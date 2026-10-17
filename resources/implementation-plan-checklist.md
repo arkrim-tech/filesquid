@@ -2,7 +2,7 @@
 
 This is a short, ordered view of [implementation-plan.md](./implementation-plan.md). Each numbered item is a global task in the order the dev team expects to finish it, and the nested items are the module tasks it dispatches, taken from each module's `resources/plan.md`. Task codes link to the full task description. A box is ticked when the matching box is ticked in the source plan.
 
-Order follows the **Dependencies** fields and the [release sequence](./implementation-plan.md#release-sequence-assumptions-do-not-reorder) of the implementation plan; where the plan allows tasks to run in parallel, the order shown is the dev team's current dispatch order. The implementation plan stays authoritative: if the two disagree, the implementation plan wins and this file is corrected.
+Order follows the **Dependencies** fields and the [release sequence](./implementation-plan.md#release-sequence-assumptions-do-not-reorder) of the implementation plan; where the plan allows tasks to run in parallel, the order shown is the dev team's current dispatch order. Finished tasks come first in each release, in the order they were finished, even when one was finished ahead of a listed dependency (Task FS-2.4 was delivered before Tasks FS-2.1, 0.5 and FS-1.4); open tasks follow in dependency order. The implementation plan stays authoritative: if the two disagree, the implementation plan wins and this file is corrected.
 
 Superseded tasks (0.7, 1.9, 9.5, 10.4 and their superseded module rows) are left out. ImageSquid (`IS-`) and Arkrim (`ARK-`) view rows are planned in their distributions' own plans and are not listed here.
 
@@ -36,7 +36,7 @@ FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by ga
     - [x] [CLI-0.1](../apps/filesquid/crates/cli/resources/plan.md#phase-f0-one-fsquid-cli-global-task-fs-01) `fsquid` binary and command routing
 7. [x] [Task 0.16](./implementation-plan.md#task-0.16) filesquid-metadata JSON sidecar
     - [x] [MD-0.5](../apps/filesquid/crates/metadata/resources/plan.md#phase-f0-stand-alone-cli-and-csv-global-tasks-014-016) JSON sidecar interchange
-8. [x] [Task FS-2.4](./implementation-plan.md#task-fs-2.4) Activity journal, process registry and Monitor dashboard
+8. [x] [Task FS-2.4](./implementation-plan.md#task-fs-2.4) Activity journal, process registry and Monitor dashboard (finished early, ahead of its listed dependencies)
     - [x] [API-F2.1](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) Activity journal, process registry, health and admin routes
     - [x] [UI-F2.7](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26) Monitor dashboard
 9. [ ] [Task FS-1.1](./implementation-plan.md#task-fs-1.1) API contract, router and transports

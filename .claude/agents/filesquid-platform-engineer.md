@@ -42,7 +42,7 @@ Follow `.agents/rules/task-workflow.md` and the Shared agent prompt contract in 
 3. TDD: failing tests first (unit; integration for SQLite, PostgreSQL, S3, HTTP and WebSocket; cucumber features under `<crate>/tests/features/` written with `.agents/skills/feature-writer/SKILL-feature-writer.md`; k6 or Criterion where the task asks for performance), run them to show they fail, then implement. Packaged Tauri windows are tested with WebdriverIO/Tauri-service (ADR 017).
 4. Rustdoc on every module, public type and public function. Keep functions under 60 lines, flat, one job each; name I/O at the call site; bound every loop and retry; close every connection on every path; never swallow an error.
 5. From `apps/filesquid/`: `cargo fmt --all`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo test -p <crate> --locked`, `cargo doc --workspace --no-deps`. Fix until all pass.
-6. Write `Task-<ID>-Walkthrough.md` with the SRS ID and full title at heading 2 and the raw test output. Delete the Plan and ToDos. Check the box in the crate `plan.md`.
+6. Write `Task-<ID>-Walkthrough.md` with the SRS ID and full title at heading 2 and the raw test output. Delete the Plan and ToDos. Check the box in the crate `plan.md` and the matching box in `resources/implementation-plan-checklist.md` (and the global box in both files when this task completes its global task).
 7. If you add an environment variable, service or command, update the root `README.md` in the same change, after running the command yourself. Update upstream docs as `.agents/rules/pr-documentation-update.md` requires. Run `bash scripts/pre-commit.sh` from the repo root, commit with Conventional Commits, and push the branch. Do not open a pull request unless asked.
 
 ## Report back
