@@ -1,7 +1,7 @@
 //! File-level operations for the filesystem backend: staged atomic writes,
 //! bounded hashing and copying, and ranged reads.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
@@ -11,7 +11,7 @@ use super::super::error::StorageError;
 use super::super::types::{
     ByteRange, CompletedPart, ETag, ObjectMeta, MAX_OBJECT_BYTES, MAX_PART_BYTES,
 };
-use super::internal::{inspect, open_existing, Entry};
+use super::internal::{create_new_checked, inspect, open_existing, Entry};
 use super::io_error;
 use super::paths::RESERVED_PREFIX;
 
@@ -66,11 +66,7 @@ fn stage_temp<R>(
         fs::create_dir_all(parent).map_err(|e| io_error(&what, e))?;
     }
     let temp = parent.join(format!("{RESERVED_PREFIX}tmp-{suffix}"));
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temp)
-        .map_err(|e| io_error(&what, e))?;
+    let mut file = create_new_checked(&temp)?;
     let filled = fill(&mut file).and_then(|value| {
         file.sync_all().map_err(|e| io_error(&what, e))?;
         Ok(value)

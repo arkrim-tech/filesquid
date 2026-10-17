@@ -142,6 +142,20 @@ pub(super) fn open_or_create(path: &Path) -> Result<File, StorageError> {
     Ok(file)
 }
 
+/// Create a new regular file at `path` for writing. `create_new` never
+/// follows a link or reuses an existing entry; the open handle is then
+/// checked against the path like every other open. Used for temporary object
+/// and part files and for upload key records.
+pub(super) fn create_new_checked(path: &Path) -> Result<File, StorageError> {
+    let file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|e| io_error(&path.display().to_string(), e))?;
+    verify_handle(path, &file)?;
+    Ok(file)
+}
+
 /// Read a small internal record of at most [`MAX_RECORD_BYTES`] as UTF-8.
 /// `Ok(None)` when it is missing.
 pub(super) fn read_record(path: &Path) -> Result<Option<String>, StorageError> {
@@ -160,4 +174,59 @@ pub(super) fn read_record(path: &Path) -> Result<Option<String>, StorageError> {
         .read_to_string(&mut text)
         .map_err(|e| io_error(&what, e))?;
     Ok(Some(text))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    /// A scratch directory under the system temporary directory, removed on
+    /// drop.
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(label: &str) -> Self {
+            let dir =
+                std::env::temp_dir().join(format!("ocfl-internal-{label}-{}", std::process::id()));
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(&dir).expect("scratch");
+            Self(dir)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn create_new_checked_creates_a_regular_file() {
+        let scratch = Scratch::new("create");
+        let path = scratch.0.join("record");
+        let file = create_new_checked(&path).expect("create");
+        assert!(file.metadata().expect("meta").is_file());
+        assert!(matches!(inspect(&path), Ok(Entry::File(_))));
+    }
+
+    #[test]
+    fn create_new_checked_never_reuses_an_existing_entry() {
+        let scratch = Scratch::new("exists");
+        let path = scratch.0.join("record");
+        fs::write(&path, b"old").expect("existing");
+        assert!(create_new_checked(&path).is_err());
+        assert_eq!(fs::read(&path).expect("read"), b"old");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn create_new_checked_never_follows_a_link() {
+        let scratch = Scratch::new("link");
+        let target = scratch.0.join("target");
+        let path = scratch.0.join("record");
+        std::os::unix::fs::symlink(&target, &path).expect("dangling link");
+        assert!(create_new_checked(&path).is_err());
+        assert!(!target.exists(), "the link target was created");
+    }
 }

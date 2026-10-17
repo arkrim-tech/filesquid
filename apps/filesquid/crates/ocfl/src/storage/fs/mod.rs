@@ -25,10 +25,10 @@
 //! - **Confinement.** A key is refused when an existing component of its path
 //!   below the root is a symbolic link, when a segment starts with `.fsquid-`,
 //!   and on Windows when a segment is a drive or stream name, a device name or
-//!   ends with a dot or space. Object files and the backend's own files are
-//!   opened as regular files only, and the open handle is checked against the
-//!   path, so a link swapped in after the check is refused (see
-//!   `internal.rs`). Directory checks still run before each operation, so the
+//!   ends with a dot or space. Object files and the backend's own files
+//!   (temporary files, key records, parts, lock files) are opened or created
+//!   as regular files only, and the open handle is checked against the path,
+//!   so a link swapped in after the check is refused (see `internal.rs`). Directory checks still run before each operation, so the
 //!   root and staging MUST NOT be writable by untrusted processes.
 //! - **Staging outside the root.** Root and staging are resolved (links,
 //!   `.`, `..`) before the containment check.

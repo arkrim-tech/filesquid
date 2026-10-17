@@ -18,7 +18,7 @@
 //!   parts are opened as regular files only, without following links and
 //!   with a size cap (see [`super::internal`]).
 
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
@@ -28,7 +28,7 @@ use super::super::types::{
     check_part, check_part_order, CompletedPart, ETag, ObjectMeta, Precondition, UploadId,
 };
 use super::files::{append_parts, part_path, write_atomic, Parent, Publish};
-use super::internal::{read_record, require_plain_dir};
+use super::internal::{create_new_checked, read_record, require_plain_dir, MAX_RECORD_BYTES};
 use super::paths::key_path;
 use super::{io_error, FsBackend};
 
@@ -119,6 +119,12 @@ impl FsBackend {
         &self,
         key: &StorageKey,
     ) -> Result<UploadId, StorageError> {
+        if key.as_str().len() as u64 > MAX_RECORD_BYTES {
+            return Err(StorageError::LimitExceeded {
+                what: "multipart key length",
+                limit: MAX_RECORD_BYTES,
+            });
+        }
         key_path(&self.root, key)?;
         let id = self.unique_suffix();
         self.check_upload_chain(&id)?;
@@ -198,16 +204,13 @@ impl FsBackend {
     }
 }
 
-/// Write the key record of a new upload directory. `create_new` never
-/// follows or replaces an existing entry.
+/// Write the key record of a new upload directory through
+/// [`create_new_checked`], which never follows or replaces an existing entry
+/// and checks the open handle against the path.
 fn write_key_record(dir: &Path, key: &StorageKey) -> Result<(), StorageError> {
     let record = dir.join(UPLOAD_KEY_FILE);
     let what = record.display().to_string();
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&record)
-        .map_err(|e| io_error(&what, e))?;
+    let mut file = create_new_checked(&record)?;
     file.write_all(key.as_str().as_bytes())
         .and_then(|()| file.sync_all())
         .map_err(|e| io_error(&what, e))

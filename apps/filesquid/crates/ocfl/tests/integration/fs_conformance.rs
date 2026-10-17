@@ -587,3 +587,15 @@ async fn fs_writes_refuse_a_symlinked_lock_file() {
     );
     assert_eq!(std::fs::read(&outside).expect("outside"), b"keep");
 }
+
+#[tokio::test]
+async fn fs_create_multipart_refuses_a_key_larger_than_its_record_cap() {
+    let (backend, scratch) = fs_backend("key-cap");
+    let long = vec!["a"; 40 * 1024].join("/");
+    let err = backend
+        .create_multipart(&key(&long))
+        .await
+        .expect_err("oversized key");
+    assert!(matches!(err, StorageError::LimitExceeded { .. }), "{err:?}");
+    assert!(staged_uploads(&backend, &scratch).is_empty());
+}
