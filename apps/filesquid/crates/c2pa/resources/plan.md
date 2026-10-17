@@ -14,7 +14,7 @@ CP-0.1 created the crate (`apps/filesquid/crates/c2pa/`, a workspace member) wit
   - **Related Tests:** [`reusable_provenance_engine_F-054.feature`](../tests/features/reusable_provenance_engine_F-054.feature)
   - **Agent Prompt:** `@AGENTS.md Begin by creating a new feature branch for Task CP-0.1. Then begin development, running Cargo from apps/filesquid/ with -p filesquid-c2pa (module directory apps/filesquid/crates/c2pa/). Additionally, invoke the @feature-writer skill to translate SRS requirements into executable BDD feature tests. Upon completion, YOU MUST generate apps/filesquid/crates/c2pa/resources/tasks/Task-CP-0.1-Walkthrough.md directly in the project repository with clear SRS mapping (including BOTH the ID and full human-readable title text) in the secondary section, and strictly delete the internal tracking Plan/ToDos documents before checking off the Markdown box locally in apps/filesquid/crates/c2pa/resources/plan.md. Then commit your changes and push the branch to origin.`
 
-- [ ] **Task CP-0.2: JUMBF and CBOR manifest store parsing**
+- [x] **Task CP-0.2: JUMBF and CBOR manifest store parsing**
   - **Description:** Parse JUMBF superboxes and description boxes, the manifest store, claims (v1 and v2), assertion stores and CBOR/JSON assertions, including remote manifest references through the caller fetcher. Reject malformed structures with typed errors. No `std::fs` in the core.
   - **Estimated Time:** 16 hours
   - **Dependencies:** Task CP-0.1

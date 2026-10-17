@@ -10,6 +10,55 @@ Feature: Reusable filesquid-c2pa engine
     When I read it with filesquid-c2pa
     Then the active manifest, its claim and its assertions should be returned
 
+  # C2PA-S-001: manifest stores in sidecar files and by remote reference
+  Scenario: Read a sidecar manifest store
+    Given a sidecar manifest store with an ingredient manifest and an active manifest
+    When I read the sidecar with filesquid-c2pa
+    Then the active manifest should be the last manifest in the store
+    And its v2 claim and its CBOR, JSON and embedded-file assertions should be returned
+
+  Scenario: Read a legacy v1 claim
+    Given a sidecar manifest store whose claim uses the legacy c2pa.claim label
+    When I read the sidecar with filesquid-c2pa
+    Then the claim should be reported as version 1 with its assertions
+
+  Scenario: Read a remote manifest store through the caller fetcher
+    Given a caller fetcher that serves a manifest store
+    When I read the remote manifest store "https://example.org/asset.c2pa"
+    Then the active manifest should be the last manifest in the store
+    And the fetcher should have been asked for a remote manifest
+
+  Scenario: A remote manifest store without a caller fetcher is inaccessible
+    Given no network fetcher supplied by the caller
+    When I read the remote manifest store "https://example.org/asset.c2pa"
+    Then the read should fail with status code "manifest.inaccessible"
+
+  Scenario: A truncated manifest store is rejected
+    Given a sidecar manifest store cut short by one byte
+    When I read the sidecar with filesquid-c2pa
+    Then the read should fail with a truncated JUMBF box error
+
+  Scenario: A manifest store over the size limit is rejected before it is read
+    Given a sidecar manifest store one byte larger than the store size limit
+    When I read the sidecar with filesquid-c2pa
+    Then the read should fail as too large without reading the source
+
+  Scenario: Nesting deeper than the limit is rejected
+    Given a sidecar manifest store nested one level deeper than the box depth limit
+    When I read the sidecar with filesquid-c2pa
+    Then the read should fail with a box depth limit error
+
+  Scenario: A manifest with a broken claim is reported with its status code
+    Given a sidecar manifest store whose ingredient claim is not valid CBOR
+    When I read the sidecar with filesquid-c2pa
+    Then the ingredient manifest should report "claim.cbor.invalid"
+    And the active manifest should still be readable
+
+  Scenario: Unknown boxes are reported, not silently dropped
+    Given a sidecar manifest store with a vendor box of an unknown type
+    When I read the sidecar with filesquid-c2pa
+    Then the vendor box should be listed as ignored with an unknown type
+
   Scenario: Validate against a caller-supplied trust list
     Given a signed asset and a trust list supplied by the caller
     When I validate it with filesquid-c2pa
@@ -120,6 +169,6 @@ Feature: Reusable filesquid-c2pa engine
   # Source
   # - resources/prd.md F-054
   # - resources/srs.md SRS-F-054
-  # - apps/filesquid/crates/c2pa/resources/srs.md C2PA-S-006, C2PA-S-007, C2PA-S-008, C2PA-S-009
+  # - apps/filesquid/crates/c2pa/resources/srs.md C2PA-S-001, C2PA-S-006, C2PA-S-007, C2PA-S-008, C2PA-S-009
   # - resources/architecture/026-filesquid-provenance-engine.md
   # - resources/architecture/028-filesquid-ui-packages-and-panel-composition.md

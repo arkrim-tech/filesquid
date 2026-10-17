@@ -20,6 +20,8 @@ ed25519-dalek = { version = "3", default-features = false, features = ["pkcs8"],
 p256 = { version = "0.14", default-features = false, features = ["ecdsa", "pkcs8"], optional = true }
 p384 = { version = "0.14", default-features = false, features = ["ecdsa", "pkcs8"], optional = true }
 p521 = { version = "0.14", default-features = false, features = ["ecdsa", "pkcs8"], optional = true }
+serde = { version = "1", default-features = false, features = ["std"] }
+serde_json = { version = "1", default-features = false, features = ["std"] }
 sha2 = { version = "0.11", default-features = false, optional = true }
 thiserror = "2"
 tracing = { version = "0.1", default-features = false, features = ["std"] }
@@ -60,6 +62,42 @@ path = "tests/unit/source_scan.rs"
 [[test]]
 name = "unit_oracle_harness"
 path = "tests/unit/oracle_harness.rs"
+
+[[test]]
+name = "unit_cbor"
+path = "tests/unit/cbor.rs"
+
+[[test]]
+name = "unit_jumbf"
+path = "tests/unit/jumbf.rs"
+
+[[test]]
+name = "unit_manifest"
+path = "tests/unit/manifest.rs"
+
+[[test]]
+name = "unit_claim"
+path = "tests/unit/claim.rs"
+
+[[test]]
+name = "unit_uri"
+path = "tests/unit/uri.rs"
+
+[[test]]
+name = "unit_read"
+path = "tests/unit/read.rs"
+
+[[test]]
+name = "unit_read_logs"
+path = "tests/unit/read_logs.rs"
+
+[[test]]
+name = "integration_conformance_parse"
+path = "tests/integration/conformance_parse.rs"
+
+[[test]]
+name = "performance_parse"
+path = "tests/performance/parse.rs"
 
 [[test]]
 name = "integration_wasm_build"
