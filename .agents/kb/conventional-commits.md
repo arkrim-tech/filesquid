@@ -53,7 +53,6 @@ Agents MUST use one of the following types for every commit:
 | **`perf:`** | A code change that improves performance. |
 | **`test:`** | Adding missing tests or correcting existing tests (including Gherkin `.feature` files). |
 | **`build:`** | Changes that affect the build system or external dependencies. |
-| **`ci:`** | Changes to our CI configuration files and scripts. |
 | **`chore:`** | Other changes that don't modify `src` or `test` files (e.g., updating `.gitignore`). |
 
 ## Formatting Rules

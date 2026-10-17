@@ -29,7 +29,7 @@ license: CC-BY
 
 | Step | Script | Checks |
 |---|---|---|
-| 0 | `verify_branch.sh` | No direct commits to `main` ([task-workflow.md](./task-workflow.md)) |
+| 0 | `verify_branch.sh` | No direct commits to `main`; branch name is `<type>/<slug>` with a permitted Conventional Commit type ([task-workflow.md](./task-workflow.md)) |
 | 1 | `verify_isolated_ports.sh` | Unique dev, preview and bind ports ([port-conflicts.md](./port-conflicts.md)) |
 | 2 | `verify_doc_sync.sh` | Source changes ship with documentation changes ([sync-logic.md](./sync-logic.md)) |
 | 3 | `verify_srs_traceability.sh` | PRD and SRS IDs resolve both ways |
