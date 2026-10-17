@@ -6,10 +6,15 @@
 //! | ECDSA P-256, P-384, P-521 | `p256`, `p384`, `p521` (`ecdsa` 0.17) |
 //! | Ed25519 | `ed25519-dalek` |
 //!
-//! RSA-PSS (`rsa`), X.509 (`x509-cert`) and CMS / RFC 3161 (`cms`) are wired
-//! in with certificate and timestamp validation (CP-0.4); until then PS256,
-//! PS384 and PS512 return [`CryptoError::UnsupportedAlgorithm`]. This is the
-//! only module in the crate that names a cryptography crate.
+//! ECDSA takes the curve from the key and the hash from the algorithm, so
+//! ES256, ES384 and ES512 each accept P-256, P-384 and P-521 keys, as C2PA 2.4
+//! section 13.2 requires.
+//!
+//! RSA-PSS (`rsa`), X.509 (`x509-cert`) and CMS / RFC 3161 (`cms`) will be
+//! added with certificate and timestamp validation in CP-0.4; none of them
+//! is a dependency yet. Until then PS256, PS384 and PS512 return
+//! [`CryptoError::UnsupportedAlgorithm`]. This is the only module of the
+//! library that names a cryptography crate.
 
 use ed25519_dalek::pkcs8::DecodePublicKey as _;
 
@@ -71,9 +76,9 @@ impl CryptoBackend for RustCryptoBackend {
     ) -> Result<(), CryptoError> {
         let (key, msg, sig) = (public_key_spki_der, message, signature);
         match algorithm {
-            SigningAlgorithm::Es256 => verify_p256(key, msg, sig),
-            SigningAlgorithm::Es384 => verify_p384(key, msg, sig),
-            SigningAlgorithm::Es512 => verify_p521(key, msg, sig),
+            SigningAlgorithm::Es256 | SigningAlgorithm::Es384 | SigningAlgorithm::Es512 => {
+                verify_ecdsa(algorithm, key, msg, sig)
+            }
             SigningAlgorithm::Ed25519 => verify_ed25519(key, msg, sig),
             SigningAlgorithm::Ps256 | SigningAlgorithm::Ps384 | SigningAlgorithm::Ps512 => {
                 Err(CryptoError::UnsupportedAlgorithm(algorithm))
@@ -92,33 +97,78 @@ fn invalid_signature(err: impl std::fmt::Display) -> CryptoError {
     CryptoError::InvalidSignature(err.to_string())
 }
 
-/// Verify an ES256 signature (P-256, SHA-256).
-fn verify_p256(spki: &[u8], message: &[u8], signature: &[u8]) -> Result<(), CryptoError> {
-    use p256::ecdsa::signature::Verifier as _;
+/// Hash `message` with the digest an ECDSA algorithm names (ES256 → SHA-256,
+/// ES384 → SHA-384, ES512 → SHA-512), independent of the key's curve.
+fn ecdsa_prehash(algorithm: SigningAlgorithm, message: &[u8]) -> Result<Vec<u8>, CryptoError> {
+    use sha2::Digest as _;
+    match algorithm {
+        SigningAlgorithm::Es256 => Ok(sha2::Sha256::digest(message).to_vec()),
+        SigningAlgorithm::Es384 => Ok(sha2::Sha384::digest(message).to_vec()),
+        SigningAlgorithm::Es512 => Ok(sha2::Sha512::digest(message).to_vec()),
+        other => Err(CryptoError::UnsupportedAlgorithm(other)),
+    }
+}
+
+/// Verify an ES256/ES384/ES512 signature.
+///
+/// C2PA 2.4, section 13.2 ("Implementations shall accept keys on any of
+/// these curves for all ECDSA algorithm choices"): the curve comes from the
+/// key (P-256, P-384 or P-521) and the hash from the algorithm.
+fn verify_ecdsa(
+    algorithm: SigningAlgorithm,
+    spki: &[u8],
+    message: &[u8],
+    signature: &[u8],
+) -> Result<(), CryptoError> {
     use p256::pkcs8::DecodePublicKey as _;
-    let key = p256::ecdsa::VerifyingKey::from_public_key_der(spki).map_err(invalid_key)?;
+    let prehash = ecdsa_prehash(algorithm, message)?;
+    if let Ok(key) = p256::ecdsa::VerifyingKey::from_public_key_der(spki) {
+        return verify_p256(&key, &prehash, signature);
+    }
+    if let Ok(key) = p384::ecdsa::VerifyingKey::from_public_key_der(spki) {
+        return verify_p384(&key, &prehash, signature);
+    }
+    match p521::ecdsa::VerifyingKey::from_public_key_der(spki) {
+        Ok(key) => verify_p521(&key, &prehash, signature),
+        Err(_) => Err(CryptoError::InvalidKey(
+            "not a P-256, P-384 or P-521 SubjectPublicKeyInfo".to_string(),
+        )),
+    }
+}
+
+/// Verify a raw `r || s` signature over `prehash` with a P-256 key.
+fn verify_p256(
+    key: &p256::ecdsa::VerifyingKey,
+    prehash: &[u8],
+    signature: &[u8],
+) -> Result<(), CryptoError> {
+    use p256::ecdsa::signature::hazmat::PrehashVerifier as _;
     let sig = p256::ecdsa::Signature::from_slice(signature).map_err(invalid_signature)?;
-    key.verify(message, &sig)
+    key.verify_prehash(prehash, &sig)
         .map_err(|_| CryptoError::VerificationFailed)
 }
 
-/// Verify an ES384 signature (P-384, SHA-384).
-fn verify_p384(spki: &[u8], message: &[u8], signature: &[u8]) -> Result<(), CryptoError> {
-    use p384::ecdsa::signature::Verifier as _;
-    use p384::pkcs8::DecodePublicKey as _;
-    let key = p384::ecdsa::VerifyingKey::from_public_key_der(spki).map_err(invalid_key)?;
+/// Verify a raw `r || s` signature over `prehash` with a P-384 key.
+fn verify_p384(
+    key: &p384::ecdsa::VerifyingKey,
+    prehash: &[u8],
+    signature: &[u8],
+) -> Result<(), CryptoError> {
+    use p384::ecdsa::signature::hazmat::PrehashVerifier as _;
     let sig = p384::ecdsa::Signature::from_slice(signature).map_err(invalid_signature)?;
-    key.verify(message, &sig)
+    key.verify_prehash(prehash, &sig)
         .map_err(|_| CryptoError::VerificationFailed)
 }
 
-/// Verify an ES512 signature (P-521, SHA-512).
-fn verify_p521(spki: &[u8], message: &[u8], signature: &[u8]) -> Result<(), CryptoError> {
-    use p521::ecdsa::signature::Verifier as _;
-    use p521::pkcs8::DecodePublicKey as _;
-    let key = p521::ecdsa::VerifyingKey::from_public_key_der(spki).map_err(invalid_key)?;
+/// Verify a raw `r || s` signature over `prehash` with a P-521 key.
+fn verify_p521(
+    key: &p521::ecdsa::VerifyingKey,
+    prehash: &[u8],
+    signature: &[u8],
+) -> Result<(), CryptoError> {
+    use p521::ecdsa::signature::hazmat::PrehashVerifier as _;
     let sig = p521::ecdsa::Signature::from_slice(signature).map_err(invalid_signature)?;
-    key.verify(message, &sig)
+    key.verify_prehash(prehash, &sig)
         .map_err(|_| CryptoError::VerificationFailed)
 }
 

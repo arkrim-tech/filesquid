@@ -225,6 +225,20 @@ fn redacted_origin_drops_userinfo_path_query_and_fragment() {
 }
 
 #[test]
+fn redacted_origin_rejects_control_and_whitespace_in_the_host() {
+    for url in [
+        "https://evil.example\nlevel=ERROR forged/path",
+        "https://evil.example\r\nforged",
+        "https://evil example.org/",
+        "https://evil.example\t/",
+        "https://evil\u{0}example/",
+        "https://evil\u{2028}example/",
+    ] {
+        assert_eq!(redacted_origin(url), UNPARSED_URL, "{url:?}");
+    }
+}
+
+#[test]
 fn redacted_origin_hides_text_that_is_not_a_url() {
     assert_eq!(redacted_origin("token=SECRET"), UNPARSED_URL);
     assert_eq!(redacted_origin("://nohost"), UNPARSED_URL);

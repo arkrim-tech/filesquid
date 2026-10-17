@@ -2,7 +2,7 @@
 //!
 //! C2PA logic in this crate never calls a cryptography crate directly: hashes
 //! and signature checks go through a [`CryptoBackend`]. The default
-//! `rust-crypto` feature provides [`RustCryptoBackend`] on established,
+//! `rust-crypto` feature provides `RustCryptoBackend` on established,
 //! audited-in-the-open RustCrypto crates. A host MAY supply its own backend,
 //! for example one that uses WebCrypto in a browser or a hardware module.
 //! Primitives are never hand-rolled.
@@ -168,7 +168,9 @@ async fn hash_range<S: ByteSource + ?Sized>(
             end: range.end,
         });
     }
-    let mut buf = vec![0u8; DIGEST_CHUNK_BYTES];
+    // `start <= end` was checked above; the buffer never exceeds the range.
+    let span = range.end - range.start;
+    let mut buf = vec![0u8; span.min(DIGEST_CHUNK_BYTES as u64) as usize];
     let mut offset = range.start;
     while offset < range.end {
         let take = (range.end - offset).min(DIGEST_CHUNK_BYTES as u64) as usize;

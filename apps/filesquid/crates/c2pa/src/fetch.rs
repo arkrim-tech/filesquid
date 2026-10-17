@@ -219,7 +219,9 @@ pub fn redacted_origin(url: &str) -> String {
         && scheme
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || "+-.".contains(c));
-    if !scheme_ok || host.is_empty() {
+    // Control and whitespace characters would let a URL forge log lines.
+    let host_ok = !host.is_empty() && !host.chars().any(|c| c.is_control() || c.is_whitespace());
+    if !scheme_ok || !host_ok {
         return UNPARSED_URL.to_string();
     }
     format!("{scheme}://{host}")

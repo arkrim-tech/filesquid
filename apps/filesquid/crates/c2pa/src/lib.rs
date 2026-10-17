@@ -15,7 +15,7 @@
 //!   refuses every request. The core never opens a network connection.
 //! - [`crypto`]: every cryptographic primitive goes through the
 //!   [`crypto::CryptoBackend`] trait. The default `rust-crypto` feature
-//!   provides [`crypto::RustCryptoBackend`] on established RustCrypto crates;
+//!   provides `crypto::RustCryptoBackend` on established RustCrypto crates;
 //!   nothing is hand-rolled.
 //!
 //! Trust lists and signers are always supplied by the caller; the crate ships

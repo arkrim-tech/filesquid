@@ -25,18 +25,24 @@ pub enum WasmBuild {
 }
 
 /// Return whether the Rust standard library for [`WASM_TARGET`] is installed.
-fn target_installed() -> bool {
+///
+/// A `rustc` that cannot be started or that exits with an error is `Err`
+/// with the real cause, not reported as a missing target.
+fn target_installed() -> Result<bool, String> {
     let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
-    let output = Command::new(rustc)
+    let out = Command::new(&rustc)
         .args(["--print", "target-libdir", "--target", WASM_TARGET])
-        .output();
-    match output {
-        Ok(out) if out.status.success() => {
-            let dir = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            PathBuf::from(dir).is_dir()
-        }
-        _ => false,
+        .output()
+        .map_err(|err| format!("could not run `{rustc}`: {err}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "`{rustc} --print target-libdir --target {WASM_TARGET}` failed ({}): {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
     }
+    let dir = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    Ok(PathBuf::from(dir).is_dir())
 }
 
 /// Target directory for the check: `$CARGO_TARGET_DIR` (or the workspace
@@ -66,7 +72,7 @@ pub fn build_for_wasm(default_features: bool) -> Result<WasmBuild, String> {
     if let Some(reason) = opted_out() {
         return Ok(WasmBuild::Skipped(reason));
     }
-    if !target_installed() {
+    if !target_installed()? {
         return Err(format!(
             "Rust target {WASM_TARGET} is not installed: run `rustup target add {WASM_TARGET}` \
              (or set {SKIP_ENV}=1 to skip this check explicitly)"

@@ -31,7 +31,7 @@ pub const ASSET_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "c2pa"];
 pub const MAX_CORPUS_FILES: usize = 1000;
 
 /// Cap on corpus directory depth.
-const MAX_DEPTH: usize = 12;
+pub const MAX_DEPTH: usize = 12;
 
 /// A ready-to-run oracle.
 #[derive(Debug, Clone)]
@@ -122,8 +122,8 @@ fn find_tool() -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
-/// Return the sorted asset files under `dir`, bounded by `max_files` and a
-/// depth cap. Directories named `.git` are skipped.
+/// Return the sorted asset files under `dir`. More than `max_files` assets or
+/// nesting deeper than [`MAX_DEPTH`] is an error. `.git` directories are skipped.
 pub fn corpus_files(dir: &Path, max_files: usize) -> Result<Vec<PathBuf>, String> {
     let mut files = Vec::new();
     walk(dir, 0, max_files, &mut files)?;
@@ -131,23 +131,36 @@ pub fn corpus_files(dir: &Path, max_files: usize) -> Result<Vec<PathBuf>, String
     Ok(files)
 }
 
+/// Collect assets under `dir` in sorted entry order. Exceeding `max` files
+/// or [`MAX_DEPTH`] is an error, so a run never checks an arbitrary subset.
 fn walk(dir: &Path, depth: usize, max: usize, out: &mut Vec<PathBuf>) -> Result<(), String> {
     if depth > MAX_DEPTH {
-        return Ok(());
+        return Err(format!(
+            "{} is deeper than {MAX_DEPTH} levels below the corpus root",
+            dir.display()
+        ));
     }
-    let entries = fs::read_dir(dir).map_err(|err| format!("{}: {err}", dir.display()))?;
-    for entry in entries {
-        let path = entry.map_err(|err| err.to_string())?.path();
-        if out.len() >= max {
-            return Ok(());
-        }
+    for path in sorted_entries(dir)? {
         if path.is_dir() && path.file_name().is_some_and(|name| name != ".git") {
             walk(&path, depth + 1, max, out)?;
         } else if is_asset(&path) {
+            if out.len() >= max {
+                return Err(format!("the corpus has more than {max} assets"));
+            }
             out.push(path);
         }
     }
     Ok(())
+}
+
+/// The entries of `dir`, sorted by path.
+fn sorted_entries(dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let entries = fs::read_dir(dir).map_err(|err| format!("{}: {err}", dir.display()))?;
+    let mut paths = entries
+        .map(|entry| entry.map(|e| e.path()).map_err(|err| err.to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
+    paths.sort();
+    Ok(paths)
 }
 
 /// Return whether `path` has one of the [`ASSET_EXTENSIONS`].

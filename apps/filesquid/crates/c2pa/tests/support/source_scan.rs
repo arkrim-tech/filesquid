@@ -73,21 +73,35 @@ enum Lex {
     Str,
 }
 
+/// One code character kept by [`code_chars`].
+#[derive(Debug, Clone, Copy)]
+pub struct CodeChar {
+    /// The character.
+    pub c: char,
+    /// 1-based line number.
+    pub line: usize,
+    /// Whether whitespace or a comment was removed right before it.
+    pub gap: bool,
+}
+
 /// Return the code characters of `text` with comments and whitespace
-/// removed, each paired with its 1-based line number.
+/// removed, each with its 1-based line number and whether a gap preceded it.
 ///
 /// Line comments, nested block comments and string literals are tracked, so
 /// a `//` inside a string does not hide the code after it. Raw strings are
 /// treated as ordinary strings; `src/` does not use `r#"..."#`.
-pub fn code_chars(text: &str) -> Vec<(char, usize)> {
+pub fn code_chars(text: &str) -> Vec<CodeChar> {
     let chars: Vec<char> = text.chars().collect();
     let mut out = Vec::with_capacity(chars.len());
-    let (mut state, mut line, mut i) = (Lex::Code, 1usize, 0usize);
+    let (mut state, mut line, mut i, mut gap) = (Lex::Code, 1usize, 0usize, true);
     while i < chars.len() {
         let (c, next) = (chars[i], chars.get(i + 1).copied());
         let (new_state, consumed, keep) = step(state, c, next);
         if keep && !c.is_whitespace() {
-            out.push((c, line));
+            out.push(CodeChar { c, line, gap });
+            gap = false;
+        } else {
+            gap = true;
         }
         for consumed_char in &chars[i..i + consumed] {
             line += usize::from(*consumed_char == '\n');
@@ -128,21 +142,37 @@ const STD_GROUP_MODULES: &[(&str, &str)] = &[
 /// Cap on characters scanned inside one `std::{...}` group.
 const MAX_GROUP_CHARS: usize = 4096;
 
+/// Return the char indices in `code` where `pattern` starts on a path-segment
+/// boundary: at the start, after removed whitespace or a comment, or after a
+/// character that cannot continue an identifier. So `ring::` matches
+/// `ring::digest` but not `std::string::String`.
+pub fn boundary_matches(code: &[CodeChar], pattern: &str) -> Vec<usize> {
+    let compact: String = code.iter().map(|ch| ch.c).collect();
+    compact
+        .match_indices(pattern)
+        .map(|(byte, _)| compact[..byte].chars().count())
+        .filter(|&k| k == 0 || code[k].gap || !is_ident_char(code[k - 1].c))
+        .collect()
+}
+
+/// Whether `c` can be part of a Rust identifier.
+fn is_ident_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
 /// Return (line, pattern) for each `std` module named inside a grouped
 /// `std::{...}` import in `code` (whitespace already removed).
-fn grouped_std_imports(code: &[(char, usize)]) -> Vec<(usize, &'static str)> {
-    let text: String = code.iter().map(|(c, _)| *c).collect();
-    let chars: Vec<char> = text.chars().collect();
+fn grouped_std_imports(code: &[CodeChar]) -> Vec<(usize, &'static str)> {
+    let chars: Vec<char> = code.iter().map(|ch| ch.c).collect();
     let mut found = Vec::new();
-    for (byte, _) in text.match_indices("std::{") {
-        let start = text[..byte].chars().count();
+    for start in boundary_matches(code, "std::{") {
         let open = start + "std::{".len();
         let items = group_items(&chars[open..chars.len().min(open + MAX_GROUP_CHARS)]);
         for item in items {
             for (module, pattern) in STD_GROUP_MODULES {
                 let rest = item.strip_prefix(module).unwrap_or("-");
                 if rest.is_empty() || rest.starts_with("::") || rest.starts_with("as") {
-                    found.push((code[start].1, *pattern));
+                    found.push((code[start].line, *pattern));
                 }
             }
         }
@@ -171,15 +201,15 @@ fn group_items(body: &[char]) -> Vec<String> {
     items
 }
 
-/// Return the patterns from `patterns` found in the code of `text`, ignoring
-/// comments and whitespace, including `std` modules named in grouped imports.
+/// Return the patterns from `patterns` found in the code of `text` at a
+/// path-segment boundary, ignoring comments and whitespace, including `std`
+/// modules named in grouped imports.
 pub fn scan_text(file: &str, text: &str, patterns: &[&'static str]) -> Vec<Finding> {
     let code = code_chars(text);
-    let compact: String = code.iter().map(|(c, _)| *c).collect();
     let mut hits: Vec<(usize, &'static str)> = Vec::new();
     for pattern in patterns {
-        for (byte, _) in compact.match_indices(pattern) {
-            hits.push((code[compact[..byte].chars().count()].1, *pattern));
+        for start in boundary_matches(&code, pattern) {
+            hits.push((code[start].line, *pattern));
         }
     }
     hits.extend(

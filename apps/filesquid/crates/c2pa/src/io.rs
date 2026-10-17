@@ -95,7 +95,13 @@ pub async fn read_exact_at<S: ByteSource + ?Sized>(
                 got: filled,
             });
         }
-        filled += read.min(wanted - filled);
+        let space = wanted - filled;
+        if read > space {
+            return Err(ByteIoError::Backend(format!(
+                "source reported {read} bytes read into a {space}-byte buffer"
+            )));
+        }
+        filled += read;
     }
     Ok(())
 }

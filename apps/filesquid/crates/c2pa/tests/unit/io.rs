@@ -53,7 +53,8 @@ fn storage_errors_propagate_through_read_exact_at() {
     );
 }
 
-/// A source that serves one byte at every offset, even past `u64::MAX - 1`.
+/// A source that claims `u64::MAX` bytes and serves one byte at any offset,
+/// so a read starting at `u64::MAX` makes progress and then overflows.
 struct EndlessSource;
 
 impl ByteSource for EndlessSource {
@@ -72,7 +73,37 @@ fn read_exact_at_reports_offset_overflow() {
     let mut buf = [0u8; 2];
     let err =
         block_on(read_exact_at(&mut EndlessSource, u64::MAX, &mut buf)).expect_err("overflow");
-    assert!(matches!(err, ByteIoError::OutOfRange { .. }), "{err:?}");
+    assert_eq!(
+        err,
+        ByteIoError::OutOfRange {
+            offset: u64::MAX,
+            size: u64::MAX
+        }
+    );
+}
+
+/// A misbehaving source that claims to have read more than it was given.
+struct OverreportingSource;
+
+impl ByteSource for OverreportingSource {
+    async fn size(&mut self) -> Result<u64, ByteIoError> {
+        Ok(100)
+    }
+
+    async fn read_at(&mut self, _offset: u64, buf: &mut [u8]) -> Result<usize, ByteIoError> {
+        Ok(buf.len() + 1)
+    }
+}
+
+#[test]
+fn read_exact_at_rejects_a_source_that_overreports() {
+    let mut buf = [0u8; 4];
+    let err =
+        block_on(read_exact_at(&mut OverreportingSource, 0, &mut buf)).expect_err("overreport");
+    assert_eq!(
+        err,
+        ByteIoError::Backend("source reported 5 bytes read into a 4-byte buffer".into())
+    );
 }
 
 #[test]

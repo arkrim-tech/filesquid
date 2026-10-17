@@ -208,18 +208,97 @@ fn ecdsa_signatures_verify_for_every_curve() {
 }
 
 #[test]
-fn ecdsa_key_of_the_wrong_curve_is_an_invalid_key() {
-    let (spki, signature) = p256_signed(b"claim");
+fn ecdsa_key_that_is_not_a_nist_curve_is_an_invalid_key() {
     let result = block_on(RustCryptoBackend.verify_signature(
-        SigningAlgorithm::Es384,
-        &spki,
+        SigningAlgorithm::Es256,
+        &ed25519_spki(),
         b"claim",
-        &signature,
+        &[0u8; 64],
     ));
     assert!(
         matches!(result, Err(CryptoError::InvalidKey(_))),
         "{result:?}"
     );
+}
+
+/// Hash `message` with the digest an ECDSA algorithm names.
+fn alg_prehash(algorithm: SigningAlgorithm, message: &[u8]) -> Vec<u8> {
+    let hash = match algorithm {
+        SigningAlgorithm::Es256 => HashAlgorithm::Sha256,
+        SigningAlgorithm::Es384 => HashAlgorithm::Sha384,
+        _ => HashAlgorithm::Sha512,
+    };
+    block_on(RustCryptoBackend.digest(hash, message)).expect("prehash")
+}
+
+/// Sign the `algorithm` prehash of `message` with a fixed key on `curve`
+/// (256, 384 or 521) and return (SPKI DER, raw r||s signature).
+fn signed_on_curve(curve: u16, algorithm: SigningAlgorithm, message: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    let prehash = alg_prehash(algorithm, message);
+    match curve {
+        256 => {
+            use p256::ecdsa::signature::hazmat::PrehashSigner;
+            use p256::pkcs8::EncodePublicKey;
+            let key = p256::ecdsa::SigningKey::from_slice(&[7u8; 32]).expect("key");
+            let sig: p256::ecdsa::Signature = key.sign_prehash(&prehash).expect("sign");
+            let spki = key.verifying_key().to_public_key_der().expect("spki");
+            (spki.as_bytes().to_vec(), sig.to_bytes().to_vec())
+        }
+        384 => {
+            use p384::ecdsa::signature::hazmat::PrehashSigner;
+            use p384::pkcs8::EncodePublicKey;
+            let key = p384::ecdsa::SigningKey::from_slice(&[9u8; 48]).expect("key");
+            let sig: p384::ecdsa::Signature = key.sign_prehash(&prehash).expect("sign");
+            let spki = key.verifying_key().to_public_key_der().expect("spki");
+            (spki.as_bytes().to_vec(), sig.to_bytes().to_vec())
+        }
+        _ => {
+            use p521::ecdsa::signature::hazmat::PrehashSigner;
+            use p521::pkcs8::EncodePublicKey;
+            let mut secret = [0u8; 66];
+            secret[65] = 11;
+            let key = p521::ecdsa::SigningKey::from_slice(&secret).expect("key");
+            let sig: p521::ecdsa::Signature = key.sign_prehash(&prehash).expect("sign");
+            let spki = key.verifying_key().to_public_key_der().expect("spki");
+            (spki.as_bytes().to_vec(), sig.to_bytes().to_vec())
+        }
+    }
+}
+
+#[test]
+fn every_ecdsa_algorithm_accepts_every_nist_curve() {
+    // C2PA 2.4 section 13.2: "Implementations shall accept keys on any of
+    // these curves for all ECDSA algorithm choices."
+    for algorithm in [
+        SigningAlgorithm::Es256,
+        SigningAlgorithm::Es384,
+        SigningAlgorithm::Es512,
+    ] {
+        for curve in [256, 384, 521] {
+            let (spki, sig) = signed_on_curve(curve, algorithm, b"claim");
+            let ok = block_on(RustCryptoBackend.verify_signature(algorithm, &spki, b"claim", &sig));
+            assert_eq!(ok, Ok(()), "{algorithm:?} on P-{curve}");
+            let bad = block_on(RustCryptoBackend.verify_signature(algorithm, &spki, b"clam", &sig));
+            assert_eq!(
+                bad,
+                Err(CryptoError::VerificationFailed),
+                "{algorithm:?} on P-{curve} tampered"
+            );
+        }
+    }
+}
+
+#[test]
+fn ecdsa_hash_comes_from_the_algorithm_not_the_curve() {
+    // An ES256 signature (SHA-256) on a P-384 key must not verify as ES384.
+    let (spki, sig) = signed_on_curve(384, SigningAlgorithm::Es256, b"claim");
+    let result = block_on(RustCryptoBackend.verify_signature(
+        SigningAlgorithm::Es384,
+        &spki,
+        b"claim",
+        &sig,
+    ));
+    assert_eq!(result, Err(CryptoError::VerificationFailed));
 }
 
 #[test]
@@ -326,6 +405,30 @@ fn digest_ranges_reports_a_short_source() {
     );
 }
 
+/// Largest total input the async-only test backend gathers: 1 MiB.
+const MAX_GATHER_BYTES: usize = 1024 * 1024;
+
+/// Append `range` of `source` to `out` in [`DIGEST_CHUNK_BYTES`] chunks,
+/// failing once `out` would exceed [`MAX_GATHER_BYTES`].
+async fn gather_range<S: ByteSource + ?Sized>(
+    source: &mut S,
+    range: &Range<u64>,
+    out: &mut Vec<u8>,
+) -> Result<(), CryptoError> {
+    let mut offset = range.start;
+    while offset < range.end {
+        let take = (range.end - offset).min(DIGEST_CHUNK_BYTES as u64) as usize;
+        if out.len() + take > MAX_GATHER_BYTES {
+            return Err(CryptoError::Backend("input over the gather limit".into()));
+        }
+        let start = out.len();
+        out.resize(start + take, 0);
+        read_exact_at(source, offset, &mut out[start..]).await?;
+        offset += take as u64;
+    }
+    Ok(())
+}
+
 /// An async-only backend, shaped like WebCrypto: no incremental hasher, a
 /// one-shot async digest, and its own `digest_ranges` that gathers the ranges
 /// (here through the default backend, standing in for `subtle.digest`).
@@ -349,11 +452,17 @@ impl CryptoBackend for AsyncOnlyBackend {
         source: &mut S,
         ranges: &[Range<u64>],
     ) -> Result<Vec<u8>, CryptoError> {
+        // A one-shot digest needs the bytes together, so gather them in
+        // chunks with a hard cap instead of one allocation per range.
         let mut gathered = Vec::new();
         for range in ranges {
-            let mut buf = vec![0u8; (range.end - range.start) as usize];
-            read_exact_at(source, range.start, &mut buf).await?;
-            gathered.extend_from_slice(&buf);
+            if range.start > range.end {
+                return Err(CryptoError::InvalidRange {
+                    start: range.start,
+                    end: range.end,
+                });
+            }
+            gather_range(source, range, &mut gathered).await?;
         }
         self.digest(algorithm, &gathered).await
     }
@@ -386,4 +495,26 @@ fn async_only_backend_can_supply_its_own_range_digest() {
     assert_eq!(async_only, default);
     let err = block_on(AsyncOnlyBackend.verify_signature(SigningAlgorithm::Es256, b"", b"", b""));
     assert!(matches!(err, Err(CryptoError::Backend(_))));
+}
+
+#[test]
+fn async_only_backend_checks_ranges_and_its_gather_limit() {
+    let mut source = MemorySource::new(vec![0u8; 10]);
+    #[allow(clippy::reversed_empty_ranges)]
+    let reversed: Range<u64> = 5..2;
+    let result = block_on(AsyncOnlyBackend.digest_ranges(
+        HashAlgorithm::Sha256,
+        &mut source,
+        std::slice::from_ref(&reversed),
+    ));
+    assert_eq!(result, Err(CryptoError::InvalidRange { start: 5, end: 2 }));
+    let big = MAX_GATHER_BYTES as u64 + 1;
+    let mut source = MemorySource::new(vec![0u8; big as usize]);
+    let too_big: Range<u64> = 0..big;
+    let result = block_on(AsyncOnlyBackend.digest_ranges(
+        HashAlgorithm::Sha256,
+        &mut source,
+        std::slice::from_ref(&too_big),
+    ));
+    assert!(matches!(result, Err(CryptoError::Backend(_))), "{result:?}");
 }

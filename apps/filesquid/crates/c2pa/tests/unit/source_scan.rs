@@ -93,6 +93,39 @@ fn grouped_import_findings_carry_the_line_of_the_group() {
 }
 
 #[test]
+fn crypto_patterns_match_only_at_path_segment_boundaries() {
+    let allowed = "use std::string::String;\nlet s: std::string::String = x.to_string();\nfn myring::f() {}\n";
+    assert!(
+        scan_text("lib.rs", allowed, CRYPTO_PATTERNS).is_empty(),
+        "{:?}",
+        scan_text("lib.rs", allowed, CRYPTO_PATTERNS)
+    );
+    for text in [
+        "use ring::digest;\n",
+        "let d = ring::digest::digest(a, b);\n",
+        "let d = ::ring::digest::SHA256;\n",
+        "use {ring::digest};\n",
+    ] {
+        let found = scan_text("lib.rs", text, CRYPTO_PATTERNS);
+        assert_eq!(found.len(), 1, "{text:?}: {found:?}");
+        assert_eq!(found[0].pattern, "ring::");
+    }
+}
+
+#[test]
+fn io_patterns_match_after_whitespace_and_path_separators() {
+    for text in [
+        "use std::fs;\n",
+        "x = ::std::fs::read(p);\n",
+        "use\nstd::fs;\n",
+    ] {
+        let found = scan_text("lib.rs", text, IO_PATTERNS);
+        assert_eq!(found.len(), 1, "{text:?}: {found:?}");
+    }
+    assert!(scan_text("lib.rs", "let mystd::fs = 1;\n", IO_PATTERNS).is_empty());
+}
+
+#[test]
 fn scanner_flags_crypto_crates() {
     let found = scan_text("claim.rs", "use sha2::Sha256;\n", CRYPTO_PATTERNS);
     assert_eq!(found.len(), 1);

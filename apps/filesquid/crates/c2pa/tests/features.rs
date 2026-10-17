@@ -121,9 +121,15 @@ fn oracle_reports(_world: &mut C2paWorld) {
             return;
         }
     };
-    let files = oracle::corpus_files(&config.corpus, 1).expect("corpus");
+    let files = oracle::corpus_files(&config.corpus, oracle::MAX_CORPUS_FILES).expect("corpus");
     let first = files.first().expect("one corpus asset");
-    oracle::run_c2patool(&config.tool, first).expect("c2patool verdict");
+    let report = oracle::run_c2patool(&config.tool, first).expect("c2patool verdict");
+    println!(
+        "c2patool verdict for {}: {:?}, failure codes {:?}",
+        first.display(),
+        report.verdict,
+        report.failure_codes
+    );
 }
 
 #[when(expr = "I build filesquid-c2pa for wasm32-unknown-unknown with default features {word}")]

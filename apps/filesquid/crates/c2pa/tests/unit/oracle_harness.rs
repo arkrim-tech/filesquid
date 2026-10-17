@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use oracle::{
     compare, corpus_files, is_asset, parse_c2patool_report, run_c2patool, Agreement, OracleReport,
-    Verdict,
+    Verdict, MAX_DEPTH,
 };
 
 /// A trimmed `c2patool` report for a valid, untrusted asset.
@@ -167,11 +167,32 @@ fn corpus_discovery_finds_assets_and_skips_git() {
 fn corpus_discovery_is_bounded() {
     let dir = scratch_corpus("bounded").join("bounded");
     fs::create_dir_all(&dir).expect("dir");
-    for i in 0..5 {
+    for i in [4, 0, 3, 1, 2] {
         fs::write(dir.join(format!("{i}.jpg")), b"x").expect("file");
     }
-    assert_eq!(corpus_files(&dir, 3).expect("walk").len(), 3);
+    let names: Vec<String> = corpus_files(&dir, 5)
+        .expect("walk at the cap")
+        .iter()
+        .map(|p| p.file_name().expect("name").to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["0.jpg", "1.jpg", "2.jpg", "3.jpg", "4.jpg"]);
+    let err = corpus_files(&dir, 3).expect_err("over the cap");
+    assert!(err.contains("more than 3 assets"), "{err}");
     fs::remove_dir_all(dir.parent().expect("parent")).expect("cleanup");
+}
+
+#[test]
+fn corpus_deeper_than_the_cap_is_an_error() {
+    let root = scratch_corpus("deep");
+    let mut dir = root.clone();
+    for level in 0..=MAX_DEPTH {
+        dir = dir.join(format!("d{level}"));
+    }
+    fs::create_dir_all(&dir).expect("deep dirs");
+    fs::write(dir.join("a.jpg"), b"x").expect("file");
+    let err = corpus_files(&root, 100).expect_err("too deep");
+    assert!(err.contains("deeper than"), "{err}");
+    fs::remove_dir_all(&root).expect("cleanup");
 }
 
 #[test]

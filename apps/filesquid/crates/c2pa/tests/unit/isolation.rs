@@ -11,6 +11,16 @@ use deps::{
     forbidden_reason, package_names, resolved_runtime_packages, sample_name, violations, RULES,
 };
 
+/// Fail when `cargo tree` produced an empty or unrelated graph, so an
+/// isolation check cannot pass vacuously.
+fn assert_graph_holds_this_crate(names: &[String]) {
+    assert!(
+        names.iter().any(|n| n == deps::SELF_NAME),
+        "cargo tree did not list {}: {names:?}",
+        deps::SELF_NAME
+    );
+}
+
 #[test]
 fn every_rule_rejects_a_matching_name() {
     for rule in RULES {
@@ -117,6 +127,7 @@ fn default_runtime_graph_is_isolated() {
 #[test]
 fn all_features_runtime_graph_is_isolated() {
     let names = resolved_runtime_packages(&["--all-features"]).expect("cargo tree");
+    assert_graph_holds_this_crate(&names);
     let found = violations(names.iter().map(String::as_str));
     assert!(
         found.is_empty(),
@@ -127,6 +138,8 @@ fn all_features_runtime_graph_is_isolated() {
 #[test]
 fn no_default_features_graph_has_no_crypto_crate() {
     let names = resolved_runtime_packages(&["--no-default-features"]).expect("cargo tree");
+    assert_graph_holds_this_crate(&names);
+    assert!(names.iter().any(|n| n == "thiserror"), "{names:?}");
     for crypto in ["sha2", "p256", "p384", "p521", "ed25519-dalek"] {
         assert!(
             !names.iter().any(|n| n == crypto),

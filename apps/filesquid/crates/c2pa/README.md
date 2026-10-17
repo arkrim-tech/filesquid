@@ -31,7 +31,7 @@ Trait methods return futures without a `Send` bound so single-threaded `wasm32` 
 
 ## Cryptographic primitive crates
 
-Chosen in CP-0.1 ([ADR 026](../../../../resources/architecture/026-filesquid-provenance-engine.md), [ADR 009](../../../../resources/architecture/009-cryptography-webcrypto-compatible-suite.md)). All are pure Rust and build for `wasm32-unknown-unknown`. They are used only in `src/crypto/rust_crypto.rs`, behind the default `rust-crypto` feature; a source-scan test fails if any other module names a cryptography crate. With `--no-default-features` the crate links no cryptography crate and the caller supplies a `CryptoBackend`.
+Chosen in CP-0.1 ([ADR 026](../../../../resources/architecture/026-filesquid-provenance-engine.md), [ADR 009](../../../../resources/architecture/009-cryptography-webcrypto-compatible-suite.md)). All are pure Rust and build for `wasm32-unknown-unknown`. In the library they are used only in `src/crypto/rust_crypto.rs`, behind the default `rust-crypto` feature; a source-scan test fails if any other library module names a cryptography crate. (The tests also use `p256`, `p384` and `p521` as dev-dependencies, to sign test vectors.) With `--no-default-features` the crate links no cryptography crate and the caller supplies a `CryptoBackend`.
 
 | Primitive | Crate | Status |
 |---|---|---|
