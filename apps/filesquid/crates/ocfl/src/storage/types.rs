@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use super::error::StorageError;
 use super::key::{validate_prefix, StorageKey};
 
-/// Largest ranged read and largest multipart part: 8 MiB. Logical files are
+/// Largest ranged read: 8 MiB. Logical files are
 /// streamed in chunks no larger than this (ADR 025: no API may need a whole
 /// large file in memory).
 pub const MAX_CHUNK_BYTES: u64 = 8 * 1024 * 1024;
@@ -27,8 +27,15 @@ pub const MAX_WALK_DEPTH: usize = 64;
 /// Most directory entries one filesystem listing visits.
 pub const MAX_WALK_ENTRIES: usize = 1_000_000;
 
-/// Largest object a backend stores or a reader streams: 5 TiB, the S3 limit.
-pub const MAX_OBJECT_BYTES: u64 = 5 * 1024 * 1024 * 1024 * 1024;
+/// Largest multipart part: 64 MiB. Within S3's 5 MiB to 5 GiB part range and
+/// small enough to hold in a `wasm32` worker. Reads stay at
+/// [`MAX_CHUNK_BYTES`].
+pub const MAX_PART_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Largest object a backend stores or a reader streams: [`MAX_PARTS`] parts
+/// of [`MAX_PART_BYTES`], 625 GiB. This is the largest object a multipart
+/// upload can produce under these bounds; S3 itself allows up to 5 TiB.
+pub const MAX_OBJECT_BYTES: u64 = MAX_PARTS as u64 * MAX_PART_BYTES;
 
 /// An opaque entity tag that changes whenever an object's bytes change.
 ///
@@ -204,17 +211,17 @@ pub(crate) fn check_put_size(bytes: &[u8]) -> Result<(), StorageError> {
 }
 
 /// Reject a part number outside `1..=MAX_PARTS` or a part above
-/// [`MAX_CHUNK_BYTES`].
+/// [`MAX_PART_BYTES`].
 pub(crate) fn check_part(part_number: u32, bytes: &[u8]) -> Result<(), StorageError> {
     if part_number == 0 || part_number > MAX_PARTS {
         return Err(StorageError::InvalidArgument {
             reason: format!("part number {part_number} is outside 1..={MAX_PARTS}"),
         });
     }
-    if bytes.len() as u64 > MAX_CHUNK_BYTES {
+    if bytes.len() as u64 > MAX_PART_BYTES {
         return Err(StorageError::LimitExceeded {
             what: "multipart part size",
-            limit: MAX_CHUNK_BYTES,
+            limit: MAX_PART_BYTES,
         });
     }
     Ok(())

@@ -54,6 +54,13 @@ fn missing_file_is_io_not_found() {
         Err(WriteError::Io(err)) => assert_eq!(err.kind(), std::io::ErrorKind::NotFound),
         other => panic!("expected Io(NotFound), got {other:?}"),
     }
+    let message = read_logical_file(&scratch.0, "metadata.md")
+        .expect_err("missing")
+        .to_string();
+    assert!(
+        message.starts_with("logical-file I/O failed"),
+        "a failed read must not be labelled as a write: {message}"
+    );
 }
 
 #[test]

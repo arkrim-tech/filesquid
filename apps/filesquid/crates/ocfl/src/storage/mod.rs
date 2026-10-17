@@ -17,6 +17,7 @@
 //! [`MultipartWriter`].
 
 mod backend;
+mod drive;
 mod error;
 #[cfg(all(feature = "fs", not(target_arch = "wasm32")))]
 mod fs;
@@ -26,6 +27,7 @@ mod stream;
 mod types;
 
 pub use backend::{MaybeSend, MaybeSync, StorageBackend};
+pub use drive::complete_immediately;
 pub use error::StorageError;
 #[cfg(all(feature = "fs", not(target_arch = "wasm32")))]
 pub use fs::FsBackend;
@@ -34,5 +36,6 @@ pub use memory::MemoryBackend;
 pub use stream::{ChunkReader, MultipartWriter};
 pub use types::{
     ByteRange, CompletedPart, ETag, ListPage, ObjectMeta, Precondition, UploadId, MAX_CHUNK_BYTES,
-    MAX_LIST_PAGE, MAX_OBJECT_BYTES, MAX_PARTS, MAX_PUT_BYTES, MAX_WALK_DEPTH, MAX_WALK_ENTRIES,
+    MAX_LIST_PAGE, MAX_OBJECT_BYTES, MAX_PARTS, MAX_PART_BYTES, MAX_PUT_BYTES, MAX_WALK_DEPTH,
+    MAX_WALK_ENTRIES,
 };

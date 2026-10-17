@@ -16,6 +16,7 @@ pub struct ChunkReader<'a, B: StorageBackend> {
     backend: &'a B,
     key: StorageKey,
     chunk: u64,
+    limit: u64,
     offset: u64,
     done: bool,
 }
@@ -29,11 +30,35 @@ impl<'a, B: StorageBackend> ChunkReader<'a, B> {
     /// [`StorageError::InvalidArgument`] for zero,
     /// [`StorageError::LimitExceeded`] above the chunk bound.
     pub fn new(backend: &'a B, key: StorageKey, chunk_bytes: u64) -> Result<Self, StorageError> {
+        Self::with_limit(backend, key, chunk_bytes, MAX_OBJECT_BYTES)
+    }
+
+    /// Like [`new`](Self::new), but stop at `limit_bytes` (at most
+    /// [`MAX_OBJECT_BYTES`]) instead of [`MAX_OBJECT_BYTES`]: an object of
+    /// exactly `limit_bytes` streams normally, and any byte past it is an
+    /// error. Callers that know an object's expected size pass it here.
+    ///
+    /// # Errors
+    ///
+    /// As [`new`](Self::new), and [`StorageError::InvalidArgument`] for a
+    /// limit of zero or above [`MAX_OBJECT_BYTES`].
+    pub fn with_limit(
+        backend: &'a B,
+        key: StorageKey,
+        chunk_bytes: u64,
+        limit_bytes: u64,
+    ) -> Result<Self, StorageError> {
         ByteRange::new(0, chunk_bytes)?;
+        if limit_bytes == 0 || limit_bytes > MAX_OBJECT_BYTES {
+            return Err(StorageError::InvalidArgument {
+                reason: format!("stream limit {limit_bytes} is outside 1..={MAX_OBJECT_BYTES}"),
+            });
+        }
         Ok(Self {
             backend,
             key,
             chunk: chunk_bytes,
+            limit: limit_bytes,
             offset: 0,
             done: false,
         })
@@ -42,37 +67,47 @@ impl<'a, B: StorageBackend> ChunkReader<'a, B> {
     /// Read the next chunk; `None` once the whole object has been returned.
     ///
     /// The loop a caller runs over this is bounded: every call advances the
-    /// offset or ends the stream, and the offset is capped at
-    /// [`MAX_OBJECT_BYTES`].
+    /// offset or ends the stream, and the offset never passes the limit. No
+    /// byte past the limit is ever returned.
     ///
     /// # Errors
     ///
     /// [`StorageError::NotFound`] for a missing object, a backend error, or
-    /// [`StorageError::LimitExceeded`] past [`MAX_OBJECT_BYTES`].
+    /// [`StorageError::LimitExceeded`] when the object holds data past the
+    /// limit (an object of exactly the limit ends normally).
     pub async fn next_chunk(&mut self) -> Result<Option<Vec<u8>>, StorageError> {
         if self.done {
             return Ok(None);
         }
-        if self.offset >= MAX_OBJECT_BYTES {
-            return Err(StorageError::LimitExceeded {
-                what: "streamed object size",
-                limit: MAX_OBJECT_BYTES,
-            });
+        if self.offset >= self.limit {
+            return self.check_end().await;
         }
-        let range = ByteRange::new(self.offset, self.chunk)?;
+        let want = self.chunk.min(self.limit - self.offset);
+        let range = ByteRange::new(self.offset, want)?;
         let bytes = self.backend.get_range(&self.key, range).await?;
         let read = bytes.len() as u64;
-        if read > self.chunk {
+        if read > want {
             return Err(StorageError::Backend {
-                reason: format!(
-                    "backend returned {read} bytes for a {} byte range",
-                    self.chunk
-                ),
+                reason: format!("backend returned {read} bytes for a {want} byte range"),
             });
         }
         self.offset += read;
-        self.done = read < self.chunk;
+        self.done = read < want;
         Ok((read > 0).then_some(bytes))
+    }
+
+    /// At the limit: end the stream if the object ends here, otherwise report
+    /// the overflow without returning its bytes.
+    async fn check_end(&mut self) -> Result<Option<Vec<u8>>, StorageError> {
+        let probe = ByteRange::new(self.offset, 1)?;
+        if self.backend.get_range(&self.key, probe).await?.is_empty() {
+            self.done = true;
+            return Ok(None);
+        }
+        Err(StorageError::LimitExceeded {
+            what: "streamed object size",
+            limit: self.limit,
+        })
     }
 }
 

@@ -6,8 +6,9 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use filesquid_ocfl::storage::{
-    ByteRange, ChunkReader, ETag, FsBackend, MemoryBackend, MultipartWriter, Precondition,
-    StorageBackend, StorageError, StorageKey, MAX_CHUNK_BYTES, MAX_LIST_PAGE, MAX_PUT_BYTES,
+    ByteRange, ChunkReader, ETag, FsBackend, MemoryBackend, MultipartWriter, ObjectMeta,
+    Precondition, StorageBackend, StorageError, StorageKey, MAX_CHUNK_BYTES, MAX_LIST_PAGE,
+    MAX_PART_BYTES, MAX_PUT_BYTES,
 };
 
 /// A scratch directory under Cargo's per-target temporary directory, removed
@@ -214,7 +215,7 @@ async fn multipart_abort_leaves_nothing<B: StorageBackend>(b: &B) {
 async fn multipart_rejects_bad_parts<B: StorageBackend>(b: &B) {
     let k = key("mp.bin");
     let upload = b.create_multipart(&k).await.expect("create");
-    let oversize = vec![0u8; MAX_CHUNK_BYTES as usize + 1];
+    let oversize = vec![0u8; MAX_PART_BYTES as usize + 1];
     let err = b.upload_part(&upload, 1, &oversize).await.expect_err("big");
     assert!(matches!(err, StorageError::LimitExceeded { .. }), "{err:?}");
     let err = b.upload_part(&upload, 0, b"x").await.expect_err("zero");
@@ -276,6 +277,70 @@ async fn chunk_reader_bounds<B: StorageBackend>(b: &B) {
     assert!(reader.next_chunk().await.expect("done").is_none());
 }
 
+async fn parts_above_the_read_chunk_are_accepted<B: StorageBackend>(b: &B) {
+    let k = key("objects/a/v1/content/large-part.bin");
+    let data = pattern(MAX_CHUNK_BYTES as usize + 5);
+    let mut writer = MultipartWriter::start(b, k.clone()).await.expect("start");
+    writer
+        .write_part(&data)
+        .await
+        .expect("part above the read chunk");
+    writer.finish(None).await.expect("finish");
+    assert_eq!(read_all(b, &k, MAX_CHUNK_BYTES).await, data);
+}
+
+async fn lookalike_temporary_names_are_listed<B: StorageBackend>(b: &B) {
+    b.put(&key("x.fsquid-tmp-y"), b"kept").await.expect("put");
+    let page = b.list("", None, 10).await.expect("list");
+    let names: Vec<&str> = page.keys.iter().map(StorageKey::as_str).collect();
+    assert_eq!(names, ["x.fsquid-tmp-y"]);
+}
+
+async fn listing_under_a_file_is_empty<B: StorageBackend>(b: &B) {
+    b.put(&key("foo"), b"file").await.expect("put");
+    let page = b.list("foo/", None, 10).await.expect("list under a file");
+    assert!(page.keys.is_empty());
+    assert!(page.next.is_none());
+}
+
+async fn stream_with_limit<B: StorageBackend>(
+    b: &B,
+    k: &StorageKey,
+    chunk: u64,
+    limit: u64,
+) -> (Vec<Vec<u8>>, Option<StorageError>) {
+    let mut reader = ChunkReader::with_limit(b, k.clone(), chunk, limit).expect("reader");
+    let mut chunks = Vec::new();
+    for _ in 0..16 {
+        match reader.next_chunk().await {
+            Ok(Some(bytes)) => chunks.push(bytes),
+            Ok(None) => return (chunks, None),
+            Err(err) => return (chunks, Some(err)),
+        }
+    }
+    panic!("reader did not finish");
+}
+
+async fn chunk_reader_stops_exactly_at_the_limit<B: StorageBackend>(b: &B) {
+    let k = key("exact.bin");
+    b.put(&k, b"01234567").await.expect("put");
+    let (chunks, err) = stream_with_limit(b, &k, 4, 8).await;
+    assert_eq!(chunks, [b"0123".to_vec(), b"4567".to_vec()]);
+    assert!(err.is_none(), "{err:?}");
+}
+
+async fn chunk_reader_never_returns_bytes_past_the_limit<B: StorageBackend>(b: &B) {
+    let k = key("over.bin");
+    b.put(&k, b"0123456789").await.expect("put");
+    let (chunks, err) = stream_with_limit(b, &k, 3, 8).await;
+    assert_eq!(chunks.concat(), b"01234567");
+    assert!(chunks.iter().all(|c| c.len() <= 3));
+    assert!(
+        matches!(err, Some(StorageError::LimitExceeded { .. })),
+        "{err:?}"
+    );
+}
+
 macro_rules! conformance {
     ($($name:ident),* $(,)?) => {
         mod memory {
@@ -302,6 +367,11 @@ macro_rules! conformance {
 
 conformance!(
     put_get_head_exists,
+    parts_above_the_read_chunk_are_accepted,
+    lookalike_temporary_names_are_listed,
+    listing_under_a_file_is_empty,
+    chunk_reader_stops_exactly_at_the_limit,
+    chunk_reader_never_returns_bytes_past_the_limit,
     put_replaces,
     missing_key_is_not_found,
     compare_and_swap,
@@ -352,8 +422,8 @@ async fn fs_backend_leaves_no_temporary_files_or_staging() {
         .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
         .collect();
     assert_eq!(names, ["f.bin"]);
-    let staged = std::fs::read_dir(scratch.0.join("staging"))
-        .expect("staging")
+    let staged = std::fs::read_dir(scratch.0.join("staging").join("uploads"))
+        .expect("uploads")
         .count();
     assert_eq!(staged, 0, "multipart staging must be cleaned up");
 }
@@ -366,4 +436,183 @@ async fn fs_delete_prunes_empty_directories() {
     backend.delete(&key("a/b/c/d.txt")).await.expect("delete");
     assert!(!scratch.0.join("root/a/b").exists(), "empty dirs remain");
     assert!(scratch.0.join("root/a/keep.txt").exists());
+}
+
+#[test]
+fn fs_staging_aliased_into_the_root_is_rejected() {
+    let scratch = Scratch::new("staging-alias");
+    std::fs::create_dir_all(scratch.0.join("alias")).expect("alias dir");
+    let aliased_root = scratch.0.join("alias").join("..").join("store");
+    let err = FsBackend::new(&aliased_root, scratch.0.join("store").join("staging"))
+        .expect_err("lexical alias");
+    assert!(matches!(err, StorageError::InvalidConfig { .. }), "{err:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn fs_staging_reached_through_a_symlink_into_the_root_is_rejected() {
+    let scratch = Scratch::new("staging-symlink");
+    let root = scratch.0.join("store");
+    std::fs::create_dir_all(&root).expect("root");
+    std::os::unix::fs::symlink(&root, scratch.0.join("link")).expect("symlink");
+    let err =
+        FsBackend::new(&root, scratch.0.join("link").join("staging")).expect_err("symlink alias");
+    assert!(matches!(err, StorageError::InvalidConfig { .. }), "{err:?}");
+}
+
+#[test]
+fn fs_root_is_reported_canonical() {
+    let scratch = Scratch::new("canonical");
+    std::fs::create_dir_all(scratch.0.join("a")).expect("dir");
+    let root = scratch.0.join("a").join("..").join("root");
+    let backend = FsBackend::new(root, scratch.0.join("st")).expect("backend");
+    let expected = scratch.0.canonicalize().expect("canon").join("root");
+    assert_eq!(backend.root(), expected.as_path());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn fs_keys_cannot_escape_through_a_symlinked_parent() {
+    let (backend, scratch) = fs_backend("symlink-parent");
+    let outside = scratch.0.join("outside");
+    std::fs::create_dir_all(&outside).expect("outside");
+    std::fs::write(outside.join("secret.txt"), b"secret").expect("secret");
+    std::fs::create_dir_all(scratch.0.join("root")).expect("root");
+    std::os::unix::fs::symlink(&outside, scratch.0.join("root").join("link")).expect("link");
+    let write = backend.put(&key("link/new.txt"), b"x").await;
+    assert!(
+        matches!(write, Err(StorageError::SymlinkForbidden { .. })),
+        "{write:?}"
+    );
+    assert!(!outside.join("new.txt").exists(), "write escaped the root");
+    let range = ByteRange::new(0, 16).expect("range");
+    let read = backend.get_range(&key("link/secret.txt"), range).await;
+    assert!(
+        matches!(read, Err(StorageError::SymlinkForbidden { .. })),
+        "{read:?}"
+    );
+    let head = backend.head(&key("link/secret.txt")).await;
+    assert!(
+        matches!(head, Err(StorageError::SymlinkForbidden { .. })),
+        "{head:?}"
+    );
+    let delete = backend.delete(&key("link/secret.txt")).await;
+    assert!(
+        matches!(delete, Err(StorageError::SymlinkForbidden { .. })),
+        "{delete:?}"
+    );
+    assert!(outside.join("secret.txt").exists());
+    let list = backend.list("link/", None, 10).await;
+    assert!(
+        matches!(list, Err(StorageError::SymlinkForbidden { .. })),
+        "{list:?}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn fs_keys_cannot_read_through_a_symlinked_file() {
+    let (backend, scratch) = fs_backend("symlink-file");
+    std::fs::write(scratch.0.join("secret.txt"), b"secret").expect("secret");
+    std::fs::create_dir_all(scratch.0.join("root")).expect("root");
+    std::os::unix::fs::symlink(scratch.0.join("secret.txt"), scratch.0.join("root/evil"))
+        .expect("link");
+    let range = ByteRange::new(0, 16).expect("range");
+    let read = backend.get_range(&key("evil"), range).await;
+    assert!(
+        matches!(read, Err(StorageError::SymlinkForbidden { .. })),
+        "{read:?}"
+    );
+}
+
+#[tokio::test]
+async fn fs_reserved_internal_names_are_rejected() {
+    let (backend, _scratch) = fs_backend("reserved");
+    for raw in [".fsquid-tmp-1", "objects/.fsquid-lock"] {
+        let err = backend.put(&key(raw), b"x").await.expect_err(raw);
+        assert!(
+            matches!(err, StorageError::InvalidKey { .. }),
+            "{raw}: {err:?}"
+        );
+    }
+}
+
+/// Drive a filesystem-backend future on this thread.
+fn block<F: std::future::Future>(future: F) -> F::Output {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("runtime")
+        .block_on(future)
+}
+
+/// Count successful conditional writes, panicking on any error other than a
+/// failed precondition.
+fn count_winners(results: Vec<Result<ObjectMeta, StorageError>>) -> usize {
+    let mut wins = 0;
+    for result in results {
+        match result {
+            Ok(_) => wins += 1,
+            Err(StorageError::PreconditionFailed { .. }) => {}
+            Err(other) => panic!("unexpected error {other:?}"),
+        }
+    }
+    wins
+}
+
+/// Run `writers` threads, each with its own `FsBackend` on the same root, that
+/// all try one conditional write at once; return how many succeeded.
+fn race(label: &str, writers: usize, shared_staging: bool, setup: Option<&[u8]>) -> usize {
+    let scratch = Scratch::new(label);
+    let root = scratch.0.join("root");
+    let staging = |i: usize| match shared_staging {
+        true => scratch.0.join("staging"),
+        false => scratch.0.join(format!("staging-{i}")),
+    };
+    let k = key("objects/a/inventory.json");
+    let first = FsBackend::new(&root, staging(0)).expect("backend");
+    let base = setup.map(|bytes| block(first.put(&k, bytes)).expect("setup").etag);
+    let barrier = std::sync::Barrier::new(writers);
+    let results = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..writers)
+            .map(|i| {
+                let (barrier, k, base) = (&barrier, &k, &base);
+                let backend = FsBackend::new(&root, staging(i)).expect("backend");
+                scope.spawn(move || {
+                    let condition = match base {
+                        Some(tag) => Precondition::IfMatch(tag.clone()),
+                        None => Precondition::IfAbsent,
+                    };
+                    let body = format!("writer-{i}");
+                    barrier.wait();
+                    block(backend.put_if(k, body.as_bytes(), &condition))
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().expect("thread"))
+            .collect::<Vec<_>>()
+    });
+    count_winners(results)
+}
+
+#[test]
+fn fs_create_only_has_one_winner_across_instances_sharing_staging() {
+    for round in 0..5 {
+        assert_eq!(race(&format!("absent-shared-{round}"), 8, true, None), 1);
+    }
+}
+
+#[test]
+fn fs_create_only_has_one_winner_across_instances_with_separate_staging() {
+    for round in 0..5 {
+        assert_eq!(race(&format!("absent-separate-{round}"), 8, false, None), 1);
+    }
+}
+
+#[test]
+fn fs_head_swap_has_one_winner_across_instances() {
+    for round in 0..5 {
+        assert_eq!(race(&format!("match-{round}"), 8, true, Some(b"v1")), 1);
+    }
 }

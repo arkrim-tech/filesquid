@@ -44,8 +44,8 @@ Feature: Storage backend interface
       | in-memory        |
       | local filesystem |
 
-  # Edge case: large files never sit whole in memory
-  Scenario Outline: Large files stream in bounded chunks
+  # Edge case: each read returns a bounded chunk
+  Scenario Outline: Multipart objects are read back in bounded chunks
     Given an empty <backend> storage backend
     And a 3 MiB file at "objects/a/v1/content/big.bin" uploaded in 1 MiB multipart parts
     When I stream "objects/a/v1/content/big.bin" in 256 KiB chunks
@@ -81,10 +81,15 @@ Feature: Storage backend interface
       | local filesystem |
 
   # Edge case: chunk limit
-  Scenario: A chunk larger than the maximum chunk size is refused
-    Given an empty in-memory storage backend
+  Scenario Outline: A chunk larger than the maximum chunk size is refused
+    Given an empty <backend> storage backend
     When I request a read chunk one byte larger than the maximum chunk size
     Then the read should be rejected as over the limit
+
+    Examples:
+      | backend          |
+      | in-memory        |
+      | local filesystem |
 
   # Source
   # - apps/filesquid/crates/ocfl/resources/srs.md OCFL-S-007

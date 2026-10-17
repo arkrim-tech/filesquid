@@ -24,13 +24,23 @@ The engine reaches bytes only through the async, runtime-agnostic `storage::Stor
 | `storage::FsBackend` | native only | `fs` (default on) |
 | S3-compatible | native and `wasm32` | planned (IO-5.1) |
 
-- Operations: `put`, `put_if` (compare-and-swap with `Precondition::IfAbsent` or `Precondition::IfMatch(etag)`), `get_range`, `head`, `exists`, paged `list`, `delete` (staging only), and multipart `create_multipart`, `upload_part`, `complete_multipart`, `abort_multipart`.
-- The trait needs no executor. Its futures are `Send` on native targets and carry no `Send` bound on `wasm32`.
-- Every transfer is bounded: ranged reads and multipart parts at most 8 MiB (`MAX_CHUNK_BYTES`), a single `put` at most 8 MiB (`MAX_PUT_BYTES`), at most 10 000 parts, listing pages of at most 1 000 keys. Use `storage::ChunkReader` to stream an object and `storage::MultipartWriter` to write a large one.
+- Operations: `put`, `put_if` (compare-and-swap with `Precondition::IfAbsent` or `Precondition::IfMatch(etag)`), `get_range`, `head`, `exists`, paged `list`, `delete`, and multipart `create_multipart`, `upload_part`, `complete_multipart`, `abort_multipart`. `delete` removes any key it is given; it is intended for staging and recovery, and the engine never uses it on published OCFL versions.
+- The trait needs no executor. Its futures are `Send` on native targets and carry no `Send` bound on `wasm32`. `storage::complete_immediately` drives the futures of the in-memory and filesystem backends, which never wait, from synchronous code.
+- Every transfer is bounded: ranged reads at most 8 MiB (`MAX_CHUNK_BYTES`), a single `put` at most 8 MiB (`MAX_PUT_BYTES`), multipart parts at most 64 MiB (`MAX_PART_BYTES`), at most 10 000 parts, so objects of at most 625 GiB (`MAX_OBJECT_BYTES`), and listing pages of at most 1 000 keys. Use `storage::ChunkReader` to read an object chunk by chunk and `storage::MultipartWriter` to write a large one part by part.
 - Keys are `/`-separated relative paths; empty, absolute, `.`, `..`, backslash and NUL keys are rejected before any I/O.
 - The shipped backends tag objects with the lowercase hex SHA-256 of their bytes.
-- `FsBackend::new(root, staging)` keeps multipart staging outside the storage root and refuses a staging directory inside it. Replacing writes go through a flushed temporary file that is renamed into place.
-- `write_logical_file`, `read_logical_file` and `reject_git_in_ocfl_root` (feature `fs`) keep their signatures for existing callers and now go through `FsBackend`.
+
+`FsBackend::new(root, staging)`:
+
+- Resolves both directories (symbolic links, `.` and `..`) and refuses a staging directory that resolves to the root or inside it.
+- Writes through a flushed temporary file that is renamed into place. Temporary files use the reserved `.fsquid-` name prefix; keys may not use it and listings skip it.
+- Serialises every write (`put`, `put_if`, `delete`, `complete_multipart`) with an operating-system lock on a file in the staging directory, named after the resolved root. All writers to one root, in any process, MUST share one staging directory. `Precondition::IfAbsent` publishes with a hard link, which the operating system refuses when the target exists, so two creators never both win even without the shared lock.
+- Refuses a key whose path below the root passes through an existing symbolic link. On Windows it also refuses drive and stream names (`:`), reserved characters, device names such as `CON` or `COM1`, and names ending in a dot or space. The checks run before each operation, so the root MUST NOT be writable by untrusted processes.
+
+Path-based helpers (feature `fs`) keep their signatures for existing callers:
+
+- `write_logical_file` and `read_logical_file` go through `FsBackend`. A read is checked against the file's SHA-256 tag and retried if the file was replaced mid-read, so it never mixes two versions.
+- `reject_git_in_ocfl_root` checks for a `.git` directory directly on the filesystem; it does not use a storage backend.
 
 ## Build and test
 

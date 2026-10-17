@@ -19,7 +19,7 @@ pub enum WriteError {
     #[error(transparent)]
     Git(#[from] OcflError),
     /// An I/O error; a missing logical file is `ErrorKind::NotFound`.
-    #[error("write failed: {0}")]
+    #[error("logical-file I/O failed: {0}")]
     Io(#[from] std::io::Error),
     /// Relative path was empty or tried to escape the object root.
     #[error("logical path must be a relative file name inside the object")]

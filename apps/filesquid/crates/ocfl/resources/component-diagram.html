@@ -113,7 +113,7 @@ code{font-size:13px}
 <text class="badge" x="442" y="95" text-anchor="end">SCAFFOLD</text>
 <text class="small" x="300" y="96">filesquid_ocfl</text>
 <text class="name" x="300" y="115">Rust API</text>
-<text class="sub" x="300" y="131">3 functions today</text>
+<text class="sub" x="300" y="131">storage module, 3 helpers</text>
 </g>
 <g class="box planned">
 <rect x="470" y="80" width="150" height="60" rx="6"/>
@@ -144,11 +144,11 @@ code{font-size:13px}
 <text class="name" x="300" y="211">Git guard</text>
 <text class="sub" x="300" y="229">no .git in a root</text>
 </g>
-<g class="box scaffold">
+<g class="box built">
 <rect x="470" y="190" width="230" height="52" rx="6"/>
-<text class="badge" x="692" y="205" text-anchor="end">SCAFFOLD</text>
+<text class="badge" x="692" y="205" text-anchor="end">BUILT</text>
 <text class="name" x="480" y="211">Logical-file helpers</text>
-<text class="sub" x="480" y="229">raw bytes at a path · no inventory</text>
+<text class="sub" x="480" y="229">via FsBackend · no inventory yet</text>
 </g>
 <polyline class="edge" points="700,216 1090,216" marker-end="url(#o1)"/>
 <text class="elabel" x="895" y="210" text-anchor="middle">FsBackend today</text>
@@ -199,9 +199,9 @@ code{font-size:13px}
 </g>
 <text class="note" x="540" y="491" text-anchor="start">One write path: the API, the CLI and the</text>
 <text class="note" x="540" y="507" text-anchor="start">view API's file operations all commit here.</text>
-<g class="box planned">
+<g class="box built">
 <rect x="290" y="560" width="750" height="52" rx="6"/>
-<text class="badge" x="1032" y="575" text-anchor="end">PLANNED</text>
+<text class="badge" x="1032" y="575" text-anchor="end">BUILT</text>
 <text class="name" x="300" y="581">Storage backend trait</text>
 <text class="sub" x="300" y="599">async put, get, head, list · multipart · compare-and-swap · wasm32, no Send bound</text>
 </g>
@@ -216,9 +216,9 @@ code{font-size:13px}
 <polyline class="edge planned-edge" points="1090,306 1010,306" marker-end="url(#o1)"/>
 <text class="elabel" x="1050" y="300" text-anchor="middle">conformance</text>
 <text class="small" x="1090" y="472" text-anchor="start">Backends</text>
-<g class="box planned">
+<g class="box built">
 <rect x="1090" y="480" width="210" height="52" rx="6"/>
-<text class="badge" x="1292" y="495" text-anchor="end">PLANNED</text>
+<text class="badge" x="1292" y="495" text-anchor="end">BUILT</text>
 <text class="name" x="1100" y="501">Local filesystem</text>
 <text class="sub" x="1100" y="519">native · owner-readable</text>
 </g>
@@ -228,9 +228,9 @@ code{font-size:13px}
 <text class="name" x="1100" y="571">S3-compatible</text>
 <text class="sub" x="1100" y="589">native and wasm32 fetch</text>
 </g>
-<g class="box planned">
+<g class="box built">
 <rect x="1090" y="620" width="210" height="52" rx="6"/>
-<text class="badge" x="1292" y="635" text-anchor="end">PLANNED</text>
+<text class="badge" x="1292" y="635" text-anchor="end">BUILT</text>
 <text class="name" x="1100" y="641">In-memory</text>
 <text class="sub" x="1100" y="659">tests</text>
 </g>

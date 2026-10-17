@@ -4,7 +4,7 @@
 
 use filesquid_ocfl::storage::{
     ByteRange, ETag, StorageError, StorageKey, MAX_CHUNK_BYTES, MAX_LIST_PAGE, MAX_OBJECT_BYTES,
-    MAX_PARTS, MAX_PUT_BYTES, MAX_WALK_DEPTH, MAX_WALK_ENTRIES,
+    MAX_PARTS, MAX_PART_BYTES, MAX_PUT_BYTES, MAX_WALK_DEPTH, MAX_WALK_ENTRIES,
 };
 
 #[test]
@@ -76,7 +76,8 @@ fn limits_match_the_plan_constraints() {
     assert_eq!(MAX_LIST_PAGE, 1_000);
     assert_eq!(MAX_WALK_DEPTH, 64);
     assert_eq!(MAX_WALK_ENTRIES, 1_000_000);
-    assert_eq!(MAX_OBJECT_BYTES, 5 * 1024 * 1024 * 1024 * 1024);
+    assert_eq!(MAX_PART_BYTES, 64 * 1024 * 1024);
+    assert_eq!(MAX_OBJECT_BYTES, u64::from(MAX_PARTS) * MAX_PART_BYTES);
 }
 
 #[test]

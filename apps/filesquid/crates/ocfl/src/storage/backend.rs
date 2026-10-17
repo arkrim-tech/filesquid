@@ -144,7 +144,7 @@ pub trait StorageBackend: MaybeSend + MaybeSync {
     ) -> impl Future<Output = Result<UploadId, StorageError>> + MaybeSend;
 
     /// Upload part `part_number` (1 to [`MAX_PARTS`](super::MAX_PARTS)) of at
-    /// most [`MAX_CHUNK_BYTES`](super::MAX_CHUNK_BYTES).
+    /// most [`MAX_PART_BYTES`](super::MAX_PART_BYTES).
     ///
     /// # Errors
     ///

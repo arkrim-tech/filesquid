@@ -21,6 +21,13 @@ pub enum StorageError {
         /// The missing key.
         key: String,
     },
+    /// The key's path below the storage root passes through a symbolic link,
+    /// which could lead outside the root. Nothing was read or written.
+    #[error("{key} passes through a symbolic link below the storage root")]
+    SymlinkForbidden {
+        /// The rejected key or prefix.
+        key: String,
+    },
     /// A compare-and-swap precondition did not hold; nothing was written.
     #[error("precondition failed for {key}: the object changed or already exists")]
     PreconditionFailed {

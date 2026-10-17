@@ -384,14 +384,16 @@ fn rust_sources(dir: &Path, out: &mut Vec<PathBuf>, depth: usize) {
 #[then("the engine core should not call std::fs directly")]
 fn core_avoids_std_fs(_world: &mut OcflWorld) {
     let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
-    let allowed = [
-        src.join("storage").join("fs.rs"),
-        src.join("logical_file.rs"),
-    ];
+    let fs_backend = src.join("storage").join("fs");
+    let helpers = src.join("logical_file.rs");
+    let allowed = |f: &PathBuf| f.starts_with(&fs_backend) || *f == helpers;
     let mut files = Vec::new();
     rust_sources(&src, &mut files, 0);
-    assert!(files.len() > allowed.len(), "engine sources not found");
-    for file in files.iter().filter(|f| !allowed.contains(f)) {
+    assert!(
+        files.iter().filter(|f| !allowed(f)).count() > 5,
+        "engine sources not found"
+    );
+    for file in files.iter().filter(|f| !allowed(f)) {
         let text = fs::read_to_string(file).expect("read source");
         for needle in ["std::fs", "tokio::fs", "reqwest", "hyper::", "std::net"] {
             assert!(!text.contains(needle), "{} uses {needle}", file.display());
