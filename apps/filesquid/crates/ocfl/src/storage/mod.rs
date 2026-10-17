@@ -25,12 +25,13 @@ mod key;
 mod memory;
 mod stream;
 mod types;
+mod whole;
 
 pub use backend::{MaybeSend, MaybeSync, StorageBackend};
 pub use drive::complete_immediately;
 pub use error::StorageError;
 #[cfg(all(feature = "fs", not(target_arch = "wasm32")))]
-pub use fs::FsBackend;
+pub use fs::{default_staging_dir, FsBackend};
 pub use key::StorageKey;
 pub use memory::MemoryBackend;
 pub use stream::{ChunkReader, MultipartWriter};
@@ -39,3 +40,4 @@ pub use types::{
     MAX_LIST_PAGE, MAX_OBJECT_BYTES, MAX_PARTS, MAX_PART_BYTES, MAX_PUT_BYTES, MAX_WALK_DEPTH,
     MAX_WALK_ENTRIES,
 };
+pub use whole::{read_verified, write_whole, READ_ATTEMPTS};

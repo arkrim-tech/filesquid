@@ -17,7 +17,8 @@ struct WalkDir {
 }
 
 /// Collect the keys of every file under `start` (whose key prefix is
-/// `key_prefix`), skipping the backend's reserved internal files. A missing
+/// `key_prefix`), skipping the backend's reserved internal files and anything
+/// that is not a regular file. A missing
 /// start, or one that is a file, yields no keys. Bounded by
 /// [`MAX_WALK_DEPTH`] and [`MAX_WALK_ENTRIES`]; links to directories are not
 /// followed.
@@ -64,7 +65,9 @@ fn check_walk_bounds(visited: usize, depth: usize) -> Result<(), StorageError> {
     Ok(())
 }
 
-/// Record one directory entry: queue a directory, keep a file's key.
+/// Record one directory entry: queue a directory (failing when it would be
+/// deeper than [`MAX_WALK_DEPTH`]) and keep a regular file's key. Symbolic
+/// links, FIFOs, sockets and devices are not objects and are not listed.
 fn visit_entry(
     entry: &fs::DirEntry,
     parent: &WalkDir,
@@ -84,12 +87,14 @@ fn visit_entry(
     let key = format!("{}{name}", parent.key_prefix);
     let file_type = entry.file_type().map_err(|e| io_error(&key, e))?;
     if file_type.is_dir() {
+        let depth = parent.depth + 1;
+        check_walk_bounds(0, depth)?;
         pending.push(WalkDir {
             dir: entry.path(),
             key_prefix: format!("{key}/"),
-            depth: parent.depth + 1,
+            depth,
         });
-    } else {
+    } else if file_type.is_file() {
         keys.push(key);
     }
     Ok(())

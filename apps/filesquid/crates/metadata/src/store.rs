@@ -9,7 +9,8 @@
 use std::path::Path;
 
 use filesquid_ocfl::storage::{
-    complete_immediately, ChunkReader, FsBackend, StorageBackend, StorageKey, MAX_CHUNK_BYTES,
+    complete_immediately, read_verified, write_whole, FsBackend, StorageBackend, StorageError,
+    StorageKey, MAX_CHUNK_BYTES,
 };
 use filesquid_ocfl::{reject_git_in_ocfl_root, WriteError};
 
@@ -24,8 +25,12 @@ pub const METADATA_MD: &str = "metadata.md";
 ///
 /// # Errors
 ///
-/// [`WriteError::InvalidPath`] when the prefix could escape the root.
+/// [`WriteError::InvalidPath`] when the prefix is absolute or could escape
+/// the root.
 pub fn metadata_key(object_prefix: &str) -> Result<StorageKey, WriteError> {
+    if object_prefix.starts_with('/') {
+        return Err(WriteError::InvalidPath);
+    }
     let prefix = object_prefix.strip_suffix('/').unwrap_or(object_prefix);
     let raw = match prefix {
         "" => METADATA_MD.to_string(),
@@ -34,8 +39,10 @@ pub fn metadata_key(object_prefix: &str) -> Result<StorageKey, WriteError> {
     StorageKey::new(&raw).map_err(|_| WriteError::InvalidPath)
 }
 
-/// Read the record stored at `key`. A missing `metadata.md` is an empty
-/// record. The file is streamed in bounded chunks.
+/// Read the record stored at `key`. A missing `metadata.md`, including one
+/// deleted during the read, is an empty record. The file is streamed in
+/// bounded chunks and checked against its SHA-256 tag, so a concurrent
+/// replace never yields a record mixed from two versions.
 ///
 /// # Errors
 ///
@@ -44,18 +51,15 @@ pub async fn load_from<B: StorageBackend>(
     backend: &B,
     key: &StorageKey,
 ) -> Result<Record, WriteError> {
-    if !backend.exists(key).await? {
-        return Ok(Record::default());
+    match read_verified(backend, key, MAX_CHUNK_BYTES).await {
+        Ok(bytes) => Ok(from_markdown(&String::from_utf8_lossy(&bytes))),
+        Err(StorageError::NotFound { .. }) => Ok(Record::default()),
+        Err(err) => Err(err.into()),
     }
-    let mut reader = ChunkReader::new(backend, key.clone(), MAX_CHUNK_BYTES)?;
-    let mut bytes = Vec::new();
-    while let Some(chunk) = reader.next_chunk().await? {
-        bytes.extend_from_slice(&chunk);
-    }
-    Ok(from_markdown(&String::from_utf8_lossy(&bytes)))
 }
 
 /// Write `record` as `metadata.md` at `key`, replacing any earlier record.
+/// Records larger than one put are written through multipart upload.
 ///
 /// # Errors
 ///
@@ -66,16 +70,16 @@ pub async fn save_to<B: StorageBackend>(
     record: &Record,
 ) -> Result<(), WriteError> {
     let bytes = to_markdown(record).into_bytes();
-    backend.put(key, &bytes).await?;
+    write_whole(backend, key, &bytes).await?;
     Ok(())
 }
 
 /// Open a local filesystem backend on an object directory after the Git
-/// guard, with multipart staging in the system temporary directory.
+/// guard, with the backend's default staging directory, which is always
+/// outside the object directory (see `FsBackend::with_default_staging`).
 fn object_backend(object_root: &Path) -> Result<FsBackend, WriteError> {
     reject_git_in_ocfl_root(object_root)?;
-    let staging = std::env::temp_dir().join("filesquid-ocfl-staging");
-    Ok(FsBackend::new(object_root, staging)?)
+    Ok(FsBackend::with_default_staging(object_root)?)
 }
 
 /// Read `metadata.md` from an object directory. Missing file is an empty record.
@@ -84,8 +88,8 @@ fn object_backend(object_root: &Path) -> Result<FsBackend, WriteError> {
 ///
 /// [`WriteError::Git`] when the directory holds `.git`, or a backend failure.
 pub fn load(object_root: &Path) -> Result<Record, WriteError> {
-    let backend = object_backend(object_root)?;
     let key = metadata_key("")?;
+    let backend = object_backend(object_root)?;
     complete_immediately(load_from(&backend, &key))?
 }
 
@@ -95,7 +99,7 @@ pub fn load(object_root: &Path) -> Result<Record, WriteError> {
 ///
 /// [`WriteError::Git`] when the directory holds `.git`, or a backend failure.
 pub fn save(object_root: &Path, record: &Record) -> Result<(), WriteError> {
-    let backend = object_backend(object_root)?;
     let key = metadata_key("")?;
+    let backend = object_backend(object_root)?;
     complete_immediately(save_to(&backend, &key, record))?
 }

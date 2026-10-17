@@ -62,7 +62,8 @@ Feature: Storage backend interface
     Given an empty <backend> storage backend
     And 5 files under "objects/"
     When I list "objects/" with a page size of 2
-    Then I should receive 3 pages holding all 5 keys in lexical order
+    Then I should receive 3 pages of at most 2 keys each
+    And the listed keys should be "objects/file-0, objects/file-1, objects/file-2, objects/file-3, objects/file-4"
 
     Examples:
       | backend          |

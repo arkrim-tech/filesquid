@@ -35,9 +35,17 @@ name = "unit_storage_key"
 path = "tests/unit/storage_key.rs"
 
 [[test]]
-name = "integration_backend_conformance"
-path = "tests/integration/backend_conformance.rs"
+name = "integration_memory_conformance"
+path = "tests/integration/memory_conformance.rs"
+
+[[test]]
+name = "integration_fs_conformance"
+path = "tests/integration/fs_conformance.rs"
 required-features = ["fs"]
+
+[[test]]
+name = "unit_source_scan"
+path = "tests/unit/source_scan.rs"
 
 [[test]]
 name = "integration_logical_file"

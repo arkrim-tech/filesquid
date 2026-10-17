@@ -68,6 +68,30 @@ mod backend_store {
     }
 
     #[test]
+    fn absolute_prefixes_are_rejected() {
+        assert!(metadata_key("/").is_err());
+        assert!(metadata_key("/objects/a").is_err());
+    }
+
+    #[test]
+    fn records_larger_than_one_put_are_saved_through_multipart() {
+        let backend = MemoryBackend::new();
+        let key = metadata_key("objects/a").unwrap();
+        let long = "x".repeat(9 * 1024 * 1024);
+        let mut record = Record::default();
+        record
+            .set(MetadataNamespace::Dcterms, "description", &long)
+            .unwrap();
+        complete_immediately(save_to(&backend, &key, &record))
+            .unwrap()
+            .unwrap();
+        let loaded = complete_immediately(load_from(&backend, &key))
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded.get("dcterms:description").unwrap().value, long);
+    }
+
+    #[test]
     fn missing_metadata_md_is_an_empty_record() {
         let backend = MemoryBackend::new();
         let key = metadata_key("objects/a").unwrap();

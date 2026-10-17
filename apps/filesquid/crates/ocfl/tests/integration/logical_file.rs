@@ -97,3 +97,28 @@ fn git_directory_blocks_reads_and_writes() {
         Err(WriteError::Git(OcflError::GitDirectoryForbidden))
     ));
 }
+
+#[test]
+fn invalid_paths_are_rejected_before_the_git_guard() {
+    let scratch = Scratch::new("validate-first");
+    std::fs::create_dir_all(scratch.0.join(".git")).expect("git dir");
+    for path in ["../x", "", "/abs"] {
+        assert!(
+            matches!(
+                write_logical_file(&scratch.0, path, b"x"),
+                Err(WriteError::InvalidPath)
+            ),
+            "{path:?}"
+        );
+    }
+}
+
+#[test]
+fn names_containing_two_dots_are_allowed() {
+    let scratch = Scratch::new("two-dots");
+    write_logical_file(&scratch.0, "foo..bar", b"ok").expect("write");
+    assert_eq!(
+        read_logical_file(&scratch.0, "foo..bar").expect("read"),
+        b"ok"
+    );
+}

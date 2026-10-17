@@ -35,6 +35,7 @@
 mod files;
 mod lock;
 mod paths;
+mod uploads;
 mod walk;
 
 use std::fs;
@@ -47,16 +48,13 @@ use super::backend::StorageBackend;
 use super::error::StorageError;
 use super::key::StorageKey;
 use super::types::{
-    check_list_request, check_part, check_part_order, check_precondition, check_put_size, paginate,
-    ByteRange, CompletedPart, ETag, ListPage, ObjectMeta, Precondition, UploadId,
+    check_list_request, check_precondition, check_put_size, paginate, ByteRange, CompletedPart,
+    ETag, ListPage, ObjectMeta, Precondition, UploadId,
 };
-use files::{append_parts, hash_file, part_path, read_range, write_atomic, Publish};
+use files::{hash_file, read_range, write_atomic, Parent, Publish};
 use lock::{lock_path, RootLock};
 use paths::{confined_path, key_path, resolve_path};
 use walk::walk_keys;
-
-/// File in a multipart staging directory that records the destination key.
-const UPLOAD_KEY_FILE: &str = "key";
 
 /// A [`StorageBackend`] over a directory on the local filesystem.
 #[derive(Debug)]
@@ -79,6 +77,38 @@ fn io_error(what: &str, err: std::io::Error) -> StorageError {
         kind: err.kind(),
         message: err.to_string(),
     }
+}
+
+/// The staging directory [`FsBackend::with_default_staging`] uses for `root`:
+/// `filesquid-ocfl-staging` in the system temporary directory, or, when that
+/// lies inside `root` (for example a root of `/tmp`), the sibling
+/// `<root>.fsquid-staging`. The choice depends only on `root` and the
+/// temporary directory, so writers to one root agree on it and share its
+/// write lock. Nothing is created.
+///
+/// # Errors
+///
+/// [`StorageError::InvalidConfig`] when no candidate is outside the root.
+pub fn default_staging_dir(root: &Path) -> Result<PathBuf, StorageError> {
+    let resolved = resolve_path(root).map_err(|e| config_error(root, e))?;
+    let mut candidates = vec![std::env::temp_dir().join("filesquid-ocfl-staging")];
+    if let (Some(parent), Some(name)) = (resolved.parent(), resolved.file_name()) {
+        let mut sibling = name.to_os_string();
+        sibling.push(".fsquid-staging");
+        candidates.push(parent.join(sibling));
+    }
+    for candidate in candidates {
+        let candidate = resolve_path(&candidate).map_err(|e| config_error(&candidate, e))?;
+        if !candidate.starts_with(&resolved) {
+            return Ok(candidate);
+        }
+    }
+    Err(StorageError::InvalidConfig {
+        reason: format!(
+            "no default staging directory outside {}; pass one to FsBackend::new",
+            resolved.display()
+        ),
+    })
 }
 
 /// Map a configuration-time I/O error on `path`.
@@ -128,6 +158,18 @@ impl FsBackend {
         })
     }
 
+    /// Use `root` with the default staging directory from
+    /// [`default_staging_dir`].
+    ///
+    /// # Errors
+    ///
+    /// As [`FsBackend::new`] and [`default_staging_dir`].
+    pub fn with_default_staging(root: impl Into<PathBuf>) -> Result<Self, StorageError> {
+        let root = root.into();
+        let staging = default_staging_dir(&root)?;
+        Self::new(root, staging)
+    }
+
     /// The resolved storage root directory.
     pub fn root(&self) -> &Path {
         &self.root
@@ -147,20 +189,6 @@ impl FsBackend {
         RootLock::acquire(&self.lock_file)
     }
 
-    /// The staging directory of `upload`, after checking its identifier
-    /// cannot name anything outside the uploads directory.
-    fn upload_dir(&self, upload: &UploadId) -> Result<PathBuf, StorageError> {
-        let id = upload.as_str();
-        let safe = !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit() || b == b'-');
-        let dir = self.uploads.join(id);
-        if safe && dir.is_dir() {
-            return Ok(dir);
-        }
-        Err(StorageError::UnknownUpload {
-            upload_id: id.to_string(),
-        })
-    }
-
     /// Write `bytes` at `key` with `mode`. The caller holds the root lock.
     fn write_locked(
         &self,
@@ -170,9 +198,13 @@ impl FsBackend {
     ) -> Result<ObjectMeta, StorageError> {
         let what = key.as_str();
         let dest = key_path(&self.root, key)?;
-        write_atomic(&dest, what, &self.unique_suffix(), mode, |file| {
-            file.write_all(bytes).map_err(|e| io_error(what, e))
-        })?;
+        write_atomic(
+            &dest,
+            what,
+            &self.unique_suffix(),
+            (Parent::Create, mode),
+            |file| file.write_all(bytes).map_err(|e| io_error(what, e)),
+        )?;
         Ok(ObjectMeta {
             size: bytes.len() as u64,
             etag: ETag::sha256_of(bytes),
@@ -296,86 +328,6 @@ impl FsBackend {
             }
         }
         Ok(())
-    }
-}
-
-impl FsBackend {
-    /// Blocking body of [`StorageBackend::create_multipart`].
-    fn create_multipart_blocking(&self, key: &StorageKey) -> Result<UploadId, StorageError> {
-        key_path(&self.root, key)?;
-        let id = self.unique_suffix();
-        let dir = self.uploads.join(&id);
-        fs::create_dir_all(&dir).map_err(|e| io_error(&dir.display().to_string(), e))?;
-        let record = dir.join(UPLOAD_KEY_FILE);
-        if let Err(err) = fs::write(&record, key.as_str()) {
-            remove_dir_logged(&dir);
-            return Err(io_error(&record.display().to_string(), err));
-        }
-        Ok(UploadId::new(id))
-    }
-
-    /// Blocking body of [`StorageBackend::upload_part`].
-    fn upload_part_blocking(
-        &self,
-        upload: &UploadId,
-        part_number: u32,
-        bytes: &[u8],
-    ) -> Result<CompletedPart, StorageError> {
-        check_part(part_number, bytes)?;
-        let path = part_path(&self.upload_dir(upload)?, part_number);
-        let what = path.display().to_string();
-        write_atomic(
-            &path,
-            &what,
-            &self.unique_suffix(),
-            Publish::Replace,
-            |file| file.write_all(bytes).map_err(|e| io_error(&what, e)),
-        )?;
-        Ok(CompletedPart {
-            part_number,
-            etag: ETag::sha256_of(bytes),
-        })
-    }
-
-    /// Blocking body of [`StorageBackend::complete_multipart`].
-    fn complete_multipart_blocking(
-        &self,
-        upload: &UploadId,
-        parts: &[CompletedPart],
-        precondition: Option<&Precondition>,
-    ) -> Result<ObjectMeta, StorageError> {
-        check_part_order(parts)?;
-        let dir = self.upload_dir(upload)?;
-        let record = dir.join(UPLOAD_KEY_FILE);
-        let raw_key =
-            fs::read_to_string(&record).map_err(|e| io_error(&record.display().to_string(), e))?;
-        let key = StorageKey::new(&raw_key)?;
-        let dest = key_path(&self.root, &key)?;
-        let _lock = self.lock()?;
-        let mode = match precondition {
-            Some(condition) => self.admit(&key, condition)?,
-            None => Publish::Replace,
-        };
-        let meta = write_atomic(&dest, key.as_str(), &self.unique_suffix(), mode, |file| {
-            append_parts(&dir, parts, file)
-        })?;
-        remove_dir_logged(&dir);
-        Ok(meta)
-    }
-
-    /// Blocking body of [`StorageBackend::abort_multipart`].
-    fn abort_multipart_blocking(&self, upload: &UploadId) -> Result<(), StorageError> {
-        let dir = self.upload_dir(upload)?;
-        fs::remove_dir_all(&dir).map_err(|e| io_error(&dir.display().to_string(), e))
-    }
-}
-
-/// Remove an upload's staging directory after its object was published or
-/// its creation failed; a failure is logged because the caller's outcome is
-/// already decided.
-fn remove_dir_logged(dir: &Path) {
-    if let Err(err) = fs::remove_dir_all(dir) {
-        tracing::warn!(path = %dir.display(), error = %err, "could not remove multipart staging");
     }
 }
 

@@ -15,6 +15,16 @@ use super::paths::RESERVED_PREFIX;
 /// Bytes read per step when hashing or copying a file.
 const COPY_BUFFER: usize = 64 * 1024;
 
+/// Whether a write may create the destination's parent directories.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Parent {
+    /// Create missing parent directories (objects under the root).
+    Create,
+    /// The parent MUST already exist (a multipart upload directory): a
+    /// closed or aborted upload is never recreated by a late part.
+    MustExist,
+}
+
 /// How a staged temporary file becomes the object.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Publish {
@@ -42,13 +52,16 @@ pub(super) fn remove_file_logged(path: &Path) {
 fn stage_temp<R>(
     dest: &Path,
     suffix: &str,
+    parent_mode: Parent,
     fill: impl FnOnce(&mut File) -> Result<R, StorageError>,
 ) -> Result<(PathBuf, R), StorageError> {
     let what = dest.display().to_string();
     let parent = dest.parent().ok_or_else(|| StorageError::Backend {
         reason: format!("{what} has no parent directory"),
     })?;
-    fs::create_dir_all(parent).map_err(|e| io_error(&what, e))?;
+    if parent_mode == Parent::Create {
+        fs::create_dir_all(parent).map_err(|e| io_error(&what, e))?;
+    }
     let temp = parent.join(format!("{RESERVED_PREFIX}tmp-{suffix}"));
     let mut file = OpenOptions::new()
         .write(true)
@@ -97,32 +110,35 @@ fn publish_temp(temp: &Path, dest: &Path, key: &str, mode: Publish) -> Result<()
 /// # Errors
 ///
 /// [`StorageError::PreconditionFailed`] when `mode` is
-/// [`Publish::NoReplace`] and an object already exists; any error from `fill`
-/// or the filesystem.
+/// [`Publish::NoReplace`] and an object already exists;
+/// [`StorageError::NotFound`] when `parent` is [`Parent::MustExist`] and the
+/// parent directory is gone; any error from `fill` or the filesystem.
 pub(super) fn write_atomic<R>(
     dest: &Path,
     key: &str,
     suffix: &str,
-    mode: Publish,
+    (parent, mode): (Parent, Publish),
     fill: impl FnOnce(&mut File) -> Result<R, StorageError>,
 ) -> Result<R, StorageError> {
-    let (temp, value) = stage_temp(dest, suffix, fill)?;
+    let (temp, value) = stage_temp(dest, suffix, parent, fill)?;
     publish_temp(&temp, dest, key, mode)?;
     Ok(value)
 }
 
 /// Hash and measure a file in bounded steps. `Ok(None)` when it is missing
-/// or is not a regular file.
+/// or is not a regular file; a failure to read its metadata is an error.
 pub(super) fn hash_file(path: &Path) -> Result<Option<ObjectMeta>, StorageError> {
     let what = path.display().to_string();
     let mut file = match File::open(path) {
-        Ok(file) if file.metadata().is_ok_and(|m| m.is_file()) => file,
-        Ok(_) => return Ok(None),
+        Ok(file) => file,
         Err(err) if matches!(err.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => {
             return Ok(None)
         }
         Err(err) => return Err(io_error(&what, err)),
     };
+    if !file.metadata().map_err(|e| io_error(&what, e))?.is_file() {
+        return Ok(None);
+    }
     let mut hasher = Sha256::new();
     let size = copy_bounded(&mut file, &mut hasher, None, &what)?;
     Ok(Some(ObjectMeta {
@@ -167,7 +183,12 @@ pub(super) fn read_range(
     key: &str,
     range: ByteRange,
 ) -> Result<Vec<u8>, StorageError> {
-    let mut file = File::open(path).map_err(|e| io_error(key, e))?;
+    let mut file = File::open(path).map_err(|e| match e.kind() {
+        ErrorKind::NotADirectory => StorageError::NotFound {
+            key: key.to_string(),
+        },
+        _ => io_error(key, e),
+    })?;
     if !file.metadata().map_err(|e| io_error(key, e))?.is_file() {
         return Err(StorageError::NotFound {
             key: key.to_string(),
@@ -202,7 +223,7 @@ pub(super) fn append_parts(
         };
         let path = part_path(dir, part.part_number);
         let what = path.display().to_string();
-        let mut src = File::open(&path).map_err(|_| mismatch.clone())?;
+        let mut src = open_part(&path, &what, &mismatch)?;
         let mut part_hash = Sha256::new();
         let read = copy_bounded(&mut src, &mut part_hash, None, &what)?;
         if ETag::from_hasher(part_hash) != part.etag {
@@ -221,5 +242,25 @@ pub(super) fn append_parts(
     Ok(ObjectMeta {
         size,
         etag: ETag::from_hasher(whole),
+    })
+}
+
+/// Open a staged part without following links. A missing part is a
+/// [`StorageError::PartMismatch`]; a link or other failure is reported as
+/// such, never hidden as a mismatch.
+fn open_part(path: &Path, what: &str, mismatch: &StorageError) -> Result<File, StorageError> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            return Err(StorageError::SymlinkForbidden {
+                key: what.to_string(),
+            })
+        }
+        Ok(_) => {}
+        Err(err) if err.kind() == ErrorKind::NotFound => return Err(mismatch.clone()),
+        Err(err) => return Err(io_error(what, err)),
+    }
+    File::open(path).map_err(|e| match e.kind() {
+        ErrorKind::NotFound => mismatch.clone(),
+        _ => io_error(what, e),
     })
 }

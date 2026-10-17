@@ -1,11 +1,14 @@
 //! Cucumber harness for filesquid-ocfl Gherkin under `tests/features/`.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use cucumber::{given, then, when, writer, StatsWriter as _, World, WriterExt as _};
+
+#[path = "support/source_scan.rs"]
+mod source_scan;
 use filesquid_ocfl::storage::{
     ChunkReader, ETag, FsBackend, MemoryBackend, MultipartWriter, Precondition, StorageBackend,
     StorageError, StorageKey, MAX_CHUNK_BYTES,
@@ -327,15 +330,18 @@ async fn list_pages(world: &mut OcflWorld, prefix: String, size: usize) {
     world.pages = on_backend!(world, b => list_all(b, &prefix, size).await);
 }
 
-#[then(expr = "I should receive {int} pages holding all {int} keys in lexical order")]
-fn pages_hold_keys(world: &mut OcflWorld, pages: usize, keys: usize) {
+#[then(expr = "I should receive {int} pages of at most {int} keys each")]
+fn pages_are_bounded(world: &mut OcflWorld, pages: usize, size: usize) {
     assert_eq!(world.pages.len(), pages);
-    let all: Vec<String> = world.pages.concat();
-    assert_eq!(all.len(), keys);
-    let mut sorted = all.clone();
-    sorted.sort();
-    assert_eq!(all, sorted);
-    assert!(all.iter().all(|k| k.starts_with("objects/")));
+    for page in &world.pages {
+        assert!(!page.is_empty() && page.len() <= size, "page {page:?}");
+    }
+}
+
+#[then(expr = "the listed keys should be {string}")]
+fn listed_keys_are(world: &mut OcflWorld, expected: String) {
+    let expected: Vec<String> = expected.split(", ").map(str::to_string).collect();
+    assert_eq!(world.pages.concat(), expected);
 }
 
 #[when("I request a read chunk one byte larger than the maximum chunk size")]
@@ -368,37 +374,14 @@ fn backend_available(world: &mut OcflWorld) {
     );
 }
 
-/// Collect every `.rs` file under `dir`; the depth cap bounds the recursion.
-fn rust_sources(dir: &Path, out: &mut Vec<PathBuf>, depth: usize) {
-    assert!(depth < 8, "source tree deeper than expected");
-    for entry in fs::read_dir(dir).expect("read src") {
-        let path = entry.expect("entry").path();
-        if path.is_dir() {
-            rust_sources(&path, out, depth + 1);
-        } else if path.extension().is_some_and(|e| e == "rs") {
-            out.push(path);
-        }
-    }
-}
-
 #[then("the engine core should not call std::fs directly")]
 fn core_avoids_std_fs(_world: &mut OcflWorld) {
-    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
-    let fs_backend = src.join("storage").join("fs");
-    let helpers = src.join("logical_file.rs");
-    let allowed = |f: &PathBuf| f.starts_with(&fs_backend) || *f == helpers;
-    let mut files = Vec::new();
-    rust_sources(&src, &mut files, 0);
+    let (findings, scanned) = source_scan::io_findings_outside_allowed().expect("scan src");
+    assert!(scanned > 5, "engine sources not found");
     assert!(
-        files.iter().filter(|f| !allowed(f)).count() > 5,
-        "engine sources not found"
+        findings.is_empty(),
+        "direct I/O outside the fs backend: {findings:?}"
     );
-    for file in files.iter().filter(|f| !allowed(f)) {
-        let text = fs::read_to_string(file).expect("read source");
-        for needle in ["std::fs", "tokio::fs", "reqwest", "hyper::", "std::net"] {
-            assert!(!text.contains(needle), "{} uses {needle}", file.display());
-        }
-    }
 }
 
 #[when("I build filesquid-ocfl for wasm32-unknown-unknown with default features off")]
