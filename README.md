@@ -1,4 +1,4 @@
-![FileSquid Logo](./resources/assets/FileSquid-logo.svg)
+![FileSquid Logo](./resources/assets/FileSquid-logo.png)
 
 # About this project
 
