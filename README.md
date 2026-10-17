@@ -31,7 +31,7 @@ Language manifests live **inside** `apps/`, never at the repository root:
 
 | Path | What it is |
 |---|---|
-| `apps/filesquid/` | Cargo workspace: `crates/{core,ocfl,metadata,cli,api,server,desktop}`; `crates/c2pa` is planned (docs and tests only, not yet a workspace member) |
+| `apps/filesquid/` | Cargo workspace: `crates/{core,ocfl,metadata,c2pa,cli,api,server,desktop}` |
 | `apps/filesquid/ui/` | `@filesquid/ui`: API client, custom elements, design tokens and the default FileSquid UI (vanilla TypeScript, Vite; ports 5173 dev / 4173 preview) |
 | `apps/imagesquid/` | The ImageSquid distribution: views, tokens, labels, brand; no backend code (ports 5174 / 4174) |
 | `scripts/docs/` | Documentation validators (requirement coverage, PRD allocation, links, ADR structure) |
@@ -106,6 +106,8 @@ cargo test --workspace --locked
 ```
 
 One module on its own, for example `cargo test -p filesquid-ocfl --locked`.
+
+`cargo test -p filesquid-c2pa --locked` (also part of `cargo test --workspace`) builds the C2PA module for `wasm32-unknown-unknown`, with default features on and off, into `filesquid-c2pa-wasm32-check/` under the Cargo target directory. Install the target once with `rustup target add wasm32-unknown-unknown`; without it the check fails, unless `FILESQUID_SKIP_WASM32=1` is set to skip it explicitly (the skip is printed). The same run executes the `c2patool` oracle harness on the C2PA conformance files when `FILESQUID_C2PA_CONFORMANCE_DIR` holds the absolute path of a checkout of `c2pa-org/public-testfiles` (`FILESQUID_C2PATOOL` names the tool if it is not on `PATH`); otherwise that test is skipped and prints why. Until the engine reads manifests (CP-0.2 to CP-0.5) the harness only records `c2patool`'s verdicts and counts every file as pending; it does not yet compare the engine with the oracle. The oracle run takes about 10 seconds; see the [module README](./apps/filesquid/crates/c2pa/README.md#interoperability-oracle).
 
 FileSquid UI and the ImageSquid distribution (unit and DOM tests in jsdom; end-to-end tests run Playwright against the **built** UI served by the real `filesquid-server`). Install the Playwright browser once with `npx playwright install chromium`:
 

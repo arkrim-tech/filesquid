@@ -37,9 +37,67 @@ Feature: Reusable filesquid-c2pa engine
     Then filesquid-ocfl, axum, tauri, sqlite, libvips, ffmpeg, and filesquid-core should be absent from default dependencies
     And no runtime dependency on the official c2pa crate should exist
 
+  @wasm32
   Scenario: Engine builds for the browser
     When I build filesquid-c2pa for wasm32-unknown-unknown with default features off
     Then the build should succeed
+
+  # C2PA-S-009
+  @wasm32
+  Scenario: Engine builds for the browser with the default crypto backend
+    When I build filesquid-c2pa for wasm32-unknown-unknown with default features on
+    Then the build should succeed
+
+  # C2PA-S-006: cryptography behind the crypto-backend trait
+  Scenario: Cryptography stays behind the crypto backend
+    When I inspect the filesquid-c2pa sources
+    Then only the crypto backend should name a cryptography crate
+
+  Scenario: The default crypto backend accepts a valid Ed25519 signature
+    Given the RFC 8032 Ed25519 test key and signature
+    When I verify the signature through the default crypto backend
+    Then the signature should be accepted
+
+  Scenario: The default crypto backend rejects a tampered message
+    Given the RFC 8032 Ed25519 test key and signature
+    When I verify the signature over a different message through the default crypto backend
+    Then verification should fail
+
+  # C2PA-S-008: bytes-only core
+  Scenario: The core performs no direct file or network access
+    When I inspect the filesquid-c2pa sources
+    Then no direct filesystem, network or process call should be present
+
+  Scenario: The engine reads through a caller-supplied byte source
+    Given a caller-supplied byte source holding "c2pa manifest bytes"
+    When the engine reads 8 bytes at offset 5
+    Then it should receive "manifest"
+
+  Scenario: Reading past the end of a byte source is reported
+    Given a caller-supplied byte source holding "short"
+    When the engine reads 8 bytes at offset 2
+    Then an unexpected end of data should be reported
+
+  Scenario: Remote fetches without a caller fetcher are refused
+    Given no network fetcher supplied by the caller
+    When the engine requests a remote manifest of at most 16 bytes
+    Then the request should be refused as offline
+
+  Scenario: Oversized remote responses are rejected
+    Given a caller fetcher that returns 32 bytes
+    When the engine requests a remote manifest of at most 16 bytes
+    Then the response should be rejected as too large
+
+  # C2PA-S-007: official tools are interoperability oracles only
+  Scenario: The official c2pa tools are oracles, not dependencies
+    When I inspect filesquid-c2pa library dependencies
+    Then no runtime dependency on the official c2pa crate should exist
+    And the c2patool oracle harness should report verdicts or a skip reason
+
+  # SRS-F-054: the module pins a C2PA specification version
+  Scenario: The C2PA specification version is pinned
+    When I inspect the filesquid-c2pa specification pin
+    Then the library and the README should both name C2PA 2.4
 
   Scenario: Content Credentials panel plugs into a file browser sidebar
     Given a selected signed file in a host file browser
@@ -62,5 +120,6 @@ Feature: Reusable filesquid-c2pa engine
   # Source
   # - resources/prd.md F-054
   # - resources/srs.md SRS-F-054
+  # - apps/filesquid/crates/c2pa/resources/srs.md C2PA-S-006, C2PA-S-007, C2PA-S-008, C2PA-S-009
   # - resources/architecture/026-filesquid-provenance-engine.md
   # - resources/architecture/028-filesquid-ui-packages-and-panel-composition.md
