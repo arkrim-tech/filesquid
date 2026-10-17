@@ -37,11 +37,13 @@ Feature: Reusable filesquid-c2pa engine
     Then filesquid-ocfl, axum, tauri, sqlite, libvips, ffmpeg, and filesquid-core should be absent from default dependencies
     And no runtime dependency on the official c2pa crate should exist
 
+  @wasm32
   Scenario: Engine builds for the browser
     When I build filesquid-c2pa for wasm32-unknown-unknown with default features off
     Then the build should succeed
 
   # C2PA-S-009
+  @wasm32
   Scenario: Engine builds for the browser with the default crypto backend
     When I build filesquid-c2pa for wasm32-unknown-unknown with default features on
     Then the build should succeed

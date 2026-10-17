@@ -9,7 +9,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use oracle::{
-    compare, corpus_files, is_asset, parse_c2patool_report, Agreement, OracleReport, Verdict,
+    compare, corpus_files, is_asset, parse_c2patool_report, run_c2patool, Agreement, OracleReport,
+    Verdict,
 };
 
 /// A trimmed `c2patool` report for a valid, untrusted asset.
@@ -54,6 +55,24 @@ fn legacy_status_without_state_is_invalid_on_failure() {
 fn trusted_state_is_recognised() {
     let report = parse_c2patool_report(r#"{"validation_state":"Trusted"}"#).expect("report");
     assert_eq!(report.verdict, Verdict::Trusted);
+}
+
+#[test]
+fn json_without_report_fields_is_an_error() {
+    for json in ["{}", r#"{"manifests":{}}"#, "[]", "null"] {
+        let err = parse_c2patool_report(json).expect_err(json);
+        assert!(err.contains("not a c2patool report"), "{json}: {err}");
+    }
+}
+
+#[test]
+fn unexpected_tool_exit_is_an_error_not_a_verdict() {
+    // `cargo` given an unknown subcommand exits non-zero with unrelated
+    // stderr, standing in for a broken or incompatible oracle binary.
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    let result = run_c2patool(Path::new(&cargo), Path::new("no-such-asset.jpg"));
+    let err = result.expect_err("unexpected exit must be an error");
+    assert!(err.contains("without a report"), "{err}");
 }
 
 #[test]

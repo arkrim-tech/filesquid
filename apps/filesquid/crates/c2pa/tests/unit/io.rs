@@ -29,6 +29,52 @@ impl ByteSource for TrickleSource {
     }
 }
 
+/// A source whose storage always fails.
+struct BrokenSource;
+
+impl ByteSource for BrokenSource {
+    async fn size(&mut self) -> Result<u64, ByteIoError> {
+        Err(ByteIoError::Backend("disk unplugged".into()))
+    }
+
+    async fn read_at(&mut self, _offset: u64, _buf: &mut [u8]) -> Result<usize, ByteIoError> {
+        Err(ByteIoError::Backend("disk unplugged".into()))
+    }
+}
+
+#[test]
+fn storage_errors_propagate_through_read_exact_at() {
+    let mut buf = [0u8; 4];
+    let err = block_on(read_exact_at(&mut BrokenSource, 0, &mut buf)).expect_err("backend");
+    assert_eq!(err, ByteIoError::Backend("disk unplugged".into()));
+    assert_eq!(
+        block_on(BrokenSource.size()),
+        Err(ByteIoError::Backend("disk unplugged".into()))
+    );
+}
+
+/// A source that serves one byte at every offset, even past `u64::MAX - 1`.
+struct EndlessSource;
+
+impl ByteSource for EndlessSource {
+    async fn size(&mut self) -> Result<u64, ByteIoError> {
+        Ok(u64::MAX)
+    }
+
+    async fn read_at(&mut self, _offset: u64, buf: &mut [u8]) -> Result<usize, ByteIoError> {
+        buf[0] = 1;
+        Ok(1)
+    }
+}
+
+#[test]
+fn read_exact_at_reports_offset_overflow() {
+    let mut buf = [0u8; 2];
+    let err =
+        block_on(read_exact_at(&mut EndlessSource, u64::MAX, &mut buf)).expect_err("overflow");
+    assert!(matches!(err, ByteIoError::OutOfRange { .. }), "{err:?}");
+}
+
 #[test]
 fn memory_source_reports_its_size() {
     let mut source = MemorySource::new(b"jumbf".to_vec());

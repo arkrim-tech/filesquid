@@ -140,8 +140,10 @@ fn build_wasm(world: &mut C2paWorld, state: String) {
 fn build_succeeded(world: &mut C2paWorld) {
     match world.build.take().expect("build ran") {
         Ok(None) => {}
-        Ok(Some(reason)) => eprintln!("SKIPPED wasm32 build: {reason}"),
-        Err(output) => panic!("wasm32 build failed:\n{output}"),
+        // `main` filters @wasm32 scenarios out when the check is opted out,
+        // so a skip here means the filter and the opt-out disagree.
+        Ok(Some(reason)) => panic!("wasm32 scenario ran although skipped: {reason}"),
+        Err(output) => panic!("wasm32 build check failed:\n{output}"),
     }
 }
 
@@ -317,6 +319,12 @@ async fn main() {
     fs::create_dir_all(&results_dir).expect("allure-results");
     let features = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/features");
     let junit = fs::File::create(results_dir.join("cucumber-junit.xml")).expect("junit file");
+    // cucumber-rs has no runtime skip, so an explicit opt-out removes the
+    // @wasm32 scenarios from the run and says so; it never reports a pass.
+    let wasm_skip = wasm::opted_out();
+    if let Some(reason) = &wasm_skip {
+        println!("SKIPPED @wasm32 scenarios: {reason}");
+    }
     let writer = C2paWorld::cucumber()
         .with_writer(
             writer::Basic::stdout()
@@ -324,7 +332,9 @@ async fn main() {
                 .tee::<C2paWorld, _>(writer::JUnit::for_tee(junit, 0))
                 .normalized(),
         )
-        .run(features)
+        .filter_run(features, move |_, _, scenario| {
+            wasm_skip.is_none() || !scenario.tags.iter().any(|tag| tag == "wasm32")
+        })
         .await;
     if writer.execution_has_failed() {
         std::process::exit(1);

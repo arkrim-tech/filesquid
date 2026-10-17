@@ -14,7 +14,7 @@ apps/
 │   │   ├── core/              # filesquid-core: portable contracts (no HTTP, no Tauri, no codecs)
 │   │   ├── ocfl/              # filesquid-ocfl: OCFL 1.1 module
 │   │   ├── metadata/          # filesquid-metadata: metadata module (Dublin Core, metadata.md, stores)
-│   │   ├── c2pa/              # filesquid-c2pa: C2PA module (planned; docs and features only today)
+│   │   ├── c2pa/              # filesquid-c2pa: C2PA module (foundation: byte I/O, fetcher and crypto-backend traits)
 │   │   ├── api/               # filesquid-api: the single FileSquid API (routes, contract, auth, events)
 │   │   ├── server/            # filesquid-server: Axum host, multi-user
 │   │   └── desktop/           # filesquid-desktop: Tauri 2 host
@@ -33,7 +33,7 @@ apps/
 
 ## Rules for this directory
 
-- Module crates (`core`, `ocfl`, `metadata`, and `c2pa` once it is scaffolded as a workspace member) MUST NOT depend on Axum, Tokio-net or `tauri`. Each one builds and tests alone (`cargo test -p <crate>`).
+- Module crates (`core`, `ocfl`, `metadata` and `c2pa`) MUST NOT depend on Axum, Tokio-net or `tauri`. Each one builds and tests alone (`cargo test -p <crate>`).
 - Hosts link `filesquid-api`. Domain logic does not go in a host crate.
 - `apps/imagesquid` depends on `@filesquid/ui` by relative path during development and on a published version for release.
 - Unique local ports: `apps/filesquid/ui` dev 5173 / preview 4173, `apps/imagesquid` dev 5174 / preview 4174, `filesquid-server` 8083.

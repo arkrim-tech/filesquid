@@ -59,8 +59,24 @@ pub const RULES: &[Rule] = &[
     rule("attohttpc", Match::Exact, NETWORK),
     rule("tokio", Match::Prefix, NETWORK),
     rule("async-std", Match::Exact, NETWORK),
+    rule("smol", Match::Exact, NETWORK),
+    rule("async-executor", Match::Exact, NETWORK),
+    rule("async-global-executor", Match::Exact, NETWORK),
+    rule("async-io", Match::Exact, NETWORK),
+    rule("async-net", Match::Exact, NETWORK),
+    rule("actix-rt", Match::Exact, NETWORK),
+    rule("glommio", Match::Exact, NETWORK),
     rule("mio", Match::Exact, NETWORK),
 ];
+
+/// A crate name that `rule` matches: the pattern itself for an exact rule,
+/// the pattern plus a suffix for a prefix rule.
+pub fn sample_name(rule: &Rule) -> String {
+    match rule.kind {
+        Match::Exact => rule.pattern.to_string(),
+        Match::Prefix => format!("{}sample", rule.pattern),
+    }
+}
 
 const fn rule(pattern: &'static str, kind: Match, reason: &'static str) -> Rule {
     Rule {

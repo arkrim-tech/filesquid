@@ -3,10 +3,13 @@
 //! RFC 8032 test 1) check the default RustCrypto backend; a caller-supplied
 //! backend proves the trait can be implemented outside this crate.
 
+use std::ops::Range;
+
 use filesquid_c2pa::crypto::{
     CryptoBackend, CryptoError, HashAlgorithm, IncrementalHasher, RustCryptoBackend,
-    SigningAlgorithm,
+    SigningAlgorithm, DIGEST_CHUNK_BYTES,
 };
+use filesquid_c2pa::io::{read_exact_at, ByteIoError, ByteSource, MemorySource};
 use futures::executor::block_on;
 
 /// Decode a lowercase hex string from a published test vector.
@@ -266,4 +269,121 @@ fn caller_supplied_backend_uses_the_default_digest() {
         refused,
         Err(CryptoError::UnsupportedHash(HashAlgorithm::Sha512))
     );
+}
+
+/// Deterministic test bytes spanning several digest chunks.
+fn asset_bytes() -> Vec<u8> {
+    (0..(DIGEST_CHUNK_BYTES * 2 + 1000))
+        .map(|i| (i % 251) as u8)
+        .collect()
+}
+
+#[test]
+fn digest_ranges_streams_included_ranges_across_chunks() {
+    let bytes = asset_bytes();
+    let len = bytes.len() as u64;
+    // Exclude bytes 100..200, as a hard binding's exclusion would.
+    let ranges = [0..100, 200..len];
+    let mut source = MemorySource::new(bytes.clone());
+    let streamed =
+        block_on(RustCryptoBackend.digest_ranges(HashAlgorithm::Sha256, &mut source, &ranges))
+            .expect("digest");
+    let mut included = bytes[..100].to_vec();
+    included.extend_from_slice(&bytes[200..]);
+    let one_shot =
+        block_on(RustCryptoBackend.digest(HashAlgorithm::Sha256, &included)).expect("digest");
+    assert_eq!(streamed, one_shot);
+}
+
+#[test]
+fn digest_ranges_rejects_a_reversed_range() {
+    let mut source = MemorySource::new(vec![0u8; 10]);
+    #[allow(clippy::reversed_empty_ranges)]
+    let reversed: Range<u64> = 5..2;
+    let result = block_on(RustCryptoBackend.digest_ranges(
+        HashAlgorithm::Sha256,
+        &mut source,
+        std::slice::from_ref(&reversed),
+    ));
+    assert_eq!(result, Err(CryptoError::InvalidRange { start: 5, end: 2 }));
+}
+
+#[test]
+fn digest_ranges_reports_a_short_source() {
+    let mut source = MemorySource::new(vec![0u8; 10]);
+    let past_end: Range<u64> = 0..20;
+    let result = block_on(RustCryptoBackend.digest_ranges(
+        HashAlgorithm::Sha256,
+        &mut source,
+        std::slice::from_ref(&past_end),
+    ));
+    assert!(
+        matches!(
+            result,
+            Err(CryptoError::Source(ByteIoError::UnexpectedEof { .. }))
+        ),
+        "{result:?}"
+    );
+}
+
+/// An async-only backend, shaped like WebCrypto: no incremental hasher, a
+/// one-shot async digest, and its own `digest_ranges` that gathers the ranges
+/// (here through the default backend, standing in for `subtle.digest`).
+struct AsyncOnlyBackend;
+
+impl CryptoBackend for AsyncOnlyBackend {
+    fn incremental_hasher(
+        &self,
+        algorithm: HashAlgorithm,
+    ) -> Result<Box<dyn IncrementalHasher>, CryptoError> {
+        Err(CryptoError::UnsupportedHash(algorithm))
+    }
+
+    async fn digest(&self, algorithm: HashAlgorithm, data: &[u8]) -> Result<Vec<u8>, CryptoError> {
+        RustCryptoBackend.digest(algorithm, data).await
+    }
+
+    async fn digest_ranges<S: ByteSource + ?Sized>(
+        &self,
+        algorithm: HashAlgorithm,
+        source: &mut S,
+        ranges: &[Range<u64>],
+    ) -> Result<Vec<u8>, CryptoError> {
+        let mut gathered = Vec::new();
+        for range in ranges {
+            let mut buf = vec![0u8; (range.end - range.start) as usize];
+            read_exact_at(source, range.start, &mut buf).await?;
+            gathered.extend_from_slice(&buf);
+        }
+        self.digest(algorithm, &gathered).await
+    }
+
+    async fn verify_signature(
+        &self,
+        _algorithm: SigningAlgorithm,
+        _public_key_spki_der: &[u8],
+        _message: &[u8],
+        _signature: &[u8],
+    ) -> Result<(), CryptoError> {
+        Err(CryptoError::Backend(
+            "not implemented by this test backend".into(),
+        ))
+    }
+}
+
+#[test]
+fn async_only_backend_can_supply_its_own_range_digest() {
+    let bytes = asset_bytes();
+    let ranges = [0..100, 200..bytes.len() as u64];
+    let mut source = MemorySource::new(bytes.clone());
+    let async_only =
+        block_on(AsyncOnlyBackend.digest_ranges(HashAlgorithm::Sha384, &mut source, &ranges))
+            .expect("digest");
+    let mut source = MemorySource::new(bytes);
+    let default =
+        block_on(RustCryptoBackend.digest_ranges(HashAlgorithm::Sha384, &mut source, &ranges))
+            .expect("digest");
+    assert_eq!(async_only, default);
+    let err = block_on(AsyncOnlyBackend.verify_signature(SigningAlgorithm::Es256, b"", b"", b""));
+    assert!(matches!(err, Err(CryptoError::Backend(_))));
 }

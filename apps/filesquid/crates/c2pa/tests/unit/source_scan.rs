@@ -38,6 +38,61 @@ fn scanner_ignores_comment_lines() {
 }
 
 #[test]
+fn scanner_ignores_block_comments_including_nested_ones() {
+    let text = "/* reads std::fs\n   /* nested std::net */ still std::process */\nfn f() {}\n";
+    assert!(scan_text("lib.rs", text, IO_PATTERNS).is_empty());
+}
+
+#[test]
+fn scanner_sees_code_after_a_block_comment_on_the_same_line() {
+    let text = "/* note */ let x = std::fs::read(p);\n";
+    let found = scan_text("lib.rs", text, IO_PATTERNS);
+    assert_eq!(found.len(), 1);
+    assert_eq!((found[0].line, found[0].pattern), (1, "std::fs"));
+}
+
+#[test]
+fn scanner_sees_code_after_a_url_in_a_string() {
+    let text = "let u = \"https://x\"; let n = std::net::TcpStream::connect(u);\n";
+    let found = scan_text("lib.rs", text, IO_PATTERNS);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].pattern, "std::net");
+}
+
+#[test]
+fn scanner_flags_grouped_std_imports() {
+    for (text, pattern) in [
+        ("use std::{fs};\nfn f() { fs::read(\"a\"); }\n", "std::fs"),
+        ("use std::{io, net::TcpStream};\n", "std::net"),
+        (
+            "use std::{\n    collections::HashMap,\n    process as p,\n};\n",
+            "std::process",
+        ),
+        ("use std :: { fs :: File };\n", "std::fs"),
+    ] {
+        let found = scan_text("lib.rs", text, IO_PATTERNS);
+        assert!(
+            found.iter().any(|f| f.pattern == pattern),
+            "{text:?} must report {pattern}: {found:?}"
+        );
+    }
+}
+
+#[test]
+fn scanner_allows_harmless_grouped_imports() {
+    let text = "use std::{future::Future, fmt, ops::Range};\n";
+    assert!(scan_text("lib.rs", text, IO_PATTERNS).is_empty());
+}
+
+#[test]
+fn grouped_import_findings_carry_the_line_of_the_group() {
+    let text = "fn a() {}\nuse std::{\n    fs,\n};\n";
+    let found = scan_text("lib.rs", text, IO_PATTERNS);
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].line, 2);
+}
+
+#[test]
 fn scanner_flags_crypto_crates() {
     let found = scan_text("claim.rs", "use sha2::Sha256;\n", CRYPTO_PATTERNS);
     assert_eq!(found.len(), 1);

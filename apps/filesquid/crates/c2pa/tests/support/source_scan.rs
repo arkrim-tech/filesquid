@@ -1,8 +1,10 @@
 //! Source scan for `filesquid-c2pa` (C2PA-S-006, C2PA-S-008).
 //!
 //! The core MUST NOT touch the filesystem, the network or processes directly,
-//! and only the crypto backend module may name a cryptography crate. Comment
-//! lines are skipped so documentation can describe the rules.
+//! and only the crypto backend module may name a cryptography crate. Line and
+//! block comments are removed before matching so documentation can describe
+//! the rules; whitespace is removed too, and grouped imports such as
+//! `use std::{fs, io};` are expanded.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -58,23 +60,142 @@ pub struct Finding {
     pub pattern: &'static str,
 }
 
-/// Return the patterns from `patterns` found in non-comment lines of `text`.
-pub fn scan_text(file: &str, text: &str, patterns: &[&'static str]) -> Vec<Finding> {
-    let mut findings = Vec::new();
-    for (index, line) in text.lines().enumerate() {
-        let code = line.trim_start();
-        if code.starts_with("//") {
-            continue;
+/// Lexer state while removing comments.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Lex {
+    /// Ordinary code.
+    Code,
+    /// Inside `// ...` until the end of the line.
+    LineComment,
+    /// Inside `/* ... */`, with the nesting depth (Rust block comments nest).
+    Block(usize),
+    /// Inside a `"..."` string literal.
+    Str,
+}
+
+/// Return the code characters of `text` with comments and whitespace
+/// removed, each paired with its 1-based line number.
+///
+/// Line comments, nested block comments and string literals are tracked, so
+/// a `//` inside a string does not hide the code after it. Raw strings are
+/// treated as ordinary strings; `src/` does not use `r#"..."#`.
+pub fn code_chars(text: &str) -> Vec<(char, usize)> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = Vec::with_capacity(chars.len());
+    let (mut state, mut line, mut i) = (Lex::Code, 1usize, 0usize);
+    while i < chars.len() {
+        let (c, next) = (chars[i], chars.get(i + 1).copied());
+        let (new_state, consumed, keep) = step(state, c, next);
+        if keep && !c.is_whitespace() {
+            out.push((c, line));
         }
-        for pattern in patterns.iter().filter(|p| code.contains(**p)) {
-            findings.push(Finding {
-                file: file.to_string(),
-                line: index + 1,
-                pattern,
-            });
+        for consumed_char in &chars[i..i + consumed] {
+            line += usize::from(*consumed_char == '\n');
+        }
+        state = new_state;
+        i += consumed;
+    }
+    out
+}
+
+/// One lexer transition: (next state, characters consumed, keep `c`).
+fn step(state: Lex, c: char, next: Option<char>) -> (Lex, usize, bool) {
+    match (state, c, next) {
+        (Lex::Code, '/', Some('/')) => (Lex::LineComment, 2, false),
+        (Lex::Code, '/', Some('*')) => (Lex::Block(1), 2, false),
+        (Lex::Code, '"', _) => (Lex::Str, 1, true),
+        (Lex::Code, _, _) => (Lex::Code, 1, true),
+        (Lex::LineComment, '\n', _) => (Lex::Code, 1, false),
+        (Lex::LineComment, _, _) => (Lex::LineComment, 1, false),
+        (Lex::Block(depth), '/', Some('*')) => (Lex::Block(depth + 1), 2, false),
+        (Lex::Block(1), '*', Some('/')) => (Lex::Code, 2, false),
+        (Lex::Block(depth), '*', Some('/')) => (Lex::Block(depth - 1), 2, false),
+        (Lex::Block(depth), _, _) => (Lex::Block(depth), 1, false),
+        (Lex::Str, '\\', Some(_)) => (Lex::Str, 2, true),
+        (Lex::Str, '"', _) => (Lex::Code, 1, true),
+        (Lex::Str, _, _) => (Lex::Str, 1, true),
+    }
+}
+
+/// `std` modules a grouped import such as `use std::{fs, io};` can name,
+/// with the pattern each one stands for.
+const STD_GROUP_MODULES: &[(&str, &str)] = &[
+    ("fs", "std::fs"),
+    ("net", "std::net"),
+    ("process", "std::process"),
+];
+
+/// Cap on characters scanned inside one `std::{...}` group.
+const MAX_GROUP_CHARS: usize = 4096;
+
+/// Return (line, pattern) for each `std` module named inside a grouped
+/// `std::{...}` import in `code` (whitespace already removed).
+fn grouped_std_imports(code: &[(char, usize)]) -> Vec<(usize, &'static str)> {
+    let text: String = code.iter().map(|(c, _)| *c).collect();
+    let chars: Vec<char> = text.chars().collect();
+    let mut found = Vec::new();
+    for (byte, _) in text.match_indices("std::{") {
+        let start = text[..byte].chars().count();
+        let open = start + "std::{".len();
+        let items = group_items(&chars[open..chars.len().min(open + MAX_GROUP_CHARS)]);
+        for item in items {
+            for (module, pattern) in STD_GROUP_MODULES {
+                let rest = item.strip_prefix(module).unwrap_or("-");
+                if rest.is_empty() || rest.starts_with("::") || rest.starts_with("as") {
+                    found.push((code[start].1, *pattern));
+                }
+            }
         }
     }
-    findings
+    found
+}
+
+/// Split the body of a `{...}` group (starting after `{`) into its
+/// top-level items, stopping at the matching `}`.
+fn group_items(body: &[char]) -> Vec<String> {
+    let (mut items, mut current, mut depth) = (Vec::new(), String::new(), 0usize);
+    for c in body {
+        match c {
+            '{' => depth += 1,
+            '}' if depth == 0 => break,
+            '}' => depth -= 1,
+            ',' if depth == 0 => {
+                items.push(std::mem::take(&mut current));
+                continue;
+            }
+            _ => {}
+        }
+        current.push(*c);
+    }
+    items.push(current);
+    items
+}
+
+/// Return the patterns from `patterns` found in the code of `text`, ignoring
+/// comments and whitespace, including `std` modules named in grouped imports.
+pub fn scan_text(file: &str, text: &str, patterns: &[&'static str]) -> Vec<Finding> {
+    let code = code_chars(text);
+    let compact: String = code.iter().map(|(c, _)| *c).collect();
+    let mut hits: Vec<(usize, &'static str)> = Vec::new();
+    for pattern in patterns {
+        for (byte, _) in compact.match_indices(pattern) {
+            hits.push((code[compact[..byte].chars().count()].1, *pattern));
+        }
+    }
+    hits.extend(
+        grouped_std_imports(&code)
+            .into_iter()
+            .filter(|(_, pattern)| patterns.contains(pattern)),
+    );
+    hits.sort();
+    hits.dedup();
+    hits.into_iter()
+        .map(|(line, pattern)| Finding {
+            file: file.to_string(),
+            line,
+            pattern,
+        })
+        .collect()
 }
 
 /// The crate's `src/` directory.

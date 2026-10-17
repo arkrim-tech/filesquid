@@ -8,6 +8,12 @@
 //! Primitives are never hand-rolled.
 
 use std::future::Future;
+use std::ops::Range;
+
+use crate::io::{read_exact_at, ByteIoError, ByteSource};
+
+/// Chunk size [`CryptoBackend::digest_ranges`] reads from a source: 64 KiB.
+pub const DIGEST_CHUNK_BYTES: usize = 64 * 1024;
 
 #[cfg(feature = "rust-crypto")]
 mod rust_crypto;
@@ -135,6 +141,42 @@ pub enum CryptoError {
     /// Any other backend failure.
     #[error("crypto backend error: {0}")]
     Backend(String),
+    /// A range to hash is reversed (`start > end`).
+    #[error("invalid hash range {start}..{end}")]
+    InvalidRange {
+        /// Range start.
+        start: u64,
+        /// Range end.
+        end: u64,
+    },
+    /// The byte source failed while being hashed.
+    #[error("reading the bytes to hash failed: {0}")]
+    Source(#[from] ByteIoError),
+}
+
+/// Feed `range` of `source` into `hasher`, [`DIGEST_CHUNK_BYTES`] at a time.
+///
+/// The loop is bounded by the range length divided by the chunk size.
+async fn hash_range<S: ByteSource + ?Sized>(
+    hasher: &mut dyn IncrementalHasher,
+    source: &mut S,
+    range: &Range<u64>,
+) -> Result<(), CryptoError> {
+    if range.start > range.end {
+        return Err(CryptoError::InvalidRange {
+            start: range.start,
+            end: range.end,
+        });
+    }
+    let mut buf = vec![0u8; DIGEST_CHUNK_BYTES];
+    let mut offset = range.start;
+    while offset < range.end {
+        let take = (range.end - offset).min(DIGEST_CHUNK_BYTES as u64) as usize;
+        read_exact_at(source, offset, &mut buf[..take]).await?;
+        hasher.update(&buf[..take]);
+        offset += take as u64;
+    }
+    Ok(())
 }
 
 /// A running hash computation, fed in chunks as bytes arrive from a
@@ -170,6 +212,30 @@ pub trait CryptoBackend {
         async move {
             let mut hasher = self.incremental_hasher(algorithm)?;
             hasher.update(data);
+            Ok(hasher.finalize())
+        }
+    }
+
+    /// Hash the concatenation of `ranges` of `source`, in order, without
+    /// buffering the asset. This is the path hard-binding validation uses
+    /// (the caller passes the included ranges, so exclusions are skipped).
+    ///
+    /// The default reads [`DIGEST_CHUNK_BYTES`] at a time into
+    /// [`CryptoBackend::incremental_hasher`]. An async-only backend (for
+    /// example WebCrypto, whose `digest` has no incremental form) overrides
+    /// this method instead and MAY return [`CryptoError::UnsupportedHash`]
+    /// from `incremental_hasher`.
+    fn digest_ranges<S: ByteSource + ?Sized>(
+        &self,
+        algorithm: HashAlgorithm,
+        source: &mut S,
+        ranges: &[Range<u64>],
+    ) -> impl Future<Output = Result<Vec<u8>, CryptoError>> {
+        async move {
+            let mut hasher = self.incremental_hasher(algorithm)?;
+            for range in ranges {
+                hash_range(hasher.as_mut(), source, range).await?;
+            }
             Ok(hasher.finalize())
         }
     }

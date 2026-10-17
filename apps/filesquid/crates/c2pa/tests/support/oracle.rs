@@ -157,10 +157,29 @@ pub fn is_asset(path: &Path) -> bool {
         .is_some_and(|ext| ASSET_EXTENSIONS.contains(&ext.as_str()))
 }
 
+/// Top-level fields that identify a `c2patool` manifest-store report.
+pub const REPORT_FIELDS: &[&str] = &[
+    "validation_state",
+    "validation_status",
+    "validation_results",
+    "active_manifest",
+];
+
 /// Reduce a `c2patool` JSON report to an [`OracleReport`].
+///
+/// The JSON MUST carry at least one of [`REPORT_FIELDS`]; anything else (for
+/// example `{}`) is an error, never a verdict.
 pub fn parse_c2patool_report(json: &str) -> Result<OracleReport, String> {
     let report: Value =
         serde_json::from_str(json).map_err(|err| format!("c2patool JSON: {err}"))?;
+    if !REPORT_FIELDS
+        .iter()
+        .any(|field| report.get(field).is_some())
+    {
+        return Err(format!(
+            "not a c2patool report: none of {REPORT_FIELDS:?} is present"
+        ));
+    }
     let failure_codes = failure_codes(&report);
     let verdict = match report.get("validation_state").and_then(Value::as_str) {
         Some("Trusted") => Verdict::Trusted,
@@ -229,10 +248,13 @@ pub fn run_c2patool(tool: &Path, file: &Path) -> Result<OracleReport, String> {
             failure_codes: Vec::new(),
         });
     }
-    Ok(OracleReport {
-        verdict: Verdict::Invalid,
-        failure_codes: vec![format!("c2patool.error: {}", stderr.trim())],
-    })
+    Err(format!(
+        "{} exited with {} on {} without a report: {}",
+        tool.display(),
+        output.status,
+        file.display(),
+        stderr.lines().next().unwrap_or("").trim()
+    ))
 }
 
 /// The engine's report for an asset. Returns `None` until the engine can

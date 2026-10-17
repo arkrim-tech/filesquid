@@ -1,9 +1,12 @@
-//! `filesquid-c2pa`: a stand-alone FOSS C2PA engine, implemented from scratch
-//! in Rust (FileSquid ADR 026).
+//! `filesquid-c2pa`: the foundation of a stand-alone FOSS C2PA engine, to be
+//! implemented from scratch in Rust (FileSquid ADR 026).
 //!
-//! FileSquid is one caller; any Rust program can use the crate on its own.
-//! The core is bytes-only and runs anywhere Rust runs, including
-//! `wasm32-unknown-unknown`:
+//! This release provides only the engine's boundaries: byte I/O, remote
+//! fetching and the crypto backend. Reading manifest stores, validation,
+//! minting and editing are not implemented yet; they arrive in later
+//! releases built on these traits. FileSquid is one caller; any Rust program
+//! can use the crate on its own. The core is bytes-only and runs anywhere
+//! Rust runs, including `wasm32-unknown-unknown`:
 //!
 //! - [`io`]: the caller supplies every byte through async [`io::ByteSource`]
 //!   and [`io::ByteSink`] values. The core never opens files.

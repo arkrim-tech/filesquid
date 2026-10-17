@@ -7,7 +7,40 @@
 #[allow(dead_code)]
 mod deps;
 
-use deps::{forbidden_reason, package_names, resolved_runtime_packages, violations};
+use deps::{
+    forbidden_reason, package_names, resolved_runtime_packages, sample_name, violations, RULES,
+};
+
+#[test]
+fn every_rule_rejects_a_matching_name() {
+    for rule in RULES {
+        let name = sample_name(rule);
+        assert_eq!(
+            forbidden_reason(&name),
+            Some(rule.reason),
+            "{name} must be rejected by rule {}",
+            rule.pattern
+        );
+    }
+}
+
+#[test]
+fn async_runtimes_and_network_clients_are_rules() {
+    for name in [
+        "isahc",
+        "surf",
+        "curl",
+        "attohttpc",
+        "async-std",
+        "mio",
+        "smol",
+        "async-executor",
+        "async-io",
+    ] {
+        assert!(RULES.iter().any(|rule| rule.pattern == name), "{name} rule");
+    }
+    assert_eq!(forbidden_reason("smol_str"), None, "smol is an exact rule");
+}
 
 #[test]
 fn rules_reject_every_named_crate() {

@@ -1,8 +1,9 @@
 //! `wasm32-unknown-unknown` build check for `filesquid-c2pa` (C2PA-S-009).
 //!
 //! Runs `cargo build` for the library into its own target subdirectory, so it
-//! never waits on the build lock held by the surrounding `cargo test`. When the
-//! Rust target is not installed the check is skipped with a logged reason.
+//! never waits on the build lock held by the surrounding `cargo test`. A
+//! missing Rust target fails the check; it is skipped only when the caller
+//! sets `FILESQUID_SKIP_WASM32=1`.
 //! A test crate that includes this module also includes `support/deps.rs` as
 //! `mod deps`.
 
@@ -47,14 +48,29 @@ fn check_target_dir() -> PathBuf {
     base.join("filesquid-c2pa-wasm32-check")
 }
 
+/// Environment variable that, set to `1`, skips the check explicitly.
+pub const SKIP_ENV: &str = "FILESQUID_SKIP_WASM32";
+
+/// Return the skip reason when the caller opted out with [`SKIP_ENV`]`=1`.
+pub fn opted_out() -> Option<String> {
+    (std::env::var(SKIP_ENV).as_deref() == Ok("1"))
+        .then(|| format!("{SKIP_ENV}=1 is set; the {WASM_TARGET} build was not checked"))
+}
+
 /// Build the library for [`WASM_TARGET`], with or without default features.
 ///
-/// Returns `Err` with the compiler output when the build fails.
+/// Returns [`WasmBuild::Skipped`] only when the caller opted out with
+/// [`SKIP_ENV`]. A missing target or a failed build is `Err`, so the gate
+/// cannot pass without the check running.
 pub fn build_for_wasm(default_features: bool) -> Result<WasmBuild, String> {
+    if let Some(reason) = opted_out() {
+        return Ok(WasmBuild::Skipped(reason));
+    }
     if !target_installed() {
-        return Ok(WasmBuild::Skipped(format!(
-            "Rust target {WASM_TARGET} is not installed; run `rustup target add {WASM_TARGET}`"
-        )));
+        return Err(format!(
+            "Rust target {WASM_TARGET} is not installed: run `rustup target add {WASM_TARGET}` \
+             (or set {SKIP_ENV}=1 to skip this check explicitly)"
+        ));
     }
     let mut command = Command::new(deps::cargo_binary());
     command
