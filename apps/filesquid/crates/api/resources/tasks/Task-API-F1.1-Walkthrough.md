@@ -37,7 +37,7 @@ Parents: [F-056 Single FileSquid API](../../../../../../resources/prd.md#f-056-s
 | Requirement | Tests |
 |---|---|
 | API-S-002 versioned contract | `contract_is_openapi_3_1_with_the_crate_api_version`, `router_serves_its_own_contract`, BDD "The API serves its own versioned contract" |
-| API-S-002 / ADR 030 drift: Rust routes ↔ contract | `routed_and_documented_paths_agree_both_ways`, `host_routes_are_the_event_channel_only`, `every_documented_operation_answers_a_documented_status_and_body` (every operation answers a status its `responses` document, both before the monitor starts and when it is ready; every JSON 200 body conforms to its success schema), `every_documented_operation_has_a_unique_operation_id`, BDD "Every routed operation is documented in the contract" |
+| API-S-002 / ADR 030 drift: Rust routes ↔ contract | `routed_and_documented_paths_agree_both_ways`, `host_routes_are_the_event_channel_only`, `every_documented_operation_answers_a_documented_status_and_body` (every operation answers a status its `responses` document, both before the monitor starts and when it is ready; every JSON 200 body conforms to its success schema), `router_fallbacks_are_documented_as_wire_conventions` and `router_fallbacks_answer_as_documented` (the router-wide 404 `not_found` and 405 `method_not_allowed` fallbacks are stated in `info.description` and the `ErrorCode` description and answer an `ApiError` body; they are not listed per operation, because in OpenAPI 3.1 an operation documents only the responses it sends), `every_documented_operation_has_a_unique_operation_id`, BDD "Every routed operation is documented in the contract" |
 | API-S-002 / ADR 030 drift: Rust types ↔ contract | `every_component_schema_has_a_rust_sample`, `every_component_schema_matches_its_serialized_rust_type` (strict: no undocumented field, required present, enums equal Rust variants both ways), `the_contract_uses_only_checked_schema_keywords`, `the_checker_accepts_only_truly_unconstrained_objects`, `health_schema_matches_the_core_payload_and_requires_every_field` |
 | API-S-002 drift: contract ↔ generated TypeScript | Vitest `apps/filesquid/ui/tests/unit/contract.test.ts` |
 | API-S-002 / CORE-S-005 operation schemas | `command_envelope_carries_idempotency_key_expected_revision_and_scope`, `query_envelope_and_page_size_parameter_are_bounded_like_core`, `every_limit_parameter_is_the_shared_page_size`, `errors_carry_code_and_retryability`, core `page_size_bound_is_one_to_one_thousand`, core BDD "The portable maximum page size of 1000 is accepted", BDD "Operation schemas carry idempotency, revision, page size and retryability" |
@@ -117,6 +117,17 @@ With the contract updated and `schema.d.ts` not yet regenerated, `npx vitest run
       Tests  1 failed (1)
 ```
 
+## Red: router fallbacks documented in the contract (review run 59609da2)
+
+`cargo test -p filesquid-api --locked --test unit_contract` before the contract stated the fallbacks:
+
+```text
+test router_fallbacks_are_documented_as_wire_conventions ... FAILED
+thread 'router_fallbacks_are_documented_as_wire_conventions' panicked at crates/api/tests/unit/contract.rs:192:9:
+info.description states 404 not_found
+test result: FAILED. 19 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+```
+
 ## Red: router fallbacks and export `limit` (review run ccca0649)
 
 `cargo test -p filesquid-api --locked --test unit_errors` before the fix:
@@ -138,7 +149,7 @@ test result: FAILED. 8 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; 
 
 ## Green: raw output
 
-`cargo test -p filesquid-api --locked --test unit_contract --test unit_errors --test features` (after Cubic review round 1):
+`cargo test -p filesquid-api --locked --test unit_contract --test unit_errors --test features` (final run, after the round 3 fixes for Cubic run 59609da2):
 
 ```text
 Feature: Versioned API contract
@@ -175,26 +186,28 @@ Feature: Versioned API contract
 4 features
 70 scenarios (11 passed, 59 skipped)
 100 steps (41 passed, 59 skipped)
-running 18 tests
+running 20 tests
 test error_code_all_lists_every_variant ... ok
-test command_envelope_carries_idempotency_key_expected_revision_and_scope ... ok
 test contract_is_openapi_3_1_with_the_crate_api_version ... ok
-test errors_carry_code_and_retryability ... ok
 test error_codes_match_the_rust_enum_with_status_and_retryability ... ok
-test every_component_schema_has_a_rust_sample ... ok
-test every_documented_operation_has_a_unique_operation_id ... ok
+test command_envelope_carries_idempotency_key_expected_revision_and_scope ... ok
+test errors_carry_code_and_retryability ... ok
 test every_component_schema_matches_its_serialized_rust_type ... ok
+test every_documented_operation_has_a_unique_operation_id ... ok
+test every_component_schema_has_a_rust_sample ... ok
 test every_error_response_carries_the_api_error_schema ... ok
-test health_schema_matches_the_core_payload_and_requires_every_field ... ok
 test host_routes_are_the_event_channel_only ... ok
-test routed_and_documented_paths_agree_both_ways ... ok
-test query_envelope_and_page_size_parameter_are_bounded_like_core ... ok
 test every_limit_parameter_is_the_shared_page_size ... ok
-test the_checker_accepts_only_truly_unconstrained_objects ... ok
-test router_serves_its_own_contract ... ok
-test the_contract_uses_only_checked_schema_keywords ... ok
+test health_schema_matches_the_core_payload_and_requires_every_field ... ok
+test routed_and_documented_paths_agree_both_ways ... ok
 test every_documented_operation_answers_a_documented_status_and_body ... ok
-test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test router_serves_its_own_contract ... ok
+test query_envelope_and_page_size_parameter_are_bounded_like_core ... ok
+test the_checker_accepts_only_truly_unconstrained_objects ... ok
+test router_fallbacks_are_documented_as_wire_conventions ... ok
+test the_contract_uses_only_checked_schema_keywords ... ok
+test router_fallbacks_answer_as_documented ... ok
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
 running 11 tests
 test a_wrong_method_is_a_method_not_allowed_api_error ... ok
 test admin_routes_before_the_monitor_starts_are_unavailable_and_retryable ... ok

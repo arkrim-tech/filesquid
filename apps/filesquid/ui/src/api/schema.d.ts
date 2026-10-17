@@ -217,7 +217,7 @@ export interface components {
             product: string;
         };
         /**
-         * @description Stable error code. HTTP status: invalid_request 400, unauthorized 401, forbidden 403, not_found 404, method_not_allowed 405, conflict 409, internal 500, unavailable 503. Only unavailable is retryable.
+         * @description Stable error code. HTTP status: invalid_request 400, unauthorized 401, forbidden 403, not_found 404, method_not_allowed 405, conflict 409, internal 500, unavailable 503. Only unavailable is retryable. The router-wide fallbacks use 404 not_found (path not in the contract) and 405 method_not_allowed (method not documented for the path).
          * @enum {string}
          */
         ErrorCode: "invalid_request" | "unauthorized" | "forbidden" | "not_found" | "method_not_allowed" | "conflict" | "internal" | "unavailable";

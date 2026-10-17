@@ -178,6 +178,70 @@ async fn every_documented_operation_answers_a_documented_status_and_body() {
     assert_eq!(checked_ok, json_ok, "every JSON 200 body was checked");
 }
 
+/// The router-wide fallbacks, as the contract states them: (status, ErrorCode value).
+const FALLBACKS: [(u16, &str); 2] = [(404, "not_found"), (405, "method_not_allowed")];
+
+#[test]
+fn router_fallbacks_are_documented_as_wire_conventions() {
+    let doc = contract();
+    let conventions = doc["info"]["description"]
+        .as_str()
+        .expect("info.description");
+    let codes = schema(&doc, "ErrorCode");
+    let code_doc = codes["description"]
+        .as_str()
+        .expect("ErrorCode description");
+    for (status, code) in FALLBACKS {
+        let stated = format!("{status} {code}");
+        assert!(
+            conventions.contains(&stated),
+            "info.description states {stated}"
+        );
+        assert!(
+            code_doc.contains(&stated),
+            "ErrorCode description states {stated}"
+        );
+        assert!(codes["enum"]
+            .as_array()
+            .expect("enum")
+            .contains(&json!(code)));
+    }
+    assert!(
+        conventions.contains("ApiError"),
+        "fallbacks carry the ApiError body"
+    );
+}
+
+/// Assert `body` is an `ApiError` with `code`, as the router fallbacks answer.
+fn assert_fallback_body(body: &[u8], code: &str, at: &str) {
+    let doc = contract();
+    let value: Value = serde_json::from_slice(body).expect("fallback body is JSON");
+    Checker::new(&doc)
+        .check(&value, schema(&doc, "ApiError"), at)
+        .expect("fallback body is an ApiError");
+    assert_eq!(value["code"], code, "{at}");
+}
+
+#[tokio::test]
+async fn router_fallbacks_answer_as_documented() {
+    let doc = contract();
+    let state = ApiState::new();
+    let (status, body) = call(&state, &Method::GET, "/api/v1/not-in-the-contract").await;
+    assert_eq!(status.as_u16(), FALLBACKS[0].0);
+    assert_fallback_body(&body, FALLBACKS[0].1, "unknown path");
+    // GET routes also answer HEAD in axum, so HEAD is not an undocumented method here.
+    let undocumented = ["put", "post", "delete", "patch"];
+    for (_, path, _) in routed_operations(&doc) {
+        let item = &doc["paths"][path.as_str()];
+        for name in undocumented.iter().filter(|m| item.get(**m).is_none()) {
+            let method = Method::from_bytes(name.to_uppercase().as_bytes()).expect("method");
+            let (status, body) = call(&state, &method, &path).await;
+            assert_eq!(status.as_u16(), FALLBACKS[1].0, "{method} {path}");
+            assert_fallback_body(&body, FALLBACKS[1].1, &format!("{method} {path}"));
+        }
+    }
+}
+
 #[test]
 fn every_documented_operation_has_a_unique_operation_id() {
     let doc = contract();
