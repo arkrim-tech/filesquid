@@ -362,6 +362,7 @@ fn error_codes_match_the_rust_enum_with_status_and_retryability() {
         (ErrorCode::Unauthorized, 401, false),
         (ErrorCode::Forbidden, 403, false),
         (ErrorCode::NotFound, 404, false),
+        (ErrorCode::MethodNotAllowed, 405, false),
         (ErrorCode::Conflict, 409, false),
         (ErrorCode::Internal, 500, false),
         (ErrorCode::Unavailable, 503, true),
@@ -633,9 +634,10 @@ fn error_code_all_lists_every_variant() {
         | ErrorCode::Unauthorized
         | ErrorCode::Forbidden
         | ErrorCode::NotFound
+        | ErrorCode::MethodNotAllowed
         | ErrorCode::Conflict
         | ErrorCode::Internal
         | ErrorCode::Unavailable => (),
     });
-    assert_eq!(ErrorCode::ALL.len(), 7);
+    assert_eq!(ErrorCode::ALL.len(), 8);
 }

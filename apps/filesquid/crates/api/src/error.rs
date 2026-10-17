@@ -26,6 +26,8 @@ pub enum ErrorCode {
     Forbidden,
     /// The resource does not exist or is not visible to the caller (HTTP 404).
     NotFound,
+    /// The path exists but does not accept this HTTP method (HTTP 405).
+    MethodNotAllowed,
     /// The expected revision no longer matches; reread and decide (HTTP 409).
     Conflict,
     /// The host failed while handling the request (HTTP 500).
@@ -36,11 +38,12 @@ pub enum ErrorCode {
 
 impl ErrorCode {
     /// Every error code, in contract order.
-    pub const ALL: [ErrorCode; 7] = [
+    pub const ALL: [ErrorCode; 8] = [
         ErrorCode::InvalidRequest,
         ErrorCode::Unauthorized,
         ErrorCode::Forbidden,
         ErrorCode::NotFound,
+        ErrorCode::MethodNotAllowed,
         ErrorCode::Conflict,
         ErrorCode::Internal,
         ErrorCode::Unavailable,
@@ -53,6 +56,7 @@ impl ErrorCode {
             ErrorCode::Unauthorized => StatusCode::UNAUTHORIZED,
             ErrorCode::Forbidden => StatusCode::FORBIDDEN,
             ErrorCode::NotFound => StatusCode::NOT_FOUND,
+            ErrorCode::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
             ErrorCode::Conflict => StatusCode::CONFLICT,
             ErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
             ErrorCode::Unavailable => StatusCode::SERVICE_UNAVAILABLE,

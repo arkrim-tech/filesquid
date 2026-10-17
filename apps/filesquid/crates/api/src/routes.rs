@@ -10,6 +10,7 @@ use axum::routing::{get, MethodRouter};
 use axum::{Json, Router};
 use filesquid_core::{health, HealthStatus};
 
+use crate::error::{ApiError, ErrorCode};
 use crate::{ApiState, API_PREFIX, CONTRACT};
 
 /// One route: path relative to [`API_PREFIX`] and its method handlers.
@@ -26,14 +27,35 @@ fn route_table() -> Vec<Route> {
 }
 
 /// Build the FileSquid API router. Hosts mount it unchanged.
+///
+/// Under [`API_PREFIX`], an unknown path answers a `not_found` [`ApiError`] and a known path
+/// with the wrong method answers a `method_not_allowed` [`ApiError`]. The fallbacks sit on the
+/// nested router, so a host's own fallback (the server's static UI) still answers every path
+/// outside [`API_PREFIX`].
 pub fn router(state: ApiState) -> Router {
     let api = route_table()
         .into_iter()
         .fold(Router::new(), |api, (path, handlers)| {
             api.route(path, handlers)
         })
+        // After the routes: axum applies this to the method routers registered so far.
+        .method_not_allowed_fallback(method_not_allowed)
+        .fallback(not_found)
         .with_state(state);
     Router::new().nest(API_PREFIX, api)
+}
+
+/// Fallback for an unknown path under [`API_PREFIX`].
+async fn not_found() -> ApiError {
+    ApiError::new(ErrorCode::NotFound, "This API path does not exist.")
+}
+
+/// Fallback for a known path called with a method it does not accept.
+async fn method_not_allowed() -> ApiError {
+    ApiError::new(
+        ErrorCode::MethodNotAllowed,
+        "This API path does not accept that method.",
+    )
 }
 
 /// Full paths (with [`API_PREFIX`]) of every route [`router`] serves, in table order.

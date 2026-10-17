@@ -139,6 +139,61 @@ async fn the_router_keeps_answering_after_a_failed_request() {
     monitor.shutdown();
 }
 
+#[tokio::test]
+async fn an_unknown_api_path_is_a_not_found_api_error() {
+    for path in ["/api/v1/no-such-route", "/api/v1/admin/nothing/here"] {
+        let (status, ctype, json) = get(&ApiState::new(), path, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+        assert_api_error(&json, &ctype, "not_found");
+    }
+}
+
+#[tokio::test]
+async fn a_wrong_method_is_a_method_not_allowed_api_error() {
+    let request = Request::post("/api/v1/health")
+        .body(Body::empty())
+        .expect("request");
+    let response = router(ApiState::new())
+        .oneshot(request)
+        .await
+        .expect("router answers");
+    assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    let ctype = response.headers()[header::CONTENT_TYPE].clone();
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let json: Value = serde_json::from_slice(&body).expect("response body is JSON");
+    assert_api_error(&json, ctype.to_str().expect("ascii"), "method_not_allowed");
+}
+
+#[tokio::test]
+async fn the_export_route_ignores_limit_because_it_does_not_document_it() {
+    let (state, monitor) = server_state();
+    for path in [
+        "/api/v1/admin/journal/export?limit=0",
+        "/api/v1/admin/journal/export?limit=1001",
+    ] {
+        let response = router(state.clone())
+            .oneshot(
+                Request::get(path)
+                    .header(header::AUTHORIZATION, "Bearer s3cret")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("router answers");
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "application/x-ndjson"
+        );
+    }
+    monitor.shutdown();
+}
+
 /// Detail that a failing store reports: a path and SQL that MUST NOT reach a caller.
 const SECRET_DETAIL: &str = "/home/owner/library/filesquid.sqlite: SELECT * FROM journal";
 

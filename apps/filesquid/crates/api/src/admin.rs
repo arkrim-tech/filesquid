@@ -242,6 +242,9 @@ async fn export(
     headers: HeaderMap,
     params: Result<Query<JournalParams>, QueryRejection>,
 ) -> Response {
+    // The export does not document `limit` (it always reads full pages), so a `limit` in the
+    // query string is ignored rather than validated.
+    let params = params.map(|Query(p)| Query(JournalParams { limit: None, ..p }));
     let (monitor, mut query) = match authorized_query(&state, &headers, params) {
         Ok(found) => found,
         Err(error) => return error.into_response(),

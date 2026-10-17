@@ -217,10 +217,10 @@ export interface components {
             product: string;
         };
         /**
-         * @description Stable error code. HTTP status: invalid_request 400, unauthorized 401, forbidden 403, not_found 404, conflict 409, internal 500, unavailable 503. Only unavailable is retryable.
+         * @description Stable error code. HTTP status: invalid_request 400, unauthorized 401, forbidden 403, not_found 404, method_not_allowed 405, conflict 409, internal 500, unavailable 503. Only unavailable is retryable.
          * @enum {string}
          */
-        ErrorCode: "invalid_request" | "unauthorized" | "forbidden" | "not_found" | "conflict" | "internal" | "unavailable";
+        ErrorCode: "invalid_request" | "unauthorized" | "forbidden" | "not_found" | "method_not_allowed" | "conflict" | "internal" | "unavailable";
         /** @description Body of every failed API request. */
         ApiError: {
             code: components["schemas"]["ErrorCode"];
