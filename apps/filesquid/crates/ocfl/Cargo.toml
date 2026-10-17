@@ -9,8 +9,17 @@ publish = false
 [lib]
 path = "src/lib.rs"
 
+[features]
+# `fs` ships the local filesystem storage backend and the path-based
+# logical-file helpers. It is native only: on wasm32 the backend is compiled
+# out even when the feature is on (ADR 025).
+default = ["fs"]
+fs = []
+
 [dependencies]
+sha2 = "0.11"
 thiserror = "2"
+tracing = "0.1"
 
 [dev-dependencies]
 cucumber = { version = "0.23", features = ["macros"] }
@@ -19,8 +28,32 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 [[test]]
 name = "unit_git_guard"
 path = "tests/unit/git_guard.rs"
+required-features = ["fs"]
+
+[[test]]
+name = "unit_storage_key"
+path = "tests/unit/storage_key.rs"
+
+[[test]]
+name = "integration_memory_conformance"
+path = "tests/integration/memory_conformance.rs"
+
+[[test]]
+name = "integration_fs_conformance"
+path = "tests/integration/fs_conformance.rs"
+required-features = ["fs"]
+
+[[test]]
+name = "unit_source_scan"
+path = "tests/unit/source_scan.rs"
+
+[[test]]
+name = "integration_logical_file"
+path = "tests/integration/logical_file.rs"
+required-features = ["fs"]
 
 [[test]]
 name = "features"
 path = "tests/features.rs"
 harness = false
+required-features = ["fs"]

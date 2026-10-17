@@ -2,8 +2,38 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-use cucumber::{then, when, writer, StatsWriter as _, World, WriterExt as _};
+use cucumber::{given, then, when, writer, StatsWriter as _, World, WriterExt as _};
+
+#[path = "support/source_scan.rs"]
+mod source_scan;
+use filesquid_ocfl::storage::{
+    ChunkReader, ETag, FsBackend, MemoryBackend, MultipartWriter, Precondition, StorageBackend,
+    StorageError, StorageKey, MAX_CHUNK_BYTES,
+};
+
+/// The backend a storage scenario runs against. The filesystem variant owns
+/// its scratch directory so it is removed when the scenario ends.
+#[derive(Debug)]
+enum AnyBackend {
+    Memory(MemoryBackend),
+    Fs {
+        backend: FsBackend,
+        _scratch: Scratch,
+    },
+}
+
+/// Scratch directory for one filesystem scenario, removed on drop.
+#[derive(Debug)]
+struct Scratch(PathBuf);
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
 
 #[derive(Debug, Default, World)]
 struct OcflWorld {
@@ -11,6 +41,29 @@ struct OcflWorld {
     lib: String,
     desktop_cargo: String,
     desktop_src: String,
+    backend: Option<AnyBackend>,
+    last_error: Option<StorageError>,
+    remembered: Option<ETag>,
+    uploaded: Vec<u8>,
+    chunks: Vec<Vec<u8>>,
+    pages: Vec<Vec<String>>,
+    wasm_build: Option<(bool, String)>,
+}
+
+/// Run `$body` with `$b` bound to the scenario's concrete backend.
+macro_rules! on_backend {
+    ($world:expr, $b:ident => $body:expr) => {
+        match $world.backend.as_ref().expect("Given a storage backend") {
+            AnyBackend::Memory(m) => {
+                let $b = m;
+                $body
+            }
+            AnyBackend::Fs { backend: f, .. } => {
+                let $b = f;
+                $body
+            }
+        }
+    };
 }
 
 fn read_rel(parts: &[&str]) -> String {
@@ -101,6 +154,264 @@ fn desktop_depends(world: &mut OcflWorld) {
 #[then("FileSquid should not shell out to fsquid for canonical writes")]
 fn no_cli_shell(world: &mut OcflWorld) {
     assert!(!world.desktop_src.contains("fsquid"));
+}
+
+fn key(s: &str) -> StorageKey {
+    StorageKey::new(s).expect("valid key")
+}
+
+fn new_fs_backend() -> AnyBackend {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("ocfl-features-{}-{n}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    let backend = FsBackend::new(dir.join("root"), dir.join("staging")).expect("fs backend");
+    AnyBackend::Fs {
+        backend,
+        _scratch: Scratch(dir),
+    }
+}
+
+#[given(regex = r"^an empty (in-memory|local filesystem) storage backend$")]
+fn empty_backend(world: &mut OcflWorld, kind: String) {
+    world.backend = Some(match kind.as_str() {
+        "in-memory" => AnyBackend::Memory(MemoryBackend::new()),
+        _ => new_fs_backend(),
+    });
+}
+
+#[when(expr = "I put {string} at {string}")]
+async fn put_at(world: &mut OcflWorld, text: String, raw_key: String) {
+    let result = match StorageKey::new(&raw_key) {
+        Ok(k) => on_backend!(world, b => b.put(&k, text.as_bytes()).await.map(|_| ())),
+        Err(err) => Err(err),
+    };
+    world.last_error = result.err();
+}
+
+#[then(expr = "{string} should exist with size {int}")]
+async fn exists_with_size(world: &mut OcflWorld, raw_key: String, size: u64) {
+    let k = key(&raw_key);
+    let meta = on_backend!(world, b => {
+        assert!(b.exists(&k).await.expect("exists"));
+        b.head(&k).await.expect("head")
+    });
+    assert_eq!(meta.size, size);
+}
+
+async fn stream_all<B: StorageBackend>(b: &B, k: StorageKey, chunk: u64) -> Vec<Vec<u8>> {
+    let mut reader = ChunkReader::new(b, k, chunk).expect("reader");
+    let mut chunks = Vec::new();
+    while let Some(bytes) = reader.next_chunk().await.expect("chunk") {
+        chunks.push(bytes);
+    }
+    chunks
+}
+
+#[then(expr = "streaming {string} should return {string}")]
+async fn streaming_returns(world: &mut OcflWorld, raw_key: String, text: String) {
+    let k = key(&raw_key);
+    let chunks = on_backend!(world, b => stream_all(b, k, 3).await);
+    assert_eq!(chunks.concat(), text.as_bytes());
+}
+
+#[given(expr = "{string} holds {string} and I remember its entity tag")]
+async fn holds_and_remember(world: &mut OcflWorld, raw_key: String, text: String) {
+    let k = key(&raw_key);
+    let meta = on_backend!(world, b => b
+        .put_if(&k, text.as_bytes(), &Precondition::IfAbsent)
+        .await
+        .expect("create"));
+    world.remembered = Some(meta.etag);
+}
+
+#[when(expr = "another writer replaces {string} with {string}")]
+async fn another_writer(world: &mut OcflWorld, raw_key: String, text: String) {
+    let k = key(&raw_key);
+    on_backend!(world, b => b.put(&k, text.as_bytes()).await.expect("put"));
+}
+
+#[when(
+    expr = "I replace {string} with {string} only if it still matches the remembered entity tag"
+)]
+async fn cas_replace(world: &mut OcflWorld, raw_key: String, text: String) {
+    let k = key(&raw_key);
+    let tag = world.remembered.clone().expect("remembered tag");
+    let result = on_backend!(world, b => b
+        .put_if(&k, text.as_bytes(), &Precondition::IfMatch(tag))
+        .await);
+    world.last_error = result.err();
+}
+
+#[when(expr = "I create {string} with {string} only if it is absent")]
+async fn create_if_absent(world: &mut OcflWorld, raw_key: String, text: String) {
+    let k = key(&raw_key);
+    let result = on_backend!(world, b => b
+        .put_if(&k, text.as_bytes(), &Precondition::IfAbsent)
+        .await);
+    world.last_error = result.err();
+}
+
+#[then("the write should be rejected as a precondition failure")]
+fn rejected_precondition(world: &mut OcflWorld) {
+    let err = world.last_error.take().expect("an error");
+    assert!(
+        matches!(err, StorageError::PreconditionFailed { .. }),
+        "{err:?}"
+    );
+}
+
+#[then("the write should be rejected as an invalid key")]
+fn rejected_invalid_key(world: &mut OcflWorld) {
+    let err = world.last_error.take().expect("an error");
+    assert!(matches!(err, StorageError::InvalidKey { .. }), "{err:?}");
+}
+
+async fn upload_parts<B: StorageBackend>(b: &B, k: StorageKey, data: &[u8], part: usize) {
+    let mut writer = MultipartWriter::start(b, k).await.expect("start");
+    for bytes in data.chunks(part) {
+        writer.write_part(bytes).await.expect("part");
+    }
+    writer.finish(None).await.expect("finish");
+}
+
+#[given(expr = "a {int} MiB file at {string} uploaded in {int} MiB multipart parts")]
+async fn multipart_file(world: &mut OcflWorld, mib: usize, raw_key: String, part_mib: usize) {
+    let data: Vec<u8> = (0..mib * 1024 * 1024).map(|i| (i % 249) as u8).collect();
+    let k = key(&raw_key);
+    on_backend!(world, b => upload_parts(b, k, &data, part_mib * 1024 * 1024).await);
+    world.uploaded = data;
+}
+
+#[when(expr = "I stream {string} in {int} KiB chunks")]
+async fn stream_in_chunks(world: &mut OcflWorld, raw_key: String, kib: u64) {
+    let k = key(&raw_key);
+    world.chunks = on_backend!(world, b => stream_all(b, k, kib * 1024).await);
+}
+
+#[then(expr = "every chunk should be at most {int} KiB")]
+fn chunks_bounded(world: &mut OcflWorld, kib: usize) {
+    assert!(!world.chunks.is_empty());
+    assert!(world.chunks.iter().all(|c| c.len() <= kib * 1024));
+}
+
+#[then("the streamed bytes should equal the uploaded bytes")]
+fn streamed_equal(world: &mut OcflWorld) {
+    assert_eq!(world.chunks.concat(), world.uploaded);
+}
+
+#[given(expr = "{int} files under {string}")]
+async fn files_under(world: &mut OcflWorld, count: usize, prefix: String) {
+    for i in (0..count).rev() {
+        let k = key(&format!("{prefix}file-{i}"));
+        on_backend!(world, b => b.put(&k, b"x").await.expect("put"));
+    }
+    let outside = key("elsewhere/file");
+    on_backend!(world, b => b.put(&outside, b"y").await.expect("put"));
+}
+
+async fn list_all<B: StorageBackend>(b: &B, prefix: &str, size: usize) -> Vec<Vec<String>> {
+    let mut pages = Vec::new();
+    let mut after: Option<StorageKey> = None;
+    for _ in 0..100 {
+        let page = b.list(prefix, after.as_ref(), size).await.expect("list");
+        pages.push(page.keys.iter().map(|k| k.as_str().to_string()).collect());
+        match page.next {
+            Some(next) => after = Some(next),
+            None => return pages,
+        }
+    }
+    panic!("listing did not finish within 100 pages");
+}
+
+#[when(expr = "I list {string} with a page size of {int}")]
+async fn list_pages(world: &mut OcflWorld, prefix: String, size: usize) {
+    world.pages = on_backend!(world, b => list_all(b, &prefix, size).await);
+}
+
+#[then(expr = "I should receive {int} pages of at most {int} keys each")]
+fn pages_are_bounded(world: &mut OcflWorld, pages: usize, size: usize) {
+    assert_eq!(world.pages.len(), pages);
+    for page in &world.pages {
+        assert!(!page.is_empty() && page.len() <= size, "page {page:?}");
+    }
+}
+
+#[then(expr = "the listed keys should be {string}")]
+fn listed_keys_are(world: &mut OcflWorld, expected: String) {
+    let expected: Vec<String> = expected.split(", ").map(str::to_string).collect();
+    assert_eq!(world.pages.concat(), expected);
+}
+
+#[when("I request a read chunk one byte larger than the maximum chunk size")]
+async fn oversize_chunk(world: &mut OcflWorld) {
+    let k = key("objects/a/x");
+    let result = on_backend!(world, b => {
+        b.put(&k, b"x").await.expect("put");
+        ChunkReader::new(b, k, MAX_CHUNK_BYTES + 1).map(|_| ())
+    });
+    world.last_error = result.err();
+}
+
+#[then("the read should be rejected as over the limit")]
+fn rejected_limit(world: &mut OcflWorld) {
+    let err = world.last_error.take().expect("an error");
+    assert!(matches!(err, StorageError::LimitExceeded { .. }), "{err:?}");
+}
+
+fn assert_backend<B: StorageBackend>() {}
+
+#[then("a storage backend trait with local filesystem and in-memory backends should be available")]
+fn backend_available(world: &mut OcflWorld) {
+    assert_backend::<MemoryBackend>();
+    assert_backend::<FsBackend>();
+    assert!(world.lib.contains("pub mod storage"));
+    let cargo = world.cargo.replace(' ', "");
+    assert!(
+        cargo.contains("default=[\"fs\"]"),
+        "fs MUST be a default-on feature"
+    );
+}
+
+#[then("the engine core should not call std::fs directly")]
+fn core_avoids_std_fs(_world: &mut OcflWorld) {
+    let (findings, scanned) = source_scan::io_findings_outside_allowed().expect("scan src");
+    assert!(scanned > 5, "engine sources not found");
+    assert!(
+        findings.is_empty(),
+        "direct I/O outside the fs backend: {findings:?}"
+    );
+}
+
+#[when("I build filesquid-ocfl for wasm32-unknown-unknown with default features off")]
+fn build_wasm(world: &mut OcflWorld) {
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let target_dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("wasm32-check");
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    let output = Command::new(cargo)
+        .current_dir(&workspace)
+        .env("CARGO_TARGET_DIR", &target_dir)
+        .args(["build", "-p", "filesquid-ocfl", "--locked"])
+        .args([
+            "--no-default-features",
+            "--target",
+            "wasm32-unknown-unknown",
+        ])
+        .output()
+        .expect("run cargo");
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    world.wasm_build = Some((output.status.success(), stderr));
+}
+
+#[then("the build should succeed")]
+fn build_succeeds(world: &mut OcflWorld) {
+    let (ok, stderr) = world.wasm_build.take().expect("a build ran");
+    assert!(
+        ok,
+        "wasm32 build failed. If the target is missing, run \
+         `rustup target add wasm32-unknown-unknown`.\n{stderr}"
+    );
 }
 
 fn write_junit_report(path: &PathBuf, passed: usize, failed: usize, skipped: usize) {
