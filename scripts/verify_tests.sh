@@ -31,7 +31,7 @@ if [ "$FILESQUID_SKIP_TESTS" = "1" ]; then
 fi
 
 WORKSPACE="apps/filesquid"
-MODULE_CRATES="filesquid-core filesquid-ocfl filesquid-metadata filesquid-api"
+MODULE_CRATES="filesquid-core filesquid-ocfl filesquid-metadata filesquid-c2pa filesquid-api"
 UI_PACKAGES="apps/filesquid/ui apps/imagesquid"
 FAILED=0
 

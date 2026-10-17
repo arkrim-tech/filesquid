@@ -31,7 +31,7 @@ Language manifests live **inside** `apps/`, never at the repository root:
 
 | Path | What it is |
 |---|---|
-| `apps/filesquid/` | Cargo workspace: `crates/{core,ocfl,metadata,cli,api,server,desktop}`; `crates/c2pa` is planned (docs and tests only, not yet a workspace member) |
+| `apps/filesquid/` | Cargo workspace: `crates/{core,ocfl,metadata,c2pa,cli,api,server,desktop}` |
 | `apps/filesquid/ui/` | `@filesquid/ui`: API client, custom elements, design tokens and the default FileSquid UI (vanilla TypeScript, Vite; ports 5173 dev / 4173 preview) |
 | `apps/imagesquid/` | The ImageSquid distribution: views, tokens, labels, brand; no backend code (ports 5174 / 4174) |
 | `scripts/docs/` | Documentation validators (requirement coverage, PRD allocation, links, ADR structure) |
