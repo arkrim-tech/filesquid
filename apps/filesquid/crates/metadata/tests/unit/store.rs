@@ -44,3 +44,78 @@ fn csv_line_break_survives_save_and_load() {
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// The store runs over any `filesquid-ocfl` storage backend, not only a
+/// local directory (IO-0.1, ADR 025).
+mod backend_store {
+    use filesquid_metadata::record::Record;
+    use filesquid_metadata::store::{load_from, metadata_key, save_to, METADATA_MD};
+    use filesquid_metadata::MetadataNamespace;
+    use filesquid_ocfl::storage::{complete_immediately, MemoryBackend, StorageBackend};
+
+    #[test]
+    fn metadata_key_joins_the_object_prefix() {
+        assert_eq!(metadata_key("").unwrap().as_str(), METADATA_MD);
+        assert_eq!(
+            metadata_key("objects/a/").unwrap().as_str(),
+            "objects/a/metadata.md"
+        );
+        assert_eq!(
+            metadata_key("objects/a").unwrap().as_str(),
+            "objects/a/metadata.md"
+        );
+        assert!(metadata_key("../a").is_err());
+    }
+
+    #[test]
+    fn absolute_prefixes_are_rejected() {
+        assert!(metadata_key("/").is_err());
+        assert!(metadata_key("/objects/a").is_err());
+    }
+
+    #[test]
+    fn records_larger_than_one_put_are_saved_through_multipart() {
+        let backend = MemoryBackend::new();
+        let key = metadata_key("objects/a").unwrap();
+        let long = "x".repeat(9 * 1024 * 1024);
+        let mut record = Record::default();
+        record
+            .set(MetadataNamespace::Dcterms, "description", &long)
+            .unwrap();
+        complete_immediately(save_to(&backend, &key, &record))
+            .unwrap()
+            .unwrap();
+        let loaded = complete_immediately(load_from(&backend, &key))
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded.get("dcterms:description").unwrap().value, long);
+    }
+
+    #[test]
+    fn missing_metadata_md_is_an_empty_record() {
+        let backend = MemoryBackend::new();
+        let key = metadata_key("objects/a").unwrap();
+        let record = complete_immediately(load_from(&backend, &key))
+            .unwrap()
+            .unwrap();
+        assert!(record.get("dcterms:title").is_none());
+    }
+
+    #[test]
+    fn save_then_load_through_a_memory_backend() {
+        let backend = MemoryBackend::new();
+        let key = metadata_key("objects/a").unwrap();
+        let mut record = Record::default();
+        record
+            .set(MetadataNamespace::Dcterms, "title", "Harbour")
+            .unwrap();
+        complete_immediately(save_to(&backend, &key, &record))
+            .unwrap()
+            .unwrap();
+        assert!(complete_immediately(backend.exists(&key)).unwrap().unwrap());
+        let loaded = complete_immediately(load_from(&backend, &key))
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded.get("dcterms:title").unwrap().value, "Harbour");
+    }
+}
