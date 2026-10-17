@@ -1009,7 +1009,7 @@ The system MUST implement [PRD F-056](./prd.md#f-056-single-filesquid-api) with 
 - [`health.feature`](../apps/filesquid/crates/server/tests/features/health.feature)
 - [`versioned_api_contract_F-056.feature`](../apps/filesquid/crates/api/tests/features/versioned_api_contract_F-056.feature) (versioned contract, typed errors); contract drift is covered by [`contract.rs`](../apps/filesquid/crates/api/tests/unit/contract.rs) and the Vitest [`contract.test.ts`](../apps/filesquid/ui/tests/unit/contract.test.ts)
 - [`event_channel_F-056.feature`](../apps/filesquid/crates/api/tests/features/event_channel_F-056.feature) (transport-agnostic routes, bounded event channel, resync hints)
-- Test gap: deny-by-default authorisation scenarios are not yet written (API-F1.7).
+- [`deny_by_default_authorisation_F-056.feature`](../apps/filesquid/crates/api/tests/features/deny_by_default_authorisation_F-056.feature) (every route, fallback and host route refuses a call without an accepted credential; typed, journaled denials); every route is also covered by [`auth.rs`](../apps/filesquid/crates/api/tests/unit/auth.rs), the server's [`auth.rs`](../apps/filesquid/crates/server/tests/integration/auth.rs) and the desktop's [`api_protocol.rs`](../apps/filesquid/crates/desktop/tests/integration/api_protocol.rs)
 
 ### SRS-F-057: Desktop and server hosts
 

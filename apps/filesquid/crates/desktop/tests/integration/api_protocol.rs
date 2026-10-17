@@ -1,14 +1,27 @@
 //! Integration tests for the desktop transport: the FileSquid API served through the
 //! `filesquid://` custom URI scheme, without a TCP listener (ADR 030, FileSquid T-049).
 
+use filesquid_api::auth::LaunchToken;
 use filesquid_api::ApiState;
-use filesquid_desktop_lib::api_protocol::{handle, SCHEME};
+use filesquid_desktop_lib::api_protocol::{handle, launch_token_script, APP_ORIGINS, SCHEME};
+use filesquid_desktop_lib::install_launch_token;
 
-/// Build a GET request the way the webview delivers it to the scheme handler.
-fn get(uri: &str, origin: Option<&str>) -> http::Request<Vec<u8>> {
+/// API state with a freshly generated per-launch token installed, as the desktop host does.
+fn launched() -> (ApiState, LaunchToken) {
+    let state = ApiState::new();
+    let token = install_launch_token(&state).expect("per-launch token");
+    (state, token)
+}
+
+/// Build a GET request the way the webview delivers it to the scheme handler, carrying the
+/// per-launch token when one is given.
+fn get_with(uri: &str, origin: Option<&str>, token: Option<&str>) -> http::Request<Vec<u8>> {
     let mut builder = http::Request::get(uri);
     if let Some(origin) = origin {
         builder = builder.header(http::header::ORIGIN, origin);
+    }
+    if let Some(token) = token {
+        builder = builder.header(http::header::AUTHORIZATION, format!("Bearer {token}"));
     }
     builder.body(Vec::new()).expect("request")
 }
@@ -20,11 +33,9 @@ fn scheme_name_is_filesquid() {
 
 #[tokio::test]
 async fn health_is_served_through_the_custom_scheme() {
-    let response = handle(
-        ApiState::new(),
-        get("filesquid://localhost/api/v1/health", None),
-    )
-    .await;
+    let (state, token) = launched();
+    let uri = "filesquid://localhost/api/v1/health";
+    let response = handle(state, get_with(uri, None, Some(token.secret()))).await;
     assert_eq!(response.status(), http::StatusCode::OK);
     let json: serde_json::Value = serde_json::from_slice(response.body()).expect("json");
     assert_eq!(json["product"], "filesquid");
@@ -32,24 +43,18 @@ async fn health_is_served_through_the_custom_scheme() {
 
 #[tokio::test]
 async fn windows_style_scheme_urls_are_served_too() {
-    let response = handle(
-        ApiState::new(),
-        get("http://filesquid.localhost/api/v1/health", None),
-    )
-    .await;
+    let (state, token) = launched();
+    let uri = "http://filesquid.localhost/api/v1/health";
+    let response = handle(state, get_with(uri, None, Some(token.secret()))).await;
     assert_eq!(response.status(), http::StatusCode::OK);
 }
 
 #[tokio::test]
 async fn app_origins_receive_cors_headers() {
-    let response = handle(
-        ApiState::new(),
-        get(
-            "filesquid://localhost/api/v1/health",
-            Some("tauri://localhost"),
-        ),
-    )
-    .await;
+    let (state, token) = launched();
+    let uri = "filesquid://localhost/api/v1/health";
+    let request = get_with(uri, Some("tauri://localhost"), Some(token.secret()));
+    let response = handle(state, request).await;
     assert_eq!(
         response.headers()[http::header::ACCESS_CONTROL_ALLOW_ORIGIN],
         "tauri://localhost"
@@ -58,14 +63,10 @@ async fn app_origins_receive_cors_headers() {
 
 #[tokio::test]
 async fn foreign_origins_receive_no_cors_headers() {
-    let response = handle(
-        ApiState::new(),
-        get(
-            "filesquid://localhost/api/v1/health",
-            Some("https://evil.example"),
-        ),
-    )
-    .await;
+    let (state, token) = launched();
+    let uri = "filesquid://localhost/api/v1/health";
+    let request = get_with(uri, Some("https://evil.example"), Some(token.secret()));
+    let response = handle(state, request).await;
     assert!(response
         .headers()
         .get(http::header::ACCESS_CONTROL_ALLOW_ORIGIN)
@@ -74,36 +75,118 @@ async fn foreign_origins_receive_no_cors_headers() {
 
 #[tokio::test]
 async fn unknown_paths_are_not_found() {
-    let response = handle(
-        ApiState::new(),
-        get("filesquid://localhost/api/v1/nope", None),
-    )
-    .await;
+    let (state, token) = launched();
+    let uri = "filesquid://localhost/api/v1/nope";
+    let response = handle(state, get_with(uri, None, Some(token.secret()))).await;
     assert_eq!(response.status(), http::StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
-async fn the_desktop_owner_reaches_admin_routes_without_a_token() {
-    use filesquid_api::admin::AdminAuth;
+async fn the_desktop_owner_reaches_admin_routes_with_the_per_launch_token() {
     use filesquid_api::journal::MemoryJournal;
     use filesquid_api::monitor::{Monitor, MonitorConfig};
-    let state = ApiState::new();
+    let (state, token) = launched();
     let monitor = Monitor::start(
         std::sync::Arc::new(MemoryJournal::new("desktop")),
-        MonitorConfig::new("desktop", std::env::temp_dir(), AdminAuth::Owner),
+        MonitorConfig::new("desktop", std::env::temp_dir()),
         state.events.clone(),
     );
     state.install_monitor(monitor.clone());
-    let response = handle(
-        state,
-        get(
-            "filesquid://localhost/api/v1/admin/health",
-            Some("tauri://localhost"),
-        ),
-    )
-    .await;
+    let uri = "filesquid://localhost/api/v1/admin/health";
+    let request = get_with(uri, Some("tauri://localhost"), Some(token.secret()));
+    let response = handle(state, request).await;
     assert_eq!(response.status(), http::StatusCode::OK);
     let json: serde_json::Value = serde_json::from_slice(response.body()).expect("json");
     assert!(json["status"].is_string());
     monitor.shutdown();
+}
+
+#[tokio::test]
+async fn a_call_without_the_per_launch_token_is_refused() {
+    let (state, _token) = launched();
+    for path in filesquid_api::routed_paths() {
+        let uri = format!("filesquid://localhost{path}");
+        let request = get_with(&uri, Some("tauri://localhost"), None);
+        let response = handle(state.clone(), request).await;
+        assert_eq!(response.status(), http::StatusCode::UNAUTHORIZED, "{path}");
+        let json: serde_json::Value = serde_json::from_slice(response.body()).expect("json");
+        assert_eq!(json["reason"], "missing_credentials", "{path}");
+    }
+}
+
+#[tokio::test]
+async fn a_token_from_another_launch_is_refused() {
+    let (state, _token) = launched();
+    let other = LaunchToken::generate().expect("random token");
+    let uri = "filesquid://localhost/api/v1/health";
+    let response = handle(state, get_with(uri, None, Some(other.secret()))).await;
+    assert_eq!(response.status(), http::StatusCode::FORBIDDEN);
+}
+
+#[test]
+fn each_launch_installs_a_new_token_once() {
+    let (state, first) = launched();
+    assert!(
+        install_launch_token(&state).is_err(),
+        "a second token is refused"
+    );
+    let (_, second) = launched();
+    assert_ne!(first.secret(), second.secret());
+}
+
+/// A CORS preflight the webview sends before a cross-origin request with `Authorization`.
+fn preflight(origin: &str) -> http::Request<Vec<u8>> {
+    http::Request::builder()
+        .method(http::Method::OPTIONS)
+        .uri("filesquid://localhost/api/v1/health")
+        .header(http::header::ORIGIN, origin)
+        .header(http::header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
+        .header(
+            http::header::ACCESS_CONTROL_REQUEST_HEADERS,
+            "authorization",
+        )
+        .body(Vec::new())
+        .expect("request")
+}
+
+#[tokio::test]
+async fn app_origins_may_preflight_the_authorization_header() {
+    let (state, _token) = launched();
+    let response = handle(state, preflight("tauri://localhost")).await;
+    assert_eq!(response.status(), http::StatusCode::NO_CONTENT);
+    let headers = response.headers();
+    assert_eq!(
+        headers[http::header::ACCESS_CONTROL_ALLOW_ORIGIN],
+        "tauri://localhost"
+    );
+    let allowed = headers[http::header::ACCESS_CONTROL_ALLOW_HEADERS]
+        .to_str()
+        .expect("ascii");
+    assert!(allowed.contains("authorization"), "{allowed}");
+    assert!(response.body().is_empty());
+}
+
+#[tokio::test]
+async fn foreign_origins_get_no_preflight_grant() {
+    let (state, _token) = launched();
+    let response = handle(state, preflight("https://evil.example")).await;
+    assert!(response
+        .headers()
+        .get(http::header::ACCESS_CONTROL_ALLOW_ORIGIN)
+        .is_none());
+    assert_ne!(response.status(), http::StatusCode::NO_CONTENT);
+}
+
+#[test]
+fn the_init_script_hands_the_token_only_to_app_origins() {
+    let token = LaunchToken::generate().expect("random token");
+    let script = launch_token_script(&token);
+    assert!(script.contains(token.secret()));
+    assert!(script.contains("__FILESQUID_LAUNCH_TOKEN__"));
+    assert!(script.contains("window.location.origin"));
+    for origin in APP_ORIGINS {
+        assert!(script.contains(origin), "{origin}");
+    }
+    assert!(!script.contains("evil.example"));
+    assert!(script.contains("writable: false"));
 }

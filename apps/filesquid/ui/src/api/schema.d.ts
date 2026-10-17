@@ -47,7 +47,7 @@ export interface paths {
         };
         /**
          * Push events (WebSocket on filesquid-server; Tauri events named filesquid-event on filesquid-desktop).
-         * @description One event channel for job progress and change notifications. Each event is an ApiEvent whose topic is an EventTopic; x-filesquid-event-payloads names the payload schema of each topic. Events are hints, not state: a client MUST NOT depend on receiving every event. A subscriber that falls more than 256 events behind, or whose next event encodes to more than 65536 bytes, receives one events.resync event (EventResync) instead of the events it missed and MUST reread the state it shows through the request routes; a client that reconnects MUST do the same. At most 64 subscribers are served at once.
+         * @description One event channel for job progress and change notifications. Each event is an ApiEvent whose topic is an EventTopic; x-filesquid-event-payloads names the payload schema of each topic. Events are hints, not state: a client MUST NOT depend on receiving every event. A subscriber that falls more than 256 events behind, or whose next event encodes to more than 65536 bytes, receives one events.resync event (EventResync) instead of the events it missed and MUST reread the state it shows through the request routes; a client that reconnects MUST do the same. At most 64 subscribers are served at once. Authorisation: send Authorization: Bearer <token>; a browser, which cannot set headers on a WebSocket, offers the subprotocols filesquid.events.v1 and filesquid.bearer.<token> instead, and the server selects filesquid.events.v1. A refused upgrade answers 401 or 403 with an ApiError body instead of switching protocols.
          */
         get: operations["subscribeEvents"];
         put?: never;
@@ -234,13 +234,19 @@ export interface components {
          * @enum {string}
          */
         ErrorCode: "invalid_request" | "unauthorized" | "forbidden" | "not_found" | "method_not_allowed" | "conflict" | "internal" | "unavailable";
-        /** @description Body of every failed API request. */
+        /**
+         * @description Why the authorisation layer refused a call: missing_credentials (401 unauthorized), invalid_credentials (403 forbidden: the credential is not accepted by this host) or not_permitted (403 forbidden: the caller is known but may not perform this operation). Never retryable.
+         * @enum {string}
+         */
+        DenialReason: "missing_credentials" | "invalid_credentials" | "not_permitted";
+        /** @description Body of every failed API request. Authorisation denials (401 unauthorized, 403 forbidden) also carry `reason`. */
         ApiError: {
             code: components["schemas"]["ErrorCode"];
             /** @description Human-readable message the UI can show. Never contains paths, SQL or internal error text. */
             message: string;
             /** @description True when repeating the same request unchanged may succeed. */
             retryable: boolean;
+            reason?: components["schemas"]["DenialReason"];
         };
         /** @description Error reported by a module port, with retryability (CORE-S-005). */
         PortError: {
@@ -299,7 +305,7 @@ export interface components {
                 "application/json": components["schemas"]["ApiError"];
             };
         };
-        /** @description No credentials (unauthorized; server only). */
+        /** @description No credentials were presented (unauthorized, reason missing_credentials). */
         Unauthorized: {
             headers: {
                 [name: string]: unknown;
@@ -308,7 +314,7 @@ export interface components {
                 "application/json": components["schemas"]["ApiError"];
             };
         };
-        /** @description Wrong credentials (forbidden). */
+        /** @description The credentials are not accepted (reason invalid_credentials) or do not permit this operation (reason not_permitted). */
         Forbidden: {
             headers: {
                 [name: string]: unknown;
@@ -366,6 +372,8 @@ export interface operations {
                     "application/json": components["schemas"]["HealthStatus"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     getContract: {
@@ -386,6 +394,8 @@ export interface operations {
                     "application/json": unknown;
                 };
             };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     subscribeEvents: {
@@ -404,6 +414,8 @@ export interface operations {
                 };
                 content?: never;
             };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     getAdminHealth: {

@@ -1,16 +1,40 @@
 //! Integration test: events published on the API bus reach a WebSocket client of
 //! `GET /api/v1/events` on a real TCP listener.
 
+use filesquid_api::auth::Authoriser;
 use filesquid_api::{ApiEvent, ApiState};
 use filesquid_server::{app, ServerConfig};
 use futures_util::StreamExt;
+use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::net::TcpListener;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::http::Request;
 use tokio_tungstenite::tungstenite::Message;
+
+/// Administrator token the test server accepts.
+const TOKEN: &str = "events-token";
+
+/// API state whose authoriser accepts [`TOKEN`].
+fn authorised_state() -> ApiState {
+    let state = ApiState::new();
+    state.install_authoriser(Authoriser::server_administrator(TOKEN));
+    state
+}
+
+/// WebSocket handshake request for the event channel carrying [`TOKEN`] as a bearer header.
+fn events_request(addr: SocketAddr) -> Request<()> {
+    let mut request = format!("ws://{addr}/api/v1/events")
+        .into_client_request()
+        .expect("request");
+    let bearer = format!("Bearer {TOKEN}").parse().expect("header value");
+    request.headers_mut().insert("authorization", bearer);
+    request
+}
 
 #[tokio::test]
 async fn websocket_clients_receive_published_events() {
-    let state = ApiState::new();
+    let state = authorised_state();
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("ephemeral port");
@@ -18,7 +42,7 @@ async fn websocket_clients_receive_published_events() {
     let router = app(&ServerConfig::default(), state.clone());
     let server = tokio::spawn(async move { axum::serve(listener, router).await });
 
-    let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/api/v1/events"))
+    let (mut socket, _) = tokio_tungstenite::connect_async(events_request(addr))
         .await
         .expect("websocket handshake");
 
@@ -51,7 +75,7 @@ async fn websocket_clients_receive_published_events() {
 
 #[tokio::test]
 async fn closing_an_idle_client_drops_its_subscription() {
-    let state = ApiState::new();
+    let state = authorised_state();
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("ephemeral port");
@@ -59,7 +83,7 @@ async fn closing_an_idle_client_drops_its_subscription() {
     let router = app(&ServerConfig::default(), state.clone());
     let server = tokio::spawn(async move { axum::serve(listener, router).await });
 
-    let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/api/v1/events"))
+    let (mut socket, _) = tokio_tungstenite::connect_async(events_request(addr))
         .await
         .expect("websocket handshake");
     let noop = || ApiEvent::new("noop", serde_json::Value::Null);

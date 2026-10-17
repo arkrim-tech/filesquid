@@ -3,7 +3,6 @@
 //! Each host starts one [`Monitor`], installs it in [`crate::ApiState`], and calls
 //! [`Monitor::tick`] about once a second.
 
-use crate::admin::AdminAuth;
 use crate::events::topic;
 use crate::health::{evaluate, HealthInputs, HealthReport, HealthStatus, ERROR_WINDOW_MS};
 use crate::journal::{
@@ -25,8 +24,6 @@ pub struct MonitorConfig {
     pub data_dir: PathBuf,
     /// Journal writer queue settings.
     pub writer: WriterConfig,
-    /// Who may call the admin routes.
-    pub auth: AdminAuth,
     /// Journal retention (default: keep everything).
     pub retention: RetentionPolicy,
     /// Clock for the registry and health window.
@@ -34,13 +31,13 @@ pub struct MonitorConfig {
 }
 
 impl MonitorConfig {
-    /// Defaults: 1 024-entry queue, keep everything, system clock.
-    pub fn new(host: impl Into<String>, data_dir: impl Into<PathBuf>, auth: AdminAuth) -> Self {
+    /// Defaults: 1 024-entry queue, keep everything, system clock. Who may read the monitor
+    /// is decided by the host's [`crate::auth::Authoriser`], not here.
+    pub fn new(host: impl Into<String>, data_dir: impl Into<PathBuf>) -> Self {
         Self {
             host: host.into(),
             data_dir: data_dir.into(),
             writer: WriterConfig::default(),
-            auth,
             retention: RetentionPolicy::KeepAll,
             clock: system_clock(),
         }
@@ -110,11 +107,6 @@ impl Monitor {
     /// The journal store (for queries).
     pub fn store(&self) -> Arc<dyn JournalStore> {
         self.inner.store.clone()
-    }
-
-    /// Who may call the admin routes.
-    pub fn auth(&self) -> &AdminAuth {
-        &self.inner.config.auth
     }
 
     /// Host name.
@@ -248,7 +240,6 @@ impl HostMonitor {
     pub fn open(
         data_dir: &std::path::Path,
         host: &str,
-        auth: AdminAuth,
         state: &crate::ApiState,
         layer: Option<&crate::trace_layer::JournalLayer>,
     ) -> Result<Self, String> {
@@ -258,7 +249,7 @@ impl HostMonitor {
             .map_err(|e| e.to_string())?;
         let monitor = Monitor::start(
             Arc::new(store),
-            MonitorConfig::new(host, data_dir, auth),
+            MonitorConfig::new(host, data_dir),
             state.events.clone(),
         );
         state.install_monitor(monitor.clone());

@@ -2,14 +2,15 @@
 //!
 //! Reads `FILESQUID_BIND` (default `127.0.0.1:8083`), `FILESQUID_UI_DIR` (optional built
 //! distribution UI), `FILESQUID_DATA_DIR` (default `./filesquid-data`; operational store and
-//! admin token) and `FILESQUID_ADMIN_TOKEN` (optional). Logs JSON to stdout only; activity is
-//! recorded in the activity journal (ADR 033).
+//! admin token) and `FILESQUID_ADMIN_TOKEN` (optional). Every API call needs the administrator
+//! token (deny-by-default, API-S-004). Logs JSON to stdout only; activity is recorded in the
+//! activity journal (ADR 033).
 
 mod telemetry;
 
 use filesquid_api::trace_layer::JournalLayer;
 use filesquid_api::ApiState;
-use filesquid_server::{app, start_host_monitor, ServerConfig};
+use filesquid_server::{app, install_admin_authoriser, start_host_monitor, ServerConfig};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
@@ -30,6 +31,10 @@ async fn main() {
         }
     };
     let state = ApiState::new();
+    if let Err(message) = install_admin_authoriser(&config, &state) {
+        tracing::error!(%message, "cannot set up API authorisation");
+        std::process::exit(2);
+    }
     let host = match start_host_monitor(&config, &state, Some(&layer)) {
         Ok(host) => Arc::new(host),
         Err(message) => {

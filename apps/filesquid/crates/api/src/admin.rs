@@ -1,8 +1,11 @@
 //! Admin routes of the FileSquid API: health, processes, journal (query and JSON Lines export)
-//! and metrics (SRS-F-061). Only the desktop owner or a server administrator may call them.
+//! and metrics (SRS-F-061). Only the desktop owner or a server administrator may call them:
+//! every route performs [`Action::ReadMonitor`], which the [`crate::auth`] layer authorises
+//! before the handler runs.
 //!
 //! Every failure answers with a typed [`ApiError`] (API-S-009).
 
+use crate::auth::Action;
 use crate::error::{ApiError, ErrorCode};
 use crate::journal::{parse_rfc3339_ms, JournalQuery, Level, Outcome, MAX_PAGE};
 use crate::monitor::Monitor;
@@ -11,7 +14,7 @@ use crate::routes::Route;
 use crate::ApiState;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
-use axum::http::{header, HeaderMap};
+use axum::http::header;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Json;
@@ -24,79 +27,26 @@ const MAX_EXPORT_PAGES: usize = 1_000;
 /// left; pass its value as `after` to continue.
 pub const NEXT_CURSOR_HEADER: &str = "x-journal-next-cursor";
 
-/// Who may call admin routes.
-#[derive(Clone, Debug)]
-pub enum AdminAuth {
-    /// The desktop owner: the `filesquid://` scheme is reachable only from the app's webviews.
-    Owner,
-    /// Server administrators presenting `Authorization: Bearer <token>`. Interim until
-    /// accounts and roles arrive (Task FS-1.4).
-    Bearer(String),
-}
-
-impl AdminAuth {
-    /// Bearer-token authorisation.
-    pub fn bearer(token: impl Into<String>) -> Self {
-        AdminAuth::Bearer(token.into())
-    }
-
-    /// Check request headers: an `unauthorized` error (401) without credentials, a
-    /// `forbidden` error (403) with wrong ones.
-    pub fn check(&self, headers: &HeaderMap) -> Result<(), ApiError> {
-        let AdminAuth::Bearer(expected) = self else {
-            return Ok(());
-        };
-        let presented = headers
-            .get(header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("Bearer "))
-            .ok_or_else(|| {
-                ApiError::new(ErrorCode::Unauthorized, "Sign in as an administrator.")
-            })?;
-        if constant_time_eq(presented.as_bytes(), expected.as_bytes()) {
-            Ok(())
-        } else {
-            Err(ApiError::new(
-                ErrorCode::Forbidden,
-                "These credentials cannot read the monitor.",
-            ))
-        }
-    }
-}
-
-/// Generate a random 256-bit admin token as 64 hex characters.
-pub fn generate_token() -> Result<String, String> {
-    let mut bytes = [0u8; 32];
-    getrandom::fill(&mut bytes).map_err(|e| e.to_string())?;
-    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
-}
-
-/// Compare without early exit so timing does not reveal the token.
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
-}
-
 /// Admin routes, relative to the API prefix.
 pub(crate) fn routes() -> Vec<Route> {
     vec![
-        ("/admin/health", get(health)),
-        ("/admin/processes", get(processes)),
-        ("/admin/journal", get(journal)),
-        ("/admin/journal/export", get(export)),
-        ("/admin/metrics", get(metrics)),
+        ("/admin/health", get(health), Action::ReadMonitor),
+        ("/admin/processes", get(processes), Action::ReadMonitor),
+        ("/admin/journal", get(journal), Action::ReadMonitor),
+        ("/admin/journal/export", get(export), Action::ReadMonitor),
+        ("/admin/metrics", get(metrics), Action::ReadMonitor),
     ]
 }
 
-/// Resolve the monitor and check the caller (`unavailable` before the monitor starts).
-fn authorize(state: &ApiState, headers: &HeaderMap) -> Result<Monitor, ApiError> {
-    let monitor = state.monitor().ok_or_else(|| {
+/// Resolve the installed monitor (`unavailable` before the monitor starts). The caller was
+/// already authorised for [`Action::ReadMonitor`] by the route's guard.
+fn installed_monitor(state: &ApiState) -> Result<Monitor, ApiError> {
+    state.monitor().ok_or_else(|| {
         ApiError::new(
             ErrorCode::Unavailable,
             "The monitor is starting. Try again in a moment.",
         )
-    })?;
-    monitor.auth().check(headers)?;
-    Ok(monitor)
+    })
 }
 
 /// Run blocking store or filesystem work off the async executor; a panicked task becomes
@@ -110,8 +60,8 @@ async fn blocking<T: Send + 'static>(
         .map_err(|e| ApiError::internal(operation, &e.to_string()))
 }
 
-async fn health(State(state): State<ApiState>, headers: HeaderMap) -> Response {
-    let monitor = match authorize(&state, &headers) {
+async fn health(State(state): State<ApiState>) -> Response {
+    let monitor = match installed_monitor(&state) {
         Ok(m) => m,
         Err(error) => return error.into_response(),
     };
@@ -121,15 +71,15 @@ async fn health(State(state): State<ApiState>, headers: HeaderMap) -> Response {
     }
 }
 
-async fn processes(State(state): State<ApiState>, headers: HeaderMap) -> Response {
-    match authorize(&state, &headers) {
+async fn processes(State(state): State<ApiState>) -> Response {
+    match installed_monitor(&state) {
         Ok(m) => Json(m.registry().snapshot()).into_response(),
         Err(error) => error.into_response(),
     }
 }
 
-async fn metrics(State(state): State<ApiState>, headers: HeaderMap) -> Response {
-    match authorize(&state, &headers) {
+async fn metrics(State(state): State<ApiState>) -> Response {
+    match installed_monitor(&state) {
         Ok(m) => Json(m.metrics().snapshot()).into_response(),
         Err(error) => error.into_response(),
     }
@@ -206,14 +156,14 @@ fn bad_request(param: &str) -> ApiError {
     )
 }
 
-/// Authorize the caller, then turn the (possibly rejected) query string into a store query.
-/// Authorization comes first so an anonymous caller learns nothing about parameters.
-fn authorized_query(
+/// Resolve the monitor, then turn the (possibly rejected) query string into a store query.
+/// The route's guard has already authorised the caller, so an anonymous caller never reaches
+/// parameter validation and learns nothing about parameters.
+fn monitor_query(
     state: &ApiState,
-    headers: &HeaderMap,
     params: Result<Query<JournalParams>, QueryRejection>,
 ) -> Result<(Monitor, JournalQuery), ApiError> {
-    let monitor = authorize(state, headers)?;
+    let monitor = installed_monitor(state)?;
     let Query(params) = params
         .map_err(|_| ApiError::new(ErrorCode::InvalidRequest, "The query string is malformed."))?;
     let query = params.to_query().map_err(bad_request)?;
@@ -222,10 +172,9 @@ fn authorized_query(
 
 async fn journal(
     State(state): State<ApiState>,
-    headers: HeaderMap,
     params: Result<Query<JournalParams>, QueryRejection>,
 ) -> Response {
-    let (monitor, query) = match authorized_query(&state, &headers, params) {
+    let (monitor, query) = match monitor_query(&state, params) {
         Ok(found) => found,
         Err(error) => return error.into_response(),
     };
@@ -239,13 +188,12 @@ async fn journal(
 
 async fn export(
     State(state): State<ApiState>,
-    headers: HeaderMap,
     params: Result<Query<JournalParams>, QueryRejection>,
 ) -> Response {
     // The export does not document `limit` (it always reads full pages), so a `limit` in the
     // query string is ignored rather than validated.
     let params = params.map(|Query(p)| Query(JournalParams { limit: None, ..p }));
-    let (monitor, mut query) = match authorized_query(&state, &headers, params) {
+    let (monitor, mut query) = match monitor_query(&state, params) {
         Ok(found) => found,
         Err(error) => return error.into_response(),
     };
@@ -301,45 +249,6 @@ fn export_response(text: String, next: Option<i64>) -> Response {
             .insert(NEXT_CURSOR_HEADER, header::HeaderValue::from(cursor));
     }
     response
-}
-
-/// Return the server admin token: `configured` if given, else the token stored in
-/// `<data_dir>/admin-token`, else a new random token written there with owner-only
-/// permissions (Unix mode 0600). Returns the token and whether it was created. Performs
-/// filesystem I/O. Interim until accounts and roles arrive (Task FS-1.4).
-pub fn load_or_create_token(
-    data_dir: &std::path::Path,
-    configured: Option<&str>,
-) -> Result<(String, bool), String> {
-    if let Some(token) = configured.filter(|t| !t.trim().is_empty()) {
-        return Ok((token.trim().to_string(), false));
-    }
-    let path = data_dir.join("admin-token");
-    if let Ok(existing) = std::fs::read_to_string(&path) {
-        if !existing.trim().is_empty() {
-            return Ok((existing.trim().to_string(), false));
-        }
-    }
-    std::fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
-    let token = generate_token()?;
-    write_private(&path, &token)?;
-    Ok((token, true))
-}
-
-/// Write `text` to `path`, readable and writable by the owner only on Unix.
-fn write_private(path: &std::path::Path, text: &str) -> Result<(), String> {
-    use std::io::Write;
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options
-        .open(path)
-        .map_err(|e| format!("write {}: {e}", path.display()))?;
-    file.write_all(text.as_bytes()).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

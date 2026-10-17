@@ -3,21 +3,31 @@
 //! The webview reaches the API through the `filesquid://` custom URI scheme
 //! (`http://filesquid.localhost` on Windows and Android). Requests are answered in-process
 //! by [`filesquid_api::router`]; no TCP port is opened (ADR 030, FileSquid T-049).
+//!
+//! Every request MUST carry the per-launch token as `Authorization: Bearer <token>`; the
+//! router refuses anything else (deny-by-default, API-S-004). The host hands the token only
+//! to pages of its own [`APP_ORIGINS`] through [`launch_token_script`], and answers the CORS
+//! preflight those pages send before a request with an `Authorization` header.
 
 use axum::body::Body;
+use filesquid_api::auth::LaunchToken;
 use filesquid_api::ApiState;
-use http::header::{ACCESS_CONTROL_ALLOW_ORIGIN, ORIGIN, VARY};
-use http::{HeaderValue, Request, Response, StatusCode};
+use http::header::{
+    ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
+    ACCESS_CONTROL_MAX_AGE, ACCESS_CONTROL_REQUEST_METHOD, ORIGIN, VARY,
+};
+use http::{HeaderValue, Method, Request, Response, StatusCode};
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
 /// Custom URI scheme name registered with Tauri.
 pub const SCHEME: &str = "filesquid";
 
-/// Page origins of the app's own webviews that may call the API cross-origin.
-/// The scheme is only reachable from this app's webviews; the allowlist keeps
-/// other origins (for example a page navigated to by mistake) from reading responses.
-const APP_ORIGINS: &[&str] = &[
+/// Page origins of the app's own webviews that may call the API cross-origin and receive the
+/// per-launch token. The scheme is only reachable from this app's webviews; the allowlist
+/// keeps other origins (for example a page navigated to by mistake) from reading responses
+/// or learning the token.
+pub const APP_ORIGINS: &[&str] = &[
     "tauri://localhost",
     "http://tauri.localhost",
     "https://tauri.localhost",
@@ -25,15 +35,79 @@ const APP_ORIGINS: &[&str] = &[
     "http://127.0.0.1:5174",
 ];
 
+/// Request headers an app page may send cross-origin (answered in the CORS preflight).
+const ALLOWED_HEADERS: &str = "authorization, content-type";
+
+/// Methods an app page may use cross-origin (answered in the CORS preflight).
+const ALLOWED_METHODS: &str = "GET, HEAD, POST, PUT, PATCH, DELETE";
+
+/// Seconds a webview may cache a preflight answer.
+const PREFLIGHT_MAX_AGE: &str = "600";
+
+/// Global the init script defines in app pages to hold the per-launch token.
+pub const TOKEN_GLOBAL: &str = "__FILESQUID_LAUNCH_TOKEN__";
+
 /// Answer one webview request with the FileSquid API router.
 ///
-/// Returns the router's response with its body collected, plus CORS headers when the
-/// request comes from an allowed app origin. Never panics: internal failures become `500`.
+/// A CORS preflight from an app origin is answered here without a token (preflights never
+/// carry one); every other request goes to the router, which authorises it. Returns the
+/// response with its body collected, plus CORS headers when the request comes from an
+/// allowed app origin. Never panics: internal failures become `500`.
 pub async fn handle(state: ApiState, request: Request<Vec<u8>>) -> Response<Vec<u8>> {
     let origin = request.headers().get(ORIGIN).cloned();
-    let mut response = route(state, request).await;
-    allow_app_origin(&mut response, origin.as_ref());
+    let app_origin = origin.filter(is_app_origin);
+    let mut response = match (&app_origin, is_preflight(&request)) {
+        (Some(_), true) => preflight_response(),
+        _ => route(state, request).await,
+    };
+    allow_app_origin(&mut response, app_origin.as_ref());
     response
+}
+
+/// True for a CORS preflight: `OPTIONS` with `Access-Control-Request-Method`.
+fn is_preflight(request: &Request<Vec<u8>>) -> bool {
+    request.method() == Method::OPTIONS
+        && request
+            .headers()
+            .contains_key(ACCESS_CONTROL_REQUEST_METHOD)
+}
+
+/// The empty `204` preflight answer that lets app pages send `Authorization`.
+fn preflight_response() -> Response<Vec<u8>> {
+    let mut response = error_response(StatusCode::NO_CONTENT);
+    let headers = response.headers_mut();
+    headers.insert(
+        ACCESS_CONTROL_ALLOW_HEADERS,
+        HeaderValue::from_static(ALLOWED_HEADERS),
+    );
+    headers.insert(
+        ACCESS_CONTROL_ALLOW_METHODS,
+        HeaderValue::from_static(ALLOWED_METHODS),
+    );
+    headers.insert(
+        ACCESS_CONTROL_MAX_AGE,
+        HeaderValue::from_static(PREFLIGHT_MAX_AGE),
+    );
+    response
+}
+
+/// JavaScript that defines `window.__FILESQUID_LAUNCH_TOKEN__` (read-only, not enumerable)
+/// in the main frame of pages whose origin is one of [`APP_ORIGINS`], and does nothing
+/// anywhere else. The host registers it as a webview initialization script, so the token
+/// reaches only the app's own pages. Pure: builds text only. The origins are fixed ASCII
+/// literals and the token is hex, so neither needs escaping inside the JavaScript strings.
+pub fn launch_token_script(token: &LaunchToken) -> String {
+    let quoted: Vec<String> = APP_ORIGINS.iter().map(|o| format!("\"{o}\"")).collect();
+    let origins = quoted.join(", ");
+    let secret = token.secret();
+    format!(
+        r#"(function () {{
+  var origins = [{origins}];
+  if (origins.indexOf(window.location.origin) === -1) return;
+  Object.defineProperty(window, "{TOKEN_GLOBAL}", {{ value: "{secret}", writable: false, enumerable: false, configurable: false }});
+}})();
+"#
+    )
 }
 
 /// Rebase the scheme URL onto a path-only URI and run it through the router.
@@ -62,15 +136,17 @@ async fn route(state: ApiState, request: Request<Vec<u8>>) -> Response<Vec<u8>> 
     }
 }
 
-/// Echo the request origin in `Access-Control-Allow-Origin` when it is an app origin.
+/// True when `origin` is one of [`APP_ORIGINS`].
+fn is_app_origin(origin: &HeaderValue) -> bool {
+    origin
+        .to_str()
+        .map(|text| APP_ORIGINS.contains(&text))
+        .unwrap_or(false)
+}
+
+/// Echo an app origin in `Access-Control-Allow-Origin`; `origin` is already filtered.
 fn allow_app_origin(response: &mut Response<Vec<u8>>, origin: Option<&HeaderValue>) {
-    let allowed = origin.filter(|value| {
-        value
-            .to_str()
-            .map(|text| APP_ORIGINS.contains(&text))
-            .unwrap_or(false)
-    });
-    if let Some(value) = allowed {
+    if let Some(value) = origin {
         response
             .headers_mut()
             .insert(ACCESS_CONTROL_ALLOW_ORIGIN, value.clone());

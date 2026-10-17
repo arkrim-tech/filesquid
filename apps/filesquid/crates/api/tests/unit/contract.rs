@@ -8,7 +8,7 @@ mod schema_check;
 
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
-use filesquid_api::admin::AdminAuth;
+use filesquid_api::auth::{Action, Authoriser, DenialReason};
 use filesquid_api::events::{topic, EventResync};
 use filesquid_api::health::{HealthInputs, HealthReason, HealthReport, HealthStatus};
 use filesquid_api::journal::{JournalEntry, JournalPage, Level, MemoryJournal, Outcome};
@@ -19,7 +19,8 @@ use filesquid_api::operation::{
 };
 use filesquid_api::registry::{ProcessSpec, ProcessState, ProcessView};
 use filesquid_api::{
-    routed_paths, router, ApiError, ApiEvent, ApiState, ErrorCode, API_VERSION, CONTRACT,
+    route_actions, routed_paths, router, ApiError, ApiEvent, ApiState, ErrorCode, API_VERSION,
+    CONTRACT,
 };
 use http_body_util::BodyExt;
 use schema_check::{required, unsupported_keywords, Checker};
@@ -54,7 +55,7 @@ fn contract_is_openapi_3_1_with_the_crate_api_version() {
     let doc = contract();
     assert_eq!(doc["openapi"], "3.1.0");
     assert_eq!(doc["info"]["version"], API_VERSION);
-    assert_eq!(API_VERSION, "0.4.0");
+    assert_eq!(API_VERSION, "0.5.0");
 }
 
 #[test]
@@ -85,6 +86,86 @@ fn host_routes_are_the_event_channel_only() {
     assert_eq!(host, vec!["/api/v1/events"]);
 }
 
+/// OpenAPI extension naming the authorisation action an operation requires.
+const ACTION: &str = "x-filesquid-action";
+
+/// Every documented operation, host routes included, as (method, path, operation).
+fn all_operations(doc: &Value) -> Vec<(String, String, &Value)> {
+    let mut operations = Vec::new();
+    for (path, item) in doc["paths"].as_object().expect("paths") {
+        for method in METHODS.iter().filter(|m| item.get(**m).is_some()) {
+            operations.push((method.to_string(), path.clone(), &item[*method]));
+        }
+    }
+    operations
+}
+
+#[test]
+fn every_operation_requires_the_bearer_scheme_and_none_makes_it_optional() {
+    let doc = contract();
+    assert_eq!(doc["security"], json!([{ "bearerAuth": [] }]));
+    let scheme = &doc["components"]["securitySchemes"]["bearerAuth"];
+    assert_eq!(scheme["type"], "http");
+    assert_eq!(scheme["scheme"], "bearer");
+    for (method, path, op) in all_operations(&doc) {
+        assert!(
+            op.get("security").is_none(),
+            "{method} {path} overrides security"
+        );
+    }
+}
+
+#[test]
+fn every_operation_documents_both_denials() {
+    let doc = contract();
+    for (method, path, op) in all_operations(&doc) {
+        for (status, response) in [("401", "Unauthorized"), ("403", "Forbidden")] {
+            let reference = format!("#/components/responses/{response}");
+            assert_eq!(
+                op["responses"][status]["$ref"], reference,
+                "{method} {path} documents {status}"
+            );
+        }
+    }
+}
+
+#[test]
+fn every_operation_names_the_action_the_router_authorises() {
+    let doc = contract();
+    let names: BTreeSet<&str> = Action::ALL.iter().map(|a| a.as_str()).collect();
+    let routed = route_actions();
+    for (method, path, op) in all_operations(&doc) {
+        let documented = op[ACTION].as_str().unwrap_or_default();
+        assert!(
+            names.contains(documented),
+            "{method} {path}: {documented:?}"
+        );
+        let expected = routed
+            .iter()
+            .find(|(p, _)| *p == path)
+            .map(|(_, action)| action.as_str())
+            .unwrap_or(Action::SubscribeEvents.as_str());
+        assert_eq!(documented, expected, "{method} {path}");
+    }
+}
+
+#[test]
+fn authentication_before_routing_is_documented_as_a_wire_convention() {
+    let doc = contract();
+    let conventions = doc["info"]["description"].as_str().expect("description");
+    for stated in ["401 unauthorized", "deny-by-default", "x-filesquid-action"] {
+        assert!(
+            conventions.contains(stated),
+            "info.description states {stated}"
+        );
+    }
+    let api_error = schema(&doc, "ApiError");
+    assert_eq!(
+        api_error["properties"]["reason"]["$ref"],
+        "#/components/schemas/DenialReason"
+    );
+}
+
 /// Every documented operation of a routed path, as (method, path).
 fn routed_operations(doc: &Value) -> Vec<(Method, String, &Value)> {
     let mut operations = Vec::new();
@@ -100,23 +181,35 @@ fn routed_operations(doc: &Value) -> Vec<(Method, String, &Value)> {
     operations
 }
 
-/// API state whose monitor is running for the desktop owner, so admin routes answer 200.
-fn owner_state() -> (ApiState, Monitor) {
+/// Bearer token that [`authorised_state`] accepts.
+const TOKEN: &str = "contract-token";
+
+/// API state whose authoriser accepts [`TOKEN`]; no monitor yet, so admin routes answer 503.
+fn authorised_state() -> ApiState {
     let state = ApiState::new();
+    state.install_authoriser(Authoriser::server_administrator(TOKEN));
+    state
+}
+
+/// Authorised API state whose monitor is running, so admin routes answer 200.
+fn owner_state() -> (ApiState, Monitor) {
+    let state = authorised_state();
     let monitor = Monitor::start(
         Arc::new(MemoryJournal::new("host-a")),
-        MonitorConfig::new("host-a", std::env::temp_dir(), AdminAuth::Owner),
+        MonitorConfig::new("host-a", std::env::temp_dir()),
         state.events.clone(),
     );
     state.install_monitor(monitor.clone());
     (state, monitor)
 }
 
-/// Send one empty-bodied request through the router; return the status and body bytes.
+/// Send one empty-bodied request carrying [`TOKEN`] through the router; return the status
+/// and body bytes.
 async fn call(state: &ApiState, method: &Method, path: &str) -> (StatusCode, Vec<u8>) {
     let request = Request::builder()
         .method(method.clone())
         .uri(path)
+        .header("authorization", format!("Bearer {TOKEN}"))
         .body(Body::empty())
         .expect("request");
     let response = router(state.clone())
@@ -159,6 +252,13 @@ async fn every_documented_operation_answers_a_documented_status_and_body() {
     let mut checked_ok = 0;
     for (method, path, op) in &operations {
         let (status, body) = call(&ApiState::new(), method, path).await;
+        assert_eq!(
+            status,
+            StatusCode::FORBIDDEN,
+            "{method} {path} unauthorised"
+        );
+        assert_documented_answer(&doc, op, status, &body);
+        let (status, body) = call(&authorised_state(), method, path).await;
         assert_documented_answer(&doc, op, status, &body);
         let (status, body) = call(&ready, method, path).await;
         assert_eq!(
@@ -226,7 +326,7 @@ fn assert_fallback_body(body: &[u8], code: &str, at: &str) {
 #[tokio::test]
 async fn router_fallbacks_answer_as_documented() {
     let doc = contract();
-    let state = ApiState::new();
+    let state = authorised_state();
     let (status, body) = call(&state, &Method::GET, "/api/v1/not-in-the-contract").await;
     assert_eq!(status.as_u16(), FALLBACKS[0].0);
     assert_fallback_body(&body, FALLBACKS[0].1, "unknown path");
@@ -320,15 +420,9 @@ fn health_schema_matches_the_core_payload_and_requires_every_field() {
 
 #[tokio::test]
 async fn router_serves_its_own_contract() {
-    let response = router(ApiState::new())
-        .oneshot(
-            Request::get("/api/v1/openapi.json")
-                .body(Body::empty())
-                .expect("request"),
-        )
-        .await
-        .expect("router answers");
-    assert_eq!(response.status(), StatusCode::OK);
+    let (status, body) = call(&authorised_state(), &Method::GET, "/api/v1/openapi.json").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, CONTRACT.as_bytes());
 }
 
 // ---- Operation schemas (CORE-S-005) ----
@@ -472,11 +566,12 @@ fn operation_samples() -> Vec<(&'static str, Vec<Value>)> {
         ("ErrorCode", ErrorCode::ALL.map(to_value).to_vec()),
         (
             "ApiError",
-            vec![to_value(ApiError::new(
-                ErrorCode::Unavailable,
-                "Not ready yet.",
-            ))],
+            vec![
+                to_value(ApiError::new(ErrorCode::Unavailable, "Not ready yet.")),
+                to_value(ApiError::denied(DenialReason::NotPermitted)),
+            ],
         ),
+        ("DenialReason", DenialReason::ALL.map(to_value).to_vec()),
         ("PortError", vec![to_value(port_error())]),
         ("CommandEnvelope", vec![to_value(command_envelope())]),
         ("QueryEnvelope", vec![to_value(query_envelope())]),

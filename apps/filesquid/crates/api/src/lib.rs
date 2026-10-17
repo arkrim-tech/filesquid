@@ -11,8 +11,14 @@
 //! in-process [`EventBus`] that hosts forward to UIs ([`events`]: documented topics, bounded
 //! subscriptions and resync hints). It holds no transport code of its own, so the same router
 //! answers on every host.
+//!
+//! Every call is authenticated and authorised by the [`auth`] layer before any handler runs,
+//! deny-by-default: a host installs its [`auth::Authoriser`] with
+//! [`ApiState::install_authoriser`] (the desktop per-launch token, or the server
+//! administrator token), and without one every call is refused.
 
 pub mod admin;
+pub mod auth;
 pub mod error;
 pub mod events;
 pub mod health;
@@ -25,14 +31,14 @@ pub mod registry;
 mod routes;
 pub mod trace_layer;
 
-pub use error::{ApiError, ErrorCode};
+pub use error::{ApiError, DenialReason, ErrorCode};
 pub use events::{ApiEvent, EventBus, EventSubscription};
-pub use routes::{routed_paths, router};
+pub use routes::{route_actions, routed_paths, router};
 
 use std::sync::{Arc, OnceLock};
 
 /// Version of the FileSquid API contract. Bumped when the contract changes.
-pub const API_VERSION: &str = "0.4.0";
+pub const API_VERSION: &str = "0.5.0";
 
 /// URL prefix shared by every API route.
 pub const API_PREFIX: &str = "/api/v1";
@@ -42,30 +48,49 @@ pub const CONTRACT: &str = include_str!("../openapi.json");
 
 /// Shared state handed to every request handler.
 ///
-/// Cloning is cheap: the event bus and the monitor slot are reference-counted.
+/// Cloning is cheap: the event bus and the monitor and authoriser slots are
+/// reference-counted.
 #[derive(Clone)]
 pub struct ApiState {
     /// Bus for push events (job progress, change notifications, journal entries).
     pub events: EventBus,
     /// The host's monitor, installed once at startup (admin routes answer 503 until then).
     monitor: Arc<OnceLock<monitor::Monitor>>,
+    /// The host's authoriser, installed once at startup (every call is refused until then).
+    authoriser: Arc<OnceLock<auth::Authoriser>>,
 }
 
 impl std::fmt::Debug for ApiState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ApiState")
             .field("monitor_installed", &self.monitor.get().is_some())
+            .field("authoriser_installed", &self.authoriser.get().is_some())
             .finish()
     }
 }
 
 impl ApiState {
-    /// Create state with a fresh event bus and no monitor.
+    /// Create state with a fresh event bus, no monitor and no authoriser (deny every call).
     pub fn new() -> Self {
         Self {
             events: EventBus::new(),
             monitor: Arc::new(OnceLock::new()),
+            authoriser: Arc::new(OnceLock::new()),
         }
+    }
+
+    /// Install the host's authoriser. Returns false, keeping the first, if one was already
+    /// installed, so a credential cannot be swapped while the host runs.
+    pub fn install_authoriser(&self, authoriser: auth::Authoriser) -> bool {
+        self.authoriser.set(authoriser).is_ok()
+    }
+
+    /// The installed authoriser, or one that refuses every call when none is installed.
+    pub fn authoriser(&self) -> auth::Authoriser {
+        self.authoriser
+            .get()
+            .cloned()
+            .unwrap_or_else(auth::Authoriser::deny_all)
     }
 
     /// Install the host's monitor. Returns false if one was already installed.

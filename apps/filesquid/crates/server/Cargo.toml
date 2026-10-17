@@ -48,3 +48,7 @@ path = "tests/integration/events.rs"
 [[test]]
 name = "integration_monitor"
 path = "tests/integration/monitor.rs"
+
+[[test]]
+name = "integration_auth"
+path = "tests/integration/auth.rs"

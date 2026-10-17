@@ -24,7 +24,10 @@ const HEALTH_URIS: [&str; 3] = [
 async fn health_everywhere(w: &mut MonitorWorld) {
     let state = w.state.clone().expect("router");
     for uri in HEALTH_URIS {
-        let request = Request::get(uri).body(Body::empty()).expect("request");
+        let request = Request::get(uri)
+            .header("authorization", format!("Bearer {}", crate::ADMIN_TOKEN))
+            .body(Body::empty())
+            .expect("request");
         let response = router(state.clone())
             .oneshot(request)
             .await

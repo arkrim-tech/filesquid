@@ -65,7 +65,16 @@ cd apps/filesquid/ui && npm run build && cd ..
 FILESQUID_BIND=127.0.0.1:8083 FILESQUID_UI_DIR=ui/dist cargo run -p filesquid-server
 ```
 
-Open `http://127.0.0.1:8083`. `GET /api/v1/health` returns `{"schema_version":1,"status":"ok","product":"filesquid"}`. Without `FILESQUID_UI_DIR` the server serves the API only. `FILESQUID_BIND` defaults to `127.0.0.1:8083`.
+Open `http://127.0.0.1:8083`. Without `FILESQUID_UI_DIR` the server serves the API only. `FILESQUID_BIND` defaults to `127.0.0.1:8083`.
+
+Every API call, the WebSocket event channel and `/metrics` are **deny-by-default**: they need `Authorization: Bearer <token>`, or the call answers `401 unauthorized` (no token) or `403 forbidden` (wrong token) with a typed error body. Until server accounts arrive, the token is the administrator token: the value of `FILESQUID_ADMIN_TOKEN`, or the token generated at first start into `<data dir>/admin-token`. The static UI itself is public. In a second terminal in `apps/filesquid`:
+
+```sh
+TOKEN=$(cat filesquid-data/admin-token)
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8083/api/v1/health
+```
+
+It returns `{"schema_version":1,"status":"ok","product":"filesquid"}`. A browser cannot set headers on a WebSocket, so it offers the subprotocols `filesquid.events.v1` and `filesquid.bearer.<token>` instead. The desktop host needs no token from you: it generates a new per-launch token at every start and gives it only to its own pages.
 
 **UI development** with hot reload: start the server as above, then in another terminal:
 
@@ -137,6 +146,15 @@ cd apps/filesquid
 cargo test -p filesquid-api --locked --test unit_events --test unit_routes --test features
 ```
 
+Deny-by-default authorisation (API-S-004) is tested on every route, the 404/405 fallbacks and the host routes: no token, a wrong token, no installed authoriser, a principal the policy does not permit, the WebSocket subprotocol carrier, the journaled refusals and the desktop per-launch token through the custom scheme:
+
+```sh
+cd apps/filesquid
+cargo test -p filesquid-api --locked --test unit_auth --test features
+cargo test -p filesquid-server --locked --test integration_auth
+cargo test -p filesquid-desktop --locked --test integration_api_protocol
+```
+
 Documentation checks, from the repository root:
 
 ```sh
@@ -153,7 +171,7 @@ Every FileSquid process writes JSON events to **stdout** and never writes log fi
 FileSquid's own tooling records **100% of activity** in its activity journal and shows **live health** of the system and its processes in the **Monitor** dashboard, on desktop and server alike ([ADR 033](./resources/architecture/033-activity-journal-and-live-health-monitoring.md)). Everything runs locally; no external service is needed.
 
 - **Where the journal lives:** `filesquid.sqlite` in the host's data directory. The desktop app uses its application data directory. `filesquid-server` uses `FILESQUID_DATA_DIR` (default `./filesquid-data`, relative to where it starts) and creates it on first start.
-- **Monitor dashboard:** open the app and choose **Monitor** in the navigation (route `#/monitor`). On the desktop the owner needs no sign-in. On `filesquid-server`, enter the admin token: the value of `FILESQUID_ADMIN_TOKEN`, or the token generated at first start into `<data dir>/admin-token` (owner-only file permissions on Unix; the server logs the path, never the token).
+- **Monitor dashboard:** open the app and choose **Monitor** in the navigation (route `#/monitor`). On the desktop the owner needs no sign-in: the host hands its own pages the per-launch token. On `filesquid-server`, enter the admin token: the value of `FILESQUID_ADMIN_TOKEN`, or the token generated at first start into `<data dir>/admin-token` (owner-only file permissions on Unix; the server logs the path, never the token).
 
 To run `filesquid-server` with the default UI and read the journal from a terminal, change to `apps/filesquid` and run:
 
@@ -169,7 +187,7 @@ TOKEN=$(cat filesquid-data/admin-token)
 curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8083/api/v1/admin/health
 curl -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:8083/api/v1/admin/journal?order=desc&limit=20"
 curl -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:8083/api/v1/admin/journal/export?operation=host.started" > journal.jsonl
-curl http://127.0.0.1:8083/metrics
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8083/metrics
 ```
 
 On Windows PowerShell, read the token with `$TOKEN = Get-Content filesquid-data/admin-token` and call `curl.exe` with the same arguments.

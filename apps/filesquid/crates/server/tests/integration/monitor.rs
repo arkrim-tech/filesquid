@@ -5,7 +5,7 @@ use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use filesquid_api::monitor::HostMonitor;
 use filesquid_api::ApiState;
-use filesquid_server::{app, start_host_monitor, ServerConfig};
+use filesquid_server::{app, install_admin_authoriser, start_host_monitor, ServerConfig};
 use http_body_util::BodyExt;
 use std::path::PathBuf;
 use tower::ServiceExt;
@@ -39,6 +39,7 @@ async fn admin_health_journal_and_processes_work_with_the_configured_token() {
         ..ServerConfig::default()
     };
     let state = ApiState::new();
+    install_admin_authoriser(&config, &state).expect("authoriser");
     let host = start_host_monitor(&config, &state, None).expect("monitor");
     let router = app(&config, state.clone());
     assert_eq!(
@@ -79,10 +80,15 @@ async fn prometheus_metrics_match_the_admin_json_route() {
         ..ServerConfig::default()
     };
     let state = ApiState::new();
+    install_admin_authoriser(&config, &state).expect("authoriser");
     let host = start_host_monitor(&config, &state, None).expect("monitor");
     host.monitor().journal().flush();
     let router = app(&config, state.clone());
-    let (_, text) = get(router.clone(), "/metrics", None).await;
+    let (status, _) = get(router.clone(), "/metrics", None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    // The refusal is journaled; let it land so both reads see the same counters.
+    host.monitor().journal().flush();
+    let (_, text) = get(router.clone(), "/metrics", Some("t")).await;
     let (_, json) = get(router.clone(), "/api/v1/admin/metrics", Some("t")).await;
     let json: serde_json::Value = serde_json::from_str(&json).unwrap();
     for (name, value) in json.as_object().unwrap() {
@@ -98,33 +104,19 @@ async fn prometheus_metrics_match_the_admin_json_route() {
 }
 
 #[tokio::test]
-async fn a_missing_token_is_generated_into_the_data_dir_and_no_log_files_are_written() {
-    let dir = data_dir("generated");
+async fn the_monitor_writes_no_log_files_into_the_data_dir() {
+    let dir = data_dir("nolog");
     let config = ServerConfig {
         data_dir: dir.clone(),
-        admin_token: None,
+        admin_token: Some("t".into()),
         ..ServerConfig::default()
     };
     let state = ApiState::new();
+    install_admin_authoriser(&config, &state).expect("authoriser");
     let host = start_host_monitor(&config, &state, None).expect("monitor");
-    let token = std::fs::read_to_string(dir.join("admin-token"))
-        .expect("token file")
-        .trim()
-        .to_string();
-    assert_eq!(token.len(), 64);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(dir.join("admin-token"))
-            .unwrap()
-            .permissions()
-            .mode()
-            & 0o777;
-        assert_eq!(mode, 0o600);
-    }
     let router = app(&config, state.clone());
     assert_eq!(
-        get(router.clone(), "/api/v1/admin/health", Some(&token))
+        get(router.clone(), "/api/v1/admin/health", Some("t"))
             .await
             .0,
         StatusCode::OK
@@ -133,7 +125,7 @@ async fn a_missing_token_is_generated_into_the_data_dir_and_no_log_files_are_wri
     let logs: Vec<_> = std::fs::read_dir(&dir)
         .unwrap()
         .filter_map(Result::ok)
-        .filter(|e| e.file_name().to_string_lossy().ends_with(".log"))
+        .filter(|e| e.path().extension().is_some_and(|x| x == "log"))
         .collect();
     assert!(logs.is_empty());
     release(host, router, state);
