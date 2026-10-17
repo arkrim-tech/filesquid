@@ -107,6 +107,8 @@ cargo test --workspace --locked
 
 One module on its own, for example `cargo test -p filesquid-ocfl --locked`.
 
+`cargo test -p filesquid-c2pa --locked` (also part of `cargo test --workspace`) builds the C2PA module for `wasm32-unknown-unknown`, with default features on and off, into `filesquid-c2pa-wasm32-check/` under the Cargo target directory. Install the target once with `rustup target add wasm32-unknown-unknown`; without it the check is skipped and prints why. The same run compares the engine with the official `c2patool` on the C2PA conformance files when `FILESQUID_C2PA_CONFORMANCE_DIR` points at a checkout of `c2pa-org/public-testfiles` (`FILESQUID_C2PATOOL` names the tool if it is not on `PATH`); otherwise that test is skipped and prints why. The oracle run takes about 10 seconds; see the [module README](./apps/filesquid/crates/c2pa/README.md#interoperability-oracle).
+
 FileSquid UI and the ImageSquid distribution (unit and DOM tests in jsdom; end-to-end tests run Playwright against the **built** UI served by the real `filesquid-server`). Install the Playwright browser once with `npx playwright install chromium`:
 
 ```sh

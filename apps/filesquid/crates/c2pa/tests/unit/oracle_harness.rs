@@ -1,0 +1,163 @@
+//! C2PA-S-007: unit tests for the `c2patool` oracle harness that need neither
+//! the tool nor the corpus: report parsing, comparison and corpus discovery.
+
+#[path = "../support/oracle.rs"]
+#[allow(dead_code)]
+mod oracle;
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use oracle::{
+    compare, corpus_files, is_asset, parse_c2patool_report, Agreement, OracleReport, Verdict,
+};
+
+/// A trimmed `c2patool` report for a valid, untrusted asset.
+const VALID_REPORT: &str = r#"{
+  "active_manifest": "urn:c2pa:1",
+  "manifests": {},
+  "validation_results": {
+    "activeManifest": {
+      "success": [{"code": "claimSignature.validated"}],
+      "informational": [],
+      "failure": [{"code": "signingCredential.untrusted"}]
+    }
+  },
+  "validation_state": "Valid"
+}"#;
+
+/// A legacy report with only `validation_status` and a data-hash mismatch.
+const LEGACY_INVALID_REPORT: &str = r#"{
+  "active_manifest": "urn:c2pa:2",
+  "validation_status": [
+    {"code": "assertion.dataHash.mismatch"},
+    {"code": "claimSignature.validated"},
+    {"code": "assertion.dataHash.mismatch"}
+  ]
+}"#;
+
+#[test]
+fn parses_validation_state_and_failure_codes() {
+    let report = parse_c2patool_report(VALID_REPORT).expect("report");
+    assert_eq!(report.verdict, Verdict::Valid);
+    assert_eq!(report.failure_codes, ["signingCredential.untrusted"]);
+}
+
+#[test]
+fn legacy_status_without_state_is_invalid_on_failure() {
+    let report = parse_c2patool_report(LEGACY_INVALID_REPORT).expect("report");
+    assert_eq!(report.verdict, Verdict::Invalid);
+    assert_eq!(report.failure_codes, ["assertion.dataHash.mismatch"]);
+}
+
+#[test]
+fn trusted_state_is_recognised() {
+    let report = parse_c2patool_report(r#"{"validation_state":"Trusted"}"#).expect("report");
+    assert_eq!(report.verdict, Verdict::Trusted);
+}
+
+#[test]
+fn malformed_json_and_unknown_state_are_errors() {
+    assert!(parse_c2patool_report("not json").is_err());
+    assert!(parse_c2patool_report(r#"{"validation_state":"Maybe"}"#).is_err());
+}
+
+fn report(verdict: Verdict, codes: &[&str]) -> OracleReport {
+    OracleReport {
+        verdict,
+        failure_codes: codes.iter().map(|c| (*c).to_string()).collect(),
+    }
+}
+
+#[test]
+fn comparison_agrees_on_identical_reports() {
+    let oracle = report(Verdict::Invalid, &["assertion.dataHash.mismatch"]);
+    assert_eq!(compare(&oracle, Some(&oracle.clone())), Agreement::Agree);
+}
+
+#[test]
+fn comparison_reports_a_different_verdict() {
+    let oracle = report(Verdict::Invalid, &["assertion.dataHash.mismatch"]);
+    let engine = report(Verdict::Valid, &[]);
+    assert!(matches!(
+        compare(&oracle, Some(&engine)),
+        Agreement::Disagree { .. }
+    ));
+}
+
+#[test]
+fn comparison_reports_different_failure_codes() {
+    let oracle = report(Verdict::Invalid, &["assertion.dataHash.mismatch"]);
+    let engine = report(Verdict::Invalid, &["claimSignature.mismatch"]);
+    assert!(matches!(
+        compare(&oracle, Some(&engine)),
+        Agreement::Disagree { .. }
+    ));
+}
+
+#[test]
+fn comparison_without_engine_report_is_pending() {
+    let oracle = report(Verdict::NoManifest, &[]);
+    assert_eq!(compare(&oracle, None), Agreement::EnginePending);
+}
+
+/// Create a scratch corpus tree unique to this process and `tag`.
+fn scratch_corpus(tag: &str) -> PathBuf {
+    let name = format!("filesquid-c2pa-corpus-{}-{tag}", std::process::id());
+    let dir = std::env::temp_dir().join(name);
+    match fs::remove_dir_all(&dir) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => panic!("remove stale {}: {err}", dir.display()),
+    }
+    fs::create_dir_all(dir.join("image/jpeg")).expect("corpus dir");
+    fs::create_dir_all(dir.join(".git")).expect(".git dir");
+    for name in [
+        "image/jpeg/a.jpg",
+        "image/jpeg/B.JPEG",
+        "image/x.png",
+        "README.md",
+        ".git/c.jpg",
+    ] {
+        fs::write(dir.join(name), b"x").expect("corpus file");
+    }
+    dir
+}
+
+#[test]
+fn corpus_discovery_finds_assets_and_skips_git() {
+    let dir = scratch_corpus("discovery");
+    let files = corpus_files(&dir, 100).expect("walk");
+    let names: Vec<String> = files
+        .iter()
+        .map(|p| {
+            p.strip_prefix(&dir)
+                .expect("prefix")
+                .to_string_lossy()
+                .replace('\\', "/")
+        })
+        .collect();
+    assert_eq!(
+        names,
+        ["image/jpeg/B.JPEG", "image/jpeg/a.jpg", "image/x.png"]
+    );
+    fs::remove_dir_all(&dir).expect("cleanup");
+}
+
+#[test]
+fn corpus_discovery_is_bounded() {
+    let dir = scratch_corpus("bounded").join("bounded");
+    fs::create_dir_all(&dir).expect("dir");
+    for i in 0..5 {
+        fs::write(dir.join(format!("{i}.jpg")), b"x").expect("file");
+    }
+    assert_eq!(corpus_files(&dir, 3).expect("walk").len(), 3);
+    fs::remove_dir_all(dir.parent().expect("parent")).expect("cleanup");
+}
+
+#[test]
+fn asset_extensions_are_case_insensitive() {
+    assert!(is_asset(Path::new("a.JPG")));
+    assert!(is_asset(Path::new("m.c2pa")));
+    assert!(!is_asset(Path::new("notes.txt")));
+}

@@ -1,0 +1,74 @@
+[package]
+name = "filesquid-c2pa"
+version = "0.1.0"
+edition = "2021"
+description = "FileSquid C2PA module: a stand-alone FOSS C2PA engine implemented from scratch in Rust. Bytes-only core; cryptography behind a crypto-backend trait. Installable without the FileSquid app."
+license = "MIT"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+# The pure-Rust RustCrypto backend. Turn it off to supply your own backend
+# (for example WebCrypto in a browser); the core then links no crypto crate.
+default = ["rust-crypto"]
+rust-crypto = ["dep:sha2", "dep:p256", "dep:p384", "dep:p521", "dep:ed25519-dalek"]
+
+[dependencies]
+ed25519-dalek = { version = "3", default-features = false, features = ["pkcs8"], optional = true }
+p256 = { version = "0.14", default-features = false, features = ["ecdsa", "pkcs8"], optional = true }
+p384 = { version = "0.14", default-features = false, features = ["ecdsa", "pkcs8"], optional = true }
+p521 = { version = "0.14", default-features = false, features = ["ecdsa", "pkcs8"], optional = true }
+sha2 = { version = "0.11", default-features = false, optional = true }
+thiserror = "2"
+tracing = { version = "0.1", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+cucumber = { version = "0.23", features = ["macros", "output-junit"] }
+futures = { version = "0.3", default-features = false, features = ["executor"] }
+# Signing side of the ECDSA test vectors (deterministic RFC 6979 signatures).
+p256 = { version = "0.14", default-features = false, features = ["ecdsa", "pkcs8", "alloc"] }
+p384 = { version = "0.14", default-features = false, features = ["ecdsa", "pkcs8", "alloc"] }
+p521 = { version = "0.14", default-features = false, features = ["ecdsa", "pkcs8", "alloc"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[[test]]
+name = "unit_io"
+path = "tests/unit/io.rs"
+
+[[test]]
+name = "unit_fetch"
+path = "tests/unit/fetch.rs"
+
+[[test]]
+name = "unit_crypto"
+path = "tests/unit/crypto.rs"
+required-features = ["rust-crypto"]
+
+[[test]]
+name = "unit_isolation"
+path = "tests/unit/isolation.rs"
+
+[[test]]
+name = "unit_source_scan"
+path = "tests/unit/source_scan.rs"
+
+[[test]]
+name = "unit_oracle_harness"
+path = "tests/unit/oracle_harness.rs"
+
+[[test]]
+name = "integration_wasm_build"
+path = "tests/integration/wasm_build.rs"
+
+[[test]]
+name = "integration_oracle"
+path = "tests/integration/oracle.rs"
+
+[[test]]
+name = "features"
+path = "tests/features.rs"
+harness = false
+required-features = ["rust-crypto"]

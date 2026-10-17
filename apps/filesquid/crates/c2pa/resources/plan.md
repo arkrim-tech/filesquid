@@ -6,7 +6,7 @@ The crate does not exist yet; CP-0.1 creates `apps/filesquid/crates/c2pa/Cargo.t
 
 ## Phase F0: Read and validate (global Task 0.17)
 
-- [ ] **Task CP-0.1: Scaffold, isolation, crypto backend and oracle harness**
+- [x] **Task CP-0.1: Scaffold, isolation, crypto backend and oracle harness**
   - **Description:** Scaffold the crate with `publish = false`. Isolation tests MUST fail if it depends on `filesquid-ocfl`, axum, tauri, SQLite crates (including rusqlite, sqlite and libsqlite3-sys), sqlx, libvips, ffmpeg-sys, `filesquid-core` or any other FileSquid crate, distribution crates, or the official `c2pa` crate outside dev-dependencies. Add a source-scan test that fails on direct `std::fs` use or a direct network-client dependency (for example reqwest, hyper, ureq) in the core. Define async byte source/sink traits, a caller-supplied fetcher trait and the crypto-backend trait; choose and record the primitive crates (SHA-2, ECDSA, Ed25519, RSA-PSS, X.509, CMS) in the README. Add a `wasm32-unknown-unknown` CI build and an oracle harness that compares results with `c2patool` on C2PA conformance files. Pin the C2PA specification version in the README.
   - **Estimated Time:** 10 hours
   - **Dependencies:** None
