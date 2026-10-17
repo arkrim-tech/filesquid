@@ -44,7 +44,7 @@ FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by ga
     - [x] [API-F1.2](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-and-api-f19-in-fs-310) Routes and the event channel
     - [ ] [DE-F1.1](../apps/filesquid/crates/desktop/resources/plan.md#phase-f1-desktop-transport-global-task-fs-11) Per-launch token, event channel and ranged reads
 10. [ ] [Task 0.3](./implementation-plan.md#task-0.3) filesquid-ocfl read, validate, and git guard
-    - [ ] [IO-0.1](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Storage backend trait
+    - [x] [IO-0.1](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Storage backend trait
     - [ ] [IO-0.2](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Git guard
     - [ ] [IO-0.3](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) SHA-256 digest and inventory types
     - [ ] [IO-0.4](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Read and browse
