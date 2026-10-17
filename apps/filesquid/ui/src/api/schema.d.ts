@@ -45,7 +45,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Push events (WebSocket on filesquid-server; Tauri events on filesquid-desktop). Topics: process.update (ProcessView), journal.entry (JournalEntry), health.change (HealthReport). */
+        /**
+         * Push events (WebSocket on filesquid-server; Tauri events named filesquid-event on filesquid-desktop).
+         * @description One event channel for job progress and change notifications. Each event is an ApiEvent whose topic is an EventTopic; x-filesquid-event-payloads names the payload schema of each topic. Events are hints, not state: a client MUST NOT depend on receiving every event. A subscriber that falls more than 256 events behind, or whose next event encodes to more than 65536 bytes, receives one events.resync event (EventResync) instead of the events it missed and MUST reread the state it shows through the request routes; a client that reconnects MUST do the same. At most 64 subscribers are served at once.
+         */
         get: operations["subscribeEvents"];
         put?: never;
         post?: never;
@@ -144,11 +147,21 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description One push event on the event channel: a topic and that topic's payload. */
         ApiEvent: {
-            /** @description Dotted event name, for example job.progress. */
-            topic: string;
-            /** @description Topic-specific payload. */
+            topic: components["schemas"]["EventTopic"];
+            /** @description Topic-specific payload; see x-filesquid-event-payloads on /api/v1/events. */
             data: unknown;
+        };
+        /**
+         * @description Documented event topics: process.update (a process or job changed), journal.entry (an activity journal entry was written), health.change (the health status changed), events.resync (events were missed; reread state).
+         * @enum {string}
+         */
+        EventTopic: "process.update" | "journal.entry" | "health.change" | "events.resync";
+        /** @description Payload of events.resync: the subscriber missed events and MUST reread the state it shows. */
+        EventResync: {
+            /** @description How many events this subscriber did not receive. */
+            missed: number;
         };
         /** @enum {string} */
         Level: "info" | "warn" | "error";

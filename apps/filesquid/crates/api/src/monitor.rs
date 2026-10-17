@@ -4,6 +4,7 @@
 //! [`Monitor::tick`] about once a second.
 
 use crate::admin::AdminAuth;
+use crate::events::topic;
 use crate::health::{evaluate, HealthInputs, HealthReport, HealthStatus, ERROR_WINDOW_MS};
 use crate::journal::{
     JournalEntry, JournalError, JournalQuery, JournalStore, Level, Outcome, RetentionPolicy,
@@ -152,7 +153,7 @@ impl Monitor {
             if let Ok(data) = serde_json::to_value(&report) {
                 self.inner
                     .events
-                    .publish(ApiEvent::new("health.change", data));
+                    .publish(ApiEvent::new(topic::HEALTH_CHANGE, data));
             }
         }
         report

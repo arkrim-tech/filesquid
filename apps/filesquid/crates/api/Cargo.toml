@@ -51,6 +51,10 @@ name = "unit_events"
 path = "tests/unit/events.rs"
 
 [[test]]
+name = "unit_routes"
+path = "tests/unit/routes.rs"
+
+[[test]]
 name = "unit_journal"
 path = "tests/unit/journal.rs"
 required-features = ["sqlite"]

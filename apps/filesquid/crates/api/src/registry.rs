@@ -3,6 +3,7 @@
 //! heartbeat. A missed heartbeat marks it `stalled` (FileSquid T-057). Every state change is
 //! journaled and pushed on the event channel as `process.update`.
 
+use crate::events::topic;
 use crate::journal::{format_rfc3339_ms, now_ms, JournalEntry, Outcome};
 use crate::journal_writer::JournalSender;
 use crate::metrics::Metrics;
@@ -327,7 +328,7 @@ impl ProcessRegistry {
         if let Ok(data) = serde_json::to_value(view) {
             self.inner
                 .events
-                .publish(ApiEvent::new("process.update", data));
+                .publish(ApiEvent::new(topic::PROCESS_UPDATE, data));
         }
         set_gauges(&self.inner.metrics, records);
     }
