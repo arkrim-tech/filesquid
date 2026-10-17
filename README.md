@@ -118,7 +118,15 @@ npx prettier --check . && npm run lint && npm run check && npm test && npm run t
 
 `npm test` clears and rewrites `tests/allure-results/vitest-junit.xml`; `npm run test:e2e` writes `tests/allure-results/playwright-junit.xml`. Open the JUnit files in any JUnit or Allure viewer.
 
-The API contract (`apps/filesquid/crates/api/openapi.json`) and the generated TypeScript types must agree. After changing the contract, regenerate the types with `npm run contract:types` in `apps/filesquid/ui`; the Rust `unit_contract` test and the Vitest `contract.test.ts` fail on drift.
+The API contract (`apps/filesquid/crates/api/openapi.json`, OpenAPI 3.1, versioned by `info.version` = `filesquid_api::API_VERSION`), the Rust routes and payload types, and the generated TypeScript types (`apps/filesquid/ui/src/api/schema.d.ts`, `openapi-typescript` 7.13) must agree. The Rust `unit_contract` test fails when a routed path is undocumented (or the reverse), or when a serialized Rust type no longer matches its component schema. The Vitest `contract.test.ts` fails when `schema.d.ts` differs from a fresh generation. Both run in the pre-commit hook. After changing the contract, regenerate the types and run both drift tests:
+
+```sh
+cd apps/filesquid/ui
+npm run contract:types
+npx vitest run tests/unit/contract.test.ts
+cd ..
+cargo test -p filesquid-api --locked --test unit_contract --test unit_errors
+```
 
 Documentation checks, from the repository root:
 

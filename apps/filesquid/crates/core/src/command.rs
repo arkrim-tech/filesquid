@@ -11,8 +11,8 @@ use crate::{DomainError, OperationId};
 /// Protocol schema version for command and query envelopes.
 pub const PROTOCOL_SCHEMA_VERSION: u32 = 1;
 
-/// Maximum items a portable query page MAY request.
-pub const MAX_PAGE_SIZE: u32 = 100;
+/// Maximum items a portable query page MAY request (CORE-S-005: page size 1–1000).
+pub const MAX_PAGE_SIZE: u32 = 1000;
 
 /// Expected catalog or object revision for a mutation.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize)]

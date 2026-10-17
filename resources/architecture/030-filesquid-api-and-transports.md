@@ -10,7 +10,7 @@ One versioned FileSquid API owned by filesquid-api, served in-process on the des
 
 Accepted
 
-Accepted: 2026-10-15, for the transport structure (HTTP resources plus one event channel, custom URI scheme on the desktop, Axum on the server), after transport spike S1; see **S1 results** under Related Decisions / Notes. S1 items (a) and (d) remain open gates, listed there. Proposed: 2026-10-15. It stayed Proposed until transport spike S1 (plan stage E) had run; S1 confirmed the working recommendation in Decision 4. Amends [ADR 002](./002-tauri2-desktop-shell.md) (the desktop still opens no TCP listener) and supersedes the per-engine view-API transport parts of [ADR 028](./028-filesquid-ui-packages-and-panel-composition.md) (Decisions 2 and 4).
+Amended: 2026-10-17, by owner decision, to adopt the contract generators (Decision 2) and the typed error body (Decision 6) after Task API-F1.1. Accepted: 2026-10-15, for the transport structure (HTTP resources plus one event channel, custom URI scheme on the desktop, Axum on the server), after transport spike S1; see **S1 results** under Related Decisions / Notes. S1 items (a) and (d) remain open gates, listed there. Proposed: 2026-10-15. It stayed Proposed until transport spike S1 (plan stage E) had run; S1 confirmed the working recommendation in Decision 4. Amends [ADR 002](./002-tauri2-desktop-shell.md) (the desktop still opens no TCP listener) and supersedes the per-engine view-API transport parts of [ADR 028](./028-filesquid-ui-packages-and-panel-composition.md) (Decisions 2 and 4).
 
 ## Context / Requirement Reference
 
@@ -29,7 +29,13 @@ Before this record, the desktop UI called Rust through Tauri IPC commands (`heal
 
 **1. One API, owned by `filesquid-api`.** The crate `filesquid-api` (`apps/filesquid/crates/api/`) owns every route, request and response type, error, auth check and event type. Hosts mount it; they add no routes of their own except static UI files on `filesquid-server`. Paths are versioned under `/api/v1/`. The first route is `GET /api/v1/health`, which replaces the desktop `health_ping` command and the server's `/health` route. Modules expose Rust APIs only; they never define HTTP routes.
 
-**2. Contract.** The API contract is an **OpenAPI 3.1** document checked into `apps/filesquid/crates/api/`. TypeScript types for `@filesquid/ui` MUST be generated from it. A test MUST fail when the Rust routes, the OpenAPI document and the generated types drift. This is ADR 001's "versioned operation schemas, generated bindings" rule applied to the new boundary. The generator crates and npm packages are chosen at implementation and MUST be verified then (see Assumptions).
+**2. Contract.** The API contract is an **OpenAPI 3.1** document checked into `apps/filesquid/crates/api/`. TypeScript types for `@filesquid/ui` MUST be generated from it. A test MUST fail when the Rust routes, the OpenAPI document and the generated types drift. This is ADR 001's "versioned operation schemas, generated bindings" rule applied to the new boundary.
+
+Generators (owner decision, 2026-10-17):
+
+- **TypeScript:** the types in `apps/filesquid/ui/src/api/schema.d.ts` are generated with the npm package `openapi-typescript`, at the version pinned in `apps/filesquid/ui/package.json` (`npm run contract:types`).
+- **Rust:** no generator. The contract is hand-written (contract-first). Drift tests in `filesquid-api` (`unit_contract`) check it against the router's route table in both directions, against serialized Rust payload types with a strict schema checker, and against the core constants (for example the page-size bound of [CORE-S-005](../../apps/filesquid/crates/core/resources/srs.md)).
+- **Where the drift tests run:** in the local pre-commit hook (`scripts/pre-commit.sh`); the repository has no hosted CI. The Rust test is `unit_contract`; the TypeScript test is the Vitest `tests/unit/contract.test.ts` in `apps/filesquid/ui`.
 
 **3. Transport-agnostic router.** `filesquid-api` exposes its routes as one `tower::Service` over `http::Request`/`http::Response`. It MUST NOT bind sockets or depend on Tauri. Each host adapts that one service:
 
@@ -66,6 +72,11 @@ S1 MUST measure: (a) `Range` reads of a 100 MB file into `<img>` and `<video>` t
 
 **6. Errors.** Every route returns typed errors defined in the contract. A failed request MUST NOT crash a host ([U-26](../product-vision.md#one-api-hosts-and-distributions)).
 
+Recorded 2026-10-17 (owner decision, Task API-F1.1):
+
+- **Error body.** Every 4xx and 5xx response produced by the `filesquid-api` router carries the `ApiError` schema: `code` (an `ErrorCode`), `message` (for people; never paths, SQL or internal error text) and `retryable`. This includes the router's own fallbacks under `/api/v1/`: an unknown path answers `not_found` and a known path called with the wrong method answers `method_not_allowed`. Each code has one HTTP status: `invalid_request` 400, `unauthorized` 401, `forbidden` 403, `not_found` 404, `method_not_allowed` 405, `conflict` 409, `internal` 500, `unavailable` 503. Only `unavailable` is retryable. An internal failure is logged to stdout; the activity journal receives a redacted record (operation and error code only). Failures that happen in a host before or around the router are outside this guarantee and belong to the host binding tasks: on the desktop, a custom-scheme request the handler cannot convert or a response it cannot build ([DE-F1.1](../../apps/filesquid/crates/desktop/resources/plan.md)); on the server, transport and proxy failures and paths outside `/api/v1/`, such as the static UI ([SV-F1.1](../../apps/filesquid/crates/server/resources/plan.md)).
+- **Host routes.** A path that a host serves instead of the `filesquid-api` router, today only the event channel `GET /api/v1/events`, carries the OpenAPI extension `x-filesquid-host-route: true`. The drift test exempts exactly these paths from the router comparison.
+
 ## Rationale
 
 One router means one implementation of every feature and one place to test it. A `tower::Service` is the common interface Axum already uses, so the server host is a thin mount and the desktop host is a thin adapter.
@@ -87,7 +98,7 @@ Verified at writing (2026-10-15):
 Not yet verified:
 
 - Webview playback of `<video>` with `Range` requests answered by a custom scheme handler on WebKitGTK, WKWebView and WebView2. S1 item (a) measures it.
-- The OpenAPI generator crate and TypeScript generator. Candidates seen at writing are `utoipa` (crates.io 6.0.0) and `openapi-typescript` (npm 7.13.0). Neither is adopted by this record; the choice MUST be verified (`cargo search`, `npm info`) and recorded when the contract test is written.
+- The OpenAPI generator crate and TypeScript generator. Candidates seen at writing were `utoipa` (crates.io 6.0.0) and `openapi-typescript` (npm 7.13.0). Verified again on 2026-10-17 (`cargo search utoipa`: 6.0.0; `npm info openapi-typescript`: latest 7.13.0). The owner decided (2026-10-17) to adopt `openapi-typescript` for the TypeScript types and no Rust generator; see Decision 2.
 
 ## Alternatives Considered
 
@@ -95,20 +106,21 @@ Not yet verified:
 - **Per-engine view APIs and client adapters (ADR 028 Decisions 2 and 4):** Three contracts and three adapters per host. Rejected in favour of one API.
 - **WebSocket only:** Loses previews, `Range`, caching and Service Worker interception, and needs a loopback port on the desktop. Rejected unless S1 shows otherwise.
 - **Loopback HTTP server on the desktop with a per-launch token:** Same transport everywhere, but opens a port and breaks ADR 002. Kept as the S1 comparison, not adopted.
+- **Generating the contract from Rust (`utoipa`):** Would derive OpenAPI from annotated handlers and types. Rejected by the owner (2026-10-17): the hand-written contract stays the reviewed source of truth, adds no Rust dependency, and drift tests already tie it to the Rust routes and types.
 - **GraphQL or gRPC-web:** Adds a second schema system and a runtime the browser does not need for file bytes. Rejected.
 
 ## Consequences / Implications
 
 Easier: every UI and every host share one contract; adding a host means writing an adapter, not routes; the desktop and server UIs run the same code.
 
-Harder: `filesquid-api` needs a contract test and a code generator in CI; the desktop custom-scheme handler buffers each response body, so file-content endpoints MUST answer bounded, capped `Range` requests (S1 results); the event channel has two implementations (WebSocket and Tauri channel) behind one client interface; `filesquid-server` needs accounts, groups and collection permissions before multi-user release. The Origin differs per platform for custom schemes, so CORS and Content Security Policy settings MUST be tested on each OS.
+Harder: `filesquid-api` needs contract drift tests and the TypeScript generator in the local pre-commit hook; the desktop custom-scheme handler buffers each response body, so file-content endpoints MUST answer bounded, capped `Range` requests (S1 results); the event channel has two implementations (WebSocket and Tauri channel) behind one client interface; `filesquid-server` needs accounts, groups and collection permissions before multi-user release. The Origin differs per platform for custom schemes, so CORS and Content Security Policy settings MUST be tested on each OS.
 
 ## Related Decisions / Notes
 
 - Amends: [ADR 002](./002-tauri2-desktop-shell.md). Supersedes in part: [ADR 028](./028-filesquid-ui-packages-and-panel-composition.md) (view-API transports). Applies the schema rule of [ADR 001](./001-shared-rust-core-with-tauri-and-axum-hosts.md).
 - Related: [ADR 029](./029-filesquid-unified-product-and-distributions.md), [ADR 031](./031-vanilla-typescript-ui-and-white-label-theming.md), [ADR 032](./032-hosting-and-privacy-model.md), [ADR 007](./007-durable-jobs-and-interactive-performance.md) (job progress events).
 - Requirements: [FE-074, FE-075](../product-vision.md#platform-api-and-hosts), [T-048–T-050, T-053](../product-vision.md#api-and-hosts), [U-16–U-18](../product-vision.md#one-api-hosts-and-distributions).
-- Open: S1 items (a) and (d), the generator choice, and the server account store.
+- Open: S1 items (a) and (d), and the server account store. The generator choice was closed on 2026-10-17 (Decision 2).
 - PRD: [F-056](../prd.md#f-056-single-filesquid-api), [F-057](../prd.md#f-057-desktop-and-server-hosts).
 
 ### S1 results (2026-10-15)

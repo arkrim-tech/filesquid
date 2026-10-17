@@ -19,7 +19,7 @@ Cargo commands run from `apps/filesquid/` with `-p filesquid-api` (`cargo test -
 
 ## Phase F1: The API (global Tasks FS-1.1–FS-1.4; after the MVP, API-F1.8 in FS-1.5 and API-F1.9 in FS-3.10)
 
-- [ ] **Task API-F1.1: Versioned contract and generated TypeScript types**
+- [x] **Task API-F1.1: Versioned contract and generated TypeScript types**
   - **Description:** Own one versioned API contract (OpenAPI 3.1 checked into the repository); generate the TypeScript types consumed by `@filesquid/ui`; add a test that fails when the contract and the generated types drift. Versioned operation schemas carry operation/idempotency key, expected revision, bounded page size, error code and retryability ([CORE-S-005](../../core/resources/srs.md)).
   - **Estimated Time:** 12 hours
   - **Dependencies:** API-F0.1

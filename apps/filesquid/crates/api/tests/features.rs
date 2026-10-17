@@ -1,4 +1,5 @@
-//! Cucumber harness for the `filesquid-api` Gherkin under `tests/features/` (F-061).
+//! Cucumber harness for the `filesquid-api` Gherkin under `tests/features/` (F-061, and the
+//! versioned contract and typed errors of F-056: API-S-002, API-S-009).
 //!
 //! Scenarios that need domain operations not built yet (import, rename, metadata writes, C2PA
 //! scans, sync) or the optional OTLP export (Task FS-3.6) have no step definitions and are
@@ -388,6 +389,186 @@ fn export_matches(w: &mut MonitorWorld) {
     let ids: Vec<i64> = entries.iter().filter_map(|e| e.id).collect();
     assert_eq!(ids, w.expected_ids);
     assert_eq!(ids.len(), 30);
+    if let Some(m) = w.monitor.take() {
+        m.shutdown();
+    }
+}
+
+// ---- Versioned API contract (F-056, API-S-002, API-S-009) ----
+
+/// Send `GET path` through the router (optionally with a bearer token); record the status
+/// in `statuses` and the JSON body in `json`.
+async fn send_get(w: &mut MonitorWorld, path: &str, token: Option<&str>) {
+    let mut req = Request::get(path);
+    if let Some(token) = token {
+        req = req.header(header::AUTHORIZATION, format!("Bearer {token}"));
+    }
+    let res = router(w.state.clone().expect("state"))
+        .oneshot(req.body(Body::empty()).expect("request"))
+        .await
+        .expect("response");
+    w.statuses.push(res.status().as_u16());
+    let body = http_body_util::BodyExt::collect(res.into_body())
+        .await
+        .expect("body")
+        .to_bytes();
+    w.json = serde_json::from_slice(&body).expect("response body is JSON");
+}
+
+/// The checked-in contract as JSON.
+fn contract_json() -> serde_json::Value {
+    serde_json::from_str(filesquid_api::CONTRACT).expect("contract JSON")
+}
+
+#[given(expr = "a FileSquid API router")]
+fn api_router(w: &mut MonitorWorld) {
+    w.state = Some(ApiState::new());
+}
+
+#[given(expr = "a FileSquid API router whose monitor has not started")]
+fn api_router_without_monitor(w: &mut MonitorWorld) {
+    w.state = Some(ApiState::new());
+}
+
+#[given(expr = "the API contract")]
+fn the_contract(w: &mut MonitorWorld) {
+    w.json = contract_json();
+}
+
+#[given(expr = "a FileSquid server API that requires an administrator token")]
+fn server_with_token(w: &mut MonitorWorld) {
+    let state = ApiState::new();
+    let monitor = Monitor::start(
+        Arc::new(MemoryJournal::new("server")),
+        MonitorConfig::new("server", std::env::temp_dir(), AdminAuth::bearer("admin")),
+        state.events.clone(),
+    );
+    state.install_monitor(monitor.clone());
+    w.state = Some(state);
+    w.monitor = Some(monitor);
+}
+
+#[when(expr = "a client asks for the API contract")]
+async fn ask_contract(w: &mut MonitorWorld) {
+    send_get(w, "/api/v1/openapi.json", None).await;
+}
+
+#[when(expr = "a client asks for the activity journal without a token")]
+async fn ask_journal_anonymous(w: &mut MonitorWorld) {
+    send_get(w, "/api/v1/admin/journal", None).await;
+}
+
+#[when(expr = "a client asks for the health report")]
+async fn ask_health_report(w: &mut MonitorWorld) {
+    send_get(w, "/api/v1/admin/health", None).await;
+}
+
+#[when(expr = "an administrator asks for the activity journal with a malformed cursor")]
+async fn ask_journal_bad_cursor(w: &mut MonitorWorld) {
+    send_get(w, "/api/v1/admin/journal?after=not-a-cursor", Some("admin")).await;
+}
+
+#[when(expr = "an administrator asks for the activity journal")]
+async fn ask_journal(w: &mut MonitorWorld) {
+    send_get(w, "/api/v1/admin/journal", Some("admin")).await;
+}
+
+#[then(expr = "the contract should be OpenAPI 3.1 at the crate's API version")]
+fn contract_is_versioned(w: &mut MonitorWorld) {
+    assert_eq!(w.statuses.last(), Some(&200));
+    assert_eq!(w.json["openapi"], "3.1.0");
+    assert_eq!(w.json["info"]["version"], filesquid_api::API_VERSION);
+}
+
+#[then(expr = "every path the router serves should be documented in the contract")]
+fn routed_are_documented(_w: &mut MonitorWorld) {
+    let doc = contract_json();
+    for path in filesquid_api::routed_paths() {
+        assert!(doc["paths"].get(&path).is_some(), "{path} is undocumented");
+    }
+}
+
+#[then(expr = "every documented path should be served by the router or marked as a host route")]
+fn documented_are_routed(_w: &mut MonitorWorld) {
+    let doc = contract_json();
+    let routed = filesquid_api::routed_paths();
+    for (path, item) in doc["paths"].as_object().expect("paths") {
+        let host = item.get("x-filesquid-host-route") == Some(&serde_json::Value::Bool(true));
+        assert!(host || routed.contains(path), "{path} is not routed");
+    }
+}
+
+#[then(
+    expr = "a command envelope should require an operation id, an expected revision, a scope and a schema version"
+)]
+fn command_envelope_required(w: &mut MonitorWorld) {
+    let required = &w.json["components"]["schemas"]["CommandEnvelope"]["required"];
+    for name in [
+        "operation_id",
+        "expected_revision",
+        "scope",
+        "schema_version",
+    ] {
+        assert!(
+            required
+                .as_array()
+                .expect("required")
+                .contains(&name.into()),
+            "{name}"
+        );
+    }
+}
+
+#[then(expr = "a query page size should be bounded between {int} and {int}")]
+fn page_size_bounded(w: &mut MonitorWorld, min: u32, max: u32) {
+    let schemas = &w.json["components"]["schemas"];
+    let parameter = &w.json["components"]["parameters"]["PageSize"]["schema"];
+    for schema in [
+        &schemas["QueryEnvelope"]["properties"]["page_size"],
+        parameter,
+    ] {
+        assert_eq!(schema["minimum"], min);
+        assert_eq!(schema["maximum"], max);
+    }
+    assert_eq!(max, filesquid_api::operation::MAX_PAGE_SIZE);
+}
+
+#[then(expr = "an API error should carry a code, a message and whether it is retryable")]
+fn api_error_fields(w: &mut MonitorWorld) {
+    let required = &w.json["components"]["schemas"]["ApiError"]["required"];
+    assert_eq!(
+        *required,
+        serde_json::json!(["code", "message", "retryable"])
+    );
+}
+
+#[then(expr = "the response should be an {string} error with a message")]
+fn typed_error(w: &mut MonitorWorld, code: String) {
+    assert!(w.statuses.last().is_some_and(|s| *s >= 400));
+    assert_eq!(w.json["code"], code.as_str(), "{}", w.json);
+    assert!(w.json["message"].as_str().is_some_and(|m| !m.is_empty()));
+}
+
+#[then(expr = "the error should be retryable")]
+fn error_retryable(w: &mut MonitorWorld) {
+    assert_eq!(w.json["retryable"], true);
+}
+
+#[then(expr = "the error should not be retryable")]
+fn error_not_retryable(w: &mut MonitorWorld) {
+    assert_eq!(w.json["retryable"], false);
+    shutdown_monitor(w);
+}
+
+#[then(expr = "the response should be a journal page")]
+fn journal_page(w: &mut MonitorWorld) {
+    assert_eq!(w.statuses.last(), Some(&200));
+    assert!(w.json["entries"].is_array());
+    shutdown_monitor(w);
+}
+
+/// Stop the scenario's monitor, if one was started.
+fn shutdown_monitor(w: &mut MonitorWorld) {
     if let Some(m) = w.monitor.take() {
         m.shutdown();
     }

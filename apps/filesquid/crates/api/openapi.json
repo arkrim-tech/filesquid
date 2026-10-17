@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "FileSquid API",
-    "version": "0.2.0",
-    "description": "The single FileSquid API served by every FileSquid host. See resources/architecture/030-filesquid-api-and-transports.md."
+    "version": "0.3.0",
+    "description": "The single FileSquid API served by every FileSquid host. See resources/architecture/030-filesquid-api-and-transports.md. Conventions: a command (mutation) sends a CommandEnvelope as the `envelope` member of its JSON request body (operation_id is the idempotency key, expected_revision the revision last read) and answers with a CommandOutcome; a query (list) takes the PageSize (`limit`, 1-1000) and Cursor (`cursor`) parameters; every failed request answers with an ApiError body (code, message, retryable). Router-wide fallbacks: any /api/v1/ path not in this contract answers 404 not_found, and a documented path called with a method it does not document answers 405 method_not_allowed; both carry the ApiError body. They are not listed per operation because no operation sends them. Paths marked x-filesquid-host-route are served by the hosts, not by the filesquid-api router."
   },
   "paths": {
     "/api/v1/health": {
@@ -47,7 +47,8 @@
             "description": "Switching protocols to WebSocket. Each text frame is one ApiEvent."
           }
         }
-      }
+      },
+      "x-filesquid-host-route": true
     },
     "/api/v1/admin/health": {
       "get": {
@@ -71,13 +72,16 @@
             }
           },
           "401": {
-            "description": "No credentials (server)."
+            "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
-            "description": "Wrong credentials."
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
           },
           "503": {
-            "description": "Monitor not started yet."
+            "$ref": "#/components/responses/Unavailable"
           }
         }
       }
@@ -107,13 +111,16 @@
             }
           },
           "401": {
-            "description": "No credentials (server)."
+            "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
-            "description": "Wrong credentials."
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
           },
           "503": {
-            "description": "Monitor not started yet."
+            "$ref": "#/components/responses/Unavailable"
           }
         }
       }
@@ -202,13 +209,7 @@
             }
           },
           {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "description": "Page size (default 100, max 1000).",
-            "schema": {
-              "type": "integer"
-            }
+            "$ref": "#/components/parameters/PageSize"
           },
           {
             "name": "order",
@@ -235,17 +236,20 @@
               }
             }
           },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
           "401": {
-            "description": "No credentials (server)."
+            "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
-            "description": "Wrong credentials."
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
           },
           "503": {
-            "description": "Monitor not started yet."
-          },
-          "400": {
-            "description": "Invalid query parameter."
+            "$ref": "#/components/responses/Unavailable"
           }
         }
       }
@@ -355,16 +359,19 @@
             }
           },
           "400": {
-            "description": "Invalid query parameter."
+            "$ref": "#/components/responses/InvalidRequest"
           },
           "401": {
-            "description": "No credentials (server)."
+            "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
-            "description": "Wrong credentials."
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
           },
           "503": {
-            "description": "Monitor not started yet."
+            "$ref": "#/components/responses/Unavailable"
           }
         }
       }
@@ -394,13 +401,16 @@
             }
           },
           "401": {
-            "description": "No credentials (server)."
+            "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
-            "description": "Wrong credentials."
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
           },
           "503": {
-            "description": "Monitor not started yet."
+            "$ref": "#/components/responses/Unavailable"
           }
         }
       }
@@ -692,6 +702,234 @@
           },
           "product": {
             "type": "string"
+          }
+        }
+      },
+      "ErrorCode": {
+        "type": "string",
+        "description": "Stable error code. HTTP status: invalid_request 400, unauthorized 401, forbidden 403, not_found 404, method_not_allowed 405, conflict 409, internal 500, unavailable 503. Only unavailable is retryable. The router-wide fallbacks use 404 not_found (path not in the contract) and 405 method_not_allowed (method not documented for the path).",
+        "enum": [
+          "invalid_request",
+          "unauthorized",
+          "forbidden",
+          "not_found",
+          "method_not_allowed",
+          "conflict",
+          "internal",
+          "unavailable"
+        ]
+      },
+      "ApiError": {
+        "type": "object",
+        "description": "Body of every failed API request.",
+        "required": [
+          "code",
+          "message",
+          "retryable"
+        ],
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/ErrorCode"
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable message the UI can show. Never contains paths, SQL or internal error text."
+          },
+          "retryable": {
+            "type": "boolean",
+            "description": "True when repeating the same request unchanged may succeed."
+          }
+        }
+      },
+      "PortError": {
+        "type": "object",
+        "description": "Error reported by a module port, with retryability (CORE-S-005).",
+        "required": [
+          "code",
+          "retryable"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Module error code."
+          },
+          "retryable": {
+            "type": "boolean",
+            "description": "Whether the caller MAY retry."
+          }
+        }
+      },
+      "CommandEnvelope": {
+        "type": "object",
+        "description": "Versioned envelope every command (mutation) carries (CORE-S-005).",
+        "required": [
+          "schema_version",
+          "operation_id",
+          "expected_revision",
+          "scope"
+        ],
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 1,
+            "description": "Protocol schema version."
+          },
+          "operation_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Operation and idempotency key: repeating a command with the same id MUST NOT apply it twice."
+          },
+          "expected_revision": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Revision the caller last read; a mismatch answers conflict."
+          },
+          "scope": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Permitted scope, for example library:<id>."
+          }
+        }
+      },
+      "QueryEnvelope": {
+        "type": "object",
+        "description": "Versioned envelope every query (list) carries (CORE-S-005).",
+        "required": [
+          "schema_version",
+          "page_size",
+          "scope"
+        ],
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 1,
+            "description": "Protocol schema version."
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000,
+            "description": "Bounded page size."
+          },
+          "scope": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Permitted scope."
+          }
+        }
+      },
+      "CommandOutcomeKind": {
+        "type": "string",
+        "description": "committed is durable completion evidence; pending is durable but incomplete; conflict means the expected revision did not match; error carries a PortError.",
+        "enum": [
+          "committed",
+          "pending",
+          "conflict",
+          "error"
+        ]
+      },
+      "CommandOutcome": {
+        "type": "object",
+        "description": "Result of a command, tied to its operation id.",
+        "required": [
+          "operation_id",
+          "kind",
+          "error"
+        ],
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The command's operation id."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/CommandOutcomeKind"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PortError"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The module error when kind is error, otherwise null."
+          }
+        }
+      }
+    },
+    "parameters": {
+      "PageSize": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "description": "Page size for a query (1-1000). Each operation states its default; the activity journal defaults to 100.",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        }
+      },
+      "Cursor": {
+        "name": "cursor",
+        "in": "query",
+        "required": false,
+        "description": "Opaque cursor from the previous page.",
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "responses": {
+      "InvalidRequest": {
+        "description": "Invalid or malformed request (invalid_request).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "No credentials (unauthorized; server only).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Wrong credentials (forbidden).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "Internal": {
+        "description": "The host failed (internal).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "Unavailable": {
+        "description": "Monitor not started yet (unavailable; retryable).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
           }
         }
       }

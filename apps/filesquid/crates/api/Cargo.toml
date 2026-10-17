@@ -43,6 +43,10 @@ name = "unit_contract"
 path = "tests/unit/contract.rs"
 
 [[test]]
+name = "unit_errors"
+path = "tests/unit/errors.rs"
+
+[[test]]
 name = "unit_events"
 path = "tests/unit/events.rs"
 

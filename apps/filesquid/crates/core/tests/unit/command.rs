@@ -51,6 +51,21 @@ fn page_size_rejects_zero_and_values_above_max() {
 }
 
 #[test]
+fn page_size_bound_is_one_to_one_thousand() {
+    assert_eq!(MAX_PAGE_SIZE, 1000);
+    assert_eq!(PageSize::new(1).expect("min").get(), 1);
+    assert_eq!(PageSize::new(1000).expect("max").get(), 1000);
+    assert_eq!(
+        PageSize::new(1001).unwrap_err(),
+        DomainError::InvalidPageSize
+    );
+    assert_eq!(
+        DomainError::InvalidPageSize.to_string(),
+        "page size must be between 1 and 1000 inclusive"
+    );
+}
+
+#[test]
 fn query_envelope_carries_bounded_page_size() {
     let query = QueryEnvelope::new(
         PageSize::new(50).expect("page"),
@@ -92,8 +107,10 @@ fn ui_progress_is_not_durable_completion() {
 fn deserialize_rejects_unbounded_page_size() {
     let parsed: Result<PageSize, _> = serde_json::from_str("0");
     assert!(parsed.is_err());
-    let parsed: Result<PageSize, _> = serde_json::from_str("101");
+    let parsed: Result<PageSize, _> = serde_json::from_str("1001");
     assert!(parsed.is_err());
+    let parsed: Result<PageSize, _> = serde_json::from_str("1000");
+    assert_eq!(parsed.expect("1000 is within the bound").get(), 1000);
     let parsed: Result<ExpectedRevision, _> = serde_json::from_str("\"\"");
     assert!(parsed.is_err());
 }

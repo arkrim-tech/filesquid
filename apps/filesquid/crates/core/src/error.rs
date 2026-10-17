@@ -62,7 +62,7 @@ impl std::fmt::Display for DomainError {
                 write!(f, "SHA-256 digest must be 64 hexadecimal characters")
             }
             Self::InvalidPageSize => {
-                write!(f, "page size must be between 1 and 100 inclusive")
+                write!(f, "page size must be between 1 and 1000 inclusive")
             }
             Self::EmptyScope => write!(f, "scope and expected revision must be non-empty"),
             Self::DuplicateHkdfPurpose => {
