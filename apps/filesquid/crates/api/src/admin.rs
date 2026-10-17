@@ -1,14 +1,19 @@
 //! Admin routes of the FileSquid API: health, processes, journal (query and JSON Lines export)
 //! and metrics (SRS-F-061). Only the desktop owner or a server administrator may call them.
+//!
+//! Every failure answers with a typed [`ApiError`] (API-S-009).
 
+use crate::error::{ApiError, ErrorCode};
 use crate::journal::{parse_rfc3339_ms, JournalQuery, Level, Outcome, MAX_PAGE};
 use crate::monitor::Monitor;
+use crate::routes::Route;
 use crate::ApiState;
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::http::{header, HeaderMap};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use axum::{Json, Router};
+use axum::Json;
 use serde::Deserialize;
 
 /// Export stops after this many pages ([`MAX_PAGE`] entries each) to bound one response.
@@ -34,8 +39,9 @@ impl AdminAuth {
         AdminAuth::Bearer(token.into())
     }
 
-    /// Check request headers: `401` without credentials, `403` with wrong ones.
-    pub fn check(&self, headers: &HeaderMap) -> Result<(), StatusCode> {
+    /// Check request headers: an `unauthorized` error (401) without credentials, a
+    /// `forbidden` error (403) with wrong ones.
+    pub fn check(&self, headers: &HeaderMap) -> Result<(), ApiError> {
         let AdminAuth::Bearer(expected) = self else {
             return Ok(());
         };
@@ -43,11 +49,16 @@ impl AdminAuth {
             .get(header::AUTHORIZATION)
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "))
-            .ok_or(StatusCode::UNAUTHORIZED)?;
+            .ok_or_else(|| {
+                ApiError::new(ErrorCode::Unauthorized, "Sign in as an administrator.")
+            })?;
         if constant_time_eq(presented.as_bytes(), expected.as_bytes()) {
             Ok(())
         } else {
-            Err(StatusCode::FORBIDDEN)
+            Err(ApiError::new(
+                ErrorCode::Forbidden,
+                "These credentials cannot read the monitor.",
+            ))
         }
     }
 }
@@ -65,53 +76,61 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 }
 
 /// Admin routes, relative to the API prefix.
-pub(crate) fn routes() -> Router<ApiState> {
-    Router::new()
-        .route("/admin/health", get(health))
-        .route("/admin/processes", get(processes))
-        .route("/admin/journal", get(journal))
-        .route("/admin/journal/export", get(export))
-        .route("/admin/metrics", get(metrics))
+pub(crate) fn routes() -> Vec<Route> {
+    vec![
+        ("/admin/health", get(health)),
+        ("/admin/processes", get(processes)),
+        ("/admin/journal", get(journal)),
+        ("/admin/journal/export", get(export)),
+        ("/admin/metrics", get(metrics)),
+    ]
 }
 
-/// Resolve the monitor and check the caller (`503` before the monitor starts).
-fn authorize(state: &ApiState, headers: &HeaderMap) -> Result<Monitor, StatusCode> {
-    let monitor = state.monitor().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+/// Resolve the monitor and check the caller (`unavailable` before the monitor starts).
+fn authorize(state: &ApiState, headers: &HeaderMap) -> Result<Monitor, ApiError> {
+    let monitor = state.monitor().ok_or_else(|| {
+        ApiError::new(
+            ErrorCode::Unavailable,
+            "The monitor is starting. Try again in a moment.",
+        )
+    })?;
     monitor.auth().check(headers)?;
     Ok(monitor)
 }
 
-/// Run blocking store or filesystem work off the async executor.
+/// Run blocking store or filesystem work off the async executor; a panicked task becomes
+/// an `internal` error for `operation`.
 async fn blocking<T: Send + 'static>(
+    operation: &str,
     f: impl FnOnce() -> T + Send + 'static,
-) -> Result<T, StatusCode> {
+) -> Result<T, ApiError> {
     tokio::task::spawn_blocking(f)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        .map_err(|e| ApiError::internal(operation, &e.to_string()))
 }
 
 async fn health(State(state): State<ApiState>, headers: HeaderMap) -> Response {
     let monitor = match authorize(&state, &headers) {
         Ok(m) => m,
-        Err(status) => return status.into_response(),
+        Err(error) => return error.into_response(),
     };
-    match blocking(move || monitor.health_report()).await {
+    match blocking("api.admin.health", move || monitor.health_report()).await {
         Ok(report) => Json(report).into_response(),
-        Err(status) => status.into_response(),
+        Err(error) => error.into_response(),
     }
 }
 
 async fn processes(State(state): State<ApiState>, headers: HeaderMap) -> Response {
     match authorize(&state, &headers) {
         Ok(m) => Json(m.registry().snapshot()).into_response(),
-        Err(status) => status.into_response(),
+        Err(error) => error.into_response(),
     }
 }
 
 async fn metrics(State(state): State<ApiState>, headers: HeaderMap) -> Response {
     match authorize(&state, &headers) {
         Ok(m) => Json(m.metrics().snapshot()).into_response(),
-        Err(status) => status.into_response(),
+        Err(error) => error.into_response(),
     }
 }
 
@@ -165,55 +184,62 @@ impl JournalParams {
     }
 }
 
-fn bad_request(param: &str) -> Response {
-    (
-        StatusCode::BAD_REQUEST,
-        format!("invalid query parameter: {param}"),
+/// `invalid_request` error naming the invalid query parameter.
+fn bad_request(param: &str) -> ApiError {
+    ApiError::new(
+        ErrorCode::InvalidRequest,
+        format!("Invalid query parameter: {param}."),
     )
-        .into_response()
+}
+
+/// Authorize the caller, then turn the (possibly rejected) query string into a store query.
+/// Authorization comes first so an anonymous caller learns nothing about parameters.
+fn authorized_query(
+    state: &ApiState,
+    headers: &HeaderMap,
+    params: Result<Query<JournalParams>, QueryRejection>,
+) -> Result<(Monitor, JournalQuery), ApiError> {
+    let monitor = authorize(state, headers)?;
+    let Query(params) = params
+        .map_err(|_| ApiError::new(ErrorCode::InvalidRequest, "The query string is malformed."))?;
+    let query = params.to_query().map_err(bad_request)?;
+    Ok((monitor, query))
 }
 
 async fn journal(
     State(state): State<ApiState>,
     headers: HeaderMap,
-    Query(params): Query<JournalParams>,
+    params: Result<Query<JournalParams>, QueryRejection>,
 ) -> Response {
-    let monitor = match authorize(&state, &headers) {
-        Ok(m) => m,
-        Err(status) => return status.into_response(),
-    };
-    let query = match params.to_query() {
-        Ok(q) => q,
-        Err(p) => return bad_request(p),
+    let (monitor, query) = match authorized_query(&state, &headers, params) {
+        Ok(found) => found,
+        Err(error) => return error.into_response(),
     };
     let store = monitor.store();
-    match blocking(move || store.query(&query)).await {
+    match blocking("api.admin.journal", move || store.query(&query)).await {
         Ok(Ok(page)) => Json(page).into_response(),
-        Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        Err(status) => status.into_response(),
+        Ok(Err(e)) => ApiError::internal("api.admin.journal", &e.to_string()).into_response(),
+        Err(error) => error.into_response(),
     }
 }
 
 async fn export(
     State(state): State<ApiState>,
     headers: HeaderMap,
-    Query(params): Query<JournalParams>,
+    params: Result<Query<JournalParams>, QueryRejection>,
 ) -> Response {
-    let monitor = match authorize(&state, &headers) {
-        Ok(m) => m,
-        Err(status) => return status.into_response(),
-    };
-    let mut query = match params.to_query() {
-        Ok(q) => q,
-        Err(p) => return bad_request(p),
+    let (monitor, mut query) = match authorized_query(&state, &headers, params) {
+        Ok(found) => found,
+        Err(error) => return error.into_response(),
     };
     query.limit = MAX_PAGE;
     query.descending = false;
     let store = monitor.store();
-    match blocking(move || export_pages(store.as_ref(), query, MAX_EXPORT_PAGES)).await {
+    let pages = move || export_pages(store.as_ref(), query, MAX_EXPORT_PAGES);
+    match blocking("api.admin.journal.export", pages).await {
         Ok(Ok((text, next))) => export_response(text, next),
-        Ok(Err(e)) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
-        Err(status) => status.into_response(),
+        Ok(Err(e)) => ApiError::internal("api.admin.journal.export", &e).into_response(),
+        Err(error) => error.into_response(),
     }
 }
 

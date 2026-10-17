@@ -216,9 +216,119 @@ export interface components {
             status: "ok";
             product: string;
         };
+        /**
+         * @description Stable error code. HTTP status: invalid_request 400, unauthorized 401, forbidden 403, not_found 404, conflict 409, internal 500, unavailable 503. Only unavailable is retryable.
+         * @enum {string}
+         */
+        ErrorCode: "invalid_request" | "unauthorized" | "forbidden" | "not_found" | "conflict" | "internal" | "unavailable";
+        /** @description Body of every failed API request. */
+        ApiError: {
+            code: components["schemas"]["ErrorCode"];
+            /** @description Human-readable message the UI can show. Never contains paths, SQL or internal error text. */
+            message: string;
+            /** @description True when repeating the same request unchanged may succeed. */
+            retryable: boolean;
+        };
+        /** @description Error reported by a module port, with retryability (CORE-S-005). */
+        PortError: {
+            /** @description Module error code. */
+            code: string;
+            /** @description Whether the caller MAY retry. */
+            retryable: boolean;
+        };
+        /** @description Versioned envelope every command (mutation) carries (CORE-S-005). */
+        CommandEnvelope: {
+            /**
+             * @description Protocol schema version.
+             * @constant
+             */
+            schema_version: 1;
+            /** @description Operation and idempotency key: repeating a command with the same id MUST NOT apply it twice. */
+            operation_id: string;
+            /** @description Revision the caller last read; a mismatch answers conflict. */
+            expected_revision: string;
+            /** @description Permitted scope, for example library:<id>. */
+            scope: string;
+        };
+        /** @description Versioned envelope every query (list) carries (CORE-S-005). */
+        QueryEnvelope: {
+            /**
+             * @description Protocol schema version.
+             * @constant
+             */
+            schema_version: 1;
+            /** @description Bounded page size. */
+            page_size: number;
+            /** @description Permitted scope. */
+            scope: string;
+        };
+        /**
+         * @description committed is durable completion evidence; pending is durable but incomplete; conflict means the expected revision did not match; error carries a PortError.
+         * @enum {string}
+         */
+        CommandOutcomeKind: "committed" | "pending" | "conflict" | "error";
+        /** @description Result of a command, tied to its operation id. */
+        CommandOutcome: {
+            /** @description The command's operation id. */
+            operation_id: string;
+            kind: components["schemas"]["CommandOutcomeKind"];
+            /** @description The module error when kind is error, otherwise null. */
+            error: components["schemas"]["PortError"] | null;
+        };
     };
-    responses: never;
-    parameters: never;
+    responses: {
+        /** @description Invalid or malformed request (invalid_request). */
+        InvalidRequest: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description No credentials (unauthorized; server only). */
+        Unauthorized: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description Wrong credentials (forbidden). */
+        Forbidden: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description The host failed (internal). */
+        Internal: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description Monitor not started yet (unavailable; retryable). */
+        Unavailable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+    };
+    parameters: {
+        /** @description Page size for a query (1-100). */
+        PageSize: number;
+        /** @description Opaque cursor from the previous page. */
+        Cursor: string;
+    };
     requestBodies: never;
     headers: never;
     pathItems: never;
@@ -301,27 +411,10 @@ export interface operations {
                     "application/json": components["schemas"]["HealthReport"];
                 };
             };
-            /** @description No credentials (server). */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Wrong credentials. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Monitor not started yet. */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["Unavailable"];
         };
     };
     getAdminProcesses: {
@@ -342,27 +435,10 @@ export interface operations {
                     "application/json": components["schemas"]["ProcessView"][];
                 };
             };
-            /** @description No credentials (server). */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Wrong credentials. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Monitor not started yet. */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["Unavailable"];
         };
     };
     getAdminJournal: {
@@ -404,34 +480,11 @@ export interface operations {
                     "application/json": components["schemas"]["JournalPage"];
                 };
             };
-            /** @description Invalid query parameter. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description No credentials (server). */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Wrong credentials. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Monitor not started yet. */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["Unavailable"];
         };
     };
     exportAdminJournal: {
@@ -471,34 +524,11 @@ export interface operations {
                     "application/x-ndjson": string;
                 };
             };
-            /** @description Invalid query parameter. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description No credentials (server). */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Wrong credentials. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Monitor not started yet. */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["Unavailable"];
         };
     };
     getAdminMetrics: {
@@ -521,27 +551,10 @@ export interface operations {
                     };
                 };
             };
-            /** @description No credentials (server). */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Wrong credentials. */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Monitor not started yet. */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["Unavailable"];
         };
     };
 }
