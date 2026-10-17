@@ -138,7 +138,7 @@ The global **Dependencies** field is the lock across modules. Module `plan.md` f
 
 ### Branch naming
 
-Use hyphenated lowercase branch names per task, for example `task/co-0.1-domain-ids`, `task/api-f1.1-contract`, `task/ui-f2.2-file-browser`, `task/ui-1.1-library-ui`. Do not commit directly to `main`. After push, open a pull request, fix Cubic's review comments until none remain, then merge the PR ([pr-review-loop.md](../.agents/rules/pr-review-loop.md)).
+Use hyphenated lowercase branch names per task, prefixed with a permitted Conventional Commit type ([conventional-commits.md](../.agents/kb/conventional-commits.md)), for example `feat/co-0.1-domain-ids`, `feat/api-f1.1-contract`, `feat/ui-f2.2-file-browser`, `docs/plan-local-verification-gates`. The prefixes `task/` and `claude/` MUST NOT be used ([task-workflow.md](../.agents/rules/task-workflow.md)). Do not commit directly to `main`. After push, open a pull request, fix Cubic's review comments until none remain, then merge the PR ([pr-review-loop.md](../.agents/rules/pr-review-loop.md)).
 
 ### Operator loop (copy-paste)
 
@@ -152,7 +152,7 @@ Replace `<MODULE-ID>`, `<module dir>` and `<crate>` from the global Description 
 
 Every task Agent Prompt below is complete. Apply these rules on every implementation task:
 
-1. Branch-per-task (`task/<id>-<slug>`), Conventional Commits, push the feature branch to origin.
+1. Branch-per-task (`feat/<id>-<slug>`, or another permitted Conventional Commit type; never `task/` or `claude/`), Conventional Commits, push the feature branch to origin.
 2. Keep work inside the named module directory. Cargo commands run from `apps/filesquid/` with `-p <crate>`; `cargo fmt --all` and `cargo clippy --workspace --all-targets --locked -- -D warnings` cover the whole workspace. npm commands run inside `apps/filesquid/ui/`.
 3. Search [resources/architecture/](./architecture/) before denying a technology.
 4. TDD: failing tests first; lint with rustfmt/Clippy or Prettier/ESLint before tests ([ADR 019](./architecture/019-coding-style-and-lint.md)).

@@ -30,5 +30,16 @@ if [ "$BRANCH_NAME" = "main" ] || [ "$BRANCH_NAME" = "master" ]; then
   exit 1
 fi
 
+# Branch names MUST be <type>/<slug>, where <type> is a permitted Conventional Commit type
+# (.agents/kb/conventional-commits.md). Prefixes such as task/ or claude/ are rejected.
+PERMITTED_PREFIX_PATTERN='^(feat|fix|docs|style|refactor|perf|test|build|chore)/[a-z0-9][a-z0-9._-]*$'
+if ! [[ "$BRANCH_NAME" =~ $PERMITTED_PREFIX_PATTERN ]]; then
+  echo "❌ Branch Validation Failed: '$BRANCH_NAME' does not start with a permitted Conventional Commit type."
+  echo "   Use <type>/<lowercase-slug> with type feat, fix, docs, style, refactor, perf, test, build or chore"
+  echo "   (for example feat/io-0.1-storage-backend). task/ and claude/ are not allowed."
+  echo "   Rename it with: git branch -m <type>/<slug>"
+  exit 1
+fi
+
 echo "✅ Branch Validation passed."
 exit 0

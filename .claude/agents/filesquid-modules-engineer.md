@@ -37,7 +37,7 @@ Later module crates named in `resources/implementation-plan.md` (media, import/m
 
 Follow `.agents/rules/task-workflow.md` and the Shared agent prompt contract in `resources/implementation-plan.md`:
 
-1. Branch `task/<id>-<slug>` from `main`. Never commit to `main`.
+1. Branch `feat/<id>-<slug>` from `main` (a permitted Conventional Commit type as prefix; never `task/` or `claude/`, and rename a tool-generated worktree branch before the first commit). Never commit to `main`.
 2. Write `Task-<ID>-Plan.md` and `Task-<ID>-ToDos.md` in `<crate>/resources/tasks/`. Copy every granular SRS constraint into the Plan, and give each one a gate in the ToDos.
 3. TDD: failing tests first (unit, integration for filesystem/S3/SQLite, cucumber features under `<crate>/tests/features/` written with `.agents/skills/feature-writer/SKILL-feature-writer.md`), run them to show they fail, then implement.
 4. Rustdoc (`//!`, `///`) on every module, public type and public function. Keep functions under 60 lines, flat, one job each; bound every loop; close every resource on every path; never swallow an error.
