@@ -9,6 +9,7 @@ mod schema_check;
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use filesquid_api::admin::AdminAuth;
+use filesquid_api::events::{topic, EventResync};
 use filesquid_api::health::{HealthInputs, HealthReason, HealthReport, HealthStatus};
 use filesquid_api::journal::{JournalEntry, JournalPage, Level, MemoryJournal, Outcome};
 use filesquid_api::monitor::{Monitor, MonitorConfig};
@@ -16,7 +17,7 @@ use filesquid_api::operation::{
     CommandEnvelope, CommandOutcome, CommandOutcomeKind, ExpectedRevision, OperationId,
     OperationScope, PageSize, PortError, QueryEnvelope, MAX_PAGE_SIZE, PROTOCOL_SCHEMA_VERSION,
 };
-use filesquid_api::registry::{ProcessState, ProcessView};
+use filesquid_api::registry::{ProcessSpec, ProcessState, ProcessView};
 use filesquid_api::{
     routed_paths, router, ApiError, ApiEvent, ApiState, ErrorCode, API_VERSION, CONTRACT,
 };
@@ -53,7 +54,7 @@ fn contract_is_openapi_3_1_with_the_crate_api_version() {
     let doc = contract();
     assert_eq!(doc["openapi"], "3.1.0");
     assert_eq!(doc["info"]["version"], API_VERSION);
-    assert_eq!(API_VERSION, "0.3.0");
+    assert_eq!(API_VERSION, "0.4.0");
 }
 
 #[test]
@@ -445,6 +446,8 @@ fn samples() -> Vec<(&'static str, Vec<Value>)> {
     let mut all = vec![
         ("HealthStatus", vec![to_value(filesquid_core::health())]),
         ("ApiEvent", vec![to_value(sample_event())]),
+        ("EventTopic", topic::ALL.map(to_value).to_vec()),
+        ("EventResync", vec![to_value(EventResync { missed: 1 })]),
         ("Level", all_levels().map(to_value).to_vec()),
         ("Outcome", all_outcomes().map(to_value).to_vec()),
         ("JournalEntry", vec![to_value(full_entry())]),
@@ -537,7 +540,7 @@ fn assert_documented_members_are_produced(name: &str, schema: &Value, values: &[
 }
 
 fn sample_event() -> ApiEvent {
-    ApiEvent::new("job.progress", json!({ "done": 1 }))
+    ApiEvent::new(topic::PROCESS_UPDATE, json!({ "done": 1 }))
 }
 
 fn full_entry() -> JournalEntry {
@@ -704,4 +707,100 @@ fn error_code_all_lists_every_variant() {
         | ErrorCode::Unavailable => (),
     });
     assert_eq!(ErrorCode::ALL.len(), 8);
+}
+
+// ---- Event channel: documented topics and payloads (API-S-003) ----
+
+/// OpenAPI extension on the event channel mapping each topic to its payload schema.
+const EVENT_PAYLOADS: &str = "x-filesquid-event-payloads";
+
+#[test]
+fn event_topics_in_the_contract_match_the_rust_topics() {
+    let doc = contract();
+    assert_eq!(
+        doc["components"]["schemas"]["ApiEvent"]["properties"]["topic"]["$ref"],
+        "#/components/schemas/EventTopic"
+    );
+    let documented: Vec<&str> = schema(&doc, "EventTopic")["enum"]
+        .as_array()
+        .expect("EventTopic enum")
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert_eq!(documented, topic::ALL.to_vec());
+}
+
+#[test]
+fn every_event_topic_documents_its_payload_schema() {
+    let doc = contract();
+    let payloads = doc["paths"]["/api/v1/events"][EVENT_PAYLOADS]
+        .as_object()
+        .expect("event payload map");
+    let keys: BTreeSet<&str> = payloads.keys().map(String::as_str).collect();
+    let topics: BTreeSet<&str> = topic::ALL.into_iter().collect();
+    assert_eq!(keys, topics, "documented payloads versus Rust topics");
+    let checker = Checker::new(&doc);
+    for (name, payload) in payloads {
+        let target = checker.resolve(payload).expect("payload $ref resolves");
+        assert!(target.is_object(), "{name} payload is a schema");
+    }
+}
+
+/// Read every event already published to `sub`, stopping after a short quiet period.
+async fn drain(sub: &mut filesquid_api::events::EventSubscription) -> Vec<ApiEvent> {
+    let mut out = Vec::new();
+    for _ in 0..1_000 {
+        let quiet = std::time::Duration::from_millis(200);
+        match tokio::time::timeout(quiet, sub.next()).await {
+            Ok(Some(event)) => out.push(event),
+            Ok(None) | Err(_) => break,
+        }
+    }
+    out
+}
+
+/// Events emitted by every publisher in the crate: registry, monitor, journal writer, lag.
+async fn events_from_every_publisher() -> Vec<ApiEvent> {
+    let (state, monitor) = owner_state();
+    let mut sub = state.events.subscription().expect("slot");
+    let handle = monitor
+        .registry()
+        .register(ProcessSpec::new("import", 60_000));
+    handle.progress(1, 2);
+    monitor.tick();
+    monitor
+        .journal()
+        .send(JournalEntry::new("ocfl.commit", Outcome::Succeeded));
+    monitor.journal().flush();
+    let mut events = drain(&mut sub).await;
+    monitor.shutdown();
+    let lagging = filesquid_api::EventBus::new();
+    let mut slow = lagging.subscription().expect("slot");
+    (0..=filesquid_api::events::EVENT_BUFFER).for_each(|_| {
+        lagging.publish(sample_event());
+    });
+    events.extend(slow.next().await);
+    events
+}
+
+#[tokio::test]
+async fn events_from_every_publisher_match_their_documented_payloads() {
+    let doc = contract();
+    let checker = Checker::new(&doc);
+    let payloads = &doc["paths"]["/api/v1/events"][EVENT_PAYLOADS];
+    let events = events_from_every_publisher().await;
+    let mut seen = BTreeSet::new();
+    for event in &events {
+        let envelope = to_value(event);
+        if let Err(e) = checker.check(&envelope, schema(&doc, "ApiEvent"), "ApiEvent") {
+            panic!("published event drifted from ApiEvent: {e}");
+        }
+        let payload = &payloads[event.topic.as_str()];
+        if let Err(e) = checker.check(&event.data, payload, &event.topic) {
+            panic!("{} payload drifted from the contract: {e}", event.topic);
+        }
+        seen.insert(event.topic.clone());
+    }
+    let all: BTreeSet<String> = topic::ALL.iter().map(|t| t.to_string()).collect();
+    assert_eq!(seen, all, "every documented topic is published by Rust");
 }

@@ -1007,7 +1007,9 @@ The system MUST implement [PRD F-056](./prd.md#f-056-single-filesquid-api) with 
 **Tests**
 - [`command_query_ports_F-038.feature`](../apps/filesquid/crates/core/tests/features/command_query_ports_F-038.feature)
 - [`health.feature`](../apps/filesquid/crates/server/tests/features/health.feature)
-- Test gap: a dedicated `single_filesquid_api_F-056.feature` (contract drift, deny-by-default, event channel) is not yet written.
+- [`versioned_api_contract_F-056.feature`](../apps/filesquid/crates/api/tests/features/versioned_api_contract_F-056.feature) (contract, drift, typed errors)
+- [`event_channel_F-056.feature`](../apps/filesquid/crates/api/tests/features/event_channel_F-056.feature) (transport-agnostic routes, bounded event channel, resync hints)
+- Test gap: deny-by-default authorisation scenarios are not yet written (API-F1.7).
 
 ### SRS-F-057: Desktop and server hosts
 

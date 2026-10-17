@@ -1,5 +1,6 @@
 //! Cucumber harness for the `filesquid-api` Gherkin under `tests/features/` (F-061, and the
-//! versioned contract and typed errors of F-056: API-S-002, API-S-009).
+//! versioned contract, typed errors, transport-agnostic routes and event channel of F-056:
+//! API-S-002, API-S-003, API-S-009).
 //!
 //! Scenarios that need domain operations not built yet (import, rename, metadata writes, C2PA
 //! scans, sync) or the optional OTLP export (Task FS-3.6) have no step definitions and are
@@ -9,17 +10,21 @@ use axum::body::Body;
 use axum::http::{header, Request};
 use cucumber::{given, then, when, writer, World, WriterExt as _};
 use filesquid_api::admin::AdminAuth;
+use filesquid_api::events::EventSubscription;
 use filesquid_api::health::HealthStatus;
 use filesquid_api::journal::{JournalEntry, JournalQuery, JournalStore, MemoryJournal, Outcome};
 use filesquid_api::journal_writer::{JournalWriter, WriterConfig};
 use filesquid_api::metrics::Metrics;
 use filesquid_api::monitor::{Monitor, MonitorConfig};
 use filesquid_api::registry::{Clock, ProcessHandle, ProcessSpec, ProcessState};
-use filesquid_api::{router, ApiEvent, ApiState, EventBus};
+use filesquid_api::{router, ApiError, ApiEvent, ApiState, EventBus};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 use tower::ServiceExt;
+
+#[path = "support/event_steps.rs"]
+mod event_steps;
 
 /// State shared by the steps of one scenario.
 #[derive(Default, World)]
@@ -40,6 +45,11 @@ struct MonitorWorld {
     store: Option<Arc<MemoryJournal>>,
     expected_ids: Vec<i64>,
     export: String,
+    answers: Vec<(u16, Vec<u8>)>,
+    channel: Option<EventBus>,
+    subscriptions: Vec<EventSubscription>,
+    received: Vec<ApiEvent>,
+    refused: Option<ApiError>,
 }
 
 impl std::fmt::Debug for MonitorWorld {

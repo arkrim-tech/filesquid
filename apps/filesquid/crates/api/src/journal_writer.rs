@@ -6,6 +6,7 @@
 //! to stdout as JSON with `"journal_write_failed": true` so they are still not lost, and the
 //! failure is counted.
 
+use crate::events::topic;
 use crate::journal::{JournalEntry, JournalStore, Level};
 use crate::metrics::Metrics;
 use crate::{ApiEvent, EventBus};
@@ -218,7 +219,7 @@ fn write_batch(
                     Level::Info => {}
                 }
                 if let Ok(data) = serde_json::to_value(&*entry) {
-                    events.publish(ApiEvent::new("journal.entry", data));
+                    events.publish(ApiEvent::new(topic::JOURNAL_ENTRY, data));
                 }
             }
         }
