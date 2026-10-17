@@ -38,7 +38,7 @@ ImageSquid tasks come from ImageSquid's own plan (`apps/imagesquid/resources/pla
 
 Follow `.agents/rules/task-workflow.md` and the Shared agent prompt contract in `resources/implementation-plan.md`:
 
-1. Branch `feat/<id>-<slug>` from `main` (a permitted Conventional Commit type as prefix; never `task/` or `claude/`, and rename a tool-generated worktree branch before the first commit). Never commit to `main`.
+1. Branch `<type>/<id>-<slug>` from `main`, where `<type>` is the permitted Conventional Commit type that matches the task (`feat` for an implementation task, `docs`, `fix`, `test` and so on otherwise). Never use `task/` or `claude/`, and rename a tool-generated worktree branch before the first commit. Never commit to `main`.
 2. Write `Task-<ID>-Plan.md` and `Task-<ID>-ToDos.md` in `<package>/resources/tasks/`. Copy every granular SRS constraint (colors, sizes, timings, thresholds) into the Plan, and give each one a gate in the ToDos.
 3. TDD: failing tests first, run them to show they fail, then implement. Vitest for units. Gherkin under `<package>/tests/features/` written with `.agents/skills/feature-writer/SKILL-feature-writer.md`. Playwright runs against `npm run build` plus `vite preview`, never only the dev server, with strict DOM assertions: the custom element is defined, labels come from the active label table, computed token values are right in light and dark, and there are no console errors.
 4. TSDoc (`/** ... */` with `@param`, `@returns`, `@throws`) on every exported module, custom element, client, adapter, loader and utility. Keep functions under 60 lines, flat, one job each; never swallow an error.

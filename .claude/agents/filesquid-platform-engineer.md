@@ -37,7 +37,7 @@ You also own the native-processing library (`filesquid-native`) when it exists, 
 
 Follow `.agents/rules/task-workflow.md` and the Shared agent prompt contract in `resources/implementation-plan.md`:
 
-1. Branch `feat/<id>-<slug>` from `main` (a permitted Conventional Commit type as prefix; never `task/` or `claude/`, and rename a tool-generated worktree branch before the first commit). Never commit to `main`.
+1. Branch `<type>/<id>-<slug>` from `main`, where `<type>` is the permitted Conventional Commit type that matches the task (`feat` for an implementation task, `docs`, `fix`, `test` and so on otherwise). Never use `task/` or `claude/`, and rename a tool-generated worktree branch before the first commit. Never commit to `main`.
 2. Write `Task-<ID>-Plan.md` and `Task-<ID>-ToDos.md` in `<crate>/resources/tasks/`. Copy every granular SRS constraint into the Plan, and give each one a gate in the ToDos.
 3. TDD: failing tests first (unit; integration for SQLite, PostgreSQL, S3, HTTP and WebSocket; cucumber features under `<crate>/tests/features/` written with `.agents/skills/feature-writer/SKILL-feature-writer.md`; k6 or Criterion where the task asks for performance), run them to show they fail, then implement. Packaged Tauri windows are tested with WebdriverIO/Tauri-service (ADR 017).
 4. Rustdoc on every module, public type and public function. Keep functions under 60 lines, flat, one job each; name I/O at the call site; bound every loop and retry; close every connection on every path; never swallow an error.
