@@ -87,7 +87,7 @@ Both produce `apps/filesquid/target/debug/filesquid-desktop`, branded by the ove
 
 ## Run tests
 
-This repository has no hosted CI. The gate before every push is the local pre-commit hook, which runs every verifier under `scripts/` (branch, ports, document sync, traceability, links, workspace boundaries, logging, formatting, documentation checks, then Clippy, Cargo and UI tests). Run it by hand from the repository root or install it once as the git hook:
+This repository has no hosted CI. The gate before every push is the local pre-commit hook, which runs every verifier under `scripts/` (branch protection and the `<type>/<slug>` branch-name prefix, ports, document sync, traceability, links, workspace boundaries, logging, formatting, documentation checks, then Clippy, Cargo and UI tests). Run it by hand from the repository root or install it once as the git hook:
 
 ```sh
 bash scripts/pre-commit.sh                     # run all gates now
