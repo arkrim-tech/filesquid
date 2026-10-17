@@ -8,7 +8,7 @@ Draft mockups of every screen a person uses in the **FileSquid MVP**: the early-
 
 - **MVP features only.** v1 drew the whole first consumer release. v2 shows only controls whose function an MVP task delivers. The [Left out](#left-out-because-the-mvp-does-not-deliver-them) list names what was removed and why.
 - **macOS window.** Every screen is a 1440 × 900 macOS window with the title bar and window buttons, because the MVP ships only as a macOS DMG.
-- **Black-and-white logo.** The mark comes from [`Filesquid-logo-bw.svg`](../../assets/Filesquid-logo-bw.svg): black outline on light surfaces, and white outline with see-through shapes on dark surfaces.
+- **Logo.** The mark comes from the coloured [`FileSquid-logo.svg`](../../assets/FileSquid-logo.svg): a green head and red, yellow and blue shapes in both modes, with a black outline and wordmark on light surfaces and a white one on dark surfaces.
 - **Early access.** The sidebar, the welcome screen and About carry the "Early access" label that C-056 and DE-F3.1 require.
 - **Desktop privacy boundary.** Every browsing screen shows "This device · only you can read these files" ([UI-S-004](../../../apps/filesquid/ui/resources/srs.md)). The welcome screen and About state it in full.
 
