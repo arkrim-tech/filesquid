@@ -1,4 +1,7 @@
-//! Stand-alone CLI: extract, get, set, export, import, validate.
+//! Metadata commands of the `fsquid` CLI: extract, get, set, export, import, validate.
+//!
+//! The `filesquid-cli` crate builds the only CLI binary, `fsquid`, and routes
+//! metadata commands here through [`run`]. This module ships no binary of its own.
 
 use std::path::{Path, PathBuf};
 
@@ -12,12 +15,13 @@ use crate::reject_file_dcterms_term;
 use crate::store::{load, save};
 use crate::xmp::{from_xmp, to_xmp};
 
-/// Usage text for the stand-alone UI.
+/// Usage text for the metadata commands of `fsquid`.
 pub const USAGE: &str = "\
-filesquid-metadata — stand-alone metadata CRUD (via filesquid-ocfl)
+fsquid metadata — metadata CRUD (via filesquid-ocfl)
 
 Usage:
-  filesquid-metadata <command> [args] [--object <dir>]
+  fsquid <command> [args] [--object <dir>]
+  fsquid metadata <command> [args] [--object <dir>]
 
 Commands:
   extract <file>          Extract EXIF/ID3 from a media file into metadata.md
@@ -26,6 +30,7 @@ Commands:
   export csv|xmp|json <path>  Write CSV, XMP or JSON sidecar interchange
   import csv|xmp|json <path>  Read CSV, XMP or JSON sidecar into metadata.md
   validate <prefix:term>  Check a dcterms: term against the /terms/ register
+                          (always run as `fsquid metadata validate`)
   help                    Show this help
 
 JSON sidecars also take --id <object-id> --file <logical-path>: the OCFL
@@ -35,7 +40,8 @@ sidecar. Import rejects a sidecar whose identifier or digest differs.
 Canonical store: <object>/metadata.md (YAML front matter + Markdown body).
 ";
 
-const COMMANDS: &[&str] = &[
+/// Metadata command names, as routed by `fsquid`.
+pub const COMMANDS: &[&str] = &[
     "extract", "get", "set", "export", "import", "validate", "help",
 ];
 

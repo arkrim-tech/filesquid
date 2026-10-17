@@ -14,6 +14,8 @@ Accepted: 2026-09-25T22:00:00Z. Revised: 2026-09-25T23:00:00Z. Owner confirmed `
 
 Superseded in part 2026-10-15 by [ADR 029](./029-filesquid-unified-product-and-distributions.md): `filesquid-ocfl` is a module of FileSquid in this repository, not a separate product with its own repository; module independence and publication on its own remain, and the technical content is unchanged. The private-client layer planned as `apps/client` is now planned in `filesquid-api` ([filesquid-api plan](../../apps/filesquid/crates/api/resources/plan.md)). Amended by [ADR 032](./032-hosting-and-privacy-model.md): the crate MAY run in `filesquid-server`.
 
+Amended 2026-10-17 by [ADR 036](./036-single-fsquid-cli.md): every FileSquid CLI is the one `fsquid` binary built by `filesquid-cli`; this module's commands run there and the crate ships no binary of its own.
+
 ## Context / Requirement Reference
 
 [ADR 016](./016-rust-ocfl-library.md) already names `filesquid-ocfl` as FileSquid’s authored OCFL library. The crate is intended for use by institutions and other programs without FileSquid types, application catalogs, or UI nouns ([U-40](../product-vision.md#ocfl-module), [FE-069](../product-vision.md#independent-library), [C-044](../product-vision.md#module-rules)). FileSquid package releases MUST pin a corresponding `filesquid-ocfl` version ([T-040](../product-vision.md#canonical-ocfl-state-and-evidence)).
@@ -24,7 +26,7 @@ OCFL 1.1 is the layout of objects at rest ([ADR 010](./010-ocfl-1-1-dual-profile
 
 ## Decision
 
-`filesquid-ocfl` is a **stand-alone FOSS OCFL 1.1 product and its own tool** (library and later CLI) for the digital preservation community as well as FileSquid. FileSquid is one caller. Other programmes MUST be able to install and use it without installing FileSquid, and without compiling FileSquid domain types ([U-40](../product-vision.md#ocfl-module), [C-047](../product-vision.md#module-rules)).
+`filesquid-ocfl` is a **stand-alone FOSS OCFL 1.1 product** (a library whose commands run in the one FileSquid CLI, `fsquid`, built by `filesquid-cli` ([ADR 036](./036-single-fsquid-cli.md)); independent users install `filesquid-cli` for the command line) for the digital preservation community as well as FileSquid. FileSquid is one caller. Other programmes MUST be able to install and use it without installing FileSquid, and without compiling FileSquid domain types ([U-40](../product-vision.md#ocfl-module), [C-047](../product-vision.md#module-rules)).
 
 The crate is a FileSquid workspace module at `apps/filesquid/crates/ocfl/` ([ADR 029](./029-filesquid-unified-product-and-distributions.md)). It MUST build, test and publish on its own, without FileSquid API, host or distribution crates. During MVP it MAY carry `publish = false`. After the engine API is versioned, crates.io publication SHOULD be the distribution; callers MUST then pin that published version ([T-042](../product-vision.md#canonical-ocfl-state-and-evidence)).
 
@@ -42,7 +44,7 @@ The public API MUST provide:
 6. An enumerator of committed logical state: object identifier, version, logical path, digest, and content locator. Callers (FileSquid catalog rebuild, later Parquet projection) consume these events. The enumerator MUST NOT require SQLite, PostgreSQL, or FileSquid catalog types.
 7. A UI view API (folder listing, file details, version history, size, fixity, ranged reads, version-producing writes) that the `@filesquid/ocfl-ui` Drive-style browser uses. The engine owns storage facts only; descriptive and technical file facts belong to `filesquid-metadata`, Content Credentials to `filesquid-provenance`, and application meaning to the composite product ([ADR 028](./028-filesquid-ui-packages-and-panel-composition.md)).
 
-Default `[dependencies]` MUST stay free of Apache Arrow, Apache Parquet, DuckDB, Iceberg, Axum, Tauri, libvips, FFmpeg, SQLite, and FileSquid domain crates. `publish` MAY remain false until the engine API is versioned; independent crates.io and CLI distribution remains the product intent and MUST NOT be designed away ([T-042](../product-vision.md#canonical-ocfl-state-and-evidence)). The API MUST be written as a public crate surface.
+Default `[dependencies]` MUST stay free of Apache Arrow, Apache Parquet, DuckDB, Iceberg, Axum, Tauri, libvips, FFmpeg, SQLite, and FileSquid domain crates. `publish` MAY remain false until the engine API is versioned; independent crates.io distribution, with its commands in `fsquid` (`filesquid-cli`), remains the product intent and MUST NOT be designed away ([T-042](../product-vision.md#canonical-ocfl-state-and-evidence)). The API MUST be written as a public crate surface.
 
 Community OCFL fixtures and oracles (`rocfl`, `ocfl-py`) MUST validate emitted objects. They MUST NOT be the writer. The conformance suite is the `1.1/` tree of [OCFL/fixtures](https://github.com/OCFL/fixtures), pinned to one commit and used only as test data ([OCFL-S-009](../../apps/filesquid/crates/ocfl/resources/srs.md)–[OCFL-S-011](../../apps/filesquid/crates/ocfl/resources/srs.md)).
 
@@ -74,7 +76,7 @@ DuckDB, dbt, and Iceberg/Polaris remain later analytical runtimes **outside** th
 
 Each FileSquid packaged release that links `filesquid-ocfl` MUST declare the exact `filesquid-ocfl` version in its lockfile and release notes. A filesquid-ocfl engine change that FileSquid needs MUST ship as a filesquid-ocfl version FileSquid then pins.
 
-After extraction (global Task 10.4), FileSquid MUST depend on the published **Cargo package** and compile that library into the desktop native graph and the browser WASM bundle. GitHub Release **CLI binaries** are for independent install. FileSquid MUST NOT shell out to `fsquid` for canonical OCFL I/O ([T-043](../product-vision.md#canonical-ocfl-state-and-evidence)).
+After extraction (global Task 10.4), FileSquid MUST depend on the published **Cargo package** and compile that library into the desktop native graph and the browser WASM bundle. GitHub Release **`fsquid` binaries** built by `filesquid-cli` are for independent install. FileSquid MUST NOT shell out to `fsquid` for canonical OCFL I/O ([T-043](../product-vision.md#canonical-ocfl-state-and-evidence)).
 
 ## Rationale
 

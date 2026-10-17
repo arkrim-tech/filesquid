@@ -38,8 +38,8 @@ The crate does not exist yet; CP-0.1 creates `apps/filesquid/crates/c2pa/Cargo.t
   - **Related Tests:** [`reusable_provenance_engine_F-054.feature`](../tests/features/reusable_provenance_engine_F-054.feature)
   - **Agent Prompt:** `@AGENTS.md Begin by creating a new feature branch for Task CP-0.4. Then begin development, running Cargo from apps/filesquid/ with -p filesquid-c2pa (module directory apps/filesquid/crates/c2pa/). Additionally, invoke the @feature-writer skill to translate SRS requirements into executable BDD feature tests. Upon completion, YOU MUST generate apps/filesquid/crates/c2pa/resources/tasks/Task-CP-0.4-Walkthrough.md directly in the project repository with clear SRS mapping (including BOTH the ID and full human-readable title text) in the secondary section, and strictly delete the internal tracking Plan/ToDos documents before checking off the Markdown box locally in apps/filesquid/crates/c2pa/resources/plan.md. Then commit your changes and push the branch to origin.`
 
-- [ ] **Task CP-0.5: Validation report and CLI read/verify**
-  - **Description:** Assemble a validation report with the specification's status codes (success, informational, failure) per manifest and ingredient. Ship the native CLI `read` and `verify` commands. Oracle suite MUST agree with `c2patool` verdicts on the conformance files.
+- [ ] **Task CP-0.5: Validation report and `fsquid` read/verify**
+  - **Description:** Assemble a validation report with the specification's status codes (success, informational, failure) per manifest and ingredient. Add the `read` and `verify` commands to `fsquid` (a command runner in this library, registered as the `c2pa` group in [filesquid-cli](../../cli/resources/plan.md), [ADR 036](../../../../../resources/architecture/036-single-fsquid-cli.md)). Oracle suite MUST agree with `c2patool` verdicts on the conformance files.
   - **Estimated Time:** 10 hours
   - **Dependencies:** Task CP-0.3, Task CP-0.4
   - **Related Requirements:** [F-054](../../../../../resources/prd.md#f-054-c2pa-module), [C-054](../../../../../resources/product-vision.md#module-rules), [ADR 026](../../../../../resources/architecture/026-filesquid-provenance-engine.md)
@@ -68,7 +68,7 @@ The crate does not exist yet; CP-0.1 creates `apps/filesquid/crates/c2pa/Cargo.t
 ## Phase F3R: Signing and embedding (global Task FS-3.12, after the MVP)
 
 - [ ] **Task CP-0.7: Signer interface, signing and embedding**
-  - **Description:** Define the `Signer` interface for local keys, hardware modules and remote/third-party signers; produce COSE_Sign1 signatures with optional RFC 3161 timestamps. Embed manifests into JPEG and PNG and write sidecar `.c2pa` files. Ship CLI `sign` and `embed`. Oracle suite MUST read every manifest this crate writes.
+  - **Description:** Define the `Signer` interface for local keys, hardware modules and remote/third-party signers; produce COSE_Sign1 signatures with optional RFC 3161 timestamps. Embed manifests into JPEG and PNG and write sidecar `.c2pa` files. Add the `fsquid` commands `sign` and `embed`. Oracle suite MUST read every manifest this crate writes.
   - **Estimated Time:** 16 hours
   - **Dependencies:** Task CP-0.6
   - **Related Requirements:** [F-054](../../../../../resources/prd.md#f-054-c2pa-module), [C2PA-S-003](./srs.md), [C-054](../../../../../resources/product-vision.md#module-rules), [ADR 026](../../../../../resources/architecture/026-filesquid-provenance-engine.md), [ADR 015](../../../../../resources/architecture/015-prov-o-jsonld-and-c2pa-sdk.md)
@@ -78,7 +78,7 @@ The crate does not exist yet; CP-0.1 creates `apps/filesquid/crates/c2pa/Cargo.t
 ## Phase F3R: Edits, formats, scans and PROV-O (global Task 2.6, after the MVP)
 
 - [ ] **Task CP-2.1: Edits, update manifests and redaction**
-  - **Description:** Record edits as new manifests referencing the prior asset as a parent ingredient; support update manifests and assertion redaction as the specification allows. A signed manifest is never modified in place. Ship CLI `edit`.
+  - **Description:** Record edits as new manifests referencing the prior asset as a parent ingredient; support update manifests and assertion redaction as the specification allows. A signed manifest is never modified in place. Add the `fsquid` command `edit`.
   - **Estimated Time:** 16 hours
   - **Dependencies:** Task CP-0.7
   - **Related Requirements:** [F-054](../../../../../resources/prd.md#f-054-c2pa-module), [C2PA-S-004](./srs.md), [C-054](../../../../../resources/product-vision.md#module-rules), [ADR 026](../../../../../resources/architecture/026-filesquid-provenance-engine.md), [F-043](../../../../../resources/prd.md#f-043-import-time-c2pa-records-and-action-disclosure)
@@ -94,7 +94,7 @@ The crate does not exist yet; CP-0.1 creates `apps/filesquid/crates/c2pa/Cargo.t
   - **Agent Prompt:** `@AGENTS.md Begin by creating a new feature branch for Task CP-2.2. Then begin development, running Cargo from apps/filesquid/ with -p filesquid-c2pa (module directory apps/filesquid/crates/c2pa/). Additionally, invoke the @feature-writer skill to translate SRS requirements into executable BDD feature tests. Upon completion, YOU MUST generate apps/filesquid/crates/c2pa/resources/tasks/Task-CP-2.2-Walkthrough.md directly in the project repository with clear SRS mapping (including BOTH the ID and full human-readable title text) in the secondary section, and strictly delete the internal tracking Plan/ToDos documents before checking off the Markdown box locally in apps/filesquid/crates/c2pa/resources/plan.md. Then commit your changes and push the branch to origin.`
 
 - [ ] **Task CP-2.3: Collection scans and reports**
-  - **Description:** Bounded, resumable scans over caller-supplied asset sources with progress and cancellation; disclosure-safe item and summary reports. A scan MUST check disclosable AI-action history against the caller-selected share or publication route and report each mismatch; scans MUST NOT auto-publish ([F-054](../../../../../resources/prd.md#f-054-c2pa-module)). Ship CLI `report`.
+  - **Description:** Bounded, resumable scans over caller-supplied asset sources with progress and cancellation; disclosure-safe item and summary reports. A scan MUST check disclosable AI-action history against the caller-selected share or publication route and report each mismatch; scans MUST NOT auto-publish ([F-054](../../../../../resources/prd.md#f-054-c2pa-module)). Ship `fsquid` command `report`.
   - **Estimated Time:** 12 hours
   - **Dependencies:** Task CP-0.5
   - **Related Requirements:** [F-054](../../../../../resources/prd.md#f-054-c2pa-module), [C-054](../../../../../resources/product-vision.md#module-rules), [ADR 026](../../../../../resources/architecture/026-filesquid-provenance-engine.md)
@@ -112,7 +112,7 @@ The crate does not exist yet; CP-0.1 creates `apps/filesquid/crates/c2pa/Cargo.t
 ## Phase F3R: Publish the crate (global Task FS-3.3, after the MVP)
 
 - [ ] **Task CP-F3.1: Version and publish `filesquid-c2pa`**
-  - **Description:** Set `publish = true` once the public API is semver-stable (CP-0.1 scaffolds with `publish = false`); rustdoc, CHANGELOG, MIT licence, pinned C2PA specification version; publish to crates.io with the CLI as a release binary. FileSquid keeps its workspace path dependency.
+  - **Description:** Set `publish = true` once the public API is semver-stable (CP-0.1 scaffolds with `publish = false`); rustdoc, CHANGELOG, MIT licence, pinned C2PA specification version; publish to crates.io; its commands ship in the `fsquid` release binary. FileSquid keeps its workspace path dependency.
   - **Estimated Time:** 6 hours
   - **Dependencies:** Task CP-0.7, Task CP-2.1
   - **Related Requirements:** [F-054](../../../../../resources/prd.md#f-054-c2pa-module), [C2PA-S-010](./srs.md), [C-054](../../../../../resources/product-vision.md#module-rules), [T-052](../../../../../resources/product-vision.md#api-and-hosts)

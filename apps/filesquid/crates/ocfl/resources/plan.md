@@ -140,7 +140,7 @@ Global Task 9.0 chooses the order of Arkrim, IIIF/GLAM and ProofMode. IO-9.1 run
 
 ## Phase F3R: Publish the crate and CLI (global Task FS-3.3, after the MVP; Task 10.4 superseded)
 
-FileSquid compiles the **library crate** through a workspace path dependency and MUST NOT shell out to the CLI for canonical OCFL I/O. The crate is published to crates.io and CLI **binaries** ship as release binaries for independent preservation programmes. A dedicated repository for this crate alone is superseded.
+FileSquid compiles the **library crate** through a workspace path dependency and MUST NOT shell out to `fsquid` for canonical OCFL I/O. The crate is published to crates.io and `fsquid` **binaries** (built by `filesquid-cli`) ship as release binaries for independent preservation programmes. A dedicated repository for this crate alone is superseded.
 
 - [ ] **Task IO-D.1: Version the public engine API**
   - **Status:** Dispatched by global Task FS-3.3.
@@ -171,7 +171,7 @@ FileSquid compiles the **library crate** through a workspace path dependency and
 
 - [ ] **Task IO-D.4: CLI and GitHub Release binaries**
   - **Status:** Dispatched by global Task FS-3.3.
-  - **Description:** Add `fsquid` linking the library, with git-style commands built only on the public API: stage, status, diff, commit, log, checkout, revert, reinstate, plus list, cat and validate ([OCFL-S-015](./srs.md)). Publish GitHub Release binaries for independent install (Linux, macOS, Windows). This CLI is **not** FileSquid's OCFL writer.
+  - **Description:** Add the OCFL commands to `fsquid`: a command runner in this library, registered as the `ocfl` module group in [filesquid-cli](../../cli/resources/plan.md) ([ADR 036](../../../../../resources/architecture/036-single-fsquid-cli.md)), with git-style commands built only on the public API: stage, status, diff, commit, log, checkout, revert, reinstate, plus list, cat and `fsquid ocfl validate` ([OCFL-S-015](./srs.md)). Publish GitHub Release `fsquid` binaries for independent install (Linux, macOS, Windows). This CLI is **not** FileSquid's OCFL writer.
   - **Estimated Time:** 6 hours
   - **Dependencies:** Task IO-D.3
   - **Related Requirements:** [F-051](../../../../../resources/prd.md#f-051-ocfl-module), [T-043](../../../../../resources/product-vision.md#canonical-ocfl-state-and-evidence), [ADR 016](../../../../../resources/architecture/016-rust-ocfl-library.md)

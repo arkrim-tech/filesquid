@@ -1,0 +1,31 @@
+[package]
+name = "filesquid-cli"
+version = "0.1.0"
+edition = "2021"
+description = "The one FileSquid command-line tool, `fsquid`: OCFL, metadata and Content Credentials commands from the FileSquid modules."
+license = "MIT"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "fsquid"
+path = "src/main.rs"
+
+[dependencies]
+filesquid-metadata = { path = "../metadata" }
+
+[dev-dependencies]
+cucumber = { version = "0.23", features = ["macros", "output-junit"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[[test]]
+name = "unit_route"
+path = "tests/unit/route.rs"
+
+[[test]]
+name = "features"
+path = "tests/features.rs"
+harness = false

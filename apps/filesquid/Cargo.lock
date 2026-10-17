@@ -1151,6 +1151,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "filesquid-cli"
+version = "0.1.0"
+dependencies = [
+ "cucumber",
+ "filesquid-metadata",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "filesquid-core"
 version = "0.1.0"
 dependencies = [

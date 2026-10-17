@@ -1,6 +1,6 @@
 # filesquid-ocfl
 
-The OCFL module of FileSquid. It is a FOSS [OCFL 1.1](https://ocfl.io/1.1/spec/) library (and a later CLI) with a generic API and no FileSquid or ImageSquid types. Digital preservation programmes can use it on its own.
+The OCFL module of FileSquid. It is a FOSS [OCFL 1.1](https://ocfl.io/1.1/spec/) library with a generic API; its commands are planned for the one FileSquid CLI, `fsquid` (Task IO-D.4), and it has no FileSquid or ImageSquid types. Digital preservation programmes can use the library on its own.
 
 | | |
 |---|---|
@@ -8,7 +8,7 @@ The OCFL module of FileSquid. It is a FOSS [OCFL 1.1](https://ocfl.io/1.1/spec/)
 | Rust import | `filesquid_ocfl` |
 | Path | `apps/filesquid/crates/ocfl/` (member of the `apps/filesquid/` Cargo workspace) |
 
-FileSquid hosts reach this module through `filesquid-api`. The module itself MUST NOT depend on Axum, Tauri or another FileSquid module by default, and it MUST keep building for `wasm32-unknown-unknown` so the roadmap E2EE browser host stays reachable. Independent programmes install the CLI binaries from GitHub Releases. FileSquid MUST NOT shell out to that CLI for canonical OCFL I/O.
+FileSquid hosts reach this module through `filesquid-api`. The module itself MUST NOT depend on Axum, Tauri or another FileSquid module by default, and it MUST keep building for `wasm32-unknown-unknown` so the roadmap E2EE browser host stays reachable. Once Task IO-D.4 lands, independent programmes install the `fsquid` binaries from GitHub Releases. FileSquid MUST NOT shell out to `fsquid` for canonical OCFL I/O.
 
 The crate stays independently publishable. It moves to its own repository only as part of extracting `apps/filesquid/` as a whole.
 

@@ -18,6 +18,7 @@ Cargo commands run from `apps/filesquid/` with `-p filesquid-metadata` (`cargo t
 ## Phase F0: Stand-alone CLI and CSV (global Tasks 0.14, 0.16)
 
 - [x] **Task MD-0.3: CLI and CSV headers**
+  - **Status:** Done as the `filesquid-metadata` binary; that binary was retired by Task CLI-0.1 and its commands now run in `fsquid` ([ADR 036](../../../../../resources/architecture/036-single-fsquid-cli.md)).
   - **Description:** Ship the `filesquid-metadata` binary as the stand-alone UI with `extract`, `get`, `set`, `export`, `import`, `validate`. CSV headers are `prefix:term` (optional leading `id` column). Reject unknown `dcterms:` columns. MODS and SQL MUST NOT appear.
   - **Estimated Time:** 8 hours
   - **Dependencies:** Task MD-0.1
@@ -76,7 +77,7 @@ Cargo commands run from `apps/filesquid/` with `-p filesquid-metadata` (`cargo t
 ## Phase F3R: Publish the crate (global Task FS-3.3, after the MVP)
 
 - [ ] **Task MD-F3.1: Version and publish `filesquid-metadata`**
-  - **Description:** Freeze a semver-stable public API with rustdoc, CHANGELOG and `publish = true`; publish to crates.io with the CLI as a release binary. No distribution types in the API. Default features still exclude Axum, Tauri and SQLite. FileSquid keeps its workspace path dependency and MUST NOT shell out to the CLI.
+  - **Description:** Freeze a semver-stable public API with rustdoc, CHANGELOG and `publish = true`; publish to crates.io; its commands ship in the `fsquid` release binary. No distribution types in the API. Default features still exclude Axum, Tauri and SQLite. FileSquid keeps its workspace path dependency and MUST NOT shell out to the CLI.
   - **Estimated Time:** 6 hours
   - **Dependencies:** Task MD-0.2, Task MD-0.5
   - **Related Requirements:** [F-052](../../../../../resources/prd.md#f-052-metadata-module), [MD-S-004](./srs.md), [C-048](../../../../../resources/product-vision.md#module-rules), [T-052](../../../../../resources/product-vision.md#api-and-hosts)

@@ -31,7 +31,7 @@ Language manifests live **inside** `apps/`, never at the repository root:
 
 | Path | What it is |
 |---|---|
-| `apps/filesquid/` | Cargo workspace: `crates/{core,ocfl,metadata,api,server,desktop}`; `crates/c2pa` is planned (docs and tests only, not yet a workspace member) |
+| `apps/filesquid/` | Cargo workspace: `crates/{core,ocfl,metadata,cli,api,server,desktop}`; `crates/c2pa` is planned (docs and tests only, not yet a workspace member) |
 | `apps/filesquid/ui/` | `@filesquid/ui`: API client, custom elements, design tokens and the default FileSquid UI (vanilla TypeScript, Vite; ports 5173 dev / 4173 preview) |
 | `apps/imagesquid/` | The ImageSquid distribution: views, tokens, labels, brand; no backend code (ports 5174 / 4174) |
 | `scripts/docs/` | Documentation validators (requirement coverage, PRD allocation, links, ADR structure) |
@@ -45,9 +45,18 @@ cd ../../imagesquid && npm ci
 
 ## Project naming
 
-Use **FileSquid** for displayed branding of the product and **filesquid** for technical identifiers (Cargo packages `filesquid-core`, `filesquid-ocfl`, `filesquid-metadata`, `filesquid-c2pa`, `filesquid-api`, `filesquid-server`, `filesquid-desktop`; npm scope `@filesquid`; desktop identifier `tech.filesquid.desktop`; hosted service domain `filesquid.tech`). **ImageSquid** is a distribution: displayed brand ImageSquid, npm package `@imagesquid/ui`, desktop identifier `app.imagesquid.desktop`, domain `imagesquid.app`. Internal code, schemas and APIs use FileSquid's internal names (repository, library, collection, virtual collection, virtual exhibit, file); a distribution changes only its UI labels ([terminology](./resources/product-vision.md#terminology)). The `ocfl`, `metadata` and `c2pa` crates stay independently installable and publishable for programmes that never run the FileSquid app.
+Use **FileSquid** for displayed branding of the product and **filesquid** for technical identifiers (Cargo packages `filesquid-core`, `filesquid-ocfl`, `filesquid-metadata`, `filesquid-c2pa`, `filesquid-cli`, `filesquid-api`, `filesquid-server`, `filesquid-desktop`; the one command-line tool is `fsquid`; npm scope `@filesquid`; desktop identifier `tech.filesquid.desktop`; hosted service domain `filesquid.tech`). **ImageSquid** is a distribution: displayed brand ImageSquid, npm package `@imagesquid/ui`, desktop identifier `app.imagesquid.desktop`, domain `imagesquid.app`. Internal code, schemas and APIs use FileSquid's internal names (repository, library, collection, virtual collection, virtual exhibit, file); a distribution changes only its UI labels ([terminology](./resources/product-vision.md#terminology)). The `ocfl`, `metadata` and `c2pa` crates stay independently installable and publishable for programmes that never run the FileSquid app.
 
 ## Run the application
+
+**Command line.** Every FileSquid CLI command runs through one tool, `fsquid`, built by `filesquid-cli` ([ADR 036](./resources/architecture/036-single-fsquid-cli.md)). From `apps/filesquid`:
+
+```sh
+cargo run -p filesquid-cli -- --help
+cargo run -p filesquid-cli -- metadata validate dcterms:title
+```
+
+A command that only one module defines runs as `fsquid <command>`; any command also runs as `fsquid <module> <command>`; `validate` always needs the module name.
 
 **Server host** (API plus the built default UI), from `apps/filesquid`:
 

@@ -14,6 +14,8 @@ Accepted: 2026-09-26T00:30:00Z. Revised: 2026-09-26T01:15:00Z. Owner confirmed t
 
 Superseded in part 2026-10-15 by [ADR 029](./029-filesquid-unified-product-and-distributions.md): `filesquid-metadata` is a module of FileSquid at `apps/filesquid/crates/metadata/`, not a separate product with its own repository; module independence and publication on its own remain, and the technical content is unchanged. Amended by [ADR 032](./032-hosting-and-privacy-model.md): the crate MAY run in `filesquid-server`.
 
+Amended 2026-10-17 by [ADR 036](./036-single-fsquid-cli.md): every FileSquid CLI is the one `fsquid` binary built by `filesquid-cli`; this module's commands run there and the crate ships no binary of its own.
+
 ## Context / Requirement Reference
 
 [ADR 022](./022-dublin-core-descriptive-metadata.md) closed the consumer descriptive vocabulary to ISO 15836-2 `/terms/` with Schema.org overflow. FileSquid already authors [filesquid-ocfl](./023-filesquid-ocfl-engine-and-parquet.md) as a stand-alone OCFL product. Metadata that lives only in FileSquid portable contracts or desktop codecs cannot be reused by institutions and cannot be the single write path for OCFL sidecars.

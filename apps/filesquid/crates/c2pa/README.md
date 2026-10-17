@@ -14,7 +14,7 @@ The C2PA module of FileSquid. It is a FOSS [C2PA](https://spec.c2pa.org/specific
 - Trust lists and signers are supplied by the caller. The module operates no certificate authority.
 - No default dependency on `filesquid-ocfl`, Axum or Tauri. The module reads and writes through caller-supplied byte sources and sinks. `filesquid-api` connects it to the OCFL module.
 - Builds for `wasm32-unknown-unknown`, so the roadmap E2EE browser host stays reachable.
-- Ships a native CLI: `read`, `verify`, `sign`, `edit`, `embed`, `report`. PROV-O JSON-LD projection is an optional feature.
+- Provides the `fsquid` commands `read`, `verify`, `sign`, `edit`, `embed`, `report` (the crate ships no binary; `filesquid-cli` builds `fsquid`). PROV-O JSON-LD projection is an optional feature.
 
 The Content Credentials sidebar panel is part of `@filesquid/ui` in `apps/filesquid/ui/`.
 

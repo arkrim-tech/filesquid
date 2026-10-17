@@ -14,6 +14,8 @@ Accepted: 2026-10-15T05:24:52Z. Owner directed a from-scratch Rust implementatio
 
 Superseded in part 2026-10-15 by [ADR 029](./029-filesquid-unified-product-and-distributions.md): the module is renamed `filesquid-c2pa` (`apps/filesquid/crates/c2pa/`) and is a module of FileSquid in this repository, not a separate product with its own repository; the technical content is unchanged and this filename is kept as history. Amended by [ADR 032](./032-hosting-and-privacy-model.md): it MAY run in `filesquid-server`, never on the ciphertext-only `*.filesquid.tech` service.
 
+Amended 2026-10-17 by [ADR 036](./036-single-fsquid-cli.md): every FileSquid CLI is the one `fsquid` binary built by `filesquid-cli`; this module's commands run there and the crate ships no binary of its own.
+
 ## Context / Requirement Reference
 
 FileSquid creates import-time C2PA records, discloses actions, validates credentials, runs free collection scans, and later submits approved outputs for third-party signing ([F-043](../prd.md#f-043-import-time-c2pa-records-and-action-disclosure), [ADR 015](./015-prov-o-jsonld-and-c2pa-sdk.md)). The inspector mockups show a C2PA Track, cryptographic credentials, Merkle audit and a PROV-O graph on every file.
