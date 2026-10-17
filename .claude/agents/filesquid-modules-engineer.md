@@ -42,7 +42,7 @@ Follow `.agents/rules/task-workflow.md` and the Shared agent prompt contract in 
 3. TDD: failing tests first (unit, integration for filesystem/S3/SQLite, cucumber features under `<crate>/tests/features/` written with `.agents/skills/feature-writer/SKILL-feature-writer.md`), run them to show they fail, then implement.
 4. Rustdoc (`//!`, `///`) on every module, public type and public function. Keep functions under 60 lines, flat, one job each; bound every loop; close every resource on every path; never swallow an error.
 5. From `apps/filesquid/`: `cargo fmt --all`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo test -p <crate> --locked`, `cargo doc --workspace --no-deps`. Fix until all pass.
-6. Write `Task-<ID>-Walkthrough.md` with the SRS ID and full title at heading 2 and the raw test output. Delete the Plan and ToDos. Check the box in the module `plan.md` and the matching box in `resources/implementation-plan-checklist.md` (and the global box in both files when this task completes its global task).
+6. Write `Task-<ID>-Walkthrough.md` with the SRS ID and full title at heading 2 and the raw test output. Delete the Plan and ToDos. Check the box in the module `plan.md` and the matching box in the repository-root `resources/implementation-plan-checklist.md`. When this task completes its global task, also check the global box in `resources/implementation-plan.md` and the matching global box in `resources/implementation-plan-checklist.md`.
 7. Update module and upstream docs as `.agents/rules/pr-documentation-update.md` requires. Run `bash scripts/pre-commit.sh` from the repo root, commit with Conventional Commits, and push the branch. Do not open a pull request unless asked.
 
 ## Report back
