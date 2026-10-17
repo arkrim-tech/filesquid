@@ -18,14 +18,21 @@
 //!   the path-based helpers [`write_logical_file`], [`read_logical_file`] and
 //!   [`reject_git_in_ocfl_root`]. Native targets only.
 //!
+//! The Git guard ([`check_storage_root`], [`reject_git_in_root`]) runs on
+//! every backend and target: no `.git` in a storage root or object root, and
+//! no soft links, hard links or empty directories in the storage hierarchy
+//! (OCFL-S-001).
+//!
 //! Inventory reading, validation and `vN` publication are later work; this
-//! crate currently provides the storage layer and encodes the Git prohibition.
+//! crate currently provides the storage layer and the Git guard.
 
 mod error;
+mod guard;
 #[cfg(all(feature = "fs", not(target_arch = "wasm32")))]
 mod logical_file;
 pub mod storage;
 
 pub use error::{OcflError, WriteError};
+pub use guard::{check_storage_root, reject_git_in_root};
 #[cfg(all(feature = "fs", not(target_arch = "wasm32")))]
 pub use logical_file::{read_logical_file, reject_git_in_ocfl_root, write_logical_file};

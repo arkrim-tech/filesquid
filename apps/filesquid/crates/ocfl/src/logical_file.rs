@@ -6,26 +6,41 @@
 //! New code SHOULD take a [`StorageBackend`](crate::storage::StorageBackend)
 //! chosen by its host instead of a filesystem path (ADR 025).
 
+use std::io::ErrorKind;
 use std::path::Path;
 
 use crate::error::{OcflError, WriteError};
 use crate::storage::{
-    complete_immediately, read_verified, write_whole, FsBackend, StorageKey, MAX_CHUNK_BYTES,
+    complete_immediately, read_verified, write_whole, FsBackend, StorageError, StorageKey,
+    MAX_CHUNK_BYTES,
 };
 
-/// Return an error when `root` contains a `.git` directory.
+/// Return an error when `root` holds a `.git` entry: a directory, a file
+/// (such as a work-tree `gitdir:` pointer) or a link, dangling or not.
 ///
-/// This checks the filesystem directly; it does not go through a storage
-/// backend.
+/// This inspects the filesystem directly without following links; it does
+/// not go through a storage backend. Backend callers use
+/// [`reject_git_in_root`](crate::reject_git_in_root) or
+/// [`check_storage_root`](crate::check_storage_root).
 ///
 /// # Errors
 ///
-/// [`OcflError::GitDirectoryForbidden`] when `root/.git` exists.
+/// [`OcflError::GitDirectoryForbidden`] naming `root` when `root/.git`
+/// exists; [`OcflError::Storage`] when it cannot be inspected.
 pub fn reject_git_in_ocfl_root(root: &Path) -> Result<(), OcflError> {
-    if root.join(".git").exists() {
-        return Err(OcflError::GitDirectoryForbidden);
+    let git = root.join(".git");
+    match std::fs::symlink_metadata(&git) {
+        Ok(_) => Err(OcflError::GitDirectoryForbidden {
+            root: root.display().to_string(),
+        }),
+        Err(err) if matches!(err.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => Ok(()),
+        Err(err) => Err(StorageError::Io {
+            key: git.display().to_string(),
+            kind: err.kind(),
+            message: err.to_string(),
+        }
+        .into()),
     }
-    Ok(())
 }
 
 /// Write `bytes` to `logical_path` under `object_root` after the Git guard.

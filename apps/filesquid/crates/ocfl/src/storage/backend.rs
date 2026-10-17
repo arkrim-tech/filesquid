@@ -4,7 +4,7 @@
 use std::future::Future;
 
 use super::error::StorageError;
-use super::key::StorageKey;
+use super::key::{validate_prefix, StorageKey};
 use super::types::{ByteRange, CompletedPart, ListPage, ObjectMeta, Precondition, UploadId};
 
 /// `Send` on native targets and nothing on `wasm32`, so backend futures can
@@ -57,6 +57,29 @@ pub trait StorageBackend: MaybeSend + MaybeSync {
     /// compared for equality.
     fn content_addressed_tags(&self) -> bool {
         false
+    }
+
+    /// Check that the storage hierarchy under the directory `prefix` (empty
+    /// for the whole root, or a key that MAY end with one `/`) holds only
+    /// plain objects: no soft link, no hard link, no empty directory and no
+    /// other entry that is not a regular file (ADR 016 layout constraints).
+    ///
+    /// Object stores have no links and no directories, so the default only
+    /// validates `prefix`. Backends over a file system override it.
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError::InvalidKey`] for a prefix that could escape the root,
+    /// [`StorageError::SymlinkForbidden`],
+    /// [`StorageError::HardLinkForbidden`] or
+    /// [`StorageError::EmptyDirectoryForbidden`] naming the first offending
+    /// key, or a backend error.
+    fn check_hierarchy(
+        &self,
+        prefix: &str,
+    ) -> impl Future<Output = Result<(), StorageError>> + MaybeSend {
+        let checked = validate_prefix(prefix);
+        async move { checked }
     }
 
     /// Store `bytes` at `key`, replacing any object there. Readers see either
