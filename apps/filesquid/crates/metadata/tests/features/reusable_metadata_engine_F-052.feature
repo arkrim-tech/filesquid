@@ -29,7 +29,7 @@ Feature: Reusable filesquid-metadata engine
     And axum, tauri, libvips, and filesquid-core should be absent
 
   Scenario: CLI is the stand-alone UI
-    When I run fsquid metadata help
+    When I ask the metadata command runner for help
     Then I should see extract, get, set, export, import, and validate
 
   Scenario: CSV headers are prefix:term

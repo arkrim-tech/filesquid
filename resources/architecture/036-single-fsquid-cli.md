@@ -26,7 +26,7 @@ Accepted: 2026-10-17. Amends [ADR 016](./016-rust-ocfl-library.md), [ADR 023](./
 3. **Top-level commands.** A command whose name only one module defines runs as `fsquid <command> [args]` (for example `fsquid get dcterms:title`).
 4. **Module groups.** Every command also runs as `fsquid <module> <command> [args]` (for example `fsquid c2pa verify`). The group is required only for a command name that more than one module defines. `fsquid <module>` alone prints that module's help.
 5. **`validate` always needs its group:** `fsquid ocfl validate`, `fsquid metadata validate`. `fsquid validate` fails with a message that names the grouped forms.
-6. **Collision guard.** A test fails when two modules define the same command name and that name is not in the qualifier-only list, when a module name equals a command name, or when any workspace crate other than the hosts declares a binary not named `fsquid`.
+6. **Collision guard.** A test fails when two modules define the same command name and that name is not in the qualifier-only list, when a module name equals a command name, when any workspace crate other than the hosts and `filesquid-cli` declares a binary, or when `filesquid-cli` declares a binary not named `fsquid`.
 7. **Unchanged:** FileSquid hosts link the module libraries and MUST NOT shell out to `fsquid` for canonical I/O ([T-043](../product-vision.md#canonical-ocfl-state-and-evidence)).
 
 ## Rationale

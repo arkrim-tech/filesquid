@@ -797,6 +797,7 @@ The system MUST implement [PRD F-050](./prd.md#f-050-filesquid-platform-and-dist
 **Tests**
 - [`later_filesquid_records_platform_F-050.feature`](../apps/filesquid/crates/server/tests/features/later_filesquid_records_platform_F-050.feature)
 - [`portable_contracts_isolation_CORE-S-003.feature`](../apps/filesquid/crates/core/tests/features/portable_contracts_isolation_CORE-S-003.feature)
+- [`single_fsquid_cli_F-050.feature`](../apps/filesquid/crates/cli/tests/features/single_fsquid_cli_F-050.feature)
 
 ### SRS-F-051: OCFL module
 

@@ -412,7 +412,9 @@ fn forbidden_deps_absent(world: &mut MetadataWorld) {
     }
 }
 
-#[when("I run fsquid metadata help")]
+/// Calls this library's command runner directly; `filesquid-cli` tests that
+/// `fsquid metadata help` routes here (`single_fsquid_cli_F-050.feature`).
+#[when("I ask the metadata command runner for help")]
 fn run_help(world: &mut MetadataWorld) {
     let code = filesquid_metadata::cli::run(&["help".into()]).expect("help");
     assert_eq!(code, 0);

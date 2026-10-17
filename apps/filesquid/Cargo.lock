@@ -1156,6 +1156,7 @@ version = "0.1.0"
 dependencies = [
  "cucumber",
  "filesquid-metadata",
+ "serde_json",
  "tokio",
 ]
 

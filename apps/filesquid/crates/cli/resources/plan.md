@@ -1,6 +1,6 @@
 # Implementation Plan: filesquid-cli
 
-The `filesquid-cli` crate builds `fsquid`, the one FileSquid command-line tool ([ADR 036](../../../../../resources/architecture/036-single-fsquid-cli.md)). It is not a module: it routes to each module library's command runner and may depend on every module; no module depends on it. OCFL and C2PA register their command groups here through their own tasks ([IO-D.4](../../ocfl/resources/plan.md), [CP-0.5, CP-0.7, CP-2.1, CP-2.3](../../c2pa/resources/plan.md)).
+The `filesquid-cli` crate builds `fsquid`, the one FileSquid command-line tool ([ADR 036](../../../../../resources/architecture/036-single-fsquid-cli.md)). It is not a module: it routes to each module library's command runner and may depend on every module; no module depends on it. OCFL and C2PA register their command groups here through their own tasks ([IO-D.4](../../ocfl/resources/plan.md), [CP-0.5, CP-0.7, CP-2.1, CP-2.3](../../c2pa/resources/plan.md)). Global sequence: [implementation-plan.md](../../../../../resources/implementation-plan.md).
 
 Cargo commands run from `apps/filesquid/` with `-p filesquid-cli` (`cargo test -p filesquid-cli --locked`).
 

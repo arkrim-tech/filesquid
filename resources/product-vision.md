@@ -589,7 +589,7 @@ Homonyms that remain in other senses and MUST be distinguished in prose:
 > - **For self-hosters and small organisations:** one multi-user Rust server whose storage is an open archival layout, not a database plus blobs (U-06, U-19).
 > - **For researchers and creators:** provenance and descriptions travel with the file from import onward (U-54–U-66, U-78).
 > - **For archivists:** standard OCFL, versioned batch jobs and dataset outputs, through a UI built for their work (Arkrim) on the same platform as everyone else (U-39–U-53, U-85, U-86).
-> - **For developers:** OCFL, metadata and C2PA engines that run natively and in the browser, with CLIs and one documented API (U-16, U-40, U-63, U-67).
+> - **For developers:** OCFL, metadata and C2PA engines that run natively and in the browser, with one shared CLI, `fsquid`, and one documented API (U-16, U-40, U-63, U-67).
 > - **For distribution builders:** a complete preservation-grade backend under any brand and vocabulary (U-24, U-25).
 
 ### Constraint requirements

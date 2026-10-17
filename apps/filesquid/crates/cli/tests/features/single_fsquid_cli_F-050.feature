@@ -21,6 +21,12 @@ Feature: One command-line tool named fsquid
     When I run fsquid with "metadata validate dcterms:title"
     Then the command should succeed
 
+  Scenario: A module name alone with help lists its commands
+    When I run fsquid with "metadata help"
+    Then the metadata module should handle it
+    And the command should succeed
+    And the routed help should list extract, get, set, export, import, and validate
+
   Scenario: An unknown command is reported
     When I run fsquid with "mods"
     Then fsquid should report an unknown command
