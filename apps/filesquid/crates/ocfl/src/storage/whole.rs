@@ -10,7 +10,7 @@ use super::backend::StorageBackend;
 use super::error::StorageError;
 use super::key::StorageKey;
 use super::stream::{ChunkReader, MultipartWriter};
-use super::types::{ETag, MAX_CHUNK_BYTES, MAX_PUT_BYTES};
+use super::types::{ByteRange, ETag, ObjectMeta, MAX_CHUNK_BYTES, MAX_PUT_BYTES};
 
 /// Read attempts before an object that keeps changing is reported.
 pub const READ_ATTEMPTS: usize = 3;
@@ -60,32 +60,52 @@ async fn write_parts<B: StorageBackend>(
 /// bytes.
 ///
 /// Each chunk is a separate ranged read, so a writer that replaces the object
-/// between chunks could mix two versions. The bytes read are therefore
-/// checked against the entity tag taken before reading, and the read is
-/// retried up to [`READ_ATTEMPTS`] times when they differ. The check needs
-/// entity tags that are the SHA-256 of the stored bytes, as on the shipped
-/// in-memory and filesystem backends.
+/// between chunks could mix two versions. The read is therefore bracketed by
+/// two `head` calls and accepted only when both return the same entity tag
+/// and the expected number of bytes was read. That works with any backend
+/// whose tag changes when the object is replaced, including opaque or S3
+/// `ETag`s. When the backend reports
+/// [`content_addressed_tags`](StorageBackend::content_addressed_tags), the
+/// bytes must also hash to the tag, which also catches a change and change
+/// back during one read. Otherwise the read is retried, up to
+/// [`READ_ATTEMPTS`] times.
 ///
 /// # Errors
 ///
-/// [`StorageError::NotFound`] when the object is missing (also when it is
-/// deleted during the read), another backend error, or
-/// [`StorageError::Backend`] when it changed during every attempt.
+/// [`StorageError::InvalidArgument`] or [`StorageError::LimitExceeded`] for an
+/// invalid `chunk` (checked before any I/O), [`StorageError::NotFound`] when
+/// the object is missing (also when it is deleted during the read), another
+/// backend error, or [`StorageError::Backend`] when it changed during every
+/// attempt.
 pub async fn read_verified<B: StorageBackend>(
     backend: &B,
     key: &StorageKey,
     chunk: u64,
 ) -> Result<Vec<u8>, StorageError> {
+    ByteRange::new(0, chunk)?;
     for _ in 0..READ_ATTEMPTS {
-        let expected = backend.head(key).await?;
-        let bytes = read_once(backend, key, chunk, expected.size).await?;
-        if ETag::sha256_of(&bytes) == expected.etag {
+        let before = backend.head(key).await?;
+        let bytes = read_once(backend, key, chunk, before.size).await?;
+        let after = backend.head(key).await?;
+        if is_consistent(backend, &before, &after, &bytes) {
             return Ok(bytes);
         }
     }
     Err(StorageError::Backend {
         reason: format!("{key} changed during each of {READ_ATTEMPTS} read attempts"),
     })
+}
+
+/// Whether `bytes`, read between the `before` and `after` heads, are one
+/// whole version of the object.
+fn is_consistent<B: StorageBackend>(
+    backend: &B,
+    before: &ObjectMeta,
+    after: &ObjectMeta,
+    bytes: &[u8],
+) -> bool {
+    let unchanged = before.etag == after.etag && bytes.len() as u64 == before.size;
+    unchanged && (!backend.content_addressed_tags() || ETag::sha256_of(bytes) == before.etag)
 }
 
 /// Stream the object at `key` into one buffer in chunks of `chunk` bytes,
@@ -106,7 +126,7 @@ async fn read_once<B: StorageBackend>(
         match reader.next_chunk().await {
             Ok(Some(bytes)) => out.extend_from_slice(&bytes),
             // A file that grew past `size` is not lost: its bytes fail the
-            // tag check in `read_verified`, which reads again.
+            // consistency check in `read_verified`, which reads again.
             Ok(None) | Err(StorageError::LimitExceeded { .. }) => return Ok(out),
             Err(err) => return Err(err),
         }
@@ -118,8 +138,7 @@ async fn read_once<B: StorageBackend>(
 mod tests {
     use super::*;
     use crate::storage::{
-        complete_immediately, ByteRange, CompletedPart, ListPage, MemoryBackend, ObjectMeta,
-        Precondition, UploadId,
+        complete_immediately, CompletedPart, ListPage, MemoryBackend, Precondition, UploadId,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -162,6 +181,9 @@ mod tests {
     }
 
     impl StorageBackend for Replaced {
+        fn content_addressed_tags(&self) -> bool {
+            self.inner.content_addressed_tags()
+        }
         async fn put(&self, k: &StorageKey, b: &[u8]) -> Result<ObjectMeta, StorageError> {
             self.inner.put(k, b).await
         }
@@ -216,6 +238,130 @@ mod tests {
         }
         async fn abort_multipart(&self, u: &UploadId) -> Result<(), StorageError> {
             self.inner.abort_multipart(u).await
+        }
+    }
+
+    /// A backend whose entity tags are opaque generation counters, like many
+    /// object stores, rather than content hashes.
+    struct Opaque {
+        inner: MemoryBackend,
+        generation: AtomicUsize,
+    }
+
+    impl Opaque {
+        fn new() -> Self {
+            Self {
+                inner: MemoryBackend::new(),
+                generation: AtomicUsize::new(0),
+            }
+        }
+
+        /// Replace `meta`'s tag with the current generation.
+        fn opaque(&self, mut meta: ObjectMeta) -> ObjectMeta {
+            let generation = self.generation.load(Ordering::SeqCst);
+            meta.etag = ETag::new(format!("gen-{generation}"));
+            meta
+        }
+
+        /// Advance the generation after a write.
+        fn bump(&self, meta: ObjectMeta) -> ObjectMeta {
+            self.generation.fetch_add(1, Ordering::SeqCst);
+            self.opaque(meta)
+        }
+    }
+
+    impl StorageBackend for Opaque {
+        async fn put(&self, k: &StorageKey, b: &[u8]) -> Result<ObjectMeta, StorageError> {
+            self.inner.put(k, b).await.map(|m| self.bump(m))
+        }
+        async fn put_if(
+            &self,
+            k: &StorageKey,
+            b: &[u8],
+            p: &Precondition,
+        ) -> Result<ObjectMeta, StorageError> {
+            self.inner.put_if(k, b, p).await.map(|m| self.bump(m))
+        }
+        async fn get_range(&self, k: &StorageKey, r: ByteRange) -> Result<Vec<u8>, StorageError> {
+            self.inner.get_range(k, r).await
+        }
+        async fn head(&self, k: &StorageKey) -> Result<ObjectMeta, StorageError> {
+            self.inner.head(k).await.map(|m| self.opaque(m))
+        }
+        async fn exists(&self, k: &StorageKey) -> Result<bool, StorageError> {
+            self.inner.exists(k).await
+        }
+        async fn list(
+            &self,
+            p: &str,
+            a: Option<&StorageKey>,
+            l: usize,
+        ) -> Result<ListPage, StorageError> {
+            self.inner.list(p, a, l).await
+        }
+        async fn delete(&self, k: &StorageKey) -> Result<(), StorageError> {
+            self.inner.delete(k).await
+        }
+        async fn create_multipart(&self, k: &StorageKey) -> Result<UploadId, StorageError> {
+            self.inner.create_multipart(k).await
+        }
+        async fn upload_part(
+            &self,
+            u: &UploadId,
+            n: u32,
+            b: &[u8],
+        ) -> Result<CompletedPart, StorageError> {
+            self.inner.upload_part(u, n, b).await
+        }
+        async fn complete_multipart(
+            &self,
+            u: &UploadId,
+            p: &[CompletedPart],
+            c: Option<&Precondition>,
+        ) -> Result<ObjectMeta, StorageError> {
+            self.inner
+                .complete_multipart(u, p, c)
+                .await
+                .map(|m| self.bump(m))
+        }
+        async fn abort_multipart(&self, u: &UploadId) -> Result<(), StorageError> {
+            self.inner.abort_multipart(u).await
+        }
+    }
+
+    #[test]
+    fn opaque_entity_tags_are_accepted() {
+        let backend = Opaque::new();
+        let key = StorageKey::new("f.txt").expect("key");
+        complete_immediately(backend.put(&key, b"opaque tags"))
+            .expect("ready")
+            .expect("put");
+        let bytes = complete_immediately(read_verified(&backend, &key, 4))
+            .expect("ready")
+            .expect("read with opaque tags");
+        assert_eq!(bytes, b"opaque tags");
+    }
+
+    #[test]
+    fn a_change_and_change_back_during_a_read_is_not_mixed() {
+        let bytes = read_with_swaps(2).expect("retried read");
+        assert!(
+            bytes == b"AAAAAAAA" || bytes == b"BBBBBBBB",
+            "mixed read {:?}",
+            String::from_utf8_lossy(&bytes)
+        );
+    }
+
+    #[test]
+    fn invalid_chunks_fail_even_for_empty_objects() {
+        let backend = MemoryBackend::new();
+        let key = StorageKey::new("empty").expect("key");
+        complete_immediately(backend.put(&key, b""))
+            .expect("ready")
+            .expect("put");
+        for chunk in [0, MAX_CHUNK_BYTES + 1] {
+            let result = complete_immediately(read_verified(&backend, &key, chunk)).expect("ready");
+            assert!(result.is_err(), "chunk {chunk} accepted");
         }
     }
 

@@ -50,6 +50,15 @@ impl<T: ?Sized> MaybeSync for T {}
 /// with [`put_if`](Self::put_if) so a competing writer can never silently
 /// overwrite them (ADR 012).
 pub trait StorageBackend: MaybeSend + MaybeSync {
+    /// Whether this backend's entity tags are the lowercase hex SHA-256 of
+    /// the stored bytes. Readers such as
+    /// [`read_verified`](super::read_verified) then also check the bytes they
+    /// read against the tag. Defaults to `false`: tags are opaque and only
+    /// compared for equality.
+    fn content_addressed_tags(&self) -> bool {
+        false
+    }
+
     /// Store `bytes` at `key`, replacing any object there. Readers see either
     /// the old or the new bytes, never a mix.
     ///

@@ -13,19 +13,23 @@
 //!   target, then are renamed into place, so readers never see a partial
 //!   object. Temporary files use the reserved `.fsquid-` name prefix, which
 //!   keys may not use and listings skip.
-//! - **Serialised writes.** Every mutation (`put`, `put_if`, `delete`,
-//!   `complete_multipart`) holds an operating-system lock on a file in the
-//!   staging directory, named after the resolved root. All writers to one
-//!   root, in any process, MUST use the same staging directory to share it.
+//! - **Serialised writes.** Every mutation of published objects (`put`,
+//!   `put_if`, `delete`, `complete_multipart`) holds an operating-system lock
+//!   on a file in the staging directory, named after the resolved root. All
+//!   writers to one root, in any process, MUST use the same staging directory
+//!   to share it. Multipart staging uses per-root, per-upload directories
+//!   instead (see `uploads.rs`).
 //! - **Create-only without a shared lock.** `Precondition::IfAbsent`
 //!   publishes with a hard link, which the operating system refuses when the
 //!   target exists, so two creators can never both win.
 //! - **Confinement.** A key is refused when an existing component of its path
 //!   below the root is a symbolic link, when a segment starts with `.fsquid-`,
 //!   and on Windows when a segment is a drive or stream name, a device name or
-//!   ends with a dot or space. The checks run before each operation; the root
-//!   MUST NOT be writable by untrusted processes, which could swap a link in
-//!   afterwards.
+//!   ends with a dot or space. Object files and the backend's own files are
+//!   opened as regular files only, and the open handle is checked against the
+//!   path, so a link swapped in after the check is refused (see
+//!   `internal.rs`). Directory checks still run before each operation, so the
+//!   root and staging MUST NOT be writable by untrusted processes.
 //! - **Staging outside the root.** Root and staging are resolved (links,
 //!   `.`, `..`) before the containment check.
 //!
@@ -33,6 +37,7 @@
 //! 016, ADR 007), not from this backend.
 
 mod files;
+mod internal;
 mod lock;
 mod paths;
 mod uploads;
@@ -54,12 +59,14 @@ use super::types::{
 use files::{hash_file, read_range, write_atomic, Parent, Publish};
 use lock::{lock_path, RootLock};
 use paths::{confined_path, key_path, resolve_path};
+use uploads::uploads_path;
 use walk::walk_keys;
 
 /// A [`StorageBackend`] over a directory on the local filesystem.
 #[derive(Debug)]
 pub struct FsBackend {
     root: PathBuf,
+    staging: PathBuf,
     uploads: PathBuf,
     lock_file: PathBuf,
     next_id: AtomicU64,
@@ -145,13 +152,14 @@ impl FsBackend {
                 ),
             });
         }
-        let uploads = staging.join("uploads");
+        let uploads = uploads_path(&staging, &root);
         let lock_file = lock_path(&staging, &root);
         for dir in [&uploads, &staging.join("locks")] {
             fs::create_dir_all(dir).map_err(|e| config_error(dir, e))?;
         }
         Ok(Self {
             root,
+            staging,
             uploads,
             lock_file,
             next_id: AtomicU64::new(0),
@@ -332,6 +340,11 @@ impl FsBackend {
 }
 
 impl StorageBackend for FsBackend {
+    /// The SHA-256 of the stored bytes is the tag.
+    fn content_addressed_tags(&self) -> bool {
+        true
+    }
+
     async fn put(&self, key: &StorageKey, bytes: &[u8]) -> Result<ObjectMeta, StorageError> {
         self.put_blocking(key, bytes)
     }

@@ -8,7 +8,10 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 
 use super::super::error::StorageError;
-use super::super::types::{ByteRange, CompletedPart, ETag, ObjectMeta, MAX_OBJECT_BYTES};
+use super::super::types::{
+    ByteRange, CompletedPart, ETag, ObjectMeta, MAX_OBJECT_BYTES, MAX_PART_BYTES,
+};
+use super::internal::{inspect, open_existing, Entry};
 use super::io_error;
 use super::paths::RESERVED_PREFIX;
 
@@ -125,20 +128,23 @@ pub(super) fn write_atomic<R>(
     Ok(value)
 }
 
-/// Hash and measure a file in bounded steps. `Ok(None)` when it is missing
-/// or is not a regular file; a failure to read its metadata is an error.
+/// Open the object file at `path` without following links. `Ok(None)` when
+/// nothing is there or it is not a regular file (a directory is not an
+/// object); see [`open_existing`].
+fn open_object(path: &Path) -> Result<Option<File>, StorageError> {
+    match inspect(path)? {
+        Entry::File(_) => Ok(open_existing(path)?.map(|(file, _)| file)),
+        Entry::Missing | Entry::Other => Ok(None),
+    }
+}
+
+/// Hash and measure an object file in bounded steps. `Ok(None)` when it is
+/// missing or is not a regular file; other failures are errors.
 pub(super) fn hash_file(path: &Path) -> Result<Option<ObjectMeta>, StorageError> {
     let what = path.display().to_string();
-    let mut file = match File::open(path) {
-        Ok(file) => file,
-        Err(err) if matches!(err.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => {
-            return Ok(None)
-        }
-        Err(err) => return Err(io_error(&what, err)),
-    };
-    if !file.metadata().map_err(|e| io_error(&what, e))?.is_file() {
+    let Some(mut file) = open_object(path)? else {
         return Ok(None);
-    }
+    };
     let mut hasher = Sha256::new();
     let size = copy_bounded(&mut file, &mut hasher, None, &what)?;
     Ok(Some(ObjectMeta {
@@ -183,17 +189,11 @@ pub(super) fn read_range(
     key: &str,
     range: ByteRange,
 ) -> Result<Vec<u8>, StorageError> {
-    let mut file = File::open(path).map_err(|e| match e.kind() {
-        ErrorKind::NotADirectory => StorageError::NotFound {
-            key: key.to_string(),
-        },
-        _ => io_error(key, e),
-    })?;
-    if !file.metadata().map_err(|e| io_error(key, e))?.is_file() {
+    let Some(mut file) = open_object(path)? else {
         return Err(StorageError::NotFound {
             key: key.to_string(),
         });
-    }
+    };
     file.seek(SeekFrom::Start(range.start()))
         .map_err(|e| io_error(key, e))?;
     let mut bytes = Vec::with_capacity(range.len() as usize);
@@ -223,7 +223,7 @@ pub(super) fn append_parts(
         };
         let path = part_path(dir, part.part_number);
         let what = path.display().to_string();
-        let mut src = open_part(&path, &what, &mismatch)?;
+        let mut src = open_part(&path, &mismatch)?;
         let mut part_hash = Sha256::new();
         let read = copy_bounded(&mut src, &mut part_hash, None, &what)?;
         if ETag::from_hasher(part_hash) != part.etag {
@@ -246,21 +246,18 @@ pub(super) fn append_parts(
 }
 
 /// Open a staged part without following links. A missing part is a
-/// [`StorageError::PartMismatch`]; a link or other failure is reported as
-/// such, never hidden as a mismatch.
-fn open_part(path: &Path, what: &str, mismatch: &StorageError) -> Result<File, StorageError> {
-    match fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_symlink() => {
-            return Err(StorageError::SymlinkForbidden {
-                key: what.to_string(),
-            })
-        }
-        Ok(_) => {}
-        Err(err) if err.kind() == ErrorKind::NotFound => return Err(mismatch.clone()),
-        Err(err) => return Err(io_error(what, err)),
+/// [`StorageError::PartMismatch`]; a link, a non-regular file (such as a FIFO,
+/// which is refused before it could block) or a part above
+/// [`MAX_PART_BYTES`] is reported as such, never hidden as a mismatch.
+fn open_part(path: &Path, mismatch: &StorageError) -> Result<File, StorageError> {
+    let Some((file, meta)) = open_existing(path)? else {
+        return Err(mismatch.clone());
+    };
+    if meta.len() > MAX_PART_BYTES {
+        return Err(StorageError::LimitExceeded {
+            what: "multipart part size",
+            limit: MAX_PART_BYTES,
+        });
     }
-    File::open(path).map_err(|e| match e.kind() {
-        ErrorKind::NotFound => mismatch.clone(),
-        _ => io_error(what, e),
-    })
+    Ok(file)
 }

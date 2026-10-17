@@ -57,3 +57,32 @@ fn only_the_fs_backend_and_path_helpers_may_do_io() {
     assert!(!io_allowed("storage/memory.rs"));
     assert!(!io_allowed("storage/fs.rs.bak"));
 }
+
+#[test]
+fn async_runtimes_are_found() {
+    for (code, pattern) in [
+        ("use smol::Timer;", "smol"),
+        ("async_executor::Executor::new();", "async_executor"),
+        ("async_global_executor::spawn(f);", "async_global_executor"),
+        ("use async_io::Async;", "async_io"),
+        ("use async_net::TcpStream;", "async_net"),
+        ("#[actix_rt::main]", "actix_rt"),
+        ("glommio::LocalExecutor::default();", "glommio"),
+    ] {
+        assert_eq!(patterns(code), [pattern], "{code}");
+    }
+}
+
+#[test]
+fn names_that_only_contain_a_pattern_are_not_flagged() {
+    assert!(patterns("use smol_str::SmolStr;").is_empty());
+    assert!(patterns("let my_tokio_helper = 1; let hyperlink = 2;").is_empty());
+    assert!(patterns("fn async_io_buffer() {}").is_empty());
+}
+
+#[test]
+fn string_literals_are_not_scanned_as_code() {
+    assert!(patterns("let msg = \"do not call std::fs or tokio here\";").is_empty());
+    assert!(patterns("let s = \"escaped \\\" std::net\"; let t = 1;").is_empty());
+    assert_eq!(patterns("let s = \"x\"; std::fs::read(s);"), ["std::fs"]);
+}

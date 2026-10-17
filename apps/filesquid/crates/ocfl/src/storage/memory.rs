@@ -106,6 +106,11 @@ fn assemble(pending: &PendingUpload, parts: &[CompletedPart]) -> Result<Vec<u8>,
 }
 
 impl StorageBackend for MemoryBackend {
+    /// The SHA-256 of the stored bytes is the tag.
+    fn content_addressed_tags(&self) -> bool {
+        true
+    }
+
     async fn put(&self, key: &StorageKey, bytes: &[u8]) -> Result<ObjectMeta, StorageError> {
         check_put_size(bytes)?;
         let mut state = self.lock()?;

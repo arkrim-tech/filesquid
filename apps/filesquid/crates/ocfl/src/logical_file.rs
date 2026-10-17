@@ -50,9 +50,9 @@ pub fn write_logical_file(
 }
 
 /// Read a logical file from `object_root` after the Git guard. The file is
-/// streamed in chunks of at most [`MAX_CHUNK_BYTES`] and checked against its
-/// SHA-256 tag, so a file replaced during the read is read again rather than
-/// returned as a mix of two versions.
+/// streamed in chunks of at most [`MAX_CHUNK_BYTES`] through
+/// [`read_verified`], so a file replaced during the read is read again rather
+/// than returned as a mix of two versions.
 ///
 /// # Errors
 ///

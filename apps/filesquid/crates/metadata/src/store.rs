@@ -41,7 +41,7 @@ pub fn metadata_key(object_prefix: &str) -> Result<StorageKey, WriteError> {
 
 /// Read the record stored at `key`. A missing `metadata.md`, including one
 /// deleted during the read, is an empty record. The file is streamed in
-/// bounded chunks and checked against its SHA-256 tag, so a concurrent
+/// bounded chunks through `read_verified`, so a concurrent
 /// replace never yields a record mixed from two versions.
 ///
 /// # Errors

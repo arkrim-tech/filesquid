@@ -12,7 +12,7 @@ Also covered: OCFL-S-003 (default public API is generic OCFL 1.1; stand-alone cr
 
 - **`src/storage/` (portable):**
   - `backend.rs`: `StorageBackend`, the one async storage interface: `put`, `put_if` (compare-and-swap), `get_range`, `head`, `exists`, paged `list`, `delete` (intended for staging and recovery; the backend deletes any key it is given), `create_multipart`, `upload_part`, `complete_multipart`, `abort_multipart`. Methods return `impl Future + MaybeSend`; `MaybeSend`/`MaybeSync` are `Send`/`Sync` on native targets and empty on `wasm32`, so browser futures carry no `Send` bound. No executor dependency.
-  - `whole.rs`: `write_whole` (single put, or multipart above 8 MiB, aborting a failed upload) and `read_verified` (reads one object as a single version: checks the bytes against the SHA-256 tag taken before the read and retries up to `READ_ATTEMPTS` = 3 times). Shared by the path helpers and the metadata store.
+  - `whole.rs`: `write_whole` (single put, or multipart above 8 MiB, aborting a failed upload) and `read_verified`, which validates the chunk size first, brackets the read with two `head` calls and accepts it only when both return the same entity tag and the expected byte count. That works with opaque tags such as S3 `ETag`s. Backends whose `content_addressed_tags()` is true (the shipped ones; the trait default is false) must also return bytes that hash to the tag, which catches a change and change back during one read. It retries up to `READ_ATTEMPTS` = 3 times. Shared by the path helpers and the metadata store.
   - `drive.rs`: `complete_immediately`, which polls a backend future once with a no-op waker. The in-memory and filesystem backends never wait, so synchronous callers (path helpers, the metadata CLI, tests) use it instead of an async runtime; a future that is not ready is reported as an error.
   - `key.rs`: `StorageKey`, a `/`-separated relative path. Empty keys, a leading `/`, empty, `.` or `..` segments, `\` and NUL are rejected before any I/O.
   - `types.rs`: `ETag` (lowercase hex SHA-256 on the shipped backends), `ObjectMeta`, `Precondition` (`IfAbsent`, `IfMatch`), `ByteRange`, `ListPage`, `UploadId`, `CompletedPart`, and the bounds `MAX_CHUNK_BYTES` (8 MiB reads), `MAX_PUT_BYTES` (8 MiB), `MAX_PART_BYTES` (64 MiB), `MAX_PARTS` (10 000), `MAX_OBJECT_BYTES` (`MAX_PARTS` × `MAX_PART_BYTES` = 625 GiB, the largest object multipart can produce), `MAX_LIST_PAGE` (1 000), `MAX_WALK_DEPTH` (64), `MAX_WALK_ENTRIES` (1 000 000). The shared pure checks (precondition, part order, page cutting) live here so both backends apply them the same way.
@@ -23,12 +23,13 @@ Also covered: OCFL-S-003 (default public API is generic OCFL 1.1; stand-alone cr
     - `lock.rs`: every mutation of published objects (`put`, `put_if`, `delete`, `complete_multipart`) holds an operating-system lock (`File::try_lock`, bounded to about 10 s of 5 ms retries) on `staging/locks/<sha256 of the resolved root>.lock`, so all instances and processes that share a staging directory serialise their writes to one root. Multipart staging (`create_multipart`, `upload_part`, `abort_multipart`) does not take this lock; see `uploads.rs`.
     - `files.rs`: objects are written to a flushed `.fsquid-tmp-*` file beside the target and published by rename (`Replace`) or by hard link (`NoReplace`, used for `IfAbsent`), which the operating system refuses when the target exists, so two creators can never both win even without the shared lock. Temporary files are removed on every path.
     - `walk.rs`: listings walk only the prefix's directory, list regular files only (never links, FIFOs or other special files), skip `.fsquid-` names, treat a prefix under a file as empty, do not follow directory links, and refuse a directory deeper than `MAX_WALK_DEPTH` before visiting it.
-    - `uploads.rs`: each open upload is `staging/uploads/<id>/`. Parts are written only into an existing upload directory (never recreating it); completing or aborting first renames the directory to `<id>.closed`, an atomic step that closes the upload for every other caller, and a failed completion renames it back so the caller can retry or abort. The uploads directory and each upload directory are checked without following links. Parts are verified against their tags on completion; only a missing part is a `PartMismatch`, other failures are reported as I/O or link errors. `delete` prunes the empty directories it leaves, never the root. `FsBackend::root()` returns the resolved root; `FsBackend::with_default_staging(root)` and `default_staging_dir(root)` pick `filesquid-ocfl-staging` in the temporary directory, or the sibling `<root>.fsquid-staging` when the temporary directory is inside the root.
+    - `uploads.rs`: each open upload is `staging/uploads/<sha256 of the resolved root>/<id>/`, so an upload ID from one root is unknown to every other root that shares the staging directory. Parts are written only into an existing upload directory (never recreating it); completing or aborting first renames the directory to `<id>.closed`, an atomic step that closes the upload for every other caller, and a failed completion or a failed removal on abort renames it back so the caller can retry. The staging, uploads, per-root and upload directories are checked without following links on every operation, including `create_multipart`. The key record is written with `create_new` and read through `internal.rs` (regular file only, no links, at most 64 KiB). Parts are opened the same way, capped at `MAX_PART_BYTES`; only a missing part is a `PartMismatch`. `delete` prunes the empty directories it leaves, never the root. `FsBackend::root()` returns the resolved root; `FsBackend::with_default_staging(root)` and `default_staging_dir(root)` pick `filesquid-ocfl-staging` in the temporary directory, or the sibling `<root>.fsquid-staging` when the temporary directory is inside the root.
+    - `internal.rs`: one way to open every object file and internal file: check the path without following links, open it, then check that the handle is a regular file and (on Unix) the same inode as the path, so a link, FIFO or other file swapped in is refused. Used for object reads and hashes, parts, key records and the lock file (whose directory is also checked).
 - **`src/logical_file.rs` (native, `fs`):** `write_logical_file` and `read_logical_file` keep their signatures and go through `FsBackend` with its default staging directory, using `write_whole` and `read_verified`. The logical path is validated before any I/O (the Git guard runs after it); `StorageKey` rejects `.` and `..` segments, so a name such as `foo..bar` is allowed. A missing file is still `WriteError::Io` with `ErrorKind::NotFound`. `reject_git_in_ocfl_root` checks `.git` directly on the filesystem; it does not use a backend.
 - **`src/error.rs`:** `OcflError` and `WriteError`; `WriteError::Io` is labelled "logical-file I/O failed" (it covers reads too); `WriteError::Storage` carries other backend errors. `StorageError::SymlinkForbidden` is new.
 - **`filesquid-metadata` store (`crates/metadata/src/store.rs`):** moved onto the backend. `load_from` reads through `read_verified` (a missing `metadata.md`, including one deleted during the read, is an empty record; no separate existence probe) and `save_to` writes through `write_whole` (multipart above 8 MiB). `metadata_key(object_prefix)` refuses absolute prefixes such as `/`. `load` and `save` (used by the CLI) apply the Git guard and run the same code over `FsBackend::with_default_staging` through `complete_immediately`. The dependency on `filesquid-ocfl` stays unconditional; making it the optional `ocfl` store is MD-0.4 ([ADR 027](../../../../../../resources/architecture/027-filesquid-metadata-pluggable-stores.md)).
 - **`Cargo.toml`:** `fs` feature (default on); `sha2` 0.11 and `tracing` 0.1 (both already in the workspace lockfile). The conformance suite lives in `tests/support/conformance.rs` and runs from two targets: `integration_memory_conformance` (no features, so `--no-default-features` keeps backend coverage) and `integration_fs_conformance` (`fs`, plus filesystem-only cases).
-- **Source guard:** `tests/support/source_scan.rs`, adapted from `filesquid-c2pa`'s CP-0.1 scanner (copied, since module crates may not share test code), removes comments and expands grouped and aliased `std` imports before matching; `unit_source_scan` tests it and the F-051 step uses it.
+- **Source guard:** `tests/support/source_scan.rs`, adapted from `filesquid-c2pa`'s scanner on `main` (copied, since module crates may not share test code). It removes comments, whitespace and string-literal contents, matches only at token or path boundaries (`smol` matches `smol::Timer`, not `smol_str`), expands grouped and aliased `std` imports, and also forbids the async runtimes `tokio`, `async_std`, `smol`, `async_executor`, `async_global_executor`, `async_io`, `async_net`, `actix_rt` and `glommio`. `unit_source_scan` tests it and the F-051 step uses it.
 - **`wasm32` gate:** the F-051 scenario "Engine builds for the browser" runs `cargo build -p filesquid-ocfl --locked --no-default-features --target wasm32-unknown-unknown` in its own target directory under Cargo's test temp dir, inside `cargo test`, so the local pre-commit hook (`scripts/verify_tests.sh`) enforces it.
 - **BDD:** [`storage_backend_OCFL-S-007.feature`](../../tests/features/storage_backend_OCFL-S-007.feature) (round trip, stale compare-and-swap, create-only conflict, a multipart object read back in bounded chunks, paged listing, key escape, chunk bound; every scenario runs on both the in-memory and the local filesystem backend), plus step definitions for the F-051 scenarios "Storage goes through one async backend interface" and "Engine builds for the browser". The chunk scenarios show that each read returns a bounded chunk; they do not measure memory, and the in-memory backend holds whole objects by design.
 - **Docs:** crate [README](../../README.md) (storage backends, `FsBackend` guarantees, path helpers, `wasm32` build), [metadata README](../../../metadata/README.md) (store over a backend), root README (wasm32 target prerequisite and test note), [component diagram](../component-diagram.html) (table rows and SVG badges), module plan (IO-0.1 checked, test links).
@@ -40,6 +41,10 @@ Fixed in this round, each with a failing test first (see the TDD section): cross
 ## Review round 2 (Cubic)
 
 Fixed, each with a failing test first where the behaviour could be reproduced: inconsistent and racy metadata loads (P1), upload identifiers followed through links out of staging (P1), metadata records above 8 MiB, the conformance suite skipped without `fs`, grouped or aliased imports missed by the source guard, abort not checked to remove staging, special files in listings, completion and abort leaving an upload reopenable, part I/O failures hidden as mismatches, `NotADirectory` reads, validation after the Git guard, `foo..bar`, default staging inside a root such as `/tmp`, weak paged-listing assertions, absolute metadata prefixes, the walk depth bound, `hash_file` metadata errors, and the lock and caption wording. The path-validation and `foo..bar` tests passed on first run because the `logical_file` refactor onto `whole.rs` landed in the same step; `hash_file` metadata errors and cleanup failures after completion could not be provoked as root in the container and are covered by review of the code paths.
+
+## Review round 3 (Cubic)
+
+Fixed, each with a failing test first: `read_verified` now works with opaque entity tags (P1), upload IDs are namespaced by root (P1), `create_multipart` checks the uploads directories without following links (P1), the key record is read as a size-capped regular file without following links (P1), the source guard covers more async runtimes (P1), staged parts must be regular files (a FIFO no longer blocks completion), a failed removal on abort reopens the upload, string literals are not scanned as code, patterns match only at token boundaries, and `read_verified` validates the chunk size before any I/O. In the same pass every internal open (object reads and hashes, parts, key records, the lock file and its directory) moved to one no-follow, regular-file-only, handle-checked helper (`internal.rs`). The failed-removal path on abort could not be provoked as root in the container and is covered by review.
 
 ## Remaining limits
 
@@ -61,9 +66,9 @@ Fixed, each with a failing test first where the behaviour could be reproduced: i
 | Bounded listing | `list_pages_in_lexical_order`, `fs_listing_returns_only_regular_files`, `fs_walk_depth_bound_is_exact`, `key_below_a_file_is_not_found`, `lookalike_temporary_names_are_listed`, `listing_under_a_file_is_empty`, feature "Listing pages through keys in lexical order" (page bounds and the exact key list) |
 | Resources closed on every path; staging outside the root | `fs_backend_leaves_no_temporary_files_or_staging`, `fs_staging_must_be_outside_the_storage_root`, `fs_staging_aliased_into_the_root_is_rejected`, `fs_staging_reached_through_a_symlink_into_the_root_is_rejected`, `fs_root_is_reported_canonical`, `multipart_abort_leaves_nothing`, `fs_delete_prunes_empty_directories` |
 | SHA-256 entity tags | `unit_storage_key::entity_tag_is_lowercase_hex_sha256`, `put_get_head_exists`, `multipart_round_trip_streams_in_chunks` |
-| Path helpers over the backend; consistent reads; Git guard kept (OCFL-S-001) | `integration_logical_file::*` (including `invalid_paths_are_rejected_before_the_git_guard`, `names_containing_two_dots_are_allowed`), `storage::whole::tests::*` (`a_read_never_mixes_two_versions`, `an_object_that_keeps_changing_is_reported`, `a_stable_object_reads_in_one_pass`, `a_missing_object_is_not_found`, `large_buffers_are_written_through_multipart`), `fs_default_staging_is_outside_a_root_that_holds_the_temp_dir`, `unit_git_guard::git_directory_is_rejected` |
+| Path helpers over the backend; consistent reads; Git guard kept (OCFL-S-001) | `integration_logical_file::*` (including `invalid_paths_are_rejected_before_the_git_guard`, `names_containing_two_dots_are_allowed`), `storage::whole::tests::*` (`opaque_entity_tags_are_accepted`, `a_change_and_change_back_during_a_read_is_not_mixed`, `invalid_chunks_fail_even_for_empty_objects`, `a_read_never_mixes_two_versions`, `an_object_that_keeps_changing_is_reported`, `a_stable_object_reads_in_one_pass`, `a_missing_object_is_not_found`, `large_buffers_are_written_through_multipart`), `fs_default_staging_is_outside_a_root_that_holds_the_temp_dir`, `unit_git_guard::git_directory_is_rejected` |
 | Metadata store over a backend | `filesquid-metadata` `unit_store::backend_store::*` (memory backend: key joining, absolute prefixes, missing record, round trip, record above 8 MiB) and the existing path tests |
-| Multipart lifecycle | `fs_abort_removes_the_upload_staging_directory`, `fs_complete_closes_the_upload_durably`, `fs_abort_and_upload_part_never_resurrect_an_upload` (50 rounds of concurrent abort and part uploads), `fs_upload_ids_cannot_follow_a_symlink_out_of_staging`, `fs_part_open_errors_are_not_reported_as_part_mismatch` |
+| Multipart lifecycle | `fs_upload_ids_do_not_cross_roots_sharing_staging`, `fs_create_multipart_refuses_a_symlinked_uploads_directory`, `fs_complete_refuses_a_symlinked_key_record`, `fs_complete_refuses_an_oversized_key_record`, `fs_complete_refuses_a_fifo_part_without_blocking`, `fs_writes_refuse_a_symlinked_lock_file`, `fs_abort_removes_the_upload_staging_directory`, `fs_complete_closes_the_upload_durably`, `fs_abort_and_upload_part_never_resurrect_an_upload` (50 rounds of concurrent abort and part uploads), `fs_upload_ids_cannot_follow_a_symlink_out_of_staging`, `fs_part_open_errors_are_not_reported_as_part_mismatch` |
 | OCFL-S-003 generic API, stand-alone crate; OCFL-S-005 no analytical engines | F-051 "Core API is generic OCFL 1.1", "Default dependencies exclude analytical engines", "Stand-alone FOSS product" |
 
 ## Coverage
@@ -138,6 +143,35 @@ test fs_walk_depth_bound_is_exact ... FAILED
 test result: FAILED. 32 passed; 7 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.90s
 ```
 
+Review round 3, with the new tests written against the round-2 code (`cargo test -p filesquid-ocfl --no-fail-fast`). Most filesystem failures come from the new per-root upload layout the tests expect; the rest are the new cases:
+
+```text
+test storage::whole::tests::invalid_chunks_fail_even_for_empty_objects ... FAILED
+test storage::whole::tests::opaque_entity_tags_are_accepted ... FAILED
+test result: FAILED. 16 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.04s
+error: test failed, to rerun pass `-p filesquid-ocfl --lib`
+test fs_abort_and_upload_part_never_resurrect_an_upload ... FAILED
+test fs_abort_removes_the_upload_staging_directory ... FAILED
+test fs_backend_leaves_no_temporary_files_or_staging ... FAILED
+test fs_complete_closes_the_upload_durably ... FAILED
+test fs_complete_refuses_a_fifo_part_without_blocking ... FAILED
+test fs_complete_refuses_a_symlinked_key_record ... FAILED
+test fs_complete_refuses_an_oversized_key_record ... FAILED
+test fs_create_multipart_refuses_a_symlinked_uploads_directory ... FAILED
+test fs_part_open_errors_are_not_reported_as_part_mismatch ... FAILED
+test fs_upload_ids_cannot_follow_a_symlink_out_of_staging ... FAILED
+test fs_upload_ids_do_not_cross_roots_sharing_staging ... FAILED
+test fs_writes_refuse_a_symlinked_lock_file ... FAILED
+test result: FAILED. 33 passed; 12 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.87s
+error: test failed, to rerun pass `-p filesquid-ocfl --test integration_fs_conformance`
+test async_runtimes_are_found ... FAILED
+test string_literals_are_not_scanned_as_code ... FAILED
+test names_that_only_contain_a_pattern_are_not_flagged ... FAILED
+test result: FAILED. 6 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+error: test failed, to rerun pass `-p filesquid-ocfl --test unit_source_scan`
+error: 3 targets failed:
+```
+
 ## Gates
 
 Run from `apps/filesquid/`:
@@ -146,7 +180,7 @@ Run from `apps/filesquid/`:
 - `cargo clippy --workspace --all-targets --locked -- -D warnings`: clean
 - `cargo clippy -p filesquid-ocfl --no-default-features --target wasm32-unknown-unknown --locked -- -D warnings`: clean
 - `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked`: clean
-- `cargo test -p filesquid-ocfl --locked`: 92 tests and 20 scenarios (78 steps) passed (raw output below); the filesystem conformance target was run 3 more times in a row to check the race tests, all passing
+- `cargo test -p filesquid-ocfl --locked`: 104 tests and 20 scenarios (78 steps) passed (raw output below)
 - `cargo test -p filesquid-ocfl --no-default-features --locked`: the in-memory conformance suite (18 cases), key and source-scan tests pass without `fs`
 - `cargo test -p filesquid-metadata --locked`: passed, including 5 backend store tests
 - `bash scripts/pre-commit.sh` from the repository root: passed, all steps (0 to 9), with `TMPDIR` set as described under Mocked Environment Variables. Without it, `filesquid-api`'s F-061 scenario "A stalled process degrades health live" reads less than 5 GiB free on the container's temporary volume (`DEGRADED_FREE_BYTES`) and reports `degraded`; that is an environment condition, not a change in this branch.
@@ -164,27 +198,30 @@ The nine skipped scenarios have no step definitions yet: six fixture-conformance
 
 ```text
    Compiling filesquid-ocfl v0.1.0 ($REPO/apps/filesquid/crates/ocfl)
-    Finished `test` profile [unoptimized] target(s) in 2.90s
+    Finished `test` profile [unoptimized] target(s) in 3.30s
      Running unittests src/lib.rs ($CARGO_TARGET_DIR/debug/deps/filesquid_ocfl-f1c06e773210ef88)
 
-running 15 tests
+running 18 tests
 test logical_file::tests::dots_inside_a_name_are_allowed ... ok
-test storage::drive::tests::pending_futures_are_reported ... ok
 test storage::drive::tests::ready_futures_return_their_output ... ok
+test storage::drive::tests::pending_futures_are_reported ... ok
 test logical_file::tests::missing_git_is_ok ... ok
 test storage::fs::paths::tests::a_drive_segment_never_replaces_the_root ... ok
-test storage::fs::paths::tests::missing_components_resolve_lexically ... ok
 test storage::fs::paths::tests::windows_accepts_ordinary_names ... ok
 test storage::fs::paths::tests::windows_rejects_device_names_and_trailing_dots ... ok
+test storage::fs::paths::tests::missing_components_resolve_lexically ... ok
 test storage::fs::paths::tests::windows_rejects_drive_prefixes_and_streams ... ok
 test storage::fs::paths::tests::windows_rules_apply_only_on_windows ... ok
 test storage::whole::tests::a_missing_object_is_not_found ... ok
-test storage::whole::tests::a_read_never_mixes_two_versions ... ok
+test storage::whole::tests::a_change_and_change_back_during_a_read_is_not_mixed ... ok
 test storage::whole::tests::a_stable_object_reads_in_one_pass ... ok
+test storage::whole::tests::a_read_never_mixes_two_versions ... ok
+test storage::whole::tests::invalid_chunks_fail_even_for_empty_objects ... ok
 test storage::whole::tests::an_object_that_keeps_changing_is_reported ... ok
+test storage::whole::tests::opaque_entity_tags_are_accepted ... ok
 test storage::whole::tests::large_buffers_are_written_through_multipart ... ok
 
-test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.37s
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.18s
 
      Running tests/features.rs ($CARGO_TARGET_DIR/debug/deps/features-8537dcd093d2ec06)
 Feature: OCFL 1.1 community fixture conformance
@@ -321,18 +358,18 @@ Feature: Storage backend interface
 87 steps (78 passed, 9 skipped)
      Running tests/integration/fs_conformance.rs ($CARGO_TARGET_DIR/debug/deps/integration_fs_conformance-335ad80c0f8ee67a)
 
-running 39 tests
-test filesystem::chunk_reader_bounds ... ok
-test filesystem::chunk_reader_never_returns_bytes_past_the_limit ... ok
+running 45 tests
 test filesystem::chunk_reader_stops_exactly_at_the_limit ... ok
+test filesystem::chunk_reader_never_returns_bytes_past_the_limit ... ok
+test filesystem::chunk_reader_bounds ... ok
 test filesystem::compare_and_swap ... ok
-test filesystem::delete_is_idempotent ... ok
 test filesystem::key_below_a_file_is_not_found ... ok
+test filesystem::delete_is_idempotent ... ok
 test filesystem::listing_under_a_file_is_empty ... ok
 test filesystem::missing_key_is_not_found ... ok
 test filesystem::lookalike_temporary_names_are_listed ... ok
-test filesystem::multipart_abort_leaves_nothing ... ok
 test filesystem::list_pages_in_lexical_order ... ok
+test filesystem::multipart_abort_leaves_nothing ... ok
 test filesystem::multipart_complete_honours_cas ... ok
 test filesystem::multipart_rejects_bad_parts ... ok
 test filesystem::put_get_head_exists ... ok
@@ -342,6 +379,10 @@ test fs_abort_removes_the_upload_staging_directory ... ok
 test fs_backend_leaves_no_temporary_files_or_staging ... ok
 test fs_backend_writes_plain_files_under_the_root ... ok
 test fs_complete_closes_the_upload_durably ... ok
+test fs_complete_refuses_a_fifo_part_without_blocking ... ok
+test fs_complete_refuses_a_symlinked_key_record ... ok
+test fs_complete_refuses_an_oversized_key_record ... ok
+test fs_create_multipart_refuses_a_symlinked_uploads_directory ... ok
 test fs_abort_and_upload_part_never_resurrect_an_upload ... ok
 test fs_create_only_has_one_winner_across_instances_with_separate_staging ... ok
 test fs_default_staging_is_outside_a_root_that_holds_the_temp_dir ... ok
@@ -357,49 +398,51 @@ test fs_staging_aliased_into_the_root_is_rejected ... ok
 test fs_staging_must_be_outside_the_storage_root ... ok
 test fs_staging_reached_through_a_symlink_into_the_root_is_rejected ... ok
 test fs_upload_ids_cannot_follow_a_symlink_out_of_staging ... ok
+test fs_upload_ids_do_not_cross_roots_sharing_staging ... ok
 test fs_walk_depth_bound_is_exact ... ok
+test fs_writes_refuse_a_symlinked_lock_file ... ok
 test fs_head_swap_has_one_winner_across_instances ... ok
 test filesystem::multipart_round_trip_streams_in_chunks ... ok
 test filesystem::parts_above_the_read_chunk_are_accepted ... ok
 
-test result: ok. 39 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.86s
+test result: ok. 45 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.87s
 
      Running tests/integration/logical_file.rs ($CARGO_TARGET_DIR/debug/deps/integration_logical_file-63ceb820eda8d51f)
 
 running 7 tests
 test escaping_paths_are_rejected ... ok
-test invalid_paths_are_rejected_before_the_git_guard ... ok
 test git_directory_blocks_reads_and_writes ... ok
+test invalid_paths_are_rejected_before_the_git_guard ... ok
 test missing_file_is_io_not_found ... ok
 test names_containing_two_dots_are_allowed ... ok
 test write_then_read_round_trips_on_a_real_directory ... ok
 test large_files_round_trip_through_bounded_chunks ... ok
 
-test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.33s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.57s
 
      Running tests/integration/memory_conformance.rs ($CARGO_TARGET_DIR/debug/deps/integration_memory_conformance-2a6a03e4159850cf)
 
 running 18 tests
 test memory::chunk_reader_bounds ... ok
-test memory::chunk_reader_never_returns_bytes_past_the_limit ... ok
 test memory::chunk_reader_stops_exactly_at_the_limit ... ok
-test memory::delete_is_idempotent ... ok
 test memory::compare_and_swap ... ok
+test memory::chunk_reader_never_returns_bytes_past_the_limit ... ok
 test memory::key_below_a_file_is_not_found ... ok
+test memory::list_pages_in_lexical_order ... ok
 test memory::listing_under_a_file_is_empty ... ok
 test memory::lookalike_temporary_names_are_listed ... ok
-test memory::list_pages_in_lexical_order ... ok
 test memory::missing_key_is_not_found ... ok
 test memory::multipart_abort_leaves_nothing ... ok
 test memory::multipart_complete_honours_cas ... ok
 test memory::multipart_rejects_bad_parts ... ok
-test memory::put_get_head_exists ... ok
+test memory::delete_is_idempotent ... ok
 test memory::put_replaces ... ok
+test memory::put_get_head_exists ... ok
 test memory::single_put_is_bounded ... ok
 test memory::multipart_round_trip_streams_in_chunks ... ok
 test memory::parts_above_the_read_chunk_are_accepted ... ok
 
-test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.79s
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.73s
 
      Running tests/unit/git_guard.rs ($CARGO_TARGET_DIR/debug/deps/unit_git_guard-74c8fab2a09cd7b9)
 
@@ -410,22 +453,25 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
      Running tests/unit/source_scan.rs ($CARGO_TARGET_DIR/debug/deps/unit_source_scan-81872135d06df499)
 
-running 6 tests
+running 9 tests
 test aliased_imports_are_found ... ok
 test comments_are_ignored_and_line_numbers_kept ... ok
 test direct_paths_are_found ... ok
-test harmless_names_are_not_flagged ... ok
-test grouped_imports_are_found ... ok
+test async_runtimes_are_found ... ok
 test only_the_fs_backend_and_path_helpers_may_do_io ... ok
+test grouped_imports_are_found ... ok
+test names_that_only_contain_a_pattern_are_not_flagged ... ok
+test harmless_names_are_not_flagged ... ok
+test string_literals_are_not_scanned_as_code ... ok
 
-test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
      Running tests/unit/storage_key.rs ($CARGO_TARGET_DIR/debug/deps/unit_storage_key-4a820d2d9306b299)
 
 running 6 tests
 test byte_ranges_are_bounded_by_the_chunk_limit ... ok
-test keys_that_could_escape_the_root_are_rejected ... ok
 test entity_tag_is_lowercase_hex_sha256 ... ok
+test keys_that_could_escape_the_root_are_rejected ... ok
 test key_segments_are_exposed_in_order ... ok
 test limits_match_the_plan_constraints ... ok
 test relative_slash_separated_keys_are_accepted ... ok

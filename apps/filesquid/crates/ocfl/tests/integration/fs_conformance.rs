@@ -75,10 +75,10 @@ async fn fs_backend_leaves_no_temporary_files_or_staging() {
         .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
         .collect();
     assert_eq!(names, ["f.bin"]);
-    let staged = std::fs::read_dir(scratch.0.join("staging").join("uploads"))
-        .expect("uploads")
-        .count();
-    assert_eq!(staged, 0, "multipart staging must be cleaned up");
+    assert!(
+        staged_uploads(&backend, &scratch).is_empty(),
+        "multipart staging must be cleaned up"
+    );
 }
 
 #[tokio::test]
@@ -289,9 +289,21 @@ mod filesystem {
     conformance_tests!(fs_fixture());
 }
 
-/// Entries left in the filesystem backend's multipart staging.
-fn staged_uploads(scratch: &Scratch) -> Vec<String> {
-    std::fs::read_dir(scratch.0.join("staging").join("uploads"))
+/// The multipart staging directory of `backend`'s root:
+/// `staging/uploads/<sha256 of the resolved root>`.
+fn upload_root(backend: &FsBackend, scratch: &Scratch) -> std::path::PathBuf {
+    let root_tag =
+        filesquid_ocfl::storage::ETag::sha256_of(backend.root().as_os_str().as_encoded_bytes());
+    scratch
+        .0
+        .join("staging")
+        .join("uploads")
+        .join(root_tag.as_str())
+}
+
+/// Entries left in the filesystem backend's multipart staging for its root.
+fn staged_uploads(backend: &FsBackend, scratch: &Scratch) -> Vec<String> {
+    std::fs::read_dir(upload_root(backend, scratch))
         .expect("uploads dir")
         .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
         .collect()
@@ -304,9 +316,12 @@ async fn fs_abort_removes_the_upload_staging_directory() {
         .await
         .expect("start");
     writer.write_part(b"partial").await.expect("part");
-    assert_eq!(staged_uploads(&scratch).len(), 1);
+    assert_eq!(staged_uploads(&backend, &scratch).len(), 1);
     writer.abort().await.expect("abort");
-    assert!(staged_uploads(&scratch).is_empty(), "abort left staging");
+    assert!(
+        staged_uploads(&backend, &scratch).is_empty(),
+        "abort left staging"
+    );
 }
 
 #[tokio::test]
@@ -319,14 +334,14 @@ async fn fs_complete_closes_the_upload_durably() {
         .complete_multipart(&upload, &[p1], None)
         .await
         .expect("complete");
-    assert!(staged_uploads(&scratch).is_empty());
+    assert!(staged_uploads(&backend, &scratch).is_empty());
     let late = backend.upload_part(&upload, 2, b"cd").await;
     assert!(
         matches!(late, Err(StorageError::UnknownUpload { .. })),
         "{late:?}"
     );
     assert!(
-        staged_uploads(&scratch).is_empty(),
+        staged_uploads(&backend, &scratch).is_empty(),
         "a late part reopened the upload"
     );
 }
@@ -346,7 +361,7 @@ fn fs_abort_and_upload_part_never_resurrect_an_upload() {
             let _ = block(backend.abort_multipart(&upload));
             parts.join().expect("parts thread");
         });
-        let left = staged_uploads(&scratch);
+        let left = staged_uploads(&backend, &scratch);
         assert!(left.is_empty(), "an aborted upload came back: {left:?}");
     }
 }
@@ -361,11 +376,7 @@ async fn fs_upload_ids_cannot_follow_a_symlink_out_of_staging() {
         .create_multipart(&key("objects/a/f.bin"))
         .await
         .expect("create");
-    let dir = scratch
-        .0
-        .join("staging")
-        .join("uploads")
-        .join(upload.as_str());
+    let dir = upload_root(&backend, &scratch).join(upload.as_str());
     std::fs::remove_dir_all(&dir).expect("remove upload dir");
     std::os::unix::fs::symlink(&outside, &dir).expect("symlink");
     let part = backend.upload_part(&upload, 1, b"escaped").await;
@@ -385,9 +396,7 @@ async fn fs_part_open_errors_are_not_reported_as_part_mismatch() {
         .await
         .expect("create");
     let p1 = backend.upload_part(&upload, 1, b"ab").await.expect("part");
-    let part = scratch
-        .0
-        .join("staging/uploads")
+    let part = upload_root(&backend, &scratch)
         .join(upload.as_str())
         .join("part-00001");
     std::fs::remove_file(&part).expect("remove part");
@@ -444,4 +453,137 @@ fn fs_default_staging_is_outside_a_root_that_holds_the_temp_dir() {
         staging.display(),
         temp.display()
     );
+}
+
+#[tokio::test]
+async fn fs_upload_ids_do_not_cross_roots_sharing_staging() {
+    let scratch = Scratch::new("cross-root");
+    let staging = scratch.0.join("staging");
+    let a = FsBackend::new(scratch.0.join("root-a"), &staging).expect("a");
+    let b = FsBackend::new(scratch.0.join("root-b"), &staging).expect("b");
+    let upload = a.create_multipart(&key("x.bin")).await.expect("create");
+    let p1 = a.upload_part(&upload, 1, b"from-a").await.expect("part");
+    let part_in_b = b.upload_part(&upload, 2, b"x").await;
+    assert!(
+        matches!(part_in_b, Err(StorageError::UnknownUpload { .. })),
+        "{part_in_b:?}"
+    );
+    let done_in_b = b
+        .complete_multipart(&upload, std::slice::from_ref(&p1), None)
+        .await;
+    assert!(
+        matches!(done_in_b, Err(StorageError::UnknownUpload { .. })),
+        "{done_in_b:?}"
+    );
+    assert!(!b.exists(&key("x.bin")).await.expect("exists"));
+    let abort_in_b = b.abort_multipart(&upload).await;
+    assert!(abort_in_b.is_err(), "{abort_in_b:?}");
+    a.complete_multipart(&upload, &[p1], None)
+        .await
+        .expect("still open in a");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn fs_create_multipart_refuses_a_symlinked_uploads_directory() {
+    let (backend, scratch) = fs_backend("uploads-symlink");
+    let outside = scratch.0.join("outside");
+    std::fs::create_dir_all(&outside).expect("outside");
+    let dir = upload_root(&backend, &scratch);
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.parent().expect("parent")).expect("uploads");
+    std::os::unix::fs::symlink(&outside, &dir).expect("symlink");
+    let created = backend.create_multipart(&key("x.bin")).await;
+    assert!(created.is_err(), "{created:?}");
+    assert_eq!(std::fs::read_dir(&outside).expect("outside").count(), 0);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn fs_complete_refuses_a_symlinked_key_record() {
+    let (backend, scratch) = fs_backend("key-symlink");
+    let upload = backend
+        .create_multipart(&key("objects/a/f.bin"))
+        .await
+        .expect("create");
+    let p1 = backend.upload_part(&upload, 1, b"ab").await.expect("part");
+    let forged = scratch.0.join("forged-key");
+    std::fs::write(&forged, b"objects/b/elsewhere.bin").expect("forged");
+    let record = upload_root(&backend, &scratch)
+        .join(upload.as_str())
+        .join("key");
+    std::fs::remove_file(&record).expect("remove record");
+    std::os::unix::fs::symlink(&forged, &record).expect("symlink");
+    let done = backend.complete_multipart(&upload, &[p1], None).await;
+    assert!(done.is_err(), "{done:?}");
+    assert!(!backend
+        .exists(&key("objects/b/elsewhere.bin"))
+        .await
+        .expect("exists"));
+}
+
+#[tokio::test]
+async fn fs_complete_refuses_an_oversized_key_record() {
+    let (backend, scratch) = fs_backend("key-size");
+    let upload = backend
+        .create_multipart(&key("objects/a/f.bin"))
+        .await
+        .expect("create");
+    let p1 = backend.upload_part(&upload, 1, b"ab").await.expect("part");
+    let record = upload_root(&backend, &scratch)
+        .join(upload.as_str())
+        .join("key");
+    std::fs::write(&record, vec![b'a'; 1024 * 1024]).expect("oversized record");
+    let done = backend.complete_multipart(&upload, &[p1], None).await;
+    assert!(done.is_err(), "{done:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn fs_complete_refuses_a_fifo_part_without_blocking() {
+    let (backend, scratch) = fs_backend("part-fifo");
+    let upload = block(backend.create_multipart(&key("objects/a/f.bin"))).expect("create");
+    let p1 = block(backend.upload_part(&upload, 1, b"ab")).expect("part");
+    let part = upload_root(&backend, &scratch)
+        .join(upload.as_str())
+        .join("part-00001");
+    std::fs::remove_file(&part).expect("remove part");
+    let made = std::process::Command::new("mkfifo").arg(&part).status();
+    if !made.is_ok_and(|s| s.success()) {
+        eprintln!("mkfifo unavailable; skipping");
+        return;
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    let backend = std::sync::Arc::new(backend);
+    let worker = std::sync::Arc::clone(&backend);
+    std::thread::spawn(move || {
+        let result = block(worker.complete_multipart(&upload, &[p1], None));
+        let _ = tx.send(result.is_err());
+    });
+    let failed = rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("completion blocked on a FIFO part");
+    assert!(failed, "a FIFO was accepted as a part");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn fs_writes_refuse_a_symlinked_lock_file() {
+    let (backend, scratch) = fs_backend("lock-symlink");
+    let outside = scratch.0.join("outside.txt");
+    std::fs::write(&outside, b"keep").expect("outside");
+    let root_tag =
+        filesquid_ocfl::storage::ETag::sha256_of(backend.root().as_os_str().as_encoded_bytes());
+    let lock = scratch
+        .0
+        .join("staging/locks")
+        .join(format!("{}.lock", root_tag.as_str()));
+    let _ = std::fs::remove_file(&lock);
+    std::os::unix::fs::symlink(&outside, &lock).expect("symlink");
+    let put = backend.put(&key("a.txt"), b"x").await;
+    assert!(
+        matches!(put, Err(StorageError::SymlinkForbidden { .. })),
+        "{put:?}"
+    );
+    assert_eq!(std::fs::read(&outside).expect("outside"), b"keep");
 }
