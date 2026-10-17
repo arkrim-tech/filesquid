@@ -27,7 +27,10 @@ $ ./scripts/verify_workspace_boundaries.sh -> ✅ Workspace Boundary validation 
 $ ./scripts/verify_centralized_logging.sh  -> ✅ Logging rule validation passed (no relevant staged files).
 $ ./scripts/verify_formatting.sh           -> ✅ Format validation passed.
 $ ./scripts/verify_docs.sh                 -> ✅ Documentation validation passed.
+$ ./scripts/verify_tests.sh                -> ✅ Lint and test validation passed.
 ```
+
+The first run of `verify_tests.sh` failed two `filesquid-c2pa` wasm32 build scenarios because the container lacked the Rust target. After `rustup target add wasm32-unknown-unknown`, the crate passed (23 scenarios: 13 passed, 10 skipped) and the whole gate passed. Playwright e2e was skipped (`FILESQUID_E2E` not set).
 
 `scripts/verify_branch.sh` (step 0) rejects the session branch name `claude/stoic-gates-famwt6`, which the session was told to push to. The owner decides whether to rename the branch before a pull request.
 
