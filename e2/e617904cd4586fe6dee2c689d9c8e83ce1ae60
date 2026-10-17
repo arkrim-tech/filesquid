@@ -1,0 +1,19 @@
+resources/assets/Filesquid-logo-bw.svg
+  s_c94e1c6447b8f2::t_30f1ca8b59a336 1-10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e2e617904cd4586fe6dee2c689d9c8e83ce1ae60",
+  "prompts": {},
+  "sessions": {
+    "s_c94e1c6447b8f2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fe064bc6-f41a-4547-ab98-97cab1bb1ac5",
+        "model": "unknown"
+      },
+      "human_author": "Peter Van Garderen <vangarderen.peter@gmail.com>"
+    }
+  }
+}
