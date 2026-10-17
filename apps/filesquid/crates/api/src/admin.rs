@@ -6,6 +6,7 @@
 use crate::error::{ApiError, ErrorCode};
 use crate::journal::{parse_rfc3339_ms, JournalQuery, Level, Outcome, MAX_PAGE};
 use crate::monitor::Monitor;
+use crate::operation::PageSize;
 use crate::routes::Route;
 use crate::ApiState;
 use axum::extract::rejection::QueryRejection;
@@ -150,6 +151,19 @@ struct JournalParams {
 }
 
 impl JournalParams {
+    /// The requested page size: absent means the journal default (`0`); an explicit `limit`
+    /// MUST be a [`PageSize`] (1 to [`filesquid_core::MAX_PAGE_SIZE`]), else `Err("limit")`.
+    fn page_limit(&self) -> Result<usize, &'static str> {
+        let Some(limit) = self.limit else {
+            return Ok(0);
+        };
+        u32::try_from(limit)
+            .ok()
+            .and_then(|n| PageSize::new(n).ok())
+            .map(|size| size.get() as usize)
+            .ok_or("limit")
+    }
+
     /// Convert to a store query; `Err` names the invalid parameter.
     fn to_query(&self) -> Result<JournalQuery, &'static str> {
         let time = |v: &Option<String>, name| {
@@ -174,7 +188,7 @@ impl JournalParams {
                 .transpose()?,
             process_id: self.process.clone(),
             after_id: self.after,
-            limit: self.limit.unwrap_or(0),
+            limit: self.page_limit()?,
             descending: match self.order.as_deref() {
                 None | Some("asc") => false,
                 Some("desc") => true,

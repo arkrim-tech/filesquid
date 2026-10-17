@@ -307,6 +307,27 @@ fn query_envelope_and_page_size_parameter_are_bounded_like_core() {
         assert_eq!(page_size["maximum"], MAX_PAGE_SIZE);
     }
     assert_eq!(doc["components"]["parameters"]["Cursor"]["in"], "query");
+    assert_eq!(MAX_PAGE_SIZE, 1000, "owner decision 2026-10-17: 1-1000");
+    assert_eq!(filesquid_api::journal::MAX_PAGE, MAX_PAGE_SIZE as usize);
+}
+
+#[test]
+fn every_limit_parameter_is_the_shared_page_size() {
+    let doc = contract();
+    let shared = "#/components/parameters/PageSize";
+    let mut uses = 0;
+    for (path, item) in doc["paths"].as_object().expect("paths") {
+        for method in METHODS.iter().filter(|m| item.get(**m).is_some()) {
+            let params = item[*method]["parameters"].as_array().cloned();
+            for param in params.unwrap_or_default() {
+                let is_shared = param.get("$ref").and_then(Value::as_str) == Some(shared);
+                uses += usize::from(is_shared);
+                let inline_limit = param.get("name").and_then(Value::as_str) == Some("limit");
+                assert!(!inline_limit, "{method} {path}: `limit` must use {shared}");
+            }
+        }
+    }
+    assert!(uses >= 1, "at least one operation pages with PageSize");
 }
 
 #[test]

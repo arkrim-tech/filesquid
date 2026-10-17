@@ -324,7 +324,7 @@ export interface components {
         };
     };
     parameters: {
-        /** @description Page size for a query (1-100). */
+        /** @description Page size for a query (1-1000). Each operation states its default; the activity journal defaults to 100. */
         PageSize: number;
         /** @description Opaque cursor from the previous page. */
         Cursor: string;
@@ -460,8 +460,8 @@ export interface operations {
                 process?: string;
                 /** @description Cursor: entries with a greater id. */
                 after?: number;
-                /** @description Page size (default 100, max 1000). */
-                limit?: number;
+                /** @description Page size for a query (1-1000). Each operation states its default; the activity journal defaults to 100. */
+                limit?: components["parameters"]["PageSize"];
                 /** @description asc (default) or desc (newest first). */
                 order?: "asc" | "desc";
             };

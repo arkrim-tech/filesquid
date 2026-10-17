@@ -20,8 +20,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Default page size for journal queries.
 pub const DEFAULT_PAGE: usize = 100;
-/// Largest page size a query may request.
-pub const MAX_PAGE: usize = 1_000;
+/// Largest page size a query may request: the portable bound
+/// [`filesquid_core::MAX_PAGE_SIZE`] (CORE-S-005), so one bound applies to every query.
+pub const MAX_PAGE: usize = filesquid_core::MAX_PAGE_SIZE as usize;
 /// Milliseconds in a day, used by retention.
 pub const DAY_MS: i64 = 86_400_000;
 

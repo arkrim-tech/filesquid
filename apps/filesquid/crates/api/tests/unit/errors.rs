@@ -118,6 +118,8 @@ async fn invalid_and_malformed_query_parameters_are_invalid_requests() {
         "/api/v1/admin/journal?after=not-a-number",
         "/api/v1/admin/journal/export?order=sideways",
         "/api/v1/admin/journal/export?after=1.5",
+        "/api/v1/admin/journal?limit=0",
+        "/api/v1/admin/journal?limit=1001",
     ] {
         let (status, ctype, json) = get(&state, path, Some("s3cret")).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{path}");

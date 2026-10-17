@@ -3,7 +3,7 @@
   "info": {
     "title": "FileSquid API",
     "version": "0.3.0",
-    "description": "The single FileSquid API served by every FileSquid host. See resources/architecture/030-filesquid-api-and-transports.md. Conventions: a command (mutation) sends a CommandEnvelope as the `envelope` member of its JSON request body (operation_id is the idempotency key, expected_revision the revision last read) and answers with a CommandOutcome; a query (list) takes the PageSize (`limit`, 1-100) and Cursor (`cursor`) parameters; every failed request answers with an ApiError body (code, message, retryable). Paths marked x-filesquid-host-route are served by the hosts, not by the filesquid-api router."
+    "description": "The single FileSquid API served by every FileSquid host. See resources/architecture/030-filesquid-api-and-transports.md. Conventions: a command (mutation) sends a CommandEnvelope as the `envelope` member of its JSON request body (operation_id is the idempotency key, expected_revision the revision last read) and answers with a CommandOutcome; a query (list) takes the PageSize (`limit`, 1-1000) and Cursor (`cursor`) parameters; every failed request answers with an ApiError body (code, message, retryable). Paths marked x-filesquid-host-route are served by the hosts, not by the filesquid-api router."
   },
   "paths": {
     "/api/v1/health": {
@@ -209,13 +209,7 @@
             }
           },
           {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "description": "Page size (default 100, max 1000).",
-            "schema": {
-              "type": "integer"
-            }
+            "$ref": "#/components/parameters/PageSize"
           },
           {
             "name": "order",
@@ -814,7 +808,7 @@
           "page_size": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 100,
+            "maximum": 1000,
             "description": "Bounded page size."
           },
           "scope": {
@@ -870,11 +864,11 @@
         "name": "limit",
         "in": "query",
         "required": false,
-        "description": "Page size for a query (1-100).",
+        "description": "Page size for a query (1-1000). Each operation states its default; the activity journal defaults to 100.",
         "schema": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 100
+          "maximum": 1000
         }
       },
       "Cursor": {

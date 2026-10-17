@@ -20,7 +20,7 @@ Feature: Versioned API contract
   Scenario: Operation schemas carry idempotency, revision, page size and retryability
     Given the API contract
     Then a command envelope should require an operation id, an expected revision, a scope and a schema version
-    And a query page size should be bounded between 1 and 100
+    And a query page size should be bounded between 1 and 1000
     And an API error should carry a code, a message and whether it is retryable
 
   Scenario: A failed request returns an error the UI can show

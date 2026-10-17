@@ -22,8 +22,12 @@ Feature: Versioned command and query ports
     When I construct a query envelope with page size 0 and scope "library:lib-1"
     Then page size construction should fail
 
+  Scenario: The portable maximum page size of 1000 is accepted
+    When I construct a query envelope with page size 1000 and scope "library:lib-1"
+    Then the query page size should be 1000
+
   Scenario: Page size above the portable maximum is rejected
-    When I construct a query envelope with page size 101 and scope "library:lib-1"
+    When I construct a query envelope with page size 1001 and scope "library:lib-1"
     Then page size construction should fail
 
   Scenario: Empty operation id is rejected
