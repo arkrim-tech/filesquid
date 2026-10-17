@@ -8,8 +8,10 @@ mod schema_check;
 
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
+use filesquid_api::admin::AdminAuth;
 use filesquid_api::health::{HealthInputs, HealthReason, HealthReport, HealthStatus};
-use filesquid_api::journal::{JournalEntry, JournalPage, Level, Outcome};
+use filesquid_api::journal::{JournalEntry, JournalPage, Level, MemoryJournal, Outcome};
+use filesquid_api::monitor::{Monitor, MonitorConfig};
 use filesquid_api::operation::{
     CommandEnvelope, CommandOutcome, CommandOutcomeKind, ExpectedRevision, OperationId,
     OperationScope, PageSize, PortError, QueryEnvelope, MAX_PAGE_SIZE, PROTOCOL_SCHEMA_VERSION,
@@ -18,9 +20,11 @@ use filesquid_api::registry::{ProcessState, ProcessView};
 use filesquid_api::{
     routed_paths, router, ApiError, ApiEvent, ApiState, ErrorCode, API_VERSION, CONTRACT,
 };
+use http_body_util::BodyExt;
 use schema_check::{required, unsupported_keywords, Checker};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
+use std::sync::Arc;
 use tower::ServiceExt;
 
 /// OpenAPI extension that marks a path served by the hosts, not by [`router`].
@@ -81,47 +85,97 @@ fn host_routes_are_the_event_channel_only() {
 }
 
 /// Every documented operation of a routed path, as (method, path).
-fn routed_operations(doc: &Value) -> Vec<(Method, String)> {
+fn routed_operations(doc: &Value) -> Vec<(Method, String, &Value)> {
     let mut operations = Vec::new();
     for (path, item) in doc["paths"].as_object().expect("paths") {
         if item.get(HOST_ROUTE).is_some() {
             continue;
         }
-        for method in METHODS.iter().filter(|m| item.get(**m).is_some()) {
-            let method = Method::from_bytes(method.to_uppercase().as_bytes()).expect("method");
-            operations.push((method, path.clone()));
+        for name in METHODS.iter().filter(|m| item.get(**m).is_some()) {
+            let method = Method::from_bytes(name.to_uppercase().as_bytes()).expect("method");
+            operations.push((method, path.clone(), &item[*name]));
         }
     }
     operations
 }
 
+/// API state whose monitor is running for the desktop owner, so admin routes answer 200.
+fn owner_state() -> (ApiState, Monitor) {
+    let state = ApiState::new();
+    let monitor = Monitor::start(
+        Arc::new(MemoryJournal::new("host-a")),
+        MonitorConfig::new("host-a", std::env::temp_dir(), AdminAuth::Owner),
+        state.events.clone(),
+    );
+    state.install_monitor(monitor.clone());
+    (state, monitor)
+}
+
+/// Send one empty-bodied request through the router; return the status and body bytes.
+async fn call(state: &ApiState, method: &Method, path: &str) -> (StatusCode, Vec<u8>) {
+    let request = Request::builder()
+        .method(method.clone())
+        .uri(path)
+        .body(Body::empty())
+        .expect("request");
+    let response = router(state.clone())
+        .oneshot(request)
+        .await
+        .expect("router answers");
+    let status = response.status();
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    (status, body.to_vec())
+}
+
+/// Assert `status` is one the operation documents and, when the documented response has a
+/// JSON schema, that `body` conforms to it. Returns whether a body was checked.
+fn assert_documented_answer(doc: &Value, op: &Value, status: StatusCode, body: &[u8]) -> bool {
+    let checker = Checker::new(doc);
+    let documented = &op["responses"][status.as_str()];
+    assert!(documented.is_object(), "status {status} is not documented");
+    let response = checker.resolve(documented).expect("response $ref");
+    let Some(schema) = response.pointer("/content/application~1json/schema") else {
+        return false;
+    };
+    let value: Value = serde_json::from_slice(body).expect("documented JSON body");
+    if let Err(e) = checker.check(&value, schema, status.as_str()) {
+        panic!("body drifted from the documented {status} schema: {e}");
+    }
+    true
+}
+
 #[tokio::test]
-async fn every_documented_operation_is_answered_by_the_router() {
+async fn every_documented_operation_answers_a_documented_status_and_body() {
     let doc = contract();
     let operations = routed_operations(&doc);
     assert!(!operations.is_empty());
-    for (method, path) in operations {
-        let request = Request::builder()
-            .method(method.clone())
-            .uri(path.as_str())
-            .body(Body::empty())
-            .expect("request");
-        let response = router(ApiState::new())
-            .oneshot(request)
-            .await
-            .expect("router answers");
-        let status = response.status();
-        assert_ne!(
+    let (ready, monitor) = owner_state();
+    let mut checked_ok = 0;
+    for (method, path, op) in &operations {
+        let (status, body) = call(&ApiState::new(), method, path).await;
+        assert_documented_answer(&doc, op, status, &body);
+        let (status, body) = call(&ready, method, path).await;
+        assert_eq!(
             status,
-            StatusCode::NOT_FOUND,
-            "{method} {path} is not routed"
+            StatusCode::OK,
+            "{method} {path} when the host is ready"
         );
-        assert_ne!(
-            status,
-            StatusCode::METHOD_NOT_ALLOWED,
-            "{method} {path}: wrong method"
-        );
+        checked_ok += usize::from(assert_documented_answer(&doc, op, status, &body));
     }
+    monitor.shutdown();
+    let checker = Checker::new(&doc);
+    let json_ok = operations
+        .iter()
+        .filter_map(|(_, _, op)| checker.resolve(&op["responses"]["200"]).ok())
+        .filter(|ok| ok.pointer("/content/application~1json/schema").is_some())
+        .count();
+    assert!(json_ok >= 5, "operations with a JSON 200 schema: {json_ok}");
+    assert_eq!(checked_ok, json_ok, "every JSON 200 body was checked");
 }
 
 #[test]
@@ -532,6 +586,23 @@ fn all_outcome_kinds() -> [CommandOutcomeKind; 4] {
         Committed | Pending | Conflict | Error => (),
     });
     all
+}
+
+#[test]
+fn the_checker_accepts_only_truly_unconstrained_objects() {
+    let doc = json!({});
+    let checker = Checker::new(&doc);
+    let empty = json!({ "description": "any payload" });
+    checker
+        .check(&json!({ "a": "x" }), &empty, "empty")
+        .expect("`{}` accepts any object");
+    let map = json!({ "additionalProperties": { "type": "integer" } });
+    checker
+        .check(&json!({ "a": 1 }), &map, "map")
+        .expect("integer values conform");
+    assert!(checker.check(&json!({ "a": "x" }), &map, "map").is_err());
+    let needs = json!({ "required": ["a"] });
+    assert!(checker.check(&json!({}), &needs, "needs").is_err());
 }
 
 #[test]

@@ -21,7 +21,7 @@ Parents: [F-056 Single FileSquid API](../../../../../../resources/prd.md#f-056-s
   - Reusable parameters `PageSize` (`limit`, 1–100) and `Cursor`, and reusable `ApiError` responses. Every documented non-2xx response now carries `ApiError`.
   - The host-served event channel is marked `x-filesquid-host-route: true`.
   - `info.description` states the wire convention: commands send `envelope`, queries take `limit`/`cursor`, failures return `ApiError`.
-- **Typed errors** ([`src/error.rs`](../../src/error.rs)): `ErrorCode` maps to one HTTP status each (400/401/403/404/409/500/503). Only `unavailable` is retryable. `ApiError::internal` logs the detail through `tracing::error!`, so it reaches stdout and the journal, and returns a generic message with no paths or SQL (API-S-005). The admin routes now answer every failure with `ApiError` JSON, including malformed query strings (the axum `QueryRejection` becomes `invalid_request`), and they check authorisation before validating parameters.
+- **Typed errors** ([`src/error.rs`](../../src/error.rs)): `ErrorCode` maps to one HTTP status each (400/401/403/404/409/500/503). Only `unavailable` is retryable. `ApiError::internal` logs the detail to stdout through `tracing::error!`. The journal layer records only the whitelisted `operation` and `error_code` fields, so the activity journal gets a redacted error record without the detail. The caller gets a generic message with no paths or SQL (API-S-005). The admin routes now answer every failure with `ApiError` JSON, including malformed query strings (the axum `QueryRejection` becomes `invalid_request`), and they check authorisation before validating parameters.
 - **Operation schemas** ([`src/operation.rs`](../../src/operation.rs)): re-exports the `filesquid-core` envelopes and documents the wire convention.
 - **Route table** ([`src/routes.rs`](../../src/routes.rs)): one table builds the router. `routed_paths()` lists exactly the paths the router serves.
 - **Generated types**: `apps/filesquid/ui/src/api/schema.d.ts`, regenerated with `npm run contract:types` (`openapi-typescript` 7.13.0).
@@ -32,11 +32,11 @@ Parents: [F-056 Single FileSquid API](../../../../../../resources/prd.md#f-056-s
 | Requirement | Tests |
 |---|---|
 | API-S-002 versioned contract | `contract_is_openapi_3_1_with_the_crate_api_version`, `router_serves_its_own_contract`, BDD "The API serves its own versioned contract" |
-| API-S-002 / ADR 030 drift: Rust routes ↔ contract | `routed_and_documented_paths_agree_both_ways`, `host_routes_are_the_event_channel_only`, `every_documented_operation_is_answered_by_the_router`, `every_documented_operation_has_a_unique_operation_id`, BDD "Every routed operation is documented in the contract" |
-| API-S-002 / ADR 030 drift: Rust types ↔ contract | `every_component_schema_has_a_rust_sample`, `every_component_schema_matches_its_serialized_rust_type` (strict: no undocumented field, required present, enums equal Rust variants both ways), `the_contract_uses_only_checked_schema_keywords`, `health_schema_matches_the_core_payload_and_requires_every_field` |
+| API-S-002 / ADR 030 drift: Rust routes ↔ contract | `routed_and_documented_paths_agree_both_ways`, `host_routes_are_the_event_channel_only`, `every_documented_operation_answers_a_documented_status_and_body` (every operation answers a status its `responses` document, both before the monitor starts and when it is ready; every JSON 200 body conforms to its success schema), `every_documented_operation_has_a_unique_operation_id`, BDD "Every routed operation is documented in the contract" |
+| API-S-002 / ADR 030 drift: Rust types ↔ contract | `every_component_schema_has_a_rust_sample`, `every_component_schema_matches_its_serialized_rust_type` (strict: no undocumented field, required present, enums equal Rust variants both ways), `the_contract_uses_only_checked_schema_keywords`, `the_checker_accepts_only_truly_unconstrained_objects`, `health_schema_matches_the_core_payload_and_requires_every_field` |
 | API-S-002 drift: contract ↔ generated TypeScript | Vitest `apps/filesquid/ui/tests/unit/contract.test.ts` |
 | API-S-002 / CORE-S-005 operation schemas | `command_envelope_carries_idempotency_key_expected_revision_and_scope`, `query_envelope_and_page_size_parameter_are_bounded_like_core`, `errors_carry_code_and_retryability`, BDD "Operation schemas carry idempotency, revision, page size and retryability" |
-| API-S-009 typed errors | `error_codes_match_the_rust_enum_with_status_and_retryability`, `error_code_all_lists_every_variant`, `every_error_response_carries_the_api_error_schema`, `unit_errors` (6 tests), BDD "A failed request returns an error the UI can show", "A request before the host is ready is a retryable error", "The host keeps answering after a failed request" |
+| API-S-009 typed errors | `error_codes_match_the_rust_enum_with_status_and_retryability`, `error_code_all_lists_every_variant`, `every_error_response_carries_the_api_error_schema`, `unit_errors` (8 tests, including `internal_errors_keep_the_detail_out_of_the_message` and `a_failing_store_answers_a_redacted_internal_error_through_the_router` for API-S-005), BDD "A failed request returns an error the UI can show", "A request before the host is ready is a retryable error", "The host keeps answering after a failed request" |
 
 [ADR 017](../../../../../../resources/architecture/017-test-runners-and-reporting.md) defines no Rust line-coverage tool, so no coverage percentage is reported. Every new public item (`ApiError`, `ErrorCode`, `routed_paths`, the `operation` re-exports) is exercised by the tests above.
 
@@ -74,9 +74,16 @@ test every_component_schema_matches_its_serialized_rust_type ... FAILED
 test result: FAILED. 14 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
 ```
 
+Mutation check (review round 1): `503` was removed from the documented responses of `GET /api/v1/admin/metrics` in a copy of the contract, the test was run, and the original was restored:
+
+```text
+test every_documented_operation_answers_a_documented_status_and_body ... FAILED
+test result: FAILED. 16 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+```
+
 ## Green: raw output
 
-`cargo test -p filesquid-api --locked --test unit_contract --test unit_errors --test features`:
+`cargo test -p filesquid-api --locked --test unit_contract --test unit_errors --test features` (after Cubic review round 1):
 
 ```text
 Feature: Versioned API contract
@@ -90,7 +97,7 @@ Feature: Versioned API contract
    ✔  And every documented path should be served by the router or marked as a host route
   Scenario: Operation schemas carry idempotency, revision, page size and retryability
    ✔  Given the API contract
-   ✔  Then a command envelope should require an operation id, an expected revision and a scope
+   ✔  Then a command envelope should require an operation id, an expected revision, a scope and a schema version
    ✔  And a query page size should be bounded between 1 and 100
    ✔  And an API error should carry a code, a message and whether it is retryable
   Scenario: A failed request returns an error the UI can show
@@ -113,32 +120,35 @@ Feature: Versioned API contract
 4 features
 70 scenarios (11 passed, 59 skipped)
 100 steps (41 passed, 59 skipped)
-running 16 tests
+running 17 tests
 test error_code_all_lists_every_variant ... ok
 test command_envelope_carries_idempotency_key_expected_revision_and_scope ... ok
 test contract_is_openapi_3_1_with_the_crate_api_version ... ok
-test error_codes_match_the_rust_enum_with_status_and_retryability ... ok
 test errors_carry_code_and_retryability ... ok
+test error_codes_match_the_rust_enum_with_status_and_retryability ... ok
 test every_component_schema_has_a_rust_sample ... ok
 test every_documented_operation_has_a_unique_operation_id ... ok
+test every_component_schema_matches_its_serialized_rust_type ... ok
 test every_error_response_carries_the_api_error_schema ... ok
 test health_schema_matches_the_core_payload_and_requires_every_field ... ok
 test host_routes_are_the_event_channel_only ... ok
-test query_envelope_and_page_size_parameter_are_bounded_like_core ... ok
-test every_documented_operation_is_answered_by_the_router ... ok
-test router_serves_its_own_contract ... ok
 test routed_and_documented_paths_agree_both_ways ... ok
-test every_component_schema_matches_its_serialized_rust_type ... ok
+test query_envelope_and_page_size_parameter_are_bounded_like_core ... ok
+test the_checker_accepts_only_truly_unconstrained_objects ... ok
+test router_serves_its_own_contract ... ok
 test the_contract_uses_only_checked_schema_keywords ... ok
-test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
-running 6 tests
+test every_documented_operation_answers_a_documented_status_and_body ... ok
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+running 8 tests
 test api_error_takes_retryability_from_its_code ... ok
+test internal_errors_keep_the_detail_out_of_the_message ... ok
 test api_error_renders_as_json_with_the_code_status ... ok
 test admin_routes_before_the_monitor_starts_are_unavailable_and_retryable ... ok
-test invalid_and_malformed_query_parameters_are_invalid_requests ... ok
+test a_failing_store_answers_a_redacted_internal_error_through_the_router ... ok
 test missing_and_wrong_credentials_are_typed_errors ... ok
+test invalid_and_malformed_query_parameters_are_invalid_requests ... ok
 test the_router_keeps_answering_after_a_failed_request ... ok
-test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 ```
 
 The 59 skipped scenarios belong to the existing F-061, F-063 and F-064 features. Their domain operations do not exist yet, so they have no step definitions; this was already the case before this task.

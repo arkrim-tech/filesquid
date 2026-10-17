@@ -4,8 +4,9 @@
 //! Every failed request answers with an [`ApiError`] JSON body (`code`, `message`,
 //! `retryable`) documented in the contract as `components.schemas.ApiError`, so every UI can
 //! show the failure and decide whether to offer a retry. Messages are written for people and
-//! never contain filesystem paths, SQL or internal error text (API-S-005); internal details
-//! go to stdout and the activity journal only.
+//! never contain filesystem paths, SQL or internal error text (API-S-005). Internal details
+//! go to stdout only; the activity journal receives a redacted error record (the whitelisted
+//! `operation` and `error_code` fields, never the detail).
 
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -100,9 +101,10 @@ impl ApiError {
         self.retryable
     }
 
-    /// Log `detail` to stdout (and, through the journal layer, the activity journal) and
-    /// return a generic `internal` error that does not reveal it. `operation` names what
-    /// failed, for example `api.admin.journal`.
+    /// Log `detail` to stdout and return a generic `internal` error that does not reveal it.
+    /// The journal layer records only the whitelisted `operation` and `error_code` fields of
+    /// this event, so the activity journal gets a redacted error record without the detail.
+    /// `operation` names what failed, for example `api.admin.journal`.
     pub fn internal(operation: &str, detail: &str) -> Self {
         tracing::error!(
             operation,

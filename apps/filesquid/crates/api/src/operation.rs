@@ -12,9 +12,12 @@
 //! - A command (mutation) sends a [`CommandEnvelope`] as the `envelope` member of its JSON
 //!   request body: `operation_id` is the idempotency key, `expected_revision` the revision
 //!   the caller last read, `scope` the permitted scope. It answers with a [`CommandOutcome`].
-//! - A query (list) takes the `limit` and `cursor` query parameters, which the handler turns
-//!   into a [`QueryEnvelope`]; a `limit` outside 1 to [`MAX_PAGE_SIZE`] is an
-//!   `invalid_request` error.
+//! - A query (list) takes the `limit` and `cursor` query parameters. The handler turns
+//!   `limit` into the [`QueryEnvelope`] page size; a `limit` outside 1 to [`MAX_PAGE_SIZE`] is
+//!   an `invalid_request` error. `cursor` is not part of the envelope (CORE-S-005 defines the
+//!   envelope as schema version, scope and page size): it is an opaque paging position the
+//!   handler passes to the module next to the envelope, and each page answers with the
+//!   cursor of the next page.
 //! - Failures answer with [`crate::ApiError`], whose `retryable` flag mirrors
 //!   [`PortError::retryable`] for module errors.
 

@@ -412,7 +412,7 @@ async fn send_get(w: &mut MonitorWorld, path: &str, token: Option<&str>) {
         .await
         .expect("body")
         .to_bytes();
-    w.json = serde_json::from_slice(&body).unwrap_or(serde_json::Value::Null);
+    w.json = serde_json::from_slice(&body).expect("response body is JSON");
 }
 
 /// The checked-in contract as JSON.
@@ -499,7 +499,7 @@ fn documented_are_routed(_w: &mut MonitorWorld) {
 }
 
 #[then(
-    expr = "a command envelope should require an operation id, an expected revision and a scope"
+    expr = "a command envelope should require an operation id, an expected revision, a scope and a schema version"
 )]
 fn command_envelope_required(w: &mut MonitorWorld) {
     let required = &w.json["components"]["schemas"]["CommandEnvelope"]["required"];

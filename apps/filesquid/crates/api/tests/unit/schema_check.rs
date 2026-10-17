@@ -111,7 +111,7 @@ impl<'a> Checker<'a> {
         depth: usize,
     ) -> Result<(), String> {
         let fields = value.as_object().expect("object");
-        if schema.get("type").is_none() && schema.get("properties").is_none() {
+        if is_unconstrained(schema) {
             return Ok(()); // An unconstrained schema (`{}`) accepts any object.
         }
         for name in required(schema) {
@@ -158,6 +158,14 @@ impl<'a> Checker<'a> {
         }
         Ok(())
     }
+}
+
+/// True when a schema constrains nothing about an object: no `type`, `properties`,
+/// `additionalProperties` or `required` (annotations such as `description` may be present).
+pub fn is_unconstrained(schema: &Value) -> bool {
+    ["type", "properties", "additionalProperties", "required"]
+        .iter()
+        .all(|key| schema.get(key).is_none())
 }
 
 /// Names listed in a schema's `required` array.

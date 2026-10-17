@@ -5,7 +5,10 @@ use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use axum::response::IntoResponse;
 use filesquid_api::admin::AdminAuth;
-use filesquid_api::journal::MemoryJournal;
+use filesquid_api::journal::{
+    JournalEntry, JournalError, JournalPage, JournalQuery, JournalStore, MemoryJournal,
+    RetentionPolicy,
+};
 use filesquid_api::monitor::{Monitor, MonitorConfig};
 use filesquid_api::{router, ApiError, ApiState, ErrorCode};
 use http_body_util::BodyExt;
@@ -131,5 +134,72 @@ async fn the_router_keeps_answering_after_a_failed_request() {
     let (status, _, json) = get(&state, "/api/v1/admin/journal", Some("s3cret")).await;
     assert_eq!(status, StatusCode::OK);
     assert!(json["entries"].is_array());
+    monitor.shutdown();
+}
+
+/// Detail that a failing store reports: a path and SQL that MUST NOT reach a caller.
+const SECRET_DETAIL: &str = "/home/owner/library/filesquid.sqlite: SELECT * FROM journal";
+
+/// A journal store whose reads always fail with [`SECRET_DETAIL`]; appends succeed.
+struct FailingStore;
+
+impl JournalStore for FailingStore {
+    fn host(&self) -> &str {
+        "server"
+    }
+    fn append(&self, entries: &[JournalEntry]) -> Result<Vec<i64>, JournalError> {
+        Ok((1..=entries.len() as i64).collect())
+    }
+    fn query(&self, _query: &JournalQuery) -> Result<JournalPage, JournalError> {
+        Err(JournalError(SECRET_DETAIL.into()))
+    }
+    fn count(&self, _query: &JournalQuery) -> Result<u64, JournalError> {
+        Err(JournalError(SECRET_DETAIL.into()))
+    }
+    fn apply_retention(&self, _policy: RetentionPolicy, _now: i64) -> Result<u64, JournalError> {
+        Ok(0)
+    }
+    fn ping(&self) -> Result<(), JournalError> {
+        Ok(())
+    }
+}
+
+/// Assert an `internal` error body that does not reveal [`SECRET_DETAIL`] (API-S-005).
+fn assert_redacted_internal(json: &Value) {
+    assert_eq!(json["code"], "internal", "{json}");
+    assert_eq!(json["retryable"], false, "{json}");
+    let message = json["message"].as_str().expect("message");
+    assert_eq!(message, "FileSquid could not complete the request.");
+    for leak in ["/home", "filesquid.sqlite", "SELECT", "journal error"] {
+        assert!(
+            !json.to_string().contains(leak),
+            "body leaks {leak}: {json}"
+        );
+    }
+}
+
+#[test]
+fn internal_errors_keep_the_detail_out_of_the_message() {
+    let error = ApiError::internal("api.test", SECRET_DETAIL);
+    assert_eq!(error.code(), ErrorCode::Internal);
+    assert!(!error.retryable());
+    assert_redacted_internal(&serde_json::to_value(&error).expect("serialize"));
+}
+
+#[tokio::test]
+async fn a_failing_store_answers_a_redacted_internal_error_through_the_router() {
+    let state = ApiState::new();
+    let monitor = Monitor::start(
+        Arc::new(FailingStore),
+        MonitorConfig::new("server", std::env::temp_dir(), AdminAuth::bearer("s3cret")),
+        state.events.clone(),
+    );
+    state.install_monitor(monitor.clone());
+    for path in ["/api/v1/admin/journal", "/api/v1/admin/journal/export"] {
+        let (status, ctype, json) = get(&state, path, Some("s3cret")).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{path}");
+        assert_eq!(ctype, "application/json", "{path}");
+        assert_redacted_internal(&json);
+    }
     monitor.shutdown();
 }
