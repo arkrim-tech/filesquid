@@ -12,6 +12,8 @@ Accepted
 
 Accepted: 2026-09-16T01:01:07Z. Revised: 2026-09-22T04:34:37Z.
 
+Amended 2026-10-17 by [ADR 035](./035-macos-first-desktop-mvp.md): macOS is the first desktop target and the FileSquid MVP is desktop-only; Linux and Windows desktop follow the MVP. The Linux-first statements below are kept as history.
+
 Amended 2026-10-15 by [ADR 030](./030-filesquid-api-and-transports.md): the UI reaches the one FileSquid API through a Tauri custom URI scheme served in-process, replacing per-feature IPC commands; there is still no TCP listener. Transport spike S1 is complete and accepted; S1 item (a), `Range` media playback through the custom scheme on each desktop webview, remains an open gate before the file-content endpoints are accepted ([ADR 030](./030-filesquid-api-and-transports.md) S1 results). Svelte is replaced by vanilla TypeScript ([ADR 031](./031-vanilla-typescript-ui-and-white-label-theming.md)). The host crate is `filesquid-desktop` at `apps/filesquid/crates/desktop/`.
 
 ## Context / Requirement Reference

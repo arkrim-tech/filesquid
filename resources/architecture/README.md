@@ -7,25 +7,25 @@ Product requirements remain in the [FileSquid vision](../product-vision.md); the
 | ADR | Status | Decision |
 |---|---|---|
 | [001](./001-shared-rust-core-with-tauri-and-axum-hosts.md) | Accepted; amended by 029, 030, 032 | Shared Rust libraries; Axum gets hosted-safe modules only |
-| [002](./002-tauri2-desktop-shell.md) | Accepted; amended by 030 | Tauri 2 desktop host; no local web server; universal CSS |
+| [002](./002-tauri2-desktop-shell.md) | Accepted; amended by 030, 035 | Tauri 2 desktop host; no local web server; universal CSS |
 | [003](./003-svelte-client-rendered-ui.md) | Superseded by 031 | Svelte client-rendered UI, not React or LiveView |
 | [004](./004-axum-hosted-ciphertext-mailbox.md) | Accepted; amended by 032 (re-scoped to `*.filesquid.tech`) | Axum ciphertext mailbox; static SPA files, not private SSR |
 | [005](./005-sqlite-local-postgres-hosted.md) | Accepted | SQLite locally; PostgreSQL plus object storage hosted |
-| [006](./006-libvips-native-stills-not-imagemagick.md) | Accepted | libvips for stills; do not install ImageMagick |
+| [006](./006-libvips-native-stills-not-imagemagick.md) | Accepted; amended by 035 | libvips for stills; do not install ImageMagick |
 | [007](./007-durable-jobs-and-interactive-performance.md) | Accepted | Durable Rust jobs; interactive media stays in the client |
 | [008](./008-browser-wasm-scope.md) | Accepted; amended by 032 | WASM: envelopes, hashes, replica queries and (per 025) the filesquid engines — not codecs |
 | [009](./009-cryptography-webcrypto-compatible-suite.md) | Accepted | AES-256-GCM, HKDF-SHA-256, SHA-256, Ed25519/X25519, Argon2id |
 | [010](./010-ocfl-1-1-dual-profile.md) | Accepted | OCFL 1.1 readable local + ciphertext hosted profiles |
 | [011](./011-native-media-adapters-and-ffmpeg-license.md) | Accepted | LibRaw, libheif, LGPL FFmpeg; C2PA moved to `filesquid-c2pa` (026, renamed by 029) |
 | [012](./012-s3-compatible-ciphertext-storage.md) | Accepted | S3-compatible API; vendor/geography later |
-| [013](./013-cargo-svelte-workspaces.md) | Accepted; amended by 029, 031 | Cargo + Vite/TypeScript under `apps/`; product-local Cargo workspace at `apps/filesquid/` (029); no BEAM |
+| [013](./013-cargo-svelte-workspaces.md) | Accepted; amended by 029, 031, 035 | Cargo + Vite/TypeScript under `apps/`; product-local Cargo workspace at `apps/filesquid/` (029); no BEAM |
 | [014](./014-stdout-observability.md) | Accepted; superseded in part by 033 | Stdout JSON logs; not Promtail; no required local Grafana |
 | [015](./015-prov-o-jsonld-and-c2pa-sdk.md) | Accepted | PROV-O JSON-LD; C2PA via `filesquid-c2pa` (026, renamed by 029); no graph database |
 | [016](./016-rust-ocfl-library.md) | Accepted; amended by 029, 032, 036 | Crate `filesquid-ocfl`: read/write/browse OCFL on local filesystem and S3-compatible storage through one async backend interface; desktop and browser; not Git |
 | [017](./017-test-runners-and-reporting.md) | Accepted | cargo test, Vitest, Playwright; Allure under each app |
 | [018](./018-inline-docs-generators.md) | Accepted (revised 2026-10-15) | rustdoc for Rust; TSDoc comments in TypeScript built with Vite; no separate TS doc generator |
 | [019](./019-coding-style-and-lint.md) | Accepted | rustfmt, Clippy, ESLint, Prettier; cargo-deny later |
-| [020](./020-distribution-web-and-tauri.md) | Accepted | Axum container/binary; Tauri installers later; updater out of scaffold |
+| [020](./020-distribution-web-and-tauri.md) | Accepted; amended by 035 | Axum container/binary; unsigned early-access macOS DMG for the MVP (035), signed Tauri installers later; updater out of scaffold |
 | [021](./021-uuid-v4-identifiers.md) | Accepted | RFC 4122/9562 UUID version 4 for newly generated domain IDs |
 | [022](./022-dublin-core-descriptive-metadata.md) | Accepted | ISO 15836-2 `/terms/` (`dcterms:`) for owner-authored descriptive metadata; Schema.org overflow |
 | [023](./023-filesquid-ocfl-engine-and-parquet.md) | Accepted; superseded in part by 029; amended by 036 | `filesquid-ocfl` is a stand-alone FOSS OCFL 1.1 product and its own tool; extractable to its own Git repository; FileSquid is a caller; later optional same-crate Parquet projection |
@@ -40,8 +40,9 @@ Product requirements remain in the [FileSquid vision](../product-vision.md); the
 | [032](./032-hosting-and-privacy-model.md) | Accepted | Host types and privacy boundaries: desktop (owner only), owner-operated multi-user `filesquid-server` (operator can read), ciphertext-only `*.filesquid.tech` backup/sync; encrypted browser host on the roadmap |
 | [033](./033-activity-journal-and-live-health-monitoring.md) | Accepted | FileSquid's own activity journal (100% of activity) and live health monitoring (process registry, Monitor dashboard) on every host; optional store-and-forward OTLP export; Promtail, Redpanda, Loki, Grafana, Alloy and Prometheus removed |
 | [034](./034-at-protocol-publishing-connection.md) | Accepted | No RSS or bearer-link activity feed; opt-in AT Protocol (Bluesky) publishing connection behind the API: explicit per-post, public items only, outgoing policy applied, journaled, credentials in the host secret store |
+| [035](./035-macos-first-desktop-mvp.md) | Accepted | macOS is the first desktop target; the FileSquid MVP is desktop-only (no `filesquid-server`), ships an unsigned early-access DMG; Linux and Windows desktop follow the MVP |
 | [036](./036-single-fsquid-cli.md) | Accepted | One FileSquid CLI, `fsquid`, built by the `filesquid-cli` crate with every module's commands; unique commands at the top level, `fsquid <module> <command>` always accepted, `validate` always needs its module; module crates ship no binaries |
 
 Rejected as application stacks: Phoenix, LiveView, FastAPI, Python sidecars, Electron, Flutter, React, Svelte (superseded by [031](./031-vanilla-typescript-ui-and-white-label-theming.md)), other UI frameworks, ImageMagick, and as the telemetry stack Promtail, Redpanda, Loki, Grafana, Alloy and Prometheus ([033](./033-activity-journal-and-live-health-monitoring.md)). Vanilla TypeScript is no longer rejected; it is the UI stack ([031](./031-vanilla-typescript-ui-and-white-label-theming.md)). Git, git-annex, Git LFS and shelled-out OCFL CLIs are not FileSquid's OCFL library ([016](./016-rust-ocfl-library.md)).
 
-Still **not** stack ADRs (later): named cloud region, payment provider, HTTP recorder implementation, ONNX/model packs, [FE-042](../product-vision.md#paid-c2pa-publication-watermarking-and-ai-disclosure) publisher, job SQL columns, SPA-asset signing, `filesquid-server` account store and datastore, OpenAPI and TypeScript generators (generator adopted for now: `openapi-typescript`, [030](./030-filesquid-api-and-transports.md)). **Gates inside existing ADRs:** independent crypto-protocol audit before hosted pilot ([009](./009-cryptography-webcrypto-compatible-suite.md)); FOSS/patent review of the linked installer before a public desktop binary ([011](./011-native-media-adapters-and-ffmpeg-license.md)).
+Still **not** stack ADRs (later): named cloud region, payment provider, HTTP recorder implementation, ONNX/model packs, [FE-042](../product-vision.md#paid-c2pa-publication-watermarking-and-ai-disclosure) publisher, job SQL columns, SPA-asset signing, `filesquid-server` account store and datastore, OpenAPI and TypeScript generators (generator adopted for now: `openapi-typescript`, [030](./030-filesquid-api-and-transports.md)). **Gates inside existing ADRs:** independent crypto-protocol audit before hosted pilot ([009](./009-cryptography-webcrypto-compatible-suite.md)); FOSS/patent review of the linked installer before a public desktop binary, including the early-access MVP DMG ([011](./011-native-media-adapters-and-ffmpeg-license.md), [035](./035-macos-first-desktop-mvp.md)).

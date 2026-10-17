@@ -14,7 +14,7 @@ FileSquid is one Rust backend with **one API**. Every user interface is plain HT
 
 | Distribution | Audience | Release |
 |---|---|---|
-| **FileSquid** (default) | Anyone who wants a private, durable cloud drive | First consumer release |
+| **FileSquid** (default) | Anyone who wants a private, durable cloud drive | First consumer release, preceded by an early-access macOS desktop MVP ([ADR 035](./resources/architecture/035-macos-first-desktop-mvp.md)) |
 | **ImageSquid** | Consumers and families managing photos and videos | Second consumer release |
 | **Arkrim** | Digital archivists and records managers | Later |
 

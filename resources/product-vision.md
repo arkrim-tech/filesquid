@@ -18,7 +18,7 @@ FileSquid is one Rust backend with **one API** for all of its features. Every us
 
 | Distribution | Audience | What it adds | Release |
 |---|---|---|---|
-| **FileSquid** (default) | Anyone who wants a private, durable cloud drive; developers; small organisations | Drive-style file browser with Details, Versions, Metadata and Content Credentials panels; internal vocabulary (repository, library, collection, file) | **First consumer release** |
+| **FileSquid** (default) | Anyone who wants a private, durable cloud drive; developers; small organisations | Drive-style file browser with Details, Versions, Metadata and Content Credentials panels; internal vocabulary (repository, library, collection, file) | **First consumer release**, preceded by a macOS desktop MVP |
 | **ImageSquid** | Consumers and families managing photos and videos (ImageSquid vision, imagesquid.app; screenshots in ImageSquid ui-mockups) | Photo-album UI: library, albums, galleries, viewer, studio, exhibits; ImageSquid vocabulary (repo, album, gallery, exhibit) | Second consumer release |
 | **Arkrim** | Digital archivists and records managers in memory institutions and organisations | Archives dashboard: batch processing, curation jobs (for example transcoding), Parquet datasets, FAIR reporting | Later |
 
@@ -156,7 +156,7 @@ Feature requirements use `FE-` IDs. Numbers are stable identifiers, not an order
 
 | ID | Requirement | Related |
 |---|---|---|
-| FE-017 | Desktop (Linux first, then macOS and Windows) and `filesquid-server` delivery and validation MUST come first. The encrypted browser host follows. An installable mobile-web interface MUST show visible capability limits. | U-14; C-001 |
+| FE-017 | Desktop (macOS first, then Linux and Windows) and `filesquid-server` delivery and validation MUST come first. The FileSquid MVP MUST target the macOS desktop host only ([C-056](#release-sequence)). The encrypted browser host follows. An installable mobile-web interface MUST show visible capability limits. | U-14; C-001 |
 | FE-019 | Per-OS installers, WASM native-processing limits and WASM worker rules remain U-23, U-34 and U-36. | U-23, U-34, U-36 |
 
 #### Managed protection and connectivity
@@ -256,7 +256,7 @@ Feature requirements use `FE-` IDs. Numbers are stable identifiers, not an order
 | ID | Requirement | Related |
 |---|---|---|
 | FE-074 | Every FileSquid feature MUST be exposed through one versioned FileSquid API served by every host. UIs MUST reach features only through that API. | U-16, U-17 |
-| FE-075 | FileSquid MUST ship a desktop host (Tauri 2, API in-process) and a multi-user `filesquid-server` host (Axum) from the first release, and an encrypted browser host afterwards. | U-18, U-19, U-22 |
+| FE-075 | FileSquid MUST ship a desktop host (Tauri 2, API in-process) from the MVP, a multi-user `filesquid-server` host (Axum) from the first consumer release, and an encrypted browser host afterwards. | U-18, U-19, U-22 |
 | FE-076 | FileSquid MUST support white-label distributions (FileSquid default, ImageSquid, Arkrim, third parties), each defined by views, design tokens, a label table, brand assets and a module set, without backend code. | U-24 |
 | FE-077 | Capabilities that a distribution needs (for example media derivatives and editing recipes for ImageSquid, curation jobs and Parquet for Arkrim) MUST be implemented as FileSquid modules behind the API and enabled per distribution. | U-25 |
 | FE-078 | FileSquid MUST offer paid ciphertext-only backup and sync servers at `*.filesquid.tech`, before the ImageSquid release. | U-21 |
@@ -309,7 +309,7 @@ IDs are sequential (`U-01`, `U-02`, …).
 | U-31 | I do not want a compiler feature flag to be the only privacy wall. | Cargo features MUST NOT be the only privacy boundary; they are additive capabilities, not a switch that can enable private processing on the hosted service. |
 | U-32 | I want the hosted services not to freeze while decoding media. | Hosted Tokio runtimes MUST NOT run blocking native media work. |
 | U-33 | I want a default installer whose media stack is licence-reviewed. | The default public installer MUST remain LGPL-FFmpeg-clean (`--enable-gpl` and `--enable-nonfree` forbidden). The whole bundled native inventory MUST pass licence and patent review before a public desktop binary. FileSquid's own licence MUST NOT be treated as covering that inventory. |
-| U-34 | I want a normal per-OS install that already includes the media tools. | Per-OS installers (Linux first, then macOS and Windows). A single binary for all operating systems is not required. Bundled native libraries MUST ship in the installer; the product MUST NOT require ImageMagick or FFmpeg on PATH. |
+| U-34 | I want a normal per-OS install that already includes the media tools. | Per-OS installers (macOS first, then Linux and Windows). A single binary for all operating systems is not required. Bundled native libraries MUST ship in the installer; the product MUST NOT require ImageMagick or FFmpeg on PATH. |
 | U-35 | I do not want a second background-job product beside FileSquid's own jobs. | Celery, Oban or another second job stack MUST NOT be added beside durable Rust jobs. |
 | U-36 | I want the browser interface to stay responsive while crypto and replica work runs. | Expensive WASM MUST run on workers, incrementally, not on the UI thread. |
 | U-37 | I want FileSquid to build on ordinary stable Rust. | Current stable Rust is preferred. A nightly toolchain MUST NOT be required. |
@@ -486,7 +486,7 @@ Homonyms that remain in other senses and MUST be distinguished in prose:
 |---|---|---|
 | T-009 | Accepted stack ADRs record implementation direction. That acceptance MUST NOT be treated as a U-11 performance pass. Framework reputation or language choice alone MUST NOT satisfy U-11. | U-11; ADR 001–016 |
 | T-010 | Representative measurements of interaction, media readiness, throughput and resource use MUST pass on packaged desktop builds, `filesquid-server`, and the encrypted browser host once it ships, before a release or performance-gate acceptance. | U-11 |
-| T-011 | Prototypes MUST exercise large catalogs, high decoded-image sizes, mixed media and concurrent work on the supported device profiles, beginning with Linux desktop and server. | U-11 |
+| T-011 | Prototypes MUST exercise large catalogs, high decoded-image sizes, mixed media and concurrent work on the supported device profiles, beginning with macOS desktop, then `filesquid-server`. | U-11 |
 | T-012 | Exact cache algorithms and acceleration mechanisms MAY remain later architectural decisions. | ADR 007 |
 
 ### Interactive rendering
@@ -652,7 +652,8 @@ Homonyms that remain in other senses and MUST be distinguished in prose:
 
 | ID | Requirement | Related |
 |---|---|---|
-| C-025 | FileSquid (the default distribution, with the `ocfl`, `metadata` and `c2pa` modules, on desktop and `filesquid-server`) MUST be the first consumer release. Encrypted backup and sync at `*.filesquid.tech` MUST precede the ImageSquid release. ImageSquid MUST be the second consumer release, delivered as a FileSquid distribution. FileSquid releases MUST NOT wait for interpretation support for every file type (C-027). | U-15; FE-063; C-052 |
+| C-025 | FileSquid (the default distribution, with the `ocfl`, `metadata` and `c2pa` modules, on desktop and `filesquid-server`) MUST be the first consumer release. The FileSquid MVP ([C-056](#release-sequence)) precedes it. Encrypted backup and sync at `*.filesquid.tech` MUST precede the ImageSquid release. ImageSquid MUST be the second consumer release, delivered as a FileSquid distribution. FileSquid releases MUST NOT wait for interpretation support for every file type (C-027). | U-15; FE-063; C-052 |
+| C-056 | The FileSquid MVP MUST be an early-access build of the default distribution on the macOS desktop host only: no `filesquid-server`, no Linux or Windows installer, and no accounts, groups or sharing. Its scope MUST be: create, open, copy and recover a local library from OCFL alone; file and folder import with durable jobs; the Drive-style browser (list and grid, previews, upload, folders, rename or move, copy, remove and restore, selection, sort keys, streamed ZIP download) with Details, Versions, Metadata and Content Credentials panels; search with filter chips; version labels and restore; metadata extraction and `dcterms:` / `schema:` / registered-namespace editing persisted as `metadata.md`; C2PA read, validation and an unsigned import-time record; the activity journal and Monitor dashboard. C2PA signing, embedding, edits and collection scans, the activity stream and comments, virtual exhibits, the distribution manifest, JSON sidecars, published module crates, installer signing and the updater MUST follow the MVP. The MVP installer MAY be unsigned and not notarized; it MUST then be labelled early access, MUST NOT be marketed as the consumer release, and its install guide MUST state how to open it on macOS. | U-15, U-34; FE-017, FE-075; C-025 |
 | C-052 | After the ImageSquid release, the owner MUST choose the order of the later milestones: the Arkrim archives distribution (with curation jobs, Parquet and FAIR reporting), IIIF/GLAM interoperability, and ProofMode integration. Hosted private OSS inference (F-048) remains a separate SKU after verified paid encrypted preservation. The backup/sync subscription (C-031) and the OCFL-job layer (C-051) stay in force regardless of that order. | U-39, U-15; C-031, C-051 |
 | C-026 | Every distribution (ImageSquid, Arkrim, third parties) MUST reuse the FileSquid architecture through the FileSquid API. A distribution MUST NOT introduce a third application language or a backend of its own. | U-29, U-15 |
 | C-027 | “All file types” in FileSquid means it is not limited to photo and video. FileSquid MUST NOT promise a working viewer, editor or metadata mapper for every existing format. Unknown types MUST remain exact-byte preservable with disclosed interpretation limits. | U-15 |

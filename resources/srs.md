@@ -1010,13 +1010,13 @@ The system MUST implement [PRD F-056](./prd.md#f-056-single-filesquid-api) with 
 
 ### SRS-F-057: Desktop and server hosts
 
-The system MUST implement [PRD F-057](./prd.md#f-057-desktop-and-server-hosts) with the acceptance criteria stated there. Both hosts MUST link `filesquid-api`. One host binary MUST serve any distribution. Desktop (Linux first, then macOS and Windows) and `filesquid-server` delivery and validation MUST come before the encrypted browser host ([FE-017](./product-vision.md#cross-platform-access)). Both hosts MUST write unbuffered structured logs to stdout ([SRS-NFR-009](#srs-nfr-009-observability-and-capacity-economics)).
+The system MUST implement [PRD F-057](./prd.md#f-057-desktop-and-server-hosts) with the acceptance criteria stated there. Both hosts MUST link `filesquid-api`. One host binary MUST serve any distribution. Desktop (macOS first, then Linux and Windows) and `filesquid-server` delivery and validation MUST come before the encrypted browser host ([FE-017](./product-vision.md#cross-platform-access)). Both hosts MUST write unbuffered structured logs to stdout ([SRS-NFR-009](#srs-nfr-009-observability-and-capacity-economics)).
 
 **Desktop host (`filesquid-desktop`, Tauri 2)**
 - The host MUST serve the API in-process through a Tauri custom URI scheme (`filesquid://localhost/api/...`; `http://filesquid.localhost/api/...` on Windows). It MUST NOT open a TCP listener unless [ADR 030](./architecture/030-filesquid-api-and-transports.md) records otherwise ([T-049](./product-vision.md#api-and-hosts)).
 - Native file access, workers and OS adapters MUST stay out of the webview.
 - Native decode, FFmpeg and libvips MUST run in out-of-process workers shipped in the installer, so a decoder crash cannot take down the catalog or UI ([FE-064](./product-vision.md#desktop-host-isolation)).
-- Installers MUST be per OS (Linux first, then macOS and Windows) and MUST bundle the native libraries. The product MUST NOT require ImageMagick or FFmpeg on PATH.
+- Installers MUST be per OS (macOS first, then Linux and Windows) and MUST bundle the native libraries. An unsigned, not-notarized macOS installer is permitted only for the early-access MVP ([C-056](./product-vision.md#release-sequence)) and MUST be labelled as such. The product MUST NOT require ImageMagick or FFmpeg on PATH.
 
 **Server host (`filesquid-server`, Axum)**
 - The host MUST serve the API and the selected distribution's UI static files from one process. The bind address MUST come from `FILESQUID_BIND` (default `127.0.0.1:8083`). The UI directory MUST come from `FILESQUID_UI_DIR`. The host MUST NOT server-render pages ([FileSquid U-19](./product-vision.md#one-api-hosts-and-distributions)).

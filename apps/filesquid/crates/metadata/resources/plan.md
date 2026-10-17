@@ -74,7 +74,7 @@ Cargo commands run from `apps/filesquid/` with `-p filesquid-metadata` (`cargo t
   - **Related Tests:** [`reusable_metadata_engine_F-052.feature`](../tests/features/reusable_metadata_engine_F-052.feature)
   - **Agent Prompt:** `@AGENTS.md Begin by creating a new feature branch for Task MD-0.7. Then begin development, running Cargo from apps/filesquid/ with -p filesquid-metadata (module directory apps/filesquid/crates/metadata/). Write failing tests first for registration, rejected redefinitions and prefix re-registrations, term-list checks, unregistered prefixes and CSV/JSON/XMP round-trips. Additionally, invoke the @feature-writer skill to translate SRS requirements into executable BDD feature tests. Upon completion, YOU MUST generate apps/filesquid/crates/metadata/resources/tasks/Task-MD-0.7-Walkthrough.md directly in the project repository with clear SRS mapping (including BOTH the ID and full human-readable title text) in the secondary section, and strictly delete the internal tracking Plan/ToDos documents before checking off the Markdown box locally in apps/filesquid/crates/metadata/resources/plan.md. Then commit your changes and push the branch to origin.`
 
-## Phase F3: Publish the crate (global Task FS-3.3)
+## Phase F3R: Publish the crate (global Task FS-3.3, after the MVP)
 
 - [ ] **Task MD-F3.1: Version and publish `filesquid-metadata`**
   - **Description:** Freeze a semver-stable public API with rustdoc, CHANGELOG and `publish = true`; publish to crates.io; its commands ship in the `fsquid` release binary. No distribution types in the API. Default features still exclude Axum, Tauri and SQLite. FileSquid keeps its workspace path dependency and MUST NOT shell out to the CLI.

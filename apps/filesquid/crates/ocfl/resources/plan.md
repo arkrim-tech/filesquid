@@ -138,7 +138,7 @@ Global Task 9.0 chooses the order of Arkrim, IIIF/GLAM and ProofMode. IO-9.1 run
   - **Related Tests:** [`institutional_dam_and_iiif_interoperability_F-047.feature`](../../server/tests/features/institutional_dam_and_iiif_interoperability_F-047.feature)
   - **Agent Prompt:** `@AGENTS.md Begin by creating a new feature branch for Task IO-9.1 only after the IIIF-2 gate. Then begin development, running Cargo from apps/filesquid/ with -p filesquid-ocfl (module directory apps/filesquid/crates/ocfl/). Additionally, invoke the @feature-writer skill to translate SRS requirements into executable BDD feature tests. Upon completion, YOU MUST generate apps/filesquid/crates/ocfl/resources/tasks/Task-IO-9.1-Walkthrough.md directly in the project repository with clear SRS mapping (including BOTH the ID and full human-readable title text) in the secondary section, and strictly delete the internal tracking Plan/ToDos documents before checking off the Markdown box locally in apps/filesquid/crates/ocfl/resources/plan.md. Then commit your changes and push the branch to origin.`
 
-## Phase F3: Publish the crate and CLI (global Task FS-3.3; Task 10.4 superseded)
+## Phase F3R: Publish the crate and CLI (global Task FS-3.3, after the MVP; Task 10.4 superseded)
 
 FileSquid compiles the **library crate** through a workspace path dependency and MUST NOT shell out to `fsquid` for canonical OCFL I/O. The crate is published to crates.io and `fsquid` **binaries** (built by `filesquid-cli`) ship as release binaries for independent preservation programmes. A dedicated repository for this crate alone is superseded.
 
@@ -192,4 +192,4 @@ FileSquid compiles the **library crate** through a workspace path dependency and
 
 - **Total Estimated Time:** 151 hours (excluding gated Task IO-9.1, the IO-D rows of global Task FS-3.3, superseded IO-1.3 and IO-D.2, and Arkrim IO-A.1)
 - **Critical Path:** storage trait → git guard/SHA-256 → read/validate → local write → snapshots/rebuild → independent copy → S3 CAS
-- **Publishing:** [crate and CLI (global Task FS-3.3)](#phase-f3-publish-the-crate-and-cli-global-task-fs-33-task-104-superseded)
+- **Publishing:** [crate and CLI (global Task FS-3.3)](#phase-f3r-publish-the-crate-and-cli-global-task-fs-33-after-the-mvp-task-104-superseded)

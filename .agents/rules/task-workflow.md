@@ -12,7 +12,8 @@ Define the Git workflow and development methodology that MUST be followed for ev
 
 - **Branches Required for ALL Tasks:** All work, including every Task defined in [resources/implementation-plan.md](../../resources/implementation-plan.md), new features, documentation updates, and bug fixes MUST be developed on dedicated branches (e.g., `task/0.1-portable-domain-contracts`, `task/co-0.5-command-ports`, `docs/update-guide`, `fix/login-bug`). No exceptions.
 - **Mandatory Push on Completion:** Upon completing a task (after all code is written, tests pass, and the Walkthrough document is generated), you MUST commit all work on your feature branch using Conventional Commits and push the branch to the remote origin (`git push --set-upstream origin <branch-name>`). Do not leave finished task branches persisting only in your local environment.
-- **No Direct Pushes to Main:** The `main` branch contains only approved, stable requirements and code. You MUST NEVER commit or push code directly to the `main` branch unless explicitly told to do so in a user prompt.
+- **Pull Request and Cubic Loop:** After the push, open a pull request against `main` and run the Cubic review loop in [pr-review-loop.md](./pr-review-loop.md) until no Cubic comments remain. Then merge the PR into `main`.
+- **No Direct Pushes to Main:** The `main` branch contains only approved, stable requirements and code. You MUST NEVER commit or push code directly to the `main` branch unless explicitly told to do so in a user prompt. Merging a PR that has finished the Cubic loop is the only way agent work reaches `main`.
 
 ## Global versus module prompts
 

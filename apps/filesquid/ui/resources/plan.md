@@ -37,7 +37,7 @@ Commands run inside `apps/filesquid/ui/` (Vite dev `127.0.0.1:5173`, preview `41
   - **Related Tests:** `tests/e2e/` Playwright suite (planned)
   - **Agent Prompt:** `@AGENTS.md Begin by creating a new feature branch for Task UI-0.6. Then begin development, executing all commands strictly within apps/filesquid/ui/. Additionally, invoke the @feature-writer skill to translate SRS requirements into executable BDD feature tests. Upon completion, YOU MUST generate apps/filesquid/ui/resources/tasks/Task-UI-0.6-Walkthrough.md directly in the project repository with clear SRS mapping (including BOTH the ID and full human-readable title text) in the secondary section, and strictly delete the internal tracking Plan/ToDos documents before checking off the Markdown box locally in apps/filesquid/ui/resources/plan.md. Then commit your changes and push the branch to origin.`
 
-## Phase F2: Default UI (global Tasks FS-2.1–FS-2.3, 1.1, 1.2)
+## Phase F2: Default UI (global Tasks FS-2.1, FS-2.2, FS-2.4, FS-2.5, 1.1, 1.2; after the MVP: UI-F2.6 in global Task FS-2.3, UI-F2.10 and UI-F2.12 in global Task FS-2.7, UI-F2.13 in global Task FS-2.6)
 
 - [ ] **Task UI-0.1: Host adapter (HTTP vs custom URI scheme)**
   - **Status:** Moved from the ImageSquid plan (former `apps/frontend`) to `@filesquid/ui` because it is generic shell, host-adapter, token or file-management work.
@@ -186,15 +186,17 @@ Commands run inside `apps/filesquid/ui/` (Vite dev `127.0.0.1:5173`, preview `41
   - **Related Tests:** [`virtual_exhibit_F-053.feature`](../tests/features/virtual_exhibit_F-053.feature)
   - **Agent Prompt:** `@AGENTS.md Begin by creating a new feature branch for Task UI-F2.13. Then begin development, executing all commands strictly within apps/filesquid/ui/. Write Playwright UI tests against vite build plus vite preview with strict DOM assertions (custom element defined, labels from the active label table, computed token values in light and dark, no console errors). Additionally, invoke the @feature-writer skill to translate SRS requirements into executable BDD feature tests. Upon completion, YOU MUST generate apps/filesquid/ui/resources/tasks/Task-UI-F2.13-Walkthrough.md directly in the project repository with clear SRS mapping (including BOTH the ID and full human-readable title text) in the secondary section, and strictly delete the internal tracking Plan/ToDos documents before checking off the Markdown box locally in apps/filesquid/ui/resources/plan.md. Then commit your changes and push the branch to origin.`
 
-## Phase F3: Release-1 performance and package publishing (global Tasks FS-3.4, FS-3.7)
+## Phase F3: MVP performance (global Task FS-3.4)
 
 - [ ] **Task UI-F3.1: Production-build browsing performance**
-  - **Description:** Measure warm browse and preview p95, first useful folder view and cache-miss readiness on the production build served by `filesquid-server` and in the packaged desktop webview. Placeholders do not pass.
+  - **Description:** Measure warm browse and preview p95, first useful folder view and cache-miss readiness on the production UI build in the packaged macOS desktop webview. The same build served by `filesquid-server` is measured after the MVP by SV-F3.2 (global Task FS-3.13). Placeholders do not pass.
   - **Estimated Time:** 8 hours
   - **Dependencies:** UI-F2.2
   - **Related Requirements:** [NFR-002](../../../../resources/prd.md#nfr-002-benchmark-envelope-and-responsiveness), [RC-002](../../../../resources/prd.md#rc-002-performance-and-resource-bounds), FileSquid [U-11](../../../../resources/product-vision.md#platform-ownership-and-access)
   - **Related Tests:** [`benchmark_envelope_and_responsiveness_NFR-002.feature`](../../crates/server/tests/features/benchmark_envelope_and_responsiveness_NFR-002.feature)
   - **Agent Prompt:** `@AGENTS.md Begin by creating a new feature branch for Task UI-F3.1. Then begin development, executing all commands strictly within apps/filesquid/ui/. Write Playwright UI tests against vite build plus vite preview with strict DOM assertions (custom element defined, labels from the active label table, computed token values in light and dark, no console errors). Record sample sizes and percentiles. Additionally, invoke the @feature-writer skill to translate SRS requirements into executable BDD feature tests. Upon completion, YOU MUST generate apps/filesquid/ui/resources/tasks/Task-UI-F3.1-Walkthrough.md directly in the project repository with clear SRS mapping (including BOTH the ID and full human-readable title text) in the secondary section, and strictly delete the internal tracking Plan/ToDos documents before checking off the Markdown box locally in apps/filesquid/ui/resources/plan.md. Then commit your changes and push the branch to origin.`
+
+## Phase F3R: Package publishing (global Task FS-3.7; after the MVP)
 
 - [ ] **Task UI-F3.2: Publish `@filesquid/ui` as a versioned package**
   - **Description:** Publish `@filesquid/ui` to npm or GitHub Packages (owner choice, recorded before publishing) so a distribution in another repository can depend on a version instead of the local path `"file:../filesquid/ui"`. Remove `"private": true`; add a semver version, `files` and `exports` for the built package, the theme tokens and the label table; record the API contract version (API-F3.1) the package targets. Tag-driven publishing only; no publish from a developer machine.

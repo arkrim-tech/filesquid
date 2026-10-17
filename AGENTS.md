@@ -19,7 +19,7 @@
 - **Walkthrough Documentation:** When executing tests, the agent MUST copy the raw CLI output of the test runs into a permanent `apps/[Module Name]/resources/tasks/Task-[Task ID]-Walkthrough.md` file to provide immediate visual proof of passing tests, in addition to generating the structured test reports.
 - **Unit Test Traceability:** When code changes make a unit test obsolete or require modifications to the underlying implementation, the agent MUST explicitly update, refactor, or remove the corresponding unit tests to remain in sync with the source code.
 - **Strict Artifact Isolation:** This principle is tactically enforced on all AI agents via the instructions in `[artifact-isolation.md](./.agents/rules/artifact-isolation.md)`.
-- **PR Review Mandate:** All proposed Pull Requests MUST be reviewed by an external AI agent acting as a Senior Software Engineer. The agent will analyze code changes, enforce project paradigms, check for logic flaws, and provide change requests. Any identified issues will be fixed and pushed to the PR before final human review and merge to main branch. 
+- **PR Review Mandate:** All proposed Pull Requests MUST be reviewed by an external AI agent acting as a Senior Software Engineer. The agent will analyze code changes, enforce project paradigms, check for logic flaws, and provide change requests. The external reviewer is Cubic. Any identified issues will be fixed and pushed to the PR, and the review-and-fix loop repeats until no Cubic comments remain. While agents work independently towards the MVP, they MAY then merge their own PR into the main branch. Tactically enforced via [`pr-review-loop.md`](./.agents/rules/pr-review-loop.md).
 
 ## 2. Branch-Per-Task
 

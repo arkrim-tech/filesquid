@@ -12,6 +12,8 @@ Accepted
 
 Accepted: 2026-09-16T01:01:07Z. Revised: 2026-09-22T04:34:37Z. Revised: 2026-10-15T05:24:52Z. Amended by [ADR 026](./026-filesquid-provenance-engine.md): C2PA is the from-scratch `filesquid-c2pa` client engine, not the official `c2pa` crate.
 
+Amended 2026-10-17 by [ADR 035](./035-macos-first-desktop-mvp.md): macOS is the first desktop target and the FileSquid MVP is desktop-only; Linux and Windows desktop follow the MVP.
+
 ## Context / Requirement Reference
 
 Desktop workers MUST generate thumbnails and display-sized previews with bounded memory while the UI stays responsive ([U-11](../product-vision.md#platform-ownership-and-access), [T-010](../product-vision.md#performance-acceptance), [T-015](../product-vision.md#interactive-rendering), [U-26](../product-vision.md#one-api-hosts-and-distributions)). Originals stay byte-exact; conversions are linked renditions ([C-028](../product-vision.md#platforms-originals-and-service-limits), [FE-001](../product-vision.md#independent-library)). The owner asked whether libvips fully replaces ImageMagick and stated that only one of the two may be installed.
@@ -57,7 +59,7 @@ Shipping libraries inside per-OS installers is the cross-platform path: one shar
 
 ## Assumptions
 
-- libvips plus declared loaders cover JPEG, PNG, TIFF and WebP on the **desktop** Linux-first profiles, with HEIF/RAW behind explicit adapters. Desktop libvips TIFF (or any native decode) does **not** establish browser decoding; ADR 008 excludes that native pipeline from WASM. Browser viewing uses prepared, browser-decodable derivatives or a visible unsupported state.
+- libvips plus declared loaders cover JPEG, PNG, TIFF and WebP on the **desktop** profiles, macOS first (the MVP DMG, [ADR 035](./035-macos-first-desktop-mvp.md)) and then Linux and Windows, with HEIF/RAW behind explicit adapters. This coverage is unverified on every OS until the libvips worker tests ([DE-0.5](../../apps/filesquid/crates/desktop/resources/plan.md)) pass against the packaged loaders of that OS; the enabled loaders are recorded in a later implementation ADR. Desktop libvips TIFF (or any native decode) does **not** establish browser decoding; ADR 008 excludes that native pipeline from WASM. Browser viewing uses prepared, browser-decodable derivatives or a visible unsupported state.
 - Static or bundled linking of native deps is achievable in CI for each supported target; FFmpeg license/codec flags get their own ADR before video processing ships.
 - Unsupported formats remain preserved originals with a visible capability state.
 
