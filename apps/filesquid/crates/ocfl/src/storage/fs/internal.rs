@@ -146,14 +146,63 @@ pub(super) fn open_or_create(path: &Path) -> Result<File, StorageError> {
 /// follows a link or reuses an existing entry; the open handle is then
 /// checked against the path like every other open. Used for temporary object
 /// and part files and for upload key records.
+///
+/// If the check fails after the file was created, the function removes the
+/// path itself, but only while it is still the file it created (see
+/// [`remove_if_still_created`]), and returns the original error.
 pub(super) fn create_new_checked(path: &Path) -> Result<File, StorageError> {
+    let what = path.display().to_string();
     let file = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(path)
-        .map_err(|e| io_error(&path.display().to_string(), e))?;
-    verify_handle(path, &file)?;
+        .map_err(|e| io_error(&what, e))?;
+    let created = match file.metadata() {
+        Ok(meta) => meta,
+        Err(err) => {
+            tracing::warn!(path = %what, error = %err, "cannot identify a new file; it is left in place");
+            return Err(io_error(&what, err));
+        }
+    };
+    if let Err(err) = verify_handle(path, &file) {
+        drop(file);
+        remove_if_still_created(path, &created);
+        return Err(err);
+    }
     Ok(file)
+}
+
+/// Remove `path` only if it is still the regular file described by
+/// `created` (same device and inode, read without following links). A link
+/// or any other entry that has since replaced the path is left alone. Where
+/// file identity cannot be proven (non-Unix), nothing is removed. Failures
+/// are logged, because the caller is already reporting another error.
+pub(super) fn remove_if_still_created(path: &Path, created: &Metadata) {
+    let still_ours = match fs::symlink_metadata(path) {
+        Ok(now) => !now.file_type().is_symlink() && provably_same_file(&now, created),
+        Err(_) => false,
+    };
+    if !still_ours {
+        tracing::warn!(path = %path.display(), "a new file could not be verified and was not removed");
+        return;
+    }
+    if let Err(err) = fs::remove_file(path) {
+        tracing::warn!(path = %path.display(), error = %err, "could not remove an unverified new file");
+    }
+}
+
+/// Whether two metadata records are provably the same regular file: same
+/// device and inode on Unix; never provable elsewhere.
+#[cfg(unix)]
+fn provably_same_file(a: &Metadata, b: &Metadata) -> bool {
+    a.is_file() && b.is_file() && same_file(a, b)
+}
+
+/// Whether two metadata records are provably the same regular file: same
+/// device and inode on Unix; never provable elsewhere.
+#[cfg(not(unix))]
+fn provably_same_file(_a: &Metadata, _b: &Metadata) -> bool {
+    false
 }
 
 /// Read a small internal record of at most [`MAX_RECORD_BYTES`] as UTF-8.
@@ -228,5 +277,48 @@ mod tests {
         std::os::unix::fs::symlink(&target, &path).expect("dangling link");
         assert!(create_new_checked(&path).is_err());
         assert!(!target.exists(), "the link target was created");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cleanup_removes_the_file_it_created() {
+        let scratch = Scratch::new("cleanup-own");
+        let path = scratch.0.join("temp");
+        let file = create_new_checked(&path).expect("create");
+        let created = file.metadata().expect("meta");
+        drop(file);
+        remove_if_still_created(&path, &created);
+        assert!(!path.exists(), "the created file was left behind");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cleanup_never_removes_a_replacement() {
+        let scratch = Scratch::new("cleanup-replaced");
+        let path = scratch.0.join("temp");
+        let file = create_new_checked(&path).expect("create");
+        let created = file.metadata().expect("meta");
+        drop(file);
+        let aside = scratch.0.join("aside");
+        fs::rename(&path, &aside).expect("move the created file aside");
+        fs::write(&path, b"someone else's").expect("replacement");
+        remove_if_still_created(&path, &created);
+        assert_eq!(fs::read(&path).expect("kept"), b"someone else's");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cleanup_never_removes_a_link() {
+        let scratch = Scratch::new("cleanup-link");
+        let path = scratch.0.join("temp");
+        let file = create_new_checked(&path).expect("create");
+        let created = file.metadata().expect("meta");
+        drop(file);
+        let aside = scratch.0.join("aside");
+        fs::rename(&path, &aside).expect("move aside");
+        std::os::unix::fs::symlink(&aside, &path).expect("link to the original");
+        remove_if_still_created(&path, &created);
+        assert!(inspect(&path).is_err(), "the link was removed");
+        assert!(aside.exists());
     }
 }
