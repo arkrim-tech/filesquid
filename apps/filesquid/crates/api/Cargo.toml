@@ -76,6 +76,14 @@ name = "unit_isolation"
 path = "tests/unit/isolation.rs"
 
 [[test]]
+name = "unit_library"
+path = "tests/unit/library.rs"
+
+[[test]]
+name = "unit_library_queries"
+path = "tests/unit/library_queries.rs"
+
+[[test]]
 name = "features"
 path = "tests/features.rs"
 harness = false

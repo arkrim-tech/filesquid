@@ -1,0 +1,332 @@
+//! [`LibraryService`]: runs library commands and queries against the injected catalog.
+//!
+//! A command is checked (schema version, names, file batch), replayed when its operation ID
+//! was already committed, planned against committed state, and handed to the catalog as one
+//! [`CatalogCommit`] together with its journal entry, so the host stores both in the same
+//! transaction. A refused command is journaled as `failed` through the bounded journal queue
+//! when the host installed one ([`LibraryService::with_failure_journal`]), and always logged
+//! to stdout. Queries page through the catalog with an opaque cursor.
+
+use super::catalog::{
+    CatalogCommit, CommitReceipt, FileListing, FileScope, Keyed, LibraryCatalog, PageKey,
+};
+use super::command::{CommandRequest, CommandResult};
+use super::plan::{Planned, Planner};
+use super::policy::{DeletionPolicy, VisibilityFilter};
+use super::query::{Cursor, LibraryQuery, Page, QueryAnswer, QueryRequest};
+use super::LibraryError;
+use crate::journal::{now_ms, JournalEntry, Level, Outcome};
+use crate::journal_writer::JournalSender;
+use crate::operation::{CommandOutcome, CommandOutcomeKind, OperationId, PROTOCOL_SCHEMA_VERSION};
+use crate::registry::Clock;
+use filesquid_core::{LibraryId, RepositoryId};
+use std::sync::Arc;
+
+/// Runs library commands and queries for every host.
+#[derive(Clone)]
+pub struct LibraryService {
+    catalog: Arc<dyn LibraryCatalog>,
+    clock: Clock,
+    policy: DeletionPolicy,
+    failures: Option<JournalSender>,
+}
+
+impl std::fmt::Debug for LibraryService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LibraryService")
+            .field("policy", &self.policy)
+            .field("journals_failures", &self.failures.is_some())
+            .finish()
+    }
+}
+
+impl LibraryService {
+    /// A service over `catalog` with the system clock and the default deletion policy.
+    pub fn new(catalog: Arc<dyn LibraryCatalog>) -> Self {
+        Self {
+            catalog,
+            clock: Arc::new(now_ms),
+            policy: DeletionPolicy::default(),
+            failures: None,
+        }
+    }
+
+    /// Use `clock` (Unix milliseconds, UTC) for deletion times and membership order.
+    pub fn with_clock(mut self, clock: Clock) -> Self {
+        self.clock = clock;
+        self
+    }
+
+    /// Journal every refused command through `sender` (the host's bounded journal queue).
+    pub fn with_failure_journal(mut self, sender: JournalSender) -> Self {
+        self.failures = Some(sender);
+        self
+    }
+
+    /// The recoverable-deletion policy.
+    pub fn deletion_policy(&self) -> DeletionPolicy {
+        self.policy
+    }
+
+    /// Run one command for `actor` (an opaque reference such as `user:<id>`), committing
+    /// its change and journal entry through the catalog.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LibraryError`] when the command is invalid, names something outside its
+    /// library, meets a stale revision (`conflict`) or the catalog fails; nothing changes.
+    pub fn execute(
+        &self,
+        actor: &str,
+        request: CommandRequest,
+    ) -> Result<CommandResult, LibraryError> {
+        let operation = request.command.operation();
+        let library = request.command.library_id().cloned();
+        self.run_command(actor, request)
+            .inspect_err(|err| self.journal_failure(actor, operation, library.as_ref(), err))
+    }
+
+    /// Check, replay or plan, then commit one command.
+    fn run_command(
+        &self,
+        actor: &str,
+        request: CommandRequest,
+    ) -> Result<CommandResult, LibraryError> {
+        check_schema(request.envelope.schema_version())?;
+        request.command.validate()?;
+        let operation_id = request.envelope.operation_id().clone();
+        if let Some(receipt) = self.catalog.receipt(&operation_id)? {
+            return Ok(committed(&operation_id, receipt, None));
+        }
+        let planner = Planner {
+            catalog: self.catalog.as_ref(),
+            now_ms: (self.clock)(),
+            policy: self.policy,
+        };
+        let planned = planner.plan(&request.envelope, &request.command)?;
+        if planned.changes.is_empty() {
+            return Ok(unchanged(&operation_id, planned));
+        }
+        self.commit_planned(actor, request, planned)
+    }
+
+    /// Commit `planned` with its journal entry and answer the receipt.
+    fn commit_planned(
+        &self,
+        actor: &str,
+        request: CommandRequest,
+        planned: Planned,
+    ) -> Result<CommandResult, LibraryError> {
+        let library_id = planned.library_id.clone().ok_or(LibraryError::Internal)?;
+        let journal = planned
+            .targets
+            .iter()
+            .fold(
+                JournalEntry::new(request.command.operation(), Outcome::Succeeded).actor(actor),
+                |entry, target| entry.target(target.as_str()),
+            )
+            .at_ms((self.clock)());
+        let operation_id = request.envelope.operation_id().clone();
+        let receipt = self.catalog.commit(CatalogCommit {
+            operation_id: operation_id.clone(),
+            library_id,
+            expected_revision: request.envelope.expected_revision().clone(),
+            changes: planned.changes,
+            journal,
+            created_id: planned.created_id,
+        })?;
+        Ok(committed(&operation_id, receipt, planned.deletion))
+    }
+
+    /// Record a refused command: in the journal when a queue is installed, always on stdout.
+    fn journal_failure(
+        &self,
+        actor: &str,
+        operation: &'static str,
+        library: Option<&LibraryId>,
+        err: &LibraryError,
+    ) {
+        tracing::warn!(
+            operation,
+            error_code = err.error_code(),
+            "library command refused"
+        );
+        let Some(sender) = &self.failures else {
+            return;
+        };
+        let level = match err {
+            LibraryError::Internal | LibraryError::Unavailable => Level::Error,
+            _ => Level::Warn,
+        };
+        let entry = JournalEntry::new(operation, Outcome::Failed)
+            .actor(actor)
+            .error_code(err.error_code())
+            .level(level)
+            .at_ms((self.clock)());
+        sender.send(match library {
+            Some(lib) => entry.target(lib.as_str()),
+            None => entry,
+        });
+    }
+
+    /// Answer one query.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LibraryError`] for a wrong schema version, a malformed cursor, an unknown
+    /// library or scope (`not_found`) or a catalog failure. A catalog failure (`unavailable`
+    /// or `internal`) is a host fault, so it is journaled as `library.query` (actor
+    /// `system`); a refused request is the caller's and is only answered.
+    pub fn query(&self, request: QueryRequest) -> Result<QueryAnswer, LibraryError> {
+        self.run_query(request).inspect_err(|err| {
+            if matches!(err, LibraryError::Unavailable | LibraryError::Internal) {
+                self.journal_failure("system", "library.query", None, err);
+            }
+        })
+    }
+
+    /// Check the request and answer the query from the catalog.
+    fn run_query(&self, request: QueryRequest) -> Result<QueryAnswer, LibraryError> {
+        check_schema(request.envelope.schema_version())?;
+        let after = request.cursor.as_ref().map(Cursor::decode).transpose()?;
+        let limit = request.envelope.page_size().get() as usize;
+        let after = after.as_ref();
+        match request.query {
+            LibraryQuery::ListLibraries { repository_id } => {
+                self.list_libraries(&repository_id, after, limit)
+            }
+            LibraryQuery::OpenLibrary { library_id } => self.open_library(&library_id),
+            LibraryQuery::ListCollections { library_id } => {
+                self.open_library(&library_id)?;
+                let rows = self.catalog.collections(&library_id, after, limit + 1)?;
+                Ok(QueryAnswer::Collections(to_page(rows, limit)))
+            }
+            LibraryQuery::ListVirtualCollections { library_id } => {
+                self.open_library(&library_id)?;
+                let rows = self
+                    .catalog
+                    .virtual_collections(&library_id, after, limit + 1)?;
+                Ok(QueryAnswer::VirtualCollections(to_page(rows, limit)))
+            }
+            LibraryQuery::ListFiles {
+                library_id,
+                scope,
+                visibility,
+            } => self.list_files(library_id, scope, visibility, after, limit),
+            LibraryQuery::DeletionPolicy => Ok(QueryAnswer::DeletionPolicy(self.policy)),
+        }
+    }
+
+    /// One page of the libraries of `repository_id`.
+    fn list_libraries(
+        &self,
+        repository_id: &RepositoryId,
+        after: Option<&PageKey>,
+        limit: usize,
+    ) -> Result<QueryAnswer, LibraryError> {
+        let rows = self.catalog.libraries(repository_id, after, limit + 1)?;
+        Ok(QueryAnswer::Libraries(to_page(rows, limit)))
+    }
+
+    /// The record and revision of `library_id`.
+    fn open_library(&self, library_id: &LibraryId) -> Result<QueryAnswer, LibraryError> {
+        let state = self
+            .catalog
+            .library(library_id)?
+            .ok_or(LibraryError::NotFound("library"))?;
+        Ok(QueryAnswer::Library(state))
+    }
+
+    /// One page of the files of `scope` in `library_id`, in `visibility`.
+    fn list_files(
+        &self,
+        library_id: LibraryId,
+        scope: FileScope,
+        visibility: VisibilityFilter,
+        after: Option<&PageKey>,
+        limit: usize,
+    ) -> Result<QueryAnswer, LibraryError> {
+        self.open_library(&library_id)?;
+        self.check_scope(&library_id, &scope)?;
+        let listing = FileListing {
+            library_id,
+            scope,
+            visibility,
+        };
+        let rows = self.catalog.files(&listing, after, limit + 1)?;
+        Ok(QueryAnswer::Files(to_page(rows, limit)))
+    }
+
+    /// A collection or virtual-collection scope must belong to `library_id`.
+    fn check_scope(&self, library_id: &LibraryId, scope: &FileScope) -> Result<(), LibraryError> {
+        let (belongs, entity) = match scope {
+            FileScope::Library | FileScope::Unfiled => (true, "library"),
+            FileScope::Collection { collection_id } => (
+                self.catalog
+                    .collection(collection_id)?
+                    .is_some_and(|c| c.library_id() == library_id),
+                "collection",
+            ),
+            FileScope::VirtualCollection {
+                virtual_collection_id,
+            } => (
+                self.catalog
+                    .virtual_collection(virtual_collection_id)?
+                    .is_some_and(|v| v.library_id() == library_id),
+                "virtual_collection",
+            ),
+        };
+        belongs.then_some(()).ok_or(LibraryError::NotFound(entity))
+    }
+}
+
+/// Only [`PROTOCOL_SCHEMA_VERSION`] is understood.
+fn check_schema(version: u32) -> Result<(), LibraryError> {
+    if version != PROTOCOL_SCHEMA_VERSION {
+        return Err(LibraryError::invalid(
+            "unsupported_schema_version",
+            "This request uses a protocol version FileSquid does not support.",
+        ));
+    }
+    Ok(())
+}
+
+/// The answer to a committed (or replayed) operation.
+fn committed(
+    operation_id: &OperationId,
+    receipt: CommitReceipt,
+    deletion: Option<super::policy::Deletion>,
+) -> CommandResult {
+    CommandResult {
+        outcome: CommandOutcome::new(operation_id.clone(), CommandOutcomeKind::Committed),
+        library_id: Some(receipt.library_id),
+        revision: Some(receipt.revision),
+        created_id: receipt.created_id,
+        deletion,
+    }
+}
+
+/// The answer to a command that changed nothing: committed at the current revision.
+fn unchanged(operation_id: &OperationId, planned: Planned) -> CommandResult {
+    CommandResult {
+        outcome: CommandOutcome::new(operation_id.clone(), CommandOutcomeKind::Committed),
+        library_id: planned.library_id,
+        revision: planned.revision,
+        created_id: None,
+        deletion: None,
+    }
+}
+
+/// Keep at most `limit` of `rows` (fetched as `limit + 1`) and point the cursor past the
+/// last kept row when more remain.
+fn to_page<T>(mut rows: Vec<Keyed<T>>, limit: usize) -> Page<T> {
+    let more = rows.len() > limit;
+    rows.truncate(limit);
+    let next_cursor = more
+        .then(|| rows.last().map(|row| Cursor::encode(&row.key)))
+        .flatten();
+    Page {
+        items: rows.into_iter().map(|row| row.item).collect(),
+        next_cursor,
+    }
+}
