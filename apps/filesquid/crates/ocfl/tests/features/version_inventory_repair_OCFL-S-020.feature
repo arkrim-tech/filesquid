@@ -57,7 +57,7 @@ Feature: Version-inventory repair for heads without one
     Given a sha256 object committed at "v2" whose head version inventory was removed
     And a repair crashed before writing "obj/v2/inventory.json.sha256"
     Then the logical state should be unchanged by the repair
-    And a commit of "v3" on the repaired object should be refused for the missing version inventory
+    And a commit of "v3" on the repaired object should be refused for the missing head version sidecar
     When the version-inventory repair runs again
     Then the repair should have written only "v2/inventory.json.sha256"
     And the repaired object should validate with zero errors and without W010
@@ -76,6 +76,8 @@ Feature: Version-inventory repair for heads without one
       | a content file whose digest no longer matches   | invalid                 |
       | a root sidecar that does not match              | a root sidecar mismatch |
       | an unlisted file in the head version directory  | not repairable          |
+      | a head version inventory that differs           | not repairable          |
+      | a reservation held by another writer            | a held reservation      |
 
   # Inspection never repairs
   Scenario: Opening, reading and validating a W010 object never repairs it

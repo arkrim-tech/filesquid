@@ -20,7 +20,7 @@ Objects written by other tools without head version inventories become editable 
 
 ## SRS-NFR-001: Preservation and transactional integrity
 
-No refusal writes a byte; a crash between the two writes leaves the logical state unchanged and is resumed.
+No refusal decided by the checks before the first write writes a byte. A failure between the two writes (a crash, a lost reservation, a backend error) can leave the version inventory without its sidecar; that leaves the logical state unchanged, the writer refuses the head until it is completed, and running the repair again completes it.
 
 ## Specification check
 
@@ -30,7 +30,7 @@ Before any code, the OCFL 1.1 specification (https://ocfl.io/1.1/spec/) was read
 
 - `src/write/repair.rs` (new): `ObjectWriter::repair_version_inventory` and `RepairReceipt` (object id, version, digest algorithm, inventory digest, paths written). Steps: read the root inventory and require its sidecar to match; reserve the object (`VersionReservations::reserve`, as a commit does); under the reservation re-read the root files (refuse a change), run the Git and hierarchy guards, classify the head version directory, run the full validator; write what is missing of `v<head>/inventory.json` and then `v<head>/inventory.json.<algorithm>` with `IfAbsent` and a fence check (`confirm`) before each; release the reservation unless it was lost.
 - `src/write/error.rs`: `RepairError` (`Reservation`, `RootSidecarMismatch`, `RootChanged`, `Invalid`, `NotRepairable`, `NothingToRepair`, `ForeignWrite`, `Guard`, `Read`, `Storage`).
-- `src/write/base.rs`: `require_head_inventory` also requires the head version sidecar.
+- `src/write/base.rs`: `require_head_inventory` also requires the head version sidecar, and (review round 1) reads both head files: a version inventory that is not byte-identical to the committed inventory, or a sidecar that does not match it, is refused with the new `CommitError::VersionInventoryMismatch` (test `a_head_version_inventory_that_does_not_match_is_refused`).
 - `src/write/listing.rs`: `list_version_keys` returns `OcflError` so both the commit and the repair path can use it; `src/write/commit.rs`: `ObjectWriter` fields are visible to the sibling repair module.
 - `src/write/mod.rs`, `src/lib.rs`: exports and module docs.
 - Tests: `tests/integration/version_inventory_repair.rs`, `tests/features/version_inventory_repair_OCFL-S-020.feature`, `tests/support/repair_steps.rs`, rig helpers `try_repair`/`repair` in `tests/support/write_rig.rs`.
@@ -284,6 +284,15 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 ## Coverage
 
 [ADR 017](../../../../../../resources/architecture/017-test-runners-and-reporting.md) defines no Rust line-coverage tool, so no percentage is reported. Every `RepairError` variant is produced by a test except `RootChanged` (needs a writer that ignores the reservation between the two reads), `ForeignWrite` (the same), `Guard` (the guards are shared with the commit path and tested there), `Read` and `Storage` (backend failures).
+
+## Review round 1 (Cubic)
+
+Cubic reviewed `8bef140` and raised 7 findings (P2: 3, P3: 4), all fixed:
+
+- The writer checked only that the head version files exist; it now verifies the version inventory bytes against the committed inventory and the sidecar against them (`CommitError::VersionInventoryMismatch`), with a new write-order test.
+- `MissingVersionInventory`'s message now covers a missing head sidecar; the BDD step for the half-repaired head names the missing sidecar.
+- The interrupted-repair outline gained a differing head inventory row and a held reservation row.
+- The README names the one allowed validator finding (E058 of the interrupted shape); the plan row links this Walkthrough; the NFR-001 paragraph above says which failures can leave a resumable partial repair.
 
 ## Sync Execution Report
 

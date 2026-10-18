@@ -315,7 +315,7 @@ fn commit_succeeds(world: &mut OcflWorld, version: String) {
 }
 
 #[then(
-    expr = "a commit of {string} on the repaired object should be refused for the missing version inventory"
+    expr = "a commit of {string} on the repaired object should be refused for the missing head version sidecar"
 )]
 fn commit_refused(world: &mut OcflWorld, _version: String) {
     let rig = rig(world);

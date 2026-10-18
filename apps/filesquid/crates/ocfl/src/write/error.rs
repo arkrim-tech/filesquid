@@ -111,9 +111,18 @@ pub enum CommitError {
     /// committed version through that version inventory. The consented
     /// [`ObjectWriter::repair_version_inventory`](super::ObjectWriter::repair_version_inventory)
     /// lifts the refusal (OCFL-S-020).
-    #[error("the committed head has no version inventory at {key}")]
+    #[error("the committed head's version inventory is incomplete: {key} is missing")]
     MissingVersionInventory {
         /// The missing key.
+        key: String,
+    },
+    /// The committed head's version inventory is not byte-identical to the
+    /// committed inventory, or its sidecar does not match it (E064, E060).
+    /// The writer refuses such a base for the same reason: readers could
+    /// not read past an interrupted publication through it.
+    #[error("the committed head's version inventory does not match at {key}")]
+    VersionInventoryMismatch {
+        /// The key that does not match.
         key: String,
     },
     /// The Git guard refused the object root (OCFL-S-001).
