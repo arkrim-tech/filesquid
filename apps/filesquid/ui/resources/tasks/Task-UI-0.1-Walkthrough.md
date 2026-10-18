@@ -47,10 +47,6 @@ All 15 findings were valid and fixed in the second commit; the new tests were wr
 - The `DELETE` command test asserts the method the transport saw.
 - UI-S-012 names uploads and the no-range and open-ended range cases; the UI README documents `bytes=start-` and the full error contract; the plan row cites UI-S-014 and its feature; the feature adds a server-token precondition, an iOS example and an upload scenario; this heading carries the full requirement text.
 
-## Review round 3 (Cubic, 1 finding)
-
-UI-S-012 said every command and upload resolves to a `CommandOutcome`, which did not match the code. It now says what the client does: a 2xx answer resolves to a `CommandOutcome` for the same operation id, so `error` arrives only as a 2xx outcome body; HTTP 409 resolves to `conflict`; any other non-2xx answer rejects with `ApiError`; only `committed` is completion evidence. This heading and the header of `host_adapter_UI-S-012.feature` quote the new text. TDD-ENFORCE: not applicable, documentation only; the behaviour was already covered by `client-io.test.ts` ("maps HTTP 409 conflict", "raises ApiError for a denial instead of an outcome", "returns a module error with its PortError").
-
 ## Review round 2 (Cubic, 3 findings)
 
 All 3 findings were valid and fixed in one commit:
@@ -58,6 +54,10 @@ All 3 findings were valid and fixed in one commit:
 - `readJsonAnswer` reads the body before the `try`, so an abort or transport failure during the read rejects with its own error; only a `JSON.parse` failure becomes the `TypeError` (with the parse error as `cause`). The new test "lets an abort during the body read reject with the AbortError, not a TypeError" failed first (see the failing run for round 2 below).
 - UI-S-012 now lists `command()` among the `FileSquidClient` methods; this heading and the header of `host_adapter_UI-S-012.feature` quote the updated text.
 - Every count in the traceability table below was recounted from the verbose Vitest run of `commands.test.ts`, `client-io.test.ts`, `host-adapter.test.ts` and `client.test.ts` (`parseContentRange` has 12 tests, not 14).
+
+## Review round 3 (Cubic, 1 finding)
+
+UI-S-012 said every command and upload resolves to a `CommandOutcome`, which did not match the code. It now says what the client does: a 2xx answer resolves to a `CommandOutcome` for the same operation id, so `error` arrives only as a 2xx outcome body; HTTP 409 resolves to `conflict`; any other non-2xx answer rejects with `ApiError`; only `committed` is completion evidence. This heading and the header of `host_adapter_UI-S-012.feature` quote the new text. TDD-ENFORCE: not applicable, documentation only; the behaviour was already covered by `client-io.test.ts` ("maps HTTP 409 conflict", "raises ApiError for a denial instead of an outcome", "returns a module error with its PortError").
 
 ## SRS traceability
 
