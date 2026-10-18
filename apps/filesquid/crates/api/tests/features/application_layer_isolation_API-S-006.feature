@@ -61,6 +61,9 @@ Feature: Application-layer isolation of filesquid-api
       | async-net             |
       | actix-rt              |
       | glommio               |
+      | monoio                |
+      | compio-runtime        |
+      | tokio-uring           |
 
   # Happy path
   Scenario: The application layer performs no direct storage I/O

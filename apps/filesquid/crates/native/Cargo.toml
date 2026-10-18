@@ -9,6 +9,14 @@ publish = false
 [lib]
 path = "src/lib.rs"
 
+[features]
+# The SQLite journal store, the data-directory checks and HostMonitor are always built; they
+# are all `filesquid-server` may use (ADR 033 amendment 2026-10-18).
+default = []
+# Desktop-only native processing (OCFL coordinator, durable job and media workers; DE-0.8).
+# Only `filesquid-desktop` enables it; a `filesquid-server` test fails if the server does.
+desktop = []
+
 [dependencies]
 filesquid-api = { path = "../api" }
 fs4 = "1"

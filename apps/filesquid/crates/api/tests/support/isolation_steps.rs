@@ -109,7 +109,8 @@ fn source_line(w: &mut MonitorWorld, line: String) {
 
 #[when(regex = r"^I scan them for direct storage I/O$")]
 fn scan_sources(w: &mut MonitorWorld) {
-    let (findings, _) = io_findings_outside_allowed().expect("scan src");
+    let (findings, scanned) = io_findings_outside_allowed().expect("scan src");
+    assert!(scanned > 10, "only {scanned} source files scanned");
     w.isolation.found = findings
         .iter()
         .map(|f| format!("{}:{} {}", f.file, f.line, f.pattern))

@@ -21,5 +21,6 @@ Feature: Native journal store and data-directory checks
   # Error case
   Scenario: A data directory that cannot be written fails health
     Given a host data directory that does not exist
-    When the data-directory checks run
+    When the data-directory checks run in the host's health report
     Then the data directory should be reported as not writable
+    And health should be failing with the reason "data_dir_not_writable"

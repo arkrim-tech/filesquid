@@ -3,11 +3,18 @@
 //! `filesquid-api`). Writes JUnit to `tests/allure-results/cucumber-junit.xml`.
 
 use cucumber::{given, then, when, writer, World, WriterExt as _};
-use filesquid_api::journal::{JournalEntry, JournalQuery, JournalStore, Outcome};
-use filesquid_api::monitor::HostChecks;
-use filesquid_api::ApiState;
+use filesquid_api::health::{HealthReport, HealthStatus};
+use filesquid_api::journal::{JournalEntry, JournalQuery, JournalStore, MemoryJournal, Outcome};
+use filesquid_api::monitor::{HostChecks, Monitor, MonitorConfig};
+use filesquid_api::{ApiState, EventBus};
 use filesquid_native::{DataDirChecks, HostMonitor, SqliteJournal, JOURNAL_FILE};
+use log_names::log_files_under;
 use std::path::PathBuf;
+use std::sync::Arc;
+
+#[path = "support/log_names.rs"]
+#[allow(dead_code)]
+mod log_names;
 
 /// State shared by the steps of one scenario.
 #[derive(Debug, Default, World)]
@@ -15,6 +22,7 @@ struct NativeWorld {
     dir: Option<PathBuf>,
     operations: Vec<String>,
     writable: Option<bool>,
+    health: Option<HealthReport>,
 }
 
 /// Fresh temporary directory named after `name` (I/O).
@@ -43,12 +51,8 @@ fn journal_import(w: &mut NativeWorld) {
 #[then(expr = "no log file should exist anywhere in the host's data directory")]
 fn no_log_files(w: &mut NativeWorld) {
     let dir = w.dir.take().expect("dir");
-    let logs: Vec<_> = std::fs::read_dir(&dir)
-        .expect("dir")
-        .filter_map(Result::ok)
-        .filter(|e| e.path().extension().is_some_and(|x| x == "log"))
-        .collect();
-    assert!(logs.is_empty());
+    let logs = log_files_under(&dir).expect("walk data directory");
+    assert!(logs.is_empty(), "log files: {logs:?}");
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
 
@@ -88,15 +92,35 @@ fn missing_dir(w: &mut NativeWorld) {
     w.dir = Some(fresh_dir("missing").join("absent"));
 }
 
-#[when(expr = "the data-directory checks run")]
+#[when(expr = "the data-directory checks run in the host's health report")]
 fn run_checks(w: &mut NativeWorld) {
-    let checks = DataDirChecks::new(w.dir.as_ref().expect("dir"));
+    let checks = Arc::new(DataDirChecks::new(w.dir.as_ref().expect("dir")));
     w.writable = Some(checks.data_dir_writable());
+    let monitor = Monitor::start(
+        Arc::new(MemoryJournal::new("host-a")),
+        checks,
+        MonitorConfig::new("host-a"),
+        EventBus::new(),
+    );
+    w.health = Some(monitor.health_report());
+    monitor.shutdown();
 }
 
 #[then(expr = "the data directory should be reported as not writable")]
 fn not_writable(w: &mut NativeWorld) {
     assert_eq!(w.writable, Some(false));
+}
+
+#[then(expr = "health should be failing with the reason {string}")]
+fn health_failing(w: &mut NativeWorld, reason: String) {
+    let report = w.health.take().expect("health report");
+    assert_eq!(report.status, HealthStatus::Failing);
+    assert!(
+        report.reasons.iter().any(|r| r.code == reason),
+        "{report:?}"
+    );
+    let dir = w.dir.take().expect("dir");
+    std::fs::remove_dir_all(dir.parent().expect("parent")).expect("cleanup");
 }
 
 #[tokio::main]

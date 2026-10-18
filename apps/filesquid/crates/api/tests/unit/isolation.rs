@@ -84,6 +84,10 @@ fn rules_reject_every_named_crate() {
         "async-net",
         "actix-rt",
         "glommio",
+        "monoio",
+        "compio",
+        "compio-runtime",
+        "tokio-uring",
     ] {
         assert!(forbidden_reason(name).is_some(), "{name} must be forbidden");
     }

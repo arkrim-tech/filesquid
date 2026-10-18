@@ -10,7 +10,7 @@ Product requirements remain in the [FileSquid vision](../product-vision.md); the
 | [002](./002-tauri2-desktop-shell.md) | Accepted; amended by 030, 035 | Tauri 2 desktop host; no local web server; universal CSS |
 | [003](./003-svelte-client-rendered-ui.md) | Superseded by 031 | Svelte client-rendered UI, not React or LiveView |
 | [004](./004-axum-hosted-ciphertext-mailbox.md) | Accepted; amended by 032 (re-scoped to `*.filesquid.tech`) | Axum ciphertext mailbox; static SPA files, not private SSR |
-| [005](./005-sqlite-local-postgres-hosted.md) | Accepted | SQLite locally; PostgreSQL plus object storage hosted |
+| [005](./005-sqlite-local-postgres-hosted.md) | Accepted; amended by 033 (interim SQLite journal on `filesquid-server` until SV-F1.2) | SQLite locally; PostgreSQL plus object storage hosted |
 | [006](./006-libvips-native-stills-not-imagemagick.md) | Accepted; amended by 035 | libvips for stills; do not install ImageMagick |
 | [007](./007-durable-jobs-and-interactive-performance.md) | Accepted | Durable Rust jobs; interactive media stays in the client |
 | [008](./008-browser-wasm-scope.md) | Accepted; amended by 032 | WASM: envelopes, hashes, replica queries and (per 025) the filesquid engines — not codecs |

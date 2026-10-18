@@ -56,3 +56,7 @@ path = "tests/integration/monitor.rs"
 [[test]]
 name = "integration_auth"
 path = "tests/integration/auth.rs"
+
+[[test]]
+name = "unit_native_features"
+path = "tests/unit/native_features.rs"

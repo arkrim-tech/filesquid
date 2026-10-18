@@ -12,8 +12,16 @@
 //! - [`DataDirChecks`]: the data-directory checks (write probe, free space);
 //! - [`HostMonitor`]: opens both in a data directory and runs the host's monitor.
 //!
-//! `filesquid-desktop` links this crate. `filesquid-server` MAY link it for its SQLite
-//! journal store until its PostgreSQL store exists
+//! # Features
+//!
+//! - default (always built): the items above.
+//! - `desktop`: desktop-only native processing (the OCFL coordinator and the durable job and
+//!   media workers that DE-0.8 adds). Only `filesquid-desktop` enables it.
+//!
+//! `filesquid-desktop` links this crate with `desktop`. `filesquid-server` MAY link it with its
+//! default features only (journal store, data-directory checks, `HostMonitor`), keeping its
+//! journal in SQLite until its PostgreSQL store exists; the server's `unit_native_features`
+//! test fails if it enables `desktop`
 //! ([ADR 033](../../../../../resources/architecture/033-activity-journal-and-live-health-monitoring.md),
 //! amendment of 2026-10-18). WebAssembly builds and the ciphertext-only hosted service MUST
 //! NOT link it.
@@ -22,6 +30,6 @@ pub mod host_checks;
 pub mod host_monitor;
 pub mod journal_sqlite;
 
-pub use host_checks::DataDirChecks;
-pub use host_monitor::{HostMonitor, HOST_HEARTBEAT_TIMEOUT_MS, JOURNAL_FILE};
+pub use host_checks::{probe_name, DataDirChecks, MAX_PROBE_ATTEMPTS};
+pub use host_monitor::{HostMonitor, ALREADY_INSTALLED, HOST_HEARTBEAT_TIMEOUT_MS, JOURNAL_FILE};
 pub use journal_sqlite::SqliteJournal;

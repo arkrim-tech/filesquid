@@ -12,6 +12,8 @@ Accepted
 
 Accepted: 2026-09-16T01:01:07Z. Revised: 2026-09-22T04:34:37Z.
 
+Amended 2026-10-18T06:52:39Z by [ADR 033](./033-activity-journal-and-live-health-monitoring.md): until its PostgreSQL operational store lands (SV-F1.2), `filesquid-server` keeps its activity journal in the SQLite store of `filesquid-native` (`<data dir>/filesquid.sqlite`). PostgreSQL remains the server target.
+
 ## Context / Requirement Reference
 
 Committed local media, metadata and relationships MUST live in owner-readable files and OCFL snapshots. An operational database MUST be rebuildable and MUST NOT be the only copy of accepted user data ([FE-001](../product-vision.md#independent-library), [FE-065](../product-vision.md#independent-library), [U-03](../product-vision.md#platform-ownership-and-access), [C-028](../product-vision.md#platforms-originals-and-service-limits)). Hosted accounts, devices, membership and ciphertext transport need a concurrent operational store plus object storage.

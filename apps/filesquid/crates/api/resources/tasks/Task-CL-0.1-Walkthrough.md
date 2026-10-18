@@ -53,12 +53,22 @@ Parents: [TC-005 Shared Rust graph, hosted mailbox isolation and OCFL writer](..
 
 - **Graph guard:** [`tests/support/isolation.rs`](../../tests/support/isolation.rs) and [`tests/unit/isolation.rs`](../../tests/unit/isolation.rs) (`unit_isolation`, 13 tests). The rules also cover `filesquid-native` and the async runtimes `async-std`, `smol` (exact match, so `smol_str` stays allowed), `async-executor`, `async-global-executor`, `async-io`, `async-net`, `actix-rt` and `glommio`.
 - **Source guard:** [`tests/support/source_scan.rs`](../../tests/support/source_scan.rs), copied from the `filesquid-ocfl` scanner. It removes line comments, nested block comments and string literals before matching, so a `//` inside a string hides nothing. It catches grouped `std::{...}` imports across lines and reports file, line and pattern. No file is exempt.
-- **BDD:** [`application_layer_isolation_API-S-006.feature`](../../tests/features/application_layer_isolation_API-S-006.feature), 34 scenarios, all passing. A double quote inside an example line is written `QUOTE`, because a Gherkin table cannot hold `\"`.
+- **BDD:** [`application_layer_isolation_API-S-006.feature`](../../tests/features/application_layer_isolation_API-S-006.feature), 37 scenarios, all passing. A double quote inside an example line is written `QUOTE`, because a Gherkin table cannot hold `\"`.
 - **Gate:** `scripts/verify_tests.sh` also runs `cargo test -p filesquid-native` alone.
 
 ### Docs
 
 [ADR 033](../../../../../../resources/architecture/033-activity-journal-and-live-health-monitoring.md) amendment and index row, [SRS-F-061](../../../../../../resources/srs.md#srs-f-061-activity-journal-and-live-health-monitoring), the SRS crate lists, [API-S-006](../srs.md) trait note, [implementation plan](../../../../../../resources/implementation-plan.md) (module table, library allocation, Task 0.5 and Task 0.10), [desktop plan](../../../desktop/resources/plan.md) (header, DE-0.8), [server plan](../../../server/resources/plan.md) (interim store, SV-F1.2), [architecture](../../../../../../resources/architecture.md), root README, this plan and the [checklist](../../../../../../resources/implementation-plan-checklist.md).
+
+### Cubic round 2 (review on 0fd3a6d) and the main merge
+
+- `main` (#28 UI-0.2, #29 content-handle docs, #30 IO-0.5) was merged in with a merge commit. The only conflict was the API SRS: main's API-S-004 and API-S-005 (content handles) were kept with this branch's API-S-006 note.
+- **Feature gate.** `filesquid-native` has a `desktop` Cargo feature, off by default, for the desktop-only processing DE-0.8 will add. `filesquid-desktop` enables it, and `filesquid-server` uses the default features only. The server test `unit_native_features` runs `cargo tree -p filesquid-server -e features` and fails if the server enables `desktop`. This is recorded in the ADR 033 amendment, the desktop plan (DE-0.8), the server plan, the implementation plan and the architecture.
+- **Second monitor.** `HostMonitor::open` refuses a second monitor for an `ApiState` before creating any file. The new `HostMonitor::start(store, checks, ...)`, which SV-F1.2 will call with its PostgreSQL store, shuts down a monitor it could not install and returns `ALREADY_INSTALLED`. Two tests cover this.
+- **Write probe.** It skips a probe name that is already taken (at most `MAX_PROBE_ATTEMPTS` = 32 names) instead of reporting the directory as not writable. The collision test seeds 16 real probe names and checks they survive.
+- **Log-file names.** The no-log-file checks use `is_log_file_name`, which is the same rule as `ends_with(".log")`, so a file named exactly `.log` is caught. The `.log` literal is avoided only because `verify_centralized_logging.sh` rejects it in staged sources. The feature step walks subdirectories (bounded) and cleans up its directories, and the health scenario now asserts `failing` with `data_dir_not_writable`.
+- **Graph guard.** The runtime rule's message now says what the guard checks (crate names; Tokio's features are not checked). `monoio`, `compio*` and `tokio-uring` are added. The happy-path source-scan step asserts that more than 10 files were scanned.
+- **Docs.** ADR 005 and its index row note the interim server SQLite journal. The Storage row and the server-runtime paragraph in the architecture name it. `HostMonitor` is named wherever the move is described. The README crate list includes `native`. The Conflict Artifact's analysis is marked historical.
 
 ## wasm32
 
@@ -80,8 +90,8 @@ After the move, `cargo test -p filesquid-api -p filesquid-native --locked` exite
 
 ```text
      Running tests/features.rs (filesquid-api)
-122 scenarios (62 passed, 60 skipped)
-264 steps (204 passed, 60 skipped)
+154 scenarios (65 passed, 89 skipped)
+302 steps (213 passed, 89 skipped)
      Running tests/unit/admin.rs
 test result: ok. 6 passed; 0 failed
      Running tests/unit/auth.rs
@@ -108,18 +118,18 @@ test result: ok. 4 passed; 0 failed
 test result: ok. 5 passed; 0 failed
      Running tests/features.rs (filesquid-native)
 3 scenarios (3 passed)
-10 steps (10 passed)
+11 steps (11 passed)
      Running tests/unit/host.rs
-test result: ok. 4 passed; 0 failed
+test result: ok. 6 passed; 0 failed
      Running tests/unit/journal.rs
-test result: ok. 11 passed; 0 failed
+test result: ok. 12 passed; 0 failed
 ```
 
-The 60 skipped API scenarios belong to features whose domain operations do not exist yet. Before the move, the API had 109 scenarios with 49 passing. It lost the moved "no log file" step and gained the extra isolation examples.
+The 89 skipped API scenarios belong to features whose domain operations do not exist yet (29 of them come from `content_handles_F-056.feature`, merged from `main` with #29). Before the move, the API had 109 scenarios with 49 passing.
 
 `cargo test -p filesquid-server -p filesquid-desktop --locked` exited 0 with the following results:
 - desktop: `integration_api_protocol` 26 and `integration_event_channel` 12 passed;
-- server: unit tests 5, `integration_auth` 18, `integration_events` 2, `integration_health` 2, `integration_monitor` 3, `integration_static_ui` 3 and `unit_health` 5 passed.
+- server: unit tests 5, `integration_auth` 18, `integration_events` 2, `integration_health` 2, `integration_monitor` 3, `integration_static_ui` 3 `unit_health` 5 and `unit_native_features` 2 passed.
 
 `cargo fmt --all`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, and `bash scripts/pre-commit.sh` (which also runs rustdoc and the test-instrumented desktop suite) pass.
 

@@ -35,7 +35,7 @@ const MEDIA: &str = "API-S-006: no libvips or FFmpeg";
 const SQLITE: &str = "API-S-006: no SQLite driver";
 const STORAGE: &str = "API-S-006: no storage I/O crate; hosts inject storage backends";
 const NETWORK: &str = "API-S-006: no network client; hosts inject storage backends";
-const RUNTIME: &str = "API-S-006: no async runtime other than tokio's sync and rt parts";
+const RUNTIME: &str = "API-S-006: no alternative async runtime crate (tokio itself is allowed; its features are not checked)";
 const NATIVE: &str = "API-S-006: the API never links native processing";
 
 /// Every forbidden crate. Names use the Cargo package spelling.
@@ -63,6 +63,9 @@ pub const RULES: &[Rule] = &[
     rule("async-net", Match::Exact, RUNTIME),
     rule("actix-rt", Match::Exact, RUNTIME),
     rule("glommio", Match::Exact, RUNTIME),
+    rule("monoio", Match::Exact, RUNTIME),
+    rule("compio", Match::Prefix, RUNTIME),
+    rule("tokio-uring", Match::Exact, RUNTIME),
 ];
 
 const fn rule(pattern: &'static str, kind: Match, reason: &'static str) -> Rule {

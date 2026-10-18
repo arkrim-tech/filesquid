@@ -4,8 +4,8 @@
 //! behave the same.
 
 use crate::{DataDirChecks, SqliteJournal};
-use filesquid_api::journal::{JournalEntry, Outcome};
-use filesquid_api::monitor::{Monitor, MonitorConfig};
+use filesquid_api::journal::{JournalEntry, JournalStore, Outcome};
+use filesquid_api::monitor::{HostChecks, Monitor, MonitorConfig};
 use filesquid_api::registry::{ProcessHandle, ProcessSpec};
 use filesquid_api::trace_layer::JournalLayer;
 use filesquid_api::ApiState;
@@ -18,6 +18,9 @@ pub const HOST_HEARTBEAT_TIMEOUT_MS: i64 = 30_000;
 /// File name of the SQLite operational store inside the data directory.
 pub const JOURNAL_FILE: &str = "filesquid.sqlite";
 
+/// Error returned when the API state already has a monitor installed.
+pub const ALREADY_INSTALLED: &str = "a monitor is already installed in this API state";
+
 /// A host's running monitor plus its own `host` process, created by [`HostMonitor::open`].
 pub struct HostMonitor {
     monitor: Monitor,
@@ -28,27 +31,55 @@ pub struct HostMonitor {
 }
 
 impl HostMonitor {
-    /// Open (creating if needed) `<data_dir>/filesquid.sqlite`, start the monitor with the
-    /// data-directory checks, install it in `state`, attach `layer` (if given) so warnings and
-    /// errors are journaled, register the `host` process and journal `host.started`.
-    /// Performs filesystem and database I/O.
+    /// Open (creating if needed) `<data_dir>/filesquid.sqlite` and start the host's monitor
+    /// over it with the data-directory checks (see [`start`](Self::start)). Performs
+    /// filesystem and database I/O.
+    ///
+    /// # Errors
+    /// The data directory or the journal could not be opened, or `state` already has a
+    /// monitor (checked before any file is created).
     pub fn open(
         data_dir: &Path,
         host: &str,
         state: &ApiState,
         layer: Option<&JournalLayer>,
     ) -> Result<Self, String> {
+        if state.monitor().is_some() {
+            return Err(ALREADY_INSTALLED.to_string());
+        }
         std::fs::create_dir_all(data_dir)
             .map_err(|e| format!("create data dir {}: {e}", data_dir.display()))?;
         let store =
             SqliteJournal::open(&data_dir.join(JOURNAL_FILE), host).map_err(|e| e.to_string())?;
+        let checks = DataDirChecks::new(data_dir);
+        Self::start(Arc::new(store), Arc::new(checks), host, state, layer)
+    }
+
+    /// Start the monitor over the host-injected `store` and `checks`, install it in `state`,
+    /// attach `layer` (if given) so warnings and errors are journaled, register the `host`
+    /// process and journal `host.started`. A host with another journal store (such as the
+    /// server's PostgreSQL store) uses this directly.
+    ///
+    /// # Errors
+    /// `state` already has a monitor. The monitor started here is then shut down (its journal
+    /// writer stopped) and nothing is installed or journaled.
+    pub fn start(
+        store: Arc<dyn JournalStore>,
+        checks: Arc<dyn HostChecks>,
+        host: &str,
+        state: &ApiState,
+        layer: Option<&JournalLayer>,
+    ) -> Result<Self, String> {
         let monitor = Monitor::start(
-            Arc::new(store),
-            Arc::new(DataDirChecks::new(data_dir)),
+            store,
+            checks,
             MonitorConfig::new(host),
             state.events.clone(),
         );
-        state.install_monitor(monitor.clone());
+        if !state.install_monitor(monitor.clone()) {
+            monitor.shutdown();
+            return Err(ALREADY_INSTALLED.to_string());
+        }
         if let Some(layer) = layer {
             layer.attach(monitor.journal());
         }

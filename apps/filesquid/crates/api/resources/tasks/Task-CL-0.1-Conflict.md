@@ -6,7 +6,9 @@ Raised 2026-10-18 by Task [CL-0.1](../plan.md) (global [Task 0.10](../../../../.
 
 **Correction:** sections 1 and 4 below named BE-0.3 as the server's PostgreSQL task. BE-0.3 is the ciphertext-only hosted service's schema; `filesquid-server`'s PostgreSQL operational store is [SV-F1.2](../../../server/resources/plan.md), which the amendment and the plans now name.
 
-## 1. Conflict description
+**Sections 1 to 5 below are historical.** They record the analysis as it was raised, against `main` before the move. Statements such as "`filesquid-native` does not exist yet" or "no ADR allows it for the server" were true then and are no longer: the crate exists, and the ADR 033 amendment allows the server to link its default features only. A server test enforces that limit (the `desktop` feature carries the desktop-only processing).
+
+## 1. Conflict description (historical)
 
 CL-0.1 must add isolation tests that fail when `filesquid-api` depends on a SQLite driver or calls `std::fs` directly. On `main` the crate already does both, through code that completed tasks put there:
 
@@ -25,7 +27,7 @@ The requirements agree that this code must leave `filesquid-api`, but none of th
 
 Moving the store now means choosing one of the resolutions below, which is an owner decision, not a reading of the documents.
 
-## 2. PRD / SRS reference
+## 2. PRD / SRS reference (historical)
 
 - [API-S-006](../srs.md): "The crate MUST NOT link Tauri host APIs, libvips, FFmpeg or a SQLite driver and MUST NOT perform storage I/O itself; hosts inject storage backends. Cargo features MUST NOT be the only boundary."
 - [SRS-F-061](../../../../../../resources/srs.md#srs-f-061-activity-journal-and-live-health-monitoring), Journal store: "Each host that runs `filesquid-api` ... MUST keep an append-only `activity_journal` table in its operational store (SQLite in WAL mode on desktop, PostgreSQL on servers)". Health: "host checks (storage roots reachable and writable, free space against thresholds, operational store reachable ...)".
@@ -33,13 +35,13 @@ Moving the store now means choosing one of the resolutions below, which is an ow
 - [api plan, CL-0.1](../plan.md): "Add isolation tests that fail if it depends on tauri, libvips, ffmpeg-sys or a SQLite driver (rusqlite/sqlx-sqlite), or calls `std::fs` directly."
 - [Implementation plan, library allocation](../../../../../../resources/implementation-plan.md): "Native I/O (SQLite storage, the local-filesystem OCFL backend, libvips, FFmpeg, OS adapters) belongs to native processing"; `filesquid-native` is linked by the "Desktop host (and the server host where an ADR allows)".
 
-## 3. ADR reference
+## 3. ADR reference (historical)
 
 - [ADR 001](../../../../../../resources/architecture/001-shared-rust-core-with-tauri-and-axum-hosts.md), library allocation table: "Native processing | Local filesystem backend, SQLite, libvips, FFmpeg, OS adapters | Tauri only".
 - [ADR 025](../../../../../../resources/architecture/025-client-side-filesquid-engines.md) Decision 6: "`filesquid-api` still MUST NOT implement storage I/O itself (no `std::fs`, no network client); it only receives backends from its host."
 - [ADR 033](../../../../../../resources/architecture/033-activity-journal-and-live-health-monitoring.md) Decision 2: the journal lives "in its own operational store (SQLite on desktop, PostgreSQL on `filesquid-server`)".
 
-## 4. Recommended resolution
+## 4. Recommended resolution (historical; option A chosen)
 
 Recommended: **option A**.
 
@@ -49,7 +51,7 @@ Recommended: **option A**.
 
 Artifacts to update for A: [API-S-006](../srs.md) (unchanged text, add the trait note), [api plan](../plan.md) (CL-0.1 status and a follow-up row), [desktop plan](../../../desktop/resources/plan.md) (DE-0.8 split or moved earlier), [server plan](../../../server/resources/plan.md) (interim SQLite store until BE-0.3), [implementation plan](../../../../../../resources/implementation-plan.md) (Task 0.10 and Task 0.5 dependencies, library allocation row for the server), [implementation-plan-checklist.md](../../../../../../resources/implementation-plan-checklist.md), [ADR 033](../../../../../../resources/architecture/033-activity-journal-and-live-health-monitoring.md) (amendment) or a new ADR, [SRS-F-061](../../../../../../resources/srs.md#srs-f-061-activity-journal-and-live-health-monitoring) (interim server store), and the pins in [`tests/support/isolation.rs`](../../tests/support/isolation.rs).
 
-## 5. Impact assessment
+## 5. Impact assessment (historical)
 
 - If unresolved, `filesquid-api` is not expected to build for `wasm32-unknown-unknown` with its default features ([API-S-010](../srs.md)): `rusqlite` with bundled SQLite and `fs4` are native-only. This blocks the browser host. The `sqlite` Cargo feature gates only the journal store and `HostMonitor::open`; `fs4` is an unconditional dependency and the `std::fs` write probe and `fs4::available_space` in `monitor.rs` are not feature-gated, so they are linked in every feature set, including `--no-default-features`. Turning the feature off would therefore not even restore the boundary, and a feature-only boundary is what TC-005 forbids.
 - CL-0.1 stays open, and global Task 0.10 cannot close. CL-0.2 and CL-0.3 can proceed: the guards already stop any new forbidden crate or storage call.
