@@ -45,12 +45,14 @@ test("the built page is static, mounts the shell and defines every custom elemen
     .locator("script[src]")
     .evaluateAll((all) => all.map((script) => script.getAttribute("src") ?? ""));
   expect(scripts.length).toBeGreaterThan(0);
-  for (const src of scripts) expect(src).toMatch(/^\/assets\/.+\.js$/);
+  for (const src of scripts) expect(src).toMatch(/^\/assets\/[A-Za-z0-9_]+-[A-Za-z0-9_-]{8}\.js$/);
   expect(await page.locator("script:not([src])").count()).toBe(0);
   expect(errors).toEqual([]);
 });
 
-test("every visible word comes from the active label table", async ({ page }) => {
+test("navigation, API status and theme legend words come from the active label table", async ({
+  page,
+}) => {
   const errors = trackErrors(page);
   await page.goto("/");
   const shell = page.locator("fs-app-shell");

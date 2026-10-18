@@ -39,8 +39,11 @@ export function trackErrors(page: Page, tolerate?: RegExp): string[] {
  */
 export function activeLabels(file = "src/theme/labels.en.json"): LabelTable {
   const parsed: unknown = JSON.parse(readFileSync(resolve(process.cwd(), file), "utf8"));
-  if (typeof parsed !== "object" || parsed === null) {
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     throw new Error(`${file} is not a label table object`);
+  }
+  if (!Object.values(parsed).every((word) => typeof word === "string")) {
+    throw new Error(`${file} has a label that is not a string`);
   }
   return parsed as LabelTable;
 }
@@ -54,9 +57,10 @@ export function activeLabels(file = "src/theme/labels.en.json"): LabelTable {
  * @throws Error when the key is absent, so a typo fails loudly instead of matching "undefined".
  */
 export function label(table: LabelTable, key: string): string {
-  const word = table[key];
-  if (word === undefined) throw new Error(`label table has no key "${key}"`);
-  return word;
+  if (!Object.prototype.hasOwnProperty.call(table, key)) {
+    throw new Error(`label table has no key "${key}"`);
+  }
+  return table[key] as string;
 }
 
 /**
@@ -80,14 +84,18 @@ export async function expectElementsDefined(page: Page, tags: readonly string[])
  * @param page - The loaded page.
  * @param name - Custom property name, for example `--fs-primary`.
  * @returns The computed colour.
+ * @throws Error when the token is not defined, so a missing token cannot pass by inheriting the
+ *   body colour.
  */
 export function tokenColour(page: Page, name: string): Promise<string> {
   return page.evaluate((prop) => {
     const probe = document.createElement("span");
-    probe.style.color = `var(${prop})`;
     document.body.append(probe);
+    const defined = getComputedStyle(probe).getPropertyValue(prop).trim() !== "";
+    probe.style.color = `var(${prop})`;
     const colour = getComputedStyle(probe).color;
     probe.remove();
+    if (!defined) throw new Error(`token ${prop} is not defined`);
     return colour;
   }, name);
 }

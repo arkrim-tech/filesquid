@@ -2,7 +2,8 @@
  * Test reporting contract (UI-S-013, ADR 017, test-cleanup rule): every run starts from a
  * clean `tests/allure-results/`, each runner writes Allure raw results and JUnit there, an
  * Allure report can be built from them, and the production Playwright proofs run against the
- * built artifact on this workspace's fixed preview port.
+ * built artifact on this workspace's fixed preview port. Assertions match code, not the
+ * header comments of the files they read.
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -10,6 +11,13 @@ import { describe, expect, it } from "vitest";
 
 /** The preview port of this package (never changes: port-conflicts rule). */
 const PREVIEW_PORT = 4173;
+
+/** Read a package-relative text file with its comments removed (block and line). */
+function code(file: string): string {
+  return read(file)
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+}
 
 /** Read a package-relative text file. */
 function read(file: string): string {
@@ -22,14 +30,25 @@ const pkg = JSON.parse(read("package.json")) as {
 };
 
 describe("clean results before each run", () => {
-  it("clears the whole results directory before the unit run", () => {
-    expect(pkg.scripts["pretest"]).toBe("rm -rf tests/allure-results");
+  it("clears the whole results directory before the unit run, on every OS", () => {
+    expect(pkg.scripts["pretest"]).toBe(
+      "node tests/support/clean-results.mjs tests/allure-results",
+    );
   });
 
   it("clears only the Playwright results before an end-to-end run", () => {
-    expect(pkg.scripts["pretest:e2e"]).toContain("tests/allure-results/playwright");
-    expect(pkg.scripts["pretest:e2e"]).toContain("playwright-junit.xml");
-    expect(pkg.scripts["pretest:e2e"]).not.toBe("rm -rf tests/allure-results");
+    const script = pkg.scripts["pretest:e2e"] ?? "";
+    expect(script).toMatch(/^node tests\/support\/clean-results\.mjs /);
+    expect(script).toContain("tests/allure-results/playwright ");
+    expect(script).toContain("tests/allure-results/playwright-junit.xml");
+    expect(script).toContain("tests/allure-results/playwright-preview-junit.xml");
+    expect(script).not.toMatch(/tests\/allure-results(\s|$)/);
+  });
+
+  it("uses no POSIX-only command in any script", () => {
+    for (const [name, script] of Object.entries(pkg.scripts)) {
+      expect(script, name).not.toMatch(/\brm\b/);
+    }
   });
 });
 
@@ -41,19 +60,19 @@ describe("Allure and JUnit output", () => {
   });
 
   it("writes Vitest Allure results beside the JUnit file", () => {
-    const config = read("vitest.config.ts");
-    expect(config).toContain("allure-vitest/reporter");
-    expect(config).toContain("tests/allure-results/vitest");
-    expect(config).toContain("tests/allure-results/vitest-junit.xml");
+    const config = code("vitest.config.ts");
+    expect(config).toContain('"allure-vitest/reporter"');
+    expect(config).toContain('resultsDir: "tests/allure-results/vitest"');
+    expect(config).toContain('outputFile: { junit: "tests/allure-results/vitest-junit.xml" }');
   });
 
   it.each(["playwright.config.ts", "playwright.preview.config.ts"])(
     "writes Playwright Allure results and JUnit from %s",
     (file) => {
-      const config = read(file);
-      expect(config).toContain("allure-playwright");
-      expect(config).toContain("tests/allure-results/playwright");
-      expect(config).toContain("-junit.xml");
+      const config = code(file);
+      expect(config).toContain('"allure-playwright"');
+      expect(config).toContain('resultsDir: "tests/allure-results/playwright"');
+      expect(config).toMatch(/outputFile: "tests\/allure-results\/playwright[a-z-]*-junit\.xml"/);
     },
   );
 
@@ -71,22 +90,22 @@ describe("Allure and JUnit output", () => {
 
 describe("production artifact suite", () => {
   it("serves the built artifact with vite preview on the fixed port", () => {
-    const config = read("playwright.preview.config.ts");
-    expect(config).toContain("npm run build");
-    expect(config).toContain("vite preview");
-    expect(config).toContain("--strictPort");
-    expect(config).toContain(`const PORT = ${PREVIEW_PORT}`);
-    expect(config).not.toMatch(/vite(\s+dev)?\s*["'`]|npm run dev/);
+    const config = code("playwright.preview.config.ts");
+    expect(config).toMatch(/command: `npm run build && npx vite preview [^`]*--strictPort`/);
+    expect(config).toContain("--port ${PORT}");
+    expect(config).toMatch(new RegExp(`const PORT = ${PREVIEW_PORT};`));
+    expect(config).not.toMatch(/npm run dev|npx vite(\s+dev)?\s*[`"']/);
   });
 
   it("keeps the preview specs out of the server-backed run and runs both in turn", () => {
-    expect(read("playwright.config.ts")).toContain('testIgnore: "**/preview/**"');
-    const script = pkg.scripts["test:e2e"] ?? "";
-    expect(script).toContain("playwright test");
-    expect(script).toContain("-c playwright.preview.config.ts");
+    expect(code("playwright.config.ts")).toContain('testIgnore: "**/preview/**"');
+    expect(pkg.scripts["test:e2e"]).toBe("node tests/support/run-e2e.mjs");
+    const runner = code("tests/support/run-e2e.mjs");
+    expect(runner).toContain('const CONFIGS = [undefined, "playwright.preview.config.ts"];');
+    expect(runner).toContain("statuses.every((status) => status === 0)");
   });
 
   it("keeps the preview port in the Vite config", () => {
-    expect(read("vite.config.ts")).toMatch(new RegExp(`preview:[^}]*port: ${PREVIEW_PORT}`));
+    expect(read("vite.config.ts")).toMatch(new RegExp(`preview:[^}]*port: ${PREVIEW_PORT}\\b`));
   });
 });
