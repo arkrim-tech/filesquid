@@ -6,7 +6,7 @@
 //! event channel and `/metrics`). The router's 404 and 405 fallbacks call [`check_caller`]
 //! first, so an anonymous caller cannot probe which paths exist.
 
-use super::credentials::presented_token;
+use super::credentials::presented_credential;
 use super::policy::{Action, Principal, Resource};
 use crate::error::{ApiError, DenialReason};
 use crate::journal::{JournalEntry, Level, Outcome};
@@ -70,7 +70,7 @@ pub async fn authorise_call(
     action: Action,
 ) -> Result<Principal, ApiError> {
     let authoriser = state.authoriser();
-    let principal = match authoriser.authenticate(presented_token(headers)) {
+    let principal = match authoriser.authenticate(presented_credential(headers)) {
         Ok(principal) => principal,
         Err(reason) => return Err(deny(state, reason, None, Some(action)).await),
     };
@@ -83,7 +83,9 @@ pub async fn authorise_call(
 /// Authenticate a call that matched no route (the router's 404 and 405 fallbacks), so those
 /// answers are given only to a known caller. Journals a refusal.
 pub async fn check_caller(state: &ApiState, headers: &HeaderMap) -> Result<Principal, ApiError> {
-    let authenticated = state.authoriser().authenticate(presented_token(headers));
+    let authenticated = state
+        .authoriser()
+        .authenticate(presented_credential(headers));
     match authenticated {
         Ok(principal) => Ok(principal),
         Err(reason) => Err(deny(state, reason, None, None).await),

@@ -21,18 +21,18 @@ This task also keeps three module requirements for everything it adds. Their ful
 ## What changed
 
 - **`auth` module** ([`src/auth/`](../../src/auth/mod.rs)):
-  - `Principal` (`Owner`, `Administrator`), `Action` (`health.read`, `contract.read`, `events.subscribe`, `monitor.read`) and `Resource` (`Host`), all `#[non_exhaustive]`.
+  - `Principal` (`Owner`, `Administrator`), `Action` (`health.read`, `contract.read`, `events.subscribe`, `monitor.read`, and `public` for the liveness probe added in review round 1) and `Resource` (`Host`), all `#[non_exhaustive]`.
   - The API-F1.9 seams: the `Authenticator` trait (token to principal) and the `Policy` trait (principal, action and resource to a yes or no). `TokenAuthenticator` compares in constant time. `HostPolicy` grants the owner and the administrator every action on the host, and its exhaustive match makes a new principal a compile error until its permissions are decided. `DenyAll` grants nothing.
   - `Authoriser`: `deny_all()`, `desktop_owner(&LaunchToken)`, `server_administrator(token)` and `new(authenticator, policy)`. `authenticate` and `authorise` are pure.
   - `LaunchToken` and `generate_token`: 256 random bits as 64 hex characters, with redacted `Debug`.
-  - `presented_token`: `Authorization: Bearer` (case-insensitive scheme), or on a WebSocket upgrade only, the `filesquid.bearer.<token>` subprotocol offered with `filesquid.events.v1`.
+  - `presented_credential` (named `presented_token` before review round 6): `Authorization: Bearer` (case-insensitive scheme) on any request, WebSocket upgrades included. Browsers cannot set headers on a WebSocket, so on an upgrade they may instead offer the `filesquid.bearer.<token>` subprotocol next to `filesquid.events.v1`. A present but unusable `Authorization` header is `invalid_credentials` and never falls back to the subprotocol.
   - The guard: `require` middleware with a `Guard { state, action }`, plus `authorise_call` and `check_caller`. A refusal logs one stdout line (INFO, target `filesquid::auth`, never journaled twice) and journals `api.auth.denied` through the bounded queue on a blocking task. The record holds the actor (`anonymous` or the principal), the reason as error code and the action as target. `token_issued_entry` builds `api.auth.token_issued`.
-- **Router** ([`src/routes.rs`](../../src/routes.rs)): every route-table entry now names its `Action`, and `router()` wraps every entry in `require`. A route cannot be added without a guard. The 404 and 405 fallbacks answer only an authenticated caller. `route_actions()` lists path and action. `ApiState::install_authoriser` installs the authoriser once; until it runs, every call is refused.
+- **Router** ([`src/routes.rs`](../../src/routes.rs)): every route-table entry now names its `Action`, and `router()` wraps every protected entry in `require`. The sole unguarded exception is the public liveness probe `GET /api/v1/health/live` (added in review round 1); building the router panics if any other path declares `public`. The 404 and 405 fallbacks answer only an authenticated caller. `route_actions()` lists path and action. `ApiState::install_authoriser` installs the authoriser once; until it runs, every guarded call is refused.
 - **Typed denial** ([`src/error.rs`](../../src/error.rs)): `DenialReason` (`missing_credentials` gives 401 `unauthorized`; `invalid_credentials` and `not_permitted` give 403 `forbidden`) and `ApiError::denied`. `ApiError` gains an optional `reason` member, omitted for other errors. Messages never repeat the credential.
 - **Admin routes and monitor**: the interim `AdminAuth` is removed. Admin routes no longer check credentials themselves; their guard does (`monitor.read`). `MonitorConfig::new` and `HostMonitor::open` lose the `auth` argument. The admin-token file I/O (`load_or_create_token`) moved from the API crate to `filesquid-server` ([API-S-006](../srs.md)). An unreadable token file is now an error instead of being silently replaced.
 - **Contract `0.5.0`** ([`openapi.json`](../../openapi.json)):
   - A global `security: [{bearerAuth: []}]`. The per-operation optional security (`{}`) is removed.
-  - 401 and 403 on every operation, the event channel included, and `x-filesquid-action` on every operation.
+  - 401 and 403 on every protected operation, the event channel included, and `x-filesquid-action` on every operation. The public liveness probe (review round 1) has `security: []` and no denial responses, as the contract test checks.
   - The `DenialReason` schema and `ApiError.reason`.
   - The wire convention (authentication before 404 and 405) in `info.description`, and the WebSocket subprotocol carrier on `GET /api/v1/events`.
 - **Generated types**: `apps/filesquid/ui/src/api/schema.d.ts`, regenerated with `npm run contract:types` (openapi-typescript 7.13.0). The Vitest drift test passes.
@@ -797,6 +797,108 @@ $ curl http://127.0.0.1:8094/api/v1/health/live
 $ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8094/api/v1/health
 {"schema_version":1,"status":"ok","product":"filesquid"}
 token file written: no
+```
+
+## Review round 6: Cubic full re-review of 31e8c0f (20 findings)
+
+| Finding | Fix | Test |
+|---|---|---|
+| P2: the launch token was injected for the Vite dev origins in every build (`api_protocol.rs:109`) | `RELEASE_ORIGINS` (the app's own scheme origins) are trusted in every build; `DEV_ORIGINS` (127.0.0.1:5173 and :5174) only when `debug_assertions` is on. `app_origins()` feeds both the init script and CORS. | `release_builds_trust_only_the_apps_own_scheme_origins`, `dev_server_origins_are_trusted_only_in_debug_builds`; the init-script test checks the dev origins appear only in debug builds |
+| P2: `FILESQUID_ADMIN_TOKEN` was accepted at any strength (`srs.md:27`) | A configured or stored token must be exactly 64 hexadecimal characters (256 bits), like a generated one. Otherwise the server refuses to start with an error that names the variable (or file) and the format, never the value. API-S-016, ADR 030 and the README say so; the README gives `openssl rand -hex 32` for Linux and macOS, and its PowerShell example already makes 32 random bytes as 64 hex characters. | `a_configured_token_must_have_the_generated_format`, `a_stored_token_that_lacks_the_generated_format_is_refused`; real binary below |
+| P2: a non-Bearer `Authorization` header counted as missing and fell back to the subprotocol (`credentials.rs:28`) | `presented_credential` returns `Absent`, `Unusable` or `Bearer`. A present but unusable header is `invalid_credentials` (403) and never falls back to the subprotocol; only a request with neither carrier is `missing_credentials`. | `a_present_but_unusable_authorization_header_is_not_a_missing_one`, `an_unusable_header_never_falls_back_to_the_subprotocol`, `a_non_bearer_authorization_header_is_refused_as_invalid_credentials`, `an_unusable_header_on_a_websocket_upgrade_is_refused_even_with_a_valid_subprotocol` |
+| P2: no denial was checked through the desktop URI forms (`routes.rs:32`) | Unauthenticated variant `answer_as(.., None)` | `denials_answer_the_same_through_every_host_uri_form` (every protected route and both fallbacks, same 401 through all three forms) |
+| P2/P3: docs said "every route/operation" (walkthrough lines 24, 30, 35; `resources/srs.md:1012`; server `lib.rs:48`; api `lib.rs:76`) | All name `GET /api/v1/health/live` as the only public exception and say "every guarded call". SRS-F-056's deny-by-default bullet names it too. The server config doc says the token file is Unix-only. | Documentation |
+| P3: ADR 030 Status had no API-F1.7 amendment | "Amended" entries for API-F1.7 (2026-10-17) and the server admin-token change (2026-10-18) | Documentation |
+| P3: `auth/mod.rs` ADR link one level short | Six `../` | Link check in pre-commit |
+| P3: `logging-enforce.md` missed host start and stop | Added | Documentation |
+| P3: `LaunchToken` derived `Clone` | Removed; nothing cloned it | Compiles |
+| P3: `Action::ALL` said "contract order" | "declaration order" | Documentation |
+| P3: server `lib.rs:14` cited ADR 031 | Cites ADR 032 (hosting and privacy model) and states the reason | Documentation |
+| P3: the SRS and walkthrough did not say WebSocket upgrades accept the Bearer header | API-S-004 and the walkthrough say non-browser clients can send the header on the upgrade, and browsers use the subprotocol because they cannot set headers | Documentation |
+| P3: the server token-issue test did not check for the token | It now asserts the stored token never appears in the journaled `api.auth.token_issued` entries | `every_start_journals_the_administrator_token_issue` |
+| P3: the walkthrough action list omitted `public` | Added | Documentation |
+
+### Red: round 6 tests before the fixes
+
+```text
+error[E0432]: unresolved imports `filesquid_api::auth::Credential`, `filesquid_api::auth::presented_credential`
+error: could not compile `filesquid-api` (test "unit_auth") due to 1 previous error
+error[E0432]: unresolved imports `filesquid_desktop_lib::api_protocol::app_origins`, `filesquid_desktop_lib::api_protocol::DEV_ORIGINS`, `filesquid_desktop_lib::api_protocol::RELEASE_ORIGINS`
+error: could not compile `filesquid-desktop` (test "integration_api_protocol") due to 1 previous error
+---- a_configured_token_must_have_the_generated_format stdout ----
+---- a_stored_token_that_lacks_the_generated_format_is_refused stdout ----
+test result: FAILED. 16 passed; 2 failed (integration_auth)
+```
+
+### Green: round 6 raw output
+
+`cargo test -p filesquid-api -p filesquid-server -p filesquid-desktop --locked` (exit code 0):
+
+```text
+     Running unittests src/lib.rs
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+     Running tests/features.rs
+87 scenarios (28 passed, 59 skipped)
+     Running tests/unit/admin.rs
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/unit/auth.rs
+test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/unit/contract.rs
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+     Running tests/unit/errors.rs
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/unit/events.rs
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/unit/health.rs
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/health_rules.rs
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/journal.rs
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/unit/metrics.rs
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/registry.rs
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/unit/routes.rs
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/unit/writer.rs
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/lib.rs
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/main.rs
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/integration/api_protocol.rs
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running unittests src/lib.rs
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.01s
+     Running unittests src/main.rs
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/integration/auth.rs
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.01s
+     Running tests/integration/events.rs
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/integration/health.rs
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/integration/monitor.rs
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/integration/static_ui.rs
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/health.rs
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+The README token-generation command and the format check, run against the real `filesquid-server` binary (port 8095):
+
+```text
+$ export FILESQUID_ADMIN_TOKEN=$(openssl rand -hex 32)
+length: 64
+"filesquid-server listening"
+$ export FILESQUID_ADMIN_TOKEN=weak-secret-value
+"cannot start API authorisation or the activity journal"
+"FILESQUID_ADMIN_TOKEN must be 64 hexadecimal characters (256 bits), like a generated token; generate one with `openssl rand -hex 32`"
 ```
 
 ## Work left to other tasks

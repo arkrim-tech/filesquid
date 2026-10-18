@@ -34,9 +34,26 @@ pub fn load_or_create_token(
     configured: Option<&str>,
 ) -> Result<(String, bool), String> {
     if let Some(token) = configured.map(str::trim).filter(|t| !t.is_empty()) {
+        if !is_well_formed(token) {
+            return Err(format!(
+                "FILESQUID_ADMIN_TOKEN must be {TOKEN_FORMAT}; {GENERATE_HINT}"
+            ));
+        }
         return Ok((token.to_string(), false));
     }
     stored_or_new_token(data_dir)
+}
+
+/// The required token format, as stated in errors (never with the value).
+const TOKEN_FORMAT: &str = "64 hexadecimal characters (256 bits), like a generated token";
+
+/// How to make a well-formed token, as stated in errors.
+const GENERATE_HINT: &str = "generate one with `openssl rand -hex 32`";
+
+/// True when `token` has the format of a generated token: exactly 64 hexadecimal characters
+/// (256 bits). Configured and stored tokens must match it, so a weak secret is refused.
+pub fn is_well_formed(token: &str) -> bool {
+    token.len() == 64 && token.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 /// Platforms without the Unix file checks never read or write a token file.
@@ -57,7 +74,7 @@ use unix::*;
 /// The Unix token-file implementation.
 #[cfg(unix)]
 mod unix {
-    use super::TOKEN_FILE;
+    use super::{is_well_formed, GENERATE_HINT, TOKEN_FILE, TOKEN_FORMAT};
     use filesquid_api::auth::generate_token;
     use std::fs::File;
     use std::io::{Read, Write};
@@ -189,11 +206,17 @@ mod unix {
         file.read_to_string(&mut text)
             .map_err(|e| format!("read {}: {e}", path.display()))?;
         let token = text.trim();
-        Ok(if token.is_empty() {
-            Stored::Blank
-        } else {
-            Stored::Token(token.to_string())
-        })
+        if token.is_empty() {
+            return Ok(Stored::Blank);
+        }
+        if !is_well_formed(token) {
+            return Err(format!(
+                "{} must hold {TOKEN_FORMAT}; delete it and restart to generate a new token, \
+                 or {GENERATE_HINT}",
+                path.display()
+            ));
+        }
+        Ok(Stored::Token(token.to_string()))
     }
 
     /// Open `path` for reading without following a symbolic link (`ELOOP`) and without
@@ -280,8 +303,18 @@ mod non_unix_tests {
         let error = load_or_create_token(&dir, None).expect_err("refused");
         assert!(error.contains("FILESQUID_ADMIN_TOKEN"), "{error}");
         assert!(!dir.join(TOKEN_FILE).exists(), "no token file is written");
-        let (token, created) = load_or_create_token(&dir, Some("t")).expect("configured");
-        assert_eq!((token.as_str(), created), ("t", false));
+        let (token, created) = load_or_create_token(
+            &dir,
+            Some("5ca1ab1e5ca1ab1e5ca1ab1e5ca1ab1e5ca1ab1e5ca1ab1e5ca1ab1e5ca1ab1e"),
+        )
+        .expect("configured");
+        assert_eq!(
+            (token.as_str(), created),
+            (
+                "5ca1ab1e5ca1ab1e5ca1ab1e5ca1ab1e5ca1ab1e5ca1ab1e5ca1ab1e5ca1ab1e",
+                false
+            )
+        );
     }
 }
 

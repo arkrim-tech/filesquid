@@ -36,8 +36,8 @@ pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 ///
 /// The host generates one at every launch, keeps it in memory only, installs it with
 /// [`crate::auth::Authoriser::desktop_owner`] and hands it only to its own webviews. A token
-/// from an earlier launch is worthless. `Debug` output never shows the secret.
-#[derive(Clone)]
+/// from an earlier launch is worthless. `Debug` output never shows the secret. It is not
+/// `Clone`, so the secret has a single owner.
 pub struct LaunchToken {
     secret: String,
 }

@@ -3,7 +3,9 @@
 
 use filesquid_api::auth::LaunchToken;
 use filesquid_api::ApiState;
-use filesquid_desktop_lib::api_protocol::{handle, launch_token_script, APP_ORIGINS, SCHEME};
+use filesquid_desktop_lib::api_protocol::{
+    app_origins, handle, launch_token_script, DEV_ORIGINS, RELEASE_ORIGINS, SCHEME,
+};
 use filesquid_desktop_lib::install_launch_token;
 
 /// API state with a freshly generated per-launch token installed, as the desktop host does.
@@ -191,14 +193,44 @@ async fn foreign_origins_get_no_preflight_grant() {
 }
 
 #[test]
+fn release_builds_trust_only_the_apps_own_scheme_origins() {
+    assert_eq!(
+        RELEASE_ORIGINS,
+        [
+            "tauri://localhost",
+            "http://tauri.localhost",
+            "https://tauri.localhost"
+        ]
+    );
+    for origin in DEV_ORIGINS {
+        assert!(!RELEASE_ORIGINS.contains(origin), "{origin}");
+        assert!(origin.starts_with("http://127.0.0.1:"), "{origin}");
+    }
+}
+
+#[test]
+fn dev_server_origins_are_trusted_only_in_debug_builds() {
+    let trusted = app_origins();
+    for origin in RELEASE_ORIGINS {
+        assert!(trusted.contains(origin), "{origin}");
+    }
+    for origin in DEV_ORIGINS {
+        assert_eq!(trusted.contains(origin), cfg!(debug_assertions), "{origin}");
+    }
+}
+
+#[test]
 fn the_init_script_hands_the_token_only_to_app_origins() {
     let token = LaunchToken::generate().expect("random token");
     let script = launch_token_script(&token);
     assert!(script.contains(token.secret()));
     assert!(script.contains("__FILESQUID_LAUNCH_TOKEN__"));
     assert!(script.contains("window.location.origin"));
-    for origin in APP_ORIGINS {
+    for origin in app_origins() {
         assert!(script.contains(origin), "{origin}");
+    }
+    for origin in DEV_ORIGINS {
+        assert_eq!(script.contains(origin), cfg!(debug_assertions), "{origin}");
     }
     assert_eq!(
         script.matches(token.secret()).count(),

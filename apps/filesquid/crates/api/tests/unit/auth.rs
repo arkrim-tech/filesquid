@@ -10,8 +10,8 @@ use axum::http::{header, HeaderMap, HeaderValue, Method, Request};
 use axum::routing::get;
 use axum::Router;
 use filesquid_api::auth::{
-    self, generate_token, presented_token, Action, Authenticator, Authoriser, DenialReason, Guard,
-    HostPolicy, LaunchToken, Policy, Principal, Resource, TokenAuthenticator,
+    self, generate_token, presented_credential, Action, Authenticator, Authoriser, Credential,
+    DenialReason, Guard, HostPolicy, LaunchToken, Policy, Principal, Resource, TokenAuthenticator,
     BEARER_SUBPROTOCOL_PREFIX, EVENTS_SUBPROTOCOL,
 };
 use filesquid_api::journal::{JournalQuery, JournalStore, Level, MemoryJournal, Outcome};
@@ -381,19 +381,81 @@ fn headers(pairs: &[(&'static str, &str)]) -> HeaderMap {
 fn the_bearer_scheme_is_read_case_insensitively() {
     for value in ["Bearer abc", "bearer abc", "BEARER abc"] {
         let map = headers(&[("authorization", value)]);
-        assert_eq!(presented_token(&map), Some("abc"), "{value}");
+        assert_eq!(
+            presented_credential(&map),
+            Credential::Bearer("abc"),
+            "{value}"
+        );
     }
-    assert_eq!(
-        presented_token(&headers(&[("authorization", "Basic abc")])),
-        None
+    assert_eq!(presented_credential(&HeaderMap::new()), Credential::Absent);
+}
+
+#[test]
+fn a_present_but_unusable_authorization_header_is_not_a_missing_one() {
+    for value in ["Basic abc", "Bearer", "Token abc", "abc"] {
+        let map = headers(&[("authorization", value)]);
+        assert_eq!(presented_credential(&map), Credential::Unusable, "{value}");
+    }
+}
+
+#[test]
+fn an_unusable_header_never_falls_back_to_the_subprotocol() {
+    let map = headers(&[
+        ("authorization", "Basic abc"),
+        ("upgrade", "websocket"),
+        (
+            "sec-websocket-protocol",
+            "filesquid.events.v1, filesquid.bearer.abc",
+        ),
+    ]);
+    assert_eq!(presented_credential(&map), Credential::Unusable);
+}
+
+#[tokio::test]
+async fn a_non_bearer_authorization_header_is_refused_as_invalid_credentials() {
+    let (state, token) = owner_state();
+    for value in [format!("Basic {}", token.secret()), "Bearer".to_string()] {
+        let request = Request::get("/api/v1/health")
+            .header(header::AUTHORIZATION, value.as_str())
+            .body(Body::empty())
+            .expect("request");
+        let response = router(state.clone())
+            .oneshot(request)
+            .await
+            .expect("answer");
+        assert_eq!(response.status().as_u16(), 403, "{value}");
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let json: Value = serde_json::from_slice(&body).expect("json");
+        assert_denial(&json, "forbidden", "invalid_credentials", &value);
+    }
+}
+
+#[tokio::test]
+async fn an_unusable_header_on_a_websocket_upgrade_is_refused_even_with_a_valid_subprotocol() {
+    let (state, token) = owner_state();
+    let offered = format!(
+        "{EVENTS_SUBPROTOCOL}, {BEARER_SUBPROTOCOL_PREFIX}{}",
+        token.secret()
     );
-    assert_eq!(presented_token(&HeaderMap::new()), None);
+    let upgrade = [
+        ("authorization", "Basic abc"),
+        ("upgrade", "websocket"),
+        ("sec-websocket-protocol", offered.as_str()),
+    ];
+    let (status, json) = host_call(host_router(&state), &upgrade).await;
+    assert_eq!(status, 403);
+    assert_denial(&json, "forbidden", "invalid_credentials", "unusable header");
 }
 
 #[test]
 fn an_empty_bearer_token_is_presented_and_then_rejected() {
     let map = headers(&[("authorization", "Bearer ")]);
-    assert_eq!(presented_token(&map), Some(""));
+    assert_eq!(presented_credential(&map), Credential::Bearer(""));
     let authenticator = TokenAuthenticator::new("abc", Principal::Owner);
     assert!(authenticator.authenticate("").is_none());
 }
@@ -405,7 +467,7 @@ fn the_subprotocol_carrier_is_read_from_any_offered_entry() {
         ("sec-websocket-protocol", "filesquid.events.v1"),
         ("sec-websocket-protocol", "filesquid.bearer.abc"),
     ]);
-    assert_eq!(presented_token(&map), Some("abc"));
+    assert_eq!(presented_credential(&map), Credential::Bearer("abc"));
 }
 
 #[test]
@@ -414,12 +476,12 @@ fn the_subprotocol_token_counts_only_next_to_the_events_subprotocol() {
         ("upgrade", "websocket"),
         ("sec-websocket-protocol", "filesquid.bearer.abc"),
     ]);
-    assert_eq!(presented_token(&alone), None);
+    assert_eq!(presented_credential(&alone), Credential::Absent);
     let other = headers(&[
         ("upgrade", "websocket"),
         ("sec-websocket-protocol", "graphql-ws, filesquid.bearer.abc"),
     ]);
-    assert_eq!(presented_token(&other), None);
+    assert_eq!(presented_credential(&other), Credential::Absent);
 }
 
 #[test]

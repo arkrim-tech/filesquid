@@ -6,8 +6,10 @@
 //!
 //! Every request MUST carry the per-launch token as `Authorization: Bearer <token>`; the
 //! router refuses anything else (deny-by-default, API-S-004). The host hands the token only
-//! to pages of its own [`APP_ORIGINS`] through [`launch_token_script`], and answers the CORS
-//! preflight those pages send before a request with an `Authorization` header.
+//! to pages of its own origins ([`app_origins`]) through [`launch_token_script`], and answers
+//! the CORS preflight those pages send before a request with an `Authorization` header.
+//! Release builds trust only the app's own scheme origins ([`RELEASE_ORIGINS`]); the Vite
+//! dev-server origins ([`DEV_ORIGINS`]) are trusted in debug builds only.
 
 use axum::body::Body;
 use filesquid_api::admin::NEXT_CURSOR_HEADER;
@@ -25,17 +27,29 @@ use tower::ServiceExt;
 /// Custom URI scheme name registered with Tauri.
 pub const SCHEME: &str = "filesquid";
 
-/// Page origins of the app's own webviews that may call the API cross-origin and receive the
-/// per-launch token. The scheme is only reachable from this app's webviews; the allowlist
-/// keeps other origins (for example a page navigated to by mistake) from reading responses
-/// or learning the token.
-pub const APP_ORIGINS: &[&str] = &[
+/// The app's own page origins (the bundled UI served by Tauri), trusted in every build.
+pub const RELEASE_ORIGINS: &[&str] = &[
     "tauri://localhost",
     "http://tauri.localhost",
     "https://tauri.localhost",
-    "http://127.0.0.1:5173",
-    "http://127.0.0.1:5174",
 ];
+
+/// The Vite dev-server origins of `@filesquid/ui` (5173) and ImageSquid (5174). Trusted in
+/// debug builds only, so a release webview never hands the token to whatever local server
+/// listens on these ports.
+pub const DEV_ORIGINS: &[&str] = &["http://127.0.0.1:5173", "http://127.0.0.1:5174"];
+
+/// Page origins of the app's own webviews that may call the API cross-origin and receive the
+/// per-launch token: [`RELEASE_ORIGINS`], plus [`DEV_ORIGINS`] in debug builds. The scheme is
+/// only reachable from this app's webviews; the allowlist keeps other origins (for example a
+/// page navigated to by mistake) from reading responses or learning the token.
+pub fn app_origins() -> Vec<&'static str> {
+    let mut origins = RELEASE_ORIGINS.to_vec();
+    if cfg!(debug_assertions) {
+        origins.extend_from_slice(DEV_ORIGINS);
+    }
+    origins
+}
 
 /// Request headers an app page may send cross-origin (answered in the CORS preflight).
 const ALLOWED_HEADERS: &str = "authorization, content-type";
@@ -94,12 +108,12 @@ fn preflight_response() -> Response<Vec<u8>> {
 }
 
 /// JavaScript that defines `window.__FILESQUID_LAUNCH_TOKEN__` (read-only, not enumerable)
-/// in the main frame of pages whose origin is one of [`APP_ORIGINS`], and does nothing
+/// in the main frame of pages whose origin is one of [`app_origins`], and does nothing
 /// anywhere else. The host registers it as a webview initialization script, so the token
 /// reaches only the app's own pages. Pure: builds text only. The origins are fixed ASCII
 /// literals and the token is hex, so neither needs escaping inside the JavaScript strings.
 pub fn launch_token_script(token: &LaunchToken) -> String {
-    let quoted: Vec<String> = APP_ORIGINS.iter().map(|o| format!("\"{o}\"")).collect();
+    let quoted: Vec<String> = app_origins().iter().map(|o| format!("\"{o}\"")).collect();
     let origins = quoted.join(", ");
     let secret = token.secret();
     format!(
@@ -138,11 +152,11 @@ async fn route(state: ApiState, request: Request<Vec<u8>>) -> Response<Vec<u8>> 
     }
 }
 
-/// True when `origin` is one of [`APP_ORIGINS`].
+/// True when `origin` is one of [`app_origins`].
 fn is_app_origin(origin: &HeaderValue) -> bool {
     origin
         .to_str()
-        .map(|text| APP_ORIGINS.contains(&text))
+        .map(|text| app_origins().contains(&text))
         .unwrap_or(false)
 }
 

@@ -17,7 +17,7 @@ use tokio_tungstenite::tungstenite::http::Request as WsRequest;
 use tower::ServiceExt;
 
 /// Administrator token configured for the test server.
-const TOKEN: &str = "auth-test-token";
+const TOKEN: &str = "5ca1ab1e5ca1ab1e5ca1ab1e5ca1ab1e5ca1ab1e5ca1ab1e5ca1ab1e5ca1ab1e";
 
 /// A fresh, empty data directory for one test.
 fn data_dir(name: &str) -> PathBuf {
@@ -242,11 +242,18 @@ fn a_group_or_world_readable_token_file_is_refused() {
         let dir = data_dir(&format!("mode-{mode:o}"));
         std::fs::create_dir_all(&dir).expect("dir");
         let path = dir.join("admin-token");
-        std::fs::write(&path, "stored-token").expect("token file");
+        std::fs::write(
+            &path,
+            "0ddba11c0ddba11c0ddba11c0ddba11c0ddba11c0ddba11c0ddba11c0ddba11c",
+        )
+        .expect("token file");
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).expect("chmod");
         let error = load_or_create_token(&dir, None).expect_err("refused");
         assert!(error.contains("chmod 600"), "{error}");
-        assert!(!error.contains("stored-token"), "{error}");
+        assert!(
+            !error.contains("0ddba11c0ddba11c0ddba11c0ddba11c0ddba11c0ddba11c0ddba11c0ddba11c"),
+            "{error}"
+        );
         std::fs::remove_dir_all(dir).expect("cleanup");
     }
 }
@@ -258,7 +265,11 @@ fn a_symlinked_token_file_is_refused() {
     let dir = data_dir("symlink");
     std::fs::create_dir_all(&dir).expect("dir");
     let target = dir.join("elsewhere");
-    std::fs::write(&target, "stored-token").expect("target");
+    std::fs::write(
+        &target,
+        "0ddba11c0ddba11c0ddba11c0ddba11c0ddba11c0ddba11c0ddba11c0ddba11c",
+    )
+    .expect("target");
     std::os::unix::fs::symlink(&target, dir.join("admin-token")).expect("symlink");
     let error = load_or_create_token(&dir, None).expect_err("refused");
     assert!(error.contains("symbolic link"), "{error}");
@@ -273,10 +284,20 @@ fn an_owner_only_token_file_is_reused() {
     let dir = data_dir("owner-only");
     std::fs::create_dir_all(&dir).expect("dir");
     let path = dir.join("admin-token");
-    std::fs::write(&path, "stored-token\n").expect("token file");
+    std::fs::write(
+        &path,
+        "0ddba11c0ddba11c0ddba11c0ddba11c0ddba11c0ddba11c0ddba11c0ddba11c\n",
+    )
+    .expect("token file");
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("chmod");
     let (token, created) = load_or_create_token(&dir, None).expect("reused");
-    assert_eq!((token.as_str(), created), ("stored-token", false));
+    assert_eq!(
+        (token.as_str(), created),
+        (
+            "0ddba11c0ddba11c0ddba11c0ddba11c0ddba11c0ddba11c0ddba11c0ddba11c",
+            false
+        )
+    );
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
 
@@ -364,9 +385,58 @@ async fn every_start_journals_the_administrator_token_issue() {
         for entry in &page.entries {
             assert_eq!(entry.target_ids, vec!["administrator".to_string()]);
         }
+        let stored = std::fs::read_to_string(dir.join("admin-token")).expect("token file");
+        let journaled = serde_json::to_string(&page.entries).expect("json");
+        assert!(
+            !journaled.contains(stored.trim()),
+            "the administrator token is never journaled"
+        );
         host.stop();
         drop(host);
         drop(state);
     }
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+#[test]
+fn a_configured_token_must_have_the_generated_format() {
+    for weak in [
+        "weak-secret-value",
+        "abc",
+        &"a".repeat(63),
+        &"a".repeat(65),
+        &"g".repeat(64),
+    ] {
+        let config = ServerConfig {
+            data_dir: data_dir("weak"),
+            admin_token: Some(weak.to_string()),
+            ..ServerConfig::default()
+        };
+        let error = install_admin_authoriser(&config, &ApiState::new()).expect_err("refused");
+        assert!(error.contains("FILESQUID_ADMIN_TOKEN"), "{error}");
+        assert!(error.contains("64 hexadecimal"), "{error}");
+        assert!(!error.contains(weak), "the value is never echoed: {error}");
+    }
+    let strong = ServerConfig {
+        data_dir: data_dir("strong"),
+        admin_token: Some(TOKEN.to_ascii_uppercase()),
+        ..ServerConfig::default()
+    };
+    assert!(install_admin_authoriser(&strong, &ApiState::new()).is_ok());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_stored_token_that_lacks_the_generated_format_is_refused() {
+    use filesquid_server::admin_token::load_or_create_token;
+    use std::os::unix::fs::PermissionsExt;
+    let dir = data_dir("weak-stored");
+    std::fs::create_dir_all(&dir).expect("dir");
+    let path = dir.join("admin-token");
+    std::fs::write(&path, "hand-written").expect("token file");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+    let error = load_or_create_token(&dir, None).expect_err("refused");
+    assert!(error.contains("64 hexadecimal"), "{error}");
+    assert!(!error.contains("hand-written"), "{error}");
     std::fs::remove_dir_all(dir).expect("cleanup");
 }

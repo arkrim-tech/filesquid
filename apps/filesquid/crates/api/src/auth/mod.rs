@@ -1,5 +1,6 @@
-//! Deny-by-default authentication and authorisation for every API call (API-S-004,
-//! [ADR 030](../../../../../resources/architecture/030-filesquid-api-and-transports.md)
+//! Deny-by-default authentication and authorisation for every API call except the public
+//! liveness probe (API-S-004, API-S-015,
+//! [ADR 030](../../../../../../resources/architecture/030-filesquid-api-and-transports.md)
 //! Decision 5).
 //!
 //! Every route the [`crate::router`] serves is wrapped in [`require`], except the public
@@ -9,10 +10,12 @@
 //! Hosts guard the routes they serve themselves with the same [`require`], which never
 //! bypasses authentication.
 //!
-//! - **Deny by default.** A host that installed no [`Authoriser`] refuses every call. An
+//! - **Deny by default.** A host that installed no [`Authoriser`] refuses every guarded call. An
 //!   authoriser grants only what its [`Policy`] explicitly permits.
-//! - **Credentials.** `Authorization: Bearer <token>`, or on a WebSocket upgrade the
-//!   `filesquid.bearer.<token>` subprotocol ([`presented_token`]).
+//! - **Credentials.** `Authorization: Bearer <token>` on any request, WebSocket upgrades
+//!   included; browsers, which cannot set headers on a WebSocket, offer the
+//!   `filesquid.bearer.<token>` subprotocol instead ([`presented_credential`]). A present but
+//!   unusable `Authorization` header is `invalid_credentials`.
 //! - **Desktop.** One local owner holding the per-launch [`LaunchToken`]
 //!   ([`Authoriser::desktop_owner`]).
 //! - **Server.** The administrator token ([`Authoriser::server_administrator`]) until accounts,
@@ -21,8 +24,9 @@
 //! - **Denials** are typed [`ApiError`]s with a [`DenialReason`]: `missing_credentials` (401
 //!   `unauthorized`), `invalid_credentials` or `not_permitted` (403 `forbidden`). None is
 //!   retryable, and none repeats the presented credential.
-//! - **Journal.** Every refusal is journaled as [`DENIED_OPERATION`]; the desktop journals
-//!   [`TOKEN_ISSUED_OPERATION`] at launch. Neither record can carry a secret.
+//! - **Journal.** Every refusal is journaled as [`DENIED_OPERATION`]; each host journals
+//!   [`TOKEN_ISSUED_OPERATION`] at startup ([`record_token_issue`]). Neither record can carry
+//!   a secret.
 
 mod credentials;
 mod layer;
@@ -30,7 +34,9 @@ mod policy;
 mod token;
 
 pub use crate::error::{ApiError, DenialReason};
-pub use credentials::{presented_token, BEARER_SUBPROTOCOL_PREFIX, EVENTS_SUBPROTOCOL};
+pub use credentials::{
+    presented_credential, Credential, BEARER_SUBPROTOCOL_PREFIX, EVENTS_SUBPROTOCOL,
+};
 pub use layer::{
     authorise_call, check_caller, denial_entry, record_token_issue, require, token_issued_entry,
     Guard, ANONYMOUS_ACTOR, DENIED_OPERATION, NO_ROUTE_TARGET, TOKEN_ISSUED_OPERATION,
@@ -85,10 +91,14 @@ impl Authoriser {
         Self::new(Arc::new(authenticator), Arc::new(HostPolicy))
     }
 
-    /// Who presented `token`: a missing token is `missing_credentials`, one no authenticator
-    /// accepts is `invalid_credentials`. Pure; no I/O.
-    pub fn authenticate(&self, token: Option<&str>) -> Result<Principal, DenialReason> {
-        let token = token.ok_or(DenialReason::MissingCredentials)?;
+    /// Who presented `credential`: none is `missing_credentials`; an unusable header, or a
+    /// token no authenticator accepts, is `invalid_credentials`. Pure; no I/O.
+    pub fn authenticate(&self, credential: Credential<'_>) -> Result<Principal, DenialReason> {
+        let token = match credential {
+            Credential::Absent => return Err(DenialReason::MissingCredentials),
+            Credential::Unusable => return Err(DenialReason::InvalidCredentials),
+            Credential::Bearer(token) => token,
+        };
         self.authenticator
             .authenticate(token)
             .ok_or(DenialReason::InvalidCredentials)

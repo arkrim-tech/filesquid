@@ -69,7 +69,7 @@ Open `http://127.0.0.1:8083`. Without `FILESQUID_UI_DIR` the server serves the A
 
 Every API route except the liveness probe, plus the WebSocket event channel and `/metrics`, is **deny-by-default**: a call without the token answers `401 unauthorized`, and one with a wrong token `403 forbidden`, with a typed error body. HTTP requests, `/metrics` included, send the token as `Authorization: Bearer <token>`. The WebSocket event channel accepts that header too, but a browser cannot set headers on a WebSocket, so it offers the subprotocols `filesquid.events.v1` and `filesquid.bearer.<token>` instead. The liveness probe `GET /api/v1/health/live` is public for process supervisors and load balancers and answers only `{"status":"up"}`; the static UI is public too.
 
-Until server accounts arrive, the token is the administrator token: the value of `FILESQUID_ADMIN_TOKEN`, or, on Linux and macOS only, the token generated at first start into `admin-token` in the data directory (`FILESQUID_DATA_DIR`, default `filesquid-data`). On Windows the server stores no token file and refuses to start until `FILESQUID_ADMIN_TOKEN` is set. On Linux and macOS the server refuses to start when the token file is unsafe, and names the case:
+Until server accounts arrive, the token is the administrator token: the value of `FILESQUID_ADMIN_TOKEN` (it must be 64 hexadecimal characters, 256 bits, like a generated token; the server refuses anything else and never prints the value), or, on Linux and macOS only, the token generated at first start into `admin-token` in the data directory (`FILESQUID_DATA_DIR`, default `filesquid-data`). On Windows the server stores no token file and refuses to start until `FILESQUID_ADMIN_TOKEN` is set. On Linux and macOS the server refuses to start when the token file is unsafe, and names the case:
 
 - **Readable by group or others:** `chmod 600 "$FILESQUID_DATA_DIR/admin-token"`, then restart.
 - **Owned by another user:** `chown <server user> "$FILESQUID_DATA_DIR/admin-token"` (as an administrator), or delete the file and restart to generate a new token.
@@ -104,7 +104,13 @@ curl.exe http://127.0.0.1:8083/api/v1/health/live
 curl.exe -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8083/api/v1/health
 ```
 
-The same `FILESQUID_ADMIN_TOKEN` flow works on Linux and macOS, where it takes precedence over the token file. The desktop host needs no token from you: it generates a new per-launch token at every start and gives it only to its own pages.
+The same `FILESQUID_ADMIN_TOKEN` flow works on Linux and macOS, where it takes precedence over the token file. Generate a well-formed token there with:
+
+```sh
+export FILESQUID_ADMIN_TOKEN=$(openssl rand -hex 32)
+```
+
+The desktop host needs no token from you: it generates a new per-launch token at every start and gives it only to its own pages.
 
 **UI development** with hot reload: start the server as above, then in another terminal:
 

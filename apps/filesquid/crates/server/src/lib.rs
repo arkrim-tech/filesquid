@@ -8,10 +8,12 @@
 //! This host is for servers that the owner or their organisation operates: its operator
 //! can read the files it stores. It MUST NOT be used as the ciphertext-only hosted service.
 //!
-//! Every API route, the event channel and `/metrics` are authorised deny-by-default by the
+//! Every API route except the public liveness probe (`GET /api/v1/health/live`), plus the
+//! event channel and `/metrics`, is authorised deny-by-default by the
 //! [`filesquid_api::auth`] layer with the administrator token
 //! ([`install_admin_authoriser`]) until server accounts arrive (API-F1.9). The static UI is
-//! public: it is a client-rendered build with no private content (ADR 031).
+//! public: it holds no private content, because private content is only ever served through
+//! the authorised API (ADR 032, hosting and privacy model).
 
 pub mod admin_token;
 
@@ -45,7 +47,9 @@ pub struct ServerConfig {
     pub ui_dir: Option<PathBuf>,
     /// Directory for the operational store and the admin token (`FILESQUID_DATA_DIR`).
     pub data_dir: PathBuf,
-    /// Administrator token required by every API call (`FILESQUID_ADMIN_TOKEN`); generated into the data dir when absent.
+    /// Administrator token required by every API call except the public liveness probe
+    /// (`FILESQUID_ADMIN_TOKEN`, 64 hexadecimal characters). When absent, Unix servers
+    /// generate one into the data dir; other platforms refuse to start.
     pub admin_token: Option<String>,
 }
 
@@ -101,7 +105,7 @@ impl ServerConfig {
 
 /// Resolve the administrator token (configured, stored, or generated into
 /// `<data_dir>/admin-token`) and install the administrator authoriser in `state`. Until this
-/// runs, every call is refused. Returns whether a new token was issued (generated) by this
+/// runs, every guarded call is refused. Returns whether a new token was issued (generated) by this
 /// call. Performs filesystem I/O. The token itself is never logged.
 pub fn install_admin_authoriser(config: &ServerConfig, state: &ApiState) -> Result<bool, String> {
     let configured = config.admin_token.as_deref();

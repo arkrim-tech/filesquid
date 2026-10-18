@@ -59,7 +59,7 @@ pub struct ApiState {
     pub events: EventBus,
     /// The host's monitor, installed once at startup (admin routes answer 503 until then).
     monitor: Arc<OnceLock<monitor::Monitor>>,
-    /// The host's authoriser, installed once at startup (every call is refused until then).
+    /// The host's authoriser, installed once at startup (every guarded call is refused until then).
     authoriser: Arc<OnceLock<auth::Authoriser>>,
 }
 
@@ -73,7 +73,8 @@ impl std::fmt::Debug for ApiState {
 }
 
 impl ApiState {
-    /// Create state with a fresh event bus, no monitor and no authoriser (deny every call).
+    /// Create state with a fresh event bus, no monitor and no authoriser (every guarded call is refused; the public liveness
+    /// probe still answers).
     pub fn new() -> Self {
         Self {
             events: EventBus::new(),
@@ -88,7 +89,7 @@ impl ApiState {
         self.authoriser.set(authoriser).is_ok()
     }
 
-    /// The installed authoriser, or one that refuses every call when none is installed.
+    /// The installed authoriser, or one that refuses every guarded call when none is installed.
     pub fn authoriser(&self) -> auth::Authoriser {
         self.authoriser
             .get()

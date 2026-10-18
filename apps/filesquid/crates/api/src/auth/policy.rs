@@ -51,7 +51,7 @@ pub enum Action {
 }
 
 impl Action {
-    /// Every action, in contract order.
+    /// Every action, in declaration order.
     pub const ALL: [Action; 5] = [
         Action::ReadHealth,
         Action::ReadContract,
