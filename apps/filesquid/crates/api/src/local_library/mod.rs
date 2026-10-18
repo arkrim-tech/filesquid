@@ -1,0 +1,53 @@
+//! Local library operations on an owner-chosen OCFL storage root (Task CL-1.1; F-001,
+//! F-042, API-S-023).
+//!
+//! The host opens the folder the owner chose and injects it as a `filesquid-ocfl`
+//! [`StorageBackend`](filesquid_ocfl::storage::StorageBackend); this module decides what each
+//! operation means and does no storage I/O of its own ([API-S-006](../../resources/srs.md)).
+//! Every host runs the same meaning through [`LocalLibraryService`]:
+//!
+//! - **Create** a library's storage root in an empty folder: only the OCFL 1.1 storage-root
+//!   declaration is written, never over an existing file. No account or connection is needed.
+//! - **Open** a storage root through the engine's guards (Git metadata, links, declaration).
+//! - **Copy a completed snapshot**: the committed files of every object, each written only
+//!   where nothing exists, into an empty destination, which is then validated, so the copy
+//!   is a checked OCFL root that ordinary tools can read. A head being published refuses the
+//!   copy until it completes.
+//! - **Rebuild from files**: every object's committed head and validator findings, from the
+//!   OCFL files alone, so a host can rebuild its catalog without its database. External
+//!   edits are reported, never adopted or repaired.
+//! - **List repair candidates**: objects whose committed head has no version inventory
+//!   (W010), found by checking each head for that file.
+//! - **Repair a version inventory**: the one command that adds a file to an existing version
+//!   directory, for named objects, by the owner, after recorded consent, journaled per object
+//!   in the same transaction as its receipt (API-S-023, OCFL-S-020).
+//!
+//! Open, copy, rebuild and the candidate query never write to the source root, and none of
+//! them repairs (F-001: direct inspection and copy MUST NOT authorize in-place edits of OCFL
+//! inventories). Answers and journal entries carry opaque IDs and codes only: no filesystem
+//! path, storage key, name or content (API-S-005).
+
+/// `tracing` target of this module's stdout-only diagnostics, outside `filesquid::activity`
+/// so the journal layer does not record them; each outcome reaches the journal once, through
+/// the service.
+const LOG_TARGET: &str = "filesquid::local_library";
+
+mod error;
+mod ledger;
+mod rebuild;
+mod repair;
+mod root;
+mod service;
+mod snapshot;
+
+pub use error::LocalLibraryError;
+pub use ledger::{LedgerError, MemoryRepairLedger, RecordedRepair, RepairLedger, RepairRecord};
+pub use rebuild::{RebuildReport, RebuiltObject, UnreadableObject};
+pub use repair::{
+    ObjectRepair, RepairAnswer, RepairCandidate, RepairCandidates, RepairConsent, RepairRequest,
+    RepairResult, CONSENT_STATEMENT, CONSENT_STATEMENT_ID, MAX_CANDIDATES, MAX_REPAIR_OBJECTS,
+    REPAIR_OPERATION,
+};
+pub use root::RootSummary;
+pub use service::LocalLibraryService;
+pub use snapshot::{CopyReport, ObjectFindings};
