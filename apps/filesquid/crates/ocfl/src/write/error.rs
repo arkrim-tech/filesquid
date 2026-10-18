@@ -1,4 +1,5 @@
-//! Errors of the write path: reservations and commits.
+//! Errors of the write path: reservations, commits and the version-inventory
+//! repair.
 
 use thiserror::Error;
 
@@ -6,6 +7,7 @@ use crate::error::OcflError;
 use crate::inventory::FormatError;
 use crate::read::ReadError;
 use crate::storage::StorageError;
+use crate::validate::Finding;
 
 /// Why a version could not be reserved, or why a reservation no longer
 /// authorises writes.
@@ -102,10 +104,13 @@ pub enum CommitError {
         /// The storage key.
         key: String,
     },
-    /// The committed head has no version inventory (OCFL allows that, W010).
+    /// The committed head has no version inventory (OCFL allows that, W010),
+    /// or its version inventory has no sidecar (an interrupted repair).
     /// The writer refuses such a base: a crash between its root inventory
     /// and root sidecar could not be read back, because readers find the
-    /// committed version through that version inventory.
+    /// committed version through that version inventory. The consented
+    /// [`ObjectWriter::repair_version_inventory`](super::ObjectWriter::repair_version_inventory)
+    /// lifts the refusal (OCFL-S-020).
     #[error("the committed head has no version inventory at {key}")]
     MissingVersionInventory {
         /// The missing key.
@@ -160,6 +165,106 @@ impl From<FormatError> for CommitError {
         match err {
             FormatError::Invalid { .. } => Self::draft(err.to_string()),
             other => Self::Read(ReadError::Format(other)),
+        }
+    }
+}
+
+/// Why a version-inventory repair (OCFL-S-020) wrote nothing more.
+///
+/// Every refusal is decided before the repair's first write. Only
+/// [`RepairError::Reservation`], [`RepairError::ForeignWrite`] and
+/// [`RepairError::Storage`] can stop a repair between its two writes; the
+/// object then holds the head version inventory without its sidecar, which
+/// leaves the logical state unchanged and is completed by running the repair
+/// again.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum RepairError {
+    /// The object could not be reserved, or the reservation was lost
+    /// before a write (expired, released or reassigned).
+    #[error(transparent)]
+    Reservation(#[from] ReservationError),
+    /// The root sidecar is missing, malformed or does not match the root
+    /// inventory, so the root inventory is not a committed head to copy.
+    #[error("the root sidecar {key} does not match the root inventory")]
+    RootSidecarMismatch {
+        /// The root sidecar's key.
+        key: String,
+    },
+    /// The root inventory or its sidecar changed between the first read
+    /// and the read under the reservation.
+    #[error("{key} changed while the repair was being reserved")]
+    RootChanged {
+        /// The key that changed.
+        key: String,
+    },
+    /// The validator reports errors other than the missing version sidecar
+    /// of an interrupted repair; content digest errors included.
+    #[error("the object has validation errors: {}", first_codes(errors))]
+    Invalid {
+        /// The errors that refuse the repair.
+        errors: Vec<Finding>,
+    },
+    /// The head version directory is not a head without a version
+    /// inventory, nor an interrupted repair: its version inventory differs
+    /// from the root inventory, its version sidecar differs from the root
+    /// sidecar or has no inventory, or it holds a file the head's inventory
+    /// does not list.
+    #[error("{key} cannot be repaired: {reason}")]
+    NotRepairable {
+        /// The key that refuses the repair.
+        key: String,
+        /// Why.
+        reason: String,
+    },
+    /// The head already holds its version inventory and sidecar, each
+    /// byte-identical to the root files: the object is not W010, or a
+    /// repair already completed.
+    #[error("the head already holds its version inventory at {key}")]
+    NothingToRepair {
+        /// The head version inventory's key.
+        key: String,
+    },
+    /// A file the repair writes appeared during the repair.
+    #[error("{key} was written by another writer during the repair")]
+    ForeignWrite {
+        /// The storage key.
+        key: String,
+    },
+    /// The Git guard refused the object root (OCFL-S-001).
+    #[error(transparent)]
+    Guard(OcflError),
+    /// The object could not be read or validated.
+    #[error(transparent)]
+    Read(ReadError),
+    /// A storage backend failed.
+    #[error(transparent)]
+    Storage(#[from] StorageError),
+}
+
+/// The distinct codes of `errors`, for the message.
+fn first_codes(errors: &[Finding]) -> String {
+    let mut codes: Vec<&str> = errors.iter().map(|f| f.code).collect();
+    codes.dedup();
+    codes.join(", ")
+}
+
+impl From<ReadError> for RepairError {
+    /// Keep a storage failure met while reading as [`RepairError::Storage`].
+    fn from(err: ReadError) -> Self {
+        match err {
+            ReadError::Storage(storage) => Self::Storage(storage),
+            other => Self::Read(other),
+        }
+    }
+}
+
+impl From<OcflError> for RepairError {
+    /// Keep a Git refusal as [`RepairError::Guard`]; a storage failure met
+    /// by the guard is a [`RepairError::Storage`].
+    fn from(err: OcflError) -> Self {
+        match err {
+            OcflError::Storage(storage) => Self::Storage(storage),
+            git => Self::Guard(git),
         }
     }
 }

@@ -7,7 +7,7 @@
 //! (root inventory for `v1` written, sidecar not yet: E058).
 
 use super::error::CommitError;
-use crate::inventory::{Inventory, VersionNum, INVENTORY_FILE, MAX_INVENTORY_BYTES};
+use crate::inventory::{sidecar_name, Inventory, VersionNum, INVENTORY_FILE, MAX_INVENTORY_BYTES};
 use crate::read::committed::{at_inventory, read_committed, Committed};
 use crate::read::small::{key_in, read_small_tagged};
 use crate::read::ReadError;
@@ -108,28 +108,38 @@ async fn uncommitted_first<B: StorageBackend>(
     })
 }
 
-/// Require the committed head's own version inventory. A reader finds the
-/// committed version through it while a new root inventory is not yet
-/// committed by its sidecar, so without it a crash mid-publication would
-/// leave the object unreadable (E060).
+/// Require the committed head's own version inventory and its sidecar. A
+/// reader finds the committed version through that inventory while a new
+/// root inventory is not yet committed by its sidecar, so without it a
+/// crash mid-publication would leave the object unreadable (E060). A head
+/// whose version inventory has no sidecar (an interrupted version-inventory
+/// repair, OCFL-S-020) is refused too, so the repair is completed before
+/// the head becomes an older version.
 ///
 /// # Errors
 ///
-/// [`CommitError::MissingVersionInventory`] when it is absent, or a backend
-/// error.
+/// [`CommitError::MissingVersionInventory`] naming the first missing file,
+/// or a backend error.
 pub(crate) async fn require_head_inventory<B: StorageBackend>(
     storage: &B,
     root: &str,
     base: &Base,
 ) -> Result<(), CommitError> {
-    let Some(head) = base.head() else {
+    let Some(inventory) = base.inventory() else {
         return Ok(());
     };
-    let key = key_in(root, &format!("{head}/{INVENTORY_FILE}"))?;
-    if storage.exists(&key).await? {
-        return Ok(());
+    let head = &inventory.head;
+    let names = [
+        INVENTORY_FILE.to_string(),
+        sidecar_name(inventory.digest_algorithm),
+    ];
+    for name in names {
+        let key = key_in(root, &format!("{head}/{name}"))?;
+        if !storage.exists(&key).await? {
+            return Err(CommitError::MissingVersionInventory {
+                key: key.to_string(),
+            });
+        }
     }
-    Err(CommitError::MissingVersionInventory {
-        key: key.to_string(),
-    })
+    Ok(())
 }

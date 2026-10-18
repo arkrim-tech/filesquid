@@ -58,7 +58,9 @@
 //!   ([`VersionReservations`], [`LeaseStore`]): content, version inventory
 //!   and sidecar, then the root inventory and its sidecar last. An
 //!   incomplete `vN` stays unpublished for readers and is reconciled by the
-//!   next commit of that version.
+//!   next commit of that version. A committed head without its own version
+//!   inventory (W010) is refused as a base until the caller runs the
+//!   consented [`ObjectWriter::repair_version_inventory`] (OCFL-S-020).
 //!
 //! Opaque bytes (OCFL-S-021;
 //! [ADR 010](../../../resources/architecture/010-ocfl-1-1-dual-profile.md)):
@@ -100,5 +102,6 @@ pub use namaste::{Declaration, SpecVersion};
 pub use read::{LogicalFile, LogicalState, Object, ReadError, StorageRoot};
 pub use validate::{validate_object, Finding, ValidationReport};
 pub use write::{
-    CommitError, CommitReceipt, LeaseStore, ObjectWriter, VersionDraft, VersionReservations,
+    CommitError, CommitReceipt, LeaseStore, ObjectWriter, RepairError, RepairReceipt, VersionDraft,
+    VersionReservations,
 };
