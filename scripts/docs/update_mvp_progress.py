@@ -14,7 +14,12 @@ Purpose:
 
     The result is drawn as `resources/assets/mvp-progress.svg`, one segment per
     global task with a divider line between tasks, and summarised
-    between the `mvp-progress` markers at the top of the checklist.
+    between the `mvp-progress` markers at the top of the checklist. Under the
+    summary the block lists the tasks In progress and the next five module
+    tasks Up next (see `mvp_queue.py`). Write mode asks GitHub for the open
+    pull requests with `gh api`; `--check` never does: it reads the PR-derived
+    IDs and the timestamp back from the block, so it does not go stale when a
+    pull request opens or closes or when time passes.
 
 Usage:
     python3 scripts/docs/update_mvp_progress.py          # rewrite both files
@@ -22,17 +27,28 @@ Usage:
 
 Returns:
     Exit code 0 when the files were written or are current, 1 when `--check`
-    finds them stale or a task has no estimate. Problems are printed one per line.
+    finds them stale or a task has no estimate. Problems are printed one per line;
+    warnings (a failed GitHub call, an unparseable Dependencies line) go to stderr.
 """
+import json
 import pathlib
 import re
+import subprocess
 import sys
 from dataclasses import dataclass
+from datetime import datetime, timezone
+
+import mvp_queue
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 PLAN = ROOT / "resources" / "implementation-plan.md"
 CHECKLIST = ROOT / "resources" / "implementation-plan-checklist.md"
 SVG = ROOT / "resources" / "assets" / "mvp-progress.svg"
+PLAN_FILES = sorted((ROOT / "apps" / "filesquid" / "crates").glob("*/resources/plan.md")) + [
+    ROOT / "apps" / "filesquid" / "ui" / "resources" / "plan.md"
+]
+PULLS_ENDPOINT = "repos/arkrim-tech/filesquid/pulls?state=open&per_page=100"
+GH_TIMEOUT_SECONDS = 30
 START = "<!-- mvp-progress:start -->"
 END = "<!-- mvp-progress:end -->"
 GLOBAL_ROW = re.compile(r"^\d+\. \[([ x])\] \[Task ([^\]]+)\]")
@@ -186,11 +202,12 @@ def render_svg(tasks: list, percent: int) -> str:
 """
 
 
-def render_summary(tasks: list) -> str:
+def render_summary(tasks: list, queue_md: str) -> str:
     """Return the Markdown block that goes between the progress markers.
 
     Args:
         tasks: MVP tasks with hours attached.
+        queue_md: The In progress and Up next Markdown from `mvp_queue.render_queue`.
 
     Returns:
         The marker block, including both markers.
@@ -206,8 +223,14 @@ def render_summary(tasks: list) -> str:
         f"**MVP progress: {percent}%**, about {round(credit)} of {total} estimated hours. "
         f"{done} of {len(tasks)} tasks are done and {started} more are under way. "
         "Each segment of the bar is one task below, as wide as its estimated hours in the implementation "
-        "plan; an open task fills by the share of its module rows that are ticked. Regenerate with "
-        "`python3 scripts/docs/update_mvp_progress.py` after ticking boxes.\n"
+        "plan; an open task fills by the share of its module rows that are ticked. Below the bar, In progress "
+        "lists the open tasks being worked on (global tasks with some but not all module rows ticked, and "
+        "tasks with an open pull request) and Up next lists the next five new module tasks whose listed "
+        "dependencies are done or in progress. Regenerate with "
+        "`python3 scripts/docs/update_mvp_progress.py` after ticking boxes or opening a pull request; "
+        "the check run by `scripts/verify_docs.sh` does not call GitHub and uses the pull requests recorded "
+        "in the block.\n\n"
+        f"{queue_md}\n"
         f"{END}"
     )
 
@@ -229,6 +252,102 @@ def replace_block(checklist: str, block: str) -> str:
     return f"{title}\n\n{block}\n\n{rest}"
 
 
+def fetch_open_prs():
+    """Ask GitHub for the open pull requests with `gh api` (one bounded call).
+
+    Returns:
+        A tuple of (list of pull request dicts, None) on success, or
+        (None, cause string) when `gh` is missing, times out, exits non-zero or
+        returns something that is not a JSON list. Never raises.
+    """
+    command = ["gh", "api", PULLS_ENDPOINT]
+    try:
+        done = subprocess.run(command, capture_output=True, text=True, timeout=GH_TIMEOUT_SECONDS, check=False)
+    except subprocess.TimeoutExpired:
+        return None, f"gh api timed out after {GH_TIMEOUT_SECONDS} seconds"
+    except OSError as error:
+        return None, f"could not run gh: {error}"
+    if done.returncode != 0:
+        return None, f"gh api exited {done.returncode}: {done.stderr.strip()[:200]}"
+    try:
+        prs = json.loads(done.stdout)
+    except json.JSONDecodeError as error:
+        return None, f"gh api returned invalid JSON: {error}"
+    if not isinstance(prs, list):
+        return None, "gh api did not return a list of pull requests"
+    return prs, None
+
+
+def now_utc() -> str:
+    """Return the current time as an RFC 3339 UTC timestamp."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def current_pr_ids(rows: list, recorded: dict, old_stamp, checking: bool):
+    """Return the PR-derived task IDs and the time they are as of.
+
+    Args:
+        rows: Parsed MVP global tasks.
+        recorded: PR IDs recorded in the existing block.
+        old_stamp: Timestamp recorded in the existing block, or None.
+        checking: True in `--check` mode, which never calls GitHub.
+
+    Returns:
+        A tuple of (task ID to PR number, timestamp). On a failed GitHub call
+        the recorded IDs and timestamp are kept and a warning names the cause.
+    """
+    if checking:
+        return recorded, old_stamp or "missing"
+    prs, cause = fetch_open_prs()
+    if prs is None:
+        print(f"warning: keeping the recorded pull requests: {cause}", file=sys.stderr)
+        return recorded, old_stamp or now_utc()
+    unticked = [g.task_id for g in rows if not g.done] + [m.task_id for g in rows for m in g.modules if not m.done]
+    return mvp_queue.match_pr_ids(prs, unticked), now_utc()
+
+
+def load_plans():
+    """Read every module plan and the implementation plan.
+
+    Returns:
+        A tuple of (module plan rows by ID in plan order, global ID to ticked state).
+    """
+    plan_rows = {}
+    for path in PLAN_FILES:
+        plan_rows.update(mvp_queue.parse_plan_rows(path.read_text(encoding="utf-8")))
+    global_rows = mvp_queue.parse_plan_rows(PLAN.read_text(encoding="utf-8"))
+    return plan_rows, {task_id: row.done for task_id, row in global_rows.items()}
+
+
+def build_queue(checklist: str, rows: list, checking: bool):
+    """Compute the In progress and Up next selections.
+
+    Args:
+        checklist: The full checklist Markdown (its block holds the recorded PRs).
+        rows: Parsed MVP global tasks.
+        checking: True in `--check` mode.
+
+    Returns:
+        A tuple of (render function taking a timestamp, timestamp to use).
+    """
+    block = checklist[checklist.index(START):] if START in checklist else ""
+    recorded, old_stamp = mvp_queue.parse_recorded(block)
+    pr_ids, stamp = current_pr_ids(rows, recorded, old_stamp, checking)
+    unticked = {g.task_id for g in rows if not g.done} | {m.task_id for g in rows for m in g.modules if not m.done}
+    pr_ids = {task_id: number for task_id, number in pr_ids.items() if task_id in unticked}
+    inprog = mvp_queue.compute_in_progress(rows, pr_ids)
+    plan_rows, global_done = load_plans()
+    up_next, warnings = mvp_queue.select_up_next(rows, inprog.active, plan_rows, global_done)
+    for warning in warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+    return (lambda when: mvp_queue.render_queue(inprog, up_next, pr_ids, when)), stamp, old_stamp
+
+
+def render_block(tasks: list, render, stamp: str) -> str:
+    """Return the full marker block for one timestamp."""
+    return render_summary(tasks, render(stamp))
+
+
 def main(argv: list) -> int:
     """Compute MVP progress and write or check the checklist block and the SVG.
 
@@ -238,17 +357,21 @@ def main(argv: list) -> int:
     Returns:
         The process exit code.
     """
+    checking = "--check" in argv
     checklist = CHECKLIST.read_text(encoding="utf-8")
     tasks = parse_tasks(mvp_section(checklist))
     problems = attach_hours(tasks, PLAN.read_text(encoding="utf-8"))
     if problems:
         print("\n".join(problems))
         return 1
-    block = render_summary(tasks)
+    render, stamp, old_stamp = build_queue(checklist, mvp_queue.parse_rows(mvp_section(checklist)), checking)
+    block = render_block(tasks, render, stamp)
+    if not checking and old_stamp and replace_block(checklist, render_block(tasks, render, old_stamp)) == checklist:
+        block = render_block(tasks, render, old_stamp)
     percent = int(re.search(r"\*\*MVP progress: (\d+)%", block).group(1))
     wanted = {CHECKLIST: replace_block(checklist, block), SVG: render_svg(tasks, percent)}
     stale = [path for path, text in wanted.items() if not path.exists() or path.read_text(encoding="utf-8") != text]
-    if "--check" in argv:
+    if checking:
         for path in stale:
             print(f"{path.relative_to(ROOT)} is stale: run python3 scripts/docs/update_mvp_progress.py")
         return 1 if stale else 0

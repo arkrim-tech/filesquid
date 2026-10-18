@@ -3,14 +3,37 @@
 <!-- mvp-progress:start -->
 ![MVP progress: 39% complete](./assets/mvp-progress.svg)
 
-**MVP progress: 39%**, about 315 of 816 estimated hours. 10 of 26 tasks are done and 4 more are under way. Each segment of the bar is one task below, as wide as its estimated hours in the implementation plan; an open task fills by the share of its module rows that are ticked. Regenerate with `python3 scripts/docs/update_mvp_progress.py` after ticking boxes.
+**MVP progress: 39%**, about 315 of 816 estimated hours. 10 of 26 tasks are done and 4 more are under way. Each segment of the bar is one task below, as wide as its estimated hours in the implementation plan; an open task fills by the share of its module rows that are ticked. Below the bar, In progress lists the open tasks being worked on (global tasks with some but not all module rows ticked, and tasks with an open pull request) and Up next lists the next five new module tasks whose listed dependencies are done or in progress. Regenerate with `python3 scripts/docs/update_mvp_progress.py` after ticking boxes or opening a pull request; the check run by `scripts/verify_docs.sh` does not call GitHub and uses the pull requests recorded in the block.
+
+**In progress**
+
+- [Task 0.4](./implementation-plan.md#task-0.4) filesquid-ocfl write and logical-state enumerator: 3 of 5 module rows ticked
+    - [IO-0.9](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Enumerate committed logical state
+    - [IO-0.10](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Forward-delta change model
+- [Task 0.10](./implementation-plan.md#task-0.10) Private-client library (ADR 001): 2 of 3 module rows ticked
+    - [CL-0.3](../apps/filesquid/crates/api/resources/plan.md#phase-f1-application-layer-global-task-010-cl-04-in-global-task-011-phase-f4-cl-05-in-global-task-012-phase-i1) Replica, cache identity, and pending mutations
+- [Task FS-2.1](./implementation-plan.md#task-fs-2.1) Default UI shell, host adapter, tokens and accessibility: 5 of 7 module rows ticked
+    - [API-F1.11](../apps/filesquid/crates/api/resources/plan.md#phase-f2-host-descriptor-and-navigation-listing-for-the-default-ui-global-task-fs-21) Navigation listing route
+    - [UI-F2.1b](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Host privacy indicator and live navigation data
+- [Task FS-1.4](./implementation-plan.md#task-fs-1.4) Jobs, events and the authorisation layer: 1 of 2 module rows ticked
+    - [API-F1.6](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-api-f19-in-fs-310-and-api-f15-in-fs-c1) Job and event routes
+
+**Up next** (the next 5 new module tasks, once their listed dependencies are done or in progress)
+
+- [MD-0.4](../apps/filesquid/crates/metadata/resources/plan.md#phase-f0-webassembly-build-global-task-015) WASM build and OCFL-sourced extraction (part of [Task 0.15](./implementation-plan.md#task-0.15))
+- [IO-1.2](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f1f2-view-api-and-file-browser-global-tasks-fs-12-19-superseded) UI view API (part of [Task FS-1.2](./implementation-plan.md#task-fs-1.2))
+- [DE-0.1](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Capability expansion (deny-by-default) (part of [Task 0.5](./implementation-plan.md#task-0.5))
+- [MD-0.2](../apps/filesquid/crates/metadata/resources/plan.md#phase-f1-persist-through-ocfl-and-namespace-registry-global-task-fs-13) Commit statements through filesquid-ocfl (part of [Task FS-1.3](./implementation-plan.md#task-fs-1.3))
+- [UI-0.6](../apps/filesquid/ui/resources/plan.md#phase-f0-test-reporting-global-task-08) Playwright production suite and Allure (part of [Task 0.8](./implementation-plan.md#task-0.8))
+
+Generated 2026-10-18T19:17:25Z (RFC 3339, UTC) from the ticked boxes, the module plans and the open pull requests at that time.
+<!-- generated-at: 2026-10-18T19:17:25Z -->
+<!-- in-progress-prs: none -->
 <!-- mvp-progress:end -->
 
 This is a short, ordered view of [implementation-plan.md](./implementation-plan.md). Each numbered item is a global task in the order the dev team expects to finish it, and the nested items are the module tasks it dispatches, taken from each module's `resources/plan.md`. Task codes link to the full task description. A box is ticked when the matching box is ticked in the source plan.
 
 Order follows the **Dependencies** fields and the [release sequence](./implementation-plan.md#release-sequence-assumptions-do-not-reorder) of the implementation plan; where the plan allows tasks to run in parallel, the order shown is the dev team's current dispatch order. Finished tasks come first in each release, in the order they were finished, even when one was finished ahead of a listed dependency (Task FS-2.4 was delivered before Tasks FS-2.1, 0.5 and FS-1.4); open tasks follow in dependency order. The implementation plan stays authoritative: if the two disagree, the implementation plan wins and this file is corrected.
-
-Superseded tasks (0.7, 1.9, 9.5, 10.4 and their superseded module rows) are left out. ImageSquid (`IS-`) and Arkrim (`ARK-`) view rows are planned in their distributions' own plans and are not listed here.
 
 ## MVP
 
