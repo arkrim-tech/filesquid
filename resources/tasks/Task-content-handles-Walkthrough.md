@@ -50,7 +50,7 @@ A fixed 5-minute lifetime would break any video that plays for more than 5 minut
 - [API plan](../../apps/filesquid/crates/api/resources/plan.md): API-F1.3 description, acceptance gates, agent prompt, dependencies (API-F1.7, already complete), related requirements and tests; 16 → 20 hours. [UI plan](../../apps/filesquid/ui/resources/plan.md): UI-F2.2 description, dependency note and related requirements (estimate unchanged).
 - [Implementation plan](../implementation-plan.md): Task FS-1.2 description, 32 → 36 hours; phase F1 152 → 156; total 2,597 → 2,601; MVP 758 → 762.
 - [DE-F1.1 walkthrough](../../apps/filesquid/crates/desktop/resources/tasks/Task-DE-F1.1-Walkthrough.md): open item marked resolved with the date and links.
-- BDD: [`content_handles_F-056.feature`](../../apps/filesquid/crates/api/tests/features/content_handles_F-056.feature) (26 scenarios counting outline examples after review round 1, skipped until API-F1.3 adds step definitions), and three UI scenarios in [`client_authorisation_UI-S-014.feature`](../../apps/filesquid/ui/tests/features/client_authorisation_UI-S-014.feature) for content-handle previews.
+- BDD: [`content_handles_F-056.feature`](../../apps/filesquid/crates/api/tests/features/content_handles_F-056.feature) (29 scenarios counting outline examples after review round 2, skipped until API-F1.3 adds step definitions), and five UI scenarios in [`client_authorisation_UI-S-014.feature`](../../apps/filesquid/ui/tests/features/client_authorisation_UI-S-014.feature) for content-handle previews.
 
 The PRD needed no change: F-056 already requires deny-by-default authorisation and opaque handles, and a content handle is minted under that authorisation. No README change: no command, service or environment variable was added.
 
@@ -59,6 +59,8 @@ The PRD needed no change: F-056 already requires deny-by-default authorisation a
 Owner decision → ADR 030 Decision 5 (and ADR 002 note, ADR index) → API-S-004, API-S-005, API-S-017, API-S-018, DE-S-005, UI-S-014 → SRS-F-056 → PRD F-056 checked, unchanged → architecture narrative → API-F1.3, UI-F2.2, Task FS-1.2 and the summary timeline → DE-F1.1 walkthrough → BDD feature.
 
 ## Verification
+
+**Superseded:** this block is the first run, on commit `f640a31` (106 scenarios). Review rounds 1 and 2 added scenarios; the current counts are in **Review round 2** below (117 scenarios).
 
 `bash scripts/pre-commit.sh` exit 0 (`CARGO_TARGET_DIR` shared, `CARGO_INCREMENTAL=0`, `CARGO_PROFILE_DEV_DEBUG=0`, after `npm ci` in both UI packages and touching the crate sources). The gate summary lines, copied verbatim from the full run (several thousand lines of test logs), and the `filesquid-api` cucumber summary from the same run:
 
@@ -136,13 +138,32 @@ All 13 findings were valid and fixed:
 12. This walkthrough now says "60 minutes", not just "60".
 13. `HEAD` cannot carry a body. ADR 030 and API-S-018 now require identical status, headers and `ApiError` fields for every denial: the same body for `GET`, and an empty body for `HEAD`.
 
-`bash scripts/pre-commit.sh` exit 0 after the fixes. The `filesquid-api` cucumber summary from that run (8 new scenarios, all skipped until API-F1.3):
+**Superseded by Review round 2.** `bash scripts/pre-commit.sh` exit 0 after the fixes. The `filesquid-api` cucumber summary from that run, on commit `1e53e5a` (8 new scenarios, all skipped until API-F1.3):
 
 ```text
 [Summary]
 7 features
 114 scenarios (28 passed, 86 skipped)
 188 steps (102 passed, 86 skipped)
+```
+
+## Review round 2 (Cubic)
+
+All five findings were valid and were fixed in one commit:
+
+1. A malformed content path could fall through to the authenticated-only fallback and get 401. API-S-018 and ADR 030 now state that every request under `/api/v1/content/` that cannot be served gets the same 403 `invalid_credentials`. That covers a malformed, missing, unknown, expired, evicted or revoked handle, and a missing or extra path segment. None of these falls through to the 404 or 405 fallback or to a 401, and API-S-004's fallback rule names this exception. The denial outline gained the missing and extra segment examples and a "never 401 or 404" assertion.
+2. The successful `HEAD` case is now an example in the privacy-header outline.
+3. The UI preview scenario is now an outline over `<img>` and `<video>`, and a separate scenario covers re-minting an image whose handle expired.
+4. The no-leak assertions now cover Web Storage, cookies, console logs, rendered text and error messages, for both the token and the handle URL.
+5. The two scenario counts are reconciled. The older blocks are labelled superseded, and the fresh run below is current.
+
+Current verification: `bash scripts/pre-commit.sh` exit 0 on the round 2 commit. The `filesquid-api` cucumber summary from that run (3 new scenarios: the `HEAD` header example and two path examples):
+
+```text
+[Summary]
+7 features
+117 scenarios (28 passed, 89 skipped)
+191 steps (102 passed, 89 skipped)
 ```
 
 ## Mocked Environment Variables

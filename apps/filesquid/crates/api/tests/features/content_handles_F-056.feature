@@ -56,6 +56,7 @@ Feature: Content handles for media elements
     Examples:
       | kind           |
       | ranged         |
+      | HEAD           |
       | unsatisfiable  |
       | refused        |
 
@@ -91,6 +92,7 @@ Feature: Content handles for media elements
   Scenario Outline: Unusable handles get one identical denial that reveals nothing about the file
     When a media element requests a range through <handle>
     Then the answer should be 403 forbidden with reason "invalid_credentials" and not retryable
+    And the answer should never be 401 or 404
     And the answer should be byte for byte the same as for an unknown handle
     And no file should have been read
     And the activity journal should record one "api.auth.denied" entry with reason "invalid_credentials"
@@ -100,6 +102,8 @@ Feature: Content handles for media elements
       | handle                                            |
       | an unknown handle                                 |
       | a malformed handle                                |
+      | a missing handle (an empty path segment)          |
+      | an extra path segment after the handle            |
       | an expired handle                                 |
       | a handle for a file its minter may no longer read |
       | a handle whose issuing credential has ended       |

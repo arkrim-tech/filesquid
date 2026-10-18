@@ -53,12 +53,23 @@ Feature: Client authorisation against the deny-by-default API
     And the error should not echo the token
 
   # Content handles for media elements (UI-S-014, API-S-018; built with UI-F2.2)
-  Scenario: A native preview loads through a content handle, never the token
+  Scenario Outline: A native preview loads through a content handle, never the token
     Given the client knows a token
-    When the file browser shows a native video preview of "holiday.mp4"
-    Then the video source should be a content handle URL on the active host's API base
-    And no URL, history entry, storage entry or page markup should contain the token
-    And the content handle URL should not be in the page address, history, storage or any link that opens another window
+    When the file browser shows a native <element> preview of "<file>"
+    Then the <element> source should be a content handle URL on the active host's API base
+    And no URL, history entry, Web Storage entry, cookie, console log line, rendered text, error message or page markup should contain the token
+    And the content handle URL should not be in the page address, history, Web Storage, a cookie, a console log line, rendered text, an error message or any link that opens another window or tab
+
+    Examples:
+      | element | file          |
+      | img     | harbour.jpg   |
+      | video   | holiday.mp4   |
+
+  Scenario: An image whose handle has expired is re-minted once
+    Given a native img preview of "harbour.jpg" whose content handle has expired
+    When the image reports a load error
+    Then the client should mint exactly one new content handle
+    And the image should show "harbour.jpg" again
 
   Scenario: An expired handle is re-minted once and playback resumes where it was
     Given a native video preview of "holiday.mp4" is paused at 42 seconds
