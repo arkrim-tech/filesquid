@@ -41,11 +41,45 @@ test("ImageSquid brand, album vocabulary and FileSquid API health", async ({ pag
   expect(errors).toEqual([]);
 });
 
-test("ImageSquid tokens override FileSquid defaults in light and dark", async ({ page }) => {
-  const primary = () =>
-    page.evaluate(() =>
-      getComputedStyle(document.documentElement).getPropertyValue("--fs-primary").trim(),
-    );
+/**
+ * Resolve a colour token to the browser's computed `rgb(...)` form through a probe element,
+ * so the check does not depend on how the build minified the hex value.
+ */
+function token(page: Page, name: string): Promise<string> {
+  return page.evaluate((prop) => {
+    const probe = document.createElement("span");
+    probe.style.color = `var(${prop})`;
+    document.body.append(probe);
+    const colour = getComputedStyle(probe).color;
+    probe.remove();
+    return colour;
+  }, name);
+}
+
+/** WCAG 2.2 contrast of two colour tokens, computed in the page from their resolved colours. */
+function tokenContrast(page: Page, fg: string, bg: string): Promise<number> {
+  return page.evaluate(
+    ([a, b]) => {
+      const probe = document.createElement("span");
+      document.body.append(probe);
+      const channel = (c: number) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+      const lum = (name: string) => {
+        probe.style.color = `var(${name})`;
+        const rgb = (getComputedStyle(probe).color.match(/\d+/g) ?? []).map(Number);
+        const [r, g, bl] = rgb.map((c) => channel(c / 255));
+        return 0.2126 * (r ?? 0) + 0.7152 * (g ?? 0) + 0.0722 * (bl ?? 0);
+      };
+      const [x, y] = [lum(a), lum(b)];
+      return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+    },
+    [fg, bg] as const,
+  );
+}
+
+test("ImageSquid tokens override FileSquid defaults in light and dark (IS-S-008)", async ({
+  page,
+}) => {
+  const errors = trackErrors(page, REFUSED_CALL);
   const sidebar = () =>
     page.evaluate(() => {
       const nav = document.querySelector("fs-app-shell")?.shadowRoot?.querySelector("nav");
@@ -53,11 +87,38 @@ test("ImageSquid tokens override FileSquid defaults in light and dark", async ({
     });
   await page.emulateMedia({ colorScheme: "light" });
   await page.goto("/");
-  expect(await primary()).toBe("#1d3f73");
+  expect(await token(page, "--fs-primary")).toBe("rgb(0, 93, 182)"); // #005db6
+  expect(await token(page, "--fs-on-primary")).toBe("rgb(255, 255, 255)"); // #ffffff
   expect(await sidebar()).toBe("rgb(244, 245, 247)");
+  expect(await tokenContrast(page, "--fs-on-primary", "--fs-primary")).toBeGreaterThanOrEqual(4.5);
+  expect(await tokenContrast(page, "--fs-on-surface", "--fs-surface")).toBeGreaterThanOrEqual(4.5);
   await page.emulateMedia({ colorScheme: "dark" });
-  expect(await primary()).toBe("#9cc0ff");
+  expect(await token(page, "--fs-primary")).toBe("rgb(169, 199, 255)"); // #a9c7ff
+  expect(await token(page, "--fs-on-primary")).toBe("rgb(0, 48, 99)"); // #003063
   expect(await sidebar()).toBe("rgb(27, 30, 36)");
+  expect(await tokenContrast(page, "--fs-on-primary", "--fs-primary")).toBeGreaterThanOrEqual(4.5);
+  expect(await tokenContrast(page, "--fs-on-surface", "--fs-surface")).toBeGreaterThanOrEqual(4.5);
+  expect(errors).toEqual([]);
+});
+
+test("ImageSquid's theme control keeps a dark choice across a reload", async ({ page }) => {
+  const errors = trackErrors(page, REFUSED_CALL);
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.goto("/");
+  const control = page.locator("fs-app-shell fs-theme-control");
+  await expect(control.locator("label")).toHaveText(["System", "Light", "Dark"]);
+  await expect(control.locator('input[value="system"]')).toBeChecked();
+  await control.locator("label", { hasText: "Dark" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect(control.locator('input[value="dark"]')).toBeChecked();
+  expect(await token(page, "--fs-primary")).toBe("rgb(169, 199, 255)"); // #a9c7ff
+  await expect(page.locator("fs-app-shell header img")).toHaveAttribute(
+    "src",
+    "/imagesquid-logo.svg",
+  );
+  expect(errors).toEqual([]);
 });
 
 test("ImageSquid names missing credentials in its own words", async ({ page }) => {

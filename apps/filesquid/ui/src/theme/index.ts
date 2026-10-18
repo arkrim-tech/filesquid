@@ -1,6 +1,29 @@
 /**
- * DOM-free theme helpers (`@filesquid/ui/theme`): label and token contracts that
- * distributions check in their own tests without a browser.
+ * DOM-free theme helpers (`@filesquid/ui/theme`): label, token and contrast contracts that
+ * distributions check in their own tests without a browser, and the theme-choice rules.
  */
 export { REQUIRED_LABEL_KEYS, missingLabels, type LabelKey, type LabelTable } from "./labels";
-export { REQUIRED_TOKENS, missingTokens } from "./tokens";
+export {
+  CONTRAST_PAIRS,
+  REQUIRED_TOKENS,
+  contrastFailures,
+  missingTokens,
+  tokenValues,
+  type ContrastFailure,
+  type TokenName,
+} from "./tokens";
+export {
+  AA_TEXT_CONTRAST,
+  contrastRatio,
+  parseHexColour,
+  relativeLuminance,
+  type Rgb,
+} from "./contrast";
+export {
+  THEME_CHOICES,
+  THEME_STORAGE_KEY,
+  parseThemeChoice,
+  resolveTheme,
+  type ResolvedTheme,
+  type ThemeChoice,
+} from "./theme-store";

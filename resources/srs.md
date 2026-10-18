@@ -51,6 +51,7 @@ This block is the **design-token contract** that every distribution (FileSquid d
 - Each distribution sets its own values under these token names.
 - Contrast of primary actions and body text on their surfaces MUST meet WCAG 2.2 AA in both themes, in every distribution.
 - A theme MUST NOT be required to match mockup pixels.
+- The theme control, the brand slots, the measured contrast pairs and the FileSquid default values are specified in [UI-S-015](../apps/filesquid/ui/resources/srs.md); the ImageSquid primary values in the ImageSquid SRS (IS-S-008).
 
 **Source**
 - [NFR-006](./prd.md#nfr-006-accessibility-and-usability), [F-058](./prd.md#f-058-white-label-distributions)

@@ -1,7 +1,9 @@
 /*
- * ImageSquid design tokens. Light values follow the current ImageSquid screenshots
- * (apps/imagesquid/resources/ui-mockups/imagesquid-ui-mockups/): white canvas, cool grey sidebar,
- * navy primary action ("Edit"), pale blue secondary ("Select"). Dark values are derived.
+ * ImageSquid design tokens. Primary and on-primary use the Arkrim role values IS-S-008
+ * requires: light #005db6 / #ffffff (6.48:1), dark #a9c7ff / #003063 (7.67:1). The surfaces
+ * follow the current ImageSquid screenshots (apps/imagesquid/resources/ui-mockups/): white
+ * canvas, cool grey sidebar, pale blue secondary ("Select"). Dark surfaces are derived.
+ * Every text pair meets WCAG 2.2 AA in both themes (checked by tests/unit/theme.test.ts).
  */
 :root {
   --fs-surface: #ffffff;
@@ -9,12 +11,13 @@
   --fs-on-surface: #1c1f24;
   --fs-on-surface-variant: #5f6670;
   --fs-outline: #e2e5ea;
-  --fs-primary: #1d3f73;
+  --fs-primary: #005db6;
   --fs-on-primary: #ffffff;
   --fs-primary-container: #dce8fb;
   --fs-on-primary-container: #0b4fae;
   --fs-error: #b42318;
   --fs-font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --fs-font-heading: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --fs-font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
   --fs-radius: 10px;
   color-scheme: light;
@@ -26,8 +29,8 @@
   --fs-on-surface: #e6e8ec;
   --fs-on-surface-variant: #a6adb8;
   --fs-outline: #2c3038;
-  --fs-primary: #9cc0ff;
-  --fs-on-primary: #0b2a57;
+  --fs-primary: #a9c7ff;
+  --fs-on-primary: #003063;
   --fs-primary-container: #24406b;
   --fs-on-primary-container: #d6e4ff;
   --fs-error: #ffb4ab;
@@ -41,8 +44,8 @@
     --fs-on-surface: #e6e8ec;
     --fs-on-surface-variant: #a6adb8;
     --fs-outline: #2c3038;
-    --fs-primary: #9cc0ff;
-    --fs-on-primary: #0b2a57;
+    --fs-primary: #a9c7ff;
+    --fs-on-primary: #003063;
     --fs-primary-container: #24406b;
     --fs-on-primary-container: #d6e4ff;
     --fs-error: #ffb4ab;
