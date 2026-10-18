@@ -17,6 +17,50 @@ npm run contract:types # regenerate src/api/schema.d.ts from crates/api/openapi.
 
 `npm run test:e2e` builds the UI and starts `filesquid-server` with Cargo, so it needs the Rust toolchain and a Playwright browser (`npx playwright install chromium`). The repository's pre-commit hook runs it when `FILESQUID_E2E=1` is set.
 
+## Theme, tokens and brand
+
+Components are styled only through `--fs-` custom properties ([SRS-UI-007](../../../resources/srs.md#srs-ui-007-light-and-dark-themes), [UI-S-015](./resources/srs.md)). [`src/theme/tokens.css`](./src/theme/tokens.css) holds FileSquid's values from the [FileSquid Design Guide](../../../resources/assets/FileSquid-Design-Guide.html), adjusted for WCAG 2.2 AA: white text on the brand green `#16ac49` is only 2.99:1, so the light primary is `#0b7a32` and the dark theme keeps the brand green with dark ink (`#0d2b18`). A distribution imports these defaults first and its own `tokens.css` on top. It defines every token in `:root` (light). It defines every colour token again in both `:root[data-theme="dark"]` and the `prefers-color-scheme: dark` block; the theme-independent tokens (fonts, type sizes, spacing and radius, listed in `THEME_INDEPENDENT_TOKENS`) need not be repeated there. Colour tokens are `#rgb` or `#rrggbb`. Component stylesheets take colour, type size, spacing and radius only from tokens, and a unit test fails on a literal value.
+
+| Token                                                                 | Role                                    |
+| --------------------------------------------------------------------- | --------------------------------------- |
+| `--fs-surface`, `--fs-surface-container`                              | Page and sidebar or panel backgrounds   |
+| `--fs-on-surface`, `--fs-on-surface-variant`                          | Body text and secondary text            |
+| `--fs-outline`                                                        | Dividers and borders                    |
+| `--fs-primary`, `--fs-on-primary`                                     | The primary action and the text on it   |
+| `--fs-primary-container`, `--fs-on-primary-container`                 | A selected item and its text            |
+| `--fs-error`                                                          | Error text                              |
+| `--fs-font-sans`, `--fs-font-heading`, `--fs-font-mono`               | Interface, heading and identifier fonts |
+| `--fs-font-size-small`, `--fs-font-size-body`, `--fs-font-size-title` | Type sizes                              |
+| `--fs-space-1` to `--fs-space-5`                                      | Spacing (FileSquid: 4, 8, 12, 16, 24px) |
+| `--fs-radius`                                                         | Corner radius                           |
+
+A distribution's own tests check its sheet with the helpers from `@filesquid/ui/theme`:
+
+```ts
+import {
+  contrastFailures,
+  invalidColourTokens,
+  missingLabels,
+  missingTokens,
+} from "@filesquid/ui/theme";
+
+expect(missingTokens(tokensCss)).toEqual({ light: [], dark: [] });
+expect(invalidColourTokens(tokensCss)).toEqual([]); // every colour token is #rgb or #rrggbb
+expect(contrastFailures(tokensCss)).toEqual([]); // every text pair at least 4.5:1, both themes
+expect(missingLabels(labels)).toEqual([]);
+```
+
+**Theme choice.** `createThemeStore(window)` returns the shared `ThemeStore`; call `start()` before configuring the shell. With no saved choice the theme follows the operating system and the root element has no `data-theme`. `<fs-theme-control>` in the shell header offers System, Light and Dark as native radio buttons (arrow keys move between them); Light or Dark sets `data-theme` and is kept on the device in Web Storage under `filesquid.theme`, so it survives a relaunch. System removes both. The choice is a display preference, never a credential; if the browser refuses storage, the choice applies until the page closes and the console says why.
+
+**Brand slots.** The distribution passes its product name and logo to `<fs-app-shell>`. `logo.srcDark` is an optional variant for dark surfaces: FileSquid uses the official mark with a black outline ([`public/filesquid-mark.svg`](./public/filesquid-mark.svg)) and a white one in the dark theme ([`public/filesquid-mark-dark.svg`](./public/filesquid-mark-dark.svg)), both cropped from the official [`FileSquid-logo.svg`](../../../resources/assets/FileSquid-logo.svg) without the wordmark.
+
+```ts
+const theme = createThemeStore(window);
+theme.start();
+defineElements();
+shell.configure({ distribution, client: createHostClient(window), theme });
+```
+
 ## Host adapter and client interface
 
 Views reach FileSquid only through `FileSquidClient` ([UI-S-012](./resources/srs.md), [ADR 030](../../../resources/architecture/030-filesquid-api-and-transports.md)); they never call `fetch`, `WebSocket` or Tauri APIs. `createHostClient()` picks the adapter at run time with `selectHostAdapter(detectHost(window))`:

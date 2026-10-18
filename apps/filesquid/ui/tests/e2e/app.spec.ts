@@ -71,7 +71,7 @@ test("design tokens switch between light and dark", async ({ page }) => {
   await page.goto("/");
   expect(await background()).toBe("rgb(255, 255, 255)");
   await page.emulateMedia({ colorScheme: "dark" });
-  expect(await background()).toBe("rgb(16, 19, 27)");
+  expect(await background()).toBe("rgb(20, 20, 20)");
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
   expect(await background()).toBe("rgb(255, 255, 255)");
 });
