@@ -107,12 +107,17 @@ pub struct Fixture {
     pub repository: RepositoryId,
     writer: JournalWriter,
     next_op: AtomicU64,
+    owns_root: bool,
 }
 
 impl Drop for Fixture {
-    /// Stop the failure journal writer thread.
+    /// Stop the failure journal writer thread and remove the catalog directory, unless
+    /// [`Fixture::release`] kept it for a reopen (filesystem I/O).
     fn drop(&mut self) {
         self.writer.shutdown();
+        if self.owns_root {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
     }
 }
 
@@ -122,7 +127,8 @@ impl Fixture {
         Self::over(temp_root(name), Arc::new(MemoryJournal::new("desktop")))
     }
 
-    /// A fixture over the catalog files in `root`, forwarding to `journal` (opens SQLite).
+    /// A fixture over the catalog files in `root`, forwarding to `journal` (opens SQLite). The
+    /// fixture owns `root` and removes it when dropped.
     pub fn over(root: PathBuf, journal: Arc<dyn JournalStore>) -> Self {
         let catalog = Arc::new(SqliteCatalog::open(&root, journal.clone()).expect("open"));
         let writer = JournalWriter::start(
@@ -140,7 +146,15 @@ impl Fixture {
             repository: RepositoryId::new("repo-1").expect("repository"),
             writer,
             next_op: AtomicU64::new(0),
+            owns_root: true,
         }
+    }
+
+    /// Close the catalog but keep its directory, answering it for a reopen with
+    /// [`Fixture::over`] (which owns it again).
+    pub fn release(mut self) -> PathBuf {
+        self.owns_root = false;
+        self.root.clone()
     }
 
     /// A fresh operation ID.

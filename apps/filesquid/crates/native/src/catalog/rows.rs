@@ -481,8 +481,8 @@ pub(crate) fn is_member(
     .map_err(sql)
 }
 
-/// The highest membership order key of `virtual_collection_id`, or `None` when this file
-/// holds no member of it. Database I/O.
+/// The highest membership order key of `virtual_collection_id`, or `None` when it has no
+/// member (in this library's file). New members are ordered after it. Database I/O.
 pub(crate) fn last_member_order(
     conn: &Connection,
     virtual_collection_id: &VirtualCollectionId,

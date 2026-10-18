@@ -25,7 +25,7 @@ Each library now has its own SQLite catalog file, the desktop's native storage b
   - `record_intent` and `pending_intents`: the first step of the ADR 005 commit sequence that DE-0.3 builds on.
   - `backup`: a consistent copy with `VACUUM INTO`, journaled as `library.catalog.backup`; a non-empty destination is refused. A copy of the live file is not a supported backup.
 - **Desktop host** ([`src/lib.rs`](../../src/lib.rs)): `open_library_catalog` opens the catalogs in `<app data>/libraries/` at launch, forwarding to the host journal store, and keeps them in Tauri state (`DesktopCatalog`) for the API's library routes. A failure is journaled as `library.catalog.open` `failed` with its error code only, the monitor is stopped (flushing the journal), and the launch fails.
-- **`filesquid-api` `events.rs`**: Rust 1.99.1 (today's `stable`, which `rust-toolchain.toml` follows) deprecated `AtomicUsize::fetch_update`, so `clippy -D warnings` failed on `main`. The subscriber-slot claim now uses `fetch_add` and gives the increment back when the cap was already reached; the cap holds under concurrency and the existing event-bus tests pass. No open pull request carried a fix.
+- **`filesquid-api` `events.rs`**: Rust 1.99.1 (today's `stable`, which `rust-toolchain.toml` follows) deprecated `AtomicUsize::fetch_update`, so `clippy -D warnings` failed on `main`. The subscriber-slot claim now uses a bounded compare-and-swap loop (at most 1,024 attempts), which keeps the cap check and the increment one atomic step; the existing event-bus tests pass. The orchestrator is landing the same fix separately; when it merges, merging `origin/main` takes `main`'s version.
 - `crates/native/tests/features.rs` now replaces only its own JUnit report instead of deleting `tests/allure-results/`, so the catalog harness's report survives.
 
 ## TDD: the tests failed first
@@ -42,8 +42,8 @@ Each library now has its own SQLite catalog file, the desktop's native storage b
 `cargo test -p filesquid-native --features desktop --locked --test unit_catalog --test catalog_features` and `cargo test -p filesquid-desktop --locked --test integration_library_catalog`, from `apps/filesquid/`:
 
 ```text
-    Finished `test` profile [unoptimized] target(s) in 5.95s
-     Running tests/catalog_features.rs (/home/user/.cargo-target-shared/debug/deps/catalog_features-457851dbdb57defc)
+    Finished `test` profile [unoptimized] target(s) in 0.19s
+     Running tests/catalog_features.rs (/home/user/.cargo-target-shared/debug/deps/catalog_features-a4032c5136c3373a)
 Feature: Per-library SQLite catalog
   Scenario: Each library keeps its own catalog file
    ✔  Given an empty catalog directory
@@ -83,41 +83,54 @@ Feature: Per-library SQLite catalog
 1 feature
 6 scenarios (6 passed)
 28 steps (28 passed)
-     Running tests/unit/catalog.rs (/home/user/.cargo-target-shared/debug/deps/unit_catalog-33a28171611c9cdf)
-running 25 tests
+     Running tests/unit/catalog.rs (/home/user/.cargo-target-shared/debug/deps/unit_catalog-6c982b023271d0b5)
+running 29 tests
+test a_catalog_file_that_is_a_symbolic_link_is_not_followed ... ok
 test a_failed_create_leaves_no_catalog_file ... ok
-test a_library_id_that_is_not_a_uuid_is_refused_without_a_file ... ok
 test a_commit_without_change_keeps_the_revision_but_stores_its_receipt ... ok
+test a_library_id_that_is_not_a_uuid_is_refused_without_a_file ... ok
 test a_failed_commit_leaves_the_catalog_unchanged ... ok
-test an_unusable_root_fails_without_naming_its_path ... ok
-test catalog_files_are_owner_only ... ok
-test a_repeated_operation_id_answers_its_first_receipt_even_after_reopen ... ok
 test a_consistent_backup_holds_the_committed_library_and_is_journaled ... ok
-test creating_an_existing_library_conflicts ... ok
+test a_repeated_operation_id_answers_its_first_receipt_even_after_reopen ... ok
+test an_unusable_root_fails_without_naming_its_path ... ok
+test a_renamed_catalog_file_is_not_served_under_another_library ... ok
+test catalog_files_are_owner_only ... ok
 test a_receipt_in_one_library_answers_a_commit_naming_another ... ok
-test deleting_a_collection_keeps_its_files_as_unfiled ... ok
+test an_intent_recorded_after_its_commit_is_not_stored ... ok
+test creating_an_existing_library_conflicts ... ok
 test committed_state_survives_a_reopen ... ok
-test entries_the_host_journal_refused_are_forwarded_at_the_next_open ... ok
-test every_commit_journal_entry_reaches_the_host_journal_redacted ... ok
-test each_library_has_its_own_catalog_file_named_by_its_id ... ok
+test deleting_a_collection_keeps_its_files_as_unfiled ... ok
 test deleting_a_virtual_collection_or_purging_a_file_removes_its_memberships ... ok
+test every_commit_journal_entry_reaches_the_host_journal_redacted ... ok
+test entries_the_host_journal_refused_are_forwarded_at_the_next_open ... ok
+test each_library_has_its_own_catalog_file_named_by_its_id ... ok
 test folders_are_indexed_and_read_back ... ok
-test removing_a_catalog_file_loses_only_the_rebuildable_index ... ok
-test pending_intent_is_recorded_and_cleared_by_its_commit ... ok
 test listings_page_by_order_then_id_and_hide_hidden_and_deleted_files ... ok
+test pending_intent_is_recorded_and_cleared_by_its_commit ... ok
+test removing_a_catalog_file_loses_only_the_rebuildable_index ... ok
 test the_catalog_directory_name_is_stable ... ok
-test revisions_start_at_one_advance_on_change_and_stale_ones_conflict ... ok
 test libraries_list_by_repository_in_creation_order ... ok
+test revisions_start_at_one_advance_on_change_and_stale_ones_conflict ... ok
 test the_schema_is_versioned_and_a_newer_catalog_is_refused ... ok
 test the_sqlite_catalog_answers_like_the_api_reference_catalog ... ok
-test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
-    Finished `test` profile [unoptimized] target(s) in 9.14s
-     Running tests/integration/library_catalog.rs (/home/user/.cargo-target-shared/debug/deps/integration_library_catalog-15c21cc3c97df351)
+test no_more_than_the_library_limit_can_be_created ... ok
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.17s
+    Finished `test` profile [unoptimized] target(s) in 13.37s
+     Running tests/integration/library_catalog.rs (/home/user/.cargo-target-shared/debug/deps/integration_library_catalog-f5487c7ef362ea6f)
 running 2 tests
 test a_catalog_directory_that_cannot_be_opened_is_journaled_without_its_path ... ok
 test the_host_keeps_one_catalog_file_per_library_and_journals_its_commits ... ok
 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
 ```
+
+## Review fixes (Cubic round 1)
+
+- A symbolic link where a catalog file belongs is refused, never followed: `create_owner_only` (now in the neutral `owner_only` module) checks for a link and opens with `O_NOFOLLOW`, and SQLite opens catalogs with `SQLITE_OPEN_NOFOLLOW` (`a_catalog_file_that_is_a_symbolic_link_is_not_followed`).
+- A catalog file whose library row names another library than its file name is not served (`a_renamed_catalog_file_is_not_served_under_another_library`).
+- Creating a library past `MAX_LIBRARIES` is refused, so the next launch can always open the directory (`no_more_than_the_library_limit_can_be_created`).
+- An intent recorded after its operation committed is not stored (`an_intent_recorded_after_its_commit_is_not_stored`).
+- The BDD feature folder is tracked (`.gitignore` exception for `tests/catalog_features/`), and test fixtures remove their temporary directories.
+- The subscriber-slot claim uses a bounded compare-and-swap, so a refusal never comes from a transient over-count.
 
 ## Owner decision needed
 

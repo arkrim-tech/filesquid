@@ -163,8 +163,7 @@ fn committed_state_survives_a_reopen() {
         },
     );
     let revision = fx.revision(&lib);
-    let root = fx.root.clone();
-    drop(fx);
+    let root = fx.release();
     let again = Fixture::over(root, Arc::new(MemoryJournal::new("desktop")));
     assert_eq!(again.revision(&lib), revision);
     let members = list(
@@ -229,8 +228,7 @@ fn a_repeated_operation_id_answers_its_first_receipt_even_after_reopen() {
         sort: Default::default(),
     };
     let first = fx.run_as(op.clone(), "1", command()).expect("first");
-    let root = fx.root.clone();
-    drop(fx);
+    let root = fx.release();
     let again = Fixture::over(root, Arc::new(MemoryJournal::new("desktop")));
     let second = again.run_as(op, "1", command()).expect("replay");
     assert_eq!(second.created_id, first.created_id);
@@ -506,10 +504,10 @@ fn every_commit_journal_entry_reaches_the_host_journal_redacted() {
 fn entries_the_host_journal_refused_are_forwarded_at_the_next_open() {
     let root = temp_root("outbox");
     let flaky = FlakyJournal::down();
-    let fx = Fixture::over(root.clone(), flaky.clone());
+    let fx = Fixture::over(root, flaky.clone());
     let lib = fx.create_library("Family archive");
     assert_eq!(fx.catalog.outbox_len(&lib).expect("outbox"), 1);
-    drop(fx);
+    let root = fx.release();
     flaky.down.store(false, Ordering::SeqCst);
     let again = Fixture::over(root, flaky.clone());
     assert_eq!(again.catalog.outbox_len(&lib).expect("outbox"), 0);
@@ -536,8 +534,7 @@ fn pending_intent_is_recorded_and_cleared_by_its_commit() {
         fx.catalog.pending_intents(&lib, 10).expect("list"),
         vec![intent.clone()]
     );
-    let root = fx.root.clone();
-    drop(fx);
+    let root = fx.release();
     let again = Fixture::over(root, Arc::new(MemoryJournal::new("desktop")));
     assert_eq!(
         again.catalog.pending_intents(&lib, 10).expect("list"),
@@ -581,8 +578,7 @@ fn removing_a_catalog_file_loses_only_the_rebuildable_index() {
     let fx = Fixture::new("rebuild");
     let lib = fx.create_library("Family archive");
     let file = fx.file_of(&lib);
-    let root = fx.root.clone();
-    drop(fx);
+    let root = fx.release();
     std::fs::remove_file(&file).expect("remove");
     let _ = std::fs::remove_file(file.with_extension("sqlite-wal"));
     let _ = std::fs::remove_file(file.with_extension("sqlite-shm"));
@@ -617,8 +613,7 @@ fn the_schema_is_versioned_and_a_newer_catalog_is_refused() {
     let fx = Fixture::new("schema");
     let lib = fx.create_library("Family archive");
     let file = fx.file_of(&lib);
-    let root = fx.root.clone();
-    drop(fx);
+    let root = fx.release();
     let conn = rusqlite::Connection::open(&file).expect("open");
     let version: i64 = conn
         .query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -634,6 +629,7 @@ fn the_schema_is_versioned_and_a_newer_catalog_is_refused() {
         !format!("{err:?}").contains(root.to_string_lossy().as_ref()),
         "{err:?}"
     );
+    std::fs::remove_dir_all(root).expect("cleanup");
 }
 
 #[test]
@@ -681,6 +677,7 @@ fn an_unusable_root_fails_without_naming_its_path() {
         !format!("{err:?}").contains(base.to_string_lossy().as_ref()),
         "{err:?}"
     );
+    std::fs::remove_dir_all(base).expect("cleanup");
 }
 
 /// Drive `catalog` through a fixed sequence of commits (create, collections, virtual
@@ -793,4 +790,84 @@ fn the_sqlite_catalog_answers_like_the_api_reference_catalog() {
             .unwrap()
     });
     assert_eq!(actual, expected);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_catalog_file_that_is_a_symbolic_link_is_not_followed() {
+    let outside = temp_root("symlink-target");
+    let target = outside.join("elsewhere.sqlite");
+    let fx = Fixture::new("symlink");
+    std::os::unix::fs::symlink(&target, fx.root.join(format!("{LIB_A}.sqlite"))).expect("link");
+    let create = raw(
+        LIB_A,
+        NEW_LIBRARY_REVISION,
+        "op-1",
+        vec![CatalogChange::CreateLibrary(record(LIB_A))],
+    );
+    assert!(fx.catalog.commit(create).is_err());
+    assert!(!target.exists(), "the link target must not be created");
+    std::fs::remove_dir_all(outside).expect("cleanup");
+}
+
+#[test]
+fn a_renamed_catalog_file_is_not_served_under_another_library() {
+    let fx = Fixture::new("renamed");
+    let lib = fx.create_library("Family archive");
+    let other = LibraryId::new(LIB_A).unwrap();
+    let from = fx.file_of(&lib);
+    let root = fx.release();
+    std::fs::rename(&from, catalog_file(&root, &other)).expect("rename");
+    let again = Fixture::over(root, Arc::new(MemoryJournal::new("desktop")));
+    assert!(again.catalog.library(&other).expect("read").is_none());
+    assert!(again.catalog.library(&lib).expect("read").is_none());
+}
+
+#[test]
+fn no_more_than_the_library_limit_can_be_created() {
+    let fx = Fixture::new("limit");
+    for n in 0..filesquid_native::MAX_LIBRARIES {
+        let id = format!("0b0f8a52-3f0e-4c4b-9a59-{n:012x}");
+        let create = raw(
+            &id,
+            NEW_LIBRARY_REVISION,
+            &format!("op-{n}"),
+            vec![CatalogChange::CreateLibrary(record(&id))],
+        );
+        fx.catalog.commit(create).expect("create");
+    }
+    let id = "0b0f8a52-3f0e-4c4b-9a59-ffffffffffff";
+    let create = raw(
+        id,
+        NEW_LIBRARY_REVISION,
+        "op-over",
+        vec![CatalogChange::CreateLibrary(record(id))],
+    );
+    assert!(matches!(
+        fx.catalog.commit(create),
+        Err(CatalogError::Failed(_))
+    ));
+    assert!(!catalog_file(&fx.root, &LibraryId::new(id).unwrap()).exists());
+}
+
+#[test]
+fn an_intent_recorded_after_its_commit_is_not_stored() {
+    let fx = Fixture::new("late-intent");
+    let lib = fx.create_library("Family archive");
+    fx.catalog
+        .commit(raw(lib.as_str(), "1", "op-done", Vec::new()))
+        .expect("commit");
+    let intent = PendingIntent {
+        library_id: lib.clone(),
+        operation_id: OperationId::new("op-done").expect("op"),
+        operation: "library.collection.create".into(),
+        expected_revision: ExpectedRevision::new("1").expect("rev"),
+        recorded_at_ms: 1_792_281_600_000,
+    };
+    fx.catalog.record_intent(&intent).expect("record");
+    assert!(fx
+        .catalog
+        .pending_intents(&lib, 10)
+        .expect("list")
+        .is_empty());
 }

@@ -45,6 +45,13 @@ impl CatalogWorld {
         self.fixture.as_ref().expect("fixture")
     }
 
+    /// Close the catalog, keeping its directory for a reopen.
+    fn close(&mut self) {
+        if let Some(fixture) = self.fixture.take() {
+            fixture.release();
+        }
+    }
+
     /// The library created under `name`.
     fn library(&self, name: &str) -> LibraryId {
         self.libraries.get(name).cloned().expect("library")
@@ -52,7 +59,7 @@ impl CatalogWorld {
 
     /// Close the catalog and open the same directory again over `journal`.
     fn reopen(&mut self, journal: Arc<dyn JournalStore>) {
-        self.fixture = None;
+        self.close();
         let root = self.root.clone().expect("root");
         self.fixture = Some(Fixture::over(root, journal));
     }
@@ -136,7 +143,7 @@ fn retry_after_restart(w: &mut CatalogWorld) {
 #[when(expr = "the host journal is reachable again when the catalog reopens")]
 fn journal_back(w: &mut CatalogWorld) {
     let flaky = w.flaky.clone().expect("flaky journal");
-    w.fixture = None;
+    w.close();
     flaky.down.store(false, Ordering::SeqCst);
     w.reopen(flaky);
 }

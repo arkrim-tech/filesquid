@@ -8,10 +8,10 @@
 //! receipts, pending intent and the journal outbox.
 
 use super::{failed, CATALOG_FILE_EXTENSION, CATALOG_SCHEMA_VERSION};
-use crate::journal_sqlite::create_owner_only;
+use crate::owner_only::create_owner_only;
 use filesquid_api::library::{is_uuid_v4, CatalogError};
 use filesquid_core::LibraryId;
-use rusqlite::Connection;
+use rusqlite::{Connection, OpenFlags};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -127,7 +127,8 @@ pub(crate) fn file_path(root: &Path, library_id: &LibraryId) -> Result<PathBuf, 
         .ok_or_else(|| failed("library identifier is not a UUID v4"))
 }
 
-/// Open (creating if needed, owner-only) the catalog file at `path` in WAL mode with foreign
+/// Open (creating if needed, owner-only, never through a symbolic link) the catalog file at
+/// `path` in WAL mode with foreign
 /// keys on, and bring its schema to [`CATALOG_SCHEMA_VERSION`]. Filesystem and database I/O.
 ///
 /// # Errors
@@ -135,7 +136,8 @@ pub(crate) fn file_path(root: &Path, library_id: &LibraryId) -> Result<PathBuf, 
 /// [`CatalogError::Failed`] when its schema is newer than this host or migration fails.
 pub(crate) fn open_catalog_db(path: &Path) -> Result<Connection, CatalogError> {
     create_owner_only(path).map_err(|e| unavailable("create catalog file", &e))?;
-    let conn = Connection::open(path).map_err(|e| unavailable("open catalog file", &e))?;
+    let conn = Connection::open_with_flags(path, open_flags())
+        .map_err(|e| unavailable("open catalog file", &e))?;
     conn.pragma_update(None, "journal_mode", "WAL")
         .map_err(|e| unavailable("set WAL mode", &e))?;
     conn.pragma_update(None, "synchronous", "NORMAL")
@@ -145,6 +147,16 @@ pub(crate) fn open_catalog_db(path: &Path) -> Result<Connection, CatalogError> {
     conn.busy_timeout(BUSY_TIMEOUT)
         .map_err(|e| unavailable("set busy timeout", &e))?;
     migrate(conn)
+}
+
+/// SQLite open flags of a catalog file: read-write, create, no URI names, and never follow a
+/// symbolic link (`SQLITE_OPEN_NOFOLLOW`), so a link placed where a catalog file belongs is
+/// refused by SQLite itself. Pure.
+fn open_flags() -> OpenFlags {
+    OpenFlags::SQLITE_OPEN_READ_WRITE
+        | OpenFlags::SQLITE_OPEN_CREATE
+        | OpenFlags::SQLITE_OPEN_NO_MUTEX
+        | OpenFlags::SQLITE_OPEN_NOFOLLOW
 }
 
 /// Bring the schema of `conn` to [`CATALOG_SCHEMA_VERSION`] in one transaction. Database I/O.

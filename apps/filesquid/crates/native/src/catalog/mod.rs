@@ -100,7 +100,8 @@ impl SqliteCatalog {
     /// Open the catalog directory `root` (created owner-only if missing), open every library
     /// catalog file in it, migrate each to [`CATALOG_SCHEMA_VERSION`], and forward journal
     /// entries a crash left in their outboxes to `journal`, the host's activity journal store.
-    /// A file without a library row (a create that never committed) is left closed.
+    /// A file without a library row (a create that never committed), or whose row names another
+    /// library than its file name, is left closed.
     /// Filesystem and database I/O.
     ///
     /// # Errors
@@ -155,13 +156,23 @@ impl SqliteCatalog {
     }
 
     /// Record `intent` in its library's catalog before canonical work starts; the commit of
-    /// its operation ID removes it. Database I/O.
+    /// its operation ID removes it. An intent whose operation is already committed (its
+    /// receipt is stored) is not stored, so no later commit is needed to clear it.
+    /// Database I/O.
     ///
     /// # Errors
     /// [`CatalogError::Failed`] for an unknown library or a database failure.
     pub fn record_intent(&self, intent: &PendingIntent) -> Result<(), CatalogError> {
         let libraries = self.lock()?;
         let library = open_library(&libraries, &intent.library_id)?;
+        let committed = rows::receipt(
+            &library.conn,
+            &intent.library_id,
+            intent.operation_id.as_str(),
+        )?;
+        if committed.is_some() {
+            return Ok(());
+        }
         intent::record(&library.conn, intent)
     }
 
@@ -261,8 +272,13 @@ impl SqliteCatalog {
         libraries: &mut BTreeMap<String, OpenLibrary>,
         commit: &CatalogCommit,
     ) -> Result<CommitReceipt, CatalogError> {
+        if libraries.len() >= MAX_LIBRARIES {
+            return Err(failed(format!(
+                "a catalog directory holds at most {MAX_LIBRARIES} libraries"
+            )));
+        }
         let path = schema::file_path(&self.root, &commit.library_id)?;
-        let existed = path.exists();
+        let existed = path.symlink_metadata().is_ok();
         let opened = schema::open_catalog_db(&path)
             .and_then(|mut conn| write::apply_commit(&mut conn, commit, true).map(|r| (conn, r)));
         let (conn, receipt) = match opened {
@@ -365,11 +381,31 @@ fn open_existing(root: &Path) -> Result<BTreeMap<String, OpenLibrary>, CatalogEr
     let mut libraries = BTreeMap::new();
     for (name, id) in names {
         let conn = schema::open_catalog_db(&root.join(&name))?;
-        if rows::library(&conn)?.is_some() {
+        if serves(&conn, &id)? {
             libraries.insert(id.as_str().to_string(), OpenLibrary { id, conn });
         }
     }
     Ok(libraries)
+}
+
+/// Whether the catalog file named after `id` serves it: it holds a library row, and that row
+/// names `id`. A file without a row (a create that never committed) is left closed; a file
+/// whose row names another library (a renamed or copied file) is refused with a warning, so
+/// it is never served or changed under the wrong identifier. Database I/O.
+fn serves(conn: &Connection, id: &LibraryId) -> Result<bool, CatalogError> {
+    let Some((record, _, _)) = rows::library(conn)? else {
+        return Ok(false);
+    };
+    if record.library.id() == id {
+        return Ok(true);
+    }
+    tracing::warn!(
+        target: LOG_TARGET,
+        operation = "library.catalog.open",
+        error_code = "conflict",
+        "a catalog file names another library; it is not served"
+    );
+    Ok(false)
 }
 
 /// The catalog file names in `root` with their libraries. Filesystem I/O.
@@ -418,7 +454,7 @@ fn vacuum_into(conn: &Connection, dest: &Path) -> Result<(), CatalogError> {
     let dest_text = dest
         .to_str()
         .ok_or_else(|| failed("backup destination is not valid UTF-8"))?;
-    crate::journal_sqlite::create_owner_only(dest)
+    crate::owner_only::create_owner_only(dest)
         .map_err(|e| CatalogError::Unavailable(format!("create backup file: {e}")))?;
     let copied = conn
         .execute("VACUUM INTO ?1", rusqlite::params![dest_text])

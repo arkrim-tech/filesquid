@@ -32,6 +32,7 @@ pub mod catalog;
 pub mod host_checks;
 pub mod host_monitor;
 pub mod journal_sqlite;
+mod owner_only;
 
 #[cfg(feature = "desktop")]
 pub use catalog::{
