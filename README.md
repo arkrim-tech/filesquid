@@ -199,6 +199,13 @@ cd apps/filesquid
 cargo test -p filesquid-api --locked --test unit_isolation
 ```
 
+The library domain commands and queries (API-S-019: create and open a library, collections, virtual collections, membership, hide and recoverable delete, permanent deletion with a scope confirmation, paged listing) run against the in-memory reference catalog, so they need no database:
+
+```sh
+cd apps/filesquid
+cargo test -p filesquid-api --locked --test unit_library --test unit_library_queries --test features
+```
+
 The host-side I/O the API must not do lives in the native-processing library `filesquid-native` (`crates/native`): the SQLite journal store, the data-directory checks (write probe, free space) and `HostMonitor`, which both hosts link ([ADR 033](./resources/architecture/033-activity-journal-and-live-health-monitoring.md) amendment 2026-10-18). Its unit tests and BDD features run alone:
 
 ```sh
