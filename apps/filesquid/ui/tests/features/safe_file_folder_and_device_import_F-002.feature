@@ -31,6 +31,12 @@ Feature: Safe file, folder and device import
     Then no OCFL version should hold the file without its file record
     And the import should be listed as pending and retryable
 
+  Scenario: A referenced import also gets a file record
+    Given an explicit referenced import of a file that stays at its source location
+    When the import completes
+    Then the OCFL version that records the reference should also contain the file record
+    And the file record should state that the bytes were referenced, not copied
+
   Scenario: Facts the source cannot provide are listed, never invented
     Given an upload whose client provides only a name, size, last-modified time and media type
     When the upload completes
@@ -54,10 +60,10 @@ Feature: Safe file, folder and device import
     And attribute values beyond the 1 MiB read budget should keep their name and size with the digest marked incomplete
 
   Scenario: Binary attribute names and values round-trip exactly
-    Given a source file with an extended attribute whose value is not valid UTF-8
+    Given a source file with an extended attribute whose name is not valid UTF-8 and another whose value is not valid UTF-8
     When I import it
-    Then the file record should store that value as base64 marked encoding base64
-    And decoding it should give the original bytes
+    Then the file record should store that name and that value as base64 marked encoding base64
+    And decoding each should give the original bytes
 
   Scenario: The Metadata panel never receives raw filesystem paths
     Given an imported file whose file record holds its original absolute path

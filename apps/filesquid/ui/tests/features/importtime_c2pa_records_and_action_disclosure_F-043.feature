@@ -26,6 +26,13 @@ Feature: Import-time C2PA records and action disclosure
     And each record should state its own creation time and cite its import file record and the OCFL version created time and SHA-256 digest
     And no record should claim FileSquid import time
 
+  Scenario: A backfilled record for a file without a file record says so
+    Given a library holds a file imported before the c2pa module was enabled that has no file record
+    When the c2pa module is enabled and the backfill job runs
+    Then the file's initial record should cite the OCFL version created time and SHA-256 digest alone
+    And it should state that no file record exists
+    And it should not claim FileSquid import time
+
   # Source
   # - srs.md SRS-F-043
   # - prd.md F-043
