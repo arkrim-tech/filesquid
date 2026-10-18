@@ -7,13 +7,25 @@
 #
 # This script ensures that whenever a Walkthrough document exists for a task,
 # the corresponding Plan and ToDos documents are removed to prevent clutter.
+# Walkthroughs are searched under apps/ (module and UI tasks) and under the
+# repository-root resources/tasks/ (documentation-only tasks).
 
 FAILED=0
 
-# Find all Walkthrough documents across all apps
-WALKTHROUGHS=$(find apps -name "*-Walkthrough.md" 2>/dev/null)
+# Walkthrough documents live under apps/ and under the repository-root resources/tasks/.
+SEARCH_ROOTS=(apps resources/tasks)
 
-for WT in $WALKTHROUGHS; do
+# Prints every Walkthrough path under the search roots, NUL-separated so file
+# names containing spaces survive. Missing roots are skipped.
+list_walkthroughs() {
+  local root
+  for root in "${SEARCH_ROOTS[@]}"; do
+    [ -d "$root" ] || continue
+    find "$root" -name "*-Walkthrough.md" -print0 2>/dev/null
+  done
+}
+
+while IFS= read -r -d '' WT; do
   # Extract the base path and the task identifier (e.g., "apps/app_abc/resources/tasks/Task-1.1")
   BASE_NAME="${WT%-Walkthrough.md}"
   
@@ -29,7 +41,7 @@ for WT in $WALKTHROUGHS; do
     echo "❌ ERROR: Task cleanup failure. Found Walkthrough but ToDos document still exists: $TODOS_FILE"
     FAILED=1
   fi
-done
+done < <(list_walkthroughs)
 
 if [ $FAILED -ne 0 ]; then
   echo "You must remove the '-Plan.md' and '-ToDos.md' files once the '-Walkthrough.md' is generated."
