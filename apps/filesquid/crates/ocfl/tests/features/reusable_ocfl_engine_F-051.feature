@@ -29,6 +29,11 @@ Feature: OCFL module (filesquid-ocfl)
     Then a storage backend trait with local filesystem and in-memory backends should be available
     And the engine core should not call std::fs directly
 
+  Scenario: Committed logical state is enumerated without a database or catalog types
+    When I inspect the filesquid-ocfl public API
+    Then a committed logical-state enumerator should be available
+    And it should need no SQLite, PostgreSQL or FileSquid catalog types
+
   Scenario: Engine builds for the browser
     When I build filesquid-ocfl for wasm32-unknown-unknown with default features off
     Then the build should succeed

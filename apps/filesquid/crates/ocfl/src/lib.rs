@@ -41,6 +41,10 @@
 //!   [`Object`]; resolve the logical state of a caller-pinned version through
 //!   the inventory; stream or copy a logical file checked against its digest;
 //!   version history and the diff of two versions.
+//! - [`StorageRoot::enumerate`]: enumerate the committed logical state of a
+//!   whole storage root (object id, version, logical path, digest and
+//!   content locator per file; T-039) for catalog rebuilds and projections,
+//!   with no database or application type.
 //!
 //! Structural validation (OCFL-S-009), on every backend and target:
 //!
@@ -97,7 +101,10 @@ pub use inventory::{FormatError, Inventory, VersionNum};
 #[cfg(all(feature = "fs", not(target_arch = "wasm32")))]
 pub use logical_file::{read_logical_file, reject_git_in_ocfl_root, write_logical_file};
 pub use namaste::{Declaration, SpecVersion};
-pub use read::{LogicalFile, LogicalState, Object, ReadError, StorageRoot};
+pub use read::{
+    CommittedEvent, CommittedFile, CommittedObject, CommittedState, CommittedVersion,
+    EnumerateError, LogicalFile, LogicalState, Object, ReadError, StorageRoot, Versions,
+};
 pub use validate::{validate_object, Finding, ValidationReport};
 pub use write::{
     CommitError, CommitReceipt, LeaseStore, ObjectWriter, VersionDraft, VersionReservations,

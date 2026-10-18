@@ -11,7 +11,7 @@
 #   - check_links.py: every relative Markdown link and anchor resolves.
 #   - check_distribution_links.py: no link crosses the FileSquid/ImageSquid boundary.
 #   - update_mvp_progress.py --check: the checklist's MVP progress bar matches its ticked boxes.
-#   - verify_task_cleanup.sh: no Plan/ToDos file survives next to its Walkthrough.
+#   - verify_task_cleanup.sh: no Plan/ToDos file survives next to its Walkthrough, under apps/ and the root resources/tasks/.
 #
 # Usage: ./scripts/verify_docs.sh   (from the repository root)
 
