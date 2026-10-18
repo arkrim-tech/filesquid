@@ -45,3 +45,24 @@ ADR 039 → [ADR index](../architecture/README.md) → [SRS](../srs.md) "Current
 ## Verification
 
 Run with `CARGO_TARGET_DIR` on the shared target, `CARGO_INCREMENTAL=0`, `CARGO_PROFILE_DEV_DEBUG=0` and `TMPDIR` on tmpfs, after `npm ci` in `apps/filesquid/ui` and `apps/imagesquid`.
+
+`bash scripts/pre-commit.sh` (docs scope) exit 0: `✅ All Pre-Commit Hooks Passed! Test scope: docs (14s)`.
+
+`FULL=1 bash scripts/pre-commit.sh` on commit `e572fd3` (2026-10-18, UTC) exit 0. Excerpt of the step lines, copied from the output. The per-crate times are a warm-target baseline without the hack; they are not the measurement Decision 7 asks for.
+
+```text
+ℹ️  Test scope: full
+✅ Clippy passed (14s).
+✅ Workspace tests passed (72s).
+✅ Module crate alone: filesquid-core passed (3s).
+✅ Module crate alone: filesquid-ocfl passed (49s).
+✅ Module crate alone: filesquid-metadata passed (14s).
+✅ Module crate alone: filesquid-c2pa passed (34s).
+✅ Module crate alone: filesquid-api passed (6s).
+✅ Module crate alone: filesquid-native passed (21s).
+✅ Rustdoc passed (13s).
+✅ Clippy (desktop, test-instrumented) passed (13s).
+✅ Desktop tests (test-instrumented) passed (32s).
+✅ Lint and test validation passed (test scope: full).
+✅ All Pre-Commit Hooks Passed! Test scope: full (325s)
+```
