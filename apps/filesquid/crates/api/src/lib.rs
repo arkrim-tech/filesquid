@@ -16,6 +16,10 @@
 //! commands and queries (collections, virtual collections, membership, the hide and delete
 //! policy, paged listing) that every host runs over the catalog it injects.
 //!
+//! [`replica`] holds what a client that works from a local copy needs: a permission-aware
+//! cache identity, visible coverage and recovery states, and the ledger of pending changes
+//! that become canonical only when their fenced head publication succeeds.
+//!
 //! Each host describes itself once at startup with [`ApiState::describe_host`] (its
 //! [`host::HostType`], a server's operator name and its hosted-service enrolment port), and
 //! `GET /api/v1/host` answers that [`host::HostDescriptor`] to every authenticated caller.
@@ -41,6 +45,7 @@ pub mod metrics;
 pub mod monitor;
 pub mod operation;
 pub mod registry;
+pub mod replica;
 mod routes;
 pub mod trace_layer;
 
