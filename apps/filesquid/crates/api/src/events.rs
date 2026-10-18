@@ -211,13 +211,16 @@ struct SubscriberSlot {
 }
 
 impl SubscriberSlot {
-    /// Take a slot if fewer than [`MAX_SUBSCRIBERS`] are taken. Check and increment are one
-    /// atomic step, so concurrent callers never exceed the cap.
+    /// Take a slot if fewer than [`MAX_SUBSCRIBERS`] are taken. The increment is one atomic
+    /// step that answers the previous count; a caller that finds the cap already reached
+    /// gives its increment back, so concurrent callers never hold more than the cap. (A plain
+    /// `fetch_add` works on every stable toolchain; `fetch_update` is deprecated since Rust
+    /// 1.99.)
     fn claim(open: &Arc<AtomicUsize>) -> Option<Self> {
-        open.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
-            (n < MAX_SUBSCRIBERS).then_some(n + 1)
-        })
-        .ok()?;
+        if open.fetch_add(1, Ordering::SeqCst) >= MAX_SUBSCRIBERS {
+            open.fetch_sub(1, Ordering::SeqCst);
+            return None;
+        }
         Some(Self { open: open.clone() })
     }
 }
