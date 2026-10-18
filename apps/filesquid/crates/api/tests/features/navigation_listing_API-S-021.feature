@@ -41,10 +41,15 @@ Feature: Navigation listing
     Then the answer should be empty
     And the virtual collection should report no children
 
-  Scenario: A folder implied only by hidden or deleted files is not listed
-    Given every file under "2025/winter" in collection "Photos" is deleted
+  Scenario Outline: A folder implied only by hidden or deleted files is not listed
+    Given every file under "2025/winter" in collection "Photos" is <state>
     When the owner lists the children of folder "2025" in collection "Photos"
     Then the answer should hold only folder "summer"
+
+    Examples:
+      | state   |
+      | hidden  |
+      | deleted |
 
   Scenario: Paging is stable across many siblings
     Given collection "Photos" holds 1001 top-level folders
@@ -61,6 +66,16 @@ Feature: Navigation listing
     When the owner renames collection "Photos" to "Pictures"
     Then the client should receive one "navigation.change" event naming the handle of library "Family"
 
+  Scenario: Change events name only the parents a subscriber may read
+    Given library "Family" also holds collection "Letters"
+    And subscriber "Ana" may read library "Family", collection "Photos" and collection "Letters"
+    And subscriber "Ben" may read library "Family" and collection "Photos" but not collection "Letters"
+    And subscriber "Cy" may read nothing in library "Family"
+    When one committed move takes a folder from collection "Letters" into collection "Photos"
+    Then "Ana" should receive one "navigation.change" event naming collections "Letters" and "Photos"
+    And "Ben" should receive one "navigation.change" event naming only collection "Photos"
+    And "Cy" should receive no "navigation.change" event
+
   # Error cases
   Scenario Outline: An unusable page request is refused
     When the owner lists the children of library "Family" with <request>
@@ -73,7 +88,20 @@ Feature: Navigation listing
       | a limit of 1001         |
 
   Scenario: Unknown and unreadable nodes get the same answer
-    Given a second user who may not read collection "Photos"
+    Given a second user who may read library "Family" and virtual collection "Best of 2025" but not collection "Photos" or the unfiled files
     When that user lists the children of collection "Photos" and of a node that does not exist
     Then both answers should be the same "not_found" error
-    And library "Family" should report children to that user only if another child is readable
+
+  Scenario: Only readable children are listed and counted
+    Given a second user who may read library "Family" and virtual collection "Best of 2025" but not collection "Photos" or the unfiled files
+    When that user lists the children of the repository
+    Then library "Family" should report has_children true
+    When that user lists the children of library "Family"
+    Then the answer should hold only virtual collection "Best of 2025"
+
+  Scenario: A node with no readable child reports none
+    Given a third user who may read library "Family" and nothing inside it
+    When that user lists the children of the repository
+    Then library "Family" should report has_children false
+    When that user lists the children of library "Family"
+    Then the answer should be empty

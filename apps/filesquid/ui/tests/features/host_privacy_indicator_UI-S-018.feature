@@ -30,7 +30,19 @@ Feature: Host privacy indicator
     And it should state that files are encrypted on this device before upload
     And sync should never be labelled as backup
 
+  Scenario: The browser host says only I can read my files, in this browser
+    Given the host descriptor says host type "browser" and the hosted service at "backup.filesquid.tech" has backup on and sync on
+    When the shell loads
+    Then the indicator should show the browser-host statement that files are decrypted only in this browser
+    And the hosted service area should show backup on and sync on as two separate states
+
   # Edge cases
+  Scenario: The indicator shows a loading state until the descriptor arrives
+    Given the host descriptor answer is delayed
+    When the shell loads
+    Then the indicator should show its loading state
+    And no host type or privacy statement should be shown until the descriptor arrives
+
   Scenario: A server without an operator name is still honest
     Given the host descriptor says host type "server" with no operator name
     When the shell loads
@@ -41,10 +53,16 @@ Feature: Host privacy indicator
     When a "host.change" event reports that sync is on
     Then the indicator should show sync on without a page reload
 
-  Scenario: The indicator rereads after missed events
+  Scenario Outline: The indicator rereads after missed events
     Given the shell shows the host indicator
-    When the event channel delivers an "events.resync" hint
+    When <interruption>
     Then the UI should read the host descriptor again
+    And the indicator should show the descriptor it read
+
+    Examples:
+      | interruption                                         |
+      | the event channel delivers an "events.resync" hint   |
+      | the event channel disconnects and reconnects         |
 
   # Error cases
   Scenario: The indicator never guesses the host

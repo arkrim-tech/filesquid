@@ -38,7 +38,7 @@ The backup and sync part fits ADR 032's ciphertext-only rule: the descriptor rep
 | Folders | Implied by committed logical paths only; none for hidden or deleted files only; UI-pending empty folders do not exist here |
 | Node | Opaque `node` handle at most 512 bytes (no filesystem path, storage key, OCFL content path, SQL or token), `kind`, `name`, `has_children` |
 | Breadcrumb | `ancestors` from the repository down to and including the requested node |
-| Paging | `limit` 1 to 1,000, default 200; opaque cursor; stable order by kind, then catalog order or folder name in Unicode code-point order, then handle; `invalid_request` for a malformed cursor or limit |
+| Paging | `limit` 1 to 1,000, default 200; opaque cursor; stable order by the fixed kind order `library`, `collection`, `virtual_collection`, `folder`, then catalog order or folder name in Unicode code-point order, then handle; `invalid_request` for a malformed cursor or limit |
 | Permissions | Filter before paging; `has_children` counts readable children only; unknown and unreadable nodes get the same `not_found` |
 | One meaning | Libraries, collections and virtual collections from the API-S-019 queries; folders from the API-F1.3 folder listing |
 | Event | `navigation.change` with `parents` (1 to 64 handles) or `all` `true`, filtered per subscriber |
@@ -70,7 +70,7 @@ The indicator reads `GET /api/v1/host` at start, follows `host.change`, rereads 
 | API-F1.10 Host descriptor route and change event (new, 6 h) | Route, event, host injection on desktop and server, not-enrolled default | API-F1.2, API-F1.7 (both done) |
 | API-F1.11 Navigation listing route (new, 10 h) | Follow-up to CL-0.2 | Task CL-0.2, API-F1.3, API-F1.7 |
 | UI-F2.1a States, and the navigation tree and breadcrumb elements (12 h) | States element; tree and breadcrumb over a typed interface with fixtures; device-kept preferences | UI-0.1, UI-0.2, UI-0.5 (all done) |
-| UI-F2.1b Host privacy indicator and live navigation data (8 h) | Indicator from the descriptor; live tree and breadcrumb | UI-F2.1a, API-F1.10 (indicator), API-F1.11 (live tree and breadcrumb) |
+| UI-F2.1b Host privacy indicator and live navigation data (8 h) | Indicator from the descriptor; live tree and breadcrumb | UI-F2.1a, API-F1.10; API-F1.11 gates only the live tree and breadcrumb |
 | API-F2.2 | Per-user preferences include the navigation choices | unchanged |
 | UI-F2.8 | Moves the navigation choices from the device to API-F2.2 | unchanged |
 | API-F4.1 | Replaces the not-enrolled default with real enrolment state and `host.change` events | unchanged |
@@ -79,7 +79,7 @@ The indicator reads `GET /api/v1/host` at start, follows `host.change`, rereads 
 | UI-I1.1 | Depends on UI-F2.1b | |
 | Task FS-2.1 | Dispatches UI-0.1, UI-0.2, UI-0.5, UI-F2.1a, API-F1.10, API-F1.11, UI-F2.1b; 48 h; also waits on Task FS-1.2 and CL-0.2 for API-F1.11 and the live tree only | |
 
-The checklist moves Task FS-2.1 after Task 0.10, since it now finishes after FS-1.2 and CL-0.2. The MVP grows by 16 hours (762 to 778; total 2,601 to 2,617).
+The checklist moves Task FS-2.1 after Task 0.10, since it now finishes after FS-1.2 and CL-0.2. The MVP grows by 16 hours (762 to 778; phase F2 288 to 304; total 2,601 to 2,617).
 
 ## Secondary SRS mapping
 

@@ -29,11 +29,18 @@ Feature: Navigation preferences
     Then the stored value should hold the folder's node handle and kind
     And it should hold no name, title, logical path, token or content handle
 
-  Scenario: A malformed stored value is ignored
-    Given device storage key "filesquid.navigation" holds a value with version 2
+  Scenario Outline: An unusable stored value is ignored
+    Given device storage key "filesquid.navigation" holds <value>
     When the UI starts
     Then the navigation tree should use its defaults
     And the console should say why the stored value was ignored
+
+    Examples:
+      | value                                   |
+      | text that is not JSON                   |
+      | a value with version 2                  |
+      | a value with 101 pinned destinations    |
+      | a value with 1,001 collapsed nodes      |
 
   Scenario: Refused device storage still applies the choice for this page
     Given device storage refuses access

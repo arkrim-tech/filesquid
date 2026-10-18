@@ -36,11 +36,24 @@ Feature: Host descriptor
     When a caller reads the host descriptor with headers that claim a server origin and a browser user agent
     Then the descriptor should still say host type "desktop"
 
-  Scenario: A server without an operator name starts and says so
-    Given a FileSquid server host started without FILESQUID_OPERATOR_NAME
+  Scenario Outline: A server without a usable operator name starts and says so
+    Given a FileSquid server host started with FILESQUID_OPERATOR_NAME <setting>
     When a signed-in member who is not an administrator reads the host descriptor
     Then the descriptor should say host type "server" with no operator name
+    And stdout should carry one "server.operator_unnamed" warning that names the variable
     And the activity journal should hold one "server.operator_unnamed" warning that names the variable
+    And neither warning should contain a token, key, account or device identifier, path or file name
+
+    Examples:
+      | setting                     |
+      | unset                       |
+      | set to an empty value       |
+      | set to only spaces and tabs |
+
+  Scenario: The operator name is trimmed
+    Given a FileSquid server host whose operator name is set to "  Garderen Family  "
+    When a signed-in member who is not an administrator reads the host descriptor
+    Then the descriptor should say host type "server" with operator name "Garderen Family"
 
   Scenario Outline: An unusable operator name stops the server
     Given FILESQUID_OPERATOR_NAME is set to <value>
@@ -56,8 +69,10 @@ Feature: Host descriptor
   Scenario: A descriptor change reaches every subscriber
     Given a FileSquid desktop host that describes itself to the API
     And an owner's webview and a second authenticated client subscribed to the event channel
-    When the host enrols with the hosted service and turns sync on
-    Then each subscriber should receive one "host.change" event carrying the whole new descriptor
+    When the host enrols with the hosted service
+    And the host then turns sync on
+    Then each subscriber should receive two "host.change" events in that order
+    And the first should carry the enrolled descriptor with sync off and the second the descriptor with sync on
 
   Scenario: A client that missed events reads the descriptor again
     Given a subscriber that received an "events.resync" hint
@@ -74,4 +89,4 @@ Feature: Host descriptor
   Scenario: The descriptor and its event carry nothing private
     Given a FileSquid desktop host enrolled with the hosted service at "backup.filesquid.tech" with backup on and sync on
     When the descriptor and a "host.change" payload are inspected
-    Then neither should contain a token, content handle, key, account or device identifier, e-mail address, quota, size, timestamp, path or file name
+    Then neither should contain a token, content handle, key or key identifier, account or device identifier, e-mail address, quota, object count, size, timestamp, path or file name

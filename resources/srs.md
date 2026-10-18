@@ -111,7 +111,7 @@ The system MUST implement [PRD F-003](./prd.md#f-003-browsing-selection-and-view
 
 The system MUST implement [PRD F-004](./prd.md#f-004-collections-folders-and-navigation) with the acceptance criteria stated there. UI copy MUST come from the active distribution's label table: the FileSquid default UI MUST use the internal names, and the ImageSquid distribution MUST use repo, library, album, gallery and exhibit. The item type in data and APIs MUST be **file**.
 - The API MUST expose a navigation listing that answers one level of the navigation tree (the host's repository, its libraries, their collections and virtual collections, and the folders implied by committed logical paths) with opaque node handles and the ancestors a breadcrumb needs, filtered by the caller's permissions before paging ([API-S-021](../apps/filesquid/crates/api/resources/srs.md)).
-- The default UI's pinned destinations, section order and collapse state MUST persist across restarts: in the API's per-user UI preferences on a host that serves them, otherwise on the device in Web Storage, holding opaque handles only ([UI-S-017](../apps/filesquid/ui/resources/srs.md)).
+- The default UI's pinned destinations, section order and collapse state MUST persist across restarts: in the API's per-user UI preferences on a host that serves them, otherwise on the device in Web Storage as a versioned value of opaque node handles, node kinds, section order and collapse state, without names, titles, paths, tokens or content handles ([UI-S-017](../apps/filesquid/ui/resources/srs.md)).
 
 **Delivered by:** FileSquid platform. Every distribution presents it through its own views and label table.
 
