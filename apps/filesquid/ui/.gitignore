@@ -3,3 +3,4 @@ dist
 tests/test-results
 tests/playwright-report
 tests/allure-results
+tests/allure-report
