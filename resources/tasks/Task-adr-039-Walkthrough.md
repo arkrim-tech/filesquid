@@ -8,9 +8,13 @@ Record the decision to unify Rust dependency feature sets across the `apps/files
 
 ## Changes
 
-- [ADR 039](../architecture/039-cargo-hakari-workspace-hack.md) (new): the generated crate `filesquid-workspace-hack`, cargo-hakari pinned to 0.9.39, `.config/hakari.toml` in `apps/filesquid` with four platforms. The hack is a **dev-dependency only** (workspace-dotted line), so runtime, WASM and published graphs and every isolation guard stay unchanged. The hook gains a drift gate (`cargo hakari generate --diff` plus a dev-only placement check, instead of `manage-deps --dry-run`). The ADR 029 alone check becomes `cargo check -p <crate> --lib` in the full scope, plus a stand-alone test run and `cargo publish --dry-run` before publication. The crate is kept only if the full-scope Rust steps get at least 20% faster, cold and warm, and a `rust:filesquid-ocfl` run is not slower.
+- [ADR 039](../architecture/039-cargo-hakari-workspace-hack.md) (new): the generated crate `filesquid-workspace-hack`, cargo-hakari pinned to 0.9.39, `.config/hakari.toml` in `apps/filesquid` with four platforms. The hack is a **dev-dependency only** (workspace-dotted line), so runtime, WASM and published graphs and every isolation guard stay unchanged. The hook gains a drift gate (`cargo hakari generate --diff` plus a dev-only placement check, instead of `manage-deps --dry-run`). The ADR 029 alone check becomes `cargo check -p <crate> --lib --locked` in the full scope, plus a stand-alone test run and `cargo publish --dry-run -p <crate> --locked` before publication. The drift gate runs in the `full` scope and every `rust:` scope, because a crate manifest change alone gives only `rust:<crate>`. The crate is kept only if the full-scope Rust steps get at least 20% faster, cold and warm, and a `rust:filesquid-ocfl` run is not slower.
 - [ADR index](../architecture/README.md): row 039.
 - [SRS](../srs.md), "Current verified stack": one bullet saying the tooling is decided and not yet installed.
+
+## Cubic round 1
+
+Four P2 findings and one P3. Fixed: `--locked` on the stand-alone check in this walkthrough; publication check deferred to the first change that makes a module crate publishable, since every crate is `publish = false` today; drift gate in every `rust:` scope; full keep criteria in the index row. Not fixed: ADR validator coverage of 034 to 039 needs a script change, out of scope here (open question 2).
 
 ## Facts checked (2026-10-18, UTC)
 
