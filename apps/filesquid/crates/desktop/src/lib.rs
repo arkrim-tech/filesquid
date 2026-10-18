@@ -19,10 +19,16 @@
 //! The same plugin keeps every webview on the app's own origins, so the token and the events
 //! reach app pages only.
 //!
+//! The webview's Tauri capabilities are deny-by-default ([`capability_policy`]): the main
+//! window may only listen for the API's events. The host defines no `#[tauri::command]`, and
+//! the app ACL manifest (`permissions/app-acl.toml`) makes Tauri refuse any custom command no
+//! capability grants. `build.rs` fails the build when a capability file widens that set.
+//!
 //! The test-instrumented build (`--features test-webdriver`, never shipped) adds the embedded
 //! WebDriver server for the packaged-window tests and a 100 MB range fixture (`test_fixture`).
 
 pub mod api_protocol;
+pub mod capability_policy;
 pub mod event_channel;
 #[cfg(feature = "test-webdriver")]
 pub mod test_fixture;

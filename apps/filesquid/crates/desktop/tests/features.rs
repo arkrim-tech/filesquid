@@ -1,5 +1,6 @@
 //! Cucumber harness for the `filesquid-desktop` Gherkin under `tests/features/` (F-057 and
-//! F-056: DE-S-001, DE-S-005). Needs the `test-webdriver` feature for the 100 MB test file.
+//! F-056: DE-S-001, DE-S-005; F-037: DE-S-001, DE-S-002, DE-S-006). Needs the `test-webdriver`
+//! feature for the 100 MB test file.
 //! Writes a JUnit report to `tests/allure-results/`, cleared before each run.
 
 use cucumber::{given, then, when, writer, World, WriterExt as _};
@@ -8,6 +9,10 @@ use filesquid_api::events::{topic, EVENT_BUFFER};
 use filesquid_api::journal::JournalEntry;
 use filesquid_api::{ApiEvent, ApiState, EventSubscription};
 use filesquid_desktop_lib::api_protocol::{handle, into_scheme_response};
+use filesquid_desktop_lib::capability_policy::{
+    check_app_security, check_capability, check_command_placement, check_plugin_dependencies,
+    Violation, APP_COMMANDS, GRANTED_PERMISSIONS,
+};
 use filesquid_desktop_lib::event_channel::{
     navigation_allowed, open_subscription, pump, EventSink, Forwarding,
 };
@@ -38,6 +43,8 @@ struct DesktopWorld {
     navigation: Option<bool>,
     journal: Vec<JournalEntry>,
     launched: Option<Launched>,
+    capabilities: Vec<serde_json::Value>,
+    violations: Vec<Violation>,
 }
 
 /// The host monitor opened by the real launch path, in a scratch data directory that is
@@ -302,6 +309,140 @@ fn journal_records(world: &mut DesktopWorld, operation: String) {
         .expect("journaled");
     let text = serde_json::to_string(entry).expect("json");
     assert!(!text.contains("example.com"), "{text}");
+}
+
+/// The crate's shipped capability files, read from `capabilities/`. Performs filesystem I/O.
+fn read_shipped_capabilities() -> Vec<serde_json::Value> {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("capabilities");
+    std::fs::read_dir(dir)
+        .expect("capabilities directory")
+        .map(|entry| {
+            let text = std::fs::read_to_string(entry.expect("entry").path()).expect("file");
+            serde_json::from_str(&text).expect("capability JSON")
+        })
+        .collect()
+}
+
+/// Read one file of the crate as text. Performs filesystem I/O.
+fn read_crate_file(name: &str) -> String {
+    std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(name)).expect(name)
+}
+
+/// Check a capability for the main window that grants `permissions`.
+fn check_main_window_capability(permissions: serde_json::Value) -> Vec<Violation> {
+    let doc = serde_json::json!({
+        "identifier": "default", "windows": ["main"], "permissions": permissions
+    });
+    check_capability(&doc)
+}
+
+#[given("the desktop host's shipped capability set")]
+fn shipped_capability_set(world: &mut DesktopWorld) {
+    world.capabilities = read_shipped_capabilities();
+}
+
+#[then("the capability set should have no policy violations")]
+fn no_policy_violations(world: &mut DesktopWorld) {
+    let mut violations: Vec<Violation> = world
+        .capabilities
+        .iter()
+        .flat_map(check_capability)
+        .collect();
+    let conf = serde_json::from_str(&read_crate_file("tauri.conf.json")).expect("conf");
+    violations.extend(check_app_security(&conf));
+    violations.extend(check_plugin_dependencies(&read_crate_file("Cargo.toml")));
+    violations.extend(check_command_placement(
+        "lib.rs",
+        &read_crate_file("src/lib.rs"),
+    ));
+    assert_eq!(violations, Vec::new());
+}
+
+#[then(expr = "the main window should be granted exactly {string} and {string}")]
+fn granted_exactly(world: &mut DesktopWorld, first: String, second: String) {
+    assert_eq!(GRANTED_PERMISSIONS, [first.as_str(), second.as_str()]);
+    let granted: Vec<&serde_json::Value> = world
+        .capabilities
+        .iter()
+        .map(|c| &c["permissions"])
+        .collect();
+    assert_eq!(granted, [&serde_json::json!([first, second])]);
+}
+
+#[then("no Tauri command of the app should be defined")]
+fn no_app_command(_world: &mut DesktopWorld) {
+    assert!(APP_COMMANDS.is_empty());
+}
+
+#[when(expr = "a capability grants {string} to the main window")]
+fn capability_grants(world: &mut DesktopWorld, permission: String) {
+    world.violations = check_main_window_capability(serde_json::json!([permission]));
+}
+
+#[when(expr = "a capability names the window {string}")]
+fn capability_names_window(world: &mut DesktopWorld, window: String) {
+    let doc =
+        serde_json::json!({ "identifier": "default", "windows": [window], "permissions": [] });
+    world.violations = check_capability(&doc);
+}
+
+#[when("a capability grants event listening to remote pages")]
+fn capability_for_remote_pages(world: &mut DesktopWorld) {
+    let doc = serde_json::json!({
+        "identifier": "default",
+        "windows": ["main"],
+        "remote": { "urls": ["https://*.example.com"] },
+        "permissions": ["core:event:allow-listen"]
+    });
+    world.violations = check_capability(&doc);
+}
+
+#[when(expr = "lib.rs defines the Tauri command {string}")]
+fn lib_defines_command(world: &mut DesktopWorld, name: String) {
+    let source = format!("#[tauri::command]\nfn {name}() {{}}\n");
+    world.violations = check_command_placement("lib.rs", &source);
+}
+
+#[when(expr = "a submodule defines the Tauri command {string}")]
+fn submodule_defines_command(world: &mut DesktopWorld, name: String) {
+    let source = format!("#[tauri::command]\npub fn {name}(path: String) {{}}\n");
+    world.violations = check_command_placement("files.rs", &source);
+}
+
+#[then(expr = "the policy should refuse it as the forbidden plugin permission {string}")]
+fn refused_forbidden(world: &mut DesktopWorld, permission: String) {
+    assert_eq!(
+        world.violations,
+        vec![Violation::ForbiddenPlugin(permission)]
+    );
+}
+
+#[then(expr = "the policy should refuse it as the ungranted permission {string}")]
+fn refused_ungranted(world: &mut DesktopWorld, permission: String) {
+    assert_eq!(
+        world.violations,
+        vec![Violation::PermissionNotGranted(permission)]
+    );
+}
+
+#[then(expr = "the policy should refuse it as the unknown window {string}")]
+fn refused_window(world: &mut DesktopWorld, window: String) {
+    assert_eq!(world.violations, vec![Violation::UnknownWindow(window)]);
+}
+
+#[then("the policy should refuse it for its remote context")]
+fn refused_remote(world: &mut DesktopWorld) {
+    assert_eq!(world.violations, vec![Violation::RemoteContext]);
+}
+
+#[then(expr = "the policy should refuse the command {string} in lib.rs")]
+fn refused_in_lib(world: &mut DesktopWorld, name: String) {
+    assert_eq!(world.violations, vec![Violation::CommandInLib(name)]);
+}
+
+#[then(expr = "the policy should refuse the unlisted command {string}")]
+fn refused_unlisted(world: &mut DesktopWorld, name: String) {
+    assert_eq!(world.violations, vec![Violation::UnlistedCommand(name)]);
 }
 
 #[tokio::main]
