@@ -17,15 +17,16 @@ export type ViewState =
 export type ViewStateKind = ViewState["kind"];
 
 /**
- * Decide how to show a failed load: offline while the browser is offline, permission denied
- * for an authorisation denial (with its reason), otherwise error. Pure.
+ * Decide how to show a failed load: permission denied for an authorisation denial (with its
+ * reason, even while the browser is offline), then offline while the browser is offline,
+ * otherwise error. Pure.
  *
  * @param error What the load rejected with.
  * @param online Whether the browser reports a network connection (`navigator.onLine`).
  * @returns The state to show.
  */
 export function failureState(error: unknown, online: boolean): ViewState {
-  if (!online) return { kind: "offline" };
   if (error instanceof ApiError && error.reason) return { kind: "denied", reason: error.reason };
+  if (!online) return { kind: "offline" };
   return { kind: "error" };
 }

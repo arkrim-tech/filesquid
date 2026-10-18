@@ -34,18 +34,26 @@ export interface NavigationEnvironment {
   storage?: DeviceStorage;
   /** Storage key; defaults to {@link NAVIGATION_STORAGE_KEY}. */
   key?: string;
+  /**
+   * Where `storage` events from other tabs arrive (the window). When given, a change saved in
+   * another tab is read here, so this tab's next save does not overwrite it.
+   */
+  events?: Pick<EventTarget, "addEventListener" | "removeEventListener">;
 }
 
 /**
- * Shared navigation choices. Call `start()` once to restore the saved choices. Every change
- * is applied at once, saved on the device and announced with a `change` event; a change that
- * changes nothing is neither saved nor announced.
+ * Shared navigation choices. Call `start()` once to restore the saved choices and follow other
+ * tabs' saves, and `dispose()` to stop following them. Every change is applied at once, saved
+ * on the device and announced with a `change` event; a change that changes nothing is neither
+ * saved nor announced.
  */
 export class NavigationStore extends EventTarget {
   private prefs: NavigationPreferences = EMPTY_NAVIGATION_PREFERENCES;
+  private listening = false;
+  private readonly onStorage = (event: Event) => this.otherTabSaved(event);
 
   /**
-   * @param env Device storage and key.
+   * @param env Device storage, key and the target of other tabs' `storage` events.
    */
   constructor(private readonly env: NavigationEnvironment) {
     super();
@@ -57,15 +65,33 @@ export class NavigationStore extends EventTarget {
   }
 
   /**
-   * Restore the saved choices and dispatch `change` when they differ from the current ones.
-   * I/O: reads Web Storage.
+   * Restore the saved choices, dispatch `change` when they differ from the current ones, and
+   * follow other tabs' saves. Safe to call again. I/O: reads Web Storage.
    */
   start(): void {
-    const saved = this.readSaved();
-    if (serializeNavigationPreferences(saved) === serializeNavigationPreferences(this.prefs)) {
+    if (!this.listening) this.env.events?.addEventListener("storage", this.onStorage);
+    this.listening = true;
+    this.adopt(this.readSaved());
+  }
+
+  /** Stop following other tabs' saves. */
+  dispose(): void {
+    this.env.events?.removeEventListener("storage", this.onStorage);
+    this.listening = false;
+  }
+
+  /** Take another tab's save of this key (or a cleared storage) as the current choices. */
+  private otherTabSaved(event: Event): void {
+    const key = (event as StorageEvent).key;
+    if (key === this.key || key === null) this.adopt(this.readSaved());
+  }
+
+  /** Make `prefs` current and dispatch `change` when they differ from the current ones. */
+  private adopt(prefs: NavigationPreferences): void {
+    if (serializeNavigationPreferences(prefs) === serializeNavigationPreferences(this.prefs)) {
       return;
     }
-    this.prefs = saved;
+    this.prefs = prefs;
     this.dispatchEvent(new Event("change"));
   }
 
@@ -135,7 +161,7 @@ export class NavigationStore extends EventTarget {
   private readSaved(): NavigationPreferences {
     try {
       const text = this.env.storage?.getItem(this.key);
-      if (!text) return EMPTY_NAVIGATION_PREFERENCES;
+      if (text === null || text === undefined) return EMPTY_NAVIGATION_PREFERENCES;
       const stored = readStoredPreferences(JSON.parse(text));
       if (stored.ok) return stored.prefs;
       console.warn(`FileSquid ignored the saved navigation choices: ${stored.problem}`);
@@ -172,7 +198,8 @@ export class NavigationStore extends EventTarget {
  * @returns A store that has not started yet.
  */
 export function createNavigationStore(win: Window, key?: string): NavigationStore {
-  return new NavigationStore({ storage: deviceStorage(win, "the navigation choices"), key });
+  const storage = deviceStorage(win, "the navigation choices");
+  return new NavigationStore({ storage, key, events: win });
 }
 
 /** The started store each window shares when a tree is given none. */

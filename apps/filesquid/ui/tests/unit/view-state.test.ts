@@ -1,21 +1,29 @@
 // @vitest-environment node
 /**
- * UI-F2.1a: a failed load is shown as one of three distinct states: offline when the browser
- * is offline, permission denied for an authorisation denial (API-S-004), error otherwise.
+ * UI-F2.1a: a failed load is shown as one of three distinct states: permission denied for an
+ * authorisation denial (API-S-004), even while offline; offline when the browser is offline;
+ * error otherwise.
  */
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../../src/api/client";
 import { failureState } from "../../src/components/view-state";
 
 describe("failureState", () => {
-  it("is offline whenever the browser is offline", () => {
+  it("is offline for any other failure while the browser is offline", () => {
     expect(failureState(new TypeError("Failed to fetch"), false)).toEqual({ kind: "offline" });
     expect(failureState(new ApiError(500, "/api/v1/x"), false)).toEqual({ kind: "offline" });
+  });
+
+  it("reports a denial as denied even while the browser is offline", () => {
+    const refused = new ApiError(403, "/api/v1/x", { reason: "invalid_credentials" });
+    expect(failureState(refused, false)).toEqual({ kind: "denied", reason: "invalid_credentials" });
   });
 
   it("is permission denied for an authorisation denial, with its reason", () => {
     const denied = new ApiError(403, "/api/v1/x", { reason: "not_permitted" });
     expect(failureState(denied, true)).toEqual({ kind: "denied", reason: "not_permitted" });
+    const invalid = new ApiError(403, "/api/v1/x", { reason: "invalid_credentials" });
+    expect(failureState(invalid, true)).toEqual({ kind: "denied", reason: "invalid_credentials" });
     const missing = new ApiError(401, "/api/v1/x", { reason: "missing_credentials" });
     expect(failureState(missing, true)).toEqual({ kind: "denied", reason: "missing_credentials" });
   });

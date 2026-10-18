@@ -113,6 +113,8 @@ export const MAX_HANDLE_BYTES = 512;
 export const MAX_SECTIONS = 16;
 /** Most pages read for one level before the listing stops. */
 export const MAX_PAGES = 50;
+/** Most libraries whose children the tree reads at start (each read runs at the same time). */
+export const MAX_LIBRARIES = 64;
 /** Deepest level the tree renders and walks. */
 export const MAX_DEPTH = 64;
 
@@ -154,8 +156,8 @@ export function readStoredPreferences(value: unknown): StoredPreferences {
   const unknown = Object.keys(value).filter((k) => !STORED_KEYS.includes(k));
   if (unknown.length > 0) return refuse(`it has unknown fields (${unknown.join(", ")})`);
   const pinned = pinList(value.pinned);
-  const order = stringList(value.order ?? [], MAX_SECTIONS, isSectionId);
-  const collapsed = stringList(value.collapsed ?? [], MAX_COLLAPSED, isHandle);
+  const order = stringList(absentAsEmpty(value.order), MAX_SECTIONS, isSectionId);
+  const collapsed = stringList(absentAsEmpty(value.collapsed), MAX_COLLAPSED, isHandle);
   if (!pinned) return refuse(`its pins are not at most ${MAX_PINNED} {node, kind} entries`);
   if (!order) return refuse(`its section order is not at most ${MAX_SECTIONS} section ids`);
   if (!collapsed) return refuse(`its collapsed nodes are not at most ${MAX_COLLAPSED} handles`);
@@ -266,7 +268,8 @@ export function navigationHref(node: Pick<NavigationNode, "node">): string {
  * @param ancestors The `ancestors` of a listing.
  * @param labels The active label table, for nodes without a name.
  * @param href The route of a node; {@link navigationHref} by default.
- * @returns The trail, at most {@link MAX_DEPTH} long.
+ * @returns The trail, at most {@link MAX_DEPTH} long; a deeper trail keeps its last
+ *   {@link MAX_DEPTH} nodes, so the current node stays last.
  */
 export function breadcrumbItems(
   ancestors: readonly NavigationNode[],
@@ -274,7 +277,7 @@ export function breadcrumbItems(
   href: (node: NavigationNode) => string = navigationHref,
 ): BreadcrumbItem[] {
   return ancestors
-    .slice(0, MAX_DEPTH)
+    .slice(-MAX_DEPTH)
     .map((node) => ({ node: node.node, name: nodeName(node, labels), href: href(node) }));
 }
 
@@ -334,6 +337,14 @@ function isSectionId(value: unknown): value is string {
   return typeof value === "string" && value !== "" && value.length <= 64;
 }
 
+/**
+ * An absent stored list means an empty one; anything else, `null` included, is checked as
+ * given, so an explicit `null` is refused.
+ */
+function absentAsEmpty(value: unknown): unknown {
+  return value === undefined ? [] : value;
+}
+
 /** A bounded list of valid strings (duplicates dropped), or undefined when malformed. */
 function stringList(
   value: unknown,
@@ -346,7 +357,7 @@ function stringList(
 
 /** A bounded list of `{node, kind}` pins (duplicates dropped), or undefined when malformed. */
 function pinList(value: unknown): PinnedDestination[] | undefined {
-  const list = value ?? [];
+  const list = absentAsEmpty(value);
   if (!Array.isArray(list) || list.length > MAX_PINNED || !list.every(isPin)) return undefined;
   const seen = new Set<string>();
   return list.filter((pin) => !seen.has(pin.node) && Boolean(seen.add(pin.node)));

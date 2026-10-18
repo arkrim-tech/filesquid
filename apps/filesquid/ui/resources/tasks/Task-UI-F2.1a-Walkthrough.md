@@ -40,49 +40,62 @@ Midway through, the docs PR #35 branch appeared with API-S-021 and UI-S-017. The
 
 No environment variables or credentials were mocked. The e2e tests inject navigation data through an in-page fixture source, not through a stubbed API route.
 
+## Review round 1 (Cubic, 21 findings)
+
+Every finding was valid and fixed in one commit, with tests for each behaviour fix:
+
+- `<fs-nav-tree>`: a pin read that fails (other than `not_found`) is retried only after the next load or store change, never in a loop. Pin and child answers that arrive after a newer load, or from a replaced source, are dropped. The Pinned section, with its Remove buttons, still shows when the repository has no library.
+- `failureState`: a denial is reported as denied even while the browser is offline (tests include the 403 `invalid_credentials` case).
+- Stored choices: an explicit `null` list and a stored empty string are refused with a console message. The store follows `storage` events, so one tab no longer overwrites another tab's choices.
+- Breadcrumb: `breadcrumbItems` and `<fs-breadcrumb>` keep the last `MAX_DEPTH` nodes, so the current node stays last. Focus stays on a link whose `href` survives a re-render.
+- `<fs-states>`: after a failed Retry (loading, then error), focus moves to the alert.
+- Loader: at most 64 libraries (`MAX_LIBRARIES`) are read at start, through `Promise.allSettled`, so one failed library does not fail the tree.
+- `MemoryNavigationSource`: limits that are not integers from 1 to 1,000 are refused with `invalid_request`. Cursors are opaque random tokens; one this source did not issue for that parent, or issued before `replace`, is refused.
+- Tests and docs: the serialisation test now covers names, titles, logical paths, tokens and content handles. The breadcrumb scenario asserts the full trail. The plan's Related Tests list every test file this task changes.
+
 ## Raw test output
 
 ### `npm test` in `apps/filesquid/ui`
 
 ```
 
-
  RUN  v4.1.12 apps/filesquid/ui
 
- ✓ tests/unit/component-styles.test.ts (81 tests) 28ms
- ✓ tests/unit/client-auth.test.ts (23 tests) 111ms
- ✓ tests/ui/accessibility.test.ts (19 tests) 1022ms
-     ✓ keeps one document-level copy while any shell is connected and removes it after the last  320ms
- ✓ tests/ui/nav-tree.test.ts (23 tests) 1314ms
- ✓ tests/unit/client-io.test.ts (22 tests) 63ms
- ✓ tests/unit/theme.test.ts (26 tests) 25ms
- ✓ tests/ui/monitor.test.ts (14 tests) 523ms
- ✓ tests/unit/a11y-audit.test.ts (19 tests) 283ms
- ✓ tests/unit/navigation-model.test.ts (27 tests) 13ms
- ✓ tests/ui/app-shell.test.ts (16 tests) 464ms
- ✓ tests/unit/theme-store.test.ts (23 tests) 35ms
- ✓ tests/unit/commands.test.ts (45 tests) 24ms
- ✓ tests/unit/navigation-store.test.ts (13 tests) 21ms
- ✓ tests/unit/navigation-source.test.ts (10 tests) 13ms
- ✓ tests/unit/focus.test.ts (16 tests) 59ms
- ✓ tests/ui/states.test.ts (14 tests) 172ms
- ✓ tests/unit/host-adapter.test.ts (13 tests) 63ms
- ✓ tests/ui/theme-control.test.ts (8 tests) 60ms
- ✓ tests/unit/nav-tree-keys.test.ts (8 tests) 7ms
- ✓ tests/unit/admin-client.test.ts (6 tests) 21ms
- ✓ tests/unit/client.test.ts (8 tests) 12ms
- ✓ tests/unit/preferences.test.ts (10 tests) 18ms
- ✓ tests/ui/breadcrumb.test.ts (4 tests) 74ms
- ✓ tests/unit/contrast.test.ts (13 tests) 12ms
- ✓ tests/ui/monitor-route.test.ts (2 tests) 41ms
- ✓ tests/unit/view-state.test.ts (3 tests) 5ms
+ ✓ tests/unit/component-styles.test.ts (81 tests) 25ms
+ ✓ tests/unit/client-auth.test.ts (23 tests) 102ms
+ ✓ tests/ui/accessibility.test.ts (19 tests) 928ms
+     ✓ keeps one document-level copy while any shell is connected and removes it after the last  333ms
+ ✓ tests/ui/nav-tree.test.ts (26 tests) 1946ms
+     ✓ moves through visible items with the arrow keys, Home and End  486ms
+ ✓ tests/unit/client-io.test.ts (22 tests) 62ms
+ ✓ tests/unit/theme.test.ts (26 tests) 40ms
+ ✓ tests/ui/monitor.test.ts (14 tests) 297ms
+ ✓ tests/unit/navigation-model.test.ts (30 tests) 30ms
+ ✓ tests/unit/a11y-audit.test.ts (19 tests) 318ms
+ ✓ tests/ui/app-shell.test.ts (16 tests) 803ms
+ ✓ tests/unit/navigation-source.test.ts (18 tests) 57ms
+ ✓ tests/unit/navigation-store.test.ts (17 tests) 126ms
+ ✓ tests/unit/commands.test.ts (45 tests) 13ms
+ ✓ tests/unit/theme-store.test.ts (23 tests) 125ms
+ ✓ tests/unit/focus.test.ts (16 tests) 318ms
+ ✓ tests/unit/host-adapter.test.ts (13 tests) 85ms
+ ✓ tests/ui/states.test.ts (16 tests) 313ms
+ ✓ tests/ui/theme-control.test.ts (8 tests) 133ms
+ ✓ tests/unit/nav-tree-keys.test.ts (8 tests) 18ms
+ ✓ tests/unit/client.test.ts (8 tests) 18ms
+ ✓ tests/unit/admin-client.test.ts (6 tests) 27ms
+ ✓ tests/ui/monitor-route.test.ts (2 tests) 26ms
+ ✓ tests/ui/breadcrumb.test.ts (6 tests) 177ms
+ ✓ tests/unit/preferences.test.ts (10 tests) 37ms
+ ✓ tests/unit/view-state.test.ts (4 tests) 9ms
+ ✓ tests/unit/contrast.test.ts (13 tests) 8ms
  ✓ tests/unit/distribution.test.ts (3 tests) 4ms
- ✓ tests/unit/contract.test.ts (1 test) 100ms
+ ✓ tests/unit/contract.test.ts (1 test) 79ms
 
  Test Files  28 passed (28)
-      Tests  470 passed (470)
-   Start at  15:59:24
-   Duration  12.60s (transform 1.94s, setup 0ms, import 4.08s, tests 4.59s, environment 19.35s)
+      Tests  493 passed (493)
+   Start at  16:36:33
+   Duration  18.73s (transform 2.05s, setup 0ms, import 4.81s, tests 6.12s, environment 30.57s)
 
 JUNIT report written to tests/allure-results/vitest-junit.xml
 ```
@@ -90,47 +103,47 @@ JUNIT report written to tests/allure-results/vitest-junit.xml
 ### `FILESQUID_E2E=1 npx playwright test` in `apps/filesquid/ui`
 
 ```
-  ✓   1 [chromium] › tests/e2e/app.spec.ts:44:1 › shell mounts with FileSquid brand, internal vocabulary and live API health (299ms)
-  ✓   3 [chromium] › tests/e2e/app.spec.ts:68:1 › design tokens switch between light and dark (234ms)
-  ✓   2 [chromium] › tests/e2e/accessibility.spec.ts:88:1 › landmarks, headings and control names come from the label table (436ms)
-  ✓   4 [chromium] › tests/e2e/app.spec.ts:85:1 › client-side routes fall back to the distribution index (218ms)
-  ✓   5 [chromium] › tests/e2e/accessibility.spec.ts:122:3 › Tab order and a 2px primary focus ring in the light theme (283ms)
-  ✓   6 [chromium] › tests/e2e/app.spec.ts:91:1 › without a token the shell names the missing credentials from the label table (230ms)
-  ✓   7 [chromium] › tests/e2e/accessibility.spec.ts:122:3 › Tab order and a 2px primary focus ring in the dark theme (265ms)
-  ✓   8 [chromium] › tests/e2e/app.spec.ts:103:1 › Monitor asks for the admin token, then shows live health, processes and the journal (352ms)
-  ✓   9 [chromium] › tests/e2e/accessibility.spec.ts:147:1 › light-DOM content slotted into the shell gets the same focus ring (225ms)
-  ✓  11 [chromium] › tests/e2e/accessibility.spec.ts:167:1 › the skip control appears on focus and moves focus to main without routing (272ms)
-  ✓  10 [chromium] › tests/e2e/app.spec.ts:136:1 › a wrong token is named as invalid credentials (360ms)
-  ✓  12 [chromium] › tests/e2e/accessibility.spec.ts:185:1 › opening the Monitor from the keyboard moves focus to main (298ms)
-  ✓  13 [chromium] › tests/e2e/app.spec.ts:147:1 › the signed-in token stays in memory: not in storage, URL or DOM, gone on reload (546ms)
-  ✓  14 [chromium] › tests/e2e/accessibility.spec.ts:203:1 › a keyboard sign-in to the Monitor keeps focus in the Monitor (584ms)
-  ✓  15 [chromium] › tests/e2e/app.spec.ts:178:1 › the desktop launch token authorises the shell, the Monitor and the event channel (299ms)
-  ✓  16 [chromium] › tests/e2e/accessibility.spec.ts:220:1 › reduced motion stops every transition (268ms)
-  ✓  17 [chromium] › tests/e2e/app.spec.ts:263:3 › inside the desktop webview (custom URI scheme adapter) › requests use the custom scheme and events use Tauri, not same-origin HTTP or WebSocket (407ms)
-  ✓  19 [chromium] › tests/e2e/navigation.spec.ts:204:1 › the elements are defined and worded from the label table inside the shell (280ms)
-  ✓  18 [chromium] › tests/e2e/accessibility.spec.ts:259:1 › more contrast strengthens borders; forced colours keep the chosen option (637ms)
-  ✓  20 [chromium] › tests/e2e/navigation.spec.ts:250:1 › the tree follows the ARIA treeview keys and reads children as nodes open (356ms)
-  ✓  21 [chromium] › tests/e2e/accessibility.spec.ts:302:3 › no horizontal scroll at 320 px wide and 100 % text (315ms)
-  ✓  23 [chromium] › tests/e2e/accessibility.spec.ts:302:3 › no horizontal scroll at 320 px wide and 200 % text (377ms)
-  ✓  22 [chromium] › tests/e2e/navigation.spec.ts:286:1 › pins, section order and library collapse are kept on the device across a reload (649ms)
-  ✓  24 [chromium] › tests/e2e/accessibility.spec.ts:302:3 › no horizontal scroll at 1280 px wide and 200 % text (534ms)
-  ✓  25 [chromium] › tests/e2e/navigation.spec.ts:327:1 › refused device storage keeps the choices for this page and says why (393ms)
-  ✓  26 [chromium] › tests/e2e/accessibility.spec.ts:302:3 › no horizontal scroll at 640 px wide and 200 % text (318ms)
-  ✓  27 [chromium] › tests/e2e/navigation.spec.ts:352:1 › the tree shows the error and offline states and reads again on Retry (457ms)
-  ✓  28 [chromium] › tests/e2e/accessibility.spec.ts:325:1 › a right-to-left locale mirrors the header and navigation (395ms)
-  ✓  29 [chromium] › tests/e2e/navigation.spec.ts:374:3 › the five states are distinct and use token colours in the light theme (271ms)
-  ✓  30 [chromium] › tests/e2e/theme.spec.ts:91:1 › official FileSquid tokens apply in light and dark and meet WCAG 2.2 AA (322ms)
-  ✓  31 [chromium] › tests/e2e/navigation.spec.ts:417:3 › tree controls draw the 2px primary focus ring in the light theme (306ms)
-  ✓  33 [chromium] › tests/e2e/navigation.spec.ts:374:3 › the five states are distinct and use token colours in the dark theme (242ms)
-  ✓  32 [chromium] › tests/e2e/theme.spec.ts:115:1 › the official mark fills the brand slot, with its dark-surface variant in dark (415ms)
-  ✓  34 [chromium] › tests/e2e/navigation.spec.ts:417:3 › tree controls draw the 2px primary focus ring in the dark theme (274ms)
-  ✓  35 [chromium] › tests/e2e/theme.spec.ts:141:1 › the theme follows the OS by default and the control's choice persists across a reload (553ms)
-  ✓  36 [chromium] › tests/e2e/navigation.spec.ts:440:1 › tree motion follows the token, stops under reduced motion, and forced colours mark the current item (439ms)
-  ✓  37 [chromium] › tests/e2e/theme.spec.ts:185:1 › the selected theme option and the API status meet AA as rendered (364ms)
-  ✓  38 [chromium] › tests/e2e/navigation.spec.ts:481:3 › the tree and breadcrumb reflow at 320 px and 100 % text (337ms)
-  ✓  39 [chromium] › tests/e2e/navigation.spec.ts:481:3 › the tree and breadcrumb reflow at 320 px and 200 % text (273ms)
-  ✓  40 [chromium] › tests/e2e/navigation.spec.ts:481:3 › the tree and breadcrumb reflow at 1280 px and 200 % text (259ms)
-  40 passed (30.6s)
+  ✓   1 [chromium] › tests/e2e/accessibility.spec.ts:88:1 › landmarks, headings and control names come from the label table (562ms)
+  ✓   2 [chromium] › tests/e2e/app.spec.ts:44:1 › shell mounts with FileSquid brand, internal vocabulary and live API health (599ms)
+  ✓   3 [chromium] › tests/e2e/accessibility.spec.ts:122:3 › Tab order and a 2px primary focus ring in the light theme (466ms)
+  ✓   4 [chromium] › tests/e2e/app.spec.ts:68:1 › design tokens switch between light and dark (420ms)
+  ✓   5 [chromium] › tests/e2e/accessibility.spec.ts:122:3 › Tab order and a 2px primary focus ring in the dark theme (471ms)
+  ✓   6 [chromium] › tests/e2e/app.spec.ts:85:1 › client-side routes fall back to the distribution index (316ms)
+  ✓   8 [chromium] › tests/e2e/app.spec.ts:91:1 › without a token the shell names the missing credentials from the label table (374ms)
+  ✓   7 [chromium] › tests/e2e/accessibility.spec.ts:147:1 › light-DOM content slotted into the shell gets the same focus ring (418ms)
+  ✓   9 [chromium] › tests/e2e/app.spec.ts:103:1 › Monitor asks for the admin token, then shows live health, processes and the journal (411ms)
+  ✓  10 [chromium] › tests/e2e/accessibility.spec.ts:167:1 › the skip control appears on focus and moves focus to main without routing (419ms)
+  ✓  11 [chromium] › tests/e2e/app.spec.ts:136:1 › a wrong token is named as invalid credentials (385ms)
+  ✓  12 [chromium] › tests/e2e/accessibility.spec.ts:185:1 › opening the Monitor from the keyboard moves focus to main (481ms)
+  ✓  13 [chromium] › tests/e2e/app.spec.ts:147:1 › the signed-in token stays in memory: not in storage, URL or DOM, gone on reload (662ms)
+  ✓  14 [chromium] › tests/e2e/accessibility.spec.ts:203:1 › a keyboard sign-in to the Monitor keeps focus in the Monitor (704ms)
+  ✓  15 [chromium] › tests/e2e/app.spec.ts:178:1 › the desktop launch token authorises the shell, the Monitor and the event channel (347ms)
+  ✓  16 [chromium] › tests/e2e/accessibility.spec.ts:220:1 › reduced motion stops every transition (338ms)
+  ✓  17 [chromium] › tests/e2e/app.spec.ts:263:3 › inside the desktop webview (custom URI scheme adapter) › requests use the custom scheme and events use Tauri, not same-origin HTTP or WebSocket (473ms)
+  ✓  18 [chromium] › tests/e2e/accessibility.spec.ts:259:1 › more contrast strengthens borders; forced colours keep the chosen option (537ms)
+  ✓  19 [chromium] › tests/e2e/navigation.spec.ts:204:1 › the elements are defined and worded from the label table inside the shell (277ms)
+  ✓  20 [chromium] › tests/e2e/accessibility.spec.ts:302:3 › no horizontal scroll at 320 px wide and 100 % text (411ms)
+  ✓  21 [chromium] › tests/e2e/navigation.spec.ts:250:1 › the tree follows the ARIA treeview keys and reads children as nodes open (575ms)
+  ✓  22 [chromium] › tests/e2e/accessibility.spec.ts:302:3 › no horizontal scroll at 320 px wide and 200 % text (457ms)
+  ✓  23 [chromium] › tests/e2e/navigation.spec.ts:286:1 › pins, section order and library collapse are kept on the device across a reload (593ms)
+  ✓  24 [chromium] › tests/e2e/accessibility.spec.ts:302:3 › no horizontal scroll at 1280 px wide and 200 % text (401ms)
+  ✓  25 [chromium] › tests/e2e/navigation.spec.ts:327:1 › refused device storage keeps the choices for this page and says why (279ms)
+  ✓  26 [chromium] › tests/e2e/accessibility.spec.ts:302:3 › no horizontal scroll at 640 px wide and 200 % text (556ms)
+  ✓  27 [chromium] › tests/e2e/navigation.spec.ts:352:1 › the tree shows the error and offline states and reads again on Retry (401ms)
+  ✓  28 [chromium] › tests/e2e/accessibility.spec.ts:325:1 › a right-to-left locale mirrors the header and navigation (296ms)
+  ✓  29 [chromium] › tests/e2e/navigation.spec.ts:374:3 › the five states are distinct and use token colours in the light theme (394ms)
+  ✓  30 [chromium] › tests/e2e/theme.spec.ts:91:1 › official FileSquid tokens apply in light and dark and meet WCAG 2.2 AA (340ms)
+  ✓  31 [chromium] › tests/e2e/navigation.spec.ts:417:3 › tree controls draw the 2px primary focus ring in the light theme (248ms)
+  ✓  32 [chromium] › tests/e2e/theme.spec.ts:115:1 › the official mark fills the brand slot, with its dark-surface variant in dark (324ms)
+  ✓  33 [chromium] › tests/e2e/navigation.spec.ts:374:3 › the five states are distinct and use token colours in the dark theme (321ms)
+  ✓  35 [chromium] › tests/e2e/navigation.spec.ts:417:3 › tree controls draw the 2px primary focus ring in the dark theme (404ms)
+  ✓  34 [chromium] › tests/e2e/theme.spec.ts:141:1 › the theme follows the OS by default and the control's choice persists across a reload (571ms)
+  ✓  37 [chromium] › tests/e2e/theme.spec.ts:185:1 › the selected theme option and the API status meet AA as rendered (314ms)
+  ✓  36 [chromium] › tests/e2e/navigation.spec.ts:440:1 › tree motion follows the token, stops under reduced motion, and forced colours mark the current item (483ms)
+  ✓  38 [chromium] › tests/e2e/navigation.spec.ts:481:3 › the tree and breadcrumb reflow at 320 px and 100 % text (256ms)
+  ✓  39 [chromium] › tests/e2e/navigation.spec.ts:481:3 › the tree and breadcrumb reflow at 320 px and 200 % text (217ms)
+  ✓  40 [chromium] › tests/e2e/navigation.spec.ts:481:3 › the tree and breadcrumb reflow at 1280 px and 200 % text (244ms)
+  40 passed (2.2m)
 ```
 
 ### `npm test` in `apps/imagesquid`
@@ -139,13 +152,13 @@ JUNIT report written to tests/allure-results/vitest-junit.xml
 
  RUN  v4.1.12 apps/imagesquid
 
- ✓ tests/unit/theme.test.ts (10 tests) 11ms
- ✓ tests/ui/distribution.test.ts (5 tests) 173ms
+ ✓ tests/unit/theme.test.ts (10 tests) 35ms
+ ✓ tests/ui/distribution.test.ts (5 tests) 345ms
 
  Test Files  2 passed (2)
       Tests  15 passed (15)
-   Start at  15:59:37
-   Duration  1.37s (transform 395ms, setup 0ms, import 486ms, tests 184ms, environment 661ms)
+   Start at  16:39:20
+   Duration  2.40s (transform 772ms, setup 0ms, import 909ms, tests 381ms, environment 1.26s)
 
 JUNIT report written to tests/allure-results/vitest-junit.xml
 ```
@@ -153,14 +166,14 @@ JUNIT report written to tests/allure-results/vitest-junit.xml
 ### `FILESQUID_E2E=1 npx playwright test` in `apps/imagesquid`
 
 ```
-  ✓  1 [chromium] › tests/e2e/app.spec.ts:23:1 › ImageSquid brand, album vocabulary and FileSquid API health (249ms)
-  ✓  2 [chromium] › tests/e2e/app.spec.ts:80:1 › ImageSquid tokens override FileSquid defaults in light and dark (IS-S-008) (167ms)
-  ✓  3 [chromium] › tests/e2e/app.spec.ts:105:1 › ImageSquid's theme control keeps a dark choice across a reload (312ms)
-  ✓  4 [chromium] › tests/e2e/app.spec.ts:125:1 › ImageSquid names missing credentials in its own words (138ms)
-  ✓  5 [chromium] › tests/e2e/app.spec.ts:134:1 › ImageSquid reaches the FileSquid Monitor with its own vocabulary (364ms)
-  ✓  6 [chromium] › tests/e2e/app.spec.ts:155:3 › ImageSquid inherits the keyboard, naming and focus contracts in light (UI-S-016) (245ms)
-  ✓  7 [chromium] › tests/e2e/app.spec.ts:155:3 › ImageSquid inherits the keyboard, naming and focus contracts in dark (UI-S-016) (308ms)
-  ✓  8 [chromium] › tests/e2e/app.spec.ts:202:3 › the navigation tree and view states speak ImageSquid in light (UI-F2.1a) (224ms)
-  ✓  9 [chromium] › tests/e2e/app.spec.ts:202:3 › the navigation tree and view states speak ImageSquid in dark (UI-F2.1a) (193ms)
-  9 passed (14.3s)
+  ✓  1 [chromium] › tests/e2e/app.spec.ts:23:1 › ImageSquid brand, album vocabulary and FileSquid API health (540ms)
+  ✓  2 [chromium] › tests/e2e/app.spec.ts:80:1 › ImageSquid tokens override FileSquid defaults in light and dark (IS-S-008) (224ms)
+  ✓  3 [chromium] › tests/e2e/app.spec.ts:105:1 › ImageSquid's theme control keeps a dark choice across a reload (384ms)
+  ✓  4 [chromium] › tests/e2e/app.spec.ts:125:1 › ImageSquid names missing credentials in its own words (188ms)
+  ✓  5 [chromium] › tests/e2e/app.spec.ts:134:1 › ImageSquid reaches the FileSquid Monitor with its own vocabulary (386ms)
+  ✓  6 [chromium] › tests/e2e/app.spec.ts:155:3 › ImageSquid inherits the keyboard, naming and focus contracts in light (UI-S-016) (411ms)
+  ✓  7 [chromium] › tests/e2e/app.spec.ts:155:3 › ImageSquid inherits the keyboard, naming and focus contracts in dark (UI-S-016) (339ms)
+  ✓  8 [chromium] › tests/e2e/app.spec.ts:202:3 › the navigation tree and view states speak ImageSquid in light (UI-F2.1a) (285ms)
+  ✓  9 [chromium] › tests/e2e/app.spec.ts:202:3 › the navigation tree and view states speak ImageSquid in dark (UI-F2.1a) (330ms)
+  9 passed (28.0s)
 ```

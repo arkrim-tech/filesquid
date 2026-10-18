@@ -4,6 +4,7 @@
  */
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  MAX_DEPTH,
   accessibilityViolations,
   defineElements,
   type BreadcrumbItem,
@@ -54,8 +55,30 @@ describe("<fs-breadcrumb>", () => {
 
   it("moves focus to the new current page when a re-render removes the focused link", () => {
     const crumb = mount(trail);
-    crumb.shadowRoot?.querySelector<HTMLAnchorElement>("a")?.focus();
+    crumb.shadowRoot?.querySelector<HTMLAnchorElement>('a[aria-current="page"]')?.focus();
     crumb.items = [trail[0] as BreadcrumbItem];
+    expect(crumb.shadowRoot?.activeElement?.getAttribute("href")).toBe(trail[0]?.href);
     expect(crumb.shadowRoot?.activeElement?.getAttribute("aria-current")).toBe("page");
+  });
+
+  it("keeps focus on the same link when it survives a re-render", () => {
+    const crumb = mount(trail);
+    crumb.shadowRoot?.querySelector<HTMLAnchorElement>("a")?.focus();
+    crumb.items = [...trail];
+    const active = crumb.shadowRoot?.activeElement;
+    expect(active?.getAttribute("href")).toBe(trail[0]?.href);
+    expect(active?.hasAttribute("aria-current")).toBe(false);
+  });
+
+  it("shows at most MAX_DEPTH links, keeping the current page last", () => {
+    const long = Array.from({ length: MAX_DEPTH + 5 }, (_, i) => ({
+      node: `n${i}`,
+      name: `Level ${i}`,
+      href: `#/n${i}`,
+    }));
+    const links = [...(mount(long).shadowRoot?.querySelectorAll("a") ?? [])];
+    expect(links).toHaveLength(MAX_DEPTH);
+    expect(links.at(-1)?.textContent).toBe(`Level ${MAX_DEPTH + 4}`);
+    expect(links.at(-1)?.getAttribute("aria-current")).toBe("page");
   });
 });

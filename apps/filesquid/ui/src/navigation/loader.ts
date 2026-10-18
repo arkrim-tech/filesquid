@@ -2,9 +2,11 @@
  * Reading the navigation tree through a {@link NavigationSource} (UI-F2.1a): every page of a
  * level, the first two levels plus each library's children at start, and the name and kind of
  * pinned destinations. Each function is named for the reads it makes; every loop is bounded by
- * {@link MAX_PAGES} pages and {@link MAX_PINNED} pins (AGENTS.md section 22).
+ * {@link MAX_PAGES} pages, {@link MAX_LIBRARIES} libraries and {@link MAX_PINNED} pins
+ * (AGENTS.md section 22).
  */
 import {
+  MAX_LIBRARIES,
   MAX_PAGES,
   MAX_PINNED,
   isNotFound,
@@ -66,7 +68,10 @@ export async function readLevel(
 }
 
 /**
- * Read the repository, its libraries and every library's children. I/O: source reads.
+ * Read the repository, its first {@link MAX_LIBRARIES} libraries and each one's children. A
+ * library whose children cannot be read is logged and shown without them, so one failure does
+ * not fail the tree; the repository or library listing failing still rejects. I/O: source
+ * reads, at most {@link MAX_LIBRARIES} at once.
  *
  * @param source The navigation source.
  * @returns The data the tree starts from.
@@ -74,9 +79,18 @@ export async function readLevel(
 export async function readNavigation(source: NavigationSource): Promise<NavigationData> {
   const repository = (await readLevel(source, null)).nodes[0];
   if (!repository) return { libraries: [], children: new Map() };
-  const libraries = (await readLevel(source, repository.node)).nodes;
-  const levels = await Promise.all(libraries.map((lib) => readLevel(source, lib.node)));
-  const children = new Map(libraries.map((lib, i) => [lib.node, levels[i]?.nodes ?? []]));
+  const listed = (await readLevel(source, repository.node)).nodes;
+  if (listed.length > MAX_LIBRARIES) {
+    console.warn(`FileSquid shows the first ${MAX_LIBRARIES} libraries in the navigation only`);
+  }
+  const libraries = listed.slice(0, MAX_LIBRARIES);
+  const levels = await Promise.allSettled(libraries.map((lib) => readLevel(source, lib.node)));
+  const children = new Map<string, readonly NavigationNode[]>();
+  levels.forEach((level, i) => {
+    const lib = libraries[i] as NavigationNode;
+    if (level.status === "fulfilled") children.set(lib.node, level.value.nodes);
+    else console.warn("FileSquid could not read a library's navigation children", level.reason);
+  });
   return { repository, libraries, children };
 }
 

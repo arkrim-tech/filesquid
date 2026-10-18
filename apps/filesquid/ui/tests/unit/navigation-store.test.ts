@@ -93,6 +93,8 @@ describe("NavigationStore", () => {
 
   it.each([
     ["text that is not JSON", "{not json", /could not read/],
+    ["an empty string", "", /could not read/],
+    ["an explicit null list", JSON.stringify({ version: 1, pinned: null }), /ignored .*pins/],
     ["another version", JSON.stringify({ version: 2 }), /ignored .*version is not 1/],
     [
       "a stored name",
@@ -135,22 +137,64 @@ describe("NavigationStore", () => {
   });
 });
 
+describe("NavigationStore across tabs", () => {
+  /** A store following storage events on `events`, over `storage`. */
+  function tab(events: EventTarget, storage = fakeStorage()) {
+    const store = new NavigationStore({ storage: storage.storage, events });
+    store.start();
+    return { store, ...storage };
+  }
+
+  it("takes another tab's save, so this tab's next save does not overwrite it", () => {
+    const events = new EventTarget();
+    const { store, data } = tab(events);
+    const listener = vi.fn();
+    store.addEventListener("change", listener);
+    const other = { version: 1, pinned: [{ node: "c7", kind: "collection" }], collapsed: ["l2"] };
+    data.set(NAVIGATION_STORAGE_KEY, JSON.stringify(other));
+    events.dispatchEvent(new StorageEvent("storage", { key: NAVIGATION_STORAGE_KEY }));
+    expect(listener).toHaveBeenCalledOnce();
+    store.setCollapsed("l1", true);
+    expect(saved(data)).toMatchObject({
+      pinned: [{ node: "c7", kind: "collection" }],
+      collapsed: ["l2", "l1"],
+    });
+  });
+
+  it("ignores other keys, and stops following after dispose", () => {
+    const events = new EventTarget();
+    const { store, data } = tab(events);
+    data.set(NAVIGATION_STORAGE_KEY, JSON.stringify({ version: 1, collapsed: ["l2"] }));
+    events.dispatchEvent(new StorageEvent("storage", { key: "filesquid.theme" }));
+    expect(store.preferences.collapsed).toEqual([]);
+    store.dispose();
+    events.dispatchEvent(new StorageEvent("storage", { key: NAVIGATION_STORAGE_KEY }));
+    expect(store.preferences.collapsed).toEqual([]);
+  });
+});
+
 describe("createNavigationStore", () => {
-  it("uses the window's localStorage", () => {
+  it("uses the window's localStorage and follows its storage events", () => {
     const { storage, data } = fakeStorage();
-    const store = createNavigationStore({ localStorage: storage } as unknown as Window);
+    const win = Object.assign(new EventTarget(), { localStorage: storage }) as unknown as Window;
+    const store = createNavigationStore(win);
     store.start();
     store.setCollapsed("l1", true);
     expect(data.has(NAVIGATION_STORAGE_KEY)).toBe(true);
+    data.set(NAVIGATION_STORAGE_KEY, JSON.stringify({ version: 1, collapsed: ["l9"] }));
+    win.dispatchEvent(new StorageEvent("storage", { key: NAVIGATION_STORAGE_KEY }));
+    expect(store.preferences.collapsed).toEqual(["l9"]);
+    store.dispose();
   });
 
   it("falls back to no storage when reading localStorage throws", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const win = {
-      get localStorage(): Storage {
+    const win = new EventTarget() as unknown as Window;
+    Object.defineProperty(win, "localStorage", {
+      get(): Storage {
         throw new Error("SecurityError");
       },
-    } as unknown as Window;
+    });
     const store = createNavigationStore(win);
     store.start();
     store.setCollapsed("l1", true);

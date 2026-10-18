@@ -87,7 +87,8 @@ const KIND_SECTIONS: readonly (readonly [NavigationKind, LabelKey])[] = [
  * @param pins The pinned destinations as the API answered them.
  * @param prefs The owner's choices.
  * @param labels The active label table.
- * @returns The sections in display order; none when the repository has no library.
+ * @returns The sections in display order; only the Pinned section (when something is pinned)
+ *   when the repository has no library, so unavailable pins keep their Remove action.
  */
 export function sectionViews(
   data: NavigationData,
@@ -95,7 +96,7 @@ export function sectionViews(
   prefs: NavigationPreferences,
   labels: LabelTable,
 ): SectionView[] {
-  if (data.libraries.length === 0) return [];
+  if (data.libraries.length === 0) return pins.length > 0 ? [pinnedSection(pins, labels)] : [];
   const kinds = KIND_SECTIONS.map(([kind, label]) => kindSection(data, kind, labels[label]));
   const all = pins.length > 0 ? [pinnedSection(pins, labels), ...kinds] : kinds;
   const order = sectionOrder(

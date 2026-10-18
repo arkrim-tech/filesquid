@@ -67,6 +67,9 @@ describe("readStoredPreferences (UI-S-017)", () => {
     ["a stored name", { version: 1, pinned: [{ node: "a", kind: "folder", name: "x" }] }, /pins/],
     ["an unknown kind", { version: 1, pinned: [{ node: "a", kind: "album" }] }, /pins/],
     ["an empty handle", { version: 1, collapsed: [""] }, /collapsed/],
+    ["explicit null pins", { version: 1, pinned: null }, /pins/],
+    ["an explicit null order", { version: 1, order: null }, /section order/],
+    ["explicit null collapsed nodes", { version: 1, collapsed: null }, /collapsed/],
     ["a non-string order entry", { version: 1, order: [3] }, /section order/],
   ])("refuses %s with a reason", (_case, value, reason) => {
     const result = readStoredPreferences(value);
@@ -94,19 +97,23 @@ describe("readStoredPreferences (UI-S-017)", () => {
   });
 
   it("serialises only handles, kinds and section ids, with the version", () => {
-    const named = { node: "c1", kind: "collection", name: "Photos" } as never;
+    const forbidden = {
+      name: "Photos",
+      title: "Summer title",
+      logical_path: "2025/summer/beach.jpg",
+      token: "secret-bearer-token",
+      content_handle: "content-handle-123",
+    };
+    const pin = { node: "c1", kind: "collection", ...forbidden } as never;
     const text = serializeNavigationPreferences({
-      pinned: [named],
+      pinned: [pin],
       order: ["folder"],
       collapsed: ["l1"],
     });
-    expect(JSON.parse(text)).toEqual({
-      version: 1,
-      pinned: [{ node: "c1", kind: "collection" }],
-      order: ["folder"],
-      collapsed: ["l1"],
-    });
-    expect(text).not.toContain("Photos");
+    expect(text).toBe(
+      '{"version":1,"pinned":[{"node":"c1","kind":"collection"}],"order":["folder"],"collapsed":["l1"]}',
+    );
+    for (const value of Object.values(forbidden)) expect(text).not.toContain(value);
   });
 });
 
@@ -173,9 +180,12 @@ describe("names, routes and the breadcrumb", () => {
     expect(breadcrumbItems([photos], labels, (n) => `#/x/${n.node}`)[0]?.href).toBe("#/x/c1");
   });
 
-  it("caps the breadcrumb at MAX_DEPTH", () => {
+  it("caps the breadcrumb at MAX_DEPTH, keeping the current node last", () => {
     const deep = Array.from({ length: MAX_DEPTH + 3 }, (_, i) => ({ ...photos, node: `n${i}` }));
-    expect(breadcrumbItems(deep, labels)).toHaveLength(MAX_DEPTH);
+    const trail = breadcrumbItems(deep, labels);
+    expect(trail).toHaveLength(MAX_DEPTH);
+    expect(trail.at(-1)?.node).toBe(`n${MAX_DEPTH + 2}`);
+    expect(trail[0]?.node).toBe("n3");
   });
 
   it("names an unavailable pin by its kind", () => {

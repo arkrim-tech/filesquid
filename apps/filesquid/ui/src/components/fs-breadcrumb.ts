@@ -6,11 +6,12 @@
  * over the navigation data. The element is hidden while the trail is empty.
  *
  * Accessibility (UI-S-016): separators are drawn by CSS and hidden from assistive technology;
- * the trail wraps instead of scrolling; when a new trail removes the focused link, focus moves
- * to the current page's link.
+ * the trail wraps instead of scrolling; at most `MAX_DEPTH` links are shown (the last ones, so
+ * the current page stays last); after a new trail, focus stays on the link with the same
+ * `href` when it survives, and otherwise moves to the current page's link.
  */
 import type { LabelTable } from "../theme/labels";
-import type { BreadcrumbItem } from "../navigation/model";
+import { MAX_DEPTH, type BreadcrumbItem } from "../navigation/model";
 import { A11Y_STYLE } from "./a11y-style";
 import { replaceKeepingFocus } from "../a11y/focus";
 
@@ -71,13 +72,23 @@ export class FsBreadcrumb extends HTMLElement {
     const nav = document.createElement("nav");
     nav.setAttribute("aria-label", this.labels.navigationBreadcrumb);
     const list = document.createElement("ol");
-    list.append(...this.trail.map((item, i) => crumb(item, i === this.trail.length - 1)));
+    const trail = this.trail.slice(-MAX_DEPTH);
+    list.append(...trail.map((item, i) => crumb(item, i === trail.length - 1)));
     nav.append(list);
-    this.hidden = this.trail.length === 0;
-    replaceKeepingFocus(root, [style, nav], () =>
-      root.querySelector<HTMLElement>('a[aria-current="page"]'),
-    );
+    this.hidden = trail.length === 0;
+    const focusedHref = root.activeElement?.getAttribute("href");
+    replaceKeepingFocus(root, [style, nav], () => surviving(root, focusedHref));
   }
+}
+
+/**
+ * The link to focus after a re-render: the one with the previously focused `href` when it is
+ * still in the trail, otherwise the current page's link.
+ */
+function surviving(root: ShadowRoot, href: string | null | undefined): HTMLElement | null {
+  const links = [...root.querySelectorAll<HTMLAnchorElement>("a")];
+  const same = links.find((link) => href != null && link.getAttribute("href") === href);
+  return same ?? root.querySelector<HTMLElement>('a[aria-current="page"]');
 }
 
 /** One `<li><a href>name</a></li>`, marked as the current page when `current`. */

@@ -6,14 +6,15 @@
  * changes flow up as events); the view that owns the data decides what to reload.
  *
  * Accessibility (UI-S-016): both live regions exist from the first render and are updated in
- * place, so screen readers announce every change; when a change removes the focused Retry
- * button, focus moves to the region that now shows the state; focus is never moved when it
- * was outside the element.
+ * place, so screen readers announce every change; when focus was inside the element and the
+ * state moves to the other region (loading after Retry, or error after a failed Retry), focus
+ * moves to the region that now shows the state; focus is never moved when it was outside the
+ * element.
  */
 import type { LabelTable } from "../theme/labels";
 import { reasonLabel } from "./denial";
 import { A11Y_STYLE } from "./a11y-style";
-import { recoverFocus } from "../a11y/focus";
+import { focusElement } from "../a11y/focus";
 import type { ViewState } from "./view-state";
 
 /** What the element needs: the active label table. */
@@ -93,7 +94,8 @@ export class FsStates extends HTMLElement {
     status?.replaceChildren(...(alerting ? [] : statusContent(state, labels)));
     alert?.replaceChildren(...(alerting ? alertContent(state, labels, () => this.retry()) : []));
     this.dataset.state = state.kind;
-    recoverFocus(root, hadFocus, () => (alerting ? alert : status));
+    const inUse = alerting ? alert : status;
+    if (hadFocus && inUse && !inUse.contains(root.activeElement)) focusElement(inUse);
   }
 
   /** Ask the owning view to load again. */

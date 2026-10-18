@@ -32,10 +32,23 @@ const ROUTE = "/api/v1/navigation";
 /** Default page size, as the API's. */
 const DEFAULT_LIMIT = 200;
 
+/** Largest page size the API accepts. */
+const MAX_LIMIT = 1000;
+
+/** Most cursors remembered; the oldest is forgotten first. */
+const MAX_CURSORS = 1000;
+
+/** The API's refusal of an unusable page request. */
+function invalidRequest(): ApiError {
+  return new ApiError(400, ROUTE, { code: "invalid_request" });
+}
+
 /** A navigation source answering from a fixture tree held in memory. */
 export class MemoryNavigationSource implements NavigationSource {
   private readonly listeners = new Set<(change: NavigationChange) => void>();
   private index = new Map<string, { item: FixtureNode; path: FixtureNode[] }>();
+  /** Cursors issued, with the parent and offset each stands for, oldest first. */
+  private readonly cursors = new Map<string, { parent: string | null; offset: number }>();
   /** When set, every `list` call rejects with this value (a network error, a denial, …). */
   failure: unknown = undefined;
 
@@ -48,12 +61,13 @@ export class MemoryNavigationSource implements NavigationSource {
 
   /**
    * List one level, as the API does. Rejects with {@link failure} when set, with a
-   * `not_found` `ApiError` for an unknown node, and with `invalid_request` for a malformed
-   * cursor.
+   * `not_found` `ApiError` for an unknown node, and with `invalid_request` for a limit that is
+   * not an integer from 1 to 1,000 or a cursor this source did not issue for `parent`.
+   * Cursors are opaque random tokens, not offsets.
    *
    * @param parent A node handle, or null for the repository.
    * @param cursor The previous page's `next_cursor`, or null.
-   * @param limit Page size, 1 to 1,000 (default 200).
+   * @param limit Page size, an integer from 1 to 1,000 (default 200).
    * @returns One page.
    */
   async list(
@@ -62,18 +76,33 @@ export class MemoryNavigationSource implements NavigationSource {
     limit?: number,
   ): Promise<NavigationPage> {
     if (this.failure !== undefined) throw this.failure;
+    const size = limit ?? DEFAULT_LIMIT;
+    if (!Number.isInteger(size) || size < 1 || size > MAX_LIMIT) throw invalidRequest();
     const entry = parent === null ? undefined : this.index.get(parent);
     if (parent !== null && !entry) throw new ApiError(404, ROUTE, { code: "not_found" });
     const level = entry ? (entry.item.children ?? []) : [this.root];
     const ancestors = entry ? [...entry.path, entry.item].map(toNode) : [];
-    if (cursor && !/^\d+$/.test(cursor)) {
-      throw new ApiError(400, ROUTE, { code: "invalid_request" });
-    }
-    const start = cursor ? Number(cursor) : 0;
-    const size = Math.min(Math.max(limit ?? DEFAULT_LIMIT, 1), 1000);
+    const start = cursor === undefined || cursor === null ? 0 : this.offsetOf(cursor, parent);
     const end = start + size;
-    const next = end < level.length ? String(end) : null;
+    const next = end < level.length ? this.issueCursor(parent, end) : null;
     return { nodes: level.slice(start, end).map(toNode), ancestors, next_cursor: next };
+  }
+
+  /** The offset a cursor stands for; refuses a cursor not issued for this parent. */
+  private offsetOf(cursor: string, parent: string | null): number {
+    const issued = this.cursors.get(cursor);
+    if (!issued || issued.parent !== parent) throw invalidRequest();
+    return issued.offset;
+  }
+
+  /** Issue an opaque cursor for the page at `offset`, keeping at most MAX_CURSORS issued. */
+  private issueCursor(parent: string | null, offset: number): string {
+    const cursor = crypto.randomUUID();
+    this.cursors.set(cursor, { parent, offset });
+    if (this.cursors.size > MAX_CURSORS) {
+      this.cursors.delete(this.cursors.keys().next().value as string);
+    }
+    return cursor;
   }
 
   /**
@@ -95,6 +124,7 @@ export class MemoryNavigationSource implements NavigationSource {
   replace(root: FixtureNode): void {
     this.root = root;
     this.reindex();
+    this.cursors.clear();
     this.emit({ all: true });
   }
 

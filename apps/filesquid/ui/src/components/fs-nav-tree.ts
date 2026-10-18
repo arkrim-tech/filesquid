@@ -121,7 +121,15 @@ export class FsNavTree extends HTMLElement {
   private rendered = new Map<string, NavigationNode>();
   private generation = 0;
   private stopFollowing?: () => void;
-  private readonly onStoreChange = () => this.syncPins();
+  /**
+   * Pins already read since the last load or store change. A pin whose read failed (other than
+   * `not_found`) is read again only after the next load or store change, never in a loop.
+   */
+  private readonly pinsTried = new Set<string>();
+  private readonly onStoreChange = () => {
+    this.pinsTried.clear();
+    this.syncPins();
+  };
 
   constructor() {
     super();
@@ -183,12 +191,13 @@ export class FsNavTree extends HTMLElement {
     this.render();
     try {
       const data = await readNavigation(source);
-      const pins = await readPins(source, this.store.preferences.pinned);
+      const asked = this.store.preferences.pinned;
+      const pins = await readPins(source, asked);
       const reopened = await this.readOpened(source);
-      if (generation !== this.generation) return;
-      this.accept(data, pins, reopened);
+      if (generation !== this.generation || source !== this.options?.source) return;
+      this.accept(data, pins, reopened, asked);
     } catch (error) {
-      if (generation !== this.generation) return;
+      if (generation !== this.generation || source !== this.options?.source) return;
       this.fail(error);
     }
     this.render();
@@ -211,11 +220,12 @@ export class FsNavTree extends HTMLElement {
     this.stopFollowing = undefined;
   }
 
-  /** Keep a new answer. */
+  /** Keep a new answer; the pins it asked for count as tried until the next store change. */
   private accept(
     data: NavigationData,
     pins: readonly ResolvedPin[],
     reopened: ReadonlyMap<string, readonly NavigationNode[]>,
+    asked: readonly PinnedDestination[],
   ): void {
     this.data = data;
     this.loaded.clear();
@@ -223,6 +233,8 @@ export class FsNavTree extends HTMLElement {
     for (const parent of this.opened) if (!reopened.has(parent)) this.opened.delete(parent);
     this.pinCache.clear();
     for (const pin of pins) this.pinCache.set(pin.pin.node, pin);
+    this.pinsTried.clear();
+    for (const pin of asked) this.pinsTried.add(pin.node);
     this.syncPins(false);
   }
 
@@ -259,7 +271,9 @@ export class FsNavTree extends HTMLElement {
       else missing.push(pin);
       return known ? [known] : [];
     });
-    if (missing.length > 0 && this.data) void this.readMissingPins(missing);
+    const untried = missing.filter((pin) => !this.pinsTried.has(pin.node));
+    for (const pin of untried) this.pinsTried.add(pin.node);
+    if (untried.length > 0 && this.data) void this.readMissingPins(untried);
     if (renderNow) this.render();
   }
 
@@ -269,11 +283,18 @@ export class FsNavTree extends HTMLElement {
     return node ? { pin, node } : undefined;
   }
 
-  /** Read pins that are neither known nor on screen, then show them. I/O: source reads. */
+  /**
+   * Read pins that are neither known nor on screen, then show them. An answer that arrives
+   * after a newer load started, or from a source that was replaced, is dropped. I/O: source
+   * reads.
+   */
   private async readMissingPins(pins: readonly PinnedDestination[]): Promise<void> {
     const source = this.options?.source;
     if (!source) return;
-    for (const answer of await readPins(source, pins)) this.pinCache.set(answer.pin.node, answer);
+    const generation = this.generation;
+    const answers = await readPins(source, pins);
+    if (generation !== this.generation || source !== this.options?.source) return;
+    for (const answer of answers) this.pinCache.set(answer.pin.node, answer);
     this.syncPins();
   }
 
@@ -399,14 +420,21 @@ export class FsNavTree extends HTMLElement {
     else this.render();
   }
 
-  /** Read a node's children, marking it busy meanwhile. I/O: source reads. */
+  /**
+   * Read a node's children, marking it busy meanwhile. An answer that arrives after a newer
+   * load started, or from a source that was replaced, is dropped. I/O: source reads.
+   */
   private async readChildren(node: NavigationNode): Promise<void> {
     const source = this.options?.source;
     if (!source || this.busy.has(node.node)) return;
+    const generation = this.generation;
     this.busy.add(node.node);
     this.render();
     try {
-      this.loaded.set(node.node, (await readLevel(source, node.node)).nodes);
+      const nodes = (await readLevel(source, node.node)).nodes;
+      if (generation === this.generation && source === this.options?.source) {
+        this.loaded.set(node.node, nodes);
+      }
     } catch (error) {
       console.warn("FileSquid could not open a navigation node", error);
       this.opened.delete(node.node);

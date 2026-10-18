@@ -421,3 +421,65 @@ describe("<fs-nav-tree> load states", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 });
+
+describe("<fs-nav-tree> asynchronous answers", () => {
+  it("reads a failing pin once per load or store change, never in a loop", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const source = new MemoryNavigationSource(oneLibrary);
+    const original = source.list.bind(source);
+    const reads = vi
+      .spyOn(source, "list")
+      .mockImplementation((parent, cursor, limit) =>
+        parent === "f1"
+          ? Promise.reject(new ApiError(503, "/api/v1/navigation"))
+          : original(parent, cursor, limit),
+      );
+    const { root, store } = await mount(source, { pinned: [{ node: "f1", kind: "folder" }] });
+    for (let i = 0; i < 5; i += 1) await settle();
+    const pinReads = () => reads.mock.calls.filter(([parent]) => parent === "f1").length;
+    expect(pinReads()).toBe(1);
+    expect(root.querySelector('[data-section="pinned"]')).toBeNull();
+    store.setCollapsed("l1", true);
+    for (let i = 0; i < 5; i += 1) await settle();
+    expect(pinReads()).toBe(2);
+  });
+
+  it("drops a child answer that arrives after a newer load", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const source = new MemoryNavigationSource(oneLibrary);
+    const original = source.list.bind(source);
+    let held = true;
+    vi.spyOn(source, "list").mockImplementation(async (parent, cursor, limit) => {
+      if (parent === "c1" && held) {
+        held = false;
+        await gate;
+      }
+      return original(parent, cursor, limit);
+    });
+    const { root } = await mount(source);
+    item(root, "collection", "Photos").focus();
+    press(root, "ArrowRight");
+    await settle();
+    const renamed: FixtureNode = structuredClone(oneLibrary);
+    const photos = renamed.children?.[0]?.children?.[0] as { children?: FixtureNode[] };
+    photos.children = [{ node: "f5", kind: "folder", name: "Renamed" }];
+    source.replace(renamed);
+    await settle();
+    expect(item(root, "collection", "Renamed").getAttribute("aria-level")).toBe("2");
+    release();
+    await settle();
+    expect(item(root, "collection", "Renamed")).toBeDefined();
+    expect(() => item(root, "collection", "2025")).toThrow();
+  });
+
+  it("keeps the Pinned section, with Remove, when the repository has no library", async () => {
+    const empty = new MemoryNavigationSource({ node: "r", kind: "repository", name: null });
+    const { root, store } = await mount(empty, { pinned: [{ node: "gone", kind: "folder" }] });
+    expect(statesOf(root).hidden).toBe(true);
+    expect(headings(root)).toEqual([labels.navigationPinned]);
+    button(root, "pinned", "remove").click();
+    expect(store.preferences.pinned).toEqual([]);
+    expect(statesOf(root).dataset.state).toBe("empty");
+  });
+});

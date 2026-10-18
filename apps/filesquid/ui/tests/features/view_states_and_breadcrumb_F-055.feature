@@ -16,8 +16,8 @@ Feature: View states and breadcrumb
     And no alert should be shown
 
   Scenario: The breadcrumb shows where I am
-    Given I am in folder "2025" of collection "Holidays"
-    Then the "Breadcrumb" navigation should list "Holidays" then "2025"
+    Given I am in folder "2025" of collection "Holidays" in library "Family" of an unnamed repository
+    Then the "Breadcrumb" navigation should list exactly "Repository", "Family", "Holidays", "2025" in that order
     And "2025" should be marked as the current page
 
   # Edge cases

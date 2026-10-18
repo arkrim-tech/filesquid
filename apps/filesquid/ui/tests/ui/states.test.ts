@@ -91,6 +91,24 @@ describe("<fs-states>", () => {
     expect(active?.getAttribute("tabindex")).toBe("-1");
   });
 
+  it("moves focus from the loading message to the alert when a Retry fails", () => {
+    const states = mount({ kind: "error" });
+    states.shadowRoot?.querySelector<HTMLButtonElement>("button")?.focus();
+    states.state = { kind: "loading" };
+    states.state = { kind: "error" };
+    const active = states.shadowRoot?.activeElement;
+    expect(active?.getAttribute("role")).toBe("alert");
+    expect(active?.textContent).toContain(labels.stateError);
+  });
+
+  it("keeps focus on Retry when the state stays an alert", () => {
+    const states = mount({ kind: "error" });
+    const retry = states.shadowRoot?.querySelector<HTMLButtonElement>("button");
+    retry?.focus();
+    states.state = { kind: "offline" };
+    expect(states.shadowRoot?.activeElement?.getAttribute("role")).toBe("alert");
+  });
+
   it("does not take focus when the state changes while focus is elsewhere", () => {
     const outside = document.createElement("button");
     outside.textContent = "outside";
