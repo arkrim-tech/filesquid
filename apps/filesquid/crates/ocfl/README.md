@@ -80,6 +80,18 @@ The `read` module opens storage roots and objects through any storage backend, o
 - `Object::history()` lists every version with `created`, `message` and `user`; `Object::diff(&from, &to)` lists added, deleted, modified and renamed paths (a rename is a deleted and an added path with the same digest), in path order.
 - Reading is not validation: a reader refuses only the faults it meets. Structural validation is the `validate` module.
 
+## Enumerate committed logical state
+
+`StorageRoot::enumerate(versions)` enumerates the committed logical state of every object discovered when the storage root was opened ([OCFL-S-004](./resources/srs.md), [T-039](../../../../resources/product-vision.md#canonical-ocfl-state-and-evidence), [ADR 023](../../../../resources/architecture/023-filesquid-ocfl-engine-and-parquet.md) engine core item 6). A caller rebuilds its own catalog, or projects a dataset, from the storage root alone; the enumerator needs no SQLite, PostgreSQL or application type.
+
+- It is a pull cursor (`CommittedState`): each `next_event().await` does one step and returns `Some(Ok(CommittedEvent))`, `Some(Err(EnumerateError))` or `None` at the end. It holds at most one object's inventory and one version's state, and reads no content bytes.
+- `Versions::Head` (the default) enumerates each object's committed `head`; `Versions::All` every committed version the inventory lists, from the first through `head` (zero-padded names such as `v001` kept as written).
+- Events come in a fixed order: objects in object-root order; per object a `CommittedObject` (root, id, head, digest algorithm, unpublished head), then each version oldest first as a `CommittedVersion` (object id, version, file count) followed by its `CommittedFile`s in logical-path order. A file event carries the object id, version, logical path, digest algorithm, digest and content locator: `content_key`, the storage key from the storage root of the bytes the manifest lists for the digest (unchanged bytes keep the key in the version directory where they were first stored).
+- State comes from the committed root inventory, exactly as `Object::open` and `Object::state` read it: files the inventory does not list are never enumerated, and neither is a version above the committed head (an uncommitted root inventory shows as `unpublished_head`).
+- An object that cannot be opened or resolved (a guard refusal, E003, E007, E058, E060, E061, E063, E064, an engine bound or a backend error) gives one `EnumerateError` with its root and `code()`, and the enumeration goes on with the next object, so one broken object does not hide the rest. Content digests are not checked here: stream a file (`Object::stream_file`) or validate the object for that.
+
+`tests/integration/enumerate_state.rs` enumerates built objects on the in-memory and filesystem backends, and every pinned `good-objects` and `warn-objects` fixture stored in one storage root, comparing each with an independent reading of its inventory JSON and reading every locator back against its digest; bad fixtures among them are reported with their codes while the good ones still enumerate.
+
 `tests/integration/fixture_reads.rs` resolves every version of every `good-objects` and `warn-objects` fixture and streams every logical file against its digest, and checks that a reader refuses the bad fixtures whose faults it meets, with the code their names list ([OCFL-S-010](./resources/srs.md) (a)), on the [pinned fixtures](#pinned-ocfl-community-fixtures).
 
 ## Structural validation
