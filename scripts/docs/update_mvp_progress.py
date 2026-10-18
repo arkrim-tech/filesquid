@@ -62,6 +62,7 @@ TICKS_START = '<metadata id="mvp-ticks">'
 TICKS_END = "</metadata>"
 TICK_LINE = re.compile(r"^Task (\S+) \[([ x])\] (\d+)h:(.*)$")
 TICK_ITEM = re.compile(r"(\S+) \[([ x])\]")
+TICK_ITEMS = re.compile(r"(?: \S+ \[[ x]\])*")
 ESTIMATE = re.compile(r'<a name="task-([^"]+)"></a>(?:\n  - (?!\*\*Estimated Time:).*)*\n  - \*\*Estimated Time:\*\* (\d+) hours')
 
 
@@ -229,7 +230,7 @@ def parse_tick_record(svg: str):
     tasks = []
     for line in (raw.strip() for raw in body.splitlines() if raw.strip()):
         match = TICK_LINE.match(line)
-        if not match:
+        if not match or not TICK_ITEMS.fullmatch(match.group(4)):
             return None
         ticks = [(unescape(module_id), mark == "x") for module_id, mark in TICK_ITEM.findall(match.group(4))]
         done = sum(ticked for _, ticked in ticks)
@@ -294,8 +295,9 @@ def render_summary(tasks: list, queue_md: str) -> str:
         "dependencies are done or in progress. Regenerate with "
         "`python3 scripts/docs/update_mvp_progress.py` after ticking boxes or opening a pull request; "
         "the check run by `scripts/verify_docs.sh` does not call GitHub and uses the pull requests recorded "
-        "in the block. When two pull requests both redraw it, the `mvp-progress` git merge driver "
-        "(see the README) merges their ticks and redraws it instead of reporting a conflict.\n\n"
+        "in the block. In a clone that registers the `mvp-progress` git merge driver (see the README), "
+        "merging two pull requests that both redraw it merges their ticks and redraws it when it can, "
+        "and otherwise leaves a conflict.\n\n"
         f"{queue_md}\n"
         f"{END}"
     )

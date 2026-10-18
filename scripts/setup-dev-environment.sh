@@ -171,9 +171,12 @@ install_ocfl_py() {
 }
 
 # Registers the MVP progress merge driver in this clone's git config (shared by
-# its worktrees). Idempotent: a driver that is already set is left alone.
+# its worktrees). Idempotent: the documented driver is left alone and any other
+# value is replaced with it. Skipped (as a failed optional step) without python3,
+# so no unrunnable driver is registered.
 configure_mvp_merge_driver() {
   command -v git >/dev/null 2>&1 || { log "git not found; merge driver not registered"; return 1; }
+  command -v python3 >/dev/null 2>&1 || { log "python3 not found; merge driver not registered (register it by hand with python or py, see README)"; return 1; }
   if [ "$(git config --get merge.mvp-progress.driver)" = "$MVP_MERGE_DRIVER" ]; then
     log "merge.mvp-progress.driver already set"
     return 0

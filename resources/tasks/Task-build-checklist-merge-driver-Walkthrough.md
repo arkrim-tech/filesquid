@@ -33,37 +33,36 @@ No PRD or SRS requirement. Every task PR ticks boxes in [implementation-plan-che
 ## Test run (raw output)
 
 ```text
-$ TMPDIR=/dev/shm/build-merge-driver python3 -m unittest -v scripts/docs/test_merge_mvp_progress.py
-test_both_strategies_give_the_same_result (…CleanMerge.test_both_strategies_give_the_same_result)
+$ python3 -m unittest -v scripts/docs/test_merge_mvp_progress.py
+test_both_strategies_give_the_same_result (scripts.docs.test_merge_mvp_progress.CleanMerge.test_both_strategies_give_the_same_result)
 The default strategy and `-s recursive` (which may visit files in another order) agree. ... ok
-test_different_ticks_merge_into_the_offline_block (…CleanMerge.test_different_ticks_merge_into_the_offline_block)
+test_different_ticks_merge_into_the_offline_block (scripts.docs.test_merge_mvp_progress.CleanMerge.test_different_ticks_merge_into_the_offline_block)
 The merged block and SVG equal what the offline generator draws from the merged ticks. ... ok
-test_driver_call_order_does_not_matter (…CleanMerge.test_driver_call_order_does_not_matter)
+test_driver_call_order_does_not_matter (scripts.docs.test_merge_mvp_progress.CleanMerge.test_driver_call_order_does_not_matter)
 Running the SVG driver before or after the checklist driver gives the same files. ... ok
-test_merge_direction_does_not_matter (…CleanMerge.test_merge_direction_does_not_matter)
+test_merge_direction_does_not_matter (scripts.docs.test_merge_mvp_progress.CleanMerge.test_merge_direction_does_not_matter)
 Merging a into b gives the same checklist and SVG as merging b into a. ... ok
-test_merge_from_a_subdirectory (…CleanMerge.test_merge_from_a_subdirectory)
+test_merge_from_a_subdirectory (scripts.docs.test_merge_mvp_progress.CleanMerge.test_merge_from_a_subdirectory)
 Git runs the driver from the top-level directory, so its relative path works anywhere. ... ok
-test_same_line_edited_differently_conflicts (…RealConflict.test_same_line_edited_differently_conflicts)
+test_same_line_edited_differently_conflicts (scripts.docs.test_merge_mvp_progress.RealConflict.test_same_line_edited_differently_conflicts)
 The merge fails, markers stay around the edited line and the block is valid. ... ok
-test_union_filtered_by_ticks (…RecordedPrs.test_union_filtered_by_ticks)
+test_union_filtered_by_ticks (scripts.docs.test_merge_mvp_progress.RecordedPrs.test_union_filtered_by_ticks)
 A recorded PR for a task the other side ticked is dropped. ... ok
-test_pick_three_way (…Unit.test_pick_three_way)
+test_pick_three_way (scripts.docs.test_merge_mvp_progress.Unit.test_pick_three_way)
 A side that changed wins; two different changes conflict. ... ok
-test_rows_changed_differently_do_not_merge (…Unit.test_rows_changed_differently_do_not_merge)
+test_rows_changed_differently_do_not_merge (scripts.docs.test_merge_mvp_progress.Unit.test_rows_changed_differently_do_not_merge)
 The same row ticked on one side and changed in hours on the other still merges; a clash does not. ... ok
-test_tick_record_round_trip (…Unit.test_tick_record_round_trip)
+test_tick_record_round_trip (scripts.docs.test_merge_mvp_progress.Unit.test_tick_record_round_trip)
 The SVG tick record reads back to the same tasks; an SVG without one reads as None. ... ok
-test_union_keeps_lowest_pr_and_newer_time (…Unit.test_union_keeps_lowest_pr_and_newer_time)
+test_union_keeps_lowest_pr_and_newer_time (scripts.docs.test_merge_mvp_progress.Unit.test_union_keeps_lowest_pr_and_newer_time)
 The same task recorded with two PRs keeps the lower number. ... ok
-test_undefined_driver_is_the_builtin_text_merge (…WithoutConfig.test_undefined_driver_is_the_builtin_text_merge)
+test_undefined_driver_is_the_builtin_text_merge (scripts.docs.test_merge_mvp_progress.WithoutConfig.test_undefined_driver_is_the_builtin_text_merge)
 Both branches redraw the block, so the plain text merge conflicts there. ... ok
 
 ----------------------------------------------------------------------
-Ran 12 tests in 5.690s
+Ran 12 tests in 6.021s
 
-OK
-```
+OK```
 
 The tests map to the owner's list as follows: (a) `test_different_ticks_merge_into_the_offline_block`; (b) `test_both_strategies_give_the_same_result`, `test_driver_call_order_does_not_matter` and `test_merge_direction_does_not_matter`; (c) `test_same_line_edited_differently_conflicts`; (d) `test_union_filtered_by_ticks`; (e) `test_undefined_driver_is_the_builtin_text_merge`. Each test builds its repository with `tempfile.mkdtemp` and removes it through `addCleanup`. Git runs with `GIT_CONFIG_GLOBAL` set to the null device and `GIT_CONFIG_NOSYSTEM=1`.
 
@@ -82,6 +81,26 @@ $ git config --get-regexp '^merge\.mvp-progress'
 merge.mvp-progress.name MVP progress block
 merge.mvp-progress.driver python3 scripts/docs/merge_mvp_progress.py %O %A %B %L %P
 ```
+
+## First real use: merging main into this branch
+
+Main moved on (PRs #47 and #56 merged) while the PR was open, with the driver registered in this clone. `git merge origin/main` merged the checklist cleanly through the driver: the regenerated block passed `--check`. The SVG driver reported a conflict, as documented, because main's bar predates the tick record:
+
+```text
+mvp-progress merge driver: an SVG version has no tick record; keeping ours. Run python3 scripts/docs/update_mvp_progress.py after the merge.
+Auto-merging resources/assets/mvp-progress.svg
+CONFLICT (content): Merge conflict in resources/assets/mvp-progress.svg
+Auto-merging resources/implementation-plan-checklist.md
+```
+
+The bar was redrawn offline to resolve that conflict. This only happens once per branch: after this PR merges, every base SVG carries a tick record.
+
+## Review fixes (Cubic round 1)
+
+- `Repo.tick` in the tests now ticks global rows (`[Task 0.2]`) as well as module rows, and fails when no open row matches, so `test_both_strategies_give_the_same_result` really ticks Task 0.2.
+- `parse_tick_record` rejects a record line whose module part does not fully parse, so a corrupt SVG leads to the conflict fallback.
+- The setup step skips registration (a warning from an optional step) when `python3` is missing, and its comment says a different driver value is replaced.
+- The checklist sentence now says the driver works in clones that register it, and leaves a conflict when it cannot merge.
 
 ## Pre-commit hook
 

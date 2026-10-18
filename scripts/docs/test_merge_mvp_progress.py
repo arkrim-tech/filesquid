@@ -153,10 +153,13 @@ class Repo:
         self.run(sys.executable, "-c", REGENERATE)
 
     def tick(self, task_id: str):
-        """Tick the checklist row whose link text is `task_id`."""
+        """Tick the module row `[task_id]` or the global row `[Task task_id]`; fail when neither is open."""
         text = self.read(CHECKLIST)
-        marker = f"- [ ] [{task_id}]"
-        self.write(CHECKLIST, text.replace(marker, f"- [x] [{task_id}]", 1))
+        markers = [(f"- [ ] [{task_id}]", f"- [x] [{task_id}]"), (f". [ ] [Task {task_id}]", f". [x] [Task {task_id}]")]
+        found = [(old, new) for old, new in markers if old in text]
+        if not found:
+            raise AssertionError(f"no open checklist row for {task_id}")
+        self.write(CHECKLIST, text.replace(found[0][0], found[0][1], 1))
 
     def record(self, prs: str, stamp: str):
         """Set the recorded PR IDs and timestamp in the block, as write mode would."""
@@ -354,6 +357,7 @@ class Unit(unittest.TestCase):
         svg = driver.progress.render_svg(tasks, driver.progress.percent_done(tasks))
         self.assertEqual(driver.progress.parse_tick_record(svg), tasks)
         self.assertIsNone(driver.progress.parse_tick_record("<svg></svg>"))
+        self.assertIsNone(driver.progress.parse_tick_record(svg.replace("CO-0.2 [ ]", "CO-0.2 [?]")))
 
     def test_rows_changed_differently_do_not_merge(self):
         """The same row ticked on one side and changed in hours on the other still merges; a clash does not."""
