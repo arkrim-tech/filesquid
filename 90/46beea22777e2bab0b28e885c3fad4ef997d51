@@ -1,0 +1,31 @@
+.agents/rules/task-workflow.md
+  s_011628764c45ed::t_5672d4866d7ae2 23
+resources/assets/mvp-progress.svg
+  s_011628764c45ed::t_5cf5f17014d9cc 1-65
+resources/implementation-plan-checklist.md
+  s_011628764c45ed::t_a2247b275b24b2 3-8
+scripts/docs/update_mvp_progress.py
+  s_011628764c45ed::t_09b1b437fc2eb8 1-256
+scripts/verify_docs.sh
+  s_011628764c45ed::t_1f947105a8a8b0 13,40
+apps/filesquid/crates/ocfl/src/storage/fs/mod.rs
+  s_011628764c45ed::t_584686e7fbe5c4 82-86,199
+resources/architecture-Rust-in-FileSquid.html
+  s_011628764c45ed::t_fdf3ed7a1e6b09 1-490
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9046beea22777e2bab0b28e885c3fad4ef997d51",
+  "prompts": {},
+  "sessions": {
+    "s_011628764c45ed": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e9f32a67-2085-4870-850d-cedb028faa93",
+        "model": "unknown"
+      },
+      "human_author": "Peter Van Garderen <vangarderen.peter@gmail.com>"
+    }
+  }
+}
