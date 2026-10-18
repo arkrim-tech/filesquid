@@ -258,9 +258,12 @@ impl ByteSource for RecordingSource {
     }
 
     async fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, ByteIoError> {
-        let start =
-            usize::try_from(offset).map_err(|_| ByteIoError::OutOfRange { offset, size: 0 })?;
-        let available = self.bytes.get(start..).unwrap_or_default();
+        let size = self.bytes.len() as u64;
+        if offset > size {
+            return Err(ByteIoError::OutOfRange { offset, size });
+        }
+        // `offset <= size`, which came from a `usize`, so this cannot truncate.
+        let available = &self.bytes[offset as usize..];
         let n = buf.len().min(available.len());
         buf[..n].copy_from_slice(&available[..n]);
         self.reads.push(offset..offset + n as u64);
@@ -295,16 +298,23 @@ fn a_store_over_the_size_limit_is_refused_without_reading_its_bytes() {
     assert!(source.reads.is_empty(), "{:?}", source.reads);
     let at_limit = block_on(read_store_bytes(&mut source, &embedded, size));
     assert_eq!(at_limit, Ok(store.clone()));
+    // Every read lies wholly inside one store part.
     let in_parts = |r: &Range<u64>| {
         embedded
             .parts
             .iter()
-            .any(|p| r.start < p.end && p.start < r.end)
+            .any(|p| p.start <= r.start && r.end <= p.end)
     };
     assert!(
         source.reads.iter().all(in_parts),
         "only store parts are read"
     );
+    // The recorder keeps the ByteSource contract past the end.
+    let past = source.bytes.len() as u64 + 1;
+    assert!(matches!(
+        block_on(source.read_at(past, &mut [0; 4])),
+        Err(ByteIoError::OutOfRange { .. })
+    ));
 }
 
 #[test]
