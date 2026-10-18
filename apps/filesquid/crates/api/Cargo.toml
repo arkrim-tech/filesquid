@@ -88,6 +88,10 @@ name = "unit_library_queries"
 path = "tests/unit/library_queries.rs"
 
 [[test]]
+name = "unit_replica"
+path = "tests/unit/replica.rs"
+
+[[test]]
 name = "features"
 path = "tests/features.rs"
 harness = false
