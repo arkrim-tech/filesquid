@@ -31,6 +31,13 @@ pub enum ReplicaError {
         /// Message shown to people.
         message: &'static str,
     },
+    /// The operation has to wait for other changes to publish; retry later.
+    Blocked {
+        /// Stable machine-readable rule name, for example `not_next`.
+        code: &'static str,
+        /// Message shown to people.
+        message: &'static str,
+    },
     /// No pending change has that operation ID.
     NotFound,
     /// The entry must be fetched again.
@@ -52,10 +59,17 @@ impl ReplicaError {
         Self::Refused { code, message }
     }
 
+    /// Shorthand for [`ReplicaError::Blocked`].
+    pub const fn blocked(code: &'static str, message: &'static str) -> Self {
+        Self::Blocked { code, message }
+    }
+
     /// Stable error code for logs and UIs.
     pub fn error_code(&self) -> &'static str {
         match self {
-            Self::Invalid { code, .. } | Self::Refused { code, .. } => code,
+            Self::Invalid { code, .. }
+            | Self::Refused { code, .. }
+            | Self::Blocked { code, .. } => code,
             Self::NotFound => "not_found",
             Self::Recovery(Recovery::NotCached) => "not_cached",
             Self::Recovery(Recovery::Evicted) => "evicted",
@@ -69,6 +83,7 @@ impl ReplicaError {
         match self {
             Self::Invalid { .. } => ErrorCode::InvalidRequest,
             Self::Refused { .. } => ErrorCode::Conflict,
+            Self::Blocked { .. } => ErrorCode::Unavailable,
             Self::NotFound => ErrorCode::NotFound,
             Self::Recovery(_) => ErrorCode::Unavailable,
             Self::IdentityMismatch => ErrorCode::Forbidden,
@@ -79,7 +94,9 @@ impl ReplicaError {
     /// The message shown to people. It names no viewer, library, title or path.
     pub fn message(&self) -> &'static str {
         match self {
-            Self::Invalid { message, .. } | Self::Refused { message, .. } => message,
+            Self::Invalid { message, .. }
+            | Self::Refused { message, .. }
+            | Self::Blocked { message, .. } => message,
             Self::NotFound => "FileSquid could not find that pending change.",
             Self::Recovery(Recovery::NotCached) => {
                 "This view is not stored on this device yet. Loading it again."

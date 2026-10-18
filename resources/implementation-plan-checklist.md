@@ -55,21 +55,21 @@ FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by ga
     - [x] [IO-0.3](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) SHA-256 digest and inventory types
     - [x] [IO-0.4](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Read and browse
     - [x] [IO-0.5](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Structural validation
-11. [ ] [Task 0.4](./implementation-plan.md#task-0.4) filesquid-ocfl write and logical-state enumerator
+11. [x] [Task 0.10](./implementation-plan.md#task-0.10) Private-client library (ADR 001)
+    - [x] [CL-0.1](../apps/filesquid/crates/api/resources/plan.md#phase-f1-application-layer-global-task-010-cl-04-in-global-task-011-phase-f4-cl-05-in-global-task-012-phase-i1) Confirm crate name, SRS, and graph guards
+    - [x] [CL-0.2](../apps/filesquid/crates/api/resources/plan.md#phase-f1-application-layer-global-task-010-cl-04-in-global-task-011-phase-f4-cl-05-in-global-task-012-phase-i1) Library domain commands and queries
+    - [x] [CL-0.3](../apps/filesquid/crates/api/resources/plan.md#phase-f1-application-layer-global-task-010-cl-04-in-global-task-011-phase-f4-cl-05-in-global-task-012-phase-i1) Replica, cache identity, and pending mutations
+12. [ ] [Task 0.4](./implementation-plan.md#task-0.4) filesquid-ocfl write and logical-state enumerator
     - [x] [IO-0.6](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Local write order and unpublished vN
     - [x] [IO-0.7](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Generic object payload
     - [x] [IO-0.8](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Opaque bytes; dual profile is a caller
     - [x] [IO-0.9](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Enumerate committed logical state
     - [ ] [IO-0.10](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Forward-delta change model
-12. [ ] [Task 0.15](./implementation-plan.md#task-0.15) filesquid-metadata WASM build and OCFL-sourced extraction
+13. [ ] [Task 0.15](./implementation-plan.md#task-0.15) filesquid-metadata WASM build and OCFL-sourced extraction
     - [ ] [MD-0.4](../apps/filesquid/crates/metadata/resources/plan.md#phase-f0-webassembly-build-global-task-015) WASM build and OCFL-sourced extraction
-13. [ ] [Task FS-1.2](./implementation-plan.md#task-fs-1.2) File operations through the API
+14. [ ] [Task FS-1.2](./implementation-plan.md#task-fs-1.2) File operations through the API
     - [ ] [IO-1.2](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f1f2-view-api-and-file-browser-global-tasks-fs-12-19-superseded) UI view API
     - [ ] [API-F1.3](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-api-f19-in-fs-310-and-api-f15-in-fs-c1) File operation routes
-14. [x] [Task 0.10](./implementation-plan.md#task-0.10) Private-client library (ADR 001)
-    - [x] [CL-0.1](../apps/filesquid/crates/api/resources/plan.md#phase-f1-application-layer-global-task-010-cl-04-in-global-task-011-phase-f4-cl-05-in-global-task-012-phase-i1) Confirm crate name, SRS, and graph guards
-    - [x] [CL-0.2](../apps/filesquid/crates/api/resources/plan.md#phase-f1-application-layer-global-task-010-cl-04-in-global-task-011-phase-f4-cl-05-in-global-task-012-phase-i1) Library domain commands and queries
-    - [x] [CL-0.3](../apps/filesquid/crates/api/resources/plan.md#phase-f1-application-layer-global-task-010-cl-04-in-global-task-011-phase-f4-cl-05-in-global-task-012-phase-i1) Replica, cache identity, and pending mutations
 15. [ ] [Task FS-2.1](./implementation-plan.md#task-fs-2.1) Default UI shell, host adapter, tokens and accessibility
     - [x] [UI-0.1](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Host adapter (HTTP vs custom URI scheme)
     - [x] [UI-0.2](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Official branding and light/dark tokens

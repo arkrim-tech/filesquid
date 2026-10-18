@@ -25,6 +25,9 @@ pub const MAX_PENDING_PER_LIBRARY: usize = 1_000;
 /// Most libraries the ledger may hold changes for.
 pub const MAX_LIBRARIES: usize = 64;
 
+/// Largest snapshot [`PendingLedger::restore`] reads, in bytes, checked before parsing.
+pub const MAX_SNAPSHOT_BYTES: usize = 64 * 1024 * 1024;
+
 /// Publication attempts after which a change stalls for the owner to decide.
 pub const MAX_ATTEMPTS: u32 = 5;
 
@@ -121,6 +124,12 @@ impl PendingLedger {
         queued_at: &str,
     ) -> Result<PendingChange, ReplicaError> {
         check_utc(queued_at)?;
+        request.command.validate().map_err(|_| {
+            ReplicaError::invalid(
+                "invalid_command",
+                "The change breaks a library rule and cannot wait as pending.",
+            )
+        })?;
         let library_id = request.command.library_id().cloned().ok_or_else(|| {
             ReplicaError::invalid(
                 "pending_needs_library",
@@ -193,7 +202,7 @@ impl PendingLedger {
             .map(PendingChange::operation_id)
             != Some(operation_id)
         {
-            return Err(ReplicaError::refused(
+            return Err(ReplicaError::blocked(
                 "not_next",
                 "An earlier change in this library has to publish first.",
             ));
@@ -326,14 +335,18 @@ impl PendingLedger {
     }
 
     /// Rebuild a ledger from a [`Self::snapshot`]. A change that was `publishing` when the
-    /// snapshot was taken was interrupted and comes back as `retry_wait`.
+    /// snapshot was taken was interrupted and comes back as `retry_wait`, or as `stalled` when
+    /// it had used its last attempt. A snapshot over [`MAX_SNAPSHOT_BYTES`] is refused before parsing.
     ///
     /// # Errors
     ///
     /// Returns `invalid_snapshot` for malformed JSON, a duplicate operation ID, a change whose
     /// library differs from its command's, a bad time, a committed change without a revision,
-    /// a revision on an uncommitted one, too many attempts, or input over the bounds.
+    /// any revision on an uncommitted one, too many attempts, or input over the bounds.
     pub fn restore(snapshot: &str) -> Result<Self, ReplicaError> {
+        if snapshot.len() > MAX_SNAPSHOT_BYTES {
+            return Err(invalid_snapshot());
+        }
         let mut changes: Vec<PendingChange> =
             serde_json::from_str(snapshot).map_err(|_| invalid_snapshot())?;
         if changes.len() > MAX_LIBRARIES * MAX_PENDING_PER_LIBRARY {
@@ -386,7 +399,7 @@ impl PendingLedger {
         let libraries: HashSet<&LibraryId> = self.changes.iter().map(|c| &c.library_id).collect();
         let new_library = in_library == 0 && libraries.len() >= MAX_LIBRARIES;
         if in_library >= MAX_PENDING_PER_LIBRARY || new_library {
-            return Err(ReplicaError::refused(
+            return Err(ReplicaError::blocked(
                 "pending_full",
                 "Too many changes are waiting on this device. Let them publish first.",
             ));
@@ -395,12 +408,13 @@ impl PendingLedger {
     }
 }
 
-/// The existing change when `request` repeats it, else `operation_reused`.
+/// The existing change when `request` repeats its command (a rebase may since have changed
+/// the expected revision), else `operation_reused`.
 fn same_request(
     existing: &PendingChange,
     request: &CommandRequest,
 ) -> Result<PendingChange, ReplicaError> {
-    if &existing.request == request {
+    if existing.request.command == request.command {
         return Ok(existing.clone());
     }
     Err(ReplicaError::refused(
@@ -447,11 +461,11 @@ fn check_restored(
 ) -> Result<(), ReplicaError> {
     let names_own_library = change.request.command.library_id() == Some(&change.library_id);
     let committed = change.state == PendingState::Committed;
-    let revision_ok = change
-        .published_revision
-        .as_deref()
-        .is_some_and(|r| !r.trim().is_empty())
-        == committed;
+    let revision_ok = match (&change.published_revision, committed) {
+        (Some(revision), true) => !revision.trim().is_empty(),
+        (None, false) => true,
+        _ => false,
+    };
     let fresh = seen.insert(change.operation_id().clone());
     let valid = names_own_library
         && revision_ok
@@ -462,7 +476,11 @@ fn check_restored(
         return Err(invalid_snapshot());
     }
     if change.state == PendingState::Publishing {
-        change.state = PendingState::RetryWait;
+        change.state = if change.attempts >= MAX_ATTEMPTS {
+            PendingState::Stalled
+        } else {
+            PendingState::RetryWait
+        };
     }
     Ok(())
 }

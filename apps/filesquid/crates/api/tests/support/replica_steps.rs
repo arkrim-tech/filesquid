@@ -23,6 +23,7 @@ const QUEUED_AT: &str = "2026-10-18T00:00:00Z";
 /// Per-scenario state of the replica steps.
 #[derive(Default)]
 pub struct ReplicaWorld {
+    viewer: String,
     library: String,
     grants: Vec<String>,
     cache: Option<MemoryReplicaCache>,
@@ -93,11 +94,7 @@ impl ReplicaWorld {
     }
 
     fn alice(&self) -> CacheIdentity {
-        identity("alice", &self.library, &self.grants)
-    }
-
-    fn library_id(&self) -> LibraryId {
-        LibraryId::new(self.library.clone()).expect("library")
+        identity(&self.viewer, &self.library, &self.grants)
     }
 
     fn store(&self, stored_for: CacheIdentity, coverage: Coverage) {
@@ -137,7 +134,8 @@ impl ReplicaWorld {
 #[given(
     expr = "a replica for viewer {string} on library {string} with grants {string} and {string}"
 )]
-fn replica(w: &mut MonitorWorld, _viewer: String, library: String, a: String, b: String) {
+fn replica(w: &mut MonitorWorld, viewer: String, library: String, a: String, b: String) {
+    w.replica.viewer = viewer;
     w.replica.library = library;
     w.replica.grants = vec![a, b];
     w.replica.cache = Some(MemoryReplicaCache::new(8).expect("cache"));
@@ -181,7 +179,7 @@ fn bob_reads(w: &mut MonitorWorld) {
 
 #[when(expr = "alice's grants shrink to {string} and she reads the same view")]
 fn narrowed(w: &mut MonitorWorld, grant: String) {
-    let id = identity("alice", &w.replica.library, &[grant]);
+    let id = identity(&w.replica.viewer, &w.replica.library, &[grant]);
     w.replica.read(id);
 }
 
@@ -282,8 +280,8 @@ fn first_state(w: &mut MonitorWorld, state: String) {
 }
 
 #[then(expr = "library {string} should have {int} pending change(s)")]
-fn pending_count(w: &mut MonitorWorld, _library: String, count: usize) {
-    let library = w.replica.library_id();
+fn pending_count(w: &mut MonitorWorld, library: String, count: usize) {
+    let library = LibraryId::new(library).expect("library");
     assert_eq!(w.replica.ledger.pending_count(&library), count);
 }
 

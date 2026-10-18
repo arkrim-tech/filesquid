@@ -9,7 +9,7 @@ pub const MAX_SHARDS: u32 = 4096;
 
 /// How much of the replica backs an answer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "coverage", rename_all = "snake_case")]
+#[serde(try_from = "RawCoverage", tag = "coverage", rename_all = "snake_case")]
 pub enum Coverage {
     /// Every shard is loaded.
     Complete,
@@ -41,5 +41,32 @@ impl Coverage {
             return Ok(Self::Complete);
         }
         Ok(Self::Incomplete { loaded, total })
+    }
+}
+
+/// The wire form of [`Coverage`], checked by [`Coverage::from_shards`] before it is trusted.
+#[derive(Clone, Copy, Deserialize)]
+#[serde(tag = "coverage", rename_all = "snake_case")]
+enum RawCoverage {
+    Complete,
+    Incomplete { loaded: u32, total: u32 },
+}
+
+impl TryFrom<RawCoverage> for Coverage {
+    type Error = ReplicaError;
+
+    /// Accept only counts [`Coverage::from_shards`] would build as incomplete, so restored
+    /// state cannot carry an impossible or non-canonical coverage.
+    fn try_from(raw: RawCoverage) -> Result<Self, Self::Error> {
+        match raw {
+            RawCoverage::Complete => Ok(Self::Complete),
+            RawCoverage::Incomplete { loaded, total } => match Self::from_shards(loaded, total)? {
+                Self::Incomplete { .. } => Ok(Self::Incomplete { loaded, total }),
+                Self::Complete => Err(ReplicaError::invalid(
+                    "invalid_coverage",
+                    "The stored view reports an impossible number of loaded parts.",
+                )),
+            },
+        }
     }
 }

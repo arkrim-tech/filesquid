@@ -4,15 +4,17 @@
 
 use filesquid_api::host::HostType;
 use filesquid_api::library::{
-    CommandRequest, DeletionPolicy, LibraryCommand, LibraryQuery, Page, QueryAnswer, QueryRequest,
+    CommandRequest, Cursor, DeletionPolicy, LibraryCommand, LibraryQuery, Page, PageKey,
+    QueryAnswer, QueryRequest,
 };
 use filesquid_api::operation::{
     CommandEnvelope, ExpectedRevision, OperationId, OperationScope, PageSize, QueryEnvelope,
 };
 use filesquid_api::replica::{
-    answer_from_cache, CacheIdentity, CachedPage, Coverage, GrantDigest, HeadPublication,
+    answer_from_cache, CacheIdentity, CacheKey, CachedPage, Coverage, GrantDigest, HeadPublication,
     MemoryReplicaCache, PendingLedger, PendingState, ReplicaCache, ReplicaError, ReplicaRequest,
     ViewerId, DEFAULT_CACHE_CAPACITY, MAX_ATTEMPTS, MAX_LIBRARIES, MAX_PENDING_PER_LIBRARY,
+    MAX_SNAPSHOT_BYTES,
 };
 use filesquid_api::ErrorCode;
 use filesquid_core::{FileId, LibraryId, RepositoryId};
@@ -185,6 +187,15 @@ fn query_keys_differ_by_identity_page_size_cursor_and_query() {
     assert_ne!(key, id.query_key(&query(11)).expect("size"));
     let other = identity("bob", "lib-1", &["file.read"]);
     assert_ne!(key, other.query_key(&query(10)).expect("bob"));
+    let mut paged = query(10);
+    paged.cursor = Some(
+        Cursor::encode(&PageKey {
+            order: 1,
+            id: "f1".to_string(),
+        })
+        .expect("cursor"),
+    );
+    assert_ne!(key, id.query_key(&paged).expect("cursor"));
     let mut open = query(10);
     open.query = LibraryQuery::OpenLibrary {
         library_id: LibraryId::new("lib-1").expect("library"),
@@ -468,9 +479,12 @@ fn a_repeated_operation_id_is_the_same_change() {
         .expect("again");
     assert_eq!(first, again);
     assert_eq!(ledger.pending_count(&first.library_id), 1);
-    let other = ledger
-        .enqueue(hide("lib-1", "op-1", "9"), QUEUED_AT)
-        .expect_err("different");
+    let mut changed = hide("lib-1", "op-1", "3");
+    changed.command = LibraryCommand::UnhideFiles {
+        library_id: LibraryId::new("lib-1").expect("library"),
+        file_ids: vec![FileId::new("f1").expect("file")],
+    };
+    let other = ledger.enqueue(changed, QUEUED_AT).expect_err("different");
     assert_eq!(other.error_code(), "operation_reused");
     assert_eq!(other.api_code(), ErrorCode::Conflict);
 }
@@ -487,7 +501,8 @@ fn pending_changes_are_bounded_per_library() {
         .enqueue(hide("lib-1", "op-over", "3"), QUEUED_AT)
         .expect_err("full");
     assert_eq!(err.error_code(), "pending_full");
-    assert_eq!(err.api_code(), ErrorCode::Conflict);
+    assert_eq!(err.api_code(), ErrorCode::Unavailable);
+    assert!(err.api_code().retryable());
     assert!(ledger
         .enqueue(hide("lib-2", "op-other", "3"), QUEUED_AT)
         .is_ok());
@@ -829,5 +844,206 @@ fn only_a_committed_change_can_be_acknowledged() {
             .expect_err("gone")
             .error_code(),
         "not_found"
+    );
+}
+
+#[test]
+fn not_next_is_retryable_like_pending_full() {
+    let mut ledger = PendingLedger::new();
+    ledger
+        .enqueue(hide("lib-1", "op-1", "3"), QUEUED_AT)
+        .expect("one");
+    ledger
+        .enqueue(hide("lib-1", "op-2", "3"), QUEUED_AT)
+        .expect("two");
+    let err = ledger.begin_publish(&op("op-2")).expect_err("blocked");
+    assert_eq!(err.api_code(), ErrorCode::Unavailable);
+}
+
+#[test]
+fn a_superseded_identity_loses_its_entries_and_others_keep_theirs() {
+    let cache = MemoryReplicaCache::new(8).expect("cache");
+    let wide = identity("alice", "lib-1", &["file.read", "file.write"]);
+    let narrow = identity("alice", "lib-1", &["file.read"]);
+    let bob = identity("bob", "lib-1", &["file.read"]);
+    for id in [&wide, &bob] {
+        let key = id.query_key(&query(10)).expect("key");
+        cache
+            .store(key, page(id, Coverage::Complete))
+            .expect("store");
+    }
+    assert_eq!(cache.drop_superseded(&narrow).expect("drop"), 1);
+    assert_eq!(cache.len().expect("len"), 1);
+    let gone = ReplicaRequest {
+        identity: wide,
+        request: query(10),
+    };
+    assert_eq!(
+        answer_from_cache(&cache, &gone)
+            .expect_err("dropped")
+            .error_code(),
+        "not_cached"
+    );
+    let kept = ReplicaRequest {
+        identity: bob,
+        request: query(10),
+    };
+    assert!(answer_from_cache(&cache, &kept).is_ok());
+}
+
+#[test]
+fn restoring_state_validates_keys_identities_and_coverage() {
+    let bad_key = serde_json::from_str::<CacheKey>("\"not-a-key\"");
+    assert!(bad_key.is_err());
+    let good = identity("alice", "lib-1", &["file.read"]);
+    let good_key: CacheKey =
+        serde_json::from_str(&format!("\"{}\"", good.key().as_str())).expect("key");
+    assert_eq!(good_key, good.key());
+    let json = serde_json::to_string(&good)
+        .expect("json")
+        .replace("\"schema_version\":1", "\"schema_version\":2");
+    assert!(serde_json::from_str::<CacheIdentity>(&json).is_err());
+    for bad in [
+        r#"{"coverage":"incomplete","loaded":9,"total":8}"#,
+        r#"{"coverage":"incomplete","loaded":8,"total":8}"#,
+        r#"{"coverage":"incomplete","loaded":0,"total":0}"#,
+    ] {
+        assert!(serde_json::from_str::<Coverage>(bad).is_err(), "{bad}");
+    }
+    let ok: Coverage =
+        serde_json::from_str(r#"{"coverage":"incomplete","loaded":3,"total":8}"#).expect("ok");
+    assert_eq!(
+        ok,
+        Coverage::Incomplete {
+            loaded: 3,
+            total: 8
+        }
+    );
+}
+
+#[test]
+fn refreshing_an_entry_makes_it_the_newest() {
+    let cache = MemoryReplicaCache::new(2).expect("cache");
+    let id = identity("alice", "lib-1", &["file.read"]);
+    let keys: Vec<CacheKey> = [1, 2, 3]
+        .iter()
+        .map(|n| id.query_key(&query(*n)).expect("key"))
+        .collect();
+    cache
+        .store(keys[0].clone(), page(&id, Coverage::Complete))
+        .expect("one");
+    cache
+        .store(keys[1].clone(), page(&id, Coverage::Complete))
+        .expect("two");
+    cache
+        .store(keys[0].clone(), page(&id, Coverage::Complete))
+        .expect("refresh one");
+    cache
+        .store(keys[2].clone(), page(&id, Coverage::Complete))
+        .expect("three");
+    let two = ReplicaRequest {
+        identity: id.clone(),
+        request: query(2),
+    };
+    assert_eq!(
+        answer_from_cache(&cache, &two)
+            .expect_err("oldest evicted")
+            .error_code(),
+        "evicted"
+    );
+    let one = ReplicaRequest {
+        identity: id,
+        request: query(1),
+    };
+    assert!(answer_from_cache(&cache, &one).is_ok());
+}
+
+#[test]
+fn debug_output_never_prints_cached_answers() {
+    let id = identity("alice", "lib-1", &["file.read"]);
+    let text = format!("{:?}", page(&id, Coverage::Complete));
+    assert!(!text.contains("alice") && !text.contains("recoverable_days"));
+}
+
+#[test]
+fn a_command_that_breaks_a_library_rule_cannot_be_pending() {
+    let mut ledger = PendingLedger::new();
+    let mut request = hide("lib-1", "op-1", "3");
+    request.command = LibraryCommand::HideFiles {
+        library_id: LibraryId::new("lib-1").expect("library"),
+        file_ids: vec![],
+    };
+    let err = ledger.enqueue(request, QUEUED_AT).expect_err("empty batch");
+    assert_eq!(err.error_code(), "invalid_command");
+    assert_eq!(
+        ledger.pending_count(&LibraryId::new("lib-1").expect("library")),
+        0
+    );
+}
+
+#[test]
+fn repeating_the_original_request_after_a_rebase_answers_the_change() {
+    let mut ledger = PendingLedger::new();
+    ledger
+        .enqueue(hide("lib-1", "op-1", "3"), QUEUED_AT)
+        .expect("one");
+    ledger.begin_publish(&op("op-1")).expect("begin");
+    ledger.report_conflict(&op("op-1")).expect("conflict");
+    ledger
+        .rebase(&op("op-1"), ExpectedRevision::new("4").expect("revision"))
+        .expect("rebase");
+    let again = ledger
+        .enqueue(hide("lib-1", "op-1", "3"), QUEUED_AT)
+        .expect("same command");
+    assert_eq!(again.request.envelope.expected_revision().as_str(), "4");
+    assert_eq!(ledger.pending_count(&again.library_id), 1);
+}
+
+#[test]
+fn restore_refuses_a_revision_on_an_uncommitted_change() {
+    let mut ledger = PendingLedger::new();
+    ledger
+        .enqueue(hide("lib-1", "op-1", "3"), QUEUED_AT)
+        .expect("one");
+    let json = ledger.snapshot().expect("snapshot");
+    for revision in ["\"\"", "\"4\""] {
+        let forged = json.replace(
+            "\"attempts\":0",
+            &format!("\"attempts\":0,\"published_revision\":{revision}"),
+        );
+        assert_eq!(
+            PendingLedger::restore(&forged)
+                .expect_err("forged")
+                .error_code(),
+            "invalid_snapshot"
+        );
+    }
+}
+
+#[test]
+fn an_interrupted_last_attempt_restores_as_stalled() {
+    let mut ledger = PendingLedger::new();
+    ledger
+        .enqueue(hide("lib-1", "op-1", "3"), QUEUED_AT)
+        .expect("one");
+    for _ in 1..MAX_ATTEMPTS {
+        ledger.begin_publish(&op("op-1")).expect("begin");
+        ledger.report_retry(&op("op-1")).expect("retry");
+    }
+    ledger.begin_publish(&op("op-1")).expect("last attempt");
+    let restored = PendingLedger::restore(&ledger.snapshot().expect("snapshot")).expect("restore");
+    let change = restored.get(&op("op-1")).expect("op-1");
+    assert_eq!(change.state, PendingState::Stalled);
+    assert_eq!(change.attempts, MAX_ATTEMPTS);
+}
+
+#[test]
+fn an_oversized_snapshot_is_refused_before_parsing() {
+    let huge = " ".repeat(MAX_SNAPSHOT_BYTES + 1);
+    assert_eq!(
+        PendingLedger::restore(&huge)
+            .expect_err("huge")
+            .error_code(),
+        "invalid_snapshot"
     );
 }

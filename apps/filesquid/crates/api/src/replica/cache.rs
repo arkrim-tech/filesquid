@@ -15,7 +15,7 @@ use std::sync::{Mutex, MutexGuard};
 pub const DEFAULT_CACHE_CAPACITY: usize = 1_024;
 
 /// One cached answer with the identity it was made for and the coverage behind it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CachedPage {
     /// Who the answer was made for.
     pub identity: CacheIdentity,
@@ -23,6 +23,15 @@ pub struct CachedPage {
     pub coverage: Coverage,
     /// The answer.
     pub answer: QueryAnswer,
+}
+
+impl std::fmt::Debug for CachedPage {
+    /// Show the coverage only; the cached answer and its identity are never printed.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CachedPage")
+            .field("coverage", &self.coverage)
+            .finish_non_exhaustive()
+    }
 }
 
 /// What a cache knows about a key.
@@ -52,6 +61,15 @@ pub trait ReplicaCache: Send + Sync {
     ///
     /// Returns [`ReplicaError::Internal`] when the backend fails.
     fn store(&self, key: CacheKey, page: CachedPage) -> Result<(), ReplicaError>;
+
+    /// Drop every entry whose identity `newer` supersedes (the same viewer and library under
+    /// other grants), so entries made under old grants are gone, not just unreachable. They
+    /// are not remembered as evicted. Returns how many were dropped.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReplicaError::Internal`] when the backend fails.
+    fn drop_superseded(&self, newer: &CacheIdentity) -> Result<usize, ReplicaError>;
 }
 
 /// A replica query asked under an identity.
@@ -226,15 +244,32 @@ impl ReplicaCache for MemoryReplicaCache {
         let mut state = self.lock()?;
         state.evicted.remove(&key);
         state.evicted_order.retain(|k| k != &key);
-        if state.entries.insert(key.clone(), page).is_some() {
+        let replaced = state.entries.insert(key.clone(), page).is_some();
+        state.order.retain(|k| k != &key);
+        state.order.push_back(key);
+        if replaced {
             return Ok(());
         }
-        state.order.push_back(key);
         if state.entries.len() > self.capacity {
             if let Some(oldest) = state.order.front().cloned() {
                 state.evict(&oldest, self.capacity);
             }
         }
         Ok(())
+    }
+
+    fn drop_superseded(&self, newer: &CacheIdentity) -> Result<usize, ReplicaError> {
+        let mut state = self.lock()?;
+        let stale: Vec<CacheKey> = state
+            .entries
+            .iter()
+            .filter(|(_, page)| page.identity.is_superseded_by(newer))
+            .map(|(key, _)| key.clone())
+            .collect();
+        for key in &stale {
+            state.entries.remove(key);
+        }
+        state.order.retain(|k| !stale.contains(k));
+        Ok(stale.len())
     }
 }

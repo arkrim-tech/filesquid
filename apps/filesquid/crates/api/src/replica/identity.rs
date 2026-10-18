@@ -126,7 +126,7 @@ fn grants_error() -> ReplicaError {
 
 /// A cache key: 64 lowercase hex characters of a SHA-256. It carries no name or path.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
+#[serde(try_from = "String")]
 pub struct CacheKey(String);
 
 impl CacheKey {
@@ -136,8 +136,24 @@ impl CacheKey {
     }
 }
 
+impl TryFrom<String> for CacheKey {
+    type Error = ReplicaError;
+
+    /// Accept only a canonical key: 64 lowercase hex characters.
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        if !is_lower_hex_digest(&value) {
+            return Err(ReplicaError::invalid(
+                "invalid_cache_key",
+                "The stored view key is malformed.",
+            ));
+        }
+        Ok(Self(value))
+    }
+}
+
 /// Who a cached answer was made for.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "RawIdentity")]
 pub struct CacheIdentity {
     schema_version: u32,
     host: HostType,
@@ -197,12 +213,37 @@ impl CacheIdentity {
     }
 
     /// True when `newer` is the same viewer, host and library under different grants: this
-    /// identity's entries must be dropped and are never served.
+    /// identity's entries are dropped by `ReplicaCache::drop_superseded` and never served.
     pub fn is_superseded_by(&self, newer: &CacheIdentity) -> bool {
         self.host == newer.host
             && self.viewer == newer.viewer
             && self.library_id == newer.library_id
             && self.grants != newer.grants
+    }
+}
+
+/// The wire form of [`CacheIdentity`], whose schema version is checked before it is trusted.
+#[derive(Deserialize)]
+struct RawIdentity {
+    schema_version: u32,
+    host: HostType,
+    viewer: ViewerId,
+    library_id: LibraryId,
+    grants: GrantDigest,
+}
+
+impl TryFrom<RawIdentity> for CacheIdentity {
+    type Error = ReplicaError;
+
+    /// Accept only [`CACHE_SCHEMA_VERSION`], so restored state cannot name another encoding.
+    fn try_from(raw: RawIdentity) -> Result<Self, Self::Error> {
+        if raw.schema_version != CACHE_SCHEMA_VERSION {
+            return Err(ReplicaError::invalid(
+                "invalid_cache_identity",
+                "The stored view identity uses an unsupported version.",
+            ));
+        }
+        Ok(Self::new(raw.host, raw.viewer, raw.library_id, raw.grants))
     }
 }
 
