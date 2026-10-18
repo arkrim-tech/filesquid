@@ -11,16 +11,22 @@ use cucumber::{given, then, when, writer, StatsWriter as _, World, WriterExt as 
 mod builder;
 #[path = "support/inventory_example.rs"]
 mod example;
+#[path = "support/fault_backend.rs"]
+mod fault;
 #[path = "support/fixtures.rs"]
 mod fixtures;
 #[path = "support/inventory_steps.rs"]
 mod inventory_steps;
 #[path = "support/read_steps.rs"]
 mod read_steps;
+#[path = "support/write_rig.rs"]
+mod rig;
 #[path = "support/source_scan.rs"]
 mod source_scan;
 #[path = "support/validate_steps.rs"]
 mod validate_steps;
+#[path = "support/write_steps.rs"]
+mod write_steps;
 use filesquid_ocfl::storage::{
     ChunkReader, ETag, FsBackend, MemoryBackend, MultipartWriter, Precondition, StorageBackend,
     StorageError, StorageKey, MAX_CHUNK_BYTES,
@@ -65,6 +71,7 @@ struct OcflWorld {
     inventory: inventory_steps::InventoryState,
     read: read_steps::ReadState,
     validate: validate_steps::ValidateState,
+    write: write_steps::WriteState,
 }
 
 /// Run `$body` with `$b` bound to the scenario's concrete backend.

@@ -25,6 +25,7 @@
 //! [`crate::validate`]. A reader checks what it needs to return correct
 //! bytes and refuses with the OCFL 1.1 code of the rule it meets broken.
 
+pub(crate) mod committed;
 pub(crate) mod declaration;
 mod error;
 mod history;
