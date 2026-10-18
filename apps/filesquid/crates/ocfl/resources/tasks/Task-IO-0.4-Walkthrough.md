@@ -63,7 +63,7 @@ The fixtures (`OCFL/fixtures` commit `d323fc207126becec066998b43408d998bf0fb1b`)
 | OCFL-S-004 (ADR 016 read and browse): version history and diff of two versions | `unit_read_state`: `history_lists_every_version_in_order_with_its_metadata`, `diff_reports_added_and_deleted_paths`, `diff_reports_renames_and_modifications`, `diff_pairs_renames_of_one_digest_in_path_order`, `diff_of_an_unknown_version_is_refused`; `integration_read_objects`: `history_and_diff_come_from_the_inventory`; BDD "Version history comes from the inventory", "Two versions are compared" |
 | OCFL-S-004 (ADR 023 Decision 2): open a storage root; discover object roots | `integration_read_objects`: `a_storage_root_discovers_its_outermost_objects`, `storage_root_declaration_faults_have_their_codes`; unit `guard::tests::only_outermost_object_roots_are_discovered`; BDD "A storage root lists its outermost objects" |
 | OCFL-S-001: Git MUST NOT be the OCFL library; `.git` MUST NOT appear in an OCFL object or storage root (guards run on open) | `integration_read_objects`: `opening_an_object_runs_the_git_guard`, `opening_a_storage_root_runs_the_guard` |
-| OCFL-S-002 / OCFL-S-017: NAMASTE, inventories and sidecars loaded with their codes and size bounds | `integration_read_objects`: `declaration_faults_have_their_codes`, `files_under_a_0_prefixed_directory_are_not_declarations`, `roots_declared_as_another_ocfl_version_are_refused`, `an_oversized_declaration_is_refused_before_it_is_read`, `an_oversized_sidecar_is_refused_before_it_is_read`, `a_file_that_grows_during_a_read_is_never_buffered_past_its_bound`, `sha512_objects_with_uppercase_digests_read` |
+| OCFL-S-002 / OCFL-S-017: NAMASTE, inventories and sidecars loaded with their codes and size bounds | `integration_read_objects`: `declaration_faults_have_their_codes`, `files_under_a_0_prefixed_directory_are_not_declarations`, `roots_declared_as_another_ocfl_version_are_refused`, `an_unknown_ocfl_version_is_refused_as_unsupported`, `declaration_listings_with_a_bad_continuation_are_refused`, `a_storage_root_with_too_many_0_files_is_refused`, `an_oversized_declaration_is_refused_before_it_is_read`, `an_oversized_sidecar_is_refused_before_it_is_read`, `a_file_that_grows_during_a_read_is_never_buffered_past_its_bound`, `sha512_objects_with_uppercase_digests_read` |
 | OCFL-S-010 (a): every good fixture version resolves and every streamed file matches its digest | `integration_fixture_reads`: `every_version_of_every_good_fixture_reads_with_matching_digests`, `every_warning_fixture_reads_with_matching_digests`, `bad_fixtures_a_reader_meets_are_refused_with_their_codes`; BDD "Valid OCFL 1.1 fixture objects are readable at every version" (run above) |
 | OCFL-S-011: fixtures pinned, test data only, never loaded by the library | fixtures read only from `FILESQUID_OCFL_FIXTURES` by tests; `unit_source_scan` (no filesystem I/O in `src/read/`) |
 | OCFL-S-007: bytes only through the storage backend; `wasm32` build | `unit_source_scan`; BDD "Engine builds for the browser"; `cargo build --target wasm32-unknown-unknown` below |
@@ -188,6 +188,79 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 ```
 
 With `FILESQUID_OCFL_FIXTURES` set, `integration_fixture_reads` and `integration_fixture_inventories` pass (3 tests each), and the BDD run is 72 scenarios, 64 passed and 8 skipped, as in round 0.
+
+## Review round 2 (Cubic)
+
+Cubic reviewed `122149a` and raised 3 findings. All were valid and are fixed.
+
+- **P1, declaration paging (`declaration.rs`).** `direct_declaration_names` checked only that a continuation moved forward, so a faulty backend that returned an empty page with a continuation, or a continuation past the page's last key, could skip the declaration. It now checks each continuation with the storage-root guard's `next_start` (crate-visible in `guard.rs`): an empty page with a continuation, or a continuation that is not the page's last key or does not move forward, is refused as a backend fault. Test: `declaration_listings_with_a_bad_continuation_are_refused` rewrites the first declaration page both ways.
+- **Unbounded root declaration candidates (`guard.rs`, `root.rs`).** Round 1 moved the storage root's declaration lookup into the guard's scan, which kept every `0=` file name in the root and so dropped the 16-name bound. The bound (`MAX_DECLARATION_ENTRIES`, now in `namaste.rs` and shared by both paths) applies again: the scan keeps at most 16 names and counts the rest, and `StorageRoot::open` refuses a root with more than 16 `0=` files as E069. Tests: `a_storage_root_with_too_many_0_files_is_refused` (21 `0=` files) and the unit test `root_declaration_names_are_bounded` (40 names, 16 kept).
+- **Unknown versions (`declaration.rs`).** `0=ocfl_object_2.0` did not parse as a known declaration, so the object was refused as having none (E003). Every `0=ocfl_object_<version>` (object) or `0=ocfl_<version>` (storage root) name is now a declaration of its kind. Its version, when a `MAJOR.MINOR` number other than 1.1, is `ReadError::UnsupportedVersion`, and when not a number (`0=ocfl_object_x`) is E003 or E069. Test: `an_unknown_ocfl_version_is_refused_as_unsupported` (object 2.0, object `x`, storage root 2.0).
+
+### TDD: round 2
+
+The three new integration tests were run against the round-1 sources before the fix:
+
+```text
+test a_storage_root_with_too_many_0_files_is_refused ... FAILED
+test an_unknown_ocfl_version_is_refused_as_unsupported ... FAILED
+test declaration_listings_with_a_bad_continuation_are_refused ... FAILED
+test content_that_does_not_match_its_digest_is_e092 ... ok
+thread 'a_storage_root_with_too_many_0_files_is_refused' (17409) panicked at crates/ocfl/tests/integration/read_objects.rs:685:50:
+too many 0= files: StorageRoot { declaration: Declaration { kind: StorageRoot, spec: V1_1 }, objects: ["obj"], .. }
+thread 'an_unknown_ocfl_version_is_refused_as_unsupported' (17414) panicked at crates/ocfl/tests/integration/read_objects.rs:696:5:
+Format(Invalid { code: "E003", at: "obj", reason: "an object root needs exactly one conformance declaration; found 0" })
+thread 'declaration_listings_with_a_bad_continuation_are_refused' (17418) panicked at crates/ocfl/tests/integration/read_objects.rs:670:9:
+Format(Invalid { code: "E003", at: "obj", reason: "an object root needs exactly one conformance declaration; found 0" })
+test result: FAILED. 28 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+error: test failed, to rerun pass `-p filesquid-ocfl --test integration_read_objects`
+```
+
+The first draft of the continuation test rewrote every page, so round 1's progress check refused it for the wrong reason and the test passed; it now rewrites only the first page, so the skipped keys are what it tests.
+
+### Raw test output, round 2
+
+`cargo test -p filesquid-ocfl --locked` (summary lines):
+
+```text
+     Running unittests src/lib.rs
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.49s
+     Running tests/features.rs
+66 scenarios (63 passed, 3 skipped)
+261 steps (258 passed, 3 skipped)
+     Running tests/integration/fixture_inventories.rs
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/integration/fixture_reads.rs
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/integration/fs_conformance.rs
+test result: ok. 46 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.03s
+     Running tests/integration/hierarchy_guard.rs
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+     Running tests/integration/logical_file.rs
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.57s
+     Running tests/integration/memory_conformance.rs
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.86s
+     Running tests/integration/read_objects.rs
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+     Running tests/unit/digest.rs
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/unit/git_guard.rs
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+     Running tests/unit/inventory.rs
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+     Running tests/unit/namaste_sidecar.rs
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/read_state.rs
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/source_scan.rs
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/unit/storage_key.rs
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+`--no-default-features`, the `wasm32` build, rustdoc and clippy are clean. With `FILESQUID_OCFL_FIXTURES` set, `integration_fixture_reads` and `integration_fixture_inventories` pass and the BDD run is 72 scenarios, 64 passed and 8 skipped, as before.
 
 ## Gates
 

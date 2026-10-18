@@ -3,7 +3,7 @@
 
 use std::fmt;
 
-use super::declaration::{check_declaration, choose_declaration};
+use super::declaration::{check_declaration, choose_declaration, too_many_declarations};
 use super::error::ReadError;
 use super::object::Object;
 use crate::guard::checked_layout;
@@ -44,6 +44,9 @@ impl<'a, B: StorageBackend> StorageRoot<'a, B> {
     pub async fn open(backend: &'a B) -> Result<Self, ReadError> {
         let layout = checked_layout(backend).await?;
         let kind = DeclarationKind::StorageRoot;
+        if let Some(count) = layout.root_declaration_overflow() {
+            return Err(too_many_declarations("", kind, count));
+        }
         let declaration = choose_declaration("", kind, layout.root_declaration_names())?;
         check_declaration(backend, "", &declaration).await?;
         let objects = layout.outermost_object_roots();

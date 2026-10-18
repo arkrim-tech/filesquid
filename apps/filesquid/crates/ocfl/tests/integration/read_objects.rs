@@ -519,7 +519,12 @@ struct Hooked {
     hook: Hook,
     fired: AtomicBool,
     served: AtomicU64,
+    pages: Option<PageHook>,
 }
+
+/// Rewrites the listing pages a [`Hooked`] backend returns for a prefix, as
+/// a faulty backend would.
+type PageHook = Box<dyn Fn(&str, Option<&StorageKey>, ListPage) -> ListPage + Send + Sync>;
 
 impl Hooked {
     /// Watch `watched` on `inner` and run `hook` once at `when`.
@@ -531,7 +536,15 @@ impl Hooked {
             hook,
             fired: AtomicBool::new(false),
             served: AtomicU64::new(0),
+            pages: None,
         }
+    }
+
+    /// A backend over `inner` whose listing pages pass through `pages`.
+    fn with_pages(inner: MemoryBackend, pages: PageHook) -> Self {
+        let mut hooked = Self::new(inner, "", When::BeforeHead, Box::new(|_| {}));
+        hooked.pages = Some(pages);
+        hooked
     }
 
     /// Run the hook if `key` is watched, `when` matches and it has not run.
@@ -584,7 +597,11 @@ impl StorageBackend for Hooked {
         a: Option<&StorageKey>,
         l: usize,
     ) -> Result<ListPage, StorageError> {
-        self.inner.list(p, a, l).await
+        let page = self.inner.list(p, a, l).await?;
+        Ok(match &self.pages {
+            Some(rewrite) => rewrite(p, a, page),
+            None => page,
+        })
     }
     async fn delete(&self, k: &StorageKey) -> Result<(), StorageError> {
         self.inner.delete(k).await
@@ -611,6 +628,91 @@ impl StorageBackend for Hooked {
     async fn abort_multipart(&self, u: &UploadId) -> Result<(), StorageError> {
         self.inner.abort_multipart(u).await
     }
+}
+
+/// Open `obj` through a backend whose listing pages pass through
+/// `rewrite`, and return the refusal.
+fn refusal_with_pages(rewrite: PageHook) -> ReadError {
+    let inner = MemoryBackend::new();
+    build(&inner, "obj", &three_versions());
+    let faulty = Hooked::with_pages(inner, rewrite);
+    open(&faulty, "obj").expect_err("a faulty listing must be refused")
+}
+
+/// Whether `prefix` and `after` ask for the first page of the object's
+/// declaration listing.
+fn declaration_listing(prefix: &str, after: Option<&StorageKey>) -> bool {
+    prefix == "obj/0=" && after.is_none()
+}
+
+/// A storage key from a literal.
+fn skey(raw: &str) -> StorageKey {
+    StorageKey::new(raw).expect("key")
+}
+
+#[test]
+fn declaration_listings_with_a_bad_continuation_are_refused() {
+    let empty: PageHook =
+        Box::new(
+            |prefix, after, page| match declaration_listing(prefix, after) {
+                true => ListPage {
+                    keys: Vec::new(),
+                    next: Some(skey("obj/0=zzz")),
+                },
+                false => page,
+            },
+        );
+    let skipping: PageHook = Box::new(|prefix, after, mut page| {
+        if declaration_listing(prefix, after) {
+            page.next = Some(skey("obj/0=zzz"));
+        }
+        page
+    });
+    for rewrite in [empty, skipping] {
+        let err = refusal_with_pages(rewrite);
+        assert!(
+            matches!(err, ReadError::Storage(StorageError::Backend { .. })),
+            "{err:?}"
+        );
+    }
+}
+
+#[test]
+fn a_storage_root_with_too_many_0_files_is_refused() {
+    let backend = MemoryBackend::new();
+    put(&backend, "", "0=ocfl_1.1", b"ocfl_1.1\n");
+    build(&backend, "obj", &three_versions());
+    for i in 0..20 {
+        put(&backend, "", &format!("0=extra-{i:02}"), b"x");
+    }
+    let err = ready(StorageRoot::open(&backend)).expect_err("too many 0= files");
+    assert_eq!(code(&err), "E069");
+    assert!(err.to_string().contains("more than 16"), "{err}");
+}
+
+#[test]
+fn an_unknown_ocfl_version_is_refused_as_unsupported() {
+    let object = refusal(|b| {
+        delete(b, "obj", "0=ocfl_object_1.1");
+        put(b, "obj", "0=ocfl_object_2.0", b"ocfl_object_2.0\n");
+    });
+    assert!(
+        matches!(&object, ReadError::UnsupportedVersion { declaration } if declaration == "obj/0=ocfl_object_2.0"),
+        "{object:?}"
+    );
+    let malformed = refusal(|b| {
+        delete(b, "obj", "0=ocfl_object_1.1");
+        put(b, "obj", "0=ocfl_object_x", b"ocfl_object_x\n");
+    });
+    assert_eq!(code(&malformed), "E003");
+    let backend = MemoryBackend::new();
+    build(&backend, "obj", &three_versions());
+    put(&backend, "", "0=ocfl_2.0", b"ocfl_2.0\n");
+    let root = ready(StorageRoot::open(&backend)).expect_err("a 2.0 storage root");
+    assert!(
+        matches!(&root, ReadError::UnsupportedVersion { declaration } if declaration == "0=ocfl_2.0"),
+        "{root:?}"
+    );
 }
 
 #[test]

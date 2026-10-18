@@ -6,6 +6,11 @@
 
 use crate::inventory::FormatError;
 
+/// Most `0=` files directly in one root that a reader looks at before it
+/// refuses the root as not having exactly one declaration. A root needs one,
+/// so this bound only stops an untrusted root from making a reader hold many.
+pub(crate) const MAX_DECLARATION_ENTRIES: usize = 16;
+
 /// An OCFL specification version this engine recognises.
 ///
 /// The engine reads and writes 1.1. It recognises 1.0 so that an object

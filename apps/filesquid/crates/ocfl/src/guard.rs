@@ -28,6 +28,7 @@
 use std::collections::BTreeSet;
 
 use crate::error::OcflError;
+use crate::namaste::MAX_DECLARATION_ENTRIES;
 use crate::storage::{
     validate_prefix, ListPage, StorageBackend, StorageError, StorageKey, MAX_LIST_PAGE,
     MAX_WALK_ENTRIES,
@@ -177,7 +178,7 @@ fn over_key_bound() -> OcflError {
 /// [`StorageError::Backend`] when a page with a continuation is empty, when
 /// the continuation is not the page's last key, or when it does not move past
 /// `previous` (which would otherwise repeat forever).
-fn next_start(
+pub(crate) fn next_start(
     page: &ListPage,
     previous: Option<&StorageKey>,
 ) -> Result<Option<StorageKey>, OcflError> {
@@ -216,8 +217,11 @@ pub(crate) struct Layout {
     /// Directories that hold a `.git` entry, outermost per key.
     git_parents: BTreeSet<String>,
     /// Files directly in the storage root whose names start with `0=`: the
-    /// candidates for its conformance declaration.
+    /// candidates for its conformance declaration. At most
+    /// [`MAX_DECLARATION_ENTRIES`] are kept; the rest are only counted.
     root_declarations: BTreeSet<String>,
+    /// How many `0=` files are directly in the storage root, kept or not.
+    root_declaration_count: usize,
 }
 
 impl Layout {
@@ -233,7 +237,7 @@ impl Layout {
             self.object_roots.insert(dirs.join("/"));
         }
         if dirs.is_empty() && name.starts_with("0=") {
-            self.root_declarations.insert((*name).to_string());
+            self.note_root_declaration(name);
         }
         if let Some(at) = segments.iter().position(|s| *s == GIT_DIR) {
             self.git_parents.insert(segments[..at].join("/"));
@@ -250,9 +254,27 @@ impl Layout {
             .find(|dir| !self.inside_an_object(dir))
     }
 
-    /// The names of the `0=` files directly in the storage root.
+    /// Count one `0=` file directly in the storage root, and keep its name
+    /// while at most [`MAX_DECLARATION_ENTRIES`] are kept, so an untrusted
+    /// root cannot make the scan hold more names than that.
+    fn note_root_declaration(&mut self, name: &str) {
+        self.root_declaration_count = self.root_declaration_count.saturating_add(1);
+        if self.root_declarations.len() < MAX_DECLARATION_ENTRIES {
+            self.root_declarations.insert(name.to_string());
+        }
+    }
+
+    /// The names of the `0=` files directly in the storage root (at most
+    /// [`MAX_DECLARATION_ENTRIES`] of them).
     pub(crate) fn root_declaration_names(&self) -> impl Iterator<Item = &str> {
         self.root_declarations.iter().map(String::as_str)
+    }
+
+    /// How many `0=` files are directly in the storage root, when that is
+    /// more than [`MAX_DECLARATION_ENTRIES`]; `None` otherwise.
+    pub(crate) fn root_declaration_overflow(&self) -> Option<usize> {
+        (self.root_declaration_count > MAX_DECLARATION_ENTRIES)
+            .then_some(self.root_declaration_count)
     }
 
     /// The outermost object roots, in lexical order: directories holding an
@@ -317,8 +339,20 @@ mod tests {
         assert_eq!(found.outermost_object_roots(), ["a/obj", "b"]);
         let names: Vec<&str> = found.root_declaration_names().collect();
         assert_eq!(names, ["0=ocfl_1.1"]);
+        assert_eq!(found.root_declaration_overflow(), None);
         let at_root = layout(&["0=ocfl_object_1.1", "x/0=ocfl_object_1.1"]);
         assert_eq!(at_root.outermost_object_roots(), [""]);
+    }
+
+    #[test]
+    fn root_declaration_names_are_bounded() {
+        let keys: Vec<String> = (0..40).map(|i| format!("0=extra-{i:02}")).collect();
+        let found = layout(&keys.iter().map(String::as_str).collect::<Vec<_>>());
+        assert_eq!(
+            found.root_declaration_names().count(),
+            MAX_DECLARATION_ENTRIES
+        );
+        assert_eq!(found.root_declaration_overflow(), Some(40));
     }
 
     #[test]
