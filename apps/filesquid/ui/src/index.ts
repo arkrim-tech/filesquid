@@ -4,6 +4,7 @@
  */
 import { FsAppShell } from "./components/fs-app-shell";
 import { FsBreadcrumb } from "./components/fs-breadcrumb";
+import { FsHostIndicator } from "./components/fs-host-indicator";
 import { FsMonitor } from "./components/fs-monitor";
 import { FsNavTree } from "./components/fs-nav-tree";
 import { FsStates } from "./components/fs-states";
@@ -12,6 +13,20 @@ import { FsThemeControl } from "./components/fs-theme-control";
 export { FsAppShell } from "./components/fs-app-shell";
 export type { ShellClient, ShellOptions } from "./components/fs-app-shell";
 export { FsThemeControl, type ThemeControlOptions } from "./components/fs-theme-control";
+export {
+  FsHostIndicator,
+  type HostClient,
+  type HostIndicatorOptions,
+} from "./components/fs-host-indicator";
+export {
+  HOST_TYPES,
+  describeHost,
+  parseHostDescriptor,
+  type HostDescriptor,
+  type HostType,
+  type HostView,
+  type ServiceView,
+} from "./host/descriptor";
 export { FsMonitor, formatGiB, processCells } from "./components/fs-monitor";
 export { FsStates, RETRY_EVENT, type StatesOptions } from "./components/fs-states";
 export { failureState, type ViewState, type ViewStateKind } from "./components/view-state";
@@ -127,6 +142,9 @@ export function defineElements(): void {
   if (!customElements.get("fs-states")) customElements.define("fs-states", FsStates);
   if (!customElements.get("fs-nav-tree")) customElements.define("fs-nav-tree", FsNavTree);
   if (!customElements.get("fs-breadcrumb")) customElements.define("fs-breadcrumb", FsBreadcrumb);
+  if (!customElements.get("fs-host-indicator")) {
+    customElements.define("fs-host-indicator", FsHostIndicator);
+  }
   if (!customElements.get("fs-app-shell")) customElements.define("fs-app-shell", FsAppShell);
   if (!customElements.get("fs-monitor")) customElements.define("fs-monitor", FsMonitor);
 }

@@ -72,6 +72,18 @@ Feature: Host privacy indicator
     Then the indicator should show its error state
     And no host type or privacy statement should be shown
 
+  Scenario: A descriptor that breaks the contract is not shown
+    Given the host descriptor answer has an unknown host type
+    When the shell loads
+    Then the indicator should show its error state
+    And no host type or privacy statement should be shown
+
+  Scenario: Retry reads the descriptor again
+    Given the indicator shows its error state
+    When the user chooses Retry
+    Then the UI should read the host descriptor again
+    And the indicator should show the descriptor it read
+
   # User interactions
   Scenario: The indicator is reachable by keyboard and screen reader
     Given the host descriptor says host type "desktop" and the hosted service is not enrolled

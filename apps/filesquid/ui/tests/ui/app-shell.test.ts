@@ -9,6 +9,7 @@ import { ApiError, type HealthStatus } from "../../src/api/client";
 import labels from "../../src/theme/labels.en.json";
 import type { ThemeStore } from "../../src/theme/theme-store";
 import { fakeThemeStore } from "../support/theme-fakes";
+import { hostFakes } from "../support/host-fakes";
 
 const distribution: Distribution = {
   id: "filesquid",
@@ -34,7 +35,7 @@ function mount(
   dist: Distribution = distribution,
 ) {
   const shell = document.createElement("fs-app-shell") as FsAppShell;
-  shell.configure({ distribution: dist, client: { health }, theme });
+  shell.configure({ distribution: dist, client: { ...hostFakes(), health }, theme });
   document.body.replaceChildren(shell);
   return shell;
 }
@@ -94,6 +95,39 @@ describe("<fs-app-shell>", () => {
     expect(control?.shadowRoot?.querySelector("legend")?.textContent).toBe("Theme");
   });
 
+  it("shows the host privacy indicator in the header on every view", async () => {
+    const shell = mount(ok);
+    await settle();
+    const indicator = shell.shadowRoot?.querySelector("header fs-host-indicator");
+    expect(indicator).not.toBeNull();
+    expect(indicator?.getAttribute("data-state")).toBe("ready");
+    expect(indicator?.shadowRoot?.querySelector(".statement")?.textContent).toBe(
+      labels.hostDesktop,
+    );
+  });
+
+  it("reads the host descriptor again when health is refreshed, for example after sign-in", async () => {
+    let reads = 0;
+    const shell = document.createElement("fs-app-shell") as FsAppShell;
+    shell.configure({
+      distribution,
+      client: {
+        health: ok,
+        host: async () => {
+          reads += 1;
+          return hostFakes().host();
+        },
+        subscribe: () => () => undefined,
+      },
+      theme: fakeThemeStore().store,
+    });
+    document.body.replaceChildren(shell);
+    await settle();
+    expect(reads).toBe(1);
+    await shell.refreshHealth();
+    expect(reads).toBe(2);
+  });
+
   it("shows the dark-surface logo when the resolved theme is dark", async () => {
     const { store, media } = fakeThemeStore(false);
     const shell = mount(ok, store);
@@ -132,7 +166,7 @@ describe("<fs-app-shell>", () => {
     const shell = mount(ok, first.store);
     await settle();
     const second = fakeThemeStore(true);
-    shell.configure({ distribution, client: { health: ok }, theme: second.store });
+    shell.configure({ distribution, client: { ...hostFakes(), health: ok }, theme: second.store });
     const src = () => shell.shadowRoot?.querySelector("header img")?.getAttribute("src");
     expect(src()).toBe("/filesquid-mark-dark.svg");
     first.store.setChoice("light");
