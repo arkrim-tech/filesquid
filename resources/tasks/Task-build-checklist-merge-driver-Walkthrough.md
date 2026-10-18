@@ -62,7 +62,8 @@ Both branches redraw the block, so the plain text merge conflicts there. ... ok
 ----------------------------------------------------------------------
 Ran 12 tests in 6.021s
 
-OK```
+OK
+```
 
 The tests map to the owner's list as follows: (a) `test_different_ticks_merge_into_the_offline_block`; (b) `test_both_strategies_give_the_same_result`, `test_driver_call_order_does_not_matter` and `test_merge_direction_does_not_matter`; (c) `test_same_line_edited_differently_conflicts`; (d) `test_union_filtered_by_ticks`; (e) `test_undefined_driver_is_the_builtin_text_merge`. Each test builds its repository with `tempfile.mkdtemp` and removes it through `addCleanup`. Git runs with `GIT_CONFIG_GLOBAL` set to the null device and `GIT_CONFIG_NOSYSTEM=1`.
 
@@ -95,6 +96,8 @@ Auto-merging resources/implementation-plan-checklist.md
 
 The bar was redrawn offline to resolve that conflict. This only happens once per branch: after this PR merges, every base SVG carries a tick record.
 
+The second merge of main (after PR #53, CL-0.3) gave the same result. For that merge commit the checklist was resolved the owner's way: main's file, then `python3 scripts/docs/update_mvp_progress.py`. Before that, the driver's own result was saved. The two files differed only in the `generated-at` timestamp; the ticks, the percentage, In progress, Up next and the recorded PRs were identical.
+
 ## Review fixes (Cubic round 1)
 
 - `Repo.tick` in the tests now ticks global rows (`[Task 0.2]`) as well as module rows, and fails when no open row matches, so `test_both_strategies_give_the_same_result` really ticks Task 0.2.
@@ -111,4 +114,6 @@ $ bash scripts/pre-commit.sh                  # first commit
 ✅ All Pre-Commit Hooks Passed! Test scope: full (214s)
 $ FULL=1 bash scripts/pre-commit.sh           # after the Cubic round 1 fixes
 ✅ All Pre-Commit Hooks Passed! Test scope: full (139s)
+$ FULL=1 bash scripts/pre-commit.sh           # second merge of main
+✅ All Pre-Commit Hooks Passed! Test scope: full (191s)
 ```
