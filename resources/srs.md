@@ -110,6 +110,8 @@ The system MUST implement [PRD F-003](./prd.md#f-003-browsing-selection-and-view
 ### SRS-F-004: Collections, folders and navigation
 
 The system MUST implement [PRD F-004](./prd.md#f-004-collections-folders-and-navigation) with the acceptance criteria stated there. UI copy MUST come from the active distribution's label table: the FileSquid default UI MUST use the internal names, and the ImageSquid distribution MUST use repo, library, album, gallery and exhibit. The item type in data and APIs MUST be **file**.
+- The API MUST expose a navigation listing that answers one level of the navigation tree (the host's repository, its libraries, their collections and virtual collections, and the folders implied by committed logical paths) with opaque node handles and the ancestors a breadcrumb needs, filtered by the caller's permissions before paging ([API-S-021](../apps/filesquid/crates/api/resources/srs.md)).
+- The default UI's pinned destinations, section order and collapse state MUST persist across restarts: in the API's per-user UI preferences on a host that serves them, otherwise on the device in Web Storage, holding opaque handles only ([UI-S-017](../apps/filesquid/ui/resources/srs.md)).
 
 **Delivered by:** FileSquid platform. Every distribution presents it through its own views and label table.
 
@@ -121,6 +123,8 @@ The system MUST implement [PRD F-004](./prd.md#f-004-collections-folders-and-nav
 **Tests**
 - [`albums_folders_and_navigation_F-004.feature`](../apps/filesquid/ui/tests/features/albums_folders_and_navigation_F-004.feature)
 - [`collections_and_virtual_collections_F-004.feature`](../apps/filesquid/crates/core/tests/features/collections_and_virtual_collections_F-004.feature)
+- [`navigation_listing_API-S-021.feature`](../apps/filesquid/crates/api/tests/features/navigation_listing_API-S-021.feature)
+- [`navigation_preferences_UI-S-017.feature`](../apps/filesquid/ui/tests/features/navigation_preferences_UI-S-017.feature)
 
 ### SRS-F-005: Favorites, metadata and keywords
 
@@ -1034,6 +1038,7 @@ The system MUST implement [PRD F-057](./prd.md#f-057-desktop-and-server-hosts) w
 
 **Privacy boundary per host**
 - Each host MUST state its privacy boundary in the UI: desktop, the owner's device only; a self-run `filesquid-server`, that server's operator can read files; encrypted hosting, ciphertext only and the operator holds no keys. The UI MUST show which host the user is connected to ([FileSquid U-20](./product-vision.md#one-api-hosts-and-distributions)).
+- The API MUST expose a host descriptor to every authenticated caller: the host type (desktop, server or browser), the operator's name on a server, and the state of encrypted backup and sync to the ciphertext-only hosted service (enrolled, backup on, sync on, service host), which a host without enrolment reports as not enrolled. It MUST publish a change event when any of these change, and MUST carry no account, device, key or content detail. The UI MUST take these facts from the descriptor and MUST NOT infer them ([API-S-020](../apps/filesquid/crates/api/resources/srs.md), [UI-S-018](../apps/filesquid/ui/resources/srs.md), [ADR 032](./architecture/032-hosting-and-privacy-model.md) Decision 7).
 - Private-library processing MUST default to authorized endpoints: the desktop host, a `filesquid-server` that the owner or their organisation operates, or the encrypted browser host ([T-001](./product-vision.md#client-processing-and-hosted-mailbox)).
 
 **Encrypted browser host (roadmap)**
@@ -1052,6 +1057,8 @@ The system MUST implement [PRD F-057](./prd.md#f-057-desktop-and-server-hosts) w
 - [`desktop_transport_F-057.feature`](../apps/filesquid/crates/desktop/tests/features/desktop_transport_F-057.feature)
 - [`shared_health_status_CORE-S-004.feature`](../apps/filesquid/crates/core/tests/features/shared_health_status_CORE-S-004.feature)
 - [`setup_updates_and_diagnostics_F-037.feature`](../apps/filesquid/ui/tests/features/setup_updates_and_diagnostics_F-037.feature)
+- [`host_descriptor_API-S-020.feature`](../apps/filesquid/crates/api/tests/features/host_descriptor_API-S-020.feature) (host type, operator name and hosted backup and sync state from the API)
+- [`host_privacy_indicator_UI-S-018.feature`](../apps/filesquid/ui/tests/features/host_privacy_indicator_UI-S-018.feature) (privacy statement per host, hosted service shown apart)
 - Test gap: a dedicated `desktop_and_server_hosts_F-057.feature` (no TCP listener on desktop, multi-user permissions, privacy boundary text) is not yet written.
 
 ### SRS-F-058: White-label distributions
@@ -1470,7 +1477,7 @@ The FileSquid default UI has no screenshot yet; [SRS-F-055](#srs-f-055-default-u
 | F-001 | SRS-F-001 | `../apps/filesquid/ui/tests/features/independent_local_library_and_ownership_F-001.feature` |
 | F-002 | SRS-F-002 | `../apps/filesquid/ui/tests/features/safe_file_folder_and_device_import_F-002.feature` |
 | F-003 | SRS-F-003 | Backend scenarios in the implementing FileSquid module (view scenarios live with the distribution) |
-| F-004 | SRS-F-004 | `../apps/filesquid/ui/tests/features/albums_folders_and_navigation_F-004.feature`, `../apps/filesquid/crates/core/tests/features/collections_and_virtual_collections_F-004.feature` |
+| F-004 | SRS-F-004 | `../apps/filesquid/ui/tests/features/albums_folders_and_navigation_F-004.feature`, `../apps/filesquid/crates/core/tests/features/collections_and_virtual_collections_F-004.feature`, `../apps/filesquid/crates/api/tests/features/navigation_listing_API-S-021.feature`, `../apps/filesquid/ui/tests/features/navigation_preferences_UI-S-017.feature` |
 | F-005 | SRS-F-005 | `../apps/filesquid/ui/tests/features/favorites_metadata_and_keywords_F-005.feature` |
 | F-006 | SRS-F-006 | `../apps/filesquid/ui/tests/features/smart_albums_and_metadata_search_F-006.feature` |
 | F-007 | SRS-F-007 | Backend scenarios in the implementing FileSquid module (view scenarios live with the distribution) |
@@ -1523,7 +1530,7 @@ The FileSquid default UI has no screenshot yet; [SRS-F-055](#srs-f-055-default-u
 | F-054 | SRS-F-054 | `../apps/filesquid/crates/c2pa/tests/features/reusable_provenance_engine_F-054.feature`, `../apps/filesquid/crates/core/tests/features/c2pa_and_provo_records_F-043.feature` |
 | F-055 | SRS-F-055 | `../apps/filesquid/ui/tests/features/composable_filesquid_ui_F-055.feature`, `../apps/filesquid/crates/ocfl/tests/features/reusable_ocfl_engine_F-051.feature` |
 | F-056 | SRS-F-056 | `../apps/filesquid/crates/core/tests/features/command_query_ports_F-038.feature`, `../apps/filesquid/crates/server/tests/features/health.feature` (dedicated feature file not yet written) |
-| F-057 | SRS-F-057 | `../apps/filesquid/crates/server/tests/features/health.feature`, `../apps/filesquid/crates/core/tests/features/shared_health_status_CORE-S-004.feature`, `../apps/filesquid/ui/tests/features/setup_updates_and_diagnostics_F-037.feature` (dedicated feature file not yet written) |
+| F-057 | SRS-F-057 | `../apps/filesquid/crates/server/tests/features/health.feature`, `../apps/filesquid/crates/core/tests/features/shared_health_status_CORE-S-004.feature`, `../apps/filesquid/ui/tests/features/setup_updates_and_diagnostics_F-037.feature`, `../apps/filesquid/crates/api/tests/features/host_descriptor_API-S-020.feature`, `../apps/filesquid/ui/tests/features/host_privacy_indicator_UI-S-018.feature` (dedicated feature file not yet written) |
 | F-058 | SRS-F-058 | `../apps/filesquid/ui/tests/features/theme_tokens_SRS-UI-007.feature`, `../apps/filesquid/ui/tests/features/product_component_terminology_and_item_type_F-049.feature`, `../apps/filesquid/ui/tests/features/composable_filesquid_ui_F-055.feature` (dedicated feature file not yet written) |
 | F-059 | SRS-F-059 | `../apps/filesquid/crates/server/tests/features/client_encryption_and_key_custody_F-029.feature`, `../apps/filesquid/crates/server/tests/features/endpoint_processing_and_hosted_encryption_TC-002.feature`, `../apps/filesquid/ui/tests/features/personal_synchronization_and_availability_F-030.feature`, `../apps/filesquid/ui/tests/features/encrypted_backup_and_verified_restore_F-031.feature` |
 | F-060 | SRS-F-060 | `../apps/filesquid/crates/ocfl/tests/features/reusable_ocfl_engine_F-051.feature`, `../apps/filesquid/crates/core/tests/features/job_checkpoint_protocol_NFR-003.feature` (dedicated feature file not yet written) |
