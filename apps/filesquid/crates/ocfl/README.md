@@ -46,7 +46,7 @@ Path-based helpers (feature `fs`) keep their signatures for existing callers:
 
 ## Git guard
 
-Git MUST NOT be the OCFL store, and the storage hierarchy MUST stay plain files ([OCFL-S-001](./resources/srs.md), [ADR 016](../../../../resources/architecture/016-rust-ocfl-library.md)). The guards can be run against every backend and target, `wasm32` included. They check only when called: backend reads and writes do not run them. Callers MUST run them when they open a storage root or an object (object discovery and reads, IO-0.4) and before they publish a version (IO-0.6 onward).
+Git MUST NOT be the OCFL store, and the storage hierarchy MUST stay plain files ([OCFL-S-001](./resources/srs.md), [ADR 016](../../../../resources/architecture/016-rust-ocfl-library.md)). The guards can be run against every backend and target, `wasm32` included. They check only when called: backend reads and writes do not run them. `read::StorageRoot::open` and `read::Object::open` run them on every open (IO-0.4); other callers MUST run them when they open a storage root or an object, and before they publish a version (IO-0.6 onward).
 
 **Scope (owner decision, 2026-10-18):** the guard covers the storage root, the storage-hierarchy directories between it and the object roots, and each object root. A `.git` inside an object's preserved content, such as an archived Git repository under `v1/content/`, is content the owner chose to keep, and the guard allows it. It may hold only ordinary files and non-empty directories: soft links, hard links and empty directories inside it are refused like anywhere else in the storage hierarchy.
 
@@ -74,6 +74,26 @@ FILESQUID_OCFL_FIXTURES=/path/to/fixtures/1.1 cargo test -p filesquid-ocfl --loc
 ```
 
 In PowerShell set the variable first with `$env:FILESQUID_OCFL_FIXTURES = "C:\path\to\fixtures\1.1"`. Without the variable the test reports that it skipped. IO-0.5 commits the fixtures under `tests/` and points the test at them.
+
+## Read and browse
+
+The `read` module opens storage roots and objects through any storage backend, on every target, `wasm32` included ([OCFL-S-004](./resources/srs.md), [ADR 016](../../../../resources/architecture/016-rust-ocfl-library.md), [ADR 023](../../../../resources/architecture/023-filesquid-ocfl-engine-and-parquet.md)):
+
+- `StorageRoot::open(&backend)` checks the `0=ocfl_1.1` declaration (E069, E080), runs the storage-root guard and, in the same paged listing (at most `MAX_WALK_ENTRIES` keys), discovers the outermost object roots: directories with an `0=ocfl_object_*` declaration that are not inside another object. `objects()` lists them; `open_object(root)` opens one.
+- `Object::open(&backend, root)` runs the Git guard and hierarchy check on the object root, requires exactly one object declaration with exact contents (E003, E007), reads the root inventory (E063 when missing; refused above 64 MiB before it is read) and its sidecar (E058, E060, E061; refused above 4 KiB before it is read), and requires the head version's inventory, when present, to be the same file (E064). A sidecar mismatch is read again, at most 3 times (`READ_ATTEMPTS`), in case a writer replaced the inventory between the two reads. Declarations above 64 bytes (`MAX_DECLARATION_BYTES`) are refused before they are read.
+- Only the root inventory commits versions (ADR 016 "Published head (readers)"): content or a version inventory for a `vN` above the root `head` is unpublished, and pinning it is `ReadError::VersionNotFound`.
+- `Object::state(&version)` (or the pure `read::resolve_state(&inventory, &version)`) resolves the logical state of a version the caller pins through `state` and `manifest` only. A file whose bytes were stored in an earlier version resolves to that earlier content path; files the inventory does not list are never part of the state. Each `LogicalFile` has its logical path, digest and content path; the state has the object id and version.
+- `Object::stream_file(&version, path, chunk_bytes)` returns a `LogicalFileReader` that reads in chunks of at most 8 MiB and checks the digest when the stream ends: bytes are unverified until `next_chunk()` returns `None`, and a mismatch or missing content file is E092. `Object::copy_file(&version, path, &dest, &key, precondition)` streams into a multipart upload on any backend and publishes it only when the digest matched; otherwise the upload is aborted and nothing appears at `key`.
+- `Object::history()` lists every version with `created`, `message` and `user`; `Object::diff(&from, &to)` lists added, deleted, modified and renamed paths (a rename is a deleted and an added path with the same digest), in path order.
+- Reading is not validation: a reader refuses only the faults it meets. Structural validation is IO-0.5.
+
+`tests/integration/fixture_reads.rs` resolves every version of every `good-objects` and `warn-objects` fixture and streams every logical file against its digest, and checks that a reader refuses the bad fixtures whose faults it meets, with the code their names list ([OCFL-S-010](./resources/srs.md) (a)). Like the inventory test, it reads the fixtures from `FILESQUID_OCFL_FIXTURES` and reports that it skipped without it; the BDD feature `OCFL_1.1_fixture_conformance.feature` (tag `@fixtures`) runs only when the variable is set:
+
+```bash
+cd apps/filesquid
+FILESQUID_OCFL_FIXTURES=/path/to/fixtures/1.1 cargo test -p filesquid-ocfl --locked --test integration_fixture_reads -- --nocapture
+FILESQUID_OCFL_FIXTURES=/path/to/fixtures/1.1 cargo test -p filesquid-ocfl --locked --test features
+```
 
 ## Build and test
 
