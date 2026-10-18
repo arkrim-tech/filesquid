@@ -123,4 +123,4 @@ Feature: Albums, folders and navigation
   # - srs.md SRS-F-004
   # - prd.md F-004
   # - apps/filesquid/ui/resources/srs.md UI-S-001, UI-S-016
-  # - UI-S-017 and API-S-021 as proposed in the docs/host-descriptor-and-nav-routes branch
+  # - apps/filesquid/ui/resources/srs.md UI-S-017; apps/filesquid/crates/api/resources/srs.md API-S-021

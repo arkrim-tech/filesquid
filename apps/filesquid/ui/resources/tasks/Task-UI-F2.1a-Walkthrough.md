@@ -1,8 +1,8 @@
 # Task UI-F2.1a Walkthrough: states, and the navigation tree and breadcrumb elements
 
-This is the first half of [Task UI-F2.1](../plan.md) (Navigation, breadcrumb, states and host privacy indicator), split by the owner on 2026-10-18. It needs no new API route. The host privacy indicator and the live navigation data are Task UI-F2.1b. The UI-F2.1 box in the plan stays open: the docs change that defines UI-F2.1a and UI-F2.1b in the plans (branch `docs/host-descriptor-and-nav-routes`) had not merged into `main` when this work finished.
+[Task UI-F2.1a](../plan.md) (States, and the navigation tree and breadcrumb elements) is the first half of the former UI-F2.1, split by the owner on 2026-10-18. It needs no new API route. The host privacy indicator and the live navigation data are Task UI-F2.1b, so the global Task FS-2.1 stays open.
 
-The data interface and the stored-choices format follow that docs branch's proposed [API-S-021](../../../crates/api/resources/srs.md) (navigation listing) and UI-S-017 (navigation preferences), so UI-F2.1b can plug in a live source without changing the elements. If the docs PR changes those requirements before it merges, the elements follow.
+The data interface and the stored-choices format follow [API-S-021](../../../crates/api/resources/srs.md) (navigation listing) and [UI-S-017](../srs.md) (navigation preferences), so UI-F2.1b can plug in a live source without changing the elements. Work began before the docs PR #35 merged, from its branch; after merging `main`, the merged text was compared and matches (the only later changes are the API's kind-order wording and the UI-S-017 scenario outline, both already met).
 
 ## SRS mapping
 
@@ -14,7 +14,7 @@ The data interface and the stored-choices format follow that docs branch's propo
 | [UI-S-005](../srs.md) | A distribution's label table defines every key of the default table | ImageSquid `tests/unit/theme.test.ts` |
 | [UI-S-013](../srs.md) | UI tests against production artifacts with strict DOM assertions | `tests/e2e/navigation.spec.ts` (built UI served by `filesquid-server`: elements defined, labels from the table, token colours in light and dark, no console errors) |
 | [UI-S-016](../srs.md) | Accessibility contracts | `tests/unit/component-styles.test.ts`, `tests/ui/*.test.ts` (audit, focus recovery, roving `tabindex`), `tests/e2e/navigation.spec.ts` (focus ring in light and dark, reduced motion, forced colours, reflow at 320 px and 200 % text) |
-| UI-S-017 (proposed) | Navigation preferences on the device under `filesquid.navigation` | `tests/unit/navigation-store.test.ts`, `tests/unit/navigation-model.test.ts`, `tests/ui/nav-tree.test.ts`, `tests/e2e/navigation.spec.ts` |
+| [UI-S-017](../srs.md) | Navigation preferences: pins, section order and collapse state kept on the device under `filesquid.navigation` | [`navigation_preferences_UI-S-017.feature`](../../tests/features/navigation_preferences_UI-S-017.feature), `tests/unit/navigation-store.test.ts`, `tests/unit/navigation-model.test.ts`, `tests/ui/nav-tree.test.ts`, `tests/e2e/navigation.spec.ts` |
 
 ## What changed
 
@@ -36,7 +36,7 @@ TDD: the first test run, before any implementation, failed as expected:
       Tests  45 failed | 327 passed (372)
 ```
 
-Midway through, the docs branch appeared with API-S-021 and UI-S-017. The model, store, view and element were realigned to them, and their tests were rewritten first against the new shapes. Commands, run inside each package: `npx prettier --write .`, `npx eslint . --fix`, `npx tsc --noEmit`, `npm test`, and `FILESQUID_E2E=1 npx playwright test` (built UI served by the real `filesquid-server`). JUnit reports are in each package's `tests/allure-results/`.
+Midway through, the docs PR #35 branch appeared with API-S-021 and UI-S-017. The model, store, view and element were realigned to them, and their tests were rewritten first against the new shapes. Commands, run inside each package: `npx prettier --write .`, `npx eslint . --fix`, `npx tsc --noEmit`, `npm test`, and `FILESQUID_E2E=1 npx playwright test` (built UI served by the real `filesquid-server`). JUnit reports are in each package's `tests/allure-results/`.
 
 No environment variables or credentials were mocked. The e2e tests inject navigation data through an in-page fixture source, not through a stubbed API route.
 
