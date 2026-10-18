@@ -53,8 +53,14 @@ export const REQUIRED_LABEL_KEYS = [
   "metricWarnings",
   "metricErrors",
   "metricQueue",
+  "theme",
+  "themeSystem",
+  "themeLight",
+  "themeDark",
   "yes",
   "no",
+  "skipToContent",
+  "navigationMain",
 ] as const;
 
 /** One required label key. */

@@ -1,5 +1,10 @@
 # F-051: Reusable filesquid-ocfl engine
 # OCFL-S-009, OCFL-S-010, OCFL-S-011: OCFL 1.1 community fixture conformance
+# @fixtures: reads the committed 1.1 tree (tests/fixtures/ocfl/1.1) by default; FILESQUID_OCFL_FIXTURES may override it.
+# The write scenario (IO-0.7) writes every 1.1/content fixture through the engine writer. Its community-validator step runs ocfl-py
+# (ocfl-validate.py) and rocfl when found on PATH or named in FILESQUID_OCFL_COMMUNITY_VALIDATOR; with none it prints why it is
+# skipped, unless FILESQUID_OCFL_REQUIRE_COMMUNITY_VALIDATOR=1 makes that a failure.
+@fixtures
 Feature: OCFL 1.1 community fixture conformance
   As a preservation programme using filesquid-ocfl
   I want the engine tested against the community OCFL 1.1 fixtures

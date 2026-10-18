@@ -33,7 +33,8 @@ fn start_monitor(w: &mut MonitorWorld, state: &ApiState) {
     let store = Arc::new(MemoryJournal::new("desktop"));
     let monitor = Monitor::start(
         store.clone(),
-        MonitorConfig::new("desktop", std::env::temp_dir()),
+        std::sync::Arc::new(filesquid_api::monitor::StaticHostChecks::healthy()),
+        MonitorConfig::new("desktop"),
         state.events.clone(),
     );
     state.install_monitor(monitor.clone());

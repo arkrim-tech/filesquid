@@ -67,10 +67,7 @@ async fn main() {
 
 /// Tick the monitor once per [`TICK`] until `stop` turns true. The loop is bounded by the
 /// server's lifetime: it ends as soon as shutdown starts.
-async fn run_ticker(
-    host: Arc<filesquid_api::monitor::HostMonitor>,
-    mut stop: watch::Receiver<bool>,
-) {
+async fn run_ticker(host: Arc<filesquid_native::HostMonitor>, mut stop: watch::Receiver<bool>) {
     let mut interval = tokio::time::interval(TICK);
     while !*stop.borrow() {
         tokio::select! {

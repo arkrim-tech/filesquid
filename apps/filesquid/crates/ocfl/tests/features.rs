@@ -7,12 +7,32 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use cucumber::{given, then, when, writer, StatsWriter as _, World, WriterExt as _};
 
+#[path = "support/object_builder.rs"]
+mod builder;
+#[path = "support/community_validator.rs"]
+mod community;
+#[path = "support/content_fixtures.rs"]
+mod content;
 #[path = "support/inventory_example.rs"]
 mod example;
+#[path = "support/fault_backend.rs"]
+mod fault;
+#[path = "support/fixtures.rs"]
+mod fixtures;
 #[path = "support/inventory_steps.rs"]
 mod inventory_steps;
+#[path = "support/payload_steps.rs"]
+mod payload_steps;
+#[path = "support/read_steps.rs"]
+mod read_steps;
+#[path = "support/write_rig.rs"]
+mod rig;
 #[path = "support/source_scan.rs"]
 mod source_scan;
+#[path = "support/validate_steps.rs"]
+mod validate_steps;
+#[path = "support/write_steps.rs"]
+mod write_steps;
 use filesquid_ocfl::storage::{
     ChunkReader, ETag, FsBackend, MemoryBackend, MultipartWriter, Precondition, StorageBackend,
     StorageError, StorageKey, MAX_CHUNK_BYTES,
@@ -55,6 +75,10 @@ struct OcflWorld {
     wasm_build: Option<(bool, String)>,
     guard_result: Option<Result<(), OcflError>>,
     inventory: inventory_steps::InventoryState,
+    read: read_steps::ReadState,
+    validate: validate_steps::ValidateState,
+    write: write_steps::WriteState,
+    payload: payload_steps::PayloadState,
 }
 
 /// Run `$body` with `$b` bound to the scenario's concrete backend.
@@ -94,13 +118,32 @@ fn inspect_api(world: &mut OcflWorld) {
     load_identity(world);
 }
 
+/// FileSquid application-layer and catalog type names the engine must not
+/// name anywhere in its sources (OCFL-S-003).
+const APPLICATION_TYPES: [&str; 6] = [
+    "CollectionSnapshot",
+    "C2paImportRecord",
+    "RecipeOperation",
+    "FileObject",
+    "CatalogEntry",
+    "filesquid_core",
+];
+
 #[then("FileSquid catalog, recipe, C2PA, and collection-snapshot types should be absent")]
 fn no_application_types(world: &mut OcflWorld) {
-    for needle in ["CollectionSnapshot", "C2paImportRecord", "RecipeOperation"] {
+    let sources = source_scan::read_sources().expect("scan src");
+    assert!(sources.len() > 5, "engine sources not found");
+    for needle in APPLICATION_TYPES {
         assert!(
             !world.lib.contains(needle),
             "{needle} must be absent from the engine crate"
         );
+        let found: Vec<&str> = sources
+            .iter()
+            .filter(|(_, text)| text.contains(needle))
+            .map(|(file, _)| file.as_str())
+            .collect();
+        assert!(found.is_empty(), "{needle} appears in {found:?}");
     }
 }
 
@@ -531,9 +574,11 @@ fn write_junit_report(path: &PathBuf, passed: usize, failed: usize, skipped: usi
     fs::write(path, xml).expect("write junit");
 }
 
-/// Whether `scenario` runs on this platform: scenarios tagged `@unix` need
-/// Unix links and run on Unix only (macOS and Linux); elsewhere they are left
-/// out instead of failing on steps compiled only for Unix.
+/// Whether `scenario` runs here. Scenarios tagged `@unix` need Unix links
+/// and run on Unix only (macOS and Linux); elsewhere they are left out
+/// instead of failing on steps compiled only for Unix. Features tagged
+/// `@fixtures` read the pinned OCFL community fixtures, which are committed
+/// under `tests/fixtures/ocfl/1.1` (OCFL-S-011), so they always run.
 fn runs_here(scenario: &cucumber::gherkin::Scenario) -> bool {
     cfg!(unix) || !scenario.tags.iter().any(|tag| tag == "unix")
 }

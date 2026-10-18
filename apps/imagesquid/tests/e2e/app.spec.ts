@@ -41,11 +41,45 @@ test("ImageSquid brand, album vocabulary and FileSquid API health", async ({ pag
   expect(errors).toEqual([]);
 });
 
-test("ImageSquid tokens override FileSquid defaults in light and dark", async ({ page }) => {
-  const primary = () =>
-    page.evaluate(() =>
-      getComputedStyle(document.documentElement).getPropertyValue("--fs-primary").trim(),
-    );
+/**
+ * Resolve a colour token to the browser's computed `rgb(...)` form through a probe element,
+ * so the check does not depend on how the build minified the hex value.
+ */
+function token(page: Page, name: string): Promise<string> {
+  return page.evaluate((prop) => {
+    const probe = document.createElement("span");
+    probe.style.color = `var(${prop})`;
+    document.body.append(probe);
+    const colour = getComputedStyle(probe).color;
+    probe.remove();
+    return colour;
+  }, name);
+}
+
+/** WCAG 2.2 contrast of two colour tokens, computed in the page from their resolved colours. */
+function tokenContrast(page: Page, fg: string, bg: string): Promise<number> {
+  return page.evaluate(
+    ([a, b]) => {
+      const probe = document.createElement("span");
+      document.body.append(probe);
+      const channel = (c: number) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+      const lum = (name: string) => {
+        probe.style.color = `var(${name})`;
+        const rgb = (getComputedStyle(probe).color.match(/\d+/g) ?? []).map(Number);
+        const [r, g, bl] = rgb.map((c) => channel(c / 255));
+        return 0.2126 * (r ?? 0) + 0.7152 * (g ?? 0) + 0.0722 * (bl ?? 0);
+      };
+      const [x, y] = [lum(a), lum(b)];
+      return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+    },
+    [fg, bg] as const,
+  );
+}
+
+test("ImageSquid tokens override FileSquid defaults in light and dark (IS-S-008)", async ({
+  page,
+}) => {
+  const errors = trackErrors(page, REFUSED_CALL);
   const sidebar = () =>
     page.evaluate(() => {
       const nav = document.querySelector("fs-app-shell")?.shadowRoot?.querySelector("nav");
@@ -53,11 +87,38 @@ test("ImageSquid tokens override FileSquid defaults in light and dark", async ({
     });
   await page.emulateMedia({ colorScheme: "light" });
   await page.goto("/");
-  expect(await primary()).toBe("#1d3f73");
+  expect(await token(page, "--fs-primary")).toBe("rgb(0, 93, 182)"); // #005db6
+  expect(await token(page, "--fs-on-primary")).toBe("rgb(255, 255, 255)"); // #ffffff
   expect(await sidebar()).toBe("rgb(244, 245, 247)");
+  expect(await tokenContrast(page, "--fs-on-primary", "--fs-primary")).toBeGreaterThanOrEqual(4.5);
+  expect(await tokenContrast(page, "--fs-on-surface", "--fs-surface")).toBeGreaterThanOrEqual(4.5);
   await page.emulateMedia({ colorScheme: "dark" });
-  expect(await primary()).toBe("#9cc0ff");
+  expect(await token(page, "--fs-primary")).toBe("rgb(169, 199, 255)"); // #a9c7ff
+  expect(await token(page, "--fs-on-primary")).toBe("rgb(0, 48, 99)"); // #003063
   expect(await sidebar()).toBe("rgb(27, 30, 36)");
+  expect(await tokenContrast(page, "--fs-on-primary", "--fs-primary")).toBeGreaterThanOrEqual(4.5);
+  expect(await tokenContrast(page, "--fs-on-surface", "--fs-surface")).toBeGreaterThanOrEqual(4.5);
+  expect(errors).toEqual([]);
+});
+
+test("ImageSquid's theme control keeps a dark choice across a reload", async ({ page }) => {
+  const errors = trackErrors(page, REFUSED_CALL);
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.goto("/");
+  const control = page.locator("fs-app-shell fs-theme-control");
+  await expect(control.locator("label")).toHaveText(["System", "Light", "Dark"]);
+  await expect(control.locator('input[value="system"]')).toBeChecked();
+  await control.locator("label", { hasText: "Dark" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect(control.locator('input[value="dark"]')).toBeChecked();
+  expect(await token(page, "--fs-primary")).toBe("rgb(169, 199, 255)"); // #a9c7ff
+  await expect(page.locator("fs-app-shell header img")).toHaveAttribute(
+    "src",
+    "/imagesquid-logo.svg",
+  );
+  expect(errors).toEqual([]);
 });
 
 test("ImageSquid names missing credentials in its own words", async ({ page }) => {
@@ -88,3 +149,45 @@ test("ImageSquid reaches the FileSquid Monitor with its own vocabulary", async (
   );
   expect(errors).toEqual([]);
 });
+
+for (const scheme of ["light", "dark"] as const) {
+  test(`ImageSquid inherits the keyboard, naming and focus contracts in ${scheme} (UI-S-016)`, async ({
+    page,
+  }) => {
+    const errors = trackErrors(page);
+    await page.addInitScript((value) => {
+      Object.defineProperty(window, "__FILESQUID_LAUNCH_TOKEN__", { value, enumerable: false });
+    }, ADMIN_TOKEN);
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.goto("/");
+    const shell = page.locator("fs-app-shell");
+    await expect(shell.getByRole("navigation", { name: "Main navigation" })).toBeVisible();
+    await expect(shell.getByRole("heading", { level: 1 })).toHaveText("ImageSquid");
+    const ring = `solid 2px ${await token(page, "--fs-primary")}`;
+    const seen: string[] = [];
+    for (let step = 0; step < 3; step += 1) {
+      await page.keyboard.press("Tab");
+      seen.push(
+        await page.evaluate(() => {
+          let active = document.activeElement;
+          while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+          const ringOn = active?.closest("label") ?? active;
+          const style = ringOn ? getComputedStyle(ringOn) : undefined;
+          const text = ringOn?.textContent?.trim() ?? "";
+          return `${text} | ${style?.outlineStyle} ${style?.outlineWidth} ${style?.outlineColor}`;
+        }),
+      );
+    }
+    expect(seen).toEqual([
+      `Skip to main content | ${ring}`,
+      `System | ${ring}`,
+      `Monitor | ${ring}`,
+    ]);
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(/#\/monitor$/);
+    await expect(
+      page.locator("fs-monitor").getByRole("table", { name: "Processes" }),
+    ).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+}

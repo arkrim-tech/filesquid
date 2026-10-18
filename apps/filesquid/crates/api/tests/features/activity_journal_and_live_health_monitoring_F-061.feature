@@ -21,7 +21,9 @@ Feature: Activity journal and live health monitoring
     Given the journal queue capacity is N events
     When 10 x N job and process events are produced as fast as possible
     Then the journal should contain all 10 x N events
-    And no log file should exist anywhere in the host's data directory
+
+  # The native SQLite store writing no log file is specified with that store:
+  # crates/native/tests/features/native_journal_store_F-061.feature
 
   Scenario: Entries are redacted
     Given a file titled "Grandma's birthday" was imported with GPS metadata

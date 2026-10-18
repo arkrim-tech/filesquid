@@ -15,10 +15,10 @@ use tower::ServiceExt;
 fn state_with_monitor(authoriser: Authoriser) -> (ApiState, Monitor) {
     let state = ApiState::new();
     state.install_authoriser(authoriser);
-    let dir = std::env::temp_dir();
     let monitor = Monitor::start(
         Arc::new(MemoryJournal::new("host-a")),
-        MonitorConfig::new("host-a", dir),
+        std::sync::Arc::new(filesquid_api::monitor::StaticHostChecks::healthy()),
+        MonitorConfig::new("host-a"),
         state.events.clone(),
     );
     state.install_monitor(monitor.clone());
@@ -166,27 +166,23 @@ async fn processes_lists_registered_processes() {
 }
 
 #[test]
-fn the_write_probe_never_touches_an_existing_file() {
-    let dir = std::env::temp_dir().join(format!("fs-admin-probe-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join(".filesquid-write-probe"), b"keep me").unwrap();
+fn health_uses_the_injected_host_checks() {
+    let checks = filesquid_api::monitor::StaticHostChecks {
+        data_dir_writable: false,
+        free_bytes: Some(1),
+    };
     let monitor = Monitor::start(
         Arc::new(MemoryJournal::new("host-a")),
-        MonitorConfig::new("host-a", &dir),
+        Arc::new(checks),
+        MonitorConfig::new("host-a"),
         filesquid_api::EventBus::new(),
     );
     let report = monitor.health_report();
-    assert!(!report
+    assert_eq!(report.checks.free_bytes, Some(1));
+    assert!(!report.checks.data_dir_writable);
+    assert!(report
         .reasons
         .iter()
         .any(|r| r.code == "data_dir_not_writable"));
-    assert_eq!(
-        std::fs::read(dir.join(".filesquid-write-probe")).unwrap(),
-        b"keep me"
-    );
-    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
     monitor.shutdown();
-    drop(monitor);
-    std::fs::remove_dir_all(dir).unwrap();
 }

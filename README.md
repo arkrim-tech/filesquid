@@ -31,7 +31,7 @@ Language manifests live **inside** `apps/`, never at the repository root:
 
 | Path | What it is |
 |---|---|
-| `apps/filesquid/` | Cargo workspace: `crates/{core,ocfl,metadata,c2pa,cli,api,server,desktop}` |
+| `apps/filesquid/` | Cargo workspace: `crates/{core,ocfl,metadata,c2pa,cli,api,native,server,desktop}` |
 | `apps/filesquid/ui/` | `@filesquid/ui`: API client, custom elements, design tokens and the default FileSquid UI (vanilla TypeScript, Vite; ports 5173 dev / 4173 preview) |
 | `apps/imagesquid/` | The ImageSquid distribution: views, tokens, labels, brand; no backend code (ports 5174 / 4174) |
 | `scripts/docs/` | Documentation validators (requirement coverage, PRD allocation, links, ADR structure) |
@@ -45,7 +45,7 @@ cd ../../imagesquid && npm ci
 
 ## Project naming
 
-Use **FileSquid** for displayed branding of the product and **filesquid** for technical identifiers (Cargo packages `filesquid-core`, `filesquid-ocfl`, `filesquid-metadata`, `filesquid-c2pa`, `filesquid-cli`, `filesquid-api`, `filesquid-server`, `filesquid-desktop`; the one command-line tool is `fsquid`; npm scope `@filesquid`; desktop identifier `tech.filesquid.desktop`; hosted service domain `filesquid.tech`). **ImageSquid** is a distribution: displayed brand ImageSquid, npm package `@imagesquid/ui`, desktop identifier `app.imagesquid.desktop`, domain `imagesquid.app`. Internal code, schemas and APIs use FileSquid's internal names (repository, library, collection, virtual collection, virtual exhibit, file); a distribution changes only its UI labels ([terminology](./resources/product-vision.md#terminology)). The `ocfl`, `metadata` and `c2pa` crates stay independently installable and publishable for programmes that never run the FileSquid app.
+Use **FileSquid** for displayed branding of the product and **filesquid** for technical identifiers (Cargo packages `filesquid-core`, `filesquid-ocfl`, `filesquid-metadata`, `filesquid-c2pa`, `filesquid-cli`, `filesquid-api`, `filesquid-native`, `filesquid-server`, `filesquid-desktop`; the one command-line tool is `fsquid`; npm scope `@filesquid`; desktop identifier `tech.filesquid.desktop`; hosted service domain `filesquid.tech`). **ImageSquid** is a distribution: displayed brand ImageSquid, npm package `@imagesquid/ui`, desktop identifier `app.imagesquid.desktop`, domain `imagesquid.app`. Internal code, schemas and APIs use FileSquid's internal names (repository, library, collection, virtual collection, virtual exhibit, file); a distribution changes only its UI labels ([terminology](./resources/product-vision.md#terminology)). The `ocfl`, `metadata` and `c2pa` crates stay independently installable and publishable for programmes that never run the FileSquid app.
 
 ## Run the application
 
@@ -140,7 +140,7 @@ bash scripts/pre-commit.sh                     # run all gates now
 ln -s ../../scripts/pre-commit.sh .git/hooks/pre-commit   # or install as the git pre-commit hook
 ```
 
-`FILESQUID_SKIP_TESTS=1 git commit ...` skips the lint and test step for a work-in-progress commit; run `bash scripts/verify_tests.sh` before pushing. `FILESQUID_E2E=1` adds the Playwright end-to-end suites. The individual commands the hook runs are listed below.
+`FILESQUID_SKIP_TESTS=1 git commit ...` skips the lint and test step for a work-in-progress commit; run `bash scripts/verify_tests.sh` before pushing. `FILESQUID_E2E=1` adds the Playwright end-to-end suites, and `FILESQUID_DESKTOP_E2E=1` the desktop packaged-window suite. The individual commands the hook runs are listed below.
 
 Rust workspace (lint first; the cucumber BDD features in each crate's `tests/features/` run as part of `cargo test` and write `tests/allure-results/cucumber-junit.xml` per crate):
 
@@ -151,7 +151,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 ```
 
-One module on its own, for example `cargo test -p filesquid-ocfl --locked`. That crate's BDD features also build it for the browser (`cargo build -p filesquid-ocfl --locked --no-default-features --target wasm32-unknown-unknown`, in a separate target directory under Cargo's test temp dir), so `cargo test` fails if the `wasm32-unknown-unknown` target is missing or the crate stops building for it.
+One module on its own, for example `cargo test -p filesquid-ocfl --locked`. That crate's BDD features also build it for the browser (`cargo build -p filesquid-ocfl --locked --no-default-features --target wasm32-unknown-unknown`, in a separate target directory under Cargo's test temp dir), so `cargo test` fails if the `wasm32-unknown-unknown` target is missing or the crate stops building for it. Its OCFL 1.1 community fixture tests (`integration_fixture_conformance`, which validates every good, warning and bad fixture object, `integration_fixture_inventories`, `integration_fixture_reads` and the `@fixtures` BDD feature) read the fixtures committed under the crate's `tests/fixtures/ocfl/1.1` (`OCFL/fixtures` commit `d323fc207126becec066998b43408d998bf0fb1b`, CC-BY-4.0), so they run offline in every `cargo test` and in the hook, and fail on any conformance failure. `FILESQUID_OCFL_FIXTURES` may name another `1.1` tree, for example a checkout at a new commit before the pin moves; see the [module README](./apps/filesquid/crates/ocfl/README.md#pinned-ocfl-community-fixtures). Its write conformance test (`integration_content_fixtures`, and the write scenario of the `@fixtures` feature) writes every `content` fixture through the engine and also runs the independent community validators `ocfl-validate.py` (from `ocfl-py`, `python3 -m pip install ocfl-py`) and `rocfl` (`cargo install rocfl --locked`) when they are on `PATH` and executable, or the one program named in `FILESQUID_OCFL_COMMUNITY_VALIDATOR` (on Windows the search also tries `PATHEXT` suffixes such as `rocfl.exe`, but does not run a bare `ocfl-validate.py` script, so use `rocfl` or name the `.exe` in that variable). They are optional test oracles: without one the community check prints `SKIPPED community OCFL validation` and the engine checks still run, unless `FILESQUID_OCFL_REQUIRE_COMMUNITY_VALIDATOR=1` makes that a failure. The validators add about 3 seconds; see [Community validators](./apps/filesquid/crates/ocfl/README.md#community-validators-test-oracles).
 
 `cargo test -p filesquid-c2pa --locked` (also part of `cargo test --workspace`) builds the C2PA module for `wasm32-unknown-unknown`, with default features on and off, into `filesquid-c2pa-wasm32-check/` under the Cargo target directory. Install the target once with `rustup target add wasm32-unknown-unknown`; without it the check fails, unless `FILESQUID_SKIP_WASM32=1` is set to skip it explicitly (the skip is printed). The same run executes the `c2patool` oracle harness on the C2PA conformance files when `FILESQUID_C2PA_CONFORMANCE_DIR` holds the absolute path of a checkout of `c2pa-org/public-testfiles` (`FILESQUID_C2PATOOL` names the tool if it is not on `PATH`); otherwise that test is skipped and prints why. Until the engine reads manifests (CP-0.2 to CP-0.5) the harness only records `c2patool`'s verdicts and counts every file as pending; it does not yet compare the engine with the oracle. The oracle run takes about 10 seconds; see the [module README](./apps/filesquid/crates/c2pa/README.md#interoperability-oracle).
 
@@ -191,6 +191,49 @@ cargo test -p filesquid-api --locked --test unit_auth --test features
 cargo test -p filesquid-server --locked --test integration_auth
 cargo test -p filesquid-desktop --locked --test integration_api_protocol
 ```
+
+The application-layer boundary (API-S-006) is guarded twice, and both guards must find nothing. `unit_isolation` runs `cargo tree` for `filesquid-api` with the default, no-default and all-features sets and fails on Tauri, libvips, FFmpeg, a SQLite driver, `fs4`, `filesquid-native`, a network client or an async runtime other than Tokio. It also scans every file in `crates/api/src/`, with comments and string literals removed, for `std::fs`, `tokio::fs`, `fs4`, the OS file-system extensions, file handles and network clients, including grouped `use std::{...}` imports that span lines:
+
+```sh
+cd apps/filesquid
+cargo test -p filesquid-api --locked --test unit_isolation
+```
+
+The library domain commands and queries (API-S-019: create and open a library, collections, virtual collections, membership, hide and recoverable delete, permanent deletion with a scope confirmation, paged listing) run against the in-memory reference catalog, so they need no database:
+
+```sh
+cd apps/filesquid
+cargo test -p filesquid-api --locked --test unit_library --test unit_library_queries --test features
+```
+
+The host-side I/O the API must not do lives in the native-processing library `filesquid-native` (`crates/native`): the SQLite journal store, the data-directory checks (write probe, free space) and `HostMonitor`, which both hosts link ([ADR 033](./resources/architecture/033-activity-journal-and-live-health-monitoring.md) amendment 2026-10-18). Its unit tests and BDD features run alone:
+
+```sh
+cd apps/filesquid
+cargo test -p filesquid-native --locked
+```
+
+The desktop transport (DE-S-005): the event channel's forwarder (one counted subscription, resync hints, the `event-forwarder` process, navigation kept on the app's origins), ranged reads through the `filesquid://localhost` scheme (`http://filesquid.localhost` on Windows and Android) with its 16 MiB response cap, and typed host errors. The 100 MB range fixture and the BDD features in `crates/desktop/tests/features/` exist only in the test-instrumented build (`--features test-webdriver`, never shipped), so the hook runs the desktop crate a second time with that feature:
+
+```sh
+cd apps/filesquid
+cargo test -p filesquid-desktop --locked --test integration_event_channel
+cargo clippy -p filesquid-desktop --all-targets --features test-webdriver --locked -- -D warnings
+cargo test -p filesquid-desktop --features test-webdriver --locked
+```
+
+Packaged-window tests (ADR 017): WebdriverIO with `@wdio/tauri-service` drives the test-instrumented desktop binary through its embedded WebDriver server (on `127.0.0.1`, port `TAURI_WEBDRIVER_PORT`, default 4445): the per-launch token, a 100 MB `Range` read through the scheme, an event subscription, and a refused navigation to a foreign site. Build the binary, then run the suite from `apps/filesquid/crates/desktop/tests/e2e`. On Linux the webview is WebKitGTK and a headless machine needs Xvfb (`xvfb-run`, from your distribution's `xvfb` package); on macOS and Windows run `npm run test:e2e` without it:
+
+```sh
+cd apps/filesquid
+cargo build -p filesquid-desktop --features test-webdriver --locked
+cd crates/desktop/tests/e2e
+npm ci
+npm run test:e2e                  # macOS, Windows, or Linux with a display
+# headless Linux instead: xvfb-run -a npm run test:e2e
+```
+
+The suite drives `<target>/debug/filesquid-desktop`, where `<target>` is `CARGO_TARGET_DIR` (a relative value is resolved against `apps/filesquid`, where the build ran) or `apps/filesquid/target`; set `FILESQUID_DESKTOP_BIN` to drive another binary. Before launching, it copies the binary into a fresh temporary directory, so a concurrent Cargo build cannot replace it mid-run, and removes that directory afterwards. On Linux each run uses a fresh temporary `XDG_DATA_HOME`, so the tests never write into your own FileSquid data. `npm run test:e2e` clears and rewrites `apps/filesquid/crates/desktop/tests/allure-results/wdio/` (JUnit). `FILESQUID_DESKTOP_E2E=1 bash scripts/verify_tests.sh` builds the binary and runs the suite as part of the hook (with `xvfb-run` on Linux when no display is set).
 
 Documentation checks, from the repository root:
 

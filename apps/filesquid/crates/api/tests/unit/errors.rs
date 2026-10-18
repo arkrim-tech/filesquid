@@ -53,7 +53,8 @@ fn server_state() -> (ApiState, Monitor) {
     let state = admin_only_state();
     let monitor = Monitor::start(
         Arc::new(MemoryJournal::new("server")),
-        MonitorConfig::new("server", std::env::temp_dir()),
+        std::sync::Arc::new(filesquid_api::monitor::StaticHostChecks::healthy()),
+        MonitorConfig::new("server"),
         state.events.clone(),
     );
     state.install_monitor(monitor.clone());
@@ -257,7 +258,8 @@ async fn a_failing_store_answers_a_redacted_internal_error_through_the_router() 
     let state = admin_only_state();
     let monitor = Monitor::start(
         Arc::new(FailingStore),
-        MonitorConfig::new("server", std::env::temp_dir()),
+        std::sync::Arc::new(filesquid_api::monitor::StaticHostChecks::healthy()),
+        MonitorConfig::new("server"),
         state.events.clone(),
     );
     state.install_monitor(monitor.clone());

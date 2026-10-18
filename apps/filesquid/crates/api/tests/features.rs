@@ -1,6 +1,8 @@
 //! Cucumber harness for the `filesquid-api` Gherkin under `tests/features/` (F-061, and the
 //! versioned contract, typed errors, deny-by-default authorisation, transport-agnostic routes
-//! and event channel of F-056: API-S-002, API-S-003, API-S-004, API-S-009).
+//! and event channel of F-056: API-S-002, API-S-003, API-S-004, API-S-009; and the
+//! application-layer isolation of API-S-006; and the library domain commands and queries of
+//! API-S-019).
 //!
 //! Scenarios that need domain operations not built yet (import, rename, metadata writes, C2PA
 //! scans, sync) or the optional OTLP export (Task FS-3.6) have no step definitions and are
@@ -28,6 +30,22 @@ mod event_steps;
 
 #[path = "support/auth_steps.rs"]
 mod auth_steps;
+
+#[path = "support/isolation.rs"]
+#[allow(dead_code)]
+mod isolation;
+
+#[path = "support/source_scan.rs"]
+mod source_scan;
+
+#[path = "support/isolation_steps.rs"]
+mod isolation_steps;
+
+#[path = "support/library_fixture.rs"]
+mod library_fixture;
+
+#[path = "support/library_steps.rs"]
+mod library_steps;
 
 /// Administrator token accepted by [`admin_state`].
 const ADMIN_TOKEN: &str = "admin";
@@ -65,6 +83,8 @@ struct MonitorWorld {
     refused: Option<ApiError>,
     secret: Option<String>,
     presented: Option<String>,
+    isolation: isolation_steps::IsolationWorld,
+    library: library_steps::LibraryWorld,
 }
 
 impl std::fmt::Debug for MonitorWorld {
@@ -117,30 +137,13 @@ fn all_events(w: &mut MonitorWorld, factor: u64) {
     assert_eq!(w.stored, w.produced);
 }
 
-#[then(expr = "no log file should exist anywhere in the host's data directory")]
-fn no_log_files(_w: &mut MonitorWorld) {
-    let dir = data_dir("nolog");
-    let store =
-        filesquid_api::journal::SqliteJournal::open(&dir.join("filesquid.sqlite"), "host-a")
-            .expect("open");
-    store
-        .append(&[JournalEntry::new("import", Outcome::Succeeded)])
-        .expect("append");
-    let logs: Vec<_> = std::fs::read_dir(&dir)
-        .expect("dir")
-        .filter_map(Result::ok)
-        .filter(|e| e.path().extension().is_some_and(|x| x == "log"))
-        .collect();
-    assert!(logs.is_empty());
-    std::fs::remove_dir_all(dir).expect("cleanup");
-}
-
 #[given(expr = "a filesquid-server with users Ana \\(administrator) and Ben \\(member)")]
 fn server_users(w: &mut MonitorWorld) {
     let state = admin_state("ana-admin-token");
     let monitor = Monitor::start(
         Arc::new(MemoryJournal::new("server")),
-        MonitorConfig::new("server", std::env::temp_dir()),
+        std::sync::Arc::new(filesquid_api::monitor::StaticHostChecks::healthy()),
+        MonitorConfig::new("server"),
         state.events.clone(),
     );
     state.install_monitor(monitor.clone());
@@ -191,10 +194,11 @@ fn heartbeating_job(w: &mut MonitorWorld, _every: i64, timeout: i64) {
     let clock_now = now.clone();
     let clock: Clock = Arc::new(move || clock_now.load(Ordering::SeqCst));
     let state = ApiState::new();
-    let mut config = MonitorConfig::new("desktop", std::env::temp_dir());
+    let mut config = MonitorConfig::new("desktop");
     config.clock = clock;
     let monitor = Monitor::start(
         Arc::new(MemoryJournal::new("desktop")),
+        Arc::new(filesquid_api::monitor::StaticHostChecks::healthy()),
         config,
         state.events.clone(),
     );
@@ -284,7 +288,8 @@ fn server_running(w: &mut MonitorWorld) {
     let state = admin_state(ADMIN_TOKEN);
     let monitor = Monitor::start(
         Arc::new(MemoryJournal::new("server")),
-        MonitorConfig::new("server", std::env::temp_dir()),
+        std::sync::Arc::new(filesquid_api::monitor::StaticHostChecks::healthy()),
+        MonitorConfig::new("server"),
         state.events.clone(),
     );
     state.install_monitor(monitor.clone());
@@ -367,7 +372,8 @@ fn entries_over_days(w: &mut MonitorWorld, days: i64) {
     let state = admin_state(ADMIN_TOKEN);
     let monitor = Monitor::start(
         store.clone(),
-        MonitorConfig::new("server", std::env::temp_dir()),
+        std::sync::Arc::new(filesquid_api::monitor::StaticHostChecks::healthy()),
+        MonitorConfig::new("server"),
         state.events.clone(),
     );
     state.install_monitor(monitor.clone());
@@ -461,7 +467,8 @@ fn server_with_token(w: &mut MonitorWorld) {
     let state = admin_state(ADMIN_TOKEN);
     let monitor = Monitor::start(
         Arc::new(MemoryJournal::new("server")),
-        MonitorConfig::new("server", std::env::temp_dir()),
+        std::sync::Arc::new(filesquid_api::monitor::StaticHostChecks::healthy()),
+        MonitorConfig::new("server"),
         state.events.clone(),
     );
     state.install_monitor(monitor.clone());
@@ -598,14 +605,6 @@ fn shutdown_monitor(w: &mut MonitorWorld) {
     if let Some(m) = w.monitor.take() {
         m.shutdown();
     }
-}
-
-/// Fresh temporary directory.
-fn data_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("fs-api-features-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("dir");
-    dir
 }
 
 #[tokio::main]

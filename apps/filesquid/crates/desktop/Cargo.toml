@@ -21,6 +21,7 @@ tauri-build = { version = "2.6.3", features = [] }
 [dependencies]
 axum = "0.8"
 filesquid-api = { path = "../api" }
+filesquid-native = { path = "../native", features = ["desktop"] }
 filesquid-core = { path = "../core" }
 filesquid-ocfl = { path = "../ocfl" }
 filesquid-metadata = { path = "../metadata" }
@@ -30,18 +31,38 @@ tower = { version = "0.5", features = ["util"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2.11.5", features = [] }
-tokio = { version = "1", features = ["sync", "time", "rt"] }
+tauri-plugin-wdio-webdriver = { version = "1.5.0", optional = true }
+tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
-test-webdriver = []
+# Test-instrumented build for the packaged-window tests (ADR 017, ADR 035): registers the
+# embedded WebDriver server (which listens on 127.0.0.1) and the 100 MB range fixture.
+# Never enabled in a shipping build.
+test-webdriver = ["dep:tauri-plugin-wdio-webdriver"]
 
 [dev-dependencies]
+cucumber = { version = "0.23", features = ["macros", "output-junit"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [[test]]
 name = "integration_api_protocol"
 path = "tests/integration/api_protocol.rs"
+
+[[test]]
+name = "integration_event_channel"
+path = "tests/integration/event_channel.rs"
+
+[[test]]
+name = "integration_range_fixture"
+path = "tests/integration/range_fixture.rs"
+required-features = ["test-webdriver"]
+
+[[test]]
+name = "features"
+path = "tests/features.rs"
+required-features = ["test-webdriver"]
+harness = false
