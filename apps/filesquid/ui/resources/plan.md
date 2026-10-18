@@ -28,13 +28,13 @@ Commands run inside `apps/filesquid/ui/` (Vite dev `127.0.0.1:5173`, preview `41
 
 ## Phase F0: Test reporting (global Task 0.8)
 
-- [ ] **Task UI-0.6: Playwright production suite and Allure**
+- [x] **Task UI-0.6: Playwright production suite and Allure**
   - **Status:** Moved from the ImageSquid plan (former `apps/frontend`) to `@filesquid/ui` because it is generic shell, host-adapter, token or file-management work.
   - **Description:** Configure Allure under `tests/allure-results/` (cleared before each run). Keep UI proofs in Playwright against `vite build` plus `vite preview`. `apps/imagesquid` runs the same suite shape.
   - **Estimated Time:** 4 hours
   - **Dependencies:** Task UI-0.1
   - **Related Requirements:** [UI-S-013](./srs.md), [NFR-008](../../../../resources/prd.md#nfr-008-maintainability-and-verified-engineering), [ADR 017](../../../../resources/architecture/017-test-runners-and-reporting.md)
-  - **Related Tests:** `tests/e2e/` Playwright suite (planned)
+  - **Related Tests:** [`production_test_suite_UI-S-013.feature`](../tests/features/production_test_suite_UI-S-013.feature), `tests/unit/test-reporting.test.ts`, `tests/e2e/preview/production-build.spec.ts` (with `tests/e2e/support/strict-dom.ts`, shared by every spec); ImageSquid `tests/unit/test-reporting.test.ts`, `tests/e2e/preview/production-build.spec.ts`; walkthrough [Task-UI-0.6-Walkthrough.md](./tasks/Task-UI-0.6-Walkthrough.md)
   - **Agent Prompt:** `@AGENTS.md Begin by creating a new feature branch for Task UI-0.6. Then begin development, executing all commands strictly within apps/filesquid/ui/. Additionally, invoke the @feature-writer skill to translate SRS requirements into executable BDD feature tests. Upon completion, YOU MUST generate apps/filesquid/ui/resources/tasks/Task-UI-0.6-Walkthrough.md directly in the project repository with clear SRS mapping (including BOTH the ID and full human-readable title text) in the secondary section, and strictly delete the internal tracking Plan/ToDos documents before checking off the Markdown box locally in apps/filesquid/ui/resources/plan.md, and the matching boxes in the repository-root resources/implementation-plan-checklist.md. Then commit your changes and push the branch to origin.`
 
 ## Phase F2: Default UI (global Tasks FS-2.1, FS-2.2, FS-2.4, FS-2.5, 1.1, 1.2; after the MVP: UI-F2.6 in global Task FS-2.3, UI-F2.10 and UI-F2.12 in global Task FS-2.7, UI-F2.13 in global Task FS-2.6; UI-F2.5 in global Task FS-C.1, phase C)
