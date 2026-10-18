@@ -1,10 +1,39 @@
-//! Unit tests for the activity journal store (SRS-F-061 K1, K2, K13).
+//! Unit tests for the activity journal stores (SRS-F-061 K1, K2, K13): the same contract
+//! against the API's in-memory store and this crate's SQLite store. Moved here from
+//! `filesquid-api` with the SQLite store (Task CL-0.1).
 
 use filesquid_api::journal::{
     is_opaque, JournalEntry, JournalQuery, JournalStore, Level, MemoryJournal, Outcome,
-    RetentionPolicy, SqliteJournal, MAX_OPAQUE_LEN, REDACTED,
+    RetentionPolicy, MAX_OPAQUE_LEN, REDACTED,
 };
+use filesquid_native::SqliteJournal;
+use log_names::is_log_file_name;
 use std::path::PathBuf;
+
+#[path = "../support/log_names.rs"]
+#[allow(dead_code)]
+mod log_names;
+
+#[test]
+fn log_file_names_match_the_original_suffix_rule() {
+    let ext = log_names::LOG_EXTENSION;
+    for name in [
+        format!("host.{ext}"),
+        format!(".{ext}"),
+        format!("a.b.{ext}"),
+    ] {
+        assert!(is_log_file_name(&name), "{name}");
+    }
+    for name in [
+        "filesquid.sqlite",
+        "filesquid.sqlite-wal",
+        "log",
+        "catalog",
+        "x.logs",
+    ] {
+        assert!(!is_log_file_name(name), "{name}");
+    }
+}
 
 /// Fresh temporary directory for one test (removed by the caller).
 fn temp_dir(name: &str) -> PathBuf {
@@ -200,7 +229,7 @@ fn opening_creates_the_database_and_writes_no_log_files() {
         .collect();
     assert!(names.iter().any(|n| n == "filesquid.sqlite"));
     assert!(
-        names.iter().all(|n| !n.ends_with(".log")),
+        names.iter().all(|n| !is_log_file_name(n)),
         "no log files: {names:?}"
     );
     std::fs::remove_dir_all(dir).unwrap();

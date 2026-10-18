@@ -56,7 +56,8 @@ fn journaled_owner_state() -> (ApiState, LaunchToken, Monitor, Arc<MemoryJournal
     let store = Arc::new(MemoryJournal::new("desktop"));
     let monitor = Monitor::start(
         store.clone(),
-        MonitorConfig::new("desktop", std::env::temp_dir()),
+        std::sync::Arc::new(filesquid_api::monitor::StaticHostChecks::healthy()),
+        MonitorConfig::new("desktop"),
         state.events.clone(),
     );
     state.install_monitor(monitor.clone());
@@ -599,7 +600,8 @@ async fn a_not_permitted_denial_names_the_principal_and_the_action() {
     let store = Arc::new(MemoryJournal::new("desktop"));
     let monitor = Monitor::start(
         store.clone(),
-        MonitorConfig::new("desktop", std::env::temp_dir()),
+        std::sync::Arc::new(filesquid_api::monitor::StaticHostChecks::healthy()),
+        MonitorConfig::new("desktop"),
         state.events.clone(),
     );
     state.install_monitor(monitor.clone());

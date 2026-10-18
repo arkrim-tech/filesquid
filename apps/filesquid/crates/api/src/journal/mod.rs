@@ -5,14 +5,14 @@
 //! recorded as a [`JournalEntry`] in a [`JournalStore`]. The journal holds **structured,
 //! whitelisted fields only** (operation, outcome, actor, opaque IDs, error codes); free-text
 //! messages never enter it, which is how redaction is enforced structurally.
+//!
+//! This crate holds the [`JournalStore`] trait and the in-memory [`MemoryJournal`]. Durable
+//! stores do storage I/O and live with the hosts ([API-S-006](../../resources/srs.md)): the
+//! SQLite store is `filesquid_native::SqliteJournal`.
 
 mod memory;
-#[cfg(feature = "sqlite")]
-mod sqlite;
 
 pub use memory::MemoryJournal;
-#[cfg(feature = "sqlite")]
-pub use sqlite::SqliteJournal;
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -362,7 +362,7 @@ pub struct JournalPage {
 
 impl JournalPage {
     /// Build a page from up to `limit + 1` matching entries.
-    pub(crate) fn from_overfetch(mut entries: Vec<JournalEntry>, limit: usize) -> Self {
+    pub fn from_overfetch(mut entries: Vec<JournalEntry>, limit: usize) -> Self {
         let more = entries.len() > limit;
         entries.truncate(limit);
         let next_cursor = if more {
@@ -416,7 +416,7 @@ pub trait JournalStore: Send + Sync {
 }
 
 /// Cutoff time for a retention policy, or `None` to keep everything.
-pub(crate) fn retention_cutoff(policy: RetentionPolicy, now_ms: i64) -> Option<i64> {
+pub fn retention_cutoff(policy: RetentionPolicy, now_ms: i64) -> Option<i64> {
     match policy {
         RetentionPolicy::KeepAll => None,
         RetentionPolicy::MaxAgeDays(days) => Some(now_ms - i64::from(days) * DAY_MS),
@@ -424,7 +424,7 @@ pub(crate) fn retention_cutoff(policy: RetentionPolicy, now_ms: i64) -> Option<i
 }
 
 /// The entry recorded when retention deletes rows.
-pub(crate) fn retention_entry(deleted: u64, now_ms: i64) -> JournalEntry {
+pub fn retention_entry(deleted: u64, now_ms: i64) -> JournalEntry {
     JournalEntry::new("journal.retention", Outcome::Succeeded)
         .at_ms(now_ms)
         .target(format!("deleted:{deleted}"))

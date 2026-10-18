@@ -1133,12 +1133,12 @@ The system MUST implement [PRD F-060](./prd.md#f-060-archival-curation-jobs-and-
 ### SRS-F-061: Activity journal and live health monitoring
 
 The system MUST implement [PRD F-061](./prd.md#f-061-activity-journal-and-live-health-monitoring) with the acceptance criteria stated there.
-- **Journal store.** Each host that runs `filesquid-api` (desktop and `filesquid-server`; the ciphertext-only service keeps a separate service-event journal, [ADR 033](./architecture/033-activity-journal-and-live-health-monitoring.md)) MUST keep an append-only `activity_journal` table in its operational store (SQLite in WAL mode on desktop, PostgreSQL on servers) with: id, time (RFC 3339 UTC), host, process or job id, actor, operation, outcome, level, opaque target ids, duration, error code. Rows MUST NOT be updated or deleted except by the configured retention or archive job, which itself is journaled ([T-055](./product-vision.md#api-and-hosts)).
+- **Journal store.** Each host that runs `filesquid-api` (desktop and `filesquid-server`; the ciphertext-only service keeps a separate service-event journal, [ADR 033](./architecture/033-activity-journal-and-live-health-monitoring.md)) MUST keep an append-only `activity_journal` table in its operational store (SQLite in WAL mode on desktop, PostgreSQL on servers) with: id, time (RFC 3339 UTC), host, process or job id, actor, operation, outcome, level, opaque target ids, duration, error code. Rows MUST NOT be updated or deleted except by the configured retention or archive job, which itself is journaled ([T-055](./product-vision.md#api-and-hosts)). The store is host-injected: `filesquid-api` defines `JournalStore` and links no SQLite driver; the SQLite store is `filesquid-native`'s `SqliteJournal`. Until its PostgreSQL operational store exists, `filesquid-server` MAY keep its journal in that SQLite store (`<data dir>/filesquid.sqlite`) ([ADR 033](./architecture/033-activity-journal-and-live-health-monitoring.md) amendment 2026-10-18).
 - **Write path.** Domain services MUST insert the journal row in the same transaction as the operational change, or before acknowledging the operation. A `tracing` layer MUST forward process, warning and error events through a bounded queue whose producers wait when it is full. A load test MUST show zero lost events at the declared desktop and server envelopes ([SRS-NFR-003](#srs-nfr-003-bounded-processing-and-migration-endurance)).
 - **No log files.** Hosts MUST NOT create text log files; stdout JSON is unchanged. `scripts/verify_centralized_logging.sh` MUST reject file appenders and `*.log` paths.
 - **Redaction.** A test per event type MUST prove entries contain no file contents, titles, captions, pixels, keys or credentials, and that server administrators cannot read another user's private metadata through journal routes.
 - **Process registry.** Every long-running unit MUST register with type, state, progress, started time, heartbeat interval and timeout; heartbeats older than the timeout MUST mark it stalled ([T-057](./product-vision.md#api-and-hosts)).
-- **Health.** Overall status MUST be `ok`, `degraded` or `failing` with machine-readable reasons from the registry and host checks (storage roots reachable and writable, free space against thresholds, operational store reachable, queue depths, error rate over a window).
+- **Health.** Overall status MUST be `ok`, `degraded` or `failing` with machine-readable reasons from the registry and host checks (storage roots reachable and writable, free space against thresholds, operational store reachable, queue depths, error rate over a window). Checks that need storage I/O (data directory writable, free space) are host-injected through `filesquid-api`'s `HostChecks` trait; the native implementation is `filesquid-native`'s `DataDirChecks`.
 - **API.** `filesquid-api` MUST expose `GET /api/v1/admin/health`, `GET /api/v1/admin/processes`, `GET /api/v1/admin/journal` (filters: from, to, actor, operation, outcome, level, process; cursor paging; order ascending or newest first), `GET /api/v1/admin/journal/export` (JSON Lines of every entry matching the same filters, including from and to, oldest first; a response that reaches its size cap sets `X-Journal-Next-Cursor`, passed back as `after` to continue) and `GET /api/v1/admin/metrics`, documented in the OpenAPI contract, plus event-channel topics `process.update`, `journal.entry` and `health.change`. Every admin route MUST reject callers who are not the desktop owner or a server administrator ([SRS-F-056](#srs-f-056-single-filesquid-api), [SRS-F-057](#srs-f-057-desktop-and-server-hosts)).
 - **Metrics.** `/metrics` (Prometheus text, `filesquid-server`) and `GET /api/v1/admin/metrics` MUST report the same counters ([T-056](./product-vision.md#api-and-hosts)).
 - **Monitor dashboard.** `@filesquid/ui` MUST provide the Monitor dashboard as custom elements: health with reasons; live processes and jobs (state, progress, rate, ETA, stalled flag); queues; throughput and error rates over time; storage roots and free space; journal search with live tail and JSON Lines export. Labels come from the label table and styling from design tokens ([SRS-F-058](#srs-f-058-white-label-distributions)).
@@ -1152,6 +1152,7 @@ The system MUST implement [PRD F-061](./prd.md#f-061-activity-journal-and-live-h
 
 **Tests**
 - [`activity_journal_and_live_health_monitoring_F-061.feature`](../apps/filesquid/crates/api/tests/features/activity_journal_and_live_health_monitoring_F-061.feature) (scenarios; step definitions, unit, load and redaction tests come with Task FS-2.4)
+- [`native_journal_store_F-061.feature`](../apps/filesquid/crates/native/tests/features/native_journal_store_F-061.feature) (SQLite journal store and data-directory checks)
 
 ### SRS-F-062: Drive-style views, sorting, selection and layout preferences
 
@@ -1387,7 +1388,7 @@ The system MUST satisfy [PRD NFR-010](./prd.md#nfr-010-accurate-public-claims) a
 
 ### SRS-TC-001: Immutable originals and explicit identity
 
-The system MUST satisfy [PRD TC-001](./prd.md#tc-001-immutable-originals-and-explicit-identity) as written. Newly generated portable domain identifiers MUST use RFC 4122 / RFC 9562 UUID version 4 as specified in [ADR 021](./architecture/021-uuid-v4-identifiers.md). SHA-256 digests remain distinct from those identifiers. Workspace crates (`filesquid-core`, `filesquid-ocfl`, `filesquid-metadata`, `filesquid-c2pa`, `filesquid-api`, `filesquid-server`, `filesquid-desktop`) and UI packages (`@filesquid/ui`, `@imagesquid/ui`) MUST keep that isolation.
+The system MUST satisfy [PRD TC-001](./prd.md#tc-001-immutable-originals-and-explicit-identity) as written. Newly generated portable domain identifiers MUST use RFC 4122 / RFC 9562 UUID version 4 as specified in [ADR 021](./architecture/021-uuid-v4-identifiers.md). SHA-256 digests remain distinct from those identifiers. Workspace crates (`filesquid-core`, `filesquid-ocfl`, `filesquid-metadata`, `filesquid-c2pa`, `filesquid-api`, the native-processing library `filesquid-native`, `filesquid-server`, `filesquid-desktop`) and UI packages (`@filesquid/ui`, `@imagesquid/ui`) MUST keep that isolation.
 
 **Source**
 - [TC-001](./prd.md#tc-001-immutable-originals-and-explicit-identity)
@@ -1401,7 +1402,7 @@ The system MUST satisfy [PRD TC-001](./prd.md#tc-001-immutable-originals-and-exp
 
 ### SRS-TC-002: Endpoint processing and hosted encryption
 
-The system MUST satisfy [PRD TC-002](./prd.md#tc-002-endpoint-processing-and-hosted-encryption) as written. Workspace crates (`filesquid-core`, `filesquid-ocfl`, `filesquid-metadata`, `filesquid-c2pa`, `filesquid-api`, `filesquid-server`, `filesquid-desktop`) and UI packages (`@filesquid/ui`, `@imagesquid/ui`) MUST keep that isolation. Owner-operated `filesquid-server` deployments MAY process plaintext on the operator's server; the UI MUST state that the operator can read files ([SRS-F-057](#srs-f-057-desktop-and-server-hosts)). The `*.filesquid.tech` hosted service MUST remain ciphertext-only ([SRS-F-059](#srs-f-059-hosted-encrypted-backup-and-sync-service)).
+The system MUST satisfy [PRD TC-002](./prd.md#tc-002-endpoint-processing-and-hosted-encryption) as written. Workspace crates (`filesquid-core`, `filesquid-ocfl`, `filesquid-metadata`, `filesquid-c2pa`, `filesquid-api`, the native-processing library `filesquid-native`, `filesquid-server`, `filesquid-desktop`) and UI packages (`@filesquid/ui`, `@imagesquid/ui`) MUST keep that isolation. Owner-operated `filesquid-server` deployments MAY process plaintext on the operator's server; the UI MUST state that the operator can read files ([SRS-F-057](#srs-f-057-desktop-and-server-hosts)). The `*.filesquid.tech` hosted service MUST remain ciphertext-only ([SRS-F-059](#srs-f-059-hosted-encrypted-backup-and-sync-service)).
 
 **Source**
 - [TC-002](./prd.md#tc-002-endpoint-processing-and-hosted-encryption)
@@ -1414,7 +1415,7 @@ The system MUST satisfy [PRD TC-002](./prd.md#tc-002-endpoint-processing-and-hos
 
 ### SRS-TC-003: Platform and provider limits
 
-The system MUST satisfy [PRD TC-003](./prd.md#tc-003-platform-and-provider-limits) as written. Workspace crates (`filesquid-core`, `filesquid-ocfl`, `filesquid-metadata`, `filesquid-c2pa`, `filesquid-api`, `filesquid-server`, `filesquid-desktop`) and UI packages (`@filesquid/ui`, `@imagesquid/ui`) MUST keep that isolation.
+The system MUST satisfy [PRD TC-003](./prd.md#tc-003-platform-and-provider-limits) as written. Workspace crates (`filesquid-core`, `filesquid-ocfl`, `filesquid-metadata`, `filesquid-c2pa`, `filesquid-api`, the native-processing library `filesquid-native`, `filesquid-server`, `filesquid-desktop`) and UI packages (`@filesquid/ui`, `@imagesquid/ui`) MUST keep that isolation.
 
 **Source**
 - [TC-003](./prd.md#tc-003-platform-and-provider-limits)
@@ -1427,7 +1428,7 @@ The system MUST satisfy [PRD TC-003](./prd.md#tc-003-platform-and-provider-limit
 
 ### SRS-TC-004: Decision status and repository alignment
 
-The system MUST satisfy [PRD TC-004](./prd.md#tc-004-decision-status-and-repository-alignment) as written. Workspace crates (`filesquid-core`, `filesquid-ocfl`, `filesquid-metadata`, `filesquid-c2pa`, `filesquid-api`, `filesquid-server`, `filesquid-desktop`) and UI packages (`@filesquid/ui`, `@imagesquid/ui`) MUST keep that isolation.
+The system MUST satisfy [PRD TC-004](./prd.md#tc-004-decision-status-and-repository-alignment) as written. Workspace crates (`filesquid-core`, `filesquid-ocfl`, `filesquid-metadata`, `filesquid-c2pa`, `filesquid-api`, the native-processing library `filesquid-native`, `filesquid-server`, `filesquid-desktop`) and UI packages (`@filesquid/ui`, `@imagesquid/ui`) MUST keep that isolation.
 
 **Source**
 - [TC-004](./prd.md#tc-004-decision-status-and-repository-alignment)
@@ -1439,7 +1440,7 @@ The system MUST satisfy [PRD TC-004](./prd.md#tc-004-decision-status-and-reposit
 
 ### SRS-TC-005: Shared Rust graph, hosted mailbox isolation and OCFL writer
 
-The system MUST satisfy [PRD TC-005](./prd.md#tc-005-shared-rust-graph-hosted-mailbox-isolation-and-ocfl-writer) as written. Workspace crates (`filesquid-core`, `filesquid-ocfl`, `filesquid-metadata`, `filesquid-c2pa`, `filesquid-api`, `filesquid-server`, `filesquid-desktop`) and UI packages (`@filesquid/ui`, `@imagesquid/ui`) MUST keep that isolation. The hosted mailbox is the `*.filesquid.tech` service. `filesquid-server` is a separate, owner-operated deployment type that links `filesquid-api` and the modules ([ADR 032](./architecture/032-hosting-and-privacy-model.md)).
+The system MUST satisfy [PRD TC-005](./prd.md#tc-005-shared-rust-graph-hosted-mailbox-isolation-and-ocfl-writer) as written. Workspace crates (`filesquid-core`, `filesquid-ocfl`, `filesquid-metadata`, `filesquid-c2pa`, `filesquid-api`, the native-processing library `filesquid-native`, `filesquid-server`, `filesquid-desktop`) and UI packages (`@filesquid/ui`, `@imagesquid/ui`) MUST keep that isolation. The hosted mailbox is the `*.filesquid.tech` service. `filesquid-server` is a separate, owner-operated deployment type that links `filesquid-api` and the modules ([ADR 032](./architecture/032-hosting-and-privacy-model.md)).
 
 **Source**
 - [TC-005](./prd.md#tc-005-shared-rust-graph-hosted-mailbox-isolation-and-ocfl-writer)
@@ -1525,7 +1526,7 @@ The FileSquid default UI has no screenshot yet; [SRS-F-055](#srs-f-055-default-u
 | F-058 | SRS-F-058 | `../apps/filesquid/ui/tests/features/theme_tokens_SRS-UI-007.feature`, `../apps/filesquid/ui/tests/features/product_component_terminology_and_item_type_F-049.feature`, `../apps/filesquid/ui/tests/features/composable_filesquid_ui_F-055.feature` (dedicated feature file not yet written) |
 | F-059 | SRS-F-059 | `../apps/filesquid/crates/server/tests/features/client_encryption_and_key_custody_F-029.feature`, `../apps/filesquid/crates/server/tests/features/endpoint_processing_and_hosted_encryption_TC-002.feature`, `../apps/filesquid/ui/tests/features/personal_synchronization_and_availability_F-030.feature`, `../apps/filesquid/ui/tests/features/encrypted_backup_and_verified_restore_F-031.feature` |
 | F-060 | SRS-F-060 | `../apps/filesquid/crates/ocfl/tests/features/reusable_ocfl_engine_F-051.feature`, `../apps/filesquid/crates/core/tests/features/job_checkpoint_protocol_NFR-003.feature` (dedicated feature file not yet written) |
-| F-061 | SRS-F-061 | `../apps/filesquid/crates/api/tests/features/activity_journal_and_live_health_monitoring_F-061.feature` |
+| F-061 | SRS-F-061 | `../apps/filesquid/crates/api/tests/features/activity_journal_and_live_health_monitoring_F-061.feature`, `../apps/filesquid/crates/native/tests/features/native_journal_store_F-061.feature` |
 | F-062 | SRS-F-062 | `../apps/filesquid/ui/tests/features/drive_style_views_and_preferences_F-062.feature` (scenarios only; step definitions pending) |
 | F-063 | SRS-F-063 | `../apps/filesquid/crates/api/tests/features/file_search_query_language_F-063.feature` (scenarios only; step definitions pending) |
 | F-064 | SRS-F-064 | `../apps/filesquid/crates/api/tests/features/file_activity_and_comments_F-064.feature` (scenarios only; step definitions pending) |

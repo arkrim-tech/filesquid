@@ -1327,10 +1327,8 @@ dependencies = [
  "axum",
  "cucumber",
  "filesquid-core",
- "fs4",
  "getrandom 0.4.3",
  "http-body-util",
- "rusqlite",
  "serde",
  "serde_json",
  "sha2 0.11.1",
@@ -1389,6 +1387,7 @@ dependencies = [
  "filesquid-api",
  "filesquid-core",
  "filesquid-metadata",
+ "filesquid-native",
  "filesquid-ocfl",
  "http",
  "http-body-util",
@@ -1419,6 +1418,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "filesquid-native"
+version = "0.1.0"
+dependencies = [
+ "cucumber",
+ "filesquid-api",
+ "fs4",
+ "rusqlite",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "filesquid-ocfl"
 version = "0.1.0"
 dependencies = [
@@ -1440,6 +1452,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "filesquid-api",
+ "filesquid-native",
  "futures-util",
  "http-body-util",
  "libc",

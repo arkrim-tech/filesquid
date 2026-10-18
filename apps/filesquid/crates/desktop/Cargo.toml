@@ -21,6 +21,7 @@ tauri-build = { version = "2.6.3", features = [] }
 [dependencies]
 axum = "0.8"
 filesquid-api = { path = "../api" }
+filesquid-native = { path = "../native", features = ["desktop"] }
 filesquid-core = { path = "../core" }
 filesquid-ocfl = { path = "../ocfl" }
 filesquid-metadata = { path = "../metadata" }

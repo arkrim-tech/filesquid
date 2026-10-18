@@ -220,7 +220,8 @@ fn owner_state() -> (ApiState, Monitor) {
     let state = authorised_state();
     let monitor = Monitor::start(
         Arc::new(MemoryJournal::new("host-a")),
-        MonitorConfig::new("host-a", std::env::temp_dir()),
+        std::sync::Arc::new(filesquid_api::monitor::StaticHostChecks::healthy()),
+        MonitorConfig::new("host-a"),
         state.events.clone(),
     );
     state.install_monitor(monitor.clone());

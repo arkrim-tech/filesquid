@@ -95,7 +95,8 @@ async fn the_desktop_owner_reaches_admin_routes_with_the_per_launch_token() {
     let (state, token) = launched();
     let monitor = Monitor::start(
         std::sync::Arc::new(MemoryJournal::new("desktop")),
-        MonitorConfig::new("desktop", std::env::temp_dir()),
+        std::sync::Arc::new(filesquid_api::monitor::StaticHostChecks::healthy()),
+        MonitorConfig::new("desktop"),
         state.events.clone(),
     );
     state.install_monitor(monitor.clone());
