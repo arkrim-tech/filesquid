@@ -161,7 +161,9 @@ impl EventBus {
         self.sender.receiver_count()
     }
 
-    /// Number of open client subscriptions (at most [`MAX_SUBSCRIBERS`]).
+    /// Number of client subscription slots counted now. Open subscriptions never exceed
+    /// [`MAX_SUBSCRIBERS`]; while a refused claim gives its reservation back, this can briefly
+    /// read above the cap (by one per refused caller in flight).
     pub fn open_subscriptions(&self) -> usize {
         self.open.load(Ordering::SeqCst)
     }
@@ -211,13 +213,26 @@ struct SubscriberSlot {
 }
 
 impl SubscriberSlot {
-    /// Take a slot if fewer than [`MAX_SUBSCRIBERS`] are taken. Check and increment are one
-    /// atomic step, so concurrent callers never exceed the cap.
+    /// Take a slot if fewer than [`MAX_SUBSCRIBERS`] are taken, or `None` when the cap is
+    /// reached.
+    ///
+    /// Reserve, then check: one `fetch_add` reserves a place and returns the count before it.
+    /// A caller that saw [`MAX_SUBSCRIBERS`] or more gives its reservation back with
+    /// `fetch_sub` and is refused. No loop and no retry are needed. Each caller gets a
+    /// distinct previous count, so only callers that saw fewer than [`MAX_SUBSCRIBERS`] are
+    /// granted and granted slots never exceed the cap.
+    ///
+    /// The trade-off: between its `fetch_add` and `fetch_sub`, a refused caller holds the
+    /// counter above the granted number. A concurrent caller that would just have fit (for
+    /// example right after a slot was released) can then be refused too. That refusal is
+    /// the same retryable `unavailable` answer as at the cap, so this is acceptable. For the
+    /// same reason [`EventBus::open_subscriptions`] can briefly read above the cap.
     fn claim(open: &Arc<AtomicUsize>) -> Option<Self> {
-        open.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
-            (n < MAX_SUBSCRIBERS).then_some(n + 1)
-        })
-        .ok()?;
+        let previous = open.fetch_add(1, Ordering::SeqCst);
+        if previous >= MAX_SUBSCRIBERS {
+            open.fetch_sub(1, Ordering::SeqCst);
+            return None;
+        }
         Some(Self { open: open.clone() })
     }
 }

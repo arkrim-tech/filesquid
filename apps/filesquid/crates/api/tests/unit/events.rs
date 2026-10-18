@@ -193,6 +193,55 @@ fn concurrent_subscribers_never_exceed_the_cap() {
     assert_eq!(bus.open_subscriptions(), MAX_SUBSCRIBERS);
 }
 
+/// Claim, hold and drop subscriptions from several threads at once. Every granted
+/// subscription is counted while held, so the test sees the most ever held together.
+#[test]
+fn concurrent_claims_and_releases_never_exceed_the_cap_and_free_every_slot() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    const THREADS: usize = 8;
+    const ROUNDS: usize = 200;
+    const BATCH: usize = 12;
+    let bus = EventBus::new();
+    let held = Arc::new(AtomicUsize::new(0));
+    let peak = Arc::new(AtomicUsize::new(0));
+    let threads: Vec<_> = (0..THREADS)
+        .map(|_| {
+            let (bus, held, peak) = (bus.clone(), held.clone(), peak.clone());
+            std::thread::spawn(move || {
+                for _ in 0..ROUNDS {
+                    let batch: Vec<EventSubscription> =
+                        (0..BATCH).filter_map(|_| bus.subscription().ok()).collect();
+                    let now = held.fetch_add(batch.len(), Ordering::SeqCst) + batch.len();
+                    peak.fetch_max(now, Ordering::SeqCst);
+                    held.fetch_sub(batch.len(), Ordering::SeqCst);
+                    drop(batch);
+                }
+            })
+        })
+        .collect();
+    for thread in threads {
+        thread.join().expect("thread");
+    }
+    let peak = peak.load(Ordering::SeqCst);
+    assert!(peak <= MAX_SUBSCRIBERS, "{peak} subscriptions held at once");
+    assert!(peak > 0, "no subscription was ever granted");
+    assert_eq!(
+        bus.open_subscriptions(),
+        0,
+        "every dropped slot is released"
+    );
+    assert_eq!(bus.subscriber_count(), 0);
+    let refill: Vec<EventSubscription> = (0..MAX_SUBSCRIBERS)
+        .map(|_| bus.subscription().expect("every slot is free again"))
+        .collect();
+    assert!(
+        bus.subscription().is_err(),
+        "the cap still holds afterwards"
+    );
+    drop(refill);
+}
+
 #[tokio::test]
 async fn a_closed_bus_ends_the_subscription() {
     let bus = EventBus::new();
