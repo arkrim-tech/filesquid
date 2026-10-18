@@ -392,11 +392,20 @@ fn a_main_window_that_cannot_be_built_is_journaled() {
 #[test]
 fn a_panic_is_journaled_without_its_message() {
     let _serial = PANIC_TESTS.lock().unwrap_or_else(|e| e.into_inner());
-    install_panic_hook(Arc::new(OnceLock::new()));
+    let flush = Arc::new(OnceLock::new());
+    let parked = JournalWriter::start(
+        Arc::new(MemoryJournal::new("desktop")),
+        WriterConfig { capacity: 16 },
+        EventBus::new(),
+        Arc::new(Metrics::default()),
+    );
+    let _ = flush.set(parked.sender());
+    install_panic_hook(flush);
     let entries = journaled(|| {
         let outcome = std::panic::catch_unwind(|| panic!("Secret Title at /home/owner/x"));
         assert!(outcome.is_err());
     });
+    parked.shutdown();
     let entry = only(&entries, PANIC_OPERATION);
     assert_eq!(entry.error_code.as_deref(), Some("panic"));
     assert_eq!(entry.level, Level::Error);
@@ -441,8 +450,11 @@ fn a_panic_before_the_journal_opens_reaches_stdout_whatever_the_log_filter() {
     let _serial = PANIC_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     install_panic_hook(Arc::new(OnceLock::new()));
     let mut stdout = Vec::new();
-    // No subscriber at all on this thread: nothing but the direct line can record it.
-    record_panic(&mut stdout);
+    // A host subscriber is installed but no journal is open: the direct line must be the
+    // only record, so the subscriber's stdout stays empty.
+    let (entries, traced) = journaled_host(|| record_panic(&mut stdout));
+    assert!(entries.is_empty(), "{entries:?}");
+    assert!(!traced.contains(PANIC_OPERATION), "{traced}");
     let text = String::from_utf8(stdout).expect("UTF-8");
     let line: serde_json::Value = serde_json::from_str(text.trim()).expect("one JSON line");
     assert_eq!(line["operation"], PANIC_OPERATION);

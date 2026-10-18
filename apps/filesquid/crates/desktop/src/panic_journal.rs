@@ -69,27 +69,23 @@ pub fn install_panic_hook(journal: Arc<OnceLock<JournalSender>>) {
 
 /// Record one panic of the current thread without its message: journal it and flush the
 /// journal. When no journal is open yet, or on the journal writer's own thread (whose queue
-/// may be full, with that thread its only consumer), the record is written to `stdout` as
-/// [`unjournaled_line`]; on the writer's thread nothing is queued. The panic hook calls it
-/// with the process's stdout. Writes to the journal and/or `stdout`.
+/// may be full, with that thread its only consumer), the only record is one
+/// [`unjournaled_line`] written to `stdout`, and nothing is queued or traced. The panic hook
+/// calls it with the process's stdout. Writes to the journal or `stdout`.
 pub fn record_panic(stdout: &mut dyn Write) {
     let on_writer = std::thread::current().name() == Some(JOURNAL_THREAD);
     let journal = if on_writer { None } else { open_journal() };
-    if journal.is_none() {
+    let Some(sender) = journal else {
         write_line(stdout, &unjournaled_line(PANIC_OPERATION, "panic"));
-    }
-    if on_writer {
         return;
-    }
+    };
     tracing::error!(
         operation = PANIC_OPERATION,
         outcome = "failed",
         error_code = "panic",
         "a FileSquid host thread panicked"
     );
-    if let Some(sender) = journal {
-        sender.flush();
-    }
+    sender.flush();
 }
 
 /// The journal the hook flushes, once it is open.

@@ -284,3 +284,8 @@ None.
 
 - A failed download carries the code `download_failed`.
 - A launch failure (`desktop.start`: `api_not_secured`, `start_failed`) and a panic before the journal opens are written straight to stdout as a redacted JSON line marked `journal_unavailable`, bypassing the `RUST_LOG` filter (`unjournaled_line`, `record_panic`).
+
+## Cubic round 4 fixes
+
+- A launch failure's detail (which may name a path) goes to stderr; its only stdout line is the redacted `desktop.start` record.
+- With no journal open (or on the writer's thread), a panic writes only the redacted line and is not traced, so stdout gets exactly one record; a test runs it under the host subscriber and checks the subscriber printed nothing.

@@ -362,7 +362,8 @@ pub const START_OPERATION: &str = "desktop.start";
 
 /// Write a launch failure straight to stdout as a redacted JSON line marked
 /// `journal_unavailable`, whatever `RUST_LOG` says: before the journal opens it is the only
-/// record. Writes to stdout.
+/// record, and the only stdout line of the failure (its detail, which may name a path, goes to
+/// stderr). Writes to stdout.
 fn report_unjournaled(error_code: &str) {
     let line = panic_journal::unjournaled_line(START_OPERATION, error_code);
     panic_journal::write_line(&mut std::io::stdout(), &line);
@@ -374,7 +375,7 @@ pub fn run() {
     let builder = match builder() {
         Ok(builder) => builder,
         Err(message) => {
-            tracing::error!(%message, "FileSquid desktop could not secure its API");
+            eprintln!("FileSquid desktop could not secure its API: {message}");
             report_unjournaled("api_not_secured");
             std::process::exit(1);
         }
@@ -384,7 +385,7 @@ pub fn run() {
     let app = match builder.build(context) {
         Ok(app) => app,
         Err(err) => {
-            tracing::error!(%err, "FileSquid desktop could not start");
+            eprintln!("FileSquid desktop could not start: {err}");
             report_unjournaled("start_failed");
             std::process::exit(1);
         }
