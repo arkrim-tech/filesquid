@@ -16,6 +16,12 @@
 //!   [`LeaseStore`] keeps leases in any compare-and-swap backend outside the
 //!   storage root (a local directory, or another S3 prefix); a host with
 //!   PostgreSQL MAY implement the trait over a generation column instead.
+//! - [`ObjectWriter::repair_version_inventory`]: the consented, one-time
+//!   repair of a committed head that has no version inventory (W010,
+//!   OCFL-S-020). It copies the root inventory and root sidecar into the
+//!   head version directory under the same fenced reservation as a commit,
+//!   refuses any other shape or validator error before writing, and
+//!   publishes no version. The engine never runs it by itself.
 //! - [`Clock`], [`SystemClock`] (native) and [`rfc3339_utc`]: time for
 //!   leases and `created` values; `wasm32` callers supply their own clock.
 //!
@@ -36,6 +42,7 @@ mod listing;
 mod plan;
 mod publish;
 mod reconcile;
+mod repair;
 mod reservation;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -43,6 +50,7 @@ pub use clock::SystemClock;
 pub use clock::{rfc3339_utc, Clock};
 pub use commit::{CommitReceipt, ObjectWriter};
 pub use draft::{DraftFile, VersionDraft};
-pub use error::{CommitError, ReservationError};
+pub use error::{CommitError, RepairError, ReservationError};
 pub use lease::{LeaseConfig, LeaseStore};
+pub use repair::RepairReceipt;
 pub use reservation::{Reservation, VersionReservations};
