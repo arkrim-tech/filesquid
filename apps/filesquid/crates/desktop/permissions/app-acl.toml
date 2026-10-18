@@ -1,0 +1,12 @@
+# App ACL manifest of filesquid-desktop (Task DE-0.1; DE-S-001; ADR 002 minimum IPC policy).
+#
+# This permission allows no command and no capability grants it. It exists so that Tauri
+# builds an app ACL manifest: with one, every custom app command is checked against the
+# capabilities and refused unless a capability grants it. Without one, Tauri runs the app's
+# own commands for local pages without any capability check. The UI reaches the FileSquid API
+# through the filesquid:// scheme (ADR 030), so the host defines no custom command.
+
+[[permission]]
+identifier = "no-app-commands"
+description = "Allows no app command. Declares the app ACL manifest so Tauri refuses every custom command that no capability grants."
+commands.allow = []
