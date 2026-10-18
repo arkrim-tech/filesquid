@@ -30,7 +30,7 @@
 <text x="254" y="540" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="400" fill="#555555">Rebuilding catalog and search index</text>
 <text x="1216" y="540" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#555555" text-anchor="end">Waiting</text>
 <g transform="translate(224 566) scale(0.750000)" fill="none" stroke="#777777" stroke-width="2.13" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></g>
-<text x="254" y="580" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="400" fill="#555555">Reading metadata.md and Content Credentials</text>
+<text x="254" y="580" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="14" font-weight="400" fill="#555555">Reading metadata.md and file records</text>
 <text x="1216" y="580" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#555555" text-anchor="end">Waiting</text>
 <rect x="200" y="636" width="1040" height="64" rx="8" fill="#FFF8E1"/>
 <g transform="translate(220 658) scale(0.750000)" fill="none" stroke="#8A6D00" stroke-width="2.13" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2 21h20z"/><path d="M12 10v5"/><path d="M12 18h.01"/></g>
