@@ -17,6 +17,27 @@ npm run contract:types # regenerate src/api/schema.d.ts from crates/api/openapi.
 
 `npm run test:e2e` builds the UI and starts `filesquid-server` with Cargo, so it needs the Rust toolchain and a Playwright browser (`npx playwright install chromium`). The repository's pre-commit hook runs it when `FILESQUID_E2E=1` is set.
 
+## Host adapter and client interface
+
+Views reach FileSquid only through `FileSquidClient` ([UI-S-012](./resources/srs.md), [ADR 030](../../../resources/architecture/030-filesquid-api-and-transports.md)); they never call `fetch`, `WebSocket` or Tauri APIs. `createHostClient()` picks the adapter at run time with `selectHostAdapter(detectHost(window))`:
+
+| Host                          | Adapter          | API base URL                                                                                 | Events                        |
+| ----------------------------- | ---------------- | -------------------------------------------------------------------------------------------- | ----------------------------- |
+| `filesquid-server`            | `server-http`    | same origin (`/api/v1/...`)                                                                  | WebSocket `/api/v1/events`    |
+| `filesquid-desktop` (Tauri 2) | `desktop-scheme` | `filesquid://localhost` (macOS, iOS, Linux); `http://filesquid.localhost` (Windows, Android) | Tauri event `filesquid-event` |
+
+The encrypted browser host (UI-F5.1) will add a third adapter behind the same interface.
+
+| Method                                               | Use                                                                                                                                                    |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `request(path, { method, body, signal })`            | JSON routes; returns the parsed body (`undefined` for 204)                                                                                             |
+| `read(path, { range, signal })`                      | Bytes; an optional inclusive `range` sends `Range: bytes=start-end` (or `bytes=start-` when `end` is omitted) and reports `partial` and `contentRange` |
+| `command(path, envelope, input, { method, signal })` | Mutations; JSON body `{ envelope, input }`; returns a `CommandOutcome`                                                                                 |
+| `upload(path, file, envelope, { filename, signal })` | One file as `multipart/form-data` with `envelope` and `file` parts; returns a `CommandOutcome`                                                         |
+| `subscribe(listener)`                                | Push events; returns the function that ends the subscription                                                                                           |
+
+Every command carries a `CommandEnvelope` built with `commandEnvelope({ scope, expectedRevision, operationId? })` ([CORE-S-005](../crates/core/resources/srs.md)). The operation id is the idempotency key: to retry, send the same envelope again. The outcome is `committed`, `pending`, `conflict` or `error` (with a `PortError`); HTTP 409 becomes `conflict`, any other non-2xx answer is an `ApiError`, a 2xx answer that is not a `CommandOutcome` for that operation throws a `TypeError`, and a network failure rejects with the transport's own error. Only `isCommitted(outcome)` is completion evidence; a pending outcome or UI state never is. No file route exists yet: the envelope binding above is the client's side of the routes that API-F1.3 adds, and changes with that contract if it differs.
+
 ## Authenticating to the FileSquid API
 
 The API is deny-by-default ([ADR 030](../../../resources/architecture/030-filesquid-api-and-transports.md) Decision 5, [API-S-004](../crates/api/resources/srs.md)). With a known token, every HTTP request from `FileSquidClient` carries `Authorization: Bearer <token>`; without one it sends no credential and the API answers `missing_credentials`. The event channel accepts the same header on WebSocket upgrades from clients that can set headers. A browser cannot, so `FileSquidClient` offers the ordered subprotocols `filesquid.events.v1` then `filesquid.bearer.<token>` instead. Only the liveness probe `GET /api/v1/health/live` is public.

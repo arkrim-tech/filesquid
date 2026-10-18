@@ -1,13 +1,15 @@
 /**
- * Build a {@link FileSquidClient} for the host this page runs in.
- * Inside the desktop app, events arrive as Tauri events named "filesquid-event", and the
- * bearer token is the per-launch token the desktop host defines for its own pages.
+ * Build a {@link FileSquidClient} for the host this page runs in, with the adapter chosen by
+ * `selectHostAdapter` (UI-S-012). Inside the desktop app, requests go through the custom URI
+ * scheme, events arrive as Tauri events named "filesquid-event", and the bearer token is the
+ * per-launch token the desktop host defines for its own pages. On `filesquid-server`,
+ * requests are same-origin HTTP and events use the WebSocket channel.
  */
 import { listen } from "@tauri-apps/api/event";
 import {
   FileSquidClient,
-  apiBaseUrl,
   detectHost,
+  selectHostAdapter,
   type ApiEvent,
   type EventListener,
 } from "./client";
@@ -59,10 +61,10 @@ export function createHostClient(
   win: Window = window,
   token?: () => string | undefined,
 ): FileSquidClient {
-  const env = detectHost(win);
+  const adapter = selectHostAdapter(detectHost(win));
   return new FileSquidClient({
-    baseUrl: apiBaseUrl(env),
-    subscribeHost: env.isTauri ? subscribeDesktop : undefined,
+    baseUrl: adapter.baseUrl,
+    subscribeHost: adapter.events === "tauri" ? subscribeDesktop : undefined,
     token: () => launchToken(win) ?? token?.(),
   });
 }
