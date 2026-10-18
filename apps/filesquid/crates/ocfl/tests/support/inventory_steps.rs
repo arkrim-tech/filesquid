@@ -9,7 +9,7 @@ use filesquid_ocfl::inventory::{
 use filesquid_ocfl::namaste::{Declaration, SpecVersion};
 use serde_json::{json, Value};
 
-use crate::example::{base, A, C, EMPTY};
+use crate::example::{base, sha512_inventory, A, C, EMPTY};
 use crate::OcflWorld;
 
 /// What the inventory scenarios carry between steps.
@@ -48,13 +48,7 @@ fn example_inventory(world: &mut OcflWorld) {
 
 #[given("the example OCFL 1.1 inventory rewritten to use sha512")]
 fn sha512_example(world: &mut OcflWorld) {
-    let text = serde_json::to_string(&base())
-        .expect("serialise")
-        .replace("sha256", "sha512")
-        .replace(A, &A.repeat(2))
-        .replace(C, &C.repeat(2))
-        .replace(EMPTY, &EMPTY.repeat(2));
-    world.inventory.json = Some(serde_json::from_str(&text).expect("json"));
+    world.inventory.json = Some(sha512_inventory());
 }
 
 #[then(expr = "the inventory's digest algorithm should be {string}")]

@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 
 #[path = "../support/inventory_example.rs"]
 mod example;
-use example::{base, A, C, EMPTY};
+use example::{base, sha512_inventory, A, C, EMPTY};
 
 /// Parse a JSON value as inventory bytes.
 fn parse(value: &Value) -> Result<Inventory, FormatError> {
@@ -334,17 +334,6 @@ fn manifest_digests_match_the_algorithm() {
         parse(&value).expect_err("sha256 digests").code(),
         Some("E039")
     );
-}
-
-/// `base()` rewritten for sha512: every stand-in digest becomes 128 digits.
-fn sha512_inventory() -> Value {
-    let text = serde_json::to_string(&base())
-        .expect("serialise")
-        .replace("sha256", "sha512")
-        .replace(A, &A.repeat(2))
-        .replace(C, &C.repeat(2))
-        .replace(EMPTY, &EMPTY.repeat(2));
-    serde_json::from_str(&text).expect("json")
 }
 
 #[test]

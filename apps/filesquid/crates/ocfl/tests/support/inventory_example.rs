@@ -12,6 +12,18 @@ pub const A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 /// Stand-in SHA-256 digest (valid hex of the right length).
 pub const C: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 
+/// The example inventory rewritten for sha512: the algorithm name changes
+/// and every stand-in digest becomes 128 hexadecimal digits.
+pub fn sha512_inventory() -> Value {
+    let text = serde_json::to_string(&base())
+        .expect("serialise")
+        .replace("sha256", "sha512")
+        .replace(A, &A.repeat(2))
+        .replace(C, &C.repeat(2))
+        .replace(EMPTY, &EMPTY.repeat(2));
+    serde_json::from_str(&text).expect("json")
+}
+
 /// The example inventory as JSON.
 pub fn base() -> Value {
     json!({
