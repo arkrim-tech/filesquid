@@ -12,6 +12,8 @@
 
 # Rust build
 **/target/
+# Shared-target Cargo lock beside the default target/ (scripts/lib/cargo_shared.sh)
+**/target.lock
 # Tauri generated schemas (rebuilt by tauri-build on every build)
 apps/filesquid/crates/desktop/gen/schemas/
 # FileSquid host data (activity journal, admin token) and journal exports from local runs
