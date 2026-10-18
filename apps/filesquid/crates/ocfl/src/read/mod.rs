@@ -22,6 +22,13 @@
 //!   so inspection and copy never edit an object (OCFL-S-019).
 //! - [`Object::history`] / [`version_history`] and [`Object::diff`] /
 //!   [`diff_versions`]: version history and the diff of two versions.
+//! - [`StorageRoot::enumerate`]: the committed logical state of every object
+//!   in a storage root, as [`CommittedEvent`]s carrying the object id,
+//!   version, logical path, digest and content locator that T-039 names,
+//!   with each object's `head` or every committed version ([`Versions`]).
+//!   It needs no database and no application type; an object that cannot
+//!   be read is reported as an [`EnumerateError`] and the others still
+//!   enumerate.
 //!
 //! Reading is not validation: structural validation of every OCFL rule is
 //! [`crate::validate`]. A reader checks what it needs to return correct
@@ -30,6 +37,7 @@
 pub(crate) mod committed;
 mod copy_guard;
 pub(crate) mod declaration;
+mod enumerate;
 mod error;
 mod history;
 mod object;
@@ -39,6 +47,10 @@ mod state;
 mod stream;
 
 pub use declaration::MAX_DECLARATION_BYTES;
+pub use enumerate::{
+    CommittedEvent, CommittedFile, CommittedObject, CommittedState, CommittedVersion,
+    EnumerateError, Versions,
+};
 pub use error::ReadError;
 pub use history::{diff_versions, version_history, Change, VersionInfo};
 pub use object::Object;
