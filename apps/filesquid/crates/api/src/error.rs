@@ -2,8 +2,9 @@
 //! Decision 6).
 //!
 //! Every failed request answers with an [`ApiError`] JSON body (`code`, `message`,
-//! `retryable`) documented in the contract as `components.schemas.ApiError`, so every UI can
-//! show the failure and decide whether to offer a retry. Messages are written for people and
+//! `retryable`, and `reason` for an authorisation denial) documented in the contract as
+//! `components.schemas.ApiError`, so every UI can show the failure and decide whether to offer
+//! a retry or a sign-in. Messages are written for people and
 //! never contain filesystem paths, SQL or internal error text (API-S-005). Internal details
 //! go to stdout only; the activity journal receives a redacted error record (the whitelisted
 //! `operation` and `error_code` fields, never the detail).
@@ -70,12 +71,67 @@ impl ErrorCode {
     }
 }
 
+/// Why the authorisation layer refused a call (API-S-004). Serialized in `snake_case` as the
+/// optional `reason` member of [`ApiError`]; documented as `components.schemas.DenialReason`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DenialReason {
+    /// The call carried no credential (`unauthorized`, HTTP 401).
+    MissingCredentials,
+    /// The credential is not one this host accepts (`forbidden`, HTTP 403).
+    InvalidCredentials,
+    /// The caller is known but the policy does not permit this action (`forbidden`, HTTP 403).
+    NotPermitted,
+}
+
+impl DenialReason {
+    /// Every denial reason, in contract order.
+    pub const ALL: [DenialReason; 3] = [
+        DenialReason::MissingCredentials,
+        DenialReason::InvalidCredentials,
+        DenialReason::NotPermitted,
+    ];
+
+    /// Wire name, also used as the journal error code.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DenialReason::MissingCredentials => "missing_credentials",
+            DenialReason::InvalidCredentials => "invalid_credentials",
+            DenialReason::NotPermitted => "not_permitted",
+        }
+    }
+
+    /// The error code answered for this reason.
+    pub fn code(self) -> ErrorCode {
+        match self {
+            DenialReason::MissingCredentials => ErrorCode::Unauthorized,
+            DenialReason::InvalidCredentials | DenialReason::NotPermitted => ErrorCode::Forbidden,
+        }
+    }
+
+    /// The message shown to people. It never repeats the presented credential.
+    fn message(self) -> &'static str {
+        match self {
+            DenialReason::MissingCredentials => {
+                "FileSquid needs credentials for this request. Sign in or reopen the app."
+            }
+            DenialReason::InvalidCredentials => {
+                "These credentials are not valid for this FileSquid host. Sign in again."
+            }
+            DenialReason::NotPermitted => "You do not have permission to do this.",
+        }
+    }
+}
+
 /// Error body of every failed API request.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApiError {
     code: ErrorCode,
     message: String,
     retryable: bool,
+    /// Present only on authorisation denials.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reason: Option<DenialReason>,
 }
 
 impl ApiError {
@@ -87,7 +143,22 @@ impl ApiError {
             code,
             message: message.into(),
             retryable: code.retryable(),
+            reason: None,
         }
+    }
+
+    /// The typed denial for `reason`: `unauthorized` or `forbidden`, never retryable, with a
+    /// message the UI can show (API-S-004, API-S-009).
+    pub fn denied(reason: DenialReason) -> Self {
+        Self {
+            reason: Some(reason),
+            ..Self::new(reason.code(), reason.message())
+        }
+    }
+
+    /// Why the call was refused, for authorisation denials.
+    pub fn reason(&self) -> Option<DenialReason> {
+        self.reason
     }
 
     /// The error code.

@@ -69,7 +69,7 @@ code{font-size:13px}
 <main>
 <h1>filesquid-c2pa component diagram</h1>
 <p class="meta">C2PA module of FileSquid · <code>apps/filesquid/crates/c2pa</code> · drawn against the code on <code>filesquid-product</code> · 2026-10-15</p>
-<p>filesquid-c2pa is the <code>c2pa</code> module of FileSquid (renamed from <code>filesquid-provenance</code>, ADR 029): an engine that reads, validates, mints, edits and embeds Content Credentials, implemented from scratch in Rust and still publishable on its own (ADR 026). FileSquid UIs reach it only through the one FileSquid API (<code>filesquid-api</code>, ADR 030), served by the <code>filesquid-desktop</code> and <code>filesquid-server</code> hosts. The crate is a workspace member. CP-0.1 built its foundation: the byte source and sink, fetcher and crypto-backend traits with the default RustCrypto backend, isolation tests, the <code>wasm32</code> build check and the <code>c2patool</code> oracle harness. CP-0.2 built the JUMBF parser and the manifest store model with its bounded CBOR decoder, reading a store from a byte source (a sidecar <code>.c2pa</code> file) or by remote reference through the caller's fetcher. The other C2PA components in the diagram below (format handlers, validation, report, minting, embedding, surfaces) do not exist yet. The other C2PA code in the repository is the portable record types in <code>filesquid-core</code> (<code>provenance.rs</code>).</p>
+<p>filesquid-c2pa is the <code>c2pa</code> module of FileSquid (renamed from <code>filesquid-provenance</code>, ADR 029): an engine that reads, validates, mints, edits and embeds Content Credentials, implemented from scratch in Rust and still publishable on its own (ADR 026). FileSquid UIs reach it only through the one FileSquid API (<code>filesquid-api</code>, ADR 030), served by the <code>filesquid-desktop</code> and <code>filesquid-server</code> hosts. The crate is a workspace member. CP-0.1 built its foundation: the byte source and sink, fetcher and crypto-backend traits with the default RustCrypto backend, isolation tests, the <code>wasm32</code> build check and the <code>c2patool</code> oracle harness. CP-0.2 built the JUMBF parser and the manifest store model with its bounded CBOR decoder, reading a store from a byte source (a sidecar <code>.c2pa</code> file) or by remote reference through the caller's fetcher. CP-0.3 built the format-handler interface with the JPEG (APP11) and PNG (<code>caBX</code>) handlers, reading a store embedded in an asset, and hard-binding validation (data hash, box hash and BMFF hash, with exclusion ranges); other formats are reported as unsupported. The other C2PA components in the diagram below (signature, certificate and timestamp validation, report, minting, embedding, surfaces) do not exist yet. The other C2PA code in the repository is the portable record types in <code>filesquid-core</code> (<code>provenance.rs</code>).</p>
 <ul class="legend" aria-label="Legend">
 <li><span class="sw built"></span>Built · working code and tests</li>
 <li><span class="sw scaffold"></span>Scaffold · stub or partial</li>
@@ -80,8 +80,8 @@ code{font-size:13px}
 </ul>
 <h2>Inside the engine</h2>
 <figure>
-<svg class="diagram" viewBox="0 0 1320 520" role="img" aria-label="filesquid-c2pa internals: format handlers, JUMBF parser, manifest store, validators and report for reading; builder, hard binding, COSE signing and embedding for minting; Rust API, CLI, view API routed by filesquid-api and the credentials panel in @filesquid/ui as surfaces; the byte source and sink, fetcher and crypto-backend foundation is built (CP-0.1), the JUMBF parser and manifest store are built (CP-0.2), all remaining components drawn are planned."><defs><marker id="c1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
-<rect class="panel" x="270" y="20" width="790" height="490" rx="10"/><text class="ptitle" x="290" y="47">filesquid-c2pa · Rust library</text><text class="psub" x="1040" y="47" text-anchor="end">foundation (CP-0.1) and parsing (CP-0.2) built · Tasks 0.17, 0.18, 2.6</text>
+<svg class="diagram" viewBox="0 0 1320 520" role="img" aria-label="filesquid-c2pa internals: format handlers, JUMBF parser, manifest store, validators and report for reading; builder, hard binding, COSE signing and embedding for minting; Rust API, CLI, view API routed by filesquid-api and the credentials panel in @filesquid/ui as surfaces; the byte source and sink, fetcher and crypto-backend foundation is built (CP-0.1), the JUMBF parser and manifest store are built (CP-0.2), the format handlers are built and the validators are partial with hard bindings built (CP-0.3), all remaining components drawn are planned."><defs><marker id="c1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+<rect class="panel" x="270" y="20" width="790" height="490" rx="10"/><text class="ptitle" x="290" y="47">filesquid-c2pa · Rust library</text><text class="psub" x="1040" y="47" text-anchor="end">foundation, parsing and hard bindings (CP-0.1 to CP-0.3) built · Tasks 0.17, 0.18, 2.6</text>
 <text class="small" x="20" y="62" text-anchor="start">Callers</text>
 <g class="box actor"><rect x="20" y="80" width="220" height="52" rx="6"/>
 <text class="name" x="30" y="101">filesquid-api</text>
@@ -109,11 +109,11 @@ code{font-size:13px}
 <polyline class="edge planned-edge" points="290,380 240,380" marker-end="url(#c1)"/>
 <text class="elabel" x="247" y="410" text-anchor="end">mapped by filesquid-api</text>
 <text class="small" x="290" y="70" text-anchor="start">Read and validate</text>
-<g class="box planned">
+<g class="box built">
 <rect x="290" y="80" width="130" height="52" rx="6"/>
-
-<text class="name" x="300" y="101">Format handlers</text>
-<text class="sub" x="300" y="119">JPEG APP11, PNG caBX</text>
+<text class="badge" x="412" y="93" text-anchor="end">BUILT</text>
+<text class="name" x="300" y="108">Format handlers</text>
+<text class="sub" x="300" y="124">JPEG APP11, PNG caBX</text>
 </g>
 <g class="box built">
 <rect x="450" y="80" width="120" height="52" rx="6"/>
@@ -127,11 +127,11 @@ code{font-size:13px}
 <text class="name" x="610" y="108">Manifest store</text>
 <text class="sub" x="610" y="124">claims, CBOR assertions</text>
 </g>
-<g class="box planned">
+<g class="box scaffold">
 <rect x="770" y="80" width="130" height="100" rx="6"/>
-
-<text class="name" x="780" y="101">Validators</text>
-<text class="sub" x="780" y="119">hard-binding hashes</text>
+<text class="badge" x="892" y="93" text-anchor="end">SCAFFOLD</text>
+<text class="name" x="780" y="108">Validators</text>
+<text class="sub" x="780" y="124">hard bindings (built)</text>
 </g>
 <text class="sub" x="780" y="135" text-anchor="start">COSE_Sign1 signature</text>
 <text class="sub" x="780" y="151" text-anchor="start">X.509 chain, RFC 3161</text>
@@ -142,7 +142,7 @@ code{font-size:13px}
 <text class="name" x="940" y="101">Report</text>
 <text class="sub" x="940" y="119">status codes</text>
 </g>
-<polyline class="edge planned-edge" points="420,106 450,106" marker-end="url(#c1)"/>
+<polyline class="edge" points="420,106 450,106" marker-end="url(#c1)"/>
 <polyline class="edge" points="570,106 600,106" marker-end="url(#c1)"/>
 <polyline class="edge planned-edge" points="740,106 770,106" marker-end="url(#c1)"/>
 <polyline class="edge planned-edge" points="900,106 930,106" marker-end="url(#c1)"/>
@@ -301,7 +301,7 @@ code{font-size:13px}
 <tr><td>Crypto backend trait (established crates)</td><td><a href="./plan.md">CP-0.1</a></td><td>0.17</td><td><span class="tag built">BUILT</span></td><td>C2PA-S-006</td></tr>
 <tr><td>wasm32 build check in the local pre-commit gate</td><td><a href="./plan.md">CP-0.1</a></td><td>0.17</td><td><span class="tag built">BUILT</span></td><td>C2PA-S-009</td></tr>
 <tr><td>JUMBF parser, CBOR decoder and manifest store model; reading from byte sources and remote references</td><td><a href="./plan.md">CP-0.2</a></td><td>0.17</td><td><span class="tag built">BUILT</span></td><td>C2PA-S-001</td></tr>
-<tr><td>Format handlers (JPEG, PNG) and hard-binding validation</td><td><a href="./plan.md">CP-0.3</a></td><td>0.17</td><td><span class="tag planned">PLANNED</span></td><td>C2PA-S-002, -005</td></tr>
+<tr><td>Format handlers (JPEG, PNG) and hard-binding validation</td><td><a href="./plan.md">CP-0.3</a></td><td>0.17</td><td><span class="tag built">BUILT</span></td><td>C2PA-S-002, -005</td></tr>
 <tr><td>COSE_Sign1, X.509 chain, RFC 3161, revocation</td><td><a href="./plan.md">CP-0.4</a></td><td>0.17</td><td><span class="tag planned">PLANNED</span></td><td>C2PA-S-002</td></tr>
 <tr><td>Validation report; CLI <code>read</code>, <code>verify</code></td><td><a href="./plan.md">CP-0.5</a></td><td>0.17</td><td><span class="tag planned">PLANNED</span></td><td>C2PA-S-002, -010</td></tr>
 <tr><td>Manifest builder (actions, ingredients, AI assertions)</td><td><a href="./plan.md">CP-0.6</a></td><td>0.18</td><td><span class="tag planned">PLANNED</span></td><td>C2PA-S-003</td></tr>

@@ -25,7 +25,7 @@ pub const TOOL_ENV: &str = "FILESQUID_C2PATOOL";
 pub const CORPUS_ENV: &str = "FILESQUID_C2PA_CONFORMANCE_DIR";
 
 /// Asset extensions the harness feeds to the oracle (lowercase).
-pub const ASSET_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "c2pa"];
+pub const ASSET_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "mp4", "c2pa"];
 
 /// Cap on corpus files per run.
 pub const MAX_CORPUS_FILES: usize = 1000;

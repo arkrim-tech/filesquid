@@ -84,7 +84,7 @@ FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by ga
     - [ ] [API-F1.4](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-api-f19-in-fs-310-and-api-f15-in-fs-c1) Metadata property routes
 18. [ ] [Task FS-1.4](./implementation-plan.md#task-fs-1.4) Jobs, events and the authorisation layer
     - [ ] [API-F1.6](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-api-f19-in-fs-310-and-api-f15-in-fs-c1) Job and event routes
-    - [ ] [API-F1.7](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-api-f19-in-fs-310-and-api-f15-in-fs-c1) Authentication and authorisation
+    - [x] [API-F1.7](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-api-f19-in-fs-310-and-api-f15-in-fs-c1) Authentication and authorisation
 19. [ ] [Task 0.8](./implementation-plan.md#task-0.8) Test reporting, capability register, and foundation evidence
     - [ ] [UI-0.6](../apps/filesquid/ui/resources/plan.md#phase-f0-test-reporting-global-task-08) Playwright production suite and Allure
 20. [ ] [Task 1.1](./implementation-plan.md#task-1.1) Independent local library create, open, copy, and recover
@@ -198,12 +198,12 @@ Everything after FileSquid release 1, in the phase order of the implementation p
 
 ### Content Credentials, release 2 (phase C)
 
-C2PA moved out of the MVP and release 1 ([ADR 037](./architecture/037-c2pa-in-release-2.md)). CP-0.1 and CP-0.2 were finished before the move.
+C2PA moved out of the MVP and release 1 ([ADR 037](./architecture/037-c2pa-in-release-2.md)). CP-0.1, CP-0.2 and CP-0.3 were finished before or alongside the move.
 
 50. [ ] [Task 0.17](./implementation-plan.md#task-0.17) filesquid-c2pa read and validate
     - [x] [CP-0.1](../apps/filesquid/crates/c2pa/resources/plan.md#phase-c-read-and-validate-global-task-017) Scaffold, isolation, crypto backend and oracle harness
     - [x] [CP-0.2](../apps/filesquid/crates/c2pa/resources/plan.md#phase-c-read-and-validate-global-task-017) JUMBF and CBOR manifest store parsing
-    - [ ] [CP-0.3](../apps/filesquid/crates/c2pa/resources/plan.md#phase-c-read-and-validate-global-task-017) Hard bindings and JPEG/PNG handlers
+    - [x] [CP-0.3](../apps/filesquid/crates/c2pa/resources/plan.md#phase-c-read-and-validate-global-task-017) Hard bindings and JPEG/PNG handlers
     - [ ] [CP-0.4](../apps/filesquid/crates/c2pa/resources/plan.md#phase-c-read-and-validate-global-task-017) Signatures, certificate chains, timestamps and revocation
     - [ ] [CP-0.5](../apps/filesquid/crates/c2pa/resources/plan.md#phase-c-read-and-validate-global-task-017) Validation report and `fsquid` read/verify
 51. [ ] [Task 0.18](./implementation-plan.md#task-0.18) filesquid-c2pa manifest builder and prepared records

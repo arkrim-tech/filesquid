@@ -186,3 +186,15 @@ impl ByteSink for MemorySink {
         Ok(())
     }
 }
+
+/// A zero-filled buffer of `size` bytes, or `None` when `size` does not fit
+/// in `usize` or the memory cannot be reserved. Nothing is written until
+/// the reservation has succeeded, so an allocation failure is reported
+/// instead of aborting the process.
+pub(crate) fn try_zeroed(size: u64) -> Option<Vec<u8>> {
+    let len = usize::try_from(size).ok()?;
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(len).ok()?;
+    bytes.resize(len, 0);
+    Some(bytes)
+}

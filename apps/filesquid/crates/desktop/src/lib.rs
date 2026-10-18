@@ -8,10 +8,14 @@
 //! health is tracked by the process registry
 //! ([ADR 033](../../../../../resources/architecture/033-activity-journal-and-live-health-monitoring.md)).
 //! Logs go to stdout as JSON; no log files.
+//!
+//! Every launch generates a new per-launch token ([`install_launch_token`]). The API refuses
+//! any request without it (deny-by-default, API-S-004), and the host hands it only to its
+//! own pages through a webview initialization script ([`api_protocol::launch_token_script`]).
 
 pub mod api_protocol;
 
-use filesquid_api::admin::AdminAuth;
+use filesquid_api::auth::{record_token_issue, Authoriser, LaunchToken, Principal};
 use filesquid_api::monitor::HostMonitor;
 use filesquid_api::trace_layer::JournalLayer;
 use filesquid_api::ApiState;
@@ -51,13 +55,37 @@ fn init_tracing(journal: JournalLayer) {
         .ok();
 }
 
-/// Build the Tauri application with the API scheme, event forwarding and the monitor.
-pub fn builder() -> tauri::Builder<tauri::Wry> {
+/// Name of the plugin that carries the per-launch token's initialization script.
+const TOKEN_PLUGIN: &str = "filesquid-launch-token";
+
+/// Generate this launch's token and install it as the only credential `state` accepts.
+/// Fails when the random source fails or an authoriser is already installed.
+pub fn install_launch_token(state: &ApiState) -> Result<LaunchToken, String> {
+    let token = LaunchToken::generate()?;
+    if !state.install_authoriser(Authoriser::desktop_owner(&token)) {
+        return Err("an authoriser was already installed".to_string());
+    }
+    Ok(token)
+}
+
+/// A plugin with no commands whose only job is the initialization script that gives app
+/// pages the per-launch token.
+fn launch_token_plugin(token: &LaunchToken) -> tauri::plugin::TauriPlugin<tauri::Wry> {
+    tauri::plugin::Builder::new(TOKEN_PLUGIN)
+        .js_init_script(api_protocol::launch_token_script(token))
+        .build()
+}
+
+/// Build the Tauri application with the per-launch token, the API scheme, event forwarding
+/// and the monitor. Fails when the per-launch token cannot be generated.
+pub fn builder() -> Result<tauri::Builder<tauri::Wry>, String> {
     let layer = JournalLayer::new();
     init_tracing(layer.clone());
     let state = ApiState::new();
+    let token = install_launch_token(&state)?;
     let scheme_state = state.clone();
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
+        .plugin(launch_token_plugin(&token))
         .manage(state)
         .register_asynchronous_uri_scheme_protocol(
             api_protocol::SCHEME,
@@ -72,7 +100,8 @@ pub fn builder() -> tauri::Builder<tauri::Wry> {
             start_monitor(app.handle(), &layer)?;
             forward_events(app.handle().clone());
             Ok(())
-        })
+        });
+    Ok(builder)
 }
 
 /// Open the journal in the app data directory, install the monitor and start its ticker.
@@ -86,10 +115,10 @@ fn start_monitor(
     let host = Arc::new(HostMonitor::open(
         &data_dir,
         "filesquid-desktop",
-        AdminAuth::Owner,
         &state,
         Some(layer),
     )?);
+    record_token_issue(host.monitor(), &Principal::Owner);
     let stop = Arc::new(AtomicBool::new(false));
     spawn_ticker(host.clone(), stop.clone());
     app.manage(DesktopMonitor { host, stop });
@@ -144,7 +173,14 @@ fn stop_monitor(app: &tauri::AppHandle) {
 
 /// Run the desktop event loop.
 pub fn run() {
-    let app = match builder().build(tauri::generate_context!()) {
+    let builder = match builder() {
+        Ok(builder) => builder,
+        Err(message) => {
+            tracing::error!(%message, "FileSquid desktop could not secure its API");
+            std::process::exit(1);
+        }
+    };
+    let app = match builder.build(tauri::generate_context!()) {
         Ok(app) => app,
         Err(err) => {
             tracing::error!(%err, "FileSquid desktop could not start");

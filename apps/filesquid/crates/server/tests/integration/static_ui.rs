@@ -5,6 +5,7 @@ use axum::{
     body::Body,
     http::{header, Request, StatusCode},
 };
+use filesquid_api::auth::Authoriser;
 use filesquid_api::ApiState;
 use filesquid_server::{app, ServerConfig};
 use std::path::PathBuf;
@@ -29,7 +30,9 @@ fn server(ui_dir: PathBuf) -> axum::Router {
         ui_dir: Some(ui_dir),
         ..ServerConfig::default()
     };
-    app(&config, ApiState::new())
+    let state = ApiState::new();
+    state.install_authoriser(Authoriser::server_administrator("ui-token"));
+    app(&config, state)
 }
 
 #[tokio::test]
@@ -71,7 +74,12 @@ async fn range_requests_return_partial_content() {
 async fn api_routes_take_precedence_over_static_files() {
     let dir = ui_fixture("precedence");
     let response = server(dir.clone())
-        .oneshot(Request::get("/api/v1/health").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::get("/api/v1/health")
+                .header(header::AUTHORIZATION, "Bearer ui-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .expect("response");
     assert_eq!(response.status(), StatusCode::OK);
