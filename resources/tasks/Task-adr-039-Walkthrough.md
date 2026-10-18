@@ -16,6 +16,10 @@ Record the decision to unify Rust dependency feature sets across the `apps/files
 
 Four P2 findings and one P3. Fixed: `--locked` on the stand-alone check in this walkthrough; publication check deferred to the first change that makes a module crate publishable, since every crate is `publish = false` today; drift gate in every `rust:` scope; full keep criteria in the index row. Not fixed: ADR validator coverage of 034 to 039 needs a script change, out of scope here (open question 2).
 
+## Cubic round 2
+
+One P2: the index row named the stand-alone check without `--locked`. Fixed.
+
 ## Facts checked (2026-10-18, UTC)
 
 | Fact | How it was checked |
