@@ -921,15 +921,18 @@ $ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8096/api/v1/health
 {"schema_version":1,"status":"ok","product":"filesquid"}
 ```
 
-Re-run in review round 8 so the blank-value check shows the real command: the server started from `apps/filesquid` with a blank `FILESQUID_ADMIN_TOKEN` and the default data directory, stopped by `timeout` after 5 s (output unedited):
+Re-run in review round 8 so the blank-value check shows the real command: the server started from `apps/filesquid` with a blank `FILESQUID_ADMIN_TOKEN` and the default data directory, stopped when the 5 s `timeout` around `cargo run` expired, then the data directory removed (re-run in review round 9 to record the cleanup; output unedited):
 
 ```text
 $ FILESQUID_ADMIN_TOKEN="   " FILESQUID_BIND=127.0.0.1:8097 timeout 5 cargo run -q -p filesquid-server
-{"timestamp":"2026-10-18T03:56:18.467548Z","level":"INFO","fields":{"message":"generated the administrator token","path":"filesquid-data/admin-token"},"target":"filesquid_server"}
-{"timestamp":"2026-10-18T03:56:18.472266Z","level":"INFO","fields":{"message":"filesquid-server listening","addr":"127.0.0.1:8097","ui_dir":"None","data_dir":"filesquid-data"},"target":"filesquid_server"}
-{"timestamp":"2026-10-18T03:56:23.222782Z","level":"INFO","fields":{"message":"shutdown requested"},"target":"filesquid_server"}
+{"timestamp":"2026-10-18T04:01:06.881794Z","level":"INFO","fields":{"message":"generated the administrator token","path":"filesquid-data/admin-token"},"target":"filesquid_server"}
+{"timestamp":"2026-10-18T04:01:06.885070Z","level":"INFO","fields":{"message":"filesquid-server listening","addr":"127.0.0.1:8097","ui_dir":"None","data_dir":"filesquid-data"},"target":"filesquid_server"}
+{"timestamp":"2026-10-18T04:01:07.458299Z","level":"INFO","fields":{"message":"shutdown requested"},"target":"filesquid_server"}
 $ ls -l filesquid-data/admin-token
--rw------- 1 root root 64 Oct 18 03:56 filesquid-data/admin-token
+-rw------- 1 root root 64 Oct 18 04:01 filesquid-data/admin-token
+$ rm -rf filesquid-data
+$ ls filesquid-data
+ls: cannot access 'filesquid-data': No such file or directory
 ```
 
 ## Work left to other tasks
