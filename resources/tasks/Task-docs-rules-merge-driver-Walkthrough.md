@@ -11,11 +11,13 @@ The owner asked for two edits to `.agents/rules/`, and nothing else there.
 - [task-workflow.md](../../.agents/rules/task-workflow.md): after each sentence that says to run `update_mvp_progress.py` and that `verify_docs.sh` fails while it is stale (global and module prompt paragraphs), the owner-specified merge-driver registration and conflict-recovery sentences.
 - [local-verification.md](../../.agents/rules/local-verification.md): step 8 row of "The gates" table now names the MVP progress merge-driver tests.
 
+Owner revision after Cubic round 1: the recovery sentence in both paragraphs now ends "If the merge still reports a conflict there, resolve any remaining conflict markers, then rerun `python3 scripts/docs/update_mvp_progress.py` and commit the result in the merge commit." The first two added sentences are unchanged.
+
 The root README ("Run tests" and setup sections) already documents the two `git config` commands (`merge.mvp-progress.name` and `merge.mvp-progress.driver`), so the wording "the two `git config` commands in the README" is accurate.
 
 ## Hook
 
-Raw output of `bash scripts/pre-commit.sh` (scope `docs`, 2026-10-18 UTC), exit 0. Summary line: `✅ All Pre-Commit Hooks Passed! Test scope: docs (19s)`.
+Raw output of `bash scripts/pre-commit.sh` (scope `docs`, 2026-10-18 UTC), exit 0. Summary line: `✅ All Pre-Commit Hooks Passed! Test scope: docs (23s)`.
 
 ```text
 changed_scope: docs (only documentation or always-run checker scripts outside the crates and npm packages changed)
@@ -55,19 +57,19 @@ TAP version 13
 # Subtest: stack ADRs exist with ISO 42010 sections and accepted vocabulary
 ok 1 - stack ADRs exist with ISO 42010 sections and accepted vocabulary
   ---
-  duration_ms: 22.185977
+  duration_ms: 101.09618
   type: 'test'
   ...
 # Subtest: ADR markdown hrefs reject absolute destinations
 ok 2 - ADR markdown hrefs reject absolute destinations
   ---
-  duration_ms: 0.383881
+  duration_ms: 0.262889
   type: 'test'
   ...
 # Subtest: FileSquid ADRs 029-032 are indexed with the FileSquid header and expected status
 ok 3 - FileSquid ADRs 029-032 are indexed with the FileSquid header and expected status
   ---
-  duration_ms: 1.409212
+  duration_ms: 1.439594
   type: 'test'
   ...
 1..3
@@ -78,7 +80,7 @@ ok 3 - FileSquid ADRs 029-032 are indexed with the FileSquid header and expected
 # cancelled 0
 # skipped 0
 # todo 0
-# duration_ms 128.643686
+# duration_ms 191.988046
 ✅ ADR structure (ISO 42010) passed.
 🔍 PRD allocation...
 FileSquid: 260 vision IDs, 260 allocated, 130 allocation rows
@@ -97,7 +99,7 @@ checked 164 documents: 0 link(s) cross the FileSquid/ImageSquid boundary
 🔍 MVP queue and merge driver tests...
 ...............................................
 ----------------------------------------------------------------------
-Ran 47 tests in 5.543s
+Ran 47 tests in 5.373s
 
 OK
 ✅ MVP queue and merge driver tests passed.
@@ -126,6 +128,6 @@ Starting Lint and Test Validation...
 ⏭️  Skipped: Desktop packaged-window e2e (docs-only change: only documentation or always-run checker scripts outside the crates and npm packages changed; set FULL=1 to run)
 ✅ Lint and test validation passed (test scope: docs).
 ========================================
-✅ All Pre-Commit Hooks Passed! Test scope: docs (19s)
+✅ All Pre-Commit Hooks Passed! Test scope: docs (23s)
 ========================================
 ```
