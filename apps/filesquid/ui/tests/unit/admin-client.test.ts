@@ -1,6 +1,7 @@
 /**
  * Unit tests for the FileSquidClient admin methods (SRS-F-061): token header, query
- * strings, JSON Lines export and error statuses.
+ * strings, JSON Lines export and error statuses. Authentication on every route is covered
+ * in client-auth.test.ts.
  */
 import { describe, expect, it } from "vitest";
 import { ApiError, FileSquidClient } from "../../src/api/client";
@@ -17,14 +18,14 @@ function recorder(body: string, status = 200) {
 }
 
 describe("admin methods", () => {
-  it("send the admin token as a bearer header when one is set", async () => {
+  it("send the token as a bearer header when one is set", async () => {
     const r = recorder(JSON.stringify({ status: "ok", reasons: [], checks: {} }));
-    const client = new FileSquidClient({ baseUrl: "", fetch: r.fetch, adminToken: () => "t0k" });
+    const client = new FileSquidClient({ baseUrl: "", fetch: r.fetch, token: () => "t0k" });
     await client.adminHealth();
     expect(r.calls).toEqual([{ url: "/api/v1/admin/health", auth: "Bearer t0k" }]);
   });
 
-  it("send no authorization header without a token (desktop owner)", async () => {
+  it("send no authorization header when no token is known", async () => {
     const r = recorder("[]");
     const client = new FileSquidClient({ baseUrl: "filesquid://localhost", fetch: r.fetch });
     await client.adminProcesses();
@@ -48,13 +49,6 @@ describe("admin methods", () => {
     expect(text.trim().split("\n")).toHaveLength(2);
   });
 
-  it("never send the admin token to non-admin routes", async () => {
-    const r = recorder(JSON.stringify({ status: "ok" }));
-    const client = new FileSquidClient({ baseUrl: "", fetch: r.fetch, adminToken: () => "t0k" });
-    await client.health();
-    expect(r.calls).toEqual([{ url: "/api/v1/health", auth: null }]);
-  });
-
   it("follow the continuation cursor of a truncated export", async () => {
     const urls: string[] = [];
     const pages = [
@@ -76,7 +70,12 @@ describe("admin methods", () => {
   });
 
   it("raise ApiError with 401 and 403 so the UI can ask for the token", async () => {
-    const client = new FileSquidClient({ baseUrl: "", fetch: recorder("", 401).fetch });
-    await expect(client.adminMetrics()).rejects.toEqual(new ApiError(401, "/api/v1/admin/metrics"));
+    const body = JSON.stringify({ code: "unauthorized", message: "x", retryable: false });
+    const client = new FileSquidClient({ baseUrl: "", fetch: recorder(body, 401).fetch });
+    await expect(client.adminMetrics()).rejects.toMatchObject({
+      status: 401,
+      path: "/api/v1/admin/metrics",
+    });
+    await expect(client.adminMetrics()).rejects.toBeInstanceOf(ApiError);
   });
 });

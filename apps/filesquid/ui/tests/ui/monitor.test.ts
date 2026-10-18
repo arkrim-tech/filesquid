@@ -164,6 +164,59 @@ describe("<fs-monitor>", () => {
     expect(el.shadowRoot?.querySelector('[data-section="health"]')).not.toBeNull();
   });
 
+  it.each([
+    ["missing_credentials", "status", "Missing credentials"],
+    ["invalid_credentials", "alert", "Invalid credentials"],
+    ["not_permitted", "alert", "Not permitted"],
+  ] as const)("shows %s distinctly above the token form", async (reason, role, text) => {
+    const status = reason === "missing_credentials" ? 401 : 403;
+    const client = fakeClient().client;
+    client.adminHealth = () => Promise.reject(new ApiError(status, "/api/v1/admin", { reason }));
+    const tokens: TokenStore = { get: () => undefined, set: () => undefined };
+    const el = mount(client, tokens);
+    await settle();
+    const note = el.shadowRoot?.querySelector(`[data-reason="${reason}"]`);
+    expect(note?.textContent).toBe(text);
+    expect(note?.getAttribute("role")).toBe(role);
+    expect(el.shadowRoot?.querySelector("form[data-form='token']")).not.toBeNull();
+  });
+
+  it("shows the reason label, not a token form, without a token store (desktop)", async () => {
+    const client = fakeClient().client;
+    const reason = "invalid_credentials";
+    client.adminHealth = () => Promise.reject(new ApiError(403, "/api/v1/admin", { reason }));
+    const el = mount(client);
+    await settle();
+    const alert = el.shadowRoot?.querySelector('[role="alert"]');
+    expect(alert?.textContent).toBe("Monitor unavailable: Invalid credentials");
+    expect(el.shadowRoot?.querySelector("form[data-form='token']")).toBeNull();
+  });
+
+  it("shows a refused subscription as a denial instead of throwing", async () => {
+    const client = fakeClient().client;
+    client.subscribe = () => {
+      throw new ApiError(0, "/api/v1/events", { reason: "invalid_credentials" });
+    };
+    const tokens: TokenStore = { get: () => undefined, set: () => undefined };
+    const el = mount(client, tokens);
+    await settle();
+    expect(el.shadowRoot?.querySelector('[data-reason="invalid_credentials"]')).not.toBeNull();
+  });
+
+  it("clears the typed token from the form after submitting", async () => {
+    const fake = fakeClient(401);
+    const tokens: TokenStore = { get: () => undefined, set: () => undefined };
+    const el = mount(fake.client, tokens);
+    await settle();
+    const form = el.shadowRoot?.querySelector("form[data-form='token']");
+    const input = form?.querySelector("input") as HTMLInputElement;
+    input.value = "s3cret";
+    form?.dispatchEvent(new Event("submit", { cancelable: true }));
+    expect(input.value).toBe("");
+    await settle();
+    expect(el.shadowRoot?.innerHTML).not.toContain("s3cret");
+  });
+
   it("keeps journal entries published while the first page loads, each once", async () => {
     const fake = fakeClient();
     let release: () => void = () => undefined;

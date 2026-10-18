@@ -1,7 +1,7 @@
 /**
  * Unit tests for the FileSquid API client: host detection, URLs and requests.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ApiError, FileSquidClient, apiBaseUrl, eventsUrl } from "../../src/api/client";
 
 describe("apiBaseUrl", () => {
@@ -53,11 +53,15 @@ describe("FileSquidClient.health", () => {
   });
 
   it("throws ApiError with the HTTP status when the API answers with an error", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const client = new FileSquidClient({
       baseUrl: "",
       fetch: async () => new Response("nope", { status: 503 }),
     });
     await expect(client.health()).rejects.toEqual(new ApiError(503, "/api/v1/health"));
+    expect(warn).toHaveBeenCalledOnce();
+    expect(String(warn.mock.calls[0]?.[0])).not.toContain("nope");
+    warn.mockRestore();
   });
 });
 

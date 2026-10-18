@@ -15,7 +15,7 @@ export default defineConfig({
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
     command: "npm run build && cd .. && cargo run -q -p filesquid-server",
-    url: `http://127.0.0.1:${PORT}/api/v1/health`,
+    url: `http://127.0.0.1:${PORT}/api/v1/health/live`,
     timeout: 300_000,
     reuseExistingServer: false,
     env: {

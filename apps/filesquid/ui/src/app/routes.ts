@@ -1,38 +1,32 @@
 /**
  * Hash routing shared by every distribution until the full navigation model (FS-2.1):
  * `#/monitor` shows the Monitor dashboard inside the shell; any other hash shows the shell
- * alone. Also provides the session-scoped admin token store used on the server host.
+ * alone. Also provides the in-memory token store used on the server host.
  */
 import type { MonitorOptions, TokenStore } from "../components/fs-monitor";
 
 /** Hash of the Monitor route. */
 export const MONITOR_ROUTE = "#/monitor";
 
-const TOKEN_KEY = "filesquid.adminToken";
-
 /**
- * Keep the admin token in `sessionStorage` (cleared when the tab closes). Storage access
- * can throw in private windows; failures are logged and the token is simply not kept.
+ * Keep a token typed in at run time (the server host's administrator token) in memory only:
+ * no localStorage, no sessionStorage, no URL. It is gone when the page reloads or closes.
  *
- * @param storage Storage to use; defaults to `window.sessionStorage`.
+ * An empty value (for example a blank form field) is not a token: `get` then returns
+ * undefined, so the client sends no credential and the API answers `missing_credentials`.
+ *
+ * @param onSet Called with no arguments after a token is set, for example to reload the
+ *   shell's API status; it never receives the token.
+ * @returns A token store for `<fs-monitor>`; give the client its getter as the `token`
+ *   function (`() => store.get()`), not the store itself.
  */
-export function sessionTokenStore(storage?: Storage): TokenStore {
-  const target = (): Storage | undefined => storage ?? globalThis.sessionStorage;
+export function memoryTokenStore(onSet?: () => void): TokenStore {
+  let token: string | undefined;
   return {
-    get() {
-      try {
-        return target()?.getItem(TOKEN_KEY) ?? undefined;
-      } catch (error) {
-        console.warn("FileSquid could not read the admin token from session storage", error);
-        return undefined;
-      }
-    },
-    set(token: string) {
-      try {
-        target()?.setItem(TOKEN_KEY, token);
-      } catch (error) {
-        console.warn("FileSquid could not keep the admin token in session storage", error);
-      }
+    get: () => (token === "" ? undefined : token),
+    set(value: string) {
+      token = value;
+      onSet?.();
     },
   };
 }

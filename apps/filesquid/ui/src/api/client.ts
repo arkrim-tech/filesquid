@@ -4,6 +4,11 @@
  * Every UI reaches FileSquid only through this client (FileSquid U-16). It hides which
  * host answers: `filesquid-server` over HTTP and WebSocket, or the desktop host through
  * the `filesquid://` custom URI scheme and Tauri events (ADR 030).
+ *
+ * Authorisation is deny-by-default (API-S-004): every request made with a known token carries
+ * `Authorization: Bearer <token>`, and the event channel WebSocket offers that token as the
+ * subprotocol `filesquid.bearer.<token>`. The client keeps no copy of the token: it asks its
+ * token source on every call, never stores, logs or renders it, and never puts it in an error.
  */
 import type { components } from "./schema";
 
@@ -12,6 +17,15 @@ export type HealthStatus = components["schemas"]["HealthStatus"];
 
 /** One push event from the API event channel. */
 export type ApiEvent = components["schemas"]["ApiEvent"];
+
+/** Error code of a failed request, generated from the API contract. */
+export type ErrorCode = components["schemas"]["ErrorCode"];
+
+/** Why the authorisation layer refused a call, generated from the API contract. */
+export type DenialReason = components["schemas"]["DenialReason"];
+
+/** Body of every failed API request, generated from the API contract. */
+export type ApiErrorBody = components["schemas"]["ApiError"];
 
 /** Callback for push events. */
 export type EventListener = (event: ApiEvent) => void;
@@ -60,6 +74,47 @@ const NEXT_CURSOR_HEADER = "X-Journal-Next-Cursor";
 /** Export requests followed at most (each up to 1 000 000 entries on the server). */
 const MAX_EXPORT_REQUESTS = 10;
 
+/** Subprotocol of the event channel; the server selects it on a successful upgrade. */
+export const EVENTS_SUBPROTOCOL = "filesquid.events.v1";
+/** Prefix of the subprotocol that carries the bearer token on a browser WebSocket. */
+const BEARER_SUBPROTOCOL_PREFIX = "filesquid.bearer.";
+/**
+ * The list itself when it names every member of the generated `Union`, otherwise `never`.
+ * Type-only: declaring a list with this type makes `tsc` fail when the contract adds a value
+ * the list lacks, and `satisfies` rejects values the contract does not define. The generated
+ * types have no run-time values, so the run-time lists are written out and checked this way.
+ */
+type CompleteList<Union, List extends readonly Union[]> = [Exclude<Union, List[number]>] extends [
+  never,
+]
+  ? List
+  : never;
+
+/** Literal {@link DenialReason} values; only checked, then used through {@link DENIAL_REASONS}. */
+const DENIAL_REASON_VALUES = [
+  "missing_credentials",
+  "invalid_credentials",
+  "not_permitted",
+] as const satisfies readonly DenialReason[];
+/** Every {@link DenialReason} the contract defines, for validating response bodies at run time. */
+const DENIAL_REASONS: CompleteList<DenialReason, typeof DENIAL_REASON_VALUES> =
+  DENIAL_REASON_VALUES;
+/** Literal {@link ErrorCode} values; only checked, then used through {@link ERROR_CODES}. */
+const ERROR_CODE_VALUES = [
+  "invalid_request",
+  "unauthorized",
+  "forbidden",
+  "not_found",
+  "method_not_allowed",
+  "conflict",
+  "internal",
+  "unavailable",
+] as const satisfies readonly ErrorCode[];
+/** Every {@link ErrorCode} the contract defines, for validating response bodies at run time. */
+const ERROR_CODES: CompleteList<ErrorCode, typeof ERROR_CODE_VALUES> = ERROR_CODE_VALUES;
+/** RFC 7230 `token`: the only characters both a header value and a subprotocol accept here. */
+const TOKEN_CHARS = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+
 /** Build a query string from defined, non-empty filter values (in declaration order). */
 function queryString(filters: JournalFilters): string {
   const params = new URLSearchParams();
@@ -78,19 +133,121 @@ export interface HostEnvironment {
   platform: "windows" | "android" | "macos" | "linux" | "other";
 }
 
-/** Error raised when the API answers with a non-2xx status. */
+/**
+ * Error raised when the API answers with a non-2xx status, or when the client refuses to send
+ * an unusable credential (`status` 0). Carries the contract's `code`, `retryable` and, for
+ * authorisation denials, `reason`, so the UI can tell missing credentials, invalid credentials
+ * and not permitted apart. The message names the path, status and reason only: never the
+ * token, and never the server's free-text message.
+ */
 export class ApiError extends Error {
+  /** Error code from the response body, when the body was a contract `ApiError`. */
+  public readonly code?: ErrorCode;
+  /** Authorisation denial reason (401 and 403 only). */
+  public readonly reason?: DenialReason;
+  /** True when repeating the same request unchanged may succeed. */
+  public readonly retryable: boolean;
+
   /**
-   * @param status HTTP status code returned by the API.
+   * @param status HTTP status code returned by the API, or 0 when nothing was sent.
    * @param path API path that failed.
+   * @param body Parsed contract error body, when there was one.
    */
   constructor(
     public readonly status: number,
     public readonly path: string,
+    body: Partial<ApiErrorBody> = {},
   ) {
-    super(`FileSquid API ${path} failed with HTTP ${status}`);
+    const detail = body.reason ?? body.code;
+    super(`FileSquid API ${path} failed with HTTP ${status}${detail ? ` (${detail})` : ""}`);
     this.name = "ApiError";
+    this.code = body.code;
+    this.reason = body.reason;
+    this.retryable = body.retryable ?? false;
   }
+}
+
+/**
+ * Supplies the bearer token: a fixed string configured by the operator, or a function asked
+ * on every request (the desktop launch token, or a token typed in at run time).
+ */
+export type TokenSource = string | (() => string | undefined);
+
+/**
+ * True when `token` can be sent as a bearer header value and as a WebSocket subprotocol
+ * (RFC 7230 `token` characters, non-empty). Pure.
+ *
+ * @param token Candidate credential.
+ * @returns Whether the client may send it.
+ */
+export function isUsableToken(token: string): boolean {
+  return TOKEN_CHARS.test(token);
+}
+
+/**
+ * The subprotocols a browser offers on the event channel: `filesquid.events.v1` first, then
+ * `filesquid.bearer.<token>` when a token is known (API-S-004). Pure.
+ *
+ * @param token The bearer token, if any; callers check it with {@link isUsableToken} first.
+ * @returns The list passed to the `WebSocket` constructor.
+ */
+export function eventProtocols(token: string | undefined): string[] {
+  return token
+    ? [EVENTS_SUBPROTOCOL, `${BEARER_SUBPROTOCOL_PREFIX}${token}`]
+    : [EVENTS_SUBPROTOCOL];
+}
+
+/**
+ * Keep only the contract fields of a parsed error body; anything else is dropped. Pure.
+ *
+ * @param value Parsed JSON of a failed response.
+ * @returns A code and a reason from the contract's enums (others are dropped) and the
+ *   retryable flag.
+ */
+export function errorBody(value: unknown): Partial<ApiErrorBody> {
+  if (typeof value !== "object" || value === null) return {};
+  const record = value as Record<string, unknown>;
+  const reason = DENIAL_REASONS.find((known) => known === record.reason);
+  const code = ERROR_CODES.find((known) => known === record.code);
+  return {
+    code,
+    retryable: typeof record.retryable === "boolean" ? record.retryable : undefined,
+    reason,
+  };
+}
+
+/**
+ * Read the contract error body of a failed response. A body that is not JSON (for example a
+ * proxy's HTML page) yields no fields; that case is logged as a warning with the status only,
+ * never the body or the parser's message (which can quote the body).
+ * Network I/O: consumes the response body.
+ *
+ * @param response A non-2xx response.
+ * @returns The contract fields found.
+ */
+async function readErrorBody(response: Response): Promise<Partial<ApiErrorBody>> {
+  try {
+    return errorBody(JSON.parse(await response.text()));
+  } catch (error) {
+    // The parser's message can quote the body, so only its kind and the status are logged.
+    const kind = error instanceof Error ? error.name : typeof error;
+    console.warn(`FileSquid API error body (HTTP ${response.status}) was not JSON (${kind})`);
+    return {};
+  }
+}
+
+/**
+ * The error raised when the configured token cannot be sent. It names neither the token nor
+ * the characters that made it unusable.
+ *
+ * @param path API path the call was for.
+ */
+function unusableToken(path: string): ApiError {
+  return new ApiError(0, path, {
+    code: "forbidden",
+    reason: "invalid_credentials",
+    retryable: false,
+  });
 }
 
 /** Options for {@link FileSquidClient}. Transports are injectable for tests. */
@@ -105,8 +262,12 @@ export interface ClientOptions {
   fetch?: typeof fetch;
   /** WebSocket constructor; defaults to the global WebSocket. */
   WebSocket?: typeof WebSocket;
-  /** Admin token for the server's admin routes; not needed on the desktop host. */
-  adminToken?: () => string | undefined;
+  /**
+   * Bearer token sent on every request and offered on the event channel. On the desktop host
+   * {@link createHostClient} supplies the per-launch token; on `filesquid-server` the operator
+   * passes the administrator token (or a function that returns it). Kept in memory only.
+   */
+  token?: TokenSource;
 }
 
 /**
@@ -173,14 +334,20 @@ export class FileSquidClient {
    * Subscribe to push events. Opens a WebSocket on the server host, or uses the
    * host-supplied subscription on the desktop host.
    *
+   * The browser WebSocket offers the subprotocols from {@link eventProtocols}, because a
+   * browser cannot set an `Authorization` header on an upgrade.
+   *
    * @param listener Called once per event.
    * @returns A function that ends the subscription and releases its connection.
+   * @throws ApiError (status 0, `invalid_credentials`) when the token cannot be sent.
    */
   subscribe(listener: EventListener): () => void {
     if (this.options.subscribeHost) return this.options.subscribeHost(listener);
+    const path = "/api/v1/events";
+    const token = this.currentToken(path);
     const Socket = this.options.WebSocket ?? globalThis.WebSocket;
     const url = this.options.eventsUrl ?? eventsUrl(new URL(globalThis.location.href));
-    const socket = new Socket(url);
+    const socket = new Socket(url, eventProtocols(token));
     socket.onmessage = (message: MessageEvent<string>) => {
       try {
         listener(JSON.parse(message.data) as ApiEvent);
@@ -240,17 +407,35 @@ export class FileSquidClient {
   }
 
   /**
-   * GET `path`; throws {@link ApiError} on non-2xx. The admin token, when set, is sent only
-   * to `/api/v1/admin/*`, never to other routes.
+   * The current token from the configured source, checked before it is sent anywhere.
+   *
+   * @param path API path the token is for (named in the error).
+   * @returns The token, or undefined when none is known.
+   * @throws ApiError (status 0, `invalid_credentials`) when the token cannot be sent.
+   */
+  private currentToken(path: string): string | undefined {
+    const source = this.options.token;
+    const token = typeof source === "function" ? source() : source;
+    if (token === undefined) return undefined;
+    if (!isUsableToken(token)) throw unusableToken(path);
+    return token;
+  }
+
+  /**
+   * GET `path` with the bearer token, when one is known. Network I/O.
+   *
+   * @param path API path under the base URL.
+   * @returns The 2xx response.
+   * @throws ApiError on a non-2xx answer, with the body's code, reason and retryable flag.
    */
   private async request(path: string): Promise<Response> {
     const doFetch = this.options.fetch ?? globalThis.fetch.bind(globalThis);
-    const token = path.startsWith("/api/v1/admin/") ? this.options.adminToken?.() : undefined;
+    const token = this.currentToken(path);
     const init: RequestInit | undefined = token
       ? { headers: { Authorization: `Bearer ${token}` } }
       : undefined;
     const response = await doFetch(`${this.options.baseUrl}${path}`, init);
-    if (!response.ok) throw new ApiError(response.status, path);
+    if (!response.ok) throw new ApiError(response.status, path, await readErrorBody(response));
     return response;
   }
 }

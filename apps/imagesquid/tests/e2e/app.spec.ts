@@ -1,14 +1,30 @@
 /**
  * End-to-end: the BUILT ImageSquid distribution served by the real `filesquid-server`.
- * ImageSquid is FileSquid underneath: same API, ImageSquid brand, vocabulary and tokens.
+ * ImageSquid is FileSquid underneath: same deny-by-default API, ImageSquid brand, vocabulary
+ * and tokens.
  */
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { ADMIN_TOKEN } from "./admin-token";
 
-test("ImageSquid brand, album vocabulary and FileSquid API health", async ({ page }) => {
+/** The browser's own console lines for a deliberately refused fetch or WebSocket upgrade. */
+const REFUSED_CALL = /status of 40[13] \(|WebSocket connection to .* failed/;
+
+/** Collect console errors (except tolerated lines) and uncaught page errors. */
+function trackErrors(page: Page, tolerate?: RegExp): string[] {
   const errors: string[] = [];
-  page.on("console", (msg) => msg.type() === "error" && errors.push(msg.text()));
+  page.on("console", (msg) => {
+    if (msg.type() === "error" && !tolerate?.test(msg.text())) errors.push(msg.text());
+  });
   page.on("pageerror", (err) => errors.push(err.message));
+  return errors;
+}
+
+test("ImageSquid brand, album vocabulary and FileSquid API health", async ({ page }) => {
+  const errors = trackErrors(page);
+  // Stand in for the desktop host, which defines its per-launch token for its own pages.
+  await page.addInitScript((value) => {
+    Object.defineProperty(window, "__FILESQUID_LAUNCH_TOKEN__", { value, enumerable: false });
+  }, ADMIN_TOKEN);
   await page.goto("/");
   await expect(page).toHaveTitle("ImageSquid");
   const shell = page.locator("fs-app-shell");
@@ -44,22 +60,31 @@ test("ImageSquid tokens override FileSquid defaults in light and dark", async ({
   expect(await sidebar()).toBe("rgb(27, 30, 36)");
 });
 
+test("ImageSquid names missing credentials in its own words", async ({ page }) => {
+  const errors = trackErrors(page, REFUSED_CALL);
+  await page.goto("/");
+  const alert = page.locator('fs-app-shell [role="alert"]');
+  await expect(alert).toHaveAttribute("data-reason", "missing_credentials");
+  await expect(alert).toHaveText("Archives unavailable: Missing credentials");
+  expect(errors).toEqual([]);
+});
+
 test("ImageSquid reaches the FileSquid Monitor with its own vocabulary", async ({ page }) => {
-  const errors: string[] = [];
-  page.on("console", (msg) => msg.type() === "error" && errors.push(msg.text()));
-  page.on("pageerror", (err) => errors.push(err.message));
-  await page.addInitScript(
-    (token) => sessionStorage.setItem("filesquid.adminToken", token),
-    ADMIN_TOKEN,
-  );
+  const errors = trackErrors(page, REFUSED_CALL);
   await page.goto("/");
   await page.locator("fs-app-shell nav a", { hasText: "Monitor" }).click();
   const monitor = page.locator("fs-monitor");
+  const form = monitor.locator("form[data-form='token']");
+  await form.locator("input").fill(ADMIN_TOKEN);
+  await form.locator("button").click();
   await expect(monitor.locator('[data-section="journal"] h2')).toHaveText("Activity history");
   await expect(monitor.locator('[data-section="storage"] h2')).toHaveText("Storage");
   await expect(monitor.locator('tr[data-process-id^="host-"]')).toHaveAttribute(
     "data-state",
     "running",
+  );
+  await expect(page.locator('fs-app-shell [role="status"]')).toHaveText(
+    "Archives API: ok (filesquid)",
   );
   expect(errors).toEqual([]);
 });

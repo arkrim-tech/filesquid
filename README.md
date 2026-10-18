@@ -111,7 +111,7 @@ export FILESQUID_ADMIN_TOKEN=$(openssl rand -hex 32)
 TOKEN=$FILESQUID_ADMIN_TOKEN    # for the curl examples
 ```
 
-The desktop host needs no token from you: it generates a new per-launch token at every start and gives it only to its own pages.
+The desktop host needs no token from you: it generates a new per-launch token at every start and gives it only to its own pages. In the browser UI served by `filesquid-server`, enter the token on the **Monitor** page (`#/monitor`); how `@filesquid/ui` sends it is in its [README](./apps/filesquid/ui/README.md#authenticating-to-the-filesquid-api).
 
 **UI development** with hot reload: start the server as above, then in another terminal:
 
@@ -208,7 +208,7 @@ Every FileSquid process writes JSON events to **stdout** and never writes log fi
 FileSquid's own tooling records **100% of activity** in its activity journal and shows **live health** of the system and its processes in the **Monitor** dashboard, on desktop and server alike ([ADR 033](./resources/architecture/033-activity-journal-and-live-health-monitoring.md)). Everything runs locally; no external service is needed.
 
 - **Where the journal lives:** `filesquid.sqlite` in the host's data directory. The desktop app uses its application data directory. `filesquid-server` uses `FILESQUID_DATA_DIR` (default `./filesquid-data`, relative to where it starts) and creates it on first start.
-- **Monitor dashboard:** open the app and choose **Monitor** in the navigation (route `#/monitor`). On the desktop the owner needs no sign-in: the host hands its own pages the per-launch token. On `filesquid-server`, enter the admin token: the value of `FILESQUID_ADMIN_TOKEN`, or the token generated at first start into `<data dir>/admin-token` (owner-only file permissions on Unix; the server logs the path, never the token).
+- **Monitor dashboard:** open the app and choose **Monitor** in the navigation (route `#/monitor`). On the desktop the owner needs no sign-in: the host hands its own pages the per-launch token. On `filesquid-server`, enter the admin token: the value of `FILESQUID_ADMIN_TOKEN`, or the token generated at first start into `<data dir>/admin-token` (owner-only file permissions on Unix; the server logs the path, never the token). Until then the shell's API status reads **Missing credentials**; a wrong token reads **Invalid credentials**. The UI keeps the token in memory only, so enter it again after a reload ([`@filesquid/ui` README](./apps/filesquid/ui/README.md#authenticating-to-the-filesquid-api)).
 
 To run `filesquid-server` with the default UI and read the journal from a terminal, change to `apps/filesquid` and run:
 
