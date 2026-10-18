@@ -185,7 +185,14 @@ cd ../../imagesquid
 npx prettier --check . && npm run lint && npm run check && npm test && npm run test:e2e
 ```
 
-`npm test` clears and rewrites `tests/allure-results/vitest-junit.xml`; `npm run test:e2e` writes `tests/allure-results/playwright-junit.xml`. Open the JUnit files in any JUnit or Allure viewer.
+`npm test` clears `tests/allure-results/` and writes the Vitest results there: Allure raw results in `vitest/` and `vitest-junit.xml`. `npm run test:e2e` clears only the Playwright results and runs two Playwright suites in turn: the server-backed specs against the real `filesquid-server` (port 4173 for FileSquid, 4174 for ImageSquid), then the static production proofs in `tests/e2e/preview/`, which run against `vite build` plus `vite preview` on the same port with no server behind them ([UI-S-013](./apps/filesquid/ui/resources/srs.md)). Both write Allure raw results to `tests/allure-results/playwright/` and JUnit beside them. Every Playwright spec uses the shared strict-DOM helper `tests/e2e/support/strict-dom.ts`: any console or page error fails the test, custom elements must be defined, words come from the label table and token colours are read as computed. The BDD scenarios are in `tests/features/` (for example [`production_test_suite_UI-S-013.feature`](./apps/filesquid/ui/tests/features/production_test_suite_UI-S-013.feature)); Playwright is their first runner.
+
+To build and open the Allure report after a run, from the same package directory (the `allure` command line tool is an npm dev dependency, so no Java or system install is needed):
+
+```sh
+npm run report                              # writes tests/allure-report/ (untracked)
+npx allure open tests/allure-report         # serves it locally; or open index.html through any static server
+```
 
 The API contract (`apps/filesquid/crates/api/openapi.json`, OpenAPI 3.1, versioned by `info.version` = `filesquid_api::API_VERSION`), the Rust routes and payload types, and the generated TypeScript types (`apps/filesquid/ui/src/api/schema.d.ts`, `openapi-typescript` 7.13) must agree. The Rust `unit_contract` test fails when a routed path is undocumented (or the reverse), when a serialized Rust type no longer matches its component schema, or when an event topic or the payload a publisher emits drifts from the `EventTopic` enum and `x-filesquid-event-payloads` map. The Vitest `contract.test.ts` fails when `schema.d.ts` differs from a fresh generation. Both run in the pre-commit hook. After changing the contract, regenerate the types and run both drift tests:
 

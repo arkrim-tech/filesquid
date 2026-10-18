@@ -9,6 +9,7 @@ export default tseslint.config(
       "dist",
       "node_modules",
       "tests/allure-results",
+      "tests/allure-report",
       "tests/test-results",
       "tests/playwright-report",
       "src/api/schema.d.ts",
