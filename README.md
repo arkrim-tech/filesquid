@@ -192,6 +192,13 @@ cargo test -p filesquid-server --locked --test integration_auth
 cargo test -p filesquid-desktop --locked --test integration_api_protocol
 ```
 
+The application-layer boundary (API-S-006) is guarded twice: `unit_isolation` runs `cargo tree` for `filesquid-api` with the default, no-default and all-features sets and fails on Tauri, libvips, FFmpeg, a SQLite driver, `fs4` or a network client, and it scans `crates/api/src/` for `std::fs`, `tokio::fs`, `fs4` and the OS file-system extensions. The deviations already on `main` (the SQLite journal store and the monitor's data-directory checks) are pinned until the [CL-0.1 Conflict Artifact](./apps/filesquid/crates/api/resources/tasks/Task-CL-0.1-Conflict.md) is resolved, so any new one fails the test:
+
+```sh
+cd apps/filesquid
+cargo test -p filesquid-api --locked --test unit_isolation
+```
+
 The desktop transport (DE-S-005): the event channel's forwarder (one counted subscription, resync hints, the `event-forwarder` process, navigation kept on the app's origins), ranged reads through the `filesquid://localhost` scheme (`http://filesquid.localhost` on Windows and Android) with its 16 MiB response cap, and typed host errors. The 100 MB range fixture and the BDD features in `crates/desktop/tests/features/` exist only in the test-instrumented build (`--features test-webdriver`, never shipped), so the hook runs the desktop crate a second time with that feature:
 
 ```sh

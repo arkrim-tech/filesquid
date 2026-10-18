@@ -1,6 +1,7 @@
 //! Cucumber harness for the `filesquid-api` Gherkin under `tests/features/` (F-061, and the
 //! versioned contract, typed errors, deny-by-default authorisation, transport-agnostic routes
-//! and event channel of F-056: API-S-002, API-S-003, API-S-004, API-S-009).
+//! and event channel of F-056: API-S-002, API-S-003, API-S-004, API-S-009; and the
+//! application-layer isolation of API-S-006).
 //!
 //! Scenarios that need domain operations not built yet (import, rename, metadata writes, C2PA
 //! scans, sync) or the optional OTLP export (Task FS-3.6) have no step definitions and are
@@ -28,6 +29,13 @@ mod event_steps;
 
 #[path = "support/auth_steps.rs"]
 mod auth_steps;
+
+#[path = "support/isolation.rs"]
+#[allow(dead_code)]
+mod isolation;
+
+#[path = "support/isolation_steps.rs"]
+mod isolation_steps;
 
 /// Administrator token accepted by [`admin_state`].
 const ADMIN_TOKEN: &str = "admin";
@@ -65,6 +73,7 @@ struct MonitorWorld {
     refused: Option<ApiError>,
     secret: Option<String>,
     presented: Option<String>,
+    isolation: isolation_steps::IsolationWorld,
 }
 
 impl std::fmt::Debug for MonitorWorld {

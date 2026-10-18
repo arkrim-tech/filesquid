@@ -85,6 +85,10 @@ name = "unit_admin"
 path = "tests/unit/admin.rs"
 
 [[test]]
+name = "unit_isolation"
+path = "tests/unit/isolation.rs"
+
+[[test]]
 name = "features"
 path = "tests/features.rs"
 required-features = ["sqlite"]
