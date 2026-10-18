@@ -10,8 +10,13 @@
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 
-/** The Playwright CLI entry point, run through Node so it needs no shell on any OS. */
-const cli = createRequire(import.meta.url).resolve("@playwright/test/cli");
+/**
+ * The Playwright CLI entry point, run through Node so it needs no shell on any OS.
+ * `FILESQUID_PLAYWRIGHT_CLI` replaces it, so a unit test can drive this runner with a stub.
+ */
+const cli =
+  process.env.FILESQUID_PLAYWRIGHT_CLI ??
+  createRequire(import.meta.url).resolve("@playwright/test/cli");
 
 /** Config files in run order; `undefined` selects the default config. */
 const CONFIGS = [undefined, "playwright.preview.config.ts"];
@@ -23,7 +28,7 @@ const CONFIGS = [undefined, "playwright.preview.config.ts"];
  * @param {string[]} extra - Extra Playwright arguments.
  * @returns {number} The suite's exit status (1 when the process could not start).
  */
-export function runSuite(config, extra) {
+function runSuite(config, extra) {
   const args = [cli, "test", ...(config ? ["-c", config] : []), ...extra];
   const result = spawnSync(process.execPath, args, { stdio: "inherit" });
   if (result.error) {

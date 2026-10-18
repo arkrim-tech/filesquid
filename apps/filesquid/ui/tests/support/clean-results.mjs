@@ -15,7 +15,7 @@ import { rmSync } from "node:fs";
  * @param {string[]} paths - Paths relative to the package directory.
  * @returns {string[]} One message per path that could not be removed.
  */
-export function removeAll(paths) {
+function removeAll(paths) {
   const failures = [];
   for (const path of paths) {
     try {

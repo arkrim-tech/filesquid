@@ -100,9 +100,6 @@ describe("production artifact suite", () => {
   it("keeps the preview specs out of the server-backed run and runs both in turn", () => {
     expect(code("playwright.config.ts")).toContain('testIgnore: "**/preview/**"');
     expect(pkg.scripts["test:e2e"]).toBe("node tests/support/run-e2e.mjs");
-    const runner = code("tests/support/run-e2e.mjs");
-    expect(runner).toContain('const CONFIGS = [undefined, "playwright.preview.config.ts"];');
-    expect(runner).toContain("statuses.every((status) => status === 0)");
   });
 
   it("keeps the preview port in the Vite config", () => {
