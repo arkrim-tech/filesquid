@@ -130,6 +130,13 @@ pub fn token_issued_entry(principal: &Principal) -> JournalEntry {
     JournalEntry::new(TOKEN_ISSUED_OPERATION, Outcome::Succeeded).target(principal.actor())
 }
 
+/// Journal that a host issued (or, on the server, loaded and now accepts) the credential of
+/// `principal` (API-S-017). Hosts call it once at startup, after the monitor starts. Blocks
+/// only while the bounded journal queue is full; never records a secret.
+pub fn record_token_issue(monitor: &crate::monitor::Monitor, principal: &Principal) {
+    monitor.journal().send(token_issued_entry(principal));
+}
+
 /// Where a record went.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Recorded {

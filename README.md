@@ -67,11 +67,14 @@ FILESQUID_BIND=127.0.0.1:8083 FILESQUID_UI_DIR=ui/dist cargo run -p filesquid-se
 
 Open `http://127.0.0.1:8083`. Without `FILESQUID_UI_DIR` the server serves the API only. `FILESQUID_BIND` defaults to `127.0.0.1:8083`.
 
-Every API route except the liveness probe, plus the WebSocket event channel and `/metrics`, is **deny-by-default**: a call needs `Authorization: Bearer <token>`, or it answers `401 unauthorized` (no token) or `403 forbidden` (wrong token) with a typed error body. The liveness probe `GET /api/v1/health/live` is public for process supervisors and load balancers and answers only `{"status":"up"}`; the static UI is public too. Until server accounts arrive, the token is the administrator token: the value of `FILESQUID_ADMIN_TOKEN`, or the token generated at first start into `admin-token` in the data directory (`FILESQUID_DATA_DIR`, default `filesquid-data`). On Linux and macOS the server refuses to start when that file is unsafe, and names the case:
+Every API route except the liveness probe, plus the WebSocket event channel and `/metrics`, is **deny-by-default**: a call without the token answers `401 unauthorized`, and one with a wrong token `403 forbidden`, with a typed error body. HTTP requests, `/metrics` included, send the token as `Authorization: Bearer <token>`. The WebSocket event channel accepts that header too, but a browser cannot set headers on a WebSocket, so it offers the subprotocols `filesquid.events.v1` and `filesquid.bearer.<token>` instead. The liveness probe `GET /api/v1/health/live` is public for process supervisors and load balancers and answers only `{"status":"up"}`; the static UI is public too.
+
+Until server accounts arrive, the token is the administrator token: the value of `FILESQUID_ADMIN_TOKEN`, or, on Linux and macOS only, the token generated at first start into `admin-token` in the data directory (`FILESQUID_DATA_DIR`, default `filesquid-data`). On Windows the server stores no token file and refuses to start until `FILESQUID_ADMIN_TOKEN` is set. On Linux and macOS the server refuses to start when the token file is unsafe, and names the case:
 
 - **Readable by group or others:** `chmod 600 "$FILESQUID_DATA_DIR/admin-token"`, then restart.
 - **Owned by another user:** `chown <server user> "$FILESQUID_DATA_DIR/admin-token"` (as an administrator), or delete the file and restart to generate a new token.
 - **A symbolic link:** delete the link and restart to generate a new token, or replace it with a regular file that holds the token and `chmod 600` it.
+- **Not a regular file** (for example a directory or a FIFO): remove it and restart to generate a new token.
 
 In a second terminal in `apps/filesquid` (with the default data directory):
 
@@ -81,7 +84,7 @@ TOKEN=$(cat filesquid-data/admin-token)
 curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8083/api/v1/health
 ```
 
-The full health route returns `{"schema_version":1,"status":"ok","product":"filesquid"}`. A browser cannot set headers on a WebSocket, so it offers the subprotocols `filesquid.events.v1` and `filesquid.bearer.<token>` instead. The desktop host needs no token from you: it generates a new per-launch token at every start and gives it only to its own pages.
+The full health route returns `{"schema_version":1,"status":"ok","product":"filesquid"}`. The desktop host needs no token from you: it generates a new per-launch token at every start and gives it only to its own pages.
 
 **UI development** with hot reload: start the server as above, then in another terminal:
 

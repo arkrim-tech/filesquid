@@ -63,6 +63,11 @@ Feature: Deny-by-default authorisation
     Then the activity journal should record one "api.auth.denied" entry per refused call
     And no journal entry should contain the presented token
 
+  Scenario: The desktop journals the issue of its per-launch token at launch
+    When the desktop host issues its per-launch token at launch
+    Then the activity journal should record one "api.auth.token_issued" entry for the owner
+    And no journal entry should contain the per-launch token
+
   # Source
   # - resources/srs.md SRS-F-056: Single FileSquid API
   # - resources/prd.md F-056: Single FileSquid API, F-057: Desktop and server hosts

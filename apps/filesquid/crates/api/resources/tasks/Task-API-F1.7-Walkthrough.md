@@ -602,6 +602,112 @@ The README token-file remedies, run against the real `filesquid-server` binary w
 "filesquid-server listening"
 ```
 
+## Review round 3: Cubic findings on a1bdb55
+
+Three rounds of edge cases landed in the same token-file code, so this round shrinks what that code handles instead of patching it again: the token file now exists only on Unix.
+
+| Finding | Fix | Test (written first) |
+|---|---|---|
+| P2: on Windows a symlink swap after `symlink_metadata` bypassed the refusal | Not patched. On non-Unix targets the server never reads or writes a token file: it requires `FILESQUID_ADMIN_TOKEN` and refuses to start without it, with an error that names the variable. The whole token-file implementation is now a `#[cfg(unix)]` module. API-S-016, ADR 030 and the README say so. | `without_a_configured_token_the_server_refuses_to_start` (compiled and run on non-Unix targets only; this Linux run cannot execute it) |
+| P2: a FIFO at `admin-token` hung the open | The open uses `O_NOFOLLOW \| O_NONBLOCK`, so it returns, and the regular-file check on the handle rejects the FIFO with a remedy. | `a_fifo_at_the_token_path_is_refused_without_hanging` (skips when `mkfifo` is unavailable; it ran here). Red: without `O_NONBLOCK` it failed after its 5 s timeout. |
+| P2: a PID-named temporary file orphaned by a crash could block recovery | Temporary files get a random name (`admin-token.<16 hex>.tmp`) created with `create_new`, retried at most 5 times on `AlreadyExists`. At startup, stale `admin-token.*.tmp` files are removed, but only regular files (never links) owned by the server user. | `an_orphaned_temporary_file_does_not_block_recovery`, `stale_cleanup_never_touches_a_link_or_another_name`, `temporary_names_are_random_not_the_process_id` |
+| P3: README applied `Authorization` to the WebSocket | HTTP requests and `/metrics` use the Bearer header; browsers use the subprotocol pair on the WebSocket | Documentation |
+| P3: README missed the not-a-regular-file case | New bullet: remove it (for example a directory or a FIFO) and restart | Run against the real binary (below) |
+| P3: API-S-016 had no number for the wait | It now states at most 50 rereads 20 ms apart (1 s), and the random temporary name and the stale cleanup | Documentation |
+| P3: router docs said every route is wrapped | The module, `router`, `auth` and crate docs name the liveness probe as the one route outside the guard | `cargo doc` |
+| P3: API-S-017 tag without a `token_issued` scenario | New scenario "The desktop journals the issue of its per-launch token at launch". It uses the new `auth::record_token_issue`, which both hosts now call. | BDD scenario (28 passed, up from 27) |
+
+### Red: round 3 tests before the fixes
+
+```text
+error[E0425]: cannot find function `remove_stale_temporaries` in this scope
+error[E0599]: no method named `expect` found for struct `PathBuf` in the current scope
+error: could not compile `filesquid-server` (lib test) due to 3 previous errors
+error[E0425]: cannot find function `record_token_issue` in module `auth`
+error: could not compile `filesquid-api` (test "features") due to 1 previous error
+```
+
+With the fixes in and `O_NONBLOCK` removed again, to show the FIFO test catches the hang:
+
+```text
+thread 'admin_token::tests::a_fifo_at_the_token_path_is_refused_without_hanging' panicked at crates/server/src/admin_token.rs:354:14:
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 5 filtered out; finished in 5.08s
+```
+
+### Green: round 3 raw output
+
+`cargo test -p filesquid-api -p filesquid-server -p filesquid-desktop --locked` (exit code 0):
+
+```text
+     Running unittests src/lib.rs
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+     Running tests/features.rs
+87 scenarios (28 passed, 59 skipped)
+     Running tests/unit/admin.rs
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/unit/auth.rs
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/unit/contract.rs
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+     Running tests/unit/errors.rs
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/unit/events.rs
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/unit/health.rs
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/health_rules.rs
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/journal.rs
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/unit/metrics.rs
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/registry.rs
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/unit/routes.rs
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/unit/writer.rs
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/lib.rs
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/main.rs
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/integration/api_protocol.rs
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running unittests src/lib.rs
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.01s
+     Running unittests src/main.rs
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/integration/auth.rs
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.01s
+     Running tests/integration/events.rs
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/integration/health.rs
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/integration/monitor.rs
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/integration/static_ui.rs
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/health.rs
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+The README "not a regular file" remedy, run against the real `filesquid-server` binary:
+
+```text
+--- a directory at the token path
+"cannot start API authorisation or the activity journal"
+"$FILESQUID_DATA_DIR/admin-token is not a regular file; remove it (for example a directory or a FIFO) and restart to generate a new token"
+--- a FIFO at the token path
+"cannot start API authorisation or the activity journal"
+"$FILESQUID_DATA_DIR/admin-token is not a regular file; remove it (for example a directory or a FIFO) and restart to generate a new token"
+--- remove it and restart
+"$FILESQUID_DATA_DIR/admin-token"
+"filesquid-server listening"
+```
+
 ## Work left to other tasks
 
 - **UI client (`@filesquid/ui`):** by owner decision a separate small pull request right after this one merges. `FileSquidClient` must send `Authorization: Bearer <token>` on every request (desktop: `window.__FILESQUID_LAUNCH_TOKEN__`; server: the administrator token until accounts exist) and offer `["filesquid.events.v1", "filesquid.bearer.<token>"]` on its WebSocket. It can probe `GET /api/v1/health/live` without a token and show `ApiError.reason` as a sign-in or permission state. The Playwright end-to-end suites (`FILESQUID_E2E=1`) need the same change.

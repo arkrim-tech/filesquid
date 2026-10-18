@@ -6,7 +6,10 @@
 //!
 //! Every table entry names the [`Action`] it performs, and [`router`] wraps every entry in
 //! [`auth::require`], so a route cannot be served without being authorised first
-//! (API-S-004). [`route_actions`] lists the actions for the contract's `x-filesquid-action`.
+//! (API-S-004). The one route outside the guard is the public liveness probe
+//! `GET /api/v1/health/live` ([`Action::Public`], API-S-015); building the router panics if
+//! any other path declares that action. [`route_actions`] lists the actions for the
+//! contract's `x-filesquid-action`.
 
 use axum::extract::State;
 use axum::http::header::CONTENT_TYPE;
@@ -64,8 +67,9 @@ fn guarded(
 
 /// Build the FileSquid API router. Hosts mount it unchanged.
 ///
-/// Every route is authorised by [`auth::require`] before its handler runs, with the
-/// authoriser installed in `state` (deny-by-default: none installed refuses every call).
+/// Every route except the public liveness probe (`GET /api/v1/health/live`, API-S-015) is
+/// authorised by [`auth::require`] before its handler runs, with the authoriser installed in
+/// `state` (deny-by-default: none installed refuses every guarded call).
 /// Under [`API_PREFIX`], an unknown path answers a `not_found` [`ApiError`] and a known path
 /// with the wrong method answers a `method_not_allowed` [`ApiError`], but only to an
 /// authenticated caller; anyone else gets the `unauthorized` or `forbidden` denial. The

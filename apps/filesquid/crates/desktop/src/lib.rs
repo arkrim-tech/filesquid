@@ -15,7 +15,7 @@
 
 pub mod api_protocol;
 
-use filesquid_api::auth::{token_issued_entry, Authoriser, LaunchToken, Principal};
+use filesquid_api::auth::{record_token_issue, Authoriser, LaunchToken, Principal};
 use filesquid_api::monitor::HostMonitor;
 use filesquid_api::trace_layer::JournalLayer;
 use filesquid_api::ApiState;
@@ -118,9 +118,7 @@ fn start_monitor(
         &state,
         Some(layer),
     )?);
-    host.monitor()
-        .journal()
-        .send(token_issued_entry(&Principal::Owner));
+    record_token_issue(host.monitor(), &Principal::Owner);
     let stop = Arc::new(AtomicBool::new(false));
     spawn_ticker(host.clone(), stop.clone());
     app.manage(DesktopMonitor { host, stop });

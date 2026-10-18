@@ -227,6 +227,36 @@ fn journal_records_denials(w: &mut MonitorWorld, operation: String) {
     assert_eq!(denied.count(), w.answers.len());
 }
 
+#[when(expr = "the desktop host issues its per-launch token at launch")]
+async fn desktop_issues_token(w: &mut MonitorWorld) {
+    let monitor = w.monitor.clone().expect("monitor");
+    auth::record_token_issue(&monitor, &Principal::Owner);
+    monitor.journal().flush();
+}
+
+#[then(expr = "the activity journal should record one {string} entry for the owner")]
+fn journal_records_issue(w: &mut MonitorWorld, operation: String) {
+    let store = w.store.as_ref().expect("store");
+    let page = store.query(&JournalQuery::default()).expect("query");
+    let issued: Vec<_> = page
+        .entries
+        .iter()
+        .filter(|e| e.operation == operation)
+        .collect();
+    assert_eq!(issued.len(), 1);
+    assert_eq!(issued[0].target_ids, vec!["owner".to_string()]);
+}
+
+#[then(expr = "no journal entry should contain the per-launch token")]
+fn journal_free_of_launch_token(w: &mut MonitorWorld) {
+    let store = w.store.as_ref().expect("store");
+    let page = store.query(&JournalQuery::default()).expect("query");
+    let text = serde_json::to_string(&page.entries).expect("json");
+    let secret = w.secret.clone().expect("per-launch token");
+    assert!(!text.contains(&secret));
+    crate::shutdown_monitor(w);
+}
+
 #[then(expr = "no journal entry should contain the presented token")]
 fn journal_redacted(w: &mut MonitorWorld) {
     let store = w.store.as_ref().expect("store");

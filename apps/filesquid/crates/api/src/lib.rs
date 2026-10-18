@@ -12,10 +12,11 @@
 //! subscriptions and resync hints). It holds no transport code of its own, so the same router
 //! answers on every host.
 //!
-//! Every call is authenticated and authorised by the [`auth`] layer before any handler runs,
-//! deny-by-default: a host installs its [`auth::Authoriser`] with
-//! [`ApiState::install_authoriser`] (the desktop per-launch token, or the server
-//! administrator token), and without one every call is refused.
+//! Every call except the public liveness probe (`GET /api/v1/health/live`) is authenticated
+//! and authorised by the [`auth`] layer before any handler runs, deny-by-default: a host
+//! installs its [`auth::Authoriser`] with [`ApiState::install_authoriser`] (the desktop
+//! per-launch token, or the server administrator token), and without one every guarded call
+//! is refused.
 
 pub mod admin;
 pub mod auth;

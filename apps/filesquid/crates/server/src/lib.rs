@@ -127,8 +127,7 @@ pub fn start_server(
 ) -> Result<HostMonitor, String> {
     install_admin_authoriser(config, state)?;
     let host = start_host_monitor(config, state, layer)?;
-    let entry = auth::token_issued_entry(&Principal::Administrator);
-    host.monitor().journal().send(entry);
+    auth::record_token_issue(host.monitor(), &Principal::Administrator);
     Ok(host)
 }
 

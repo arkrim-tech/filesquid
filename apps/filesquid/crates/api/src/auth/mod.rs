@@ -2,10 +2,12 @@
 //! [ADR 030](../../../../../resources/architecture/030-filesquid-api-and-transports.md)
 //! Decision 5).
 //!
-//! Every route the [`crate::router`] serves is wrapped in [`require`], and its 404 and 405
-//! fallbacks call [`check_caller`], so no handler runs (and no file, SQL or key is touched)
-//! before the caller is authenticated and the route's [`Action`] is authorised. Hosts guard
-//! the routes they serve themselves with the same [`require`].
+//! Every route the [`crate::router`] serves is wrapped in [`require`], except the public
+//! liveness probe `GET /api/v1/health/live` ([`Action::Public`], API-S-015), and its 404 and
+//! 405 fallbacks call [`check_caller`], so no other handler runs (and no file, SQL or key is
+//! touched) before the caller is authenticated and the route's [`Action`] is authorised.
+//! Hosts guard the routes they serve themselves with the same [`require`], which never
+//! bypasses authentication.
 //!
 //! - **Deny by default.** A host that installed no [`Authoriser`] refuses every call. An
 //!   authoriser grants only what its [`Policy`] explicitly permits.
@@ -30,8 +32,8 @@ mod token;
 pub use crate::error::{ApiError, DenialReason};
 pub use credentials::{presented_token, BEARER_SUBPROTOCOL_PREFIX, EVENTS_SUBPROTOCOL};
 pub use layer::{
-    authorise_call, check_caller, denial_entry, require, token_issued_entry, Guard,
-    ANONYMOUS_ACTOR, DENIED_OPERATION, NO_ROUTE_TARGET, TOKEN_ISSUED_OPERATION,
+    authorise_call, check_caller, denial_entry, record_token_issue, require, token_issued_entry,
+    Guard, ANONYMOUS_ACTOR, DENIED_OPERATION, NO_ROUTE_TARGET, TOKEN_ISSUED_OPERATION,
 };
 pub use policy::{
     Action, Authenticator, DenyAll, HostPolicy, Policy, Principal, Resource, TokenAuthenticator,
