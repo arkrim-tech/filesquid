@@ -22,7 +22,7 @@ fn version_is_optional_and_object_id_may_be_empty() {
 #[test]
 fn escaping_or_empty_logical_paths_are_rejected() {
     for bad in [
-        "", "/a", "a//b", "a/", "./a", "../a", "a/../b", "a\\b", "a\0b",
+        "", "/a", "a//b", "a/", "./a", "../a", "a/../b", "a\\b", "a\0b", "D:/a", "C:a",
     ] {
         assert_eq!(
             FileRef::new("o", bad),

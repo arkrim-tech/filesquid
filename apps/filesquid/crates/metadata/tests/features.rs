@@ -550,9 +550,12 @@ fn inspect_native_only(world: &mut MetadataWorld) {
         read_crate_file("src/lib.rs"),
         read_crate_file("src/store/mod.rs")
     );
+    world
+        .inspected
+        .push_str(&read_crate_file("src/store/ocfl.rs"));
 }
 
-#[then("the CLI and the sidecar store should be compiled out for wasm32")]
+#[then("the CLI, the sidecar store and the OCFL path helpers should be compiled out for wasm32")]
 fn native_only_gated(world: &mut MetadataWorld) {
     let gate = "not(target_arch = \"wasm32\")";
     for module in ["pub mod cli;", "pub mod sidecar;"] {
@@ -568,6 +571,17 @@ fn native_only_gated(world: &mut MetadataWorld) {
             "{module} lacks {gate}: {attribute}"
         );
     }
+    let helpers = "pub use native::";
+    let at = world.inspected.find(helpers).expect("ocfl-fs re-export");
+    let attribute = world.inspected[..at]
+        .lines()
+        .rev()
+        .find(|l| l.starts_with("#[cfg"))
+        .expect("cfg");
+    assert!(
+        attribute.contains(gate),
+        "{helpers} lacks {gate}: {attribute}"
+    );
 }
 
 #[then("axum, tauri, libvips, and filesquid-core should be absent")]

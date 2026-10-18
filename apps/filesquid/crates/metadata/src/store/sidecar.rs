@@ -36,18 +36,60 @@ impl SidecarStore {
         self.root.join(name)
     }
 
-    /// Refuse a root that is a Git working tree.
+    /// Refuse a root that is a Git working tree, including a dangling `.git`
+    /// symlink; only a missing `.git` passes (file I/O).
     fn reject_git(&self) -> Result<(), StoreError> {
-        if self.root.join(".git").exists() {
-            return Err(StoreError::Git);
+        match std::fs::symlink_metadata(self.root.join(".git")) {
+            Ok(_) => Err(StoreError::Git),
+            Err(err) if is_absent(&err) => Ok(()),
+            Err(err) => Err(backend(err)),
+        }
+    }
+
+    /// Refuse a sidecar path that reaches outside the root through a symlink:
+    /// every component under the root, and the sidecar itself, must not be one
+    /// (file I/O). Components that do not exist yet are fine.
+    fn reject_symlinks(&self, file: &FileRef) -> Result<(), StoreError> {
+        let mut current = self.root.clone();
+        let sidecar = self.sidecar_path(file);
+        let relative = sidecar
+            .strip_prefix(&self.root)
+            .map_err(|_| StoreError::InvalidPath)?;
+        for part in relative.components() {
+            current.push(part);
+            match std::fs::symlink_metadata(&current) {
+                Ok(meta) if meta.file_type().is_symlink() => return Err(StoreError::InvalidPath),
+                Ok(_) => {}
+                Err(err) if is_absent(&err) => return Ok(()),
+                Err(err) => return Err(backend(err)),
+            }
         }
         Ok(())
     }
+
+    /// Run the Git and symlink guards for `file`.
+    fn guard(&self, file: &FileRef) -> Result<(), StoreError> {
+        self.reject_git()?;
+        self.reject_symlinks(file)
+    }
+}
+
+/// Return whether `err` only means the path (or a parent) does not exist.
+fn is_absent(err: &std::io::Error) -> bool {
+    matches!(err.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory)
 }
 
 /// Wrap an I/O failure as a backend error.
 fn backend(err: std::io::Error) -> StoreError {
     StoreError::Backend(Box::new(err))
+}
+
+/// Parse sidecar bytes; invalid UTF-8 is an error so a later save never
+/// overwrites the owner's file with a lossy replacement.
+fn parse_record(bytes: Vec<u8>) -> Result<Record, StoreError> {
+    let text = String::from_utf8(bytes)
+        .map_err(|e| backend(std::io::Error::new(ErrorKind::InvalidData, e)))?;
+    Ok(from_markdown(&text))
 }
 
 /// Write `text` to `path` through a sibling temporary file, then rename it
@@ -56,7 +98,11 @@ fn write_replacing(path: &Path, text: &str) -> Result<(), std::io::Error> {
     let mut staging = path.as_os_str().to_owned();
     staging.push(".tmp");
     let staging = PathBuf::from(staging);
-    std::fs::write(&staging, text)?;
+    if let Err(err) = std::fs::write(&staging, text) {
+        // Best effort: the write error is the one the caller needs.
+        let _ = std::fs::remove_file(&staging);
+        return Err(err);
+    }
     if let Err(err) = std::fs::rename(&staging, path) {
         // Best effort: the rename error is the one the caller needs.
         let _ = std::fs::remove_file(&staging);
@@ -67,16 +113,16 @@ fn write_replacing(path: &Path, text: &str) -> Result<(), std::io::Error> {
 
 impl MetadataStore for SidecarStore {
     async fn load(&self, file: &FileRef) -> Result<Record, StoreError> {
-        self.reject_git()?;
+        self.guard(file)?;
         match std::fs::read(self.sidecar_path(file)) {
-            Ok(bytes) => Ok(from_markdown(&String::from_utf8_lossy(&bytes))),
+            Ok(bytes) => parse_record(bytes),
             Err(err) if err.kind() == ErrorKind::NotFound => Ok(Record::default()),
             Err(err) => Err(backend(err)),
         }
     }
 
     async fn save(&self, file: &FileRef, record: &Record) -> Result<(), StoreError> {
-        self.reject_git()?;
+        self.guard(file)?;
         write_replacing(&self.sidecar_path(file), &to_markdown(record)).map_err(backend)
     }
 }

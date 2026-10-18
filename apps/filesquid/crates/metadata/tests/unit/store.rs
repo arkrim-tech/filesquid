@@ -156,4 +156,15 @@ mod backend_store {
         let result = complete_immediately(store.load(&file)).unwrap();
         assert!(matches!(result, Err(StoreError::InvalidPath)));
     }
+
+    #[test]
+    fn a_record_that_is_not_utf8_is_an_error() {
+        let backend = MemoryBackend::new();
+        let key = metadata_key("objects/a").unwrap();
+        complete_immediately(backend.put(&key, &[0xff, 0xfe]))
+            .unwrap()
+            .unwrap();
+        let result = complete_immediately(load_from(&backend, &key)).unwrap();
+        assert!(result.is_err());
+    }
 }

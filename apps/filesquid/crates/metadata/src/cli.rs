@@ -154,9 +154,13 @@ fn validate_args(rest: &[String]) -> Result<i32, String> {
 fn extract_file(path: &Path, record: &mut Record) -> Result<(), String> {
     let name = path
         .file_name()
-        .and_then(|name| name.to_str())
+        .map(|name| name.to_string_lossy().into_owned())
         .ok_or_else(|| format!("{} has no file name", path.display()))?;
-    let file_ref = FileRef::new("", name).map_err(|e| e.to_string())?;
+    // The reference only labels the report; a name that is not a valid logical
+    // path (for example one holding a backslash) must not stop extraction.
+    let file_ref = FileRef::new("", &name)
+        .or_else(|_| FileRef::new("", "file"))
+        .map_err(|e| e.to_string())?;
     let file = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let found = extract_from_reader(&mut BufReader::new(file), &file_ref, record)
         .map_err(|e| e.to_string())?;

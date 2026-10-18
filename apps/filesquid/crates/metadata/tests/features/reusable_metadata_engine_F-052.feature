@@ -105,7 +105,7 @@ Feature: Reusable filesquid-metadata engine
 
   Scenario: CLI and path helpers are native-only
     When I inspect the filesquid-metadata native-only modules
-    Then the CLI and the sidecar store should be compiled out for wasm32
+    Then the CLI, the sidecar store and the OCFL path helpers should be compiled out for wasm32
 
   Scenario: Metadata panel plugs into a file browser sidebar
     Given the filesquid-ocfl file browser with a selected file

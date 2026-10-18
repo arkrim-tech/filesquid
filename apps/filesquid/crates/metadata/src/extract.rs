@@ -1,6 +1,6 @@
 //! Extract EXIF and ID3 from caller-supplied bytes and map onto statements.
 //!
-//! Extraction never opens a path ([ADR 027](../../../../resources/architecture/027-filesquid-metadata-pluggable-stores.md),
+//! Extraction never opens a path ([ADR 027](../../../../../resources/architecture/027-filesquid-metadata-pluggable-stores.md),
 //! MD-S-009): the caller reads the bytes (through `filesquid-ocfl`, a browser
 //! file handle or anything else) and hands them over with the [`FileRef`] they
 //! belong to. It is independent of any [`MetadataStore`](crate::store::MetadataStore).
@@ -59,7 +59,8 @@ pub fn extract_from_bytes(
 /// # Errors
 ///
 /// [`ExtractError::Io`] when the reader fails for a reason other than the data
-/// ending inside a tag block.
+/// ending inside a tag block. `record` may then hold the statements of the
+/// passes that finished before the failure, so discard it on `Err`.
 pub fn extract_from_reader<R: BufRead + Seek>(
     reader: &mut R,
     file: &FileRef,

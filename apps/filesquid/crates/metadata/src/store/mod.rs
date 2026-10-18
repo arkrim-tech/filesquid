@@ -1,4 +1,4 @@
-//! Pluggable metadata stores ([ADR 027](../../../../../resources/architecture/027-filesquid-metadata-pluggable-stores.md)).
+//! Pluggable metadata stores ([ADR 027](../../../../../../resources/architecture/027-filesquid-metadata-pluggable-stores.md)).
 //!
 //! The core (statements, register, extraction, `metadata.md` format,
 //! interchange) depends on no store. A [`MetadataStore`] loads and saves a
@@ -36,8 +36,8 @@ pub enum StoreError {
     #[error("refusing to use a Git working tree as the metadata store")]
     Git,
     /// The backend failed; the source says why.
-    #[error("metadata store backend failed: {0}")]
-    Backend(Box<dyn Error + Send + Sync>),
+    #[error("metadata store backend failed")]
+    Backend(#[source] Box<dyn Error + Send + Sync>),
 }
 
 /// Loads and saves the metadata record of one file.

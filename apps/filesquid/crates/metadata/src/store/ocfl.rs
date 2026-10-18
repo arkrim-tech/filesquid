@@ -2,7 +2,7 @@
 //!
 //! The store runs over any [`StorageBackend`] the host supplies (local
 //! filesystem, in-memory, later S3-compatible), so it reaches bytes only
-//! through `filesquid-ocfl` ([ADR 025](../../../../../resources/architecture/025-client-side-filesquid-engines.md)).
+//! through `filesquid-ocfl` ([ADR 025](../../../../../../resources/architecture/025-client-side-filesquid-engines.md)).
 //! [`OcflStore`] is the [`MetadataStore`] over a backend. With the `ocfl-fs`
 //! feature on a native target, [`load`] and [`save`] are the path-based form
 //! used by the CLI: they apply the Git guard and run the same code over a
@@ -44,13 +44,17 @@ pub fn metadata_key(object_prefix: &str) -> Result<StorageKey, WriteError> {
 ///
 /// # Errors
 ///
-/// Any backend failure other than a missing object, as a [`WriteError`].
+/// Any backend failure other than a missing object, and a record that is not
+/// valid UTF-8 (so a later save never overwrites it with a lossy copy), as a
+/// [`WriteError`].
 pub async fn load_from<B: StorageBackend>(
     backend: &B,
     key: &StorageKey,
 ) -> Result<Record, WriteError> {
     match read_verified(backend, key, MAX_CHUNK_BYTES).await {
-        Ok(bytes) => Ok(from_markdown(&String::from_utf8_lossy(&bytes))),
+        Ok(bytes) => String::from_utf8(bytes)
+            .map(|text| from_markdown(&text))
+            .map_err(|e| WriteError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))),
         Err(StorageError::NotFound { .. }) => Ok(Record::default()),
         Err(err) => Err(err.into()),
     }
@@ -85,7 +89,10 @@ fn store_error(err: WriteError) -> StoreError {
 ///
 /// The record describes the whole OCFL object, so the [`FileRef`]'s object
 /// identifier is the object's key prefix in the backend and its logical path
-/// and version do not change the key.
+/// and version do not change the key. The store applies no Git guard: a host
+/// that backs it with a local directory runs `reject_git_in_ocfl_root` first
+/// (the native [`load`] and [`save`] helpers do), so [`StoreError::Git`] only
+/// appears when the backend itself reports it.
 #[derive(Debug)]
 pub struct OcflStore<B: StorageBackend> {
     /// Backend the host supplies.

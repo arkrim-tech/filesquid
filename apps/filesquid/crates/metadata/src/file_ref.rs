@@ -4,7 +4,7 @@
 //! [`MetadataStore`](crate::store::MetadataStore) or to extraction unchanged.
 //! The core never opens it: it only names a file, so the same engine runs over
 //! a plain directory, an OCFL object or a caller-owned store, natively and in
-//! WebAssembly ([ADR 027](../../../../resources/architecture/027-filesquid-metadata-pluggable-stores.md)).
+//! WebAssembly ([ADR 027](../../../../../resources/architecture/027-filesquid-metadata-pluggable-stores.md)).
 
 use thiserror::Error;
 
@@ -12,7 +12,7 @@ use thiserror::Error;
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum FileRefError {
     /// The logical path is empty, absolute, or could leave its root.
-    #[error("logical path must be relative, non-empty and free of `.`, `..` and `\\`")]
+    #[error("logical path must be relative, non-empty and free of `.`, `..`, `\\` and `:`")]
     InvalidLogicalPath,
 }
 
@@ -33,7 +33,7 @@ pub struct FileRef {
 
 /// Return whether `path` is a relative `/`-separated path without escapes.
 fn is_valid_logical_path(path: &str) -> bool {
-    if path.is_empty() || path.contains(['\\', '\0']) {
+    if path.is_empty() || path.contains(['\\', '\0', ':']) {
         return false;
     }
     path.split('/')
@@ -46,7 +46,8 @@ impl FileRef {
     /// # Errors
     ///
     /// [`FileRefError::InvalidLogicalPath`] when the path is empty, absolute,
-    /// holds an empty, `.` or `..` segment, or contains `\` or NUL.
+    /// holds an empty, `.` or `..` segment, or contains `\`, `:` (a Windows drive
+    /// prefix) or NUL.
     pub fn new(object_id: &str, logical_path: &str) -> Result<Self, FileRefError> {
         if !is_valid_logical_path(logical_path) {
             return Err(FileRefError::InvalidLogicalPath);

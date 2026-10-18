@@ -70,6 +70,7 @@ path = "tests/unit/extract.rs"
 [[test]]
 name = "unit_sidecar"
 path = "tests/unit/sidecar.rs"
+required-features = ["sidecar"]
 
 [[test]]
 name = "features"

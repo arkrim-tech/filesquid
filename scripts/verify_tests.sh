@@ -117,7 +117,8 @@ run_metadata_features() {
   local wasm=wasm32-unknown-unknown
   run_step "Clippy (filesquid-metadata, all features)" "$WORKSPACE" cargo_locked clippy -p filesquid-metadata --all-targets --all-features --locked -- -D warnings
   run_step "Tests (filesquid-metadata, all features)" "$WORKSPACE" cargo_locked test -p filesquid-metadata --all-features --locked
-  if ! rustup target list --installed 2>/dev/null | grep -qx "$wasm"; then
+  # Query from $WORKSPACE so the workspace rust-toolchain.toml picks the toolchain cargo uses.
+  if ! (cd "$WORKSPACE" && rustup target list --installed 2>/dev/null) | grep -qx "$wasm"; then
     echo "❌ ERROR: Rust target $wasm is not installed. Run 'rustup target add $wasm'."
     FAILED=1
     return

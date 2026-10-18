@@ -32,6 +32,12 @@ Notes for later tasks: the `ocfl` store still writes `metadata.md` whole through
 | MD-S-009 wasm32 build | F-052 "Engine builds for the browser" (default features off, and with `ocfl`), hook step |
 | MD-S-009 bytes/reader plus `FileRef` | `unit_extract`, `unit_file_ref`, `unit_cli` extract, F-052 "Extraction reads bytes from filesquid-ocfl", "Extraction takes a reader and a file reference, independent of any store", "CLI and path helpers are native-only" |
 
+The F-052 scenario "Metadata panel plugs into a file browser sidebar" stays skipped (22 scenarios: 21 passed, 1 skipped). It has no steps in this crate on purpose: the panel is the `<fs-metadata-panel>` element in `@filesquid/ui`, owned by UI-F2.4, and this task does not touch it.
+
+## Review fixes
+
+Cubic round 1: the sidecar store rejects symlinked path components and treats a dangling `.git` symlink as Git; `FileRef` rejects `:` (Windows drive prefixes); invalid UTF-8 records are errors in both stores instead of lossy; staging files are removed on a failed write; the CLI no longer fails on file names that are not valid logical paths; `StoreError::Backend` exposes its source; ADR links fixed; the hook queries `rustup` from the workspace.
+
 ## Mocked Environment Variables
 
 None.
