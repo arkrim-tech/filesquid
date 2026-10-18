@@ -8,7 +8,7 @@ SRS-UI-007 in full: tokens MUST be CSS custom properties with the `--fs-` prefix
 
 ## Changes
 
-- **Official FileSquid tokens** ([`tokens.css`](../../src/theme/tokens.css)) from the [FileSquid Design Guide](../../../../../resources/assets/FileSquid-Design-Guide.html), adjusted where the guide misses AA:
+- **Official FileSquid tokens** ([`tokens.css`](../../src/theme/tokens.css)) from the [FileSquid Design Guide](../../../../../resources/assets/FileSquid-design-guide-v1.html), adjusted where the guide misses AA:
 
   | Token | Light | Dark |
   |---|---|---|

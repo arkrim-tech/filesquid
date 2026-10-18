@@ -5,7 +5,7 @@ Documentation-only task (design artifacts). Output: 37 SVG mockups and an index 
 ## What was done
 
 - Worked out the MVP scope from [C-056](../product-vision.md#release-sequence), [ADR 035](../architecture/035-macos-first-desktop-mvp.md) and phases F0 to F3 of the [implementation plan](../implementation-plan.md), down to the module rows (UI-0.x, UI-F2.1 to UI-F2.13, UI-1.1, UI-1.2, API-F1.3 to API-F2.5, CL-1.1, CL-1.4, DE-0.4, DE-0.5, DE-1.1, DE-1.2, DE-F3.1, IO-1.1, MD-0.7). Anything assigned to phase F3R, F4 or I1, or with no MVP task, was left out. The v2 README lists what was removed from v1 and why.
-- Drew 34 distinct screens plus 3 dark variants at 1440 × 900 in a macOS window, following the [FileSquid Design Guide](../assets/FileSquid-Design-Guide.html) tokens and the v1 layouts.
+- Drew 34 distinct screens plus 3 dark variants at 1440 × 900 in a macOS window, following the [FileSquid Design Guide](../assets/FileSquid-design-guide-v1.html) tokens and the v1 layouts.
 - Used the coloured logo [`FileSquid-logo.svg`](../assets/FileSquid-logo.svg), at the owner's request after a black-and-white draft: coloured shapes in both modes, with a black outline and wordmark on light surfaces and a white one on dark surfaces.
 - Did not mark v2 as the active suite in the [mockups README](../ui-mockups/README.md). The owner approves that, because an active suite becomes an SRS requirement source.
 

@@ -1,6 +1,6 @@
 # UI mockups v1: FileSquid default UI
 
-Draft mockups of the screens the FileSquid MVP (the first consumer release) needs, drawn from the [PRD](../../prd.md), the [SRS](../../srs.md) and the module SRS files with the [FileSquid Design Guide](../../assets/FileSquid-Design-Guide.html).
+Draft mockups of the screens the FileSquid MVP (the first consumer release) needs, drawn from the [PRD](../../prd.md), the [SRS](../../srs.md) and the module SRS files with the [FileSquid Design Guide](../../assets/FileSquid-design-guide-v1.html).
 
 **Status: draft, not the active suite.** The [mockups README](../README.md) names the active suite. Until the owner approves v1 there, these files MUST NOT be read as SRS requirements.
 
