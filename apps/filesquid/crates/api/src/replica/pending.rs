@@ -116,7 +116,7 @@ impl PendingLedger {
     /// # Errors
     ///
     /// Returns `invalid_time` for a bad time, `pending_needs_library` for a command that
-    /// names no library, `operation_reused` when the operation ID belongs to a different
+    /// names no library, `invalid_command` for a command that breaks a library rule, `operation_reused` when the operation ID belongs to a different
     /// request, and `pending_full` at the per-library or per-ledger bound.
     pub fn enqueue(
         &mut self,

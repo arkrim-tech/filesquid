@@ -6,7 +6,7 @@
 //! changes it has not yet published as pending ([ADR 008](../../../../../../resources/architecture/008-browser-wasm-scope.md),
 //! [ADR 025](../../../../../../resources/architecture/025-client-side-filesquid-engines.md)).
 //! This module is pure computation: it does no storage I/O and holds no filesystem path or
-//! SQL ([API-S-006](../../resources/srs.md)), uses only portable dependencies (so it does not block the
+//! SQL ([API-S-006](../../resources/srs.md)), uses no native, network or storage dependency (so it does not block the
 //! `wasm32-unknown-unknown` build of API-S-010) and adds no dependency. The host injects the cache backend ([`ReplicaCache`]) and keeps the ledger
 //! snapshot wherever it stores local state.
 //!

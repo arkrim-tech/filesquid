@@ -1039,7 +1039,7 @@ fn an_interrupted_last_attempt_restores_as_stalled() {
 
 #[test]
 fn an_oversized_snapshot_is_refused_before_parsing() {
-    let huge = " ".repeat(MAX_SNAPSHOT_BYTES + 1);
+    let huge = format!("[{}]", " ".repeat(MAX_SNAPSHOT_BYTES));
     assert_eq!(
         PendingLedger::restore(&huge)
             .expect_err("huge")

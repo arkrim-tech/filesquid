@@ -62,7 +62,7 @@ pub trait ReplicaCache: Send + Sync {
     /// Returns [`ReplicaError::Internal`] when the backend fails.
     fn store(&self, key: CacheKey, page: CachedPage) -> Result<(), ReplicaError>;
 
-    /// Drop every entry whose identity `newer` supersedes (the same viewer and library under
+    /// Drop every entry whose identity `newer` supersedes (the same host, viewer and library under
     /// other grants), so entries made under old grants are gone, not just unreachable. They
     /// are not remembered as evicted. Returns how many were dropped.
     ///
@@ -269,7 +269,8 @@ impl ReplicaCache for MemoryReplicaCache {
         for key in &stale {
             state.entries.remove(key);
         }
-        state.order.retain(|k| !stale.contains(k));
+        let State { entries, order, .. } = &mut *state;
+        order.retain(|k| entries.contains_key(k));
         Ok(stale.len())
     }
 }
