@@ -4,9 +4,14 @@
 use filesquid_api::auth::LaunchToken;
 use filesquid_api::ApiState;
 use filesquid_desktop_lib::api_protocol::{
-    app_origins, handle, launch_token_script, DEV_ORIGINS, RELEASE_ORIGINS, SCHEME,
+    api_error_response, app_origins, handle, into_scheme_response, launch_token_script,
+    DEV_ORIGINS, MAX_SCHEME_RESPONSE_BYTES, RELEASE_ORIGINS, SCHEME,
 };
+
+#[path = "../support/journal.rs"]
+mod journal;
 use filesquid_desktop_lib::install_launch_token;
+use journal::{block_on, journaled};
 
 /// API state with a freshly generated per-launch token installed, as the desktop host does.
 fn launched() -> (ApiState, LaunchToken) {
@@ -254,4 +259,143 @@ async fn app_origin_responses_expose_the_journal_cursor_header() {
         .expect("ascii")
         .to_ascii_lowercase();
     assert!(exposed.contains("x-journal-next-cursor"), "{exposed}");
+}
+
+#[tokio::test]
+async fn app_origins_may_preflight_the_range_header() {
+    let (state, _token) = launched();
+    let response = handle(state, preflight("tauri://localhost")).await;
+    let allowed = response.headers()[http::header::ACCESS_CONTROL_ALLOW_HEADERS]
+        .to_str()
+        .expect("ascii");
+    assert!(allowed.contains("range"), "{allowed}");
+}
+
+#[tokio::test]
+async fn app_origin_responses_expose_the_range_headers() {
+    let (state, token) = launched();
+    let uri = "filesquid://localhost/api/v1/health";
+    let request = get_with(uri, Some("tauri://localhost"), Some(token.secret()));
+    let response = handle(state, request).await;
+    let exposed = response.headers()[http::header::ACCESS_CONTROL_EXPOSE_HEADERS]
+        .to_str()
+        .expect("ascii")
+        .to_ascii_lowercase();
+    assert!(exposed.contains("content-range"), "{exposed}");
+    assert!(exposed.contains("accept-ranges"), "{exposed}");
+}
+
+#[tokio::test]
+async fn windows_style_scheme_urls_allow_and_expose_the_range_headers() {
+    let (state, token) = launched();
+    let uri = "http://filesquid.localhost/api/v1/health";
+    let preflight = http::Request::builder()
+        .method(http::Method::OPTIONS)
+        .uri(uri)
+        .header(http::header::ORIGIN, "http://tauri.localhost")
+        .header(http::header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
+        .header(
+            http::header::ACCESS_CONTROL_REQUEST_HEADERS,
+            "authorization, range",
+        )
+        .body(Vec::new())
+        .expect("request");
+    let answer = handle(state.clone(), preflight).await;
+    assert_eq!(answer.status(), http::StatusCode::NO_CONTENT);
+    let allowed = answer.headers()[http::header::ACCESS_CONTROL_ALLOW_HEADERS]
+        .to_str()
+        .expect("ascii");
+    assert!(allowed.contains("range"), "{allowed}");
+    let request = get_with(uri, Some("http://tauri.localhost"), Some(token.secret()));
+    let response = handle(state, request).await;
+    let exposed = response.headers()[http::header::ACCESS_CONTROL_EXPOSE_HEADERS]
+        .to_str()
+        .expect("ascii")
+        .to_ascii_lowercase();
+    assert!(exposed.contains("content-range"), "{exposed}");
+    assert!(exposed.contains("accept-ranges"), "{exposed}");
+}
+
+/// A router-style response with `bytes` as its body and `status`.
+fn body_response(status: u16, bytes: Vec<u8>) -> http::Response<axum::body::Body> {
+    http::Response::builder()
+        .status(status)
+        .header(http::header::CONTENT_RANGE, "bytes 0-9/100")
+        .body(axum::body::Body::from(bytes))
+        .expect("response")
+}
+
+#[tokio::test]
+async fn a_partial_response_passes_through_the_scheme_unchanged() {
+    let bytes: Vec<u8> = (0..10).collect();
+    let response = into_scheme_response(body_response(206, bytes.clone()), 10).await;
+    assert_eq!(response.status(), http::StatusCode::PARTIAL_CONTENT);
+    assert_eq!(
+        response.headers()[http::header::CONTENT_RANGE],
+        "bytes 0-9/100"
+    );
+    assert_eq!(response.body(), &bytes);
+}
+
+#[tokio::test]
+async fn a_response_over_the_buffer_cap_is_a_typed_internal_error() {
+    let response = into_scheme_response(body_response(206, vec![7; 11]), 10).await;
+    assert_eq!(response.status(), http::StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        response.headers()[http::header::CONTENT_TYPE],
+        "application/json"
+    );
+    let json: serde_json::Value = serde_json::from_slice(response.body()).expect("json");
+    assert_eq!(json["code"], "internal");
+    assert_eq!(json["retryable"], false);
+    assert!(response
+        .headers()
+        .get(http::header::CONTENT_RANGE)
+        .is_none());
+}
+
+#[test]
+fn the_scheme_buffers_at_most_sixteen_mebibytes() {
+    assert_eq!(MAX_SCHEME_RESPONSE_BYTES, 16 * 1024 * 1024);
+}
+
+#[test]
+fn host_errors_carry_the_api_error_body() {
+    let error = filesquid_api::ApiError::new(
+        filesquid_api::ErrorCode::InvalidRequest,
+        "The request address is not valid.",
+    );
+    let response = api_error_response(&error);
+    assert_eq!(response.status(), http::StatusCode::BAD_REQUEST);
+    assert_eq!(
+        response.headers()[http::header::CONTENT_TYPE],
+        "application/json"
+    );
+    let json: serde_json::Value = serde_json::from_slice(response.body()).expect("json");
+    assert_eq!(json["code"], "invalid_request");
+    assert_eq!(json["message"], "The request address is not valid.");
+}
+
+#[cfg(not(feature = "test-webdriver"))]
+#[tokio::test]
+async fn default_builds_serve_no_test_fixture() {
+    let (state, token) = launched();
+    let uri = "filesquid://localhost/__filesquid_test__/range-fixture";
+    let response = handle(state, get_with(uri, None, Some(token.secret()))).await;
+    assert_eq!(response.status(), http::StatusCode::NOT_FOUND);
+}
+
+#[test]
+fn an_oversized_response_is_journaled_without_its_detail() {
+    let entries = journaled(|| {
+        let private = b"/Users/owner/Pictures/private.jpg".to_vec();
+        block_on(into_scheme_response(body_response(200, private), 4));
+    });
+    assert_eq!(entries.len(), 1);
+    let entry = &entries[0];
+    assert_eq!(entry.operation, "desktop.scheme.response");
+    assert_eq!(entry.error_code.as_deref(), Some("internal"));
+    let text = serde_json::to_string(entry).expect("json");
+    assert!(!text.contains("private"), "{text}");
+    assert!(!text.contains("Users"), "{text}");
 }

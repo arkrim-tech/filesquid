@@ -77,6 +77,20 @@ path = "tests/integration/logical_file.rs"
 required-features = ["fs"]
 
 [[test]]
+name = "unit_read_state"
+path = "tests/unit/read_state.rs"
+
+[[test]]
+name = "integration_read_objects"
+path = "tests/integration/read_objects.rs"
+required-features = ["fs"]
+
+[[test]]
+name = "integration_fixture_reads"
+path = "tests/integration/fixture_reads.rs"
+required-features = ["fs"]
+
+[[test]]
 name = "features"
 path = "tests/features.rs"
 harness = false
