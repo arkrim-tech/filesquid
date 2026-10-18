@@ -6,6 +6,7 @@
 //! directory, so the community validators (`crate::community`) can read
 //! them. Copy scenarios use the write rig of `write_order_OCFL-S-018`.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -29,6 +30,11 @@ pub struct PayloadState {
     other: Option<MemoryBackend>,
     copy: Option<Result<ObjectMeta, ReadError>>,
     before: Option<Option<Vec<u8>>>,
+    /// The destination key the last copy was asked to write.
+    dest: Option<String>,
+    /// Every key of the source object with its bytes, taken just before
+    /// the last copy.
+    source: Option<BTreeMap<String, Vec<u8>>>,
 }
 
 /// The directory storage the content fixtures were written into.
@@ -98,6 +104,26 @@ fn storage_root_declaration(world: &mut OcflWorld) {
     ready(rig(world).storage.put(&declaration, b"ocfl_1.1\n")).expect("declare");
 }
 
+/// Every key under the source object root with its bytes: inventories,
+/// sidecars, declarations and stored content.
+fn source_snapshot(world: &OcflWorld) -> BTreeMap<String, Vec<u8>> {
+    let rig = rig(world);
+    rig.snapshot(&format!("{ROOT}/"))
+        .into_keys()
+        .map(|raw| {
+            let bytes = rig.bytes(&raw);
+            (raw, bytes)
+        })
+        .collect()
+}
+
+/// Record what a copy must leave alone: the source object and the
+/// requested destination.
+fn record_before_copy(world: &mut OcflWorld, dest: &str) {
+    world.payload.source = Some(source_snapshot(world));
+    world.payload.dest = Some(dest.to_string());
+}
+
 /// The bytes at `raw` in the rig's storage, or `None` when absent.
 fn stored_bytes(world: &OcflWorld, raw: &str) -> Option<Vec<u8>> {
     let rig = rig(world);
@@ -107,6 +133,7 @@ fn stored_bytes(world: &OcflWorld, raw: &str) -> Option<Vec<u8>> {
 #[when(expr = "I copy {string} of {string} to {string} in the same storage")]
 fn copy_in_same_storage(world: &mut OcflWorld, path: String, version: String, dest: String) {
     world.payload.before = Some(stored_bytes(world, &dest));
+    record_before_copy(world, &dest);
     let rig = rig(world);
     let object = ready(Object::open(&rig.storage, ROOT)).expect("open");
     let dest = key(&dest);
@@ -117,6 +144,7 @@ fn copy_in_same_storage(world: &mut OcflWorld, path: String, version: String, de
 #[when(expr = "I copy {string} of {string} to {string} on another backend")]
 fn copy_to_other_backend(world: &mut OcflWorld, path: String, version: String, dest: String) {
     let other = MemoryBackend::new();
+    record_before_copy(world, &dest);
     let rig = rig(world);
     let object = ready(Object::open(&rig.storage, ROOT)).expect("open");
     let result = ready(object.copy_file(&v(&version), &path, &other, &key(&dest), None));
@@ -134,7 +162,10 @@ fn copy_holds_bytes(world: &mut OcflWorld, path: String) {
         .expect("copied");
     let other = world.payload.other.as_ref().expect("another backend");
     let page = ready(other.list("", None, 10)).expect("list");
-    let copied: &StorageKey = page.keys.first().expect("one copied file");
+    let listed: Vec<&str> = page.keys.iter().map(StorageKey::as_str).collect();
+    let dest = world.payload.dest.as_deref().expect("a copy ran");
+    assert_eq!(listed, [dest], "the copy is stored at its destination only");
+    let copied: &StorageKey = &page.keys[0];
     let bytes = ready(filesquid_ocfl::storage::read_verified(
         other,
         copied,
@@ -163,4 +194,15 @@ fn destination_unchanged(world: &mut OcflWorld, dest: String) {
         .take()
         .expect("the copy recorded the destination");
     assert_eq!(stored_bytes(world, &dest), before, "{dest} changed");
+}
+
+#[then("the source object should be byte-identical to before the copy")]
+fn source_unchanged(world: &mut OcflWorld) {
+    let before = world
+        .payload
+        .source
+        .take()
+        .expect("the copy recorded the source object");
+    assert!(!before.is_empty(), "the source object has keys");
+    assert_eq!(source_snapshot(world), before, "the source object changed");
 }

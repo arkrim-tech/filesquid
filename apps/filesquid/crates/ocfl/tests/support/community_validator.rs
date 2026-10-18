@@ -127,13 +127,67 @@ pub fn find_validators() -> Vec<Validator> {
     found
 }
 
-/// The first executable called `name` in a `PATH` directory.
+/// The first executable called `name` in a `PATH` directory. On Windows a
+/// name also matches with each `PATHEXT` suffix (`rocfl.exe`,
+/// `ocfl-validate.exe`), as the shell would run it. A file that is not
+/// executable is passed over and the search goes on.
 fn on_path(name: &str) -> Option<PathBuf> {
-    let path = env::var_os("PATH")?;
-    env::split_paths(&path)
+    find_in(&env::var_os("PATH")?, name)
+}
+
+/// The first executable called `name` in the directories of `path`, a
+/// value in the form of `PATH`; see [`on_path`].
+pub fn find_in(path: &std::ffi::OsStr, name: &str) -> Option<PathBuf> {
+    let names = program_names(name);
+    env::split_paths(path)
         .take(MAX_PATH_ENTRIES)
-        .map(|dir| dir.join(name))
-        .find(|candidate| candidate.is_file())
+        .flat_map(|dir| names.iter().map(move |n| dir.join(n)))
+        .find(|candidate| is_executable(candidate))
+}
+
+/// Most `PATHEXT` suffixes tried for one program name on Windows.
+const MAX_PATHEXT_ENTRIES: usize = 32;
+
+/// The file names `name` may have on disk: `name` itself and, on Windows,
+/// `name` with each `PATHEXT` suffix (`.COM;.EXE;.BAT;.CMD` when unset).
+fn program_names(name: &str) -> Vec<String> {
+    let mut names = vec![name.to_string()];
+    if cfg!(windows) {
+        let pathext = env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
+        let suffixes = pathext.split(';').filter(|ext| !ext.is_empty());
+        names.extend(
+            suffixes
+                .take(MAX_PATHEXT_ENTRIES)
+                .map(|ext| format!("{name}{}", ext.to_ascii_lowercase())),
+        );
+    }
+    names
+}
+
+/// Whether `candidate` is a regular file this process may run: any
+/// execute bit on Unix; on Windows, a `PATHEXT`-style suffix such as
+/// `.exe` (a bare `.py` script is not run directly).
+fn is_executable(candidate: &Path) -> bool {
+    let Ok(meta) = candidate.metadata() else {
+        return false;
+    };
+    meta.is_file() && has_run_permission(candidate, &meta)
+}
+
+/// Whether the file's permissions let this process run it (Unix).
+#[cfg(unix)]
+fn has_run_permission(_: &Path, meta: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    meta.permissions().mode() & 0o111 != 0
+}
+
+/// Whether the file's suffix makes it runnable (Windows and others).
+#[cfg(not(unix))]
+fn has_run_permission(candidate: &Path, _: &std::fs::Metadata) -> bool {
+    candidate
+        .extension()
+        .map(|ext| ext.to_string_lossy().to_ascii_lowercase())
+        .is_some_and(|ext| matches!(ext.as_str(), "exe" | "com" | "bat" | "cmd"))
 }
 
 /// Whether a missing validator fails the test ([`REQUIRE_VAR`] is `1`).

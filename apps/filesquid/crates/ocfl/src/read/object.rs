@@ -184,7 +184,11 @@ impl<'a, B: StorageBackend> Object<'a, B> {
     ///
     /// [`ReadError::CopyIntoOcflRoot`] for a destination inside an OCFL
     /// root; as [`stream_file`](Self::stream_file) and
-    /// [`LogicalFileReader::next_chunk`]; or a destination backend error.
+    /// [`LogicalFileReader::next_chunk`]; a destination backend error; or
+    /// [`ReadError::Storage`] with [`StorageError::LimitExceeded`] for a
+    /// `dest_key` deeper than 64 directory levels, or for a directory above
+    /// it holding more than [`MAX_LIST_PAGE`](crate::storage::MAX_LIST_PAGE)
+    /// keys named like an OCFL declaration, refused before any copy.
     pub async fn copy_file<D: StorageBackend>(
         &self,
         version: &VersionNum,

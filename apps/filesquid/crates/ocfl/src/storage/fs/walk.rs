@@ -27,6 +27,15 @@ pub(super) trait Visitor {
         false
     }
 
+    /// Whether to leave out the entry whose storage key is `key`, after
+    /// [`Visitor::skips`] kept its name. A pruned directory is not entered.
+    /// Pruned entries still count toward the entry bound. Prunes nothing by
+    /// default.
+    fn prunes(&self, key: &str) -> bool {
+        let _ = key;
+        false
+    }
+
     /// Handle one entry that is not a directory. `key` is its storage key and
     /// `file_type` is read without following links.
     fn entry(
@@ -51,14 +60,28 @@ struct WalkDir {
     depth: usize,
 }
 
-/// Collects the keys of regular files: the listing's visitor.
-struct KeyCollector(Vec<String>);
+/// Collects the keys of regular files that can start with a listing
+/// prefix: the listing's visitor.
+struct KeyCollector {
+    /// The keys found so far.
+    keys: Vec<String>,
+    /// The listing prefix; entries whose keys cannot start with it are
+    /// pruned, so a listing never walks an unrelated subtree.
+    prefix: String,
+}
 
 impl Visitor for KeyCollector {
     /// Skip the backend's reserved internal names (temporary files), which
     /// are never keys.
     fn skips(&self, name: &str) -> bool {
         name.starts_with(RESERVED_PREFIX)
+    }
+
+    /// Prune an entry when no key at or below it can start with the
+    /// prefix: its key neither starts with the prefix nor is a leading part
+    /// of it.
+    fn prunes(&self, key: &str) -> bool {
+        !(key.starts_with(&self.prefix) || self.prefix.starts_with(key))
     }
 
     /// Keep a regular file's key. Symbolic links, FIFOs, sockets and devices
@@ -70,20 +93,29 @@ impl Visitor for KeyCollector {
         file_type: FileType,
     ) -> Result<(), StorageError> {
         if file_type.is_file() {
-            self.0.push(key);
+            self.keys.push(key);
         }
         Ok(())
     }
 }
 
-/// Collect the keys of every file under `start` (whose key prefix is
-/// `key_prefix`), skipping the backend's reserved internal files and anything
-/// that is not a regular file. A missing start, or one that is a file, yields
-/// no keys. Bounded as [`walk`].
-pub(super) fn walk_keys(start: PathBuf, key_prefix: String) -> Result<Vec<String>, StorageError> {
-    let mut collector = KeyCollector(Vec::new());
+/// Collect the keys of the files under `start` (whose key prefix is
+/// `key_prefix`) that can start with `prefix`, skipping the backend's
+/// reserved internal files, anything that is not a regular file and every
+/// directory whose keys cannot start with `prefix`. The caller still
+/// filters the keys by `prefix`. A missing start, or one that is a file,
+/// yields no keys. Bounded as [`walk`].
+pub(super) fn walk_keys(
+    start: PathBuf,
+    key_prefix: String,
+    prefix: &str,
+) -> Result<Vec<String>, StorageError> {
+    let mut collector = KeyCollector {
+        keys: Vec::new(),
+        prefix: prefix.to_string(),
+    };
     walk(start, key_prefix, &mut collector)?;
-    Ok(collector.0)
+    Ok(collector.keys)
 }
 
 /// Visit every entry under `start` (whose key prefix is `key_prefix`) with
@@ -156,7 +188,8 @@ fn check_walk_bounds(visited: usize, depth: usize) -> Result<(), StorageError> {
     Ok(())
 }
 
-/// Route one directory entry: skip a name the visitor skips, queue a directory
+/// Route one directory entry: skip a name the visitor skips or a key it
+/// prunes, queue a directory
 /// (failing when it would be deeper than [`MAX_WALK_DEPTH`]) and hand
 /// anything else to the visitor.
 fn visit_entry(
@@ -176,6 +209,9 @@ fn visit_entry(
         return Ok(());
     }
     let key = format!("{}{name}", parent.key_prefix);
+    if visitor.prunes(&key) {
+        return Ok(());
+    }
     let file_type = entry.file_type().map_err(|e| io_error(&key, e))?;
     if !file_type.is_dir() {
         return visitor.entry(entry, key, file_type);

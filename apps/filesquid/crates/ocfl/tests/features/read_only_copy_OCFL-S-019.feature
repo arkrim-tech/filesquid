@@ -13,12 +13,14 @@ Feature: Inspection and copy never edit a completed object
   Scenario: A logical file copies out to another backend
     When I copy "b.txt" of "v1" to "export/b.txt" on another backend
     Then the copy should hold the bytes of "b.txt"
+    And the source object should be byte-identical to before the copy
 
   # Error cases: a copy aimed inside the object it reads
   Scenario Outline: A copy into the object root is refused
     When I copy "b.txt" of "v1" to "<destination>" in the same storage
     Then the copy should be refused as a write into an OCFL root
     And "<destination>" should be unchanged
+    And the source object should be byte-identical to before the copy
     And the object should validate with zero errors
 
     Examples:

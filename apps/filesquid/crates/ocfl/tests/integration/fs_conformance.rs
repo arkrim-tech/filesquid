@@ -430,6 +430,34 @@ async fn fs_listing_returns_only_regular_files() {
     assert_eq!(keys, ["objects/a/real.txt"]);
 }
 
+/// A prefix listing reads only the entries its prefix can match: a sibling
+/// tree deeper than the walk bound does not fail a listing for `0=ocfl_`
+/// beside it, so the copy guard (OCFL-S-019) can ask one directory for its
+/// declarations without walking the whole root.
+#[tokio::test]
+async fn fs_prefix_listing_skips_unrelated_subtrees() {
+    let (backend, scratch) = fs_backend("prefix-prune");
+    let mut dir = scratch.0.join("root/objects");
+    for i in 0..=filesquid_ocfl::storage::MAX_WALK_DEPTH {
+        dir.push(format!("d{i}"));
+    }
+    std::fs::create_dir_all(&dir).expect("deep dirs");
+    std::fs::write(dir.join("deep.txt"), b"d").expect("deep file");
+    backend
+        .put(&key("0=ocfl_1.1"), b"ocfl_1.1\n")
+        .await
+        .expect("declaration");
+    backend
+        .put(&key("0=ocfl_notes/a.txt"), b"a")
+        .await
+        .expect("lookalike directory");
+    let page = backend.list("0=ocfl_", None, 10).await.expect("list");
+    let keys: Vec<&str> = page.keys.iter().map(StorageKey::as_str).collect();
+    assert_eq!(keys, ["0=ocfl_1.1", "0=ocfl_notes/a.txt"]);
+    let err = backend.list("", None, 10).await.expect_err("too deep");
+    assert!(matches!(err, StorageError::LimitExceeded { .. }), "{err:?}");
+}
+
 #[tokio::test]
 async fn fs_walk_depth_bound_is_exact() {
     let (backend, scratch) = fs_backend("walk-depth");

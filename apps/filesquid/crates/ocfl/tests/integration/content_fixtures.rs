@@ -210,25 +210,66 @@ fn spec_ex_full_keeps_the_callers_version_metadata() {
     write_fixture(&storage, "obj", &load("spec-ex-full"));
     let object = ready(Object::open(&storage, "obj")).expect("open");
     assert_eq!(object.id(), "ark:/12345/bcd987");
+    let expected = [
+        (
+            "v1",
+            "2018-01-01T01:01:01Z",
+            "Initial import",
+            "Alice",
+            "alice@example.com",
+        ),
+        (
+            "v2",
+            "2018-02-02T02:02:02Z",
+            "Fix bar.xml, remove image.tiff, add empty2.txt",
+            "Bob",
+            "bob@example.com",
+        ),
+        (
+            "v3",
+            "2018-03-03T03:03:03Z",
+            "Reinstate image.tiff, delete empty.txt",
+            "Cecilia",
+            "cecilia@example.com",
+        ),
+    ];
     let history = object.history();
-    let v1 = &history[0];
-    assert_eq!(v1.version, v("v1"));
-    assert_eq!(v1.created, "2018-01-01T01:01:01Z");
-    assert_eq!(v1.message.as_deref(), Some("Initial import"));
-    assert_eq!(
-        v1.user,
-        Some(User {
-            name: "Alice".to_string(),
-            address: Some("alice@example.com".to_string()),
-        })
-    );
-    let messages: Vec<_> = history.iter().map(|h| h.message.clone()).collect();
-    assert_eq!(
-        messages,
-        [
-            Some("Initial import".to_string()),
-            Some("Fix bar.xml, remove image.tiff, add empty2.txt".to_string()),
-            Some("Reinstate image.tiff, delete empty.txt".to_string()),
-        ]
-    );
+    assert_eq!(history.len(), expected.len(), "every version has history");
+    for (entry, (version, created, message, name, address)) in history.iter().zip(expected) {
+        assert_eq!(entry.version, v(version));
+        assert_eq!(entry.created, created, "{version} created");
+        assert_eq!(entry.message.as_deref(), Some(message), "{version} message");
+        let user = User {
+            name: name.to_string(),
+            address: Some(address.to_string()),
+        };
+        assert_eq!(entry.user, Some(user), "{version} user");
+    }
+}
+
+/// Write `name` in `dir` with the Unix permission bits `mode`.
+#[cfg(unix)]
+fn program(dir: &std::path::Path, name: &str, mode: u32) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::create_dir_all(dir).expect("dir");
+    let file = dir.join(name);
+    std::fs::write(&file, b"#!/bin/sh\nexit 0\n").expect("write");
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(mode)).expect("chmod");
+    file
+}
+
+/// Validator discovery passes over a file on `PATH` that cannot be run and
+/// keeps searching, so it never hides a usable validator later on `PATH`.
+#[cfg(unix)]
+#[test]
+fn a_non_executable_validator_on_path_is_passed_over() {
+    let (_, scratch) = fs_backend();
+    let first = scratch.0.join("first");
+    let second = scratch.0.join("second");
+    program(&first, "rocfl", 0o644);
+    let usable = program(&second, "rocfl", 0o755);
+    let path = std::env::join_paths([&first, &second]).expect("PATH");
+    assert_eq!(community::find_in(&path, "rocfl"), Some(usable));
+    let only_first = std::env::join_paths([&first]).expect("PATH");
+    assert_eq!(community::find_in(&only_first, "rocfl"), None);
 }

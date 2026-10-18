@@ -14,7 +14,7 @@ Sources: [OCFL-S-010, OCFL-S-003, OCFL-S-011, OCFL-S-019](../srs.md) (OCFL-S-019
 
 - **Write conformance (OCFL-S-010 (b)).** `tests/integration/content_fixtures.rs` (new test target `integration_content_fixtures`) and `tests/support/content_fixtures.rs` write each of the 7 pinned `content` fixtures through `ObjectWriter`, one version per version directory (13 versions), from caller-supplied logical files only. A `vN/` directory is that version's whole state; `README.md` and `vN_inventory.json` are not content. `spec-ex-full`'s `vN_inventory.json` files supply the object id (`ark:/12345/bcd987`) and each version's `created`, `message` and `user` as caller metadata. Each object is written on the in-memory backend and in a real directory, validated by the engine (zero errors), and read back: every version's logical paths and streamed bytes equal the source directory. The writer needed no change: the IO-0.6 write path already met OCFL-S-010 (b).
 - **Community validators (test oracles).** `tests/support/community_validator.rs` runs `ocfl-validate.py`/`ocfl-validate` (ocfl-py) and `rocfl` when found on `PATH`, or the program in `FILESQUID_OCFL_COMMUNITY_VALIDATOR`. With none, the check prints `SKIPPED community OCFL validation ...` with install hints; `FILESQUID_OCFL_REQUIRE_COMMUNITY_VALIDATOR=1` makes that a failure. They are run as separate processes from tests only: no crate dependency, no runtime dependency, never the writer (ADR 016, ADR 023, PRD F-051).
-- **Copy guard (OCFL-S-019, T-036, ADR 016).** Before this task `Object::copy_file` accepted any destination, "this one included", so a copy could replace `inventory.json`, a sidecar or `vN/content/...` of a completed object, or add a file to it. New `src/read/copy_guard.rs`: before it writes, a copy checks every directory above the destination key (the backend root included, at most 64 levels) for an OCFL object or storage-root declaration (`0=ocfl_object_1.0`/`1.1`, `0=ocfl_1.0`/`1.1`) on the destination backend, and refuses with the new `ReadError::CopyIntoOcflRoot { key, root }` (no OCFL code; logged with `tracing::warn!`). It uses `exists` only (four checks per level), so it never walks a large storage root.
+- **Copy guard (OCFL-S-019, T-036, ADR 016).** Before this task `Object::copy_file` accepted any destination, "this one included", so a copy could replace `inventory.json`, a sidecar or `vN/content/...` of a completed object, or add a file to it. New `src/read/copy_guard.rs`: before it writes, a copy checks every directory above the destination key (the backend root included, at most 64 levels) for an OCFL object or storage-root declaration of any version (a file named `0=ocfl_object_<version>` or `0=ocfl_<version>` directly in that directory) on the destination backend, and refuses with the new `ReadError::CopyIntoOcflRoot { key, root }` (no OCFL code; logged with `tracing::warn!`). Each level is one listing of at most 1,000 keys under `<dir>/0=ocfl_`; the filesystem backend's listing now enters only subdirectories whose keys can match the prefix, so the check never walks a large storage root. A directory with more keys under that prefix and no declaration among them is refused with `StorageError::LimitExceeded`, never guessed.
 - **Generic API (OCFL-S-003).** The F-051 BDD step "FileSquid catalog, recipe, C2PA, and collection-snapshot types should be absent" now scans every file under `src/`, not only `lib.rs`, for `CollectionSnapshot`, `C2paImportRecord`, `RecipeOperation`, `FileObject`, `CatalogEntry` and `filesquid_core`.
 - **BDD.** The scenario "Objects written from OCFL 1.1 content fixtures pass independent validation" in `OCFL_1.1_fixture_conformance.feature` now has steps (`tests/support/payload_steps.rs`); it was skipped before. New `read_only_copy_OCFL-S-019.feature` (5 scenarios: a copy to another backend, three copies into the object root, a copy into a storage root).
 - **Fixtures.** Unchanged (`git status` shows nothing under `tests/fixtures/`), still `exclude`d from the package (OCFL-S-011).
@@ -54,7 +54,7 @@ Write conformance, exactly as documented in the crate README, with both validato
 $ cd apps/filesquid
 $ FILESQUID_OCFL_REQUIRE_COMMUNITY_VALIDATOR=1 cargo test -p filesquid-ocfl --locked --test integration_content_fixtures -- --nocapture
     Finished `test` profile [unoptimized] target(s) in 4.92s
-     Running tests/integration/content_fixtures.rs 
+     Running tests/integration/content_fixtures.rs
 
 running 7 tests
 test spec_ex_full_keeps_the_callers_version_metadata ... ok
@@ -216,50 +216,50 @@ test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 Full crate run with both validators required (`FILESQUID_OCFL_REQUIRE_COMMUNITY_VALIDATOR=1 cargo test -p filesquid-ocfl --locked`), result lines:
 
 ```text
-     Running unittests src/lib.rs 
+     Running unittests src/lib.rs
 test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.31s
-     Running tests/features.rs 
+     Running tests/features.rs
 100 scenarios (97 passed, 3 skipped)
 439 steps (436 passed, 3 skipped)
-     Running tests/integration/content_fixtures.rs 
+     Running tests/integration/content_fixtures.rs
 test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.11s
-     Running tests/integration/fixture_conformance.rs 
+     Running tests/integration/fixture_conformance.rs
 test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
-     Running tests/integration/fixture_inventories.rs 
+     Running tests/integration/fixture_inventories.rs
 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
-     Running tests/integration/fixture_reads.rs 
+     Running tests/integration/fixture_reads.rs
 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.39s
-     Running tests/integration/fs_conformance.rs 
+     Running tests/integration/fs_conformance.rs
 test result: ok. 46 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.06s
-     Running tests/integration/hierarchy_guard.rs 
+     Running tests/integration/hierarchy_guard.rs
 test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
-     Running tests/integration/logical_file.rs 
+     Running tests/integration/logical_file.rs
 test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.67s
-     Running tests/integration/memory_conformance.rs 
+     Running tests/integration/memory_conformance.rs
 test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.81s
-     Running tests/integration/read_objects.rs 
+     Running tests/integration/read_objects.rs
 test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
-     Running tests/integration/validate_objects.rs 
+     Running tests/integration/validate_objects.rs
 test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s
-     Running tests/integration/write_order.rs 
+     Running tests/integration/write_order.rs
 test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
-     Running tests/unit/digest.rs 
+     Running tests/unit/digest.rs
 test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
-     Running tests/unit/fixity.rs 
+     Running tests/unit/fixity.rs
 test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-     Running tests/unit/git_guard.rs 
+     Running tests/unit/git_guard.rs
 test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
-     Running tests/unit/inventory.rs 
+     Running tests/unit/inventory.rs
 test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
-     Running tests/unit/lease.rs 
+     Running tests/unit/lease.rs
 test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-     Running tests/unit/namaste_sidecar.rs 
+     Running tests/unit/namaste_sidecar.rs
 test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-     Running tests/unit/read_state.rs 
+     Running tests/unit/read_state.rs
 test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-     Running tests/unit/source_scan.rs 
+     Running tests/unit/source_scan.rs
 test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-     Running tests/unit/storage_key.rs 
+     Running tests/unit/storage_key.rs
 test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 ```
@@ -338,6 +338,134 @@ test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 `cargo fmt --all`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo build -p filesquid-ocfl --locked --no-default-features --target wasm32-unknown-unknown` and `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` all exit 0. `bash scripts/pre-commit.sh` passes before the push.
 
+## Review round 1 (Cubic)
+
+Cubic's first review of `dde327c` raised nine findings. Each was fixed; the tests below were written first and failed before the fix where they test engine behaviour.
+
+- **Copy guard, declarations of any version (P1).** The guard probed only the 1.0 and 1.1 declaration names, so a copy could land below `0=ocfl_object_2.0` or `0=ocfl_2.0`. It now refuses below any directory that directly holds a file named `0=ocfl_*` (OCFL-S-019 already says `<version>`), found with one bounded listing per level. To keep that cheap, the filesystem backend's `list` now enters only subdirectories whose keys can start with the prefix (`Visitor::prunes` in `src/storage/fs/walk.rs`). New tests `a_copy_under_an_unknown_version_declaration_is_refused`, `a_copy_beside_a_declaration_lookalike_succeeds` (memory and filesystem) and `fs_prefix_listing_skips_unrelated_subtrees`. Before the fix:
+
+  ```text
+  test a_copy_under_an_unknown_version_declaration_is_refused ... FAILED
+  test fs_prefix_listing_skips_unrelated_subtrees ... FAILED
+  ```
+
+- **Fixture loader (P2).** A directory in a content fixture that is not a version directory now fails the load instead of being skipped.
+- **Version metadata (P2).** `spec_ex_full_keeps_the_callers_version_metadata` asserts `created`, `message` and `user` of all three versions.
+- **Copy destination (P2).** The BDD copy step asserts that the other backend holds exactly the requested destination key.
+- **Source unchanged (P2).** New BDD step "the source object should be byte-identical to before the copy" compares every key and byte of the object after the happy path and after each refused copy.
+- **Validator discovery (P2).** `PATH` search skips files without an execute bit and keeps searching; on Windows it also tries `PATHEXT` suffixes. New test `a_non_executable_validator_on_path_is_passed_over`. The READMEs say a bare `ocfl-validate.py` is not run on Windows.
+- **Rustdoc (P3).** `Object::copy_file` names the `StorageError::LimitExceeded` refusals.
+- **Whitespace (P3).** Trailing spaces removed from this file's captured output.
+
+`FILESQUID_OCFL_REQUIRE_COMMUNITY_VALIDATOR=1 cargo test -p filesquid-ocfl --locked` passes every target (100 scenarios: 97 passed, 3 skipped that belong to the server and UI). `integration_read_objects`:
+
+```text
+test a_copy_beside_a_declaration_lookalike_succeeds ... ok
+test a_copy_into_a_storage_root_is_refused ... ok
+test a_copy_into_its_own_object_root_is_refused ... ok
+test a_copy_that_fails_its_digest_is_never_published ... ok
+test a_head_published_during_open_is_read_again ... ok
+test a_copy_into_another_object_root_is_refused ... ok
+test a_head_version_inventory_removed_during_open_counts_as_missing ... ok
+test a_copy_under_an_unknown_version_declaration_is_refused ... ok
+test a_head_version_inventory_that_differs_from_the_root_is_e064 ... ok
+test a_missing_head_version_inventory_is_allowed ... ok
+test a_storage_root_with_too_many_0_files_is_refused ... ok
+test a_logical_file_copies_into_another_key ... ok
+test an_object_at_the_backend_root_opens ... ok
+test a_storage_root_discovers_its_outermost_objects ... ok
+test an_oversized_declaration_is_refused_before_it_is_read ... ok
+test an_oversized_sidecar_is_refused_before_it_is_read ... ok
+test an_unknown_ocfl_version_is_refused_as_unsupported ... ok
+test a_version_above_the_root_head_is_unpublished ... ok
+test a_file_that_grows_during_a_read_is_never_buffered_past_its_bound ... ok
+test declaration_faults_have_their_codes ... ok
+test declaration_listings_with_a_bad_continuation_are_refused ... ok
+test content_missing_from_storage_is_e092 ... ok
+test content_that_does_not_match_its_digest_is_e092 ... ok
+test files_under_a_0_prefixed_directory_are_not_declarations ... ok
+test every_version_resolves_through_state_and_manifest ... ok
+test every_logical_file_streams_in_bounded_chunks ... ok
+test objects_with_ten_or_more_versions_open ... ok
+test inventory_and_sidecar_faults_have_their_codes ... ok
+test opening_a_storage_root_runs_the_guard ... ok
+test history_and_diff_come_from_the_inventory ... ok
+test files_outside_the_inventory_are_not_logical_state ... ok
+test roots_declared_as_another_ocfl_version_are_refused ... ok
+test storage_root_declaration_faults_have_their_codes ... ok
+test only_versions_and_paths_in_the_inventory_can_be_pinned ... ok
+test opening_an_object_runs_the_git_guard ... ok
+test sha512_objects_with_uppercase_digests_read ... ok
+test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+```
+
+`FILESQUID_OCFL_REQUIRE_COMMUNITY_VALIDATOR=1 cargo test -p filesquid-ocfl --locked --test integration_content_fixtures -- --nocapture` (verdict lines; ocfl-py 2.1.0, rocfl 1.7.0):
+
+```text
+running 8 tests
+test a_non_executable_validator_on_path_is_passed_over ... ok
+test spec_ex_full_keeps_the_callers_version_metadata ... ok
+test the_pinned_content_fixtures_are_all_written ... ok
+test unchanged_and_reinstated_bytes_are_not_written_again ... ok
+test every_content_fixture_is_written_one_version_per_directory_in_memory ... ok
+test written_objects_use_sha256_and_its_sidecar ... ok
+test earlier_versions_are_never_changed_by_later_commits ... ok
+ocfl-py cf1: VALID
+ocfl-py cf2: VALID
+ocfl-py cf3: VALID
+ocfl-py cf4: VALID
+ocfl-py spec-ex-diff-paths: VALID
+ocfl-py spec-ex-full: VALID
+ocfl-py spec-ex-minimal: VALID
+rocfl cf1: VALID
+rocfl cf2: VALID
+rocfl cf3: VALID
+rocfl cf4: VALID
+rocfl spec-ex-diff-paths: VALID
+rocfl spec-ex-full: VALID
+rocfl spec-ex-minimal: VALID
+test every_content_fixture_written_to_a_directory_passes_the_engine_and_community_validators ... ok
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.54s
+```
+
+`read_only_copy_OCFL-S-019.feature`:
+
+```text
+Feature: Inspection and copy never edit a completed object
+  Scenario: A logical file copies out to another backend
+   ✔> Given an OCFL object "obj" committed at "v1" through the engine writer
+   ✔  When I copy "b.txt" of "v1" to "export/b.txt" on another backend
+   ✔  Then the copy should hold the bytes of "b.txt"
+   ✔  And the source object should be byte-identical to before the copy
+  Scenario Outline: A copy into the object root is refused
+   ✔> Given an OCFL object "obj" committed at "v1" through the engine writer
+   ✔  When I copy "b.txt" of "v1" to "obj/inventory.json" in the same storage
+   ✔  Then the copy should be refused as a write into an OCFL root
+   ✔  And "obj/inventory.json" should be unchanged
+   ✔  And the source object should be byte-identical to before the copy
+   ✔  And the object should validate with zero errors
+  Scenario Outline: A copy into the object root is refused
+   ✔> Given an OCFL object "obj" committed at "v1" through the engine writer
+   ✔  When I copy "b.txt" of "v1" to "obj/v1/content/a.txt" in the same storage
+   ✔  Then the copy should be refused as a write into an OCFL root
+   ✔  And "obj/v1/content/a.txt" should be unchanged
+   ✔  And the source object should be byte-identical to before the copy
+   ✔  And the object should validate with zero errors
+  Scenario Outline: A copy into the object root is refused
+   ✔> Given an OCFL object "obj" committed at "v1" through the engine writer
+   ✔  When I copy "b.txt" of "v1" to "obj/v2/content/b.txt" in the same storage
+   ✔  Then the copy should be refused as a write into an OCFL root
+   ✔  And "obj/v2/content/b.txt" should be unchanged
+   ✔  And the source object should be byte-identical to before the copy
+   ✔  And the object should validate with zero errors
+  Scenario: A copy into a storage root is refused
+   ✔> Given an OCFL object "obj" committed at "v1" through the engine writer
+   ✔  Given the storage holds an OCFL storage root declaration
+   ✔  When I copy "b.txt" of "v1" to "export/b.txt" in the same storage
+   ✔  Then the copy should be refused as a write into an OCFL root
+   ✔  And "export/b.txt" should be unchanged
+```
+
 ## SRS traceability
 
 | Requirement | Tests |
@@ -350,7 +478,10 @@ test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 | OCFL-S-018 only new bitstreams under `vN/`; earlier versions never changed | `unchanged_and_reinstated_bytes_are_not_written_again`, `earlier_versions_are_never_changed_by_later_commits` (memory and filesystem) |
 | OCFL-S-019 a copy into its own object root is refused and changes nothing | `integration_read_objects`: `a_copy_into_its_own_object_root_is_refused` (inventory, sidecar, content, a version inventory, a new `v4/` path, the declaration); BDD "A copy into the object root is refused" (3 examples) |
 | OCFL-S-019 a copy into another object root or a storage root is refused | `a_copy_into_another_object_root_is_refused`, `a_copy_into_a_storage_root_is_refused`; BDD "A copy into a storage root is refused" |
-| OCFL-S-019 a copy outside OCFL roots still works | `a_logical_file_copies_into_another_key`, `a_copy_into_a_storage_root_is_refused` (to another backend); BDD "A logical file copies out to another backend" |
+| OCFL-S-019 a root declared for any OCFL version is refused | `a_copy_under_an_unknown_version_declaration_is_refused` (`0=ocfl_object_2.0`, `0=ocfl_2.0`) |
+| OCFL-S-019 a copy outside OCFL roots still works | `a_logical_file_copies_into_another_key`, `a_copy_into_a_storage_root_is_refused` (to another backend), `a_copy_beside_a_declaration_lookalike_succeeds`; BDD "A logical file copies out to another backend" (the copy is stored at its destination only) |
+| OCFL-S-019 a copy never changes the source object | BDD step "the source object should be byte-identical to before the copy" (every key of the object, after the happy path and after each refusal) |
+| OCFL-S-007 a prefix listing reads only what the prefix can match | `integration_fs_conformance`: `fs_prefix_listing_skips_unrelated_subtrees` |
 | OCFL-S-003 caller-supplied logical files, no FileSquid application-layer type | every write test builds drafts from `VersionDraft` and bytes only; BDD "Core API is generic OCFL 1.1" now scans all of `src/` |
 | OCFL-S-011 fixtures pinned, unchanged, test data only | BDD "Community fixtures are pinned test data only"; no file under `tests/fixtures/` changed |
 | OCFL-S-007 no direct I/O in the engine; wasm32 build | `unit_source_scan` (covers the new `src/read/copy_guard.rs`); BDD "Engine builds for the browser" |
@@ -377,5 +508,5 @@ None. No credential or `.env` value was mocked. The validator runs used `ocfl-py
 ## Remaining limits and owner decisions
 
 - **Community validation is optional in the hook (owner decision).** `scripts/verify_tests.sh` runs `cargo test`, which runs the community check only where `ocfl-py` or `rocfl` is installed; elsewhere it is skipped with a message. PRD F-051 requires the independent check "before each release". Making it mandatory in the pre-commit hook (setting `FILESQUID_OCFL_REQUIRE_COMMUNITY_VALIDATOR=1` there) would make Python with `ocfl-py`, or `rocfl`, a development prerequisite for every contributor; that is left to the owner.
-- **The copy guard checks, it does not lock.** It recognises OCFL 1.0 and 1.1 declarations at the moment of the copy. A destination that becomes an OCFL root after the check (another process declaring it during the copy) is not caught, and a directory that is an object root without any declaration (a crashed first commit before the declaration was written) is not recognised; neither is reachable through the engine's own writer, which writes the declaration first.
+- **The copy guard checks, it does not lock.** It recognises declarations of any OCFL version at the moment of the copy. A destination that becomes an OCFL root after the check (another process declaring it during the copy) is not caught, and a directory that is an object root without any declaration (a crashed first commit before the declaration was written) is not recognised; neither is reachable through the engine's own writer, which writes the declaration first.
 - **`rocfl` 1.7.0 is from 2022** (ADR 016); it validates OCFL 1.1 objects here, and `ocfl-py` 2.1.0 checks OCFL 1.1 explicitly. Either one satisfies OCFL-S-010 (b).

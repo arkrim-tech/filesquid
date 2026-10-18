@@ -123,11 +123,20 @@ pub fn load(name: &str) -> ContentFixture {
     }
 }
 
-/// The `vN` directory names in `dir`, in version order.
+/// The `vN` directory names in `dir`, in version order. Every directory in
+/// a content fixture is a version directory; any other directory fails the
+/// load, so a changed or damaged fixture can never pass with part of its
+/// payload left untested.
 fn version_dirs(dir: &Path) -> Vec<String> {
     let mut versions: Vec<(VersionNum, String)> = fixtures::objects(dir)
         .into_iter()
-        .filter_map(|name| VersionNum::parse(&name).ok().map(|v| (v, name)))
+        .map(|name| match VersionNum::parse(&name) {
+            Ok(version) => (version, name),
+            Err(err) => panic!(
+                "{}: directory {name:?} is not a version directory: {err}",
+                dir.display()
+            ),
+        })
         .collect();
     versions.sort();
     versions.into_iter().map(|(_, name)| name).collect()
