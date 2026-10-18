@@ -28,8 +28,14 @@ fn link_error(path: &Path) -> StorageError {
 
 /// The error for a path that exists but is not a regular file.
 fn not_regular(path: &Path) -> StorageError {
+    not_regular_entry(&path.display().to_string())
+}
+
+/// The error for an entry, named by its key or path, that exists but is not
+/// a regular file.
+pub(super) fn not_regular_entry(what: &str) -> StorageError {
     StorageError::Io {
-        key: path.display().to_string(),
+        key: what.to_string(),
         kind: ErrorKind::InvalidInput,
         message: "not a regular file".to_string(),
     }
@@ -88,6 +94,21 @@ fn same_file(a: &Metadata, b: &Metadata) -> bool {
 #[cfg(not(unix))]
 fn same_file(a: &Metadata, b: &Metadata) -> bool {
     a.is_file() && b.is_file()
+}
+
+/// The number of hard links to the file `meta` describes, or `None` where
+/// the platform's standard library cannot report it.
+#[cfg(unix)]
+pub(super) fn link_count(meta: &Metadata) -> Option<u64> {
+    use std::os::unix::fs::MetadataExt;
+    Some(meta.nlink())
+}
+
+/// The number of hard links to the file `meta` describes, or `None` where
+/// the platform's standard library cannot report it.
+#[cfg(not(unix))]
+pub(super) fn link_count(_meta: &Metadata) -> Option<u64> {
+    None
 }
 
 /// Check an open handle against the path it was opened from: it must be a

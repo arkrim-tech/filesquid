@@ -13,6 +13,7 @@ use filesquid_ocfl::storage::{
     ChunkReader, ETag, FsBackend, MemoryBackend, MultipartWriter, Precondition, StorageBackend,
     StorageError, StorageKey, MAX_CHUNK_BYTES,
 };
+use filesquid_ocfl::{check_storage_root, OcflError};
 
 /// The backend a storage scenario runs against. The filesystem variant owns
 /// its scratch directory so it is removed when the scenario ends.
@@ -48,6 +49,7 @@ struct OcflWorld {
     chunks: Vec<Vec<u8>>,
     pages: Vec<Vec<String>>,
     wasm_build: Option<(bool, String)>,
+    guard_result: Option<Result<(), OcflError>>,
 }
 
 /// Run `$body` with `$b` bound to the scenario's concrete backend.
@@ -414,6 +416,106 @@ fn build_succeeds(world: &mut OcflWorld) {
     );
 }
 
+/// The scenario's filesystem root and scratch directory; panics for a memory
+/// backend, because links and directories exist only on a filesystem.
+fn fs_dirs(world: &OcflWorld) -> (PathBuf, PathBuf) {
+    match world.backend.as_ref().expect("Given a storage backend") {
+        AnyBackend::Fs { backend, _scratch } => (backend.root().to_path_buf(), _scratch.0.clone()),
+        AnyBackend::Memory(_) => panic!("this step needs a local filesystem backend"),
+    }
+}
+
+/// Store a one-byte file at `raw_key` through the scenario's backend.
+async fn store(world: &OcflWorld, raw_key: &str) {
+    let k = key(raw_key);
+    on_backend!(world, b => b.put(&k, b"x").await.expect("put"));
+}
+
+#[given(expr = "an OCFL storage root with the object {string}")]
+async fn storage_root_with_object(world: &mut OcflWorld, object: String) {
+    store(world, "0=ocfl_1.1").await;
+    for name in ["0=ocfl_object_1.1", "inventory.json", "v1/content/a.txt"] {
+        store(world, &format!("{object}/{name}")).await;
+    }
+}
+
+#[given(expr = "a stored file at {string}")]
+async fn stored_file(world: &mut OcflWorld, raw_key: String) {
+    let (root, _) = match world.backend {
+        Some(AnyBackend::Fs { .. }) => fs_dirs(world),
+        _ => return store(world, &raw_key).await,
+    };
+    // Written directly: the backend itself refuses nothing here, but writing
+    // with std::fs mirrors a file placed by another tool.
+    let path = root.join(&raw_key);
+    fs::create_dir_all(path.parent().expect("parent")).expect("parent dir");
+    fs::write(path, b"x").expect("write");
+}
+
+#[given(expr = "an empty directory at {string}")]
+fn empty_directory(world: &mut OcflWorld, raw_key: String) {
+    let (root, _) = fs_dirs(world);
+    fs::create_dir_all(root.join(raw_key)).expect("empty dir");
+}
+
+#[cfg(unix)]
+#[given(expr = "a soft link at {string} to a file outside the root")]
+fn soft_link(world: &mut OcflWorld, raw_key: String) {
+    let (root, scratch) = fs_dirs(world);
+    let outside = scratch.join("outside.txt");
+    fs::write(&outside, b"outside").expect("outside file");
+    std::os::unix::fs::symlink(outside, root.join(raw_key)).expect("soft link");
+}
+
+#[cfg(unix)]
+#[given(expr = "the file {string} is hard linked from outside the root")]
+fn hard_link(world: &mut OcflWorld, raw_key: String) {
+    let (root, scratch) = fs_dirs(world);
+    fs::hard_link(root.join(raw_key), scratch.join("hard-link")).expect("hard link");
+}
+
+#[when("I run the storage root guard")]
+async fn run_guard(world: &mut OcflWorld) {
+    let result = on_backend!(world, b => check_storage_root(b).await);
+    world.guard_result = Some(result);
+}
+
+/// The guard's outcome from the When step.
+fn guard_result(world: &mut OcflWorld) -> Result<(), OcflError> {
+    world.guard_result.take().expect("the guard ran")
+}
+
+#[then("the guard should pass")]
+fn guard_passes(world: &mut OcflWorld) {
+    assert_eq!(guard_result(world), Ok(()));
+}
+
+#[then(regex = r#"^the guard should refuse a \.git directory in "(.*)"$"#)]
+fn guard_refuses_git(world: &mut OcflWorld, root: String) {
+    assert_eq!(
+        guard_result(world),
+        Err(OcflError::GitDirectoryForbidden { root })
+    );
+}
+
+#[then(expr = "the guard should refuse an empty directory at {string}")]
+fn guard_refuses_empty(world: &mut OcflWorld, key: String) {
+    let expected = StorageError::EmptyDirectoryForbidden { key };
+    assert_eq!(guard_result(world), Err(OcflError::Storage(expected)));
+}
+
+#[then(expr = "the guard should refuse a soft link at {string}")]
+fn guard_refuses_soft_link(world: &mut OcflWorld, key: String) {
+    let expected = StorageError::SymlinkForbidden { key };
+    assert_eq!(guard_result(world), Err(OcflError::Storage(expected)));
+}
+
+#[then(expr = "the guard should refuse a hard link at {string}")]
+fn guard_refuses_hard_link(world: &mut OcflWorld, key: String) {
+    let expected = StorageError::HardLinkForbidden { key };
+    assert_eq!(guard_result(world), Err(OcflError::Storage(expected)));
+}
+
 fn write_junit_report(path: &PathBuf, passed: usize, failed: usize, skipped: usize) {
     let tests = passed + failed + skipped;
     let xml = format!(
@@ -424,6 +526,13 @@ fn write_junit_report(path: &PathBuf, passed: usize, failed: usize, skipped: usi
     fs::write(path, xml).expect("write junit");
 }
 
+/// Whether `scenario` runs on this platform: scenarios tagged `@unix` need
+/// Unix links and run on Unix only (macOS and Linux); elsewhere they are left
+/// out instead of failing on steps compiled only for Unix.
+fn runs_here(scenario: &cucumber::gherkin::Scenario) -> bool {
+    cfg!(unix) || !scenario.tags.iter().any(|tag| tag == "unix")
+}
+
 #[tokio::main]
 async fn main() {
     let results_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/allure-results");
@@ -432,7 +541,7 @@ async fn main() {
     let features = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/features");
     let writer = OcflWorld::cucumber()
         .with_writer(writer::Basic::stdout().summarized())
-        .run(features)
+        .filter_run(features, |_, _, scenario| runs_here(scenario))
         .await;
     write_junit_report(
         &results_dir.join("cucumber-junit.xml"),

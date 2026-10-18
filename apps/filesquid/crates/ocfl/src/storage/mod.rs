@@ -32,6 +32,7 @@ pub use drive::complete_immediately;
 pub use error::StorageError;
 #[cfg(all(feature = "fs", not(target_arch = "wasm32")))]
 pub use fs::{default_staging_dir, FsBackend};
+pub(crate) use key::validate_prefix;
 pub use key::StorageKey;
 pub use memory::MemoryBackend;
 pub use stream::{ChunkReader, MultipartWriter};

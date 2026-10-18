@@ -90,11 +90,11 @@ fn git_directory_blocks_reads_and_writes() {
     std::fs::create_dir_all(scratch.0.join(".git")).expect("git dir");
     assert!(matches!(
         write_logical_file(&scratch.0, "metadata.md", b"x"),
-        Err(WriteError::Git(OcflError::GitDirectoryForbidden))
+        Err(WriteError::Git(OcflError::GitDirectoryForbidden { .. }))
     ));
     assert!(matches!(
         read_logical_file(&scratch.0, "metadata.md"),
-        Err(WriteError::Git(OcflError::GitDirectoryForbidden))
+        Err(WriteError::Git(OcflError::GitDirectoryForbidden { .. }))
     ));
 }
 

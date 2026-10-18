@@ -32,10 +32,17 @@
 //!   root and staging MUST NOT be writable by untrusted processes.
 //! - **Staging outside the root.** Root and staging are resolved (links,
 //!   `.`, `..`) before the containment check.
+//! - **Plain hierarchy.** [`StorageBackend::check_hierarchy`] refuses soft
+//!   links, hard links (where the platform reports link counts), empty
+//!   directories below the root and other non-regular entries (ADR 016). It
+//!   holds the root's write lock, so it never sees a write half done: the
+//!   transient second link of a create-only publish, or parent directories
+//!   created for a file not yet in place.
 //!
 //! Exclusive writers across hosts come from the per-object OCFL lease (ADR
 //! 016, ADR 007), not from this backend.
 
+mod audit;
 mod files;
 mod internal;
 mod lock;
@@ -51,11 +58,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::backend::StorageBackend;
 use super::error::StorageError;
-use super::key::StorageKey;
+use super::key::{validate_prefix, StorageKey};
 use super::types::{
     check_list_request, check_precondition, check_put_size, paginate, ByteRange, CompletedPart,
     ETag, ListPage, ObjectMeta, Precondition, UploadId,
 };
+use audit::audit_tree;
 use files::{hash_file, read_range, write_atomic, Parent, Publish};
 use lock::{lock_path, RootLock};
 use paths::{confined_path, key_path, resolve_path};
@@ -299,6 +307,21 @@ impl FsBackend {
         paginate(keys.iter().map(String::as_str), prefix, start_after, limit)
     }
 
+    /// Blocking body of [`StorageBackend::check_hierarchy`]: under the root
+    /// lock, audit the directory `prefix` names (the whole root when empty).
+    fn check_hierarchy_blocking(&self, prefix: &str) -> Result<(), StorageError> {
+        validate_prefix(prefix)?;
+        let dir = prefix.strip_suffix('/').unwrap_or(prefix);
+        let key_prefix = if dir.is_empty() {
+            String::new()
+        } else {
+            format!("{dir}/")
+        };
+        let _lock = self.lock()?;
+        let start = confined_path(&self.root, dir)?;
+        audit_tree(start, key_prefix)
+    }
+
     /// Blocking body of [`StorageBackend::delete`]: remove the file, then
     /// prune directories it leaves empty, stopping at the root.
     fn delete_blocking(&self, key: &StorageKey) -> Result<(), StorageError> {
@@ -343,6 +366,10 @@ impl StorageBackend for FsBackend {
     /// The SHA-256 of the stored bytes is the tag.
     fn content_addressed_tags(&self) -> bool {
         true
+    }
+
+    async fn check_hierarchy(&self, prefix: &str) -> Result<(), StorageError> {
+        self.check_hierarchy_blocking(prefix)
     }
 
     async fn put(&self, key: &StorageKey, bytes: &[u8]) -> Result<ObjectMeta, StorageError> {

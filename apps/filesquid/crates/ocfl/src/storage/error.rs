@@ -28,6 +28,21 @@ pub enum StorageError {
         /// The rejected key or prefix.
         key: String,
     },
+    /// A file in the storage hierarchy has more than one hard link, so its
+    /// bytes can change through a path outside OCFL's control. OCFL storage
+    /// MUST NOT use hard links (ADR 016).
+    #[error("{key} is a hard link; OCFL storage must not use hard links")]
+    HardLinkForbidden {
+        /// The hard-linked key.
+        key: String,
+    },
+    /// A directory below the storage root holds nothing. OCFL storage MUST
+    /// NOT contain empty directories (ADR 016).
+    #[error("{key} is an empty directory; OCFL storage must not contain empty directories")]
+    EmptyDirectoryForbidden {
+        /// The empty directory, as a key without a trailing `/`.
+        key: String,
+    },
     /// A compare-and-swap precondition did not hold; nothing was written.
     #[error("precondition failed for {key}: the object changed or already exists")]
     PreconditionFailed {
