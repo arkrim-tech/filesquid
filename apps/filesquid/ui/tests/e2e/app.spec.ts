@@ -243,8 +243,11 @@ async function emitDesktopEvent(page: Page, payload: unknown): Promise<void> {
       __fsIpcCalls: { cmd: string; args: { handler?: number } }[];
       __fsEmit: (handler: number, payload: unknown) => void;
     };
-    const listen = win.__fsIpcCalls.find((call) => call.cmd === "plugin:event|listen");
-    win.__fsEmit(listen?.args.handler ?? -1, { event: "filesquid-event", id: 1, payload: data });
+    // Every listener receives the event, as Tauri delivers it to each registered handler.
+    for (const call of win.__fsIpcCalls) {
+      if (call.cmd !== "plugin:event|listen") continue;
+      win.__fsEmit(call.args.handler ?? -1, { event: "filesquid-event", id: 1, payload: data });
+    }
   }, payload);
 }
 
@@ -283,7 +286,9 @@ test.describe("inside the desktop webview (custom URI scheme adapter)", () => {
         .filter((call) => call.cmd === "plugin:event|listen")
         .map((call) => call.args.event),
     );
-    expect(listened).toEqual(["filesquid-event"]);
+    // One listener for the host indicator in the shell header and one for the Monitor.
+    expect(listened).toEqual(["filesquid-event", "filesquid-event"]);
+    expect(paths).toContain("/api/v1/host");
 
     await emitDesktopEvent(page, {
       topic: "journal.entry",
