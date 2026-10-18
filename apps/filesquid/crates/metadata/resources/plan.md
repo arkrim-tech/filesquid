@@ -2,7 +2,7 @@
 
 The `metadata` module of FileSquid and a stand-alone FOSS metadata CRUD engine (Cargo package `filesquid-metadata`, import `filesquid_metadata`). It owns **every file fact other than storage facts and Content Credentials** ([C-055](../../../../../resources/product-vision.md#module-rules)): extraction of embedded metadata from files in pluggable stores (`sidecar`, optional `ocfl` through `filesquid-ocfl`, optional `sqlite`; [ADR 027](../../../../../resources/architecture/027-filesquid-metadata-pluggable-stores.md)), Dublin Core `/terms/` and Schema.org create/enhance, and persistence through the configured store. FileSquid configures the `ocfl` store as canonical, and every distribution MUST route metadata handling through this module behind `filesquid-api`. Git MUST NOT be the metadata store. `filesquid-api` links it in the desktop host and `filesquid-server`, and the encrypted browser host links its `wasm32` build; the ciphertext-only hosted service MUST NOT link it ([ADR 025](../../../../../resources/architecture/025-client-side-filesquid-engines.md), [ADR 032](../../../../../resources/architecture/032-hosting-and-privacy-model.md)). It MUST build, test and publish on its own; other programmes MUST be able to install it without the FileSquid app ([C-048](../../../../../resources/product-vision.md#module-rules), [T-044](../../../../../resources/product-vision.md#canonical-ocfl-state-and-evidence), [ADR 024](../../../../../resources/architecture/024-filesquid-metadata-engine.md)). Global sequence: [implementation-plan.md](../../../../../resources/implementation-plan.md).
 
-Cargo commands run from `apps/filesquid/` with `-p filesquid-metadata` (`cargo test -p filesquid-metadata --locked`). The unconditional dependency on `filesquid-ocfl` becomes the optional `ocfl` store in MD-0.4.
+Cargo commands run from `apps/filesquid/` with `-p filesquid-metadata` (`cargo test -p filesquid-metadata --locked`). `filesquid-ocfl` is the optional `ocfl` store since MD-0.4; run `cargo test -p filesquid-metadata --all-features --locked` to include the `ocfl`, `ocfl-fs` and `cli` tests that a default build skips.
 
 ## Phase F0: Register (global Task 0.13)
 
@@ -36,7 +36,7 @@ Cargo commands run from `apps/filesquid/` with `-p filesquid-metadata` (`cargo t
 
 ## Phase F0: WebAssembly build (global Task 0.15)
 
-- [ ] **Task MD-0.4: WASM build and OCFL-sourced extraction**
+- [x] **Task MD-0.4: WASM build and OCFL-sourced extraction**
   - **Description:** Build for `wasm32-unknown-unknown` with default features off plus portable features. Introduce the `MetadataStore` interface and opaque `FileRef` ([ADR 027](../../../../../resources/architecture/027-filesquid-metadata-pluggable-stores.md)): a `sidecar` store (default), the `ocfl` store behind a feature (replacing today's `store.rs`), and move `filesquid-ocfl` to an optional dependency; update `tests/unit/isolation.rs` and the F-052 feature accordingly. `extract` MUST take bytes or a reader plus a `FileRef` (today `extract_into` opens a path with `std::fs`). The `sqlite` store and index are a later task. CLI binary and file-path helpers stay native-only behind a Cargo feature or `cfg(not(target_arch = "wasm32"))`. Confirm `kamadak-exif` and `id3` reader APIs compile to `wasm32`; feature-gate and report any adapter that does not. Add a `wasm32` build check to the local pre-commit hook (`scripts/verify_tests.sh`).
   - **Estimated Time:** 8 hours
   - **Dependencies:** Task MD-0.3; global Task 0.3 (async storage backend trait)

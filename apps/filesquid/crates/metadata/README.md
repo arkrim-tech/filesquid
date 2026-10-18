@@ -8,7 +8,25 @@ The metadata module of FileSquid. It extracts metadata from file bytes, creates,
 | Rust import | `filesquid_metadata` |
 | Path | `apps/filesquid/crates/metadata/` (member of the `apps/filesquid/` Cargo workspace) |
 
-Today the crate persists records only through OCFL: `metadata.md` (YAML front matter + Markdown body) is read and written as a logical file in an OCFL object through [`filesquid-ocfl`](../ocfl/README.md), FileSquid's canonical store, and the dependency on `filesquid-ocfl` is unconditional. The store reaches bytes only through a `filesquid-ocfl` storage backend: `store::load_from` and `store::save_to` take any `StorageBackend` the host supplies plus the `metadata.md` key from `store::metadata_key`, and the path-based `store::load` and `store::save` used by the CLI run the same code over a local filesystem backend after the Git guard. Planned, not yet available ([ADR 027](../../../../resources/architecture/027-filesquid-metadata-pluggable-stores.md)): a pluggable `MetadataStore` interface; a `sidecar` store (default on native) keeping `metadata.md` beside the file; the `ocfl` store as an optional feature; and an optional native `sqlite` store keeping records as rows in a caller-owned SQLite file. Catalogs rebuild from the canonical store.
+Records persist through a pluggable `store::MetadataStore` that loads and saves a `Record` by an opaque `file_ref::FileRef` (object identifier, optional version, logical path; [ADR 027](../../../../resources/architecture/027-filesquid-metadata-pluggable-stores.md)). Two stores ship:
+
+- `store::sidecar::SidecarStore` (the default `sidecar` feature, native only) keeps `<file>.metadata.md` beside a plain file under a root directory and refuses a Git working tree.
+- `store::ocfl::OcflStore` (the optional `ocfl` feature) keeps `metadata.md` (YAML front matter + Markdown body) as a logical file in an OCFL object through [`filesquid-ocfl`](../ocfl/README.md), FileSquid's canonical store. It runs over any `StorageBackend` the host supplies; `store::ocfl::load_from`, `save_to` and `metadata_key` are the backend-level functions, and with `ocfl-fs` the path-based `store::ocfl::load` and `save` run the same code over a local filesystem backend after the Git guard.
+
+A caller, such as the browser host, can also implement `MetadataStore` itself. A native `sqlite` store is planned. Catalogs rebuild from the canonical store.
+
+Extraction takes bytes or a reader plus a `FileRef`, never a path: `extract::extract_from_bytes` and `extract::extract_from_reader` read EXIF and ID3 from what the caller supplies (for example a logical file read through `filesquid-ocfl`) and are independent of any store. The returned `Extracted` says which blocks were found and how many statements the register refused.
+
+## Cargo features and WebAssembly
+
+| Feature | Default | Adds |
+|---|---|---|
+| `sidecar` | yes | The `sidecar` store (native only; compiled out for `wasm32`) |
+| `ocfl` | no | The `ocfl` store and the optional `filesquid-ocfl` dependency |
+| `ocfl-fs` | no | `ocfl` plus the native path helpers over the local OCFL filesystem backend |
+| `cli` | no | `ocfl-fs` plus the native `cli` module (the `fsquid` metadata commands) |
+
+The crate builds for `wasm32-unknown-unknown` with default features off, alone or with `ocfl` (`kamadak-exif` and `id3` both compile there, so no adapter is gated). The CLI and the sidecar store are compiled out for `wasm32`. The ciphertext-only hosted service MUST NOT link this crate.
 
 All FileSquid metadata handling goes through this module, and hosts reach it through `filesquid-api`. The stand-alone interface is the metadata commands of the one FileSquid CLI, `fsquid` (`fsquid extract`, `get`, `set`, `export`, `import`, and `fsquid metadata validate`); this crate ships no binary with CSV, XMP and JSON sidecar interchange. MODS and SQL import/export interchange are out of scope (the optional SQLite store is storage, not interchange). The module MUST NOT depend on Axum or Tauri.
 
@@ -21,10 +39,12 @@ Run Cargo from the workspace root:
 ```bash
 cd apps/filesquid
 cargo test -p filesquid-metadata --locked
+cargo test -p filesquid-metadata --all-features --locked
+cargo check -p filesquid-metadata --lib --no-default-features --target wasm32-unknown-unknown --locked
 cargo run -p filesquid-cli -- metadata --help
 ```
 
-This crate ships no binary. Its commands run in the one FileSquid CLI, `fsquid`, built by [`filesquid-cli`](../cli/README.md) ([ADR 036](../../../../resources/architecture/036-single-fsquid-cli.md)): `fsquid get`, or `fsquid metadata get`; `validate` always needs the module name (`fsquid metadata validate dcterms:title`).
+The default test run skips the tests that need the `ocfl`, `ocfl-fs` or `cli` features; `--all-features` runs them, and the BDD feature (`--test features`) needs `cli`. The pre-commit hook runs the all-features tests and both `wasm32` checks whenever `filesquid-metadata` is in the change scope. This crate ships no binary. Its commands run in the one FileSquid CLI, `fsquid`, built by [`filesquid-cli`](../cli/README.md) ([ADR 036](../../../../resources/architecture/036-single-fsquid-cli.md)): `fsquid get`, or `fsquid metadata get`; `validate` always needs the module name (`fsquid metadata validate dcterms:title`).
 
 ## JSON sidecar
 
