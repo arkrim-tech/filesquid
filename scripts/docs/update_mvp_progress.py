@@ -19,7 +19,9 @@ Purpose:
     tasks Up next (see `mvp_queue.py`). Write mode asks GitHub for the open
     pull requests with `gh api`; `--check` never does: it reads the PR-derived
     IDs and the timestamp back from the block, so it does not go stale when a
-    pull request opens or closes or when time passes.
+    pull request opens or closes or when time passes. The SVG also carries a
+    hidden tick record (`tick_record`) that the git merge driver
+    `merge_mvp_progress.py` uses to merge two bars without the checklist.
 
 Usage:
     python3 scripts/docs/update_mvp_progress.py          # rewrite both files
@@ -35,8 +37,9 @@ import pathlib
 import re
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from xml.sax.saxutils import escape, unescape
 
 import mvp_queue
 
@@ -54,7 +57,12 @@ MAX_PULL_PAGES = 10
 START = "<!-- mvp-progress:start -->"
 END = "<!-- mvp-progress:end -->"
 GLOBAL_ROW = re.compile(r"^\d+\. \[([ x])\] \[Task ([^\]]+)\]")
-MODULE_ROW = re.compile(r"^\s+- \[([ x])\] ")
+MODULE_ROW = re.compile(r"^\s+- \[([ x])\] (?:\[([^\]]+)\])?")
+TICKS_START = '<metadata id="mvp-ticks">'
+TICKS_END = "</metadata>"
+TICK_LINE = re.compile(r"^Task (\S+) \[([ x])\] (\d+)h:(.*)$")
+TICK_ITEM = re.compile(r"(\S+) \[([ x])\]")
+TICK_ITEMS = re.compile(r"(?: \S+ \[[ x]\])*")
 ESTIMATE = re.compile(r'<a name="task-([^"]+)"></a>(?:\n  - (?!\*\*Estimated Time:).*)*\n  - \*\*Estimated Time:\*\* (\d+) hours')
 
 
@@ -68,6 +76,9 @@ class Task:
         modules_done: Number of ticked module rows under the task.
         modules_total: Number of module rows under the task.
         hours: Estimated hours from the implementation plan.
+        module_ticks: `(module ID, ticked)` pairs in checklist order. The SVG
+            records them so the merge driver can merge two SVGs without the
+            checklist (see `merge_mvp_progress.py`).
     """
 
     task_id: str
@@ -75,6 +86,7 @@ class Task:
     modules_done: int = 0
     modules_total: int = 0
     hours: int = 0
+    module_ticks: list = field(default_factory=list)
 
     def credit(self) -> float:
         """Return the hours counted as done for this task."""
@@ -118,6 +130,8 @@ def parse_tasks(section: list) -> list:
         elif module and tasks:
             tasks[-1].modules_total += 1
             tasks[-1].modules_done += module.group(1) == "x"
+            module_id = module.group(2) or f"row-{tasks[-1].modules_total}"
+            tasks[-1].module_ticks.append((module_id, module.group(1) == "x"))
     return tasks
 
 
@@ -175,6 +189,55 @@ def segment_shapes(tasks: list) -> list:
     return shapes
 
 
+def percent_done(tasks: list) -> int:
+    """Return the weighted completion of `tasks` (hours attached), 0 to 100."""
+    return round(100 * sum(task.credit() for task in tasks) / sum(task.hours for task in tasks))
+
+
+def tick_record(tasks: list) -> str:
+    """Return the SVG `<metadata>` element that records every task's ticks and hours.
+
+    One line per global task: `Task <ID> [x] <hours>h:` (or `[ ]` when open)
+    followed by `<module ID> [x]` or `<module ID> [ ]` for each module row.
+    It is not drawn. `merge_mvp_progress.py` reads it back to merge two SVGs.
+
+    Args:
+        tasks: MVP tasks with hours attached, in checklist order.
+
+    Returns:
+        The element source, indented for the SVG body.
+    """
+    lines = []
+    for task in tasks:
+        modules = "".join(f" {escape(module_id)} [{'x' if done else ' '}]" for module_id, done in task.module_ticks)
+        lines.append(f"Task {escape(task.task_id)} [{'x' if task.done else ' '}] {task.hours}h:{modules}")
+    return f"{TICKS_START}\n" + "\n".join(lines) + f"\n  {TICKS_END}"
+
+
+def parse_tick_record(svg: str):
+    """Read the tasks back from the tick record of an SVG drawn by `render_svg`.
+
+    Args:
+        svg: SVG source.
+
+    Returns:
+        A list of `Task` with ticks and hours, or None when the SVG has no
+        tick record, a record line cannot be parsed or the record is empty.
+    """
+    if TICKS_START not in svg or TICKS_END not in svg.split(TICKS_START, 1)[1]:
+        return None
+    body = svg.split(TICKS_START, 1)[1].split(TICKS_END, 1)[0]
+    tasks = []
+    for line in (raw.strip() for raw in body.splitlines() if raw.strip()):
+        match = TICK_LINE.match(line)
+        if not match or not TICK_ITEMS.fullmatch(match.group(4)):
+            return None
+        ticks = [(unescape(module_id), mark == "x") for module_id, mark in TICK_ITEM.findall(match.group(4))]
+        done = sum(ticked for _, ticked in ticks)
+        tasks.append(Task(unescape(match.group(1)), match.group(2) == "x", done, len(ticks), int(match.group(3)), ticks))
+    return tasks or None
+
+
 def render_svg(tasks: list, percent: int) -> str:
     """Return the progress bar as an SVG document.
 
@@ -194,6 +257,7 @@ def render_svg(tasks: list, percent: int) -> str:
     @media (prefers-color-scheme: dark) {{ text {{ fill: #e6edf3; }} .track {{ fill: #30363d; }} .divider {{ stroke: #0d1117; }} }}
   </style>
   <defs><clipPath id="bar"><rect x="20" y="28" width="600" height="18" rx="9"/></clipPath></defs>
+  {tick_record(tasks)}
   <text x="20" y="18">MVP (early access): {len(tasks)} tasks</text>
   <text x="620" y="18" text-anchor="end">{percent}% complete</text>
   <g clip-path="url(#bar)">
@@ -216,7 +280,7 @@ def render_summary(tasks: list, queue_md: str) -> str:
     """
     total = sum(task.hours for task in tasks)
     credit = sum(task.credit() for task in tasks)
-    percent = round(100 * credit / total)
+    percent = percent_done(tasks)
     done = sum(task.done for task in tasks)
     started = sum(not task.done and task.modules_done > 0 for task in tasks)
     return (
@@ -231,7 +295,9 @@ def render_summary(tasks: list, queue_md: str) -> str:
         "dependencies are done or in progress. Regenerate with "
         "`python3 scripts/docs/update_mvp_progress.py` after ticking boxes or opening a pull request; "
         "the check run by `scripts/verify_docs.sh` does not call GitHub and uses the pull requests recorded "
-        "in the block.\n\n"
+        "in the block. In a clone that registers the `mvp-progress` git merge driver (see the README), "
+        "merging two pull requests that both redraw it merges their ticks and redraws it when it can, "
+        "and otherwise leaves a conflict.\n\n"
         f"{queue_md}\n"
         f"{END}"
     )
@@ -375,6 +441,32 @@ def render_block(tasks: list, render, stamp: str) -> str:
     return render_summary(tasks, render(stamp))
 
 
+def expected_outputs(checklist: str, checking: bool):
+    """Return the checklist and SVG text that match the checklist's ticks.
+
+    Args:
+        checklist: The full checklist Markdown, including its marker block.
+        checking: True for the offline `--check` computation: no GitHub call,
+            and the PR IDs and timestamp are read back from the block. The
+            merge driver (`merge_mvp_progress.py`) uses this mode too.
+
+    Returns:
+        A tuple of ((checklist text, SVG text), []), or (None, problems) when
+        the checklist has no `## MVP` section or a task has no estimate.
+    """
+    if "## MVP" not in checklist.splitlines():
+        return None, ["No '## MVP' section in the checklist"]
+    tasks = parse_tasks(mvp_section(checklist))
+    problems = attach_hours(tasks, PLAN.read_text(encoding="utf-8"))
+    if problems:
+        return None, problems
+    render, stamp, old_stamp = build_queue(checklist, mvp_queue.parse_rows(mvp_section(checklist)), checking)
+    block = render_block(tasks, render, stamp)
+    if not checking and old_stamp and replace_block(checklist, render_block(tasks, render, old_stamp)) == checklist:
+        block = render_block(tasks, render, old_stamp)
+    return (replace_block(checklist, block), render_svg(tasks, percent_done(tasks))), []
+
+
 def main(argv: list) -> int:
     """Compute MVP progress and write or check the checklist block and the SVG.
 
@@ -385,18 +477,11 @@ def main(argv: list) -> int:
         The process exit code.
     """
     checking = "--check" in argv
-    checklist = CHECKLIST.read_text(encoding="utf-8")
-    tasks = parse_tasks(mvp_section(checklist))
-    problems = attach_hours(tasks, PLAN.read_text(encoding="utf-8"))
+    outputs, problems = expected_outputs(CHECKLIST.read_text(encoding="utf-8"), checking)
     if problems:
         print("\n".join(problems))
         return 1
-    render, stamp, old_stamp = build_queue(checklist, mvp_queue.parse_rows(mvp_section(checklist)), checking)
-    block = render_block(tasks, render, stamp)
-    if not checking and old_stamp and replace_block(checklist, render_block(tasks, render, old_stamp)) == checklist:
-        block = render_block(tasks, render, old_stamp)
-    percent = int(re.search(r"\*\*MVP progress: (\d+)%", block).group(1))
-    wanted = {CHECKLIST: replace_block(checklist, block), SVG: render_svg(tasks, percent)}
+    wanted = dict(zip((CHECKLIST, SVG), outputs))
     stale = [path for path, text in wanted.items() if not path.exists() or path.read_text(encoding="utf-8") != text]
     if checking:
         for path in stale:

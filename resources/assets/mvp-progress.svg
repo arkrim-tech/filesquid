@@ -6,6 +6,34 @@
     @media (prefers-color-scheme: dark) { text { fill: #e6edf3; } .track { fill: #30363d; } .divider { stroke: #0d1117; } }
   </style>
   <defs><clipPath id="bar"><rect x="20" y="28" width="600" height="18" rx="9"/></clipPath></defs>
+  <metadata id="mvp-ticks">
+Task FS-0.0 [x] 64h: API-F0.1 [x] SV-F0.1 [x] DE-F0.1 [x] UI-F0.1 [x] UI-F0.2 [x]
+Task 0.1 [x] 16h: CO-0.1 [x] CO-0.2 [x] CO-0.3 [x] CO-0.4 [x]
+Task 0.2 [x] 20h: CO-0.5 [x] CO-0.6 [x] CO-0.7 [x] CO-0.8 [x] CO-0.9 [x] CO-0.10 [x]
+Task 0.13 [x] 8h: MD-0.1 [x]
+Task 0.14 [x] 8h: MD-0.3 [x]
+Task FS-0.1 [x] 6h: CLI-0.1 [x]
+Task 0.16 [x] 8h: MD-0.5 [x]
+Task FS-2.4 [x] 48h: API-F2.1 [x] UI-F2.7 [x]
+Task FS-1.1 [x] 28h: API-F1.1 [x] API-F1.2 [x] DE-F1.1 [x]
+Task 0.3 [x] 24h: IO-0.1 [x] IO-0.2 [x] IO-0.3 [x] IO-0.4 [x] IO-0.5 [x]
+Task 0.10 [x] 16h: CL-0.1 [x] CL-0.2 [x] CL-0.3 [x]
+Task 0.4 [ ] 48h: IO-0.6 [x] IO-0.7 [x] IO-0.8 [x] IO-0.9 [x] IO-0.10 [ ]
+Task 0.15 [x] 8h: MD-0.4 [x]
+Task FS-1.2 [ ] 36h: IO-1.2 [ ] API-F1.3 [ ]
+Task FS-2.1 [ ] 48h: UI-0.1 [x] UI-0.2 [x] UI-0.5 [x] UI-F2.1a [x] API-F1.10 [x] API-F1.11 [ ] UI-F2.1b [ ]
+Task 0.5 [ ] 40h: DE-0.1 [x] DE-0.2 [ ] DE-0.3 [ ] DE-0.4 [ ] DE-0.5 [ ] DE-0.6 [ ] DE-0.8 [ ]
+Task FS-1.3 [ ] 54h: MD-0.2 [ ] MD-0.7 [ ] MD-0.8 [ ] API-F1.4 [ ]
+Task FS-1.4 [ ] 22h: API-F1.6 [ ] API-F1.7 [x]
+Task 0.8 [ ] 16h: UI-0.6 [x]
+Task 1.1 [ ] 62h: CL-1.1 [ ] DE-1.1 [ ] UI-1.1 [ ] IO-1.1 [ ] IO-1.4 [x] API-F2.7 [ ] UI-F2.14 [ ]
+Task FS-2.2 [ ] 46h: UI-F2.2 [ ] UI-F2.3 [ ] UI-F2.4 [ ]
+Task 1.2 [ ] 34h: DE-1.2 [ ] UI-1.2 [ ]
+Task FS-2.5 [ ] 104h: API-F2.2 [ ] API-F2.3 [ ] API-F2.5 [ ] UI-F2.8 [ ] UI-F2.9 [ ] UI-F2.11 [ ]
+Task FS-3.1 [ ] 16h: DE-F3.1 [ ]
+Task FS-3.4 [ ] 24h: DE-F3.2 [ ] UI-F3.1 [ ]
+Task FS-3.9 [ ] 12h:
+  </metadata>
   <text x="20" y="18">MVP (early access): 26 tasks</text>
   <text x="620" y="18" text-anchor="end">45% complete</text>
   <g clip-path="url(#bar)">

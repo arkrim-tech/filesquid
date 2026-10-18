@@ -23,7 +23,10 @@
 #   4. optional  community OCFL validator ocfl-py==2.1.0 with pip, when python3
 #                exists (into the user site, or a private virtualenv when the
 #                system Python is externally managed); rocfl is not installed
-#   5. optional  pre-warm the Cargo target: cargo build --workspace --tests --locked,
+#   5. optional  register the git merge driver for the generated MVP progress
+#                block (merge.mvp-progress.* in this clone's git config; see
+#                scripts/docs/merge_mvp_progress.py and .gitattributes)
+#   6. optional  pre-warm the Cargo target: cargo build --workspace --tests --locked,
 #                under the same shared-target lock and Cargo environment as the
 #                pre-commit hook (scripts/lib/cargo_shared.sh)
 #
@@ -39,6 +42,7 @@
 OCFL_PY_VERSION="2.1.0"
 WORKSPACE="apps/filesquid"
 UI_PACKAGES="apps/filesquid/ui apps/imagesquid"
+MVP_MERGE_DRIVER="python3 scripts/docs/merge_mvp_progress.py %O %A %B %L %P"
 
 cd "$(dirname "$0")/.." || { echo "❌ cannot enter the repository root"; exit 1; }
 . ./scripts/lib/cargo_shared.sh
@@ -166,6 +170,22 @@ install_ocfl_py() {
   command -v ocfl-validate.py >/dev/null 2>&1 || log "⚠️  ocfl-validate.py is installed but not on PATH; add the pip user bin directory or ~/.local/bin to PATH"
 }
 
+# Registers the MVP progress merge driver in this clone's git config (shared by
+# its worktrees). Idempotent: the documented driver is left alone and any other
+# value is replaced with it. Skipped (as a failed optional step) without python3,
+# so no unrunnable driver is registered.
+configure_mvp_merge_driver() {
+  command -v git >/dev/null 2>&1 || { log "git not found; merge driver not registered"; return 1; }
+  command -v python3 >/dev/null 2>&1 || { log "python3 not found; merge driver not registered (register it by hand with python or py, see README)"; return 1; }
+  if [ "$(git config --get merge.mvp-progress.driver)" = "$MVP_MERGE_DRIVER" ]; then
+    log "merge.mvp-progress.driver already set"
+    return 0
+  fi
+  git config merge.mvp-progress.name "MVP progress block" \
+    && git config merge.mvp-progress.driver "$MVP_MERGE_DRIVER" \
+    && log "merge.mvp-progress.driver set to: $MVP_MERGE_DRIVER"
+}
+
 # Builds the workspace and its tests into the shared target, under the lock.
 prewarm_cargo_target() {
   log "CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-<Cargo default>} CARGO_INCREMENTAL=$CARGO_INCREMENTAL CARGO_PROFILE_DEV_DEBUG=$CARGO_PROFILE_DEV_DEBUG"
@@ -182,6 +202,7 @@ main() {
     required_step "npm ci in $pkg" install_npm_package "$pkg"
   done
   optional_step "ocfl-py $OCFL_PY_VERSION (community OCFL validator)" install_ocfl_py
+  optional_step "Git merge driver for the MVP progress block" configure_mvp_merge_driver
   optional_step "Pre-warm Cargo target (cargo build --workspace --tests --locked)" prewarm_cargo_target
   log "✅ Setup complete ($((SECONDS - started))s)"
 }
