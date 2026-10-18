@@ -74,6 +74,10 @@ name = "integration_host_events"
 path = "tests/integration/host_events.rs"
 
 [[test]]
+name = "integration_library_catalog"
+path = "tests/integration/library_catalog.rs"
+
+[[test]]
 name = "integration_range_fixture"
 path = "tests/integration/range_fixture.rs"
 required-features = ["test-webdriver"]

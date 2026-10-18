@@ -92,18 +92,23 @@ impl SqliteJournal {
 /// Create `path` if missing and set it to mode 0600 (Unix only; elsewhere the data
 /// directory's access control applies). Filesystem I/O.
 fn restrict_to_owner(path: &Path) -> Result<(), JournalError> {
+    create_owner_only(path).map_err(|err| JournalError(format!("{}: {err}", path.display())))
+}
+
+/// Create the file at `path` if missing and set it to mode 0600 on Unix, so other local users
+/// cannot read it; elsewhere the data directory's access control applies. Shared by the
+/// journal and the library catalogs. Filesystem I/O.
+pub(crate) fn create_owner_only(path: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-        let io_err = |err: std::io::Error| JournalError(format!("{}: {err}", path.display()));
         std::fs::OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(false)
             .mode(0o600)
-            .open(path)
-            .map_err(io_err)?;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(io_err)?;
+            .open(path)?;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
     }
     #[cfg(not(unix))]
     let _ = path;

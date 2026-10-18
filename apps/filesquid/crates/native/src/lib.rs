@@ -15,8 +15,9 @@
 //! # Features
 //!
 //! - default (always built): the items above.
-//! - `desktop`: desktop-only native processing (the OCFL coordinator and the durable job and
-//!   media workers that DE-0.8 adds). Only `filesquid-desktop` enables it.
+//! - `desktop`: desktop-only native processing: the per-library SQLite catalog
+//!   ([`SqliteCatalog`], Task DE-0.2), and later the OCFL coordinator and the durable job and
+//!   media workers that DE-0.8 adds. Only `filesquid-desktop` enables it.
 //!
 //! `filesquid-desktop` links this crate with `desktop`. `filesquid-server` MAY link it with its
 //! default features only (journal store, data-directory checks, `HostMonitor`), keeping its
@@ -26,10 +27,17 @@
 //! amendment of 2026-10-18). WebAssembly builds and the ciphertext-only hosted service MUST
 //! NOT link it.
 
+#[cfg(feature = "desktop")]
+pub mod catalog;
 pub mod host_checks;
 pub mod host_monitor;
 pub mod journal_sqlite;
 
+#[cfg(feature = "desktop")]
+pub use catalog::{
+    PendingIntent, SqliteCatalog, CATALOG_DIR, CATALOG_FILE_EXTENSION, CATALOG_SCHEMA_VERSION,
+    MAX_LIBRARIES,
+};
 pub use host_checks::{probe_name, DataDirChecks, MAX_PROBE_ATTEMPTS};
 pub use host_monitor::{HostMonitor, ALREADY_INSTALLED, HOST_HEARTBEAT_TIMEOUT_MS, JOURNAL_FILE};
 pub use journal_sqlite::SqliteJournal;
