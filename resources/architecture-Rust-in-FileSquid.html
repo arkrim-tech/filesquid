@@ -1,4 +1,4 @@
-<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style>
 <title>Rust in FileSquid</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <style>
@@ -21,7 +21,7 @@
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
   --bg: #141414; --card: #1C1C1C; --raised: #242424;
   --border-sub: #2A2A2A; --border-def: #3A3A3A;
-  --text-head: #F5F5F5; --text-body: #E0E0E0; --text-sec: #A0A0A0; --text-muted: #6A6A6A;
+  --text-head: #F5F5F5; --text-body: #E0E0E0; --text-sec: #A0A0A0; --text-muted: #8C8C8C;
   --green-text: #4ACA74;
   --own: #16AC49; --own-f: #0D2B18; --own-t: #4ACA74;
   --typ: #3D9BFF; --typ-f: #0C1D33; --typ-t: #7DBBFF;
@@ -33,7 +33,7 @@
 :root[data-theme="dark"] {
   --bg: #141414; --card: #1C1C1C; --raised: #242424;
   --border-sub: #2A2A2A; --border-def: #3A3A3A;
-  --text-head: #F5F5F5; --text-body: #E0E0E0; --text-sec: #A0A0A0; --text-muted: #6A6A6A;
+  --text-head: #F5F5F5; --text-body: #E0E0E0; --text-sec: #A0A0A0; --text-muted: #8C8C8C;
   --green-text: #4ACA74;
   --own: #16AC49; --own-f: #0D2B18; --own-t: #4ACA74;
   --typ: #3D9BFF; --typ-f: #0C1D33; --typ-t: #7DBBFF;
@@ -103,7 +103,7 @@ td.adr { font: 13px var(--mono); color: var(--text-sec); white-space: nowrap; fo
 .chip-tool { background: var(--tool-f); border-color: var(--tool); color: var(--tool-t); }
 .foot { font-size: 13px; color: var(--text-muted); }
 </style>
-
+</head><body>
 <div class="wrap">
   <header>
     <p class="eyebrow">Architecture · Rust</p>
@@ -159,8 +159,8 @@ td.adr { font: 13px var(--mono); color: var(--text-sec); white-space: nowrap; fo
 <text x="67" y="349.5" class="p p-typ">Result&lt;T, ApiError&gt; → typed error codes</text>
 <rect x="332" y="336" width="234" height="19" rx="9.5" class="f-typ"/>
 <text x="339" y="349.5" class="p p-typ">hosts inject storage through traits</text>
-<rect x="578" y="336" width="209" height="19" rx="9.5" class="f-tool"/>
-<text x="585" y="349.5" class="p p-tool">no Tauri, SQL driver or libvips</text>
+<rect x="578" y="336" width="171" height="19" rx="9.5" class="f-tool"/>
+<text x="585" y="349.5" class="p p-tool">no Tauri, no libvips</text>
 <path d="M118,372 L118,418" class="ln ln-n" marker-end="url(#a-n)"/>
 <rect x="45" y="420" width="147" height="140" rx="6" class="f-n"/>
 <text x="57" y="442" class="h">Later modules</text>
@@ -255,7 +255,7 @@ td.adr { font: 13px var(--mono); color: var(--text-sec); white-space: nowrap; fo
 <text x="880" y="372" class="m">filesquid-ocfl · -metadata</text>
 <text x="880" y="388" class="m">filesquid-c2pa · API read paths</text>
 <text x="880" y="404" class="m">libvips · FFmpeg · library keys</text>
-<text x="880" y="428" class="s">Graph gate fails the build.</text>
+<text x="880" y="428" class="s">A planned graph gate fails the build.</text>
 <text x="880" y="444" class="s">Cargo features are not the boundary.</text>
 <path d="M866,262 L842,262 L842,490 L822,490" class="ln ln-own" marker-end="url(#a-own)"/>
 <text x="866" y="486" class="lab-own">links filesquid-core only:</text>
@@ -393,15 +393,15 @@ td.adr { font: 13px var(--mono); color: var(--text-sec); white-space: nowrap; fo
 
   <section>
     <h2>Toolchain, from source to four artefacts</h2>
-    <p>Every quality gate is a Cargo command run by the local pre-commit hook. The graph gate is what turns the hosted-service rule above into a build failure.</p>
+    <p>Every quality gate is a Cargo command. The local pre-commit hook runs the solid gates today. <code>cargo deny</code> and the dependency-graph gate are planned (ADR 019, ADR 032); the graph gate will turn the hosted-service rule above into a build failure.</p>
     <figure>
       <div class="scroll"><svg viewBox="0 0 1200 340" role="img" aria-label="Every commit passes eight local Cargo gates in scripts/pre-commit.sh, then cargo build produces four artefacts for three target triples." xmlns="http://www.w3.org/2000/svg"><defs><marker id="c-n" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk-n"/></marker><marker id="c-own" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk-own"/></marker><marker id="c-typ" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk-typ"/></marker><marker id="c-con" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk-con"/></marker><marker id="c-uns" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="mk-uns"/></marker></defs><rect x="15" y="15" width="1170" height="150" rx="8" class="f-tool" stroke-dasharray="5 4"/>
 <text x="30" y="39" class="h">Local gate: scripts/pre-commit.sh</text>
-<text x="290" y="39" class="m">every gate runs before a push · no hosted CI</text>
+<text x="290" y="39" class="m">runs before a push · no hosted CI · dashed = planned</text>
 <rect x="38" y="55" width="130" height="92" rx="6" class="f-card"/>
 <text x="48" y="78" class="mh">rust-toolchain</text>
 <text x="48" y="100" class="m">stable channel</text>
-<text x="48" y="118" class="m">edition 2024</text>
+<text x="48" y="118" class="m">edition 2021</text>
 <path d="M169,101 L179,101" class="ln ln-n" marker-end="url(#c-n)"/>
 <rect x="180" y="55" width="130" height="92" rx="6" class="f-card"/>
 <text x="190" y="78" class="mh">cargo fmt</text>
@@ -416,20 +416,22 @@ td.adr { font: 13px var(--mono); color: var(--text-sec); white-space: nowrap; fo
 <rect x="464" y="55" width="130" height="92" rx="6" class="f-card"/>
 <text x="474" y="78" class="mh">cargo test -p</text>
 <text x="474" y="100" class="m">unit · tests/</text>
-<text x="474" y="118" class="m">BDD · proptest</text>
+<text x="474" y="118" class="m">BDD features</text>
 <path d="M595,101 L605,101" class="ln ln-n" marker-end="url(#c-n)"/>
 <rect x="606" y="55" width="130" height="92" rx="6" class="f-card"/>
 <text x="616" y="78" class="mh">API drift test</text>
 <text x="616" y="100" class="m">OpenAPI 3.1 →</text>
 <text x="616" y="118" class="m">TS types match</text>
 <path d="M737,101 L747,101" class="ln ln-n" marker-end="url(#c-n)"/>
-<rect x="748" y="55" width="130" height="92" rx="6" class="f-card"/>
+<rect x="748" y="55" width="130" height="92" rx="6" class="f-card" stroke-dasharray="5 4"/>
 <text x="758" y="78" class="mh">cargo deny</text>
+<text x="758" y="136" class="lab">planned</text>
 <text x="758" y="100" class="m">licences · audit</text>
 <text x="758" y="118" class="m">LGPL-only FFmpeg</text>
 <path d="M879,101 L889,101" class="ln ln-n" marker-end="url(#c-n)"/>
-<rect x="890" y="55" width="130" height="92" rx="6" class="f-card"/>
+<rect x="890" y="55" width="130" height="92" rx="6" class="f-card" stroke-dasharray="5 4"/>
 <text x="900" y="78" class="mh">graph gate</text>
+<text x="900" y="136" class="lab">planned</text>
 <text x="900" y="100" class="m">cargo tree on</text>
 <text x="900" y="118" class="m">hosted: no ocfl</text>
 <path d="M1021,101 L1031,101" class="ln ln-n" marker-end="url(#c-n)"/>
@@ -484,7 +486,7 @@ td.adr { font: 13px var(--mono); color: var(--text-sec); white-space: nowrap; fo
     </div>
   </section>
 
-  <p class="foot">Source: <code>resources/architecture.md</code> (revised 2026-10-15T18:00:00Z), the Rust language briefing and ADRs 001–038. Drawn as the target architecture, with every requirement delivered.</p>
+  <p class="foot">Source: <code>resources/architecture.md</code> (revised 2026-10-15T18:00:00Z), the Rust language briefing and ADRs 001–038. It allocates the target architecture to Rust primitives; it does not claim that every part is implemented. Dashed toolchain gates are planned and not yet in the hook.</p>
 </div>
 
 </body></html>

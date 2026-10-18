@@ -80,8 +80,11 @@ pub struct FsBackend {
 }
 
 /// Counter behind [`FsBackend::unique_suffix`]. It is process-wide, not per
-/// backend, so two backends on one root never draw the same suffix even when
-/// the clock (microsecond resolution on macOS) returns the same instant.
+/// backend, so its sequence separates backends within one process even when
+/// the clock (microsecond resolution on macOS) returns the same instant. The
+/// PID in the suffix separates concurrent processes; the timestamp only
+/// reduces the risk of meeting a stale file, and create-new creation still
+/// rejects a path that already exists.
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
 /// Map an I/O error on `what` to a storage error; `NotFound` stays not found.

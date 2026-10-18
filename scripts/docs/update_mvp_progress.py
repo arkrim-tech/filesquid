@@ -111,14 +111,20 @@ def attach_hours(tasks: list, plan: str) -> list:
         plan: The full implementation plan Markdown.
 
     Returns:
-        A list of problems, one per task without a numeric estimate.
+        A list of problems: no MVP tasks at all, or a task without a positive
+        numeric estimate. Either would leave the bar with zero width to divide.
     """
+    if not tasks:
+        return ["No MVP tasks found in the checklist's MVP section"]
     estimates = {anchor: int(hours) for anchor, hours in ESTIMATE.findall(plan)}
     problems = []
     for task in tasks:
         anchor = task.task_id.lower()
         if anchor not in estimates:
             problems.append(f"Task {task.task_id}: no 'Estimated Time: N hours' in the implementation plan")
+            continue
+        if estimates[anchor] <= 0:
+            problems.append(f"Task {task.task_id}: estimated time must be more than 0 hours")
             continue
         task.hours = estimates[anchor]
     return problems
