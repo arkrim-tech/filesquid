@@ -105,7 +105,7 @@ JUNIT report written to <repo>/apps/filesquid/ui/tests/allure-results/vitest-jun
 JUNIT report written to <repo>/apps/imagesquid/tests/allure-results/vitest-junit.xml
 ```
 
-Both Playwright suites passed in `FILESQUID_E2E=1 bash scripts/pre-commit.sh` on that commit (13/13 and 5/5). The suite grew from 211 to 227 tests in this round (16 new tests in `apps/filesquid/ui`, 1 in `apps/imagesquid`). The 211 and 11 totals under "Passing runs" below are from the first commit `48ebd0f` and are superseded by these.
+Both Playwright suites passed in `FILESQUID_E2E=1 bash scripts/pre-commit.sh` on that commit (13/13 and 5/5). In this round the FileSquid UI suite (`apps/filesquid/ui`) grew from 211 to 227 tests (16 new tests), and the ImageSquid suite (`apps/imagesquid`) grew from 11 to 12 (1 new test). The 211 and 11 totals under "Passing runs" below are from the first commit `48ebd0f` and are superseded by these.
 
 ## Review round 2 (Cubic, 3 findings)
 
