@@ -58,7 +58,7 @@ Coverage: no coverage reporter is approved for Vitest in [ADR 017](../../../../.
 
 ## Review round 1 (Cubic, 12 findings)
 
-All 12 findings were valid and fixed in one commit; the new or changed tests were written first and failed first (run below).
+All 12 findings were valid and fixed in one commit. The regression tests for the reported defects were written first and failed first: the 10 failures in the run below. Some tests added in this round passed before the fixes, because they cover behaviour that was already correct and had no direct test: the `logoSource` unit test (`tests/unit/distribution.test.ts`, added for the coverage finding), the exact nine-pair `CONTRAST_PAIRS` assertion, the stylesheet-only and named-colour checks of `component-styles.test.ts`, the shared-fakes refactor, the "does not notify" store test and the ImageSquid `data-resolved` assertion.
 
 - `theme.test.ts` now requires exactly the nine UI-S-015 contrast pairs.
 - Type size, spacing and radius come from tokens. New theme-independent tokens are `--fs-font-size-small`, `--fs-font-size-body`, `--fs-font-size-title` and `--fs-space-1` to `--fs-space-5` (4, 8, 12, 16 and 24 px in both distributions). `<fs-theme-control>`, `<fs-app-shell>` and `<fs-monitor>` use them. `component-styles.test.ts` fails on any literal margin, padding, gap, font size or border radius.
@@ -93,7 +93,27 @@ TypeError: invalidColourTokens is not a function
       Tests  1 failed | 11 passed (12)
 ```
 
-After the fixes: `apps/filesquid/ui` Vitest 227/227 (16 files), `apps/imagesquid` Vitest 12/12, and both Playwright suites pass in `FILESQUID_E2E=1 bash scripts/pre-commit.sh` (13/13 and 5/5).
+After the fixes (commit `d8907dc`), `npm test` in `apps/filesquid/ui`, then in `apps/imagesquid`:
+
+```text
+ Test Files  16 passed (16)
+      Tests  227 passed (227)
+JUNIT report written to <repo>/apps/filesquid/ui/tests/allure-results/vitest-junit.xml
+
+ Test Files  2 passed (2)
+      Tests  12 passed (12)
+JUNIT report written to <repo>/apps/imagesquid/tests/allure-results/vitest-junit.xml
+```
+
+Both Playwright suites passed in `FILESQUID_E2E=1 bash scripts/pre-commit.sh` on that commit (13/13 and 5/5). The suite grew from 211 to 227 tests in this round (16 new tests in `apps/filesquid/ui`, 1 in `apps/imagesquid`). The 211 and 11 totals under "Passing runs" below are from the first commit `48ebd0f` and are superseded by these.
+
+## Review round 2 (Cubic, 3 findings)
+
+All 3 findings were valid documentation fixes, made in one commit. TDD-ENFORCE: not applicable, documentation only.
+
+- The README type-size row names `--fs-font-size-small`, `--fs-font-size-body` and `--fs-font-size-title` in full.
+- Round 1 no longer claims that every new test failed first. It names the tests that passed before the fixes (including `logoSource`) and why.
+- The round-1 totals now come with their own transcripts at `d8907dc`, and the earlier "Passing runs" are labelled as the first commit's, superseded.
 
 ## TDD: failing run before the implementation
 
@@ -148,6 +168,8 @@ AssertionError: expected [ '#1d3f73', '#ffffff' ] to deeply equal [ '#005db6', '
 The first Playwright run also failed twice and changed the tests, not the code: a minified build writes `#ffffff` as `#fff`, so the e2e helpers now resolve each token through a probe element's computed `rgb()`; and the keyboard step now starts from the chosen radio, as a native radio group does.
 
 ## Passing runs
+
+These transcripts are from the first commit `48ebd0f`, before review round 1. They are superseded by the round-1 transcripts above (227 and 12 Vitest tests at `d8907dc`); the Playwright counts did not change.
 
 `npx vitest run --reporter=verbose` for the new and changed test files in `apps/filesquid/ui`:
 
