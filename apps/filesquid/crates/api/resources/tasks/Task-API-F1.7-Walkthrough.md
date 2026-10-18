@@ -708,6 +708,97 @@ The README "not a regular file" remedy, run against the real `filesquid-server` 
 "filesquid-server listening"
 ```
 
+## Review round 4: Cubic findings on feab6ac
+
+This round keeps shrinking the token-file code instead of adding machinery.
+
+| Finding | Fix | Test |
+|---|---|---|
+| P2: the startup cleanup of `admin-token.*.tmp` could delete a concurrent server's recovery file (`admin_token.rs:93`) | The cleanup is **removed**, not made concurrency-safe. Startup never deletes temporary files. Random names and `create_new` already mean an orphan left by a crash never blocks recovery, so an orphan is a harmless leftover. API-S-016, ADR 030 and the module docs say so; the round-3 cleanup test is gone. | `an_orphaned_temporary_file_does_not_block_recovery` now also asserts that the orphan is left untouched (red with the cleanup, green without) |
+| P2: "stale" was undefined in API-S-016 (`srs.md:27`) | Resolved by the removal: API-S-016 now says startup MUST NOT delete temporary token files, and an orphan MUST NOT block a later recovery | Same test |
+| P3: the cleanup requirement was broader than the implementation (`srs.md:27`) | Resolved by the removal: there is no cleanup requirement left to scope | Documentation |
+| P2: the README's Windows flow could not start or authenticate (`README.md:72`) | A PowerShell 7 example generates a token, sets `FILESQUID_ADMIN_TOKEN` for the server launch, and reuses `$TOKEN` with `curl.exe`. The logs section's old `Get-Content filesquid-data/admin-token` line now points to that flow. | The same `FILESQUID_ADMIN_TOKEN` flow was run on Linux (below). PowerShell (`pwsh`) is not installed in this environment, so the PowerShell lines themselves were **not run**. |
+| P3: lib.rs claimed the fallbacks are authorised | The crate docs now say routed operations are authenticated and authorised, and the 404 and 405 fallbacks are authentication-only. The code matches: the fallbacks call `auth::check_caller`, which only authenticates. | Existing `unknown_paths_and_wrong_methods_authenticate_before_routing` |
+| P3: ADR 030 said "where the server runs" and wrote `<data dir>/admin-token` | The phrase is dropped, and the remedies use `$FILESQUID_DATA_DIR/admin-token` | Documentation |
+
+### Red
+
+```text
+thread 'admin_token::tests::an_orphaned_temporary_file_does_not_block_recovery' panicked at crates/server/src/admin_token.rs:376:46:
+orphan kept: Os { code: 2, kind: NotFound, message: "No such file or directory" }
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 4 filtered out; finished in 1.09s
+```
+
+### Green: round 4 raw output
+
+`cargo test -p filesquid-api -p filesquid-server -p filesquid-desktop --locked` (exit code 0):
+
+```text
+     Running unittests src/lib.rs
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+     Running tests/features.rs
+87 scenarios (28 passed, 59 skipped)
+     Running tests/unit/admin.rs
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/auth.rs
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/unit/contract.rs
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+     Running tests/unit/errors.rs
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/unit/events.rs
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/unit/health.rs
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/health_rules.rs
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/journal.rs
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/unit/metrics.rs
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/registry.rs
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/unit/routes.rs
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/unit/writer.rs
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/lib.rs
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/main.rs
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/integration/api_protocol.rs
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running unittests src/lib.rs
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.01s
+     Running unittests src/main.rs
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/integration/auth.rs
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.01s
+     Running tests/integration/events.rs
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/integration/health.rs
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/integration/monitor.rs
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/integration/static_ui.rs
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/health.rs
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+The `FILESQUID_ADMIN_TOKEN` flow from the Windows example, run on Linux against the real `filesquid-server` binary (on port 8094 to avoid clashing with other sessions; no token file is written):
+
+```text
+$ curl http://127.0.0.1:8083/api/v1/health/live
+{"status":"up"}
+$ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8083/api/v1/health
+{"schema_version":1,"status":"ok","product":"filesquid"}
+token file written: no
+```
+
 ## Work left to other tasks
 
 - **UI client (`@filesquid/ui`):** by owner decision a separate small pull request right after this one merges. `FileSquidClient` must send `Authorization: Bearer <token>` on every request (desktop: `window.__FILESQUID_LAUNCH_TOKEN__`; server: the administrator token until accounts exist) and offer `["filesquid.events.v1", "filesquid.bearer.<token>"]` on its WebSocket. It can probe `GET /api/v1/health/live` without a token and show `ApiError.reason` as a sign-in or permission state. The Playwright end-to-end suites (`FILESQUID_E2E=1`) need the same change.

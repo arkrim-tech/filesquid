@@ -84,7 +84,26 @@ TOKEN=$(cat filesquid-data/admin-token)
 curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8083/api/v1/health
 ```
 
-The full health route returns `{"schema_version":1,"status":"ok","product":"filesquid"}`. The desktop host needs no token from you: it generates a new per-launch token at every start and gives it only to its own pages.
+The full health route returns `{"schema_version":1,"status":"ok","product":"filesquid"}`.
+
+On Windows, set `FILESQUID_ADMIN_TOKEN` yourself (the server stores no token file there) and reuse the same value for requests. In PowerShell 7, from `apps/filesquid`:
+
+```powershell
+$TOKEN = -join (1..32 | ForEach-Object { '{0:x2}' -f [System.Security.Cryptography.RandomNumberGenerator]::GetInt32(256) })
+$TOKEN                                   # note it; the server never prints it
+$env:FILESQUID_ADMIN_TOKEN = $TOKEN
+$env:FILESQUID_UI_DIR = "ui/dist"
+cargo run -p filesquid-server
+```
+
+In a second PowerShell window, set `$TOKEN` to the same value, then:
+
+```powershell
+curl.exe http://127.0.0.1:8083/api/v1/health/live
+curl.exe -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8083/api/v1/health
+```
+
+The same `FILESQUID_ADMIN_TOKEN` flow works on Linux and macOS, where it takes precedence over the token file. The desktop host needs no token from you: it generates a new per-launch token at every start and gives it only to its own pages.
 
 **UI development** with hot reload: start the server as above, then in another terminal:
 
@@ -200,7 +219,7 @@ curl -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:8083/api/v1/admin/journ
 curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8083/metrics
 ```
 
-On Windows PowerShell, read the token with `$TOKEN = Get-Content filesquid-data/admin-token` and call `curl.exe` with the same arguments.
+On Windows there is no token file: start the server with `FILESQUID_ADMIN_TOKEN` set as shown under **Server host**, set `$TOKEN` to the same value in PowerShell, and call `curl.exe` with the same arguments.
 
 ---
 

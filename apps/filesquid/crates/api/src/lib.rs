@@ -12,8 +12,10 @@
 //! subscriptions and resync hints). It holds no transport code of its own, so the same router
 //! answers on every host.
 //!
-//! Every call except the public liveness probe (`GET /api/v1/health/live`) is authenticated
-//! and authorised by the [`auth`] layer before any handler runs, deny-by-default: a host
+//! Every routed operation except the public liveness probe (`GET /api/v1/health/live`) is
+//! authenticated and authorised by the [`auth`] layer before its handler runs. The 404 and 405
+//! fallbacks are authentication-only: they answer only a caller with an accepted credential
+//! and apply no policy, because no operation runs. All of it is deny-by-default: a host
 //! installs its [`auth::Authoriser`] with [`ApiState::install_authoriser`] (the desktop
 //! per-launch token, or the server administrator token), and without one every guarded call
 //! is refused.

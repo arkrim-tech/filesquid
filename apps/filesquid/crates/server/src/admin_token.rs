@@ -15,8 +15,9 @@
 //! - **Crash recovery.** A blank, owner-only, regular file can only be left by a first start
 //!   that crashed. After a bounded wait of [`MAX_REREADS`] x 20 ms (another process may still
 //!   be writing it), it is replaced atomically: the new token goes to a temporary file with a
-//!   random name, which is renamed over it. Stale temporary files of earlier crashes
-//!   (regular files owned by this user) are removed at startup.
+//!   random name, which is renamed over it. Temporary files are never deleted at startup,
+//!   because one may belong to a concurrent server's recovery; an orphan left by a crash is
+//!   harmless and never blocks a later recovery.
 
 use std::path::Path;
 
@@ -86,44 +87,16 @@ mod unix {
         Token(String),
     }
 
-    /// Unix: remove stale temporaries, then use the stored token, create the first one, or
-    /// recover a blank file. Performs filesystem I/O.
+    /// Unix: use the stored token, create the first one, or recover a blank file. Temporary
+    /// files are never deleted here: one may belong to a concurrent server's recovery, and a
+    /// random name means an orphan from a crash never blocks recovery. Performs filesystem I/O.
     pub(super) fn stored_or_new_token(data_dir: &Path) -> Result<(String, bool), String> {
-        if data_dir.is_dir() {
-            remove_stale_temporaries(data_dir)?;
-        }
         let path = data_dir.join(TOKEN_FILE);
         match read_token_file(&path)? {
             Stored::Token(token) => Ok((token, false)),
             Stored::Absent => create_first(data_dir, &path),
             Stored::Blank => replace_blank(&path),
         }
-    }
-
-    /// Remove `admin-token.*.tmp` files left by crashed recoveries: only regular files (never
-    /// links) owned by this user. Performs filesystem I/O.
-    pub(super) fn remove_stale_temporaries(data_dir: &Path) -> Result<(), String> {
-        let entries =
-            std::fs::read_dir(data_dir).map_err(|e| format!("list {}: {e}", data_dir.display()))?;
-        let prefix = format!("{TOKEN_FILE}.");
-        for entry in entries {
-            let entry = entry.map_err(|e| format!("list {}: {e}", data_dir.display()))?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if name.starts_with(&prefix) && name.ends_with(TEMPORARY_SUFFIX) {
-                remove_if_own_regular_file(&entry.path())?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Remove `path` when it is a regular file (not a link) owned by this user.
-    fn remove_if_own_regular_file(path: &Path) -> Result<(), String> {
-        let metadata = std::fs::symlink_metadata(path)
-            .map_err(|e| format!("inspect {}: {e}", path.display()))?;
-        if !metadata.is_file() || metadata.uid() != current_uid() {
-            return Ok(());
-        }
-        std::fs::remove_file(path).map_err(|e| format!("remove {}: {e}", path.display()))
     }
 
     /// First start: create the token file atomically. If another process created it first,
@@ -372,25 +345,11 @@ mod tests {
             std::fs::read_to_string(&path).expect("stored").trim(),
             token
         );
-        assert!(
-            !orphan.exists(),
-            "a stale temporary file of ours is removed"
+        assert_eq!(
+            std::fs::read_to_string(&orphan).expect("orphan kept"),
+            "stale",
+            "startup never deletes temporary files: one may be a concurrent server's recovery"
         );
-        std::fs::remove_dir_all(dir).expect("cleanup");
-    }
-
-    #[test]
-    fn stale_cleanup_never_touches_a_link_or_another_name() {
-        let dir = dir("cleanup");
-        let target = dir.join("keep");
-        std::fs::write(&target, "x").expect("target");
-        let link = dir.join(format!("{TOKEN_FILE}.link.tmp"));
-        std::os::unix::fs::symlink(&target, &link).expect("symlink");
-        let other = dir.join("notes.tmp");
-        std::fs::write(&other, "x").expect("other");
-        remove_stale_temporaries(&dir).expect("cleanup runs");
-        assert!(link.symlink_metadata().is_ok(), "a link is never removed");
-        assert!(other.exists() && target.exists());
         std::fs::remove_dir_all(dir).expect("cleanup");
     }
 
