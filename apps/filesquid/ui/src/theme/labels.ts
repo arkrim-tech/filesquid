@@ -16,6 +16,8 @@ export const REQUIRED_LABEL_KEYS = [
   "virtualExhibits",
   "file",
   "files",
+  "folder",
+  "folders",
   "apiStatus",
   "apiUnavailable",
   "authMissingCredentials",
@@ -61,6 +63,21 @@ export const REQUIRED_LABEL_KEYS = [
   "no",
   "skipToContent",
   "navigationMain",
+  "navigationPinned",
+  "navigationPin",
+  "navigationPinItem",
+  "navigationUnavailable",
+  "navigationRemove",
+  "navigationRemoveItem",
+  "navigationMoveUp",
+  "navigationMoveDown",
+  "navigationBreadcrumb",
+  "stateLoading",
+  "stateEmpty",
+  "stateError",
+  "stateOffline",
+  "stateDenied",
+  "stateRetry",
 ] as const;
 
 /** One required label key. */
@@ -79,4 +96,19 @@ export function missingLabels(table: Record<string, unknown>): LabelKey[] {
     const value = table[key];
     return typeof value !== "string" || value.trim() === "";
   });
+}
+
+/**
+ * Fill the named placeholders of a label, for example `"Move {name} up"`, so a distribution
+ * can order the words its language needs. Each value is inserted literally; a placeholder with
+ * no value is left as written. Pure.
+ *
+ * @param template A label from the active table.
+ * @param values Text for each placeholder, keyed by its name.
+ * @returns The label with its placeholders filled.
+ */
+export function formatLabel(template: string, values: Readonly<Record<string, string>>): string {
+  return template.replace(/\{([a-zA-Z]+)\}/g, (whole, name: string) =>
+    Object.hasOwn(values, name) ? (values[name] ?? whole) : whole,
+  );
 }

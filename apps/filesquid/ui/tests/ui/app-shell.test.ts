@@ -67,6 +67,25 @@ describe("<fs-app-shell>", () => {
     ]);
   });
 
+  it("offers a navigation slot in its nav, with the static list as fallback (UI-F2.1a)", async () => {
+    const shell = mount(ok);
+    await settle();
+    const root = shell.shadowRoot;
+    const slot = root?.querySelector<HTMLSlotElement>('nav slot[name="navigation"]');
+    expect(slot).not.toBeNull();
+    expect([...(slot?.querySelectorAll("li") ?? [])].map((li) => li.textContent)).toEqual([
+      "Libraries",
+      "Collections",
+      "Virtual collections",
+      "Virtual exhibits",
+    ]);
+    expect(root?.querySelector('nav > ul a[href="#/monitor"]')?.textContent).toBe("Monitor");
+    const tree = document.createElement("div");
+    tree.slot = "navigation";
+    shell.append(tree);
+    expect(slot?.assignedElements()).toEqual([tree]);
+  });
+
   it("puts the theme control in the header, worded from the label table", async () => {
     const shell = mount(ok);
     await settle();

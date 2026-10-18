@@ -29,5 +29,16 @@ export interface DenialText {
  */
 export function denialLabel(error: unknown, labels: LabelTable): DenialText | undefined {
   if (!(error instanceof ApiError) || !error.reason) return undefined;
-  return { reason: error.reason, text: labels[DENIAL_LABEL[error.reason]] };
+  return { reason: error.reason, text: reasonLabel(error.reason, labels) };
+}
+
+/**
+ * The label for a denial reason in the active table. Pure.
+ *
+ * @param reason A contract denial reason.
+ * @param labels The distribution's label table.
+ * @returns The label text.
+ */
+export function reasonLabel(reason: DenialReason, labels: LabelTable): string {
+  return labels[DENIAL_LABEL[reason]];
 }

@@ -40,6 +40,18 @@ describe("ImageSquid label table", () => {
     expect(labels.automaticGalleriesHeading).toBe("Collections");
     expect(labels.searchPlaceholder).toBe("Search photos, collections, dates…");
   });
+  it("words navigation and view states without the internal nouns (UI-F2.1a)", () => {
+    expect(labels.folders).toBe("Folders");
+    expect(labels.navigationPinned).toBe("Pinned");
+    for (const template of [
+      labels.navigationMoveUp,
+      labels.navigationMoveDown,
+      labels.navigationPinItem,
+    ]) {
+      expect(template).toContain("{name}");
+    }
+    expect(labels.stateRetry).toBe("Try again");
+  });
   it("words the theme control", () => {
     expect([labels.theme, labels.themeSystem, labels.themeLight, labels.themeDark]).toEqual([
       "Theme",
