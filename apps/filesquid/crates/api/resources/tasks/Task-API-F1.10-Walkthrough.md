@@ -19,7 +19,7 @@ Parents: [F-057 Desktop and server hosts](../../../../../../resources/prd.md#f-0
 | `operator_name` null on desktop and browser | `HostIdentity::desktop()` and `browser()` cannot carry one; `only_a_server_identity_can_carry_an_operator` | Met |
 | Operator trimmed, 1 to 256 characters, no control characters | `OperatorName::parse`; `an_operator_name_*` tests, server `the_operator_name_is_read_trimmed_from_the_environment` | Met |
 | Unset or blank: starts, null, one `server.operator_unnamed` warning to stdout and the journal at every start, naming the variable | The line is written straight to stdout, outside the `RUST_LOG` filter, and the entry is queued on the journal directly. Gates: server harness outline (3 examples, with the log filter off), `an_unnamed_server_starts_with_one_warning_*` (log filter off, journal layer attached, still one entry), `the_binary_prints_the_warning_even_with_logging_off`, `the_warning_is_written_at_every_start`, `without_a_journal_layer_*` | Met |
-| Too long or control character: refuses to start, names the variable, omits the value | server harness outline against the real binary (the 257-character value is exactly 257 characters), `an_unusable_operator_name_refuses_*`; a value that is not valid Unicode is refused the same way instead of reading as unset (`a_non_unicode_operator_name_is_refused_without_echoing_it`, `the_binary_refuses_a_non_unicode_operator_name`) | Met |
+| Too long or control character: refuses to start, names the variable, omits the value | server harness outline against the real binary (the 257-character value is exactly 257 characters), `an_unusable_operator_name_refuses_*`; a value that is not valid Unicode, in this or any other variable the server reads, is refused the same way instead of reading as unset (`a_non_unicode_variable_is_refused_without_echoing_it`, `the_binary_refuses_a_non_unicode_operator_name`) | Met |
 | Hosted service from an injected enrolment port; no enrolment state reports not enrolled | `EnrolmentPort`, `NotEnrolled`; `the_default_port_reports_exactly_not_enrolled` | Met (API-F4.1 brings the real port) |
 | Enrolled: lowercase bare DNS host name; backup and sync separate | `HostedService::enrolled_at`; `the_service_host_is_a_bare_dns_host_name`, `the_service_host_is_stored_lowercase`, `an_enrolled_service_reports_backup_and_sync_separately` | Met |
 | Privacy of answer and event | `the_answer_and_the_event_carry_nothing_private`, scenario "The descriptor and its event carry nothing private" | Met |
@@ -58,6 +58,10 @@ Fixed: the unnamed-operator warning now reaches stdout whatever `RUST_LOG` says 
 ## Cubic round 2
 
 Fixed: the 257-character refusal value is now exactly 257 characters; `assert_plain_text` rejects any digit; every awaited event in the host steps is bounded by a 5-second timeout; a non-Unicode `FILESQUID_OPERATOR_NAME` is refused (`ServerConfig::from_env`, `require_unicode_operator_name`) instead of reading as unset; the README says "authenticated caller" and "non-blank, valid"; reconnect rereading has its own test.
+
+## Cubic round 3
+
+Fixed: `ServerConfig::from_env` reads every server variable (`ENV_VARIABLES`) through one helper, `unicode_value`, so a non-Unicode value in any of them is refused with a message that names the variable and not the value; the non-Unicode binary test sets `RUST_LOG=info` explicitly.
 
 ## Test output
 

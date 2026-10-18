@@ -123,32 +123,53 @@ impl ServerConfig {
     }
 }
 
+/// Every environment variable [`ServerConfig::from_env`] reads.
+pub const ENV_VARIABLES: [&str; 5] = [
+    "FILESQUID_BIND",
+    "FILESQUID_UI_DIR",
+    "FILESQUID_DATA_DIR",
+    "FILESQUID_ADMIN_TOKEN",
+    OPERATOR_NAME_VARIABLE,
+];
+
 impl ServerConfig {
-    /// Build configuration from the process environment. Performs environment reads.
+    /// Build configuration from the process environment: read each of [`ENV_VARIABLES`]
+    /// once, refuse any that is set but not valid Unicode ([`unicode_value`]), then apply
+    /// [`from_lookup`](Self::from_lookup). Performs environment reads.
     ///
     /// # Errors
-    /// Any [`from_lookup`](Self::from_lookup) error, or a `FILESQUID_OPERATOR_NAME` that is
-    /// not valid Unicode ([`require_unicode_operator_name`]), which would otherwise read as
-    /// unset.
+    /// A variable that is not valid Unicode, which would otherwise read as unset, or any
+    /// [`from_lookup`](Self::from_lookup) error. No message contains a value.
     pub fn from_env() -> Result<Self, String> {
-        let operator = std::env::var_os(OPERATOR_NAME_VARIABLE);
-        require_unicode_operator_name(operator.as_deref())?;
-        Self::from_lookup(|key| std::env::var(key).ok())
+        let mut values = Vec::with_capacity(ENV_VARIABLES.len());
+        for variable in ENV_VARIABLES {
+            let value = unicode_value(variable, std::env::var_os(variable).as_deref())?;
+            values.push((variable, value));
+        }
+        Self::from_lookup(|key| {
+            values
+                .iter()
+                .find(|(variable, _)| *variable == key)
+                .and_then(|(_, value)| value.clone())
+        })
     }
 }
 
-/// Refuse a `FILESQUID_OPERATOR_NAME` that is set but not valid Unicode, with a message that
-/// names the variable and never the value. Unset is accepted. Pure.
+/// The value of environment `variable` as text: `None` when unset. Pure.
 ///
 /// # Errors
-/// The value is not valid Unicode.
-pub fn require_unicode_operator_name(value: Option<&std::ffi::OsStr>) -> Result<(), String> {
-    match value {
-        Some(raw) if raw.to_str().is_none() => Err(format!(
-            "{OPERATOR_NAME_VARIABLE} is not usable: the operator name is not valid Unicode; set 1 to 256 characters with no control characters, or leave it unset"
-        )),
-        _ => Ok(()),
-    }
+/// The value is set but not valid Unicode. The message names the variable and never the
+/// value.
+pub fn unicode_value(
+    variable: &str,
+    value: Option<&std::ffi::OsStr>,
+) -> Result<Option<String>, String> {
+    let Some(raw) = value else {
+        return Ok(None);
+    };
+    raw.to_str().map(|text| Some(text.to_string())).ok_or_else(|| {
+        format!("{variable} is not usable: its value is not valid Unicode; set it to valid text or leave it unset")
+    })
 }
 
 /// Parse the configured `FILESQUID_OPERATOR_NAME`: unset or blank is `None`. Pure.
