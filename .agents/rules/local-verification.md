@@ -15,14 +15,14 @@ license: CC-BY
 - Describe a check as "run in CI". Checks run in the pre-commit hook or not at all.
 - Push a commit that fails `scripts/pre-commit.sh`.
 - Bypass the hook with `--no-verify`. The only sanctioned shortcut is `FILESQUID_SKIP_TESTS=1` for a work-in-progress commit that will not be pushed until `scripts/verify_tests.sh` passes.
-- Mark a pull request ready for review, or merge it, without a `FULL=1` run on its head commit (below).
+- Mark a pull request ready for review, or merge it, without the head-commit hook run required for its scope (below).
 - Set the `CHANGED_SCOPE_*` fixture variables to shrink a hook run. The hook ignores them; they exist for `scripts/verify_changed_scope.sh` only.
 
 ## MUST
 
 - Put every new gate in a `scripts/verify_*.sh` script and call it from `scripts/pre-commit.sh`. One script, one gate, non-zero exit on failure, a message that names the fix.
 - Run `bash scripts/pre-commit.sh` from the repository root before every push, or install it once: `ln -s ../../scripts/pre-commit.sh .git/hooks/pre-commit`.
-- Run the **full suite** with `FULL=1 bash scripts/pre-commit.sh` (a) before a pull request is first marked ready for review (or first opened as ready), and (b) on the final commit before it is merged. Paste the hook's summary line, which names the test scope, in the PR or its walkthrough so a reviewer can see the run was `full`.
+- Run the hook on the head commit (a) before a pull request is first marked ready for review (or first opened as ready), and (b) on the final commit before it is merged. When the PR's change scope (`scripts/changed_scope.sh` against `origin/main`) is `full` or includes `rust:`, that run MUST be the **full suite**, `FULL=1 bash scripts/pre-commit.sh`. When the PR's scope is `docs` or npm-only, a passing ordinary `bash scripts/pre-commit.sh` is enough. Paste the hook's summary line (`Test scope: <scope>`) in the PR or its walkthrough so a reviewer can see which run passed.
 - Run every cargo command in a gate that builds, tests, documents or formats through `cargo_locked` from `scripts/lib/cargo_shared.sh`, so two gate runs that share one target directory never use it at the same time. `cargo metadata --no-deps` in the scope helper reads manifests only and is not locked. Where `flock` is not installed (for example macOS without util-linux) the gates warn and run unlocked; there, do not run two gate runs on one target directory at once.
 - Keep the gates platform-agnostic ([platform-agnostic.md](./platform-agnostic.md)) and verify any command they run ([command-verification.md](./command-verification.md)).
 - Document a new gate, its environment variables and its runtime in the root README "Run tests" section in the same change.
@@ -53,10 +53,10 @@ Steps 0 to 9 run on every commit and take seconds; only step 7's Rust format che
 
 | Scope | When | Step 10 runs |
 |---|---|---|
-| `docs` | Only Markdown, `resources/` or `.agents/` files changed **outside** the crates and npm packages (every file inside a crate or package, its README and `resources/` included, belongs to it, because its tests read them, for example `crates/api/resources/srs.md`) | No Cargo or npm step; each skipped step is printed with the reason |
+| `docs` | Only documentation changed **outside** the crates and npm packages: Markdown, `resources/`, `.agents/`, and the root `.claude/` and `docs/` (every file inside a crate or package, its README and `resources/` included, belongs to it, because its tests read them, for example `crates/api/resources/srs.md`); or a text checker that steps 0 to 9 run on every commit (the explicit list `verify_branch.sh`, `verify_isolated_ports.sh`, `verify_doc_sync.sh`, `verify_srs_traceability.sh`, `verify_relative_links.sh`, `verify_workspace_boundaries.sh`, `verify_centralized_logging.sh`, `verify_docs.sh`, `verify_task_cleanup.sh`, and `scripts/docs/`) | No Cargo or npm step; each skipped step is printed with the reason |
 | `rust:<crates>` | Any file changed under `apps/filesquid/crates/<crate>/` | Clippy, tests and rustdoc with `-p` for the changed crates **and every workspace crate that depends on them** (`cargo metadata` reverse dependencies); each listed module crate alone; the desktop `test-webdriver` steps only when `filesquid-desktop` is listed |
-| `npm:<packages>` | Files changed in `apps/filesquid/ui` or `apps/imagesquid` | Lint, typecheck and tests for those packages, plus ImageSquid whenever `@filesquid/ui` changed (it links it) |
-| `full` | `apps/filesquid/Cargo.toml` or `Cargo.lock`, a `rust-toolchain` file, any `package.json` or `package-lock.json`, `scripts/`, a generated contract file (`openapi.json`, `schema.d.ts`), any other unclassified file, `FULL=1`, or any detection failure (unknown `origin/main`, git or `cargo metadata` error) | Every step, exactly as before the scope existed |
+| `npm:<packages>` | Files changed in `apps/filesquid/ui` or `apps/imagesquid`, their own `package.json` and `package-lock.json` included (no Rust build reads them) | Lint, typecheck and tests for those packages, plus ImageSquid whenever `@filesquid/ui` changed (it links it) |
+| `full` | `apps/filesquid/Cargo.toml` or `Cargo.lock`, a `rust-toolchain` file, any other `package.json` or `package-lock.json`, a script that decides or runs the scope (`pre-commit.sh`, `changed_scope.sh`, `verify_changed_scope.sh`, `verify_tests.sh`, `verify_formatting.sh`, `setup-dev-environment.sh`, `scripts/lib/`) or any script not in the `docs` list (a new one included), a generated contract file (`openapi.json`, `schema.d.ts`), any other unclassified file, `FULL=1`, or any detection failure (unknown `origin/main`, git or `cargo metadata` error) | Every step, exactly as before the scope existed |
 
 Detection never falls back to running less: any doubt, and any answer outside the scope grammar, gives `full`. The hook detects the scope once, hands it to steps 7 and 10 with `--scope`, and prints it in its first and last lines (`✅ All Pre-Commit Hooks Passed! Test scope: <scope>`).
 
