@@ -34,7 +34,8 @@ Feature: Host privacy indicator
     Given the host descriptor says host type "browser" and the hosted service at "backup.filesquid.tech" has backup on and sync on
     When the shell loads
     Then the indicator should show the browser-host statement that files are decrypted only in this browser
-    And the hosted service area should show backup on and sync on as two separate states
+    And the hosted service area should show backup on and sync on as two separate states with "backup.filesquid.tech"
+    And it should state that the service stores only ciphertext and never has the keys
 
   # Edge cases
   Scenario: The indicator shows a loading state until the descriptor arrives
