@@ -1,5 +1,11 @@
 # Implementation Plan Checklist: FileSquid
 
+<!-- mvp-progress:start -->
+![MVP progress: 29% complete](./assets/mvp-progress.svg)
+
+**MVP progress: 29%**, about 222 of 758 estimated hours. 8 of 26 tasks are done and 3 more are under way. Each segment of the bar is one task below, as wide as its estimated hours in the implementation plan; an open task fills by the share of its module rows that are ticked. Regenerate with `python3 scripts/docs/update_mvp_progress.py` after ticking boxes.
+<!-- mvp-progress:end -->
+
 This is a short, ordered view of [implementation-plan.md](./implementation-plan.md). Each numbered item is a global task in the order the dev team expects to finish it, and the nested items are the module tasks it dispatches, taken from each module's `resources/plan.md`. Task codes link to the full task description. A box is ticked when the matching box is ticked in the source plan.
 
 Order follows the **Dependencies** fields and the [release sequence](./implementation-plan.md#release-sequence-assumptions-do-not-reorder) of the implementation plan; where the plan allows tasks to run in parallel, the order shown is the dev team's current dispatch order. Finished tasks come first in each release, in the order they were finished, even when one was finished ahead of a listed dependency (Task FS-2.4 was delivered before Tasks FS-2.1, 0.5 and FS-1.4); open tasks follow in dependency order. The implementation plan stays authoritative: if the two disagree, the implementation plan wins and this file is corrected.

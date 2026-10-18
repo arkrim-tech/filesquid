@@ -77,8 +77,12 @@ pub struct FsBackend {
     staging: PathBuf,
     uploads: PathBuf,
     lock_file: PathBuf,
-    next_id: AtomicU64,
 }
+
+/// Counter behind [`FsBackend::unique_suffix`]. It is process-wide, not per
+/// backend, so two backends on one root never draw the same suffix even when
+/// the clock (microsecond resolution on macOS) returns the same instant.
+static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
 /// Map an I/O error on `what` to a storage error; `NotFound` stays not found.
 fn io_error(what: &str, err: std::io::Error) -> StorageError {
@@ -170,7 +174,6 @@ impl FsBackend {
             staging,
             uploads,
             lock_file,
-            next_id: AtomicU64::new(0),
         })
     }
 
@@ -193,7 +196,7 @@ impl FsBackend {
 
     /// A process-unique suffix for temporary names and upload identifiers.
     fn unique_suffix(&self) -> String {
-        let n = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let n = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| d.as_nanos());
