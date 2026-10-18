@@ -268,6 +268,14 @@ cd apps/filesquid
 cargo test -p filesquid-native --locked
 ```
 
+The per-library SQLite catalog (Task DE-0.2, DE-S-009) is desktop-only, so it sits behind `filesquid-native`'s `desktop` feature, which only `filesquid-desktop` enables. The desktop keeps one catalog file per library, `<library-id>.sqlite`, in the `libraries/` folder of its application data directory, beside the journal. A catalog is a rebuildable index of the library's OCFL objects, never the only copy; to back one up, use the host's consistent backup (`VACUUM INTO`), not a copy of the live file. Its integration tests run against SQLite files on disk, with its BDD features in `crates/native/tests/catalog_features/`:
+
+```sh
+cd apps/filesquid
+cargo test -p filesquid-native --features desktop --locked --test unit_catalog --test catalog_features
+cargo test -p filesquid-desktop --locked --test integration_library_catalog
+```
+
 The desktop transport (DE-S-005): the event channel's forwarder (one counted subscription, resync hints, the `event-forwarder` process, navigation kept on the app's origins), ranged reads through the `filesquid://localhost` scheme (`http://filesquid.localhost` on Windows and Android) with its 16 MiB response cap, and typed host errors. The 100 MB range fixture and the BDD features in `crates/desktop/tests/features/` exist only in the test-instrumented build (`--features test-webdriver`, never shipped), so the hook runs the desktop crate a second time with that feature:
 
 ```sh
