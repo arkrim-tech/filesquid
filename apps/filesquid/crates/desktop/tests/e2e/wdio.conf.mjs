@@ -30,11 +30,15 @@ const built = process.env.FILESQUID_DESKTOP_BIN
   : path.join(targetDir, "debug", binaryName);
 // The launcher and every worker load this file; the launcher makes the run directory and
 // copies the binary once, and the workers (which inherit its environment) reuse both.
-const run =
-  process.env.FILESQUID_DESKTOP_E2E_RUN ??
-  mkdtempSync(path.join(tmpdir(), "filesquid-desktop-e2e-"));
+// Ownership: only the process that calls mkdtemp here owns the directory and may delete it.
+// A path inherited by a worker or supplied by a caller in FILESQUID_DESKTOP_E2E_RUN is never
+// removed, because this process cannot know what else lives there.
+const ownsRun = !process.env.FILESQUID_DESKTOP_E2E_RUN;
+const run = ownsRun
+  ? mkdtempSync(path.join(tmpdir(), "filesquid-desktop-e2e-"))
+  : process.env.FILESQUID_DESKTOP_E2E_RUN;
 const binary = path.join(run, binaryName);
-if (!process.env.FILESQUID_DESKTOP_E2E_RUN) {
+if (ownsRun) {
   copyFileSync(built, binary);
   process.env.FILESQUID_DESKTOP_E2E_RUN = run;
 }
@@ -62,8 +66,13 @@ export const config = {
   waitforTimeout: 15000,
   connectionRetryTimeout: 120000,
   connectionRetryCount: 1,
-  /** Remove the run directory (binary copy and app data) once every worker has finished. */
+  /**
+   * Remove the run directory (binary copy and app data) once every worker has finished, but
+   * only when this launcher created it (`ownsRun`); an inherited or caller-supplied path stays.
+   */
   onComplete() {
-    rmSync(run, { recursive: true, force: true });
+    if (ownsRun) {
+      rmSync(run, { recursive: true, force: true });
+    }
   },
 };

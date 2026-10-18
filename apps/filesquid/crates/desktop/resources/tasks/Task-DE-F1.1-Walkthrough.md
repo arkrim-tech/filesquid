@@ -219,7 +219,7 @@ running 0 tests
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 ```
 
-Packaged window: `cargo build -p filesquid-desktop --features test-webdriver --locked`, then in `apps/filesquid/crates/desktop/tests/e2e`: `xvfb-run -a npm run test:e2e` (Linux, WebKitGTK 2.52.6; the spec's file URL is shortened to `<file URL>`, and Cargo's target directory to `<target>` above, to keep machine paths out of the repository):
+Packaged window: `cargo build -p filesquid-desktop --features test-webdriver --locked`, then in `apps/filesquid/crates/desktop/tests/e2e`: `FILESQUID_DESKTOP_BIN=<copy of the built binary> xvfb-run -a npm run test:e2e` (Linux, WebKitGTK 2.52.6; the spec's file URL is shortened to `<file URL>`, and Cargo's target directory to `<target>` above, to keep machine paths out of the repository):
 
 ```text
 > pretest:e2e
@@ -349,7 +349,7 @@ test the_whole_100_mb_file_is_read_through_capped_ranges ... ok
 test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.65s
 ```
 
-Packaged window with the default binary resolution (no `FILESQUID_DESKTOP_BIN`), `xvfb-run -a npm run test:e2e`:
+Packaged window, round 1 run with `FILESQUID_DESKTOP_BIN` unset (default binary resolution: `CARGO_TARGET_DIR/debug/filesquid-desktop`, copied by `wdio.conf.mjs` to a run directory), `xvfb-run -a npm run test:e2e`:
 
 ```text
 [WebKitGTK 605.1.15 linux #0-0] Running: WebKitGTK (v605.1.15) on linux
@@ -368,6 +368,37 @@ Packaged window with the default binary resolution (no `FILESQUID_DESKTOP_BIN`),
 Spec Files:	 1 passed, 1 total (100% completed) in 00:00:07
 ```
 
+## Review round 2
+
+Cubic reviewed head `f4a529c` and opened 2 threads. Both were valid:
+
+- **`onComplete` could delete a directory it did not create.** `wdio.conf.mjs` now records ownership in `ownsRun`, which is true only in the process that called `mkdtemp`, the launcher. `onComplete` removes the run directory only when `ownsRun` is true. A path inherited by a worker, or supplied by a caller in `FILESQUID_DESKTOP_E2E_RUN`, is never removed; a short comment says why. Checked by hand:
+  - After a normal run, the owned directory is gone (0 left in `TMPDIR`).
+  - With a caller-supplied `FILESQUID_DESKTOP_E2E_RUN` holding a marker file, calling `onComplete` left the directory and the marker in place.
+- **Which runs set `FILESQUID_DESKTOP_BIN`.** The transcript labels now name each invocation:
+  - The initial green run set `FILESQUID_DESKTOP_BIN`.
+  - The round 1 and round 2 runs left it unset.
+  - The Mocked Environment Variables section below now says the same.
+
+Packaged window, round 2 run with `FILESQUID_DESKTOP_BIN` and `FILESQUID_DESKTOP_E2E_RUN` unset (`env -u FILESQUID_DESKTOP_BIN -u FILESQUID_DESKTOP_E2E_RUN xvfb-run -a npm run test:e2e`):
+
+```text
+[WebKitGTK 605.1.15 linux #0-0] Running: WebKitGTK (v605.1.15) on linux
+[WebKitGTK 605.1.15 linux #0-0] Session ID: 9b6f5254-e88e-4219-8a5a-ecca2a5c3e8b
+[WebKitGTK 605.1.15 linux #0-0]
+[WebKitGTK 605.1.15 linux #0-0] » specs/transport.e2e.mjs
+[WebKitGTK 605.1.15 linux #0-0] filesquid-desktop transport in a packaged window
+[WebKitGTK 605.1.15 linux #0-0]    ✓ gives the app page a 64-hex per-launch token
+[WebKitGTK 605.1.15 linux #0-0]    ✓ answers API calls with the token and refuses them without it
+[WebKitGTK 605.1.15 linux #0-0]    ✓ reads the last bytes of a 100 MB file as partial content
+[WebKitGTK 605.1.15 linux #0-0]    ✓ reads the whole 100 MB file through capped ranges
+[WebKitGTK 605.1.15 linux #0-0]    ✓ pushes events to the app window on the event channel
+[WebKitGTK 605.1.15 linux #0-0]    ✓ keeps the app window on the app's own origin
+[WebKitGTK 605.1.15 linux #0-0]
+[WebKitGTK 605.1.15 linux #0-0] 6 passing (5s)
+Spec Files:	 1 passed, 1 total (100% completed) in 00:00:06
+```
+
 ## Mocked Environment Variables
 
-None. The packaged-window run set `FILESQUID_DESKTOP_BIN` to a copy of the test-instrumented binary, because other sessions share the Cargo target directory and could replace `debug/filesquid-desktop` with a default build mid-run. `XDG_DATA_HOME` is set to a fresh temporary directory by `wdio.conf.mjs` itself.
+None. Only the initial green packaged-window run (section "Green: test output") set `FILESQUID_DESKTOP_BIN`, to a copy of the test-instrumented binary: other sessions share the Cargo target directory and could have replaced `debug/filesquid-desktop` with a default build mid-run. Since review round 1, `wdio.conf.mjs` makes that copy itself, so the round 1 and round 2 runs left `FILESQUID_DESKTOP_BIN` unset. `XDG_DATA_HOME` is set to a fresh temporary directory by `wdio.conf.mjs` itself.
