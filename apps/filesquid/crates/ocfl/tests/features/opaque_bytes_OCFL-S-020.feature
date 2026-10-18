@@ -1,4 +1,4 @@
-# OCFL-S-020: Opaque bytes; the dual profile is a caller. The engine MUST store the bytes and logical paths its caller supplies without reading them as anything but bytes; owner-readable local media and ciphertext hosted packages are caller transforms, not engine object types, and over ciphertext the inventory MUST stay structurally readable OCFL 1.1.
+# OCFL-S-020: Opaque bytes; the dual profile is a caller. The engine MUST store the content bytes its caller supplies without reading them as anything but bytes, and logical paths as given within the OCFL 1.1 path rules; owner-readable local media and ciphertext hosted packages are caller transforms, not engine object types, and over ciphertext the inventory MUST stay structurally readable OCFL 1.1.
 # F-042: OCFL preservation and portable recovery
 # TC-002: Endpoint processing and hosted encryption
 Feature: The engine stores opaque bytes and the dual profile is a caller

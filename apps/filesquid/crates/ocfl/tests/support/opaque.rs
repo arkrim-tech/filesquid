@@ -128,7 +128,8 @@ impl ToyCipher {
         }
     }
 
-    /// One version sealed, with metadata naming `object_id`.
+    /// One version sealed, with metadata naming `object_id`. A user's
+    /// `address` is kept, sealed into an opaque `urn:opaque:` URI.
     fn seal_version(&self, source: &SourceVersion, object_id: &str) -> SourceVersion {
         let meta = source.meta.as_ref();
         SourceVersion {
@@ -143,7 +144,10 @@ impl ToyCipher {
                     .map(|m| self.seal_name(m)),
                 user: meta.and_then(|m| m.user.as_ref()).map(|u| User {
                     name: self.seal_name(&u.name),
-                    address: None,
+                    address: u
+                        .address
+                        .as_deref()
+                        .map(|a| format!("urn:opaque:{}", self.seal_name(a))),
                 }),
             }),
         }
@@ -205,21 +209,54 @@ pub fn profile_words_in(file: &str, text: &str) -> Vec<String> {
         .collect()
 }
 
-/// The crate names declared in every dependency table of `manifest`.
+/// The crate names declared in every dependency table of `manifest`: each
+/// dependency's key, the name of each `[dependencies.<name>]` table, and
+/// every `package = "<crate>"` value, so a crate renamed under an alias is
+/// still listed.
 fn dependency_names(manifest: &str) -> Vec<String> {
-    let mut in_dependencies = false;
+    let mut in_list = false;
+    let mut in_table = false;
     let mut names = Vec::new();
     for line in manifest.lines().map(str::trim) {
         if line.starts_with('[') {
-            in_dependencies = line.ends_with("dependencies]");
+            in_list = line.ends_with("dependencies]");
+            let table = dependency_table_name(line);
+            in_table = table.is_some();
+            names.extend(table);
             continue;
         }
-        let name = line.split('=').next().unwrap_or("").trim();
-        if in_dependencies && !name.is_empty() && !name.starts_with('#') {
-            names.push(name.trim_matches('"').to_string());
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let key = line.split('=').next().unwrap_or("").trim();
+        if in_list {
+            names.push(key.trim_matches('"').to_string());
+        }
+        if in_list || in_table {
+            names.extend(package_value(line));
         }
     }
     names
+}
+
+/// The `<name>` of a `[dependencies.<name>]` table header (or of a
+/// `dev-`, `build-` or `target.….` dependency table), if `header` is one.
+fn dependency_table_name(header: &str) -> Option<String> {
+    let inner = header.trim_matches(|c| c == '[' || c == ']');
+    let (_, name) = inner.split_once("dependencies.")?;
+    Some(name.trim_matches('"').to_string())
+}
+
+/// The crate named by a `package = "<crate>"` entry on `line`, whether the
+/// line is that entry or an inline table holding it.
+fn package_value(line: &str) -> Option<String> {
+    let at = line.find("package")?;
+    let rest = line[at + "package".len()..]
+        .trim_start()
+        .strip_prefix('=')?;
+    let quoted = rest.trim_start().strip_prefix('"')?;
+    let end = quoted.find('"')?;
+    Some(quoted[..end].to_string())
 }
 
 /// The [`CRYPTO_CRATES`] that `manifest` declares as dependencies.
@@ -264,16 +301,18 @@ pub fn object_keys<B: StorageBackend>(storage: &B, root: &str) -> Vec<String> {
     page.keys.iter().map(|k| k.as_str().to_string()).collect()
 }
 
-/// Plaintext logical paths and metadata text of `fixture` that cannot be
-/// mistaken for lowercase hex.
+/// Plaintext logical paths, metadata text, object name and object id of
+/// `fixture` that cannot be mistaken for lowercase hex.
 pub fn plaintext_markers(fixture: &ContentFixture) -> Vec<String> {
     let is_hex = |text: &str| text.bytes().all(|b| b.is_ascii_hexdigit() || b == b'/');
-    let mut markers: Vec<String> = Vec::new();
+    let mut markers: Vec<String> = vec![fixture.name.clone(), fixture.object_id()];
     for source in &fixture.versions {
         markers.extend(source.files.keys().cloned());
         let meta = source.meta.as_ref();
         markers.extend(meta.and_then(|m| m.message.clone()));
-        markers.extend(meta.and_then(|m| m.user.as_ref()).map(|u| u.name.clone()));
+        let user = meta.and_then(|m| m.user.as_ref());
+        markers.extend(user.map(|u| u.name.clone()));
+        markers.extend(user.and_then(|u| u.address.clone()));
     }
     markers.retain(|m| !is_hex(m));
     markers.sort();
@@ -282,8 +321,9 @@ pub fn plaintext_markers(fixture: &ContentFixture) -> Vec<String> {
 }
 
 /// Where the object at `root` shows plaintext of `fixture`: a plaintext
-/// name or metadata text in its inventory or a stored key, or a stored
-/// content file equal to a plaintext file of at least 4 bytes.
+/// name, object name, object id or metadata text in its inventory or a
+/// stored key, or a stored content file equal to a plaintext file of at
+/// least 4 bytes.
 pub fn plaintext_leaks<B: StorageBackend>(
     storage: &B,
     root: &str,

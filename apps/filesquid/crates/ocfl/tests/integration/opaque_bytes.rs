@@ -204,7 +204,8 @@ fn assert_no_plaintext<B: StorageBackend>(storage: &B, root: &str, fixture: &Con
 }
 
 /// The leak check is a real oracle: on the owner-readable object of the
-/// same fixture it finds the plaintext names, metadata and content.
+/// same fixture it finds the plaintext names, object id, metadata (user
+/// address included) and content.
 #[test]
 fn the_plaintext_check_finds_an_owner_readable_object() {
     let storage = MemoryBackend::new();
@@ -215,6 +216,8 @@ fn the_plaintext_check_finds_an_owner_readable_object() {
         "\"foo/bar.xml\"",
         "\"Initial import\"",
         "\"Alice\"",
+        "\"alice@example.com\"",
+        "\"ark:/12345/bcd987\"",
         "holds plaintext",
     ] {
         assert!(
@@ -302,11 +305,18 @@ fn the_profile_scan_finds_profile_code_and_encryption_crates() {
     assert_eq!(words.len(), 2, "{words:?}");
     let manifest = "[dependencies]\nsha2 = \"0.11\"\naes-gcm = \"0.10\"\n";
     assert_eq!(opaque::crypto_dependencies(manifest), ["aes-gcm"]);
+    let renamed = "[dependencies]\nsafe = { package = \"ring\", version = \"0.17\" }\n\
+                   [dev-dependencies.sealer]\npackage = \"chacha20poly1305\"\n\
+                   [target.'cfg(unix)'.dependencies.aes]\nversion = \"0.8\"\n";
+    assert_eq!(
+        opaque::crypto_dependencies(renamed),
+        ["ring", "chacha20poly1305", "aes"]
+    );
     let commented = "pub fn read() {} // encrypt nothing\nconst A: &str = \"cipher\";";
     assert!(opaque::profile_words_in("y.rs", commented).is_empty());
 }
 
-/// Fixity covers the stored bytes, so a changed sealed file is refused with
+/// Manifest digests cover the stored bytes, so a changed sealed file is refused with
 /// E092 without the engine knowing any key: the caller never receives
 /// damaged ciphertext to open.
 #[test]
