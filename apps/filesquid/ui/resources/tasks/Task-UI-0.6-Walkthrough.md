@@ -22,7 +22,9 @@ Constraint gates: results cleared before each run (`test-reporting.test.ts`), ru
 
 ## Mocked environment variables
 
-None. The preview spec answers `GET /api/v1/health` itself with `{"schema_version":1,"status":"ok","product":"filesquid"}`, so the static build is tested without a server; the server-backed specs still use the real `filesquid-server` and its `ADMIN_TOKEN` test constant (unchanged).
+None for the product. `FILESQUID_PLAYWRIGHT_CLI` is a test-only hook: `tests/unit/test-scripts.test.ts` sets it to a stub so the e2e runner can be unit tested without starting a browser.
+
+Other than that, nothing is mocked. The preview spec answers `GET /api/v1/health` itself with `{"schema_version":1,"status":"ok","product":"filesquid"}`, so the static build is tested without a server; the server-backed specs still use the real `filesquid-server` and its `ADMIN_TOKEN` test constant (unchanged).
 
 ## Test output (raw)
 
