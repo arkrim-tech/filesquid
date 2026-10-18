@@ -301,8 +301,10 @@ pub struct CommandResult {
     /// Identifier of the library, collection or virtual collection the command created.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_id: Option<String>,
-    /// Deletion and purge-after times of a recoverable deletion; a replay answers the first
-    /// times.
+    /// Deletion and purge-after times of the files this command newly deleted; a replay
+    /// answers the first times. A file in the batch that was already deleted keeps its
+    /// earlier times, which the deleted view reports per file. Absent when the command newly
+    /// deleted no file.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deletion: Option<Deletion>,
 }

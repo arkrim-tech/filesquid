@@ -30,7 +30,8 @@ pub(super) struct Planned {
     pub created_id: Option<String>,
     /// Opaque identifiers of what was touched, for the journal.
     pub targets: Vec<String>,
-    /// The deletion record of a recoverable deletion.
+    /// The deletion record of the files a recoverable deletion newly deletes; files already
+    /// deleted keep their earlier record.
     pub deletion: Option<Deletion>,
 }
 

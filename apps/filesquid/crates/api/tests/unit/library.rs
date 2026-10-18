@@ -412,6 +412,42 @@ fn deletion_is_recoverable_for_thirty_days_and_restore_keeps_hidden() {
 }
 
 #[test]
+fn a_mixed_delete_batch_answers_the_times_of_the_files_it_newly_deletes() {
+    let fx = Fixture::with_library();
+    let earlier = fx.add_file("f-earlier");
+    let fresh = fx.add_file("f-fresh");
+    fx.run(LibraryCommand::DeleteFiles {
+        library_id: fx.library(),
+        file_ids: vec![earlier.clone()],
+    });
+    let later_ms = NOW_MS + DAY_MS;
+    let both = vec![earlier.clone(), fresh.clone()];
+    let mixed = fx.run_at(
+        later_ms,
+        LibraryCommand::DeleteFiles {
+            library_id: fx.library(),
+            file_ids: both.clone(),
+        },
+    );
+    let answered = mixed.deletion.expect("deletion");
+    assert_eq!(answered.deleted_at_ms, later_ms);
+    assert_eq!(answered.purge_after_ms, later_ms + 30 * DAY_MS);
+    let deletion_of = |id: &FileId| fx.catalog.file(id).expect("read").expect("file");
+    let kept = deletion_of(&earlier).state.deletion.expect("still deleted");
+    assert_eq!(kept.deleted_at_ms, NOW_MS);
+    assert_eq!(kept.purge_after_ms, NOW_MS + 30 * DAY_MS);
+    assert_eq!(deletion_of(&fresh).state.deletion, Some(answered));
+    let again = fx.run_at(
+        later_ms + DAY_MS,
+        LibraryCommand::DeleteFiles {
+            library_id: fx.library(),
+            file_ids: both,
+        },
+    );
+    assert_eq!(again.deletion, None, "no file was newly deleted");
+}
+
+#[test]
 fn permanent_deletion_needs_deleted_files_and_an_exact_confirmation() {
     let fx = Fixture::with_library();
     let file = fx.add_file("f-1");
@@ -779,7 +815,7 @@ fn create_collection_needs_a_folder_of_its_library() {
 }
 
 #[test]
-fn membership_batches_keep_their_order_within_one_millisecond() {
+fn membership_batches_keep_their_order_after_the_last_member() {
     let fx = Fixture::with_library();
     let vc = fx.create_virtual_collection("Best", None);
     let added_first = fx.add_file("f-b");

@@ -152,8 +152,10 @@ pub struct CatalogCommit {
     pub journal: JournalEntry,
     /// Identifier the command created, kept in the receipt for replays.
     pub created_id: Option<String>,
-    /// Deletion and purge-after times of a recoverable deletion, kept in the receipt so a
-    /// replay answers the first times.
+    /// Deletion and purge-after times of the files this command newly deleted, kept in the
+    /// receipt so a replay answers the first times. A file in the batch that was already
+    /// deleted keeps its earlier times, which the deleted view reports per file; `None` when
+    /// the command newly deleted no file.
     pub deletion: Option<Deletion>,
 }
 
@@ -166,7 +168,8 @@ pub struct CommitReceipt {
     pub revision: String,
     /// Identifier the command created, if any.
     pub created_id: Option<String>,
-    /// Deletion and purge-after times of a recoverable deletion, if any.
+    /// Deletion and purge-after times of the files the command newly deleted, if any (see
+    /// [`CatalogCommit::deletion`]).
     pub deletion: Option<Deletion>,
 }
 

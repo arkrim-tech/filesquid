@@ -21,7 +21,7 @@ Parents: [F-001 Independent local library and ownership](../../../../../../resou
 | C7 Deleting a collection or virtual collection keeps its files | `deleting_a_collection_retains_its_files_as_unfiled`, `deleting_a_virtual_collection_retains_its_members`, scenario 2 | Met |
 | C8 Removing a virtual-collection member keeps its collection and other memberships | `virtual_collection_membership_leaves_the_home_collection_alone`, scenario 3 | Met |
 | C9 A rule-based virtual collection refuses hand-picked members | `rule_based_virtual_collections_refuse_hand_picked_members`, scenario 4 | Met |
-| C10 Deleted files stay recoverable for 30 days, with `deleted_at` and `purge_after` given; restoring a file keeps it hidden if it was hidden | `deletion_is_recoverable_for_thirty_days_and_restore_keeps_hidden`, scenario 5, `deletion_policy_query_reports_thirty_days` | Met |
+| C10 Deleted files stay recoverable for 30 days, with `deleted_at` and `purge_after` given for the files the command newly deletes (a file already deleted keeps its earlier times); restoring a file keeps it hidden if it was hidden | `deletion_is_recoverable_for_thirty_days_and_restore_keeps_hidden`, `a_mixed_delete_batch_answers_the_times_of_the_files_it_newly_deletes`, scenario 5, `deletion_policy_query_reports_thirty_days` | Met |
 | C11 Permanent deletion applies only to deleted files, with a confirmation that names the library and the exact file count; a purged file and its memberships are gone | `permanent_deletion_needs_deleted_files_and_an_exact_confirmation`, scenario 6 | Met |
 | C12 The ordinary view leaves out hidden and deleted files; the hidden and deleted views show them | `ordinary_listing_excludes_hidden_and_deleted_files`, scenario 5 | Met |
 | C13 Pages hold 1 to 1,000 items in a stable order; the cursor is opaque; a malformed or non-canonical cursor is refused; every issued cursor decodes | `paging_is_stable_with_no_repeats_or_gaps`, `the_last_page_has_no_cursor`, `cursors_are_opaque_and_malformed_ones_are_refused`, `every_issued_cursor_decodes_and_only_canonical_text_is_accepted`, `listing_libraries_pages_by_repository`, paging scenario | Met |
@@ -30,7 +30,7 @@ Parents: [F-001 Independent local library and ownership](../../../../../../resou
 | C16 No storage I/O or forbidden crate | `unit_isolation` (13 passed), API-S-006 feature | Met |
 | C17 Errors map to `ApiError` and `PortError` | `errors_map_to_api_and_port_errors` | Met |
 | C18 A command that changes nothing (a present member, the same title) answers `committed` at the current revision, with no new revision and no OCFL version | `adding_a_present_member_is_a_no_op_that_commits_nothing`, `renaming_to_the_same_title_commits_nothing` | Met |
-| C19 New virtual-collection members are ordered after the current last member, in the order named | `membership_batches_keep_their_order_within_one_millisecond` | Met |
+| C19 New virtual-collection members are ordered after the current last member, in the order named | `membership_batches_keep_their_order_after_the_last_member` | Met |
 | API-S-005: no path or SQL in answers | `answers_carry_no_filesystem_paths`, `commands_round_trip_as_versioned_json` | Met |
 
 ### Secondary SRS mapping
@@ -57,43 +57,44 @@ error[E0433]: cannot find `library` in `filesquid_api`
 error: could not compile `filesquid-api` (test "unit_library") due to 4 previous errors
 ```
 
-After the implementation, and after Cubic review round 1 (below), `cargo test -p filesquid-api --locked` gave for the library targets:
+After the implementation, and after Cubic review rounds 1 and 2 (below), `cargo test -p filesquid-api --locked` gave for the library targets:
 
 ```text
      Running tests/unit/library.rs
 
-running 29 tests
-test a_repeated_operation_id_returns_the_first_outcome ... ok
-test a_no_op_is_journaled_and_replays_under_its_operation_id ... ok
-test a_later_create_library_change_cannot_replace_a_library ... ok
+running 30 tests
 test a_failed_commit_leaves_the_memory_catalog_unchanged ... ok
-test adding_a_present_member_is_a_no_op_that_commits_nothing ... ok
-test catalog_failures_are_journaled_exactly_once_with_the_journal_layer_installed ... ok
+test a_later_create_library_change_cannot_replace_a_library ... ok
+test a_mixed_delete_batch_answers_the_times_of_the_files_it_newly_deletes ... ok
+test a_no_op_is_journaled_and_replays_under_its_operation_id ... ok
+test a_repeated_operation_id_returns_the_first_outcome ... ok
 test a_replayed_delete_answers_its_first_deletion ... ok
 test a_stale_expected_revision_is_a_conflict_without_change ... ok
 test catalog_failures_are_retryable_and_journaled_for_queries_too ... ok
-test create_library_mints_an_id_and_starts_at_revision_one ... ok
-test deleting_a_collection_retains_its_files_as_unfiled ... ok
-test create_library_needs_the_new_library_revision ... ok
-test create_collection_needs_a_folder_of_its_library ... ok
+test adding_a_present_member_is_a_no_op_that_commits_nothing ... ok
 test commands_round_trip_as_versioned_json ... ok
-test deleting_a_virtual_collection_retains_its_members ... ok
+test catalog_failures_are_journaled_exactly_once_with_the_journal_layer_installed ... ok
+test create_collection_needs_a_folder_of_its_library ... ok
+test create_library_needs_the_new_library_revision ... ok
+test deleting_a_collection_retains_its_files_as_unfiled ... ok
 test errors_map_to_api_and_port_errors ... ok
-test deletion_is_recoverable_for_thirty_days_and_restore_keeps_hidden ... ok
-test membership_batches_keep_their_order_within_one_millisecond ... ok
+test create_library_mints_an_id_and_starts_at_revision_one ... ok
+test deleting_a_virtual_collection_retains_its_members ... ok
 test every_commit_carries_one_redacted_journal_entry ... ok
+test deletion_is_recoverable_for_thirty_days_and_restore_keeps_hidden ... ok
+test membership_batches_keep_their_order_after_the_last_member ... ok
 test names_must_be_non_empty_and_bounded ... ok
 test minted_identifiers_are_canonical_uuid_v4 ... ok
 test permanent_deletion_needs_deleted_files_and_an_exact_confirmation ... ok
-test references_to_another_library_are_not_found ... ok
 test refused_commands_are_journaled_as_failed ... ok
+test references_to_another_library_are_not_found ... ok
 test uuid_check_rejects_other_shapes ... ok
 test rule_based_virtual_collections_refuse_hand_picked_members ... ok
-test virtual_collection_membership_leaves_the_home_collection_alone ... ok
 test renaming_to_the_same_title_commits_nothing ... ok
+test virtual_collection_membership_leaves_the_home_collection_alone ... ok
 test file_batches_hold_one_to_one_thousand_distinct_files ... ok
 
-test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
      Running tests/unit/library_queries.rs
 
 running 12 tests
@@ -173,7 +174,7 @@ Feature: Library domain commands and queries
    ✔  And no journal entry should contain "Lisbon" or "Secret plans"
 ```
 
-`cargo test -p filesquid-api --locked` passed: 177 tests across 15 unit targets, and `164 scenarios (75 passed, 89 skipped)` and `346 steps (257 passed, 89 skipped)` in the harness. The skipped scenarios belong to later tasks. `cargo fmt --all`, `cargo clippy --workspace --all-targets --locked -- -D warnings` and `cargo doc --workspace --no-deps` are clean.
+`cargo test -p filesquid-api --locked` passed: 178 tests across 15 unit targets, and `164 scenarios (75 passed, 89 skipped)` and `346 steps (257 passed, 89 skipped)` in the harness. The skipped scenarios belong to later tasks. `cargo fmt --all`, `cargo clippy --workspace --all-targets --locked -- -D warnings` and `cargo doc --workspace --no-deps` are clean.
 
 Coverage: no coverage tool is configured for the Rust workspace yet.
 
@@ -206,6 +207,15 @@ error[E0599]: no method named `operation_count` found for struct `Arc<MemoryCata
 error: could not compile `filesquid-api` (test "unit_library") due to 8 previous errors
 error: could not compile `filesquid-api` (test "unit_library_queries") due to 6 previous errors
 ```
+
+## Cubic review round 2
+
+Cubic raised 4 findings on `e1fe18d`:
+
+- `MemoryCatalog::commit` no longer clones the whole state per commit. It checks everything that can fail first (the stored receipt, the create-library placement and the revision, in `next_revision`), then applies the changes, the revision, the journal entry and the receipt in place with infallible map writes (`apply_checked`). A commit now costs the size of its change set. TDD-ENFORCE: not applicable, a refactor of tested code; `a_failed_commit_leaves_the_memory_catalog_unchanged` and `a_later_create_library_change_cannot_replace_a_library` still pass.
+- A delete answers `deleted_at` and `purge_after` of the files it newly deletes. A file in the batch that was already deleted keeps its earlier times, which the deleted view reports per file, and a batch that deletes no new file answers no times. The rustdoc of `CatalogCommit::deletion`, `CommitReceipt::deletion` and `CommandResult::deletion` and the module SRS row API-S-019 say so. The new test `a_mixed_delete_batch_answers_the_times_of_the_files_it_newly_deletes` pins this behaviour; it passed on first run because the code already behaved this way, and the fix is the documented contract.
+- The test fixture's `failure_journal` pages through `next_cursor` (at most 1,000 pages of `MAX_PAGE`) instead of reading only the first page of 100.
+- The C19 test is renamed `membership_batches_keep_their_order_after_the_last_member`.
 
 ## Mocked Environment Variables
 

@@ -4,7 +4,9 @@
 
 #![allow(dead_code)]
 
-use filesquid_api::journal::{JournalEntry, JournalQuery, JournalStore, MemoryJournal};
+use filesquid_api::journal::{
+    JournalEntry, JournalPage, JournalQuery, JournalStore, MemoryJournal, MAX_PAGE,
+};
 use filesquid_api::journal_writer::{JournalWriter, WriterConfig};
 use filesquid_api::library::{
     CommandRequest, CommandResult, FileScope, LibraryCommand, LibraryError, LibraryQuery,
@@ -27,6 +29,9 @@ pub const NOW_MS: i64 = 1_792_281_600_000;
 
 /// One day in milliseconds.
 pub const DAY_MS: i64 = 86_400_000;
+
+/// Upper bound on the journal pages [`Fixture::failure_journal`] reads (AGENTS.md §22).
+const MAX_JOURNAL_PAGES: usize = 1_000;
 
 /// Upper bound on pages read by one listing helper.
 const MAX_PAGES: usize = 2_000;
@@ -89,12 +94,32 @@ impl Fixture {
     }
 
     /// Every entry of the failure journal, oldest first, once the queue is written.
+    ///
+    /// Reads page by page through `next_cursor` until the journal is exhausted, so no entry
+    /// beyond the first page is missed. The walk is bounded by [`MAX_JOURNAL_PAGES`].
     pub fn failure_journal(&self) -> Vec<JournalEntry> {
         self.writer.sender().flush();
-        self.journal
-            .query(&JournalQuery::default())
-            .expect("journal query")
-            .entries
+        let mut entries = Vec::new();
+        let mut after_id = None;
+        for _ in 0..MAX_JOURNAL_PAGES {
+            let page = self.read_journal_page(after_id);
+            entries.extend(page.entries);
+            after_id = page.next_cursor;
+            if after_id.is_none() {
+                return entries;
+            }
+        }
+        panic!("failure journal exceeds {MAX_JOURNAL_PAGES} pages");
+    }
+
+    /// Read one page of the failure journal at the largest page size, after `after_id`.
+    fn read_journal_page(&self, after_id: Option<i64>) -> JournalPage {
+        let query = JournalQuery {
+            after_id,
+            limit: MAX_PAGE,
+            ..JournalQuery::default()
+        };
+        self.journal.query(&query).expect("journal query")
     }
 
     fn seeded(self) -> Self {
@@ -161,6 +186,15 @@ impl Fixture {
             cursor,
             query,
         }
+    }
+
+    /// Run `command` on the current library at its current revision through a second service
+    /// over the same catalog and journal whose clock reads `now_ms`, and expect success.
+    pub fn run_at(&self, now_ms: i64, command: LibraryCommand) -> CommandResult {
+        let service = LibraryService::new(self.catalog.clone(), self.writer.sender())
+            .with_clock(Arc::new(move || now_ms));
+        let request = self.request(&self.revision(), command);
+        service.execute("user:ana", request).expect("command")
     }
 
     /// Create a library named `name` on the fixture repository.

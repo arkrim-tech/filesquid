@@ -1,8 +1,9 @@
 //! In-memory [`LibraryCatalog`]: the reference implementation of the port for tests and for
 //! hosts without a database. Everything is lost when the process ends. One mutex guards the
-//! whole state. A commit is applied to a staged copy of the state and published only after
-//! every step succeeds, so its changes, its journal entry and its receipt land together or
-//! not at all.
+//! whole state. A commit runs every check that can fail first, then applies its changes,
+//! its journal entry and its receipt in place with infallible map writes, so they land
+//! together or not at all. Nothing is copied, so a commit costs the size of its change set,
+//! not the size of the catalog.
 
 use super::catalog::{
     CatalogChange, CatalogCommit, CatalogError, CommitReceipt, FileEntry, FileListing, FileScope,
@@ -18,7 +19,6 @@ use std::collections::BTreeMap;
 use std::sync::{Mutex, MutexGuard};
 
 /// A stored library: record, revision counter and creation sequence.
-#[derive(Clone)]
 struct StoredLibrary {
     record: LibraryRecord,
     revision: u64,
@@ -26,14 +26,13 @@ struct StoredLibrary {
 }
 
 /// A stored file: the entry and its listing order.
-#[derive(Clone)]
 struct StoredFile {
     entry: FileEntry,
     order: i64,
 }
 
 /// Everything the catalog holds.
-#[derive(Clone, Default)]
+#[derive(Default)]
 struct State {
     libraries: BTreeMap<String, StoredLibrary>,
     collections: BTreeMap<String, Collection>,
@@ -88,8 +87,8 @@ impl MemoryCatalog {
     }
 
     /// Every journal entry stored with a commit, oldest first, including commits that changed
-    /// nothing. Reads through a poisoned lock, because a commit publishes its staged state in
-    /// one assignment and never leaves the state half applied.
+    /// nothing. Reads through a poisoned lock, because a commit checks everything that can
+    /// fail before its first write and never leaves the state half applied.
     pub fn journal_entries(&self) -> Vec<JournalEntry> {
         self.read().journal.clone()
     }
@@ -223,7 +222,7 @@ impl State {
         }
     }
 
-    /// Store a new library at revision 0 (the commit advances it to 1).
+    /// Store a new library at revision 0 (the commit then sets its revision to 1).
     fn create_library(&mut self, record: LibraryRecord) {
         let sequence = i64::try_from(self.libraries.len()).unwrap_or(i64::MAX);
         let id = record.library.id().as_str().to_string();
@@ -247,50 +246,42 @@ impl State {
         self.members.retain(|(_, file), _| file != id.as_str());
     }
 
-    /// Whether `commit` may apply: a library it creates must not exist; otherwise the library
-    /// must exist at the expected revision.
-    fn check_commit(&self, commit: &CatalogCommit) -> Result<(), CatalogError> {
+    /// The library's revision once `commit` applies, or why it may not apply. A library the
+    /// commit creates must not exist and starts at revision 1. Otherwise the library must
+    /// exist at the expected revision, which advances by one when the commit changes
+    /// something and is kept when it changes nothing.
+    fn next_revision(&self, commit: &CatalogCommit) -> Result<u64, CatalogError> {
         let creates = creates_library(commit)?;
         let current = self.libraries.get(commit.library_id.as_str());
-        let ok = match (creates, current) {
-            (true, None) => true,
-            (false, Some(lib)) => lib.revision.to_string() == commit.expected_revision.as_str(),
-            _ => false,
-        };
-        ok.then_some(()).ok_or(CatalogError::Conflict)
-    }
-
-    /// The library's revision after a commit: advanced by one when the commit `changed`
-    /// something, otherwise kept.
-    fn advance(&mut self, library_id: &LibraryId, changed: bool) -> Result<u64, CatalogError> {
-        let library = self
-            .libraries
-            .get_mut(library_id.as_str())
-            .ok_or_else(|| CatalogError::Failed("committed library vanished".into()))?;
-        if changed {
-            library.revision += 1;
-            self.commits += 1;
+        let changed = u64::from(!commit.changes.is_empty());
+        match (creates, current) {
+            (true, None) => Ok(1),
+            (false, Some(lib)) if lib.revision.to_string() == commit.expected_revision.as_str() => {
+                Ok(lib.revision + changed)
+            }
+            _ => Err(CatalogError::Conflict),
         }
-        Ok(library.revision)
     }
 
-    /// A copy of this state with `commit` applied, its journal entry and its receipt stored,
-    /// and the receipt. `self` is not touched, so a failure here changes nothing.
-    fn staged(&self, commit: CatalogCommit) -> Result<(State, CommitReceipt), CatalogError> {
-        let mut next = self.clone();
+    /// Apply a checked `commit` in place: its changes, the library's `revision`, its journal
+    /// entry and its receipt. Every step is an infallible map write, so the commit lands whole.
+    fn apply_checked(&mut self, commit: CatalogCommit, revision: u64) -> CommitReceipt {
         let changed = !commit.changes.is_empty();
-        commit.changes.into_iter().for_each(|c| next.apply(c));
-        let revision = next.advance(&commit.library_id, changed)?;
+        commit.changes.into_iter().for_each(|c| self.apply(c));
+        if let Some(library) = self.libraries.get_mut(commit.library_id.as_str()) {
+            library.revision = revision;
+        }
+        self.commits += u64::from(changed);
         let receipt = CommitReceipt {
             library_id: commit.library_id,
             revision: revision.to_string(),
             created_id: commit.created_id,
             deletion: commit.deletion,
         };
-        next.journal.push(commit.journal.redacted());
-        next.receipts
+        self.journal.push(commit.journal.redacted());
+        self.receipts
             .insert(commit.operation_id.as_str().to_string(), receipt.clone());
-        Ok((next, receipt))
+        receipt
     }
 }
 
@@ -438,15 +429,13 @@ impl LibraryCatalog for MemoryCatalog {
         Ok(page(items, after, limit))
     }
 
-    /// Answer a stored receipt first, then check, stage and publish the commit.
+    /// Answer a stored receipt first, then check the commit and apply it in place.
     fn commit(&self, commit: CatalogCommit) -> Result<CommitReceipt, CatalogError> {
         let mut state = self.lock()?;
         if let Some(done) = state.receipts.get(commit.operation_id.as_str()) {
             return Ok(done.clone());
         }
-        state.check_commit(&commit)?;
-        let (next, receipt) = state.staged(commit)?;
-        *state = next;
-        Ok(receipt)
+        let revision = state.next_revision(&commit)?;
+        Ok(state.apply_checked(commit, revision))
     }
 }
