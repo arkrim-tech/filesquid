@@ -199,7 +199,7 @@ pub enum RepairError {
     },
     /// The validator reports errors other than the missing version sidecar
     /// of an interrupted repair; content digest errors included.
-    #[error("the object has validation errors: {}", first_codes(errors))]
+    #[error("the object has validation errors: {}", distinct_codes(errors))]
     Invalid {
         /// The errors that refuse the repair.
         errors: Vec<Finding>,
@@ -241,11 +241,10 @@ pub enum RepairError {
     Storage(#[from] StorageError),
 }
 
-/// The distinct codes of `errors`, for the message.
-fn first_codes(errors: &[Finding]) -> String {
-    let mut codes: Vec<&str> = errors.iter().map(|f| f.code).collect();
-    codes.dedup();
-    codes.join(", ")
+/// The distinct codes of `errors`, sorted, for the message.
+fn distinct_codes(errors: &[Finding]) -> String {
+    let codes: std::collections::BTreeSet<&str> = errors.iter().map(|f| f.code).collect();
+    codes.into_iter().collect::<Vec<_>>().join(", ")
 }
 
 impl From<ReadError> for RepairError {

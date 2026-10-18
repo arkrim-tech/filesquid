@@ -262,7 +262,14 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 `cargo clippy -p filesquid-ocfl --all-targets --locked -- -D warnings` and `RUSTDOCFLAGS="-D warnings" cargo doc -p filesquid-ocfl --no-deps --locked` finished without warnings.
 
-FULL_HOOK_PLACEHOLDER
+`FULL=1 bash scripts/pre-commit.sh` (after merging `origin/main`, which brought IO-0.9):
+
+```text
+✅ Lint and test validation passed (test scope: full).
+========================================
+✅ All Pre-Commit Hooks Passed! Test scope: full (430s)
+========================================
+```
 
 ## SRS traceability
 
