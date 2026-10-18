@@ -63,16 +63,16 @@ const GIB = 1024 ** 3;
 
 const STYLE = `
   :host { display: block; color: var(--fs-on-surface); font-family: var(--fs-font-sans); }
-  section { margin-bottom: 24px; padding: 16px; border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface); }
-  h2 { margin: 0 0 8px; font-size: 1rem; }
+  section { margin-bottom: var(--fs-space-5); padding: var(--fs-space-4); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface); }
+  h2 { margin: 0 0 var(--fs-space-2); font-size: var(--fs-font-size-body); }
   table { width: 100%; border-collapse: collapse; }
-  th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--fs-outline); }
+  th, td { text-align: left; padding: var(--fs-space-1) var(--fs-space-2); border-bottom: 1px solid var(--fs-outline); }
   td { font-family: var(--fs-font-mono); }
-  dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: var(--fs-space-1) var(--fs-space-4); margin: 0; }
   dd { margin: 0; font-family: var(--fs-font-mono); }
   [data-status="ok"] .status { color: var(--fs-primary); }
   [data-status="degraded"] .status, [data-status="failing"] .status, tr[data-state="stalled"], tr[data-state="failed"] { color: var(--fs-error); }
-  form { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+  form { display: flex; gap: var(--fs-space-2); align-items: center; margin-bottom: var(--fs-space-2); }
   [role="alert"] { color: var(--fs-error); }
 `;
 

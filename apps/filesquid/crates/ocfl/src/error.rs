@@ -5,7 +5,7 @@ use thiserror::Error;
 use crate::storage::StorageError;
 
 /// Errors from the OCFL root guard (OCFL-S-001, ADR 016 layout constraints).
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum OcflError {
     /// A `.git` entry (directory, file or link) was found in an OCFL object
     /// root, the storage root, or a directory of the storage hierarchy above

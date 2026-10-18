@@ -49,6 +49,10 @@
   "metricWarnings": "Warnings",
   "metricErrors": "Errors",
   "metricQueue": "Journal queue",
+  "theme": "Theme",
+  "themeSystem": "System",
+  "themeLight": "Light",
+  "themeDark": "Dark",
   "yes": "Yes",
   "no": "No"
 }

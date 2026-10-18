@@ -43,6 +43,8 @@ node_modules/
 !**/tests/e2e/
 !**/tests/integration/
 !**/tests/performance/
+# Pinned third-party test data, such as the OCFL community fixtures (OCFL-S-011).
+!**/tests/fixtures/
 !**/tests/README.md
 !**/tests/**/*.rs
 !**/tests/**/*.ts

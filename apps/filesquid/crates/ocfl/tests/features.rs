@@ -7,12 +7,20 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use cucumber::{given, then, when, writer, StatsWriter as _, World, WriterExt as _};
 
+#[path = "support/object_builder.rs"]
+mod builder;
 #[path = "support/inventory_example.rs"]
 mod example;
+#[path = "support/fixtures.rs"]
+mod fixtures;
 #[path = "support/inventory_steps.rs"]
 mod inventory_steps;
+#[path = "support/read_steps.rs"]
+mod read_steps;
 #[path = "support/source_scan.rs"]
 mod source_scan;
+#[path = "support/validate_steps.rs"]
+mod validate_steps;
 use filesquid_ocfl::storage::{
     ChunkReader, ETag, FsBackend, MemoryBackend, MultipartWriter, Precondition, StorageBackend,
     StorageError, StorageKey, MAX_CHUNK_BYTES,
@@ -55,6 +63,8 @@ struct OcflWorld {
     wasm_build: Option<(bool, String)>,
     guard_result: Option<Result<(), OcflError>>,
     inventory: inventory_steps::InventoryState,
+    read: read_steps::ReadState,
+    validate: validate_steps::ValidateState,
 }
 
 /// Run `$body` with `$b` bound to the scenario's concrete backend.
@@ -531,9 +541,11 @@ fn write_junit_report(path: &PathBuf, passed: usize, failed: usize, skipped: usi
     fs::write(path, xml).expect("write junit");
 }
 
-/// Whether `scenario` runs on this platform: scenarios tagged `@unix` need
-/// Unix links and run on Unix only (macOS and Linux); elsewhere they are left
-/// out instead of failing on steps compiled only for Unix.
+/// Whether `scenario` runs here. Scenarios tagged `@unix` need Unix links
+/// and run on Unix only (macOS and Linux); elsewhere they are left out
+/// instead of failing on steps compiled only for Unix. Features tagged
+/// `@fixtures` read the pinned OCFL community fixtures, which are committed
+/// under `tests/fixtures/ocfl/1.1` (OCFL-S-011), so they always run.
 fn runs_here(scenario: &cucumber::gherkin::Scenario) -> bool {
     cfg!(unix) || !scenario.tags.iter().any(|tag| tag == "unix")
 }
