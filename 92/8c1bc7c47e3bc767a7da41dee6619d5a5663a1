@@ -1,0 +1,25 @@
+.agents/rules/task-workflow.md
+  s_6b918be628d5ad::t_aafbf3e03d522f 25
+apps/filesquid/crates/ocfl/src/storage/fs/mod.rs
+  s_6b918be628d5ad::t_b5ec469ee9a4ab 83-87
+resources/architecture-Rust-in-FileSquid.html
+  s_6b918be628d5ad::t_b6ec185361bd14 1,24,36,106,162-163,258,396,400,404,419,426,428,432,434,489
+scripts/docs/update_mvp_progress.py
+  s_6b918be628d5ad::t_ee4a6bed8bbfa1 114-115,117-118,126-128
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "928c1bc7c47e3bc767a7da41dee6619d5a5663a1",
+  "prompts": {},
+  "sessions": {
+    "s_6b918be628d5ad": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aca38ded-309b-411f-872e-66eb53faf408",
+        "model": "unknown"
+      },
+      "human_author": "Peter Van Garderen <vangarderen.peter@gmail.com>"
+    }
+  }
+}
