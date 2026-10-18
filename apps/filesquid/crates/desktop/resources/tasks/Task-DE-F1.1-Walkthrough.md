@@ -48,6 +48,8 @@ The second and third sentences were added to [DE-S-005](../srs.md) in this task.
 
 ## Open item: media elements and the per-launch token
 
+**Resolved 2026-10-18 (owner decision).** Media elements authenticate with short-lived, read-only content handles: an authenticated client mints a handle for one file version and the element loads `/api/v1/content/<handle>` through the scheme. See [ADR 030](../../../../../../resources/architecture/030-filesquid-api-and-transports.md) Decision 5 (**Content handles for media elements**), [API-S-018](../../../api/resources/srs.md) and the amended [DE-S-005](../srs.md). The playback runs on WebKitGTK, WKWebView and WebView2 stay open under [API-F1.3](../../../api/resources/plan.md). The original text follows.
+
 S1 item (a) is only partly closed. `fetch` with `Authorization` reads 100 MB in ranges in a real WebKitGTK window. `<img>` and `<video>` cannot send an `Authorization` header, though, and DE-S-005 and ADR 030 Decision 5 require the token on every request. How a media element presents the token is an open owner decision, recorded in ADR 030's S1 table. It blocks the API-F1.3 acceptance gate, not this task. WKWebView and WebView2 runs are also still open.
 
 ## Red: tests before the implementation
