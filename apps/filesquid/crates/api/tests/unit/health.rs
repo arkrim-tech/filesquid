@@ -1,15 +1,23 @@
 //! Unit tests for `GET /api/v1/health` on the shared FileSquid router.
 
 use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::http::{header, Request, StatusCode};
+use filesquid_api::auth::Authoriser;
 use filesquid_api::{router, ApiState};
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
-/// Send one GET request to a fresh router and return status and body text.
+/// Send one GET request with the administrator token to a fresh router; return status and
+/// body text.
 async fn get(path: &str) -> (StatusCode, String) {
-    let response = router(ApiState::new())
-        .oneshot(Request::get(path).body(Body::empty()).expect("request"))
+    let state = ApiState::new();
+    state.install_authoriser(Authoriser::server_administrator("t"));
+    let request = Request::get(path)
+        .header(header::AUTHORIZATION, "Bearer t")
+        .body(Body::empty())
+        .expect("request");
+    let response = router(state)
+        .oneshot(request)
         .await
         .expect("router answers");
     let status = response.status();

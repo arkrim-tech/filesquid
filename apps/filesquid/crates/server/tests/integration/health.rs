@@ -2,16 +2,35 @@
 
 use axum::{
     body::Body,
-    http::{Request, StatusCode},
+    http::{header, Request, StatusCode},
 };
+use filesquid_api::auth::Authoriser;
 use filesquid_api::ApiState;
 use filesquid_server::{app, ServerConfig};
 use tower::ServiceExt;
 
+/// Administrator token the test server accepts.
+const TOKEN: &str = "health-token";
+
+/// The server app with an administrator authoriser for [`TOKEN`].
+fn server() -> axum::Router {
+    let state = ApiState::new();
+    state.install_authoriser(Authoriser::server_administrator(TOKEN));
+    app(&ServerConfig::default(), state)
+}
+
+/// `GET path` with the administrator token.
+fn authorised(path: &str) -> Request<Body> {
+    Request::get(path)
+        .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+        .body(Body::empty())
+        .unwrap()
+}
+
 #[tokio::test]
 async fn api_health_returns_filesquid_json() {
-    let response = app(&ServerConfig::default(), ApiState::new())
-        .oneshot(Request::get("/api/v1/health").body(Body::empty()).unwrap())
+    let response = server()
+        .oneshot(authorised("/api/v1/health"))
         .await
         .expect("response");
     assert_eq!(response.status(), StatusCode::OK);
@@ -25,8 +44,8 @@ async fn api_health_returns_filesquid_json() {
 
 #[tokio::test]
 async fn metrics_are_exposed_for_prometheus() {
-    let response = app(&ServerConfig::default(), ApiState::new())
-        .oneshot(Request::get("/metrics").body(Body::empty()).unwrap())
+    let response = server()
+        .oneshot(authorised("/metrics"))
         .await
         .expect("response");
     assert_eq!(response.status(), StatusCode::OK);

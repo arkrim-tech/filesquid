@@ -1,6 +1,6 @@
 //! Cucumber harness for the `filesquid-api` Gherkin under `tests/features/` (F-061, and the
-//! versioned contract, typed errors, transport-agnostic routes and event channel of F-056:
-//! API-S-002, API-S-003, API-S-009).
+//! versioned contract, typed errors, deny-by-default authorisation, transport-agnostic routes
+//! and event channel of F-056: API-S-002, API-S-003, API-S-004, API-S-009).
 //!
 //! Scenarios that need domain operations not built yet (import, rename, metadata writes, C2PA
 //! scans, sync) or the optional OTLP export (Task FS-3.6) have no step definitions and are
@@ -9,7 +9,7 @@
 use axum::body::Body;
 use axum::http::{header, Request};
 use cucumber::{given, then, when, writer, World, WriterExt as _};
-use filesquid_api::admin::AdminAuth;
+use filesquid_api::auth::Authoriser;
 use filesquid_api::events::EventSubscription;
 use filesquid_api::health::HealthStatus;
 use filesquid_api::journal::{JournalEntry, JournalQuery, JournalStore, MemoryJournal, Outcome};
@@ -25,6 +25,19 @@ use tower::ServiceExt;
 
 #[path = "support/event_steps.rs"]
 mod event_steps;
+
+#[path = "support/auth_steps.rs"]
+mod auth_steps;
+
+/// Administrator token accepted by [`admin_state`].
+const ADMIN_TOKEN: &str = "admin";
+
+/// API state whose authoriser accepts `token` as the server administrator's.
+fn admin_state(token: &str) -> ApiState {
+    let state = ApiState::new();
+    state.install_authoriser(Authoriser::server_administrator(token));
+    state
+}
 
 /// State shared by the steps of one scenario.
 #[derive(Default, World)]
@@ -50,6 +63,8 @@ struct MonitorWorld {
     subscriptions: Vec<EventSubscription>,
     received: Vec<ApiEvent>,
     refused: Option<ApiError>,
+    secret: Option<String>,
+    presented: Option<String>,
 }
 
 impl std::fmt::Debug for MonitorWorld {
@@ -122,14 +137,10 @@ fn no_log_files(_w: &mut MonitorWorld) {
 
 #[given(expr = "a filesquid-server with users Ana \\(administrator) and Ben \\(member)")]
 fn server_users(w: &mut MonitorWorld) {
-    let state = ApiState::new();
+    let state = admin_state("ana-admin-token");
     let monitor = Monitor::start(
         Arc::new(MemoryJournal::new("server")),
-        MonitorConfig::new(
-            "server",
-            std::env::temp_dir(),
-            AdminAuth::bearer("ana-admin-token"),
-        ),
+        MonitorConfig::new("server", std::env::temp_dir()),
         state.events.clone(),
     );
     state.install_monitor(monitor.clone());
@@ -180,7 +191,7 @@ fn heartbeating_job(w: &mut MonitorWorld, _every: i64, timeout: i64) {
     let clock_now = now.clone();
     let clock: Clock = Arc::new(move || clock_now.load(Ordering::SeqCst));
     let state = ApiState::new();
-    let mut config = MonitorConfig::new("desktop", std::env::temp_dir(), AdminAuth::Owner);
+    let mut config = MonitorConfig::new("desktop", std::env::temp_dir());
     config.clock = clock;
     let monitor = Monitor::start(
         Arc::new(MemoryJournal::new("desktop")),
@@ -270,10 +281,10 @@ fn pushed_live(w: &mut MonitorWorld) {
 /// crate's integration tests.
 #[given(expr = "filesquid-server is running")]
 fn server_running(w: &mut MonitorWorld) {
-    let state = ApiState::new();
+    let state = admin_state(ADMIN_TOKEN);
     let monitor = Monitor::start(
         Arc::new(MemoryJournal::new("server")),
-        MonitorConfig::new("server", std::env::temp_dir(), AdminAuth::bearer("admin")),
+        MonitorConfig::new("server", std::env::temp_dir()),
         state.events.clone(),
     );
     state.install_monitor(monitor.clone());
@@ -353,10 +364,10 @@ fn entries_over_days(w: &mut MonitorWorld, days: i64) {
         .filter(|(e, _)| e.operation == "ocfl.commit" && e.outcome == Outcome::Failed)
         .map(|(_, id)| id)
         .collect();
-    let state = ApiState::new();
+    let state = admin_state(ADMIN_TOKEN);
     let monitor = Monitor::start(
         store.clone(),
-        MonitorConfig::new("server", std::env::temp_dir(), AdminAuth::bearer("admin")),
+        MonitorConfig::new("server", std::env::temp_dir()),
         state.events.clone(),
     );
     state.install_monitor(monitor.clone());
@@ -432,12 +443,12 @@ fn contract_json() -> serde_json::Value {
 
 #[given(expr = "a FileSquid API router")]
 fn api_router(w: &mut MonitorWorld) {
-    w.state = Some(ApiState::new());
+    w.state = Some(admin_state(ADMIN_TOKEN));
 }
 
 #[given(expr = "a FileSquid API router whose monitor has not started")]
 fn api_router_without_monitor(w: &mut MonitorWorld) {
-    w.state = Some(ApiState::new());
+    w.state = Some(admin_state(ADMIN_TOKEN));
 }
 
 #[given(expr = "the API contract")]
@@ -447,10 +458,10 @@ fn the_contract(w: &mut MonitorWorld) {
 
 #[given(expr = "a FileSquid server API that requires an administrator token")]
 fn server_with_token(w: &mut MonitorWorld) {
-    let state = ApiState::new();
+    let state = admin_state(ADMIN_TOKEN);
     let monitor = Monitor::start(
         Arc::new(MemoryJournal::new("server")),
-        MonitorConfig::new("server", std::env::temp_dir(), AdminAuth::bearer("admin")),
+        MonitorConfig::new("server", std::env::temp_dir()),
         state.events.clone(),
     );
     state.install_monitor(monitor.clone());
@@ -460,7 +471,7 @@ fn server_with_token(w: &mut MonitorWorld) {
 
 #[when(expr = "a client asks for the API contract")]
 async fn ask_contract(w: &mut MonitorWorld) {
-    send_get(w, "/api/v1/openapi.json", None).await;
+    send_get(w, "/api/v1/openapi.json", Some(ADMIN_TOKEN)).await;
 }
 
 #[when(expr = "a client asks for the activity journal without a token")]
@@ -470,17 +481,22 @@ async fn ask_journal_anonymous(w: &mut MonitorWorld) {
 
 #[when(expr = "a client asks for the health report")]
 async fn ask_health_report(w: &mut MonitorWorld) {
-    send_get(w, "/api/v1/admin/health", None).await;
+    send_get(w, "/api/v1/admin/health", Some(ADMIN_TOKEN)).await;
 }
 
 #[when(expr = "an administrator asks for the activity journal with a malformed cursor")]
 async fn ask_journal_bad_cursor(w: &mut MonitorWorld) {
-    send_get(w, "/api/v1/admin/journal?after=not-a-cursor", Some("admin")).await;
+    send_get(
+        w,
+        "/api/v1/admin/journal?after=not-a-cursor",
+        Some(ADMIN_TOKEN),
+    )
+    .await;
 }
 
 #[when(expr = "an administrator asks for the activity journal")]
 async fn ask_journal(w: &mut MonitorWorld) {
-    send_get(w, "/api/v1/admin/journal", Some("admin")).await;
+    send_get(w, "/api/v1/admin/journal", Some(ADMIN_TOKEN)).await;
 }
 
 #[then(expr = "the contract should be OpenAPI 3.1 at the crate's API version")]

@@ -4,7 +4,7 @@
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use axum::response::IntoResponse;
-use filesquid_api::admin::AdminAuth;
+use filesquid_api::auth::Authoriser;
 use filesquid_api::journal::{
     JournalEntry, JournalError, JournalPage, JournalQuery, JournalStore, MemoryJournal,
     RetentionPolicy,
@@ -42,11 +42,18 @@ async fn get(state: &ApiState, path: &str, token: Option<&str>) -> (StatusCode, 
     (status, ctype, json)
 }
 
-fn server_state() -> (ApiState, Monitor) {
+/// Server state: administrator token `s3cret` and no monitor yet.
+fn admin_only_state() -> ApiState {
     let state = ApiState::new();
+    state.install_authoriser(Authoriser::server_administrator("s3cret"));
+    state
+}
+
+fn server_state() -> (ApiState, Monitor) {
+    let state = admin_only_state();
     let monitor = Monitor::start(
         Arc::new(MemoryJournal::new("server")),
-        MonitorConfig::new("server", std::env::temp_dir(), AdminAuth::bearer("s3cret")),
+        MonitorConfig::new("server", std::env::temp_dir()),
         state.events.clone(),
     );
     state.install_monitor(monitor.clone());
@@ -93,7 +100,8 @@ fn api_error_takes_retryability_from_its_code() {
 
 #[tokio::test]
 async fn admin_routes_before_the_monitor_starts_are_unavailable_and_retryable() {
-    let (status, ctype, json) = get(&ApiState::new(), "/api/v1/admin/health", None).await;
+    let (status, ctype, json) =
+        get(&admin_only_state(), "/api/v1/admin/health", Some("s3cret")).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert_api_error(&json, &ctype, "unavailable");
 }
@@ -142,7 +150,7 @@ async fn the_router_keeps_answering_after_a_failed_request() {
 #[tokio::test]
 async fn an_unknown_api_path_is_a_not_found_api_error() {
     for path in ["/api/v1/no-such-route", "/api/v1/admin/nothing/here"] {
-        let (status, ctype, json) = get(&ApiState::new(), path, None).await;
+        let (status, ctype, json) = get(&admin_only_state(), path, Some("s3cret")).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
         assert_api_error(&json, &ctype, "not_found");
     }
@@ -151,9 +159,10 @@ async fn an_unknown_api_path_is_a_not_found_api_error() {
 #[tokio::test]
 async fn a_wrong_method_is_a_method_not_allowed_api_error() {
     let request = Request::post("/api/v1/health")
+        .header(header::AUTHORIZATION, "Bearer s3cret")
         .body(Body::empty())
         .expect("request");
-    let response = router(ApiState::new())
+    let response = router(admin_only_state())
         .oneshot(request)
         .await
         .expect("router answers");
@@ -245,10 +254,10 @@ fn internal_errors_keep_the_detail_out_of_the_message() {
 
 #[tokio::test]
 async fn a_failing_store_answers_a_redacted_internal_error_through_the_router() {
-    let state = ApiState::new();
+    let state = admin_only_state();
     let monitor = Monitor::start(
         Arc::new(FailingStore),
-        MonitorConfig::new("server", std::env::temp_dir(), AdminAuth::bearer("s3cret")),
+        MonitorConfig::new("server", std::env::temp_dir()),
         state.events.clone(),
     );
     state.install_monitor(monitor.clone());

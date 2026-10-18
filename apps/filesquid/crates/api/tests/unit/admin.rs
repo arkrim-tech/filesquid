@@ -2,7 +2,7 @@
 
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
-use filesquid_api::admin::AdminAuth;
+use filesquid_api::auth::{Authoriser, LaunchToken};
 use filesquid_api::journal::{JournalEntry, MemoryJournal, Outcome};
 use filesquid_api::monitor::{Monitor, MonitorConfig};
 use filesquid_api::registry::ProcessSpec;
@@ -11,16 +11,25 @@ use http_body_util::BodyExt;
 use std::sync::Arc;
 use tower::ServiceExt;
 
-fn state_with_monitor(auth: AdminAuth) -> (ApiState, Monitor) {
+/// API state with `authoriser` installed and a running monitor over an in-memory journal.
+fn state_with_monitor(authoriser: Authoriser) -> (ApiState, Monitor) {
     let state = ApiState::new();
+    state.install_authoriser(authoriser);
     let dir = std::env::temp_dir();
     let monitor = Monitor::start(
         Arc::new(MemoryJournal::new("host-a")),
-        MonitorConfig::new("host-a", dir, auth),
+        MonitorConfig::new("host-a", dir),
         state.events.clone(),
     );
     state.install_monitor(monitor.clone());
     (state, monitor)
+}
+
+/// Desktop state: the owner's per-launch token, as text for the `Authorization` header.
+fn owner_state() -> (ApiState, Monitor, String) {
+    let token = LaunchToken::generate().expect("random token");
+    let (state, monitor) = state_with_monitor(Authoriser::desktop_owner(&token));
+    (state, monitor, token.secret().to_string())
 }
 
 async fn get(
@@ -47,7 +56,7 @@ async fn get(
 
 #[tokio::test]
 async fn admin_routes_need_the_admin_token_on_the_server() {
-    let (state, monitor) = state_with_monitor(AdminAuth::bearer("s3cret"));
+    let (state, monitor) = state_with_monitor(Authoriser::server_administrator("s3cret"));
     assert_eq!(
         get(&state, "/api/v1/admin/health", None).await.0,
         StatusCode::UNAUTHORIZED
@@ -65,10 +74,14 @@ async fn admin_routes_need_the_admin_token_on_the_server() {
 }
 
 #[tokio::test]
-async fn the_desktop_owner_needs_no_token() {
-    let (state, monitor) = state_with_monitor(AdminAuth::Owner);
+async fn the_desktop_owner_reaches_admin_routes_with_the_per_launch_token() {
+    let (state, monitor, token) = owner_state();
     assert_eq!(
         get(&state, "/api/v1/admin/metrics", None).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        get(&state, "/api/v1/admin/metrics", Some(&token)).await.0,
         StatusCode::OK
     );
     monitor.shutdown();
@@ -77,15 +90,16 @@ async fn the_desktop_owner_needs_no_token() {
 #[tokio::test]
 async fn admin_routes_report_unavailable_before_the_monitor_starts() {
     let state = ApiState::new();
+    state.install_authoriser(Authoriser::server_administrator("s3cret"));
     assert_eq!(
-        get(&state, "/api/v1/admin/health", None).await.0,
+        get(&state, "/api/v1/admin/health", Some("s3cret")).await.0,
         StatusCode::SERVICE_UNAVAILABLE
     );
 }
 
 #[tokio::test]
 async fn journal_query_filters_pages_and_exports_json_lines() {
-    let (state, monitor) = state_with_monitor(AdminAuth::Owner);
+    let (state, monitor, token) = owner_state();
     let sender = monitor.journal();
     for _ in 0..3 {
         sender.send(JournalEntry::new("ocfl.commit", Outcome::Failed));
@@ -95,7 +109,7 @@ async fn journal_query_filters_pages_and_exports_json_lines() {
     let (status, body, _) = get(
         &state,
         "/api/v1/admin/journal?operation=ocfl.commit&outcome=failed&limit=2",
-        None,
+        Some(&token),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -107,7 +121,7 @@ async fn journal_query_filters_pages_and_exports_json_lines() {
         &format!(
             "/api/v1/admin/journal?operation=ocfl.commit&outcome=failed&limit=2&after={cursor}"
         ),
-        None,
+        Some(&token),
     )
     .await;
     let page2: serde_json::Value = serde_json::from_str(&body2).unwrap();
@@ -115,7 +129,7 @@ async fn journal_query_filters_pages_and_exports_json_lines() {
     let (status, export, ctype) = get(
         &state,
         "/api/v1/admin/journal/export?operation=ocfl.commit",
-        None,
+        Some(&token),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -130,12 +144,12 @@ async fn journal_query_filters_pages_and_exports_json_lines() {
 
 #[tokio::test]
 async fn processes_lists_registered_processes() {
-    let (state, monitor) = state_with_monitor(AdminAuth::Owner);
+    let (state, monitor, token) = owner_state();
     let handle = monitor
         .registry()
         .register(ProcessSpec::new("c2pa.scan", 30_000));
     handle.progress(2, 8);
-    let (status, body, _) = get(&state, "/api/v1/admin/processes", None).await;
+    let (status, body, _) = get(&state, "/api/v1/admin/processes", Some(&token)).await;
     assert_eq!(status, StatusCode::OK);
     let list: serde_json::Value = serde_json::from_str(&body).unwrap();
     let scan = list
@@ -159,7 +173,7 @@ fn the_write_probe_never_touches_an_existing_file() {
     std::fs::write(dir.join(".filesquid-write-probe"), b"keep me").unwrap();
     let monitor = Monitor::start(
         Arc::new(MemoryJournal::new("host-a")),
-        MonitorConfig::new("host-a", &dir, AdminAuth::Owner),
+        MonitorConfig::new("host-a", &dir),
         filesquid_api::EventBus::new(),
     );
     let report = monitor.health_report();

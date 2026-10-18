@@ -92,7 +92,7 @@ FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by ga
     - [ ] [API-F1.5](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-and-api-f19-in-fs-310) Content Credentials routes
 20. [ ] [Task FS-1.4](./implementation-plan.md#task-fs-1.4) Jobs, events and the authorisation layer
     - [ ] [API-F1.6](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-and-api-f19-in-fs-310) Job and event routes
-    - [ ] [API-F1.7](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-and-api-f19-in-fs-310) Authentication and authorisation
+    - [x] [API-F1.7](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-and-api-f19-in-fs-310) Authentication and authorisation
 21. [ ] [Task 0.8](./implementation-plan.md#task-0.8) Test reporting, capability register, and foundation evidence
     - [ ] [UI-0.6](../apps/filesquid/ui/resources/plan.md#phase-f0-test-reporting-global-task-08) Playwright production suite and Allure
 22. [ ] [Task 1.1](./implementation-plan.md#task-1.1) Independent local library create, open, copy, and recover

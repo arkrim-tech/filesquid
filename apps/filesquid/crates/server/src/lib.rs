@@ -7,15 +7,26 @@
 //!
 //! This host is for servers that the owner or their organisation operates: its operator
 //! can read the files it stores. It MUST NOT be used as the ciphertext-only hosted service.
+//!
+//! Every API route except the public liveness probe (`GET /api/v1/health/live`), plus the
+//! event channel and `/metrics`, is authorised deny-by-default by the
+//! [`filesquid_api::auth`] layer with the administrator token
+//! ([`install_admin_authoriser`]) until server accounts arrive (API-F1.9). The static UI is
+//! public: it holds no private content, because private content is only ever served through
+//! the authorised API (ADR 032, hosting and privacy model).
+
+pub mod admin_token;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
+use axum::middleware::from_fn_with_state;
 use axum::response::Response;
-use axum::{routing::get, Router};
-use filesquid_api::admin::{load_or_create_token, AdminAuth};
+use axum::routing::{get, MethodRouter};
+use axum::Router;
+use filesquid_api::auth::{self, Action, Authoriser, Guard, Principal, EVENTS_SUBPROTOCOL};
 use filesquid_api::monitor::HostMonitor;
 use filesquid_api::trace_layer::JournalLayer;
-use filesquid_api::{ApiState, API_PREFIX};
+use filesquid_api::{ApiError, ApiState, ErrorCode, API_PREFIX};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use tokio::sync::broadcast::error::RecvError;
@@ -36,7 +47,10 @@ pub struct ServerConfig {
     pub ui_dir: Option<PathBuf>,
     /// Directory for the operational store and the admin token (`FILESQUID_DATA_DIR`).
     pub data_dir: PathBuf,
-    /// Admin token for the admin routes (`FILESQUID_ADMIN_TOKEN`); generated into the data dir when absent.
+    /// Administrator token required by every API call except the public liveness probe
+    /// (`FILESQUID_ADMIN_TOKEN`, 64 hexadecimal characters). When absent, Unix servers load
+    /// the token stored in the data dir, or create one there if none exists; other platforms
+    /// refuse to start.
     pub admin_token: Option<String>,
 }
 
@@ -90,33 +104,82 @@ impl ServerConfig {
     }
 }
 
+/// Resolve the administrator token (configured, stored, or generated into
+/// `<data_dir>/admin-token`) and install the administrator authoriser in `state`. Until this
+/// runs, every guarded call is refused. Returns whether a new token was issued (generated) by this
+/// call. Performs filesystem I/O. The token itself is never logged.
+pub fn install_admin_authoriser(config: &ServerConfig, state: &ApiState) -> Result<bool, String> {
+    let configured = config.admin_token.as_deref();
+    let (token, created) = admin_token::load_or_create_token(&config.data_dir, configured)?;
+    if created {
+        let path = config.data_dir.join(admin_token::TOKEN_FILE);
+        tracing::info!(path = %path.display(), "generated the administrator token");
+    }
+    if !state.install_authoriser(Authoriser::server_administrator(token)) {
+        return Err("an authoriser was already installed".to_string());
+    }
+    Ok(created)
+}
+
+/// Start the server's authorisation and monitor in order: install the administrator
+/// authoriser, open the monitor, then journal `api.auth.token_issued` for the administrator
+/// credential this run accepts, whether it was generated now or loaded (API-S-017).
+/// Performs filesystem and database I/O.
+pub fn start_server(
+    config: &ServerConfig,
+    state: &ApiState,
+    layer: Option<&JournalLayer>,
+) -> Result<HostMonitor, String> {
+    install_admin_authoriser(config, state)?;
+    let host = start_host_monitor(config, state, layer)?;
+    auth::record_token_issue(host.monitor(), &Principal::Administrator);
+    Ok(host)
+}
+
 /// Start the activity journal, process registry and admin routes for this server (FileSquid
-/// F-061): opens `<data_dir>/filesquid.sqlite`, resolves the admin token (configured, stored,
-/// or generated into `<data_dir>/admin-token`), and installs the monitor in `state`.
-/// Performs filesystem and database I/O. The token itself is never logged.
+/// F-061): opens `<data_dir>/filesquid.sqlite` and installs the monitor in `state`.
+/// Performs filesystem and database I/O.
 pub fn start_host_monitor(
     config: &ServerConfig,
     state: &ApiState,
     layer: Option<&JournalLayer>,
 ) -> Result<HostMonitor, String> {
-    let (token, created) = load_or_create_token(&config.data_dir, config.admin_token.as_deref())?;
-    if created {
-        tracing::info!(path = %config.data_dir.join("admin-token").display(), "generated admin token for the Monitor dashboard");
-    }
-    HostMonitor::open(
-        &config.data_dir,
-        "filesquid-server",
-        AdminAuth::bearer(token),
-        state,
-        layer,
+    HostMonitor::open(&config.data_dir, "filesquid-server", state, layer)
+}
+
+/// Wrap a host route so it runs only after the caller is authorised for `action`.
+///
+/// The guard is a `layer`, not a `route_layer`, so it also covers the method router's
+/// fallback: an unsupported method is refused like any other call, and only an authorised
+/// caller learns that the method is not allowed.
+fn guarded(
+    state: &ApiState,
+    route: MethodRouter<ApiState>,
+    action: Action,
+) -> MethodRouter<ApiState> {
+    let guard = Guard::new(state.clone(), action);
+    route
+        .fallback(method_not_allowed)
+        .layer(from_fn_with_state(guard, auth::require))
+}
+
+/// The typed `method_not_allowed` answer for a host route called with another method.
+async fn method_not_allowed() -> ApiError {
+    ApiError::new(
+        ErrorCode::MethodNotAllowed,
+        "This path does not accept that method.",
     )
 }
 
 /// Compose the server router: API, events, metrics, then the optional static UI.
+///
+/// The event channel and `/metrics` are guarded like every API route; the static UI is not.
 pub fn app(config: &ServerConfig, state: ApiState) -> Router {
+    let events_route = guarded(&state, get(events_handler), Action::SubscribeEvents);
+    let metrics_route = guarded(&state, get(metrics_handler), Action::ReadMonitor);
     let events = Router::new()
-        .route(&format!("{API_PREFIX}/events"), get(events_handler))
-        .route("/metrics", get(metrics_handler))
+        .route(&format!("{API_PREFIX}/events"), events_route)
+        .route("/metrics", metrics_route)
         .with_state(state.clone());
     let router = filesquid_api::router(state).merge(events);
     match &config.ui_dir {
@@ -131,8 +194,13 @@ fn static_ui(dir: &std::path::Path) -> ServeDir<ServeFile> {
 }
 
 /// `GET /api/v1/events`: upgrade to WebSocket and forward every API event as a JSON text frame.
+///
+/// Runs only after the guard authorised the caller. When the client offered the
+/// `filesquid.events.v1` subprotocol (browsers do, next to their `filesquid.bearer.<token>`
+/// credential), it is selected; the credential entry is never echoed.
 async fn events_handler(ws: WebSocketUpgrade, State(state): State<ApiState>) -> Response {
-    ws.on_upgrade(move |socket| forward_events(socket, state))
+    ws.protocols([EVENTS_SUBPROTOCOL])
+        .on_upgrade(move |socket| forward_events(socket, state))
 }
 
 /// Forward bus events to one WebSocket until the client disconnects or the bus closes.
