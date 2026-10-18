@@ -127,7 +127,7 @@ fn add_version<B: StorageBackend>(
         state.entry(digest).or_default().push((*path).to_string());
     }
     let block = Version {
-        created: format!("2026-10-1{}T00:00:00Z", version.number()),
+        created: created_at(version),
         state,
         message: Some(format!("Version {version}")),
         user: Some(User {
@@ -137,6 +137,15 @@ fn add_version<B: StorageBackend>(
     };
     inventory.versions.insert(version.clone(), block);
     inventory.head = version.clone();
+}
+
+/// A valid RFC 3339 UTC time for `version`: `2026-10-11T00:00:00Z` for v1
+/// and one second later per version, for up to 86 400 versions.
+pub fn created_at(version: &VersionNum) -> String {
+    let n = version.as_u64().expect("a test version number") - 1;
+    assert!(n < 86_400, "the builder dates at most 86 400 versions");
+    let (h, m, s) = (n / 3_600, n / 60 % 60, n % 60);
+    format!("2026-10-11T{h:02}:{m:02}:{s:02}Z")
 }
 
 /// The digest of `bytes` as the spec writes it.

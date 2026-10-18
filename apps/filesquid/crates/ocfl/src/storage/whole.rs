@@ -98,7 +98,7 @@ pub async fn read_verified<B: StorageBackend>(
 
 /// Whether `bytes`, read between the `before` and `after` heads, are one
 /// whole version of the object.
-fn is_consistent<B: StorageBackend>(
+pub(crate) fn is_consistent<B: StorageBackend>(
     backend: &B,
     before: &ObjectMeta,
     after: &ObjectMeta,
@@ -110,7 +110,7 @@ fn is_consistent<B: StorageBackend>(
 
 /// Stream the object at `key` into one buffer in chunks of `chunk` bytes,
 /// stopping at the `size` reported before the read.
-async fn read_once<B: StorageBackend>(
+pub(crate) async fn read_once<B: StorageBackend>(
     backend: &B,
     key: &StorageKey,
     chunk: u64,

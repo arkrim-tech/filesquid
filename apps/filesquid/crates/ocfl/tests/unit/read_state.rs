@@ -123,8 +123,19 @@ fn diff_reports_added_and_deleted_paths() {
         ]
     );
     let back = diff_versions(&inventory, &v("v2"), &v("v1")).expect("diff");
-    assert!(back.iter().all(|c| matches!(c, Change::Deleted { .. })));
-    assert_eq!(back.len(), 2);
+    assert_eq!(
+        back,
+        [
+            Change::Deleted {
+                path: "empty2.txt".to_string(),
+                digest: EMPTY.to_string()
+            },
+            Change::Deleted {
+                path: "image.tiff".to_string(),
+                digest: C.to_string()
+            },
+        ]
+    );
     assert!(diff_versions(&inventory, &v("v2"), &v("v2"))
         .expect("diff")
         .is_empty());

@@ -215,6 +215,9 @@ pub(crate) struct Layout {
     object_roots: BTreeSet<String>,
     /// Directories that hold a `.git` entry, outermost per key.
     git_parents: BTreeSet<String>,
+    /// Files directly in the storage root whose names start with `0=`: the
+    /// candidates for its conformance declaration.
+    root_declarations: BTreeSet<String>,
 }
 
 impl Layout {
@@ -229,6 +232,9 @@ impl Layout {
         if name.starts_with(OBJECT_DECLARATION_PREFIX) {
             self.object_roots.insert(dirs.join("/"));
         }
+        if dirs.is_empty() && name.starts_with("0=") {
+            self.root_declarations.insert((*name).to_string());
+        }
         if let Some(at) = segments.iter().position(|s| *s == GIT_DIR) {
             self.git_parents.insert(segments[..at].join("/"));
         }
@@ -242,6 +248,11 @@ impl Layout {
             .iter()
             .map(String::as_str)
             .find(|dir| !self.inside_an_object(dir))
+    }
+
+    /// The names of the `0=` files directly in the storage root.
+    pub(crate) fn root_declaration_names(&self) -> impl Iterator<Item = &str> {
+        self.root_declarations.iter().map(String::as_str)
     }
 
     /// The outermost object roots, in lexical order: directories holding an
@@ -304,6 +315,8 @@ mod tests {
             "0=ocfl_1.1",
         ]);
         assert_eq!(found.outermost_object_roots(), ["a/obj", "b"]);
+        let names: Vec<&str> = found.root_declaration_names().collect();
+        assert_eq!(names, ["0=ocfl_1.1"]);
         let at_root = layout(&["0=ocfl_object_1.1", "x/0=ocfl_object_1.1"]);
         assert_eq!(at_root.outermost_object_roots(), [""]);
     }

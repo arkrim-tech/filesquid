@@ -10,20 +10,20 @@ Sources: [OCFL-S-004](../srs.md), [PRD F-051](../../../../../../resources/prd.md
 
 Sources: [OCFL-S-010](../srs.md), [OCFL-S-011](../srs.md) (fixture pinning and handling). Part (b), writing from the `content` fixtures, is IO-0.10.
 
-## OCFL-S-001: Git MUST NOT be the OCFL library; `.git` MUST NOT appear in an OCFL object or storage root (guards run on open).
+## OCFL-S-001: Git MUST NOT be the OCFL library; `.git` MUST NOT appear in an OCFL object or storage root (the storage root, the storage-hierarchy directories above the objects, and each object root; a `.git` inside preserved object content is allowed). The guards run on open.
 
 The IO-0.2 contract said callers MUST run the guards when they open a storage root or an object. The read API now does so on every open.
 
 ## What changed
 
 - **`src/read/` (new public module `read`).** No `std::fs`, no executor; builds for `wasm32-unknown-unknown`.
-  - `StorageRoot::open(&backend)`: checks the `0=ocfl_1.1` declaration (E069, E080), runs the storage-root guard and discovers the outermost object roots in the same paged listing (at most `MAX_WALK_ENTRIES` keys). `guard.rs` now exposes that one scan (`checked_layout`, `Layout::outermost_object_roots`), so opening a root walks the keys once. A storage root that also declares an object is `ReadError::ObjectAtStorageRoot`.
-  - `Object::open(&backend, root)`: Git guard and hierarchy check on the object root; exactly one object declaration with exact contents (E003, E007; above 64 bytes refused before it is read); root inventory (E063 when missing; above 64 MiB refused before it is read; every `Inventory::parse` code) and its sidecar (E058, E060, E061; above 4 KiB refused before it is read); the head version inventory, when present, must be the same bytes (E064). A sidecar mismatch is read again up to `READ_ATTEMPTS` (3) times, in case a writer published a new head between the two reads.
+  - `StorageRoot::open(&backend)`: runs the storage-root guard, whose one paged listing (at most `MAX_WALK_ENTRIES` keys) also yields the root's `0=` files and the outermost object roots; it then checks the `0=ocfl_1.1` declaration (E069, E080). `guard.rs` exposes that scan (`checked_layout`, `Layout::root_declaration_names`, `Layout::outermost_object_roots`), so the reader lists the root's keys once. A storage root that also declares an object is `ReadError::ObjectAtStorageRoot`.
+  - `Object::open(&backend, root)`: Git guard and hierarchy check on the object root; exactly one object declaration among the files directly in the root, with exact contents (E003, E007; above 64 bytes refused before it is read); a root declared as another OCFL version is `ReadError::UnsupportedVersion` (OCFL 1.0 is out of scope, OCFL-S-011); root inventory (E063 when missing; above 64 MiB refused before it is read; every `Inventory::parse` code) and its sidecar (E058, E060, E061; above 4 KiB refused before it is read); the head version inventory, when present, must be the same bytes (E064). A sidecar mismatch is read again up to `READ_ATTEMPTS` (3) times, in case a writer published a new head between the two reads.
   - `resolve_state` / `Object::state`: the logical state of a caller-pinned version through `state` and `manifest` only. A version the root inventory does not list, an unpublished `vN` above `head` included, is `ReadError::VersionNotFound`.
   - `LogicalFileReader` (`Object::stream_file`): chunks of at most `MAX_CHUNK_BYTES` (8 MiB), hashed as they pass; at the end the digest must match (E092), and a missing content file is E092. A failed stream keeps returning its error, so it can never end as if verified.
   - `Object::copy_file`: streams into a multipart upload on any backend, in parts of at most `MAX_PART_BYTES`, and publishes only after the digest matched and the caller's precondition held; otherwise the upload is aborted.
   - `version_history` / `Object::history` and `diff_versions` / `Object::diff`: history with `created`, `message` and `user`; diff as added, deleted, modified and renamed paths in path order.
-  - `ReadError` with `code()`; every refusal names the full key or JSON pointer of the broken file.
+  - `ReadError` with `code()`. Format refusals name the full key, or the key and JSON pointer, of the broken file where a file is involved; version, path, storage, guard and engine-scope refusals name what they are about instead.
 - **`src/error.rs`**: `OcflError` is now `Clone` (so `ReadError` can be).
 - **Tests.** `tests/unit/read_state.rs` (pure resolution, history, diff); `tests/integration/read_objects.rs` (every scenario on the in-memory backend and on a real directory through `FsBackend`, plus a backend that publishes a new head during open); `tests/integration/fixture_reads.rs` (pinned fixtures); `tests/support/object_builder.rs` (builds forward-delta test objects in any backend); [`read_and_browse_OCFL-S-004.feature`](../../tests/features/read_and_browse_OCFL-S-004.feature) with steps in `tests/support/read_steps.rs`; steps for the read scenario of [`OCFL_1.1_fixture_conformance.feature`](../../tests/features/OCFL_1.1_fixture_conformance.feature).
 - **`@fixtures` tag.** `OCFL_1.1_fixture_conformance.feature` is tagged `@fixtures` and runs only when `FILESQUID_OCFL_FIXTURES` names the fixtures (`tests/features.rs`), so its read scenario runs for real when they are present and the scenarios whose steps belong to IO-0.5 and IO-0.10 are not reported without them.
@@ -59,11 +59,11 @@ The fixtures (`OCFL/fixtures` commit `d323fc207126becec066998b43408d998bf0fb1b`)
 | OCFL-S-004: Logical state MUST be inventory-driven at a caller-pinned version (through `state` and `manifest`; older content paths resolve) | `unit_read_state`: `state_is_resolved_through_the_manifest_at_the_pinned_version`, `unchanged_bytes_resolve_to_the_older_version_directory`, `a_version_the_inventory_does_not_list_is_refused`, `a_state_digest_missing_from_the_manifest_is_e050`; `integration_read_objects`: `every_version_resolves_through_state_and_manifest`, `files_outside_the_inventory_are_not_logical_state`, `only_versions_and_paths_in_the_inventory_can_be_pinned`; BDD "Logical state is resolved through the inventory at a pinned version", "Files that the inventory does not list are not logical state" |
 | OCFL-S-004: enumerate committed logical state (object id, version, logical path, digest, content path) | `unit_read_state`: `every_file_is_enumerated_with_its_digest_and_content_path`; `integration_read_objects`: `an_object_at_the_backend_root_opens` |
 | OCFL-S-004: stream logical files (bounded chunks, digest checked, E092, copy never published on mismatch) | `integration_read_objects`: `every_logical_file_streams_in_bounded_chunks`, `content_that_does_not_match_its_digest_is_e092`, `content_missing_from_storage_is_e092`, `a_logical_file_copies_into_another_key`, `a_copy_that_fails_its_digest_is_never_published`, `sha512_objects_with_uppercase_digests_read`; BDD "Every logical file streams with bytes that match its inventory digest", "Content that does not match its digest is refused" |
-| OCFL-S-004 (ADR 016 published head): only the root inventory commits; `vN` above `head` unpublished; sidecar and head version inventory checked; a head published during open is read again | `integration_read_objects`: `a_version_above_the_root_head_is_unpublished`, `inventory_and_sidecar_faults_have_their_codes`, `a_head_version_inventory_that_differs_from_the_root_is_e064`, `a_missing_head_version_inventory_is_allowed`, `a_head_published_during_open_is_read_again`; BDD "A version above the root head is unpublished" and the outline "An object whose root files are broken is refused when opened" |
+| OCFL-S-004 (ADR 016 published head): only the root inventory commits; `vN` above `head` unpublished; sidecar and head version inventory checked; a head published during open is read again | `integration_read_objects`: `a_version_above_the_root_head_is_unpublished`, `inventory_and_sidecar_faults_have_their_codes`, `a_head_version_inventory_that_differs_from_the_root_is_e064`, `a_missing_head_version_inventory_is_allowed`, `a_head_published_during_open_is_read_again`, `a_head_version_inventory_removed_during_open_counts_as_missing`, `objects_with_ten_or_more_versions_open`; BDD "A version above the root head is unpublished" and the outline "An object whose root files are broken is refused when opened" |
 | OCFL-S-004 (ADR 016 read and browse): version history and diff of two versions | `unit_read_state`: `history_lists_every_version_in_order_with_its_metadata`, `diff_reports_added_and_deleted_paths`, `diff_reports_renames_and_modifications`, `diff_pairs_renames_of_one_digest_in_path_order`, `diff_of_an_unknown_version_is_refused`; `integration_read_objects`: `history_and_diff_come_from_the_inventory`; BDD "Version history comes from the inventory", "Two versions are compared" |
 | OCFL-S-004 (ADR 023 Decision 2): open a storage root; discover object roots | `integration_read_objects`: `a_storage_root_discovers_its_outermost_objects`, `storage_root_declaration_faults_have_their_codes`; unit `guard::tests::only_outermost_object_roots_are_discovered`; BDD "A storage root lists its outermost objects" |
 | OCFL-S-001: Git MUST NOT be the OCFL library; `.git` MUST NOT appear in an OCFL object or storage root (guards run on open) | `integration_read_objects`: `opening_an_object_runs_the_git_guard`, `opening_a_storage_root_runs_the_guard` |
-| OCFL-S-002 / OCFL-S-017: NAMASTE, inventories and sidecars loaded with their codes and size bounds | `integration_read_objects`: `declaration_faults_have_their_codes`, `an_oversized_declaration_is_refused_before_it_is_read`, `an_oversized_sidecar_is_refused_before_it_is_read`, `sha512_objects_with_uppercase_digests_read` |
+| OCFL-S-002 / OCFL-S-017: NAMASTE, inventories and sidecars loaded with their codes and size bounds | `integration_read_objects`: `declaration_faults_have_their_codes`, `files_under_a_0_prefixed_directory_are_not_declarations`, `roots_declared_as_another_ocfl_version_are_refused`, `an_oversized_declaration_is_refused_before_it_is_read`, `an_oversized_sidecar_is_refused_before_it_is_read`, `a_file_that_grows_during_a_read_is_never_buffered_past_its_bound`, `sha512_objects_with_uppercase_digests_read` |
 | OCFL-S-010 (a): every good fixture version resolves and every streamed file matches its digest | `integration_fixture_reads`: `every_version_of_every_good_fixture_reads_with_matching_digests`, `every_warning_fixture_reads_with_matching_digests`, `bad_fixtures_a_reader_meets_are_refused_with_their_codes`; BDD "Valid OCFL 1.1 fixture objects are readable at every version" (run above) |
 | OCFL-S-011: fixtures pinned, test data only, never loaded by the library | fixtures read only from `FILESQUID_OCFL_FIXTURES` by tests; `unit_source_scan` (no filesystem I/O in `src/read/`) |
 | OCFL-S-007: bytes only through the storage backend; `wasm32` build | `unit_source_scan`; BDD "Engine builds for the browser"; `cargo build --target wasm32-unknown-unknown` below |
@@ -86,6 +86,108 @@ Tests written first, with no `read` module (`cargo test -p filesquid-ocfl --lock
 ```
 
 The `[_]` errors follow from the missing types. After the module existed, the first full run passed except one fixture expectation: `E092_E093_content_path_does_not_exist` reads correctly (see above), so it was removed from the refusal list with the reason in the test. Self-review then found that a stream whose digest check failed returned `Ok(None)` on the next call; the regression assertions in `content_that_does_not_match_its_digest_is_e092` were added with the fix, which keeps the failure.
+
+## Review round 1 (Cubic)
+
+Cubic reviewed `3d058a4` and raised 12 findings. Each was checked against the code and the contract; all 12 were valid and are fixed.
+
+- **P1, bounded small reads (`small.rs`).** `read_small` checked the size once and then called `read_verified`, which takes a fresh size: a writer that replaced a sidecar or inventory with a huge object between the two could make it buffer the whole new object. `read_small` now runs the verified-read loop itself (`read_once` and `is_consistent` are crate-visible in `storage/whole.rs`): every attempt checks the size against the bound before any byte is read and reads at most that many bytes, and a changed object is retried, at most `READ_ATTEMPTS` times. Test: `a_file_that_grows_during_a_read_is_never_buffered_past_its_bound` grows the sidecar to 1 MiB after the reader's first `head` and asserts the refusal is `TooLarge` and that at most 4 KiB of it was ever served.
+- **Head version inventory race (`object.rs`).** `exists` then `read_small` failed if the optional `vHEAD/inventory.json` vanished in between. It is now read directly and `NotFound` means absent. Test: `a_head_version_inventory_removed_during_open_counts_as_missing`.
+- **Nested `0=` paths (`declaration.rs`).** Listings are recursive, so files under a directory such as `obj/0=data/` filled the one listing page and the object was refused as E003. Declarations are now the `0=` files directly in the root, collected over a bounded number of pages with a progress check. Test: `files_under_a_0_prefixed_directory_are_not_declarations` (20 files under `obj/0=data/`).
+- **OCFL 1.0 declarations.** OCFL-S-011 puts OCFL 1.0 objects out of scope and no ADR adds them (`resources/architecture/` has no 1.0 support), so a 1.0 object or storage root is now refused as `ReadError::UnsupportedVersion`. It has no OCFL code, because it is the engine's scope rather than an OCFL rule. Test: `roots_declared_as_another_ocfl_version_are_refused`.
+- **Storage root walked twice (`root.rs`).** The declaration lookup listed the root before the guard listed it again. The guard's layout now records the `0=` files directly in the root, so `StorageRoot::open` uses its one scan for the guard, the declaration and discovery. `FsBackend::list` re-walks the directory for each page; that is the IO-0.1 backend's design and is shared by every listing caller, so it is out of this task's scope. Unit test: `only_outermost_object_roots_are_discovered` now also checks the declaration names.
+- **Builder timestamps (`object_builder.rs`).** `created` was `2026-10-1{n}`, invalid from v10. It is now `2026-10-11T00:00:00Z` plus one second per version. Test: `objects_with_ten_or_more_versions_open` (12 versions).
+- **Fixture counts (`fixture_reads.rs`).** The group reads now assert the pinned counts, 12 `good-objects` and 13 `warn-objects`.
+- **Reverse diff (`read_state.rs`).** The test now asserts the exact deleted changes.
+- **History scenario.** The feature now gives the expected `created`, `message`, user name and address of every version in a table, and the step compares them.
+- **README.** A failed copy publishes nothing new and leaves an existing object at the destination unchanged.
+- **Walkthrough.** The OCFL-S-001 heading states the guard's scope as built, and the error-location sentence is limited to format refusals.
+
+### TDD: round 1
+
+The new integration tests were run against the round-0 sources (the round-1 `src/` set aside, the committed `src/` restored, then put back). `roots_declared_as_another_ocfl_version_are_refused` was reduced to its object half for this run, because `ReadError::UnsupportedVersion` does not exist in round 0; it fails because the 1.0 object opens. `objects_with_ten_or_more_versions_open` passes on round 0 because its fix is in the test builder itself.
+
+```text
+test a_head_version_inventory_removed_during_open_counts_as_missing ... FAILED
+test a_file_that_grows_during_a_read_is_never_buffered_past_its_bound ... FAILED
+test files_under_a_0_prefixed_directory_are_not_declarations ... FAILED
+test roots_declared_as_another_ocfl_version_are_refused ... FAILED
+thread 'a_head_version_inventory_removed_during_open_counts_as_missing' (12678) panicked at crates/ocfl/tests/integration/read_objects.rs:661:39:
+thread 'a_file_that_grows_during_a_read_is_never_buffered_past_its_bound' (12676) panicked at crates/ocfl/tests/integration/read_objects.rs:646:5:
+thread 'files_under_a_0_prefixed_directory_are_not_declarations' (12693) panicked at crates/ocfl/tests/integration/read_objects.rs:685:38:
+thread 'roots_declared_as_another_ocfl_version_are_refused' (12700) panicked at crates/ocfl/tests/integration/read_objects.rs:397:27:
+test result: FAILED. 24 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+error: test failed, to rerun pass `-p filesquid-ocfl --test integration_read_objects`
+```
+
+### Raw test output, round 1
+
+`cargo test -p filesquid-ocfl --locked` (summary lines):
+
+```text
+     Running unittests src/lib.rs
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.27s
+     Running tests/features.rs
+66 scenarios (63 passed, 3 skipped)
+261 steps (258 passed, 3 skipped)
+     Running tests/integration/fixture_inventories.rs
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/integration/fixture_reads.rs
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/integration/fs_conformance.rs
+test result: ok. 46 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.84s
+     Running tests/integration/hierarchy_guard.rs
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+     Running tests/integration/logical_file.rs
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.56s
+     Running tests/integration/memory_conformance.rs
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.71s
+     Running tests/integration/read_objects.rs
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+     Running tests/unit/digest.rs
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/unit/git_guard.rs
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+     Running tests/unit/inventory.rs
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+     Running tests/unit/namaste_sidecar.rs
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/read_state.rs
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/source_scan.rs
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/storage_key.rs
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+`cargo test -p filesquid-ocfl --locked --no-default-features` (summary lines):
+
+```text
+     Running unittests src/lib.rs
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.21s
+     Running tests/integration/fixture_inventories.rs
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/integration/memory_conformance.rs
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.80s
+     Running tests/unit/digest.rs
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/unit/git_guard.rs
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+     Running tests/unit/inventory.rs
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+     Running tests/unit/namaste_sidecar.rs
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/read_state.rs
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/source_scan.rs
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/storage_key.rs
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+With `FILESQUID_OCFL_FIXTURES` set, `integration_fixture_reads` and `integration_fixture_inventories` pass (3 tests each), and the BDD run is 72 scenarios, 64 passed and 8 skipped, as in round 0.
 
 ## Gates
 

@@ -3,7 +3,7 @@
 
 use std::fmt;
 
-use super::declaration::read_declaration;
+use super::declaration::{check_declaration, choose_declaration};
 use super::error::ReadError;
 use super::object::Object;
 use crate::guard::checked_layout;
@@ -21,25 +21,32 @@ pub struct StorageRoot<'a, B: StorageBackend> {
 impl<'a, B: StorageBackend> StorageRoot<'a, B> {
     /// Open the storage root at the root of `backend`.
     ///
-    /// Checks its declaration, then runs the storage-root guard
+    /// Runs the storage-root guard
     /// ([`check_storage_root`](crate::check_storage_root): no `.git` above
-    /// the objects or in an object root, no links or empty directories) and
-    /// discovers the object roots in the same paged listing: every
-    /// directory holding an `0=ocfl_object_*` declaration that is not inside
-    /// another object. The listing reads at most
+    /// the objects or in an object root, no links or empty directories).
+    /// The guard's one paged listing also yields the storage root's
+    /// declaration candidates (the `0=` files directly in it) and the object
+    /// roots (every directory holding an `0=ocfl_object_*` declaration that
+    /// is not inside another object), so the keys are listed once. The
+    /// listing reads at most
     /// [`MAX_WALK_ENTRIES`](crate::storage::MAX_WALK_ENTRIES) keys; a larger
     /// root is refused as over the limit, never partly discovered.
     ///
     /// # Errors
     ///
     /// [`ReadError::Format`] with E069 or E080 for the declaration;
+    /// [`ReadError::UnsupportedVersion`] for a storage root that is not
+    /// OCFL 1.1;
     /// [`ReadError::Guard`] for forbidden Git metadata;
     /// [`ReadError::ObjectAtStorageRoot`] when the storage root also declares
     /// an object; [`ReadError::Storage`] for a link, an empty directory, the
     /// key bound or a backend error.
     pub async fn open(backend: &'a B) -> Result<Self, ReadError> {
-        let declaration = read_declaration(backend, "", DeclarationKind::StorageRoot).await?;
-        let objects = checked_layout(backend).await?.outermost_object_roots();
+        let layout = checked_layout(backend).await?;
+        let kind = DeclarationKind::StorageRoot;
+        let declaration = choose_declaration("", kind, layout.root_declaration_names())?;
+        check_declaration(backend, "", &declaration).await?;
+        let objects = layout.outermost_object_roots();
         if objects.iter().any(String::is_empty) {
             return Err(ReadError::ObjectAtStorageRoot);
         }

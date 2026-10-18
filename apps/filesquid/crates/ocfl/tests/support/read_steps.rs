@@ -150,19 +150,25 @@ fn read_history(world: &mut OcflWorld) {
     world.read.history = open(world).expect("open").history();
 }
 
-#[then(expr = "the history should list {string} with their created times, messages and users")]
-fn history_lists(world: &mut OcflWorld, expected: String) {
-    let names: Vec<String> = world
-        .read
-        .history
-        .iter()
-        .map(|h| h.version.to_string())
-        .collect();
-    assert_eq!(names, list(&expected));
-    for info in &world.read.history {
-        assert!(info.created.ends_with('Z'), "{}", info.created);
-        assert!(info.message.is_some() && info.user.is_some(), "{info:?}");
-    }
+/// One history entry as a table row: version, created, message, user name
+/// and address (empty when absent).
+fn history_row(info: &VersionInfo) -> Vec<String> {
+    let user = info.user.as_ref();
+    vec![
+        info.version.to_string(),
+        info.created.clone(),
+        info.message.clone().unwrap_or_default(),
+        user.map(|u| u.name.clone()).unwrap_or_default(),
+        user.and_then(|u| u.address.clone()).unwrap_or_default(),
+    ]
+}
+
+#[then("the history should be:")]
+fn history_is(world: &mut OcflWorld, step: &cucumber::gherkin::Step) {
+    let table = step.table.as_ref().expect("a history table");
+    let expected: Vec<Vec<String>> = table.rows.iter().skip(1).cloned().collect();
+    let actual: Vec<Vec<String>> = world.read.history.iter().map(history_row).collect();
+    assert_eq!(actual, expected);
 }
 
 #[when(expr = "I compare version {string} with version {string}")]

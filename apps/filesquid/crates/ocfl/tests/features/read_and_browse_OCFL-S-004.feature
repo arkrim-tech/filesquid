@@ -20,7 +20,11 @@ Feature: Read and browse OCFL objects
 
   Scenario: Version history comes from the inventory
     When I read the version history
-    Then the history should list "v1, v2, v3" with their created times, messages and users
+    Then the history should be:
+      | version | created              | message    | user     | address              |
+      | v1      | 2026-10-11T00:00:00Z | Version v1 | A Person | mailto:a@example.org |
+      | v2      | 2026-10-11T00:00:01Z | Version v2 | A Person | mailto:a@example.org |
+      | v3      | 2026-10-11T00:00:02Z | Version v3 | A Person | mailto:a@example.org |
 
   Scenario: Two versions are compared
     When I compare version "v1" with version "v2"

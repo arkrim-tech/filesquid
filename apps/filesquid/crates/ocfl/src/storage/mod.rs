@@ -41,4 +41,5 @@ pub use types::{
     MAX_LIST_PAGE, MAX_OBJECT_BYTES, MAX_PARTS, MAX_PART_BYTES, MAX_PUT_BYTES, MAX_WALK_DEPTH,
     MAX_WALK_ENTRIES,
 };
+pub(crate) use whole::{is_consistent, read_once};
 pub use whole::{read_verified, write_whole, READ_ATTEMPTS};

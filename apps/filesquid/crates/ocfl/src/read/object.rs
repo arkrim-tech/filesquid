@@ -24,7 +24,8 @@ use crate::inventory::{
 };
 use crate::namaste::{Declaration, DeclarationKind};
 use crate::storage::{
-    ObjectMeta, Precondition, StorageBackend, StorageKey, MAX_CHUNK_BYTES, READ_ATTEMPTS,
+    ObjectMeta, Precondition, StorageBackend, StorageError, StorageKey, MAX_CHUNK_BYTES,
+    READ_ATTEMPTS,
 };
 
 /// One opened OCFL object: its root, declaration and root inventory, read
@@ -51,6 +52,7 @@ impl<'a, B: StorageBackend> Object<'a, B> {
     ///
     /// [`ReadError::Guard`] for a `.git` in the object root;
     /// [`ReadError::Storage`] for a link, empty directory or backend error;
+    /// [`ReadError::UnsupportedVersion`] for an object that is not OCFL 1.1;
     /// [`ReadError::Format`] with E003 or E007 (declaration), E063 (no root
     /// inventory), E058, E060 or E061 (sidecar), E064 (head version
     /// inventory differs), any code [`Inventory::parse`] gives, or an engine
@@ -247,7 +249,8 @@ fn at_inventory(err: FormatError, key: &StorageKey) -> ReadError {
 
 /// When the head version directory holds an inventory, it must be the same
 /// file as the root inventory (E064). A missing one is allowed (OCFL
-/// recommends it, W010).
+/// recommends it, W010). It is read directly, without an existence check
+/// first, so one that disappears during the read counts as missing.
 async fn check_head_inventory<B: StorageBackend>(
     backend: &B,
     root: &str,
@@ -255,10 +258,11 @@ async fn check_head_inventory<B: StorageBackend>(
     root_bytes: &[u8],
 ) -> Result<(), ReadError> {
     let key = key_in(root, &format!("{}/{INVENTORY_FILE}", inventory.head))?;
-    if !backend.exists(&key).await? {
-        return Ok(());
-    }
-    let bytes = read_small(backend, &key, MAX_INVENTORY_BYTES, "inventory").await?;
+    let bytes = match read_small(backend, &key, MAX_INVENTORY_BYTES, "inventory").await {
+        Ok(bytes) => bytes,
+        Err(ReadError::Storage(StorageError::NotFound { .. })) => return Ok(()),
+        Err(err) => return Err(err),
+    };
     if bytes == root_bytes {
         return Ok(());
     }

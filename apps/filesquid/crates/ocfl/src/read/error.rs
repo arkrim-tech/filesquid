@@ -35,6 +35,14 @@ pub enum ReadError {
         /// The logical path asked for.
         path: String,
     },
+    /// The root declares an OCFL version other than 1.1. This reader reads
+    /// OCFL 1.1 only (OCFL-S-011); this is the engine's scope, not an OCFL
+    /// rule, so it has no validation code.
+    #[error("{declaration} declares an OCFL version this reader does not read (only 1.1)")]
+    UnsupportedVersion {
+        /// The declaration file's key.
+        declaration: String,
+    },
     /// The storage root's own declaration names it as an object root too.
     #[error("the storage root is also declared as an OCFL object root")]
     ObjectAtStorageRoot,

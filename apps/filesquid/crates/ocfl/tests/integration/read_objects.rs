@@ -17,7 +17,7 @@ use filesquid_ocfl::{OcflError, VersionNum};
 
 #[path = "../support/object_builder.rs"]
 mod builder;
-use builder::{build, delete, key_in, put, write_inventory, ObjectSpec};
+use builder::{build, delete, put, write_inventory, ObjectSpec};
 
 /// Scratch directory for one filesystem backend, removed on drop.
 struct Scratch(PathBuf);
@@ -496,26 +496,61 @@ fn opening_a_storage_root_runs_the_guard() {
     );
 }
 
-/// A memory backend where another writer publishes a new head between the
-/// reader's root inventory read and its sidecar read, once.
-struct RacingWriter {
-    inner: MemoryBackend,
-    next: Inventory,
-    fired: AtomicBool,
+/// When a [`Hooked`] backend runs its hook, relative to the first `head` of
+/// the watched key.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum When {
+    /// Before that `head` is answered.
+    BeforeHead,
+    /// After that `head` is answered, so the reader saw the old size.
+    AfterHead,
 }
 
-impl RacingWriter {
-    /// Publish `next` (version content already stored) the first time the
-    /// root sidecar is looked at.
-    fn race(&self, key: &StorageKey) {
-        if key.as_str() != "obj/inventory.json.sha256" || self.fired.swap(true, Ordering::SeqCst) {
+/// Another writer's change, applied to the store the reader uses.
+type Hook = Box<dyn Fn(&MemoryBackend) + Send + Sync>;
+
+/// A memory backend where another writer changes the store once, at the
+/// first `head` of one key, and which counts the bytes it serves for that
+/// key.
+struct Hooked {
+    inner: MemoryBackend,
+    watched: String,
+    when: When,
+    hook: Hook,
+    fired: AtomicBool,
+    served: AtomicU64,
+}
+
+impl Hooked {
+    /// Watch `watched` on `inner` and run `hook` once at `when`.
+    fn new(inner: MemoryBackend, watched: &str, when: When, hook: Hook) -> Self {
+        Self {
+            inner,
+            watched: watched.to_string(),
+            when,
+            hook,
+            fired: AtomicBool::new(false),
+            served: AtomicU64::new(0),
+        }
+    }
+
+    /// Run the hook if `key` is watched, `when` matches and it has not run.
+    fn maybe_fire(&self, key: &StorageKey, when: When) {
+        if key.as_str() != self.watched || when != self.when {
             return;
         }
-        write_inventory(&self.inner, "obj", "", &self.next);
+        if !self.fired.swap(true, Ordering::SeqCst) {
+            (self.hook)(&self.inner);
+        }
+    }
+
+    /// Whether the hook ran.
+    fn fired(&self) -> bool {
+        self.fired.load(Ordering::SeqCst)
     }
 }
 
-impl StorageBackend for RacingWriter {
+impl StorageBackend for Hooked {
     async fn put(&self, k: &StorageKey, b: &[u8]) -> Result<ObjectMeta, StorageError> {
         self.inner.put(k, b).await
     }
@@ -528,11 +563,17 @@ impl StorageBackend for RacingWriter {
         self.inner.put_if(k, b, p).await
     }
     async fn get_range(&self, k: &StorageKey, r: ByteRange) -> Result<Vec<u8>, StorageError> {
-        self.inner.get_range(k, r).await
+        let bytes = self.inner.get_range(k, r).await?;
+        if k.as_str() == self.watched {
+            self.served.fetch_add(bytes.len() as u64, Ordering::SeqCst);
+        }
+        Ok(bytes)
     }
     async fn head(&self, k: &StorageKey) -> Result<ObjectMeta, StorageError> {
-        self.race(k);
-        self.inner.head(k).await
+        self.maybe_fire(k, When::BeforeHead);
+        let meta = self.inner.head(k).await;
+        self.maybe_fire(k, When::AfterHead);
+        meta
     }
     async fn exists(&self, k: &StorageKey) -> Result<bool, StorageError> {
         self.inner.exists(k).await
@@ -581,17 +622,95 @@ fn a_head_published_during_open_is_read_again() {
     let next = build(&MemoryBackend::new(), "x", &spec);
     put(&inner, "obj", "v4/content/e.txt", b"echo");
     write_inventory(&inner, "obj", "v4", &next);
-    let racing = RacingWriter {
+    let publish: Hook = Box::new(move |b| write_inventory(b, "obj", "", &next));
+    let racing = Hooked::new(
         inner,
-        next,
-        fired: AtomicBool::new(false),
-    };
-    let object = open(&racing, "obj").expect("open after the race");
-    assert!(
-        racing.fired.load(Ordering::SeqCst),
-        "the race did not happen"
+        "obj/inventory.json.sha256",
+        When::BeforeHead,
+        publish,
     );
+    let object = open(&racing, "obj").expect("open after the race");
+    assert!(racing.fired(), "the race did not happen");
     assert_eq!(object.head(), &v("v4"));
     assert_eq!(stream(&object, "v4", "e.txt", 4).expect("e"), b"echo");
-    assert_eq!(key_in("obj", "v4").as_str(), "obj/v4");
+}
+
+#[test]
+fn a_file_that_grows_during_a_read_is_never_buffered_past_its_bound() {
+    let inner = MemoryBackend::new();
+    build(&inner, "obj", &three_versions());
+    let grow: Hook = Box::new(|b| put(b, "obj", "inventory.json.sha256", &[b'0'; 1 << 20]));
+    let growing = Hooked::new(inner, "obj/inventory.json.sha256", When::AfterHead, grow);
+    let err = open(&growing, "obj").expect_err("the grown sidecar is refused");
+    assert!(growing.fired(), "the sidecar did not grow");
+    assert!(
+        matches!(err, ReadError::Format(FormatError::TooLarge { .. })),
+        "{err:?}"
+    );
+    let served = growing.served.load(Ordering::SeqCst);
+    assert!(
+        served <= MAX_SIDECAR_BYTES as u64,
+        "{served} sidecar bytes were read past the {MAX_SIDECAR_BYTES} byte bound"
+    );
+}
+
+#[test]
+fn a_head_version_inventory_removed_during_open_counts_as_missing() {
+    let inner = MemoryBackend::new();
+    build(&inner, "obj", &three_versions());
+    let remove: Hook = Box::new(|b| {
+        delete(b, "obj", "v3/inventory.json");
+        delete(b, "obj", "v3/inventory.json.sha256");
+    });
+    let racing = Hooked::new(inner, "obj/v3/inventory.json", When::BeforeHead, remove);
+    let object = open(&racing, "obj").expect("a missing head inventory is allowed");
+    assert!(racing.fired(), "the inventory was not removed");
+    assert_eq!(object.head(), &v("v3"));
+}
+
+#[test]
+fn objects_with_ten_or_more_versions_open() {
+    let backend = MemoryBackend::new();
+    let versions = (0..12)
+        .map(|i| vec![("a.txt", if i % 2 == 0 { b"even" as &[u8] } else { b"odd" })])
+        .collect();
+    build(
+        &backend,
+        "obj",
+        &ObjectSpec::new("urn:example:twelve", versions),
+    );
+    let object = open(&backend, "obj").expect("open");
+    assert_eq!(object.head(), &v("v12"));
+    assert_eq!(object.history()[11].created, "2026-10-11T00:00:11Z");
+}
+
+#[test]
+fn files_under_a_0_prefixed_directory_are_not_declarations() {
+    let backend = MemoryBackend::new();
+    build(&backend, "obj", &three_versions());
+    for i in 0..20 {
+        put(&backend, "obj", &format!("0=data/file-{i}"), b"x");
+    }
+    assert_eq!(open(&backend, "obj").expect("open").head(), &v("v3"));
+}
+
+#[test]
+fn roots_declared_as_another_ocfl_version_are_refused() {
+    let object = refusal(|b| {
+        delete(b, "obj", "0=ocfl_object_1.1");
+        put(b, "obj", "0=ocfl_object_1.0", b"ocfl_object_1.0\n");
+    });
+    assert!(
+        matches!(&object, ReadError::UnsupportedVersion { declaration } if declaration == "obj/0=ocfl_object_1.0"),
+        "{object:?}"
+    );
+    assert_eq!(object.code(), None);
+    let backend = MemoryBackend::new();
+    build(&backend, "obj", &three_versions());
+    put(&backend, "", "0=ocfl_1.0", b"ocfl_1.0\n");
+    let root = ready(StorageRoot::open(&backend)).expect_err("a 1.0 storage root");
+    assert!(
+        matches!(root, ReadError::UnsupportedVersion { .. }),
+        "{root:?}"
+    );
 }

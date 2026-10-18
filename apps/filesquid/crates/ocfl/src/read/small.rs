@@ -4,7 +4,8 @@
 use super::error::ReadError;
 use crate::inventory::FormatError;
 use crate::storage::{
-    read_verified, validate_prefix, StorageBackend, StorageError, StorageKey, MAX_CHUNK_BYTES,
+    is_consistent, read_once, validate_prefix, StorageBackend, StorageError, StorageKey,
+    MAX_CHUNK_BYTES, READ_ATTEMPTS,
 };
 
 /// A root directory as a key prefix without a trailing `/` (empty for the
@@ -37,27 +38,42 @@ pub(crate) fn key_in(dir: &str, rel: &str) -> Result<StorageKey, ReadError> {
     Ok(StorageKey::new(&child(dir, rel))?)
 }
 
-/// Read the whole object at `key`, refusing it before any byte is read when
-/// it is larger than `limit` (an engine bound, no OCFL code). The read is one
-/// consistent version of the object ([`read_verified`]).
+/// Read the whole object at `key` as one consistent version, never holding
+/// more than `limit` bytes (an engine bound, no OCFL code).
+///
+/// Each attempt reads the size first and refuses an object above `limit`
+/// before any byte is read; it then reads at most that many bytes and
+/// accepts them only when a second `head` shows the object unchanged (the
+/// [`read_verified`](crate::storage::read_verified) rules). A writer that
+/// replaces the object with a larger one between the two steps therefore
+/// costs one bounded read and a retry, never a large buffer. At most
+/// [`READ_ATTEMPTS`] attempts are made.
 ///
 /// # Errors
 ///
 /// [`ReadError::Format`] with [`FormatError::TooLarge`] above `limit`,
 /// [`ReadError::Storage`] with [`StorageError::NotFound`] when it is
-/// missing, or another backend error.
+/// missing, [`StorageError::Backend`] when it changed during every attempt,
+/// or another backend error.
 pub(crate) async fn read_small<B: StorageBackend>(
     backend: &B,
     key: &StorageKey,
     limit: usize,
     what: &'static str,
 ) -> Result<Vec<u8>, ReadError> {
-    let size = backend.head(key).await?.size;
-    check_size(size, limit, what)?;
-    let bytes = read_verified(backend, key, MAX_CHUNK_BYTES).await?;
-    // The object may have grown between the size check and the read.
-    check_size(bytes.len() as u64, limit, what)?;
-    Ok(bytes)
+    for _ in 0..READ_ATTEMPTS {
+        let before = backend.head(key).await?;
+        check_size(before.size, limit, what)?;
+        let bytes = read_once(backend, key, MAX_CHUNK_BYTES, before.size).await?;
+        let after = backend.head(key).await?;
+        if is_consistent(backend, &before, &after, &bytes) {
+            return Ok(bytes);
+        }
+    }
+    Err(StorageError::Backend {
+        reason: format!("{key} changed during each of {READ_ATTEMPTS} read attempts"),
+    }
+    .into())
 }
 
 /// Refuse a size above `limit`.

@@ -43,6 +43,12 @@ const READ_REFUSALS: &[(&str, &str)] = &[
     ("E092_content_file_digest_mismatch", "E092"),
 ];
 
+/// Objects in `1.1/good-objects` at the pinned commit.
+const PINNED_GOOD_OBJECTS: usize = 12;
+
+/// Objects in `1.1/warn-objects` at the pinned commit.
+const PINNED_WARN_OBJECTS: usize = 13;
+
 /// The fixtures' `1.1` directory, when the environment names it.
 fn fixtures() -> Option<PathBuf> {
     let dir = PathBuf::from(std::env::var_os("FILESQUID_OCFL_FIXTURES")?);
@@ -118,12 +124,17 @@ fn read_whole(object: &Object<'_, FsBackend>) -> Result<(usize, usize), ReadErro
     Ok((object.history().len(), files))
 }
 
-/// Read every object in `group`; every one must read without error.
-fn read_group(dir: &Path, group: &str) {
+/// Read every object in `group`, which must hold exactly `expected`
+/// objects at the pinned commit; every one must read without error.
+fn read_group(dir: &Path, group: &str, expected: usize) {
     let root = dir.join(group);
     let backend = backend(&root);
     let names = objects(&root);
-    assert!(!names.is_empty(), "no fixtures in {group}");
+    assert_eq!(
+        names.len(),
+        expected,
+        "{group} must hold the {expected} objects of the pinned commit"
+    );
     for name in &names {
         let opened = ready(Object::open(&backend, name));
         let object = opened.unwrap_or_else(|err| panic!("{group}/{name}: open: {err}"));
@@ -141,7 +152,7 @@ fn every_version_of_every_good_fixture_reads_with_matching_digests() {
         println!("skipped: FILESQUID_OCFL_FIXTURES is not set");
         return;
     };
-    read_group(&dir, "good-objects");
+    read_group(&dir, "good-objects", PINNED_GOOD_OBJECTS);
 }
 
 #[test]
@@ -150,7 +161,7 @@ fn every_warning_fixture_reads_with_matching_digests() {
         println!("skipped: FILESQUID_OCFL_FIXTURES is not set");
         return;
     };
-    read_group(&dir, "warn-objects");
+    read_group(&dir, "warn-objects", PINNED_WARN_OBJECTS);
 }
 
 /// Open and read one bad fixture and return the first refusal.
