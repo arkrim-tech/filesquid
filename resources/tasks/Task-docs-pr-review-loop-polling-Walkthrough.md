@@ -4,18 +4,24 @@ Documentation-only task on branch `docs/pr-review-loop-polling`. TDD-ENFORCE: No
 
 ## Owner decision (2026-10-18)
 
-Agents drive the Cubic review loop by polling. They MUST NOT use PR-activity subscriptions, triggers, scheduled wake-ups or check-ins for it.
+Agents drive the Cubic review loop by polling. They MUST NOT use PR-activity subscriptions or scheduled triggers, wake-ups or check-ins for it. Re-triggering Cubic through its "Re-trigger cubic" link or an `@cubic-dev-ai` comment is a recovery step, not a forbidden trigger, and stays allowed.
 
 ## Changes
 
 - [pr-review-loop.md](../../.agents/rules/pr-review-loop.md), "The loop":
-  - Step 2 is now **Poll for Cubic**. After each push the agent polls the `cubic · AI code reviewer` check run on the head commit with `gh api repos/<owner>/<repo>/commits/<sha>/check-runs` (REST). It polls at most once every 5 minutes and at most 24 times per round, from a background loop or a monitor tool, never a foreground `sleep`. At each poll it also reads the PR's `mergeable_state` and merges `main` into the branch straight away when that is `dirty`. Subscribing to PR activity, and creating triggers, scheduled wake-ups or check-ins for the loop, is forbidden.
-  - The re-trigger rule is unchanged: re-trigger after 15 minutes without a completed check run, at most 3 times per head commit, then stop and report to the owner. 24 polls without completion now also count as the re-trigger case.
-  - Step 3 adds that each thread gets exactly one reply. Step 4 says to resolve threads through the REST route `POST /repos/<owner>/<repo>/pulls/<number>/ccr/comments/<comment_id>/resolve`, because GraphQL may be unavailable.
+  - Step 2 is now **Poll for Cubic**. After each push the agent polls the `cubic · AI code reviewer` check run on the head commit with `gh api repos/<owner>/<repo>/commits/<sha>/check-runs` (REST). It polls at most once every 5 minutes and at most 24 times per round, from a background loop or a monitor tool, never a foreground `sleep`. At each poll it also reads the PR's `mergeable_state` and merges `main` into the branch straight away when that is `dirty`. Subscribing to PR activity, and creating scheduled triggers, wake-ups or check-ins for the loop, is forbidden; re-triggering Cubic stays allowed.
+  - The re-trigger rule stays: re-trigger after 15 minutes without a completed check run (counted from the push or the last re-trigger), at most 3 times per head commit. The 24-poll cap covers the whole round, re-triggers included; when the re-triggers are used up or the cap is reached without a completed check run, the agent stops, does not merge and reports to the owner.
+  - Step 3 adds that each thread gets exactly one reply. Step 4 says GitHub resolves threads through the GraphQL `resolveReviewThread` mutation and, where GraphQL is unavailable (for example in Claude Code sessions), through the session proxy's REST route `POST /repos/<owner>/<repo>/pulls/<number>/ccr/comments/<comment_id>/resolve`.
   - The 10-round bound in "Bound" is unchanged.
 - [AGENTS.md](../../AGENTS.md) §1 "PR Review Mandate": one sentence saying agents wait for each review by polling Cubic's check run, never through PR-activity subscriptions or scheduled check-ins.
 
 Searched for other mentions of subscribing to PR activity for the Cubic loop in `.agents/`, the root `README.md`, `AGENTS.md`, `resources/` and `.claude/agents/`. Only `pr-review-loop.md` had one. `.claude/agents/filesquid-orchestrator.md` is in open PR #63 and was not edited.
+
+## Cubic round 1
+
+- P1 (rule step 4): the `ccr` route is not a public GitHub REST endpoint. Fixed: the rule names the GraphQL `resolveReviewThread` mutation as GitHub's route and the `ccr` route as the session proxy's REST fallback where GraphQL is unavailable.
+- P3 (rule step 2): at one poll per 5 minutes the 15-minute re-trigger always fired before 24 polls, so the 24-poll condition was unreachable. Fixed: the 24-poll cap covers the whole round, re-triggers included, and reaching it without a completed check run means stop and report.
+- P3 (walkthrough): the ban on "triggers" read as contradicting the Cubic re-trigger. Fixed: the rule and this walkthrough ban scheduled triggers only and say re-triggering Cubic stays allowed.
 
 ## Hook
 
