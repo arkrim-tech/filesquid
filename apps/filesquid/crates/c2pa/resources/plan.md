@@ -22,7 +22,7 @@ CP-0.1 created the crate (`apps/filesquid/crates/c2pa/`, a workspace member) wit
   - **Related Tests:** [`reusable_provenance_engine_F-054.feature`](../tests/features/reusable_provenance_engine_F-054.feature)
   - **Agent Prompt:** `@AGENTS.md Begin by creating a new feature branch for Task CP-0.2. Then begin development, running Cargo from apps/filesquid/ with -p filesquid-c2pa (module directory apps/filesquid/crates/c2pa/). Additionally, invoke the @feature-writer skill to translate SRS requirements into executable BDD feature tests. Upon completion, YOU MUST generate apps/filesquid/crates/c2pa/resources/tasks/Task-CP-0.2-Walkthrough.md directly in the project repository with clear SRS mapping (including BOTH the ID and full human-readable title text) in the secondary section, and strictly delete the internal tracking Plan/ToDos documents before checking off the Markdown box locally in apps/filesquid/crates/c2pa/resources/plan.md, and the matching boxes in the repository-root resources/implementation-plan-checklist.md. Then commit your changes and push the branch to origin.`
 
-- [ ] **Task CP-0.3: Hard bindings and JPEG/PNG handlers**
+- [x] **Task CP-0.3: Hard bindings and JPEG/PNG handlers**
   - **Description:** Implement data-hash, box-hash and BMFF-hash binding validation with exclusion ranges. Add the format-handler interface and JPEG (APP11) and PNG (caBX) handlers for locating and reading manifests. Unsupported formats return an explicit unsupported result.
   - **Estimated Time:** 20 hours
   - **Dependencies:** Task CP-0.2

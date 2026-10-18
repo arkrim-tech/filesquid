@@ -199,5 +199,6 @@ fn corpus_deeper_than_the_cap_is_an_error() {
 fn asset_extensions_are_case_insensitive() {
     assert!(is_asset(Path::new("a.JPG")));
     assert!(is_asset(Path::new("m.c2pa")));
+    assert!(is_asset(Path::new("v.mp4")));
     assert!(!is_asset(Path::new("notes.txt")));
 }

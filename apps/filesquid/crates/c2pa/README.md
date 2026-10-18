@@ -7,7 +7,7 @@ The C2PA module of FileSquid. It is a FOSS [C2PA](https://spec.c2pa.org/specific
 | Cargo package | `filesquid-c2pa` |
 | Rust import | `filesquid_c2pa` |
 | Path | `apps/filesquid/crates/c2pa/` (member of the `apps/filesquid/` Cargo workspace) |
-| Status | Foundation (CP-0.1: byte I/O, fetcher and crypto-backend traits, isolation tests, `wasm32` build check, `c2patool` oracle harness) and manifest store parsing (CP-0.2: JUMBF, CBOR, claims v1 and v2, assertions, sidecar and remote stores). Locating stores inside JPEG and PNG (CP-0.3), validation (CP-0.3 to CP-0.5), minting and editing do not exist yet. `publish = false` until the API is versioned (CP-F3.1). |
+| Status | Foundation (CP-0.1: byte I/O, fetcher and crypto-backend traits, isolation tests, `wasm32` build check, `c2patool` oracle harness) and manifest store parsing (CP-0.2: JUMBF, CBOR, claims v1 and v2, assertions, sidecar and remote stores), JPEG and PNG format handlers and hard-binding validation (CP-0.3: data hash, box hash, BMFF hash). Signature, timestamp and trust validation (CP-0.4, CP-0.5), the BMFF format handler (CP-2.2), minting and editing do not exist yet. `publish = false` until the API is versioned (CP-F3.1). |
 | Specification | Pinned specification: C2PA Technical Specification 2.4 (`filesquid_c2pa::C2PA_SPEC_VERSION`) |
 
 - C2PA logic (JUMBF, CBOR claims and assertions, bindings, validation, manifest assembly, format handlers) is this module's own code. Cryptographic primitives come from established crates behind a crypto-backend trait; they are never hand-rolled.
@@ -29,7 +29,9 @@ The Content Credentials sidebar panel is part of `@filesquid/ui` in `apps/filesq
 | `jumbf` | `parse_superbox`, `Superbox`, `DescriptionBox`, `ContentBox`, `JumbfChild`, `BoxRange`, `ByteRange`, `BoxType`, `TypeUuid`, `types`, `toggles`, `JumbfLimits`, `JumbfError`, `MAX_SUPPORTED_DEPTH` | JUMBF superboxes and description boxes (ISO 19566-5, C2PA 2.4 section 11.1) with the byte range of every box. `BoxRange::payload` is the superbox content without its header, which is what a hashed URI covers (section 8.4.2.3). |
 | `cbor` | `decode`, `CborValue`, `CborFloat`, `ItemBudget`, `CborError`, `MAX_SUPPORTED_DEPTH` | A CBOR decoder written for this crate (RFC 8949). Accepts well-formed CBOR and rejects invalid UTF-8 and duplicate map keys. |
 | `manifest` | `ManifestStore`, `ManifestEntry`, `Manifest`, `ManifestKind`, `ClaimSignature`, `Claim`, `ClaimVersion`, `HashedUri`, `GeneratorInfo`, `Assertion`, `AssertionContent`, `JumbfUri`, `IgnoredBox`, `IgnoreReason`, `ParseLimits`, `StoreError`, `ManifestError`, `ClaimError`, `AssertionError`, `UriError`, `ResolveError` | A parsed C2PA Manifest Store: every manifest in order (the last is active), each with its claim (`c2pa.claim.v2` or the legacy `c2pa.claim`), the claim's CBOR bytes, the raw `COSE_Sign1` claim signature and its assertions (CBOR decoded, JSON checked, embedded files and UUID boxes located). `ManifestStore::resolve` follows `self#jumbf` URIs. |
-| `read` | `read_manifest_store`, `fetch_remote_manifest_store`, `ReadError` | Read a store from a `ByteSource` (a sidecar `.c2pa` file) or by remote reference through the caller's `Fetcher` (`http` and `https` only). |
+| `format` | `FormatHandler`, `JpegHandler`, `PngHandler`, `detect_format`, `asset_layout`, `read_store_bytes`, `AssetFormat`, `AssetLayout`, `AssetBox`, `EmbeddedStore`, `FormatError`, `HEAD_BYTES` | Format handlers lay out an asset's boxes (with their C2PA 2.4 box-hash names) and locate its embedded store: JPEG APP11 JUMBF packets (section A.3.1) and PNG `caBX` chunks (section A.3.2). Any other format is `None`: unsupported, never an error. |
+| `read` | `read_manifest_store`, `read_asset`, `AssetManifest`, `fetch_remote_manifest_store`, `ReadError` | Read a store from a `ByteSource` (a sidecar `.c2pa` file), from an asset through its format handler (`AssetManifest::Unsupported`, `NotEmbedded`, `MultipleStores` or `Embedded`), or by remote reference through the caller's `Fetcher` (`http` and `https` only). |
+| `binding` | `validate_hard_binding`, `BindingReport`, `BindingStatus`, `BindingKind`, `BindingError` | Validate the active manifest's hard binding (or, for an update manifest, its `parentOf` parent's) against the asset's bytes, with the specification's status code. Only assertions the claim references are considered. |
 
 ### Manifest store parsing
 
@@ -49,6 +51,23 @@ Boxes the specification says to skip (unknown type UUIDs, time-stamp manifests `
 | `max_boxes` (every box header in the store) | 65 536 | `JumbfError::TooManyBoxes` |
 | `max_cbor_depth` (a scalar is depth 1) | 64, never above 256 | `StoreError::CborLimit(CborError::TooDeep)` |
 | `max_cbor_items` (shared by the CBOR decoded in the store; claim signatures are kept as raw bytes) | 1 048 576 | `StoreError::CborLimit(CborError::TooManyItems)` |
+| `max_asset_boxes` (JPEG segments, counting each APP11 packet and each RST marker; PNG chunks; the boxes a BMFF-hash check walks) | 262 144 | `ReadError::Format(FormatError::TooManyBoxes)`; for a BMFF hash, `BindingStatus::NotChecked` |
+
+An embedded store larger than `max_store_bytes` is `ReadError::Format(FormatError::StoreTooLarge)`, checked from the format's headers before any byte of the store is read for it. Its buffer is reserved fallibly, so a failed reservation is `ReadError::Allocation`, as for a sidecar store.
+
+### Format handlers and hard bindings
+
+`read_asset` picks a handler from the first `HEAD_BYTES` bytes. The JPEG handler names segments as ISO 10918-1 Table B.1 does (`SOI`, `APP0`, `DQT`, ...), includes the entropy-coded data after `SOS` and each `RSTn` in that box, skips `0xFF` fill bytes and stray bytes between segments as libjpeg does, and reassembles the C2PA APP11 packets (`JP`, box instance `En`, sequence `Z` from 1, contiguous with no bytes between them and in order, each continuation repeating the first packet's box header). Skipped bytes belong to no box: section 18.7.1 hashes only the data within a separately listed box. The store is identified by its type UUID and the label `c2pa` (section 18.7.3.1); a store without the requestable and label toggles, or a first packet cut off inside its description box, is malformed. The PNG handler checks the signature, walks chunks to an empty `IEND`; chunk CRCs are not checked. The store's container (all its APP11 segments, or the `caBX` chunk with length and type) is reported as box `C2PA`. Truncated or malformed structure is a `FormatError` with its offset; two stores are `MultipleStores` (section 15.5.2.1).
+
+`validate_hard_binding` takes the store, the asset as a `ByteSource`, the layout (or `None` for a sidecar or remote store), the `ParseLimits` and the caller's `CryptoBackend`. It considers only the assertions the claim references (`created_assertions` and `gathered_assertions`, or `assertions` in a v1 claim), both for the hard binding and for an update manifest's `parentOf` ingredient; an unreadable update manifest on the way is reported as not checked:
+
+| Binding | Checked | Codes |
+|---|---|---|
+| `c2pa.hash.data` | Exclusions sorted and not overlapping; inside the asset; the exclusion holding the store holds only the store (section 15.12.1); update-manifest length adjustment; `sha256`, `sha384` or `sha512` from the assertion or the claim | `assertion.dataHash.match`, `.mismatch`, `.malformed`, `.additionalExclusionsPresent` (informational) |
+| `c2pa.hash.boxes` | Names in asset order, each asset box listed, `exclusions` with `boxIndex`, `excluded` entries, `C2PA` entry not hashed, `c2pa.after` last | `assertion.boxesHash.match`, `.mismatch`, `.malformed`, `.unknownBox`, `.additionalExclusionsPresent` |
+| `c2pa.hash.bmff.v2`, `.v3` | Restricted xpaths with `length`, `version`, `flags` + `exact`, `data` and `subset` conditions; each root box hashed as its 64-bit offset then its included bytes (section 18.6); a missing `hash` (without `merkle`) is malformed, and a broken box list under a box an xpath descends into is a mismatch, never a silent no-match | `assertion.bmffHash.match`, `.mismatch`, `.malformed`, `.additionalExclusionsPresent` |
+
+All bindings also report `algorithm.unsupported`, `claim.hardBindings.missing` and `assertion.multipleHardBindings`. `c2pa.hash.bmff` (v1) is ignored as section 18.6.1 says. Not checked yet, and reported as `BindingStatus::NotChecked` with the reason rather than as a pass: collection data hashes, BMFF Merkle trees, compressed manifests and the multi-asset fallback after a mismatch.
 
 A CBOR string, array or map that declares more data than remains fails as truncated, and an array or map that declares more items than the item budget has left fails at its head, both before anything is allocated; at most 1 024 slots are reserved up front. Map keys are compared as RFC 8949 section 5.6.1 says (`0.0` equals `-0.0`, map keys ignore pair order). JSON assertions are checked for well-formedness without building a value tree, and `serde_json` skips nested values iteratively, so JSON nesting needs no separate limit.
 
@@ -87,7 +106,7 @@ To skip the check on purpose, set `FILESQUID_SKIP_WASM32=1`. The integration tes
 
 ### Interoperability oracle
 
-The oracle harness runs the official `c2patool` on the C2PA public conformance files and records its verdict and failure codes. It is built to compare them with the engine's and fail on any disagreement, but **no comparison happens yet**: the engine parses manifest stores (CP-0.2) but cannot yet locate them inside a JPEG or PNG (CP-0.3) or produce a validation verdict (CP-0.5), so every file is counted as pending and only `c2patool`'s verdict is recorded. An unexpected `c2patool` exit or output that is not a report fails the test. Without the tool or the corpus the test is skipped and prints why.
+The oracle harness runs the official `c2patool` on the C2PA public conformance files and records its verdict and failure codes. It is built to compare them with the engine's and fail on any disagreement, but **no comparison happens yet**: the engine locates and parses stores and checks hard bindings (CP-0.3) but does not yet produce a full validation verdict (CP-0.5), so every file is counted as pending and only `c2patool`'s verdict is recorded. An unexpected `c2patool` exit or output that is not a report fails the test. Without the tool or the corpus the test is skipped and prints why.
 
 From the repository root, in a POSIX shell (Linux, macOS, or Git Bash or WSL on Windows). The corpus is cloned next to the repository, and its path is passed as an absolute path because the test runs with the crate directory as its working directory:
 
@@ -104,7 +123,7 @@ cargo test -p filesquid-c2pa --locked --test integration_oracle -- --nocapture
 | `FILESQUID_C2PATOOL` | Path to `c2patool`; default: `c2patool` on `PATH` |
 | `FILESQUID_C2PA_CONFORMANCE_DIR` | Checkout of `c2pa-org/public-testfiles` (CC BY-SA 4.0; not vendored) |
 
-The same corpus also drives the conformance parse test, which needs no `c2patool`: it reassembles every JPEG's APP11 JUMBF in test-only code and requires every manifest store, and every manifest in it, to parse completely. Without the variable it is skipped and prints why:
+The same corpus also drives the conformance parse test, which needs no `c2patool`. It reads every JPEG and PNG through `read_asset` (the MP4's store is located by test-only code until the BMFF handler exists), requires every manifest store and every manifest in it to parse completely, validates the selected hard binding of each store (the active manifest's, or its update chain's parent) and compares the result with the `*Hash.match` or `*Hash.mismatch` verdict recorded in the corpus's `detailed.json`. Every store must have a recorded verdict. Three Truepic JPEGs record a match although their data-hash exclusion starts at byte 0 and so leaves the APP1 Exif segment unhashed; C2PA 2.4 section 15.12.1 makes that a mismatch, and the test requires both the recorded match and exactly that result for those files. Without the variable it is skipped and prints why:
 
 ```bash
 cd apps/filesquid

@@ -44,6 +44,8 @@ pub const DEFAULT_MAX_BOXES: usize = 65_536;
 pub const DEFAULT_MAX_CBOR_DEPTH: usize = 64;
 /// Default [`ParseLimits::max_cbor_items`].
 pub const DEFAULT_MAX_CBOR_ITEMS: usize = 1_048_576;
+/// Default [`ParseLimits::max_asset_boxes`].
+pub const DEFAULT_MAX_ASSET_BOXES: usize = 262_144;
 
 /// Bounds on the work and memory one manifest store may cost. Exceeding any
 /// of them fails the whole store with a typed error; nothing is clamped or
@@ -63,6 +65,11 @@ pub struct ParseLimits {
     pub max_cbor_depth: usize,
     /// Most CBOR data items decoded across the whole store.
     pub max_cbor_items: usize,
+    /// Most boxes laid out or walked in one asset: JPEG segments (each
+    /// APP11 packet of the store counts) and restart markers, PNG chunks,
+    /// and the BMFF boxes a BMFF-hash check walks
+    /// (`binding::validate_hard_binding` reports more as not checked).
+    pub max_asset_boxes: usize,
 }
 
 impl Default for ParseLimits {
@@ -73,6 +80,7 @@ impl Default for ParseLimits {
             max_boxes: DEFAULT_MAX_BOXES,
             max_cbor_depth: DEFAULT_MAX_CBOR_DEPTH,
             max_cbor_items: DEFAULT_MAX_CBOR_ITEMS,
+            max_asset_boxes: DEFAULT_MAX_ASSET_BOXES,
         }
     }
 }

@@ -752,6 +752,7 @@ fn default_limits_are_documented_values() {
     assert_eq!(limits.max_boxes, 65_536);
     assert_eq!(limits.max_cbor_depth, 64);
     assert_eq!(limits.max_cbor_items, 1_048_576);
+    assert_eq!(limits.max_asset_boxes, 262_144);
 }
 
 #[test]
