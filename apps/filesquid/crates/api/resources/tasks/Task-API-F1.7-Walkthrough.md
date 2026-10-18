@@ -914,13 +914,22 @@ Documentation only; no code changed.
 | P3: server `lib.rs` said Unix servers "generate" the token | Now says they load the stored token or create one |
 | P3: missing trailing comma in `monitor.rs` | Declined. rustfmt is the project's formatter (ADR 019), and `cargo fmt --all --check` passes on this code as written, so rustfmt's own output is kept. |
 
-The README's Linux lines and the blank-value rule, run against the real `filesquid-server` binary (port 8096):
+The README's Linux lines, run against the real `filesquid-server` binary (port 8096):
 
 ```text
 $ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8096/api/v1/health
 {"schema_version":1,"status":"ok","product":"filesquid"}
-$ FILESQUID_ADMIN_TOKEN="   " (blank counts as unset; Unix falls back to the token file)
-"filesquid-server listening"
+```
+
+Re-run in review round 8 so the blank-value check shows the real command: the server started from `apps/filesquid` with a blank `FILESQUID_ADMIN_TOKEN` and the default data directory, stopped by `timeout` after 5 s (output unedited):
+
+```text
+$ FILESQUID_ADMIN_TOKEN="   " FILESQUID_BIND=127.0.0.1:8097 timeout 5 cargo run -q -p filesquid-server
+{"timestamp":"2026-10-18T03:56:18.467548Z","level":"INFO","fields":{"message":"generated the administrator token","path":"filesquid-data/admin-token"},"target":"filesquid_server"}
+{"timestamp":"2026-10-18T03:56:18.472266Z","level":"INFO","fields":{"message":"filesquid-server listening","addr":"127.0.0.1:8097","ui_dir":"None","data_dir":"filesquid-data"},"target":"filesquid_server"}
+{"timestamp":"2026-10-18T03:56:23.222782Z","level":"INFO","fields":{"message":"shutdown requested"},"target":"filesquid_server"}
+$ ls -l filesquid-data/admin-token
+-rw------- 1 root root 64 Oct 18 03:56 filesquid-data/admin-token
 ```
 
 ## Work left to other tasks
