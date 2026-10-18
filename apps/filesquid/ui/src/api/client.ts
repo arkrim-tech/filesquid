@@ -79,17 +79,28 @@ export const EVENTS_SUBPROTOCOL = "filesquid.events.v1";
 /** Prefix of the subprotocol that carries the bearer token on a browser WebSocket. */
 const BEARER_SUBPROTOCOL_PREFIX = "filesquid.bearer.";
 /**
- * Every {@link DenialReason} the contract defines, for validating response bodies at run time.
- * The generated type has no run-time value; {@link CONTRACT_LISTS_COMPLETE} fails the build
- * when this list and the generated union drift apart in either direction.
+ * The list itself when it names every member of the generated `Union`, otherwise `never`.
+ * Type-only: declaring a list with this type makes `tsc` fail when the contract adds a value
+ * the list lacks, and `satisfies` rejects values the contract does not define. The generated
+ * types have no run-time values, so the run-time lists are written out and checked this way.
  */
-const DENIAL_REASONS = [
+type CompleteList<Union, List extends readonly Union[]> = [Exclude<Union, List[number]>] extends [
+  never,
+]
+  ? List
+  : never;
+
+/** Literal {@link DenialReason} values; only checked, then used through {@link DENIAL_REASONS}. */
+const DENIAL_REASON_VALUES = [
   "missing_credentials",
   "invalid_credentials",
   "not_permitted",
 ] as const satisfies readonly DenialReason[];
-/** Every {@link ErrorCode} the contract defines, checked like {@link DENIAL_REASONS}. */
-const ERROR_CODES = [
+/** Every {@link DenialReason} the contract defines, for validating response bodies at run time. */
+const DENIAL_REASONS: CompleteList<DenialReason, typeof DENIAL_REASON_VALUES> =
+  DENIAL_REASON_VALUES;
+/** Literal {@link ErrorCode} values; only checked, then used through {@link ERROR_CODES}. */
+const ERROR_CODE_VALUES = [
   "invalid_request",
   "unauthorized",
   "forbidden",
@@ -99,18 +110,8 @@ const ERROR_CODES = [
   "internal",
   "unavailable",
 ] as const satisfies readonly ErrorCode[];
-/** Generated union members missing from a run-time list (`never` when it is complete). */
-type Unlisted<Union, List extends readonly unknown[]> = Exclude<Union, List[number]>;
-/**
- * Compile-time proof that both lists name every member of their generated union; a contract
- * change that adds a value makes this assignment a type error until the list is updated.
- */
-export const CONTRACT_LISTS_COMPLETE: [
-  Unlisted<DenialReason, typeof DENIAL_REASONS>,
-  Unlisted<ErrorCode, typeof ERROR_CODES>,
-] extends [never, never]
-  ? true
-  : never = true;
+/** Every {@link ErrorCode} the contract defines, for validating response bodies at run time. */
+const ERROR_CODES: CompleteList<ErrorCode, typeof ERROR_CODE_VALUES> = ERROR_CODE_VALUES;
 /** RFC 7230 `token`: the only characters both a header value and a subprotocol accept here. */
 const TOKEN_CHARS = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 

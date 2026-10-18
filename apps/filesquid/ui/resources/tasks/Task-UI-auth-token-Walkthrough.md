@@ -75,10 +75,30 @@ All 17 were valid and are fixed in one commit:
 
 - **Shell race:** `<fs-app-shell>` numbers its health reads and discards an answer from an older read, so a slow pre-sign-in 401 cannot overwrite the signed-in status. Test: `app-shell.test.ts` "ignores a stale pre-sign-in answer", which fails without the fix.
 - **Empty token:** an explicitly supplied empty token is unusable (status 0, `invalid_credentials`); only `undefined` means no token. `memoryTokenStore` returns undefined for an empty entry, so the signed-out flow still sends no credential and reads `missing_credentials`. Both are tested.
-- **Error codes:** `errorBody` keeps a `code` only when it is in the contract's `ErrorCode` enum. The run-time lists are tied to the generated unions by `CONTRACT_LISTS_COMPLETE`, which fails `tsc` if a contract value is missing.
+- **Error codes:** `errorBody` keeps a `code` only when it is in the contract's `ErrorCode` enum. The run-time lists are tied to the generated unions, so `tsc` fails if a contract value is missing (made type-only in round 2).
 - **Non-JSON warning:** it now logs only the status and the parser error's kind, because V8's `SyntaxError` message quotes the body. A test checks that no body text is logged.
 - **Tests:** stubs and spies are restored in `afterEach`, and the wrong-token e2e test now asserts no unexpected console errors.
 - **Docs:** UI-S-014 says "when a token is known" and covers empty tokens. `DenialText` is exported. Mermaid edge labels no longer contain semicolons, and the architecture doc says WebSocket upgrades accept the header for clients that can set it. The README gives the per-platform token rules (Linux/macOS file vs Windows variable), the 64-hex format and blank-as-unset. The plan's UI-F0.1 Related Tests links the feature file, and the UI-F2.6 parenthetical is gone. The feature file asserts status 0, and the `routes.ts`, `fs-monitor.ts` and `client.ts` doc comments match the code.
+
+## Review round 2 (Cubic, 3 findings)
+
+All 3 were valid and are fixed in one commit:
+
+- **README:** it now names both WebSocket credential carriers: the `Authorization` header from clients that can set headers, and the ordered subprotocols from browsers. The sentence about no token and `missing_credentials` stays.
+- **Spy restore:** `app-shell.test.ts` restores spies in `afterEach` (`vi.restoreAllMocks()`) instead of inline.
+- **Type-only drift check:** the exported run-time constant `CONTRACT_LISTS_COMPLETE` is gone. The lists are now declared through the type `CompleteList<Union, List>`, which resolves to `never` when a contract value is missing, so the check adds nothing at run time and nothing to the public API. To prove it, I dropped one value from each list in turn, ran `npx tsc --noEmit`, then restored the list:
+
+```text
+src/api/client.ts(113,7): error TS2322: Type 'readonly ["invalid_request", "unauthorized", "forbidden", "not_found", "method_not_allowed", "conflict", "internal"]' is not assignable to type 'never'.
+src/api/client.ts(210,28): error TS2339: Property 'find' does not exist on type 'never'.
+src/api/client.ts(210,34): error TS7006: Parameter 'known' implicitly has an 'any' type.
+```
+
+```text
+src/api/client.ts(99,7): error TS2322: Type 'readonly ["missing_credentials", "invalid_credentials"]' is not assignable to type 'never'.
+src/api/client.ts(209,33): error TS2339: Property 'find' does not exist on type 'never'.
+src/api/client.ts(209,39): error TS7006: Parameter 'known' implicitly has an 'any' type.
+```
 
 ## SRS traceability
 
@@ -169,18 +189,18 @@ IS lint/tsc OK
 > @filesquid/ui@0.1.0 test
 > vitest run
  RUN  v4.1.12 apps/filesquid/ui
- ✓ tests/unit/client-auth.test.ts (23 tests) 28ms
- ✓ tests/ui/app-shell.test.ts (9 tests) 92ms
- ✓ tests/ui/monitor.test.ts (14 tests) 193ms
- ✓ tests/unit/client.test.ts (8 tests) 12ms
- ✓ tests/unit/admin-client.test.ts (6 tests) 14ms
+ ✓ tests/unit/client-auth.test.ts (23 tests) 34ms
+ ✓ tests/ui/app-shell.test.ts (9 tests) 106ms
+ ✓ tests/ui/monitor.test.ts (14 tests) 203ms
+ ✓ tests/unit/admin-client.test.ts (6 tests) 13ms
  ✓ tests/unit/theme.test.ts (6 tests) 7ms
- ✓ tests/ui/monitor-route.test.ts (2 tests) 27ms
- ✓ tests/unit/contract.test.ts (1 test) 58ms
+ ✓ tests/unit/client.test.ts (8 tests) 11ms
+ ✓ tests/ui/monitor-route.test.ts (2 tests) 22ms
+ ✓ tests/unit/contract.test.ts (1 test) 56ms
  Test Files  8 passed (8)
       Tests  69 passed (69)
-   Start at  04:39:48
-   Duration  2.73s (transform 471ms, setup 0ms, import 1.25s, tests 429ms, environment 3.82s)
+   Start at  04:48:57
+   Duration  2.90s (transform 598ms, setup 0ms, import 1.42s, tests 454ms, environment 3.98s)
 JUNIT report written to tests/allure-results/vitest-junit.xml
 ```
 

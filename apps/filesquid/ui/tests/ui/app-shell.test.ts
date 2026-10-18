@@ -2,7 +2,7 @@
  * UI tests for <fs-app-shell>: strict DOM assertions on what the shell renders
  * for a distribution, with a fake API client.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FsAppShell, defineElements } from "../../src/index";
 import type { Distribution } from "../../src/distribution";
 import { ApiError, type HealthStatus } from "../../src/api/client";
@@ -28,6 +28,8 @@ function mount(health: () => Promise<HealthStatus>) {
 
 describe("<fs-app-shell>", () => {
   beforeEach(() => defineElements());
+  // Restore spies even when an assertion fails mid-test.
+  afterEach(() => vi.restoreAllMocks());
 
   it("is registered as a custom element", () => {
     expect(customElements.get("fs-app-shell")).toBe(FsAppShell);
@@ -118,6 +120,5 @@ describe("<fs-app-shell>", () => {
     );
     expect(shell.shadowRoot?.querySelector('[role="alert"]')).toBeNull();
     expect(debug).toHaveBeenCalledOnce();
-    debug.mockRestore();
   });
 });
