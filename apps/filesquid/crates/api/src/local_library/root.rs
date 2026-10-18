@@ -27,17 +27,30 @@ fn not_empty() -> LocalLibraryError {
     )
 }
 
-/// Whether `backend` holds no key at all.
+/// Whether `backend` holds nothing: no file, and no empty directory, link or other entry
+/// that is not a regular file (which a key listing does not show).
 ///
 /// # Errors
 ///
-/// `unavailable` when the listing fails.
+/// `unavailable` (or `internal`) when the listing or the hierarchy check fails for a reason
+/// other than such an entry.
 pub(super) async fn is_empty<B: StorageBackend>(backend: &B) -> Result<bool, LocalLibraryError> {
     let page = backend
         .list("", None, 1)
         .await
         .map_err(|err| LocalLibraryError::from_storage(&err))?;
-    Ok(page.keys.is_empty())
+    if !page.keys.is_empty() {
+        return Ok(false);
+    }
+    match backend.check_hierarchy("").await {
+        Ok(()) => Ok(true),
+        Err(
+            StorageError::SymlinkForbidden { .. }
+            | StorageError::HardLinkForbidden { .. }
+            | StorageError::EmptyDirectoryForbidden { .. },
+        ) => Ok(false),
+        Err(err) => Err(LocalLibraryError::from_storage(&err)),
+    }
 }
 
 /// Write the OCFL 1.1 storage-root declaration into the empty `backend`, then open it.

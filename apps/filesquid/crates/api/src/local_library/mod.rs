@@ -32,6 +32,7 @@
 /// the service.
 const LOG_TARGET: &str = "filesquid::local_library";
 
+mod candidates;
 mod error;
 mod ledger;
 mod rebuild;
@@ -39,6 +40,7 @@ mod repair;
 mod root;
 mod service;
 mod snapshot;
+mod transfer;
 
 pub use error::LocalLibraryError;
 pub use ledger::{LedgerError, MemoryRepairLedger, RecordedRepair, RepairLedger, RepairRecord};

@@ -6,18 +6,17 @@
 //! root inventory and its sidecar to the head version directory and changes nothing else.
 //! This module decides who may ask for it and when: a [`RepairRequest`] names the library and
 //! the objects, carries the owner's [`RepairConsent`] from the UI-1.1 dialog, and is checked
-//! before anything is written. The candidate query finds the objects to offer by checking
-//! each head for its version inventory and sidecar, independently of the scheduled
-//! validation (API-F2.7).
+//! before anything is written. The candidate query that finds the objects to offer lives in
+//! [`super::candidates`].
 
+use super::candidates::{head_files, open_or_skip};
 use super::error::{is_outage, LocalLibraryError};
 use super::ledger::RecordedRepair;
 use filesquid_core::LibraryId;
-use filesquid_ocfl::inventory::{sidecar_name, INVENTORY_FILE};
 use filesquid_ocfl::read::{Object, StorageRoot};
-use filesquid_ocfl::storage::{StorageBackend, StorageKey};
+use filesquid_ocfl::storage::{StorageBackend, StorageError};
 use filesquid_ocfl::write::{ObjectWriter, RepairError, ReservationError, VersionReservations};
-use filesquid_ocfl::{DigestAlgorithm, RepairReceipt};
+use filesquid_ocfl::{ReadError, RepairReceipt};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -129,46 +128,6 @@ pub struct RepairCandidates {
     pub truncated: bool,
 }
 
-/// What the head version directory of an object holds of the two repair files.
-pub(super) struct HeadFiles {
-    inventory: bool,
-    sidecar: bool,
-}
-
-impl HeadFiles {
-    /// Both files are present: nothing to repair.
-    pub(super) fn complete(&self) -> bool {
-        self.inventory && self.sidecar
-    }
-}
-
-/// Check the committed head of `object` for its version inventory and sidecar.
-///
-/// # Errors
-///
-/// `unavailable` for a storage failure.
-pub(super) async fn head_files<B: StorageBackend>(
-    backend: &B,
-    object: &Object<'_, B>,
-) -> Result<HeadFiles, LocalLibraryError> {
-    let head = object.head();
-    let sidecar = sidecar_name(object.inventory().digest_algorithm);
-    let root = object.root();
-    Ok(HeadFiles {
-        inventory: exists(backend, &format!("{root}/{head}/{INVENTORY_FILE}")).await?,
-        sidecar: exists(backend, &format!("{root}/{head}/{sidecar}")).await?,
-    })
-}
-
-/// Whether `raw` exists on `backend`.
-async fn exists<B: StorageBackend>(backend: &B, raw: &str) -> Result<bool, LocalLibraryError> {
-    let key = StorageKey::new(raw).map_err(|err| LocalLibraryError::from_storage(&err))?;
-    backend
-        .exists(&key)
-        .await
-        .map_err(|err| LocalLibraryError::from_storage(&err))
-}
-
 impl RepairRequest {
     /// Check the object list and the consent. Nothing is read or written.
     ///
@@ -219,10 +178,9 @@ impl RepairRequest {
     }
 }
 
-/// A located object: its root and committed head.
+/// A located object: its root in the storage root.
 pub(super) struct Located {
     pub(super) root: String,
-    pub(super) head: String,
 }
 
 /// Find the roots of the requested objects by opening every object of the storage root.
@@ -245,101 +203,29 @@ pub(super) async fn locate<B: StorageBackend>(
             continue;
         };
         if wanted.contains(object.id()) {
-            let located = Located {
-                root: root.clone(),
-                head: object.head().to_string(),
-            };
+            let located = Located { root: root.clone() };
             found.insert(object.id().to_string(), located);
         }
     }
     Ok(found)
 }
 
-/// Open the object at `root`, or `None` when it is unreadable (not a storage outage).
-async fn open_or_skip<'a, B: StorageBackend>(
-    storage: &StorageRoot<'a, B>,
-    root: &str,
-) -> Result<Option<Object<'a, B>>, LocalLibraryError> {
-    match storage.open_object(root).await {
-        Ok(object) => Ok(Some(object)),
-        Err(filesquid_ocfl::ReadError::Storage(err)) if is_outage(&err) => {
-            Err(LocalLibraryError::from_storage(&err))
-        }
-        Err(err) => {
-            tracing::info!(target: super::LOG_TARGET, error = %err, "object skipped");
-            Ok(None)
-        }
-    }
-}
-
-/// The candidates of `backend`'s storage root: committed heads without their version
-/// inventory or its sidecar. Objects with an unpublished head or that cannot be opened are
-/// not candidates (the engine would refuse them). Writes nothing.
-///
-/// # Errors
-///
-/// The open errors of the storage root; `unavailable` for a storage outage.
-pub(super) async fn candidates<B: StorageBackend>(
-    backend: &B,
-) -> Result<RepairCandidates, LocalLibraryError> {
-    let storage = StorageRoot::open(backend)
-        .await
-        .map_err(|err| LocalLibraryError::from_open(&err))?;
-    let mut found = RepairCandidates {
-        candidates: Vec::new(),
-        truncated: false,
-    };
-    for root in storage.objects() {
-        let Some(object) = open_or_skip(&storage, root).await? else {
-            continue;
-        };
-        let Some(candidate) = candidate(backend, &object).await? else {
-            continue;
-        };
-        if found.candidates.len() == MAX_CANDIDATES {
-            found.truncated = true;
-            break;
-        }
-        found.candidates.push(candidate);
-    }
-    Ok(found)
-}
-
-/// `object` as a candidate, or `None` when its head is complete or not yet published.
-async fn candidate<B: StorageBackend>(
-    backend: &B,
-    object: &Object<'_, B>,
-) -> Result<Option<RepairCandidate>, LocalLibraryError> {
-    if object.unpublished_head().is_some() {
-        return Ok(None);
-    }
-    let files = head_files(backend, object).await?;
-    if files.complete() {
-        return Ok(None);
-    }
-    let algorithm = object.inventory().digest_algorithm;
-    Ok(Some(RepairCandidate {
-        object_id: object.id().to_string(),
-        head: object.head().to_string(),
-        digest_algorithm: algorithm.name().to_string(),
-        interrupted: files.inventory,
-        committable_after_repair: algorithm == DigestAlgorithm::Sha256,
-    }))
-}
-
-/// Why one object was not repaired: a stable code and whether a retry may succeed.
+/// Why one object was not repaired: a stable code, whether a retry may succeed, and the
+/// head version of the object as reopened for the repair, when it could be read.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct ObjectRefusal {
     pub(super) code: &'static str,
     pub(super) retryable: bool,
+    pub(super) version: Option<String>,
 }
 
 impl ObjectRefusal {
     /// A refusal a retry will not clear.
-    const fn fixed(code: &'static str) -> Self {
+    pub(super) const fn fixed(code: &'static str) -> Self {
         Self {
             code,
             retryable: false,
+            version: None,
         }
     }
 
@@ -348,42 +234,75 @@ impl ObjectRefusal {
         Self {
             code,
             retryable: true,
+            version: None,
         }
+    }
+
+    /// This refusal, for the head `version` of the reopened object.
+    fn at(mut self, version: &str) -> Self {
+        self.version = Some(version.to_string());
+        self
     }
 }
 
-/// Repair one located object: refuse a complete head without calling the engine, then run
-/// the engine repair under a fresh reservation holder.
+/// Repair the object `object_id` located at `located`: reopen it and refuse when another
+/// object now sits at that root or its head is already complete, without calling the
+/// engine; then run the engine repair, which re-reads the object under its reservation.
 pub(super) async fn repair_object<B: StorageBackend, R: VersionReservations>(
     backend: &B,
     reservations: &R,
     holder: &str,
+    object_id: &str,
     located: &Located,
 ) -> Result<RepairReceipt, ObjectRefusal> {
     let object = Object::open(backend, &located.root)
         .await
         .map_err(|err| read_refusal(&err))?;
+    let version = object.head().to_string();
+    if object.id() != object_id {
+        return Err(ObjectRefusal::fixed("object_not_found"));
+    }
     let files = head_files(backend, &object)
         .await
-        .map_err(|_| ObjectRefusal::transient("storage_unavailable"))?;
+        .map_err(|err| storage_refusal(&err).at(&version))?;
     if files.complete() {
-        return Err(ObjectRefusal::fixed("nothing_to_repair"));
+        return Err(ObjectRefusal::fixed("nothing_to_repair").at(&version));
     }
     let writer = ObjectWriter::new(backend, reservations, holder);
     writer
         .repair_version_inventory(&located.root)
         .await
-        .map_err(|err| engine_refusal(&err))
+        .map_err(|err| engine_refusal(&err).at(&version))
+}
+
+/// The refusal for a storage failure: an outage is retryable, anything else is not.
+fn storage_refusal(err: &StorageError) -> ObjectRefusal {
+    if is_outage(err) {
+        ObjectRefusal::transient("storage_unavailable")
+    } else {
+        ObjectRefusal::fixed("storage_failed")
+    }
 }
 
 /// The refusal for an object that cannot be read before the repair.
-fn read_refusal(err: &filesquid_ocfl::ReadError) -> ObjectRefusal {
+fn read_refusal(err: &ReadError) -> ObjectRefusal {
     tracing::info!(target: super::LOG_TARGET, error = %err, "repair could not read the object");
     match err {
-        filesquid_ocfl::ReadError::Storage(storage) if is_outage(storage) => {
+        ReadError::Storage(storage) => storage_refusal(storage),
+        _ => ObjectRefusal::fixed("read_failed"),
+    }
+}
+
+/// The refusal for a reservation failure: a held or lost reservation, or a storage outage,
+/// may clear on retry; a corrupt record, a bad configuration or no clock will not.
+fn reservation_refusal(err: &ReservationError) -> ObjectRefusal {
+    match err {
+        ReservationError::Held { .. } => ObjectRefusal::transient("reservation_held"),
+        ReservationError::Lost { .. } => ObjectRefusal::transient("reservation_lost"),
+        ReservationError::Storage(storage) if is_outage(storage) => {
             ObjectRefusal::transient("storage_unavailable")
         }
-        _ => ObjectRefusal::fixed("read_failed"),
+        _ => ObjectRefusal::fixed("reservation_failed"),
     }
 }
 
@@ -391,12 +310,9 @@ fn read_refusal(err: &filesquid_ocfl::ReadError) -> ObjectRefusal {
 fn engine_refusal(err: &RepairError) -> ObjectRefusal {
     tracing::info!(target: super::LOG_TARGET, error = %err, "repair refused by the engine");
     match err {
-        RepairError::Reservation(ReservationError::Held { .. }) => {
-            ObjectRefusal::transient("reservation_held")
-        }
-        RepairError::Reservation(_) => ObjectRefusal::transient("reservation_lost"),
+        RepairError::Reservation(reservation) => reservation_refusal(reservation),
         RepairError::RootChanged { .. } => ObjectRefusal::transient("root_changed"),
-        RepairError::Storage(_) => ObjectRefusal::transient("storage_unavailable"),
+        RepairError::Storage(storage) => storage_refusal(storage),
         RepairError::RootSidecarMismatch { .. } => ObjectRefusal::fixed("root_sidecar_mismatch"),
         RepairError::Invalid { .. } => ObjectRefusal::fixed("object_invalid"),
         RepairError::NotRepairable { .. } => ObjectRefusal::fixed("not_repairable"),

@@ -33,7 +33,7 @@ Parents: [F-042 OCFL preservation and portable recovery](../../../../../../resou
 
 ## What changed
 
-- `crates/api/src/local_library/`: `root` (create, open), `snapshot` (completed snapshot copy), `rebuild` (rebuild from files), `repair` (request, consent, candidates, engine call and error codes), `ledger` (`RepairLedger` port, `MemoryRepairLedger`), `error` (`LocalLibraryError`), `service` (`LocalLibraryService`).
+- `crates/api/src/local_library/`: `root` (create, open), `snapshot` (completed snapshot copy), `transfer` (one verified file copy), `rebuild` (rebuild from files), `candidates` (head checks and the candidate query), `repair` (request, consent, engine call and error codes), `ledger` (`RepairLedger` port, `MemoryRepairLedger`), `error` (`LocalLibraryError`), `service` (`LocalLibraryService`).
 - `crates/api/Cargo.toml`: `filesquid-ocfl` (path, default features off); test targets `unit_local_library` and `unit_version_inventory_repair`.
 - `crates/api/src/events.rs`: `fetch_update` renamed to `try_update`. The rustc 1.99 toolchain deprecates `fetch_update`, which failed `cargo clippy -D warnings` for `filesquid-api` on `main` as well; separate commit.
 - Tests: `tests/unit/local_library.rs`, `tests/unit/version_inventory_repair.rs`, `tests/support/ocfl_fixture.rs`, `tests/support/local_library_steps.rs`, `tests/features/local_library_and_version_inventory_repair_API-S-023.feature`.
@@ -55,45 +55,51 @@ error: could not compile `filesquid-api` (test "unit_local_library") due to 2 pr
 error: could not compile `filesquid-api` (test "unit_version_inventory_repair") due to 5 previous errors
 ```
 
-After the implementation, `cargo test -p filesquid-api --locked --test unit_local_library --test unit_version_inventory_repair`:
+After the implementation and Cubic round 1, `cargo test -p filesquid-api --locked --test unit_local_library --test unit_version_inventory_repair`:
 
 ```text
-     Running tests/unit/local_library.rs
-running 14 tests
+running 18 tests
 test copy_refuses_a_destination_that_is_not_empty ... ok
+test copy_refuses_a_destination_that_gains_a_file_during_the_copy ... ok
+test copy_keeps_version_sidecars_of_another_algorithm ... ok
 test copy_refuses_a_snapshot_with_an_unpublished_head ... ok
 test copy_reports_an_external_edit_found_in_the_copy ... ok
+test create_refuses_a_folder_holding_only_an_empty_directory_or_link ... ok
+test create_refuses_a_folder_that_is_not_empty ... ok
 test create_twice_is_refused ... ok
 test create_writes_only_the_storage_root_declaration ... ok
 test errors_carry_stable_codes_and_api_errors ... ok
+test copy_produces_a_checked_snapshot_and_never_writes_the_source ... ok
 test open_refuses_a_folder_that_is_not_a_storage_root ... ok
 test open_refuses_git_metadata_in_the_root ... ok
-test create_refuses_a_folder_that_is_not_empty ... ok
-test copy_produces_a_checked_snapshot_and_never_writes_the_source ... ok
-test rebuild_reports_an_external_edit_instead_of_adopting_it ... ok
 test open_reports_the_objects_and_writes_nothing ... ok
 test rebuild_reconstructs_from_files_and_repairs_nothing ... ok
+test rebuild_reports_an_external_edit_instead_of_adopting_it ... ok
+test copy_refuses_a_large_source_file_that_changes_while_it_is_copied ... ok
 test copy_streams_a_file_larger_than_one_put ... ok
-test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.87s
-     Running tests/unit/version_inventory_repair.rs
-running 16 tests
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.47s
+running 20 tests
 test a_head_that_already_has_both_files_is_refused_with_nothing_to_repair ... ok
 test a_held_reservation_is_a_retryable_refusal ... ok
-test an_interrupted_repair_is_resumed ... ok
+test a_root_sidecar_that_does_not_commit_the_root_inventory_is_refused ... ok
+test a_damaged_interrupted_repair_is_refused_without_writing_the_sidecar ... ok
 test a_second_repair_is_refused_with_nothing_to_repair ... ok
-test an_unknown_object_is_refused_per_object ... ok
 test a_consented_repair_by_the_owner_makes_a_sha256_object_committable ... ok
+test an_unknown_object_is_refused_per_object ... ok
+test an_interrupted_repair_is_resumed ... ok
 test an_unrecordable_consent_repairs_nothing ... ok
-test an_unrecordable_outcome_still_reaches_the_journal ... ok
 test candidates_say_whether_the_repair_opens_the_object_to_commits ... ok
+test an_unlisted_file_in_the_head_is_neither_offered_nor_repaired ... ok
 test object_lists_are_bounded_and_distinct ... ok
-test the_command_is_refused_for_another_caller ... ok
-test open_copy_and_rebuild_never_reach_the_repair ... ok
+test an_unrecordable_outcome_still_reaches_the_journal ... ok
 test consent_and_one_outcome_row_per_object_are_journaled_without_paths ... ok
+test open_copy_and_rebuild_never_reach_the_repair ... ok
+test the_consent_statement_id_is_pinned ... ok
 test the_consent_statement_names_what_changes ... ok
+test the_command_is_refused_for_another_caller ... ok
 test the_command_is_refused_without_consent_and_writes_nothing ... ok
 test the_candidate_query_lists_heads_without_their_version_inventory ... ok
-test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
 ```
 
 `cargo test -p filesquid-api --locked --test features` (this task's feature, then the harness summary; the skipped scenarios belong to features whose steps land with later tasks):
@@ -153,6 +159,20 @@ Feature: Local library create, open, copy, rebuild and version-inventory repair
 211 scenarios (105 passed, 106 skipped)
 488 steps (382 passed, 106 skipped)
 ```
+
+## Cubic review
+
+Round 1 on `5b382c1`: 18 findings (P1 2, P2 16, P3 0). Fixed in the next commit:
+
+- The repair reopens each located object and refuses one whose ID changed (`object_not_found`); refusal versions come from the reopened object (`a_damaged_interrupted_repair_is_refused_without_writing_the_sidecar`).
+- Large files are streamed with the checks of `read_verified` (tag and size before and after, byte count, SHA-256 on content-addressed backends), and a changed source aborts the upload (`copy_refuses_a_large_source_file_that_changes_while_it_is_copied`).
+- The copy refuses a destination that gains a file it did not write (`copy_refuses_a_destination_that_gains_a_file_during_the_copy`) and keeps version sidecars of any known algorithm (`copy_keeps_version_sidecars_of_another_algorithm`).
+- Create treats an empty directory or link as not empty (`create_refuses_a_folder_holding_only_an_empty_directory_or_link`).
+- Retryability: only storage outages are `unavailable`; other storage failures are `internal` or `storage_failed`; reservation errors other than held, lost or an outage are `reservation_failed`; a retryable refusal maps to a retryable API error.
+- Candidates exclude heads with an unlisted file (`an_unlisted_file_in_the_head_is_neither_offered_nor_repaired`); the rebuild records a per-object validation failure and goes on.
+- Tests: the consent statement ID is pinned, damaged resumes and a bad root sidecar are refused without writing, and the fixture's snapshot pages and its staging keys are unique.
+
+Answered without code: create's emptiness check is not atomic with the declaration write (no backend offers a multi-key atomic create, the declaration is `IfAbsent`, and a file added at that moment leaves a valid storage root with an extra file); and the plan row's server-owner scope, now stated in its Status line.
 
 ## Mocked Environment Variables
 

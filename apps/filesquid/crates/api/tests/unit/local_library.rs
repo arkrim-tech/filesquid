@@ -8,6 +8,7 @@ mod fixture;
 use filesquid_api::journal::Outcome;
 use filesquid_api::local_library::LocalLibraryError;
 use filesquid_ocfl::storage::{MemoryBackend, StorageBackend, MAX_PUT_BYTES};
+use filesquid_ocfl::DigestAlgorithm;
 use fixture::{key, library, ready, CountingBackend, Rig};
 
 /// Paths or storage keys that must never appear in answers or the journal.
@@ -47,6 +48,15 @@ fn create_refuses_a_folder_that_is_not_empty() {
     assert_eq!(journaled.len(), 1);
     assert_eq!(journaled[0].outcome, Outcome::Failed);
     assert_eq!(journaled[0].error_code.as_deref(), Some("root_not_empty"));
+}
+
+#[test]
+fn create_refuses_a_folder_holding_only_an_empty_directory_or_link() {
+    let rig = Rig::new();
+    rig.root.break_hierarchy();
+    let err = ready(rig.service.create_root("owner", &library(), &rig.root)).expect_err("refused");
+    assert_eq!(err.error_code(), "root_not_empty");
+    assert_eq!(rig.root.writes(), 0, "nothing written");
 }
 
 #[test]
@@ -144,6 +154,66 @@ fn copy_streams_a_file_larger_than_one_put() {
     assert!(report.bytes > MAX_PUT_BYTES);
     let copied = ready(dest.head(&key("obj-big/v1/content/big.bin"))).expect("copied");
     assert_eq!(copied.size, big.len() as u64);
+}
+
+#[test]
+fn copy_refuses_a_large_source_file_that_changes_while_it_is_copied() {
+    let rig = Rig::with_root();
+    let big = vec![7u8; (MAX_PUT_BYTES + 1024) as usize];
+    let draft = rig.draft_whole("urn:uuid:big", "big.bin", &big);
+    rig.commit("obj-big", None, &draft).expect("commit");
+    rig.root
+        .replace_after_read("obj-big/v1/content/big.bin", vec![9u8; big.len()]);
+    let dest = CountingBackend::new();
+    let err = ready(
+        rig.service
+            .copy_snapshot("owner", &library(), &rig.root, &dest),
+    )
+    .expect_err("refused");
+    assert_eq!(err.error_code(), "unavailable");
+    assert!(err.retryable());
+    let copied = ready(dest.exists(&key("obj-big/v1/content/big.bin"))).expect("exists");
+    assert!(!copied, "no mixed bytes are published");
+}
+
+#[test]
+fn copy_refuses_a_destination_that_gains_a_file_during_the_copy() {
+    let rig = Rig::with_root();
+    rig.object("obj-a", "urn:uuid:a");
+    let dest = CountingBackend::new();
+    dest.add_on_next_write("someone-else.txt");
+    let err = ready(
+        rig.service
+            .copy_snapshot("owner", &library(), &rig.root, &dest),
+    )
+    .expect_err("refused");
+    assert_eq!(err.error_code(), "destination_not_empty");
+}
+
+#[test]
+fn copy_keeps_version_sidecars_of_another_algorithm() {
+    let rig = Rig::with_root();
+    rig.object("obj-a", "urn:uuid:a");
+    let v1 = rig.bytes("obj-a/v1/inventory.json");
+    let sidecar = format!(
+        "{}  inventory.json\n",
+        DigestAlgorithm::Sha512.digest_hex(&v1)
+    );
+    ready(
+        rig.root
+            .put(&key("obj-a/v1/inventory.json.sha512"), sidecar.as_bytes()),
+    )
+    .expect("put");
+    ready(rig.root.put(&key("obj-a/v1/inventory.json.bak"), b"junk")).expect("put");
+    let dest = CountingBackend::new();
+    ready(
+        rig.service
+            .copy_snapshot("owner", &library(), &rig.root, &dest),
+    )
+    .expect("copy");
+    let copied: Vec<String> = dest.snapshot().into_iter().map(|(k, _)| k).collect();
+    assert!(copied.contains(&"obj-a/v1/inventory.json.sha512".to_string()));
+    assert!(!copied.contains(&"obj-a/v1/inventory.json.bak".to_string()));
 }
 
 #[test]
@@ -247,5 +317,9 @@ fn errors_carry_stable_codes_and_api_errors() {
     assert!(!err.retryable());
     let api: filesquid_api::ApiError = LocalLibraryError::Forbidden.into();
     assert_eq!(api.code(), filesquid_api::ErrorCode::Forbidden);
+    let incomplete = LocalLibraryError::refused("snapshot_incomplete", "msg");
+    assert!(incomplete.retryable());
+    let api: filesquid_api::ApiError = incomplete.into();
+    assert!(api.retryable(), "the API error keeps the retryability");
     assert!(LocalLibraryError::Unavailable.retryable());
 }

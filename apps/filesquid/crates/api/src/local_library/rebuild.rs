@@ -5,11 +5,11 @@
 //! Each object is opened at its committed head and validated in full. Validator errors, such
 //! as a digest mismatch left by an external edit, are reported per object and never adopted
 //! or repaired; an object whose head has no version inventory (W010) is flagged as a repair
-//! candidate, not repaired. An object that cannot be opened at all is reported by its error
-//! code only. Nothing is written.
+//! candidate, not repaired. An object that cannot be opened, resolved or validated is
+//! reported by its error code only, and the rebuild goes on. Nothing is written.
 
+use super::candidates::head_files;
 use super::error::{is_outage, LocalLibraryError};
-use super::repair::head_files;
 use filesquid_ocfl::read::{Object, StorageRoot};
 use filesquid_ocfl::storage::StorageBackend;
 use filesquid_ocfl::{validate_object, ReadError};
@@ -65,8 +65,12 @@ pub(super) async fn rebuild<B: StorageBackend>(
         unreadable: Vec::new(),
     };
     for root in storage.objects() {
-        match storage.open_object(root).await {
-            Ok(object) => report.objects.push(rebuilt(backend, &object).await?),
+        let read = match storage.open_object(root).await {
+            Ok(object) => rebuilt(backend, &object).await,
+            Err(err) => Err(err),
+        };
+        match read {
+            Ok(object) => report.objects.push(object),
             Err(err) => report.unreadable.push(unreadable(&err)?),
         }
     }
@@ -74,17 +78,17 @@ pub(super) async fn rebuild<B: StorageBackend>(
 }
 
 /// The rebuilt view of one opened object.
+///
+/// # Errors
+///
+/// A [`ReadError`] when its head state cannot be resolved or it cannot be validated (for
+/// example an engine bound); the rebuild records it for this object and goes on.
 async fn rebuilt<B: StorageBackend>(
     backend: &B,
     object: &Object<'_, B>,
-) -> Result<RebuiltObject, LocalLibraryError> {
-    let files = object
-        .state(object.head())
-        .map(|state| state.len())
-        .map_err(|err| LocalLibraryError::from_open(&err))?;
-    let report = validate_object(backend, object.root())
-        .await
-        .map_err(|err| LocalLibraryError::from_open(&err))?;
+) -> Result<RebuiltObject, ReadError> {
+    let files = object.state(object.head())?.len();
+    let report = validate_object(backend, object.root()).await?;
     let head = head_files(backend, object).await?;
     Ok(RebuiltObject {
         object_id: object.id().to_string(),
@@ -96,8 +100,8 @@ async fn rebuilt<B: StorageBackend>(
     })
 }
 
-/// The report entry of an object that could not be opened; a storage outage stops the
-/// rebuild instead.
+/// The report entry of an object that could not be opened or read; a storage outage stops
+/// the rebuild instead.
 fn unreadable(err: &ReadError) -> Result<UnreadableObject, LocalLibraryError> {
     if let ReadError::Storage(storage) = err {
         if is_outage(storage) {

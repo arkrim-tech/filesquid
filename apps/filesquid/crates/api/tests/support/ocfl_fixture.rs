@@ -16,16 +16,17 @@ use filesquid_api::EventBus;
 use filesquid_core::LibraryId;
 use filesquid_ocfl::digest::DigestAlgorithm;
 use filesquid_ocfl::storage::{
-    complete_immediately, write_whole, ByteRange, CompletedPart, ListPage, MemoryBackend,
-    ObjectMeta, Precondition, StorageBackend, StorageError, StorageKey, UploadId,
+    complete_immediately, read_verified, write_whole, ByteRange, CompletedPart, ListPage,
+    MemoryBackend, ObjectMeta, Precondition, StorageBackend, StorageError, StorageKey, UploadId,
+    MAX_CHUNK_BYTES, MAX_LIST_PAGE,
 };
 use filesquid_ocfl::write::{
     rfc3339_utc, Clock, CommitError, CommitReceipt, LeaseConfig, LeaseStore, ObjectWriter,
     VersionDraft,
 };
 use filesquid_ocfl::VersionNum;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 /// The fixed journal clock: 2026-10-18T00:00:00Z in Unix milliseconds.
 pub const NOW_MS: i64 = 1_792_281_600_000;
@@ -38,6 +39,9 @@ const LEASES: LeaseConfig = LeaseConfig {
     ttl_ms: 60_000,
     margin_ms: 10_000,
 };
+
+/// Upper bound on listing pages read by [`CountingBackend::snapshot`] (AGENTS.md §22).
+const MAX_SNAPSHOT_PAGES: usize = 1_000;
 
 /// Upper bound on journal pages read by [`Rig::journal`] (AGENTS.md §22).
 const MAX_JOURNAL_PAGES: usize = 100;
@@ -85,6 +89,9 @@ impl Clock for ManualClock {
 pub struct CountingBackend {
     inner: MemoryBackend,
     writes: AtomicU64,
+    broken_hierarchy: AtomicBool,
+    extra_on_write: Mutex<Option<String>>,
+    replace_after_read: Mutex<Option<(String, Vec<u8>)>>,
 }
 
 impl CountingBackend {
@@ -103,25 +110,66 @@ impl CountingBackend {
         self.writes.fetch_add(1, Ordering::SeqCst);
     }
 
-    /// Every key and its bytes, for before/after comparisons.
+    /// Every key and its bytes, for before/after comparisons, paging through the listing and
+    /// reading each value in bounded chunks (at most [`MAX_SNAPSHOT_PAGES`] pages).
     pub fn snapshot(&self) -> Vec<(String, Vec<u8>)> {
-        let page = ready(self.inner.list("", None, 1_000)).expect("list");
-        assert!(page.next.is_none(), "fixture roots stay below one page");
-        page.keys
-            .into_iter()
+        let mut keys = Vec::new();
+        let mut after: Option<StorageKey> = None;
+        for _ in 0..MAX_SNAPSHOT_PAGES {
+            let page = ready(self.inner.list("", after.as_ref(), MAX_LIST_PAGE)).expect("list");
+            keys.extend(page.keys);
+            match page.next {
+                Some(next) => after = Some(next),
+                None => break,
+            }
+        }
+        keys.into_iter()
             .map(|k| {
-                let size = ready(self.inner.head(&k)).expect("head").size;
-                let bytes = match size {
-                    0 => Vec::new(),
-                    n => ready(
-                        self.inner
-                            .get_range(&k, ByteRange::new(0, n).expect("range")),
-                    )
-                    .expect("read"),
-                };
+                let bytes = ready(read_verified(&self.inner, &k, MAX_CHUNK_BYTES)).expect("read");
                 (k.as_str().to_string(), bytes)
             })
             .collect()
+    }
+
+    /// Report an empty directory from [`StorageBackend::check_hierarchy`], as a folder that
+    /// holds one would.
+    pub fn break_hierarchy(&self) {
+        self.broken_hierarchy.store(true, Ordering::SeqCst);
+    }
+
+    /// Store `raw` (as another writer would) right after the next write succeeds.
+    pub fn add_on_next_write(&self, raw: &str) {
+        *self.extra_on_write.lock().expect("lock") = Some(raw.to_string());
+    }
+
+    /// Replace `raw` with `bytes` right after its next ranged read, as a writer changing the
+    /// file while it is being copied would.
+    pub fn replace_after_read(&self, raw: &str, bytes: Vec<u8>) {
+        *self.replace_after_read.lock().expect("lock") = Some((raw.to_string(), bytes));
+    }
+
+    /// Run the armed extra write, once.
+    async fn after_write(&self) {
+        let extra = self.extra_on_write.lock().expect("lock").take();
+        if let Some(raw) = extra {
+            self.inner.put(&key(&raw), b"other").await.expect("extra");
+        }
+    }
+
+    /// Run the armed replacement of `read`, once.
+    async fn after_read(&self, read: &StorageKey) {
+        let armed = {
+            let mut slot = self.replace_after_read.lock().expect("lock");
+            match slot.as_ref() {
+                Some((raw, _)) if raw == read.as_str() => slot.take(),
+                _ => None,
+            }
+        };
+        if let Some((raw, bytes)) = armed {
+            write_whole(&self.inner, &key(&raw), &bytes)
+                .await
+                .expect("replace");
+        }
     }
 }
 
@@ -142,11 +190,24 @@ impl StorageBackend for CountingBackend {
         precondition: &Precondition,
     ) -> Result<ObjectMeta, StorageError> {
         self.count();
-        self.inner.put_if(key, bytes, precondition).await
+        let meta = self.inner.put_if(key, bytes, precondition).await?;
+        self.after_write().await;
+        Ok(meta)
     }
 
     async fn get_range(&self, key: &StorageKey, range: ByteRange) -> Result<Vec<u8>, StorageError> {
-        self.inner.get_range(key, range).await
+        let bytes = self.inner.get_range(key, range).await?;
+        self.after_read(key).await;
+        Ok(bytes)
+    }
+
+    async fn check_hierarchy(&self, prefix: &str) -> Result<(), StorageError> {
+        if self.broken_hierarchy.load(Ordering::SeqCst) {
+            return Err(StorageError::EmptyDirectoryForbidden {
+                key: "empty".to_string(),
+            });
+        }
+        self.inner.check_hierarchy(prefix).await
     }
 
     async fn head(&self, key: &StorageKey) -> Result<ObjectMeta, StorageError> {
@@ -221,6 +282,8 @@ pub struct Rig {
     pub service: LocalLibraryService,
     /// The repair ledger the service records consents and outcomes in.
     pub ledger: Arc<MemoryRepairLedger>,
+    /// Drafts staged whole so far, so each gets its own staging key.
+    staged: AtomicU64,
     /// The journal store behind the bounded queue.
     pub journal: Arc<MemoryJournal>,
     writer: JournalWriter,
@@ -256,6 +319,7 @@ impl Rig {
             clock,
             service,
             ledger,
+            staged: AtomicU64::new(0),
             journal,
             writer,
         }
@@ -287,7 +351,8 @@ impl Rig {
     /// A draft of `object_id` with one file of `bytes`, staged whole (multipart above one put).
     pub fn draft_whole(&self, object_id: &str, path: &str, bytes: &[u8]) -> VersionDraft {
         let mut draft = VersionDraft::new(object_id, self.now());
-        let staged = key(&format!("stage/whole/{path}"));
+        let n = self.staged.fetch_add(1, Ordering::SeqCst);
+        let staged = key(&format!("stage/whole-{n}/{path}"));
         ready(write_whole(&self.staging, &staged, bytes)).expect("stage");
         draft.stage(path, staged);
         draft

@@ -7,8 +7,9 @@ mod fixture;
 use filesquid_api::auth::Principal;
 use filesquid_api::journal::{JournalEntry, Outcome};
 use filesquid_api::local_library::{
-    RepairResult, CONSENT_STATEMENT, MAX_REPAIR_OBJECTS, REPAIR_OPERATION,
+    RepairResult, CONSENT_STATEMENT, CONSENT_STATEMENT_ID, MAX_REPAIR_OBJECTS, REPAIR_OPERATION,
 };
+use filesquid_ocfl::storage::StorageBackend;
 use filesquid_ocfl::write::{CommitError, VersionReservations};
 use filesquid_ocfl::DigestAlgorithm;
 use fixture::{library, ready, Rig};
@@ -333,6 +334,66 @@ fn the_candidate_query_lists_heads_without_their_version_inventory() {
     assert!(!found.candidates[0].interrupted);
     assert!(found.candidates[1].interrupted);
     assert_eq!(found.candidates[0].digest_algorithm, "sha256");
+}
+
+#[test]
+fn the_consent_statement_id_is_pinned() {
+    assert_eq!(CONSENT_STATEMENT_ID, "version_inventory_repair.v1");
+}
+
+#[test]
+fn a_damaged_interrupted_repair_is_refused_without_writing_the_sidecar() {
+    let rig = Rig::with_root();
+    rig.interrupted_repair("obj-a", "urn:uuid:a");
+    ready(
+        rig.root
+            .put(&fixture::key("obj-a/v2/content/b.txt"), b"tampered"),
+    )
+    .expect("tamper");
+    let answer = repair_as_owner(&rig, rig.consented(&["urn:uuid:a"])).expect("answered");
+    assert_eq!(
+        answer.objects[0].error_code.as_deref(),
+        Some("object_invalid")
+    );
+    assert_eq!(answer.objects[0].version.as_deref(), Some("v2"));
+    assert!(
+        !rig.stored("obj-a/v2/inventory.json.sha256"),
+        "no sidecar written"
+    );
+}
+
+#[test]
+fn an_unlisted_file_in_the_head_is_neither_offered_nor_repaired() {
+    let rig = Rig::with_root();
+    rig.interrupted_repair("obj-a", "urn:uuid:a");
+    ready(rig.root.put(&fixture::key("obj-a/v2/stray.tmp"), b"junk")).expect("stray");
+    let found = ready(
+        rig.service
+            .repair_candidates("owner", &library(), &rig.root),
+    )
+    .expect("query");
+    assert!(found.candidates.is_empty(), "{found:?}");
+    let answer = repair_as_owner(&rig, rig.consented(&["urn:uuid:a"])).expect("answered");
+    assert_eq!(answer.objects[0].result, RepairResult::Refused);
+    assert!(
+        !rig.stored("obj-a/v2/inventory.json.sha256"),
+        "no sidecar written"
+    );
+}
+
+#[test]
+fn a_root_sidecar_that_does_not_commit_the_root_inventory_is_refused() {
+    let rig = Rig::with_root();
+    rig.w010_object("obj-a", "urn:uuid:a");
+    ready(rig.root.put(
+        &fixture::key("obj-a/inventory.json.sha256"),
+        b"0000  inventory.json\n",
+    ))
+    .expect("bad sidecar");
+    let writes = rig.root.writes();
+    let answer = repair_as_owner(&rig, rig.consented(&["urn:uuid:a"])).expect("answered");
+    assert_eq!(answer.objects[0].result, RepairResult::Refused);
+    assert_eq!(rig.root.writes(), writes, "nothing written");
 }
 
 #[test]

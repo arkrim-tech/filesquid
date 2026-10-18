@@ -2,28 +2,33 @@
 //!
 //! The copy holds what the source has committed and nothing else: the storage-root
 //! declaration (and `ocfl_layout.json` and `ocfl_1.1.txt` when present) and, per object, its
-//! declaration, its root inventory and sidecar, each version inventory and sidecar present,
-//! and every content path the manifest lists. Files no inventory lists, such as a stray file
-//! or a reservation, are left behind. Every file is written with `IfAbsent` into a
-//! destination that MUST be empty, so the copy never replaces anything, and the source is only
-//! read. A head that is still being published refuses the copy until it completes. The copy
-//! is then validated object by object and its findings reported, so the owner gets a checked
-//! OCFL root readable with ordinary tools.
+//! declaration, its root inventory and sidecar, each version inventory present with each
+//! sidecar it has (a version may use another digest algorithm than the root), and every
+//! content path the manifest lists. Files no inventory lists, such as a stray file or a
+//! reservation, are left behind. Every file is written with `IfAbsent` into a destination
+//! that MUST be empty, so the copy never replaces anything, and the source is only read
+//! ([`super::transfer`] refuses a source file that changes while it is copied). A head that
+//! is still being published refuses the copy until it completes. When every file is written,
+//! the destination must hold exactly the files copied, and each object of the copy is
+//! validated and its findings reported, so the owner gets a checked OCFL root readable with
+//! ordinary tools.
 
-use super::error::LocalLibraryError;
+use super::error::{is_outage, LocalLibraryError};
 use super::root::is_empty;
-use filesquid_ocfl::inventory::{sidecar_name, Inventory, INVENTORY_FILE};
+use super::transfer::copy_file;
+use filesquid_ocfl::inventory::{sidecar_algorithm, sidecar_name, INVENTORY_FILE};
 use filesquid_ocfl::read::{Object, StorageRoot};
-use filesquid_ocfl::storage::{
-    read_verified, ChunkReader, MultipartWriter, Precondition, StorageBackend, StorageError,
-    StorageKey, MAX_CHUNK_BYTES, MAX_PART_BYTES, MAX_PUT_BYTES,
-};
-use filesquid_ocfl::validate_object;
+use filesquid_ocfl::storage::{StorageBackend, StorageError, StorageKey, MAX_LIST_PAGE};
+use filesquid_ocfl::{validate_object, DigestAlgorithm, ReadError};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 /// Optional storage-root files copied when present, besides the declaration.
 const ROOT_EXTRAS: [&str; 2] = ["ocfl_layout.json", "ocfl_1.1.txt"];
+
+/// Most keys one version directory listing of `inventory.json.*` reads: one per digest
+/// algorithm a sidecar can name, with room to spare.
+const MAX_SIDECARS: usize = 16;
 
 /// An object of the copy whose validation found errors.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,10 +59,10 @@ struct ObjectFiles {
     keys: BTreeSet<String>,
 }
 
-/// Files and bytes written so far.
+/// The keys written so far and their bytes.
 #[derive(Default)]
 struct Tally {
-    files: u64,
+    written: BTreeSet<String>,
     bytes: u64,
 }
 
@@ -69,9 +74,10 @@ struct Tally {
 ///
 /// # Errors
 ///
-/// `destination_not_empty` when `dest` holds anything (or gains a file during the copy);
-/// `snapshot_incomplete` (retryable) while a head is being published; `snapshot_unreadable`
-/// for an object that cannot be opened; the open errors of the source; `unavailable`.
+/// `destination_not_empty` when `dest` holds anything, or gains a file the copy did not
+/// write; `snapshot_incomplete` (retryable) while a head is being published;
+/// `snapshot_unreadable` for an object that cannot be opened; the open errors of the source;
+/// `unavailable` for a storage outage, including a source file that changed while copied.
 pub(super) async fn copy_snapshot<S: StorageBackend, D: StorageBackend>(
     source: &S,
     dest: &D,
@@ -87,16 +93,17 @@ pub(super) async fn copy_snapshot<S: StorageBackend, D: StorageBackend>(
     let objects = plan_objects(source, &storage).await?;
     let mut tally = Tally::default();
     for name in &root_keys {
-        copy_if_present(source, dest, name, &mut tally).await?;
-    }
-    for object in &objects {
-        for name in &object.keys {
-            copy_file(source, dest, &key(name)?, &mut tally).await?;
+        if exists(source, name).await? {
+            copy_one(source, dest, name, &mut tally).await?;
         }
     }
+    for name in objects.iter().flat_map(|object| &object.keys) {
+        copy_one(source, dest, name, &mut tally).await?;
+    }
+    refuse_unplanned(dest, &tally.written).await?;
     Ok(CopyReport {
         objects: objects.len(),
-        files: tally.files,
+        files: tally.written.len() as u64,
         bytes: tally.bytes,
         invalid_objects: validate_copies(dest, &objects).await?,
     })
@@ -137,8 +144,14 @@ async fn plan_objects<S: StorageBackend>(
     Ok(objects)
 }
 
-/// The refusal for an object that cannot be opened, logging why to stdout only.
-fn unreadable(err: &filesquid_ocfl::ReadError) -> LocalLibraryError {
+/// The error for an object that cannot be opened, logging why to stdout only: a storage
+/// outage is `unavailable`; anything else refuses the copy as `snapshot_unreadable`.
+fn unreadable(err: &ReadError) -> LocalLibraryError {
+    if let ReadError::Storage(storage) = err {
+        if is_outage(storage) {
+            return LocalLibraryError::from_storage(storage);
+        }
+    }
     tracing::info!(target: super::LOG_TARGET, error = %err, "snapshot object unreadable");
     LocalLibraryError::refused(
         "snapshot_unreadable",
@@ -148,22 +161,26 @@ fn unreadable(err: &filesquid_ocfl::ReadError) -> LocalLibraryError {
 }
 
 /// The keys of `object`'s committed files: declaration, root inventory and sidecar, version
-/// inventories and sidecars present, and manifest content paths.
+/// inventories and their sidecars present, and manifest content paths.
 async fn object_files<S: StorageBackend>(
     source: &S,
     object: &Object<'_, S>,
 ) -> Result<ObjectFiles, LocalLibraryError> {
     let inventory = object.inventory();
     let root = object.root().to_string();
-    let sidecar = sidecar_name(inventory.digest_algorithm);
     let mut keys = BTreeSet::new();
     keys.insert(format!("{root}/{}", object.declaration().file_name()));
     keys.insert(format!("{root}/{INVENTORY_FILE}"));
-    keys.insert(format!("{root}/{sidecar}"));
-    for name in version_files(inventory, &sidecar) {
-        let full = format!("{root}/{name}");
-        if exists(source, &full).await? {
-            keys.insert(full);
+    keys.insert(format!(
+        "{root}/{}",
+        sidecar_name(inventory.digest_algorithm)
+    ));
+    for version in inventory.versions.keys() {
+        let dir = format!("{root}/{version}");
+        let version_inventory = format!("{dir}/{INVENTORY_FILE}");
+        if exists(source, &version_inventory).await? {
+            keys.insert(version_inventory);
+            keys.extend(version_sidecars(source, &dir).await?);
         }
     }
     let content = inventory.manifest.values().flatten();
@@ -175,13 +192,28 @@ async fn object_files<S: StorageBackend>(
     })
 }
 
-/// `vN/inventory.json` and `vN/<sidecar>` of every version of `inventory`.
-fn version_files(inventory: &Inventory, sidecar: &str) -> Vec<String> {
-    inventory
-        .versions
-        .keys()
-        .flat_map(|v| [format!("{v}/{INVENTORY_FILE}"), format!("{v}/{sidecar}")])
-        .collect()
+/// The sidecars in the version directory `dir`: `inventory.json.<algorithm>` for every
+/// algorithm the engine knows, whichever the version inventory uses.
+async fn version_sidecars<S: StorageBackend>(
+    source: &S,
+    dir: &str,
+) -> Result<Vec<String>, LocalLibraryError> {
+    let prefix = format!("{dir}/{INVENTORY_FILE}.");
+    let page = source
+        .list(&prefix, None, MAX_SIDECARS)
+        .await
+        .map_err(|err| LocalLibraryError::from_storage(&err))?;
+    let named = |raw: &str| {
+        let name = raw.rsplit('/').next().unwrap_or(raw);
+        sidecar_algorithm(name).and_then(DigestAlgorithm::from_name)
+    };
+    Ok(page
+        .keys
+        .iter()
+        .map(StorageKey::as_str)
+        .filter(|raw| named(raw).is_some())
+        .map(String::from)
+        .collect())
 }
 
 /// Whether `raw` exists on `backend`.
@@ -192,41 +224,23 @@ async fn exists<B: StorageBackend>(backend: &B, raw: &str) -> Result<bool, Local
         .map_err(|err| LocalLibraryError::from_storage(&err))
 }
 
-/// Copy `raw` when the source has it.
-async fn copy_if_present<S: StorageBackend, D: StorageBackend>(
+/// Copy `raw` and count it.
+async fn copy_one<S: StorageBackend, D: StorageBackend>(
     source: &S,
     dest: &D,
     raw: &str,
     tally: &mut Tally,
 ) -> Result<(), LocalLibraryError> {
-    if !exists(source, raw).await? {
-        return Ok(());
-    }
-    copy_file(source, dest, &key(raw)?, tally).await
-}
-
-/// Copy one file, whole when it fits one put and streamed part by part otherwise, never over
-/// an existing file.
-async fn copy_file<S: StorageBackend, D: StorageBackend>(
-    source: &S,
-    dest: &D,
-    key: &StorageKey,
-    tally: &mut Tally,
-) -> Result<(), LocalLibraryError> {
-    let size = source.head(key).await.map_err(|e| copy_error(&e))?.size;
-    let copied = if size <= MAX_PUT_BYTES {
-        copy_whole(source, dest, key).await
-    } else {
-        copy_streamed(source, dest, key).await
-    };
-    copied.map_err(|err| copy_error(&err))?;
-    tally.files += 1;
-    tally.bytes += size;
+    let bytes = copy_file(source, dest, &key(raw)?)
+        .await
+        .map_err(|err| copy_error(&err))?;
+    tally.written.insert(raw.to_string());
+    tally.bytes += bytes;
     Ok(())
 }
 
 /// A storage failure during the copy: a file that appeared at the destination refuses the
-/// copy; anything else is `unavailable`.
+/// copy; anything else maps as [`LocalLibraryError::from_storage`].
 fn copy_error(err: &StorageError) -> LocalLibraryError {
     match err {
         StorageError::PreconditionFailed { .. } => destination_not_empty(),
@@ -234,63 +248,29 @@ fn copy_error(err: &StorageError) -> LocalLibraryError {
     }
 }
 
-/// Copy a file of at most one put as one consistent read.
-async fn copy_whole<S: StorageBackend, D: StorageBackend>(
-    source: &S,
+/// Refuse the copy when `dest` holds a key the copy did not write. The listing reads at most
+/// one page more than the written keys fill, so a destination with more keys than that is
+/// refused without being read to its end.
+async fn refuse_unplanned<D: StorageBackend>(
     dest: &D,
-    key: &StorageKey,
-) -> Result<(), StorageError> {
-    let bytes = read_verified(source, key, MAX_CHUNK_BYTES).await?;
-    dest.put_if(key, &bytes, &Precondition::IfAbsent).await?;
-    Ok(())
-}
-
-/// Copy a large file through a multipart upload, aborting the upload on failure.
-async fn copy_streamed<S: StorageBackend, D: StorageBackend>(
-    source: &S,
-    dest: &D,
-    key: &StorageKey,
-) -> Result<(), StorageError> {
-    let mut writer = MultipartWriter::start(dest, key.clone()).await?;
-    let uploaded = upload_parts(source, key, &mut writer).await;
-    let finished = match uploaded {
-        Ok(()) => writer
-            .finish(Some(&Precondition::IfAbsent))
+    written: &BTreeSet<String>,
+) -> Result<(), LocalLibraryError> {
+    let max_pages = written.len() / MAX_LIST_PAGE + 2;
+    let mut after: Option<StorageKey> = None;
+    for _ in 0..max_pages {
+        let page = dest
+            .list("", after.as_ref(), MAX_LIST_PAGE)
             .await
-            .map(|_| ()),
-        Err(err) => Err(err),
-    };
-    if let Err(err) = finished {
-        if let Err(abort) = writer.abort().await {
-            tracing::warn!(target: super::LOG_TARGET, error = %abort, "could not abort a copy upload");
+            .map_err(|err| LocalLibraryError::from_storage(&err))?;
+        if page.keys.iter().any(|k| !written.contains(k.as_str())) {
+            return Err(destination_not_empty());
         }
-        return Err(err);
-    }
-    Ok(())
-}
-
-/// Read `key` chunk by chunk and upload parts of up to [`MAX_PART_BYTES`]: a part is sent
-/// before one more chunk could take it over the bound. The reader stops
-/// at the end of the object, and [`MultipartWriter::write_part`] refuses more parts than the
-/// backend bound, so the loop is bounded.
-async fn upload_parts<S: StorageBackend, D: StorageBackend>(
-    source: &S,
-    key: &StorageKey,
-    writer: &mut MultipartWriter<'_, D>,
-) -> Result<(), StorageError> {
-    let mut reader = ChunkReader::new(source, key.clone(), MAX_CHUNK_BYTES)?;
-    let mut part = Vec::new();
-    while let Some(chunk) = reader.next_chunk().await? {
-        part.extend_from_slice(&chunk);
-        if part.len() as u64 + MAX_CHUNK_BYTES > MAX_PART_BYTES {
-            writer.write_part(&part).await?;
-            part.clear();
+        match page.next {
+            Some(next) => after = Some(next),
+            None => return Ok(()),
         }
     }
-    if !part.is_empty() {
-        writer.write_part(&part).await?;
-    }
-    Ok(())
+    Err(destination_not_empty())
 }
 
 /// Validate every copied object and keep those with errors.

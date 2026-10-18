@@ -60,11 +60,15 @@ impl LocalLibraryError {
         }
     }
 
-    /// The API error code (HTTP status) for this error.
+    /// The API error code (HTTP status and retryability) for this error. A refusal a retry
+    /// may clear answers `unavailable`, so the API error keeps [`Self::retryable`].
     pub fn api_code(&self) -> ErrorCode {
         match self {
             Self::Invalid { .. } => ErrorCode::InvalidRequest,
             Self::Forbidden => ErrorCode::Forbidden,
+            Self::Refused { code, .. } if RETRYABLE_REFUSALS.contains(code) => {
+                ErrorCode::Unavailable
+            }
             Self::Refused { .. } => ErrorCode::Conflict,
             Self::Unavailable => ErrorCode::Unavailable,
             Self::Internal => ErrorCode::Internal,
@@ -90,10 +94,16 @@ impl LocalLibraryError {
         }
     }
 
-    /// Map a storage failure, logging its detail to stdout only.
+    /// Map a storage failure, logging its detail to stdout only: an outage is retryable
+    /// `unavailable`; any other failure (an invalid key, a bound, a link) is `internal`,
+    /// because a retry will not change it.
     pub(super) fn from_storage(err: &StorageError) -> Self {
         tracing::info!(target: LOG_TARGET, error = %err, "library storage failed");
-        Self::Unavailable
+        if is_outage(err) {
+            Self::Unavailable
+        } else {
+            Self::Internal
+        }
     }
 
     /// Map a failure to open a storage root or object: Git metadata is `git_in_root`, a

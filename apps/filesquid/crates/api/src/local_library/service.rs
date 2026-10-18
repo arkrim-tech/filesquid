@@ -9,12 +9,13 @@
 //! in one transaction. A refused repair command, and any outcome the ledger cannot take, goes
 //! through the bounded queue instead, so no refusal or outcome is left unjournaled.
 
+use super::candidates::candidates;
 use super::error::LocalLibraryError;
 use super::ledger::{RepairLedger, RepairRecord};
 use super::rebuild::{rebuild, RebuildReport};
 use super::repair::{
-    candidates, locate, recorded, repair_object, Located, ObjectRefusal, ObjectRepair,
-    RepairAnswer, RepairCandidates, RepairRequest, RepairResult, REPAIR_OPERATION,
+    locate, recorded, repair_object, ObjectRefusal, ObjectRepair, RepairAnswer, RepairCandidates,
+    RepairRequest, RepairResult, REPAIR_OPERATION,
 };
 use super::root::{create_root, open_root, RootSummary};
 use super::snapshot::{copy_snapshot, CopyReport};
@@ -200,17 +201,13 @@ impl LocalLibraryService {
         let mut objects = Vec::with_capacity(request.object_ids.len());
         for object_id in &request.object_ids {
             let outcome = match located.get(object_id) {
-                Some(found) => repair_object(root, reservations, &holder, found).await,
-                None => Err(ObjectRefusal {
-                    code: "object_not_found",
-                    retryable: false,
-                }),
+                Some(found) => repair_object(root, reservations, &holder, object_id, found).await,
+                None => Err(ObjectRefusal::fixed("object_not_found")),
             };
             let target = Target {
                 actor,
                 library_id: &request.library_id,
                 object_id,
-                located: located.get(object_id),
             };
             objects.push(self.record_outcome(&target, outcome));
         }
@@ -252,7 +249,7 @@ impl LocalLibraryService {
     ) -> ObjectRepair {
         let version = match &outcome {
             Ok(receipt) => Some(receipt.version.to_string()),
-            Err(_) => target.located.map(|found| found.head.clone()),
+            Err(refusal) => refusal.version.clone(),
         };
         let entry = outcome_entry(target, version.as_deref(), &outcome).at_ms((self.clock)());
         let record = RepairRecord {
@@ -305,7 +302,6 @@ struct Target<'a> {
     actor: &'a str,
     library_id: &'a LibraryId,
     object_id: &'a str,
-    located: Option<&'a Located>,
 }
 
 /// Only the desktop owner may repair. A server library owner becomes a [`Principal`] with
