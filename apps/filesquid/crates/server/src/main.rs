@@ -24,7 +24,7 @@ const TICK: Duration = Duration::from_secs(1);
 async fn main() {
     let layer = JournalLayer::new();
     telemetry::init(layer.clone());
-    let config = match ServerConfig::from_lookup(|key| std::env::var(key).ok()) {
+    let config = match ServerConfig::from_env() {
         Ok(config) => config,
         Err(message) => {
             tracing::error!(%message, "invalid configuration");

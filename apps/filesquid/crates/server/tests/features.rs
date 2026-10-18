@@ -114,7 +114,11 @@ fn setting_value(setting: &str) -> Option<String> {
 /// The configured value for an example `value` of the refusal outline.
 fn unusable_value(value: &str) -> String {
     match value {
-        "a name of 257 characters" => format!("{VALUE_MARKER}{}", "n".repeat(257)),
+        "a name of 257 characters" => {
+            let value = format!("{VALUE_MARKER}{}", "n".repeat(257 - VALUE_MARKER.len()));
+            assert_eq!(value.chars().count(), 257, "one character over the limit");
+            value
+        }
         "a name with a control character" => format!("{VALUE_MARKER}\u{7}Team"),
         other => panic!("unknown value {other:?}"),
     }

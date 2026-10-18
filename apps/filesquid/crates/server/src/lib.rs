@@ -123,6 +123,34 @@ impl ServerConfig {
     }
 }
 
+impl ServerConfig {
+    /// Build configuration from the process environment. Performs environment reads.
+    ///
+    /// # Errors
+    /// Any [`from_lookup`](Self::from_lookup) error, or a `FILESQUID_OPERATOR_NAME` that is
+    /// not valid Unicode ([`require_unicode_operator_name`]), which would otherwise read as
+    /// unset.
+    pub fn from_env() -> Result<Self, String> {
+        let operator = std::env::var_os(OPERATOR_NAME_VARIABLE);
+        require_unicode_operator_name(operator.as_deref())?;
+        Self::from_lookup(|key| std::env::var(key).ok())
+    }
+}
+
+/// Refuse a `FILESQUID_OPERATOR_NAME` that is set but not valid Unicode, with a message that
+/// names the variable and never the value. Unset is accepted. Pure.
+///
+/// # Errors
+/// The value is not valid Unicode.
+pub fn require_unicode_operator_name(value: Option<&std::ffi::OsStr>) -> Result<(), String> {
+    match value {
+        Some(raw) if raw.to_str().is_none() => Err(format!(
+            "{OPERATOR_NAME_VARIABLE} is not usable: the operator name is not valid Unicode; set 1 to 256 characters with no control characters, or leave it unset"
+        )),
+        _ => Ok(()),
+    }
+}
+
 /// Parse the configured `FILESQUID_OPERATOR_NAME`: unset or blank is `None`. Pure.
 ///
 /// # Errors

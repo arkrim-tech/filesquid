@@ -11,8 +11,9 @@ use filesquid_api::trace_layer::JournalLayer;
 use filesquid_api::ApiState;
 use filesquid_native::HostMonitor;
 use filesquid_server::{
-    app, operator_unnamed_entry, operator_unnamed_line, start_server, start_server_writing_to,
-    ServerConfig, OPERATOR_NAME_VARIABLE, OPERATOR_UNNAMED_OPERATION,
+    app, operator_unnamed_entry, operator_unnamed_line, require_unicode_operator_name,
+    start_server, start_server_writing_to, ServerConfig, OPERATOR_NAME_VARIABLE,
+    OPERATOR_UNNAMED_OPERATION,
 };
 use http_body_util::BodyExt;
 use std::io::Write;
@@ -281,4 +282,45 @@ fn the_binary_prints_the_warning_even_with_logging_off() {
     assert!(line.contains("\"level\":\"WARN\""), "{line}");
     assert!(line.contains(OPERATOR_NAME_VARIABLE), "{line}");
     assert!(!line.contains(TOKEN), "{line}");
+}
+
+/// A non-Unicode `FILESQUID_OPERATOR_NAME` is refused, not read as unset, and the message
+/// names the variable without the value.
+#[cfg(unix)]
+#[test]
+fn a_non_unicode_operator_name_is_refused_without_echoing_it() {
+    use std::os::unix::ffi::OsStrExt;
+    let value = std::ffi::OsStr::from_bytes(b"Leakybytes\xff\xfe");
+    let message = require_unicode_operator_name(Some(value)).expect_err("refused");
+    assert!(message.contains(OPERATOR_NAME_VARIABLE), "{message}");
+    assert!(!message.contains("Leakybytes"), "{message}");
+    assert_eq!(require_unicode_operator_name(None), Ok(()));
+    let unicode = std::ffi::OsStr::new("Garderen Family");
+    assert_eq!(require_unicode_operator_name(Some(unicode)), Ok(()));
+}
+
+/// The real binary refuses to start with a non-Unicode `FILESQUID_OPERATOR_NAME`.
+#[cfg(unix)]
+#[test]
+fn the_binary_refuses_a_non_unicode_operator_name() {
+    use std::os::unix::ffi::OsStrExt;
+    let dir = data_dir("binary-non-unicode");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_filesquid-server"))
+        .env(
+            OPERATOR_NAME_VARIABLE,
+            std::ffi::OsStr::from_bytes(b"Leakybytes\xff"),
+        )
+        .env("FILESQUID_ADMIN_TOKEN", TOKEN)
+        .env("FILESQUID_DATA_DIR", &dir)
+        .env("FILESQUID_BIND", "127.0.0.1:0")
+        .output()
+        .expect("server binary runs");
+    assert!(!output.status.success(), "the server must not start");
+    let text = String::from_utf8_lossy(&output.stdout).to_string();
+    assert!(text.contains(OPERATOR_NAME_VARIABLE), "{text}");
+    assert!(!text.contains("Leakybytes"), "{text}");
+    assert!(
+        !dir.join("filesquid.sqlite").exists(),
+        "refused before opening"
+    );
 }

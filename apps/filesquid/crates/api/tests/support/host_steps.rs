@@ -258,6 +258,17 @@ fn sync_on(w: &mut MonitorWorld) {
     switch(w, service);
 }
 
+/// Longest wait for one expected event before the step fails instead of hanging the run.
+const EVENT_WAIT: Duration = Duration::from_secs(5);
+
+/// The next event on `subscription`, failing the step if none arrives within [`EVENT_WAIT`].
+async fn next_event(subscription: &mut filesquid_api::EventSubscription) -> ApiEvent {
+    tokio::time::timeout(EVENT_WAIT, subscription.next())
+        .await
+        .expect("an event within the wait")
+        .expect("the bus is open")
+}
+
 /// Every event already queued on each open subscription, appended per subscriber.
 async fn drain_all(w: &mut MonitorWorld) -> Vec<Vec<ApiEvent>> {
     let mut per_subscriber = Vec::new();
@@ -317,7 +328,7 @@ async fn resynced_subscriber(w: &mut MonitorWorld, hint: String) {
             serde_json::json!({ "n": n }),
         ));
     }
-    let first = subscription.next().await.expect("an event");
+    let first = next_event(&mut subscription).await;
     assert_eq!(first.topic, hint);
     w.host.resynced = true;
     w.subscriptions.push(subscription);
@@ -384,7 +395,7 @@ async fn inspect_both(w: &mut MonitorWorld, name: String) {
     let token = owner_token(w);
     read_host(w, Some(&token), &[]).await;
     for _ in 0..2 {
-        let event = subscription.next().await.expect("event");
+        let event = next_event(&mut subscription).await;
         assert_eq!(event.topic, name);
         w.host.answers.push(event.data);
     }

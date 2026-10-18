@@ -487,6 +487,34 @@ async fn a_refresh_without_a_change_sends_nothing() {
     assert!(drain(&mut subscription).await.is_empty());
 }
 
+/// A client that reconnects gets no replay of what it missed: the new subscription starts
+/// empty, and only rereading the route shows the current state (API-S-003, API-S-020).
+#[tokio::test]
+async fn a_client_that_reconnects_reads_the_current_descriptor_from_the_route() {
+    let (state, port) = switchable();
+    let host = state.host().expect("described");
+    let disconnected = state.events.subscription().expect("slot");
+    drop(disconnected);
+    port.set(HostedService::enrolled_at("backup.filesquid.tech", true, false).expect("valid"));
+    assert!(host.refresh_hosted_service());
+    let mut reconnected = state.events.subscription().expect("slot");
+    assert!(
+        drain(&mut reconnected).await.is_empty(),
+        "nothing is replayed"
+    );
+    let (status, body) = read_host(&state).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["hosted_service"]["enrolled"], true);
+    let contract: Value = serde_json::from_str(filesquid_api::CONTRACT).expect("contract");
+    let route = contract["paths"]["/api/v1/host"]["get"]["description"]
+        .as_str()
+        .expect("documented");
+    assert!(
+        route.contains("after events.resync or a reconnect"),
+        "{route}"
+    );
+}
+
 #[test]
 fn host_change_is_a_documented_topic() {
     assert_eq!(topic::HOST_CHANGE, "host.change");
@@ -575,8 +603,8 @@ fn assert_plain_text(text: &str) {
         .unwrap_or(0);
     assert!(hex_run < 16, "{text:?} looks like a token or key");
     assert!(
-        !text.chars().any(|c| c.is_ascii_digit()) || text.contains('.'),
-        "{text:?} looks like a size or count"
+        !text.chars().any(|c| c.is_ascii_digit()),
+        "{text:?} looks like a size, count or timestamp"
     );
     let file_like = [".jpg", ".png", ".pdf", ".txt", ".json", ".sqlite", ".mov"];
     assert!(

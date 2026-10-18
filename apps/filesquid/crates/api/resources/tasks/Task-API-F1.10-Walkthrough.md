@@ -19,12 +19,12 @@ Parents: [F-057 Desktop and server hosts](../../../../../../resources/prd.md#f-0
 | `operator_name` null on desktop and browser | `HostIdentity::desktop()` and `browser()` cannot carry one; `only_a_server_identity_can_carry_an_operator` | Met |
 | Operator trimmed, 1 to 256 characters, no control characters | `OperatorName::parse`; `an_operator_name_*` tests, server `the_operator_name_is_read_trimmed_from_the_environment` | Met |
 | Unset or blank: starts, null, one `server.operator_unnamed` warning to stdout and the journal at every start, naming the variable | The line is written straight to stdout, outside the `RUST_LOG` filter, and the entry is queued on the journal directly. Gates: server harness outline (3 examples, with the log filter off), `an_unnamed_server_starts_with_one_warning_*` (log filter off, journal layer attached, still one entry), `the_binary_prints_the_warning_even_with_logging_off`, `the_warning_is_written_at_every_start`, `without_a_journal_layer_*` | Met |
-| Too long or control character: refuses to start, names the variable, omits the value | server harness outline against the real binary, `an_unusable_operator_name_refuses_*` | Met |
+| Too long or control character: refuses to start, names the variable, omits the value | server harness outline against the real binary (the 257-character value is exactly 257 characters), `an_unusable_operator_name_refuses_*`; a value that is not valid Unicode is refused the same way instead of reading as unset (`a_non_unicode_operator_name_is_refused_without_echoing_it`, `the_binary_refuses_a_non_unicode_operator_name`) | Met |
 | Hosted service from an injected enrolment port; no enrolment state reports not enrolled | `EnrolmentPort`, `NotEnrolled`; `the_default_port_reports_exactly_not_enrolled` | Met (API-F4.1 brings the real port) |
 | Enrolled: lowercase bare DNS host name; backup and sync separate | `HostedService::enrolled_at`; `the_service_host_is_a_bare_dns_host_name`, `the_service_host_is_stored_lowercase`, `an_enrolled_service_reports_backup_and_sync_separately` | Met |
 | Privacy of answer and event | `the_answer_and_the_event_carry_nothing_private`, scenario "The descriptor and its event carry nothing private" | Met |
 | One `host.change` per change, whole descriptor, every subscriber, in order | `HostInfo::refresh_hosted_service`; `each_change_sends_one_host_change_*`, `a_refresh_without_a_change_sends_nothing`, scenario "A descriptor change reaches every subscriber" | Met. Trigger: whoever changes the enrolment state calls `refresh_hosted_service` right after the change (push, not poll). Host type and operator name never change in a running process, and both hosts use `NotEnrolled`, which never changes, so no host calls it yet; API-F4.1 calls it after every enrol, unenrol, backup switch and sync switch (stated in its plan row) |
-| Reread after `events.resync` or reconnect | contract route description; scenario "A client that missed events reads the descriptor again" | Met |
+| Reread after `events.resync` or reconnect | Resync: scenario "A client that missed events reads the descriptor again". Reconnect: `a_client_that_reconnects_reads_the_current_descriptor_from_the_route` shows that a new subscription replays nothing and the route answers the current state. The client's duty to reread is a contract statement (route description), checked by both tests; client behaviour itself is UI-F2.1b's to test | Met for the API side |
 | Contract holds route, action, schemas and topic | `openapi.json` 0.6.0; `unit_contract` drift tests including a real `host.change` publisher; `schema.d.ts` regenerated | Met |
 | Reading is not journaled | `reading_the_descriptor_is_not_journaled` | Met |
 | Redaction of answer, event payload and `server.operator_unnamed` entry | the two privacy tests above, `the_operator_unnamed_entry_carries_nothing_private`, server scenario redaction step | Met |
@@ -54,6 +54,10 @@ None. Tests use generated or fixed test tokens in temporary data directories.
 ## Cubic round 1
 
 Fixed: the unnamed-operator warning now reaches stdout whatever `RUST_LOG` says (with a test against the real binary); the refresh trigger is named in `host.rs`, this walkthrough and the API-F4.1 plan row; the README no longer says the UI shows the operator name; the forbidden-field lists in `host.rs` and the test doc comments match API-S-020; the `auth` module doc names the `host.read` exception; the stand-in member credential is explained where it is built; the duplicate binary-refusal test was removed (the feature harness keeps it); the Plan and ToDos were deleted.
+
+## Cubic round 2
+
+Fixed: the 257-character refusal value is now exactly 257 characters; `assert_plain_text` rejects any digit; every awaited event in the host steps is bounded by a 5-second timeout; a non-Unicode `FILESQUID_OPERATOR_NAME` is refused (`ServerConfig::from_env`, `require_unicode_operator_name`) instead of reading as unset; the README says "authenticated caller" and "non-blank, valid"; reconnect rereading has its own test.
 
 ## Test output
 
