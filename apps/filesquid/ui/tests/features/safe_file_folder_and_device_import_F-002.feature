@@ -23,13 +23,19 @@ Feature: Safe file, folder and device import
     Given a source file on macOS with known birth, modified and accessed times captured before FileSquid reads it, an owner, a mode, Finder tags and a quarantine attribute
     When I import it into a library
     Then the same OCFL version should contain the file and its file-record.md
-    And the file record should hold the original name and path, every timestamp, the owner, group and mode, every extended attribute with the quarantine and Finder tags decoded, the source volume, the host OS version and the FileSquid version
+    And the file record should hold the original name and path, the file size in bytes as reported and as verified, every timestamp, the owner, group and mode, every extended attribute with the quarantine and Finder tags decoded, the source volume, the host OS version and the FileSquid version
 
   Scenario: A failure between the content and its file record leaves a retryable pending import
     Given an import whose content has been verified
     When the import fails before the file record is committed
     Then no OCFL version should hold the file without its file record
     And the import should be listed as pending and retryable
+
+  Scenario: A size mismatch between source and stored bytes fails the import
+    Given a source file whose reported size differs from the bytes copied into the library
+    When I import it
+    Then the import should fail verification and stay pending and retryable
+    And no OCFL version should hold the file or its file record
 
   Scenario: A referenced import also gets a file record
     Given an explicit referenced import of a file that stays at its source location
