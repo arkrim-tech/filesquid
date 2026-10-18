@@ -45,11 +45,7 @@ export {
   type TextDirection,
 } from "./a11y/locale";
 export { REDUCED_MOTION_QUERY, prefersReducedMotion, type MotionEnvironment } from "./a11y/motion";
-export {
-  A11Y_DOCUMENT_STYLE_ID,
-  A11Y_STYLE,
-  installDocumentA11yStyle,
-} from "./components/a11y-style";
+export { A11Y_STYLE } from "./components/a11y-style";
 export { denialLabel, type DenialText } from "./components/denial";
 export { logoSource, type Distribution, type DistributionLogo } from "./distribution";
 export * from "./theme/index";

@@ -29,7 +29,7 @@ describe("resolveLocale", () => {
   });
   it("refuses a direction other than ltr or rtl, and an empty language", () => {
     const bad = { ...base, locale: { lang: "en", dir: "auto" } } as unknown as Distribution;
-    expect(() => resolveLocale(bad)).toThrow(/direction "auto"/);
+    expect(() => resolveLocale(bad)).toThrow(/^Distribution filesquid: direction "auto"/);
     expect(() => resolveLocale({ ...base, locale: { lang: " ", dir: "ltr" } })).toThrow(/language/);
   });
   it("trims the language tag and returns its canonical form", () => {
@@ -38,7 +38,7 @@ describe("resolveLocale", () => {
   });
   it("refuses a malformed language tag", () => {
     expect(() => resolveLocale({ ...base, locale: { lang: "en US", dir: "ltr" } })).toThrow(
-      /language "en US" is not a BCP 47 tag/,
+      /^Distribution filesquid: language "en US" is not a BCP 47 tag/,
     );
     expect(() => resolveLocale({ ...base, locale: { lang: "e", dir: "ltr" } })).toThrow(
       /not a BCP 47 tag/,

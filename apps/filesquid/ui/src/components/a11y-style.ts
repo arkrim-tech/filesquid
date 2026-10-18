@@ -29,21 +29,46 @@ const STYLE = `
 /** CSS text of the shared accessibility stylesheet; components prepend it to their own. */
 export const A11Y_STYLE = STYLE;
 
-/** Id of the document-level copy of the stylesheet. */
+/** Id of the document-level copy of the stylesheet (internal to `@filesquid/ui`). */
 export const A11Y_DOCUMENT_STYLE_ID = "fs-a11y-style";
 
+/** How many connected shells currently use the document-level copy, per document. */
+const documentUsers = new WeakMap<Document, number>();
+
+/** The document-level copy this module installed in `doc.head`, if present. */
+function ownDocumentStyle(doc: Document): HTMLStyleElement | null {
+  return doc.head.querySelector<HTMLStyleElement>(`:scope > style#${A11Y_DOCUMENT_STYLE_ID}`);
+}
+
 /**
- * Add one document-level copy of the shared rules to `doc.head`, so light-DOM content that a
- * distribution slots into a component (which shadow-root styles cannot reach beyond the
- * slotted element itself) gets the same focus ring, motion and contrast rules. Idempotent.
- * Side effect: mutates the document head.
+ * Take a reference to the document-level copy of the shared rules, adding it to `doc.head`
+ * when absent, so light-DOM content that a distribution slots into a component (which
+ * shadow-root styles cannot reach beyond the slotted element itself) gets the same focus ring,
+ * motion and contrast rules. Only this module's own `<style id="fs-a11y-style">` in the head
+ * counts as present; an unrelated element with that id does not. Internal: `<fs-app-shell>`
+ * calls it when connected and calls {@link releaseDocumentA11yStyle} when disconnected.
+ * Side effect: may mutate the document head.
  *
  * @param doc The document the component is connected to.
  */
-export function installDocumentA11yStyle(doc: Document): void {
-  if (doc.getElementById(A11Y_DOCUMENT_STYLE_ID)) return;
+export function retainDocumentA11yStyle(doc: Document): void {
+  documentUsers.set(doc, (documentUsers.get(doc) ?? 0) + 1);
+  if (ownDocumentStyle(doc)) return;
   const style = doc.createElement("style");
   style.id = A11Y_DOCUMENT_STYLE_ID;
   style.textContent = STYLE;
   doc.head.append(style);
+}
+
+/**
+ * Drop a reference taken with {@link retainDocumentA11yStyle}; the last release removes the
+ * document-level copy, so no global `!important` rule outlives the shells that need it.
+ * Side effect: may mutate the document head.
+ *
+ * @param doc The document the component was connected to.
+ */
+export function releaseDocumentA11yStyle(doc: Document): void {
+  const users = Math.max((documentUsers.get(doc) ?? 0) - 1, 0);
+  documentUsers.set(doc, users);
+  if (users === 0) ownDocumentStyle(doc)?.remove();
 }

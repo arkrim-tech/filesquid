@@ -17,7 +17,7 @@ import type { HealthStatus } from "../api/client";
 import { MONITOR_ROUTE } from "../app/routes";
 import { denialLabel } from "./denial";
 import type { FsThemeControl } from "./fs-theme-control";
-import { A11Y_STYLE, installDocumentA11yStyle } from "./a11y-style";
+import { A11Y_STYLE, releaseDocumentA11yStyle, retainDocumentA11yStyle } from "./a11y-style";
 import { focusElement, recoverFocus } from "../a11y/focus";
 
 /** The part of the API client the shell needs (injectable in tests). */
@@ -66,6 +66,8 @@ export class FsAppShell extends HTMLElement {
   /** Number of the newest health read; answers to older reads are discarded. */
   private healthRequest = 0;
   private readonly onThemeChange = () => this.showLogo();
+  /** The document holding this shell's reference to the document-level rules, while connected. */
+  private styledDocument?: Document;
 
   constructor() {
     super();
@@ -86,22 +88,28 @@ export class FsAppShell extends HTMLElement {
     if (this.isConnected) this.connect();
   }
 
-  /** Follow the theme and render when attached to the document. */
+  /**
+   * Take a reference to the document-level accessibility rules for slotted content, follow
+   * the theme and render when attached to the document.
+   */
   connectedCallback(): void {
+    this.styledDocument = this.ownerDocument;
+    retainDocumentA11yStyle(this.styledDocument);
     this.connect();
   }
 
-  /** Stop following the theme once detached. */
+  /**
+   * Stop following the theme and release the document-level rules once detached; the last
+   * shell to leave removes them.
+   */
   disconnectedCallback(): void {
     this.theme?.removeEventListener("change", this.onThemeChange);
+    if (this.styledDocument) releaseDocumentA11yStyle(this.styledDocument);
+    this.styledDocument = undefined;
   }
 
-  /**
-   * Install the document-level accessibility rules for slotted content, subscribe to the theme
-   * store and render.
-   */
+  /** Subscribe to the theme store and render. */
   private connect(): void {
-    if (this.isConnected) installDocumentA11yStyle(this.ownerDocument);
     this.theme?.addEventListener("change", this.onThemeChange);
     this.render();
   }

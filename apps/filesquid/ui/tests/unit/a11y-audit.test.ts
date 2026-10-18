@@ -3,7 +3,7 @@
  * without a text alternative and unnamed landmarks, through open shadow roots.
  */
 import { describe, expect, it } from "vitest";
-import { accessibilityViolations, accessibleName } from "../../src/a11y/audit";
+import { accessibilityViolations, accessibleName, effectiveRole } from "../../src/a11y/audit";
 import * as entry from "../../src/index";
 
 /** Build a detached container from markup. */
@@ -151,5 +151,43 @@ describe("accessibleName and the audit follow the accname rules (review round 1)
       { rule: "missing-alt", element: "img" },
       { rule: "missing-alt", element: "img" },
     ]);
+  });
+});
+
+describe("role tokens and content text (review round 2)", () => {
+  it("uses the first token of a fallback role list as the effective role", () => {
+    const root = html(`
+      <div role="switch checkbox" tabindex="0"></div>
+      <div role=" Slider  textbox " tabindex="0">50</div>
+      <div role="presentation button"></div>`);
+    const [first, second, third] = [...root.querySelectorAll("div")];
+    expect([first, second, third].map((el) => effectiveRole(el as Element))).toEqual([
+      "switch",
+      "slider",
+      "presentation",
+    ]);
+    expect(accessibilityViolations(root)).toEqual([
+      { rule: "unnamed-control", element: "div" },
+      { rule: "unnamed-control", element: "div" },
+    ]);
+  });
+  it("applies the content-name rule to the effective role only", () => {
+    const root = html(`<div role="switch checkbox">Wi-Fi</div><div role="slider switch">50</div>`);
+    const [named, slider] = [...root.querySelectorAll("div")];
+    expect(accessibleName(named as Element)).toBe("Wi-Fi");
+    expect(accessibleName(slider as Element)).toBe("");
+  });
+  it("finds a landmark by its effective role", () => {
+    expect(accessibilityViolations(html(`<div role="region group"></div>`))).toEqual([
+      { rule: "unnamed-landmark", element: "div" },
+    ]);
+  });
+  it("takes content names from text nodes only, never from comments", () => {
+    const root = html(
+      `<button type="button"><!-- icon only --></button><a href="/x">Go<!-- x --></a>`,
+    );
+    expect(accessibleName(root.querySelector("button") as Element)).toBe("");
+    expect(accessibleName(root.querySelector("a") as Element)).toBe("Go");
+    expect(accessibilityViolations(root)).toEqual([{ rule: "unnamed-control", element: "button" }]);
   });
 });

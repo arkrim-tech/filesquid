@@ -53,18 +53,32 @@ const CONTENT_ROLES = new Set([
   "treeitem",
 ]);
 
-/** Elements that need an accessible name when they can be operated. */
-const CONTROLS = [
-  "a[href]",
-  "button",
-  "input:not([type='hidden'])",
-  "select",
-  "textarea",
-  ...NAMED_ROLES.map((role) => `[role='${role}']`),
-].join(", ");
+/** Native elements that need an accessible name when they can be operated. */
+const NATIVE_CONTROLS = "a[href], button, input:not([type='hidden']), select, textarea";
 
-/** Landmarks that must be named so a screen reader can tell them apart. */
-const LANDMARKS = "nav, [role='region'], [role='navigation']";
+/** Landmark roles that must be named so a screen reader can tell them apart. */
+const LANDMARK_ROLES = ["region", "navigation"];
+
+/**
+ * The effective ARIA role: the first token of a space-separated `role` list (later tokens are
+ * fallbacks for older assistive technology), lower-cased; "" when there is none.
+ *
+ * @param element The element whose role to read.
+ * @returns The first role token, or "".
+ */
+export function effectiveRole(element: Element): string {
+  return (element.getAttribute("role") ?? "").trim().toLowerCase().split(/\s+/)[0] ?? "";
+}
+
+/** True for a native control, or an element whose effective role requires a name. */
+function isControl(element: Element): boolean {
+  return element.matches(NATIVE_CONTROLS) || NAMED_ROLES.includes(effectiveRole(element));
+}
+
+/** True for a `<nav>`, or an element whose effective role is a landmark that needs a name. */
+function isLandmark(element: Element): boolean {
+  return element.localName === "nav" || LANDMARK_ROLES.includes(effectiveRole(element));
+}
 
 /** Input types whose `value` is their visible name, with the browser's default when empty. */
 const VALUE_NAMED: Record<string, string> = { button: "", submit: "Submit", reset: "Reset" };
@@ -108,14 +122,14 @@ export function accessibilityViolations(root: ParentNode): A11yViolation[] {
     ...all("[tabindex]")
       .filter((el) => Number(el.getAttribute("tabindex")) > 0)
       .map((el) => violation("positive-tabindex", el)),
-    ...all(CONTROLS)
-      .filter((el) => operable(el) && accessibleName(el) === "")
+    ...all("*")
+      .filter((el) => isControl(el) && operable(el) && accessibleName(el) === "")
       .map((el) => violation("unnamed-control", el)),
     ...all("img")
       .filter((el) => !el.hasAttribute("alt"))
       .map((el) => violation("missing-alt", el)),
-    ...all(LANDMARKS)
-      .filter((el) => landmarkName(el) === "")
+    ...all("*")
+      .filter((el) => isLandmark(el) && landmarkName(el) === "")
       .map((el) => violation("unnamed-landmark", el)),
   ];
 }
@@ -164,18 +178,21 @@ function valueText(element: Element): string {
 
 /** True when the element's role takes its name from its content. */
 function namedFromContent(element: Element): boolean {
-  const role = element.getAttribute("role");
+  const role = effectiveRole(element);
   if (role) return CONTENT_ROLES.has(role);
   return element instanceof HTMLAnchorElement || element instanceof HTMLButtonElement;
 }
 
-/** The text of an element's content, with descendant images contributing their `alt`. */
+/**
+ * The text of an element's content: text nodes only (comments and other nodes add nothing),
+ * with descendant images contributing their `alt`.
+ */
 function contentText(element: Element): string {
   return [...element.childNodes]
     .map((node) => {
       if (node instanceof HTMLImageElement) return ` ${node.getAttribute("alt") ?? ""} `;
       if (node instanceof Element) return contentText(node);
-      return node.textContent ?? "";
+      return node.nodeType === Node.TEXT_NODE ? (node.textContent ?? "") : "";
     })
     .join("");
 }

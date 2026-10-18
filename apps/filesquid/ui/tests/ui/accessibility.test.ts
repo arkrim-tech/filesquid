@@ -6,8 +6,9 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiError } from "../../src/api/client";
+import * as entry from "../../src/index";
+import { A11Y_DOCUMENT_STYLE_ID } from "../../src/components/a11y-style";
 import {
-  A11Y_DOCUMENT_STYLE_ID,
   A11Y_STYLE,
   MONITOR_ROUTE,
   accessibilityViolations,
@@ -96,13 +97,49 @@ describe("<fs-app-shell> accessibility (UI-S-016)", () => {
     window.location.hash = "";
   });
 
-  it("installs one document-level copy of the shared rules for slotted light-DOM content", () => {
-    document.getElementById(A11Y_DOCUMENT_STYLE_ID)?.remove();
-    mountShell();
-    mountShell();
-    const copies = document.head.querySelectorAll(`#${A11Y_DOCUMENT_STYLE_ID}`);
-    expect(copies).toHaveLength(1);
-    expect(copies[0]?.textContent).toBe(A11Y_STYLE);
+  /** The document-level copies of the shared rules in the head. */
+  const headCopies = () => document.head.querySelectorAll(`style#${A11Y_DOCUMENT_STYLE_ID}`);
+
+  /** A configured shell that is not yet connected. */
+  function shellElement(): FsAppShell {
+    const shell = document.createElement("fs-app-shell") as FsAppShell;
+    shell.configure({
+      distribution,
+      client: { health: async () => ({ status: "ok", product: "x", schema_version: 1 }) },
+      theme: fakeThemeStore().store,
+    });
+    return shell;
+  }
+
+  it("keeps one document-level copy while any shell is connected and removes it after the last", () => {
+    document.body.replaceChildren();
+    expect(headCopies()).toHaveLength(0);
+    const [first, second] = [shellElement(), shellElement()];
+    document.body.append(first, second);
+    expect(headCopies()).toHaveLength(1);
+    expect(headCopies()[0]?.textContent).toBe(A11Y_STYLE);
+    first.remove();
+    expect(headCopies()).toHaveLength(1);
+    second.remove();
+    expect(headCopies()).toHaveLength(0);
+  });
+
+  it("installs its own style even when an unrelated element already has the id", () => {
+    document.body.replaceChildren();
+    const unrelated = document.createElement("div");
+    unrelated.id = A11Y_DOCUMENT_STYLE_ID;
+    document.body.append(unrelated, shellElement());
+    expect(headCopies()).toHaveLength(1);
+    expect(headCopies()[0]?.textContent).toBe(A11Y_STYLE);
+    document.body.replaceChildren();
+    expect(headCopies()).toHaveLength(0);
+    expect(unrelated.isConnected).toBe(false);
+  });
+
+  it("keeps the document-level style helpers internal", () => {
+    expect("installDocumentA11yStyle" in entry).toBe(false);
+    expect("retainDocumentA11yStyle" in entry).toBe(false);
+    expect("A11Y_DOCUMENT_STYLE_ID" in entry).toBe(false);
   });
 
   it("passes the accessibility audit, theme control included", async () => {
