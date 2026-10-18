@@ -3,7 +3,7 @@
 //! Browsers have no ordinary filesystem, so this store is compiled out for
 //! `wasm32`; there the caller selects the `ocfl` store or supplies its own
 //! [`MetadataStore`]. The file I/O is named at the call sites below
-//! ([`std::fs::read`], [`std::fs::write`], [`std::fs::rename`]).
+//! ([`std::fs::read`], [`std::fs::OpenOptions`], [`std::fs::remove_file`], [`std::fs::rename`]).
 
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
@@ -117,8 +117,12 @@ fn write_replacing(path: &Path, text: &str) -> Result<(), std::io::Error> {
     staging.push(".tmp");
     let staging = PathBuf::from(staging);
     if let Err(err) = write_new(&staging, text) {
-        // Best effort: the write error is the one the caller needs.
-        let _ = std::fs::remove_file(&staging);
+        // Another save's staging file is not ours to delete; clean up only
+        // what this call may have created. The write error is the one the
+        // caller needs, so a failed cleanup is ignored.
+        if err.kind() != ErrorKind::AlreadyExists {
+            let _ = std::fs::remove_file(&staging);
+        }
         return Err(err);
     }
     if let Err(err) = std::fs::rename(&staging, path) {
