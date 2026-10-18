@@ -1,16 +1,24 @@
 //! Stand-alone FOSS metadata CRUD engine (`filesquid-metadata`,
 //! import `filesquid_metadata`).
 //!
-//! Extracts metadata from files stored through `filesquid-ocfl`, then
-//! creates, reads, updates and deletes namespaced statements. FileSquid
-//! is one caller and MUST divert all metadata handling here. Canonical
-//! store is `metadata.md` (YAML front matter) written through filesquid-ocfl.
+//! Extracts metadata from caller-supplied bytes (for example a file read
+//! through `filesquid-ocfl`), then creates, reads, updates and deletes
+//! namespaced statements. FileSquid is one caller and MUST divert all metadata
+//! handling here. Records persist through a pluggable [`store::MetadataStore`]:
+//! `sidecar` (default, native), `ocfl` (optional feature, canonical for
+//! FileSquid, `metadata.md` written through filesquid-ocfl) or a caller's own.
+//!
+//! The crate builds for `wasm32-unknown-unknown` with default features off.
+//! Cargo features: `sidecar` (default), `ocfl`, `ocfl-fs` (native OCFL path
+//! helpers) and `cli` (the native `fsquid` metadata commands).
 
 #![deny(missing_docs)]
 
+#[cfg(all(feature = "cli", not(target_arch = "wasm32")))]
 pub mod cli;
 pub mod csv;
 pub mod extract;
+pub mod file_ref;
 pub mod json;
 pub mod markdown;
 pub mod record;

@@ -280,3 +280,52 @@ fn json_rejects_a_symlink_that_leaves_the_object() {
     std::fs::remove_file(&outside).ok();
     cleanup(&[&object], &out);
 }
+
+/// Big-endian TIFF with one ASCII `ImageDescription` ("Cat").
+const TIFF_DESCRIPTION: &[u8] = &[
+    b'M', b'M', 0, 42, 0, 0, 0, 8, 0, 1, 0x01, 0x0E, 0, 2, 0, 0, 0, 4, b'C', b'a', b't', 0, 0, 0,
+    0, 0,
+];
+
+#[test]
+fn extract_reads_the_file_through_a_reader_into_metadata_md() {
+    let dir = std::env::temp_dir().join(format!(
+        "filesquid-metadata-cli-extract-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let photo = dir.join("cat.tif");
+    std::fs::write(&photo, TIFF_DESCRIPTION).unwrap();
+    let object = dir.join("object");
+    std::fs::create_dir_all(&object).unwrap();
+    let args = [
+        "extract".to_string(),
+        photo.to_string_lossy().into_owned(),
+        "--object".to_string(),
+        object.to_string_lossy().into_owned(),
+    ];
+    assert_eq!(run(&args).expect("extract"), 0);
+    let text = std::fs::read_to_string(object.join("metadata.md")).unwrap();
+    assert!(text.contains("ImageDescription"), "{text}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn extract_reports_a_missing_file() {
+    let dir = std::env::temp_dir().join(format!(
+        "filesquid-metadata-cli-missing-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let args = [
+        "extract".to_string(),
+        dir.join("absent.jpg").to_string_lossy().into_owned(),
+        "--object".to_string(),
+        dir.to_string_lossy().into_owned(),
+    ];
+    let err = run(&args).expect_err("missing file is reported");
+    assert!(err.contains("absent.jpg"), "{err}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
