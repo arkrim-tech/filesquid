@@ -107,6 +107,8 @@ The bar was redrawn offline to resolve that conflict. This only happens once per
 The change scope is `full`, because `setup-dev-environment.sh`, a new script and the root `.gitattributes` changed. The hook ran with `CARGO_TARGET_DIR` set to a shared target, `CARGO_INCREMENTAL=0` and `CARGO_PROFILE_DEV_DEBUG=0`.
 
 ```text
-$ bash scripts/pre-commit.sh
+$ bash scripts/pre-commit.sh                  # first commit
 ✅ All Pre-Commit Hooks Passed! Test scope: full (214s)
+$ FULL=1 bash scripts/pre-commit.sh           # after the Cubic round 1 fixes
+✅ All Pre-Commit Hooks Passed! Test scope: full (139s)
 ```
