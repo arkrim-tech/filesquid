@@ -4,40 +4,45 @@
 //! zero-padded, `v001`, `v002`, ... The first version sets the convention
 //! for the whole object; a padded convention has a fixed number of digits
 //! and always a leading zero, so `v10000` is not allowed at five digits.
+//!
+//! OCFL sets no limit on the number of digits, so the number is kept as a
+//! validated decimal string, not a machine integer: any valid name parses,
+//! and [`VersionNum::next`] never produces a name [`VersionNum::parse`]
+//! refuses. Names are bounded only by the input they come from.
 
+use std::cmp::Ordering;
 use std::fmt;
 
 use super::error::FormatError;
-
-/// Most digits a version number may have, so it fits a `u64`. No real object
-/// comes near it.
-const MAX_DIGITS: usize = 18;
 
 /// A parsed version directory name.
 ///
 /// Ordering is by version number; names that differ only in padding never
 /// meet in one valid object.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct VersionNum {
-    number: u64,
+    /// The number in decimal without leading zeros (never empty, never `0`).
+    number: String,
     /// Digit count of a zero-padded name, or 0 for an unpadded one.
     width: usize,
 }
 
 impl VersionNum {
     /// The first version, unpadded: `v1`.
-    pub const FIRST: Self = Self {
-        number: 1,
-        width: 0,
-    };
+    pub fn first() -> Self {
+        Self {
+            number: "1".to_string(),
+            width: 0,
+        }
+    }
 
     /// Parse a version directory name.
     ///
     /// # Errors
     ///
     /// [`FormatError::Invalid`] with E104 when the name does not start with
-    /// `v`, or E105 when the rest is not a positive base-ten integer of at
-    /// most 18 ASCII digits.
+    /// `v`, or E105 when the rest is not a positive base-ten integer written
+    /// in ASCII digits.
     pub fn parse(name: &str) -> Result<Self, FormatError> {
         let Some(digits) = name.strip_prefix('v') else {
             return Err(FormatError::invalid(
@@ -46,28 +51,34 @@ impl VersionNum {
                 "a version name starts with v",
             ));
         };
-        let well_formed = !digits.is_empty()
-            && digits.len() <= MAX_DIGITS
-            && digits.bytes().all(|b| b.is_ascii_digit());
-        let number = digits.parse::<u64>().ok().filter(|n| well_formed && *n > 0);
-        let Some(number) = number else {
+        let number = digits.trim_start_matches('0');
+        let all_digits = !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit());
+        if !all_digits || number.is_empty() {
             return Err(FormatError::invalid(
                 "E105",
                 name,
                 "a version number is a positive base-ten integer",
             ));
-        };
+        }
         let width = if digits.starts_with('0') {
             digits.len()
         } else {
             0
         };
-        Ok(Self { number, width })
+        Ok(Self {
+            number: number.to_string(),
+            width,
+        })
     }
 
-    /// The version number.
-    pub fn number(&self) -> u64 {
-        self.number
+    /// The version number in decimal, without padding or leading zeros.
+    pub fn number(&self) -> &str {
+        &self.number
+    }
+
+    /// The version number as a `u64`, or `None` when it is larger.
+    pub fn as_u64(&self) -> Option<u64> {
+        self.number.parse().ok()
     }
 
     /// Whether the name is zero-padded, such as `v001`.
@@ -80,20 +91,26 @@ impl VersionNum {
         if self.width > 0 {
             return self.width;
         }
-        self.number.to_string().len()
+        self.number.len()
     }
 
-    /// The next version under the same naming convention, or `None` when it
-    /// would not fit (a padded name always keeps a leading zero, so `v0999`
-    /// is the last at four digits).
+    /// The next version under the same naming convention, or `None` when a
+    /// padded name would lose its leading zero (`v0999` is the last at four
+    /// digits). Unpadded names always have a next one.
     pub fn next(&self) -> Option<Self> {
-        let number = self.number.checked_add(1)?;
-        let candidate = Self {
+        let number = increment(&self.number);
+        if self.width > 0 && number.len() >= self.width {
+            return None;
+        }
+        Some(Self {
             number,
             width: self.width,
-        };
-        let fits = self.width == 0 || number.to_string().len() < self.width;
-        fits.then_some(candidate)
+        })
+    }
+
+    /// Whether this version's number is `n`.
+    pub(crate) fn is_number(&self, n: u64) -> bool {
+        self.as_u64() == Some(n)
     }
 
     /// Whether `other` follows the naming convention this version sets, as
@@ -124,9 +141,46 @@ impl VersionNum {
     }
 }
 
+/// `number` (ASCII decimal digits) plus one. The loop visits each digit at
+/// most once.
+fn increment(number: &str) -> String {
+    let mut digits = number.as_bytes().to_vec();
+    let mut carry = true;
+    for digit in digits.iter_mut().rev() {
+        if *digit < b'9' {
+            *digit += 1;
+            carry = false;
+            break;
+        }
+        *digit = b'0';
+    }
+    if carry {
+        digits.insert(0, b'1');
+    }
+    digits.into_iter().map(char::from).collect()
+}
+
+impl Ord for VersionNum {
+    /// Numeric order: a shorter number (no leading zeros) is smaller; equal
+    /// lengths compare digit by digit; padding breaks a tie.
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.number
+            .len()
+            .cmp(&other.number.len())
+            .then_with(|| self.number.cmp(&other.number))
+            .then_with(|| self.width.cmp(&other.width))
+    }
+}
+
+impl PartialOrd for VersionNum {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl fmt::Display for VersionNum {
     /// Write the directory name, padded to the convention's width.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "v{:0width$}", self.number, width = self.width)
+        write!(f, "v{:0>width$}", self.number, width = self.width)
     }
 }

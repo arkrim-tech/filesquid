@@ -4,8 +4,28 @@
 //! The grammar is RFC 3339 section 5.6 `date-time`: `YYYY-MM-DD`, `T`, then
 //! `hh:mm:ss` with optional fractional seconds, then `Z` or `+hh:mm` /
 //! `-hh:mm`. `T` and `Z` may be lowercase (RFC 3339 section 5.6 note). The
-//! date must exist (leap years included) and a second of 60 is allowed for a
-//! leap second.
+//! date must exist (leap years included).
+//!
+//! Second 60 is a leap second, which RFC 3339 section 5.7 allows only at the
+//! end of a UTC day: it is accepted only when the time, moved to UTC by its
+//! offset, is 23:59. Whether a leap second was actually inserted on that
+//! date is not checked; that needs a leap-second table that changes over
+//! time, and OCFL does not ask for it.
+
+/// Minutes in a day.
+const DAY_MINUTES: i32 = 24 * 60;
+
+/// The UTC minute of the day a leap second may follow: 23:59.
+const LAST_MINUTE: i32 = 23 * 60 + 59;
+
+/// A parsed `hh:mm:ss`.
+#[derive(Clone, Copy)]
+struct Clock {
+    /// Minutes since midnight, local time.
+    minute_of_day: i32,
+    /// Seconds, 0 to 60.
+    second: u32,
+}
 
 /// Whether `text` is an RFC 3339 date-time to at least the second, with a
 /// time zone.
@@ -15,11 +35,14 @@ pub(crate) fn is_rfc3339(text: &str) -> bool {
         return false;
     }
     let (date, rest) = bytes.split_at(10);
-    let (time, zone) = rest.split_at(9);
-    valid_date(date)
-        && matches!(time[0], b'T' | b't')
-        && valid_clock(&time[1..])
-        && valid_tail(zone)
+    let (time, tail) = rest.split_at(9);
+    if !valid_date(date) || !matches!(time[0], b'T' | b't') {
+        return false;
+    }
+    let (Some(clock), Some(offset)) = (read_clock(&time[1..]), read_tail(tail)) else {
+        return false;
+    };
+    clock.second < 60 || ends_utc_day(clock, offset)
 }
 
 /// `n` ASCII digits read as a number, or `None`.
@@ -55,38 +78,53 @@ fn days_in_month(year: u32, month: u32) -> u32 {
     }
 }
 
-/// `hh:mm:ss`, with a second of 60 allowed for a leap second.
-fn valid_clock(clock: &[u8]) -> bool {
+/// `hh:mm:ss` with hour 0-23, minute 0-59 and second 0-60.
+fn read_clock(clock: &[u8]) -> Option<Clock> {
     if clock[2] != b':' || clock[5] != b':' {
-        return false;
+        return None;
     }
-    match (
-        number(&clock[..2]),
-        number(&clock[3..5]),
-        number(&clock[6..8]),
-    ) {
-        (Some(hour), Some(minute), Some(second)) => hour <= 23 && minute <= 59 && second <= 60,
-        _ => false,
-    }
+    let hour = number(&clock[..2]).filter(|h| *h <= 23)?;
+    let minute = number(&clock[3..5]).filter(|m| *m <= 59)?;
+    let second = number(&clock[6..8]).filter(|s| *s <= 60)?;
+    Some(Clock {
+        minute_of_day: i32::try_from(hour * 60 + minute).ok()?,
+        second,
+    })
 }
 
-/// Optional `.` and at least one digit, then the time zone.
-fn valid_tail(tail: &[u8]) -> bool {
+/// Optional `.` and at least one digit, then the time zone. Returns the
+/// zone's offset from UTC in minutes.
+fn read_tail(tail: &[u8]) -> Option<i32> {
     let Some(fraction) = tail.strip_prefix(b".") else {
-        return valid_zone(tail);
+        return read_zone(tail);
     };
     let digits = fraction.iter().take_while(|b| b.is_ascii_digit()).count();
-    digits > 0 && valid_zone(&fraction[digits..])
+    if digits == 0 {
+        return None;
+    }
+    read_zone(&fraction[digits..])
 }
 
-/// `Z`, `z`, or `+hh:mm` / `-hh:mm`.
-fn valid_zone(zone: &[u8]) -> bool {
+/// `Z`, `z`, or `+hh:mm` / `-hh:mm`, as an offset from UTC in minutes.
+fn read_zone(zone: &[u8]) -> Option<i32> {
     if matches!(zone, [b'Z'] | [b'z']) {
-        return true;
+        return Some(0);
     }
     let [sign, h1, h2, b':', m1, m2] = zone else {
-        return false;
+        return None;
     };
-    let in_range = |hi: u8, lo: u8, max: u32| number(&[hi, lo]).is_some_and(|n| n <= max);
-    matches!(sign, b'+' | b'-') && in_range(*h1, *h2, 23) && in_range(*m1, *m2, 59)
+    let hours = number(&[*h1, *h2]).filter(|h| *h <= 23)?;
+    let minutes = number(&[*m1, *m2]).filter(|m| *m <= 59)?;
+    let offset = i32::try_from(hours * 60 + minutes).ok()?;
+    match sign {
+        b'+' => Some(offset),
+        b'-' => Some(-offset),
+        _ => None,
+    }
+}
+
+/// Whether `clock`, at `offset` minutes from UTC, is 23:59 UTC: the only
+/// minute a leap second may end.
+fn ends_utc_day(clock: Clock, offset: i32) -> bool {
+    (clock.minute_of_day - offset).rem_euclid(DAY_MINUTES) == LAST_MINUTE
 }

@@ -18,7 +18,7 @@ pub enum FormatError {
         limit: usize,
     },
     /// The input breaks an OCFL 1.1 rule.
-    #[error("{code} at {at:?}: {reason}")]
+    #[error("{code}{}: {reason}", location(at))]
     Invalid {
         /// The OCFL 1.1 validation code of the rule, such as `E036`.
         code: &'static str,
@@ -28,6 +28,14 @@ pub enum FormatError {
         /// What is wrong, for people.
         reason: String,
     },
+}
+
+/// ` at "<where>"` for a located fault, nothing for the whole input.
+fn location(at: &str) -> String {
+    if at.is_empty() {
+        return String::new();
+    }
+    format!(" at {at:?}")
 }
 
 impl FormatError {

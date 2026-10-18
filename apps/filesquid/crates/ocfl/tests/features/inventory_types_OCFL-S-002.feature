@@ -19,6 +19,13 @@ Feature: SHA-256 digests and OCFL 1.1 inventory types
     And the content directory should be "content"
     And the inventory should have 2 versions
 
+  # Happy path: the engine reads sha512 objects too
+  Scenario: A valid sha512 inventory is read
+    Given the example OCFL 1.1 inventory rewritten to use sha512
+    When I parse the inventory
+    Then the inventory's digest algorithm should be "sha512"
+    And the head should be "v2"
+
   # Error cases: every rule refused with its OCFL 1.1 validation code
   Scenario Outline: An inventory that breaks an OCFL rule is refused with its code
     Given the example OCFL 1.1 inventory

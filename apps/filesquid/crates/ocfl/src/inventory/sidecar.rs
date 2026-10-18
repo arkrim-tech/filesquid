@@ -10,6 +10,12 @@ use super::error::FormatError;
 use super::INVENTORY_FILE;
 use crate::digest::DigestAlgorithm;
 
+/// Largest sidecar [`parse_sidecar`] reads: 4 KiB. A sidecar is one line (a
+/// digest of at most 128 hexadecimal digits, a separator and the file
+/// name), so anything near the bound is not a sidecar, and larger input is
+/// refused before it is read.
+pub const MAX_SIDECAR_BYTES: usize = 4 * 1024;
+
 /// The sidecar file name for `algorithm`, such as `inventory.json.sha256`.
 pub fn sidecar_name(algorithm: DigestAlgorithm) -> String {
     format!("{INVENTORY_FILE}.{}", algorithm.name())
@@ -50,10 +56,18 @@ pub fn sidecar_contents(algorithm: DigestAlgorithm, inventory: &[u8]) -> String 
 ///
 /// # Errors
 ///
-/// [`FormatError::Invalid`] with E061 unless the bytes are UTF-8 text of the
-/// form `DIGEST inventory.json`: a digest, one or more spaces or tabs, the
-/// file name, and at most one final newline.
+/// [`FormatError::TooLarge`] above [`MAX_SIDECAR_BYTES`] (an engine bound,
+/// with no OCFL code), or [`FormatError::Invalid`] with E061 unless the
+/// bytes are UTF-8 text of the form `DIGEST inventory.json`: a digest, one or
+/// more spaces or tabs, the file name, and at most one final newline.
 pub fn parse_sidecar(bytes: &[u8]) -> Result<&str, FormatError> {
+    if bytes.len() > MAX_SIDECAR_BYTES {
+        return Err(FormatError::TooLarge {
+            what: "inventory sidecar",
+            size: bytes.len(),
+            limit: MAX_SIDECAR_BYTES,
+        });
+    }
     let malformed = || {
         FormatError::invalid(
             "E061",
@@ -77,8 +91,8 @@ pub fn parse_sidecar(bytes: &[u8]) -> Result<&str, FormatError> {
 ///
 /// # Errors
 ///
-/// [`FormatError::Invalid`] with E061 for a malformed sidecar, or E060 when
-/// the stated digest is not the digest of `inventory`.
+/// As [`parse_sidecar`], or [`FormatError::Invalid`] with E060 when the
+/// stated digest is not the digest of `inventory`.
 pub fn verify_sidecar(
     algorithm: DigestAlgorithm,
     inventory: &[u8],

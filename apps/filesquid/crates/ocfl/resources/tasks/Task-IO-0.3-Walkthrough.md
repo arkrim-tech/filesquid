@@ -2,9 +2,13 @@
 
 Module plan row: [IO-0.3](../plan.md). Global task: Task 0.3 in the [implementation plan](../../../../../../resources/implementation-plan.md). Branch `feat/io-0.3-digest-inventory`, based on `main` at `654050c` (IO-0.2 merged).
 
-## OCFL-S-002: Digest algorithm is SHA-256: objects the engine writes MUST use `sha256` for content addressing and inventory sidecars. The engine MUST read objects that use `sha256` or `sha512`, the OCFL 1.1 content-addressing algorithms. Inventories, digest sidecars and NAMASTE declarations MUST be parsed strictly from untrusted bytes, with a bound on size and on JSON nesting and no repeated JSON keys, and every refusal MUST name its OCFL 1.1 validation code.
+## OCFL-S-002: Digest algorithm is SHA-256: objects the engine writes MUST use `sha256` for content addressing and inventory sidecars. The engine MUST read objects that use `sha256` or `sha512`, the OCFL 1.1 content-addressing algorithms. Inventory, sidecar, NAMASTE and `head` types MUST match OCFL 1.1, and a broken OCFL rule MUST be refused with its OCFL 1.1 validation code (parsing bounds: OCFL-S-017).
 
-Sources: [OCFL-S-002](../srs.md), [PRD TC-004](../../../../../../resources/prd.md#tc-004-decision-status-and-repository-alignment) (shared SHA-256 test vectors), [ADR 009](../../../../../../resources/architecture/009-cryptography-webcrypto-compatible-suite.md) (SHA-256 for OCFL digests), [ADR 010](../../../../../../resources/architecture/010-ocfl-1-1-dual-profile.md), and the OCFL 1.1 specification, sections 3.2 to 3.7 and 4.2, with its validation-codes page. The SRS row previously read "Digest algorithm is SHA-256 (implementation later)"; it now states what was built (see the Sync note below).
+Sources: [OCFL-S-002](../srs.md), [PRD TC-004](../../../../../../resources/prd.md#tc-004-decision-status-and-repository-alignment) (shared SHA-256 test vectors), [ADR 009](../../../../../../resources/architecture/009-cryptography-webcrypto-compatible-suite.md) (SHA-256 for OCFL digests), [ADR 010](../../../../../../resources/architecture/010-ocfl-1-1-dual-profile.md), and the OCFL 1.1 specification, sections 3.2 to 3.7 and 4.2, with its validation-codes page. The SRS row previously read "Digest algorithm is SHA-256 (implementation later)"; it now states what was built, and the parsing bounds have their own row, OCFL-S-017 (see Sync below).
+
+## OCFL-S-017: Untrusted OCFL files MUST be parsed within fixed bounds: an inventory above 64 MiB and a digest sidecar above 4 KiB MUST be refused before they are read, JSON nesting deeper than 8 objects or arrays MUST be refused while parsing, and a JSON object that repeats a key MUST be refused. A refusal because of these engine bounds carries no OCFL validation code; every refusal for a broken OCFL rule MUST carry its OCFL 1.1 code. Error messages MUST NOT echo unbounded input such as a repeated key.
+
+Source: [PRD NFR-004](../../../../../../resources/prd.md#nfr-004-security-and-privacy) (hostile input is safely rejected), with [OCFL-S-002](../srs.md) as its parent.
 
 ## What changed
 
@@ -22,6 +26,24 @@ Sources: [OCFL-S-002](../srs.md), [PRD TC-004](../../../../../../resources/prd.m
 - **Engine rules kept.** No `std::fs`, no executor; the crate still builds for `wasm32-unknown-unknown` without default features, and the source scan passes.
 - **Tests.** `tests/unit/digest.rs`, `tests/unit/inventory.rs`, `tests/unit/namaste_sidecar.rs`, `tests/integration/fixture_inventories.rs`, the shared example in `tests/support/inventory_example.rs`, and [`inventory_types_OCFL-S-002.feature`](../../tests/features/inventory_types_OCFL-S-002.feature) with steps in `tests/support/inventory_steps.rs`.
 - **Docs.** Module [SRS](../srs.md) OCFL-S-002; crate [README](../../README.md) "OCFL file formats"; [component diagram](../component-diagram.html); module [plan](../plan.md) (IO-0.3 checked, test links); the repository-root implementation-plan checklist (IO-0.3 checked; Task 0.3 stays open).
+
+## Sync
+
+- Module SRS: OCFL-S-002 now reads as built (the engine writes `sha256`, reads `sha256` and `sha512`, types match OCFL 1.1, every broken OCFL rule carries its code). The parsing bounds moved to a new row, OCFL-S-017, with its parent PRD NFR-004 and the bounds stated: 64 MiB per inventory, 4 KiB per sidecar, JSON nesting 8, no repeated keys, no echoed input. Engine-bound refusals carry no OCFL code.
+- Module plan: IO-0.3 lists OCFL-S-017 and NFR-004.
+- PRD, global SRS and ADRs: unchanged; NFR-004 already requires hostile input to be rejected safely.
+
+## Review round 1 (Cubic)
+
+All 19 findings were valid. Each was checked against the code and OCFL 1.1:
+
+- `digest.rs`: `matches` now requires both operands to be digests of the algorithm (length and hexadecimal digits); new `is_digest`. The module doc says case-insensitive comparison is for checking a stated digest (a sidecar), while state digests match manifest keys exactly (E050). The ADR 009 link has five `../`.
+- `sidecar.rs`: input above 4 KiB (`MAX_SIDECAR_BYTES`) is refused before it is read, as `TooLarge` with no OCFL code.
+- `version.rs`: OCFL sets no digit limit, so the number is now a validated decimal string; any valid name parses, ordering is numeric, and `next` (decimal increment) always returns a name `parse` accepts. `as_u64` gives the number when it fits.
+- `timestamp.rs`: second 60 is accepted only when the time, moved to UTC by its offset, is 23:59 (RFC 3339 section 5.7). Checking whether a leap second was really inserted on that date was declined: it needs a leap-second table that changes over time, and OCFL does not ask for it.
+- `json.rs`: a repeated key is reported without echoing it. `error.rs`: the location is omitted when there is none.
+- Tests: a valid `sha512` inventory parses (unit and a BDD scenario); a non-hex `sha512` digest is E031; the fixture test asserts each bad-fixture refusal is an OCFL code, not an I/O error.
+- SRS split (OCFL-S-017), README fixture wording (externally supplied at the recorded commit, not verified by the test), the skipped scenarios in Gates, the Sync section, and the component diagram (conjunction, core label, aria-label, figcaption).
 
 ## Split with structural validation (IO-0.5)
 
@@ -46,12 +68,12 @@ The pinned fixtures (`OCFL/fixtures` commit `d323fc207126becec066998b43408d998bf
 | Requirement | Tests |
 |---|---|
 | OCFL-S-002: Digest algorithm is SHA-256 (engine writes `sha256`; shared test vectors, PRD TC-004) | `unit_digest`: `sha256_is_the_engine_algorithm`, `known_vectors_match`, `streaming_matches_one_shot`; BDD "SHA-256 is the engine's digest algorithm" |
-| OCFL-S-002: Digest algorithm is SHA-256 (the engine reads `sha256` and `sha512`) | `unit_digest`: `known_vectors_match`, `names_and_lengths_follow_ocfl`, `digests_compare_without_regard_to_case`; fixture run (all 25 valid and warning fixtures, 23 of them `sha512`) |
+| OCFL-S-002: Digest algorithm is SHA-256 (the engine reads `sha256` and `sha512`) | `unit_digest`: `known_vectors_match`, `names_and_lengths_follow_ocfl`, `digests_compare_without_regard_to_case`, `only_real_digests_match`; `unit_inventory`: `a_valid_sha512_inventory_parses`, `a_non_hex_sha512_digest_is_e031`; BDD "A valid sha512 inventory is read"; fixture run (all 25 valid and warning fixtures, 23 of them `sha512`) |
 | OCFL-S-002: Digest algorithm is SHA-256 (inventory types match OCFL 1.1: required keys, `contentDirectory` default, `head`, version blocks) | `unit_inventory`: `a_valid_inventory_becomes_typed_data`, `content_directory_defaults_to_content`, `optional_blocks_may_be_absent_or_empty`, `a_written_inventory_parses_back_to_the_same_data`, `an_ocfl_1_0_inventory_type_is_recognised`, `required_keys_are_enforced`, `unknown_keys_are_refused`, `type_and_digest_algorithm_are_checked`, `content_directory_must_be_a_direct_child_name`, `head_must_name_the_highest_version`; BDD "A valid OCFL 1.1 inventory becomes typed data" and the refusal outline |
 | OCFL-S-002: Digest algorithm is SHA-256 (version names and sequence) | `unit_inventory`: `versions_must_be_a_non_empty_object`, `version_names_are_v_and_a_positive_integer`, `version_sequences_start_at_one_without_gaps`, `zero_padded_versions_keep_one_width`, `a_padded_head_outside_the_width_is_refused`, `version_numbers_parse_format_and_advance` |
 | OCFL-S-002: Digest algorithm is SHA-256 (version blocks: `created`, `message`, `user`) | `unit_inventory`: `created_is_an_rfc3339_date_time_to_the_second`, `message_and_user_have_their_shapes` |
 | OCFL-S-002: Digest algorithm is SHA-256 (digest-to-path maps: manifest, state, fixity) | `unit_inventory`: `manifest_structure_is_checked`, `manifest_digests_match_the_algorithm`, `a_digest_appears_once_regardless_of_case`, `content_paths_are_safe_and_unique`, `every_manifest_digest_is_used_by_a_version`, `state_digests_exactly_match_the_manifest`, `mixed_case_digests_are_kept_as_written`, `logical_paths_are_safe_and_unique`, `fixity_follows_the_manifest_structure` |
-| OCFL-S-002: Digest algorithm is SHA-256 (strict parsing of untrusted bytes, size and nesting bounds) | `unit_inventory`: `malformed_json_is_refused`, `duplicate_json_keys_are_refused`, `deep_nesting_is_refused_without_exhausting_the_stack`, `oversized_input_is_refused_before_parsing`; BDD "An oversized inventory is refused before it is parsed" |
+| OCFL-S-017: Untrusted OCFL files MUST be parsed within fixed bounds | `unit_inventory`: `malformed_json_is_refused`, `duplicate_json_keys_are_refused`, `a_repeated_key_is_not_echoed`, `errors_name_a_location_only_when_there_is_one`, `deep_nesting_is_refused_without_exhausting_the_stack`, `oversized_input_is_refused_before_parsing`; `unit_namaste_sidecar`: `an_oversized_sidecar_is_refused_before_it_is_read`; BDD "An oversized inventory is refused before it is parsed" |
 | OCFL-S-002: Digest algorithm is SHA-256 (sidecar digest check) | `unit_namaste_sidecar`: `sidecar_names_carry_the_algorithm`, `a_written_sidecar_verifies`, `sidecar_separators_and_case_are_accepted`, `a_sidecar_with_the_wrong_digest_is_refused`, `a_malformed_sidecar_is_refused`; BDD "The inventory digest sidecar must match the inventory" |
 | OCFL-S-002: Digest algorithm is SHA-256 (NAMASTE declarations) | `unit_namaste_sidecar`: `declarations_have_their_namaste_names_and_contents`, `declaration_file_names_are_recognised`, `declaration_contents_must_be_exact`; BDD "An OCFL 1.1 object declares itself with NAMASTE" |
 | OCFL-S-007: The engine MUST reach bytes only through an async, runtime-agnostic storage backend interface (no `std::fs`, `wasm32` build) | `unit_source_scan`; BDD "Storage goes through one async backend interface" and "Engine builds for the browser" |
@@ -59,7 +81,7 @@ The pinned fixtures (`OCFL/fixtures` commit `d323fc207126becec066998b43408d998bf
 
 ## Coverage
 
-[ADR 017](../../../../../../resources/architecture/017-test-runners-and-reporting.md) defines no Rust line-coverage tool, so no percentage is reported. Every validation code the parser can return has a unit test that triggers it, except E031 (non-hex `sha512` digest, the same path as E030) and the `E033` cases for wrong JSON types of `id` and `address`, which share one helper with tested callers.
+[ADR 017](../../../../../../resources/architecture/017-test-runners-and-reporting.md) defines no Rust line-coverage tool, so no percentage is reported. Every validation code the parser can return has a unit test that triggers it, except the `E033` cases for wrong JSON types of `id` and `address`, which share one helper with tested callers.
 
 ## TDD: failing run before implementation
 
@@ -77,6 +99,30 @@ Tests written first, with no `digest`, `inventory` or `namaste` module (`cargo t
 
 The first green run then failed five `unit_inventory` tests in the test helper `set`, which could not add a key that did not exist yet (`pointer_mut` only reaches existing keys); the helper was fixed to insert into the parent object.
 
+## TDD: round 1
+
+The regression tests were run against the sources of `c90e0b0` before the fixes. Targets that call the new API (`is_digest`, `MAX_SIDECAR_BYTES`, `as_u64`) do not compile, which is their red run. With the version test set aside so `unit_inventory` compiles, three behaviour tests fail. The `sha512` and E031 tests, and the new BDD scenario, already passed: those findings were missing coverage, not wrong behaviour.
+
+```text
+      1 error: could not compile `filesquid-ocfl` (test "unit_inventory") due to 4 previous errors
+      1 error: could not compile `filesquid-ocfl` (test "unit_namaste_sidecar") due to 1 previous error
+      1 error[E0277]: can't compare `u64` with `&str`
+      1 error[E0308]: mismatched types
+      1 error[E0432]: unresolved import `filesquid_ocfl::inventory::MAX_SIDECAR_BYTES`
+      2 error[E0599]: no method named `as_u64` found for struct `VersionNum` in the current scope
+error[E0599]: no method named `is_digest` found for enum `DigestAlgorithm` in the current scope
+error[E0599]: no method named `is_digest` found for enum `DigestAlgorithm` in the current scope
+error: could not compile `filesquid-ocfl` (test "unit_digest") due to 2 previous errors
+  Scenario: A valid sha512 inventory is read
+58 scenarios (49 passed, 9 skipped)
+212 steps (203 passed, 9 skipped)
+test a_repeated_key_is_not_echoed ... FAILED
+test errors_name_a_location_only_when_there_is_one ... FAILED
+test created_is_an_rfc3339_date_time_to_the_second ... FAILED
+test result: FAILED. 31 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.76s
+error: test failed, to rerun pass `-p filesquid-ocfl --test unit_inventory`
+```
+
 ## Gates
 
 Run from `apps/filesquid/` with `CARGO_TARGET_DIR` on a shared target:
@@ -85,7 +131,7 @@ Run from `apps/filesquid/` with `CARGO_TARGET_DIR` on a shared target:
 |---|---|
 | `cargo fmt --all` | clean |
 | `cargo clippy --workspace --all-targets --locked -- -D warnings` | clean |
-| `cargo test -p filesquid-ocfl --locked` | all pass (counts below) |
+| `cargo test -p filesquid-ocfl --locked` | all run tests pass; 58 BDD scenarios: 49 passed, 9 skipped. The 9 skipped scenarios belong to later tasks and have no step definitions yet, so cucumber skips their first step: six in `OCFL_1.1_fixture_conformance.feature` (validation, reads and writes against the fixtures: IO-0.4, IO-0.5, IO-0.10) and three in `reusable_ocfl_engine_F-051.feature` (the hosted-service manifest check, the Drive-style browser and its panel slots: server and UI tasks) |
 | `cargo test -p filesquid-ocfl --locked --no-default-features` | all pass (below) |
 | `cargo build -p filesquid-ocfl --locked --no-default-features --target wasm32-unknown-unknown` | builds |
 | `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps` | clean |
@@ -101,32 +147,32 @@ None. `FILESQUID_OCFL_FIXTURES` is an optional input that names real fixture dat
 
 ```text
      Running unittests src/lib.rs
-test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.29s
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.31s
      Running tests/features.rs
-57 scenarios (48 passed, 9 skipped)
-208 steps (199 passed, 9 skipped)
+58 scenarios (49 passed, 9 skipped)
+212 steps (203 passed, 9 skipped)
      Running tests/integration/fixture_inventories.rs
 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests/integration/fs_conformance.rs
-test result: ok. 46 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.86s
+test result: ok. 46 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.88s
      Running tests/integration/hierarchy_guard.rs
-test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
      Running tests/integration/logical_file.rs
-test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.60s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.59s
      Running tests/integration/memory_conformance.rs
-test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.83s
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.72s
      Running tests/unit/digest.rs
-test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
      Running tests/unit/git_guard.rs
-test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
      Running tests/unit/inventory.rs
-test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
      Running tests/unit/namaste_sidecar.rs
-test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests/unit/source_scan.rs
 test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests/unit/storage_key.rs
-test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 ```
 
@@ -134,21 +180,21 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 ```text
      Running unittests src/lib.rs
-test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.40s
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.27s
      Running tests/integration/fixture_inventories.rs
 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests/integration/memory_conformance.rs
-test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.96s
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.73s
      Running tests/unit/digest.rs
-test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
      Running tests/unit/git_guard.rs
-test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
      Running tests/unit/inventory.rs
-test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
      Running tests/unit/namaste_sidecar.rs
-test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests/unit/source_scan.rs
-test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests/unit/storage_key.rs
 test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
@@ -157,63 +203,69 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 ### `cargo test -p filesquid-ocfl --locked --test unit_digest --test unit_inventory --test unit_namaste_sidecar`
 
 ```text
-running 5 tests
-test sha256_is_the_engine_algorithm ... ok
+running 6 tests
 test digests_compare_without_regard_to_case ... ok
+test only_real_digests_match ... ok
 test names_and_lengths_follow_ocfl ... ok
+test sha256_is_the_engine_algorithm ... ok
 test known_vectors_match ... ok
 test streaming_matches_one_shot ... ok
 
-test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
 
 
-running 31 tests
-test a_digest_appears_once_regardless_of_case ... ok
+running 35 tests
+test a_non_hex_sha512_digest_is_e031 ... ok
 test a_padded_head_outside_the_width_is_refused ... ok
-test a_written_inventory_parses_back_to_the_same_data ... ok
+test a_repeated_key_is_not_echoed ... ok
+test a_digest_appears_once_regardless_of_case ... ok
 test a_valid_inventory_becomes_typed_data ... ok
-test an_ocfl_1_0_inventory_type_is_recognised ... ok
+test a_valid_sha512_inventory_parses ... ok
 test content_directory_defaults_to_content ... ok
+test an_ocfl_1_0_inventory_type_is_recognised ... ok
+test a_written_inventory_parses_back_to_the_same_data ... ok
 test content_directory_must_be_a_direct_child_name ... ok
-test content_paths_are_safe_and_unique ... ok
-test deep_nesting_is_refused_without_exhausting_the_stack ... ok
-test every_manifest_digest_is_used_by_a_version ... ok
 test duplicate_json_keys_are_refused ... ok
-test fixity_follows_the_manifest_structure ... ok
+test deep_nesting_is_refused_without_exhausting_the_stack ... ok
+test content_paths_are_safe_and_unique ... ok
+test errors_name_a_location_only_when_there_is_one ... ok
+test every_manifest_digest_is_used_by_a_version ... ok
 test head_must_name_the_highest_version ... ok
+test fixity_follows_the_manifest_structure ... ok
 test malformed_json_is_refused ... ok
+test logical_paths_are_safe_and_unique ... ok
 test created_is_an_rfc3339_date_time_to_the_second ... ok
-test manifest_digests_match_the_algorithm ... ok
 test manifest_structure_is_checked ... ok
+test mixed_case_digests_are_kept_as_written ... ok
+test manifest_digests_match_the_algorithm ... ok
 test message_and_user_have_their_shapes ... ok
 test optional_blocks_may_be_absent_or_empty ... ok
-test logical_paths_are_safe_and_unique ... ok
 test state_digests_exactly_match_the_manifest ... ok
-test mixed_case_digests_are_kept_as_written ... ok
 test required_keys_are_enforced ... ok
+test unknown_keys_are_refused ... ok
 test type_and_digest_algorithm_are_checked ... ok
 test version_numbers_parse_format_and_advance ... ok
+test version_names_are_v_and_a_positive_integer ... ok
 test version_sequences_start_at_one_without_gaps ... ok
 test versions_must_be_a_non_empty_object ... ok
 test zero_padded_versions_keep_one_width ... ok
-test version_names_are_v_and_a_positive_integer ... ok
-test unknown_keys_are_refused ... ok
 test oversized_input_is_refused_before_parsing ... ok
 
-test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
 
 
-running 8 tests
+running 9 tests
+test an_oversized_sidecar_is_refused_before_it_is_read ... ok
 test a_malformed_sidecar_is_refused ... ok
-test declaration_contents_must_be_exact ... ok
 test a_sidecar_with_the_wrong_digest_is_refused ... ok
+test a_written_sidecar_verifies ... ok
+test declaration_contents_must_be_exact ... ok
 test declarations_have_their_namaste_names_and_contents ... ok
 test declaration_file_names_are_recognised ... ok
 test sidecar_names_carry_the_algorithm ... ok
-test a_written_sidecar_verifies ... ok
 test sidecar_separators_and_case_are_accepted ... ok
 
-test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 ```
 
 ### Cucumber: `inventory_types_OCFL-S-002.feature`
@@ -230,6 +282,11 @@ Feature: SHA-256 digests and OCFL 1.1 inventory types
    ✔  Then the head should be "v2"
    ✔  And the content directory should be "content"
    ✔  And the inventory should have 2 versions
+  Scenario: A valid sha512 inventory is read
+   ✔  Given the example OCFL 1.1 inventory rewritten to use sha512
+   ✔  When I parse the inventory
+   ✔  Then the inventory's digest algorithm should be "sha512"
+   ✔  And the head should be "v2"
   Scenario Outline: An inventory that breaks an OCFL rule is refused with its code
    ✔  Given the example OCFL 1.1 inventory
    ✔  And the inventory is changed so that it has an unknown key
@@ -359,5 +416,5 @@ ok
 test valid_and_warning_fixtures_parse_and_verify ... 25 valid and warning fixtures parsed and verified
 ok
 
-test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
 ```

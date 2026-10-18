@@ -93,6 +93,13 @@ fn code_text(err: FormatError) -> String {
     err.code().map_or_else(|| err.to_string(), str::to_string)
 }
 
+/// Whether `text` is an OCFL validation code (`E` and three digits), not an
+/// I/O error such as a missing fixture.
+fn is_ocfl_code(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    bytes.len() == 4 && bytes[0] == b'E' && bytes[1..].iter().all(u8::is_ascii_digit)
+}
+
 /// The object declaration must be the exact 1.1 declaration.
 fn check_declaration(object: &Path) {
     let declaration = Declaration::object(SpecVersion::V1_1);
@@ -137,6 +144,10 @@ fn inventory_level_bad_fixtures_are_refused() {
     for name in INVENTORY_LEVEL {
         let object = root.join("bad-objects").join(name);
         let code = check_root(&object).expect_err(name);
+        assert!(
+            is_ocfl_code(&code),
+            "{name} failed with {code}, not an OCFL refusal"
+        );
         let listed = name.split('_').any(|part| part == code);
         println!("{name}: refused with {code} (named in the prefix: {listed})");
     }

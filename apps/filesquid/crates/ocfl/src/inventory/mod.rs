@@ -32,7 +32,7 @@ pub use error::FormatError;
 pub use json::MAX_JSON_DEPTH;
 pub use sidecar::{
     check_sidecar_name, parse_sidecar, sidecar_algorithm, sidecar_contents, sidecar_name,
-    verify_sidecar,
+    verify_sidecar, MAX_SIDECAR_BYTES,
 };
 pub use version::VersionNum;
 

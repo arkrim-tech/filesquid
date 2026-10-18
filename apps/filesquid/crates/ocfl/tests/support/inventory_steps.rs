@@ -46,6 +46,22 @@ fn example_inventory(world: &mut OcflWorld) {
     world.inventory.json = Some(base());
 }
 
+#[given("the example OCFL 1.1 inventory rewritten to use sha512")]
+fn sha512_example(world: &mut OcflWorld) {
+    let text = serde_json::to_string(&base())
+        .expect("serialise")
+        .replace("sha256", "sha512")
+        .replace(A, &A.repeat(2))
+        .replace(C, &C.repeat(2))
+        .replace(EMPTY, &EMPTY.repeat(2));
+    world.inventory.json = Some(serde_json::from_str(&text).expect("json"));
+}
+
+#[then(expr = "the inventory's digest algorithm should be {string}")]
+fn algorithm_is(world: &mut OcflWorld, name: String) {
+    assert_eq!(parsed(world).digest_algorithm.name(), name);
+}
+
 /// Apply the named change to the example inventory.
 fn change(value: &mut Value, change: &str) {
     match change {

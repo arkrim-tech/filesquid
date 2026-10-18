@@ -4,6 +4,7 @@
 use filesquid_ocfl::digest::DigestAlgorithm;
 use filesquid_ocfl::inventory::{
     check_sidecar_name, sidecar_algorithm, sidecar_contents, sidecar_name, verify_sidecar,
+    FormatError, MAX_SIDECAR_BYTES,
 };
 use filesquid_ocfl::namaste::{Declaration, DeclarationKind, SpecVersion};
 
@@ -118,6 +119,17 @@ fn a_sidecar_with_the_wrong_digest_is_refused() {
     let contents = format!("{other} inventory.json\n");
     let err = verify_sidecar(DigestAlgorithm::Sha256, INVENTORY, contents.as_bytes());
     assert_eq!(err.expect_err("mismatch").code(), Some("E060"));
+}
+
+#[test]
+fn an_oversized_sidecar_is_refused_before_it_is_read() {
+    let digest = DigestAlgorithm::Sha256.digest_hex(INVENTORY);
+    let padding = " ".repeat(MAX_SIDECAR_BYTES);
+    let contents = format!("{digest}{padding}inventory.json\n");
+    let err = verify_sidecar(DigestAlgorithm::Sha256, INVENTORY, contents.as_bytes());
+    let err = err.expect_err("too large");
+    assert!(matches!(err, FormatError::TooLarge { .. }), "{err:?}");
+    assert_eq!(err.code(), None, "an engine bound has no OCFL code");
 }
 
 #[test]

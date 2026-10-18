@@ -1,5 +1,5 @@
 //! Content-addressing digests (OCFL-S-002,
-//! [ADR 009](../../../resources/architecture/009-cryptography-webcrypto-compatible-suite.md);
+//! [ADR 009](../../../../../resources/architecture/009-cryptography-webcrypto-compatible-suite.md);
 //! OCFL 1.1 section 3.4).
 //!
 //! OCFL 1.1 objects address content with `sha512` or `sha256`. The engine
@@ -8,9 +8,12 @@
 //! TC-004). The engine reads both, because OCFL requires readers to accept
 //! either and most existing objects use `sha512`.
 //!
-//! Digests are lowercase hexadecimal when the engine computes them. Base16
-//! digests are case insensitive, so [`DigestAlgorithm::matches`] compares
-//! without regard to case; inventories keep the case they were written in.
+//! Digests are lowercase hexadecimal when the engine computes them.
+//! [`DigestAlgorithm::matches`] compares two digests without regard to case,
+//! as checking a computed digest against a stated one (a sidecar) needs.
+//! Inside an inventory the rule is stricter: a state digest must match its
+//! manifest key exactly, case included (E050), and inventories keep the case
+//! they were written in.
 
 use sha2::{Digest as _, Sha256, Sha512};
 
@@ -73,10 +76,19 @@ impl DigestAlgorithm {
         hasher.finalize_hex()
     }
 
-    /// Whether two digests of this algorithm are equal. Base16 is case
-    /// insensitive, so `ABC1` matches `abc1`.
+    /// Whether `digest` is a digest of this algorithm: exactly
+    /// [`hex_len`](Self::hex_len) ASCII hexadecimal digits, in either case.
+    pub fn is_digest(self, digest: &str) -> bool {
+        digest.len() == self.hex_len() && digest.bytes().all(|b| b.is_ascii_hexdigit())
+    }
+
+    /// Whether `a` and `b` are both digests of this algorithm (see
+    /// [`is_digest`](Self::is_digest)) and equal without regard to case, so
+    /// `ABC1...` matches `abc1...`. Use it to check a computed digest against
+    /// a stated one, such as a sidecar's; inventory state digests match their
+    /// manifest keys exactly instead (E050).
     pub fn matches(self, a: &str, b: &str) -> bool {
-        a.len() == self.hex_len() && a.eq_ignore_ascii_case(b)
+        self.is_digest(a) && self.is_digest(b) && a.eq_ignore_ascii_case(b)
     }
 }
 

@@ -91,7 +91,8 @@ pub(super) fn read_versions(value: &Value) -> Result<BTreeMap<VersionNum, Versio
     check_sequence(named.keys())?;
     let mut versions = BTreeMap::new();
     for (num, block) in named {
-        versions.insert(num, read_version(block, &format!("/versions/{num}"))?);
+        let at = format!("/versions/{num}");
+        versions.insert(num, read_version(block, &at)?);
     }
     Ok(versions)
 }
@@ -106,7 +107,7 @@ fn check_sequence<'a>(names: impl Iterator<Item = &'a VersionNum>) -> Result<(),
     for name in &names {
         first.check_convention(name)?;
     }
-    if first.number() != 1 {
+    if !first.is_number(1) {
         return Err(FormatError::invalid(
             "E009",
             "/versions",
@@ -116,7 +117,7 @@ fn check_sequence<'a>(names: impl Iterator<Item = &'a VersionNum>) -> Result<(),
     match names
         .iter()
         .zip(1u64..)
-        .find(|(name, n)| name.number() != *n)
+        .find(|(name, n)| !name.is_number(*n))
     {
         Some((name, _)) => Err(FormatError::invalid(
             "E010",

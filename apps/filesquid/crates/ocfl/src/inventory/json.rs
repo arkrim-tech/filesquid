@@ -125,7 +125,8 @@ impl<'de> Visitor<'de> for Strict {
         let mut object = Map::new();
         while let Some(key) = map.next_key::<String>()? {
             if object.contains_key(&key) {
-                return Err(de::Error::custom(format_args!("duplicate key {key:?}")));
+                // The key is not echoed: a hostile key may be very long.
+                return Err(de::Error::custom("a JSON object repeats a key"));
             }
             let value = map.next_value_seed(inner)?;
             object.insert(key, value);

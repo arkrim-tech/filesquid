@@ -255,6 +255,8 @@ fn created_is_an_rfc3339_date_time_to_the_second() {
         "2018-01-01t01:01:01z",
         "2018-01-01T01:01:01.123456789+05:30",
         "2016-12-31T23:59:60Z",
+        "2016-12-31T18:59:60-05:00",
+        "2017-01-01T05:29:60+05:30",
         "2020-02-29T00:00:00-00:00",
     ] {
         let mut value = base();
@@ -271,6 +273,8 @@ fn created_is_an_rfc3339_date_time_to_the_second() {
         "2018-01-01T01:01:01.Z",
         "2018-01-01T01:01:01+0100",
         "18-01-01T01:01:01Z",
+        "2018-01-01T12:00:60Z",
+        "2016-12-31T23:59:60+01:00",
     ] {
         assert_eq!(
             code_after(|v| set(v, "/versions/v1/created", json!(bad))),
@@ -330,6 +334,53 @@ fn manifest_digests_match_the_algorithm() {
         parse(&value).expect_err("sha256 digests").code(),
         Some("E039")
     );
+}
+
+/// `base()` rewritten for sha512: every stand-in digest becomes 128 digits.
+fn sha512_inventory() -> Value {
+    let text = serde_json::to_string(&base())
+        .expect("serialise")
+        .replace("sha256", "sha512")
+        .replace(A, &A.repeat(2))
+        .replace(C, &C.repeat(2))
+        .replace(EMPTY, &EMPTY.repeat(2));
+    serde_json::from_str(&text).expect("json")
+}
+
+#[test]
+fn a_valid_sha512_inventory_parses() {
+    let inventory = parse(&sha512_inventory()).expect("valid sha512 inventory");
+    assert_eq!(inventory.digest_algorithm, DigestAlgorithm::Sha512);
+    assert!(inventory.manifest.keys().all(|d| d.len() == 128));
+}
+
+#[test]
+fn a_non_hex_sha512_digest_is_e031() {
+    let mut value = sha512_inventory();
+    let manifest = value["manifest"].as_object_mut().expect("manifest");
+    let paths = manifest.remove(&A.repeat(2)).expect("A");
+    manifest.insert("z".repeat(128), paths);
+    assert_eq!(parse(&value).expect_err("not hex").code(), Some("E031"));
+}
+
+#[test]
+fn errors_name_a_location_only_when_there_is_one() {
+    let whole = Inventory::parse(b"{").expect_err("invalid");
+    assert!(!whole.to_string().contains("at \"\""), "{whole}");
+    let mut value = base();
+    set(&mut value, "/head", json!("v9"));
+    let located = parse(&value).expect_err("head is not the highest version");
+    assert_eq!(located.code(), Some("E040"));
+    assert!(located.to_string().contains("at \"/head\""), "{located}");
+}
+
+#[test]
+fn a_repeated_key_is_not_echoed() {
+    let key = "k".repeat(10_000);
+    let text = format!("{{\"{key}\":1,\"{key}\":2}}");
+    let err = Inventory::parse(text.as_bytes()).expect_err("repeated key");
+    assert_eq!(err.code(), Some("E033"));
+    assert!(!err.to_string().contains(&key[..100]), "the key was echoed");
 }
 
 #[test]
@@ -460,14 +511,27 @@ fn oversized_input_is_refused_before_parsing() {
 #[test]
 fn version_numbers_parse_format_and_advance() {
     let v1 = VersionNum::parse("v1").expect("v1");
-    assert_eq!((v1.number(), v1.is_zero_padded()), (1, false));
+    assert_eq!((v1.number(), v1.is_zero_padded()), ("1", false));
     assert_eq!(v1.next().expect("next").to_string(), "v2");
     let padded = VersionNum::parse("v0009").expect("padded");
-    assert_eq!(padded.number(), 9);
+    assert_eq!(padded.number(), "9");
+    assert_eq!(padded.as_u64(), Some(9));
     assert_eq!(padded.next().expect("next").to_string(), "v0010");
     let last = VersionNum::parse("v0999").expect("last at width 4");
     assert_eq!(last.next(), None, "v1000 does not fit the padded width");
-    assert!(VersionNum::parse("v1234567890123456789").is_err());
+    let long = VersionNum::parse("v123456789012345678901234567890").expect("no digit limit");
+    assert_eq!(long.as_u64(), None);
+    assert_eq!(
+        long.next().expect("next").to_string(),
+        "v123456789012345678901234567891"
+    );
+    let nines = VersionNum::parse("v9999999999999999999").expect("nineteen nines");
+    let after = nines.next().expect("next");
+    assert_eq!(
+        after,
+        VersionNum::parse("v10000000000000000000").expect("parses")
+    );
+    assert!(nines < after);
     let name = |n: &str| VersionNum::parse(n).expect(n);
     assert!(name("v1") < name("v2"));
     assert!(name("v2") < name("v10"));

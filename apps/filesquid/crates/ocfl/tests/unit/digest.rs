@@ -58,3 +58,13 @@ fn digests_compare_without_regard_to_case() {
     assert!(DigestAlgorithm::Sha256.matches(&upper, SHA256_ABC));
     assert!(!DigestAlgorithm::Sha256.matches(SHA256_EMPTY, SHA256_ABC));
 }
+
+#[test]
+fn only_real_digests_match() {
+    let not_hex = "z".repeat(64);
+    assert!(!DigestAlgorithm::Sha256.matches(&not_hex, &not_hex));
+    assert!(!DigestAlgorithm::Sha256.matches("abc", "abc"));
+    assert!(!DigestAlgorithm::Sha512.matches(SHA256_ABC, SHA256_ABC));
+    assert!(DigestAlgorithm::Sha256.is_digest(SHA256_ABC));
+    assert!(!DigestAlgorithm::Sha256.is_digest(&not_hex));
+}
