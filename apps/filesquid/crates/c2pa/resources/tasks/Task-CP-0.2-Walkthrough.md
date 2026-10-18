@@ -48,7 +48,7 @@ Verified against the published HTML of the [C2PA 2.4 specification](https://spec
 | `max_box_depth` | 16 (ceiling 256) | `unit_jumbf::superbox_depth_limit_holds_at_the_boundary`, `a_caller_depth_above_the_supported_ceiling_is_lowered_to_it`, `hostile_nesting_does_not_overflow_the_stack`; `unit_manifest::box_depth_limit_holds_at_the_boundary` |
 | `max_boxes` | 65 536 | `unit_jumbf::box_count_limit_holds_at_the_boundary` (count from an independent walker), `private_boxes_count_toward_the_box_limit`; `performance_parse` (65 416 boxes) |
 | `max_cbor_depth` | 64 (ceiling 256) | `unit_cbor::nesting_depth_limit_holds_at_the_boundary`, `a_caller_depth_above_the_supported_ceiling_is_lowered_to_it`, `deep_nesting_from_untrusted_input_does_not_overflow_the_stack`; `unit_manifest::cbor_depth_limit_rejects_the_whole_store` |
-| `max_cbor_items` | 1 048 576 per store | `unit_cbor::item_budget_holds_at_the_boundary_and_is_shared`, `a_declared_count_beyond_the_item_budget_fails_at_the_container_head` (a million declared elements fail at the array head, before any reservation); `unit_manifest::cbor_item_budget_is_shared_across_the_store_and_holds_at_the_boundary` (count from an independent counter) |
+| `max_cbor_items` | 1 048 576 decoded CBOR items per store (claims and assertions); claim signatures stay raw bytes and are not charged | `unit_cbor::item_budget_holds_at_the_boundary_and_is_shared`, `a_declared_count_beyond_the_item_budget_fails_at_the_container_head` (a million declared elements fail at the array head, before any reservation); `unit_manifest::cbor_item_budget_is_shared_across_the_store_and_holds_at_the_boundary` (count from an independent counter) |
 | CBOR declared lengths | remaining input | `unit_cbor::declared_lengths_longer_than_the_input_fail_without_allocating` |
 | JSON nesting | none needed: validation is iterative and builds no tree | `unit_manifest::deeply_nested_json_is_checked_without_recursion` (200 000 levels) |
 
@@ -116,6 +116,12 @@ thread 'rejection_logs_carry_categories_only' (15668) panicked at tests/unit/rea
 test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
 ```
 
+## Cubic review round 2
+
+- A `JP` APP11 packet shorter than 16 bytes (identifier, instance, sequence number, box header) is now an extraction error instead of being skipped. The new test `a_short_jp_packet_is_an_extraction_error` failed first. APP11 segments without `JP` are still ignored, the libjpeg-style stray-byte handling is unchanged, and the corpus result is the same (24 stores, 40 manifests, 0 errors).
+- The JSON fixture is the raw string `r#"{"@type":"CreativeWork"}"#`, with no backslashes, and `unit_manifest::assertions_are_parsed_by_content_type` passes. No change.
+- The `max_cbor_items` row in the limits table says it counts decoded CBOR and that claim signatures stay raw bytes. The raw test output below was captured again.
+
 ## Mocked Environment Variables
 
 None. `FILESQUID_C2PA_CONFORMANCE_DIR` pointed at a shallow clone of `https://github.com/c2pa-org/public-testfiles` (CC BY-SA 4.0, not vendored) for the conformance parse run below. It is not a secret and is not stored anywhere. `c2patool` was not installed, so the oracle test printed its skip reason.
@@ -157,44 +163,44 @@ Run from `apps/filesquid/` with `CARGO_TARGET_DIR` set to the shared target dire
 
 ## Raw test output
 
-`FILESQUID_C2PA_CONFORMANCE_DIR=... cargo test -p filesquid-c2pa --locked` (target directory shown as `$CARGO_TARGET_DIR`, blank lines removed). Test binaries and results:
+Captured after Cubic review round 2: `FILESQUID_C2PA_CONFORMANCE_DIR=... cargo test -p filesquid-c2pa --locked` (target directory shown as `$CARGO_TARGET_DIR`, blank lines removed). Test binaries and results:
 
 ```text
      Running unittests src/lib.rs ($CARGO_TARGET_DIR/debug/deps/filesquid_c2pa-d65bcc9dd41296d9)
-test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests/features.rs ($CARGO_TARGET_DIR/debug/deps/features-8655cb2d4004b238)
      Running tests/integration/conformance_parse.rs ($CARGO_TARGET_DIR/debug/deps/integration_conformance_parse-090ffb77eeb9717c)
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
      Running tests/integration/oracle.rs ($CARGO_TARGET_DIR/debug/deps/integration_oracle-94666cdf1f8605b4)
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests/integration/wasm_build.rs ($CARGO_TARGET_DIR/debug/deps/integration_wasm_build-35bc3b66d2b65aee)
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.39s
      Running tests/performance/parse.rs ($CARGO_TARGET_DIR/debug/deps/performance_parse-f035af314bbfc222)
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
      Running tests/unit/cbor.rs ($CARGO_TARGET_DIR/debug/deps/unit_cbor-c7040e8e8f10e2a2)
-test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
      Running tests/unit/claim.rs ($CARGO_TARGET_DIR/debug/deps/unit_claim-f9b9284008e60bf6)
-test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests/unit/crypto.rs ($CARGO_TARGET_DIR/debug/deps/unit_crypto-432f2a37df2000a3)
-test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
      Running tests/unit/fetch.rs ($CARGO_TARGET_DIR/debug/deps/unit_fetch-738758fb7279fcdb)
 test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests/unit/io.rs ($CARGO_TARGET_DIR/debug/deps/unit_io-c003cdb6bb92b265)
 test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests/unit/isolation.rs ($CARGO_TARGET_DIR/debug/deps/unit_isolation-fe596040567ca446)
-test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.42s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.46s
      Running tests/unit/jumbf.rs ($CARGO_TARGET_DIR/debug/deps/unit_jumbf-f69096fce7fab3ff)
 test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
      Running tests/unit/manifest.rs ($CARGO_TARGET_DIR/debug/deps/unit_manifest-e0b825c7c5ed2037)
-test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+test result: ok. 39 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
      Running tests/unit/oracle_harness.rs ($CARGO_TARGET_DIR/debug/deps/unit_oracle_harness-6d4b880861972b3f)
-test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
      Running tests/unit/read.rs ($CARGO_TARGET_DIR/debug/deps/unit_read-d590eb7c9591cd5b)
 test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests/unit/read_logs.rs ($CARGO_TARGET_DIR/debug/deps/unit_read_logs-b14b662b7f43348d)
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests/unit/source_scan.rs ($CARGO_TARGET_DIR/debug/deps/unit_source_scan-49491e813dee674f)
-test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
      Running tests/unit/uri.rs ($CARGO_TARGET_DIR/debug/deps/unit_uri-bb9093e7b09a2280)
 test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
@@ -203,7 +209,7 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 The Cucumber run from the same command:
 
 ```text
-     Running tests/features.rs ($CARGO_TARGET_DIR/debug/deps/features-8655cb2d4004b238)
+Running tests/features.rs ($CARGO_TARGET_DIR/debug/deps/features-8655cb2d4004b238)
 Feature: Reusable filesquid-c2pa engine
   Scenario: Read a manifest store
    ?  Given a JPEG with an embedded C2PA manifest store
@@ -331,22 +337,24 @@ SKIPPED c2patool oracle: c2patool not found: set FILESQUID_C2PATOOL or put c2pat
 `FILESQUID_C2PA_CONFORMANCE_DIR=... cargo test -p filesquid-c2pa --locked --test integration_conformance_parse --test performance_parse -- --nocapture`:
 
 ```text
-    Finished `test` profile [unoptimized] target(s) in 0.23s
+    Finished `test` profile [unoptimized] target(s) in 0.22s
      Running tests/integration/conformance_parse.rs ($CARGO_TARGET_DIR/debug/deps/integration_conformance_parse-090ffb77eeb9717c)
-running 1 test
+running 4 tests
+test a_short_jp_packet_is_an_extraction_error ... ok
+test app11_extraction_skips_marker_fill_bytes ... ok
+test app11_extraction_skips_extraneous_bytes_but_not_truncation ... ok
 conformance parse: 24 stores, 91 files without a store, 40 manifests parsed, 0 manifest errors, 0 store errors
 test every_conformance_manifest_store_parses ... ok
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
      Running tests/performance/parse.rs ($CARGO_TARGET_DIR/debug/deps/performance_parse-f035af314bbfc222)
 running 1 test
-parsed 21800 assertions and an 8 MiB thumbnail in 82.278618ms
+parsed 21800 assertions and an 8 MiB thumbnail in 106.501797ms
 test a_store_near_the_box_limit_parses_within_the_budget ... ok
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
 ```
 
-Without the variable, the documented command prints its skip reason:
+Without the variable, the conformance parse test prints its skip reason:
 
 ```text
 SKIPPED conformance parse: FILESQUID_C2PA_CONFORMANCE_DIR is not set
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 ```

@@ -85,8 +85,17 @@ fn segment(bytes: &[u8], at: usize) -> Result<Option<Segment<'_>>, String> {
 
 /// Append one APP11 packet to its box.
 fn add_packet(boxes: &mut BTreeMap<u16, Vec<u8>>, payload: &[u8]) -> Result<(), String> {
-    if payload.get(..2) != Some(&b"JP"[..]) || payload.len() < 16 {
+    // APP11 segments without the JP identifier carry other data.
+    if payload.get(..2) != Some(&b"JP"[..]) {
         return Ok(());
+    }
+    // JP, instance, sequence number and a box header take 16 bytes; less
+    // is a broken store, never "no store".
+    if payload.len() < 16 {
+        return Err(format!(
+            "JP APP11 packet of {} bytes is too short",
+            payload.len()
+        ));
     }
     let instance = u16::from_be_bytes([payload[2], payload[3]]);
     let body = &payload[8..];

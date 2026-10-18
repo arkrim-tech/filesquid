@@ -140,3 +140,17 @@ fn app11_extraction_skips_extraneous_bytes_but_not_truncation() {
     let truncated = [0xFF, 0xD8, 0xFF, 0xEB, 0x00, 0x40, b'J', b'P'];
     assert!(jpeg_app11::jpeg_jumbf(&truncated).is_err());
 }
+
+#[test]
+fn a_short_jp_packet_is_an_extraction_error() {
+    // An APP11 segment with the JP identifier but fewer than the 16 bytes
+    // of identifier, instance, sequence and box header is a broken store,
+    // not a file without one.
+    let mut jpeg = vec![0xFF, 0xD8, 0xFF, 0xEB, 0x00, 0x08, b'J', b'P', 0, 1, 0, 0];
+    jpeg.extend_from_slice(&[0xFF, 0xDA]);
+    assert!(jpeg_app11::jpeg_jumbf(&jpeg).is_err());
+    // APP11 segments for other purposes are not JUMBF and are ignored.
+    let mut other = vec![0xFF, 0xD8, 0xFF, 0xEB, 0x00, 0x04, b'X', b'Y'];
+    other.extend_from_slice(&[0xFF, 0xDA]);
+    assert_eq!(jpeg_app11::jpeg_jumbf(&other), Ok(Vec::new()));
+}
