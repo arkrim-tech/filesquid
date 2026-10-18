@@ -5,6 +5,9 @@ edition = "2021"
 description = "FileSquid OCFL 1.1 module. Installable without the FileSquid app; builds and publishes without other FileSquid crates. Git MUST NOT be the OCFL store."
 license = "MIT"
 publish = false
+# The pinned OCFL community fixtures are test data only: never packaged with
+# the crate or loaded by it (OCFL-S-011).
+exclude = ["tests/fixtures/"]
 
 [lib]
 path = "src/lib.rs"
@@ -22,6 +25,12 @@ fs = []
 serde = { version = "1", default-features = false, features = ["std"] }
 serde_json = { version = "1", default-features = false, features = ["std"] }
 sha2 = "0.11"
+# Fixity algorithms a validator must verify besides sha256 and sha512
+# (OCFL 1.1 fixity table, E027): md5, sha1 and blake2b-512. Read only; the
+# engine never writes them (ADR 009). Pure Rust, so wasm32 still builds.
+md-5 = "0.11"
+sha1 = "0.11"
+blake2 = "0.11"
 thiserror = "2"
 tracing = "0.1"
 
@@ -88,6 +97,20 @@ required-features = ["fs"]
 [[test]]
 name = "integration_fixture_reads"
 path = "tests/integration/fixture_reads.rs"
+required-features = ["fs"]
+
+[[test]]
+name = "unit_fixity"
+path = "tests/unit/fixity.rs"
+
+[[test]]
+name = "integration_validate_objects"
+path = "tests/integration/validate_objects.rs"
+required-features = ["fs"]
+
+[[test]]
+name = "integration_fixture_conformance"
+path = "tests/integration/fixture_conformance.rs"
 required-features = ["fs"]
 
 [[test]]

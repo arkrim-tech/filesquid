@@ -2,9 +2,8 @@
 //! (OCFL-S-010 (a), OCFL-S-011; `OCFL/fixtures` commit
 //! `d323fc207126becec066998b43408d998bf0fb1b`).
 //!
-//! Set `FILESQUID_OCFL_FIXTURES` to the fixtures' `1.1` directory to run it.
-//! Without it the test reports that it skipped and passes: the fixtures are
-//! committed under `tests/` by IO-0.5, which then points this test at them.
+//! The fixtures are committed under `tests/fixtures/ocfl/1.1` (IO-0.5), so
+//! this test always runs; `FILESQUID_OCFL_FIXTURES` may name another copy.
 //!
 //! Checked here, through `FsBackend` on the fixture directories:
 //! - every version, `v1` to `head`, of every `good-objects` fixture resolves
@@ -30,8 +29,8 @@ use filesquid_ocfl::VersionNum;
 ///
 /// `E092_E093_content_path_does_not_exist` is not here: its manifest lists
 /// two content paths for one digest and only the second is missing, so the
-/// logical file reads correctly from the first. Finding the missing path is
-/// validation (IO-0.5), not reading.
+/// logical file reads correctly from the first. The validator reports the
+/// missing path (`integration_fixture_conformance`).
 const READ_REFUSALS: &[(&str, &str)] = &[
     ("E003_E063_empty", "E003"),
     ("E003_no_decl", "E003"),
@@ -49,16 +48,8 @@ const PINNED_GOOD_OBJECTS: usize = 12;
 /// Objects in `1.1/warn-objects` at the pinned commit.
 const PINNED_WARN_OBJECTS: usize = 13;
 
-/// The fixtures' `1.1` directory, when the environment names it.
-fn fixtures() -> Option<PathBuf> {
-    let dir = PathBuf::from(std::env::var_os("FILESQUID_OCFL_FIXTURES")?);
-    assert!(
-        dir.join("good-objects").is_dir(),
-        "{} is not the 1.1 tree",
-        dir.display()
-    );
-    Some(dir)
-}
+#[path = "../support/fixtures.rs"]
+mod fixtures;
 
 /// A read-only backend over one fixture group (such as `good-objects`),
 /// with its staging directory in the test target directory.
@@ -148,19 +139,13 @@ fn read_group(dir: &Path, group: &str, expected: usize) {
 
 #[test]
 fn every_version_of_every_good_fixture_reads_with_matching_digests() {
-    let Some(dir) = fixtures() else {
-        println!("skipped: FILESQUID_OCFL_FIXTURES is not set");
-        return;
-    };
+    let dir = fixtures::tree();
     read_group(&dir, "good-objects", PINNED_GOOD_OBJECTS);
 }
 
 #[test]
 fn every_warning_fixture_reads_with_matching_digests() {
-    let Some(dir) = fixtures() else {
-        println!("skipped: FILESQUID_OCFL_FIXTURES is not set");
-        return;
-    };
+    let dir = fixtures::tree();
     read_group(&dir, "warn-objects", PINNED_WARN_OBJECTS);
 }
 
@@ -175,10 +160,7 @@ fn first_refusal(backend: &FsBackend, name: &str) -> ReadError {
 
 #[test]
 fn bad_fixtures_a_reader_meets_are_refused_with_their_codes() {
-    let Some(dir) = fixtures() else {
-        println!("skipped: FILESQUID_OCFL_FIXTURES is not set");
-        return;
-    };
+    let dir = fixtures::tree();
     let backend = backend(&dir.join("bad-objects"));
     for (name, expected) in READ_REFUSALS {
         let err = first_refusal(&backend, name);

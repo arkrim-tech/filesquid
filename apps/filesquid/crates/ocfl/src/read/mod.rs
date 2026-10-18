@@ -21,16 +21,16 @@
 //! - [`Object::history`] / [`version_history`] and [`Object::diff`] /
 //!   [`diff_versions`]: version history and the diff of two versions.
 //!
-//! Reading is not validation: structural validation of every OCFL rule is a
-//! separate step (IO-0.5). A reader checks what it needs to return correct
+//! Reading is not validation: structural validation of every OCFL rule is
+//! [`crate::validate`]. A reader checks what it needs to return correct
 //! bytes and refuses with the OCFL 1.1 code of the rule it meets broken.
 
-mod declaration;
+pub(crate) mod declaration;
 mod error;
 mod history;
 mod object;
 mod root;
-mod small;
+pub(crate) mod small;
 mod state;
 mod stream;
 

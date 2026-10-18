@@ -66,14 +66,7 @@ Pure parsing and writing, available on every target, `wasm32` included ([OCFL-S-
 - Sidecars: `sidecar_name`, `sidecar_contents` (`DIGEST inventory.json` and a newline), `verify_sidecar` (refuses input above 4 KiB, `MAX_SIDECAR_BYTES`; E061 malformed, E060 wrong digest) and `check_sidecar_name` (E059).
 - `namaste::Declaration`: `0=ocfl_object_1.1` and `0=ocfl_1.1`, with their exact contents (E007, E080).
 
-Object-level validation (files against the manifest, version directories, earlier version inventories) is structural validation (IO-0.5), built on these types. `tests/integration/fixture_inventories.rs` checks the root inventories, sidecars and declarations of the OCFL 1.1 community fixtures in a directory you supply with `FILESQUID_OCFL_FIXTURES` (the fixtures' `1.1` directory). The test does not verify which fixtures commit that directory holds; use the commit recorded in [OCFL-S-011](./resources/srs.md) (`d323fc207126becec066998b43408d998bf0fb1b`), as the IO-0.3 Walkthrough did:
-
-```bash
-cd apps/filesquid
-FILESQUID_OCFL_FIXTURES=/path/to/fixtures/1.1 cargo test -p filesquid-ocfl --locked --test integration_fixture_inventories -- --nocapture
-```
-
-In PowerShell set the variable first with `$env:FILESQUID_OCFL_FIXTURES = "C:\path\to\fixtures\1.1"`. Without the variable the test reports that it skipped. IO-0.5 commits the fixtures under `tests/` and points the test at them.
+Object-level validation (files against the manifest, version directories, earlier version inventories) is the `validate` module, built on these types ([Structural validation](#structural-validation)). `tests/integration/fixture_inventories.rs` checks the root inventories, sidecars and declarations of the [pinned OCFL 1.1 community fixtures](#pinned-ocfl-community-fixtures).
 
 ## Read and browse
 
@@ -85,14 +78,48 @@ The `read` module opens storage roots and objects through any storage backend, o
 - `Object::state(&version)` (or the pure `read::resolve_state(&inventory, &version)`) resolves the logical state of a version the caller pins through `state` and `manifest` only. A file whose bytes were stored in an earlier version resolves to that earlier content path; files the inventory does not list are never part of the state. Each `LogicalFile` has its logical path, digest and content path; the state has the object id and version.
 - `Object::stream_file(&version, path, chunk_bytes)` returns a `LogicalFileReader` that reads in chunks of at most 8 MiB and checks the digest when the stream ends: bytes are unverified until `next_chunk()` returns `None`, and a mismatch or missing content file is E092. `Object::copy_file(&version, path, &dest, &key, precondition)` streams into a multipart upload on any backend and publishes it only when the digest matched; otherwise the upload is aborted, no new object is published at `key`, and any object already there stays unchanged.
 - `Object::history()` lists every version with `created`, `message` and `user`; `Object::diff(&from, &to)` lists added, deleted, modified and renamed paths (a rename is a deleted and an added path with the same digest), in path order.
-- Reading is not validation: a reader refuses only the faults it meets. Structural validation is IO-0.5.
+- Reading is not validation: a reader refuses only the faults it meets. Structural validation is the `validate` module.
 
-`tests/integration/fixture_reads.rs` resolves every version of every `good-objects` and `warn-objects` fixture and streams every logical file against its digest, and checks that a reader refuses the bad fixtures whose faults it meets, with the code their names list ([OCFL-S-010](./resources/srs.md) (a)). Like the inventory test, it reads the fixtures from `FILESQUID_OCFL_FIXTURES` and reports that it skipped without it; the BDD feature `OCFL_1.1_fixture_conformance.feature` (tag `@fixtures`) runs only when the variable is set:
+`tests/integration/fixture_reads.rs` resolves every version of every `good-objects` and `warn-objects` fixture and streams every logical file against its digest, and checks that a reader refuses the bad fixtures whose faults it meets, with the code their names list ([OCFL-S-010](./resources/srs.md) (a)), on the [pinned fixtures](#pinned-ocfl-community-fixtures).
+
+## Structural validation
+
+`validate::validate_object(&backend, root)` validates one OCFL 1.1 object through any storage backend, on every target ([OCFL-S-009](./resources/srs.md)). It returns a `ValidationReport`: each broken rule it reaches is a `Finding` with its OCFL 1.1 validation code (`E###` errors, `W###` warnings), the storage key (and JSON pointer, for an inventory value) where it is, and a message. `is_valid()` is true when there are no errors; warnings never make an object invalid. The function returns an error only when the object cannot be validated: a backend failure, a listing above `MAX_WALK_ENTRIES` keys, a file above the engine's parsing bounds ([OCFL-S-017](./resources/srs.md); no OCFL code), or an object declared as another OCFL version than 1.1.
+
+It checks, in order:
+
+- the hierarchy under the object root: an empty directory is E024 (validation goes on), a soft or hard link E090 (validation stops there, since the listing cannot be trusted);
+- the declaration (E003, E007), the root inventory (E063 when missing, every code `Inventory::parse` gives, E038 for a type other than 1.1) and its sidecar (E058, E060, E061);
+- the object root's entries: only the declaration, the inventory and its sidecar, version directories, `logs` and `extensions` (E001); a version directory the root inventory does not list is E046, even with an inventory and sidecar of its own, because only the root inventory commits a version; a listed version without a directory is E010; `extensions` holds only directories (E067), each SHOULD be a registered extension name (W013);
+- inventory warnings: zero-padded versions (W001), `sha256` (W004), an id that is not a URI (W005), a version without `message` or `user` (W007), a user without an address (W008) or with one that is not a URI (W009);
+- each version directory: only its inventory, its sidecar and the content directory (E015; another directory is W002 and ignored). When the version inventory parses, only the sidecar for its `digestAlgorithm` is allowed; a sidecar without an inventory is E015; a malformed inventory reports its own error and allows any recognised (`sha256`, `sha512`) sidecar; a missing inventory is W010; a version inventory must be valid with its own sidecar, name its own version as `head` (E040), keep the id (E037) and content directory (E019), not go back to an older specification (E103), equal the root inventory for the head version (E064), describe every earlier version's state as the root inventory does (E066; `created`, `message` or `user` differences are W011), keep every manifest path inside a content directory (E042) and list every content file of its versions (E023);
+- content: every file in a content directory is in the manifest (E023), every manifest path is inside a version's content directory (E042), and every file is streamed once, in chunks of at most 8 MiB, and checked against every digest stated for it: the root manifest and the manifests of earlier version inventories, whatever their algorithm (E092), and the root fixity block (E093). A content path that does not exist is E092 (and E093 when the fixity block lists it).
+
+Fixity values are checked in every algorithm of the OCFL 1.1 fixity table (`fixity::FixityAlgorithm`: `md5`, `sha1`, `sha256`, `sha512`, `blake2b-512`, E027); values in other algorithms are ignored (E028). md5 and sha1 are only read: the engine writes `sha256`.
+
+One inventory is checked to its first broken rule, so an object whose inventory breaks several rules reports the first; the [fixtures README](./tests/fixtures/ocfl/README.md) allows this. Storage-root validation (E069 to E090 across a whole storage root) is not part of this module yet; `StorageRoot::open` checks the declaration and guards.
+
+## Pinned OCFL community fixtures
+
+The `1.1/` tree of the [OCFL community fixtures](https://github.com/OCFL/fixtures) is committed unchanged under `tests/fixtures/ocfl/1.1/`, pinned to commit `d323fc207126becec066998b43408d998bf0fb1b` (2024-12-05T17:25:06Z), with the upstream README, its CC-BY-4.0 licence record (`.zenodo.json`) and a [NOTICE](./tests/fixtures/ocfl/NOTICE.md) ([OCFL-S-011](./resources/srs.md)). They are test data: the package `exclude`s them and no library code loads them. Moving the pin replaces the whole tree in its own reviewed change.
+
+`cargo test -p filesquid-ocfl --locked` runs them offline, so the local pre-commit hook does too:
+
+- `integration_fixture_conformance` validates every object: all 12 `good-objects` and all 13 `warn-objects` with zero errors (each warning fixture also reports the warning codes its name starts with), and all 55 `bad-objects` are rejected. A code a bad fixture's name lists but the validator does not report is allowed only when it is in the test's `EXPECTED_GAPS` list; the [IO-0.5 Walkthrough](./resources/tasks/Task-IO-0.5-Walkthrough.md) explains each one.
+- `integration_fixture_inventories` and `integration_fixture_reads` check root inventories and reads ([Read and browse](#read-and-browse)); the BDD feature `OCFL_1.1_fixture_conformance.feature` covers validation, reads and the pin.
+
+To see one line per fixture:
 
 ```bash
 cd apps/filesquid
-FILESQUID_OCFL_FIXTURES=/path/to/fixtures/1.1 cargo test -p filesquid-ocfl --locked --test integration_fixture_reads -- --nocapture
-FILESQUID_OCFL_FIXTURES=/path/to/fixtures/1.1 cargo test -p filesquid-ocfl --locked --test features
+cargo test -p filesquid-ocfl --locked --test integration_fixture_conformance -- --nocapture --test-threads=1
+```
+
+`FILESQUID_OCFL_FIXTURES` may name another copy of a `1.1` tree, for example an `OCFL/fixtures` checkout at a new commit before the pin moves (in PowerShell, `$env:FILESQUID_OCFL_FIXTURES = "C:\path\to\fixtures\1.1"` first):
+
+```bash
+cd apps/filesquid
+FILESQUID_OCFL_FIXTURES=/path/to/fixtures/1.1 cargo test -p filesquid-ocfl --locked --test integration_fixture_conformance
 ```
 
 ## Build and test
@@ -114,3 +141,4 @@ The `wasm32` build needs `rustup target add wasm32-unknown-unknown` once. `cargo
 - [PRD F-051: OCFL module](../../../../resources/prd.md#f-051-ocfl-module)
 - [ADR 016](../../../../resources/architecture/016-rust-ocfl-library.md) and [ADR 023](../../../../resources/architecture/023-filesquid-ocfl-engine-and-parquet.md)
 - [Module SRS](./resources/srs.md) and [module plan](./resources/plan.md)
+- [OCFL 1.1 validation codes](https://ocfl.io/1.1/spec/validation-codes.html)

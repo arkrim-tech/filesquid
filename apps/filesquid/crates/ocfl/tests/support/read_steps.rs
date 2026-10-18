@@ -1,5 +1,6 @@
 //! Step definitions for `read_and_browse_OCFL-S-004.feature` and the read
-//! scenario of `OCFL_1.1_fixture_conformance.feature` (IO-0.4).
+//! scenario of `OCFL_1.1_fixture_conformance.feature` (IO-0.4). The
+//! fixtures are the committed pinned tree (`crate::fixtures`, IO-0.5).
 
 use std::path::PathBuf;
 
@@ -286,8 +287,7 @@ fn refused_with(world: &mut OcflWorld, code: String) {
 
 #[given("the pinned OCFL 1.1 community fixtures")]
 fn pinned_fixtures(world: &mut OcflWorld) {
-    let dir = std::env::var_os("FILESQUID_OCFL_FIXTURES").expect("filtered without fixtures");
-    world.read.fixtures = Some(PathBuf::from(dir));
+    world.read.fixtures = Some(crate::fixtures::tree());
 }
 
 #[when("I resolve every version of every object in good-objects")]
