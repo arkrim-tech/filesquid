@@ -54,9 +54,9 @@ Requirements that drive this decision:
 
 **7. Release order.**
 
-1. FileSquid: the API and the default Drive-style UI, with the `ocfl`, `metadata` and `c2pa` modules, on the desktop and `filesquid-server` hosts.
+1. FileSquid: the API and the default Drive-style UI, with the `ocfl` and `metadata` modules, on the desktop and `filesquid-server` hosts (the `c2pa` module moved to the ImageSquid release by [ADR 037](./037-c2pa-in-release-2.md)).
 2. Encrypted backup and sync at `*.filesquid.tech` ([ADR 032](./032-hosting-and-privacy-model.md)).
-3. ImageSquid, as a FileSquid distribution.
+3. ImageSquid, as a FileSquid distribution, with FileSquid's `c2pa` module.
 4. Arkrim and the other later milestones, in an order the owner chooses ([C-052](../product-vision.md#release-sequence)).
 
 **8. Module rename.** The C2PA module is `filesquid-c2pa`, in `apps/filesquid/crates/c2pa/`. It replaces the name `filesquid-provenance`. [ADR 026](./026-filesquid-provenance-engine.md) keeps its filename as history; its technical content applies to `filesquid-c2pa`.
@@ -89,7 +89,7 @@ Putting every backend capability in FileSquid means a FileSquid user gets thumbn
 
 Easier: one product to build, test and release; distributions are cheap to add; module crates still stand alone; the capability placement test settles where new work goes.
 
-Harder: FileSquid grows large, because every distribution's backend needs become FileSquid modules. Mitigation: module crates with no default cross-dependencies, a module set per distribution, and FileSquid release 1 limited to three modules. CI MUST build and test each module crate alone, as well as the workspace. Rules, scripts and READMEs that assumed separate app directories (`apps/core`, `apps/backend`, `apps/desktop`, `apps/frontend`, `apps/client`, `apps/filesquid-*`) MUST be updated; those directories no longer exist.
+Harder: FileSquid grows large, because every distribution's backend needs become FileSquid modules. Mitigation: module crates with no default cross-dependencies, a module set per distribution, and FileSquid release 1 limited to the `ocfl` and `metadata` modules ([ADR 037](./037-c2pa-in-release-2.md)). CI MUST build and test each module crate alone, as well as the workspace. Rules, scripts and READMEs that assumed separate app directories (`apps/core`, `apps/backend`, `apps/desktop`, `apps/frontend`, `apps/client`, `apps/filesquid-*`) MUST be updated; those directories no longer exist.
 
 ## Related Decisions / Notes
 

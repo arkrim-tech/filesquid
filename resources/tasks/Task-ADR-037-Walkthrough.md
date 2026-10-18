@@ -35,7 +35,7 @@ Reading used for "release 2": the repository already calls the ImageSquid releas
 | Phase C (release 2) | none | 217 hours |
 | All FileSquid phases | 2,560 hours | 2,593 hours |
 
-118 hours leave the MVP, of which 26 (CP-0.1 and CP-0.2) were already done, so open MVP work falls by about 92 hours. Phase C adds 13 hours: the record backfill (+4 on API-F1.5), the `generator:` operator (+1) and the Content Credentials gate (8). The import file record (round 2) adds 20 hours back to the MVP: MD-0.8 (8), DE-1.2 (+6), API-F1.3 (+2), API-F1.4 (+2), UI-F2.4 (+2).
+118 hours leave the MVP, of which 26 (CP-0.1 and CP-0.2) were already done, so open MVP work falls by about 92 hours. Phase C adds 13 hours: the record backfill (+4 on API-F1.5), the `generator:` operator (+1) and the Content Credentials gate (8). The import file record (round 2) adds 20 hours back to the MVP: MD-0.8 (8), DE-1.2 (+6), API-F1.4 (+4, including the upload's file record), UI-F2.4 (+2).
 
 ## Sync Execution Report
 
@@ -43,16 +43,16 @@ ADR 037 → vision C-025, C-056 → PRD (summary, F-050, F-043, release gates) �
 
 ## Round 2: owner follow-up (2026-10-18)
 
-1. **Import file record instead of a C2PA record.** [ADR 038](../architecture/038-import-file-record.md) (new): every import commits an append-only `file-record.md` in the file's OCFL object, owned by `filesquid-metadata`, with as many source-system and host facts as are available (name, paths, timestamps, ownership, permissions, ACL, flags, link target, content type, every extended attribute with quarantine, where-from and Finder tags decoded, volume, OS, host, account, FileSquid version, import method and job); unavailable facts are listed with a reason; bounded; identity fields scrubbed on export and share. Cascaded into vision C-055, C-056 and C-025, PRD F-002 (new criteria) and F-043 (backfill cites the file record), [architecture](../architecture.md), new module SRS rows MD-S-013 and DE-S-008, new module task MD-0.8, and DE-1.2, API-F1.3, API-F1.4 and UI-F2.4; global Tasks FS-1.2, FS-1.3, FS-2.2, 1.2 and the MVP gate FS-3.9; the checklist; new F-002 BDD scenarios.
+1. **Import file record instead of a C2PA record.** [ADR 038](../architecture/038-import-file-record.md) (new): every import commits an append-only `file-record.md` in the file's OCFL object, owned by `filesquid-metadata`, with as many source-system and host facts as are available (name, paths, timestamps, ownership, permissions, ACL, flags, link target, content type, every extended attribute with quarantine, where-from and Finder tags decoded, volume, OS, host, account, FileSquid version, import method and job); unavailable facts are listed with a reason; bounded; identity fields scrubbed on export and share. Cascaded into vision C-055, C-056 and C-025, PRD F-002 (new criteria) and F-043 (backfill cites the file record), [architecture](../architecture.md), new module SRS rows MD-S-013 and DE-S-008, new module task MD-0.8, and DE-1.2, API-F1.4 and UI-F2.4; global Tasks FS-1.3, FS-2.2, 1.2 and the MVP gate FS-3.9; the checklist; new F-002 BDD scenarios.
 2. **`generator:` removed from the MVP search.** Dropped from API-F2.3 and its BDD examples; PRD F-063, SRS-F-063 and API-S-012 make it part of the grammar only where the `c2pa` module is enabled (otherwise an unknown operator); it returns with API-F1.5 in Task FS-C.1, with BDD scenarios for both cases.
 3. **Credentials tab removed from every mockup.** v1 (13, 14, 15, 16, 17, 19, 20: the Activity and Sharing pills move up into the freed slot) and v2 (22–29). The credentials panel mockups v1/18 and v2/30 were deleted. v2 settings, import review and library recovery no longer mention Content Credentials; import review and recovery mention the file record. Both mockup READMEs updated.
 4. **C2PA with ImageSquid through the one API.** ADR 037, the vision (C-025), the plan's release sequence and Task FS-C.1 say that `filesquid-c2pa` is added to FileSquid in release 2 and reaches the ImageSquid distribution and UI only through `filesquid-api`; the `<fs-credentials-panel>` is the component the ImageSquid inspector composes. Owner decision (2026-10-18): in release 2 the default FileSquid sidebar also gets the Credentials tab; recorded in ADR 037, Task FS-C.1, UI-F2.5 and the v2 mockups README.
 
 ## Verification
 
-Raw output of `bash scripts/pre-commit.sh` is appended below.
+An excerpt of the `bash scripts/pre-commit.sh` output (the gate summary lines, copied verbatim from the full run) is appended below; the full output is several thousand lines of test logs.
 
-`bash scripts/pre-commit.sh` exit 0. Raw output, gate summary lines:
+`bash scripts/pre-commit.sh` exit 0. Excerpt, gate summary lines:
 
 ```text
 ========================================

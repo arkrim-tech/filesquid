@@ -20,7 +20,7 @@ ImageSquid is a distribution of FileSquid: a UI layer of views, design tokens (l
 
 ## Release order and dependency gates
 
-ImageSquid is the second consumer release. It follows the FileSquid release (FileSquid's default UI with the `ocfl`, `metadata` and `c2pa` modules) and FileSquid's encrypted backup and sync. After the ImageSquid release, the owner chooses the order of the later milestones (Arkrim, IIIF/GLAM, ProofMode). Copied from the FileSquid PRD release table (2026-10-16):
+ImageSquid is the second consumer release. It follows the FileSquid release (FileSquid's default UI with the `ocfl` and `metadata` modules) and FileSquid's encrypted backup and sync; FileSquid's `c2pa` module ships with the ImageSquid release. After the ImageSquid release, the owner chooses the order of the later milestones (Arkrim, IIIF/GLAM, ProofMode). Copied from the FileSquid PRD release table (2026-10-16; updated 2026-10-18 for the C2PA move, condensed here):
 
 | Release or gate | Prerequisites | Scope and objective | Exit gate |
 |---|---|---|---|

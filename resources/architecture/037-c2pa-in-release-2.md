@@ -33,7 +33,7 @@ Accepted: 2026-10-18. Amends [ADR 035](./035-macos-first-desktop-mvp.md) (the MV
 - Taking the from-scratch C2PA engine off the critical path removes its specification and cryptography risk from the MVP and from release 1.
 - The panel-slot architecture ([ADR 031](./031-vanilla-typescript-ui-and-white-label-theming.md)) and the one-owner rule for file facts ([C-055](../product-vision.md#module-rules)) let the Content Credentials panel and routes join later without changing the browser, the other panels or the OCFL layout.
 - C2PA's strongest audience is photo and media work, which is what the ImageSquid release delivers.
-- Not linking `filesquid-c2pa` shrinks the MVP DMG's linked inventory, and with it the [ADR 011](./011-native-media-adapters-and-ffmpeg-license.md) licence review on the MVP path.
+- Not linking `filesquid-c2pa` shrinks the MVP DMG's linked inventory, and with it the C2PA part of the [ADR 011](./011-native-media-adapters-and-ffmpeg-license.md) licence review; the rest of that review still gates the MVP.
 
 ## Assumptions
 
