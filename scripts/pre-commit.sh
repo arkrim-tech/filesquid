@@ -11,8 +11,9 @@
 # from the diff against the merge-base with origin/main. The scope is detected
 # once here and handed to steps 7 and 10 with --scope, so the summary line
 # names the scope that actually ran. `FULL=1 bash scripts/pre-commit.sh` forces
-# the full suite; it is required before a PR is first marked ready and on the
-# final commit before merge (.agents/rules/local-verification.md).
+# the full suite; when the PR's scope is full or includes rust:, it is required
+# before a PR is first marked ready and on the final commit before merge
+# (.agents/rules/local-verification.md).
 
 . ./scripts/lib/hook_scope.sh
 HOOK_STARTED=$SECONDS

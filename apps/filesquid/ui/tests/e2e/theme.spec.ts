@@ -6,42 +6,13 @@
  */
 import { expect, test, type Page } from "@playwright/test";
 import { ADMIN_TOKEN } from "./admin-token";
-
-/** Collect console errors and uncaught page errors for the whole test. */
-function trackErrors(page: Page): string[] {
-  const errors: string[] = [];
-  page.on("console", (msg) => {
-    if (msg.type() === "error") errors.push(msg.text());
-  });
-  page.on("pageerror", (err) => errors.push(err.message));
-  return errors;
-}
+import { bodyBackground, tokenColour, trackErrors } from "./support/strict-dom";
 
 /** Authorise the shell with the desktop host's launch token so no call is refused. */
 async function withLaunchToken(page: Page): Promise<void> {
   await page.addInitScript((value) => {
     Object.defineProperty(window, "__FILESQUID_LAUNCH_TOKEN__", { value, enumerable: false });
   }, ADMIN_TOKEN);
-}
-
-/**
- * Resolve a colour token to the browser's computed `rgb(...)` form through a probe element,
- * so the check does not depend on how the build minified the hex value.
- */
-function tokenColour(page: Page, name: string): Promise<string> {
-  return page.evaluate((prop) => {
-    const probe = document.createElement("span");
-    probe.style.color = `var(${prop})`;
-    document.body.append(probe);
-    const colour = getComputedStyle(probe).color;
-    probe.remove();
-    return colour;
-  }, name);
-}
-
-/** Computed body background colour. */
-function bodyBackground(page: Page): Promise<string> {
-  return page.evaluate(() => getComputedStyle(document.body).backgroundColor);
 }
 
 /**
