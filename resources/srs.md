@@ -34,6 +34,7 @@ The FileSquid default UI MUST use the internal names and MUST NOT inherit the Im
 - **UIs:** vanilla TypeScript (no UI framework) compiled with Vite 8, using standard custom elements:
   - `@filesquid/ui` at `apps/filesquid/ui`: FileSquid API client, custom elements, default distribution UI. Dev port `5173`, preview port `4173`.
   - `@imagesquid/ui` at `apps/imagesquid`: the ImageSquid distribution (views, theme, labels, brand, distribution manifest). No Rust. Dev port `5174`, preview port `4174`.
+- **Build tooling decided, not yet installed:** a cargo-hakari workspace-hack crate (`filesquid-workspace-hack`, dev-dependency only) for one feature set in test and Clippy builds, with a pre-commit drift gate and a `cargo check -p <crate> --lib` stand-alone check per module crate; adopted only if its measurement gate passes ([ADR 039](./architecture/039-cargo-hakari-workspace-hack.md)). It does not change any crate's runtime, WASM or published dependency graph.
 - Svelte is removed ([ADR 003](./architecture/003-svelte-client-rendered-ui.md) superseded by [ADR 031](./architecture/031-vanilla-typescript-ui-and-white-label-theming.md)).
 - Standards in use: OCFL 1.1; C2PA records per PRD F-043/F-044; ISO 15836-2 `/terms/`; RFC 4122 / RFC 9562 UUID version 4.
 
