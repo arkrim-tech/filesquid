@@ -6,9 +6,12 @@
 #
 #   hook_scope [--quiet]          detect and print the validated scope; the
 #                                 helper's reason goes to stderr unless --quiet
-#   scope_or_detect [--scope S]   print S when it is a valid scope (how
+#   scope_or_detect [--scope S]   with no arguments, detect the scope; with
+#                                 exactly `--scope S` and a valid S, print S (how
 #                                 scripts/pre-commit.sh hands its one detection
-#                                 to the gates), otherwise detect it here
+#                                 to the gates); with anything else (an invalid
+#                                 S, `--scope=S`, a misspelling, extra
+#                                 arguments) print a message and `full`
 #   is_valid_scope S              succeed when S follows the scope grammar
 #
 # The fixture-only overrides CHANGED_SCOPE_FILES, CHANGED_SCOPE_METADATA and
@@ -42,15 +45,15 @@ hook_scope() {
   printf '%s\n' "$scope"
 }
 
-# Prints the scope given as `--scope <scope>` when valid, `full` when the
-# given one is invalid, or the detected scope when none is given.
+# Prints the detected scope when called with no arguments, the given scope
+# for exactly `--scope <valid scope>`, and `full` (with a message) otherwise.
 scope_or_detect() {
-  if [ "${1:-}" != "--scope" ]; then
+  if [ "$#" -eq 0 ]; then
     hook_scope
-  elif is_valid_scope "${2:-}"; then
+  elif [ "$#" -eq 2 ] && [ "$1" = "--scope" ] && is_valid_scope "$2"; then
     printf '%s\n' "$2"
   else
-    echo "changed_scope: full (invalid --scope '${2:-}')" >&2
+    echo "changed_scope: full (unrecognised arguments '$*'; expected none or --scope <scope>)" >&2
     echo full
   fi
 }

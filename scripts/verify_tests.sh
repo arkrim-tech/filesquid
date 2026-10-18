@@ -44,8 +44,9 @@
 #   FILESQUID_CARGO_LOCK_WAIT  seconds to wait for the shared-target lock (default 1800)
 #
 # Usage: ./scripts/verify_tests.sh [--scope <scope>]   (from the repository root)
-#   Without --scope the scope is detected. scripts/pre-commit.sh passes the
-#   scope it detected once; an invalid --scope runs the full suite.
+#   Without arguments the scope is detected. scripts/pre-commit.sh passes the
+#   scope it detected once. Any other argument, or an invalid scope, runs the
+#   full suite after a message.
 
 echo "Starting Lint and Test Validation..."
 

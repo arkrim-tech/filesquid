@@ -6,16 +6,18 @@
 # Development environment setup: installs the pinned toolchain and dependencies and pre-warms the Cargo target, safely on every new session.
 #
 # Idempotent and bounded: every step can run again without harm, and every
-# network or build step runs under a time limit when `timeout` (or `gtimeout`)
-# exists. Without either program the steps run without a time limit after a
+# install, download or build command (rustup, cargo, npm, pip) runs under a
+# time limit when `timeout` (or `gtimeout`) exists; quick local checks such as
+# `pip show` and `python3 -m venv` are not wrapped. Without either program the steps run without a time limit after a
 # warning (macOS without coreutils, for example); the lock wait stays bounded. Every step logs to stdout with an RFC 3339 UTC timestamp. A failed
 # required step stops the script with a non-zero exit naming the step; a
 # failed optional step prints a warning and the script continues.
 #
 # Steps:
 #   1. required  Rust toolchain pinned in apps/filesquid/rust-toolchain.toml
-#                (with its rustfmt and clippy components), plus the
-#                wasm32-unknown-unknown target the ocfl and c2pa tests build
+#                (rustup 1.28 or newer), its rustfmt and clippy components
+#                (added explicitly), and the wasm32-unknown-unknown target the
+#                ocfl and c2pa tests build
 #   2. required  cargo fetch --locked in apps/filesquid
 #   3. required  npm ci in apps/filesquid/ui, then apps/imagesquid (which links it)
 #   4. optional  community OCFL validator ocfl-py==2.1.0 with pip, when python3
@@ -92,16 +94,36 @@ optional_step() {
   fi
 }
 
-# Installs the toolchain named by rust-toolchain.toml and the wasm32 target.
-# `rustup toolchain install` without arguments reads the toolchain file
-# (rustup 1.28 or newer); any failure fails the step.
+# Succeeds when the installed rustup is older than 1.28, which cannot install
+# a toolchain from rust-toolchain.toml without arguments.
+rustup_is_older_than_1_28() {
+  local version major minor
+  version=$(rustup --version 2>/dev/null | sed -n 's/^rustup \([0-9]*\)\.\([0-9]*\).*/\1 \2/p')
+  [ -n "$version" ] || return 1
+  read -r major minor <<<"$version"
+  [ "$major" -lt 1 ] || { [ "$major" -eq 1 ] && [ "$minor" -lt 28 ]; }
+}
+
+# Logs why `rustup toolchain install` failed: an old rustup when that is the
+# detected cause, otherwise rustup's own output above (network, timeout, ...).
+explain_toolchain_failure() {
+  if rustup_is_older_than_1_28; then
+    log "rustup $(rustup --version 2>/dev/null | awk '{print $2}') is older than 1.28 and cannot read rust-toolchain.toml here; run 'rustup self update'"
+  else
+    log "rustup toolchain install failed; see rustup's output above for the cause (for example network or time limit)"
+  fi
+}
+
+# Installs the toolchain named by rust-toolchain.toml, its rustfmt and clippy
+# components (added explicitly, since some rustup versions skip them), and the
+# wasm32 target. Any failure fails the step.
 install_rust_toolchain() {
   command -v rustup >/dev/null 2>&1 || { log "rustup not found; install it from https://rustup.rs/"; return 1; }
   # shellcheck disable=SC2046 # the prefix is one or two words
-  (cd "$WORKSPACE" && $(timeout_prefix "$STEP_TIMEOUT") rustup toolchain install) \
-    || { log "rustup could not install the toolchain from rust-toolchain.toml (rustup 1.28 or newer is required: run 'rustup self update')"; return 1; }
+  (cd "$WORKSPACE" && $(timeout_prefix "$STEP_TIMEOUT") rustup toolchain install) || { explain_toolchain_failure; return 1; }
   # shellcheck disable=SC2046
-  (cd "$WORKSPACE" && $(timeout_prefix "$STEP_TIMEOUT") rustup target add wasm32-unknown-unknown)
+  (cd "$WORKSPACE" && $(timeout_prefix "$STEP_TIMEOUT") rustup component add rustfmt clippy \
+    && $(timeout_prefix "$STEP_TIMEOUT") rustup target add wasm32-unknown-unknown)
 }
 
 # Downloads every locked Cargo dependency.

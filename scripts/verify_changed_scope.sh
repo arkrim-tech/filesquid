@@ -258,6 +258,9 @@ test_scope_grammar() {
   scope=$(scope_or_detect --scope "rust:" 2>/dev/null)
   assert_eq "invalid --scope runs full" full "$scope"
   assert_eq "valid --scope is used" docs "$(scope_or_detect --scope docs)"
+  assert_eq "--scope=docs runs full" full "$(scope_or_detect --scope=docs 2>/dev/null)"
+  assert_eq "misspelled option runs full" full "$(scope_or_detect --scop docs 2>/dev/null)"
+  assert_eq "extra arguments run full" full "$(scope_or_detect --scope docs extra 2>/dev/null)"
 }
 
 test_lock_file_is_ignored() {
@@ -280,16 +283,20 @@ wait_until_locked() {
 }
 
 test_lock_timeout() {
-  local holder status
+  local holder status via_link lock
   command -v flock >/dev/null 2>&1 || { echo "ℹ️  flock not found; lock timeout test skipped."; return; }
-  mkdir -p "$WORK/locked"
-  flock "$WORK/locked/target.lock" sleep 3 &
+  mkdir -p "$WORK/locked/target" && ln -s "$WORK/locked/target" "$WORK/target-link"
+  lock="$(cd "$WORK/locked" && pwd -P)/target.lock"
+  flock "$lock" sleep 4 &
   holder=$!
-  wait_until_locked "$WORK/locked/target.lock"
+  wait_until_locked "$lock"
   (cd "$WORK/locked" && CARGO_TARGET_DIR=target FILESQUID_CARGO_LOCK_WAIT=1 with_cargo_lock true 2>/dev/null)
   status=$?
+  (cd "$WORK" && CARGO_TARGET_DIR="$WORK/target-link" FILESQUID_CARGO_LOCK_WAIT=1 with_cargo_lock true 2>/dev/null)
+  via_link=$?
   wait "$holder"
   assert_eq "bounded lock wait times out with 75" 75 "$status"
+  assert_eq "a symlinked target shares the real target's lock" 75 "$via_link"
   (cd "$WORK/locked" && CARGO_TARGET_DIR=target FILESQUID_CARGO_LOCK_WAIT=5 with_cargo_lock true)
   assert_eq "lock acquired once free" 0 "$?"
   local message

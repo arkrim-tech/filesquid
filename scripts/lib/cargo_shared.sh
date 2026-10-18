@@ -17,7 +17,8 @@
 # IDE does not take it.
 #
 # The target directory is CARGO_TARGET_DIR, else CARGO_BUILD_TARGET_DIR, else
-# Cargo's default `target`. A `build.target-dir` set in a Cargo config file is
+# Cargo's default `target`, resolved to its physical path (symlinks followed)
+# so every spelling of one target directory maps to the same lock file. A `build.target-dir` set in a Cargo config file is
 # not read; this repository sets none, so use one of the variables instead.
 #
 # Sourcing also exports CARGO_INCREMENTAL=0 and CARGO_PROFILE_DEV_DEBUG=0
@@ -75,6 +76,12 @@ cargo_target_dir() {
   printf '%s\n' "${CARGO_TARGET_DIR:-${CARGO_BUILD_TARGET_DIR:-target}}"
 }
 
+# Creates target directory $1 (relative to the current directory) if needed
+# and prints its physical path, so a symlink and its real path share one lock.
+canonical_target_dir() {
+  mkdir -p "$1" && (cd "$1" && pwd -P)
+}
+
 # Takes the lock on file descriptor 9, waiting at most $1 seconds. Prints a
 # waiting notice, and on timeout a message naming lock file $2; fails then.
 acquire_cargo_lock_fd9() {
@@ -93,10 +100,10 @@ with_cargo_lock() {
     "$@"
     return
   fi
-  local lock wait
-  lock=$(cargo_lock_path "$(cargo_target_dir)" "$PWD")
+  local lock wait target
+  target=$(canonical_target_dir "$(cargo_target_dir)") || return 1
+  lock=$(cargo_lock_path "$target" "$PWD")
   wait=$(cargo_lock_wait_seconds)
-  mkdir -p "$(dirname "$lock")" || return 1
   (
     acquire_cargo_lock_fd9 "$wait" "$lock" || exit "$CARGO_LOCK_TIMEOUT_EXIT"
     "$@" 9>&-
