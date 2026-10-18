@@ -199,7 +199,9 @@ impl FsBackend {
     /// instances in one process apart, and the process id keeps concurrent
     /// processes apart. The timestamp only lowers the chance that a reused
     /// process id meets stale files left by an earlier process; wall-clock
-    /// time is not a uniqueness guarantee.
+    /// time is not a uniqueness guarantee. If a stale path does exist,
+    /// `create_new_checked` refuses it with `AlreadyExists` rather than
+    /// reusing it.
     fn unique_suffix(&self) -> String {
         let n = NEXT_SUFFIX.fetch_add(1, Ordering::Relaxed);
         let nanos = SystemTime::now()
