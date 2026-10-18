@@ -233,23 +233,29 @@ fn only_the_apps_own_pages_are_app_urls() {
 
 #[test]
 fn app_webviews_may_open_blank_documents() {
-    assert!(navigation_allowed(&url("about:blank")));
-    assert!(navigation_allowed(&url("about:srcdoc")));
-    assert!(navigation_allowed(&url("tauri://localhost/index.html")));
+    assert!(navigation_allowed("main", &url("about:blank")));
+    assert!(navigation_allowed("main", &url("about:srcdoc")));
+    assert!(navigation_allowed(
+        "main",
+        &url("tauri://localhost/index.html")
+    ));
 }
 
 #[test]
 fn navigation_to_a_foreign_origin_is_refused_and_journaled_without_the_address() {
     let mut allowed = None;
     let entries = journaled(|| {
-        allowed = Some(navigation_allowed(&url(
-            "https://evil.example/collect?token=abc&file=private.jpg",
-        )))
+        allowed = Some(navigation_allowed(
+            "main",
+            &url("https://evil.example/collect?token=abc&file=private.jpg"),
+        ))
     });
     assert_eq!(allowed, Some(false));
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].operation, "desktop.navigation.refused");
     assert_eq!(entries[0].error_code.as_deref(), Some("foreign_origin"));
+    assert_eq!(entries[0].actor, "webview:main");
+    assert_eq!(entries[0].outcome, filesquid_api::journal::Outcome::Failed);
     let text = serde_json::to_string(&entries[0]).expect("json");
     assert!(!text.contains("evil"), "{text}");
     assert!(!text.contains("private"), "{text}");

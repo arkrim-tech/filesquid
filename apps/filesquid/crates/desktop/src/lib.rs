@@ -24,12 +24,23 @@
 //! the app ACL manifest (`permissions/app-acl.toml`) makes Tauri refuse any custom command no
 //! capability grants. `build.rs` fails the build when a capability file widens that set.
 //!
+//! Every refusal in the shell is journaled (Task DE-0.9): the host owns Tauri's IPC scheme and
+//! journals every IPC call it or Tauri refuses ([`ipc_gate`]); a `tracing` layer journals the
+//! refusals Tauri reports only through its own trace ([`ipc_observer`]); the host builds the
+//! main window itself and refuses and journals new windows, permission requests and foreign
+//! downloads ([`app_window`]); navigation off the app's origins is refused and journaled by the
+//! app-pages plugin; and a panic on any host thread is journaled ([`panic_journal`]).
+//!
 //! The test-instrumented build (`--features test-webdriver`, never shipped) adds the embedded
 //! WebDriver server for the packaged-window tests and a 100 MB range fixture (`test_fixture`).
 
 pub mod api_protocol;
+pub mod app_window;
 pub mod capability_policy;
 pub mod event_channel;
+pub mod ipc_gate;
+pub mod ipc_observer;
+pub mod panic_journal;
 #[cfg(feature = "test-webdriver")]
 pub mod test_fixture;
 
@@ -38,14 +49,20 @@ pub use event_channel::EVENT_NAME;
 use event_channel::{Forwarding, TauriSink, FORWARDER_HEARTBEAT};
 use filesquid_api::auth::{record_token_issue, Authoriser, LaunchToken, Principal};
 use filesquid_api::host::{HostIdentity, NotEnrolled};
+use filesquid_api::journal_writer::JournalSender;
 use filesquid_api::registry::ProcessHandle;
 use filesquid_api::trace_layer::JournalLayer;
 use filesquid_api::ApiState;
 use filesquid_native::HostMonitor;
+use ipc_observer::TauriIpcObserver;
+use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tauri::{Manager, RunEvent};
+use tracing::Subscriber;
+use tracing_subscriber::filter::{filter_fn, EnvFilter, FilterExt};
+use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::Layer;
@@ -60,19 +77,85 @@ struct DesktopMonitor {
     stop: Arc<AtomicBool>,
 }
 
-/// Install stdout JSON logging (filtered by `RUST_LOG`) and the unfiltered journal layer.
-fn init_tracing(journal: JournalLayer) {
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+/// The journal sinks the host attaches once the journal opens: the journal layer, the Tauri
+/// IPC observer and the journal the panic hook flushes.
+#[derive(Clone)]
+struct HostJournal {
+    layer: JournalLayer,
+    observer: TauriIpcObserver,
+    panic_flush: Arc<OnceLock<JournalSender>>,
+}
+
+impl HostJournal {
+    /// Sinks with no journal yet.
+    fn new() -> Self {
+        Self {
+            layer: JournalLayer::new(),
+            observer: TauriIpcObserver::new(),
+            panic_flush: Arc::new(OnceLock::new()),
+        }
+    }
+
+    /// Attach the observer and the panic hook to the opened journal (`HostMonitor::open`
+    /// attaches the layer itself).
+    fn attach(&self, sender: JournalSender) {
+        self.observer.attach(sender.clone());
+        let _ = self.panic_flush.set(sender);
+    }
+}
+
+/// The host's `tracing` stack: JSON lines to `stdout` filtered by `filter`, the journal
+/// layer, and the Tauri IPC observer ([`ipc_observer`]). The stdout and journal layers
+/// skip Tauri's IPC trace and webview errors, which only the observer handles, so neither a
+/// request body nor the invoke key Tauri records there reaches either. Pure: builds the
+/// subscriber without installing it.
+pub fn host_subscriber<W>(
+    journal: JournalLayer,
+    observer: TauriIpcObserver,
+    stdout: W,
+    filter: EnvFilter,
+) -> impl Subscriber + Send + Sync + 'static
+where
+    W: for<'w> MakeWriter<'w> + Clone + Send + Sync + 'static,
+{
+    let observer = observer.with_stdout(line_sink(stdout.clone()));
+    let kept = filter_fn(ipc_observer::outside_observed);
     let stdout = tracing_subscriber::fmt::layer()
         .json()
-        .with_writer(std::io::stdout)
-        .with_filter(filter);
+        .with_writer(stdout)
+        .with_filter(filter.and(kept.clone()));
     tracing_subscriber::registry()
         .with(stdout)
-        .with(journal)
-        .try_init()
-        .ok();
+        .with(journal.with_filter(kept))
+        .with(observer.with_filter(filter_fn(ipc_observer::observed)))
+}
+
+/// A sink that writes one line through `stdout`. Performs I/O when called; a write error is
+/// reported on stderr, since the stdout stream itself failed.
+fn line_sink<W>(stdout: W) -> ipc_observer::StdoutSink
+where
+    W: for<'w> MakeWriter<'w> + Send + Sync + 'static,
+{
+    Arc::new(move |line: &str| {
+        let mut writer = stdout.make_writer();
+        if let Err(err) = writeln!(writer, "{line}") {
+            eprintln!("stdout line not written: {err}");
+        }
+    })
+}
+
+/// Install the host's `tracing` stack ([`host_subscriber`]) with stdout filtered by `RUST_LOG`
+/// (default `info`). It also routes `log` records (Tauri's own) into `tracing`.
+fn init_tracing(journal: &HostJournal) {
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    host_subscriber(
+        journal.layer.clone(),
+        journal.observer.clone(),
+        std::io::stdout,
+        filter,
+    )
+    .try_init()
+    .ok();
 }
 
 /// Name of the plugin that gives app pages the per-launch token and keeps every webview on
@@ -106,7 +189,7 @@ pub fn describe_desktop_host(state: &ApiState) -> Result<(), String> {
 fn app_pages_plugin(token: &LaunchToken) -> tauri::plugin::TauriPlugin<tauri::Wry> {
     tauri::plugin::Builder::new(APP_PAGES_PLUGIN)
         .js_init_script(api_protocol::launch_token_script(token))
-        .on_navigation(|_webview, url| event_channel::navigation_allowed(url))
+        .on_navigation(|webview, url| event_channel::navigation_allowed(webview.label(), url))
         .build()
 }
 
@@ -126,8 +209,9 @@ fn with_test_driver(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri
 /// Build the Tauri application with the per-launch token, the API scheme, event forwarding
 /// and the monitor. Fails when the per-launch token cannot be generated.
 pub fn builder() -> Result<tauri::Builder<tauri::Wry>, String> {
-    let layer = JournalLayer::new();
-    init_tracing(layer.clone());
+    let journal = HostJournal::new();
+    init_tracing(&journal);
+    panic_journal::install_panic_hook(journal.panic_flush.clone());
     let state = ApiState::new();
     let token = install_launch_token(&state)?;
     describe_desktop_host(&state)?;
@@ -144,12 +228,33 @@ pub fn builder() -> Result<tauri::Builder<tauri::Wry>, String> {
                 });
             },
         )
+        .register_asynchronous_uri_scheme_protocol(
+            ipc_gate::IPC_SCHEME,
+            |ctx, request, responder| {
+                let label = ctx.webview_label().to_string();
+                let reply: ipc_gate::Reply = Box::new(move |answer| responder.respond(answer));
+                ipc_gate::handle(ctx.app_handle(), &label, request, reply);
+            },
+        )
         .setup(move |app| {
-            start_monitor(app.handle(), &layer)?;
+            start_monitor(app.handle(), &journal)?;
             forward_events(app.handle());
-            Ok(())
+            open_main_window(app.handle())
         });
     Ok(builder)
+}
+
+/// Build the main window ([`app_window::create_main_window`]). When it cannot be built, the
+/// failure is already journaled; stop the monitor so the journal is flushed before the
+/// process exits. Performs I/O.
+fn open_main_window(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    match app_window::create_main_window(app) {
+        Ok(_) => Ok(()),
+        Err(err) => {
+            stop_monitor(app);
+            Err(Box::new(err))
+        }
+    }
 }
 
 /// The desktop's launch journaling: open the journal in `data_dir`, install the monitor in
@@ -169,15 +274,17 @@ pub fn open_host_monitor(
     Ok(host)
 }
 
-/// Open the journal in the app data directory, install the monitor, register the event
-/// forwarder's process and start the ticker. Performs filesystem and database I/O.
+/// Open the journal in the app data directory, attach every journal sink, install the
+/// monitor, register the event forwarder's process and start the ticker. Performs filesystem
+/// and database I/O.
 fn start_monitor(
     app: &tauri::AppHandle,
-    layer: &JournalLayer,
+    journal: &HostJournal,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let data_dir = app.path().app_data_dir()?;
     let state = app.state::<ApiState>();
-    let host = Arc::new(open_host_monitor(&state, &data_dir, Some(layer))?);
+    let host = Arc::new(open_host_monitor(&state, &data_dir, Some(&journal.layer))?);
+    journal.attach(host.monitor().journal());
     let forwarder = Arc::new(event_channel::register_forwarder(host.monitor().registry()));
     let stop = Arc::new(AtomicBool::new(false));
     spawn_ticker(host.clone(), stop.clone());
@@ -250,19 +357,36 @@ fn stop_monitor(app: &tauri::AppHandle) {
     }
 }
 
-/// Run the desktop event loop.
+/// Journal operation of a launch that failed before the app could run.
+pub const START_OPERATION: &str = "desktop.start";
+
+/// Write a launch failure straight to stdout as a redacted JSON line marked
+/// `journal_unavailable`, whatever `RUST_LOG` says: before the journal opens it is the only
+/// record, and the only stdout line of the failure (its detail, which may name a path, goes to
+/// stderr). Writes to stdout.
+fn report_unjournaled(error_code: &str) {
+    let line = panic_journal::unjournaled_line(START_OPERATION, error_code);
+    panic_journal::write_line(&mut std::io::stdout(), &line);
+}
+
+/// Run the desktop event loop. Every configured window is built by the host
+/// ([`app_window::host_built_windows`]) so it carries the host's guards.
 pub fn run() {
     let builder = match builder() {
         Ok(builder) => builder,
         Err(message) => {
-            tracing::error!(%message, "FileSquid desktop could not secure its API");
+            eprintln!("FileSquid desktop could not secure its API: {message}");
+            report_unjournaled("api_not_secured");
             std::process::exit(1);
         }
     };
-    let app = match builder.build(tauri::generate_context!()) {
+    let mut context = tauri::generate_context!();
+    app_window::host_built_windows(context.config_mut());
+    let app = match builder.build(context) {
         Ok(app) => app,
         Err(err) => {
-            tracing::error!(%err, "FileSquid desktop could not start");
+            eprintln!("FileSquid desktop could not start: {err}");
+            report_unjournaled("start_failed");
             std::process::exit(1);
         }
     };
