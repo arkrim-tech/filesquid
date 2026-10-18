@@ -11,27 +11,39 @@
 # an add, so both paths are classified.
 #
 # Prints exactly one line on stdout; the reason goes to stderr:
-#   docs                    only Markdown, resources/ or .agents/ files changed
-#                           outside the crates and npm packages. Every file inside
-#                           a crate or package, Markdown and resources/ included,
-#                           belongs to it, because its tests read files there
-#                           (for example crates/api/resources/srs.md and
-#                           crates/c2pa/README.md)
+#   docs                    only documentation changed outside the crates and
+#                           npm packages: Markdown, resources/, .agents/, and
+#                           at the repository root .claude/ and docs/; plus the
+#                           text checkers that pre-commit steps 0 to 9 run on
+#                           every commit whatever the scope (the allowlist in
+#                           DOCS_CHECKER_SCRIPTS, and scripts/docs/). Every file
+#                           inside a crate or package, Markdown and resources/
+#                           included, belongs to it, because its tests read
+#                           files there (for example crates/api/resources/srs.md
+#                           and crates/c2pa/README.md)
 #   rust:<crates>           the changed crates under apps/filesquid/crates/*, plus
 #                           every workspace crate that depends on them (all
 #                           dependency kinds, transitively; from
 #                           `cargo metadata --no-deps --format-version 1`)
 #   npm:<packages>          the changed npm packages, plus every package that
 #                           links one by a `file:` dependency (ImageSquid links
-#                           @filesquid/ui)
+#                           @filesquid/ui). A package's own top-level
+#                           package.json and package-lock.json count as the
+#                           package: no Rust build reads them
 #   rust:<crates> npm:<packages>   both
 #   full                    the workspace Cargo.toml or Cargo.lock, a
-#                           rust-toolchain file, any package.json or
-#                           package-lock.json, scripts/, a generated contract file
-#                           (openapi.json, schema.d.ts) or any file outside the
-#                           categories above changed; or FULL=1 is set; or
-#                           detection failed (unknown base ref, git or
-#                           cargo metadata error, unknown crate directory)
+#                           rust-toolchain file, any other package.json or
+#                           package-lock.json, a script that decides or runs the
+#                           scope (scripts/pre-commit.sh, changed_scope.sh,
+#                           verify_changed_scope.sh, verify_tests.sh,
+#                           verify_formatting.sh, setup-dev-environment.sh,
+#                           scripts/lib/) or any other script not in the
+#                           allowlist, a generated contract file (openapi.json,
+#                           schema.d.ts; the api contract test reads the
+#                           latter) or any file outside the categories above
+#                           changed; or FULL=1 is set; or detection failed
+#                           (unknown base ref, git or cargo metadata error,
+#                           unknown crate directory)
 #
 # It never falls back to a smaller scope: every failure prints `full`.
 #
@@ -51,6 +63,12 @@ unset CDPATH
 WORKSPACE_DIR="apps/filesquid"
 CRATES_DIR="$WORKSPACE_DIR/crates"
 NPM_PACKAGES="apps/filesquid/ui apps/imagesquid"
+# Text checkers that pre-commit steps 0 to 9 run on every commit, whatever the
+# scope, so the commit that changes one also runs it. An explicit list: a
+# script not named here (a new one included) forces full.
+DOCS_CHECKER_SCRIPTS="verify_branch.sh verify_isolated_ports.sh verify_doc_sync.sh
+  verify_srs_traceability.sh verify_relative_links.sh verify_workspace_boundaries.sh
+  verify_centralized_logging.sh verify_docs.sh verify_task_cleanup.sh"
 
 # Reads `cargo metadata --no-deps` JSON on stdin and crate directories
 # (relative to the workspace root, e.g. crates/api) as arguments. Prints the
@@ -113,16 +131,45 @@ report() {
   printf '%s\n' "$1"
 }
 
-# Classifies one changed path. Pure. The case order matters: full triggers,
-# then crates, then npm packages, then documentation. Prints one of: docs, full,
+# Classifies one path under scripts/. Pure. Prints docs for scripts/docs/ and
+# for a top-level script in DOCS_CHECKER_SCRIPTS, full for anything else (the
+# scripts that decide or run the scope, scripts/lib/, and unknown scripts).
+classify_script() {
+  local path="$1" name
+  case "$path" in
+    scripts/docs/*) echo docs; return ;;
+  esac
+  for name in $DOCS_CHECKER_SCRIPTS; do
+    [ "$path" = "scripts/$name" ] && { echo docs; return; }
+  done
+  echo full
+}
+
+# Classifies one package.json or package-lock.json. Pure. Prints
+# npm:<package> when it is the top-level manifest of a package in
+# NPM_PACKAGES, full for any other one.
+classify_npm_manifest() {
+  local path="$1" pkg
+  for pkg in $NPM_PACKAGES; do
+    [ "${path%/*}" = "$pkg" ] && { echo "npm:$pkg"; return; }
+  done
+  echo full
+}
+
+# Classifies one changed path. Pure. The case order matters: full triggers
+# (contract and toolchain files; npm manifests and scripts/, which are full
+# unless their own rule above matches; the Cargo manifest and lockfile), then
+# crates, then npm packages, then documentation. Prints one of: docs, full,
 # crate:<dir relative to the workspace root>, npm:<package directory>.
 classify_path() {
   local path="$1" rest pkg
   case "${path##*/}" in
-    package.json | package-lock.json | openapi.json | schema.d.ts | rust-toolchain | rust-toolchain.toml) echo full; return ;;
+    openapi.json | schema.d.ts | rust-toolchain | rust-toolchain.toml) echo full; return ;;
+    package.json | package-lock.json) classify_npm_manifest "$path"; return ;;
   esac
   case "$path" in
-    scripts/* | "$WORKSPACE_DIR/Cargo.toml" | "$WORKSPACE_DIR/Cargo.lock") echo full; return ;;
+    scripts/*) classify_script "$path"; return ;;
+    "$WORKSPACE_DIR/Cargo.toml" | "$WORKSPACE_DIR/Cargo.lock") echo full; return ;;
     "$CRATES_DIR"/*/*)
       rest="${path#"$CRATES_DIR"/}"
       echo "crate:crates/${rest%%/*}"
@@ -134,7 +181,7 @@ classify_path() {
     esac
   done
   case "$path" in
-    resources/* | .agents/* | "$WORKSPACE_DIR"/resources/* | *.md) echo docs ;;
+    resources/* | .agents/* | .claude/* | docs/* | "$WORKSPACE_DIR"/resources/* | *.md) echo docs ;;
     *) echo full ;;
   esac
 }
@@ -196,7 +243,7 @@ main() {
   classes=$(printf '%s\n' "$files" | classify_files)
   full_path=$(printf '%s\n' "$classes" | sed -n 's/^full //p' | head -n 1)
   if [ -n "$full_path" ]; then report full "$full_path changed"; return; fi
-  if [ -z "$classes" ]; then report docs "only Markdown, resources/ or .agents/ files outside the crates and npm packages changed"; return; fi
+  if [ -z "$classes" ]; then report docs "only documentation or always-run checker scripts outside the crates and npm packages changed"; return; fi
   crate_dirs=$(printf '%s\n' "$classes" | sed -n 's/^crate://p')
   npm_dirs=$(printf '%s\n' "$classes" | sed -n 's/^npm://p')
   if [ -n "$crate_dirs" ]; then

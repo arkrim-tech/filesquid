@@ -34,6 +34,7 @@ The FileSquid default UI MUST use the internal names and MUST NOT inherit the Im
 - **UIs:** vanilla TypeScript (no UI framework) compiled with Vite 8, using standard custom elements:
   - `@filesquid/ui` at `apps/filesquid/ui`: FileSquid API client, custom elements, default distribution UI. Dev port `5173`, preview port `4173`.
   - `@imagesquid/ui` at `apps/imagesquid`: the ImageSquid distribution (views, theme, labels, brand, distribution manifest). No Rust. Dev port `5174`, preview port `4174`.
+- **Build tooling decided, not yet installed:** a cargo-hakari workspace-hack crate (`filesquid-workspace-hack`, dev-dependency only) for one feature set in test and Clippy builds, with a pre-commit drift gate and a `cargo check -p <crate> --lib --locked` stand-alone check per module crate; adopted only if its measurement gate passes ([ADR 039](./architecture/039-cargo-hakari-workspace-hack.md)). It does not change any crate's runtime, WASM or published dependency graph.
 - Svelte is removed ([ADR 003](./architecture/003-svelte-client-rendered-ui.md) superseded by [ADR 031](./architecture/031-vanilla-typescript-ui-and-white-label-theming.md)).
 - Standards in use: OCFL 1.1; C2PA records per PRD F-043/F-044; ISO 15836-2 `/terms/`; RFC 4122 / RFC 9562 UUID version 4.
 
@@ -597,6 +598,7 @@ The system MUST implement [PRD F-037](./prd.md#f-037-setup-updates-and-diagnosti
 **Tests**
 - [`setup_updates_and_diagnostics_F-037.feature`](../apps/filesquid/ui/tests/features/setup_updates_and_diagnostics_F-037.feature)
 - [`shared_health_status_CORE-S-004.feature`](../apps/filesquid/crates/core/tests/features/shared_health_status_CORE-S-004.feature)
+- [`desktop_capabilities_F-037.feature`](../apps/filesquid/crates/desktop/tests/features/desktop_capabilities_F-037.feature)
 
 ### SRS-F-038: Open interfaces and product exit
 
@@ -1515,7 +1517,7 @@ The FileSquid default UI has no screenshot yet; [SRS-F-055](#srs-f-055-default-u
 | F-034 | SRS-F-034 | `../apps/filesquid/ui/tests/features/family_accounts_and_shared_libraries_F-034.feature` |
 | F-035 | SRS-F-035 | `../apps/filesquid/crates/server/tests/features/optional_service_extensions_F-035.feature` |
 | F-036 | SRS-F-036 | `../apps/filesquid/ui/tests/features/browser_and_mobileweb_experience_F-036.feature`, `../apps/filesquid/crates/api/tests/features/replica_cache_identity_and_pending_changes_API-S-024.feature` |
-| F-037 | SRS-F-037 | `../apps/filesquid/ui/tests/features/setup_updates_and_diagnostics_F-037.feature`, `../apps/filesquid/crates/core/tests/features/shared_health_status_CORE-S-004.feature` |
+| F-037 | SRS-F-037 | `../apps/filesquid/ui/tests/features/setup_updates_and_diagnostics_F-037.feature`, `../apps/filesquid/crates/core/tests/features/shared_health_status_CORE-S-004.feature`, `../apps/filesquid/crates/desktop/tests/features/desktop_capabilities_F-037.feature` |
 | F-038 | SRS-F-038 | `../apps/filesquid/crates/server/tests/features/open_interfaces_and_product_exit_F-038.feature`, `../apps/filesquid/crates/core/tests/features/command_query_ports_F-038.feature` |
 | F-039 | SRS-F-039 | `../apps/filesquid/ui/tests/features/consent_notifications_and_activity_privacy_F-039.feature` |
 | F-040 | SRS-F-040 | `../apps/filesquid/crates/server/tests/features/compatibility_and_parity_register_F-040.feature`, `../apps/filesquid/crates/core/tests/features/capability_register_F-040.feature` |

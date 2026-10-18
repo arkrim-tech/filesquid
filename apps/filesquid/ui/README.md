@@ -10,12 +10,13 @@ From `apps/filesquid/ui`, on any OS with Node.js 22.12 or later:
 npm ci
 npm run dev            # http://127.0.0.1:5173 (preview: 4173)
 npm run build          # type-check, then the static build in dist/
-npm test               # Vitest unit and jsdom UI tests; JUnit in tests/allure-results/
-npm run test:e2e       # Playwright against the built UI and a real filesquid-server
+npm test               # Vitest unit and jsdom UI tests; Allure and JUnit in tests/allure-results/
+npm run test:e2e       # Playwright: built UI on a real filesquid-server, then built UI on vite preview
+npm run report         # Allure HTML report from tests/allure-results/ into tests/allure-report/
 npm run contract:types # regenerate src/api/schema.d.ts from crates/api/openapi.json
 ```
 
-`npm run test:e2e` builds the UI and starts `filesquid-server` with Cargo, so it needs the Rust toolchain and a Playwright browser (`npx playwright install chromium`). The repository's pre-commit hook runs it when `FILESQUID_E2E=1` is set.
+`npm run test:e2e` builds the UI and starts `filesquid-server` with Cargo, so it needs the Rust toolchain and a Playwright browser (`npx playwright install chromium`). The repository's pre-commit hook runs it when `FILESQUID_E2E=1` is set. The second suite, `tests/e2e/preview/`, serves the static build with `vite preview` on port 4173 and needs no server; both use `tests/e2e/support/strict-dom.ts` for strict DOM assertions (defined elements, labels from the label table, computed tokens in light and dark, no console errors).
 
 ## Theme, tokens and brand
 

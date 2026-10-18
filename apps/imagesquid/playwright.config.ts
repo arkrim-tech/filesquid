@@ -10,7 +10,12 @@ const PORT = 4174;
 export default defineConfig({
   testDir: "tests/e2e",
   outputDir: "tests/test-results",
-  reporter: [["list"], ["junit", { outputFile: "tests/allure-results/playwright-junit.xml" }]],
+  testIgnore: "**/preview/**",
+  reporter: [
+    ["list"],
+    ["junit", { outputFile: "tests/allure-results/playwright-junit.xml" }],
+    ["allure-playwright", { resultsDir: "tests/allure-results/playwright" }],
+  ],
   use: { baseURL: `http://127.0.0.1:${PORT}` },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
