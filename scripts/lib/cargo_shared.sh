@@ -76,10 +76,17 @@ cargo_target_dir() {
   printf '%s\n' "${CARGO_TARGET_DIR:-${CARGO_BUILD_TARGET_DIR:-target}}"
 }
 
-# Creates target directory $1 (relative to the current directory) if needed
-# and prints its physical path, so a symlink and its real path share one lock.
-canonical_target_dir() {
-  mkdir -p "$1" && (cd "$1" && pwd -P)
+# Creates target directory $1 if it does not exist yet (Cargo would create it
+# on its first build anyway), so its physical path can be resolved.
+create_target_dir() {
+  mkdir -p -- "$1"
+}
+
+# Prints the physical path of existing directory $1 (relative to the current
+# directory), so a symlink and its real path share one lock. CDPATH is
+# cleared so a relative name never resolves elsewhere or prints extra output.
+physical_dir_path() {
+  (CDPATH='' cd -- "$1" && pwd -P)
 }
 
 # Takes the lock on file descriptor 9, waiting at most $1 seconds. Prints a
@@ -101,7 +108,9 @@ with_cargo_lock() {
     return
   fi
   local lock wait target
-  target=$(canonical_target_dir "$(cargo_target_dir)") || return 1
+  target=$(cargo_target_dir)
+  create_target_dir "$target" || return 1
+  target=$(physical_dir_path "$target") || return 1
   lock=$(cargo_lock_path "$target" "$PWD")
   wait=$(cargo_lock_wait_seconds)
   (
@@ -122,5 +131,8 @@ export_shared_cargo_env() {
   export CARGO_PROFILE_DEV_DEBUG="${CARGO_PROFILE_DEV_DEBUG:-0}"
 }
 
+# A CDPATH inherited from the environment would make `cd <relative dir>` in the
+# gates resolve elsewhere and print the path; the gates never rely on it.
+unset CDPATH
 export_shared_cargo_env
 cargo_lock_warn_if_unavailable

@@ -46,6 +46,8 @@
 #
 # Usage: ./scripts/changed_scope.sh   (from the repository root)
 
+# An inherited CDPATH would make `cd apps/filesquid` resolve elsewhere.
+unset CDPATH
 WORKSPACE_DIR="apps/filesquid"
 CRATES_DIR="$WORKSPACE_DIR/crates"
 NPM_PACKAGES="apps/filesquid/ui apps/imagesquid"

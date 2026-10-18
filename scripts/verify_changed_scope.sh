@@ -302,6 +302,16 @@ test_lock_timeout() {
   local message
   message=$(cd "$WORK/locked" && CARGO_TARGET_DIR=target with_cargo_lock sh -c 'exit 75' 2>&1)
   assert_eq "a command's own exit 75 is not reported as a lock timeout" "" "$message"
+  test_lock_ignores_cdpath
+}
+
+test_lock_ignores_cdpath() {
+  local output
+  mkdir -p "$WORK/cdpath-case" "$WORK/decoy/target"
+  output=$(cd "$WORK/cdpath-case" && CDPATH="$WORK/decoy" CARGO_TARGET_DIR=target with_cargo_lock echo ran)
+  assert_eq "CDPATH does not redirect the lock or add output" ran "$output"
+  assert_eq "lock created beside the local target" yes "$([ -f "$WORK/cdpath-case/target.lock" ] && echo yes)"
+  assert_eq "no lock beside the CDPATH decoy" no "$([ -f "$WORK/decoy/target.lock" ] && echo yes || echo no)"
 }
 
 test_real_workspace() {
