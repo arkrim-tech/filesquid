@@ -148,10 +148,12 @@ class MatchPrs(unittest.TestCase):
         self.assertEqual(self.match("feat/task-0.4-write"), {"0.4": 1})
         self.assertEqual(self.match("x", "Task FS-1.2 file ops"), {"FS-1.2": 1})
 
-    def test_bare_global_after_branch_separator(self):
-        """`feat/0.4-write` and `0.4-write` name Task 0.4; 0.4 mid-branch or as a version does not."""
+    def test_bare_global_needs_task_token_or_type_prefix(self):
+        """`feat/0.4-write` names Task 0.4; release branches, bare starts and mid-branch numbers do not."""
         self.assertEqual(self.match("feat/0.4-write"), {"0.4": 1})
-        self.assertEqual(self.match("0.4-write"), {"0.4": 1})
+        self.assertEqual(self.match("build/0.4-write"), {"0.4": 1})
+        self.assertEqual(self.match("release/0.4-rc"), {})
+        self.assertEqual(self.match("0.4-write"), {})
         self.assertEqual(self.match("feat/bump-0.4"), {})
         self.assertEqual(self.match("release/0.4.1"), {})
 
@@ -190,6 +192,17 @@ class InProgress(unittest.TestCase):
         flat = [e for e in result.entries if not e.nested]
         self.assertEqual([e.modules[0].task_id for e in flat], ["IO-0.2"])
         self.assertIn("IO-0.2", result.active)
+
+    def test_recorded_pr_of_a_since_ticked_task_is_dropped(self):
+        """A recorded PR whose task is now ticked is neither listed nor kept."""
+        parsed = rows()
+        parsed[1].modules[1].done = True  # IO-0.9 merged and ticked on main
+        kept = q.only_unticked({"IO-0.9": 48, "DE-0.1": 47, "0.3": 5, "GONE-1.1": 9}, parsed)
+        self.assertEqual(kept, {"DE-0.1": 47})
+        result = q.compute_in_progress(parsed, kept)
+        listed = [m.task_id for e in result.entries for m in e.modules]
+        self.assertNotIn("IO-0.9", listed)
+        self.assertNotIn("IO-0.9", q.render_queue(result, [], kept, "2026-10-18T17:40:00Z"))
 
     def test_pr_on_global_without_modules(self):
         """A PR on a global task lists it, even with no module rows."""
@@ -274,6 +287,13 @@ class Render(unittest.TestCase):
         """Only RFC 3339 UTC timestamps are read back."""
         self.assertIsNone(q.parse_recorded("<!-- generated-at: yesterday -->")[1])
         self.assertIsNone(q.parse_recorded("<!-- generated-at: 2026-10-18T17:40:00+02:00 -->")[1])
+
+    def test_check_keeps_recorded_ids_verbatim(self):
+        """With `recorded` given (check mode) the comment is the one read back."""
+        inprog = q.compute_in_progress(rows(), {})
+        text = q.render_queue(inprog, [], {}, "2026-10-18T17:40:00Z", recorded={"IO-0.9": 48})
+        self.assertIn("<!-- in-progress-prs: IO-0.9=#48 -->", text)
+        self.assertNotIn("PR #48", text)
 
     def test_parse_recorded_empty(self):
         """A block without the comments records nothing."""

@@ -359,14 +359,15 @@ def build_queue(checklist: str, rows: list, checking: bool):
     block = checklist[checklist.index(START):] if START in checklist else ""
     recorded, old_stamp = mvp_queue.parse_recorded(block)
     pr_ids, stamp = current_pr_ids(rows, recorded, old_stamp, checking)
-    unticked = {g.task_id for g in rows if not g.done} | {m.task_id for g in rows for m in g.modules if not m.done}
-    pr_ids = {task_id: number for task_id, number in pr_ids.items() if task_id in unticked}
+    raw_ids = pr_ids
+    pr_ids = mvp_queue.only_unticked(pr_ids, rows)
     inprog = mvp_queue.compute_in_progress(rows, pr_ids)
     plan_rows, global_done = load_plans()
     up_next, warnings = mvp_queue.select_up_next(rows, inprog.active, plan_rows, global_done)
     for warning in warnings:
         print(f"warning: {warning}", file=sys.stderr)
-    return (lambda when: mvp_queue.render_queue(inprog, up_next, pr_ids, when)), stamp, old_stamp
+    kept = raw_ids if checking else None
+    return (lambda when: mvp_queue.render_queue(inprog, up_next, pr_ids, when, kept)), stamp, old_stamp
 
 
 def render_block(tasks: list, render, stamp: str) -> str:

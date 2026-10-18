@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 
 PR_URL = "https://github.com/arkrim-tech/filesquid/pull/"
 UP_NEXT_LIMIT = 5
+BRANCH_TYPES = "feat|fix|build|docs|refactor|test|chore|perf|ci|style"
 
 GLOBAL_ROW = re.compile(r"^\d+\. \[([ x])\] (\[Task ([^\]]+)\]\([^)]*\))\s*(.*)$")
 MODULE_ROW = re.compile(r"^\s+- \[([ x])\] (\[([^\]]+)\]\([^)]*\))\s*(.*)$")
@@ -235,9 +236,9 @@ def id_regex(task_id: str):
 
     A `.` in the ID also matches `-`. The ID must not be glued to other
     letters or digits, nor continue as `.N`/`-N` (so IO-0.1 never matches
-    inside IO-0.10). A bare global number such as `0.4` needs `task` before it or must start
-    the branch name or follow a `/` (as in `feat/0.4-write`); a number in the
-    middle of a title never matches.
+    inside IO-0.10). A bare global number such as `0.4` needs a `task` token before it or an exact
+    `<type>/<id>` branch prefix (`feat/0.4-write`); `release/0.4-rc`, a number
+    in the middle of a branch or title, and a version never match.
 
     Args:
         task_id: A task ID from the checklist.
@@ -246,7 +247,7 @@ def id_regex(task_id: str):
         A compiled regular expression.
     """
     body = re.escape(task_id.lower()).replace(r"\.", r"[.\-]")
-    prefix = r"(?:task[\s_\-/]*|^|(?<=/))" if task_id[0].isdigit() else ""
+    prefix = rf"(?:task[\s_\-/]*|^(?:{BRANCH_TYPES})/)" if task_id[0].isdigit() else ""
     return re.compile(rf"(?<![a-z0-9.]){prefix}{body}(?![a-z0-9])(?![.\-]\d)")
 
 
@@ -268,6 +269,23 @@ def match_pr_ids(prs: list, known_ids: list) -> dict:
             if task_id not in found and pattern.search(text):
                 found[task_id] = pr["number"]
     return found
+
+
+def only_unticked(pr_ids: dict, rows: list) -> dict:
+    """Drop PR-derived IDs whose task is ticked (or not in the checklist) now.
+
+    A recorded PR may have merged since the block was drawn; its task then
+    counts as done, so it must neither be listed nor recorded again.
+
+    Args:
+        pr_ids: Task ID to PR number, fresh or read back from the block.
+        rows: Parsed MVP global tasks.
+
+    Returns:
+        The entries of `pr_ids` whose task is an unticked global or module row.
+    """
+    unticked = {g.task_id for g in rows if not g.done} | {m.task_id for g in rows for m in g.modules if not m.done}
+    return {task_id: number for task_id, number in pr_ids.items() if task_id in unticked}
 
 
 def compute_in_progress(rows: list, pr_ids: dict) -> InProgress:
@@ -455,7 +473,7 @@ def parse_recorded(text: str):
     return prs, (stamp.group(1) if stamp else None)
 
 
-def render_queue(inprog: InProgress, up_next: list, pr_ids: dict, timestamp: str) -> str:
+def render_queue(inprog: InProgress, up_next: list, pr_ids: dict, timestamp: str, recorded=None) -> str:
     """Return the In progress and Up next Markdown for the progress block.
 
     Args:
@@ -463,6 +481,9 @@ def render_queue(inprog: InProgress, up_next: list, pr_ids: dict, timestamp: str
         up_next: `(ModuleRow, GlobalRow)` pairs from `select_up_next`.
         pr_ids: Task ID to open PR number, as recorded.
         timestamp: RFC 3339 UTC time the PR list was fetched.
+        recorded: PR IDs to write into the `in-progress-prs` comment; defaults to
+            `pr_ids`. `--check` passes the IDs it read back unchanged, so a recorded
+            PR whose task has since been ticked does not make the block stale.
 
     Returns:
         Markdown ending with two parseable comments.
@@ -481,6 +502,6 @@ def render_queue(inprog: InProgress, up_next: list, pr_ids: dict, timestamp: str
         "",
         f"Generated {timestamp} (RFC 3339, UTC) from the ticked boxes, the module plans and the open pull requests at that time.",
         f"<!-- generated-at: {timestamp} -->",
-        f"<!-- in-progress-prs: {format_recorded(pr_ids)} -->",
+        f"<!-- in-progress-prs: {format_recorded(pr_ids if recorded is None else recorded)} -->",
     ]
     return "\n".join(lines)

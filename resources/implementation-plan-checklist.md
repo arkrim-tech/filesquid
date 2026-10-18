@@ -1,14 +1,13 @@
 # Implementation Plan Checklist: FileSquid
 
 <!-- mvp-progress:start -->
-![MVP progress: 39% complete](./assets/mvp-progress.svg)
+![MVP progress: 40% complete](./assets/mvp-progress.svg)
 
-**MVP progress: 39%**, about 315 of 816 estimated hours. 10 of 26 tasks are done and 4 more are under way. Each segment of the bar is one task below, as wide as its estimated hours in the implementation plan; an open task fills by the share of its module rows that are ticked. Below the bar, In progress lists the open tasks being worked on (global tasks with some but not all module rows ticked, and tasks with an open pull request) and Up next lists the next five new module tasks whose listed dependencies are done or in progress. Regenerate with `python3 scripts/docs/update_mvp_progress.py` after ticking boxes or opening a pull request; the check run by `scripts/verify_docs.sh` does not call GitHub and uses the pull requests recorded in the block.
+**MVP progress: 40%**, about 324 of 816 estimated hours. 10 of 26 tasks are done and 4 more are under way. Each segment of the bar is one task below, as wide as its estimated hours in the implementation plan; an open task fills by the share of its module rows that are ticked. Below the bar, In progress lists the open tasks being worked on (global tasks with some but not all module rows ticked, and tasks with an open pull request) and Up next lists the next five new module tasks whose listed dependencies are done or in progress. Regenerate with `python3 scripts/docs/update_mvp_progress.py` after ticking boxes or opening a pull request; the check run by `scripts/verify_docs.sh` does not call GitHub and uses the pull requests recorded in the block.
 
 **In progress**
 
-- [Task 0.4](./implementation-plan.md#task-0.4) filesquid-ocfl write and logical-state enumerator: 3 of 5 module rows ticked
-    - [IO-0.9](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Enumerate committed logical state ([PR #48](https://github.com/arkrim-tech/filesquid/pull/48))
+- [Task 0.4](./implementation-plan.md#task-0.4) filesquid-ocfl write and logical-state enumerator: 4 of 5 module rows ticked
     - [IO-0.10](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Forward-delta change model
 - [Task 0.10](./implementation-plan.md#task-0.10) Private-client library (ADR 001): 2 of 3 module rows ticked
     - [CL-0.3](../apps/filesquid/crates/api/resources/plan.md#phase-f1-application-layer-global-task-010-cl-04-in-global-task-011-phase-f4-cl-05-in-global-task-012-phase-i1) Replica, cache identity, and pending mutations
@@ -28,9 +27,9 @@
 - [DE-0.6](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Stdout JSON logging (part of [Task 0.5](./implementation-plan.md#task-0.5))
 - [MD-0.2](../apps/filesquid/crates/metadata/resources/plan.md#phase-f1-persist-through-ocfl-and-namespace-registry-global-task-fs-13) Commit statements through filesquid-ocfl (part of [Task FS-1.3](./implementation-plan.md#task-fs-1.3))
 
-Generated 2026-10-18T19:35:55Z (RFC 3339, UTC) from the ticked boxes, the module plans and the open pull requests at that time.
-<!-- generated-at: 2026-10-18T19:35:55Z -->
-<!-- in-progress-prs: DE-0.1=#47,IO-0.9=#48,UI-0.6=#46 -->
+Generated 2026-10-18T19:48:57Z (RFC 3339, UTC) from the ticked boxes, the module plans and the open pull requests at that time.
+<!-- generated-at: 2026-10-18T19:48:57Z -->
+<!-- in-progress-prs: DE-0.1=#47,UI-0.6=#46 -->
 <!-- mvp-progress:end -->
 
 This is a short, ordered view of [implementation-plan.md](./implementation-plan.md). Each numbered item is a global task in the order the dev team expects to finish it, and the nested items are the module tasks it dispatches, taken from each module's `resources/plan.md`. Task codes link to the full task description. A box is ticked when the matching box is ticked in the source plan.
@@ -84,7 +83,7 @@ FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by ga
     - [x] [IO-0.6](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Local write order and unpublished vN
     - [x] [IO-0.7](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Generic object payload
     - [x] [IO-0.8](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Opaque bytes; dual profile is a caller
-    - [ ] [IO-0.9](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Enumerate committed logical state
+    - [x] [IO-0.9](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Enumerate committed logical state
     - [ ] [IO-0.10](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Forward-delta change model
 12. [ ] [Task 0.15](./implementation-plan.md#task-0.15) filesquid-metadata WASM build and OCFL-sourced extraction
     - [ ] [MD-0.4](../apps/filesquid/crates/metadata/resources/plan.md#phase-f0-webassembly-build-global-task-015) WASM build and OCFL-sourced extraction

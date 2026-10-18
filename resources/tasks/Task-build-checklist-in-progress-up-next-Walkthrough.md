@@ -16,7 +16,7 @@ No PRD or SRS requirement. The generated block at the top of [implementation-pla
 
 ## Rules
 
-- In progress: a global task with some but not all module rows ticked (its unticked rows are listed), plus any unticked task whose ID appears in the head branch or title of an open PR. IDs are matched as whole tokens against the real unticked IDs in the checklist (`.` may be `-`; `IO-0.1` never matches inside `IO-0.10`; a bare global number such as `0.4` needs `task` before it).
+- In progress: a global task with some but not all module rows ticked (its unticked rows are listed), plus any unticked task whose ID appears in the head branch or title of an open PR. IDs are matched as whole tokens against the real unticked IDs in the checklist (`.` may be `-`; `IO-0.1` never matches inside `IO-0.10`; a bare global number such as `0.4` needs a `task` token or an exact `<type>/<id>` branch prefix such as `feat/0.4-write`, so `release/0.4-rc` does not match).
 - Up next: the first five unticked, not-in-progress MVP module rows in checklist order whose Dependencies are all ticked or in progress. `global Task N` means all of that task's module rows. An ID found nowhere is not ready; an unparseable or missing Dependencies line is not ready and warns on stderr.
 - Determinism: `--check` never calls GitHub. The PR-derived IDs and the timestamp are embedded in the block as `<!-- in-progress-prs: ... -->` and `<!-- generated-at: ... -->` and read back; everything else is recomputed from ticks and plans. Write mode keeps the old timestamp when nothing else changed.
 
@@ -24,9 +24,9 @@ No PRD or SRS requirement. The generated block at the top of [implementation-pla
 
 ```text
 $ python3 scripts/docs/test_mvp_queue.py
-.................................
+...................................
 ----------------------------------------------------------------------
-Ran 33 tests in 0.006s
+Ran 35 tests in 0.007s
 
 OK
 
@@ -34,3 +34,7 @@ $ python3 scripts/docs/update_mvp_progress.py --check
 $ echo $?
 0
 ```
+
+## Merged tasks and the offline check
+
+When a task PR merges, its task is ticked. `--check` reads the recorded PR IDs back unchanged, lists only PR-derived tasks that are still unticked, and recomputes everything else from the ticks. A recorded PR whose task has since been ticked is therefore never listed, and it does not by itself make the block stale. Any PR that ticks boxes already has to rerun `python3 scripts/docs/update_mvp_progress.py` (the percentage and the task lists change with the ticks); a PR that ticks nothing never touches the block. Opening or closing a PR never affects `--check`. Main was merged on 2026-10-18 after PR #48 (IO-0.9) and the script rerun to resolve the block conflict.
