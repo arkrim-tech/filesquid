@@ -1,4 +1,4 @@
-//! Opaque bytes; the dual profile is a caller (IO-0.8; OCFL-S-020,
+//! Opaque bytes; the dual profile is a caller (IO-0.8; OCFL-S-021,
 //! OCFL-S-002, OCFL-S-003, OCFL-S-007; ADR 010, ADR 023; PRD F-042,
 //! TC-002).
 //!

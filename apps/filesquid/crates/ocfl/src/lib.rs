@@ -60,7 +60,7 @@
 //!   incomplete `vN` stays unpublished for readers and is reconciled by the
 //!   next commit of that version.
 //!
-//! Opaque bytes (OCFL-S-020;
+//! Opaque bytes (OCFL-S-021;
 //! [ADR 010](../../../resources/architecture/010-ocfl-1-1-dual-profile.md)):
 //! the engine stores the content bytes its caller supplies and reads them
 //! only as bytes. Logical paths are UTF-8 strings stored as given, and they

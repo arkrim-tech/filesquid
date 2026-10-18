@@ -1,4 +1,4 @@
-# OCFL-S-020: Opaque bytes; the dual profile is a caller. The engine MUST store the content bytes its caller supplies without reading them as anything but bytes, and logical paths as given within the OCFL 1.1 path rules; owner-readable local media and ciphertext hosted packages are caller transforms, not engine object types, and over ciphertext the inventory MUST stay structurally readable OCFL 1.1.
+# OCFL-S-021: Opaque bytes; the dual profile is a caller. The engine MUST store the content bytes its caller supplies without reading them as anything but bytes, and logical paths as given within the OCFL 1.1 path rules; owner-readable local media and ciphertext hosted packages are caller transforms, not engine object types, and over ciphertext the inventory MUST stay structurally readable OCFL 1.1.
 # F-042: OCFL preservation and portable recovery
 # TC-002: Endpoint processing and hosted encryption
 Feature: The engine stores opaque bytes and the dual profile is a caller
@@ -41,6 +41,6 @@ Feature: The engine stores opaque bytes and the dual profile is a caller
 
   # Source
   # - resources/prd.md F-042, TC-002
-  # - apps/filesquid/crates/ocfl/resources/srs.md OCFL-S-020
+  # - apps/filesquid/crates/ocfl/resources/srs.md OCFL-S-021
   # - resources/architecture/010-ocfl-1-1-dual-profile.md Decision 2 "inventories and digest sidecars remain structurally readable over ciphertext"
   # - resources/architecture/023-filesquid-ocfl-engine-and-parquet.md "the engine stores opaque bytes the caller supplies"

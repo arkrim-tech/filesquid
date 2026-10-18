@@ -2,7 +2,7 @@
 
 Module plan row: [IO-0.8](../plan.md). Global task: [Task 0.4](../../../../../../resources/implementation-plan.md#task-0.4) (stays open: IO-0.9 and IO-0.10 remain).
 
-## OCFL-S-020: Opaque bytes; the dual profile is a caller
+## OCFL-S-021: Opaque bytes; the dual profile is a caller
 
 ## OCFL-S-002: Digest algorithm is SHA-256 (digests over the stored bytes)
 
@@ -10,11 +10,11 @@ Module plan row: [IO-0.8](../plan.md). Global task: [Task 0.4](../../../../../..
 
 ## OCFL-S-010: Read and write conformance (b) — sealed content fixtures valid in the engine and an independent community validator
 
-Sources: [OCFL-S-020, OCFL-S-002, OCFL-S-003, OCFL-S-007, OCFL-S-010](../srs.md) (OCFL-S-020 is a new row, see Sync), [PRD F-042](../../../../../../resources/prd.md#f-042-ocfl-preservation-and-portable-recovery), [PRD TC-002](../../../../../../resources/prd.md#tc-002-endpoint-processing-and-hosted-encryption), [ADR 010](../../../../../../resources/architecture/010-ocfl-1-1-dual-profile.md) Decision 2, [ADR 023](../../../../../../resources/architecture/023-filesquid-ocfl-engine-and-parquet.md) "Dual-profile encryption".
+Sources: [OCFL-S-021, OCFL-S-002, OCFL-S-003, OCFL-S-007, OCFL-S-010](../srs.md) (OCFL-S-021 is a new row, see Sync), [PRD F-042](../../../../../../resources/prd.md#f-042-ocfl-preservation-and-portable-recovery), [PRD TC-002](../../../../../../resources/prd.md#tc-002-endpoint-processing-and-hosted-encryption), [ADR 010](../../../../../../resources/architecture/010-ocfl-1-1-dual-profile.md) Decision 2, [ADR 023](../../../../../../resources/architecture/023-filesquid-ocfl-engine-and-parquet.md) "Dual-profile encryption".
 
 ## What changed
 
-- **No engine change was needed.** The IO-0.6 writer and the IO-0.4 reader already treat content and logical paths as bytes and strings: they never decode, transform or inspect content, and digest exactly what was staged. This task proves that and records it as OCFL-S-020. The crate rustdoc (`src/lib.rs`) gains an "Opaque bytes" section.
+- **No engine change was needed.** The IO-0.6 writer and the IO-0.4 reader already treat content and logical paths as bytes and strings: they never decode, transform or inspect content, and digest exactly what was staged. This task proves that and records it as OCFL-S-021. The crate rustdoc (`src/lib.rs`) gains an "Opaque bytes" section.
 - **Test caller transform.** `tests/support/opaque.rs` holds `ToyCipher`, a keyed SHA-256 counter-mode keystream XOR. It is test-only and NOT cryptography. Playing the hosted-profile caller, it seals content (nonce: the plaintext path, so unchanged files seal to the same bytes), seals each logical path into one lowercase hex segment, gives the object an opaque `urn:opaque:` id, and seals `message` and `user` text (a user's `address` becomes an opaque `urn:opaque:` URI). `created` stays an RFC 3339 timestamp, as OCFL requires. The owner-readable profile is the identity: the same `write_fixture` call with the plaintext.
 - **Integration tests** (`tests/integration/opaque_bytes.rs`, new target `integration_opaque_bytes`):
   - `every_byte_value_and_ocfl_lookalike_content_round_trips` (memory and filesystem): stores every byte value, an empty file, bytes that are not UTF-8, a copy of a pinned `inventory.json`, a sidecar-looking file and a `0=ocfl_object_1.1` file as content. Each validates, streams back byte-identical and is digested as stored.
@@ -25,7 +25,7 @@ Sources: [OCFL-S-020, OCFL-S-002, OCFL-S-003, OCFL-S-007, OCFL-S-010](../srs.md)
   - `a_changed_sealed_file_is_refused_with_e092`: manifest digest verification over ciphertext needs no key.
   - `the_engine_has_no_profile_or_encryption_types`: no `encrypt`, `decrypt`, `cipher`, `plaintext`, `profile` or `aead` in engine code (comments and strings removed, case ignored), and no encryption crate in `Cargo.toml`, whether declared by key, as a `[dependencies.<name>]` table or renamed through `package = "…"`.
   - Two oracle checks show the leak check and the scan find what they look for: `the_plaintext_check_finds_an_owner_readable_object` and `the_profile_scan_finds_profile_code_and_encryption_crates`.
-- **BDD.** New `tests/features/opaque_bytes_OCFL-S-020.feature` (6 scenarios) with steps in `tests/support/opaque_steps.rs`.
+- **BDD.** New `tests/features/opaque_bytes_OCFL-S-021.feature` (6 scenarios) with steps in `tests/support/opaque_steps.rs`.
 - **Test support.** `content_fixtures::draft_for` stages through `write_whole`, so files above one put (8 MiB) are staged by multipart.
 - **No new dependency.** The transform uses `sha2`, already a dependency. Fixtures are unchanged (OCFL-S-011). The `wasm32-unknown-unknown` build with default features off still passes (BDD "Engine builds for the browser").
 
@@ -46,7 +46,7 @@ test a_file_above_one_chunk_streams_back_in_bounded_chunks ... FAILED
 - The profile scan matched `nonce` inside `FnOnce` once whitespace was removed, so `nonce` was dropped from the word list.
 - The fixture helper staged with one `put`, which is capped at 8 MiB, so it now uses `write_whole`.
 
-After those harness fixes every test passed against the unchanged engine; OCFL-S-020 needed no engine change. The two oracle tests show the leak and profile checks fail when their target is present.
+After those harness fixes every test passed against the unchanged engine; OCFL-S-021 needed no engine change. The two oracle tests show the leak and profile checks fail when their target is present.
 
 ## Constraint gates
 
@@ -103,7 +103,7 @@ test unchanged_sealed_bytes_are_not_written_again ... ok
 test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.36s
 ```
 
-`opaque_bytes_OCFL-S-020.feature` from `FILESQUID_OCFL_REQUIRE_COMMUNITY_VALIDATOR=1 cargo test -p filesquid-ocfl --locked`:
+`opaque_bytes_OCFL-S-021.feature` from `FILESQUID_OCFL_REQUIRE_COMMUNITY_VALIDATOR=1 cargo test -p filesquid-ocfl --locked`:
 
 ```text
 Feature: The engine stores opaque bytes and the dual profile is a caller
@@ -218,8 +218,8 @@ test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 ## Sync Execution Report
 
-- **Module SRS:** new row **OCFL-S-020** (opaque bytes; the dual profile is a caller). It restates the IO-0.8 plan description, ADR 010 Decision 2 and ADR 023 "Dual-profile encryption". It adds two testable consequences of those sources: digests are over the stored bytes (OCFL-S-002), and the engine takes no encryption dependency.
-- **Module plan:** IO-0.8 checked; Related Requirements add OCFL-S-020; Related Tests add the new feature, the integration test and this Walkthrough.
+- **Module SRS:** new row **OCFL-S-021** (opaque bytes; the dual profile is a caller). It restates the IO-0.8 plan description, ADR 010 Decision 2 and ADR 023 "Dual-profile encryption". It adds two testable consequences of those sources: digests are over the stored bytes (OCFL-S-002), and the engine takes no encryption dependency.
+- **Module plan:** IO-0.8 checked; Related Requirements add OCFL-S-021; Related Tests add the new feature, the integration test and this Walkthrough.
 - **Repository-root implementation-plan checklist:** IO-0.8 checked. Global Task 0.4 stays open (IO-0.9 and IO-0.10).
 - **Crate README:** new "Opaque bytes" section. **Root README:** "Run tests" names `integration_opaque_bytes`.
 - **Crate rustdoc:** "Opaque bytes" section in `src/lib.rs`.
@@ -235,4 +235,4 @@ None. No credential or `.env` value was mocked. The `ToyCipher` key is a fixed t
 
 - **The hosted profile's real encryption is not here.** ADR 009's suite, key custody and name encryption belong to the caller (`filesquid-api` and the private-client library, ADR 023). That caller must keep OCFL path rules for the names it produces (this test uses one hex segment per path) and must keep `created` an RFC 3339 timestamp.
 - **Deterministic sealing is a confidentiality trade-off, not only a space one.** `ToyCipher` uses the plaintext path as the nonce, so every version of a path reuses one keystream. Changed content at that path leaks the XOR of the two plaintexts, and unchanged ciphertext shows that the content did not change. This is acceptable only in a test transform. The real caller MUST seal with a fresh nonce per encryption (an AEAD from the ADR 009 suite), and then every file is stored again in every version. Keeping deduplication over ciphertext needs a deliberate owner decision to accept the equality leak (for example convergent or SIV-style sealing, which reveals that two files are equal but not their XOR). The engine is correct either way.
-- **Numbering:** PR #37 (open) also adds a module SRS row after OCFL-S-019. Whichever merges second renumbers its row; this one is OCFL-S-020.
+- **Numbering:** PR #37 merged first with OCFL-S-020 (version-inventory repair), so this row was renumbered OCFL-S-021 when `main` was merged in.

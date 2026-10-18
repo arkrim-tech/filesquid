@@ -1,4 +1,4 @@
-//! Step definitions for `opaque_bytes_OCFL-S-020.feature` (IO-0.8): the
+//! Step definitions for `opaque_bytes_OCFL-S-021.feature` (IO-0.8): the
 //! engine stores opaque bytes, and the owner-readable and sealed profiles
 //! are caller transforms over the same engine calls.
 //!

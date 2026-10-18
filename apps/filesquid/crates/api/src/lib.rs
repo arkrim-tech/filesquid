@@ -12,6 +12,10 @@
 //! subscriptions and resync hints). It holds no transport code of its own, so the same router
 //! answers on every host.
 //!
+//! It is also FileSquid's application layer: [`library`] holds the versioned library
+//! commands and queries (collections, virtual collections, membership, the hide and delete
+//! policy, paged listing) that every host runs over the catalog it injects.
+//!
 //! Every routed operation except the public liveness probe (`GET /api/v1/health/live`) is
 //! authenticated and authorised by the [`auth`] layer before its handler runs. The 404 and 405
 //! fallbacks are authentication-only: they answer only a caller with an accepted credential
@@ -27,6 +31,7 @@ pub mod events;
 pub mod health;
 pub mod journal;
 pub mod journal_writer;
+pub mod library;
 pub mod metrics;
 pub mod monitor;
 pub mod operation;

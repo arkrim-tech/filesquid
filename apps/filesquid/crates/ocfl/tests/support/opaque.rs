@@ -1,5 +1,5 @@
 //! A test-only caller transform for the opaque-bytes tests (IO-0.8;
-//! OCFL-S-020; ADR 010 "Hosted / optional encrypted package", ADR 023
+//! OCFL-S-021; ADR 010 "Hosted / optional encrypted package", ADR 023
 //! "Dual-profile encryption").
 //!
 //! The engine stores the bytes its caller supplies. The hosted profile's
@@ -269,7 +269,7 @@ pub fn crypto_dependencies(manifest: &str) -> Vec<String> {
 
 /// Every reason the engine would carry the dual profile itself: a profile
 /// or encryption word in the code under `src/`, or an encryption crate in
-/// `Cargo.toml` (OCFL-S-020). Empty when the profile stays a caller.
+/// `Cargo.toml` (OCFL-S-021). Empty when the profile stays a caller.
 pub fn engine_profile_findings() -> Vec<String> {
     let sources = source_scan::read_sources().expect("scan src");
     assert!(sources.len() > 5, "engine sources not found");
