@@ -1,7 +1,8 @@
 //! Cucumber harness for the `@server-start` scenarios of the API's
 //! `host_descriptor_API-S-020.feature` (API-S-020): how `filesquid-server` reads
 //! `FILESQUID_OPERATOR_NAME` when it starts. An unset or blank value starts the server with no
-//! operator name and one `server.operator_unnamed` warning on stdout and in the journal; an
+//! operator name and one `server.operator_unnamed` warning on stdout (whatever the log filter)
+//! and in the journal; an
 //! unusable value stops the real binary with an error that names the variable and omits the
 //! value. The API harness runs the feature's other scenarios. Writes a JUnit report to
 //! `tests/allure-results/`, cleared before each run.
@@ -13,7 +14,7 @@ use filesquid_api::journal::{JournalEntry, JournalQuery, Level};
 use filesquid_api::trace_layer::JournalLayer;
 use filesquid_api::ApiState;
 use filesquid_native::HostMonitor;
-use filesquid_server::{app, start_server, ServerConfig, OPERATOR_NAME_VARIABLE};
+use filesquid_server::{app, start_server_writing_to, ServerConfig, OPERATOR_NAME_VARIABLE};
 use http_body_util::BodyExt;
 use std::io::Write;
 use std::path::PathBuf;
@@ -21,6 +22,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
 use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::Layer;
 
 /// The feature file, owned by the API crate.
 const FEATURE: &str = "../api/tests/features/host_descriptor_API-S-020.feature";
@@ -118,19 +120,22 @@ fn unusable_value(value: &str) -> String {
     }
 }
 
-/// Start the server as `main` does (JSON stdout plus the journal layer), stdout captured.
+/// Start the server as `main` does (JSON stdout plus the journal layer), with the stdout log
+/// filter turned off (`RUST_LOG=off`) and the server's unfiltered startup lines captured.
 fn start_captured(w: &mut ServerWorld, config: ServerConfig) {
     let layer = JournalLayer::new();
+    let filtered = tracing_subscriber::fmt::layer()
+        .json()
+        .with_writer(w.stdout.clone())
+        .with_filter(tracing_subscriber::filter::LevelFilter::OFF);
     let subscriber = tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::fmt::layer()
-                .json()
-                .with_writer(w.stdout.clone()),
-        )
+        .with(filtered)
         .with(layer.clone());
     let state = ApiState::new();
+    let mut stdout = w.stdout.clone();
     let host = tracing::subscriber::with_default(subscriber, || {
-        start_server(&config, &state, Some(&layer)).expect("the server starts")
+        start_server_writing_to(&config, &state, Some(&layer), &mut stdout)
+            .expect("the server starts")
     });
     host.monitor().journal().flush();
     w.started = Some((state, host, config));

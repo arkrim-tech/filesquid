@@ -10,10 +10,17 @@
 //!   port of a host with no enrolment state; enrolment (API-F4.1) brings a real one.
 //! - **Change event:** [`HostInfo::refresh_hosted_service`] rereads the port and publishes one
 //!   [`topic::HOST_CHANGE`] event carrying the whole new [`HostDescriptor`] when anything
-//!   changed.
+//!   changed. The host type and operator name are fixed for the life of a process, so only the
+//!   hosted-service state can change.
+//! - **Trigger:** whoever changes the enrolment state calls
+//!   [`HostInfo::refresh_hosted_service`] right after the change (a push, not a poll). Until
+//!   enrolment exists (API-F4.1) every host uses [`NotEnrolled`], which never changes, so no
+//!   host calls it yet; API-F4.1 calls it after every enrol, unenrol, backup switch and sync
+//!   switch on both hosts.
 //! - **Privacy:** the descriptor holds only the host type, the operator's display name, three
-//!   flags and the service's DNS host name: no token, key, account, device, quota, size,
-//!   timestamp, path or file name.
+//!   flags and the service's DNS host name: no token, content handle, key or key identifier,
+//!   account or device identifier, e-mail address, quota, object count, size, timestamp,
+//!   logical or filesystem path or file name.
 //!
 //! Pure data and validation, plus one publish on the in-process event bus; no I/O.
 
@@ -207,7 +214,9 @@ fn is_label(label: &str) -> bool {
 
 /// Where a host reads its hosted-service state. API-F4.1 implements it over the real
 /// enrolment; until then every host uses [`NotEnrolled`]. Implementations MUST NOT do slow
-/// I/O: the route and [`HostInfo::refresh_hosted_service`] call it inline.
+/// I/O: the route and [`HostInfo::refresh_hosted_service`] call it inline. Whoever changes the
+/// state behind a port MUST call [`HostInfo::refresh_hosted_service`] afterwards, so
+/// subscribers receive the `host.change` event.
 pub trait EnrolmentPort: Send + Sync + 'static {
     /// The current hosted-service state.
     fn hosted_service(&self) -> HostedService;

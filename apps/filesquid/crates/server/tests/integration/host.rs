@@ -11,8 +11,8 @@ use filesquid_api::trace_layer::JournalLayer;
 use filesquid_api::ApiState;
 use filesquid_native::HostMonitor;
 use filesquid_server::{
-    app, operator_unnamed_entry, start_server, ServerConfig, OPERATOR_NAME_VARIABLE,
-    OPERATOR_UNNAMED_OPERATION,
+    app, operator_unnamed_entry, operator_unnamed_line, start_server, start_server_writing_to,
+    ServerConfig, OPERATOR_NAME_VARIABLE, OPERATOR_UNNAMED_OPERATION,
 };
 use http_body_util::BodyExt;
 use std::io::Write;
@@ -20,6 +20,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
 use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::Layer;
 
 /// Administrator token configured for the test server.
 const TOKEN: &str = "0dd5eed50dd5eed50dd5eed50dd5eed50dd5eed50dd5eed50dd5eed50dd5eed5";
@@ -95,21 +96,22 @@ impl Captured {
     }
 }
 
-/// Start the server as `main` does (JSON stdout plus the journal layer), with stdout
+/// Start the server as `main` does (JSON stdout plus the journal layer), but with the
+/// stdout log filter turned off entirely (`RUST_LOG=off`), and its unfiltered startup lines
 /// captured. Returns the state, the running monitor and the captured stdout.
 fn start_captured(config: &ServerConfig) -> (ApiState, HostMonitor, Captured) {
-    let stdout = Captured::default();
+    let mut stdout = Captured::default();
     let layer = JournalLayer::new();
+    let filtered = tracing_subscriber::fmt::layer()
+        .json()
+        .with_writer(stdout.clone())
+        .with_filter(tracing_subscriber::filter::LevelFilter::OFF);
     let subscriber = tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::fmt::layer()
-                .json()
-                .with_writer(stdout.clone()),
-        )
+        .with(filtered)
         .with(layer.clone());
     let state = ApiState::new();
     let host = tracing::subscriber::with_default(subscriber, || {
-        start_server(config, &state, Some(&layer)).expect("server starts")
+        start_server_writing_to(config, &state, Some(&layer), &mut stdout).expect("server starts")
     });
     host.monitor().journal().flush();
     (state, host, stdout)
@@ -240,24 +242,43 @@ fn the_operator_unnamed_entry_carries_nothing_private() {
     for forbidden in ['/', '\\', '@', ' '] {
         assert!(!text.contains(forbidden), "{text}");
     }
+    let line: serde_json::Value =
+        serde_json::from_str(&operator_unnamed_line("2026-10-18T00:00:00.000Z")).expect("JSON");
+    let fields = line["fields"].as_object().expect("fields");
+    let mut keys: Vec<&str> = fields.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(keys, ["message", "operation", "variable"]);
+    assert_eq!(line["level"], "WARN");
+    assert!(!line.to_string().contains('/') && !line.to_string().contains('@'));
 }
 
+/// The real binary with `RUST_LOG=off` still prints the warning: it does not go through the
+/// log filter. The server is stopped as soon as the line appears (bounded wait).
 #[test]
-fn the_binary_refuses_an_unusable_operator_name_without_printing_it() {
-    let dir = data_dir("binary");
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_filesquid-server"))
-        .env("FILESQUID_OPERATOR_NAME", "Leakyvalue\u{1b}[31m")
+fn the_binary_prints_the_warning_even_with_logging_off() {
+    let dir = data_dir("binary-off");
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_filesquid-server"))
+        .env("RUST_LOG", "off")
         .env("FILESQUID_ADMIN_TOKEN", TOKEN)
         .env("FILESQUID_DATA_DIR", &dir)
         .env("FILESQUID_BIND", "127.0.0.1:0")
-        .output()
+        .env_remove(OPERATOR_NAME_VARIABLE)
+        .stdout(std::process::Stdio::piped())
+        .spawn()
         .expect("server binary runs");
-    assert!(!output.status.success());
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(text.contains(OPERATOR_NAME_VARIABLE), "{text}");
-    assert!(!text.contains("Leakyvalue"), "{text}");
+    let stdout = child.stdout.take().expect("stdout");
+    let (found, lines) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let warning = std::io::BufRead::lines(std::io::BufReader::new(stdout))
+            .map_while(Result::ok)
+            .find(|line| line.contains(OPERATOR_UNNAMED_OPERATION));
+        let _ = found.send(warning);
+    });
+    let warning = lines.recv_timeout(std::time::Duration::from_secs(30));
+    let _ = child.kill();
+    let _ = child.wait();
+    let line = warning.expect("a line in time").expect("the warning line");
+    assert!(line.contains("\"level\":\"WARN\""), "{line}");
+    assert!(line.contains(OPERATOR_NAME_VARIABLE), "{line}");
+    assert!(!line.contains(TOKEN), "{line}");
 }

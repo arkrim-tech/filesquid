@@ -182,6 +182,7 @@ async fn the_desktop_owner_reads_it_with_the_per_launch_token() {
 /// member who is not an administrator: it reads the descriptor and nothing else.
 #[tokio::test]
 async fn every_accepted_credential_reads_it_even_one_granted_nothing_else() {
+    // No member principal exists before API-F1.9: the label is inert, `DenyAll` grants nothing.
     let member = TokenAuthenticator::new(TOKEN, Principal::Administrator);
     let state = ApiState::new();
     state.install_authoriser(Authoriser::new(Arc::new(member), Arc::new(DenyAll)));
@@ -520,9 +521,12 @@ async fn reading_the_descriptor_is_not_journaled() {
 
 // ---- Redaction ----
 
-/// Assert `value` carries nothing API-S-020 forbids: only the documented keys, no number but
-/// the schema version, and no string shaped like a token, key, identifier, e-mail address,
-/// path, file name, timestamp, URL or size.
+/// Assert `value` carries nothing API-S-020 forbids (a token, content handle, key or key
+/// identifier, account or device identifier, e-mail address, quota, object count, size,
+/// timestamp, logical or filesystem path or file name): only the documented keys, booleans
+/// for the switches, no number but the schema version (so no quota, size or object count),
+/// and no string shaped like a token, handle, key, identifier, e-mail address, path, file
+/// name, timestamp or URL.
 fn assert_nothing_private(value: &Value) {
     let top = value.as_object().expect("descriptor object");
     let keys: Vec<&str> = top.keys().map(String::as_str).collect();

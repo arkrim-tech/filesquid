@@ -25,10 +25,11 @@ use axum::routing::{get, MethodRouter};
 use axum::Router;
 use filesquid_api::auth::{self, Action, Authoriser, Guard, Principal, EVENTS_SUBPROTOCOL};
 use filesquid_api::host::{HostIdentity, NotEnrolled, OperatorName};
-use filesquid_api::journal::{JournalEntry, Level, Outcome};
+use filesquid_api::journal::{format_rfc3339_ms, now_ms, JournalEntry, Level, Outcome};
 use filesquid_api::trace_layer::JournalLayer;
 use filesquid_api::{ApiError, ApiState, ErrorCode, API_PREFIX};
 use filesquid_native::HostMonitor;
+use std::io::Write;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -148,9 +149,11 @@ pub fn operator_unnamed_entry() -> JournalEntry {
 
 /// Describe this server to the API (API-S-020): host type `server`, the configured operator
 /// name, and not enrolled with the hosted service. Without an operator name, write one
-/// [`OPERATOR_UNNAMED_OPERATION`] warning to stdout and to the activity journal: through
-/// `layer` when it is attached (it MUST then be the layer installed in this process's
-/// subscriber), otherwise straight to `host`'s journal.
+/// [`OPERATOR_UNNAMED_OPERATION`] warning line to `stdout` and queue
+/// [`operator_unnamed_entry`] on `host`'s activity journal.
+///
+/// The warning bypasses `tracing` on purpose: the stdout log filter (`RUST_LOG=error` or
+/// `off`) cannot hide it, and the journal layer cannot journal it a second time.
 ///
 /// # Errors
 /// The API state already describes a host.
@@ -158,29 +161,46 @@ pub fn describe_server_host(
     config: &ServerConfig,
     state: &ApiState,
     host: &HostMonitor,
-    layer: Option<&JournalLayer>,
+    stdout: &mut dyn Write,
 ) -> Result<(), String> {
     let identity = HostIdentity::server(config.operator_name.clone());
     if !state.describe_host(identity, Arc::new(NotEnrolled)) {
         return Err("the host was already described".to_string());
     }
     if config.operator_name.is_none() {
-        warn_operator_unnamed(host, layer.is_some());
+        write_operator_unnamed_warning(stdout);
+        host.monitor().journal().send(operator_unnamed_entry());
     }
     Ok(())
 }
 
-/// Write the unnamed-operator warning once to stdout (and, through the journal layer, to the
-/// journal); when no layer journals it, queue [`operator_unnamed_entry`] on the journal.
-fn warn_operator_unnamed(host: &HostMonitor, journaled_by_layer: bool) {
-    tracing::warn!(
-        operation = OPERATOR_UNNAMED_OPERATION,
-        target_id = OPERATOR_NAME_VARIABLE,
-        variable = OPERATOR_NAME_VARIABLE,
+/// The stdout line of the unnamed-operator warning: one JSON object shaped like the server's
+/// other log lines (RFC 3339 UTC timestamp, `WARN`, the operation and the variable's name).
+/// It holds no value, token or path. Pure.
+pub fn operator_unnamed_line(timestamp: &str) -> String {
+    let message = format!(
         "{OPERATOR_NAME_VARIABLE} is unset or blank; the host descriptor reports no operator name"
     );
-    if !journaled_by_layer {
-        host.monitor().journal().send(operator_unnamed_entry());
+    serde_json::json!({
+        "timestamp": timestamp,
+        "level": "WARN",
+        "fields": {
+            "message": message,
+            "operation": OPERATOR_UNNAMED_OPERATION,
+            "variable": OPERATOR_NAME_VARIABLE,
+        },
+        "target": "filesquid_server",
+    })
+    .to_string()
+}
+
+/// Write the unnamed-operator warning line to `stdout` and flush it. A failed write is
+/// reported through `tracing`; the journal entry is written either way.
+fn write_operator_unnamed_warning(stdout: &mut dyn Write) {
+    let timestamp = format_rfc3339_ms(now_ms());
+    let line = operator_unnamed_line(&timestamp);
+    if let Err(err) = writeln!(stdout, "{line}").and_then(|()| stdout.flush()) {
+        tracing::error!(%err, operation = OPERATOR_UNNAMED_OPERATION, "stdout write failed");
     }
 }
 
@@ -210,10 +230,21 @@ pub fn start_server(
     state: &ApiState,
     layer: Option<&JournalLayer>,
 ) -> Result<HostMonitor, String> {
+    start_server_writing_to(config, state, layer, &mut std::io::stdout())
+}
+
+/// [`start_server`], writing its unfiltered startup warnings to `stdout` instead of the
+/// process's standard output (tests capture them this way).
+pub fn start_server_writing_to(
+    config: &ServerConfig,
+    state: &ApiState,
+    layer: Option<&JournalLayer>,
+    stdout: &mut dyn Write,
+) -> Result<HostMonitor, String> {
     install_admin_authoriser(config, state)?;
     let host = start_host_monitor(config, state, layer)?;
     auth::record_token_issue(host.monitor(), &Principal::Administrator);
-    if let Err(message) = describe_server_host(config, state, &host, layer) {
+    if let Err(message) = describe_server_host(config, state, &host, stdout) {
         host.stop();
         return Err(message);
     }

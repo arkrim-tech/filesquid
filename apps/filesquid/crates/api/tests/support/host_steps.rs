@@ -20,7 +20,9 @@ use std::time::Duration;
 use tower::ServiceExt;
 
 /// Credential of the stand-in server member: accepted, granted nothing but what every
-/// credential gets.
+/// credential gets. Server accounts and a member principal arrive with API-F1.9; until then
+/// the stand-in authenticates as `Principal::Administrator` under the `DenyAll` policy, so
+/// the principal label is inert here and the policy alone makes it a non-administrator.
 const MEMBER_TOKEN: &str = "member-token";
 
 /// Per-scenario state of the host descriptor steps.
@@ -127,6 +129,7 @@ fn desktop_enrolled(w: &mut MonitorWorld, service_host: String, backup: String, 
 #[given(expr = "a FileSquid server host whose operator name is set to {string}")]
 fn server_named(w: &mut MonitorWorld, configured: String) {
     let operator = OperatorName::parse(&configured).expect("usable operator name");
+    // No member principal exists before API-F1.9: the label is inert, `DenyAll` grants nothing.
     let member = TokenAuthenticator::new(MEMBER_TOKEN, Principal::Administrator);
     let state = ApiState::new();
     state.install_authoriser(Authoriser::new(Arc::new(member), Arc::new(DenyAll)));
@@ -404,7 +407,10 @@ fn nothing_private(w: &mut MonitorWorld) {
     crate::shutdown_monitor(w);
 }
 
-/// Exactly the documented keys, booleans for the switches, and no number but the version.
+/// Exactly the documented keys, booleans for the switches, and no number but the version, so
+/// none of what API-S-020 forbids can be present: a token, content handle, key or key
+/// identifier, account or device identifier, e-mail address, quota, object count, size,
+/// timestamp, logical or filesystem path or file name.
 fn assert_only_descriptor_fields(answer: &Value) {
     let keys: Vec<&String> = answer.as_object().expect("object").keys().collect();
     assert_eq!(
