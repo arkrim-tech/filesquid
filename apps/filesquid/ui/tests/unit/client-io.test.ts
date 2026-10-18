@@ -161,10 +161,17 @@ describe("FileSquidClient.command", () => {
 
   it("returns pending for a 202 answer, which is not completion", async () => {
     const pending = { operation_id: "op-1", kind: "pending", error: null };
-    const { client } = clientWith(() => json(202, pending));
+    const { client, seen } = clientWith(() => json(202, pending));
     expect(await client.command("/api/v1/x", ENVELOPE, undefined, { method: "DELETE" })).toEqual(
       pending,
     );
+    expect(seen[0]?.init.method).toBe("DELETE");
+  });
+
+  it("rejects a 2xx answer that is not JSON with a TypeError", async () => {
+    const { client } = clientWith(() => new Response("<html>proxy</html>", { status: 200 }));
+    const error = await client.command("/api/v1/x", ENVELOPE).catch((e: unknown) => e);
+    expect(error).toEqual(new TypeError("command answer is not a CommandOutcome"));
   });
 
   it("returns a module error with its PortError", async () => {
@@ -239,6 +246,13 @@ describe("FileSquidClient.upload", () => {
     // The transport sets the multipart boundary itself.
     expect(headersOf(seen[0]).has("content-type")).toBe(false);
     expect(headersOf(seen[0]).get("authorization")).toBe(`Bearer ${TOKEN}`);
+  });
+
+  it("keeps a File's own name when no filename is given", async () => {
+    const outcome = { operation_id: "op-1", kind: "committed", error: null };
+    const { client, seen } = clientWith(() => json(201, outcome));
+    await client.upload("/api/v1/x", new File(["x"], "holiday.jpg"), ENVELOPE);
+    expect(((seen[0]?.init.body as FormData).get("file") as File).name).toBe("holiday.jpg");
   });
 
   it("maps HTTP 409 conflict to a conflict outcome", async () => {

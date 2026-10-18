@@ -9,12 +9,14 @@ Feature: One client for every FileSquid host
   # Happy path
   Scenario: The UI served by filesquid-server uses same-origin HTTP and the WebSocket channel
     Given the UI is served by filesquid-server
+    And the client has a valid server token
     When the shell reads API health and the Monitor subscribes to live events
     Then the requests should go to the page's own origin under "/api/v1/"
     And the events should arrive over the WebSocket at "/api/v1/events"
 
   Scenario: The UI inside the desktop app uses the custom URI scheme and Tauri events
     Given the UI runs inside the filesquid-desktop webview on Windows
+    And the desktop host has given its own page a per-launch token
     When the shell reads API health and the Monitor subscribes to live events
     Then the requests should go to "http://filesquid.localhost/api/v1/"
     And no request should go to the page's own origin
@@ -29,6 +31,7 @@ Feature: One client for every FileSquid host
       | platform | base                       |
       | macOS    | filesquid://localhost      |
       | Linux    | filesquid://localhost      |
+      | iOS      | filesquid://localhost      |
       | Windows  | http://filesquid.localhost |
       | Android  | http://filesquid.localhost |
 
@@ -48,6 +51,12 @@ Feature: One client for every FileSquid host
     Given a command was sent and its answer was lost
     When the view retries the command
     Then the retry should carry the same operation id
+
+  Scenario: An upload carries its envelope and returns an outcome
+    Given a command envelope with an operation id, the revision last read and a scope
+    When the view uploads a file
+    Then the request should be multipart form data with an "envelope" part and a "file" part
+    And the client should return the API's outcome for the same operation id
 
   # Edge cases
   Scenario: A ranged read returns part of a file

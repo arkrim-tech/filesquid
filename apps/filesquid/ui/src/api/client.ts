@@ -246,6 +246,23 @@ async function readErrorBody(response: Response): Promise<Partial<ApiErrorBody>>
 }
 
 /**
+ * Parse the JSON body of a 2xx command answer. A body that is not JSON (for example a proxy
+ * page) is not an outcome, so it is reported as the same `TypeError` as any other invalid
+ * answer, with the parser's error as its `cause`. Network I/O: consumes the response body.
+ *
+ * @param response A 2xx command answer.
+ * @returns The parsed JSON value.
+ * @throws TypeError when the body is not JSON.
+ */
+async function readJsonAnswer(response: Response): Promise<unknown> {
+  try {
+    return JSON.parse(await response.text()) as unknown;
+  } catch (error) {
+    throw new TypeError("command answer is not a CommandOutcome", { cause: error });
+  }
+}
+
+/**
  * The error raised when the configured token cannot be sent. It names neither the token nor
  * the characters that made it unusable.
  *
@@ -573,7 +590,7 @@ export class FileSquidClient {
   ): Promise<CommandOutcome> {
     const form = new FormData();
     form.append("envelope", new Blob([JSON.stringify(envelope)], { type: "application/json" }));
-    form.append("file", file, options.filename ?? "file");
+    form.append("file", file, options.filename ?? (file instanceof File ? file.name : "file"));
     const response = await this.transmit(path, {
       method: "POST",
       body: form,
@@ -596,7 +613,7 @@ export class FileSquidClient {
     operationId: string,
     response: Response,
   ): Promise<CommandOutcome> {
-    if (response.ok) return commandOutcome(await response.json(), operationId);
+    if (response.ok) return commandOutcome(await readJsonAnswer(response), operationId);
     if (response.status !== HTTP_CONFLICT) {
       throw new ApiError(response.status, path, await readErrorBody(response));
     }

@@ -64,14 +64,25 @@ const OUTCOME_KINDS: CompleteList<CommandOutcomeKind, typeof OUTCOME_KIND_VALUES
 /** `bytes <start>-<end>/<size or *>` (RFC 9110 section 14.4). */
 const CONTENT_RANGE = /^bytes (\d+)-(\d+)\/(\d+|\*)$/;
 
+/** Bytes in a UUID. */
+const UUID_BYTES = 16;
+/** The 8-4-4-4-12 hex groups of a UUID's 32 hex digits. */
+const UUID_GROUPS = /^(.{8})(.{4})(.{4})(.{4})(.{12})$/;
+
 /**
- * A new operation id: a version 4 UUID from the platform's secure random source.
+ * A new operation id: a version 4 UUID (RFC 9562) built from `crypto.getRandomValues`.
+ * `crypto.randomUUID` is not used because browsers expose it only in secure contexts, and a
+ * server UI may be served over plain HTTP from a non-loopback address.
  * Side effect: reads randomness.
  *
  * @returns A fresh id, unique per command.
  */
 export function newOperationId(): string {
-  return globalThis.crypto.randomUUID();
+  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(UUID_BYTES));
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40; // version 4
+  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80; // RFC 9562 variant
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return hex.replace(UUID_GROUPS, "$1-$2-$3-$4-$5");
 }
 
 /**
@@ -137,6 +148,9 @@ export function commandOutcome(value: unknown, operationId: string): CommandOutc
   const error = portError(record.error);
   const errorMatches = kind === "error" ? error !== undefined : record.error === null;
   if (!errorMatches) throw new TypeError("command answer error does not match its kind");
+  if (typeof record.operation_id !== "string" || record.operation_id === "") {
+    throw new TypeError("command answer has no operation id");
+  }
   if (record.operation_id !== operationId) {
     throw new TypeError("command outcome is for another operation");
   }
@@ -150,6 +164,7 @@ export function commandOutcome(value: unknown, operationId: string): CommandOutc
  * @returns A `conflict` outcome; the caller rereads and decides again.
  */
 export function conflictOutcome(operationId: string): CommandOutcome {
+  requireText("operation_id", operationId);
   return { operation_id: operationId, kind: "conflict", error: null };
 }
 
@@ -198,8 +213,11 @@ export function rangeHeader(range: ByteRange): string {
 export function parseContentRange(value: string | null): ContentRange | undefined {
   const match = value === null ? null : CONTENT_RANGE.exec(value);
   if (!match) return undefined;
-  const [, start, end, size] = match;
-  const range = { start: Number(start), end: Number(end) };
-  if (range.end < range.start) return undefined;
-  return { ...range, size: size === "*" ? undefined : Number(size) };
+  const [, startText, endText, sizeText] = match;
+  const start = Number(startText);
+  const end = Number(endText);
+  const size = sizeText === "*" ? undefined : Number(sizeText);
+  const ordered = isOffset(start) && isOffset(end) && end >= start;
+  const inside = size === undefined || (isOffset(size) && size > end);
+  return ordered && inside ? { start, end, size } : undefined;
 }

@@ -2,7 +2,7 @@
  * Unit tests for the pure command and byte-range helpers (UI-S-012, CORE-S-005): envelope
  * building, outcome validation, durability and RFC 9110 ranges.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   commandEnvelope,
   commandOutcome,
@@ -12,6 +12,9 @@ import {
   parseContentRange,
   rangeHeader,
 } from "../../src/api/commands";
+
+/** RFC 9562 version 4 UUID, lower case. */
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 describe("commandEnvelope", () => {
   it("builds a schema version 1 envelope with the caller's scope and revision", () => {
@@ -52,9 +55,17 @@ describe("commandEnvelope", () => {
 
 describe("newOperationId", () => {
   it("returns a UUID from the platform's secure random source", () => {
-    expect(newOperationId()).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
-    );
+    expect(newOperationId()).toMatch(UUID_V4);
+  });
+
+  it("works without crypto.randomUUID (plain HTTP is not a secure context)", () => {
+    const fill = (bytes: Uint8Array) => bytes.fill(0xff);
+    vi.stubGlobal("crypto", { getRandomValues: fill });
+    try {
+      expect(newOperationId()).toBe("ffffffff-ffff-4fff-bfff-ffffffffffff");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 
@@ -105,6 +116,13 @@ describe("commandOutcome", () => {
     expect(() => commandOutcome(value, "op-1")).toThrow(TypeError);
   });
 
+  it("rejects an empty operation id, even when both sides are empty", () => {
+    const value = { operation_id: "", kind: "committed", error: null };
+    expect(() => commandOutcome(value, "")).toThrow(
+      new TypeError("command answer has no operation id"),
+    );
+  });
+
   it("rejects an outcome for another operation id", () => {
     const value = { operation_id: "op-2", kind: "committed", error: null };
     expect(() => commandOutcome(value, "op-1")).toThrow(
@@ -120,6 +138,10 @@ describe("conflictOutcome and isCommitted", () => {
       kind: "conflict",
       error: null,
     });
+  });
+
+  it("refuses to build a conflict outcome for an empty operation id", () => {
+    expect(() => conflictOutcome("")).toThrow(new RangeError("operation_id must not be empty"));
   });
 
   it("treats only committed as durable completion evidence", () => {
@@ -170,10 +192,20 @@ describe("parseContentRange", () => {
   it("leaves size undefined when the length is unknown", () => {
     expect(parseContentRange("bytes 10-19/*")).toEqual({ start: 10, end: 19, size: undefined });
   });
-  it.each([[null], [""], ["bytes */1000"], ["items 0-1/2"], ["bytes 9-1/20"]])(
-    "returns undefined for %j",
-    (value) => {
-      expect(parseContentRange(value)).toBeUndefined();
-    },
-  );
+  it("accepts a last byte one below the complete length", () => {
+    expect(parseContentRange("bytes 0-9/10")).toEqual({ start: 0, end: 9, size: 10 });
+  });
+  it.each([
+    [null],
+    [""],
+    ["bytes */1000"],
+    ["items 0-1/2"],
+    ["bytes 9-1/20"],
+    ["bytes 0-9/9"],
+    ["bytes 0-9/5"],
+    ["bytes 0-9007199254740992/*"],
+    ["bytes 0-1/9007199254740993"],
+  ])("returns undefined for %j", (value) => {
+    expect(parseContentRange(value)).toBeUndefined();
+  });
 });

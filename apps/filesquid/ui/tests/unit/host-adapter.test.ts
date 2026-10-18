@@ -3,7 +3,7 @@
  * custom-scheme adapter or the server HTTP adapter, each with its own event transport.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { selectHostAdapter, type HostEnvironment } from "../../src/api/client";
+import { detectHost, selectHostAdapter, type HostEnvironment } from "../../src/api/client";
 import { DESKTOP_EVENT, createHostClient } from "../../src/api/host";
 
 /** Host facts for a platform, inside or outside the desktop webview. */
@@ -45,6 +45,21 @@ describe("selectHostAdapter", () => {
       });
     },
   );
+});
+
+describe("detectHost on iOS", () => {
+  it("selects filesquid://localhost inside the iOS desktop webview", () => {
+    const ios = {
+      __TAURI_INTERNALS__: {},
+      navigator: {
+        userAgent:
+          "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148",
+      },
+    };
+    expect(selectHostAdapter(detectHost(ios as unknown as Window)).baseUrl).toBe(
+      "filesquid://localhost",
+    );
+  });
 });
 
 describe("createHostClient event transport", () => {
