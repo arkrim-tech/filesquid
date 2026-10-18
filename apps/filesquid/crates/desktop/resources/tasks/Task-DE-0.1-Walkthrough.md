@@ -167,11 +167,11 @@ The linked-plugin check sees the real build: with `test_build` forced to `false`
 
 ## Pre-commit
 
-`FULL=1 FILESQUID_DESKTOP_E2E=1 bash scripts/pre-commit.sh` from the repository root:
+`FULL=1 FILESQUID_DESKTOP_E2E=1 bash scripts/pre-commit.sh` from the repository root, after the review fixes and the merge of `main` (the run on the final commit is recorded in the pull request):
 
 ```text
-✅ Desktop packaged-window e2e passed (11s).
-✅ All Pre-Commit Hooks Passed! Test scope: full (153s)
+✅ Desktop packaged-window e2e passed (13s).
+✅ All Pre-Commit Hooks Passed! Test scope: full (369s)
 ```
 
 ## Mocked Environment Variables
