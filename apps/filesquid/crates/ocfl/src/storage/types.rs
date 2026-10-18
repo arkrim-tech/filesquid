@@ -58,13 +58,7 @@ impl ETag {
 
     /// Finish an incremental SHA-256 and return it as a tag.
     pub(crate) fn from_hasher(hasher: Sha256) -> Self {
-        let digest = hasher.finalize();
-        let mut hex = String::with_capacity(digest.len() * 2);
-        for byte in digest.iter() {
-            hex.push(char::from(HEX[usize::from(byte >> 4)]));
-            hex.push(char::from(HEX[usize::from(byte & 0x0f)]));
-        }
-        Self(hex)
+        Self(crate::digest::to_hex(&hasher.finalize()))
     }
 
     /// The tag text.
@@ -72,9 +66,6 @@ impl ETag {
         &self.0
     }
 }
-
-/// Lowercase hexadecimal digits.
-const HEX: &[u8; 16] = b"0123456789abcdef";
 
 /// Size and entity tag of a stored object.
 #[derive(Debug, Clone, PartialEq, Eq)]

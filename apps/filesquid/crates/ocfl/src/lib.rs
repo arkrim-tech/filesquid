@@ -26,16 +26,31 @@
 //! or an object (object discovery and reads, IO-0.4) and before they publish
 //! a version (IO-0.6 onward).
 //!
-//! Inventory reading, validation and `vN` publication are later work; this
-//! crate currently provides the storage layer and the Git guard.
+//! OCFL 1.1 file formats (OCFL-S-002), pure and available on every target:
+//!
+//! - [`digest`]: SHA-256, the engine's content-addressing algorithm, and
+//!   SHA-512, which the engine reads.
+//! - [`inventory`]: [`Inventory`] types and a strict parser for untrusted
+//!   `inventory.json` bytes that names the OCFL 1.1 validation code of the
+//!   first rule an inventory breaks; digest sidecars; version names.
+//! - [`namaste`]: object and storage-root conformance declarations.
+//!
+//! Object discovery and reads, structural validation and `vN` publication
+//! are later work.
 
+pub mod digest;
 mod error;
 mod guard;
+pub mod inventory;
 #[cfg(all(feature = "fs", not(target_arch = "wasm32")))]
 mod logical_file;
+pub mod namaste;
 pub mod storage;
 
+pub use digest::DigestAlgorithm;
 pub use error::{OcflError, WriteError};
 pub use guard::{check_storage_root, reject_git_in_root};
+pub use inventory::{FormatError, Inventory, VersionNum};
 #[cfg(all(feature = "fs", not(target_arch = "wasm32")))]
 pub use logical_file::{read_logical_file, reject_git_in_ocfl_root, write_logical_file};
+pub use namaste::{Declaration, SpecVersion};

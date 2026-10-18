@@ -7,6 +7,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use cucumber::{given, then, when, writer, StatsWriter as _, World, WriterExt as _};
 
+#[path = "support/inventory_example.rs"]
+mod example;
+#[path = "support/inventory_steps.rs"]
+mod inventory_steps;
 #[path = "support/source_scan.rs"]
 mod source_scan;
 use filesquid_ocfl::storage::{
@@ -50,6 +54,7 @@ struct OcflWorld {
     pages: Vec<Vec<String>>,
     wasm_build: Option<(bool, String)>,
     guard_result: Option<Result<(), OcflError>>,
+    inventory: inventory_steps::InventoryState,
 }
 
 /// Run `$body` with `$b` bound to the scenario's concrete backend.

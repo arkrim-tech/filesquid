@@ -46,7 +46,7 @@ FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by ga
 10. [ ] [Task 0.3](./implementation-plan.md#task-0.3) filesquid-ocfl read, validate, and git guard
     - [x] [IO-0.1](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Storage backend trait
     - [x] [IO-0.2](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Git guard
-    - [ ] [IO-0.3](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) SHA-256 digest and inventory types
+    - [x] [IO-0.3](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) SHA-256 digest and inventory types
     - [ ] [IO-0.4](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Read and browse
     - [ ] [IO-0.5](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Structural validation
 11. [ ] [Task 0.4](./implementation-plan.md#task-0.4) filesquid-ocfl write and logical-state enumerator
