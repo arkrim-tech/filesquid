@@ -290,7 +290,7 @@ The 4 skipped scenarios are unchanged from `main`: they belong to IO-0.7 (conten
 
 ## Coverage
 
-[ADR 017](../../../../../../resources/architecture/017-test-runners-and-reporting.md) defines no Rust line-coverage tool, so no percentage is reported. These `CommitError` variants are produced by a test: `Reservation` (`Held`, `Lost`), `HeadMoved`, `InvalidDraft`, `UnsupportedAlgorithm`, `StagingChanged`, `MissingVersionInventory` and `Guard`. `Read` and `Storage` (backend failures) are not; `ForeignWrite` is reached only through the residual race described under "Remaining limits". `unit_lease` produces every `ReservationError` variant except `Storage` (backend failures): `Held`, `Lost`, `Corrupt` and `InvalidConfig`. Crash tests cover these publication keys: a content file, the version inventory, the version sidecar (BDD), the root inventory, the root sidecar and the first root sidecar. The object declaration and individual multipart parts are not crash-injected.
+[ADR 017](../../../../../../resources/architecture/017-test-runners-and-reporting.md) defines no Rust line-coverage tool, so no percentage is reported. These `CommitError` variants are produced by a test: `Reservation` (`Held`, `Lost`), `HeadMoved`, `InvalidDraft`, `UnsupportedAlgorithm`, `StagingChanged`, `MissingVersionInventory` and `Guard`. `Read` and `Storage` (backend failures) are not; `ForeignWrite` is reached only through the residual race described under "Remaining limits". `unit_lease` produces every `ReservationError` variant except `Storage` (backend failures): `Held`, `Lost`, `Corrupt`, `InvalidConfig` and `ClockUnavailable`. Crash tests cover these publication keys: a content file, the version inventory, the version sidecar (BDD), the root inventory, the root sidecar and the first root sidecar. The object declaration and individual multipart parts are not crash-injected.
 
 ## Review round 1 (Cubic)
 
@@ -308,6 +308,10 @@ Cubic reviewed `fcd83b6` and raised 22 findings. Fixed in code or docs:
 - Docs: the README says `vN/<contentDirectory>/` and describes the first-version crash (E058); the component diagram shows the publisher as built in both SVGs and their accessible descriptions, and the caption no longer claims the change model routes writes yet; this Walkthrough's coverage claims are narrowed; the module SRS row OCFL-S-018 now states what the writer guarantees, including the open check-to-write window.
 
 Answered rather than fixed: the stale-writer findings on the residual check-to-write window (SRS wording, a stalled recovering writer's delete). Storage-side token enforcement is not possible through the current `StorageBackend` trait and is an owner decision (see "Remaining limits").
+
+## Review round 2 (Cubic)
+
+Cubic reviewed `febe840` and raised 2 documentation findings, both fixed. The README now says which validation error each crash point leaves (E046 before the root inventory is replaced, E060 after it; E058 or E063 for a first commit). The coverage section above now lists `ClockUnavailable`.
 
 ## Sync Execution Report
 
