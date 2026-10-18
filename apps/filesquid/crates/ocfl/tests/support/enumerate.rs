@@ -153,7 +153,7 @@ pub fn oracle_rows(object_dir: &Path, root: &str, all: bool) -> Vec<String> {
         .iter()
         .filter(|(name, _)| all || name.as_str() == head)
         .collect();
-    versions.sort_by_key(|(name, _)| version_number(name));
+    versions.sort_by_key(|(name, _)| version_order(name));
     let mut rows = Vec::new();
     for (name, block) in versions {
         rows.extend(version_rows(&inventory, id, name, block, root));
@@ -177,7 +177,41 @@ fn version_rows(inventory: &Value, id: &str, name: &str, block: &Value, root: &s
         .collect()
 }
 
-/// The number of a version name such as `v3` or `v0003`.
-fn version_number(name: &str) -> u64 {
-    name[1..].parse().expect("version number")
+/// A sort key for a version name such as `v3` or `v0003` that orders by
+/// its decimal number without converting it, so any number of digits works:
+/// the digits without leading zeros, shorter first, then by text.
+fn version_order(name: &str) -> (usize, String) {
+    let digits = name[1..].trim_start_matches('0');
+    (digits.len(), digits.to_string())
+}
+
+/// The object events as rows: root, id, head and digest algorithm.
+pub fn object_rows(items: &[Item]) -> Vec<String> {
+    items
+        .iter()
+        .filter_map(|item| match item {
+            Ok(CommittedEvent::Object(o)) => Some(format!(
+                "{} {} {} {}",
+                o.root,
+                o.id,
+                o.head,
+                o.digest_algorithm.name()
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The object row an enumerator must give for the fixture at `object_dir`
+/// stored at `root`, from its root `inventory.json` read with `serde_json`.
+pub fn oracle_object_row(object_dir: &Path, root: &str) -> String {
+    let text = std::fs::read(object_dir.join("inventory.json")).expect("read inventory");
+    let inventory: Value = serde_json::from_slice(&text).expect("inventory JSON");
+    let field = |name: &str| inventory[name].as_str().expect(name).to_string();
+    format!(
+        "{root} {} {} {}",
+        field("id"),
+        field("head"),
+        field("digestAlgorithm")
+    )
 }

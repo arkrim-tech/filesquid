@@ -32,7 +32,7 @@ mod fixtures;
 use builder::{build, delete, put, write_inventory, ObjectSpec};
 use enumerate::{
     check_content, declare_storage_root, describe_all, enumerate_all, file_rows, load_tree,
-    oracle_rows, put_key, ready, Item,
+    object_rows, oracle_object_row, oracle_rows, put_key, ready, Item,
 };
 
 /// v2 renames b.txt to c.txt and adds d.txt; v3 changes a.txt and removes
@@ -303,11 +303,18 @@ fn check_fixtures<B: StorageBackend>(backend: &B, versions: Versions, all: bool)
         .filter(|w| w.starts_with("error"))
         .collect();
     assert!(errors.is_empty(), "fixtures refused: {errors:?}");
-    let objects_seen = items
+    let mut sorted: Vec<&(String, PathBuf)> = objects.iter().collect();
+    sorted.sort_by(|a, b| a.0.cmp(&b.0));
+    let expected_rows: Vec<String> = sorted
         .iter()
-        .filter(|i| matches!(i, Ok(CommittedEvent::Object(_))))
-        .count();
-    assert_eq!(objects_seen, expected_objects);
+        .map(|(root, dir)| oracle_object_row(dir, root))
+        .collect();
+    assert_eq!(object_rows(&items), expected_rows);
+    assert!(
+        expected_rows.iter().any(|row| row.ends_with(" sha512"))
+            && expected_rows.iter().any(|row| row.ends_with(" sha256")),
+        "the fixtures cover both content-addressing algorithms"
+    );
     assert_eq!(file_rows(&items), oracle_for(&objects, all));
     check_content(backend, &items)
 }

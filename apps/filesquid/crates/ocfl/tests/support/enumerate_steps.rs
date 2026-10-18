@@ -225,18 +225,21 @@ fn no_database(world: &mut OcflWorld) {
         assert!(!manifest.contains(name), "{name} must not be a dependency");
     }
     let sources = crate::source_scan::read_sources().expect("scan src");
-    let (file, text) = sources
+    assert!(
+        sources.iter().any(|(file, _)| file == "read/enumerate.rs"),
+        "the enumerator source was not scanned"
+    );
+    let findings: Vec<_> = sources
         .iter()
-        .find(|(file, _)| file.ends_with("read/enumerate.rs"))
-        .expect("the enumerator source");
-    let findings = crate::source_scan::scan_text(file, text, &DATABASE_CODE);
+        .flat_map(|(file, text)| crate::source_scan::scan_text(file, text, &DATABASE_CODE))
+        .collect();
     assert!(
         findings.is_empty(),
         "database or catalog code: {findings:?}"
     );
 }
 
-/// Database and catalog names the enumerator's code must not use (comments
+/// Database and catalog names no engine source may use in code (comments
 /// and strings are ignored).
 const DATABASE_CODE: [&str; 7] = [
     "rusqlite",

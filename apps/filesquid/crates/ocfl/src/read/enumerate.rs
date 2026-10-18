@@ -50,7 +50,9 @@ pub enum Versions {
     /// Only each object's committed `head`.
     #[default]
     Head,
-    /// Every committed version, `v1` to `head`, oldest first.
+    /// Every committed version the inventory lists, from the first
+    /// through `head`, oldest first (zero-padded names such as `v001` are
+    /// kept as written).
     All,
 }
 

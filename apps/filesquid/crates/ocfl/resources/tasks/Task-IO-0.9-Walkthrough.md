@@ -17,7 +17,7 @@ Sources: [OCFL-S-004, OCFL-S-003, OCFL-S-005, OCFL-S-007, OCFL-S-010](../srs.md)
 - **New public API** (`src/read/enumerate.rs`, re-exported from `read` and the crate root):
   - `StorageRoot::enumerate(versions: Versions) -> CommittedState<'_, 'a, B>`.
   - `CommittedState::next_event(&mut self).await -> Option<Result<CommittedEvent, EnumerateError>>`: a pull cursor; each call does one step (open one object, resolve one version, or yield one file), so there is no inner loop and the cursor holds at most one object's inventory and one version's state. It reads no content bytes.
-  - `Versions::{Head, All}` (default `Head`): each object's committed `head`, or every committed version `v1`..`head`, oldest first.
+  - `Versions::{Head, All}` (default `Head`): each object's committed `head`, or every committed version the inventory lists, from the first through `head`, oldest first (zero-padded names such as `v001` are kept as written).
   - `CommittedEvent::{Object(CommittedObject), Version(CommittedVersion), File(CommittedFile)}`. `CommittedObject` has `root`, `id`, `head`, `digest_algorithm`, `unpublished_head`; `CommittedVersion` has `object_id`, `version`, `files` (count); `CommittedFile` has the T-039 fields `object_id`, `version`, `path`, `digest` and the content locator `content_key` (a `StorageKey` from the storage root), plus `digest_algorithm`, so each file event stands alone (objects may use sha256 or sha512).
   - `EnumerateError { root, source: ReadError }` with `code()`.
   - Order is fixed: objects in object-root order (as `StorageRoot::objects()`), versions oldest first, files in logical-path order.
@@ -136,7 +136,7 @@ test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 ```
 
-The new BDD scenarios from that run:
+Scenarios from that run: the 5 of the new feature, the new F-051 scenario, and the existing browser-build scenario that follows it:
 
 ```text
 Feature: Enumerate committed logical state
@@ -189,11 +189,11 @@ Local gate, `FULL=1 bash scripts/pre-commit.sh` from the repository root (run wi
 
 ## Coverage
 
-[ADR 017](../../../../../../resources/architecture/017-test-runners-and-reporting.md) defines no Rust line-coverage tool, so no percentage is reported. Every constraint above has at least one test, and every branch of `src/read/enumerate.rs` (file, next version, end of object, object opened, object refused) is reached by the integration tests.
+[ADR 017](../../../../../../resources/architecture/017-test-runners-and-reporting.md) defines no Rust line-coverage tool, so no percentage is reported. Every constraint above has at least one test. The integration tests reach the cursor's file, next-version, end-of-object, object-opened and object-refused paths. The error path after an object has opened (a version that cannot be resolved, or a content path that is not a storage key) is defensive and is not reached: `Inventory::parse` already refuses those inventories (E050, E099, E100), so no stored object can produce it.
 
 ## Sync Execution Report
 
-- **Module SRS:** OCFL-S-004 gains the enumerator's testable detail: the five T-039 fields per committed file, head or every version as the caller chooses, fixed order, storage root alone, no SQLite, PostgreSQL or application types, one object's inventory at a time, and a broken object reported with its root and code without stopping the others. It restates T-039, ADR 023 item 6 and ADR 016; the last clause records the engine decision above.
+- **Module SRS:** OCFL-S-004 gains the enumerator's testable detail: the five T-039 fields per committed file, head or every version as the caller chooses, fixed order, storage root alone, no SQLite, PostgreSQL or application types, one object's inventory at a time, and a broken object reported with its root (and its OCFL code when it breaks an OCFL rule) without stopping the others. It restates T-039, ADR 023 item 6 and ADR 016; the last clause records the engine decision above.
 - **Module plan:** IO-0.9 checked; Related Tests add the new feature, the integration test, its support module and this Walkthrough.
 - **Repository-root implementation-plan checklist:** IO-0.9 checked; MVP progress bar redrawn (`scripts/docs/update_mvp_progress.py`). Global Task 0.4 stays open (IO-0.10).
 - **Crate README:** new "Enumerate committed logical state" section. **Root README:** "Run tests" names `integration_enumerate_state` among the fixture tests.
