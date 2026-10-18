@@ -5,26 +5,29 @@
 #[path = "../support/library_fixture.rs"]
 mod library_fixture;
 
-use filesquid_api::journal::{JournalQuery, JournalStore, MemoryJournal, Outcome};
+use filesquid_api::journal::{JournalEntry, JournalQuery, JournalStore, MemoryJournal, Outcome};
 use filesquid_api::journal_writer::{JournalWriter, WriterConfig};
 use filesquid_api::library::{
-    is_uuid_v4, mint_uuid_v4, CatalogCommit, CatalogError, CommandRequest, CommitReceipt,
-    FileEntry, FileListing, FileScope, Keyed, LibraryCatalog, LibraryCommand, LibraryError,
-    LibraryQuery, LibraryRecord, LibraryService, LibraryState, PageKey, PurgeConfirmation,
-    QueryRequest, VisibilityFilter, MAX_NAME_BYTES, NEW_LIBRARY_REVISION, RECOVERABLE_DAYS,
+    is_uuid_v4, mint_uuid_v4, CatalogChange, CatalogCommit, CatalogError, CommandRequest,
+    CommitReceipt, FileEntry, FileListing, FileScope, Keyed, LibraryCatalog, LibraryCommand,
+    LibraryError, LibraryQuery, LibraryRecord, LibraryService, LibraryState, PageKey,
+    PurgeConfirmation, QueryRequest, VisibilityFilter, MAX_FILES_PER_COMMAND, MAX_NAME_BYTES,
+    NEW_LIBRARY_REVISION, RECOVERABLE_DAYS,
 };
 use filesquid_api::metrics::Metrics;
 use filesquid_api::operation::{
     CommandEnvelope, CommandOutcomeKind, ExpectedRevision, OperationId, OperationScope, PageSize,
     QueryEnvelope,
 };
+use filesquid_api::trace_layer::JournalLayer;
 use filesquid_api::{ApiError, ErrorCode, EventBus};
 use filesquid_core::{
-    Collection, CollectionId, FileId, LibraryId, RepositoryId, VirtualCollection,
-    VirtualCollectionId,
+    Collection, CollectionId, FileId, Folder, FolderId, Library, LibraryId, RepositoryId,
+    VirtualCollection, VirtualCollectionId,
 };
 use library_fixture::{Fixture, DAY_MS, NOW_MS};
 use std::sync::Arc;
+use tracing_subscriber::layer::SubscriberExt;
 
 #[test]
 fn minted_identifiers_are_canonical_uuid_v4() {
@@ -213,6 +216,19 @@ fn file_batches_hold_one_to_one_thousand_distinct_files() {
             .expect_err("refused");
         assert_eq!(err.api_code(), ErrorCode::InvalidRequest);
     }
+    let exactly: Vec<FileId> = (0..MAX_FILES_PER_COMMAND)
+        .map(|n| fx.add_file(&format!("g-{n:04}")))
+        .collect();
+    assert_eq!(exactly.len(), 1_000);
+    let hidden = fx.run(LibraryCommand::HideFiles {
+        library_id: fx.library(),
+        file_ids: exactly.clone(),
+    });
+    assert_eq!(hidden.outcome.kind(), CommandOutcomeKind::Committed);
+    assert_eq!(
+        fx.list_files_paged(FileScope::Library, VisibilityFilter::Hidden, 1_000),
+        exactly
+    );
 }
 
 #[test]
@@ -288,12 +304,33 @@ fn deleting_a_virtual_collection_retains_its_members() {
     });
     fx.run(LibraryCommand::DeleteVirtualCollection {
         library_id: fx.library(),
-        virtual_collection_id: vc,
+        virtual_collection_id: vc.clone(),
     });
     let scope = FileScope::Collection {
         collection_id: collection,
     };
-    assert_eq!(fx.list_files(scope, VisibilityFilter::Ordinary), vec![file]);
+    assert_eq!(
+        fx.list_files(scope, VisibilityFilter::Ordinary),
+        vec![file.clone()]
+    );
+    assert!(fx.list_virtual_collections().is_empty());
+    assert_eq!(fx.catalog.virtual_collection(&vc).expect("read"), None);
+    assert!(!fx.catalog.is_virtual_member(&vc, &file).expect("read"));
+    let err = fx
+        .service
+        .query(fx.query(
+            10,
+            None,
+            LibraryQuery::ListFiles {
+                library_id: fx.library(),
+                scope: FileScope::VirtualCollection {
+                    virtual_collection_id: vc,
+                },
+                visibility: VisibilityFilter::Ordinary,
+            },
+        ))
+        .expect_err("deleted scope");
+    assert_eq!(err.api_code(), ErrorCode::NotFound);
 }
 
 #[test]
@@ -379,6 +416,12 @@ fn permanent_deletion_needs_deleted_files_and_an_exact_confirmation() {
     let fx = Fixture::with_library();
     let file = fx.add_file("f-1");
     let files = vec![file.clone()];
+    let vc = fx.create_virtual_collection("Best", None);
+    fx.run(LibraryCommand::AddToVirtualCollection {
+        library_id: fx.library(),
+        virtual_collection_id: vc.clone(),
+        file_ids: files.clone(),
+    });
     let purge = |count: u32, library: LibraryId| LibraryCommand::PurgeFiles {
         library_id: fx.library(),
         file_ids: files.clone(),
@@ -403,9 +446,15 @@ fn permanent_deletion_needs_deleted_files_and_an_exact_confirmation() {
         files
     );
     fx.run(purge(1, fx.library()));
-    assert!(fx
-        .list_files(FileScope::Library, VisibilityFilter::Deleted)
-        .is_empty());
+    for view in [
+        VisibilityFilter::Ordinary,
+        VisibilityFilter::Hidden,
+        VisibilityFilter::Deleted,
+    ] {
+        assert!(fx.list_files(FileScope::Library, view).is_empty());
+    }
+    assert_eq!(fx.catalog.file(&file).expect("read"), None);
+    assert!(!fx.catalog.is_virtual_member(&vc, &file).expect("read"));
 }
 
 #[test]
@@ -418,7 +467,7 @@ fn every_commit_carries_one_redacted_journal_entry() {
         title: "Secret title".into(),
     });
     let entries = fx.catalog.journal_entries();
-    assert_eq!(entries.len(), fx.catalog.commit_count() as usize);
+    assert_eq!(entries.len(), fx.catalog.operation_count() as usize);
     let rename = entries.last().expect("entry");
     assert_eq!(rename.operation, "library.collection.rename");
     assert_eq!(rename.outcome, Outcome::Succeeded);
@@ -432,14 +481,7 @@ fn every_commit_carries_one_redacted_journal_entry() {
 
 #[test]
 fn refused_commands_are_journaled_as_failed() {
-    let store = Arc::new(MemoryJournal::new("desktop"));
-    let writer = JournalWriter::start(
-        store.clone(),
-        WriterConfig::default(),
-        EventBus::new(),
-        Arc::new(Metrics::default()),
-    );
-    let fx = Fixture::with_library_and_journal(writer.sender());
+    let fx = Fixture::with_library();
     let missing = CollectionId::new("missing").expect("id");
     let err = fx
         .try_run(LibraryCommand::DeleteCollection {
@@ -447,13 +489,12 @@ fn refused_commands_are_journaled_as_failed() {
             collection_id: missing,
         })
         .expect_err("not found");
-    writer.sender().flush();
-    let page = store.query(&JournalQuery::default()).expect("query");
-    let failed = page.entries.last().expect("journaled");
+    let entries = fx.failure_journal();
+    assert_eq!(entries.len(), 1);
+    let failed = &entries[0];
     assert_eq!(failed.operation, "library.collection.delete");
     assert_eq!(failed.outcome, Outcome::Failed);
     assert_eq!(failed.error_code.as_deref(), Some(err.error_code()));
-    writer.shutdown();
 }
 
 #[test]
@@ -546,6 +587,12 @@ impl LibraryCatalog for DownCatalog {
     fn is_virtual_member(&self, _: &VirtualCollectionId, _: &FileId) -> Result<bool, CatalogError> {
         down()
     }
+    fn last_member_order(&self, _: &VirtualCollectionId) -> Result<Option<i64>, CatalogError> {
+        down()
+    }
+    fn folder(&self, _: &FolderId) -> Result<Option<Folder>, CatalogError> {
+        down()
+    }
     fn file(&self, _: &FileId) -> Result<Option<FileEntry>, CatalogError> {
         down()
     }
@@ -565,13 +612,8 @@ impl LibraryCatalog for DownCatalog {
 #[test]
 fn catalog_failures_are_retryable_and_journaled_for_queries_too() {
     let store = Arc::new(MemoryJournal::new("desktop"));
-    let writer = JournalWriter::start(
-        store.clone(),
-        WriterConfig::default(),
-        EventBus::new(),
-        Arc::new(Metrics::default()),
-    );
-    let service = LibraryService::new(Arc::new(DownCatalog)).with_failure_journal(writer.sender());
+    let writer = start_writer(&store);
+    let service = LibraryService::new(Arc::new(DownCatalog), writer.sender());
     let request = QueryRequest {
         envelope: QueryEnvelope::new(
             PageSize::new(10).expect("page"),
@@ -591,4 +633,245 @@ fn catalog_failures_are_retryable_and_journaled_for_queries_too() {
     assert_eq!(failed.outcome, Outcome::Failed);
     assert_eq!(failed.error_code.as_deref(), Some("unavailable"));
     writer.shutdown();
+}
+
+/// Start a journal writer over `store`.
+fn start_writer(store: &Arc<MemoryJournal>) -> JournalWriter {
+    JournalWriter::start(
+        store.clone(),
+        WriterConfig::default(),
+        EventBus::new(),
+        Arc::new(Metrics::default()),
+    )
+}
+
+#[test]
+fn catalog_failures_are_journaled_exactly_once_with_the_journal_layer_installed() {
+    let store = Arc::new(MemoryJournal::new("desktop"));
+    let writer = start_writer(&store);
+    let layer = JournalLayer::new();
+    layer.attach(writer.sender());
+    let subscriber = tracing_subscriber::registry().with(layer);
+    let service = LibraryService::new(Arc::new(DownCatalog), writer.sender());
+    let request = CommandRequest {
+        envelope: CommandEnvelope::new(
+            OperationId::new("op-down").expect("op"),
+            ExpectedRevision::new("1").expect("rev"),
+            OperationScope::new("library").expect("scope"),
+        ),
+        command: LibraryCommand::DeleteCollection {
+            library_id: LibraryId::new("lib-1").expect("id"),
+            collection_id: CollectionId::new("c-1").expect("id"),
+        },
+    };
+    let err = tracing::subscriber::with_default(subscriber, || {
+        service
+            .execute("user:ana", request)
+            .expect_err("store down")
+    });
+    assert_eq!(err, LibraryError::Unavailable);
+    writer.sender().flush();
+    let entries = store
+        .query(&JournalQuery::default())
+        .expect("query")
+        .entries;
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    assert_eq!(entries[0].operation, "library.collection.delete");
+    assert_eq!(entries[0].error_code.as_deref(), Some("unavailable"));
+    writer.shutdown();
+}
+
+#[test]
+fn renaming_to_the_same_title_commits_nothing() {
+    let fx = Fixture::with_library();
+    let collection = fx.create_collection("Trips");
+    let vc = fx.create_virtual_collection("Best", None);
+    let commits = fx.catalog.commit_count();
+    let revision = fx.revision();
+    let same = [
+        LibraryCommand::RenameCollection {
+            library_id: fx.library(),
+            collection_id: collection,
+            title: "Trips".into(),
+        },
+        LibraryCommand::RenameVirtualCollection {
+            library_id: fx.library(),
+            virtual_collection_id: vc,
+            title: "Best".into(),
+        },
+    ];
+    for command in same {
+        let result = fx.run(command);
+        assert_eq!(result.outcome.kind(), CommandOutcomeKind::Committed);
+        assert_eq!(result.revision.as_deref(), Some(revision.as_str()));
+    }
+    assert_eq!(fx.catalog.commit_count(), commits);
+}
+
+#[test]
+fn a_no_op_is_journaled_and_replays_under_its_operation_id() {
+    let fx = Fixture::with_library();
+    let file = fx.add_file("f-1");
+    let vc = fx.create_virtual_collection("Best", None);
+    let add = LibraryCommand::AddToVirtualCollection {
+        library_id: fx.library(),
+        virtual_collection_id: vc.clone(),
+        file_ids: vec![file.clone()],
+    };
+    fx.run(add.clone());
+    let journal = fx.catalog.journal_entries().len();
+    let noop = fx.request(&fx.revision(), add);
+    let first = fx.service.execute("user:ana", noop.clone()).expect("no-op");
+    assert_eq!(fx.catalog.journal_entries().len(), journal + 1);
+    fx.run(LibraryCommand::RemoveFromVirtualCollection {
+        library_id: fx.library(),
+        virtual_collection_id: vc.clone(),
+        file_ids: vec![file.clone()],
+    });
+    let again = fx.service.execute("user:ana", noop).expect("replay");
+    assert_eq!(again, first);
+    assert!(!fx.catalog.is_virtual_member(&vc, &file).expect("read"));
+}
+
+#[test]
+fn a_replayed_delete_answers_its_first_deletion() {
+    let fx = Fixture::with_library();
+    let file = fx.add_file("f-1");
+    let request = fx.request(
+        &fx.revision(),
+        LibraryCommand::DeleteFiles {
+            library_id: fx.library(),
+            file_ids: vec![file],
+        },
+    );
+    let first = fx
+        .service
+        .execute("user:ana", request.clone())
+        .expect("delete");
+    assert!(first.deletion.is_some());
+    let again = fx.service.execute("user:ana", request).expect("replay");
+    assert_eq!(again.deletion, first.deletion);
+    assert_eq!(again, first);
+}
+
+#[test]
+fn create_collection_needs_a_folder_of_its_library() {
+    let fx = Fixture::with_library();
+    let other = fx.create_library("Other");
+    let other_id = LibraryId::new(other.created_id.expect("id")).expect("id");
+    let own = fx.add_folder("folder-own", &fx.library());
+    let foreign = fx.add_folder("folder-foreign", &other_id);
+    let unknown = FolderId::new("folder-unknown").expect("id");
+    let create = |folder: FolderId| LibraryCommand::CreateCollection {
+        library_id: fx.library(),
+        title: "Trips".into(),
+        folder_id: Some(folder),
+        sort: Default::default(),
+    };
+    for folder in [foreign, unknown] {
+        let err = fx.try_run(create(folder)).expect_err("refused");
+        assert_eq!(err, LibraryError::NotFound("folder"));
+    }
+    let created = fx.run(create(own.clone()));
+    let id = CollectionId::new(created.created_id.expect("id")).expect("id");
+    let stored = fx.catalog.collection(&id).expect("read").expect("stored");
+    assert_eq!(stored.folder_id(), Some(&own));
+}
+
+#[test]
+fn membership_batches_keep_their_order_within_one_millisecond() {
+    let fx = Fixture::with_library();
+    let vc = fx.create_virtual_collection("Best", None);
+    let added_first = fx.add_file("f-b");
+    let added_second = fx.add_file("f-a");
+    for file in [&added_first, &added_second] {
+        fx.run(LibraryCommand::AddToVirtualCollection {
+            library_id: fx.library(),
+            virtual_collection_id: vc.clone(),
+            file_ids: vec![file.clone()],
+        });
+    }
+    let scope = FileScope::VirtualCollection {
+        virtual_collection_id: vc,
+    };
+    assert_eq!(
+        fx.list_files(scope, VisibilityFilter::Ordinary),
+        vec![added_first, added_second]
+    );
+}
+
+/// A raw catalog commit of `changes` to `library_id` at `revision`, as operation `op`.
+fn raw_commit(
+    op: &str,
+    library_id: &LibraryId,
+    revision: &str,
+    changes: Vec<CatalogChange>,
+) -> CatalogCommit {
+    CatalogCommit {
+        operation_id: OperationId::new(op).expect("op"),
+        library_id: library_id.clone(),
+        expected_revision: ExpectedRevision::new(revision).expect("rev"),
+        changes,
+        journal: JournalEntry::new("library.test", Outcome::Succeeded),
+        created_id: None,
+        deletion: None,
+    }
+}
+
+/// A library record of `library_id` on `fx`'s repository, named `name`.
+fn record(fx: &Fixture, library_id: &LibraryId, name: &str) -> LibraryRecord {
+    LibraryRecord {
+        library: Library::new(library_id.clone(), fx.repository.clone()),
+        name: name.into(),
+    }
+}
+
+#[test]
+fn a_failed_commit_leaves_the_memory_catalog_unchanged() {
+    let fx = Fixture::with_library();
+    let stray = LibraryId::new("lib-stray").expect("id");
+    let named = LibraryId::new("lib-named").expect("id");
+    let create = CatalogChange::CreateLibrary(record(&fx, &stray, "Stray"));
+    let commits = fx.catalog.commit_count();
+    let journal = fx.catalog.journal_entries().len();
+    let result = fx
+        .catalog
+        .commit(raw_commit("op-stray", &named, "0", vec![create]));
+    assert!(result.is_err(), "{result:?}");
+    assert_eq!(fx.catalog.library(&stray).expect("read"), None);
+    assert_eq!(fx.catalog.library(&named).expect("read"), None);
+    assert_eq!(fx.catalog.commit_count(), commits);
+    assert_eq!(fx.catalog.journal_entries().len(), journal);
+    let op = OperationId::new("op-stray").expect("op");
+    assert_eq!(fx.catalog.receipt(&op).expect("read"), None);
+}
+
+#[test]
+fn a_later_create_library_change_cannot_replace_a_library() {
+    let fx = Fixture::with_library();
+    let library = fx.library();
+    let before = fx
+        .catalog
+        .library(&library)
+        .expect("read")
+        .expect("library");
+    let collection = Collection::new(
+        CollectionId::new("c-sneaky").expect("id"),
+        library.clone(),
+        "Sneaky",
+    )
+    .expect("collection");
+    let changes = vec![
+        CatalogChange::PutCollection(collection.clone()),
+        CatalogChange::CreateLibrary(record(&fx, &library, "Replaced")),
+    ];
+    let result = fx.catalog.commit(raw_commit(
+        "op-replace",
+        &library,
+        &before.revision,
+        changes,
+    ));
+    assert!(result.is_err(), "{result:?}");
+    assert_eq!(fx.catalog.library(&library).expect("read"), Some(before));
+    assert_eq!(fx.catalog.collection(collection.id()).expect("read"), None);
 }

@@ -20,7 +20,8 @@ const DAY_MS: i64 = 86_400_000;
 /// How long deleted files stay recoverable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeletionPolicy {
-    /// Days between a recoverable deletion and the earliest purge.
+    /// Days a deleted file stays recoverable. The owner may still purge it earlier with a
+    /// [`PurgeConfirmation`].
     pub recoverable_days: u32,
 }
 
@@ -44,14 +45,16 @@ impl DeletionPolicy {
     }
 }
 
-/// When a file was recoverably deleted and when it may be purged. Both times serialize as
-/// RFC 3339 UTC with milliseconds (`deleted_at`, `purge_after`).
+/// When a file was recoverably deleted and when its recoverability ends. Both times serialize
+/// as RFC 3339 UTC with milliseconds (`deleted_at`, `purge_after`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Deletion {
     /// Deletion time in Unix milliseconds (UTC).
     #[serde(rename = "deleted_at", with = "rfc3339")]
     pub deleted_at_ms: i64,
-    /// Earliest purge time in Unix milliseconds (UTC), shown before deletion.
+    /// End of recoverability in Unix milliseconds (UTC): until then the file can be
+    /// restored; after it the file may be purged. An explicit, confirmed purge may remove
+    /// the file before this time.
     #[serde(rename = "purge_after", with = "rfc3339")]
     pub purge_after_ms: i64,
 }

@@ -2,8 +2,9 @@
 //!
 //! The [`Planner`] reads committed state through the injected catalog and turns one
 //! validated [`LibraryCommand`] into a [`Planned`] change set. It writes nothing; the service
-//! commits the result. Every referenced collection, virtual collection and file must belong
-//! to the command's library, or the command is `not_found`.
+//! commits the result. Every referenced folder, collection, virtual collection and file must
+//! belong to the command's library, or the command is `not_found`. A command whose result
+//! equals the stored state plans no change.
 
 use super::catalog::{CatalogChange, FileEntry, LibraryCatalog, LibraryRecord};
 use super::command::{LibraryCommand, NEW_LIBRARY_REVISION};
@@ -18,16 +19,11 @@ use filesquid_core::{
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-/// Membership order keys per millisecond, so a batch keeps its order after earlier additions.
-const ORDER_KEYS_PER_MS: i64 = 1_000;
-
 /// The changes one command makes, and what it answers.
 #[derive(Debug, Default)]
 pub(super) struct Planned {
     /// The library changed.
     pub library_id: Option<LibraryId>,
-    /// The library's revision before the command (answered when nothing changes).
-    pub revision: Option<String>,
     /// The catalog changes, in order; empty when the command changes nothing.
     pub changes: Vec<CatalogChange>,
     /// Identifier the command created.
@@ -42,7 +38,7 @@ pub(super) struct Planned {
 pub(super) struct Planner<'a> {
     /// The injected catalog (read only here).
     pub catalog: &'a dyn LibraryCatalog,
-    /// The command's time, Unix milliseconds (UTC).
+    /// The command's time, Unix milliseconds (UTC), for deletion times.
     pub now_ms: i64,
     /// The recoverable-deletion policy.
     pub policy: DeletionPolicy,
@@ -64,20 +60,15 @@ impl Planner<'_> {
             return create_library(expected, repository_id, name);
         }
         let library_id = command.library_id().ok_or(LibraryError::Internal)?;
-        let revision = self.check_revision(library_id, expected)?;
+        self.check_revision(library_id, expected)?;
         let mut planned = self.plan_in(library_id, command)?;
         planned.library_id = Some(library_id.clone());
-        planned.revision = Some(revision);
         planned.targets.insert(0, library_id.as_str().to_string());
         Ok(planned)
     }
 
-    /// The library's current revision, when it exists and equals `expected`.
-    fn check_revision(
-        &self,
-        library_id: &LibraryId,
-        expected: &str,
-    ) -> Result<String, LibraryError> {
+    /// The library must exist at revision `expected`.
+    fn check_revision(&self, library_id: &LibraryId, expected: &str) -> Result<(), LibraryError> {
         let state = self
             .catalog
             .library(library_id)?
@@ -85,7 +76,7 @@ impl Planner<'_> {
         if state.revision != expected {
             return Err(LibraryError::Conflict);
         }
-        Ok(state.revision)
+        Ok(())
     }
 
     /// Plan a command of an existing library.
@@ -97,7 +88,7 @@ impl Planner<'_> {
                 folder_id,
                 sort,
                 ..
-            } => create_collection(lib, title, folder_id.as_ref(), *sort),
+            } => self.create_collection(lib, title, folder_id.as_ref(), *sort),
             C::RenameCollection {
                 collection_id,
                 title,
@@ -133,6 +124,15 @@ impl Planner<'_> {
             } => self.purge(lib, file_ids, confirmation),
             other => self.change_states(lib, other),
         }
+    }
+
+    /// The folder `id`, when it belongs to `lib`.
+    fn folder_in(&self, lib: &LibraryId, id: &FolderId) -> Result<(), LibraryError> {
+        self.catalog
+            .folder(id)?
+            .filter(|f| f.library_id() == lib)
+            .map(|_| ())
+            .ok_or(LibraryError::NotFound("folder"))
     }
 
     /// The collection `id`, when it belongs to `lib`.
@@ -183,18 +183,34 @@ impl Planner<'_> {
             .ok_or(LibraryError::NotFound("file"))
     }
 
-    /// Rename a collection of `lib`.
+    /// Plan a new, empty collection in `lib`, in a folder of `lib` when one is named.
+    fn create_collection(
+        &self,
+        lib: &LibraryId,
+        title: &str,
+        folder_id: Option<&FolderId>,
+        sort: CollectionSort,
+    ) -> Result<Planned, LibraryError> {
+        if let Some(folder) = folder_id {
+            self.folder_in(lib, folder)?;
+        }
+        new_collection(lib, title, folder_id, sort)
+    }
+
+    /// Rename a collection of `lib`; the same title changes nothing.
     fn rename_collection(
         &self,
         lib: &LibraryId,
         id: &CollectionId,
         title: &str,
     ) -> Result<Planned, LibraryError> {
-        let renamed = retitled(&self.collection_in(lib, id)?, title)?;
-        Ok(planned(
-            vec![CatalogChange::PutCollection(renamed)],
-            [id.as_str()],
-        ))
+        let current = self.collection_in(lib, id)?;
+        let renamed = retitled(&current, title)?;
+        let changes = (renamed != current)
+            .then_some(CatalogChange::PutCollection(renamed))
+            .into_iter()
+            .collect();
+        Ok(planned(changes, [id.as_str()]))
     }
 
     /// Delete a collection of `lib`; its files stay and become unfiled.
@@ -210,18 +226,20 @@ impl Planner<'_> {
         ))
     }
 
-    /// Rename a virtual collection of `lib`.
+    /// Rename a virtual collection of `lib`; the same title changes nothing.
     fn rename_virtual(
         &self,
         lib: &LibraryId,
         id: &VirtualCollectionId,
         title: &str,
     ) -> Result<Planned, LibraryError> {
-        let renamed = retitled(&self.virtual_in(lib, id)?, title)?;
-        Ok(planned(
-            vec![CatalogChange::PutVirtualCollection(renamed)],
-            [id.as_str()],
-        ))
+        let current = self.virtual_in(lib, id)?;
+        let renamed = retitled(&current, title)?;
+        let changes = (renamed != current)
+            .then_some(CatalogChange::PutVirtualCollection(renamed))
+            .into_iter()
+            .collect();
+        Ok(planned(changes, [id.as_str()]))
     }
 
     /// Delete a virtual collection of `lib`; its member files stay.
@@ -235,7 +253,8 @@ impl Planner<'_> {
         Ok(planned(vec![change], [id.as_str()]))
     }
 
-    /// Add the files that are not members yet to a hand-picked virtual collection.
+    /// Add the files that are not members yet to a hand-picked virtual collection, ordered
+    /// after its current last member in the order named.
     fn add_members(
         &self,
         lib: &LibraryId,
@@ -243,16 +262,16 @@ impl Planner<'_> {
         file_ids: &[FileId],
     ) -> Result<Planned, LibraryError> {
         self.hand_picked_in(lib, id)?;
-        let base = self.now_ms.saturating_mul(ORDER_KEYS_PER_MS);
+        let mut next = first_member_order(self.catalog.last_member_order(id)?)?;
         let mut changes = Vec::new();
-        for (index, file_id) in file_ids.iter().enumerate() {
+        for file_id in file_ids {
             self.file_in(lib, file_id)?;
             if self.catalog.is_virtual_member(id, file_id)? {
                 continue;
             }
-            let order = base.saturating_add(i64::try_from(index).unwrap_or(i64::MAX));
-            let member = VirtualMembership::new(id.clone(), file_id.clone(), order);
+            let member = VirtualMembership::new(id.clone(), file_id.clone(), next);
             changes.push(CatalogChange::AddVirtualMember(member));
+            next = next.checked_add(1).ok_or_else(order_exhausted)?;
         }
         Ok(planned_files(changes, Some(id.as_str()), file_ids))
     }
@@ -379,8 +398,24 @@ fn create_library(
     Ok(out)
 }
 
-/// Plan a new, empty collection in `lib`.
-fn create_collection(
+/// The order key of the first member added after `last` (the current last member's key).
+fn first_member_order(last: Option<i64>) -> Result<i64, LibraryError> {
+    match last {
+        None => Ok(0),
+        Some(key) => key.checked_add(1).ok_or_else(order_exhausted),
+    }
+}
+
+/// The error when a virtual collection has used every membership order key.
+fn order_exhausted() -> LibraryError {
+    LibraryError::invalid(
+        "membership_order_exhausted",
+        "This virtual collection cannot take more members.",
+    )
+}
+
+/// Plan a new, empty collection in `lib` (the folder, if any, is already checked).
+fn new_collection(
     lib: &LibraryId,
     title: &str,
     folder_id: Option<&FolderId>,
@@ -424,7 +459,8 @@ fn create_virtual(
 /// core types validate the title again on the way back).
 fn retitled<T: Serialize + DeserializeOwned>(item: &T, title: &str) -> Result<T, LibraryError> {
     let mut wire = serde_json::to_value(item).map_err(|err| {
-        tracing::error!(error_code = "internal", detail = %err, "retitle encode failed");
+        // Stdout only: the service journals the command's failure once (`internal`).
+        tracing::info!(target: super::LOG_TARGET, error_code = "internal", detail = %err, "retitle encode failed");
         LibraryError::Internal
     })?;
     wire["title"] = serde_json::Value::String(title.to_string());

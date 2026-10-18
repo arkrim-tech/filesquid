@@ -1,18 +1,24 @@
 //! Shared fixture for the library command and query tests (Task CL-0.2): a
-//! `LibraryService` over a `MemoryCatalog` with a fixed clock and one repository.
+//! `LibraryService` over a `MemoryCatalog` with a fixed clock, one repository and a bounded
+//! failure journal over an in-memory journal store.
 
 #![allow(dead_code)]
 
-use filesquid_api::journal_writer::JournalSender;
+use filesquid_api::journal::{JournalEntry, JournalQuery, JournalStore, MemoryJournal};
+use filesquid_api::journal_writer::{JournalWriter, WriterConfig};
 use filesquid_api::library::{
     CommandRequest, CommandResult, FileScope, LibraryCommand, LibraryError, LibraryQuery,
     LibraryService, MemoryCatalog, QueryAnswer, QueryRequest, VisibilityFilter,
     NEW_LIBRARY_REVISION,
 };
+use filesquid_api::metrics::Metrics;
 use filesquid_api::operation::{
     CommandEnvelope, ExpectedRevision, OperationId, OperationScope, PageSize, QueryEnvelope,
 };
-use filesquid_core::{CollectionId, File, FileId, LibraryId, RepositoryId, VirtualCollectionId};
+use filesquid_api::EventBus;
+use filesquid_core::{
+    CollectionId, File, FileId, Folder, FolderId, LibraryId, RepositoryId, VirtualCollectionId,
+};
 use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 
@@ -25,7 +31,8 @@ pub const DAY_MS: i64 = 86_400_000;
 /// Upper bound on pages read by one listing helper.
 const MAX_PAGES: usize = 2_000;
 
-/// A service, its catalog, a repository and (optionally) one current library.
+/// A service, its catalog, a repository, its failure journal and (optionally) one current
+/// library. Dropping the fixture stops the journal writer thread.
 pub struct Fixture {
     /// The reference catalog behind the service.
     pub catalog: Arc<MemoryCatalog>,
@@ -33,39 +40,61 @@ pub struct Fixture {
     pub service: LibraryService,
     /// The repository every library is created on.
     pub repository: RepositoryId,
+    /// The journal store that receives refused commands and failed queries.
+    pub journal: Arc<MemoryJournal>,
+    writer: JournalWriter,
     library: RefCell<Option<LibraryId>>,
     next_op: Cell<u64>,
+}
+
+impl Drop for Fixture {
+    /// Write what is queued and stop the journal writer thread.
+    fn drop(&mut self) {
+        self.writer.shutdown();
+    }
 }
 
 impl Fixture {
     /// A fixture with no library.
     pub fn new() -> Self {
-        Self::build(None)
+        Self::build()
     }
 
     /// A fixture whose current library "Family archive" exists.
     pub fn with_library() -> Self {
-        Self::seeded(Self::build(None))
+        Self::seeded(Self::build())
     }
 
-    /// Like [`Self::with_library`], journaling refused commands through `sender`.
-    pub fn with_library_and_journal(sender: JournalSender) -> Self {
-        Self::seeded(Self::build(Some(sender)))
-    }
-
-    fn build(sender: Option<JournalSender>) -> Self {
+    /// Start the failure journal and build the service over an empty catalog.
+    fn build() -> Self {
         let catalog = Arc::new(MemoryCatalog::new());
-        let mut service = LibraryService::new(catalog.clone()).with_clock(Arc::new(|| NOW_MS));
-        if let Some(sender) = sender {
-            service = service.with_failure_journal(sender);
-        }
+        let journal = Arc::new(MemoryJournal::new("desktop"));
+        let writer = JournalWriter::start(
+            journal.clone(),
+            WriterConfig::default(),
+            EventBus::new(),
+            Arc::new(Metrics::default()),
+        );
+        let service =
+            LibraryService::new(catalog.clone(), writer.sender()).with_clock(Arc::new(|| NOW_MS));
         Self {
             catalog,
             service,
             repository: RepositoryId::new("repo-1").expect("repository"),
+            journal,
+            writer,
             library: RefCell::new(None),
             next_op: Cell::new(0),
         }
+    }
+
+    /// Every entry of the failure journal, oldest first, once the queue is written.
+    pub fn failure_journal(&self) -> Vec<JournalEntry> {
+        self.writer.sender().flush();
+        self.journal
+            .query(&JournalQuery::default())
+            .expect("journal query")
+            .entries
     }
 
     fn seeded(self) -> Self {
@@ -198,6 +227,14 @@ impl Fixture {
         let file = File::new(file_id.clone(), self.library(), collection.clone());
         self.catalog.insert_file(file, 0).expect("insert file");
         file_id
+    }
+
+    /// Store a folder `id` of `library_id`, as a host would.
+    pub fn add_folder(&self, id: &str, library_id: &LibraryId) -> FolderId {
+        let folder_id = FolderId::new(id).expect("folder id");
+        let folder = Folder::new(folder_id.clone(), library_id.clone(), "Folder").expect("folder");
+        self.catalog.insert_folder(folder).expect("insert folder");
+        folder_id
     }
 
     /// Every file of `scope` and `visibility`, read in pages of 2.

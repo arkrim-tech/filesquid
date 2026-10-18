@@ -21,7 +21,8 @@ const HYPHENS: [usize; 4] = [8, 13, 18, 23];
 pub fn mint_uuid_v4() -> Result<String, LibraryError> {
     let mut bytes = [0u8; 16];
     getrandom::fill(&mut bytes).map_err(|err| {
-        tracing::error!(error_code = "unavailable", detail = %err, "OS random source failed");
+        // Stdout only: the service journals the command's failure once (`unavailable`).
+        tracing::info!(target: super::LOG_TARGET, error_code = "unavailable", detail = %err, "OS random source failed");
         LibraryError::Unavailable
     })?;
     Ok(format_uuid_v4(bytes))

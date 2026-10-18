@@ -102,11 +102,28 @@ pub enum QueryAnswer {
 pub struct Cursor(String);
 
 impl Cursor {
-    /// Encode `key` as an opaque version 1 cursor.
-    pub fn encode(key: &PageKey) -> Self {
+    /// Encode `key` as an opaque version 1 cursor: the prefix, then the lowercase hex of
+    /// `<order>:<id>`. Every cursor this answers is one [`Self::decode`] accepts.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibraryError::Internal`] when the cursor would exceed the
+    /// `MAX_CURSOR_BYTES` bound that [`Self::decode`] enforces (an item ID of about 490
+    /// bytes or more); the detail goes to stdout only.
+    pub fn encode(key: &PageKey) -> Result<Self, LibraryError> {
         let plain = format!("{}:{}", key.order, key.id);
         let hex: String = plain.bytes().map(|b| format!("{b:02x}")).collect();
-        Self(format!("{CURSOR_PREFIX}{hex}"))
+        let text = format!("{CURSOR_PREFIX}{hex}");
+        if text.len() > MAX_CURSOR_BYTES {
+            tracing::info!(
+                target: super::LOG_TARGET,
+                error_code = "internal",
+                id_bytes = key.id.len(),
+                "page key too long for a cursor"
+            );
+            return Err(LibraryError::Internal);
+        }
+        Ok(Self(text))
     }
 
     /// The cursor text.
@@ -119,20 +136,26 @@ impl Cursor {
     /// # Errors
     ///
     /// Returns an `invalid_cursor` [`LibraryError`] for any text [`Self::encode`] did not
-    /// produce.
+    /// produce, including other spellings of a valid position (uppercase hex, a `+` sign or
+    /// leading zeros): the decoded key is encoded again and must give the same text.
     pub fn decode(&self) -> Result<PageKey, LibraryError> {
+        let key = self.parse().ok_or_else(invalid_cursor)?;
+        match Self::encode(&key) {
+            Ok(canonical) if canonical == *self => Ok(key),
+            _ => Err(invalid_cursor()),
+        }
+    }
+
+    /// The position this cursor's text spells, without the canonical-form check.
+    fn parse(&self) -> Option<PageKey> {
         let hex = self
             .0
             .strip_prefix(CURSOR_PREFIX)
-            .filter(|hex| self.0.len() <= MAX_CURSOR_BYTES && !hex.is_empty())
-            .ok_or_else(invalid_cursor)?;
-        let plain = decode_hex(hex).ok_or_else(invalid_cursor)?;
-        let (order, id) = plain.split_once(':').ok_or_else(invalid_cursor)?;
-        let order = order.parse::<i64>().map_err(|_| invalid_cursor())?;
-        if id.is_empty() {
-            return Err(invalid_cursor());
-        }
-        Ok(PageKey {
+            .filter(|hex| self.0.len() <= MAX_CURSOR_BYTES && !hex.is_empty())?;
+        let plain = decode_hex(hex)?;
+        let (order, id) = plain.split_once(':')?;
+        let order = order.parse::<i64>().ok()?;
+        (!id.is_empty()).then(|| PageKey {
             order,
             id: id.to_string(),
         })
@@ -147,7 +170,7 @@ fn invalid_cursor() -> LibraryError {
     )
 }
 
-/// Decode lowercase or uppercase hex pairs into UTF-8 text.
+/// Decode hex pairs into UTF-8 text (case is checked by [`Cursor::decode`]).
 fn decode_hex(hex: &str) -> Option<String> {
     if !hex.len().is_multiple_of(2) {
         return None;

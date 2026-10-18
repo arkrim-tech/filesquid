@@ -103,7 +103,7 @@ fn cursors_are_opaque_and_malformed_ones_are_refused() {
         order: 3,
         id: "f-1".into(),
     };
-    let cursor = Cursor::encode(&key);
+    let cursor = Cursor::encode(&key).expect("encode");
     assert!(!cursor.as_str().contains("f-1"));
     assert!(cursor.as_str().starts_with("v1."));
     assert_eq!(cursor.decode().expect("decode"), key);
@@ -120,6 +120,59 @@ fn cursors_are_opaque_and_malformed_ones_are_refused() {
             ))
             .expect_err(bad);
         assert_eq!(err.api_code(), ErrorCode::InvalidRequest, "{bad}");
+    }
+}
+
+/// The hex spelling of `text`, in `upper` or lowercase.
+fn hex(text: &str, upper: bool) -> String {
+    text.bytes()
+        .map(|b| match upper {
+            true => format!("{b:02X}"),
+            false => format!("{b:02x}"),
+        })
+        .collect()
+}
+
+#[test]
+fn every_issued_cursor_decodes_and_only_canonical_text_is_accepted() {
+    let longest_id = (0..)
+        .map(|n| "i".repeat(n))
+        .take(2_048)
+        .take_while(|id| {
+            let key = PageKey {
+                order: i64::MIN,
+                id: id.clone(),
+            };
+            Cursor::encode(&key).is_ok()
+        })
+        .last()
+        .expect("some id encodes");
+    assert!(longest_id.len() >= 36, "a UUID must fit");
+    for order in [i64::MIN, -1, 0, 7, i64::MAX] {
+        let key = PageKey {
+            order,
+            id: longest_id.clone(),
+        };
+        let cursor = Cursor::encode(&key).expect("encode");
+        assert_eq!(cursor.decode().expect("decode"), key);
+    }
+    let too_long = PageKey {
+        order: 0,
+        id: "i".repeat(longest_id.len() + 21),
+    };
+    let err = Cursor::encode(&too_long).expect_err("too long");
+    assert_eq!(err.api_code(), ErrorCode::Internal);
+    let canonical = format!("v1.{}", hex("3:f-1", false));
+    let decoded: Cursor = serde_json::from_value(canonical.into()).expect("cursor");
+    assert!(decoded.decode().is_ok());
+    for spelling in [
+        format!("v1.{}", hex("3:f-1", true)),
+        format!("v1.{}", hex("+3:f-1", false)),
+        format!("v1.{}", hex("03:f-1", false)),
+    ] {
+        let cursor: Cursor = serde_json::from_value(spelling.clone().into()).expect("cursor");
+        let err = cursor.decode().expect_err(&spelling);
+        assert_eq!(err.error_code(), "invalid_cursor", "{spelling}");
     }
 }
 

@@ -406,7 +406,7 @@ fn one_entry_per_commit(w: &mut MonitorWorld) {
     let catalog = &w.library.fx().catalog;
     assert_eq!(
         catalog.journal_entries().len() as u64,
-        catalog.commit_count()
+        catalog.operation_count()
     );
 }
 

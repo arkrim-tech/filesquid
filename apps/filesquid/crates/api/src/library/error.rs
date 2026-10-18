@@ -106,12 +106,15 @@ impl From<LibraryError> for ApiError {
 }
 
 impl From<CatalogError> for LibraryError {
-    /// Map a store failure, logging its detail to stdout only.
+    /// Map a store failure, logging its detail to stdout only (INFO under the
+    /// `filesquid::library` target, which the journal layer does not record). The service journals
+    /// the failed command or query once, with its own operation name.
     fn from(err: CatalogError) -> Self {
         match err {
             CatalogError::Conflict => Self::Conflict,
             CatalogError::Unavailable(detail) => {
-                tracing::warn!(
+                tracing::info!(
+                    target: super::LOG_TARGET,
                     error_code = "unavailable",
                     detail,
                     "library catalog unavailable"
@@ -119,7 +122,12 @@ impl From<CatalogError> for LibraryError {
                 Self::Unavailable
             }
             CatalogError::Failed(detail) => {
-                tracing::error!(error_code = "internal", detail, "library catalog failed");
+                tracing::info!(
+                    target: super::LOG_TARGET,
+                    error_code = "internal",
+                    detail,
+                    "library catalog failed"
+                );
                 Self::Internal
             }
         }

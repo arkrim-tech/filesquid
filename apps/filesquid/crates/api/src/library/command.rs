@@ -47,7 +47,8 @@ pub enum LibraryCommand {
         library_id: LibraryId,
         /// Title shown to people.
         title: String,
-        /// Folder that holds the collection, if any.
+        /// Folder of the same library that holds the collection, if any; a folder that does
+        /// not exist or belongs to another library is `not_found`.
         #[serde(default)]
         folder_id: Option<FolderId>,
         /// Stored sort order.
@@ -209,7 +210,13 @@ impl LibraryCommand {
                 title, expression, ..
             } => check_name(title).and_then(|()| check_expression(expression.as_deref())),
             Self::DeleteCollection { .. } | Self::DeleteVirtualCollection { .. } => Ok(()),
-            _ => check_files(self.file_ids()),
+            Self::AddToVirtualCollection { file_ids, .. }
+            | Self::RemoveFromVirtualCollection { file_ids, .. }
+            | Self::HideFiles { file_ids, .. }
+            | Self::UnhideFiles { file_ids, .. }
+            | Self::DeleteFiles { file_ids, .. }
+            | Self::RestoreFiles { file_ids, .. }
+            | Self::PurgeFiles { file_ids, .. } => check_files(file_ids),
         }
     }
 
@@ -223,7 +230,13 @@ impl LibraryCommand {
             | Self::DeleteFiles { file_ids, .. }
             | Self::RestoreFiles { file_ids, .. }
             | Self::PurgeFiles { file_ids, .. } => file_ids,
-            _ => &[],
+            Self::CreateLibrary { .. }
+            | Self::CreateCollection { .. }
+            | Self::RenameCollection { .. }
+            | Self::DeleteCollection { .. }
+            | Self::CreateVirtualCollection { .. }
+            | Self::RenameVirtualCollection { .. }
+            | Self::DeleteVirtualCollection { .. } => &[],
         }
     }
 }
@@ -288,7 +301,8 @@ pub struct CommandResult {
     /// Identifier of the library, collection or virtual collection the command created.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_id: Option<String>,
-    /// Deletion and purge-after times of a recoverable deletion.
+    /// Deletion and purge-after times of a recoverable deletion; a replay answers the first
+    /// times.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deletion: Option<Deletion>,
 }

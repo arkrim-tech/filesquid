@@ -22,7 +22,13 @@
 //!   [`PurgeConfirmation`] of the exact scope. Ordinary listings never show hidden or
 //!   deleted files.
 //! - Every commit carries one redacted journal entry for the host to store in the same
-//!   transaction; refused commands are journaled as `failed`.
+//!   transaction, including a command that changed nothing; refused commands are journaled
+//!   once as `failed` through the bounded journal queue that every [`LibraryService`] holds.
+
+/// `tracing` target of this module's stdout-only diagnostics. They are logged at INFO under a
+/// target outside `filesquid::activity`, so the journal layer does not record them and each
+/// failure reaches the activity journal exactly once, through the service.
+const LOG_TARGET: &str = "filesquid::library";
 
 mod catalog;
 mod command;

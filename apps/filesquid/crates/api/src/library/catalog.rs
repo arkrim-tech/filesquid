@@ -3,18 +3,21 @@
 //! `filesquid-api` decides what a library command means; the host's [`LibraryCatalog`]
 //! stores it. A host implementation (SQLite on the desktop, PostgreSQL on the server, the
 //! encrypted replica in the browser) reads records and applies a [`CatalogCommit`]
-//! atomically: it checks the expected revision, applies every [`CatalogChange`], commits the
-//! change as one OCFL version through the `filesquid-ocfl` change model (API-S-008), stores
-//! the commit's journal entry in the same transaction, records the operation ID for replay,
-//! and answers the library's new revision. Listing methods page by [`PageKey`] in ascending
-//! (order, ID) order. No method takes or answers a filesystem path or SQL.
+//! atomically, in the order [`LibraryCatalog::commit`] states: answer a stored receipt of the
+//! operation ID first, then check the create or revision rule, apply every [`CatalogChange`],
+//! commit the change as one OCFL version through the `filesquid-ocfl` change model
+//! (API-S-008), store the commit's journal entry and receipt in the same transaction, and
+//! answer the library's new revision. A commit with no change (a command that changed
+//! nothing) stores only its journal entry and receipt, at the current revision. Listing
+//! methods page by [`PageKey`] in ascending (order, ID) order. No method takes or answers a
+//! filesystem path or SQL.
 
-use super::policy::{FileState, VisibilityFilter};
+use super::policy::{Deletion, FileState, VisibilityFilter};
 use crate::journal::JournalEntry;
 use crate::operation::{ExpectedRevision, OperationId};
 use filesquid_core::{
-    Collection, CollectionId, File, FileId, Library, LibraryId, RepositoryId, VirtualCollection,
-    VirtualCollectionId, VirtualMembership,
+    Collection, CollectionId, File, FileId, Folder, FolderId, Library, LibraryId, RepositoryId,
+    VirtualCollection, VirtualCollectionId, VirtualMembership,
 };
 use serde::{Deserialize, Serialize};
 
@@ -95,6 +98,8 @@ pub struct FileListing {
 }
 
 /// One change of a [`CatalogCommit`]. A host applies all of a commit's changes or none.
+/// [`CatalogChange::CreateLibrary`] may appear only as the first change of a commit, at
+/// most once, and only for the commit's own library.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CatalogChange {
     /// Store a new library record.
@@ -130,29 +135,39 @@ pub enum CatalogChange {
 /// Everything one command commits, applied by the host in one transaction.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CatalogCommit {
-    /// Idempotency key; a host answers a repeated key with its first receipt.
+    /// Idempotency key; a host answers a repeated key with its first receipt, before any
+    /// other check.
     pub operation_id: OperationId,
     /// The library changed.
     pub library_id: LibraryId,
-    /// The revision the caller read; a mismatch is [`CatalogError::Conflict`].
+    /// The revision the caller read. For a commit whose first change is
+    /// [`CatalogChange::CreateLibrary`] it is [`crate::library::NEW_LIBRARY_REVISION`] and is
+    /// not compared: the library MUST be absent, or the commit is
+    /// [`CatalogError::Conflict`]. For every other commit the library MUST exist at exactly
+    /// this revision, or the commit is [`CatalogError::Conflict`].
     pub expected_revision: ExpectedRevision,
-    /// The changes, in order.
+    /// The changes, in order; empty when the command changed nothing.
     pub changes: Vec<CatalogChange>,
     /// The journal entry stored in the same transaction (opaque IDs only).
     pub journal: JournalEntry,
     /// Identifier the command created, kept in the receipt for replays.
     pub created_id: Option<String>,
+    /// Deletion and purge-after times of a recoverable deletion, kept in the receipt so a
+    /// replay answers the first times.
+    pub deletion: Option<Deletion>,
 }
 
-/// What a committed operation answered.
+/// What a committed operation answered; a replay of its operation ID answers it again.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommitReceipt {
     /// The library changed.
     pub library_id: LibraryId,
-    /// The library's revision after the commit.
+    /// The library's revision after the commit (unchanged for a commit with no change).
     pub revision: String,
     /// Identifier the command created, if any.
     pub created_id: Option<String>,
+    /// Deletion and purge-after times of a recoverable deletion, if any.
+    pub deletion: Option<Deletion>,
 }
 
 /// A failure of the injected catalog. Details go to stdout only.
@@ -214,6 +229,16 @@ pub trait LibraryCatalog: Send + Sync {
         file_id: &FileId,
     ) -> Result<bool, CatalogError>;
 
+    /// The highest membership order key of `virtual_collection_id`, or `None` when it has no
+    /// member. New members are ordered after it.
+    fn last_member_order(
+        &self,
+        virtual_collection_id: &VirtualCollectionId,
+    ) -> Result<Option<i64>, CatalogError>;
+
+    /// One folder of a library's collection hierarchy.
+    fn folder(&self, folder_id: &FolderId) -> Result<Option<Folder>, CatalogError>;
+
     /// One file with its state.
     fn file(&self, file_id: &FileId) -> Result<Option<FileEntry>, CatalogError>;
 
@@ -225,6 +250,19 @@ pub trait LibraryCatalog: Send + Sync {
         limit: usize,
     ) -> Result<Vec<Keyed<FileEntry>>, CatalogError>;
 
-    /// Apply `commit` atomically with its journal entry and answer the receipt.
+    /// Apply `commit` atomically with its journal entry and answer the receipt. A host MUST
+    /// work in this order, all in one transaction:
+    ///
+    /// 1. If a receipt is stored for `commit.operation_id`, answer it and change nothing.
+    ///    This comes first because a retry carries the revision read before the first
+    ///    attempt, which the first attempt has since advanced.
+    /// 2. Check the create or revision rule of [`CatalogCommit::expected_revision`]; a
+    ///    mismatch is [`CatalogError::Conflict`] with no change.
+    /// 3. Apply every change; when there is at least one, commit one OCFL version and
+    ///    advance the revision. A commit with no change keeps the revision and writes no
+    ///    version.
+    /// 4. Store the journal entry and the receipt, then answer the receipt.
+    ///
+    /// A failure at any step MUST leave the catalog as it was.
     fn commit(&self, commit: CatalogCommit) -> Result<CommitReceipt, CatalogError>;
 }
