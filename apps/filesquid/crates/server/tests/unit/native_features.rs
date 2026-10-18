@@ -6,7 +6,7 @@
 //! features`, which is what `cargo build -p filesquid-server` compiles. (A whole-workspace
 //! build unifies features with `filesquid-desktop`; server release builds use `-p`.)
 //!
-//! [ADR 033]: ../../../../../resources/architecture/033-activity-journal-and-live-health-monitoring.md
+//! [ADR 033]: ../../../../../../resources/architecture/033-activity-journal-and-live-health-monitoring.md
 
 use std::path::PathBuf;
 use std::process::Command;
