@@ -66,6 +66,17 @@
 //!   inventory (W010) is refused as a base until the caller runs the
 //!   consented [`ObjectWriter::repair_version_inventory`] (OCFL-S-020).
 //!
+//! Change model (OCFL-S-014 to OCFL-S-016), on every backend and target:
+//!
+//! - [`change`]: [`ChangeModel`] stages changes in a [`StagingArea`]
+//!   outside every OCFL root and publishes them as one version through
+//!   [`ObjectWriter::commit`]: stage, status, diff, commit, log, checkout,
+//!   revert and reinstate. [`compute_delta`](change::compute_delta)
+//!   classifies a working state against a base version by digest, so only
+//!   new bytes are written. A moved head is rebased onto, or reported as a
+//!   conflict without publishing. Callers (the view API, `fsquid`) use it
+//!   as the only write path.
+//!
 //! Opaque bytes (OCFL-S-021;
 //! [ADR 010](../../../resources/architecture/010-ocfl-1-1-dual-profile.md)):
 //! the engine stores the content bytes its caller supplies and reads them
@@ -83,6 +94,7 @@
 //! `created` is still an RFC 3339 timestamp, and any `message` or `user`
 //! text is whatever the caller supplied.
 
+pub mod change;
 pub mod digest;
 mod error;
 pub mod fixity;
@@ -96,6 +108,7 @@ pub mod storage;
 pub mod validate;
 pub mod write;
 
+pub use change::{ChangeError, ChangeModel, PathChange, StagingArea, VersionMeta};
 pub use digest::DigestAlgorithm;
 pub use error::{OcflError, WriteError};
 pub use guard::{check_storage_root, reject_git_in_root};

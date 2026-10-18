@@ -31,7 +31,7 @@
 //! module is the engine's only write path; the change model (stage,
 //! status, diff, commit, ...) is built on it.
 
-mod base;
+pub(crate) mod base;
 mod clock;
 mod commit;
 mod draft;

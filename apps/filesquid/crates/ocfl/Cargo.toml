@@ -143,6 +143,11 @@ path = "tests/integration/version_inventory_repair.rs"
 required-features = ["fs"]
 
 [[test]]
+name = "integration_change_model"
+path = "tests/integration/change_model.rs"
+required-features = ["fs"]
+
+[[test]]
 name = "features"
 path = "tests/features.rs"
 harness = false
