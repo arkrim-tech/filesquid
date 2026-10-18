@@ -21,6 +21,7 @@ const sources = readdirSync(dir)
 const ELEMENTS = [
   "fs-app-shell.ts",
   "fs-breadcrumb.ts",
+  "fs-host-indicator.ts",
   "fs-monitor.ts",
   "fs-nav-tree.ts",
   "fs-states.ts",

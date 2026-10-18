@@ -24,6 +24,7 @@ const ELEMENTS = [
   "fs-states",
   "fs-nav-tree",
   "fs-breadcrumb",
+  "fs-host-indicator",
   "fs-monitor",
 ];
 
@@ -33,6 +34,23 @@ test.beforeEach(async ({ page }) => {
       json: { schema_version: 1, status: "ok", product: "filesquid" },
     }),
   );
+  await page.route("**/api/v1/host", (route) =>
+    route.fulfill({
+      json: {
+        schema_version: 1,
+        host_type: "desktop",
+        operator_name: null,
+        hosted_service: {
+          enrolled: false,
+          backup_enabled: false,
+          sync_enabled: false,
+          service_host: null,
+        },
+      },
+    }),
+  );
+  // The host indicator follows the event channel; answer it so no real socket is attempted.
+  await page.routeWebSocket(/\/api\/v1\/events$/, () => undefined);
 });
 
 test("the built page is static, mounts the shell and defines every custom element", async ({
