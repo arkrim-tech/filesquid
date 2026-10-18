@@ -59,6 +59,23 @@
 //!   and sidecar, then the root inventory and its sidecar last. An
 //!   incomplete `vN` stays unpublished for readers and is reconciled by the
 //!   next commit of that version.
+//!
+//! Opaque bytes (OCFL-S-021;
+//! [ADR 010](../../../resources/architecture/010-ocfl-1-1-dual-profile.md)):
+//! the engine stores the content bytes its caller supplies and reads them
+//! only as bytes. Logical paths are UTF-8 strings stored as given, and they
+//! must pass the OCFL 1.1 path rules (E052, E053) like any other. It
+//! computes `sha256` over exactly what was stored, so manifest digest
+//! verification (E092) holds over ciphertext too. FileSquid's
+//! owner-readable local profile has no transform: its plaintext is staged
+//! as is. Only the encrypted hosted package (sealed content and encoded
+//! names) is a transform, which the caller applies before staging and after
+//! reading. Both use the same [`ObjectWriter`] and [`Object`] calls; the
+//! engine has no profile, key or
+//! encryption type and no encryption dependency. Over sealed bytes and
+//! opaque names the inventory stays structurally readable OCFL 1.1:
+//! `created` is still an RFC 3339 timestamp, and any `message` or `user`
+//! text is whatever the caller supplied.
 
 pub mod digest;
 mod error;
