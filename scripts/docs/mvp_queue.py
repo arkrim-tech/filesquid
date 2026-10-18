@@ -13,6 +13,12 @@ Purpose:
       in the head branch or title of an open pull request.
     - Up next: the first five unticked, not-in-progress module rows, in
       checklist order, whose Dependencies are all ticked or in progress.
+
+    Pull request IDs are the only input that is not derived from the repository.
+    Write mode fetches them; `--check` reads them back from the block's
+    `in-progress-prs` comment and ignores any whose task has since been ticked
+    (`only_unticked`), so merging a task PR never makes the offline check fail
+    by itself.
 """
 import re
 from dataclasses import dataclass, field
