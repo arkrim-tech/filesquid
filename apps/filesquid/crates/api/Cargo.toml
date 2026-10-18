@@ -9,17 +9,10 @@ publish = false
 [lib]
 path = "src/lib.rs"
 
-[features]
-default = ["sqlite"]
-# SQLite journal store (native hosts). Off for a future WebAssembly build.
-sqlite = ["dep:rusqlite"]
-
 [dependencies]
 axum = "0.8"
 filesquid-core = { path = "../core" }
-fs4 = "1"
 getrandom = "0.4"
-rusqlite = { version = "0.40", features = ["bundled"], optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"
@@ -32,7 +25,6 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["r
 cucumber = { version = "0.23", features = ["macros", "output-junit"] }
 http-body-util = "0.1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-rusqlite = { version = "0.40", features = ["bundled"] }
 tower = { version = "0.5", features = ["util"] }
 
 [[test]]
@@ -58,11 +50,6 @@ path = "tests/unit/routes.rs"
 [[test]]
 name = "unit_auth"
 path = "tests/unit/auth.rs"
-
-[[test]]
-name = "unit_journal"
-path = "tests/unit/journal.rs"
-required-features = ["sqlite"]
 
 [[test]]
 name = "unit_writer"
@@ -91,5 +78,4 @@ path = "tests/unit/isolation.rs"
 [[test]]
 name = "features"
 path = "tests/features.rs"
-required-features = ["sqlite"]
 harness = false

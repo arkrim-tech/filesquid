@@ -186,7 +186,8 @@ async fn the_forwarder_is_a_registered_process_with_a_heartbeat() {
     let state = ApiState::new();
     let monitor = Monitor::start(
         Arc::new(MemoryJournal::new("desktop")),
-        MonitorConfig::new("desktop", std::env::temp_dir()),
+        std::sync::Arc::new(filesquid_api::monitor::StaticHostChecks::healthy()),
+        MonitorConfig::new("desktop"),
         state.events.clone(),
     );
     let subscription = open_subscription(&state.events).expect("subscription");

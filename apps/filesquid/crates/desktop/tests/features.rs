@@ -6,7 +6,6 @@ use cucumber::{given, then, when, writer, World, WriterExt as _};
 use filesquid_api::auth::LaunchToken;
 use filesquid_api::events::{topic, EVENT_BUFFER};
 use filesquid_api::journal::JournalEntry;
-use filesquid_api::monitor::HostMonitor;
 use filesquid_api::{ApiEvent, ApiState, EventSubscription};
 use filesquid_desktop_lib::api_protocol::{handle, into_scheme_response};
 use filesquid_desktop_lib::event_channel::{
@@ -14,6 +13,7 @@ use filesquid_desktop_lib::event_channel::{
 };
 use filesquid_desktop_lib::test_fixture::{fixture_byte, FIXTURE_LEN, FIXTURE_PATH};
 use filesquid_desktop_lib::{install_launch_token, open_host_monitor};
+use filesquid_native::HostMonitor;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::{Arc, Mutex};

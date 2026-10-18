@@ -1,6 +1,7 @@
-//! SQLite journal store (WAL mode) in the host's operational database.
+//! SQLite journal store (WAL mode) in the host's operational database: the native
+//! [`JournalStore`] the hosts inject into `filesquid-api` (SRS-F-061 Journal store).
 
-use super::{
+use filesquid_api::journal::{
     retention_cutoff, retention_entry, JournalEntry, JournalError, JournalPage, JournalQuery,
     JournalStore, Level, Outcome, RetentionPolicy,
 };

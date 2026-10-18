@@ -3,10 +3,10 @@
 //! the source scan for direct storage I/O, with the rules proven on synthetic inputs.
 
 use crate::isolation::{
-    crate_dir, forbidden_reason, line_uses_storage_io, pinned_graph_deviations,
-    read_sources_with_storage_io, run_cargo_tree, violations, workspace_manifest,
-    PINNED_SOURCE_DEVIATIONS, SELF_NAME,
+    crate_dir, feature_args, forbidden_reason, run_cargo_tree, violations, workspace_manifest,
+    SELF_NAME,
 };
+use crate::source_scan::{io_findings_outside_allowed, scan_text, IO_PATTERNS};
 use crate::MonitorWorld;
 use cucumber::{given, then, when};
 
@@ -19,10 +19,8 @@ pub struct IsolationWorld {
     pub subject: String,
     /// Package names of the resolved (or synthetic) graph.
     pub packages: Vec<String>,
-    /// Forbidden packages or storage-I/O files found by the last check.
+    /// Forbidden packages, or `file:line pattern` storage-I/O findings, from the last check.
     pub found: Vec<String>,
-    /// Whether the last scanned line was reported as storage I/O.
-    pub flagged: bool,
 }
 
 #[given(expr = "the FileSquid Cargo workspace")]
@@ -57,12 +55,7 @@ fn srs_states_boundary(_w: &mut MonitorWorld) {
 
 #[given(expr = "the resolved runtime graph of filesquid-api with the {word} feature set")]
 fn resolved_graph(w: &mut MonitorWorld, features: String) {
-    let args: &[&str] = match features.as_str() {
-        "default" => &[],
-        "no-default-features" => &["--no-default-features"],
-        "all-features" => &["--all-features"],
-        other => panic!("unknown feature set {other}"),
-    };
+    let args = feature_args(&features).expect("known feature set");
     w.isolation.packages = run_cargo_tree(args).expect("cargo tree");
     w.isolation.subject = features;
 }
@@ -73,13 +66,15 @@ fn check_rules(w: &mut MonitorWorld) {
 }
 
 #[then(
-    expr = "it should hold no Tauri, libvips, FFmpeg, SQLite driver, storage or network client crate except the deviations pinned by the CL-0.1 Conflict Artifact"
+    expr = "it should hold no Tauri, libvips, FFmpeg, SQLite driver, storage, native-processing, network client or alternative async runtime crate"
 )]
-fn only_pinned_graph(w: &mut MonitorWorld) {
+fn graph_is_isolated(w: &mut MonitorWorld) {
     assert!(w.isolation.packages.iter().any(|p| p == SELF_NAME), "graph");
-    assert_eq!(
-        w.isolation.found,
-        pinned_graph_deviations(&w.isolation.subject)
+    assert!(
+        w.isolation.found.is_empty(),
+        "{}: {:?}",
+        w.isolation.subject,
+        w.isolation.found
     );
 }
 
@@ -105,28 +100,46 @@ fn source_files(w: &mut MonitorWorld) {
     w.isolation.subject = "src".to_string();
 }
 
-#[given(expr = "a source line {string}")]
+/// The feature writes a double quote inside a source line as `QUOTE`.
+#[given(regex = r#"^a source line "(.*)"$"#)]
 fn source_line(w: &mut MonitorWorld, line: String) {
-    w.isolation.input = line;
+    w.isolation.input = line.replace("QUOTE", "\"");
     w.isolation.subject = "line".to_string();
 }
 
 #[when(regex = r"^I scan them for direct storage I/O$")]
 fn scan_sources(w: &mut MonitorWorld) {
-    w.isolation.found = read_sources_with_storage_io().expect("scan src");
+    let (findings, _) = io_findings_outside_allowed().expect("scan src");
+    w.isolation.found = findings
+        .iter()
+        .map(|f| format!("{}:{} {}", f.file, f.line, f.pattern))
+        .collect();
 }
 
 #[when(regex = r"^I scan it for direct storage I/O$")]
 fn scan_line(w: &mut MonitorWorld) {
-    w.isolation.flagged = line_uses_storage_io(&w.isolation.input);
+    w.isolation.found = scan_text("line.rs", &w.isolation.input, IO_PATTERNS)
+        .iter()
+        .map(|f| f.pattern.to_string())
+        .collect();
 }
 
-#[then(expr = "only the files pinned by the CL-0.1 Conflict Artifact should perform it")]
-fn only_pinned_sources(w: &mut MonitorWorld) {
-    assert_eq!(w.isolation.found, PINNED_SOURCE_DEVIATIONS);
+#[then(expr = "no source file should perform it")]
+fn no_source_io(w: &mut MonitorWorld) {
+    assert!(w.isolation.found.is_empty(), "{:?}", w.isolation.found);
 }
 
 #[then(regex = r"^the line should be reported as storage I/O$")]
 fn line_reported(w: &mut MonitorWorld) {
-    assert!(w.isolation.flagged, "{}", w.isolation.input);
+    assert!(!w.isolation.found.is_empty(), "{}", w.isolation.input);
+}
+
+#[then(regex = r"^the line should not be reported as storage I/O$")]
+fn line_not_reported(w: &mut MonitorWorld) {
+    assert!(
+        w.isolation.found.is_empty(),
+        "{}: {:?}",
+        w.isolation.input,
+        w.isolation.found
+    );
 }

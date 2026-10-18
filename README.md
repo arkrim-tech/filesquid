@@ -45,7 +45,7 @@ cd ../../imagesquid && npm ci
 
 ## Project naming
 
-Use **FileSquid** for displayed branding of the product and **filesquid** for technical identifiers (Cargo packages `filesquid-core`, `filesquid-ocfl`, `filesquid-metadata`, `filesquid-c2pa`, `filesquid-cli`, `filesquid-api`, `filesquid-server`, `filesquid-desktop`; the one command-line tool is `fsquid`; npm scope `@filesquid`; desktop identifier `tech.filesquid.desktop`; hosted service domain `filesquid.tech`). **ImageSquid** is a distribution: displayed brand ImageSquid, npm package `@imagesquid/ui`, desktop identifier `app.imagesquid.desktop`, domain `imagesquid.app`. Internal code, schemas and APIs use FileSquid's internal names (repository, library, collection, virtual collection, virtual exhibit, file); a distribution changes only its UI labels ([terminology](./resources/product-vision.md#terminology)). The `ocfl`, `metadata` and `c2pa` crates stay independently installable and publishable for programmes that never run the FileSquid app.
+Use **FileSquid** for displayed branding of the product and **filesquid** for technical identifiers (Cargo packages `filesquid-core`, `filesquid-ocfl`, `filesquid-metadata`, `filesquid-c2pa`, `filesquid-cli`, `filesquid-api`, `filesquid-native`, `filesquid-server`, `filesquid-desktop`; the one command-line tool is `fsquid`; npm scope `@filesquid`; desktop identifier `tech.filesquid.desktop`; hosted service domain `filesquid.tech`). **ImageSquid** is a distribution: displayed brand ImageSquid, npm package `@imagesquid/ui`, desktop identifier `app.imagesquid.desktop`, domain `imagesquid.app`. Internal code, schemas and APIs use FileSquid's internal names (repository, library, collection, virtual collection, virtual exhibit, file); a distribution changes only its UI labels ([terminology](./resources/product-vision.md#terminology)). The `ocfl`, `metadata` and `c2pa` crates stay independently installable and publishable for programmes that never run the FileSquid app.
 
 ## Run the application
 
@@ -192,11 +192,18 @@ cargo test -p filesquid-server --locked --test integration_auth
 cargo test -p filesquid-desktop --locked --test integration_api_protocol
 ```
 
-The application-layer boundary (API-S-006) is guarded twice: `unit_isolation` runs `cargo tree` for `filesquid-api` with the default, no-default and all-features sets and fails on Tauri, libvips, FFmpeg, a SQLite driver, `fs4` or a network client, and it scans `crates/api/src/` for `std::fs`, `tokio::fs`, `fs4` and the OS file-system extensions. The deviations already on `main` (the SQLite journal store and the monitor's data-directory checks) are pinned until the [CL-0.1 Conflict Artifact](./apps/filesquid/crates/api/resources/tasks/Task-CL-0.1-Conflict.md) is resolved, so any new one fails the test:
+The application-layer boundary (API-S-006) is guarded twice, and both guards must find nothing. `unit_isolation` runs `cargo tree` for `filesquid-api` with the default, no-default and all-features sets and fails on Tauri, libvips, FFmpeg, a SQLite driver, `fs4`, `filesquid-native`, a network client or an async runtime other than Tokio. It also scans every file in `crates/api/src/`, with comments and string literals removed, for `std::fs`, `tokio::fs`, `fs4`, the OS file-system extensions, file handles and network clients, including grouped `use std::{...}` imports that span lines:
 
 ```sh
 cd apps/filesquid
 cargo test -p filesquid-api --locked --test unit_isolation
+```
+
+The host-side I/O the API must not do lives in the native-processing library `filesquid-native` (`crates/native`): the SQLite journal store, the data-directory checks (write probe, free space) and `HostMonitor`, which both hosts link ([ADR 033](./resources/architecture/033-activity-journal-and-live-health-monitoring.md) amendment 2026-10-18). Its unit tests and BDD features run alone:
+
+```sh
+cd apps/filesquid
+cargo test -p filesquid-native --locked
 ```
 
 The desktop transport (DE-S-005): the event channel's forwarder (one counted subscription, resync hints, the `event-forwarder` process, navigation kept on the app's origins), ranged reads through the `filesquid://localhost` scheme (`http://filesquid.localhost` on Windows and Android) with its 16 MiB response cap, and typed host errors. The 100 MB range fixture and the BDD features in `crates/desktop/tests/features/` exist only in the test-instrumented build (`--features test-webdriver`, never shipped), so the hook runs the desktop crate a second time with that feature:

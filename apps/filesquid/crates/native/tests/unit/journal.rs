@@ -1,9 +1,12 @@
-//! Unit tests for the activity journal store (SRS-F-061 K1, K2, K13).
+//! Unit tests for the activity journal stores (SRS-F-061 K1, K2, K13): the same contract
+//! against the API's in-memory store and this crate's SQLite store. Moved here from
+//! `filesquid-api` with the SQLite store (Task CL-0.1).
 
 use filesquid_api::journal::{
     is_opaque, JournalEntry, JournalQuery, JournalStore, Level, MemoryJournal, Outcome,
-    RetentionPolicy, SqliteJournal, MAX_OPAQUE_LEN, REDACTED,
+    RetentionPolicy, MAX_OPAQUE_LEN, REDACTED,
 };
+use filesquid_native::SqliteJournal;
 use std::path::PathBuf;
 
 /// Fresh temporary directory for one test (removed by the caller).
@@ -200,7 +203,9 @@ fn opening_creates_the_database_and_writes_no_log_files() {
         .collect();
     assert!(names.iter().any(|n| n == "filesquid.sqlite"));
     assert!(
-        names.iter().all(|n| !n.ends_with(".log")),
+        names.iter().all(|n| std::path::Path::new(n)
+            .extension()
+            .is_none_or(|ext| ext != "log")),
         "no log files: {names:?}"
     );
     std::fs::remove_dir_all(dir).unwrap();

@@ -9,7 +9,8 @@
 # run there. From the FileSquid Cargo workspace (apps/filesquid/):
 #   1. cargo clippy --workspace --all-targets --locked -- -D warnings
 #   2. cargo test --workspace --locked
-#   3. cargo test -p <crate> --locked for each module crate alone (ADR 029)
+#   3. cargo test -p <crate> --locked for each module crate alone (ADR 029), and for
+#      the native-processing library filesquid-native, which the hosts link
 #   4. cargo doc --workspace --no-deps --locked with warnings denied
 #   5. Clippy and cargo test for filesquid-desktop with --features test-webdriver
 #      (the test-instrumented build: range fixture and BDD features)
@@ -37,7 +38,7 @@ if [ "$FILESQUID_SKIP_TESTS" = "1" ]; then
 fi
 
 WORKSPACE="apps/filesquid"
-MODULE_CRATES="filesquid-core filesquid-ocfl filesquid-metadata filesquid-c2pa filesquid-api"
+MODULE_CRATES="filesquid-core filesquid-ocfl filesquid-metadata filesquid-c2pa filesquid-api filesquid-native"
 UI_PACKAGES="apps/filesquid/ui apps/imagesquid"
 FAILED=0
 

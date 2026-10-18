@@ -1,22 +1,14 @@
-//! Application-layer isolation rules for `filesquid-api` ([API-S-006], Task CL-0.1).
+//! Application-layer dependency rules for `filesquid-api` ([API-S-006], Task CL-0.1).
 //!
-//! Two guards share this module:
-//!
-//! - the **graph guard** checks every package in the resolved runtime graph (`cargo tree`,
-//!   normal and build edges, every target) against [`RULES`], for the default, the
-//!   no-default and the all-features sets, so Cargo features are never the only boundary;
-//! - the **source guard** scans every file under `src/` for direct storage I/O
-//!   ([`STORAGE_IO_PATTERNS`]).
-//!
-//! `main` already deviates from API-S-006 in a few places that the documents do not yet say
-//! how to move. Those deviations are pinned exactly in [`pinned_graph_deviations`] and
-//! [`PINNED_SOURCE_DEVIATIONS`] and described in the Conflict Artifact
-//! `resources/tasks/Task-CL-0.1-Conflict.md`. A new violation fails the guard, and so does a
-//! pinned one that disappears, so the pin list can only shrink deliberately.
+//! The **graph guard** checks every package in the resolved runtime graph (`cargo tree`,
+//! normal and build edges, every target) against [`RULES`], for the default, the no-default
+//! and the all-features sets, so Cargo features are never the only boundary. The **source
+//! guard** is `source_scan.rs`. Both must find nothing: the SQLite journal store and the
+//! data-directory checks live in `filesquid-native`, which the hosts inject.
 //!
 //! [API-S-006]: ../../resources/srs.md
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
 /// How a rule matches a crate name.
@@ -43,6 +35,8 @@ const MEDIA: &str = "API-S-006: no libvips or FFmpeg";
 const SQLITE: &str = "API-S-006: no SQLite driver";
 const STORAGE: &str = "API-S-006: no storage I/O crate; hosts inject storage backends";
 const NETWORK: &str = "API-S-006: no network client; hosts inject storage backends";
+const RUNTIME: &str = "API-S-006: no async runtime other than tokio's sync and rt parts";
+const NATIVE: &str = "API-S-006: the API never links native processing";
 
 /// Every forbidden crate. Names use the Cargo package spelling.
 pub const RULES: &[Rule] = &[
@@ -54,12 +48,21 @@ pub const RULES: &[Rule] = &[
     rule("sqlite", Match::Exact, SQLITE),
     rule("sqlx", Match::Prefix, SQLITE),
     rule("fs4", Match::Exact, STORAGE),
+    rule("filesquid-native", Match::Exact, NATIVE),
     rule("reqwest", Match::Exact, NETWORK),
     rule("ureq", Match::Exact, NETWORK),
     rule("isahc", Match::Exact, NETWORK),
     rule("surf", Match::Exact, NETWORK),
     rule("curl", Match::Prefix, NETWORK),
     rule("attohttpc", Match::Exact, NETWORK),
+    rule("async-std", Match::Exact, RUNTIME),
+    rule("smol", Match::Exact, RUNTIME),
+    rule("async-executor", Match::Exact, RUNTIME),
+    rule("async-global-executor", Match::Exact, RUNTIME),
+    rule("async-io", Match::Exact, RUNTIME),
+    rule("async-net", Match::Exact, RUNTIME),
+    rule("actix-rt", Match::Exact, RUNTIME),
+    rule("glommio", Match::Exact, RUNTIME),
 ];
 
 const fn rule(pattern: &'static str, kind: Match, reason: &'static str) -> Rule {
@@ -90,20 +93,13 @@ pub const FEATURE_SETS: &[(&str, &[&str])] = &[
     ("all-features", &["--all-features"]),
 ];
 
-/// Forbidden packages that `main` already links, per feature set, sorted. Pinned by the
-/// Conflict Artifact `Task-CL-0.1-Conflict.md`: the `sqlite` feature's journal store
-/// (`rusqlite`, `libsqlite3-sys`) and the free-space probe (`fs4`).
-pub fn pinned_graph_deviations(feature_set: &str) -> &'static [&'static str] {
-    match feature_set {
-        "no-default-features" => &["fs4"],
-        _ => &["fs4", "libsqlite3-sys", "rusqlite"],
-    }
+/// The `cargo tree` arguments for a feature-set label from [`FEATURE_SETS`].
+pub fn feature_args(label: &str) -> Option<&'static [&'static str]> {
+    FEATURE_SETS
+        .iter()
+        .find(|(name, _)| *name == label)
+        .map(|(_, args)| *args)
 }
-
-/// Source files under `src/` that already perform storage I/O on `main`, sorted. Pinned by
-/// the Conflict Artifact `Task-CL-0.1-Conflict.md`: the SQLite journal store and the host
-/// monitor's data-directory checks.
-pub const PINNED_SOURCE_DEVIATIONS: &[&str] = &["src/journal/sqlite.rs", "src/monitor.rs"];
 
 /// Return why `name` is forbidden, or `None` when it is allowed.
 pub fn forbidden_reason(name: &str) -> Option<&'static str> {
@@ -177,85 +173,4 @@ pub fn package_names(tree: &str) -> Vec<String> {
     names.sort();
     names.dedup();
     names
-}
-
-/// Substrings that mark direct storage I/O in Rust source.
-pub const STORAGE_IO_PATTERNS: &[&str] = &[
-    "std::fs",
-    "tokio::fs",
-    "fs4::",
-    "os::unix::fs",
-    "os::windows::fs",
-];
-
-/// Whether one source line performs or imports direct storage I/O. Text after `//` is
-/// ignored, and a grouped `use std::{..., fs, ...}` counts as `std::fs`.
-pub fn line_uses_storage_io(line: &str) -> bool {
-    let code = line.split("//").next().unwrap_or("");
-    let compact: String = code.chars().filter(|c| !c.is_whitespace()).collect();
-    if STORAGE_IO_PATTERNS.iter().any(|p| compact.contains(p)) {
-        return true;
-    }
-    compact.contains("std::{")
-        && compact
-            .split(|c: char| !c.is_alphanumeric() && c != '_')
-            .any(|t| t == "fs")
-}
-
-/// Whether any line of `source` performs or imports direct storage I/O.
-pub fn source_uses_storage_io(source: &str) -> bool {
-    source.lines().any(line_uses_storage_io)
-}
-
-/// Maximum directory depth and file count the source walk visits (AGENTS.md §22).
-const MAX_DEPTH: usize = 8;
-const MAX_FILES: usize = 2_000;
-
-/// List every `.rs` file under `dir` (I/O: reads directories), at most [`MAX_DEPTH`] deep and
-/// [`MAX_FILES`] files; reaching a cap is an error, never a silent truncation.
-pub fn list_rust_files(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) -> Result<(), String> {
-    if depth > MAX_DEPTH {
-        return Err(format!("{} is deeper than {MAX_DEPTH}", dir.display()));
-    }
-    let entries = std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    for entry in entries {
-        let path = entry.map_err(|e| e.to_string())?.path();
-        if path.is_dir() {
-            list_rust_files(&path, depth + 1, out)?;
-        } else if path.extension().is_some_and(|ext| ext == "rs") {
-            out.push(path);
-        }
-        if out.len() > MAX_FILES {
-            return Err(format!("more than {MAX_FILES} source files"));
-        }
-    }
-    Ok(())
-}
-
-/// Read every file under `src/` (I/O) and return the sorted crate-relative paths (with `/`
-/// separators) of those that perform direct storage I/O.
-pub fn read_sources_with_storage_io() -> Result<Vec<String>, String> {
-    let root = crate_dir();
-    let mut files = Vec::new();
-    list_rust_files(&root.join("src"), 0, &mut files)?;
-    let mut found = Vec::new();
-    for file in files {
-        let source =
-            std::fs::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))?;
-        if source_uses_storage_io(&source) {
-            found.push(relative_name(&root, &file));
-        }
-    }
-    found.sort();
-    Ok(found)
-}
-
-/// `file` relative to `root`, with `/` separators on every platform.
-fn relative_name(root: &Path, file: &Path) -> String {
-    let relative = file.strip_prefix(root).unwrap_or(file);
-    relative
-        .components()
-        .map(|c| c.as_os_str().to_string_lossy().into_owned())
-        .collect::<Vec<_>>()
-        .join("/")
 }

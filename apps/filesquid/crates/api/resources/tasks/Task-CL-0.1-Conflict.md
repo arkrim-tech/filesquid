@@ -1,6 +1,10 @@
 # Conflict Artifact: Task CL-0.1, the activity-journal store and host checks inside `filesquid-api`
 
-Raised 2026-10-18 by Task [CL-0.1](../plan.md) (global [Task 0.10](../../../../../../resources/implementation-plan.md#task-0.10)) under [sync-logic.md](../../../../../../.agents/rules/sync-logic.md). Owner review is required. Until it is resolved, CL-0.1 stays open and its guards pin the current deviations (see [Task-CL-0.1-Walkthrough.md](./Task-CL-0.1-Walkthrough.md)).
+Raised 2026-10-18 by Task [CL-0.1](../plan.md) (global [Task 0.10](../../../../../../resources/implementation-plan.md#task-0.10)) under [sync-logic.md](../../../../../../.agents/rules/sync-logic.md).
+
+**Status: resolved 2026-10-18. Decision: option A** (owner). `filesquid-native` (name confirmed by the owner the same day) was created at `apps/filesquid/crates/native` with the SQLite journal store, the data-directory checks and `HostMonitor`. `filesquid-api` keeps the `JournalStore` trait, the in-memory store, the monitor, the health rules and the admin routes, gains the `HostChecks` trait, and no longer has `rusqlite`, `fs4` or the `sqlite` feature. Both hosts link `filesquid-native`. The [ADR 033](../../../../../../resources/architecture/033-activity-journal-and-live-health-monitoring.md) amendment records that `filesquid-server` MAY use its SQLite journal store until the server's PostgreSQL operational store lands. The CL-0.1 guards now find no violation (see [Task-CL-0.1-Walkthrough.md](./Task-CL-0.1-Walkthrough.md)).
+
+**Correction:** sections 1 and 4 below named BE-0.3 as the server's PostgreSQL task. BE-0.3 is the ciphertext-only hosted service's schema; `filesquid-server`'s PostgreSQL operational store is [SV-F1.2](../../../server/resources/plan.md), which the amendment and the plans now name.
 
 ## 1. Conflict description
 
@@ -8,7 +12,7 @@ CL-0.1 must add isolation tests that fail when `filesquid-api` depends on a SQLi
 
 | Deviation on `main` | Where | Added by |
 |---|---|---|
-| `rusqlite` (bundled `libsqlite3-sys`), behind the default `sqlite` feature | [`Cargo.toml`](../../Cargo.toml), [`src/journal/sqlite.rs`](../../src/journal/sqlite.rs) (`SqliteJournal`, opens the database and sets `0o600` with `std::fs` and `std::os::unix::fs`) | API-F2.1 (activity journal) |
+| `rusqlite` (bundled `libsqlite3-sys`), behind the default `sqlite` feature | [`Cargo.toml`](../../Cargo.toml), `src/journal/sqlite.rs` (now [`crates/native/src/journal_sqlite.rs`](../../../native/src/journal_sqlite.rs)) (`SqliteJournal`, opens the database and sets `0o600` with `std::fs` and `std::os::unix::fs`) | API-F2.1 (activity journal) |
 | `fs4` and `std::fs` | [`src/monitor.rs`](../../src/monitor.rs): `fs4::available_space`, the write probe `probe_write`, and `HostMonitor::open`, which creates the data directory and opens `<data_dir>/filesquid.sqlite` | API-F2.1 (health host checks) |
 
 Both hosts call `HostMonitor::open`: [`filesquid-server`](../../../server/src/lib.rs) and [`filesquid-desktop`](../../../desktop/src/lib.rs).
@@ -47,6 +51,6 @@ Artifacts to update for A: [API-S-006](../srs.md) (unchanged text, add the trait
 
 ## 5. Impact assessment
 
-- If unresolved, `filesquid-api` is not expected to build for `wasm32-unknown-unknown` with its default features ([API-S-010](../srs.md)): `rusqlite` with bundled SQLite and `fs4` are native-only. This blocks the browser host and makes the API-S-006 boundary rest on the `sqlite` Cargo feature alone, which TC-005 forbids.
+- If unresolved, `filesquid-api` is not expected to build for `wasm32-unknown-unknown` with its default features ([API-S-010](../srs.md)): `rusqlite` with bundled SQLite and `fs4` are native-only. This blocks the browser host. The `sqlite` Cargo feature gates only the journal store and `HostMonitor::open`; `fs4` is an unconditional dependency and the `std::fs` write probe and `fs4::available_space` in `monitor.rs` are not feature-gated, so they are linked in every feature set, including `--no-default-features`. Turning the feature off would therefore not even restore the boundary, and a feature-only boundary is what TC-005 forbids.
 - CL-0.1 stays open, and global Task 0.10 cannot close. CL-0.2 and CL-0.3 can proceed: the guards already stop any new forbidden crate or storage call.
 - No runtime behaviour changes until the move: the guards only pin today's graph and source.

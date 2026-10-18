@@ -3,8 +3,8 @@
 
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
-use filesquid_api::monitor::HostMonitor;
 use filesquid_api::ApiState;
+use filesquid_native::HostMonitor;
 use filesquid_server::{app, install_admin_authoriser, start_host_monitor, ServerConfig};
 use http_body_util::BodyExt;
 use std::path::PathBuf;
