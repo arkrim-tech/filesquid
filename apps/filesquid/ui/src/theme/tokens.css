@@ -1,6 +1,6 @@
 /*
  * FileSquid default design tokens (light and dark), from the FileSquid Design Guide
- * (resources/assets/FileSquid-Design-Guide.html in the FileSquid repository). Components read
+ * (resources/assets/FileSquid-design-guide-v1.html in the FileSquid repository). Components read
  * only these custom properties; distributions override them in their own token sheet.
  *
  * WCAG 2.2 AA (4.5:1) adjustments to the guide: white text on the brand green #16ac49 is

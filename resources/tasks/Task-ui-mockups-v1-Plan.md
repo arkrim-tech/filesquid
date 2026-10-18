@@ -4,7 +4,7 @@ Branch: `ui-mocksups-v1`. Documentation-only task (design artifacts). Output: SV
 
 ## Objective
 
-Identify every screen the FileSquid MVP (the first consumer release) needs, from the [PRD](../prd.md) and [SRS](../srs.md) plus the module SRS files, and draw one SVG mockup per screen using the [FileSquid Design Guide](../assets/FileSquid-Design-Guide.html).
+Identify every screen the FileSquid MVP (the first consumer release) needs, from the [PRD](../prd.md) and [SRS](../srs.md) plus the module SRS files, and draw one SVG mockup per screen using the [FileSquid Design Guide](../assets/FileSquid-design-guide-v1.html).
 
 ## MVP scope used
 
