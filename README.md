@@ -89,6 +89,7 @@ The full health route returns `{"schema_version":1,"status":"ok","product":"file
 On Windows, set `FILESQUID_ADMIN_TOKEN` yourself (the server stores no token file there) and reuse the same value for requests. In PowerShell 7, from `apps/filesquid`:
 
 ```powershell
+Push-Location ui; npm ci; npm run build; Pop-Location
 $TOKEN = -join (1..32 | ForEach-Object { '{0:x2}' -f [System.Security.Cryptography.RandomNumberGenerator]::GetInt32(256) })
 $TOKEN                                   # note it; the server never prints it
 $env:FILESQUID_ADMIN_TOKEN = $TOKEN

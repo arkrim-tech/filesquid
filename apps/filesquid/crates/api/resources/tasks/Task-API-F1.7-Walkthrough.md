@@ -789,12 +789,12 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 ```
 
-The `FILESQUID_ADMIN_TOKEN` flow from the Windows example, run on Linux against the real `filesquid-server` binary (on port 8094 to avoid clashing with other sessions; no token file is written):
+The `FILESQUID_ADMIN_TOKEN` flow from the Windows example, run on Linux against the real `filesquid-server` binary (on port 8094 to avoid clashing with other sessions, so these commands use 8094 rather than the README's 8083; no token file is written. Re-run in review round 5 so the commands and the output agree):
 
 ```text
-$ curl http://127.0.0.1:8083/api/v1/health/live
+$ curl http://127.0.0.1:8094/api/v1/health/live
 {"status":"up"}
-$ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8083/api/v1/health
+$ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8094/api/v1/health
 {"schema_version":1,"status":"ok","product":"filesquid"}
 token file written: no
 ```
