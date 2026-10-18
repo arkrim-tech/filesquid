@@ -169,7 +169,7 @@ Feature: Version-inventory repair for heads without one
    ✔  Given a sha256 object committed at "v2" whose head version inventory was removed
    ✔  And a repair crashed before writing "obj/v2/inventory.json.sha256"
    ✔  Then the logical state should be unchanged by the repair
-   ✔  And a commit of "v3" on the repaired object should be refused for the missing version inventory
+   ✔  And a commit of "v3" on the repaired object should be refused for the missing head version sidecar
    ✔  When the version-inventory repair runs again
    ✔  Then the repair should have written only "v2/inventory.json.sha256"
    ✔  And the repaired object should validate with zero errors and without W010
@@ -195,28 +195,76 @@ Feature: Version-inventory repair for heads without one
    ✔  When the version-inventory repair runs again
    ✔  Then the repair should be refused as not repairable
    ✔  And the repair should have written nothing
+  Scenario Outline: An interrupted repair on a damaged object is refused
+   ✔  Given a sha256 object committed at "v2" whose head version inventory was removed
+   ✔  And a repair crashed before writing "obj/v2/inventory.json.sha256"
+   ✔  And the object was then changed by a head version inventory that differs
+   ✔  When the version-inventory repair runs again
+   ✔  Then the repair should be refused as not repairable
+   ✔  And the repair should have written nothing
+  Scenario Outline: An interrupted repair on a damaged object is refused
+   ✔  Given a sha256 object committed at "v2" whose head version inventory was removed
+   ✔  And a repair crashed before writing "obj/v2/inventory.json.sha256"
+   ✔  And the object was then changed by a reservation held by another writer
+   ✔  When the version-inventory repair runs again
+   ✔  Then the repair should be refused as a held reservation
+   ✔  And the repair should have written nothing
   Scenario: Opening, reading and validating a W010 object never repairs it
    ✔  Given a copy of the pinned W010 fixture object
    ✔  When the object is opened, read and validated
    ✔  Then nothing should have been written to the storage root
 [Summary]
 1 feature
-14 scenarios (14 passed)
-79 steps (79 passed)
+16 scenarios (16 passed)
+91 steps (91 passed)
+```
+
+`cargo test -p filesquid-ocfl --locked --test integration_write_order` (after review round 1, with `a_head_version_inventory_that_does_not_match_is_refused`):
+
+```text
+running 24 tests
+test a_crash_before_the_first_root_sidecar_publishes_nothing ... ok
+test a_crash_between_content_and_inventories_leaves_vn_unpublished ... ok
+test a_crash_before_the_root_inventory_leaves_vn_unpublished ... ok
+test a_crash_before_the_root_sidecar_reads_as_unpublished ... ok
+test a_git_directory_in_the_object_root_refuses_the_commit ... ok
+test a_head_without_its_version_inventory_is_refused ... ok
+test a_head_version_inventory_that_does_not_match_is_refused ... ok
+test a_crash_while_writing_content_leaves_vn_unpublished ... ok
+test a_new_object_is_reserved_before_any_object_root_byte ... ok
+test a_new_object_commits_as_v1_and_validates ... ok
+test a_reservation_held_by_another_writer_refuses_the_commit ... ok
+test a_moved_head_is_refused_without_publishing ... ok
+test an_object_that_does_not_use_sha256_is_refused ... ok
+test an_uncommitted_first_version_cannot_be_taken_over_by_another_object ... ok
+test a_stale_lease_holder_cannot_publish_the_head_after_reassignment ... ok
+test creating_an_object_that_exists_is_refused ... ok
+test a_stale_lease_holder_cannot_write_content_after_reassignment ... ok
+test an_unpublished_vn_is_reported_by_the_validator ... ok
+test earlier_versions_and_inventories_are_never_changed ... ok
+test invalid_drafts_are_refused_before_any_reservation ... ok
+test staged_bytes_that_change_after_assembly_are_refused ... ok
+test leftovers_of_an_unpublished_vn_are_reconciled_under_the_reservation ... ok
+test the_next_version_writes_only_new_bytes ... ok
+test writes_follow_the_publication_order ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
 ```
 
 `cargo test -p filesquid-ocfl --locked` (summary lines; every binary passed, 3 BDD scenarios skipped are the existing `@unix`/community-validator ones):
 
 ```text
      Running unittests src/lib.rs
-test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.15s
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.24s
      Running tests/features.rs
-120 scenarios (117 passed, 3 skipped)
-540 steps (537 passed, 3 skipped)
+128 scenarios (125 passed, 3 skipped)
+576 steps (573 passed, 3 skipped)
      Running tests/integration/content_fixtures.rs
-test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.80s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.11s
+     Running tests/integration/enumerate_state.rs
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.48s
      Running tests/integration/fixture_conformance.rs
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
      Running tests/integration/fixture_inventories.rs
 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
      Running tests/integration/fixture_reads.rs
@@ -224,23 +272,23 @@ test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
      Running tests/integration/fs_conformance.rs
 test result: ok. 48 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.85s
      Running tests/integration/hierarchy_guard.rs
-test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
      Running tests/integration/logical_file.rs
-test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.61s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.52s
      Running tests/integration/memory_conformance.rs
-test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.75s
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.78s
      Running tests/integration/opaque_bytes.rs
-test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.13s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.14s
      Running tests/integration/read_objects.rs
-test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
      Running tests/integration/validate_objects.rs
-test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.37s
+test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.40s
      Running tests/integration/version_inventory_repair.rs
-test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
      Running tests/integration/write_order.rs
-test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
      Running tests/unit/digest.rs
-test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
      Running tests/unit/fixity.rs
 test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests/unit/git_guard.rs
@@ -262,7 +310,7 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 `cargo clippy -p filesquid-ocfl --all-targets --locked -- -D warnings` and `RUSTDOCFLAGS="-D warnings" cargo doc -p filesquid-ocfl --no-deps --locked` finished without warnings.
 
-`FULL=1 bash scripts/pre-commit.sh` (after merging `origin/main`, which brought IO-0.9):
+`FULL=1 bash scripts/pre-commit.sh` (first run, after merging `origin/main`, which brought IO-0.9; the run on each later head is recorded in the PR description):
 
 ```text
 ✅ Lint and test validation passed (test scope: full).
@@ -276,7 +324,7 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 | Requirement | Tests |
 |---|---|
 | OCFL-S-020 Version-inventory repair | `integration_version_inventory_repair` (all 14); `version_inventory_repair_OCFL-S-020.feature` (all 14 scenarios) |
-| OCFL-S-018 Write order and unpublished versions | `a_repaired_sha256_object_becomes_editable`, `an_interrupted_repair_is_completed_by_running_it_again`, `integration_write_order` (unchanged, still passing) |
+| OCFL-S-018 Write order and unpublished versions | `a_repaired_sha256_object_becomes_editable`, `an_interrupted_repair_is_completed_by_running_it_again`; `integration_write_order`: new `a_head_version_inventory_that_does_not_match_is_refused`, the other 23 unchanged |
 | OCFL-S-019 Inspection and copy never edit an object | `opening_reading_and_validating_never_repair`; BDD "Opening, reading and validating a W010 object never repairs it" |
 | OCFL-S-002 Inventory types (sha256 writer only) | `the_w010_fixture_is_repaired_and_stays_closed_to_commits_as_sha512` |
 | PRD F-042, NFR-001 | all of the above |
@@ -293,6 +341,10 @@ Cubic reviewed `8bef140` and raised 7 findings (P2: 3, P3: 4), all fixed:
 - `MissingVersionInventory`'s message now covers a missing head sidecar; the BDD step for the half-repaired head names the missing sidecar.
 - The interrupted-repair outline gained a differing head inventory row and a held reservation row.
 - The README names the one allowed validator finding (E058 of the interrupted shape); the plan row links this Walkthrough; the NFR-001 paragraph above says which failures can leave a resumable partial repair.
+
+## Review round 2 (Cubic)
+
+Cubic reviewed `852b23b` and raised 2 P3 findings, both fixed: the `VersionInventoryMismatch` message now names the sidecar too, and this Walkthrough's traceability row and raw output include the new write-order test.
 
 ## Sync Execution Report
 

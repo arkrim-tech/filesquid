@@ -120,7 +120,7 @@ pub enum CommitError {
     /// committed inventory, or its sidecar does not match it (E064, E060).
     /// The writer refuses such a base for the same reason: readers could
     /// not read past an interrupted publication through it.
-    #[error("the committed head's version inventory does not match at {key}")]
+    #[error("the committed head's version inventory or its sidecar does not match at {key}")]
     VersionInventoryMismatch {
         /// The key that does not match.
         key: String,
