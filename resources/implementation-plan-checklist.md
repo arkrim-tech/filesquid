@@ -51,7 +51,7 @@ FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by ga
     - [x] [IO-0.5](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Structural validation
 11. [ ] [Task 0.4](./implementation-plan.md#task-0.4) filesquid-ocfl write and logical-state enumerator
     - [x] [IO-0.6](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Local write order and unpublished vN
-    - [ ] [IO-0.7](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Generic object payload
+    - [x] [IO-0.7](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Generic object payload
     - [ ] [IO-0.8](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Opaque bytes; dual profile is a caller
     - [ ] [IO-0.9](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Enumerate committed logical state
     - [ ] [IO-0.10](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Forward-delta change model

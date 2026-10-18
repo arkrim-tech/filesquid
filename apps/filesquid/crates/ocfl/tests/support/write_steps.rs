@@ -33,7 +33,7 @@ impl fmt::Debug for WriteState {
 }
 
 /// The scenario's rig.
-fn rig(world: &OcflWorld) -> &Rig<MemoryBackend> {
+pub fn rig(world: &OcflWorld) -> &Rig<MemoryBackend> {
     world.write.rig.as_ref().expect("Given an OCFL object")
 }
 
