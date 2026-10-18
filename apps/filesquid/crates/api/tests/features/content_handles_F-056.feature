@@ -30,7 +30,20 @@ Feature: Content handles for media elements
     Given the client has minted a content handle for "holiday.mp4" at version v2
     When a media element requests bytes 0 to 1048575 through the content URL without an Authorization header
     Then the answer should be 206 with "Content-Range" "bytes 0-1048575/104857600"
-    And the answer should carry the content response headers
+    And the answer should carry "Accept-Ranges" "bytes"
+    And the answer should carry "Content-Type" "video/mp4"
+
+  Scenario: A HEAD request through the content handle describes the file without a body
+    Given the client has minted a content handle for "holiday.mp4" at version v2
+    When a media element sends HEAD through the content URL
+    Then the answer should be 200 with an empty body
+    And the answer should carry "Accept-Ranges" "bytes"
+    And the answer should carry "Content-Type" "video/mp4"
+
+  Scenario: An unsatisfiable range keeps its 416 answer
+    Given the client has minted a content handle for "holiday.mp4" at version v2
+    When a media element requests bytes 104857600 to 104857700 through the content URL
+    Then the answer should be 416 with "Content-Range" "bytes */104857600"
 
   Scenario Outline: Every content answer carries the privacy headers
     Given the client has minted a content handle for "holiday.mp4" at version v2
@@ -80,6 +93,7 @@ Feature: Content handles for media elements
     Then the answer should be 403 forbidden with reason "invalid_credentials" and not retryable
     And the answer should be byte for byte the same as for an unknown handle
     And no file should have been read
+    And the activity journal should record one "api.auth.denied" entry with reason "invalid_credentials"
     And no log line or journal entry should contain the presented handle
 
     Examples:
@@ -105,3 +119,21 @@ Feature: Content handles for media elements
     Given the client has minted a content handle for "holiday.mp4" at version v2 on the desktop
     When the desktop app is relaunched
     Then a request through the old content URL should be refused as forbidden with reason "invalid_credentials"
+
+  Scenario: A HEAD denial matches a GET denial without a body
+    When a media element sends HEAD through an unknown handle
+    Then the answer should be 403 with the same headers as a GET denial and an empty body
+
+  Scenario Outline: On filesquid-server a handle ends with its credential or permission
+    Given a filesquid-server where Ana has minted a content handle for "holiday.mp4" at version v2
+    When <event>
+    Then Ana's next request through the content URL should be refused as forbidden with reason "invalid_credentials"
+    And the activity journal should record one "api.auth.denied" entry with reason "invalid_credentials"
+
+    Examples:
+      | event                                                 |
+      | Ana logs out                                          |
+      | Ana's session ends                                    |
+      | the server token that minted the handle is rotated    |
+      | the server restarts                                   |
+      | Ana's permission to read "holiday.mp4" is withdrawn   |

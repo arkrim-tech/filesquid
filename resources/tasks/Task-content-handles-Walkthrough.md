@@ -26,7 +26,7 @@ Owner decision (2026-10-18): `<img>` and `<video>` cannot send `Authorization`, 
 
 ### Why 300 seconds idle and 3,600 seconds absolute
 
-A fixed 5-minute lifetime would break any video that plays for more than 5 minutes: a media element keeps issuing new `Range` requests as it plays and seeks, and through the desktop scheme each answer holds at most 16 MiB, so a 100 MB file needs at least 7 requests spread over the playback. Restarting a 300-second idle window at each accepted request keeps playback and seeking working, while an unused or leaked handle dies within 5 minutes. The 3,600-second absolute lifetime bounds how long any one handle can be kept alive by use. Because expiry is checked only when a request starts, a range read in flight is never cut off. A video paused for more than 5 minutes, or playing for more than 60, gets one refused request; the UI then mints a new handle and resumes at the same position (UI-S-014).
+A fixed 5-minute lifetime would break any video that plays for more than 5 minutes: a media element keeps issuing new `Range` requests as it plays and seeks, and through the desktop scheme each answer holds at most 16 MiB, so a 100 MB file needs at least 7 requests spread over the playback. Restarting a 300-second idle window at each accepted request keeps playback and seeking working, while an unused or leaked handle dies within 5 minutes. The 3,600-second absolute lifetime bounds how long any one handle can be kept alive by use. Because expiry is checked only when a request starts, a range read in flight is never cut off. A video paused for more than 5 minutes, or playing for more than 60 minutes, gets one refused request; the UI then mints a new handle and resumes at the same position (UI-S-014).
 
 `Cache-Control: private, no-store` rather than a cacheable policy: every mint makes a new URL, so a cache would rarely hit, while private bytes would otherwise land in webview, browser or proxy disk caches. Media elements keep their in-memory buffer, so seeking within buffered data is unaffected; whether each webview seeks correctly under `no-store` is measured with S1 (a).
 
@@ -50,7 +50,7 @@ A fixed 5-minute lifetime would break any video that plays for more than 5 minut
 - [API plan](../../apps/filesquid/crates/api/resources/plan.md): API-F1.3 description, acceptance gates, agent prompt, dependencies (API-F1.7, already complete), related requirements and tests; 16 → 20 hours. [UI plan](../../apps/filesquid/ui/resources/plan.md): UI-F2.2 description, dependency note and related requirements (estimate unchanged).
 - [Implementation plan](../implementation-plan.md): Task FS-1.2 description, 32 → 36 hours; phase F1 152 → 156; total 2,597 → 2,601; MVP 758 → 762.
 - [DE-F1.1 walkthrough](../../apps/filesquid/crates/desktop/resources/tasks/Task-DE-F1.1-Walkthrough.md): open item marked resolved with the date and links.
-- BDD: [`content_handles_F-056.feature`](../../apps/filesquid/crates/api/tests/features/content_handles_F-056.feature) (18 scenarios counting outline examples, skipped until API-F1.3 adds step definitions).
+- BDD: [`content_handles_F-056.feature`](../../apps/filesquid/crates/api/tests/features/content_handles_F-056.feature) (26 scenarios counting outline examples after review round 1, skipped until API-F1.3 adds step definitions), and three UI scenarios in [`client_authorisation_UI-S-014.feature`](../../apps/filesquid/ui/tests/features/client_authorisation_UI-S-014.feature) for content-handle previews.
 
 The PRD needed no change: F-056 already requires deny-by-default authorisation and opaque handles, and a content handle is minted under that authorisation. No README change: no command, service or environment variable was added.
 
@@ -116,6 +116,33 @@ filesquid-api cucumber (tests/features, includes content_handles_F-056.feature):
 7 features
 106 scenarios (28 passed, 78 skipped)
 180 steps (102 passed, 78 skipped)
+```
+
+## Review round 1 (Cubic)
+
+All 13 findings were valid and fixed:
+
+1. API-F1.3 acceptance named "other-file handles", which is not an invalid-handle case. It now lists unknown, malformed, expired, evicted, revoked and policy-failed handles, a proof that a handle serves only its own file version, and `HEAD` answers.
+2. UI-F2.2 had no scenario for the media-error re-mint. Three scenarios were added to `client_authorisation_UI-S-014.feature` (single re-mint, resume position and paused state, error after a failed retry) and linked from UI-F2.2.
+3. ADR 030 Consequences stated native playback as settled. It is now the expected outcome, to be confirmed by S1 (a).
+4. There was no server-host scenario. A `filesquid-server` outline now covers logout, session end, token rotation, restart and permission withdrawal.
+5. The refusal scenarios did not assert `api.auth.denied`. They now do.
+6. There was no `HEAD` scenario and no check of the success headers. Added, with `Accept-Ranges: bytes` and the stored media type.
+7. The unsatisfiable example did not assert `416`. A dedicated scenario now asserts `416` and `Content-Range: bytes */104857600`.
+8. The DE-F1.1 walkthrough still read as open. The old paragraph is labelled historical, and only the playback measurements are said to remain open.
+9. The ADR index row is now dated in its Status column, with ADR 030's RFC 3339 timestamp.
+10. The architecture narrative now says that the client prefixes the host's API base.
+11. The ADR 030 rationale now gives the real exposure: at most 60 minutes, and beyond 5 minutes only while the handle is in use.
+12. This walkthrough now says "60 minutes", not just "60".
+13. `HEAD` cannot carry a body. ADR 030 and API-S-018 now require identical status, headers and `ApiError` fields for every denial: the same body for `GET`, and an empty body for `HEAD`.
+
+`bash scripts/pre-commit.sh` exit 0 after the fixes. The `filesquid-api` cucumber summary from that run (8 new scenarios, all skipped until API-F1.3):
+
+```text
+[Summary]
+7 features
+114 scenarios (28 passed, 86 skipped)
+188 steps (102 passed, 86 skipped)
 ```
 
 ## Mocked Environment Variables

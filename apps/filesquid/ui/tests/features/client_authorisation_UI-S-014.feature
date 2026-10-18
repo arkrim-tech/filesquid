@@ -52,7 +52,29 @@ Feature: Client authorisation against the deny-by-default API
     And the call should fail with status 0 and reason "invalid_credentials"
     And the error should not echo the token
 
+  # Content handles for media elements (UI-S-014, API-S-018; built with UI-F2.2)
+  Scenario: A native preview loads through a content handle, never the token
+    Given the client knows a token
+    When the file browser shows a native video preview of "holiday.mp4"
+    Then the video source should be a content handle URL on the active host's API base
+    And no URL, history entry, storage entry or page markup should contain the token
+    And the content handle URL should not be in the page address, history, storage or any link that opens another window
+
+  Scenario: An expired handle is re-minted once and playback resumes where it was
+    Given a native video preview of "holiday.mp4" is paused at 42 seconds
+    And its content handle has expired
+    When the video reports a media error
+    Then the client should mint exactly one new content handle
+    And the video should resume at 42 seconds and stay paused
+
+  Scenario: A preview whose new handle also fails shows the error
+    Given a native video preview of "holiday.mp4" whose content handle has expired
+    And minting a new content handle succeeds but the new handle is refused too
+    When the video reports a media error
+    Then the client should not mint a third content handle
+    And the preview should show the error from the active label table
+
   # Source
   # - apps/filesquid/ui/resources/srs.md UI-S-014
-  # - apps/filesquid/crates/api/resources/srs.md API-S-004, API-S-015
+  # - apps/filesquid/crates/api/resources/srs.md API-S-004, API-S-015, API-S-018
   # - resources/prd.md F-056
