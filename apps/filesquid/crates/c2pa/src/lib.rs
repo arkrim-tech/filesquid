@@ -2,9 +2,10 @@
 //! scratch in Rust (FileSquid ADR 026).
 //!
 //! This release provides the engine's boundaries (byte I/O, remote fetching
-//! and the crypto backend) and manifest store parsing. Locating stores in
-//! asset formats, validation, minting and editing are not implemented yet;
-//! they arrive in later releases built on these modules. FileSquid is one
+//! and the crypto backend), manifest store parsing, locating stores in JPEG
+//! and PNG assets, and hard-binding validation. Signature and trust
+//! validation, minting and editing are not implemented yet; they arrive in
+//! later releases built on these modules. FileSquid is one
 //! caller; any Rust program can use the crate on its own. The core is
 //! bytes-only and runs anywhere Rust runs, including
 //! `wasm32-unknown-unknown`:
@@ -22,15 +23,23 @@
 //!   that carry C2PA data.
 //! - [`manifest`]: manifest stores, manifests, claims (v1 and v2), claim
 //!   signatures and assertions, with the specification's failure codes.
-//! - [`read`]: reading a store from a byte source (a sidecar `.c2pa` file)
-//!   or by remote reference through the caller's fetcher.
+//! - [`format`](mod@format): format handlers that lay out an asset's boxes and locate
+//!   its embedded store (JPEG APP11 and PNG `caBX`); other formats are
+//!   reported as unsupported.
+//! - [`read`]: reading a store from a byte source (a sidecar `.c2pa` file),
+//!   from an asset through its format handler, or by remote reference
+//!   through the caller's fetcher.
+//! - [`binding`]: validating the hard binding (data hash, box hash, BMFF
+//!   hash) of a store against the asset's bytes.
 //!
 //! Trust lists and signers are always supplied by the caller; the crate ships
 //! no implicit trust store and operates no certificate authority.
 
+pub mod binding;
 pub mod cbor;
 pub mod crypto;
 pub mod fetch;
+pub mod format;
 pub mod io;
 pub mod jumbf;
 pub mod manifest;

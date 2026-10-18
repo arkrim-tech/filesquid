@@ -157,7 +157,7 @@ pub enum CryptoError {
 /// Feed `range` of `source` into `hasher`, [`DIGEST_CHUNK_BYTES`] at a time.
 ///
 /// The loop is bounded by the range length divided by the chunk size.
-async fn hash_range<S: ByteSource + ?Sized>(
+pub(crate) async fn hash_range<S: ByteSource + ?Sized>(
     hasher: &mut dyn IncrementalHasher,
     source: &mut S,
     range: &Range<u64>,

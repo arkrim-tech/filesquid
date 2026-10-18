@@ -76,10 +76,43 @@ Feature: Reusable filesquid-c2pa engine
     When I record an edit
     Then a new manifest should reference the prior asset as a parent ingredient
 
+  # C2PA-S-005: format handlers
   Scenario: Unsupported formats are reported
     Given an asset in a format without a handler
     When I read it with filesquid-c2pa
     Then the result should say the format is unsupported
+
+  Scenario: Read a manifest store embedded in a PNG
+    Given a PNG with an embedded C2PA manifest store
+    When I read it with filesquid-c2pa
+    Then the active manifest, its claim and its assertions should be returned
+
+  # C2PA-S-002: hard bindings
+  Scenario: A JPEG's data hash matches its content
+    Given a JPEG whose manifest binds its content with a data hash
+    When I validate its hard binding with filesquid-c2pa
+    Then the hard binding should report "assertion.dataHash.match"
+
+  Scenario: A changed JPEG fails its data hash
+    Given a JPEG whose manifest binds its content with a data hash
+    And one byte of its image data is changed
+    When I validate its hard binding with filesquid-c2pa
+    Then the hard binding should report "assertion.dataHash.mismatch"
+
+  Scenario: A PNG's box hash matches its chunks
+    Given a PNG whose manifest binds its content with a box hash
+    When I validate its hard binding with filesquid-c2pa
+    Then the hard binding should report "assertion.boxesHash.match"
+
+  Scenario: A chunk the box hash does not list is rejected
+    Given a PNG whose box hash leaves out one chunk
+    When I validate its hard binding with filesquid-c2pa
+    Then the hard binding should report "assertion.boxesHash.unknownBox"
+
+  Scenario: An MP4's BMFF hash matches its boxes
+    Given an MP4 bound by a BMFF hash in a sidecar manifest store
+    When I validate its hard binding with filesquid-c2pa
+    Then the hard binding should report "assertion.bmffHash.match"
 
   Scenario: Stand-alone dependencies
     When I inspect filesquid-c2pa library dependencies
@@ -169,6 +202,6 @@ Feature: Reusable filesquid-c2pa engine
   # Source
   # - resources/prd.md F-054
   # - resources/srs.md SRS-F-054
-  # - apps/filesquid/crates/c2pa/resources/srs.md C2PA-S-001, C2PA-S-006, C2PA-S-007, C2PA-S-008, C2PA-S-009
+  # - apps/filesquid/crates/c2pa/resources/srs.md C2PA-S-001, C2PA-S-002, C2PA-S-005, C2PA-S-006, C2PA-S-007, C2PA-S-008, C2PA-S-009
   # - resources/architecture/026-filesquid-provenance-engine.md
   # - resources/architecture/028-filesquid-ui-packages-and-panel-composition.md

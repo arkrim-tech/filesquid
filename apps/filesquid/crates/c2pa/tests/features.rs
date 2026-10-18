@@ -6,6 +6,9 @@
 //! editing, the UI panel) have no step definitions yet and are reported as
 //! skipped.
 
+#[path = "support/assets.rs"]
+#[allow(dead_code)]
+mod assets;
 #[path = "support/deps.rs"]
 #[allow(dead_code)]
 mod deps;
@@ -26,6 +29,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use cucumber::{given, then, when, writer, StatsWriter as _, World, WriterExt as _};
+use filesquid_c2pa::binding::{validate_hard_binding, BindingReport, BindingStatus};
 use filesquid_c2pa::crypto::{CryptoBackend, CryptoError, RustCryptoBackend, SigningAlgorithm};
 use filesquid_c2pa::fetch::{
     fetch_bounded, FetchError, FetchPurpose, FetchRequest, FetchResponse, Fetcher, OfflineFetcher,
@@ -35,7 +39,9 @@ use filesquid_c2pa::jumbf::JumbfError;
 use filesquid_c2pa::manifest::{
     AssertionContent, ClaimVersion, IgnoreReason, ManifestStore, ParseLimits, StoreError,
 };
-use filesquid_c2pa::read::{fetch_remote_manifest_store, read_manifest_store, ReadError};
+use filesquid_c2pa::read::{
+    fetch_remote_manifest_store, read_asset, read_manifest_store, AssetManifest, ReadError,
+};
 
 /// RFC 8032 section 7.1 TEST 1 public key as an Ed25519 SubjectPublicKeyInfo.
 const RFC8032_T1_SPKI: &str =
@@ -136,6 +142,14 @@ struct C2paWorld {
     store: Option<Result<ManifestStore, ReadError>>,
     /// Request purposes seen by a store-serving fetcher.
     purposes: Vec<FetchPurpose>,
+    /// The asset a scenario reads or validates.
+    asset: Vec<u8>,
+    /// A sidecar store for the asset, when the store is not embedded.
+    asset_sidecar: Option<Vec<u8>>,
+    /// Outcome of the last asset read.
+    asset_read: Option<Result<AssetManifest, ReadError>>,
+    /// Outcome of the last hard-binding validation.
+    binding: Option<BindingReport>,
 }
 
 impl C2paWorld {
@@ -584,6 +598,121 @@ fn pin_is_2_4(world: &mut C2paWorld) {
         readme.contains("Pinned specification: C2PA Technical Specification 2.4"),
         "README must pin C2PA 2.4"
     );
+}
+
+#[given("a JPEG with an embedded C2PA manifest store")]
+fn jpeg_with_store(world: &mut C2paWorld) {
+    world.asset = assets::assemble(&assets::pieces(
+        assets::Kind::Jpeg,
+        &fixtures::sample_store(),
+    ))
+    .0;
+}
+
+#[given("a PNG with an embedded C2PA manifest store")]
+fn png_with_store(world: &mut C2paWorld) {
+    world.asset = assets::assemble(&assets::pieces(
+        assets::Kind::Png,
+        &fixtures::sample_store(),
+    ))
+    .0;
+}
+
+#[given("an asset in a format without a handler")]
+fn unsupported_asset(world: &mut C2paWorld) {
+    world.asset = b"GIF89a\x01\x00\x01\x00\x00\x00\x00;".to_vec();
+}
+
+#[when("I read it with filesquid-c2pa")]
+async fn read_the_asset(world: &mut C2paWorld) {
+    let mut source = MemorySource::new(world.asset.clone());
+    world.asset_read = Some(read_asset(&mut source, &ParseLimits::default()).await);
+}
+
+#[then("the active manifest, its claim and its assertions should be returned")]
+fn embedded_manifest_returned(world: &mut C2paWorld) {
+    let read = world.asset_read.take().expect("read ran");
+    let Ok(AssetManifest::Embedded { store, .. }) = read else {
+        panic!("embedded store expected: {read:?}");
+    };
+    let manifest = store.active_manifest().content.as_ref().expect("manifest");
+    assert_eq!(store.active_manifest().label, fixtures::ACTIVE_LABEL);
+    assert_eq!(manifest.claim.created_assertions.len(), 4);
+    assert_eq!(manifest.assertions.len(), 4);
+}
+
+#[then("the result should say the format is unsupported")]
+fn format_unsupported(world: &mut C2paWorld) {
+    assert_eq!(
+        world.asset_read.take(),
+        Some(Ok(AssetManifest::Unsupported))
+    );
+}
+
+#[given("a JPEG whose manifest binds its content with a data hash")]
+fn jpeg_data_hash(world: &mut C2paWorld) {
+    world.asset = assets::data_hash_asset(assets::Kind::Jpeg);
+}
+
+#[given("one byte of its image data is changed")]
+fn change_image_byte(world: &mut C2paWorld) {
+    // The last byte before EOI is entropy-coded data.
+    let at = world.asset.len() - 3;
+    world.asset[at] ^= 0x55;
+}
+
+#[given("a PNG whose manifest binds its content with a box hash")]
+fn png_box_hash(world: &mut C2paWorld) {
+    world.asset = assets::box_hash_asset(assets::Kind::Png);
+}
+
+#[given("a PNG whose box hash leaves out one chunk")]
+fn png_box_hash_missing_chunk(world: &mut C2paWorld) {
+    world.asset = assets::box_hash_asset_with(assets::Kind::Png, |pieces| {
+        let mut entries = assets::default_box_entries(pieces);
+        entries.remove(1);
+        entries
+    });
+}
+
+#[given("an MP4 bound by a BMFF hash in a sidecar manifest store")]
+fn mp4_bmff_hash(world: &mut C2paWorld) {
+    let (bytes, ranges) = assets::mp4();
+    let roots = [ranges[2].clone(), ranges[5].clone(), ranges[6].clone()];
+    let hash = assets::bmff_expected_hash(&bytes, &roots, &[]);
+    let map = assets::bmff_hash_map(assets::bmff_required_exclusions(), &hash);
+    world.asset_sidecar = Some(assets::binding_store("c2pa.hash.bmff.v3", &map));
+    world.asset = bytes;
+}
+
+#[when("I validate its hard binding with filesquid-c2pa")]
+async fn validate_binding(world: &mut C2paWorld) {
+    let limits = ParseLimits::default();
+    let (store, layout) = match world.asset_sidecar.take() {
+        Some(store) => (
+            ManifestStore::from_bytes(store, &limits).expect("store"),
+            None,
+        ),
+        None => match read_asset(&mut MemorySource::new(world.asset.clone()), &limits).await {
+            Ok(AssetManifest::Embedded { store, layout }) => (*store, Some(layout)),
+            other => panic!("embedded store expected: {other:?}"),
+        },
+    };
+    let mut source = MemorySource::new(world.asset.clone());
+    let report = validate_hard_binding(&store, &mut source, layout.as_ref(), &RustCryptoBackend)
+        .await
+        .expect("asset readable");
+    world.binding = Some(report);
+}
+
+#[then(expr = "the hard binding should report {string}")]
+fn binding_reports(world: &mut C2paWorld, expected: String) {
+    let report = world.binding.take().expect("validation ran");
+    let code = match &report.status {
+        BindingStatus::Valid { code } | BindingStatus::Invalid { code, .. } => *code,
+        BindingStatus::NotChecked { reason } => panic!("not checked: {reason}"),
+    };
+    assert_eq!(code, expected);
 }
 
 /// Remove a directory, treating "already absent" as success.

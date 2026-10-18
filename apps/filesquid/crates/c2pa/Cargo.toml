@@ -92,8 +92,29 @@ name = "unit_read_logs"
 path = "tests/unit/read_logs.rs"
 
 [[test]]
+name = "unit_format"
+path = "tests/unit/format.rs"
+required-features = ["rust-crypto"]
+
+[[test]]
+name = "unit_binding"
+path = "tests/unit/binding.rs"
+required-features = ["rust-crypto"]
+
+[[test]]
+name = "unit_bmff"
+path = "tests/unit/bmff.rs"
+required-features = ["rust-crypto"]
+
+[[test]]
+name = "performance_bindings"
+path = "tests/performance/bindings.rs"
+required-features = ["rust-crypto"]
+
+[[test]]
 name = "integration_conformance_parse"
 path = "tests/integration/conformance_parse.rs"
+required-features = ["rust-crypto"]
 
 [[test]]
 name = "performance_parse"
