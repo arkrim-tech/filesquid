@@ -2,8 +2,8 @@
 //! hosts without a database. Everything is lost when the process ends. One mutex guards the
 //! whole state. A commit runs every check that can fail first, then applies its changes,
 //! its journal entry and its receipt in place with infallible map writes, so they land
-//! together or not at all. Nothing is copied, so a commit costs the size of its change set,
-//! not the size of the catalog.
+//! together or not at all. Nothing is copied, so a commit no longer costs a copy of the
+//! catalog. A purge or virtual-collection removal still scans every stored membership.
 
 use super::catalog::{
     CatalogChange, CatalogCommit, CatalogError, CommitReceipt, FileEntry, FileListing, FileScope,

@@ -18,8 +18,8 @@
 //! - A repeated operation ID answers its first outcome without a second change.
 //! - Deleting a collection or virtual collection keeps its files; removing a file from a
 //!   virtual collection keeps its collection and other memberships.
-//! - Deletion is recoverable for [`RECOVERABLE_DAYS`] days; permanent deletion needs a
-//!   [`PurgeConfirmation`] of the exact scope. Ordinary listings never show hidden or
+//! - A deleted file is recoverable until its purge-after time, [`RECOVERABLE_DAYS`] days by
+//!   default; an earlier permanent deletion needs a [`PurgeConfirmation`] of the exact scope. Ordinary listings never show hidden or
 //!   deleted files.
 //! - Every commit carries one redacted journal entry for the host to store in the same
 //!   transaction, including a command that changed nothing; refused commands are journaled
