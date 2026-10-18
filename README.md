@@ -43,6 +43,12 @@ cd apps/filesquid/ui && npm ci
 cd ../../imagesquid && npm ci
 ```
 
+Or let one script do all of the setup. `scripts/setup-dev-environment.sh` is idempotent and safe to run at the start of every session. It installs the toolchain pinned in `apps/filesquid/rust-toolchain.toml` and the `wasm32-unknown-unknown` target. It runs `cargo fetch --locked` and `npm ci` in both UI packages. When `python3` exists, it installs the community OCFL validator `ocfl-py` 2.1.0 with pip (it does not install `rocfl`). It then pre-warms the Cargo target with `cargo build --workspace --tests --locked`, using the same shared-target lock and Cargo settings as the pre-commit hook. Every step logs to stdout with a UTC timestamp and has a time limit (`FILESQUID_SETUP_STEP_TIMEOUT`, default 1800 seconds; `FILESQUID_SETUP_BUILD_TIMEOUT`, default 3600 seconds for the pre-warm). A failed required step (toolchain, fetch, `npm ci`) exits non-zero and names the step. A failed optional step (`ocfl-py`, pre-warm) prints a warning and the script continues. In a cloud environment, put this one line in the environment's setup script; it runs from the repository checkout:
+
+```sh
+bash scripts/setup-dev-environment.sh
+```
+
 ## Project naming
 
 Use **FileSquid** for displayed branding of the product and **filesquid** for technical identifiers (Cargo packages `filesquid-core`, `filesquid-ocfl`, `filesquid-metadata`, `filesquid-c2pa`, `filesquid-cli`, `filesquid-api`, `filesquid-native`, `filesquid-server`, `filesquid-desktop`; the one command-line tool is `fsquid`; npm scope `@filesquid`; desktop identifier `tech.filesquid.desktop`; hosted service domain `filesquid.tech`). **ImageSquid** is a distribution: displayed brand ImageSquid, npm package `@imagesquid/ui`, desktop identifier `app.imagesquid.desktop`, domain `imagesquid.app`. Internal code, schemas and APIs use FileSquid's internal names (repository, library, collection, virtual collection, virtual exhibit, file); a distribution changes only its UI labels ([terminology](./resources/product-vision.md#terminology)). The `ocfl`, `metadata` and `c2pa` crates stay independently installable and publishable for programmes that never run the FileSquid app.
@@ -133,14 +139,26 @@ Both produce `apps/filesquid/target/debug/filesquid-desktop`, branded by the ove
 
 ## Run tests
 
-This repository has no hosted CI. The gate before every push is the local pre-commit hook, which runs every verifier under `scripts/` (branch protection and the `<type>/<slug>` branch-name prefix, ports, document sync, traceability, links, workspace boundaries, logging, formatting, documentation checks, then Clippy, Cargo and UI tests). Run it by hand from the repository root or install it once as the git hook:
+This repository has no hosted CI. The gate before every push is the local pre-commit hook. On every commit it runs the fast verifiers under `scripts/`: branch protection and the `<type>/<slug>` branch-name prefix, ports, document sync, traceability, links, workspace boundaries, logging, formatting, documentation checks, and the change-scope helper's own tests. Then it runs Clippy, Cargo and UI tests **for what changed**. Run it by hand from the repository root, or install it once as the git hook:
 
 ```sh
-bash scripts/pre-commit.sh                     # run all gates now
+bash scripts/pre-commit.sh                     # change-aware run (the normal commit gate)
+FULL=1 bash scripts/pre-commit.sh              # full suite: before a PR is first marked ready, and on its final commit before merge
 ln -s ../../scripts/pre-commit.sh .git/hooks/pre-commit   # or install as the git pre-commit hook
 ```
 
-`FILESQUID_SKIP_TESTS=1 git commit ...` skips the lint and test step for a work-in-progress commit; run `bash scripts/verify_tests.sh` before pushing. `FILESQUID_E2E=1` adds the Playwright end-to-end suites, and `FILESQUID_DESKTOP_E2E=1` the desktop packaged-window suite. The individual commands the hook runs are listed below.
+The lint and test step is change-aware. `scripts/changed_scope.sh` compares the working tree with its merge-base with `origin/main`. It counts committed, staged, unstaged and untracked files, and prints one scope; run it on its own to see the scope and the reason:
+
+- `docs`: only Markdown, `resources/` or `.agents/` files changed. No Cargo or npm step runs, and each skipped step is printed with the reason.
+- `rust:<crates>`: Clippy, tests and rustdoc with `-p` for the changed crates and every workspace crate that depends on them. Each listed module crate is also tested alone. The desktop `test-webdriver` steps run only when `filesquid-desktop` is listed.
+- `npm:<packages>`: lint, typecheck and tests for the changed UI packages. ImageSquid is included whenever `@filesquid/ui` changes.
+- `full`: every step. This happens when `apps/filesquid/Cargo.toml` or `Cargo.lock`, a `rust-toolchain` file, a `package.json` or `package-lock.json`, `scripts/` or a generated contract file (`openapi.json`, `schema.d.ts`) changed. It also happens for any unclassified file, when `FULL=1` is set, when `origin/main` is unknown (run `git fetch origin main`), or when detection fails.
+
+The hook's first and last lines name the scope that ran (`✅ All Pre-Commit Hooks Passed! Test scope: full (…s)`), so a reviewer can tell whether a run was full. On a warm Cargo cache, a docs-only commit takes seconds and a single-crate change takes about a minute; see the [walkthrough](./resources/tasks/Task-build-change-aware-pre-commit-Walkthrough.md) for measured timings. `bash scripts/verify_changed_scope.sh` tests the scope helper on its own, in a few seconds.
+
+Every cargo command in the hook, and the setup script's pre-warm, holds an exclusive `flock` on a lock file beside the Cargo target directory (`<CARGO_TARGET_DIR>.lock`). Agents that share one `CARGO_TARGET_DIR` therefore never build into it at the same time. The wait is bounded by `FILESQUID_CARGO_LOCK_WAIT` seconds (default 1800). On timeout the command does not run and the message names the lock file. Where `flock` is not installed (for example macOS without util-linux) the hook warns and runs without the lock. The hook and the setup script also default `CARGO_INCREMENTAL=0` and `CARGO_PROFILE_DEV_DEBUG=0` (set either yourself to override), so both build the same, smaller artifacts.
+
+`FILESQUID_SKIP_TESTS=1 git commit ...` skips the lint and test step for a work-in-progress commit; run `bash scripts/verify_tests.sh` before pushing. `FILESQUID_E2E=1` adds the Playwright end-to-end suites for the UI packages in scope, and `FILESQUID_DESKTOP_E2E=1` adds the desktop packaged-window suite when the desktop crate is in scope. Combine either with `FULL=1` to force it. The individual commands of a full run are listed below.
 
 Rust workspace (lint first; the cucumber BDD features in each crate's `tests/features/` run as part of `cargo test` and write `tests/allure-results/cucumber-junit.xml` per crate):
 

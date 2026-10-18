@@ -27,13 +27,13 @@ Only the owner edits this section. It is updated after the owner's manual testin
 
 ## The loop
 
-1. **Open the PR.** When a task is complete and `bash scripts/pre-commit.sh` exits 0, push the task branch and open a pull request against `main`. Follow [pr-documentation-update.md](./pr-documentation-update.md) first.
+1. **Open the PR.** When a task is complete and the full suite passes (`FULL=1 bash scripts/pre-commit.sh` exits 0 and its summary line reads `Test scope: full`; see [local-verification.md](./local-verification.md#change-aware-test-scope)), push the task branch and open a pull request against `main`. Follow [pr-documentation-update.md](./pr-documentation-update.md) first.
 2. **Wait for Cubic.** Subscribe to the PR's activity so Cubic's review wakes the agent the moment it is posted, and keep a fallback check-in about 10 minutes out in case an event is lost. Do not poll with `sleep`. Cubic reviews each new head commit on its own; it is done when its `cubic · AI code reviewer` check run on that commit has completed (a clean pass posts no new review). If that check run has not completed 15 minutes after the push, re-trigger Cubic with the "Re-trigger cubic" link in its last review or by mentioning `@cubic-dev-ai` in a PR comment. Re-trigger at most 3 times per head commit; if Cubic still has not reviewed it, stop, do not merge, and report the blocker to the owner.
 3. **Fix every Cubic comment.** For each open Cubic review thread:
    - Fix it in code or documentation, following every other rule in `.agents/rules/` (TDD, lint, docs, links).
    - If the finding is wrong, reply on the thread with the reasoning and evidence, then resolve the thread. Never dismiss a finding silently.
    - If you disagree with a security finding, leave the thread open and ask the owner.
-4. **Push the fixes.** Rerun `bash scripts/pre-commit.sh`, commit with Conventional Commits, and push to the same branch. Reply on each thread you fixed, naming the commit, and resolve it.
+4. **Push the fixes.** Rerun `bash scripts/pre-commit.sh` (its change-aware scope is enough for a fix commit), commit with Conventional Commits, and push to the same branch. Reply on each thread you fixed, naming the commit, and resolve it.
 5. **Repeat** steps 2 to 4 until the merge conditions below hold.
 
 ## Merge conditions
@@ -42,7 +42,7 @@ Merge the PR into `main` only when all of these are true:
 
 - Cubic has reviewed the current head commit: its `cubic · AI code reviewer` check run on that commit has completed with `success`. A clean pass posts no new review, so the check run is the signal; new findings arrive as review comments.
 - No Cubic review thread is unresolved.
-- `bash scripts/pre-commit.sh` exited 0 on the current head commit.
+- `FULL=1 bash scripts/pre-commit.sh` exited 0 on the current head commit, with the summary line `Test scope: full`. A change-aware run is not enough for the final commit.
 - The PR has no merge conflict with `main`. Resolve a conflict by merging `main` into the branch, then return to step 2.
 - No human reviewer has requested changes that are still open.
 
