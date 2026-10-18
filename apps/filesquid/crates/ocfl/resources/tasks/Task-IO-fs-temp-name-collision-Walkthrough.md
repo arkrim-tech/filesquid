@@ -12,8 +12,8 @@ Traceability: [OCFL-S-007 storage backend](../../tests/features/storage_backend_
 
 ## Change
 
-- Replaced the per-instance `next_id` field with a process-wide `static NEXT_SUFFIX: AtomicU64`. The process id plus a process-wide sequence number is unique for every call in every process, whatever the clock resolution.
-- The nanosecond timestamp stays, so a reused process id does not meet stale temporary files left by an earlier, crashed process.
+- Replaced the per-instance `next_id` field with a process-wide `static NEXT_SUFFIX: AtomicU64`. Backend instances in one process never reuse a sequence number, whatever the clock resolution. Processes running at the same time have distinct process ids.
+- The nanosecond timestamp lowers the chance that a reused process id meets stale temporary files left by an earlier, crashed process. Wall-clock time can move backwards, so it is not a uniqueness guarantee. If such a stale file does exist, `create_new_checked` refuses it with `AlreadyExists` rather than reusing it.
 - The `.fsquid-tmp-` prefix and the suffix format are unchanged.
 - Two unit tests in `storage::fs::tests`:
   - `fresh_instances_on_one_root_never_share_a_sequence_number` fails deterministically on the old code.

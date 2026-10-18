@@ -195,10 +195,11 @@ impl FsBackend {
     }
 
     /// A process-unique suffix for temporary names and upload identifiers:
-    /// `<pid>-<nanos>-<n>`. The process id and the process-wide sequence
-    /// number `n` make it unique across all instances and processes; the
-    /// timestamp keeps a reused process id from meeting stale files left by
-    /// an earlier process.
+    /// `<pid>-<nanos>-<n>`. The process-wide sequence number `n` keeps
+    /// instances in one process apart, and the process id keeps concurrent
+    /// processes apart. The timestamp only lowers the chance that a reused
+    /// process id meets stale files left by an earlier process; wall-clock
+    /// time is not a uniqueness guarantee.
     fn unique_suffix(&self) -> String {
         let n = NEXT_SUFFIX.fetch_add(1, Ordering::Relaxed);
         let nanos = SystemTime::now()
