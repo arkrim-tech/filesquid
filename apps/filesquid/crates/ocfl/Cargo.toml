@@ -17,6 +17,10 @@ default = ["fs"]
 fs = []
 
 [dependencies]
+# Inventory JSON. Default features off (as filesquid-c2pa), so the crate
+# still builds for wasm32-unknown-unknown; `std` is all it needs.
+serde = { version = "1", default-features = false, features = ["std"] }
+serde_json = { version = "1", default-features = false, features = ["std"] }
 sha2 = "0.11"
 thiserror = "2"
 tracing = "0.1"
@@ -33,6 +37,22 @@ path = "tests/unit/git_guard.rs"
 name = "integration_hierarchy_guard"
 path = "tests/integration/hierarchy_guard.rs"
 required-features = ["fs"]
+
+[[test]]
+name = "unit_digest"
+path = "tests/unit/digest.rs"
+
+[[test]]
+name = "unit_inventory"
+path = "tests/unit/inventory.rs"
+
+[[test]]
+name = "unit_namaste_sidecar"
+path = "tests/unit/namaste_sidecar.rs"
+
+[[test]]
+name = "integration_fixture_inventories"
+path = "tests/integration/fixture_inventories.rs"
 
 [[test]]
 name = "unit_storage_key"

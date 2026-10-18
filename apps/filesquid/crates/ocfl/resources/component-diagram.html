@@ -70,7 +70,7 @@ code{font-size:13px}
 <main>
 <h1>filesquid-ocfl component diagram</h1>
 <p class="meta">OCFL module of FileSquid · <code>apps/filesquid/crates/ocfl</code> · drawn against the code on <code>filesquid-product</code> · 2026-10-15</p>
-<p>filesquid-ocfl is the <code>ocfl</code> module of FileSquid: an OCFL 1.1 library for reading, writing, validating and browsing preservation storage that still builds, tests and publishes on its own (ADRs 016, 023, 029). FileSquid UIs reach it only through the one FileSquid API (<code>filesquid-api</code>, ADR 030), served by the <code>filesquid-desktop</code> and <code>filesquid-server</code> hosts. Today it has the Git guard (no <code>.git</code> in a storage or object root, and no soft links, hard links or empty directories in the storage hierarchy; IO-0.2) and the async storage backend trait with local filesystem and in-memory backends (IO-0.1); the path-based logical-file helpers now go through the filesystem backend. Inventories, versions, digests, validation, the git-like change model, the S3-compatible backend and the API routes are planned. The Drive-style browser is the <code>&lt;fs-file-browser&gt;</code> custom element in <code>@filesquid/ui</code>.</p>
+<p>filesquid-ocfl is the <code>ocfl</code> module of FileSquid: an OCFL 1.1 library for reading, writing, validating and browsing preservation storage that still builds, tests and publishes on its own (ADRs 016, 023, 029). FileSquid UIs reach it only through the one FileSquid API (<code>filesquid-api</code>, ADR 030), served by the <code>filesquid-desktop</code> and <code>filesquid-server</code> hosts. Today it has the Git guard (no <code>.git</code> in a storage or object root, and no soft links, hard links or empty directories in the storage hierarchy; IO-0.2) the async storage backend trait with local filesystem and in-memory backends (IO-0.1), and the OCFL 1.1 file formats: SHA-256 and SHA-512 digests, a strict inventory parser that names the OCFL validation code of each refusal, digest sidecars and NAMASTE declarations (IO-0.3); the path-based logical-file helpers now go through the filesystem backend. Object discovery and reads, structural validation, the git-like change model, the S3-compatible backend and the API routes are planned. The Drive-style browser is the <code>&lt;fs-file-browser&gt;</code> custom element in <code>@filesquid/ui</code>.</p>
 <ul class="legend" aria-label="Legend">
 <li><span class="sw built"></span>Built · working code and tests</li>
 <li><span class="sw scaffold"></span>Scaffold · stub or partial</li>
@@ -153,9 +153,9 @@ code{font-size:13px}
 <polyline class="edge" points="700,216 1090,216" marker-end="url(#o1)"/>
 <text class="elabel" x="895" y="210" text-anchor="middle">FsBackend today</text>
 <text class="small" x="290" y="272" text-anchor="start">Planned core</text>
-<g class="box planned">
+<g class="box built">
 <rect x="290" y="280" width="230" height="52" rx="6"/>
-<text class="badge" x="512" y="295" text-anchor="end">PLANNED</text>
+<text class="badge" x="512" y="295" text-anchor="end">BUILT</text>
 <text class="name" x="300" y="301">Inventory model</text>
 <text class="sub" x="300" y="319">NAMASTE, sidecars, SHA-256</text>
 </g>
@@ -357,7 +357,7 @@ code{font-size:13px}
 <tr><td>Logical-file helpers (<code>write_logical_file</code>, <code>read_logical_file</code>)</td><td><span class="tag built">BUILT</span></td><td><a href="./plan.md">IO-0.1</a></td><td>0.3</td><td>now over <code>FsBackend</code>, bounded chunks</td></tr>
 <tr><td>BDD harness (<code>tests/features.rs</code>)</td><td><span class="tag built">BUILT</span></td><td>—</td><td>—</td><td>6 of 9 F-051 scenarios and the OCFL-S-007 backend feature have steps</td></tr>
 <tr><td>Async storage backend trait; local filesystem and in-memory backends</td><td><span class="tag built">BUILT</span></td><td><a href="./plan.md">IO-0.1</a></td><td>0.3</td><td>OCFL-S-007; wasm32 build checked by <code>cargo test</code></td></tr>
-<tr><td>Inventory model, NAMASTE, sidecars, SHA-256</td><td><span class="tag planned">PLANNED</span></td><td><a href="./plan.md">IO-0.3</a></td><td>0.3</td><td>OCFL-S-002</td></tr>
+<tr><td>Inventory model, NAMASTE, sidecars, SHA-256 (<code>Inventory::parse</code>, <code>DigestAlgorithm</code>, <code>verify_sidecar</code>, <code>Declaration</code>)</td><td><span class="tag built">BUILT</span></td><td><a href="./plan.md">IO-0.3</a></td><td>0.3</td><td>OCFL-S-002; writes sha256, reads sha256 and sha512; strict parsing of untrusted bytes (64 MiB, nesting 8, no repeated keys) with OCFL 1.1 codes; every target including wasm32</td></tr>
 <tr><td>Root open, read and browse resolver</td><td><span class="tag planned">PLANNED</span></td><td><a href="./plan.md">IO-0.4</a></td><td>0.3</td><td>OCFL-S-004</td></tr>
 <tr><td>Structural validator and fixture conformance in CI</td><td><span class="tag planned">PLANNED</span></td><td><a href="./plan.md">IO-0.5</a></td><td>0.3</td><td>OCFL-S-009, -011</td></tr>
 <tr><td>Version publisher (root inventory last, head CAS)</td><td><span class="tag planned">PLANNED</span></td><td><a href="./plan.md">IO-0.6</a></td><td>0.4</td><td>OCFL-S-004</td></tr>

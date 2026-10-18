@@ -56,6 +56,25 @@ Git MUST NOT be the OCFL store, and the storage hierarchy MUST stay plain files 
 - `StorageBackend::check_hierarchy(prefix)` refuses soft links (`StorageError::SymlinkForbidden`), hard links (`HardLinkForbidden`), empty directories below the root (`EmptyDirectoryForbidden`) and other non-regular entries. Object stores have neither links nor directories, so the default implementation only validates the prefix. `FsBackend` walks the directory under its root write lock, with the same bounds as listings. Hard links are detected where the standard library reports link counts (Unix, macOS included); on Windows they cannot be seen yet and pass.
 - An empty `.git` directory holds no keys; on a file system it is refused as an empty directory.
 
+## OCFL file formats
+
+Pure parsing and writing, available on every target, `wasm32` included ([OCFL-S-002](./resources/srs.md), [ADR 009](../../../../resources/architecture/009-cryptography-webcrypto-compatible-suite.md)):
+
+- `digest::DigestAlgorithm`: `sha256` is the engine's algorithm (`DigestAlgorithm::ENGINE`), so objects it writes use SHA-256 and validators report OCFL's SHOULD-use-`sha512` warning (W004) for them. `sha512` is read, because OCFL 1.1 allows both and most existing objects use it. `hasher()` digests content in bounded chunks; `matches` compares digests without regard to case.
+- `inventory::Inventory::parse(bytes)` reads one untrusted `inventory.json`. It refuses input above 64 MiB (`MAX_INVENTORY_BYTES`) before parsing, JSON nested deeper than 8 levels (`MAX_JSON_DEPTH`) while parsing, and any JSON object that repeats a key. It then checks every rule one inventory can decide and names the OCFL 1.1 validation code of the first one broken (`FormatError::code`): required keys (E036, E041, E043, E048), no other keys (E102), `type` (E038), `digestAlgorithm` (E025), `contentDirectory` (E017, E018, E108), version names, padding and sequence (E008 to E012, E104, E105), `head` (E040), `created` as RFC 3339 (E049), `message` and `user` (E054, E094), manifest digests and content paths (E030, E031, E039, E092, E096, E099 to E101, E106, E107), state digests and logical paths (E050, E052, E053, E095) and fixity (E057, E097, E111). Digests keep the case they were written in, and a state digest must match its manifest key exactly. `to_json()` writes an inventory with sorted keys that parses back to the same value.
+- `inventory::VersionNum`: `v1`, `v2`, ... or zero-padded `v001`, ...; `next()` stays within a padded width.
+- Sidecars: `sidecar_name`, `sidecar_contents` (`DIGEST inventory.json` and a newline), `verify_sidecar` (E061 malformed, E060 wrong digest) and `check_sidecar_name` (E059).
+- `namaste::Declaration`: `0=ocfl_object_1.1` and `0=ocfl_1.1`, with their exact contents (E007, E080).
+
+Object-level validation (files against the manifest, version directories, earlier version inventories) is structural validation (IO-0.5), built on these types. `tests/integration/fixture_inventories.rs` checks the root inventories, sidecars and declarations of the pinned OCFL 1.1 community fixtures when `FILESQUID_OCFL_FIXTURES` names their `1.1` directory:
+
+```bash
+cd apps/filesquid
+FILESQUID_OCFL_FIXTURES=/path/to/fixtures/1.1 cargo test -p filesquid-ocfl --locked --test integration_fixture_inventories -- --nocapture
+```
+
+In PowerShell set the variable first with `$env:FILESQUID_OCFL_FIXTURES = "C:\path\to\fixtures\1.1"`. Without the variable the test reports that it skipped. IO-0.5 adds the pinned fixtures under `tests/` and points the test at them.
+
 ## Build and test
 
 Run Cargo from the workspace root:
