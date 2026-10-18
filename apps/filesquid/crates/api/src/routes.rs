@@ -28,6 +28,8 @@ pub(crate) type Route = (&'static str, MethodRouter<ApiState>, Action);
 fn route_table() -> Vec<Route> {
     let mut table: Vec<Route> = vec![
         ("/health", get(health_handler), Action::ReadHealth),
+        // Public on purpose: a liveness probe that says only that the process is up.
+        ("/health/live", get(liveness_handler), Action::Public),
         ("/openapi.json", get(contract_handler), Action::ReadContract),
     ];
     table.extend(crate::admin::routes());
@@ -99,6 +101,25 @@ pub fn route_actions() -> Vec<(String, Action)> {
         .into_iter()
         .map(|(path, _, action)| (format!("{API_PREFIX}{path}"), action))
         .collect()
+}
+
+/// Body of the public liveness probe: only that the process is up. No version, component
+/// detail or journal, so an anonymous caller learns nothing else.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct Liveness {
+    status: &'static str,
+}
+
+impl Liveness {
+    /// The only answer: `{"status":"up"}`.
+    pub fn up() -> Self {
+        Self { status: "up" }
+    }
+}
+
+/// `GET /api/v1/health/live`: public liveness probe (no credential needed).
+async fn liveness_handler() -> Json<Liveness> {
+    Json(Liveness::up())
 }
 
 /// `GET /api/v1/health`: process health from `filesquid-core`.

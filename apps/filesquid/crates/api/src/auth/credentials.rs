@@ -28,16 +28,24 @@ fn bearer_header(headers: &HeaderMap) -> Option<&str> {
     scheme.eq_ignore_ascii_case("bearer").then(|| token.trim())
 }
 
-/// The token of the first `filesquid.bearer.` subprotocol offered on a WebSocket upgrade.
+/// The token of the first `filesquid.bearer.` subprotocol offered on a WebSocket upgrade, and
+/// only when the client also offers [`EVENTS_SUBPROTOCOL`], the protocol the server selects.
 fn bearer_subprotocol(headers: &HeaderMap) -> Option<&str> {
     let upgrade = headers.get(UPGRADE)?.to_str().ok()?;
     if !upgrade.eq_ignore_ascii_case("websocket") {
         return None;
     }
-    headers
+    let offered: Vec<&str> = headers
         .get_all(SEC_WEBSOCKET_PROTOCOL)
         .iter()
         .filter_map(|value| value.to_str().ok())
         .flat_map(|value| value.split(','))
-        .find_map(|entry| entry.trim().strip_prefix(BEARER_SUBPROTOCOL_PREFIX))
+        .map(str::trim)
+        .collect();
+    if !offered.contains(&EVENTS_SUBPROTOCOL) {
+        return None;
+    }
+    offered
+        .into_iter()
+        .find_map(|entry| entry.strip_prefix(BEARER_SUBPROTOCOL_PREFIX))
 }

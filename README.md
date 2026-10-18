@@ -67,14 +67,15 @@ FILESQUID_BIND=127.0.0.1:8083 FILESQUID_UI_DIR=ui/dist cargo run -p filesquid-se
 
 Open `http://127.0.0.1:8083`. Without `FILESQUID_UI_DIR` the server serves the API only. `FILESQUID_BIND` defaults to `127.0.0.1:8083`.
 
-Every API call, the WebSocket event channel and `/metrics` are **deny-by-default**: they need `Authorization: Bearer <token>`, or the call answers `401 unauthorized` (no token) or `403 forbidden` (wrong token) with a typed error body. Until server accounts arrive, the token is the administrator token: the value of `FILESQUID_ADMIN_TOKEN`, or the token generated at first start into `<data dir>/admin-token`. The static UI itself is public. In a second terminal in `apps/filesquid`:
+Every API call, the WebSocket event channel and `/metrics` are **deny-by-default**: they need `Authorization: Bearer <token>`, or the call answers `401 unauthorized` (no token) or `403 forbidden` (wrong token) with a typed error body. Until server accounts arrive, the token is the administrator token: the value of `FILESQUID_ADMIN_TOKEN`, or the token generated at first start into `<data dir>/admin-token`. On Linux and macOS the server refuses to start if that file is a symbolic link, belongs to another user, or is readable by group or others; fix it with `chmod 600 filesquid-data/admin-token`. The static UI itself is public, and so is one probe for process supervisors and load balancers, `GET /api/v1/health/live`, which answers only `{"status":"up"}`. In a second terminal in `apps/filesquid`:
 
 ```sh
+curl http://127.0.0.1:8083/api/v1/health/live
 TOKEN=$(cat filesquid-data/admin-token)
 curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8083/api/v1/health
 ```
 
-It returns `{"schema_version":1,"status":"ok","product":"filesquid"}`. A browser cannot set headers on a WebSocket, so it offers the subprotocols `filesquid.events.v1` and `filesquid.bearer.<token>` instead. The desktop host needs no token from you: it generates a new per-launch token at every start and gives it only to its own pages.
+The full health route returns `{"schema_version":1,"status":"ok","product":"filesquid"}`. A browser cannot set headers on a WebSocket, so it offers the subprotocols `filesquid.events.v1` and `filesquid.bearer.<token>` instead. The desktop host needs no token from you: it generates a new per-launch token at every start and gives it only to its own pages.
 
 **UI development** with hot reload: start the server as above, then in another terminal:
 

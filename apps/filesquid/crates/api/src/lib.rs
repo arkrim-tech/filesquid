@@ -33,7 +33,7 @@ pub mod trace_layer;
 
 pub use error::{ApiError, DenialReason, ErrorCode};
 pub use events::{ApiEvent, EventBus, EventSubscription};
-pub use routes::{route_actions, routed_paths, router};
+pub use routes::{route_actions, routed_paths, router, Liveness};
 
 use std::sync::{Arc, OnceLock};
 

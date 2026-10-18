@@ -7,7 +7,7 @@
 //! collection-level permissions (API-F1.9) are added as new [`Principal`] and [`Resource`]
 //! variants with their own [`Authenticator`] and [`Policy`]; the layer itself does not change.
 
-use super::token::constant_time_eq;
+use super::token::{constant_time_eq, digest};
 
 /// An authenticated caller.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -42,15 +42,20 @@ pub enum Action {
     SubscribeEvents,
     /// Read the monitor: health report, processes, journal and metrics (admin routes, `/metrics`).
     ReadMonitor,
+    /// Deliberately public, unauthenticated: only the liveness probe
+    /// (`GET /api/v1/health/live`), which says that the process is up and nothing else. The
+    /// guard lets these calls through without a credential; nothing else may use this action.
+    Public,
 }
 
 impl Action {
     /// Every action, in contract order.
-    pub const ALL: [Action; 4] = [
+    pub const ALL: [Action; 5] = [
         Action::ReadHealth,
         Action::ReadContract,
         Action::SubscribeEvents,
         Action::ReadMonitor,
+        Action::Public,
     ];
 
     /// Dotted wire name (`x-filesquid-action`, journal target).
@@ -60,6 +65,7 @@ impl Action {
             Action::ReadContract => "contract.read",
             Action::SubscribeEvents => "events.subscribe",
             Action::ReadMonitor => "monitor.read",
+            Action::Public => "public",
         }
     }
 }
@@ -87,18 +93,21 @@ pub trait Policy: Send + Sync + 'static {
     fn permits(&self, principal: &Principal, action: Action, resource: &Resource) -> bool;
 }
 
-/// Accepts exactly one token and names one principal for it.
+/// Accepts exactly one token and names one principal for it. It keeps only the token's
+/// SHA-256 digest and compares digests in constant time, so timing reveals neither the
+/// token's content nor its length.
 #[derive(Clone)]
 pub struct TokenAuthenticator {
-    token: String,
+    digest: Option<[u8; 32]>,
     principal: Principal,
 }
 
 impl TokenAuthenticator {
     /// Accept `token` as `principal`. An empty token accepts nothing.
     pub fn new(token: impl Into<String>, principal: Principal) -> Self {
+        let token = token.into();
         Self {
-            token: token.into(),
+            digest: (!token.is_empty()).then(|| digest(&token)),
             principal,
         }
     }
@@ -106,9 +115,8 @@ impl TokenAuthenticator {
 
 impl Authenticator for TokenAuthenticator {
     fn authenticate(&self, token: &str) -> Option<Principal> {
-        let valid =
-            !self.token.is_empty() && constant_time_eq(token.as_bytes(), self.token.as_bytes());
-        valid.then(|| self.principal.clone())
+        let expected = self.digest?;
+        constant_time_eq(&digest(token), &expected).then(|| self.principal.clone())
     }
 }
 

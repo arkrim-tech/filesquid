@@ -63,6 +63,15 @@ fn journaled_owner_state() -> (ApiState, LaunchToken, Monitor, Arc<MemoryJournal
     (state, token, monitor, store)
 }
 
+/// Every routed path that requires a credential: all but the deliberately public ones.
+fn protected_paths() -> Vec<String> {
+    route_actions()
+        .into_iter()
+        .filter(|(_, action)| *action != Action::Public)
+        .map(|(path, _)| path)
+        .collect()
+}
+
 /// Assert `json` is a non-retryable denial with `code` and `reason`.
 fn assert_denial(json: &Value, code: &str, reason: &str, at: &str) {
     assert_eq!(json["code"], code, "{at}: {json}");
@@ -77,7 +86,7 @@ fn assert_denial(json: &Value, code: &str, reason: &str, at: &str) {
 #[tokio::test]
 async fn without_an_installed_authoriser_every_route_is_denied() {
     let state = ApiState::new();
-    for path in routed_paths() {
+    for path in protected_paths() {
         let (status, json) = call(&state, Method::GET, &path, None).await;
         assert_eq!(status, 401, "{path}");
         assert_denial(&json, "unauthorized", "missing_credentials", &path);
@@ -90,7 +99,7 @@ async fn without_an_installed_authoriser_every_route_is_denied() {
 #[tokio::test]
 async fn every_route_denies_a_call_without_the_per_launch_token() {
     let (state, _token) = owner_state();
-    let paths = routed_paths();
+    let paths = protected_paths();
     assert!(paths.iter().any(|p| p == "/api/v1/health"));
     assert!(paths.iter().any(|p| p == "/api/v1/openapi.json"));
     for path in paths {
@@ -105,7 +114,7 @@ async fn every_route_denies_a_wrong_token() {
     let (state, token) = owner_state();
     let other = LaunchToken::generate().expect("random token");
     let near_miss = format!("{}0", token.secret());
-    for path in routed_paths() {
+    for path in protected_paths() {
         for wrong in [PRESENTED, other.secret(), near_miss.as_str(), ""] {
             let (status, json) = call(&state, Method::GET, &path, Some(wrong)).await;
             assert_eq!(status, 403, "{path} with {wrong:?}");
@@ -180,10 +189,53 @@ async fn an_authoriser_can_be_installed_only_once() {
 #[tokio::test]
 async fn a_denial_never_echoes_the_presented_credential() {
     let (state, _token) = owner_state();
-    for path in routed_paths() {
+    for path in protected_paths() {
         let (_, json) = call(&state, Method::GET, &path, Some(PRESENTED)).await;
         assert!(!json.to_string().contains(PRESENTED), "{path}: {json}");
     }
+}
+
+// ---- The one deliberately public route ----
+
+/// Path of the public liveness probe.
+const LIVE: &str = "/api/v1/health/live";
+
+#[test]
+fn only_the_liveness_route_is_public() {
+    let public: Vec<String> = route_actions()
+        .into_iter()
+        .filter(|(_, action)| *action == Action::Public)
+        .map(|(path, _)| path)
+        .collect();
+    assert_eq!(public, vec![LIVE.to_string()]);
+    assert_eq!(protected_paths().len() + 1, routed_paths().len());
+}
+
+#[tokio::test]
+async fn the_liveness_route_answers_without_a_token_and_says_only_that_the_process_is_up() {
+    let (state, token, monitor, store) = journaled_owner_state();
+    for presented in [None, Some(PRESENTED), Some(token.secret())] {
+        let (status, json) = call(&state, Method::GET, LIVE, presented).await;
+        assert_eq!(status, 200, "{presented:?}");
+        assert_eq!(json, serde_json::json!({ "status": "up" }));
+    }
+    let (status, json) = call(&ApiState::new(), Method::GET, LIVE, None).await;
+    assert_eq!(status, 200, "public even without an installed authoriser");
+    assert_eq!(json, serde_json::json!({ "status": "up" }));
+    let refused = entries(&monitor, &store)
+        .into_iter()
+        .filter(|e| e.operation == "api.auth.denied")
+        .count();
+    assert_eq!(refused, 0, "a public call is never a refusal");
+    monitor.shutdown();
+}
+
+#[tokio::test]
+async fn the_liveness_route_still_refuses_an_anonymous_wrong_method() {
+    let (state, _token) = owner_state();
+    let (status, json) = call(&state, Method::POST, LIVE, None).await;
+    assert_eq!(status, 401);
+    assert_denial(&json, "unauthorized", "missing_credentials", "POST live");
 }
 
 // ---- Every route declares its action ----
@@ -196,6 +248,7 @@ fn every_routed_path_declares_its_action() {
     for (path, action) in &actions {
         let expected = match path.as_str() {
             "/api/v1/health" => Action::ReadHealth,
+            "/api/v1/health/live" => Action::Public,
             "/api/v1/openapi.json" => Action::ReadContract,
             admin if admin.starts_with("/api/v1/admin/") => Action::ReadMonitor,
             other => panic!("{other} has no expected action in this test"),
@@ -213,7 +266,8 @@ fn action_names_are_unique_dotted_identifiers() {
             "health.read",
             "contract.read",
             "events.subscribe",
-            "monitor.read"
+            "monitor.read",
+            "public"
         ]
     );
 }
@@ -267,6 +321,19 @@ async fn host_routes_are_denied_by_default() {
     assert_denial(&json, "forbidden", "invalid_credentials", "host route");
     let bearer = format!("Bearer {}", token.secret());
     let (status, _) = host_call(host_router(&state), &[("authorization", &bearer)]).await;
+    assert_eq!(status, 200);
+}
+
+#[tokio::test]
+async fn a_public_host_route_runs_without_a_token() {
+    let (state, _token) = owner_state();
+    let guard = Guard::new(state.clone(), Action::Public);
+    let router = Router::new().route(
+        "/api/v1/events",
+        get(|| async { "open" })
+            .route_layer(axum::middleware::from_fn_with_state(guard, auth::require)),
+    );
+    let (status, _) = host_call(router, &[]).await;
     assert_eq!(status, 200);
 }
 
@@ -331,6 +398,20 @@ fn the_subprotocol_carrier_is_read_from_any_offered_entry() {
         ("sec-websocket-protocol", "filesquid.bearer.abc"),
     ]);
     assert_eq!(presented_token(&map), Some("abc"));
+}
+
+#[test]
+fn the_subprotocol_token_counts_only_next_to_the_events_subprotocol() {
+    let alone = headers(&[
+        ("upgrade", "websocket"),
+        ("sec-websocket-protocol", "filesquid.bearer.abc"),
+    ]);
+    assert_eq!(presented_token(&alone), None);
+    let other = headers(&[
+        ("upgrade", "websocket"),
+        ("sec-websocket-protocol", "graphql-ws, filesquid.bearer.abc"),
+    ]);
+    assert_eq!(presented_token(&other), None);
 }
 
 #[test]
@@ -473,13 +554,46 @@ async fn a_not_permitted_denial_names_the_principal_and_the_action() {
 }
 
 #[test]
-fn the_token_issued_entry_names_the_principal_and_never_a_secret() {
-    let token = LaunchToken::generate().expect("random token");
+fn the_token_issued_entry_has_no_field_that_could_carry_a_secret() {
     let entry = auth::token_issued_entry(&Principal::Owner);
     assert_eq!(entry.operation, "api.auth.token_issued");
     assert_eq!(entry.outcome, Outcome::Succeeded);
     assert_eq!(entry.target_ids, vec!["owner".to_string()]);
-    let text = serde_json::to_string(&entry.redacted()).expect("json");
-    assert!(!text.contains(token.secret()));
-    assert!(text.contains("api.auth.token_issued"));
+    let json = serde_json::to_value(entry.redacted()).expect("json");
+    let mut fields: Vec<&str> = json
+        .as_object()
+        .expect("object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    fields.sort_unstable();
+    assert_eq!(
+        fields,
+        [
+            "actor",
+            "host",
+            "level",
+            "operation",
+            "outcome",
+            "target_ids",
+            "time"
+        ],
+        "only fixed, opaque fields; no free text"
+    );
+}
+
+#[tokio::test]
+async fn fallback_refusals_are_journaled_with_the_no_route_target() {
+    let (state, _token, monitor, store) = journaled_owner_state();
+    call(&state, Method::GET, "/api/v1/no-such-route", None).await;
+    call(&state, Method::DELETE, "/api/v1/health", None).await;
+    let denied: Vec<_> = entries(&monitor, &store)
+        .into_iter()
+        .filter(|e| e.operation == "api.auth.denied")
+        .collect();
+    assert_eq!(denied.len(), 2);
+    for entry in denied {
+        assert_eq!(entry.target_ids, vec![auth::NO_ROUTE_TARGET.to_string()]);
+    }
+    monitor.shutdown();
 }

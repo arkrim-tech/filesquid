@@ -31,7 +31,7 @@ pub use crate::error::{ApiError, DenialReason};
 pub use credentials::{presented_token, BEARER_SUBPROTOCOL_PREFIX, EVENTS_SUBPROTOCOL};
 pub use layer::{
     authorise_call, check_caller, denial_entry, require, token_issued_entry, Guard,
-    ANONYMOUS_ACTOR, DENIED_OPERATION, TOKEN_ISSUED_OPERATION,
+    ANONYMOUS_ACTOR, DENIED_OPERATION, NO_ROUTE_TARGET, TOKEN_ISSUED_OPERATION,
 };
 pub use policy::{
     Action, Authenticator, DenyAll, HostPolicy, Policy, Principal, Resource, TokenAuthenticator,

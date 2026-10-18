@@ -24,7 +24,7 @@ use axum::Router;
 use filesquid_api::auth::{self, Action, Authoriser, Guard, EVENTS_SUBPROTOCOL};
 use filesquid_api::monitor::HostMonitor;
 use filesquid_api::trace_layer::JournalLayer;
-use filesquid_api::{ApiState, API_PREFIX};
+use filesquid_api::{ApiError, ApiState, ErrorCode, API_PREFIX};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use tokio::sync::broadcast::error::RecvError;
@@ -127,13 +127,27 @@ pub fn start_host_monitor(
 }
 
 /// Wrap a host route so it runs only after the caller is authorised for `action`.
+///
+/// The guard is a `layer`, not a `route_layer`, so it also covers the method router's
+/// fallback: an unsupported method is refused like any other call, and only an authorised
+/// caller learns that the method is not allowed.
 fn guarded(
     state: &ApiState,
     route: MethodRouter<ApiState>,
     action: Action,
 ) -> MethodRouter<ApiState> {
     let guard = Guard::new(state.clone(), action);
-    route.route_layer(from_fn_with_state(guard, auth::require))
+    route
+        .fallback(method_not_allowed)
+        .layer(from_fn_with_state(guard, auth::require))
+}
+
+/// The typed `method_not_allowed` answer for a host route called with another method.
+async fn method_not_allowed() -> ApiError {
+    ApiError::new(
+        ErrorCode::MethodNotAllowed,
+        "This path does not accept that method.",
+    )
 }
 
 /// Compose the server router: API, events, metrics, then the optional static UI.

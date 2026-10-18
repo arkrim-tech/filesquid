@@ -22,6 +22,10 @@ pub const DENIED_OPERATION: &str = "api.auth.denied";
 /// Journal operation recorded when a host issues a credential at startup.
 pub const TOKEN_ISSUED_OPERATION: &str = "api.auth.token_issued";
 
+/// Journal target of a refusal on a path or method that matched no route (the 404 and 405
+/// fallbacks), where no action exists.
+pub const NO_ROUTE_TARGET: &str = "no_route";
+
 /// Journal actor of a call that presented no accepted credential.
 pub const ANONYMOUS_ACTOR: &str = "anonymous";
 
@@ -42,11 +46,15 @@ impl Guard {
 /// Axum middleware: authenticate the caller, authorise [`Guard`]'s action on the host, and
 /// only then run the route. A refused call answers the typed [`ApiError`] denial and is
 /// journaled; the route never runs. On success the [`Principal`] is added to the request
-/// extensions for the handler.
+/// extensions for the handler. A route guarded with [`Action::Public`] runs without a
+/// credential: that is the one deliberate exception (the liveness probe).
 ///
 /// Use with `axum::middleware::from_fn_with_state(Guard::new(state, action), require)` as a
 /// `route_layer`.
 pub async fn require(State(guard): State<Guard>, mut request: Request, next: Next) -> Response {
+    if guard.action == Action::Public {
+        return next.run(request).await;
+    }
     let checked = authorise_call(&guard.state, request.headers(), guard.action).await;
     match checked {
         Ok(principal) => {
@@ -94,6 +102,7 @@ async fn deny(
     let actor = principal.map_or(ANONYMOUS_ACTOR, Principal::actor);
     let action_name = action.map_or("none", Action::as_str);
     // INFO under a non-activity target: stdout only, so the journal gets exactly one record.
+    // Without a monitor, `journal_entry` prints the record unfiltered instead.
     tracing::info!(
         target: "filesquid::auth",
         reason = reason.as_str(),
@@ -105,17 +114,15 @@ async fn deny(
     ApiError::denied(reason)
 }
 
-/// The journal record of one refusal: actor, reason as error code, action as target. It has
-/// no field that could carry the presented credential.
+/// The journal record of one refusal: actor, reason as error code, and as target the action,
+/// or [`NO_ROUTE_TARGET`] when the call matched no route. It has no field that could carry
+/// the presented credential.
 pub fn denial_entry(reason: DenialReason, actor: &str, action: Option<Action>) -> JournalEntry {
-    let entry = JournalEntry::new(DENIED_OPERATION, Outcome::Failed)
+    JournalEntry::new(DENIED_OPERATION, Outcome::Failed)
         .level(Level::Warn)
         .actor(actor)
-        .error_code(reason.as_str());
-    match action {
-        Some(action) => entry.target(action.as_str()),
-        None => entry,
-    }
+        .error_code(reason.as_str())
+        .target(action.map_or(NO_ROUTE_TARGET, Action::as_str))
 }
 
 /// The journal record of a host issuing a credential for `principal` at startup (the desktop
@@ -124,14 +131,51 @@ pub fn token_issued_entry(principal: &Principal) -> JournalEntry {
     JournalEntry::new(TOKEN_ISSUED_OPERATION, Outcome::Succeeded).target(principal.actor())
 }
 
+/// Where a record went.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Recorded {
+    /// Queued on the monitor's activity journal.
+    Journal,
+    /// No monitor yet: printed to stdout as one JSON line, whatever `RUST_LOG` says.
+    Stdout,
+}
+
 /// Queue `entry` on the monitor's journal without blocking the async executor. Before the
-/// monitor starts there is no journal and the stdout line is the only record.
-async fn journal_entry(state: &ApiState, entry: JournalEntry) {
+/// monitor starts there is no journal, so the redacted entry is printed straight to stdout,
+/// bypassing the log-level filter, and is never lost.
+async fn journal_entry(state: &ApiState, entry: JournalEntry) -> Recorded {
     let Some(monitor) = state.monitor() else {
-        return;
+        print_unjournaled(&entry.redacted());
+        return Recorded::Stdout;
     };
     let sender = monitor.journal();
     if let Err(err) = tokio::task::spawn_blocking(move || sender.send(entry)).await {
         tracing::error!(%err, operation = DENIED_OPERATION, "journal write panicked");
+    }
+    Recorded::Journal
+}
+
+/// Print one journal entry to stdout as JSON, marked `journal_unavailable`. Writes to stdout.
+fn print_unjournaled(entry: &JournalEntry) {
+    match serde_json::to_value(entry) {
+        Ok(mut value) => {
+            value["journal_unavailable"] = serde_json::Value::Bool(true);
+            println!("{value}");
+        }
+        Err(err) => tracing::error!(%err, operation = DENIED_OPERATION, "entry not printable"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn without_a_monitor_a_refusal_goes_to_stdout_unfiltered() {
+        let entry = denial_entry(DenialReason::MissingCredentials, ANONYMOUS_ACTOR, None);
+        assert_eq!(
+            journal_entry(&ApiState::new(), entry).await,
+            Recorded::Stdout
+        );
     }
 }

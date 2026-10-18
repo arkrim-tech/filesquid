@@ -108,17 +108,36 @@ fn every_operation_requires_the_bearer_scheme_and_none_makes_it_optional() {
     assert_eq!(scheme["type"], "http");
     assert_eq!(scheme["scheme"], "bearer");
     for (method, path, op) in all_operations(&doc) {
-        assert!(
-            op.get("security").is_none(),
-            "{method} {path} overrides security"
-        );
+        match op[ACTION].as_str() {
+            Some("public") => assert_eq!(op["security"], json!([]), "{method} {path}"),
+            _ => assert!(
+                op.get("security").is_none(),
+                "{method} {path} overrides security"
+            ),
+        }
     }
+}
+
+#[test]
+fn the_only_public_operation_is_the_liveness_probe() {
+    let doc = contract();
+    let public: Vec<String> = all_operations(&doc)
+        .into_iter()
+        .filter(|(_, _, op)| op[ACTION] == "public")
+        .map(|(method, path, _)| format!("{method} {path}"))
+        .collect();
+    assert_eq!(public, vec!["get /api/v1/health/live".to_string()]);
 }
 
 #[test]
 fn every_operation_documents_both_denials() {
     let doc = contract();
     for (method, path, op) in all_operations(&doc) {
+        if op[ACTION] == "public" {
+            let responses = op["responses"].as_object().expect("responses");
+            assert!(!responses.contains_key("401") && !responses.contains_key("403"));
+            continue;
+        }
         for (status, response) in [("401", "Unauthorized"), ("403", "Forbidden")] {
             let reference = format!("#/components/responses/{response}");
             assert_eq!(
@@ -153,7 +172,12 @@ fn every_operation_names_the_action_the_router_authorises() {
 fn authentication_before_routing_is_documented_as_a_wire_convention() {
     let doc = contract();
     let conventions = doc["info"]["description"].as_str().expect("description");
-    for stated in ["401 unauthorized", "deny-by-default", "x-filesquid-action"] {
+    for stated in [
+        "401 unauthorized",
+        "deny-by-default",
+        "x-filesquid-action",
+        "/api/v1/health/live",
+    ] {
         assert!(
             conventions.contains(stated),
             "info.description states {stated}"
@@ -252,11 +276,11 @@ async fn every_documented_operation_answers_a_documented_status_and_body() {
     let mut checked_ok = 0;
     for (method, path, op) in &operations {
         let (status, body) = call(&ApiState::new(), method, path).await;
-        assert_eq!(
-            status,
-            StatusCode::FORBIDDEN,
-            "{method} {path} unauthorised"
-        );
+        let expected = match op[ACTION].as_str() {
+            Some("public") => StatusCode::OK,
+            _ => StatusCode::FORBIDDEN,
+        };
+        assert_eq!(status, expected, "{method} {path} without an authoriser");
         assert_documented_answer(&doc, op, status, &body);
         let (status, body) = call(&authorised_state(), method, path).await;
         assert_documented_answer(&doc, op, status, &body);
@@ -539,6 +563,7 @@ fn error_codes_match_the_rust_enum_with_status_and_retryability() {
 fn samples() -> Vec<(&'static str, Vec<Value>)> {
     let mut all = vec![
         ("HealthStatus", vec![to_value(filesquid_core::health())]),
+        ("Liveness", vec![to_value(filesquid_api::Liveness::up())]),
         ("ApiEvent", vec![to_value(sample_event())]),
         ("EventTopic", topic::ALL.map(to_value).to_vec()),
         ("EventResync", vec![to_value(EventResync { missed: 1 })]),

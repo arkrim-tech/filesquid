@@ -14,10 +14,19 @@ use filesquid_api::auth::{
 };
 use filesquid_api::journal::{JournalQuery, JournalStore, MemoryJournal};
 use filesquid_api::monitor::{Monitor, MonitorConfig};
-use filesquid_api::{routed_paths, router, ApiState};
+use filesquid_api::{route_actions, router, ApiState};
 use http_body_util::BodyExt;
 use std::sync::Arc;
 use tower::ServiceExt;
+
+/// Every routed path that requires a credential (all but the public liveness probe).
+fn protected_paths() -> Vec<String> {
+    route_actions()
+        .into_iter()
+        .filter(|(_, action)| *action != Action::Public)
+        .map(|(path, _)| path)
+        .collect()
+}
 
 /// Start a monitor over an in-memory journal for `state` and keep both in the world.
 fn start_monitor(w: &mut MonitorWorld, state: &ApiState) {
@@ -109,14 +118,14 @@ fn event_channel(state: &ApiState) -> Router {
 
 #[when(expr = "the owner's webview calls every API route with the per-launch token")]
 async fn call_all_with_token(w: &mut MonitorWorld) {
-    for path in routed_paths() {
+    for path in protected_paths() {
         call(w, &path, w.secret.clone()).await;
     }
 }
 
 #[when(expr = "a client calls every API route without a token")]
 async fn call_all_anonymous(w: &mut MonitorWorld) {
-    for path in routed_paths() {
+    for path in protected_paths() {
         call(w, &path, None).await;
     }
 }
@@ -125,7 +134,7 @@ async fn call_all_anonymous(w: &mut MonitorWorld) {
 async fn call_all_with_other_token(w: &mut MonitorWorld) {
     let other = launch_token().secret().to_string();
     w.presented = Some(other.clone());
-    for path in routed_paths() {
+    for path in protected_paths() {
         call(w, &path, Some(other.clone())).await;
     }
 }
@@ -162,6 +171,20 @@ async fn events_with_subprotocol(w: &mut MonitorWorld) {
         .header("sec-websocket-protocol", offered)
         .body(Body::empty());
     record(w, service, request.expect("request")).await;
+}
+
+#[when(expr = "a monitoring probe asks whether the process is up without a token")]
+async fn liveness_probe(w: &mut MonitorWorld) {
+    call(w, "/api/v1/health/live", None).await;
+}
+
+#[then(expr = "the probe should be told only that the process is up")]
+fn probe_told_up(w: &mut MonitorWorld) {
+    let (status, body) = w.answers.last().expect("answer");
+    assert_eq!(*status, 200);
+    let json: serde_json::Value = serde_json::from_slice(body).expect("JSON");
+    assert_eq!(json, serde_json::json!({ "status": "up" }));
+    crate::shutdown_monitor(w);
 }
 
 #[then(expr = "every call should be answered")]

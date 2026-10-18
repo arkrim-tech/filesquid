@@ -12,7 +12,7 @@ Feature: Deny-by-default authorisation
     Given a desktop FileSquid API with a per-launch token
 
   # Happy path
-  Scenario: The owner's own webview reaches every route with the per-launch token
+  Scenario: The owner's own webview reaches every protected route with the per-launch token
     When the owner's webview calls every API route with the per-launch token
     Then every call should be answered
 
@@ -33,6 +33,10 @@ Feature: Deny-by-default authorisation
     Then every call should be refused as "unauthorized" because of "missing_credentials"
 
   # Edge cases
+  Scenario: A liveness probe needs no token and learns only that the process is up
+    When a monitoring probe asks whether the process is up without a token
+    Then the probe should be told only that the process is up
+
   Scenario: An unknown path does not reveal the route table to an anonymous caller
     When a client asks for an API path that does not exist without a token
     Then every call should be refused as "unauthorized" because of "missing_credentials"

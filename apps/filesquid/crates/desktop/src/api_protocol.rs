@@ -10,11 +10,13 @@
 //! preflight those pages send before a request with an `Authorization` header.
 
 use axum::body::Body;
+use filesquid_api::admin::NEXT_CURSOR_HEADER;
 use filesquid_api::auth::LaunchToken;
 use filesquid_api::ApiState;
 use http::header::{
     ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
-    ACCESS_CONTROL_MAX_AGE, ACCESS_CONTROL_REQUEST_METHOD, ORIGIN, VARY,
+    ACCESS_CONTROL_EXPOSE_HEADERS, ACCESS_CONTROL_MAX_AGE, ACCESS_CONTROL_REQUEST_METHOD, ORIGIN,
+    VARY,
 };
 use http::{HeaderValue, Method, Request, Response, StatusCode};
 use http_body_util::BodyExt;
@@ -144,15 +146,17 @@ fn is_app_origin(origin: &HeaderValue) -> bool {
         .unwrap_or(false)
 }
 
-/// Echo an app origin in `Access-Control-Allow-Origin`; `origin` is already filtered.
+/// Echo an app origin in `Access-Control-Allow-Origin` and expose the journal export's
+/// continuation header (`X-Journal-Next-Cursor`) to it; `origin` is already filtered.
 fn allow_app_origin(response: &mut Response<Vec<u8>>, origin: Option<&HeaderValue>) {
     if let Some(value) = origin {
-        response
-            .headers_mut()
-            .insert(ACCESS_CONTROL_ALLOW_ORIGIN, value.clone());
-        response
-            .headers_mut()
-            .insert(VARY, HeaderValue::from_static("Origin"));
+        let headers = response.headers_mut();
+        headers.insert(ACCESS_CONTROL_ALLOW_ORIGIN, value.clone());
+        headers.insert(VARY, HeaderValue::from_static("Origin"));
+        headers.insert(
+            ACCESS_CONTROL_EXPOSE_HEADERS,
+            HeaderValue::from_static(NEXT_CURSOR_HEADER),
+        );
     }
 }
 

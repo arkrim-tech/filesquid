@@ -13,8 +13,21 @@ pub fn generate_token() -> Result<String, String> {
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
-/// Compare without an early exit, so timing does not reveal how much of a token matched.
-/// Different lengths compare unequal (lengths are not secret: every token is 64 characters).
+/// SHA-256 digest of a secret. Comparing digests makes the comparison independent of the
+/// secrets' lengths, so timing reveals neither how much matched nor how long the token is.
+pub(crate) fn digest(secret: &str) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(secret.as_bytes()).into()
+}
+
+/// True when two secrets are equal, compared as SHA-256 digests in constant time.
+#[cfg(test)]
+pub(crate) fn secret_eq(presented: &str, expected: &str) -> bool {
+    constant_time_eq(&digest(presented), &digest(expected))
+}
+
+/// Compare without an early exit, so timing does not reveal how much matched. Callers pass
+/// fixed-length digests, so the length check never depends on a secret.
 pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
@@ -52,6 +65,16 @@ impl std::fmt::Debug for LaunchToken {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn secrets_compare_by_digest_whatever_their_lengths() {
+        assert!(secret_eq("abc", "abc"));
+        for other in ["", "a", "ab", "abd", "abcd", &"x".repeat(4096)] {
+            assert!(!secret_eq("abc", other), "{other:?}");
+            assert!(!secret_eq(other, "abc"), "{other:?}");
+        }
+        assert_eq!(digest("abc").len(), 32);
+    }
 
     #[test]
     fn equal_slices_compare_equal_and_every_difference_is_found() {

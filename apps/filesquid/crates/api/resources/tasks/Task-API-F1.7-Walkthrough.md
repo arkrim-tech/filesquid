@@ -10,6 +10,14 @@ Parents: [F-056 Single FileSquid API](../../../../../../resources/prd.md#f-056-s
 
 This task also keeps [API-S-002](../srs.md) (versioned contract and drift tests), [API-S-006](../srs.md) (no storage I/O in the API crate) and [API-S-009](../srs.md) (errors the UI can show) for everything it adds.
 
+### Secondary SRS mapping
+
+This task also keeps three module requirements for everything it adds. Their full text:
+
+- **API-S-002: The API contract MUST be versioned and owned by this crate (OpenAPI 3.1 in the repository). TypeScript types MUST be generated from it, and a test MUST fail when the contract and the generated types drift. Operations carry operation/idempotency key, expected revision, bounded page size, error code and retryability.** Covered here by contract 0.5.0 (global `bearerAuth`, 401 and 403 on every protected operation, `x-filesquid-action`, the public liveness probe with `security: []`, the `DenialReason` and `Liveness` schemas, `ApiError.reason`), the regenerated `schema.d.ts`, `unit_contract` and the Vitest `contract.test.ts`.
+- **API-S-006: Application meaning (catalog, search, replica, the FileSquid OCFL application profile) MUST be implemented here once for every host. The crate MUST NOT link Tauri host APIs, libvips, FFmpeg or a SQLite driver and MUST NOT perform storage I/O itself; hosts inject storage backends. Cargo features MUST NOT be the only boundary.** Covered here by moving the administrator token file (`load_or_create_token`) out of `filesquid-api` into `filesquid-server`. The authorisation layer itself is pure apart from the journal queue and the random source.
+- **API-S-009: Module and API boundaries MUST return errors the UI can show; a failed request MUST NOT crash a host.** Covered here by the typed denials (`ApiError` with `reason`, a message for people, never retryable, never repeating the credential) and the typed `method_not_allowed` answer on host routes.
+
 ## What changed
 
 - **`auth` module** ([`src/auth/`](../../src/auth/mod.rs)):
@@ -355,9 +363,136 @@ $ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8083/
 200
 ```
 
+## Review round 1: owner decisions and Cubic findings
+
+### Owner decisions
+
+- **Public liveness probe.** `GET /api/v1/health/live` answers `{"status":"up"}` without a credential: no version, component detail or journal. Its route-table entry carries the action `public` (`Action::Public`), the one action the guard lets through, so the exception is explicit rather than a gap. The contract gives it `security: []` and `x-filesquid-action: public`, and adds the `Liveness` schema. Full health stays behind the token. Tests: `only_the_liveness_route_is_public`, `the_liveness_route_answers_without_a_token_and_says_only_that_the_process_is_up`, `the_liveness_route_still_refuses_an_anonymous_wrong_method`, `a_public_host_route_runs_without_a_token`, `the_only_public_operation_is_the_liveness_probe`, server `the_liveness_probe_answers_without_a_token`, desktop `the_liveness_probe_needs_no_token`, BDD "A liveness probe needs no token and learns only that the process is up". The deny-by-default tests now loop over every protected route, which is every route except the probe.
+- **Journaling.** The journal records refusals plus credential issue and rotation. Successful calls are not journaled one by one; they are visible as the API calls and operations they lead to. The rule text now says exactly that in [API-S-004](../srs.md), the [PRD](../../../../../../resources/prd.md) 100% logging bullet, the [product vision](../../../../../../resources/product-vision.md) FE-081, [ADR 033](../../../../../../resources/architecture/033-activity-journal-and-live-health-monitoring.md) and `.agents/rules/logging-enforce.md`.
+- **UI client.** Wiring `FileSquidClient` to send the token ships as a separate small `@filesquid/ui` pull request right after this one merges. [DE-F1.1](../../../desktop/resources/plan.md) says so.
+
+### Cubic findings
+
+| Finding | Fix | Test (written first) |
+|---|---|---|
+| P1: a group- or world-readable token file was accepted (`admin_token.rs`) | The token file now fails closed on Unix. A stored file is used only when it is a regular file (not a symbolic link), owned by the server user (`geteuid`) and has no group or other permission bits. Anything else stops the server with an error that names `chmod 600` and never contains the token. Checked by hand: a 0644 file stops the server with exit code 2. | `a_group_or_world_readable_token_file_is_refused` (0644, 0640, 0604), `a_symlinked_token_file_is_refused`, `an_owner_only_token_file_is_reused` |
+| P2: two first starts could write different tokens | The file is created with `create_new`. A loser of the race rereads the winner's token, waiting at most 50 x 20 ms. | `concurrent_first_starts_agree_on_one_token` (20 rounds of 8 threads) |
+| P2: the token compare leaked the token's length | `TokenAuthenticator` keeps only the SHA-256 digest and compares 32-byte digests in constant time (`sha2` 0.11, already in the workspace; ADR 009 suite) | `secrets_compare_by_digest_whatever_their_lengths` |
+| P2: Axum's unguarded 405 on `/api/v1/events` and `/metrics` | Host routes are guarded with `layer` (which also covers the method fallback), and the fallback answers a typed `method_not_allowed` | `other_methods_on_host_routes_are_refused_before_routing` |
+| P2: the bearer subprotocol was accepted without `filesquid.events.v1` | The token entry counts only when `filesquid.events.v1` is offered too | `the_subprotocol_token_counts_only_next_to_the_events_subprotocol` |
+| P2: fallback refusals were journaled without a target | They are journaled with the target `no_route` (`NO_ROUTE_TARGET`) | `fallback_refusals_are_journaled_with_the_no_route_target` |
+| P2: with no monitor, an INFO line hidden by `RUST_LOG=warn` was the only record of a refusal | Without a monitor the redacted entry is printed straight to stdout as one JSON line (`journal_unavailable: true`), bypassing the log filter | `without_a_monitor_a_refusal_goes_to_stdout_unfiltered` |
+| P2: `X-Journal-Next-Cursor` was not exposed to app origins | `Access-Control-Expose-Headers: x-journal-next-cursor` on app-origin responses | `app_origin_responses_expose_the_journal_cursor_header` |
+| P2: client wiring untracked (`desktop/plan.md`) | DE-F1.1 names the follow-up `@filesquid/ui` pull request | Documentation |
+| P3: vacuous `evil.example` assertion | The test asserts the secret appears exactly once, after the origin guard | `the_init_script_hands_the_token_only_to_app_origins` |
+| P3: vacuous journal-redaction assertion | The test asserts the exact serialized field set of `api.auth.token_issued` | `the_token_issued_entry_has_no_field_that_could_carry_a_secret` |
+| P3: secondary SRS mapping without full titles | The full text of API-S-002, API-S-006 and API-S-009 is above | Documentation |
+
+### Red: round 1 tests before the fixes
+
+Liveness, before `Action::Public` existed (`cargo test -p filesquid-api --locked --no-fail-fast`):
+
+```text
+error: could not compile `filesquid-api` (test "features") due to 1 previous error
+error: could not compile `filesquid-api` (test "unit_auth") due to 4 previous errors
+error[E0599]: no variant, associated function, or constant named `Public` found for enum `Action` in the current scope
+```
+
+Cubic findings, before the fixes (`cargo test -p filesquid-api -p filesquid-server -p filesquid-desktop --locked --no-fail-fast`; the API lib tests and `unit_auth` did not compile, and five host tests failed):
+
+```text
+error[E0425]: cannot find function `digest` in this scope
+error[E0425]: cannot find function `secret_eq` in this scope
+error[E0433]: cannot find type `Recorded` in this scope
+error[E0425]: cannot find value `NO_ROUTE_TARGET` in module `auth`
+---- a_group_or_world_readable_token_file_is_refused stdout ----
+---- a_symlinked_token_file_is_refused stdout ----
+---- concurrent_first_starts_agree_on_one_token stdout ----
+---- other_methods_on_host_routes_are_refused_before_routing stdout ----
+---- app_origin_responses_expose_the_journal_cursor_header stdout ----
+test result: FAILED. 9 passed; 4 failed (integration_auth)
+test result: FAILED. 14 passed; 1 failed (integration_api_protocol)
+```
+
+### Green: round 1 raw output
+
+`cargo test -p filesquid-api -p filesquid-server -p filesquid-desktop --locked` (exit code 0):
+
+```text
+     Running unittests src/lib.rs
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/features.rs
+86 scenarios (27 passed, 59 skipped)
+     Running tests/unit/admin.rs
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/auth.rs
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/unit/contract.rs
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+     Running tests/unit/errors.rs
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/unit/events.rs
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/unit/health.rs
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/health_rules.rs
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/journal.rs
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/unit/metrics.rs
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/registry.rs
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/unit/routes.rs
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/unit/writer.rs
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/lib.rs
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/main.rs
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/integration/api_protocol.rs
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running unittests src/lib.rs
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/main.rs
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/integration/auth.rs
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/integration/events.rs
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/integration/health.rs
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/integration/monitor.rs
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/integration/static_ui.rs
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/health.rs
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+Clippy (`-D warnings`), `cargo fmt --check`, the Vitest contract drift test (after `npm run contract:types`) and `cargo doc --workspace --no-deps` pass.
+
+README commands, run against a real `filesquid-server`:
+
+```text
+$ curl http://127.0.0.1:8083/api/v1/health/live
+{"status":"up"}
+$ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8083/api/v1/health
+{"schema_version":1,"status":"ok","product":"filesquid"}
+$ curl -s -X POST -w ' %{http_code}\n' http://127.0.0.1:8083/metrics
+{"code":"unauthorized","message":"FileSquid needs credentials for this request. Sign in or reopen the app.","retryable":false,"reason":"missing_credentials"} 401
+$ chmod 644 filesquid-data/admin-token && cargo run -q -p filesquid-server
+{"level":"ERROR","fields":{"message":"cannot set up API authorisation","message":"filesquid-data/admin-token is readable by other users; run chmod 600 on it and restart"}, ...}
+exit=2
+```
+
 ## Work left to other tasks
 
-- **UI client (`@filesquid/ui`, UI engineer):** `FileSquidClient` must send `Authorization: Bearer <token>` on every request, not only on `/api/v1/admin/*`. On the desktop it reads `window.__FILESQUID_LAUNCH_TOKEN__`. On the server it uses the administrator token until accounts exist. Its WebSocket must offer `["filesquid.events.v1", "filesquid.bearer.<token>"]`. It can show `ApiError.reason` (now in the generated types) as a sign-in or permission state. Until this lands, the UI's anonymous `health()` call and server WebSocket are refused. The Playwright end-to-end suites (`FILESQUID_E2E=1`) that call the real server need the same change.
+- **UI client (`@filesquid/ui`):** by owner decision a separate small pull request right after this one merges. `FileSquidClient` must send `Authorization: Bearer <token>` on every request (desktop: `window.__FILESQUID_LAUNCH_TOKEN__`; server: the administrator token until accounts exist) and offer `["filesquid.events.v1", "filesquid.bearer.<token>"]` on its WebSocket. It can probe `GET /api/v1/health/live` without a token and show `ApiError.reason` as a sign-in or permission state. The Playwright end-to-end suites (`FILESQUID_E2E=1`) need the same change.
 - **DE-F1.1:** the desktop still forwards events to every webview with `app.emit`. A Tauri channel that delivers only to the app's own webviews belongs to that task, as do ranged reads.
 - **API-F1.9:** accounts, sessions, groups and collection permissions as a new `Authenticator`, `Policy`, `Principal` and `Resource` variants. The guard does not change.
 

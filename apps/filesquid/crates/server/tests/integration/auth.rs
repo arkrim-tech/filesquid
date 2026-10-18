@@ -5,7 +5,8 @@
 
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
-use filesquid_api::{routed_paths, ApiState};
+use filesquid_api::auth::Action;
+use filesquid_api::{route_actions, ApiState};
 use filesquid_server::{app, install_admin_authoriser, ServerConfig};
 use http_body_util::BodyExt;
 use std::net::SocketAddr;
@@ -57,10 +58,14 @@ async fn get(router: axum::Router, path: &str, token: Option<&str>) -> (u16, ser
     (status, json)
 }
 
-/// Every path the server answers that MUST be guarded: the API router's routes, the event
-/// channel and `/metrics`.
+/// Every path the server answers that MUST be guarded: the API router's routes except the
+/// public liveness probe, the event channel and `/metrics`.
 fn guarded_paths() -> Vec<String> {
-    let mut paths = routed_paths();
+    let mut paths: Vec<String> = route_actions()
+        .into_iter()
+        .filter(|(_, action)| *action != Action::Public)
+        .map(|(path, _)| path)
+        .collect();
     paths.push("/api/v1/events".into());
     paths.push("/metrics".into());
     paths
@@ -94,6 +99,16 @@ async fn a_server_without_an_installed_authoriser_refuses_every_route() {
         let (status, _) = get(router.clone(), &path, Some(TOKEN)).await;
         assert_eq!(status, 403, "{path}");
     }
+}
+
+#[tokio::test]
+async fn the_liveness_probe_answers_without_a_token() {
+    let (status, json) = get(server(&config("live")), "/api/v1/health/live", None).await;
+    assert_eq!(status, 200);
+    assert_eq!(json, serde_json::json!({ "status": "up" }));
+    let router = app(&ServerConfig::default(), ApiState::new());
+    let (status, _) = get(router, "/api/v1/health/live", None).await;
+    assert_eq!(status, 200, "public even before an authoriser is installed");
 }
 
 #[tokio::test]
@@ -191,4 +206,97 @@ async fn a_missing_admin_token_is_generated_into_the_data_dir_with_owner_only_ac
     let (status, _) = get(server(&again), "/api/v1/health", Some(&token)).await;
     assert_eq!(status, 200, "the stored token is reused on restart");
     std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+#[tokio::test]
+async fn other_methods_on_host_routes_are_refused_before_routing() {
+    let config = config("methods");
+    for path in ["/api/v1/events", "/metrics"] {
+        let request = || Request::post(path);
+        let anonymous = request().body(Body::empty()).expect("request");
+        let response = server(&config).oneshot(anonymous).await.expect("answer");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
+        let authorised = request()
+            .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+            .body(Body::empty())
+            .expect("request");
+        let response = server(&config).oneshot(authorised).await.expect("answer");
+        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED, "{path}");
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).expect("ApiError");
+        assert_eq!(json["code"], "method_not_allowed", "{path}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_group_or_world_readable_token_file_is_refused() {
+    use filesquid_server::admin_token::load_or_create_token;
+    use std::os::unix::fs::PermissionsExt;
+    for mode in [0o644, 0o640, 0o604] {
+        let dir = data_dir(&format!("mode-{mode:o}"));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let path = dir.join("admin-token");
+        std::fs::write(&path, "stored-token").expect("token file");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).expect("chmod");
+        let error = load_or_create_token(&dir, None).expect_err("refused");
+        assert!(error.contains("chmod 600"), "{error}");
+        assert!(!error.contains("stored-token"), "{error}");
+        std::fs::remove_dir_all(dir).expect("cleanup");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_token_file_is_refused() {
+    use filesquid_server::admin_token::load_or_create_token;
+    let dir = data_dir("symlink");
+    std::fs::create_dir_all(&dir).expect("dir");
+    let target = dir.join("elsewhere");
+    std::fs::write(&target, "stored-token").expect("target");
+    std::os::unix::fs::symlink(&target, dir.join("admin-token")).expect("symlink");
+    let error = load_or_create_token(&dir, None).expect_err("refused");
+    assert!(error.contains("symbolic link"), "{error}");
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+#[cfg(unix)]
+#[test]
+fn an_owner_only_token_file_is_reused() {
+    use filesquid_server::admin_token::load_or_create_token;
+    use std::os::unix::fs::PermissionsExt;
+    let dir = data_dir("owner-only");
+    std::fs::create_dir_all(&dir).expect("dir");
+    let path = dir.join("admin-token");
+    std::fs::write(&path, "stored-token\n").expect("token file");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+    let (token, created) = load_or_create_token(&dir, None).expect("reused");
+    assert_eq!((token.as_str(), created), ("stored-token", false));
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+#[test]
+fn concurrent_first_starts_agree_on_one_token() {
+    use filesquid_server::admin_token::load_or_create_token;
+    for round in 0..20 {
+        let dir = data_dir(&format!("race-{round}"));
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let dir = dir.clone();
+                std::thread::spawn(move || load_or_create_token(&dir, None).expect("token").0)
+            })
+            .collect();
+        let tokens: Vec<String> = threads
+            .into_iter()
+            .map(|t| t.join().expect("thread"))
+            .collect();
+        let stored = std::fs::read_to_string(dir.join("admin-token")).expect("stored");
+        assert!(tokens.iter().all(|t| *t == stored.trim()), "round {round}");
+        std::fs::remove_dir_all(dir).expect("cleanup");
+    }
 }

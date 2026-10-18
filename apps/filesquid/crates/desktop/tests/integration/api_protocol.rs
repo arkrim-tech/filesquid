@@ -104,7 +104,10 @@ async fn the_desktop_owner_reaches_admin_routes_with_the_per_launch_token() {
 #[tokio::test]
 async fn a_call_without_the_per_launch_token_is_refused() {
     let (state, _token) = launched();
-    for path in filesquid_api::routed_paths() {
+    let protected = filesquid_api::route_actions()
+        .into_iter()
+        .filter(|(_, action)| *action != filesquid_api::auth::Action::Public);
+    for (path, _) in protected {
         let uri = format!("filesquid://localhost{path}");
         let request = get_with(&uri, Some("tauri://localhost"), None);
         let response = handle(state.clone(), request).await;
@@ -112,6 +115,16 @@ async fn a_call_without_the_per_launch_token_is_refused() {
         let json: serde_json::Value = serde_json::from_slice(response.body()).expect("json");
         assert_eq!(json["reason"], "missing_credentials", "{path}");
     }
+}
+
+#[tokio::test]
+async fn the_liveness_probe_needs_no_token() {
+    let (state, _token) = launched();
+    let uri = "filesquid://localhost/api/v1/health/live";
+    let response = handle(state, get_with(uri, None, None)).await;
+    assert_eq!(response.status(), http::StatusCode::OK);
+    let json: serde_json::Value = serde_json::from_slice(response.body()).expect("json");
+    assert_eq!(json, serde_json::json!({ "status": "up" }));
 }
 
 #[tokio::test]
@@ -187,6 +200,26 @@ fn the_init_script_hands_the_token_only_to_app_origins() {
     for origin in APP_ORIGINS {
         assert!(script.contains(origin), "{origin}");
     }
-    assert!(!script.contains("evil.example"));
+    assert_eq!(
+        script.matches(token.secret()).count(),
+        1,
+        "the secret appears once, inside the origin-guarded defineProperty"
+    );
+    let guard = script.find("indexOf(window.location.origin) === -1) return;");
+    let secret_at = script.find(token.secret());
+    assert!(guard.expect("origin guard") < secret_at.expect("secret"));
     assert!(script.contains("writable: false"));
+}
+
+#[tokio::test]
+async fn app_origin_responses_expose_the_journal_cursor_header() {
+    let (state, token) = launched();
+    let uri = "filesquid://localhost/api/v1/health";
+    let request = get_with(uri, Some("tauri://localhost"), Some(token.secret()));
+    let response = handle(state, request).await;
+    let exposed = response.headers()[http::header::ACCESS_CONTROL_EXPOSE_HEADERS]
+        .to_str()
+        .expect("ascii")
+        .to_ascii_lowercase();
+    assert!(exposed.contains("x-journal-next-cursor"), "{exposed}");
 }
