@@ -287,7 +287,7 @@ Product switch, module foundations (OCFL read, validate, write and change model;
 
 The one versioned API: contract, router and transports, file operations, metadata properties, jobs, events and the authorisation layer, all behind `filesquid-api` ([ADR 030](./architecture/030-filesquid-api-and-transports.md)). The Content Credentials routes moved to phase C ([ADR 037](./architecture/037-c2pa-in-release-2.md)).
 
-- [ ] **Task 0.10: Private-client library (ADR 001)** <a name="task-0.10"></a>
+- [x] **Task 0.10: Private-client library (ADR 001)** <a name="task-0.10"></a>
   - **Status:** Moved to F1 and re-scoped: no separate private-client crate is created. Catalog, search, replica and application-profile meaning lives in FileSquid's application layer behind `filesquid-api`, which links the modules ([ADR 030](./architecture/030-filesquid-api-and-transports.md)). The CL rows keep their IDs in the api plan.
   - **Description:** Confirm the application-layer module boundaries and SRS inside `filesquid-api`. It owns catalog/search/replica/application-profile **meaning** for every host (desktop, server, later the WASM browser host). It MUST NOT link Tauri, libvips, FFmpeg or SQLite drivers, and MUST NOT do storage I/O itself; hosts inject storage backends. CL-0.1 moved the SQLite journal store, the data-directory checks and `HostMonitor` out of `filesquid-api` into the new `filesquid-native` crate, which Task 0.5 (DE-0.8) then grows; Task 0.5 therefore depends on CL-0.1. Execute [CL-0.1](../apps/filesquid/crates/api/resources/plan.md) through [CL-0.3](../apps/filesquid/crates/api/resources/plan.md).
   - **Estimated Time:** 16 hours
