@@ -11,6 +11,16 @@ A new agent definition, [filesquid-orchestrator.md](../../.claude/agents/filesqu
 - Models are named only by the dispatch tier names (`sonnet`, `haiku`, default); no model identifier appears. The shared Cargo target is written as `$HOME/.cargo-target-shared`, so the file holds no environment-specific home path.
 - No `AGENTS.md` or README section lists the agent definitions, so no index was updated.
 
+## Cubic review fixes
+
+Round 1 (5 P2 findings, all fixed in the definition):
+
+- Global tasks, including the milestone's gate task, now have a dispatch rule: they go to the role that owns their module slices, to a role-less sub-agent when they have none, and to the owner when they need hardware no lane has.
+- Docs and tooling agents without an engineer role are named in the instructions block, with the role files' process rules they still keep.
+- The Cubic loop in the block carries the bounds of pr-review-loop.md: 10 rounds, three returns of one finding, 3 re-triggers per head commit (after 15 minutes), and the 24-poll cap.
+- The polling rule now says it replaces the rule's subscription and fallback check-in by owner decision, and keeps the capped re-trigger path.
+- Open PRs are listed in bounded 100-item pages (at most 10), with a warning when the cap is reached.
+
 TDD-ENFORCE: Not applicable - documentation-only change (an agent definition and this walkthrough).
 
 ## Verification
@@ -19,7 +29,9 @@ The change scope is `docs`, so an ordinary `bash scripts/pre-commit.sh` is the r
 
 Run at 2026-10-18T23:26:49Z (UTC). Summary line: `All Pre-Commit Hooks Passed! Test scope: docs (22s)`.
 
-Complete, unabridged hook output:
+The Cubic round 1 fix commit passed the same run at 2026-10-18T23:34:14Z (UTC): `All Pre-Commit Hooks Passed! Test scope: docs (24s)`.
+
+Complete, unabridged hook output of the first run:
 
 ```text
 changed_scope: docs (only documentation or always-run checker scripts outside the crates and npm packages changed)

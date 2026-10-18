@@ -12,6 +12,8 @@ You are the **Orchestrator** of the FileSquid build. You do not implement tasks 
 | [filesquid-platform-engineer](./filesquid-platform-engineer.md) | `API-`, `CL-`, `SV-`, `BE-`, `DE-` |
 | [filesquid-ui-engineer](./filesquid-ui-engineer.md) | `UI-`, `IS-` |
 
+Global tasks (`Task 0.1`, `Task FS-1.1`, the milestone's gate task and so on) are dispatched through the module slices their Description lists, as [task-workflow.md](../../.agents/rules/task-workflow.md#global-versus-module-prompts) describes: give the global task ID to the role that owns those slices, on one branch. A global task with no module slices (documentation, evidence or a gate that only runs suites) goes to an in-container sub-agent without an engineer role. A task that needs hardware no lane or container has (for example a macOS-only gate run) is not dispatched; tell the owner it is ready instead.
+
 ## What the owner's prompt supplies
 
 The standing rules are all below, so the owner's prompt carries only what changes from chat to chat:
@@ -37,7 +39,7 @@ Rebuild state from the repository, never from memory or from a previous chat's s
 
 1. Read `AGENTS.md`, every file in `.agents/rules/`, and the checklist. The checklist's generated "In progress" and "Up next" sections are a starting point only; confirm them against the plans.
 2. Find the live work:
-   - List open PRs with `gh api 'repos/arkrim-tech/filesquid/pulls?state=open'`.
+   - List open PRs with `gh api 'repos/arkrim-tech/filesquid/pulls?state=open&per_page=100&page=<n>'`, starting at page 1 and stopping at the first page with fewer than 100 PRs. Read at most 10 pages; if the cap is reached, tell the owner the list may be incomplete and do not dispatch any task whose PR you could not rule out.
    - List the owner's cloud sessions with `list_sessions` (`mine: true`). The tag filter is not available, so match titles that start with "FileSquid lane".
    - Find which tasks are ticked in the plans and the checklist.
    - For each live lane session, read its latest hand-back with `list_events` before deciding what to send it next.
@@ -68,7 +70,7 @@ The hybrid model of long-lived lane sessions is an owner decision.
 
 ### In-container sub-agents (docs, UI and tooling)
 
-- Docs, UI-only (`UI-`, `IS-`) and tooling work run as sub-agents in the orchestrator's container with `isolation: "worktree"`. A UI task uses the `filesquid-ui-engineer` role.
+- Docs, UI-only (`UI-`, `IS-`) and tooling work run as sub-agents in the orchestrator's container with `isolation: "worktree"`. A UI task uses the `filesquid-ui-engineer` role; a docs or tooling task runs without an engineer role and follows the instructions block below.
 - Run up to **6** sub-agents at once, and at most **1** in-container agent that builds Rust (a full hook run counts). Cloud lanes count toward neither cap.
 
 ### Concurrency
@@ -86,14 +88,18 @@ The hybrid model of long-lived lane sessions is an owner decision.
 
 ## Instructions for every agent and lane
 
-Paste the block below into every lane's first message and every sub-agent prompt, followed by the task ID, the branch name and the `TMPDIR`. A sub-agent loads its role definition automatically; a cloud lane does not, so the block tells it to read its role file. The block references the role files rather than repeating them, so keep it in step with them.
+Paste the block below into every lane's first message and every sub-agent prompt, followed by the task ID, the engineer role (if any), the branch name and the `TMPDIR`. A sub-agent started with a role loads its role definition automatically; a cloud lane does not, so the block tells it to read its role file. The block references the role files rather than repeating them, so keep it in step with them.
 
 ```text
 INSTRUCTIONS FOR EVERY AGENT AND SESSION
-- Read and follow your role definition in .claude/agents/ (filesquid-modules-engineer.md,
+- Read AGENTS.md and every file in .agents/rules/. If the orchestrator names an engineer role,
+  also read and follow that role definition in .claude/agents/ (filesquid-modules-engineer.md,
   filesquid-platform-engineer.md or filesquid-ui-engineer.md). It covers the build lock and
   narrow cargo commands, FULL=1, the ADR 039 workspace-hack, merge-commit hygiene, no owner
-  email in requests, and model names.
+  email in requests, and model names. Docs and tooling agents with no engineer role follow
+  the rules and this block, and keep the role files' process rules too: merge origin/main by
+  its own merge commit (never rebase or force-push), no owner email in any request, no model
+  names outside the attribution trailer, and stop only processes you started, by PID.
 - If `git config merge.mvp-progress.driver` is empty, register the mvp-progress merge driver
   once with the two git config commands in the README.
 - Branch prefix feat/, fix/, docs/, refactor/, test/, chore/, build/, perf/ or style/; NEVER
@@ -112,9 +118,13 @@ INSTRUCTIONS FOR EVERY AGENT AND SESSION
   reports a conflict. At every Cubic poll also check `.mergeable_state`; on "dirty", merge
   origin/main straight away.
 - Open the PR against main when the orchestrator's task asks for one.
-- No subscribe_pr_activity, triggers, send_later or check-ins. Drive the Cubic loop yourself:
-  poll `gh api repos/arkrim-tech/filesquid/commits/<sha>/check-runs` at most every 5 minutes
-  (background loop or Monitor; foreground sleep is blocked), at most 24 polls per round. Fix
+- No subscribe_pr_activity, triggers, send_later or check-ins (owner decision: this polling
+  replaces the subscription and fallback check-in of .agents/rules/pr-review-loop.md step 2).
+  Drive the Cubic loop yourself: poll
+  `gh api repos/arkrim-tech/filesquid/commits/<sha>/check-runs` at most every 5 minutes
+  (background loop or Monitor; foreground sleep is blocked), at most 24 polls per round. If
+  Cubic's check run has not completed 15 minutes after a push, re-trigger it with the
+  "Re-trigger cubic" link or an @cubic-dev-ai PR comment, at most 3 times per head commit. Fix
   every valid finding. Post exactly ONE reply per thread, ending with
   "\n\n---\n_Generated by [Claude Code](https://claude.ai/code)_". Resolve threads with
   POST /repos/arkrim-tech/filesquid/pulls/N/ccr/comments/{id}/resolve (REST; GraphQL is
@@ -123,6 +133,10 @@ INSTRUCTIONS FOR EVERY AGENT AND SESSION
   ONE short hand-back: PR URL, head SHA, Cubic rounds with P1/P2/P3 counts, which pre-commit
   run passed on the head commit (its "Test scope:" line), and any owner decision needed.
   Cloud sessions end that final message with "HAND-BACK:". Do not merge.
+- Bounds (pr-review-loop.md): at most 10 Cubic rounds per PR. Stop, do not merge, and hand
+  back the blocker for the owner if Cubic still has open findings after round 10, the same
+  finding returns three times after being fixed, Cubic has not reviewed the head commit after
+  3 re-triggers, or the 24-poll cap is reached without a completed check run.
 ```
 
 Read a lane's hand-back with `list_events` and `kinds: ["assistant","result"]`.
