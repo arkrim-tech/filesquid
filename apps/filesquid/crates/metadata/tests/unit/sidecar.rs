@@ -116,3 +116,23 @@ async fn a_sidecar_that_is_not_utf8_is_an_error_not_a_lossy_record() {
     ));
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_symlinked_staging_file_cannot_redirect_the_write() {
+    let dir = scratch("staging");
+    let outside = scratch("staging-outside");
+    let target = outside.join("victim.txt");
+    std::fs::write(&target, "keep").unwrap();
+    std::os::unix::fs::symlink(&target, dir.join("a.jpg.metadata.md.tmp")).unwrap();
+    let store = SidecarStore::new(&dir);
+    let file = FileRef::new("", "a.jpg").unwrap();
+    store.save(&file, &titled("x")).await.unwrap();
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "keep");
+    assert!(!std::fs::symlink_metadata(dir.join("a.jpg.metadata.md"))
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    std::fs::remove_dir_all(&dir).unwrap();
+    std::fs::remove_dir_all(&outside).unwrap();
+}

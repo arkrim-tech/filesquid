@@ -5,7 +5,7 @@
 //! [`MetadataStore`]. The file I/O is named at the call sites below
 //! ([`std::fs::read`], [`std::fs::write`], [`std::fs::rename`]).
 
-use std::io::ErrorKind;
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
 use crate::file_ref::FileRef;
@@ -92,13 +92,31 @@ fn parse_record(bytes: Vec<u8>) -> Result<Record, StoreError> {
     Ok(from_markdown(&text))
 }
 
+/// Create `path` exclusively and write `text` to it (file I/O).
+///
+/// A stale entry is removed first (removing a symlink removes the link, not its
+/// target) and creation then fails if anything reappears, so a planted staging
+/// symlink can never redirect the write.
+fn write_new(path: &Path, text: &str) -> Result<(), std::io::Error> {
+    match std::fs::remove_file(path) {
+        Ok(()) => {}
+        Err(err) if err.kind() == ErrorKind::NotFound => {}
+        Err(err) => return Err(err),
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    file.write_all(text.as_bytes())
+}
+
 /// Write `text` to `path` through a sibling temporary file, then rename it
 /// into place so a reader never sees a partial record.
 fn write_replacing(path: &Path, text: &str) -> Result<(), std::io::Error> {
     let mut staging = path.as_os_str().to_owned();
     staging.push(".tmp");
     let staging = PathBuf::from(staging);
-    if let Err(err) = std::fs::write(&staging, text) {
+    if let Err(err) = write_new(&staging, text) {
         // Best effort: the write error is the one the caller needs.
         let _ = std::fs::remove_file(&staging);
         return Err(err);
