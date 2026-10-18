@@ -9,7 +9,8 @@
 # run there. The scope comes from scripts/changed_scope.sh (the diff between
 # the merge-base with origin/main and the working tree):
 #
-#   full  (FULL=1, a manifest, lockfile, toolchain, scripts/ or contract file
+#   full  (FULL=1, the Cargo manifest or lockfile, a toolchain, an unlisted package
+#          manifest, a gate-logic script or contract file
 #          changed, or detection failed) — every step below:
 #     From the FileSquid Cargo workspace (apps/filesquid/):
 #       1. cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -34,8 +35,9 @@
 # Every cargo command runs under the shared-target lock (scripts/lib/cargo_shared.sh).
 #
 # Environment:
-#   FULL=1                  run the full suite whatever changed (required before
-#                           a PR is first marked ready and on its final commit)
+#   FULL=1                  run the full suite whatever changed (required, when
+#                           the PR scope is full or includes rust:, before a PR
+#                           is first marked ready and on its final commit)
 #   FILESQUID_SKIP_TESTS=1  skip this script (work-in-progress commits only;
 #                           run it before pushing)
 #   FILESQUID_E2E=1         also run Playwright end-to-end tests for packages in scope
@@ -229,7 +231,7 @@ run_full_scope() {
 }
 
 run_docs_scope() {
-  local reason="docs-only change: only Markdown, resources/ or .agents/ files outside the crates and npm packages changed; set FULL=1 to run"
+  local reason="docs-only change: only documentation or always-run checker scripts outside the crates and npm packages changed; set FULL=1 to run"
   skip_rust "$reason"
   skip_step "ESLint, TypeScript, Vitest and Playwright e2e in $UI_PACKAGES" "$reason"
   skip_step "Desktop packaged-window e2e" "$reason"
