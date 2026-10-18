@@ -1,0 +1,6 @@
+# The generated MVP progress block and its bar are merged by
+# scripts/docs/merge_mvp_progress.py once a clone registers the driver (README,
+# "Setup Development Environment"). Without that git config, git falls back to
+# its normal text merge for these files.
+resources/implementation-plan-checklist.md merge=mvp-progress
+resources/assets/mvp-progress.svg merge=mvp-progress
