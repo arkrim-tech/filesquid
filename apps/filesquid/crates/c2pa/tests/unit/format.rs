@@ -17,7 +17,7 @@ use filesquid_c2pa::format::{
     asset_layout, detect_format, read_store_bytes, AssetFormat, AssetLayout, EmbeddedStore,
     FormatError, FormatHandler, PngHandler,
 };
-use filesquid_c2pa::io::MemorySource;
+use filesquid_c2pa::io::{ByteIoError, ByteSource, MemorySource};
 use filesquid_c2pa::jumbf::toggles;
 use filesquid_c2pa::manifest::ParseLimits;
 use filesquid_c2pa::read::{read_asset, AssetManifest, ReadError};
@@ -244,8 +244,71 @@ fn the_asset_box_limit_holds_at_the_boundary() {
     ));
 }
 
+/// An in-memory source that records the range of every read.
+struct RecordingSource {
+    /// The bytes.
+    bytes: Vec<u8>,
+    /// `offset..offset + len` of each `read_at` call.
+    reads: Vec<Range<u64>>,
+}
+
+impl ByteSource for RecordingSource {
+    async fn size(&mut self) -> Result<u64, ByteIoError> {
+        Ok(self.bytes.len() as u64)
+    }
+
+    async fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, ByteIoError> {
+        let start =
+            usize::try_from(offset).map_err(|_| ByteIoError::OutOfRange { offset, size: 0 })?;
+        let available = self.bytes.get(start..).unwrap_or_default();
+        let n = buf.len().min(available.len());
+        buf[..n].copy_from_slice(&available[..n]);
+        self.reads.push(offset..offset + n as u64);
+        Ok(n)
+    }
+}
+
 #[test]
-fn a_store_over_the_size_limit_is_rejected_before_reading_it() {
+fn a_store_over_the_size_limit_is_refused_without_reading_its_bytes() {
+    // The layout reads the APP11 segments to find the store; reading the
+    // store itself must then stop at the size check, with no read at all.
+    let store = sample_store();
+    let (bytes, _) = assemble(&jpeg_pieces(app11_segments(&store, 1, 200)));
+    let mut source = RecordingSource {
+        bytes: bytes.clone(),
+        reads: Vec::new(),
+    };
+    let found = block_on(asset_layout(&mut source, 10_000))
+        .expect("layout")
+        .expect("JPEG");
+    let embedded = found.stores.first().expect("a store").clone();
+    source.reads.clear();
+    let size = store.len() as u64;
+    let over = block_on(read_store_bytes(&mut source, &embedded, size - 1));
+    assert_eq!(
+        over,
+        Err(FormatError::StoreTooLarge {
+            size,
+            max: size - 1
+        })
+    );
+    assert!(source.reads.is_empty(), "{:?}", source.reads);
+    let at_limit = block_on(read_store_bytes(&mut source, &embedded, size));
+    assert_eq!(at_limit, Ok(store.clone()));
+    let in_parts = |r: &Range<u64>| {
+        embedded
+            .parts
+            .iter()
+            .any(|p| r.start < p.end && p.start < r.end)
+    };
+    assert!(
+        source.reads.iter().all(in_parts),
+        "only store parts are read"
+    );
+}
+
+#[test]
+fn a_store_over_the_size_limit_is_reported_by_read_asset() {
     let store = sample_store();
     let (bytes, _) = assemble(&jpeg_pieces(app11_segments(&store, 1, 200)));
     let limits = |max_store_bytes| ParseLimits {
@@ -495,4 +558,28 @@ fn an_unreservable_store_is_an_allocation_error_not_an_abort() {
     };
     assert_eq!(result, Err(expected));
     assert_eq!(FormatError::Allocation { size }.category(), "allocation");
+}
+
+#[test]
+fn no_bytes_may_sit_between_c2pa_app11_packets() {
+    // A stray byte or a 0xFF fill byte between the store's packets would
+    // leave bytes inside the store's container that no part covers.
+    let store = sample_store();
+    let segments = app11_segments(&store, 1, 400);
+    let first_len = 2 + usize::from(u16::from_be_bytes([segments[2], segments[3]]));
+    let (first, rest) = segments.split_at(first_len);
+    for gap in [0x00u8, 0xFF] {
+        let gapped = [first, &[gap], rest].concat();
+        let (bytes, _) = assemble(&jpeg_pieces(gapped));
+        assert!(
+            matches!(layout(&bytes), Err(FormatError::Malformed { .. })),
+            "gap byte {gap:#04x}"
+        );
+    }
+    // The same bytes after the last packet are skipped as before.
+    let (bytes, _) = assemble(&jpeg_pieces([&segments[..], &[0x00]].concat()));
+    assert_eq!(
+        layout(&bytes).expect("layout").expect("JPEG").stores.len(),
+        1
+    );
 }

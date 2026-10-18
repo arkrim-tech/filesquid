@@ -54,7 +54,8 @@ pub enum ReadError {
     /// The bytes are not a usable manifest store.
     #[error("{0}")]
     Store(StoreError),
-    /// The asset's format handler could not lay the asset out.
+    /// The asset's format handler could not lay the asset out or read its
+    /// embedded store (including [`FormatError::StoreTooLarge`]).
     #[error("{0}")]
     Format(FormatError),
 }

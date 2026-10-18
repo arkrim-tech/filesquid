@@ -5,7 +5,8 @@
 //! packet sequence number `Z` (from 1) and a slice of the box; every packet
 //! after the first repeats the box header, which reassembly drops
 //! (ISO 19566-5 D.2) after checking that it equals the first packet's. The
-//! store's segments must be contiguous and in sequence. The store is
+//! store's segments must be contiguous (no fill or stray bytes between
+//! them) and in sequence. The store is
 //! identified by its JUMBF type UUID and the label `c2pa` (section
 //! 18.7.3.1); a store whose description box lacks the requestable and label
 //! toggles (section 11.1.4.1.2), or a first packet cut off before those
@@ -132,6 +133,9 @@ impl<S: ByteSource + ?Sized> Parser<'_, S> {
             let Some((marker, code)) = self.next_marker(at).await? else {
                 return Err(FormatError::Truncated { offset: at });
             };
+            if marker != at && self.building.is_some() {
+                return Err(malformed(at, "C2PA APP11 segments are not contiguous"));
+            }
             if code == EOI {
                 return self.push("EOI".into(), marker..marker + 2);
             }
@@ -181,11 +185,11 @@ impl<S: ByteSource + ?Sized> Parser<'_, S> {
         if len < 2 {
             return Err(malformed(at, "segment length below 2"));
         }
-        let end = at + 2 + len;
-        if end > self.reader.size() {
-            return Err(FormatError::Truncated { offset: at });
+        let end = at.checked_add(2).and_then(|end| end.checked_add(len));
+        match end {
+            Some(end) if end <= self.reader.size() => Ok(end),
+            _ => Err(FormatError::Truncated { offset: at }),
         }
-        Ok(end)
     }
 
     /// A length-prefixed segment.

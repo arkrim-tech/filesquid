@@ -411,10 +411,14 @@ fn an_update_manifest_uses_its_parent_binding_and_the_current_store_length() {
 #[test]
 fn an_update_manifest_without_a_parent_has_no_hard_binding() {
     let asset = b"asset".to_vec();
+    let missing = |reason| BindingStatus::Invalid {
+        code: "claim.hardBindings.missing",
+        reason,
+    };
     let orphan = store(&[update_manifest(ACTIVE_LABEL, "urn:c2pa:absent")]);
     assert_eq!(
-        code(&check_sidecar(orphan, &asset)),
-        "claim.hardBindings.missing"
+        check_sidecar(orphan, &asset).status,
+        missing("an update manifest's parent is not in the store")
     );
     let loop_label = "urn:c2pa:cccccccc-1111-4222-8333-444444444444";
     let cycle = store(&[
@@ -422,8 +426,33 @@ fn an_update_manifest_without_a_parent_has_no_hard_binding() {
         update_manifest(ACTIVE_LABEL, loop_label),
     ]);
     assert_eq!(
-        code(&check_sidecar(cycle, &asset)),
-        "claim.hardBindings.missing"
+        check_sidecar(cycle, &asset).status,
+        missing("the update manifests' parents form a loop")
+    );
+    let std_label = "urn:c2pa:aaaaaaaa-1111-4222-8333-444444444444";
+    let parent = binding_manifest(
+        std_label,
+        "c2pa.hash.data",
+        &data_hash_map(&[], &sha256(&asset)),
+    );
+    let two_parents = manifest(
+        b"c2um",
+        ACTIVE_LABEL,
+        &[
+            assertion_store(&[
+                cbor_assertion("c2pa.ingredient.v3", &parent_ingredient(std_label)),
+                cbor_assertion("c2pa.ingredient.v3__1", &parent_ingredient(std_label)),
+            ]),
+            claim_box(
+                "c2pa.claim.v2",
+                &encode(&claim_v2(&["c2pa.ingredient.v3", "c2pa.ingredient.v3__1"])),
+            ),
+            signature_box(),
+        ],
+    );
+    assert_eq!(
+        check_sidecar(store(&[parent, two_parents]), &asset).status,
+        missing("an update manifest has more than one parentOf ingredient")
     );
 }
 

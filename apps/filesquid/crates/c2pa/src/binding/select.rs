@@ -82,8 +82,9 @@ pub(super) fn referenced<'m>(
 }
 
 /// The standard manifest whose hard binding applies: the active manifest,
-/// or for an update manifest its `parentOf` chain. Every step visits a
-/// different manifest, so the store's manifest count bounds the walk.
+/// or for an update manifest its `parentOf` chain. A manifest may not name
+/// itself, but longer cycles are possible; the walk takes at most the
+/// store's manifest count of steps, which stops a cycle.
 pub(super) fn standard_manifest(store: &ManifestStore) -> Result<Selected, BindingStatus> {
     let manifests = store.manifests();
     let mut index = manifests.len() - 1;
@@ -109,10 +110,8 @@ pub(super) fn standard_manifest(store: &ManifestStore) -> Result<Selected, Bindi
             });
         };
         updates_seen = true;
-        index = parent_of(store, index, update).ok_or(invalid(
-            "claim.hardBindings.missing",
-            "an update manifest has no parent manifest in the store",
-        ))?;
+        index = parent_of(store, index, update)
+            .map_err(|reason| invalid("claim.hardBindings.missing", reason))?;
     }
     Err(invalid(
         "claim.hardBindings.missing",
@@ -121,8 +120,13 @@ pub(super) fn standard_manifest(store: &ManifestStore) -> Result<Selected, Bindi
 }
 
 /// The index of the manifest that the update manifest `update` (at
-/// `index`) names in its one claim-referenced `parentOf` ingredient.
-fn parent_of(store: &ManifestStore, index: usize, update: &Manifest) -> Option<usize> {
+/// `index`) names in its one claim-referenced `parentOf` ingredient, or
+/// why there is none.
+fn parent_of(
+    store: &ManifestStore,
+    index: usize,
+    update: &Manifest,
+) -> Result<usize, &'static str> {
     let assertions = referenced(store, index, update);
     let mut parents = assertions.iter().filter_map(|assertion| {
         let label = base_label(&assertion.label);
@@ -137,16 +141,21 @@ fn parent_of(store: &ManifestStore, index: usize, update: &Manifest) -> Option<u
             _ => None,
         }
     });
-    let url = parents.next()?;
+    let url = parents
+        .next()
+        .ok_or("an update manifest has no parentOf ingredient")?;
     if parents.next().is_some() {
-        return None;
+        return Err("an update manifest has more than one parentOf ingredient");
     }
-    let target = store.resolve(&JumbfUri::parse(url).ok()?, index).ok()?;
+    let missing = "an update manifest's parent is not in the store";
+    let uri = JumbfUri::parse(url).map_err(|_| missing)?;
+    let target = store.resolve(&uri, index).map_err(|_| missing)?;
     store
         .manifests()
         .iter()
         .position(|entry| entry.range == target.range)
         .filter(|parent| *parent != index)
+        .ok_or(missing)
 }
 
 /// The manifest URL of a `parentOf` ingredient: `activeManifest` (v3) or

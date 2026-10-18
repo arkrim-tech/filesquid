@@ -11,7 +11,7 @@ use std::ops::Range;
 
 use super::{hash_algorithm, included_ranges, BindingError, BindingStatus, Check, Outcome};
 use crate::cbor::CborValue;
-use crate::crypto::{hash_range, CryptoBackend};
+use crate::crypto::{hash_range, CryptoBackend, HashAlgorithm};
 use crate::format::reader::Reader;
 use crate::format::{BoxBudget, FormatError};
 use crate::io::ByteSource;
@@ -91,28 +91,19 @@ where
             informational: Vec::new(),
         });
     }
+    // Without `merkle`, `hash` is what the assertion binds (section 18.6).
     let Some(expected) = value.get("hash").and_then(CborValue::as_bytes) else {
-        return Ok(Outcome::invalid(MISMATCH, "the hash field is missing"));
+        return Ok(Outcome::invalid(
+            MALFORMED,
+            "the hash field is missing or not a byte string",
+        ));
     };
     let (roots, excluded) =
         match layout_exclusions(check.asset, &exclusions, check.max_boxes).await? {
             Ok(found) => found,
             Err(outcome) => return Ok(outcome),
         };
-    let mut hasher = check.crypto.incremental_hasher(alg)?;
-    for root in &roots {
-        if excluded
-            .iter()
-            .any(|r| r.start <= root.start && r.end >= root.end)
-        {
-            continue;
-        }
-        hasher.update(&root.start.to_be_bytes());
-        for range in included_ranges(root.clone(), &excluded) {
-            hash_range(hasher.as_mut(), check.asset, &range).await?;
-        }
-    }
-    let actual = hasher.finalize();
+    let actual = read_and_hash_roots(check, alg, &roots, &excluded).await?;
     let additional = exclusions
         .iter()
         .any(|e| !EXPECTED_XPATHS.contains(&e.xpath));
@@ -122,6 +113,35 @@ where
         Vec::new()
     };
     Ok(Outcome::compared(actual == expected, MATCH, MISMATCH, info))
+}
+
+/// Read the asset and hash, for each root box not wholly `excluded`, its
+/// 64-bit big-endian offset followed by its bytes outside `excluded`
+/// (section 18.6).
+async fn read_and_hash_roots<S, C>(
+    check: &mut Check<'_, S, C>,
+    alg: HashAlgorithm,
+    roots: &[Range<u64>],
+    excluded: &[Range<u64>],
+) -> Result<Vec<u8>, BindingError>
+where
+    S: ByteSource + ?Sized,
+    C: CryptoBackend,
+{
+    let mut hasher = check.crypto.incremental_hasher(alg)?;
+    for root in roots {
+        if excluded
+            .iter()
+            .any(|r| r.start <= root.start && r.end >= root.end)
+        {
+            continue;
+        }
+        hasher.update(&root.start.to_be_bytes());
+        for range in included_ranges(root.clone(), excluded) {
+            hash_range(hasher.as_mut(), check.asset, &range).await?;
+        }
+    }
+    Ok(hasher.finalize())
 }
 
 /// The root box ranges and the merged excluded ranges, or the outcome when
@@ -136,25 +156,15 @@ async fn layout_exclusions<S: ByteSource + ?Sized>(
     let size = reader.size();
     let roots = match boxes(&mut reader, 0..size, &mut budget).await {
         Ok(roots) => roots,
-        Err(FormatError::Io(err)) => return Err(err.into()),
-        Err(FormatError::TooManyBoxes { .. }) => {
-            return Ok(Err(Outcome {
-                status: BindingStatus::NotChecked {
-                    reason: "the asset has more boxes than ParseLimits::max_asset_boxes",
-                },
-                informational: Vec::new(),
-            }))
-        }
-        Err(_) => {
-            return Ok(Err(Outcome::invalid(
-                MISMATCH,
-                "the asset is not a valid BMFF box structure",
-            )))
-        }
+        Err(err) => return walk_failure(err).map(Err),
     };
     let mut excluded = Vec::new();
     for exclusion in exclusions {
-        for matched in matching(&mut reader, &roots, &exclusion.nodes, &mut budget).await? {
+        let found = match matching(&mut reader, &roots, &exclusion.nodes, &mut budget).await {
+            Ok(found) => found,
+            Err(err) => return walk_failure(err).map(Err),
+        };
+        for matched in found {
             if conditions_hold(&mut reader, &matched, exclusion).await? {
                 excluded.extend(excluded_parts(&matched, exclusion));
             }
@@ -164,6 +174,26 @@ async fn layout_exclusions<S: ByteSource + ?Sized>(
         roots.into_iter().map(|b| b.range).collect(),
         merge(excluded),
     )))
+}
+
+/// The outcome for a box walk that failed: an I/O failure is an error,
+/// more boxes than [`crate::manifest::ParseLimits::max_asset_boxes`] is not
+/// checked, and a broken box structure (at the root or under a box an
+/// xpath descends into) is a mismatch.
+fn walk_failure(err: FormatError) -> Result<Outcome, BindingError> {
+    match err {
+        FormatError::Io(err) => Err(err.into()),
+        FormatError::TooManyBoxes { .. } => Ok(Outcome {
+            status: BindingStatus::NotChecked {
+                reason: "the asset has more boxes than ParseLimits::max_asset_boxes",
+            },
+            informational: Vec::new(),
+        }),
+        _ => Ok(Outcome::invalid(
+            MISMATCH,
+            "the asset is not a valid BMFF box structure",
+        )),
+    }
 }
 
 /// An I/O failure while reading the asset.
@@ -239,14 +269,16 @@ async fn one_box<S: ByteSource + ?Sized>(
 }
 
 /// The boxes `nodes` selects, starting from `roots`. Children are parsed
-/// only under selected boxes; a box whose content is not a box list has
-/// no children. The xpath length bounds the descent.
+/// only under selected boxes that the xpath descends into; their content
+/// must be a valid box list, and a failure (including the box budget) is
+/// returned, never taken as "no match". The xpath length bounds the
+/// descent.
 async fn matching<S: ByteSource + ?Sized>(
     reader: &mut Reader<'_, S>,
     roots: &[BmffBox],
     nodes: &[Node],
     budget: &mut BoxBudget,
-) -> Result<Vec<BmffBox>, BindingError> {
+) -> Result<Vec<BmffBox>, FormatError> {
     let Some((first, rest)) = nodes.split_first() else {
         return Ok(Vec::new());
     };
@@ -255,11 +287,8 @@ async fn matching<S: ByteSource + ?Sized>(
         let mut next = Vec::new();
         for parent in &current {
             let content = parent.range.start + parent.header_len..parent.range.end;
-            match boxes(reader, content, budget).await {
-                Ok(children) => next.extend(select(&children, node)),
-                Err(FormatError::Io(err)) => return Err(err.into()),
-                Err(_) => {}
-            }
+            let children = boxes(reader, content, budget).await?;
+            next.extend(select(&children, node));
         }
         current = next;
     }

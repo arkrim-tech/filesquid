@@ -12,32 +12,65 @@ const C2PA_UUID: [u8; 16] = [
 ];
 
 /// Most root boxes walked.
-const MAX_BOXES: usize = 10_000;
+pub const MAX_BOXES: usize = 10_000;
 
 /// The manifest store bytes of the first C2PA `uuid` box with purpose
-/// `manifest`, or `None`.
+/// `manifest`, or `None`, walking at most [`MAX_BOXES`] root boxes.
 pub fn mp4_manifest_store(bytes: &[u8]) -> Result<Option<Vec<u8>>, String> {
+    mp4_manifest_store_within(bytes, MAX_BOXES)
+}
+
+/// [`mp4_manifest_store`] with a limit of `max_boxes` root boxes. An asset
+/// of exactly `max_boxes` boxes is walked to its end.
+pub fn mp4_manifest_store_within(
+    bytes: &[u8],
+    max_boxes: usize,
+) -> Result<Option<Vec<u8>>, String> {
     let mut at = 0usize;
-    for _ in 0..MAX_BOXES {
+    for _ in 0..max_boxes {
         if at == bytes.len() {
             return Ok(None);
         }
-        let header = bytes.get(at..at + 8).ok_or("truncated box header")?;
-        let size = u32::from_be_bytes(header[..4].try_into().expect("4")) as usize;
-        let end = match size {
-            0 => bytes.len(),
-            1 => return Err("64-bit box sizes are not handled by this test helper".into()),
-            n => at.checked_add(n).ok_or("box size overflow")?,
-        };
-        let body = bytes.get(at + 8..end).ok_or("box runs past the end")?;
-        if &header[4..] == b"uuid" && body.get(..16) == Some(&C2PA_UUID[..]) {
+        let (body, end) = root_box(bytes, at)?;
+        if body.get(..16) == Some(&C2PA_UUID[..]) {
             if let Some(store) = manifest_payload(&body[16..])? {
                 return Ok(Some(store));
             }
         }
         at = end;
     }
-    Err("too many boxes".into())
+    match at == bytes.len() {
+        true => Ok(None),
+        false => Err("too many boxes".into()),
+    }
+}
+
+/// The box at `at`: the body of a `uuid` box (empty for other types) and
+/// the box's end. Handles 32-bit, 64-bit (`size` 1) and to-the-end
+/// (`size` 0) sizes.
+fn root_box(bytes: &[u8], at: usize) -> Result<(&[u8], usize), String> {
+    let header = bytes.get(at..at + 8).ok_or("truncated box header")?;
+    let size32 = u32::from_be_bytes(header[..4].try_into().expect("4"));
+    let (header_len, size) = match size32 {
+        0 => (8, bytes.len() - at),
+        1 => {
+            let large = bytes.get(at + 8..at + 16).ok_or("truncated large size")?;
+            let large = u64::from_be_bytes(large.try_into().expect("8"));
+            (16, usize::try_from(large).map_err(|_| "box size overflow")?)
+        }
+        n => (8, n as usize),
+    };
+    if size < header_len {
+        return Err("box size is below its header".into());
+    }
+    let end = at.checked_add(size).ok_or("box size overflow")?;
+    let body = bytes
+        .get(at + header_len..end)
+        .ok_or("box runs past the end")?;
+    match &header[4..] {
+        b"uuid" => Ok((body, end)),
+        _ => Ok((&[], end)),
+    }
 }
 
 /// The store inside a C2PA `uuid` box body after its extended type, or

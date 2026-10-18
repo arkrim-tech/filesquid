@@ -330,12 +330,20 @@ fn an_xpath_at_the_node_limit_is_accepted() {
 }
 
 #[test]
-fn a_missing_hash_is_a_mismatch_and_merkle_trees_are_not_checked() {
+fn a_missing_hash_is_malformed_and_merkle_trees_are_not_checked() {
     let (asset, _) = mp4();
     let no_hash = map(&[("exclusions", CborValue::Array(bmff_required_exclusions()))]);
     assert_eq!(
         code(&check(&no_hash, &asset)),
-        "assertion.bmffHash.mismatch"
+        "assertion.bmffHash.malformed"
+    );
+    let text_hash = map(&[
+        ("exclusions", CborValue::Array(bmff_required_exclusions())),
+        ("hash", text("not bytes")),
+    ]);
+    assert_eq!(
+        code(&check(&text_hash, &asset)),
+        "assertion.bmffHash.malformed"
     );
     let merkle = map(&[
         ("exclusions", CborValue::Array(bmff_required_exclusions())),
@@ -399,31 +407,101 @@ fn the_asset_box_limit_bounds_the_bmff_walk() {
     // five root boxes: five pass, four are reported as not checked.
     let (asset, all) = mp4();
     let hash = expected(&asset, &all, &[MOOV, FREE, MDAT], &[]);
+    let map = bmff_hash_map(bmff_required_exclusions(), &hash);
+    assert_eq!(
+        code(&check_with_box_limit(&map, &asset, 5)),
+        "assertion.bmffHash.match"
+    );
+    assert_eq!(
+        code(&check_with_box_limit(&map, &asset, 4)),
+        "not checked: the asset has more boxes than ParseLimits::max_asset_boxes"
+    );
+}
+
+/// Validate the BMFF-hash `value` against `asset` with `max_asset_boxes`.
+fn check_with_box_limit(value: &CborValue, asset: &[u8], max_asset_boxes: usize) -> BindingReport {
     let store = ManifestStore::from_bytes(
-        binding_store(
-            "c2pa.hash.bmff.v3",
-            &bmff_hash_map(bmff_required_exclusions(), &hash),
-        ),
+        binding_store("c2pa.hash.bmff.v3", value),
         &ParseLimits::default(),
     )
     .expect("store");
-    let run = |max_asset_boxes| {
-        let limits = ParseLimits {
-            max_asset_boxes,
-            ..ParseLimits::default()
-        };
-        block_on(validate_hard_binding(
-            &store,
-            &mut MemorySource::new(asset.clone()),
-            None,
-            &limits,
-            &RustCryptoBackend,
-        ))
-        .expect("asset readable")
+    let limits = ParseLimits {
+        max_asset_boxes,
+        ..ParseLimits::default()
     };
-    assert_eq!(code(&run(5)), "assertion.bmffHash.match");
+    block_on(validate_hard_binding(
+        &store,
+        &mut MemorySource::new(asset.to_vec()),
+        None,
+        &limits,
+        &RustCryptoBackend,
+    ))
+    .expect("asset readable")
+}
+
+#[test]
+fn nested_boxes_count_toward_the_box_limit() {
+    // Five root boxes plus `moov`'s two children are walked for
+    // `/moov/udta`: seven pass, six are reported as not checked, never as
+    // an exclusion that matched nothing.
+    let (asset, all) = mp4();
+    let hash = expected(&asset, &all, &[MOOV, FREE, MDAT], &[all[UDTA].clone()]);
+    let map = bmff_hash_map(exclusions(vec![bmff_exclusion("/moov/udta", &[])]), &hash);
     assert_eq!(
-        code(&run(4)),
+        code(&check_with_box_limit(&map, &asset, 7)),
+        "assertion.bmffHash.match"
+    );
+    assert_eq!(
+        code(&check_with_box_limit(&map, &asset, 6)),
         "not checked: the asset has more boxes than ParseLimits::max_asset_boxes"
     );
+}
+
+#[test]
+fn a_broken_box_list_under_an_xpath_is_a_mismatch_not_no_match() {
+    // `mdat` holds 0x05 bytes, which do not parse as boxes. Descending into
+    // it is an error, not an exclusion that silently matched nothing.
+    let (asset, all) = mp4();
+    let hash = expected(&asset, &all, &[MOOV, FREE, MDAT], &[]);
+    let map = bmff_hash_map(exclusions(vec![bmff_exclusion("/mdat/abcd", &[])]), &hash);
+    let report = check(&map, &asset);
+    assert_eq!(
+        report.status,
+        BindingStatus::Invalid {
+            code: "assertion.bmffHash.mismatch",
+            reason: "the asset is not a valid BMFF box structure",
+        }
+    );
+    // A path that parses but finds no such box is a genuine no-match.
+    let absent = bmff_hash_map(exclusions(vec![bmff_exclusion("/moov/abcd", &[])]), &hash);
+    assert_eq!(code(&check(&absent, &asset)), "assertion.bmffHash.match");
+}
+
+#[test]
+fn the_test_store_locator_handles_large_sizes_and_its_box_limit() {
+    let (asset, all) = mp4();
+    let piece = |i: usize| asset[all[i].start as usize..all[i].end as usize].to_vec();
+    // `free` written with a 64-bit size (`size` 1, then the largesize).
+    let free = &piece(FREE)[8..];
+    let mut large_free = 1u32.to_be_bytes().to_vec();
+    large_free.extend_from_slice(b"free");
+    large_free.extend_from_slice(&(16 + free.len() as u64).to_be_bytes());
+    large_free.extend_from_slice(free);
+    let store = sample_store();
+    let mut manifest = C2PA_BMFF_UUID.to_vec();
+    manifest.extend_from_slice(&[0, 0, 0, 0]);
+    manifest.extend_from_slice(b"manifest\0");
+    manifest.extend_from_slice(&[0; 8]);
+    manifest.extend_from_slice(&store);
+    let with_large = [piece(FTYP), large_free, bmff_box(b"uuid", &manifest)].concat();
+    let found = bmff_store::mp4_manifest_store(&with_large).expect("located");
+    assert_eq!(found, Some(store), "the manifest after a large-size box");
+    // Three root boxes without a manifest: a limit of three walks to the
+    // end, two stops early.
+    let no_manifest = [piece(FTYP), piece(MOOV), piece(MDAT)].concat();
+    assert_eq!(
+        bmff_store::mp4_manifest_store_within(&no_manifest, 3),
+        Ok(None)
+    );
+    assert!(bmff_store::mp4_manifest_store_within(&no_manifest, 2).is_err());
 }
