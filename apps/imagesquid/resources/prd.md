@@ -769,7 +769,7 @@ Durable completed-item checkpoints MUST extend to supported import/upload, thumb
 
 Copied from FileSquid NFR-006 on 2026-10-16. ImageSquid MUST meet it for its views and workflows; FileSquid owns the platform-wide evidence.
 
-**ImageSquid surfaces:** [Distribution requirements](./srs.md#distribution-requirements), [inherited UI-S-013](./srs.md#inherited-from-filesquidui-copied-2026-10-16), [PRD coverage](./srs.md#prd-coverage) (IS-S-008).
+**ImageSquid surfaces:** [Distribution requirements](./srs.md#distribution-requirements), [inherited UI-S-013](./srs.md#inherited-from-filesquidui), [inherited UI-S-016](./srs.md#inherited-from-filesquidui), [PRD coverage](./srs.md#prd-coverage) (IS-S-008).
 
 **Requirement:** Web interfaces MUST target WCAG 2.2 AA; desktop MUST support keyboard-only tasks, native screen readers, visible focus, scalable text and high-contrast/reduced-motion preferences. Drag-only workflows MUST have alternatives. Release testing MUST include import, search, edit, permission review, recovery and export on each supported platform; built UI MUST mount with rigorous DOM/state assertions and no SSR/hydration/browser errors.
 
@@ -805,7 +805,7 @@ Copied from FileSquid RC-002 on 2026-10-16. ImageSquid MUST meet it for its view
 
 Copied from FileSquid RC-005 on 2026-10-16. ImageSquid MUST meet it for its views and workflows; FileSquid owns the platform-wide evidence.
 
-**ImageSquid surfaces:** [inherited UI-S-013](./srs.md#inherited-from-filesquidui-copied-2026-10-16), [PRD coverage](./srs.md#prd-coverage).
+**ImageSquid surfaces:** [inherited UI-S-013](./srs.md#inherited-from-filesquidui), [inherited UI-S-016](./srs.md#inherited-from-filesquidui), [PRD coverage](./srs.md#prd-coverage).
 
 **Criteria:** Assigned F requirements and NFR-002/006/007 pass on released platforms; no uncaught browser, hydration or SSR errors occur during built-artifact scenarios. Linux/web are initial targets; mature macOS/Windows support remains separately verified.
 

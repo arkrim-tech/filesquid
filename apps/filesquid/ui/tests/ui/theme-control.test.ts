@@ -24,6 +24,17 @@ describe("<fs-theme-control>", () => {
   beforeEach(() => defineElements());
   afterEach(() => document.body.replaceChildren());
 
+  it("keeps focus on the chosen radio when reconfigured while focused (UI-S-016)", () => {
+    const { control, store } = mount();
+    store.setChoice("dark");
+    radio(control, "dark")?.focus();
+    control.configure({ store, labels: { ...labels, theme: "Appearance" } });
+    const focused = control.shadowRoot?.activeElement as HTMLInputElement | null;
+    expect(focused?.value).toBe("dark");
+    expect(focused).toBe(radio(control, "dark"));
+    expect(control.shadowRoot?.querySelector("legend")?.textContent).toBe("Appearance");
+  });
+
   it("is registered as a custom element", () => {
     expect(customElements.get("fs-theme-control")).toBe(FsThemeControl);
   });

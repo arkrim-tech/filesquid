@@ -6,6 +6,7 @@ export { REQUIRED_LABEL_KEYS, missingLabels, type LabelKey, type LabelTable } fr
 export {
   COLOUR_TOKENS,
   CONTRAST_PAIRS,
+  FOCUS_CONTRAST_PAIRS,
   REQUIRED_TOKENS,
   THEME_INDEPENDENT_TOKENS,
   contrastFailures,
@@ -18,6 +19,7 @@ export {
 } from "./tokens";
 export {
   AA_TEXT_CONTRAST,
+  NON_TEXT_CONTRAST,
   contrastRatio,
   parseHexColour,
   relativeLuminance,

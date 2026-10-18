@@ -54,5 +54,7 @@
   "themeLight": "Light",
   "themeDark": "Dark",
   "yes": "Yes",
-  "no": "No"
+  "no": "No",
+  "skipToContent": "Skip to main content",
+  "navigationMain": "Main navigation"
 }

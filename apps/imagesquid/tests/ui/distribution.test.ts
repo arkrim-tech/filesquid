@@ -3,7 +3,14 @@
  * the ImageSquid manifest and brand assets (IS-S-009) and the shared theme control.
  */
 import { beforeEach, expect, it } from "vitest";
-import { ThemeStore, defineElements, type FsAppShell, type ThemeMedia } from "@filesquid/ui";
+import {
+  ThemeStore,
+  accessibilityViolations,
+  defineElements,
+  resolveLocale,
+  type FsAppShell,
+  type ThemeMedia,
+} from "@filesquid/ui";
 import manifest from "../../distribution.json";
 import { imagesquid } from "../../src/distribution";
 
@@ -51,6 +58,17 @@ it("renders ImageSquid brand and vocabulary in the shared shell", async () => {
     "Monitor",
   ]);
   expect(root?.querySelector('[role="status"]')?.textContent).toBe("Archives API: ok (filesquid)");
+});
+
+it("inherits the FileSquid accessibility contracts (UI-S-016)", async () => {
+  const shell = await mount(false);
+  const root = shell.shadowRoot;
+  expect(accessibilityViolations(shell)).toEqual([]);
+  expect(root?.querySelector(".skip")?.textContent).toBe(imagesquid.labels.skipToContent);
+  expect(root?.querySelector("nav")?.getAttribute("aria-label")).toBe(
+    imagesquid.labels.navigationMain,
+  );
+  expect(resolveLocale(imagesquid)).toEqual({ lang: "en", dir: "ltr" });
 });
 
 it("keeps the official mark in the dark theme and shows the theme control", async () => {

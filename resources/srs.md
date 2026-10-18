@@ -1334,6 +1334,7 @@ The system MUST satisfy [PRD NFR-006](./prd.md#nfr-006-accessibility-and-usabili
 
 **Tests**
 - [`accessibility_and_usability_NFR-006.feature`](../apps/filesquid/crates/server/tests/features/accessibility_and_usability_NFR-006.feature)
+- [`accessibility_contracts_NFR-006.feature`](../apps/filesquid/ui/tests/features/accessibility_contracts_NFR-006.feature) (the UI contracts every `@filesquid/ui` element and distribution meets: [UI-S-016](../apps/filesquid/ui/resources/srs.md))
 
 ### SRS-NFR-007: Compatibility, rendering and localization
 
@@ -1537,7 +1538,7 @@ The FileSquid default UI has no screenshot yet; [SRS-F-055](#srs-f-055-default-u
 | NFR-003 | SRS-NFR-003 | `../apps/filesquid/crates/server/tests/features/bounded_processing_and_migration_endurance_NFR-003.feature`, `../apps/filesquid/crates/core/tests/features/job_checkpoint_protocol_NFR-003.feature` |
 | NFR-004 | SRS-NFR-004 | `../apps/filesquid/crates/server/tests/features/security_and_privacy_NFR-004.feature` |
 | NFR-005 | SRS-NFR-005 | `../apps/filesquid/crates/server/tests/features/recovery_and_service_reliability_NFR-005.feature` |
-| NFR-006 | SRS-NFR-006 | `../apps/filesquid/crates/server/tests/features/accessibility_and_usability_NFR-006.feature` |
+| NFR-006 | SRS-NFR-006 | `../apps/filesquid/crates/server/tests/features/accessibility_and_usability_NFR-006.feature`, `../apps/filesquid/ui/tests/features/accessibility_contracts_NFR-006.feature` |
 | NFR-007 | SRS-NFR-007 | `../apps/filesquid/crates/server/tests/features/compatibility_rendering_and_localization_NFR-007.feature` |
 | NFR-008 | SRS-NFR-008 | `../apps/filesquid/crates/server/tests/features/maintainability_and_verified_engineering_NFR-008.feature`, `../apps/filesquid/crates/core/tests/features/portable_contracts_isolation_CORE-S-003.feature` |
 | NFR-009 | SRS-NFR-009 | `../apps/filesquid/crates/server/tests/features/observability_and_capacity_economics_NFR-009.feature` |

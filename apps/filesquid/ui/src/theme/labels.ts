@@ -59,6 +59,8 @@ export const REQUIRED_LABEL_KEYS = [
   "themeDark",
   "yes",
   "no",
+  "skipToContent",
+  "navigationMain",
 ] as const;
 
 /** One required label key. */
