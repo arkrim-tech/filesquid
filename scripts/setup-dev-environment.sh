@@ -7,7 +7,8 @@
 #
 # Idempotent and bounded: every step can run again without harm, and every
 # network or build step runs under a time limit when `timeout` (or `gtimeout`)
-# exists. Every step logs to stdout with an RFC 3339 UTC timestamp. A failed
+# exists. Without either program the steps run without a time limit after a
+# warning (macOS without coreutils, for example); the lock wait stays bounded. Every step logs to stdout with an RFC 3339 UTC timestamp. A failed
 # required step stops the script with a non-zero exit naming the step; a
 # failed optional step prints a warning and the script continues.
 #
@@ -92,11 +93,15 @@ optional_step() {
 }
 
 # Installs the toolchain named by rust-toolchain.toml and the wasm32 target.
+# `rustup toolchain install` without arguments reads the toolchain file
+# (rustup 1.28 or newer); any failure fails the step.
 install_rust_toolchain() {
   command -v rustup >/dev/null 2>&1 || { log "rustup not found; install it from https://rustup.rs/"; return 1; }
   # shellcheck disable=SC2046 # the prefix is one or two words
-  (cd "$WORKSPACE" && { $(timeout_prefix "$STEP_TIMEOUT") rustup toolchain install || $(timeout_prefix "$STEP_TIMEOUT") rustup show; } \
-    && $(timeout_prefix "$STEP_TIMEOUT") rustup target add wasm32-unknown-unknown)
+  (cd "$WORKSPACE" && $(timeout_prefix "$STEP_TIMEOUT") rustup toolchain install) \
+    || { log "rustup could not install the toolchain from rust-toolchain.toml (rustup 1.28 or newer is required: run 'rustup self update')"; return 1; }
+  # shellcheck disable=SC2046
+  (cd "$WORKSPACE" && $(timeout_prefix "$STEP_TIMEOUT") rustup target add wasm32-unknown-unknown)
 }
 
 # Downloads every locked Cargo dependency.

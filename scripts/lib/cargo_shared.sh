@@ -9,8 +9,16 @@
 # find crate"), so every cargo run in the pre-commit gates and the setup script
 # takes an exclusive `flock` on a lock file next to the target directory.
 #
-#   with_cargo_lock <program...>   run an executable (not a shell function) under the lock
+#   with_cargo_lock <command...>   run a command (program or shell function) under the lock
 #   cargo_locked <cargo args...>   run `cargo <args>` under the lock
+#
+# The lock covers only cargo runs started through these functions (the
+# pre-commit gates and the setup script). A cargo command run by hand or by an
+# IDE does not take it.
+#
+# The target directory is CARGO_TARGET_DIR, else CARGO_BUILD_TARGET_DIR, else
+# Cargo's default `target`. A `build.target-dir` set in a Cargo config file is
+# not read; this repository sets none, so use one of the variables instead.
 #
 # Sourcing also exports CARGO_INCREMENTAL=0 and CARGO_PROFILE_DEV_DEBUG=0
 # unless they are already set, so the hook and scripts/setup-dev-environment.sh
@@ -23,8 +31,12 @@
 #
 # The wait is bounded (AGENTS.md section 22): FILESQUID_CARGO_LOCK_WAIT seconds,
 # default 1800. On timeout the command is not run, a message names the lock
-# file, and the exit status is 75. Without `flock` (for example on macOS) the
-# command runs unlocked after a warning, so the gates stay platform-agnostic.
+# file, and the exit status is 75. The message is printed only on a real
+# timeout, so a command that itself exits 75 is never reported as one. The
+# lock is held on a file descriptor of a subshell that the command does not
+# inherit, so a daemon the command leaves behind cannot keep the lock. Without
+# `flock` (for example on macOS) the command runs unlocked after a warning, so
+# the gates stay platform-agnostic.
 #
 # Usage: . scripts/lib/cargo_shared.sh
 
@@ -57,26 +69,38 @@ cargo_lock_warn_if_unavailable() {
   fi
 }
 
+# Prints the target directory Cargo will use: CARGO_TARGET_DIR, else
+# CARGO_BUILD_TARGET_DIR, else `target`. Pure over the environment.
+cargo_target_dir() {
+  printf '%s\n' "${CARGO_TARGET_DIR:-${CARGO_BUILD_TARGET_DIR:-target}}"
+}
+
+# Takes the lock on file descriptor 9, waiting at most $1 seconds. Prints a
+# waiting notice, and on timeout a message naming lock file $2; fails then.
+acquire_cargo_lock_fd9() {
+  flock -n 9 && return 0
+  echo "⏳ Waiting up to ${1}s for the Cargo lock $2 (another cargo run on this target directory holds it)..." >&2
+  flock -w "$1" 9 && return 0
+  echo "❌ Timed out after ${1}s waiting for the Cargo lock $2; the command was not run. Another cargo run on the same target directory still holds it: wait for it to finish and rerun, or raise FILESQUID_CARGO_LOCK_WAIT." >&2
+  return 1
+}
+
 # Runs "$@" under an exclusive lock on the current Cargo target directory.
-# Returns the command's status, or 75 when the bounded wait times out.
+# Returns the command's status, or 75 when the bounded wait times out. The
+# lock is released when the subshell holding descriptor 9 exits, on every path.
 with_cargo_lock() {
   if ! command -v flock >/dev/null 2>&1; then
     "$@"
     return
   fi
-  local lock wait status
-  lock=$(cargo_lock_path "${CARGO_TARGET_DIR:-target}" "$PWD")
+  local lock wait
+  lock=$(cargo_lock_path "$(cargo_target_dir)" "$PWD")
   wait=$(cargo_lock_wait_seconds)
   mkdir -p "$(dirname "$lock")" || return 1
-  if ! flock -n "$lock" true; then
-    echo "⏳ Waiting up to ${wait}s for the Cargo lock $lock (another cargo run on this target directory holds it)..." >&2
-  fi
-  flock -w "$wait" -E "$CARGO_LOCK_TIMEOUT_EXIT" "$lock" "$@"
-  status=$?
-  if [ "$status" -eq "$CARGO_LOCK_TIMEOUT_EXIT" ]; then
-    echo "❌ Timed out after ${wait}s waiting for the Cargo lock $lock; the command was not run. Another cargo run on CARGO_TARGET_DIR still holds it: wait for it to finish and rerun, or raise FILESQUID_CARGO_LOCK_WAIT." >&2
-  fi
-  return "$status"
+  (
+    acquire_cargo_lock_fd9 "$wait" "$lock" || exit "$CARGO_LOCK_TIMEOUT_EXIT"
+    "$@" 9>&-
+  ) 9>>"$lock"
 }
 
 # Runs `cargo "$@"` under the shared-target lock.

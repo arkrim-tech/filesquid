@@ -43,7 +43,9 @@
 #                           desktop crate is in scope
 #   FILESQUID_CARGO_LOCK_WAIT  seconds to wait for the shared-target lock (default 1800)
 #
-# Usage: ./scripts/verify_tests.sh   (from the repository root)
+# Usage: ./scripts/verify_tests.sh [--scope <scope>]   (from the repository root)
+#   Without --scope the scope is detected. scripts/pre-commit.sh passes the
+#   scope it detected once; an invalid --scope runs the full suite.
 
 echo "Starting Lint and Test Validation..."
 
@@ -226,7 +228,7 @@ run_full_scope() {
 }
 
 run_docs_scope() {
-  local reason="docs-only change: only Markdown, resources/ or .agents/ files changed; set FULL=1 to run"
+  local reason="docs-only change: only Markdown, resources/ or .agents/ files outside the crates and npm packages changed; set FULL=1 to run"
   skip_rust "$reason"
   skip_step "ESLint, TypeScript, Vitest and Playwright e2e in $UI_PACKAGES" "$reason"
   skip_step "Desktop packaged-window e2e" "$reason"
@@ -247,7 +249,7 @@ run_partial_scope() {
   run_desktop_e2e_if_requested "$desktop"
 }
 
-SCOPE=$(hook_scope)
+SCOPE=$(scope_or_detect "$@")
 echo "ℹ️  Test scope: $SCOPE"
 case "$SCOPE" in
   full) run_full_scope ;;

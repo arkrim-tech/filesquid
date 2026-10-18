@@ -4,15 +4,31 @@
 #
 # Hook scope: runs scripts/changed_scope.sh for the pre-commit gates and validates its answer (sourced, not run).
 #
-#   hook_scope          print the scope; the helper's reason goes to stderr
-#   hook_scope --quiet  print the scope only
+#   hook_scope [--quiet]          detect and print the validated scope; the
+#                                 helper's reason goes to stderr unless --quiet
+#   scope_or_detect [--scope S]   print S when it is a valid scope (how
+#                                 scripts/pre-commit.sh hands its one detection
+#                                 to the gates), otherwise detect it here
+#   is_valid_scope S              succeed when S follows the scope grammar
 #
 # The fixture-only overrides CHANGED_SCOPE_FILES, CHANGED_SCOPE_METADATA and
 # CHANGED_SCOPE_BASE are removed, so the gates always diff the real working
-# tree against origin/main. Any failure, or an answer that is not a known
-# scope, becomes `full`: the gates never run less because detection broke.
+# tree against origin/main. Any failure, and any answer outside the grammar
+# (docs | full | rust:<crates> | npm:<packages> | rust:<crates> npm:<packages>,
+# with non-empty comma-separated lists and no other tokens or lines), becomes
+# `full`: the gates never run less because detection broke.
 #
 # Usage: . scripts/lib/hook_scope.sh   (from the repository root)
+
+SCOPE_RUST_TOKEN='rust:[a-z0-9_-]+(,[a-z0-9_-]+)*'
+SCOPE_NPM_TOKEN='npm:[A-Za-z0-9_./-]+(,[A-Za-z0-9_./-]+)*'
+SCOPE_GRAMMAR="^(docs|full|${SCOPE_RUST_TOKEN}|${SCOPE_NPM_TOKEN}|${SCOPE_RUST_TOKEN} ${SCOPE_NPM_TOKEN})\$"
+
+# Succeeds when $1 is exactly one valid scope line. Pure.
+is_valid_scope() {
+  case "$1" in *$'\n'*) return 1 ;; esac
+  [[ "$1" =~ $SCOPE_GRAMMAR ]]
+}
 
 # Prints the validated scope for the current working tree.
 hook_scope() {
@@ -22,11 +38,21 @@ hook_scope() {
   else
     scope=$(env -u CHANGED_SCOPE_FILES -u CHANGED_SCOPE_METADATA -u CHANGED_SCOPE_BASE ./scripts/changed_scope.sh) || scope=full
   fi
-  case "$scope" in
-    docs | full | rust:* | npm:*) ;;
-    *) scope=full ;;
-  esac
+  is_valid_scope "$scope" || scope=full
   printf '%s\n' "$scope"
+}
+
+# Prints the scope given as `--scope <scope>` when valid, `full` when the
+# given one is invalid, or the detected scope when none is given.
+scope_or_detect() {
+  if [ "${1:-}" != "--scope" ]; then
+    hook_scope
+  elif is_valid_scope "${2:-}"; then
+    printf '%s\n' "$2"
+  else
+    echo "changed_scope: full (invalid --scope '${2:-}')" >&2
+    echo full
+  fi
 }
 
 # Prints the comma-separated crate list of scope $1 ("" when it has none). Pure.

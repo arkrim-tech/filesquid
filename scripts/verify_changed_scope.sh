@@ -11,8 +11,10 @@
 # npm:<packages> with file: links, mixed scopes, every full trigger, and the
 # fallbacks to full (FULL=1, unknown base, not a git repository, cargo
 # metadata failure, unknown crate directory, missing file list). It also
-# checks that the hook ignores the fixture-only overrides, the pure scope
-# parsers, the Cargo lock path, and the bounded lock wait. Takes seconds and
+# checks that the hook ignores the fixture-only overrides, the scope grammar
+# and --scope, the pure scope parsers, the Cargo lock path and target
+# fallbacks, that the default lock file is gitignored, and the bounded lock
+# wait (including that a command's own exit 75 is not a timeout). Takes seconds and
 # needs no network or Cargo build (one case runs `cargo metadata --no-deps`).
 #
 # Usage: ./scripts/verify_changed_scope.sh   (from the repository root)
@@ -32,8 +34,8 @@ METADATA="$WORK/metadata.json"
 FAILED=0
 PASSED=0
 
-. ./scripts/lib/cargo_shared.sh 2>/dev/null
-. ./scripts/lib/hook_scope.sh
+. ./scripts/lib/cargo_shared.sh || { echo "❌ cannot load scripts/lib/cargo_shared.sh"; exit 1; }
+. ./scripts/lib/hook_scope.sh || { echo "❌ cannot load scripts/lib/hook_scope.sh"; exit 1; }
 
 # Records one assertion. $1 = label, $2 = expected, $3 = actual.
 assert_eq() {
@@ -49,6 +51,17 @@ assert_eq() {
 fixture_git() {
   git -C "$FIXTURE" -c user.name=scope-test -c user.email=scope-test@example.invalid \
     -c commit.gpgsign=false -c core.hooksPath=/dev/null "$@" >/dev/null 2>&1
+}
+
+# Runs fixture_git "$@" and records a failure when the git command fails, so a
+# broken fixture step cannot let a later assertion pass for the wrong reason.
+fixture_must() {
+  if fixture_git "$@"; then
+    PASSED=$((PASSED + 1))
+  else
+    echo "❌ fixture step failed: git $*"
+    FAILED=1
+  fi
 }
 
 # Runs the helper in directory $1 with only the given overrides ("$@" after $1).
@@ -115,9 +128,9 @@ make_fixture_repo() {
 
 # Returns the fixture to origin/main with a clean working tree.
 reset_fixture() {
-  fixture_git checkout -q -B build/fixture origin/main
-  fixture_git reset -q --hard origin/main
-  fixture_git clean -fdq
+  fixture_must checkout -q -B build/fixture origin/main
+  fixture_must reset -q --hard origin/main
+  fixture_must clean -fdq
 }
 
 # Checks the helper against fixture file lists. $1 = expected, rest = paths.
@@ -130,11 +143,15 @@ expect_list() {
 CORE_SCOPE="rust:filesquid-api,filesquid-core,filesquid-desktop,filesquid-native,filesquid-server"
 OCFL_SCOPE="rust:filesquid-cli,filesquid-desktop,filesquid-metadata,filesquid-ocfl"
 UI_SCOPE="npm:apps/filesquid/ui,apps/imagesquid"
+API_SCOPE="rust:filesquid-api,filesquid-desktop,filesquid-native,filesquid-server"
 
 test_file_lists() {
   expect_list docs README.md resources/prd.md .agents/rules/rule.md docs/guide.md
-  expect_list docs apps/filesquid/crates/api/resources/plan.md apps/filesquid/resources/notes.md
-  expect_list docs apps/imagesquid/resources/prd.md apps/filesquid/ui/resources/tasks/Task-x-Walkthrough.md
+  expect_list docs apps/filesquid/resources/notes.md apps/README.md
+  expect_list "$API_SCOPE" apps/filesquid/crates/api/resources/srs.md apps/filesquid/resources/notes.md
+  expect_list "rust:filesquid-c2pa" apps/filesquid/crates/c2pa/README.md
+  expect_list "$UI_SCOPE" apps/filesquid/ui/resources/tasks/Task-x-Walkthrough.md
+  expect_list "npm:apps/imagesquid" apps/imagesquid/resources/prd.md
   expect_list "$OCFL_SCOPE" apps/filesquid/crates/ocfl/tests/fixtures/README.md
   expect_list "$OCFL_SCOPE" apps/filesquid/crates/ocfl/tests/resources/case.json
   expect_list "$CORE_SCOPE" apps/filesquid/crates/core/src/lib.rs README.md
@@ -164,19 +181,20 @@ test_git_changes() {
   assert_eq "no changes" docs "$(scope_in "$FIXTURE")"
   put README.md "# Edited"; put resources/prd.md "# Edited"; put .agents/rules/rule.md "# Edited"
   assert_eq "unstaged docs" docs "$(scope_in "$FIXTURE")"
-  reset_fixture; put apps/filesquid/crates/core/src/lib.rs "// staged"; fixture_git add -A
+  reset_fixture; put apps/filesquid/crates/core/src/lib.rs "// staged"; fixture_must add -A
   assert_eq "staged core" "$CORE_SCOPE" "$(scope_in "$FIXTURE")"
   reset_fixture; put apps/filesquid/crates/c2pa/src/lib.rs "// unstaged"
-  put apps/imagesquid/src/main.ts "// staged"; fixture_git add apps/imagesquid
+  put apps/imagesquid/src/main.ts "// staged"; fixture_must add apps/imagesquid
   assert_eq "staged and unstaged" "rust:filesquid-c2pa npm:apps/imagesquid" "$(scope_in "$FIXTURE")"
   reset_fixture; put apps/filesquid/crates/server/src/new.rs "// untracked"
   assert_eq "untracked" "rust:filesquid-server" "$(scope_in "$FIXTURE")"
   reset_fixture; put apps/filesquid/target/debug/out "ignored"
   assert_eq "ignored file" docs "$(scope_in "$FIXTURE")"
   reset_fixture; put apps/filesquid/crates/desktop/src/lib.rs "// committed"
-  fixture_git commit -qam "branch commit"
+  fixture_must commit -qam "branch commit"
+  assert_eq "committed change is no longer in the working tree" "" "$(git -C "$FIXTURE" status --porcelain)"
   assert_eq "committed on branch" "rust:filesquid-desktop" "$(scope_in "$FIXTURE")"
-  reset_fixture; fixture_git mv apps/filesquid/crates/c2pa/src/lib.rs apps/filesquid/crates/server/src/c2pa.rs
+  reset_fixture; fixture_must mv apps/filesquid/crates/c2pa/src/lib.rs apps/filesquid/crates/server/src/c2pa.rs
   assert_eq "rename across crates" "rust:filesquid-c2pa,filesquid-server" "$(scope_in "$FIXTURE")"
 }
 
@@ -194,7 +212,9 @@ test_fallbacks() {
 test_hook_ignores_overrides() {
   local list="$WORK/docs-only.txt" scope
   reset_fixture; mkdir -p "$FIXTURE/scripts" && cp "$HELPER" "$FIXTURE/scripts/changed_scope.sh"
-  fixture_git add -A && fixture_git commit -qm "helper" && fixture_git update-ref refs/remotes/origin/main HEAD
+  fixture_must add -A
+  fixture_must commit -qm "helper"
+  fixture_must update-ref refs/remotes/origin/main HEAD
   put apps/imagesquid/src/main.ts "// changed"; printf 'README.md\n' >"$list"
   scope=$(cd "$FIXTURE" && CHANGED_SCOPE_FILES="$list" CHANGED_SCOPE_BASE=HEAD hook_scope --quiet)
   assert_eq "hook ignores CHANGED_SCOPE_* overrides" "npm:apps/imagesquid" "$scope"
@@ -209,6 +229,45 @@ test_scope_parsers() {
   assert_eq "lock beside relative target" "/work/target.lock" "$(cargo_lock_path target /work)"
   assert_eq "default lock wait" 1800 "$(FILESQUID_CARGO_LOCK_WAIT=abc cargo_lock_wait_seconds)"
   assert_eq "custom lock wait" 7 "$(FILESQUID_CARGO_LOCK_WAIT=7 cargo_lock_wait_seconds)"
+  assert_eq "target from CARGO_TARGET_DIR" /a "$(CARGO_TARGET_DIR=/a CARGO_BUILD_TARGET_DIR=/b cargo_target_dir)"
+  assert_eq "target from CARGO_BUILD_TARGET_DIR" /b "$(env -u CARGO_TARGET_DIR CARGO_BUILD_TARGET_DIR=/b bash -c '. ./scripts/lib/cargo_shared.sh; cargo_target_dir')"
+  assert_eq "default target" target "$(env -u CARGO_TARGET_DIR -u CARGO_BUILD_TARGET_DIR bash -c '. ./scripts/lib/cargo_shared.sh; cargo_target_dir')"
+}
+
+# Records whether is_valid_scope accepts $2 as expected ($1 = yes or no).
+expect_valid() {
+  local actual=no
+  is_valid_scope "$2" && actual=yes
+  assert_eq "scope grammar '$2'" "$1" "$actual"
+}
+
+test_scope_grammar() {
+  local scope
+  expect_valid yes docs
+  expect_valid yes full
+  expect_valid yes "rust:filesquid-api,filesquid-server"
+  expect_valid yes "npm:apps/filesquid/ui,apps/imagesquid"
+  expect_valid yes "rust:filesquid-c2pa npm:apps/imagesquid"
+  expect_valid no ""
+  expect_valid no "rust:"
+  expect_valid no "npm:"
+  expect_valid no "rust:a extra"
+  expect_valid no "npm:x rust:a"
+  expect_valid no "rust:a,,b"
+  expect_valid no "$(printf 'docs\nfull')"
+  scope=$(scope_or_detect --scope "rust:" 2>/dev/null)
+  assert_eq "invalid --scope runs full" full "$scope"
+  assert_eq "valid --scope is used" docs "$(scope_or_detect --scope docs)"
+}
+
+test_lock_file_is_ignored() {
+  local path="apps/filesquid/target.lock"
+  if git check-ignore -q "$path"; then
+    PASSED=$((PASSED + 1))
+  else
+    echo "❌ $path (the default lock beside target/) is not gitignored; it would force full scope"
+    FAILED=1
+  fi
 }
 
 # Waits (at most 50 x 0.1s) until lock file $1 is held by another process.
@@ -233,6 +292,9 @@ test_lock_timeout() {
   assert_eq "bounded lock wait times out with 75" 75 "$status"
   (cd "$WORK/locked" && CARGO_TARGET_DIR=target FILESQUID_CARGO_LOCK_WAIT=5 with_cargo_lock true)
   assert_eq "lock acquired once free" 0 "$?"
+  local message
+  message=$(cd "$WORK/locked" && CARGO_TARGET_DIR=target with_cargo_lock sh -c 'exit 75' 2>&1)
+  assert_eq "a command's own exit 75 is not reported as a lock timeout" "" "$message"
 }
 
 test_real_workspace() {
@@ -256,6 +318,8 @@ test_git_changes
 test_fallbacks
 test_hook_ignores_overrides
 test_scope_parsers
+test_scope_grammar
+test_lock_file_is_ignored
 test_lock_timeout
 test_real_workspace
 

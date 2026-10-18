@@ -12,9 +12,11 @@
 #
 # Prints exactly one line on stdout; the reason goes to stderr:
 #   docs                    only Markdown, resources/ or .agents/ files changed
-#                           (a crate's or npm package's own resources/ counts too;
-#                           other files inside a crate, Markdown or not, belong to
-#                           that crate, because tests read fixtures there)
+#                           outside the crates and npm packages. Every file inside
+#                           a crate or package, Markdown and resources/ included,
+#                           belongs to it, because its tests read files there
+#                           (for example crates/api/resources/srs.md and
+#                           crates/c2pa/README.md)
 #   rust:<crates>           the changed crates under apps/filesquid/crates/*, plus
 #                           every workspace crate that depends on them (all
 #                           dependency kinds, transitively; from
@@ -109,7 +111,8 @@ report() {
   printf '%s\n' "$1"
 }
 
-# Classifies one changed path. Pure. Prints one of: docs, full,
+# Classifies one changed path. Pure. The case order matters: full triggers,
+# then crates, then npm packages, then documentation. Prints one of: docs, full,
 # crate:<dir relative to the workspace root>, npm:<package directory>.
 classify_path() {
   local path="$1" rest pkg
@@ -120,15 +123,11 @@ classify_path() {
     scripts/* | "$WORKSPACE_DIR/Cargo.toml" | "$WORKSPACE_DIR/Cargo.lock") echo full; return ;;
     "$CRATES_DIR"/*/*)
       rest="${path#"$CRATES_DIR"/}"
-      case "${rest#*/}" in
-        resources/*) echo docs ;;
-        *) echo "crate:crates/${rest%%/*}" ;;
-      esac
+      echo "crate:crates/${rest%%/*}"
       return ;;
   esac
   for pkg in $NPM_PACKAGES; do
     case "$path" in
-      "$pkg"/resources/*) echo docs; return ;;
       "$pkg"/*) echo "npm:$pkg"; return ;;
     esac
   done
@@ -195,7 +194,7 @@ main() {
   classes=$(printf '%s\n' "$files" | classify_files)
   full_path=$(printf '%s\n' "$classes" | sed -n 's/^full //p' | head -n 1)
   if [ -n "$full_path" ]; then report full "$full_path changed"; return; fi
-  if [ -z "$classes" ]; then report docs "only Markdown, resources/ or .agents/ files changed"; return; fi
+  if [ -z "$classes" ]; then report docs "only Markdown, resources/ or .agents/ files outside the crates and npm packages changed"; return; fi
   crate_dirs=$(printf '%s\n' "$classes" | sed -n 's/^crate://p')
   npm_dirs=$(printf '%s\n' "$classes" | sed -n 's/^npm://p')
   if [ -n "$crate_dirs" ]; then

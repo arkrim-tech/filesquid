@@ -8,14 +8,15 @@ No PRD or SRS requirement. This task changes the local verification gate describ
 
 | File | Change |
 |---|---|
-| [`scripts/changed_scope.sh`](../../scripts/changed_scope.sh) | New helper. It diffs the merge-base with `origin/main` against the working tree (committed, staged, unstaged and untracked files) and prints `docs`, `rust:<crates>`, `npm:<packages>` (or both) or `full`. Rust scope adds reverse dependencies from `cargo metadata --no-deps --format-version 1`. npm scope adds packages that link a changed package by `file:` (ImageSquid links `@filesquid/ui`). Every failure prints `full`. |
-| [`scripts/lib/hook_scope.sh`](../../scripts/lib/hook_scope.sh) | New. The gates call the helper through this file. It strips the fixture-only `CHANGED_SCOPE_*` overrides and turns any unknown answer into `full`. |
-| [`scripts/lib/cargo_shared.sh`](../../scripts/lib/cargo_shared.sh) | New. `cargo_locked` and `with_cargo_lock` run a command under `flock -w ${FILESQUID_CARGO_LOCK_WAIT:-1800}` on `<CARGO_TARGET_DIR>.lock`. A timeout exits 75 with a message naming the lock. Without `flock` the command runs unlocked after a warning. Sourcing the file also defaults `CARGO_INCREMENTAL=0` and `CARGO_PROFILE_DEV_DEBUG=0`. |
+| [`scripts/changed_scope.sh`](../../scripts/changed_scope.sh) | New helper. It diffs the merge-base with `origin/main` against the working tree (committed, staged, unstaged and untracked files) and prints `docs`, `rust:<crates>`, `npm:<packages>` (or both) or `full`. Rust scope adds reverse dependencies from `cargo metadata --no-deps --format-version 1`. npm scope adds packages that link a changed package by `file:` (ImageSquid links `@filesquid/ui`). Every file inside a crate or npm package, its README and `resources/` included, belongs to that crate or package, because tests read them (`crates/api/resources/srs.md`, `crates/c2pa/README.md`). Every failure prints `full`. |
+| [`scripts/lib/hook_scope.sh`](../../scripts/lib/hook_scope.sh) | New. The gates call the helper through this file. It strips the fixture-only `CHANGED_SCOPE_*` overrides and validates the answer against the scope grammar: `docs`, `full`, `rust:<list>`, `npm:<list>`, or both, with non-empty lists and one line. Anything else becomes `full`. `scope_or_detect` takes the scope the hook detected once (`--scope`), so steps 7 and 10 and the summary line agree. |
+| [`scripts/lib/cargo_shared.sh`](../../scripts/lib/cargo_shared.sh) | New. `cargo_locked` and `with_cargo_lock` hold `flock -w ${FILESQUID_CARGO_LOCK_WAIT:-1800}` on descriptor 9 of a subshell, on `<target>.lock`. The target is `CARGO_TARGET_DIR`, else `CARGO_BUILD_TARGET_DIR`, else `target`, whose `target.lock` is gitignored. The command does not inherit the descriptor. A timeout prints a message naming the lock and exits 75; a command's own exit 75 is never reported as a timeout. Without `flock` the command runs unlocked after a warning. Sourcing the file also defaults `CARGO_INCREMENTAL=0` and `CARGO_PROFILE_DEV_DEBUG=0`. |
+| [`.gitignore`](../../.gitignore) | Ignores `**/target.lock`, so the default lock never shows up as an unclassified file (which would force `full`). |
 | [`scripts/verify_tests.sh`](../../scripts/verify_tests.sh) | Follows the scope. `full` keeps the previous steps unchanged. `rust:` runs scoped Clippy, tests and rustdoc, each listed module crate alone, and the desktop `test-webdriver` steps only for `filesquid-desktop`. `npm:` runs only the listed packages. `docs` prints every skipped step and the reason. Every cargo call runs under the lock. |
-| [`scripts/verify_formatting.sh`](../../scripts/verify_formatting.sh) | `cargo fmt --check` runs under the lock. It is skipped when the scope is `docs` or npm-only, because no `.rs` file changed. Prettier still runs on every commit because it also checks Markdown. Rust format failures now print the diff. |
-| [`scripts/verify_changed_scope.sh`](../../scripts/verify_changed_scope.sh) | New gate (hook step 9) with 52 assertions. It builds a temporary git repository with a fake `origin/main` and the real crate graph. It checks every scope, every `full` trigger and every fallback: `FULL=1`, an unknown base, no git repository, a `cargo metadata` failure, an unknown crate and a missing file list. It also checks that renames and ignored files are handled, that the hook ignores the overrides, the pure parsers, the lock path, and the bounded lock wait (exit 75), and it runs one real `cargo metadata` case. |
-| [`scripts/pre-commit.sh`](../../scripts/pre-commit.sh) | Prints the test scope in its first line and in the summary line (`✅ All Pre-Commit Hooks Passed! Test scope: <scope> (<s>s)`). Adds step 9. |
-| [`scripts/setup-dev-environment.sh`](../../scripts/setup-dev-environment.sh) | New session setup script. It is idempotent and bounded, and logs every step to stdout with RFC 3339 UTC timestamps. Required steps: the toolchain from `rust-toolchain.toml` plus `wasm32-unknown-unknown`, `cargo fetch --locked`, and `npm ci` in both UI packages. Optional steps: `ocfl-py==2.1.0` with pip when `python3` exists, and the pre-warm `cargo build --workspace --tests --locked` under the same lock and Cargo environment as the hook. |
+| [`scripts/verify_formatting.sh`](../../scripts/verify_formatting.sh) | `cargo fmt --check` runs under the lock. It is skipped when the scope is `docs` or npm-only, because no `.rs` file changed, and runs for every `rust:` and `full` scope. Prettier still runs on every commit because it also checks Markdown. On failure it prints the cargo output and says whether the check failed, could not run, or timed out on the lock. |
+| [`scripts/verify_changed_scope.sh`](../../scripts/verify_changed_scope.sh) | New gate (hook step 9) with 115 assertions. It builds a temporary git repository with a fake `origin/main` and the real crate graph, and checks every fixture git step. Cases:<br>- every scope, crate and package resources included<br>- every `full` trigger<br>- every fallback: `FULL=1`, an unknown base, no git repository, a `cargo metadata` failure, an unknown crate, a missing file list<br>- renames and ignored files<br>- the hook ignoring the overrides<br>- the scope grammar and `--scope`<br>- the pure parsers<br>- the lock path, including the `CARGO_BUILD_TARGET_DIR` fallback, and that the default lock is gitignored<br>- the bounded lock wait (exit 75), and no timeout message for a command that exits 75<br>- one real `cargo metadata` case |
+| [`scripts/pre-commit.sh`](../../scripts/pre-commit.sh) | Detects the scope once, passes it to steps 7 and 10 with `--scope`, and prints it in its first line and in the summary line (`✅ All Pre-Commit Hooks Passed! Test scope: <scope> (<s>s)`). Adds step 9. |
+| [`scripts/setup-dev-environment.sh`](../../scripts/setup-dev-environment.sh) | New session setup script. It is idempotent and bounded (each step needs `timeout` or `gtimeout` for its time limit and warns without one), and logs every step to stdout with RFC 3339 UTC timestamps. A toolchain failure fails the step; there is no `rustup show` fallback. Required steps: the toolchain from `rust-toolchain.toml` plus `wasm32-unknown-unknown`, `cargo fetch --locked`, and `npm ci` in both UI packages. Optional steps: `ocfl-py==2.1.0` with pip when `python3` exists, and the pre-warm `cargo build --workspace --tests --locked` under the same lock and Cargo environment as the hook. |
 | [local-verification.md](../../.agents/rules/local-verification.md), [task-workflow.md](../../.agents/rules/task-workflow.md), [pr-review-loop.md](../../.agents/rules/pr-review-loop.md) | Run `FULL=1 bash scripts/pre-commit.sh` before a PR is first marked ready and on the final commit before merge, and record the `Test scope: full` summary line. These rules also describe the scope table, the shared-target lock and the new step 9. |
 | [README](../../README.md) | Documents the setup script with its one-line command, the change-aware test scope, `FULL=1`, the lock and `FILESQUID_CARGO_LOCK_WAIT`. |
 
@@ -29,6 +30,7 @@ All runs used `CARGO_TARGET_DIR` set to the shared target, `CARGO_INCREMENTAL=0`
 | After: docs-only commit | `docs` | 10 s | 0 s (all skipped and listed) |
 | After: single-crate commit (`filesquid-c2pa`, which nothing depends on) | `rust:filesquid-c2pa` | 108 s | 94 s: Clippy 16 s, tests 55 s, rustdoc 23 s. This figure includes compiling the crate in a fresh clone; a warm rerun is faster |
 | Setup script, first run in this session | n/a | 72 s | pre-warm build 57 s |
+| Setup script, rerun after the Cubic round 1 fixes (idempotence check) | n/a | 20 s | pre-warm build 8 s; every step passed |
 
 The docs-only and single-crate runs used a scratch clone of this branch. Its local `origin/main` pointed at a commit containing this change, so the diff held only the demonstration edit. On this branch the hook always selects `full`, because `scripts/` changed.
 
@@ -42,9 +44,23 @@ The pre-commit run on the staged branch showed both effects. The first `FULL=1` 
 
 None. No credentials or dummy values were used.
 
-## Raw output: docs-only run (`bash scripts/pre-commit.sh`, one Markdown edit)
+## Review fixes (Cubic round 1)
 
-Run at 2026-10-18T17:29:12Z. Absolute paths are replaced with `<repo>`, `<demo-clone>`, `<other-agent-worktree>` and `<CARGO_TARGET_DIR>`.
+Cubic's first review raised 20 findings, and all were fixed:
+- crate and package `resources/` and READMEs now count as code;
+- the default lock file is gitignored;
+- the toolchain step has no masking fallback;
+- the lock is fd-based, reads `CARGO_BUILD_TARGET_DIR`, and never mislabels a command's own exit 75;
+- the scope grammar is strict, and the scope is detected once and passed with `--scope`;
+- formatting failures name their cause;
+- the fixture git steps are checked;
+- the documentation is reworded where it overstated the lock, the timeouts, the docs scope or the step 7 exception.
+
+The runs below were recorded before these fixes. The scope logic they show is unchanged for the edits they made (a root `resources/tasks/` file and `crates/c2pa/src/lib.rs`). Only the reason text of the docs scope now adds "outside the crates and npm packages".
+
+## Raw output (complete): docs-only run (`bash scripts/pre-commit.sh`, one Markdown edit)
+
+Run at 2026-10-18T17:29:12Z. Absolute paths are replaced with `<repo>`, `<demo-clone>`, `<other-agent-worktree>` and `<CARGO_TARGET_DIR>`. This is the complete output.
 
 ```text
 ========================================
@@ -149,9 +165,9 @@ changed_scope: docs (only Markdown, resources/ or .agents/ files changed)
 ========================================
 ```
 
-## Raw output: single-crate run (`bash scripts/pre-commit.sh`, one edit in `crates/c2pa/src/lib.rs`)
+## Output excerpt: single-crate run (`bash scripts/pre-commit.sh`, one edit in `crates/c2pa/src/lib.rs`)
 
-Run at 2026-10-18T17:33:38Z. Cargo compile and progress lines and per-test lines are left out; every hook line is kept.
+Run at 2026-10-18T17:33:38Z. This is an excerpt of the raw output (739 lines in all): every hook line is kept verbatim, and Cargo compile and progress lines and per-test lines are left out. The complete log was not committed because it is mostly cargo noise and holds machine-specific absolute paths ([links-enforce.md](../../.agents/rules/links-enforce.md)).
 
 ```text
 ========================================
@@ -233,9 +249,9 @@ changed_scope: rust:filesquid-c2pa (changed: crates/c2pa)
 ========================================
 ```
 
-## Raw output: full run (`FULL=1 bash scripts/pre-commit.sh` on this branch)
+## Output excerpt: full run (`FULL=1 bash scripts/pre-commit.sh` on this branch)
 
-Hook and step result lines, with the cucumber scenario totals. The individual test lines (7,360 lines in all) are left out.
+This is an excerpt of the raw output (7,360 lines in all): the hook and step result lines verbatim, with the cucumber scenario totals. The individual test lines are left out, for the same reasons as above.
 
 ```text
 ========================================
@@ -299,7 +315,7 @@ changed_scope: full (FULL=1 is set)
 ========================================
 ```
 
-## Raw output: `bash scripts/setup-dev-environment.sh` (first run in this session)
+## Raw output (complete): `bash scripts/setup-dev-environment.sh` (first run in this session)
 
 ```text
 [2026-10-18T17:23:38Z] FileSquid development environment setup
@@ -343,5 +359,5 @@ added 202 packages in 5s
 
 ```text
 Starting Change Scope Validation...
-✅ Change scope validation passed (52 assertions).
+✅ Change scope validation passed (115 assertions).
 ```
