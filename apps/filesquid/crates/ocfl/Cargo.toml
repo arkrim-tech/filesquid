@@ -123,6 +123,11 @@ path = "tests/integration/write_order.rs"
 required-features = ["fs"]
 
 [[test]]
+name = "integration_content_fixtures"
+path = "tests/integration/content_fixtures.rs"
+required-features = ["fs"]
+
+[[test]]
 name = "features"
 path = "tests/features.rs"
 harness = false

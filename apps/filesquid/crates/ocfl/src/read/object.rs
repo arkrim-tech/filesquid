@@ -12,6 +12,7 @@
 use std::fmt;
 
 use super::committed::read_committed;
+use super::copy_guard::refuse_copy_into_ocfl_root;
 use super::declaration::read_declaration;
 use super::error::ReadError;
 use super::history::{diff_versions, version_history, Change, VersionInfo};
@@ -174,10 +175,16 @@ impl<'a, B: StorageBackend> Object<'a, B> {
     /// only when every byte matched the inventory digest and `precondition`,
     /// when given, holds; otherwise nothing is published at `dest_key`.
     ///
+    /// A copy never edits an OCFL object (OCFL-S-019): `dest_key` MUST NOT
+    /// lie inside an OCFL object root or storage root on `dest`, which is
+    /// checked before anything is read or written. New versions are
+    /// published by [`ObjectWriter`](crate::write::ObjectWriter) only.
+    ///
     /// # Errors
     ///
-    /// As [`stream_file`](Self::stream_file) and
-    /// [`LogicalFileReader::next_chunk`], or a destination backend error.
+    /// [`ReadError::CopyIntoOcflRoot`] for a destination inside an OCFL
+    /// root; as [`stream_file`](Self::stream_file) and
+    /// [`LogicalFileReader::next_chunk`]; or a destination backend error.
     pub async fn copy_file<D: StorageBackend>(
         &self,
         version: &VersionNum,
@@ -187,6 +194,7 @@ impl<'a, B: StorageBackend> Object<'a, B> {
         precondition: Option<&Precondition>,
     ) -> Result<ObjectMeta, ReadError> {
         let source = self.stream_file(version, path, MAX_CHUNK_BYTES)?;
+        refuse_copy_into_ocfl_root(dest, dest_key).await?;
         copy_to(source, dest, dest_key.clone(), precondition).await
     }
 }
