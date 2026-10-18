@@ -279,3 +279,8 @@ None.
 
 - `record_panic(stdout)` takes its output stream, so the test reads the writer-thread fallback line the hook actually writes; the line carries `actor: system`.
 - ADR 002, README, the plan row and `panic_journal` state that Rust's default hook still prints the panic message to stderr, and which fields each entry kind carries (error codes on refusals and failures; `system` actor for host events).
+
+## Cubic round 3 fixes
+
+- A failed download carries the code `download_failed`.
+- A launch failure (`desktop.start`: `api_not_secured`, `start_failed`) and a panic before the journal opens are written straight to stdout as a redacted JSON line marked `journal_unavailable`, bypassing the `RUST_LOG` filter (`unjournaled_line`, `record_panic`).

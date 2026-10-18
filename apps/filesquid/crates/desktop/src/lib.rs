@@ -357,6 +357,17 @@ fn stop_monitor(app: &tauri::AppHandle) {
     }
 }
 
+/// Journal operation of a launch that failed before the app could run.
+pub const START_OPERATION: &str = "desktop.start";
+
+/// Write a launch failure straight to stdout as a redacted JSON line marked
+/// `journal_unavailable`, whatever `RUST_LOG` says: before the journal opens it is the only
+/// record. Writes to stdout.
+fn report_unjournaled(error_code: &str) {
+    let line = panic_journal::unjournaled_line(START_OPERATION, error_code);
+    panic_journal::write_line(&mut std::io::stdout(), &line);
+}
+
 /// Run the desktop event loop. Every configured window is built by the host
 /// ([`app_window::host_built_windows`]) so it carries the host's guards.
 pub fn run() {
@@ -364,6 +375,7 @@ pub fn run() {
         Ok(builder) => builder,
         Err(message) => {
             tracing::error!(%message, "FileSquid desktop could not secure its API");
+            report_unjournaled("api_not_secured");
             std::process::exit(1);
         }
     };
@@ -373,6 +385,7 @@ pub fn run() {
         Ok(app) => app,
         Err(err) => {
             tracing::error!(%err, "FileSquid desktop could not start");
+            report_unjournaled("start_failed");
             std::process::exit(1);
         }
     };

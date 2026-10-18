@@ -18,9 +18,11 @@ use filesquid_desktop_lib::app_window::{
     DOWNLOAD_REFUSED_OPERATION, NEW_WINDOW_REFUSED_OPERATION, OPENED_OPERATION,
     PERMISSION_REFUSED_OPERATION,
 };
-use filesquid_desktop_lib::host_subscriber;
 use filesquid_desktop_lib::ipc_observer::TauriIpcObserver;
-use filesquid_desktop_lib::panic_journal::{install_panic_hook, record_panic, PANIC_OPERATION};
+use filesquid_desktop_lib::panic_journal::{
+    install_panic_hook, record_panic, unjournaled_line, PANIC_OPERATION,
+};
+use filesquid_desktop_lib::{host_subscriber, START_OPERATION};
 use std::io::Write;
 use std::sync::{Arc, Mutex, OnceLock};
 use tauri::test::{mock_builder, mock_context, noop_assets, MockRuntime};
@@ -333,6 +335,11 @@ fn a_download_is_journaled_without_its_address_or_file_name() {
         outcomes,
         vec![Outcome::Started, Outcome::Succeeded, Outcome::Failed]
     );
+    let failed = entries
+        .iter()
+        .find(|e| e.operation == DOWNLOAD_OPERATION && e.outcome == Outcome::Failed)
+        .expect("failed download journaled");
+    assert_eq!(failed.error_code.as_deref(), Some("download_failed"));
     let text = as_json(&entries);
     assert!(
         !text.contains("example.com") && !text.contains("holiday"),
@@ -427,6 +434,31 @@ fn a_panic_on_the_journal_writer_thread_is_never_queued_and_reaches_stdout_redac
     assert_eq!(line["actor"], "system");
     assert_eq!(line["journal_unavailable"], true);
     assert!(!stdout.contains("Secret"), "{stdout}");
+}
+
+#[test]
+fn a_panic_before_the_journal_opens_reaches_stdout_whatever_the_log_filter() {
+    let _serial = PANIC_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    install_panic_hook(Arc::new(OnceLock::new()));
+    let mut stdout = Vec::new();
+    // No subscriber at all on this thread: nothing but the direct line can record it.
+    record_panic(&mut stdout);
+    let text = String::from_utf8(stdout).expect("UTF-8");
+    let line: serde_json::Value = serde_json::from_str(text.trim()).expect("one JSON line");
+    assert_eq!(line["operation"], PANIC_OPERATION);
+    assert_eq!(line["error_code"], "panic");
+    assert_eq!(line["journal_unavailable"], true);
+}
+
+#[test]
+fn a_launch_failure_record_is_redacted_and_marked_unjournaled() {
+    let line: serde_json::Value =
+        serde_json::from_str(&unjournaled_line(START_OPERATION, "start_failed")).expect("JSON");
+    assert_eq!(line["operation"], "desktop.start");
+    assert_eq!(line["actor"], "system");
+    assert_eq!(line["error_code"], "start_failed");
+    assert_eq!(line["journal_unavailable"], true);
+    assert_eq!(line.as_object().expect("object").len(), 6);
 }
 
 #[test]

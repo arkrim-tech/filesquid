@@ -6,9 +6,9 @@
 //! may hold content) through the host's tracing layer, then flushes the journal so the entry
 //! survives a panic that ends the process, and then runs the previous hook.
 //!
-//! Two panics cannot reach the journal: one before the journal opens (its record reaches
-//! stdout only), and one on the journal writer's own thread, whose record is printed to stdout
-//! as a JSON line marked `journal_unavailable` ([`writer_panic_line`]). In every case the
+//! Two panics cannot reach the journal: one before the journal opens, and one on the journal
+//! writer's own thread. Their record is written straight to stdout as a JSON line marked
+//! `journal_unavailable` ([`unjournaled_line`]), whatever `RUST_LOG` says. In every case the
 //! previous hook (Rust's default) still prints the panic message to stderr.
 
 use filesquid_api::journal_writer::JournalSender;
@@ -18,18 +18,26 @@ use std::sync::{Arc, Once, OnceLock, RwLock};
 /// Journal operation of a host thread panic.
 pub const PANIC_OPERATION: &str = "desktop.panic";
 
-/// The stdout record of a panic on the journal writer's own thread: the panic entry's fields,
+/// The stdout record of a host failure that cannot reach the journal: a journal entry's
+/// fields (actor `system`, outcome `failed`, level `error`) for `operation` and `error_code`,
 /// marked `journal_unavailable`. Pure.
-pub fn writer_panic_line() -> String {
+pub fn unjournaled_line(operation: &str, error_code: &str) -> String {
     serde_json::json!({
-        "operation": PANIC_OPERATION,
+        "operation": operation,
         "actor": "system",
         "outcome": "failed",
         "level": "error",
-        "error_code": "panic",
+        "error_code": error_code,
         "journal_unavailable": true,
     })
     .to_string()
+}
+
+/// Write `line` to `stdout`; a failure is reported on stderr, since stdout itself failed.
+pub fn write_line(stdout: &mut dyn Write, line: &str) {
+    if let Err(err) = writeln!(stdout, "{line}") {
+        eprintln!("unjournaled record not written: {err}");
+    }
 }
 
 /// Name of the journal writer's own thread (`filesquid_api::journal_writer`).
@@ -60,14 +68,17 @@ pub fn install_panic_hook(journal: Arc<OnceLock<JournalSender>>) {
 }
 
 /// Record one panic of the current thread without its message: journal it and flush the
-/// journal; on the journal writer's own thread nothing is queued (the queue may be full and
-/// that thread is its only consumer), so [`writer_panic_line`] is written to `stdout` instead.
-/// The panic hook calls it with the process's stdout. Writes to the journal or `stdout`.
+/// journal. When no journal is open yet, or on the journal writer's own thread (whose queue
+/// may be full, with that thread its only consumer), the record is written to `stdout` as
+/// [`unjournaled_line`]; on the writer's thread nothing is queued. The panic hook calls it
+/// with the process's stdout. Writes to the journal and/or `stdout`.
 pub fn record_panic(stdout: &mut dyn Write) {
-    if std::thread::current().name() == Some(JOURNAL_THREAD) {
-        if let Err(err) = writeln!(stdout, "{}", writer_panic_line()) {
-            eprintln!("panic record not written: {err}");
-        }
+    let on_writer = std::thread::current().name() == Some(JOURNAL_THREAD);
+    let journal = if on_writer { None } else { open_journal() };
+    if journal.is_none() {
+        write_line(stdout, &unjournaled_line(PANIC_OPERATION, "panic"));
+    }
+    if on_writer {
         return;
     }
     tracing::error!(
@@ -76,11 +87,15 @@ pub fn record_panic(stdout: &mut dyn Write) {
         error_code = "panic",
         "a FileSquid host thread panicked"
     );
-    let sender = FLUSH
-        .read()
-        .ok()
-        .and_then(|slot| slot.as_ref().and_then(|journal| journal.get().cloned()));
-    if let Some(sender) = sender {
+    if let Some(sender) = journal {
         sender.flush();
     }
+}
+
+/// The journal the hook flushes, once it is open.
+fn open_journal() -> Option<JournalSender> {
+    FLUSH
+        .read()
+        .ok()
+        .and_then(|slot| slot.as_ref().and_then(|journal| journal.get().cloned()))
 }

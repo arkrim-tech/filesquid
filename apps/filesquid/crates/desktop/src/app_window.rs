@@ -214,13 +214,15 @@ fn journal_download_refused(label: &str) {
     );
 }
 
-/// Journal that a download of webview `label` finished, with whether it succeeded.
+/// Journal that a download of webview `label` finished, with whether it succeeded (a failure
+/// carries the code `download_failed`).
 pub fn journal_download_finished(label: &str, success: bool) {
     let outcome = if success { "succeeded" } else { "failed" };
     tracing::info!(
         target: ACTIVITY_TARGET,
         operation = DOWNLOAD_OPERATION,
         outcome,
+        error_code = (!success).then_some("download_failed"),
         actor = actor(label).as_str(),
         "download finished"
     );
