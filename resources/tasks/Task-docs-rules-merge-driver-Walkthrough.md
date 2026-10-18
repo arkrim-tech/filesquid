@@ -15,7 +15,7 @@ The root README ("Run tests" and setup sections) already documents the two `git 
 
 ## Hook
 
-Raw output of `bash scripts/pre-commit.sh` (scope `docs`, 2026-10-18 UTC), exit 0. Summary line: `✅ All Pre-Commit Hooks Passed! Test scope: docs`.
+Raw output of `bash scripts/pre-commit.sh` (scope `docs`, 2026-10-18 UTC), exit 0. Summary line: `✅ All Pre-Commit Hooks Passed! Test scope: docs (19s)`.
 
 ```text
 changed_scope: docs (only documentation or always-run checker scripts outside the crates and npm packages changed)
