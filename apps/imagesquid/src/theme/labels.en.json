@@ -88,5 +88,5 @@
   "hostOn": "On",
   "hostOff": "Off",
   "hostServiceAt": "Service:",
-  "hostServiceCiphertext": "Your files are encrypted on your device before upload. FileSquid's service stores ciphertext and never has your keys."
+  "hostServiceCiphertext": "Your files are encrypted on your device before upload. ImageSquid's service stores ciphertext and never has your keys."
 }

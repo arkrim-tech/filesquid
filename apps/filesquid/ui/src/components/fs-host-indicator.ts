@@ -143,9 +143,11 @@ export class FsHostIndicator extends HTMLElement {
    * carries the token known now, for example one just entered) and read the descriptor.
    * Network I/O via the client.
    *
-   * @returns Resolves once the indicator shows the answer of that read.
+   * @returns Resolves once the indicator shows the answer of that read; does nothing when the
+   *   indicator is not attached to a document.
    */
   async refresh(): Promise<void> {
+    if (!this.isConnected) return;
     await this.start();
   }
 
@@ -223,7 +225,12 @@ export class FsHostIndicator extends HTMLElement {
   /** Build the persistent frame once: the named group, its title and its body. */
   private frame(labels: LabelTable): void {
     const root = this.shadowRoot;
-    if (!root || root.querySelector("section")) return;
+    if (!root) return;
+    const existing = root.querySelector("h2");
+    if (existing) {
+      existing.textContent = labels.hostIndicator;
+      return;
+    }
     const style = document.createElement("style");
     style.textContent = A11Y_STYLE + STYLE;
     const section = document.createElement("section");

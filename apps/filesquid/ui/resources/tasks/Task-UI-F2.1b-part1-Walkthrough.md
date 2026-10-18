@@ -22,7 +22,7 @@ Constraint gates (from UI-S-018 and ADR 032 Decision 6): `GET /api/v1/host` read
 ## What changed
 
 - **`<fs-host-indicator>`** ([`src/components/fs-host-indicator.ts`](../../src/components/fs-host-indicator.ts)): takes `{ labels, client }`; named focusable group, polite live region, `<fs-states>` for loading, error, offline and denied (Retry re-reads and does not bubble to other views), host statements first and the hosted service apart. Newest read wins; a slow older answer is dropped. Exposes `data-state` and `data-host-type` for tests and styling hooks.
-- **Host model** ([`src/host/descriptor.ts`](../../src/host/descriptor.ts)): `parseHostDescriptor` (contract check: schema version, host type, operator name 1 to 256 characters without controls, service flags agreeing with `enrolled`) and `describeHost` (pure wording from the label table; the operator name is inserted literally and rendered as text).
+- **Host model** ([`src/host/descriptor.ts`](../../src/host/descriptor.ts)): `parseHostDescriptor` (contract check: exactly the four descriptor and four service fields, schema version, host type, operator name only on a server and 1 to 256 characters without C0 or C1 controls, lowercase DNS service host, flags agreeing with `enrolled`) and `describeHost` (pure wording from the label table; the operator name is inserted literally and rendered as text).
 - **Client** ([`src/api/client.ts`](../../src/api/client.ts)): `host()` and an optional `onOpen` on `subscribe()`, called each time the WebSocket opens.
 - **`<fs-app-shell>`**: mounts the indicator in the header (own row); `ShellClient` now extends `HostClient`; `refreshHealth()` also refreshes the indicator, so a token entered later reopens the event channel and reads the descriptor again.
 - **Labels** (default and ImageSquid): `hostIndicator`, `hostDesktop`, `hostDesktopBackup`, `hostServer`, `hostOperatorUnnamed`, `hostServerAtRest`, `hostBrowser`, `hostServiceTitle`, `hostNotEnrolled`, `hostBackup`, `hostSync`, `hostOn`, `hostOff`, `hostServiceAt`, `hostServiceCiphertext`. The Decision 6 sentences are verbatim; the at-rest line is new wording for the SRS requirement.
@@ -106,9 +106,22 @@ FileSquid host descriptor could not be read ApiError: FileSquid API /api/v1/host
   retryable: false
 }
 
+stderr | tests/ui/host-indicator.test.ts > <fs-host-indicator> loading and error > shows the offline state with Retry when the read fails while the browser is offline
+FileSquid host descriptor could not be read TypeError: Failed to fetch
+    at apps/filesquid/ui/tests/ui/host-indicator.test.ts:233:29
+    at file://apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11
+    at file://apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26
+    at file://apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20
+    at new Promise (<anonymous>)
+    at runWithCancel (file://apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)
+    at file://apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20
+    at new Promise (<anonymous>)
+    at runWithTimeout (file://apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)
+    at file://apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2956:64
+
 stderr | tests/ui/host-indicator.test.ts > <fs-host-indicator> loading and error > reads again when Retry is pressed and recovers
 FileSquid host descriptor could not be read ApiError: FileSquid API /api/v1/host failed with HTTP 500
-    at apps/filesquid/ui/tests/ui/host-indicator.test.ts:232:29
+    at apps/filesquid/ui/tests/ui/host-indicator.test.ts:245:29
     at file://apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11
     at file://apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26
     at file://apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20
@@ -128,44 +141,44 @@ FileSquid host descriptor could not be read ApiError: FileSquid API /api/v1/host
 stderr | tests/ui/host-indicator.test.ts > <fs-host-indicator> follows the host > reads again when a host.change payload breaks the contract
 FileSquid host.change payload broke the contract; reading the descriptor
 
- ✓ tests/ui/host-indicator.test.ts (24 tests) 184ms
- ✓ tests/unit/component-styles.test.ts (88 tests) 55ms
- ✓ tests/ui/accessibility.test.ts (19 tests) 588ms
- ✓ tests/ui/nav-tree.test.ts (26 tests) 854ms
- ✓ tests/unit/client-io.test.ts (22 tests) 58ms
- ✓ tests/unit/client-auth.test.ts (23 tests) 56ms
- ✓ tests/unit/theme.test.ts (26 tests) 28ms
- ✓ tests/ui/monitor.test.ts (14 tests) 220ms
- ✓ tests/unit/navigation-store.test.ts (19 tests) 50ms
- ✓ tests/unit/navigation-model.test.ts (30 tests) 33ms
- ✓ tests/unit/a11y-audit.test.ts (19 tests) 133ms
- ✓ tests/ui/app-shell.test.ts (18 tests) 415ms
- ✓ tests/unit/navigation-source.test.ts (18 tests) 34ms
- ✓ tests/unit/theme-store.test.ts (23 tests) 30ms
- ✓ tests/unit/commands.test.ts (45 tests) 43ms
- ✓ tests/unit/focus.test.ts (16 tests) 74ms
- ✓ tests/unit/host-descriptor.test.ts (25 tests) 20ms
- ✓ tests/ui/states.test.ts (16 tests) 114ms
- ✓ tests/unit/test-reporting.test.ts (12 tests) 16ms
- ✓ tests/unit/host-adapter.test.ts (13 tests) 74ms
- ✓ tests/unit/test-scripts.test.ts (10 tests) 898ms
- ✓ tests/ui/theme-control.test.ts (8 tests) 78ms
- ✓ tests/unit/nav-tree-keys.test.ts (8 tests) 24ms
- ✓ tests/unit/admin-client.test.ts (6 tests) 20ms
+ ✓ tests/ui/host-indicator.test.ts (27 tests) 347ms
+ ✓ tests/ui/accessibility.test.ts (19 tests) 537ms
+ ✓ tests/unit/component-styles.test.ts (88 tests) 114ms
+ ✓ tests/ui/nav-tree.test.ts (26 tests) 1088ms
+ ✓ tests/unit/client-auth.test.ts (23 tests) 53ms
+ ✓ tests/unit/client-io.test.ts (22 tests) 47ms
+ ✓ tests/unit/theme.test.ts (26 tests) 37ms
+ ✓ tests/ui/monitor.test.ts (14 tests) 308ms
+ ✓ tests/unit/navigation-store.test.ts (19 tests) 35ms
+ ✓ tests/unit/navigation-model.test.ts (30 tests) 100ms
+ ✓ tests/ui/app-shell.test.ts (18 tests) 591ms
+ ✓ tests/unit/a11y-audit.test.ts (19 tests) 178ms
+ ✓ tests/unit/theme-store.test.ts (23 tests) 61ms
+ ✓ tests/unit/commands.test.ts (45 tests) 54ms
+ ✓ tests/unit/navigation-source.test.ts (18 tests) 70ms
+ ✓ tests/unit/host-descriptor.test.ts (43 tests) 33ms
+ ✓ tests/unit/focus.test.ts (16 tests) 61ms
+ ✓ tests/ui/states.test.ts (16 tests) 119ms
+ ✓ tests/unit/test-reporting.test.ts (12 tests) 15ms
+ ✓ tests/unit/host-adapter.test.ts (13 tests) 90ms
+ ✓ tests/unit/test-scripts.test.ts (10 tests) 1084ms
+ ✓ tests/ui/theme-control.test.ts (8 tests) 72ms
+ ✓ tests/unit/admin-client.test.ts (6 tests) 18ms
+ ✓ tests/unit/nav-tree-keys.test.ts (8 tests) 17ms
  ✓ tests/unit/client.test.ts (8 tests) 17ms
- ✓ tests/unit/preferences.test.ts (10 tests) 18ms
- ✓ tests/ui/breadcrumb.test.ts (6 tests) 96ms
- ✓ tests/unit/host-client.test.ts (4 tests) 16ms
- ✓ tests/unit/view-state.test.ts (4 tests) 15ms
- ✓ tests/unit/contrast.test.ts (13 tests) 28ms
- ✓ tests/ui/monitor-route.test.ts (2 tests) 34ms
- ✓ tests/unit/distribution.test.ts (3 tests) 10ms
- ✓ tests/unit/contract.test.ts (1 test) 70ms
+ ✓ tests/unit/preferences.test.ts (10 tests) 28ms
+ ✓ tests/ui/breadcrumb.test.ts (6 tests) 117ms
+ ✓ tests/unit/host-client.test.ts (4 tests) 20ms
+ ✓ tests/unit/view-state.test.ts (4 tests) 10ms
+ ✓ tests/unit/contrast.test.ts (13 tests) 50ms
+ ✓ tests/ui/monitor-route.test.ts (2 tests) 26ms
+ ✓ tests/unit/distribution.test.ts (3 tests) 7ms
+ ✓ tests/unit/contract.test.ts (1 test) 108ms
 
  Test Files  33 passed (33)
-      Tests  579 passed (579)
-   Start at  23:23:06
-   Duration  11.20s (transform 1.97s, setup 1.45s, import 3.44s, tests 4.40s, environment 16.77s)
+      Tests  600 passed (600)
+   Start at  23:32:10
+   Duration  14.01s (transform 2.18s, setup 1.75s, import 3.80s, tests 5.51s, environment 21.52s)
 
 JUNIT report written to apps/filesquid/ui/tests/allure-results/vitest-junit.xml
 ```
@@ -175,24 +188,24 @@ JUNIT report written to apps/filesquid/ui/tests/allure-results/vitest-junit.xml
 ```
 Running 16 tests using 2 workers
 
-  ✓   1 [chromium] › tests/e2e/preview/host-indicator.spec.ts:86:1 › the indicator is a defined custom element in the shell header, named from the label table (367ms)
-  ✓   2 [chromium] › tests/e2e/preview/production-build.spec.ts:56:1 › the built page is static, mounts the shell and defines every custom element (444ms)
-  ✓   3 [chromium] › tests/e2e/preview/host-indicator.spec.ts:100:1 › the desktop host says only you can read your files, and shows the not-enrolled state (258ms)
-  ✓   4 [chromium] › tests/e2e/preview/production-build.spec.ts:73:1 › navigation, API status and theme legend words come from the active label table (243ms)
-  ✓   5 [chromium] › tests/e2e/preview/host-indicator.spec.ts:114:1 › a server names its operator, who can read the files, and states the at-rest duty (208ms)
-  ✓   6 [chromium] › tests/e2e/preview/production-build.spec.ts:91:1 › computed token values are exact in light and dark (216ms)
-  ✓   7 [chromium] › tests/e2e/preview/host-indicator.spec.ts:127:1 › a server without an operator name uses the unnamed-operator label (198ms)
-  ✓   8 [chromium] › tests/e2e/preview/production-build.spec.ts:107:1 › a refused health call shows the unavailable alert, not a console error from the app (187ms)
-  ✓   9 [chromium] › tests/e2e/preview/host-indicator.spec.ts:137:1 › the browser host says files are decrypted only in this browser (192ms)
-  ✓  10 [chromium] › tests/e2e/preview/host-indicator.spec.ts:150:1 › enrolled backup and sync are shown apart from the host, as ciphertext only (161ms)
-  ✓  11 [chromium] › tests/e2e/preview/host-indicator.spec.ts:175:1 › a host.change event updates the indicator without a reload or another read (148ms)
-  ✓  12 [chromium] › tests/e2e/preview/host-indicator.spec.ts:197:1 › events.resync makes the indicator read the descriptor again (188ms)
-  ✓  13 [chromium] › tests/e2e/preview/host-indicator.spec.ts:210:1 › loading shows no host until the descriptor arrives (960ms)
-  ✓  14 [chromium] › tests/e2e/preview/host-indicator.spec.ts:222:1 › a failed read shows the error state and never a guessed host, then Retry recovers (231ms)
-  ✓  15 [chromium] › tests/e2e/preview/host-indicator.spec.ts:240:1 › computed token values are exact in light and dark (179ms)
-  ✓  16 [chromium] › tests/e2e/preview/host-indicator.spec.ts:265:1 › the indicator is reachable by keyboard and has a visible focus outline (211ms)
+  ✓   1 [chromium] › tests/e2e/preview/host-indicator.spec.ts:86:1 › the indicator is a defined custom element in the shell header, named from the label table (541ms)
+  ✓   2 [chromium] › tests/e2e/preview/production-build.spec.ts:56:1 › the built page is static, mounts the shell and defines every custom element (442ms)
+  ✓   3 [chromium] › tests/e2e/preview/host-indicator.spec.ts:100:1 › the desktop host says only you can read your files, and shows the not-enrolled state (266ms)
+  ✓   4 [chromium] › tests/e2e/preview/production-build.spec.ts:73:1 › navigation, API status and theme legend words come from the active label table (210ms)
+  ✓   5 [chromium] › tests/e2e/preview/host-indicator.spec.ts:114:1 › a server names its operator, who can read the files, and states the at-rest duty (229ms)
+  ✓   7 [chromium] › tests/e2e/preview/host-indicator.spec.ts:127:1 › a server without an operator name uses the unnamed-operator label (216ms)
+  ✓   6 [chromium] › tests/e2e/preview/production-build.spec.ts:91:1 › computed token values are exact in light and dark (257ms)
+  ✓   8 [chromium] › tests/e2e/preview/host-indicator.spec.ts:139:1 › the browser host says files are decrypted only in this browser (196ms)
+  ✓   9 [chromium] › tests/e2e/preview/production-build.spec.ts:107:1 › a refused health call shows the unavailable alert, not a console error from the app (254ms)
+  ✓  10 [chromium] › tests/e2e/preview/host-indicator.spec.ts:152:1 › enrolled backup and sync are shown apart from the host, as ciphertext only (190ms)
+  ✓  11 [chromium] › tests/e2e/preview/host-indicator.spec.ts:177:1 › a host.change event updates the indicator without a reload or another read (153ms)
+  ✓  12 [chromium] › tests/e2e/preview/host-indicator.spec.ts:199:1 › events.resync makes the indicator read the descriptor again (254ms)
+  ✓  13 [chromium] › tests/e2e/preview/host-indicator.spec.ts:212:1 › loading shows no host until the descriptor arrives (1.0s)
+  ✓  14 [chromium] › tests/e2e/preview/host-indicator.spec.ts:224:1 › a failed read shows the error state and never a guessed host, then Retry recovers (216ms)
+  ✓  15 [chromium] › tests/e2e/preview/host-indicator.spec.ts:242:1 › computed token values are exact in light and dark (204ms)
+  ✓  16 [chromium] › tests/e2e/preview/host-indicator.spec.ts:267:1 › the indicator is reachable by keyboard and has a visible focus outline (244ms)
 
-  16 passed (9.4s)
+  16 passed (12.4s)
 ```
 
 ### npm test (apps/imagesquid)
@@ -208,15 +221,15 @@ Running 16 tests using 2 workers
 
  RUN  v4.1.12 apps/imagesquid
 
- ✓ tests/unit/test-reporting.test.ts (12 tests) 17ms
- ✓ tests/unit/theme.test.ts (10 tests) 21ms
- ✓ tests/ui/distribution.test.ts (5 tests) 201ms
- ✓ tests/unit/test-scripts.test.ts (10 tests) 898ms
+ ✓ tests/unit/test-reporting.test.ts (12 tests) 24ms
+ ✓ tests/unit/theme.test.ts (10 tests) 28ms
+ ✓ tests/ui/distribution.test.ts (5 tests) 217ms
+ ✓ tests/unit/test-scripts.test.ts (10 tests) 1077ms
 
  Test Files  4 passed (4)
       Tests  37 passed (37)
-   Start at  23:22:18
-   Duration  1.83s (transform 628ms, setup 248ms, import 685ms, tests 1.14s, environment 1.99s)
+   Start at  23:32:39
+   Duration  2.06s (transform 929ms, setup 226ms, import 1.05s, tests 1.35s, environment 2.04s)
 
 JUNIT report written to apps/imagesquid/tests/allure-results/vitest-junit.xml
 ```
@@ -226,10 +239,10 @@ JUNIT report written to apps/imagesquid/tests/allure-results/vitest-junit.xml
 ```
 Running 4 tests using 1 worker
 
-  ✓  1 [chromium] › tests/e2e/preview/production-build.spec.ts:54:1 › the built page is static, mounts the shell and defines every custom element (236ms)
-  ✓  2 [chromium] › tests/e2e/preview/production-build.spec.ts:71:1 › navigation, API status and theme legend words come from the active label table (176ms)
-  ✓  3 [chromium] › tests/e2e/preview/production-build.spec.ts:89:1 › computed ImageSquid token values are exact in light and dark (179ms)
-  ✓  4 [chromium] › tests/e2e/preview/production-build.spec.ts:105:1 › a refused health call shows the unavailable alert (150ms)
+  ✓  1 [chromium] › tests/e2e/preview/production-build.spec.ts:54:1 › the built page is static, mounts the shell and defines every custom element (251ms)
+  ✓  2 [chromium] › tests/e2e/preview/production-build.spec.ts:71:1 › navigation, API status and theme legend words come from the active label table (226ms)
+  ✓  3 [chromium] › tests/e2e/preview/production-build.spec.ts:89:1 › computed ImageSquid token values are exact in light and dark (239ms)
+  ✓  4 [chromium] › tests/e2e/preview/production-build.spec.ts:105:1 › a refused health call shows the unavailable alert (191ms)
 
-  4 passed (5.7s)
+  4 passed (7.0s)
 ```

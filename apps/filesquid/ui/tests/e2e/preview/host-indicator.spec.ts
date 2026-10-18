@@ -118,7 +118,7 @@ test("a server names its operator, who can read the files, and states the at-res
   await serve(page, [descriptor({ host_type: "server", operator_name: "Garderen Family" })]);
   await page.goto("/");
   await expect(inIndicator(page, ".statement")).toHaveText([
-    "Your files are stored on a server run by Garderen Family. That operator can read them. Other users see only what they are permitted to.",
+    label(labels, "hostServer").replace("{operator}", "Garderen Family"),
     label(labels, "hostServerAtRest"),
   ]);
   expect(errors).toEqual([]);
@@ -130,7 +130,9 @@ test("a server without an operator name uses the unnamed-operator label", async 
   await page.goto("/");
   const first = inIndicator(page, ".statement").first();
   await expect(first).toContainText(label(labels, "hostOperatorUnnamed"));
-  await expect(first).toContainText("That operator can read them.");
+  await expect(first).toHaveText(
+    label(labels, "hostServer").replace("{operator}", label(labels, "hostOperatorUnnamed")),
+  );
   expect(errors).toEqual([]);
 });
 

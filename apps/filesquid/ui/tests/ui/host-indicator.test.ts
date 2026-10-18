@@ -228,6 +228,19 @@ describe("<fs-host-indicator> loading and error", () => {
     expect(error).toHaveBeenCalled();
   });
 
+  it("shows the offline state with Retry when the read fails while the browser is offline", async () => {
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    const fake = fakeClient(new TypeError("Failed to fetch"), descriptor());
+    const indicator = await mount(fake);
+    expect(indicator.dataset.state).toBe("offline");
+    expect(texts(indicator, ".statement")).toEqual([]);
+    const states = indicator.shadowRoot?.querySelector("fs-states");
+    expect(states?.shadowRoot?.textContent).toContain(labels.stateOffline);
+    states?.shadowRoot?.querySelector("button")?.click();
+    await settle();
+    expect(indicator.dataset.state).toBe("ready");
+  });
+
   it("reads again when Retry is pressed and recovers", async () => {
     const fake = fakeClient(new ApiError(500, "/api/v1/host"), descriptor());
     const indicator = await mount(fake);
@@ -325,6 +338,23 @@ describe("<fs-host-indicator> follows the host", () => {
     expect(fake.subscriptions.opened).toBe(2);
     indicator.remove();
     expect(fake.subscriptions.closed).toBe(2);
+  });
+
+  it("refresh() does nothing once the indicator is detached, so no channel leaks", async () => {
+    const fake = fakeClient(descriptor());
+    const indicator = await mount(fake);
+    indicator.remove();
+    await indicator.refresh();
+    expect(fake.subscriptions.opened).toBe(1);
+    expect(fake.subscriptions.closed).toBe(1);
+  });
+
+  it("follows a new label table when configured again while connected", async () => {
+    const fake = fakeClient(descriptor());
+    const indicator = await mount(fake);
+    indicator.configure({ labels: { ...labels, hostIndicator: "Dónde" }, client: fake.client });
+    await settle();
+    expect(text(indicator, "h2")).toBe("Dónde");
   });
 
   it("refresh() resubscribes (a new token) and reads again", async () => {

@@ -19,19 +19,23 @@ const BODY = {
 
 describe("FileSquidClient.host", () => {
   it("reads GET /api/v1/host with the bearer token and returns the descriptor", async () => {
-    const seen: { url: string; auth: string | null }[] = [];
+    const seen: { url: string; method: string; auth: string | null }[] = [];
     const client = new FileSquidClient({
       baseUrl: "",
       token: "abc",
       fetch: async (input, init) => {
-        seen.push({ url: String(input), auth: new Headers(init?.headers).get("Authorization") });
+        seen.push({
+          url: String(input),
+          method: init?.method ?? "GET",
+          auth: new Headers(init?.headers).get("Authorization"),
+        });
         return new Response(JSON.stringify(BODY), {
           headers: { "content-type": "application/json" },
         });
       },
     });
     expect(await client.host()).toEqual(BODY);
-    expect(seen).toEqual([{ url: "/api/v1/host", auth: "Bearer abc" }]);
+    expect(seen).toEqual([{ url: "/api/v1/host", method: "GET", auth: "Bearer abc" }]);
   });
 
   it("rejects with ApiError when the host has not described itself yet", async () => {

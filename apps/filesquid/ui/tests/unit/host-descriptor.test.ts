@@ -37,13 +37,25 @@ describe("parseHostDescriptor", () => {
     }
   });
 
+  it("counts an operator name in characters, so 256 astral characters are accepted", () => {
+    const operator_name = "\u{1F991}".repeat(256);
+    expect(parseHostDescriptor(descriptor({ host_type: "server", operator_name }))).toBeDefined();
+  });
+
+  it("accepts a lowercase DNS service host of 253 characters", () => {
+    const service_host = [..."abcd"].map(() => "a".repeat(62)).join(".");
+    const hosted_service = { ...ENROLLED, service_host };
+    expect(service_host.length).toBeLessThanOrEqual(253);
+    expect(parseHostDescriptor(descriptor({ hosted_service }))).toBeDefined();
+  });
+
   it("accepts an enrolled service with its host name", () => {
     expect(parseHostDescriptor(descriptor({ hosted_service: ENROLLED }))?.hosted_service).toEqual(
       ENROLLED,
     );
   });
 
-  it.each([
+  it.each<[string, unknown]>([
     ["null", null],
     ["a string", "desktop"],
     ["a wrong schema version", descriptor({ schema_version: 2 })],
@@ -52,7 +64,41 @@ describe("parseHostDescriptor", () => {
     ["a numeric operator", descriptor({ operator_name: 7 })],
     ["an empty operator name", descriptor({ operator_name: "" })],
     ["an operator name with a control character", descriptor({ operator_name: "a\u0007b" })],
-    ["an overlong operator name", descriptor({ operator_name: "x".repeat(257) })],
+    [
+      "an operator name with a C1 control character",
+      descriptor({ host_type: "server", operator_name: "a\u0085b" }),
+    ],
+    [
+      "an overlong operator name",
+      descriptor({ host_type: "server", operator_name: "x".repeat(257) }),
+    ],
+    ["an operator name on a desktop host", descriptor({ operator_name: "Someone" })],
+    [
+      "an operator name on a browser host",
+      descriptor({ host_type: "browser", operator_name: "Someone" }),
+    ],
+    ["an unknown descriptor field", descriptor({ account_id: "a1" })],
+    [
+      "an unknown hosted service field",
+      descriptor({ hosted_service: { ...NOT_ENROLLED, quota: 1 } }),
+    ],
+    ...[
+      "https://backup.filesquid.tech",
+      "backup.filesquid.tech:443",
+      "backup.filesquid.tech/path",
+      "user@backup.filesquid.tech",
+      "backup.filesquid.tech?x=1",
+      "Backup.Filesquid.Tech",
+      "back up.filesquid.tech",
+      "-backup.filesquid.tech",
+      "backup..filesquid.tech",
+      "",
+      `${"a".repeat(64)}.tech`,
+      `${"a.".repeat(127)}b`,
+    ].map((host): [string, unknown] => [
+      `service host ${JSON.stringify(host.slice(0, 30))}`,
+      descriptor({ hosted_service: { ...ENROLLED, service_host: host } }),
+    ]),
     ["no hosted service", descriptor({ hosted_service: undefined })],
     ["a non-boolean flag", descriptor({ hosted_service: { ...NOT_ENROLLED, sync_enabled: "no" } })],
     [
@@ -136,13 +182,5 @@ describe("describeHost", () => {
       sync: false,
       text: labels.hostServiceCiphertext,
     });
-  });
-
-  it("never copies operator text onto a host that has no operator", () => {
-    const view = describeHost(
-      descriptor({ host_type: "desktop", operator_name: "Someone" }),
-      labels,
-    );
-    expect(view.statements.join(" ")).not.toContain("Someone");
   });
 });
