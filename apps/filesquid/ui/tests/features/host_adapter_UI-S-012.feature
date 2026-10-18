@@ -1,6 +1,9 @@
 # UI-S-012: The UI reaches FileSquid only through FileSquidClient (request, read, command, upload, subscribe),
 # which selects the HTTP-plus-event-channel adapter on filesquid-server, the custom-scheme adapter
-# on filesquid-desktop, and later the browser-host adapter.
+# on filesquid-desktop, and later the browser-host adapter. Every command and upload carries a
+# CommandEnvelope; a 2xx answer resolves to a CommandOutcome for the same operation id (error arrives
+# only as a 2xx outcome body), HTTP 409 resolves to conflict, any other non-2xx answer rejects with
+# ApiError, and only committed is completion evidence.
 Feature: One client for every FileSquid host
   As a library owner using the desktop app or a FileSquid server
   I want the same UI to reach whichever host serves it
