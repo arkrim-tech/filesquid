@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use filesquid_ocfl::inventory::User;
 use filesquid_ocfl::read::Object;
 use filesquid_ocfl::storage::{
-    complete_immediately, MemoryBackend, StorageBackend, StorageKey, MAX_CHUNK_BYTES,
+    complete_immediately, write_whole, MemoryBackend, StorageBackend, StorageKey, MAX_CHUNK_BYTES,
 };
 use filesquid_ocfl::write::{
     rfc3339_utc, Clock, CommitReceipt, LeaseConfig, LeaseStore, ObjectWriter, SystemClock,
@@ -203,7 +203,8 @@ pub fn ready<F: std::future::Future>(future: F) -> F::Output {
     complete_immediately(future).expect("backend futures complete at once")
 }
 
-/// The draft of `version` of `fixture`: every file staged on `staging`
+/// The draft of `version` of `fixture`: every file staged (multipart when
+/// above one put) on `staging`
 /// under `stage/<fixture>/<version>/`, with the fragment's metadata when
 /// there is one.
 pub fn draft_for(
@@ -217,7 +218,7 @@ pub fn draft_for(
     for (path, bytes) in &source.files {
         let key = StorageKey::new(&format!("stage/{}/{}/{path}", fixture.name, source.name))
             .expect("staging key");
-        ready(staging.put(&key, bytes)).expect("stage");
+        ready(write_whole(staging, &key, bytes)).expect("stage");
         draft.stage(path.clone(), key);
     }
     let meta = source.meta.as_ref();

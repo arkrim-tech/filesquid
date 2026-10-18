@@ -128,6 +128,11 @@ path = "tests/integration/content_fixtures.rs"
 required-features = ["fs"]
 
 [[test]]
+name = "integration_opaque_bytes"
+path = "tests/integration/opaque_bytes.rs"
+required-features = ["fs"]
+
+[[test]]
 name = "features"
 path = "tests/features.rs"
 harness = false

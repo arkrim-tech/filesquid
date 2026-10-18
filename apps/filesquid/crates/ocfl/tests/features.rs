@@ -21,6 +21,10 @@ mod fault;
 mod fixtures;
 #[path = "support/inventory_steps.rs"]
 mod inventory_steps;
+#[path = "support/opaque.rs"]
+mod opaque;
+#[path = "support/opaque_steps.rs"]
+mod opaque_steps;
 #[path = "support/payload_steps.rs"]
 mod payload_steps;
 #[path = "support/read_steps.rs"]
@@ -79,6 +83,7 @@ struct OcflWorld {
     validate: validate_steps::ValidateState,
     write: write_steps::WriteState,
     payload: payload_steps::PayloadState,
+    opaque: opaque_steps::OpaqueState,
 }
 
 /// Run `$body` with `$b` bound to the scenario's concrete backend.

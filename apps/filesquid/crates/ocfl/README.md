@@ -154,6 +154,12 @@ cd apps/filesquid
 FILESQUID_OCFL_FIXTURES=/path/to/fixtures/1.1 cargo test -p filesquid-ocfl --locked --test integration_fixture_conformance
 ```
 
+## Opaque bytes
+
+The engine stores the bytes and logical paths its caller supplies and reads them only as bytes ([OCFL-S-020](./resources/srs.md); [ADR 010](../../../../resources/architecture/010-ocfl-1-1-dual-profile.md), [ADR 023](../../../../resources/architecture/023-filesquid-ocfl-engine-and-parquet.md)). Digests are `sha256` of exactly what was stored, so fixity checks (E092) work over ciphertext without a key. FileSquid's owner-readable local profile and its encrypted hosted package are caller transforms in `filesquid-api`: the caller seals content and names before it stages them, and opens what it streams back. Both profiles use the same `ObjectWriter` and `Object` calls; the engine has no profile, key or encryption type and no encryption dependency. Over sealed bytes the inventory stays structurally readable OCFL 1.1, and the engine and community validators accept the object.
+
+`integration_opaque_bytes` and `opaque_bytes_OCFL-S-020.feature` check this. A test-only keystream transform (not cryptography) seals the 7 content fixtures. The tests check that the engine validator reports zero errors, that the community validators accept the objects when they are installed, and that the caller recovers every version. They also check that no stored key, inventory text or content file shows plaintext, and that unchanged sealed bytes are stored once. Other inputs are stored as content and read back byte-identical: every byte value, empty files, bytes that are not UTF-8, OCFL-looking files and a file larger than one 8 MiB chunk.
+
 ## Build and test
 
 Run Cargo from the workspace root:
