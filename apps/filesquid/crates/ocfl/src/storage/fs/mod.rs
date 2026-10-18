@@ -292,7 +292,8 @@ impl FsBackend {
     }
 
     /// Blocking body of [`StorageBackend::list`]: walk only the directory the
-    /// prefix names, then page through the sorted keys.
+    /// prefix names, entering only subdirectories whose keys can start with
+    /// the prefix, then page through the sorted keys.
     fn list_blocking(
         &self,
         prefix: &str,
@@ -302,7 +303,7 @@ impl FsBackend {
         check_list_request(prefix, limit)?;
         let dir_prefix = prefix.rfind('/').map_or("", |i| &prefix[..=i]);
         let start = confined_path(&self.root, dir_prefix)?;
-        let mut keys = walk_keys(start, dir_prefix.to_string())?;
+        let mut keys = walk_keys(start, dir_prefix.to_string(), prefix)?;
         keys.sort_unstable();
         paginate(keys.iter().map(String::as_str), prefix, start_after, limit)
     }

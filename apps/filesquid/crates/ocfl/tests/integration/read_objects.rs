@@ -118,6 +118,11 @@ fn run_scenario<B: StorageBackend>(backend: &B, name: &str) {
         "missing-content" => missing_content_is_e092(backend),
         "copy" => copy_streams_into_another_key(backend),
         "copy-corrupt" => corrupt_copy_is_never_published(backend),
+        "copy-own-object" => copy_into_its_own_object_is_refused(backend),
+        "copy-other-object" => copy_into_another_object_is_refused(backend),
+        "copy-storage-root" => copy_into_a_storage_root_is_refused(backend),
+        "copy-unknown-version" => copy_under_an_unknown_version_declaration_is_refused(backend),
+        "copy-declaration-lookalike" => copy_beside_a_declaration_lookalike_succeeds(backend),
         "sha512-upper" => sha512_uppercase_object_reads(backend),
         "git" => git_in_object_root_is_refused(backend),
         "storage-root" => storage_root_discovers_objects(backend),
@@ -287,6 +292,90 @@ fn corrupt_copy_is_never_published<B: StorageBackend>(backend: &B) {
     assert!(!ready(backend.exists(&dest)).expect("exists"));
 }
 
+/// The bytes at `raw`, or `None` when nothing is stored there.
+fn stored<B: StorageBackend>(backend: &B, raw: &str) -> Option<Vec<u8>> {
+    let key = StorageKey::new(raw).expect("key");
+    if !ready(backend.exists(&key)).expect("exists") {
+        return None;
+    }
+    let range = ByteRange::new(0, 1 << 20).expect("range");
+    Some(ready(backend.get_range(&key, range)).expect("read"))
+}
+
+/// Copy `c.txt` of v2 to `dest` and expect the copy-into-OCFL refusal,
+/// with nothing changed at `dest`.
+fn assert_copy_refused<B: StorageBackend>(backend: &B, object: &Object<'_, B>, dest: &str) {
+    let before = stored(backend, dest);
+    let key = StorageKey::new(dest).expect("key");
+    let result = ready(object.copy_file(&v("v2"), "c.txt", backend, &key, None));
+    assert!(
+        matches!(result, Err(ReadError::CopyIntoOcflRoot { .. })),
+        "{dest}: {result:?}"
+    );
+    assert_eq!(stored(backend, dest), before, "{dest} changed");
+}
+
+fn copy_into_its_own_object_is_refused<B: StorageBackend>(backend: &B) {
+    build(backend, "obj", &three_versions());
+    let object = open(backend, "obj").expect("open");
+    for dest in [
+        "obj/inventory.json",
+        "obj/inventory.json.sha256",
+        "obj/v1/content/a.txt",
+        "obj/v3/inventory.json",
+        "obj/v4/content/c.txt",
+        "obj/0=ocfl_object_1.1",
+    ] {
+        assert_copy_refused(backend, &object, dest);
+    }
+    let reopened = open(backend, "obj").expect("the object is unchanged");
+    assert_eq!(reopened.head(), &v("v3"));
+    assert_eq!(stream(&reopened, "v1", "a.txt", 64).expect("a"), b"alpha");
+}
+
+fn copy_into_another_object_is_refused<B: StorageBackend>(backend: &B) {
+    build(backend, "objects/one", &three_versions());
+    build(backend, "objects/two", &three_versions());
+    let object = open(backend, "objects/one").expect("open");
+    assert_copy_refused(backend, &object, "objects/two/v1/content/a.txt");
+    assert_copy_refused(backend, &object, "objects/two/inventory.json");
+}
+
+fn copy_into_a_storage_root_is_refused<B: StorageBackend>(backend: &B) {
+    let declaration = StorageKey::new("0=ocfl_1.1").expect("key");
+    ready(backend.put(&declaration, b"ocfl_1.1\n")).expect("declare the storage root");
+    build(backend, "obj", &three_versions());
+    let object = open(backend, "obj").expect("open");
+    assert_copy_refused(backend, &object, "export/c.txt");
+    let other = MemoryBackend::new();
+    let dest = StorageKey::new("export/c.txt").expect("key");
+    let copied = ready(object.copy_file(&v("v2"), "c.txt", &other, &dest, None));
+    assert_eq!(copied.expect("copy outside OCFL roots").size, 5);
+}
+
+/// A root declared for an OCFL version the engine does not know is still
+/// an OCFL root: a copy below it is refused (OCFL-S-019 `<version>`).
+fn copy_under_an_unknown_version_declaration_is_refused<B: StorageBackend>(backend: &B) {
+    build(backend, "obj", &three_versions());
+    let object = open(backend, "obj").expect("open");
+    put(backend, "future", "0=ocfl_object_2.0", b"ocfl_object_2.0\n");
+    assert_copy_refused(backend, &object, "future/v1/content/c.txt");
+    put(backend, "", "0=ocfl_2.0", b"ocfl_2.0\n");
+    assert_copy_refused(backend, &object, "export/c.txt");
+}
+
+/// A directory merely named like a declaration, or a `0=` file that is not
+/// an OCFL declaration, does not make its parent an OCFL root.
+fn copy_beside_a_declaration_lookalike_succeeds<B: StorageBackend>(backend: &B) {
+    build(backend, "obj", &three_versions());
+    let object = open(backend, "obj").expect("open");
+    put(backend, "export", "0=ocfl_notes/readme.txt", b"notes");
+    put(backend, "export", "0=bagit_1.0", b"bagit_1.0\n");
+    let dest = StorageKey::new("export/c.txt").expect("key");
+    let copied = ready(object.copy_file(&v("v2"), "c.txt", backend, &dest, None));
+    assert_eq!(copied.expect("copy beside lookalikes").size, 5);
+}
+
 fn sha512_uppercase_object_reads<B: StorageBackend>(backend: &B) {
     let mut spec = three_versions();
     spec.algorithm = DigestAlgorithm::Sha512;
@@ -372,6 +461,31 @@ fn a_logical_file_copies_into_another_key() {
 #[test]
 fn a_copy_that_fails_its_digest_is_never_published() {
     on_both("copy-corrupt");
+}
+
+#[test]
+fn a_copy_into_its_own_object_root_is_refused() {
+    on_both("copy-own-object");
+}
+
+#[test]
+fn a_copy_into_another_object_root_is_refused() {
+    on_both("copy-other-object");
+}
+
+#[test]
+fn a_copy_into_a_storage_root_is_refused() {
+    on_both("copy-storage-root");
+}
+
+#[test]
+fn a_copy_under_an_unknown_version_declaration_is_refused() {
+    on_both("copy-unknown-version");
+}
+
+#[test]
+fn a_copy_beside_a_declaration_lookalike_succeeds() {
+    on_both("copy-declaration-lookalike");
 }
 
 #[test]

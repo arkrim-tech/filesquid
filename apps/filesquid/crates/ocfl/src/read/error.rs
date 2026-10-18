@@ -46,6 +46,18 @@ pub enum ReadError {
     /// The storage root's own declaration names it as an object root too.
     #[error("the storage root is also declared as an OCFL object root")]
     ObjectAtStorageRoot,
+    /// A copy's destination lies inside an OCFL object root or storage root
+    /// on the destination backend. Inspection and copy never edit an object
+    /// (OCFL-S-019); only the writer adds versions. This is the engine's
+    /// rule, not an OCFL validation code.
+    #[error("{key} is inside the OCFL root {root:?}; a copy never writes into an OCFL root")]
+    CopyIntoOcflRoot {
+        /// The refused destination key.
+        key: String,
+        /// The directory that holds the OCFL declaration (`""` for the
+        /// backend root).
+        root: String,
+    },
 }
 
 impl ReadError {
