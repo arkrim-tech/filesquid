@@ -901,6 +901,28 @@ $ export FILESQUID_ADMIN_TOKEN=weak-secret-value
 "FILESQUID_ADMIN_TOKEN must be 64 hexadecimal characters (256 bits), like a generated token; generate one with `openssl rand -hex 32`"
 ```
 
+## Review round 7: Cubic findings on b4143c7
+
+Documentation only; no code changed.
+
+| Finding | Resolution |
+|---|---|
+| P2: API-S-004 had a stray duplicate subprotocol fragment after `missing_credentials` | Removed. I reread the whole row: "refuse every call" now reads "refuse every guarded call", to match API-S-015. |
+| P3: README said the server refuses any other `FILESQUID_ADMIN_TOKEN` value | Now says whitespace is trimmed, a blank value counts as unset, and any other value must be 64 hex characters. API-S-016 says the same, matching `load_or_create_token` (`trim`, then a non-empty filter). |
+| P3: README's Linux token example had no `TOKEN` for the curl examples | Adds `TOKEN=$FILESQUID_ADMIN_TOKEN` |
+| P3: `resources/srs.md` cited API-S-015 without a link | Linked to the api module SRS |
+| P3: server `lib.rs` said Unix servers "generate" the token | Now says they load the stored token or create one |
+| P3: missing trailing comma in `monitor.rs` | Declined. rustfmt is the project's formatter (ADR 019), and `cargo fmt --all --check` passes on this code as written, so rustfmt's own output is kept. |
+
+The README's Linux lines and the blank-value rule, run against the real `filesquid-server` binary (port 8096):
+
+```text
+$ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8096/api/v1/health
+{"schema_version":1,"status":"ok","product":"filesquid"}
+$ FILESQUID_ADMIN_TOKEN="   " (blank counts as unset; Unix falls back to the token file)
+"filesquid-server listening"
+```
+
 ## Work left to other tasks
 
 - **UI client (`@filesquid/ui`):** by owner decision a separate small pull request right after this one merges. `FileSquidClient` must send `Authorization: Bearer <token>` on every request (desktop: `window.__FILESQUID_LAUNCH_TOKEN__`; server: the administrator token until accounts exist) and offer `["filesquid.events.v1", "filesquid.bearer.<token>"]` on its WebSocket. It can probe `GET /api/v1/health/live` without a token and show `ApiError.reason` as a sign-in or permission state. The Playwright end-to-end suites (`FILESQUID_E2E=1`) need the same change.

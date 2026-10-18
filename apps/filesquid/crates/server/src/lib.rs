@@ -48,8 +48,9 @@ pub struct ServerConfig {
     /// Directory for the operational store and the admin token (`FILESQUID_DATA_DIR`).
     pub data_dir: PathBuf,
     /// Administrator token required by every API call except the public liveness probe
-    /// (`FILESQUID_ADMIN_TOKEN`, 64 hexadecimal characters). When absent, Unix servers
-    /// generate one into the data dir; other platforms refuse to start.
+    /// (`FILESQUID_ADMIN_TOKEN`, 64 hexadecimal characters). When absent, Unix servers load
+    /// the token stored in the data dir, or create one there if none exists; other platforms
+    /// refuse to start.
     pub admin_token: Option<String>,
 }
 
