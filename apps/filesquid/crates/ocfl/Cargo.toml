@@ -138,6 +138,11 @@ path = "tests/integration/enumerate_state.rs"
 required-features = ["fs"]
 
 [[test]]
+name = "integration_version_inventory_repair"
+path = "tests/integration/version_inventory_repair.rs"
+required-features = ["fs"]
+
+[[test]]
 name = "features"
 path = "tests/features.rs"
 harness = false
