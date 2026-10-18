@@ -67,10 +67,11 @@
 //! must pass the OCFL 1.1 path rules (E052, E053) like any other. It
 //! computes `sha256` over exactly what was stored, so manifest digest
 //! verification (E092) holds over ciphertext too. FileSquid's
-//! owner-readable local profile (plaintext as is) and its encrypted hosted
-//! package (sealed content and encoded names) are transforms the caller
-//! applies before staging and after reading, through the same
-//! [`ObjectWriter`] and [`Object`] calls; the engine has no profile, key or
+//! owner-readable local profile has no transform: its plaintext is staged
+//! as is. Only the encrypted hosted package (sealed content and encoded
+//! names) is a transform, which the caller applies before staging and after
+//! reading. Both use the same [`ObjectWriter`] and [`Object`] calls; the
+//! engine has no profile, key or
 //! encryption type and no encryption dependency. Over sealed bytes and
 //! opaque names the inventory stays structurally readable OCFL 1.1:
 //! `created` is still an RFC 3339 timestamp, and any `message` or `user`
