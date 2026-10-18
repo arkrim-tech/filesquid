@@ -100,23 +100,27 @@ export class ThemeStore extends EventTarget {
     return this.shown;
   }
 
-  /** Restore the saved choice, apply it, and follow OS changes. Safe to call again. */
+  /**
+   * Restore the saved choice, apply it to the root element, and follow OS changes. Dispatches
+   * `change` when the restored choice or resolved theme differs from what subscribers last saw.
+   * Safe to call again.
+   */
   start(): void {
     if (!this.listening) this.env.media.addEventListener("change", this.onSystemChange);
     this.listening = true;
-    this.current = this.readSavedChoice();
-    this.shown = resolveTheme(this.current, this.env.media.matches);
     this.applyToRoot();
+    this.update(this.readSavedChoice());
   }
 
   /**
    * Choose a theme: apply it now and save it on this device. Side effects: writes the root
-   * element's `data-theme` and the device storage.
+   * element's `data-theme` and the device storage. Choosing System always clears the saved
+   * value, even when System is already shown (for example after an unreadable saved value).
    *
    * @param choice The new choice.
    */
   setChoice(choice: ThemeChoice): void {
-    if (choice === this.current) return;
+    if (choice === this.current && choice !== "system") return;
     this.saveChoice(choice);
     this.update(choice);
   }

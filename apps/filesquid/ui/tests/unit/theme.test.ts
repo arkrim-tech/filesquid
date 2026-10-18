@@ -12,6 +12,7 @@ import {
   CONTRAST_PAIRS,
   REQUIRED_TOKENS,
   contrastFailures,
+  invalidColourTokens,
   missingTokens,
   tokenValues,
 } from "../../src/theme/tokens";
@@ -60,6 +61,37 @@ describe("default design tokens", () => {
     const css = tokensCss.replace(/(:root\[data-theme="dark"\]\s*\{[^}]*?)--fs-error:[^;]*;/, "$1");
     expect(missingTokens(css)).toEqual({ light: [], dark: ["--fs-error"] });
   });
+  it("reads a last declaration without a closing semicolon", () => {
+    const css =
+      ':root { --fs-surface: #fff; --fs-outline: #e0e0e0 }\n:root[data-theme="dark"] { --fs-outline: #2a2a2a\n}';
+    const { light, dark } = tokenValues(css);
+    expect(light).toEqual({ "--fs-surface": "#fff", "--fs-outline": "#e0e0e0" });
+    expect(dark).toEqual({ "--fs-outline": "#2a2a2a" });
+  });
+  it("requires theme-independent spacing and type-size tokens", () => {
+    for (const token of [
+      "--fs-space-1",
+      "--fs-space-2",
+      "--fs-space-3",
+      "--fs-space-4",
+      "--fs-space-5",
+      "--fs-font-size-small",
+      "--fs-font-size-body",
+      "--fs-font-size-title",
+    ]) {
+      expect(REQUIRED_TOKENS).toContain(token);
+    }
+    expect(tokenValues(tokensCss).light).toMatchObject({
+      "--fs-space-1": "4px",
+      "--fs-space-2": "8px",
+      "--fs-space-3": "12px",
+      "--fs-space-4": "16px",
+      "--fs-space-5": "24px",
+      "--fs-font-size-small": "0.8125rem",
+      "--fs-font-size-body": "1rem",
+      "--fs-font-size-title": "1.25rem",
+    });
+  });
   it("does not count commented-out declarations", () => {
     const css = tokensCss.replace(/(--fs-primary\s*:[^;]*;)/g, "/* $1 */");
     expect(missingTokens(css).light).toContain("--fs-primary");
@@ -107,14 +139,18 @@ describe("default design tokens", () => {
 });
 
 describe("WCAG 2.2 AA contrast", () => {
-  it("checks primary actions and body text on their surfaces", () => {
-    expect(CONTRAST_PAIRS).toEqual(
-      expect.arrayContaining([
-        ["--fs-on-surface", "--fs-surface"],
-        ["--fs-on-primary", "--fs-primary"],
-        ["--fs-primary", "--fs-surface"],
-      ]),
-    );
+  it("checks exactly the nine UI-S-015 pairs: body, secondary, primary, selected and error text", () => {
+    expect(CONTRAST_PAIRS).toEqual([
+      ["--fs-on-surface", "--fs-surface"],
+      ["--fs-on-surface", "--fs-surface-container"],
+      ["--fs-on-surface-variant", "--fs-surface"],
+      ["--fs-on-surface-variant", "--fs-surface-container"],
+      ["--fs-primary", "--fs-surface"],
+      ["--fs-on-primary", "--fs-primary"],
+      ["--fs-on-primary-container", "--fs-primary-container"],
+      ["--fs-error", "--fs-surface"],
+      ["--fs-error", "--fs-surface-container"],
+    ]);
   });
   it("passes for the default tokens in light and dark", () => {
     expect(contrastFailures(tokensCss)).toEqual([]);
@@ -138,7 +174,18 @@ describe("WCAG 2.2 AA contrast", () => {
       ratio: undefined,
     });
   });
+  it("finds no unreadable colour token in the default sheet", () => {
+    expect(invalidColourTokens(tokensCss)).toEqual([]);
+  });
+  it("reports a colour token outside the contrast pairs that is not #rgb or #rrggbb", () => {
+    const css = tokensCss.replace("--fs-outline: #2a2a2a;", "--fs-outline: rgb(0 0 0);");
+    expect(contrastFailures(css)).toEqual([]);
+    expect(invalidColourTokens(css)).toEqual([
+      { theme: "dark", token: "--fs-outline", value: "rgb(0 0 0)" },
+    ]);
+  });
   it("is exported for distributions from @filesquid/ui/theme", () => {
+    expect(themeEntry.invalidColourTokens).toBe(invalidColourTokens);
     expect(themeEntry.contrastFailures).toBe(contrastFailures);
     expect(typeof themeEntry.contrastRatio).toBe("function");
     expect(typeof themeEntry.tokenValues).toBe("function");

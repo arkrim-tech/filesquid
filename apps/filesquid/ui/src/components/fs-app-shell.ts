@@ -31,16 +31,16 @@ export interface ShellOptions {
 
 const STYLE = `
   :host { display: block; min-height: 100vh; background: var(--fs-surface); color: var(--fs-on-surface); font-family: var(--fs-font-sans); }
-  header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--fs-outline); }
-  h1 { margin: 0; font-family: var(--fs-font-heading); font-size: 1.25rem; font-weight: 700; color: var(--fs-on-surface); }
+  header { display: flex; align-items: center; gap: var(--fs-space-3); padding: var(--fs-space-3) var(--fs-space-4); border-bottom: 1px solid var(--fs-outline); }
+  h1 { margin: 0; font-family: var(--fs-font-heading); font-size: var(--fs-font-size-title); font-weight: 700; color: var(--fs-on-surface); }
   img { height: 32px; width: auto; }
   fs-theme-control { margin-left: auto; }
   .body { display: flex; }
-  nav { width: 240px; padding: 16px; background: var(--fs-surface-container); min-height: calc(100vh - 57px); box-sizing: border-box; }
+  nav { width: 240px; padding: var(--fs-space-4); background: var(--fs-surface-container); min-height: calc(100vh - 57px); box-sizing: border-box; }
   ul { list-style: none; margin: 0; padding: 0; }
-  li { padding: 8px 12px; border-radius: var(--fs-radius); }
+  li { padding: var(--fs-space-2) var(--fs-space-3); border-radius: var(--fs-radius); }
   a { color: inherit; text-decoration: none; }
-  main { flex: 1; padding: 16px; }
+  main { flex: 1; padding: var(--fs-space-4); }
   [role="status"] { font-family: var(--fs-font-mono); color: var(--fs-on-surface-variant); }
   [role="alert"] { color: var(--fs-error); }
 `;

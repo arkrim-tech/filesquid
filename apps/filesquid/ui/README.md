@@ -19,7 +19,7 @@ npm run contract:types # regenerate src/api/schema.d.ts from crates/api/openapi.
 
 ## Theme, tokens and brand
 
-Components are styled only through `--fs-` custom properties ([SRS-UI-007](../../../resources/srs.md#srs-ui-007-light-and-dark-themes), [UI-S-015](./resources/srs.md)). [`src/theme/tokens.css`](./src/theme/tokens.css) holds FileSquid's values from the [FileSquid Design Guide](../../../resources/assets/FileSquid-Design-Guide.html), adjusted for WCAG 2.2 AA: white text on the brand green `#16ac49` is only 2.99:1, so the light primary is `#0b7a32` and the dark theme keeps the brand green with dark ink (`#0d2b18`). A distribution imports these defaults first and its own `tokens.css` on top, defining every token in `:root` (light) and in both `:root[data-theme="dark"]` and the `prefers-color-scheme: dark` block. Colour tokens are `#rgb` or `#rrggbb`.
+Components are styled only through `--fs-` custom properties ([SRS-UI-007](../../../resources/srs.md#srs-ui-007-light-and-dark-themes), [UI-S-015](./resources/srs.md)). [`src/theme/tokens.css`](./src/theme/tokens.css) holds FileSquid's values from the [FileSquid Design Guide](../../../resources/assets/FileSquid-Design-Guide.html), adjusted for WCAG 2.2 AA: white text on the brand green `#16ac49` is only 2.99:1, so the light primary is `#0b7a32` and the dark theme keeps the brand green with dark ink (`#0d2b18`). A distribution imports these defaults first and its own `tokens.css` on top. It defines every token in `:root` (light). It defines every colour token again in both `:root[data-theme="dark"]` and the `prefers-color-scheme: dark` block; the theme-independent tokens (fonts, type sizes, spacing and radius, listed in `THEME_INDEPENDENT_TOKENS`) need not be repeated there. Colour tokens are `#rgb` or `#rrggbb`. Component stylesheets take colour, type size, spacing and radius only from tokens, and a unit test fails on a literal value.
 
 | Token                                                   | Role                                    |
 | ------------------------------------------------------- | --------------------------------------- |
@@ -30,14 +30,22 @@ Components are styled only through `--fs-` custom properties ([SRS-UI-007](../..
 | `--fs-primary-container`, `--fs-on-primary-container`   | A selected item and its text            |
 | `--fs-error`                                            | Error text                              |
 | `--fs-font-sans`, `--fs-font-heading`, `--fs-font-mono` | Interface, heading and identifier fonts |
+| `--fs-font-size-small`, `-body`, `-title`               | Type sizes                              |
+| `--fs-space-1` to `--fs-space-5`                        | Spacing (FileSquid: 4, 8, 12, 16, 24px) |
 | `--fs-radius`                                           | Corner radius                           |
 
 A distribution's own tests check its sheet with the helpers from `@filesquid/ui/theme`:
 
 ```ts
-import { contrastFailures, missingLabels, missingTokens } from "@filesquid/ui/theme";
+import {
+  contrastFailures,
+  invalidColourTokens,
+  missingLabels,
+  missingTokens,
+} from "@filesquid/ui/theme";
 
 expect(missingTokens(tokensCss)).toEqual({ light: [], dark: [] });
+expect(invalidColourTokens(tokensCss)).toEqual([]); // every colour token is #rgb or #rrggbb
 expect(contrastFailures(tokensCss)).toEqual([]); // every text pair at least 4.5:1, both themes
 expect(missingLabels(labels)).toEqual([]);
 ```

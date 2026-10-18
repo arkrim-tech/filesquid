@@ -11,50 +11,15 @@ import {
   createThemeStore,
   parseThemeChoice,
   resolveTheme,
-  type ThemeMedia,
   type ThemeStorage,
 } from "../../src/theme/theme-store";
+import { fakeMedia, fakeStorage, fakeThemeStore } from "../support/theme-fakes";
 
-/** In-memory stand-in for localStorage that records every call. */
-function fakeStorage(initial: Record<string, string> = {}) {
-  const data = new Map(Object.entries(initial));
-  const storage: ThemeStorage = {
-    getItem: (key) => data.get(key) ?? null,
-    setItem: (key, value) => void data.set(key, value),
-    removeItem: (key) => void data.delete(key),
-  };
-  return { storage, data };
-}
-
-/** Stand-in for matchMedia("(prefers-color-scheme: dark)") whose answer the test changes. */
-function fakeMedia(initial: boolean) {
-  const listeners = new Set<() => void>();
-  let matches = initial;
-  const media: ThemeMedia & { set(value: boolean): void; listeners: Set<() => void> } = {
-    get matches() {
-      return matches;
-    },
-    addEventListener: (_type: "change", listener: () => void) => void listeners.add(listener),
-    removeEventListener: (_type: "change", listener: () => void) => void listeners.delete(listener),
-    set(value: boolean) {
-      matches = value;
-      for (const listener of [...listeners]) listener();
-    },
-    listeners,
-  };
-  return media;
-}
-
-/** Build a started store over fakes. */
+/** Build a started store over the shared fakes. */
 function started(options: { stored?: string; dark?: boolean } = {}) {
-  const { storage, data } = fakeStorage(
-    options.stored === undefined ? {} : { [THEME_STORAGE_KEY]: options.stored },
-  );
-  const media = fakeMedia(options.dark ?? false);
-  const root = document.createElement("html");
-  const store = new ThemeStore({ storage, media, root });
-  store.start();
-  return { store, storage, data, media, root };
+  const saved: Record<string, string> =
+    options.stored === undefined ? {} : { [THEME_STORAGE_KEY]: options.stored };
+  return fakeThemeStore(options.dark ?? false, saved);
 }
 
 afterEach(() => vi.restoreAllMocks());
@@ -150,9 +115,38 @@ describe("ThemeStore", () => {
   it("start is idempotent and dispose removes the OS listener", () => {
     const { store, media } = started();
     store.start();
-    expect(media.listeners.size).toBe(1);
+    expect(media.listenerCount()).toBe(1);
     store.dispose();
-    expect(media.listeners.size).toBe(0);
+    expect(media.listenerCount()).toBe(0);
+  });
+
+  it("notifies subscribers when start restores a different choice or theme", () => {
+    const { storage } = fakeStorage({ [THEME_STORAGE_KEY]: "dark" });
+    const store = new ThemeStore({
+      storage,
+      media: fakeMedia(false),
+      root: document.createElement("html"),
+    });
+    const seen: string[] = [];
+    store.addEventListener("change", () => seen.push(`${store.choice}/${store.resolved}`));
+    store.start();
+    store.start();
+    expect(seen).toEqual(["dark/dark"]);
+  });
+
+  it("does not notify when start restores what the store already shows", () => {
+    const store = new ThemeStore({ media: fakeMedia(false), root: document.createElement("html") });
+    const seen: string[] = [];
+    store.addEventListener("change", () => seen.push(store.resolved));
+    store.start();
+    expect(seen).toEqual([]);
+  });
+
+  it("choosing System removes a saved value even when System is already shown", () => {
+    const { store, data } = started({ stored: "neon" });
+    expect(store.choice).toBe("system");
+    store.setChoice("system");
+    expect(data.has(THEME_STORAGE_KEY)).toBe(false);
   });
 
   it("still applies the choice when storage throws, and logs why", () => {

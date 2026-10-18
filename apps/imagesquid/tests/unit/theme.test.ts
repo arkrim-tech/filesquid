@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   REQUIRED_LABEL_KEYS,
   contrastFailures,
+  invalidColourTokens,
   missingLabels,
   missingTokens,
   tokenValues,
@@ -60,6 +61,9 @@ describe("ImageSquid design tokens", () => {
   });
   it("meet WCAG 2.2 AA for primary actions and body text in light and dark", () => {
     expect(contrastFailures(tokensCss)).toEqual([]);
+  });
+  it("write every colour token as #rgb or #rrggbb in both themes", () => {
+    expect(invalidColourTokens(tokensCss)).toEqual([]);
   });
   it("apply the same dark values for the OS preference and for data-theme=dark", () => {
     const media = tokensCss.match(

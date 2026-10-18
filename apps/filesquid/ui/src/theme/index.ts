@@ -4,12 +4,16 @@
  */
 export { REQUIRED_LABEL_KEYS, missingLabels, type LabelKey, type LabelTable } from "./labels";
 export {
+  COLOUR_TOKENS,
   CONTRAST_PAIRS,
   REQUIRED_TOKENS,
+  THEME_INDEPENDENT_TOKENS,
   contrastFailures,
+  invalidColourTokens,
   missingTokens,
   tokenValues,
   type ContrastFailure,
+  type InvalidColourToken,
   type TokenName,
 } from "./tokens";
 export {

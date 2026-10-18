@@ -22,9 +22,9 @@ export interface ThemeControlOptions {
 
 const STYLE = `
   :host { display: inline-block; font-family: var(--fs-font-sans); color: var(--fs-on-surface); }
-  fieldset { position: relative; display: flex; gap: 2px; margin: 0; padding: 2px; border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface-container); }
+  fieldset { position: relative; display: flex; gap: var(--fs-space-1); margin: 0; padding: var(--fs-space-1); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface-container); }
   legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  label { position: relative; display: inline-flex; align-items: center; padding: 4px 10px; border-radius: calc(var(--fs-radius) - 2px); font-size: 0.8125rem; font-weight: 600; color: var(--fs-on-surface-variant); background: var(--fs-surface-container); cursor: pointer; }
+  label { position: relative; display: inline-flex; align-items: center; padding: var(--fs-space-1) var(--fs-space-3); border-radius: var(--fs-radius); font-size: var(--fs-font-size-small); font-weight: 600; color: var(--fs-on-surface-variant); background: var(--fs-surface-container); cursor: pointer; }
   label:has(input:checked) { color: var(--fs-on-primary-container); background: var(--fs-primary-container); }
   label:has(input:focus-visible) { outline: 2px solid var(--fs-primary); outline-offset: 1px; }
   input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; }

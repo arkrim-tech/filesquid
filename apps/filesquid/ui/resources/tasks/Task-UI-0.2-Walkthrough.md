@@ -52,7 +52,48 @@ SRS-UI-007 in full: tokens MUST be CSS custom properties with the `--fs-` prefix
 | ImageSquid name and mark from its brand assets (IS-S-009) | ImageSquid `distribution.test.ts` (3); e2e ImageSquid brand test |
 | UI-S-011, UI-S-013: built bundle, custom elements defined, no console errors | e2e: 13 FileSquid and 5 ImageSquid tests against `npm run build` and `filesquid-server` |
 
-Coverage: no coverage reporter is approved for Vitest in [ADR 017](../../../../../resources/architecture/017-test-runners-and-reporting.md); every new exported function and branch above has a direct test.
+| Spacing, type size and radius only from tokens; every colour token hex in both themes (review round 1) | `component-styles.test.ts` "takes spacing, type size and radius from tokens" (per component); `theme.test.ts` "requires theme-independent spacing and type-size tokens", "reports a colour token outside the contrast pairs ..."; ImageSquid "write every colour token as #rgb or #rrggbb" |
+
+Coverage: no coverage reporter is approved for Vitest in [ADR 017](../../../../../resources/architecture/017-test-runners-and-reporting.md). Every new exported function has a direct unit test: `logoSource` in `tests/unit/distribution.test.ts` (added in review round 1; before that it was covered only through the shell tests), and the contrast, token, store and control functions in the files named above.
+
+## Review round 1 (Cubic, 12 findings)
+
+All 12 findings were valid and fixed in one commit; the new or changed tests were written first and failed first (run below).
+
+- `theme.test.ts` now requires exactly the nine UI-S-015 contrast pairs.
+- Type size, spacing and radius come from tokens. New theme-independent tokens are `--fs-font-size-small`, `--fs-font-size-body`, `--fs-font-size-title` and `--fs-space-1` to `--fs-space-5` (4, 8, 12, 16 and 24 px in both distributions). `<fs-theme-control>`, `<fs-app-shell>` and `<fs-monitor>` use them. `component-styles.test.ts` fails on any literal margin, padding, gap, font size or border radius.
+- `invalidColourTokens(css)` reports any colour token that is not `#rgb` or `#rrggbb` in either theme, including `--fs-outline`, which no contrast pair reads. Both packages run it.
+- `tokenValues` reads a last declaration that has no closing semicolon.
+- `ThemeStore.start()` dispatches `change` when the restored choice or theme differs from the one subscribers last saw.
+- `setChoice("system")` removes a saved value even when System is already shown.
+- `component-styles.test.ts` now reads only each component's `STYLE` template and matches every CSS named colour, `transparent` and colour function, case-insensitively.
+- The README says which tokens the dark blocks must repeat (colours) and which they need not (`THEME_INDEPENDENT_TOKENS`).
+- `theme-store.test.ts` uses the shared `tests/support/theme-fakes.ts`, which can now start from saved values and count its listeners.
+- The ImageSquid dark-theme test also asserts the control's `data-resolved="dark"`.
+- `logoSource` has a direct unit test, and the coverage line above was corrected.
+
+Failing run before the round 1 fixes (`npx vitest run` in `apps/filesquid/ui`, then `apps/imagesquid`):
+
+```text
+     × 'fs-app-shell.ts' takes spacing, type size and radius from tokens
+     × 'fs-monitor.ts' takes spacing, type size and radius from tokens
+     × 'fs-theme-control.ts' takes spacing, type size and radius from tokens
+     × choosing System removes a saved value even when System is already shown
+     × finds no unreadable colour token in the default sheet
+     × notifies subscribers when start restores a different choice or theme
+     × reads a last declaration without a closing semicolon
+     × reports a colour token outside the contrast pairs that is not #rgb or #rrggbb
+     × requires theme-independent spacing and type-size tokens
+ Test Files  3 failed | 13 passed (16)
+      Tests  9 failed | 218 passed (227)
+
+     × write every colour token as #rgb or #rrggbb in both themes
+TypeError: invalidColourTokens is not a function
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 11 passed (12)
+```
+
+After the fixes: `apps/filesquid/ui` Vitest 227/227 (16 files), `apps/imagesquid` Vitest 12/12, and both Playwright suites pass in `FILESQUID_E2E=1 bash scripts/pre-commit.sh` (13/13 and 5/5).
 
 ## TDD: failing run before the implementation
 

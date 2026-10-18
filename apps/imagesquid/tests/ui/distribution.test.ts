@@ -58,6 +58,7 @@ it("keeps the official mark in the dark theme and shows the theme control", asyn
   const root = shell.shadowRoot;
   expect(root?.querySelector("header img")?.getAttribute("src")).toBe("/imagesquid-logo.svg");
   const control = root?.querySelector("header fs-theme-control");
+  expect(control?.getAttribute("data-resolved")).toBe("dark");
   expect(control?.shadowRoot?.querySelector("legend")?.textContent).toBe("Theme");
   expect(
     [...(control?.shadowRoot?.querySelectorAll("label") ?? [])].map((l) => l.textContent),
