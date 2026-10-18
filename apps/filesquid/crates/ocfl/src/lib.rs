@@ -51,7 +51,14 @@
 //! - [`fixity`]: the fixity-table algorithms a validator verifies (md5,
 //!   sha1, sha256, sha512, blake2b-512).
 //!
-//! `vN` publication is later work.
+//! Write (OCFL-S-018), on every backend and target:
+//!
+//! - [`write`](mod@write): [`ObjectWriter::commit`] publishes one new version in OCFL
+//!   write order under a fenced reservation of `vN`
+//!   ([`VersionReservations`], [`LeaseStore`]): content, version inventory
+//!   and sidecar, then the root inventory and its sidecar last. An
+//!   incomplete `vN` stays unpublished for readers and is reconciled by the
+//!   next commit of that version.
 
 pub mod digest;
 mod error;
@@ -64,6 +71,7 @@ pub mod namaste;
 pub mod read;
 pub mod storage;
 pub mod validate;
+pub mod write;
 
 pub use digest::DigestAlgorithm;
 pub use error::{OcflError, WriteError};
@@ -74,3 +82,6 @@ pub use logical_file::{read_logical_file, reject_git_in_ocfl_root, write_logical
 pub use namaste::{Declaration, SpecVersion};
 pub use read::{LogicalFile, LogicalState, Object, ReadError, StorageRoot};
 pub use validate::{validate_object, Finding, ValidationReport};
+pub use write::{
+    CommitError, CommitReceipt, LeaseStore, ObjectWriter, VersionDraft, VersionReservations,
+};

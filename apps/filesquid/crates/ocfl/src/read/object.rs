@@ -11,31 +11,29 @@
 
 use std::fmt;
 
+use super::committed::read_committed;
 use super::declaration::read_declaration;
 use super::error::ReadError;
 use super::history::{diff_versions, version_history, Change, VersionInfo};
-use super::small::{at_key, key_in, missing_as, read_small, root_dir};
+use super::small::{key_in, read_small, root_dir};
 use super::state::{resolve_state, LogicalFile, LogicalState};
 use super::stream::{copy_to, LogicalFileReader};
 use crate::guard::reject_git_in_root;
-use crate::inventory::{
-    sidecar_name, verify_sidecar, FormatError, Inventory, VersionNum, INVENTORY_FILE,
-    MAX_INVENTORY_BYTES, MAX_SIDECAR_BYTES,
-};
+use crate::inventory::{Inventory, VersionNum, INVENTORY_FILE, MAX_INVENTORY_BYTES};
 use crate::namaste::{Declaration, DeclarationKind};
 use crate::storage::{
     ObjectMeta, Precondition, StorageBackend, StorageError, StorageKey, MAX_CHUNK_BYTES,
-    READ_ATTEMPTS,
 };
 
-/// One opened OCFL object: its root, declaration and root inventory, read
-/// once. Versions above the root inventory's `head` are unpublished and
+/// One opened OCFL object: its root, declaration and committed inventory,
+/// read once. Versions above the committed `head` are unpublished and
 /// invisible here.
 pub struct Object<'a, B: StorageBackend> {
     backend: &'a B,
     root: String,
     declaration: Declaration,
     inventory: Inventory,
+    unpublished: Option<VersionNum>,
 }
 
 impl<'a, B: StorageBackend> Object<'a, B> {
@@ -44,9 +42,17 @@ impl<'a, B: StorageBackend> Object<'a, B> {
     ///
     /// Runs the Git and hierarchy guards on the object root, checks the one
     /// object declaration, reads the root inventory and its sidecar
-    /// (re-reading both, at most [`READ_ATTEMPTS`] times, when a writer
-    /// replaced the inventory between the two reads), and checks that the
-    /// head version's inventory, when present, equals the root inventory.
+    /// (re-reading both, at most [`READ_ATTEMPTS`](crate::storage::READ_ATTEMPTS)
+    /// times, when a writer replaced the inventory between the two reads),
+    /// and checks that the head version's inventory, when present, equals
+    /// the committed inventory.
+    ///
+    /// A root inventory whose sidecar still holds the digest of the previous
+    /// version's inventory names a head that is not committed yet (a writer
+    /// is publishing it, or crashed before its sidecar). The object then
+    /// opens at the previous version, and
+    /// [`unpublished_head`](Self::unpublished_head) names the claimed head
+    /// (ADR 016 "Published head (readers)").
     ///
     /// # Errors
     ///
@@ -61,14 +67,16 @@ impl<'a, B: StorageBackend> Object<'a, B> {
         let root = root_dir(root)?;
         guard_object_root(backend, &root).await?;
         let declaration = read_declaration(backend, &root, DeclarationKind::Object).await?;
-        let (inventory, bytes) = read_root_inventory(backend, &root).await?;
-        check_head_inventory(backend, &root, &inventory, &bytes).await?;
+        let committed = read_committed(backend, &root).await?;
+        let inventory = committed.inventory;
+        check_head_inventory(backend, &root, &inventory, &committed.bytes).await?;
         tracing::debug!(object = %inventory.id, head = %inventory.head, "opened OCFL object");
         Ok(Self {
             backend,
             root,
             declaration,
             inventory,
+            unpublished: committed.unpublished,
         })
     }
 
@@ -95,6 +103,13 @@ impl<'a, B: StorageBackend> Object<'a, B> {
     /// The most recent committed version.
     pub fn head(&self) -> &VersionNum {
         &self.inventory.head
+    }
+
+    /// The head the root inventory names when its sidecar does not commit
+    /// it: a version being published, or left unpublished by a crash. It
+    /// is not readable; `None` when the root inventory is committed.
+    pub fn unpublished_head(&self) -> Option<&VersionNum> {
+        self.unpublished.as_ref()
     }
 
     /// The logical state of the caller-pinned `version`.
@@ -183,6 +198,7 @@ impl<B: StorageBackend> fmt::Debug for Object<'_, B> {
             .field("root", &self.root)
             .field("id", &self.inventory.id)
             .field("head", &self.inventory.head)
+            .field("unpublished", &self.unpublished)
             .finish_non_exhaustive()
     }
 }
@@ -192,59 +208,6 @@ async fn guard_object_root<B: StorageBackend>(backend: &B, root: &str) -> Result
     reject_git_in_root(backend, root).await?;
     backend.check_hierarchy(root).await?;
     Ok(())
-}
-
-/// Read the root inventory and check it against its sidecar. A sidecar that
-/// does not match (E060) may mean a writer replaced the inventory between
-/// the two reads, so both are read again, at most [`READ_ATTEMPTS`] times.
-async fn read_root_inventory<B: StorageBackend>(
-    backend: &B,
-    root: &str,
-) -> Result<(Inventory, Vec<u8>), ReadError> {
-    let mut last = None;
-    for _ in 0..READ_ATTEMPTS {
-        match read_checked_inventory(backend, root).await {
-            Err(err) if err.code() == Some("E060") => last = Some(err),
-            other => return other,
-        }
-    }
-    Err(last.unwrap_or_else(|| ReadError::invalid("E060", root, "no read attempt was made")))
-}
-
-/// Read and parse the root inventory and verify it against its sidecar.
-async fn read_checked_inventory<B: StorageBackend>(
-    backend: &B,
-    root: &str,
-) -> Result<(Inventory, Vec<u8>), ReadError> {
-    let key = key_in(root, INVENTORY_FILE)?;
-    let bytes = read_small(backend, &key, MAX_INVENTORY_BYTES, "inventory")
-        .await
-        .map_err(|err| missing_as(err, "E063", key.as_str(), "the object has no inventory"))?;
-    let inventory = Inventory::parse(&bytes).map_err(|err| at_inventory(err, &key))?;
-    let name = sidecar_name(inventory.digest_algorithm);
-    let sidecar_key = key_in(root, &name)?;
-    let sidecar = read_small(
-        backend,
-        &sidecar_key,
-        MAX_SIDECAR_BYTES,
-        "inventory sidecar",
-    )
-    .await
-    .map_err(|err| missing_as(err, "E058", sidecar_key.as_str(), "the sidecar is missing"))?;
-    verify_sidecar(inventory.digest_algorithm, &bytes, &sidecar)
-        .map_err(|err| at_key(err, &sidecar_key))?;
-    Ok((inventory, bytes))
-}
-
-/// Prefix the JSON pointer of an inventory refusal with the inventory's key,
-/// so the error names the object (`obj/inventory.json/manifest`).
-fn at_inventory(err: FormatError, key: &StorageKey) -> ReadError {
-    match err {
-        FormatError::Invalid { code, at, reason } => {
-            ReadError::invalid(code, format!("{key}{at}"), reason)
-        }
-        other => other.into(),
-    }
 }
 
 /// When the head version directory holds an inventory, it must be the same

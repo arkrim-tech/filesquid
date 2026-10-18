@@ -4,7 +4,7 @@
 use super::error::ReadError;
 use crate::inventory::FormatError;
 use crate::storage::{
-    is_consistent, read_once, validate_prefix, StorageBackend, StorageError, StorageKey,
+    is_consistent, read_once, validate_prefix, ETag, StorageBackend, StorageError, StorageKey,
     MAX_CHUNK_BYTES, READ_ATTEMPTS,
 };
 
@@ -61,13 +61,30 @@ pub(crate) async fn read_small<B: StorageBackend>(
     limit: usize,
     what: &'static str,
 ) -> Result<Vec<u8>, ReadError> {
+    read_small_tagged(backend, key, limit, what)
+        .await
+        .map(|(bytes, _)| bytes)
+}
+
+/// As [`read_small`], and also return the entity tag of the version read,
+/// for a later compare-and-swap of the same object.
+///
+/// # Errors
+///
+/// As [`read_small`].
+pub(crate) async fn read_small_tagged<B: StorageBackend>(
+    backend: &B,
+    key: &StorageKey,
+    limit: usize,
+    what: &'static str,
+) -> Result<(Vec<u8>, ETag), ReadError> {
     for _ in 0..READ_ATTEMPTS {
         let before = backend.head(key).await?;
         check_size(before.size, limit, what)?;
         let bytes = read_once(backend, key, MAX_CHUNK_BYTES, before.size).await?;
         let after = backend.head(key).await?;
         if is_consistent(backend, &before, &after, &bytes) {
-            return Ok(bytes);
+            return Ok((bytes, before.etag));
         }
     }
     Err(StorageError::Backend {
