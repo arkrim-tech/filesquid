@@ -76,12 +76,13 @@ pub(super) fn audit_tree(start: PathBuf, key_prefix: String) -> Result<(), Stora
 }
 
 /// Whether the audit's start exists as a directory, read without following
-/// links. `Ok(false)` when it is missing.
+/// links. `Ok(false)` only when it is missing (`NotFound`).
 ///
 /// # Errors
 ///
 /// [`StorageError::Io`] with [`ErrorKind::NotADirectory`] when something
-/// other than a directory is there, or the inspection error.
+/// other than a directory is there, or when a component above it is a file
+/// (the prefix names a path below a file); any other inspection error.
 fn start_is_directory(start: &Path) -> Result<bool, StorageError> {
     let what = start.display().to_string();
     match fs::symlink_metadata(start) {
@@ -91,9 +92,7 @@ fn start_is_directory(start: &Path) -> Result<bool, StorageError> {
             kind: ErrorKind::NotADirectory,
             message: "the storage hierarchy must be a directory".to_string(),
         }),
-        Err(err) if matches!(err.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => {
-            Ok(false)
-        }
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(false),
         Err(err) => Err(io_error(&what, err)),
     }
 }

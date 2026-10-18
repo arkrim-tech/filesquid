@@ -151,6 +151,30 @@ fn a_root_that_is_a_regular_file_is_rejected() {
 }
 
 #[test]
+fn a_prefix_below_a_regular_file_is_rejected() {
+    let (backend, _scratch) = fs_root("below-file");
+    let checked = complete_immediately(backend.check_hierarchy("obj/v1/content/a.txt/child/"))
+        .expect("ready");
+    assert!(
+        matches!(
+            checked,
+            Err(StorageError::Io {
+                kind: std::io::ErrorKind::NotADirectory,
+                ..
+            })
+        ),
+        "{checked:?}"
+    );
+}
+
+#[test]
+fn a_missing_prefix_passes() {
+    let (backend, _scratch) = fs_root("missing-prefix");
+    let checked = complete_immediately(backend.check_hierarchy("nowhere/deeper/")).expect("ready");
+    assert_eq!(checked, Ok(()));
+}
+
+#[test]
 fn a_hierarchy_check_below_a_prefix_skips_the_rest() {
     let (backend, _scratch) = fs_root("prefix");
     fs::create_dir_all(root(&backend).join("other/empty")).expect("dir");
@@ -202,6 +226,31 @@ mod unix {
             hierarchy(&backend),
             Err(StorageError::SymlinkForbidden {
                 key: ".fsquid-x".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn links_and_empty_directories_inside_a_preserved_git_are_rejected() {
+        let (backend, scratch) = fs_root("preserved-git");
+        let git = root(&backend).join("obj/v1/content/repo/.git");
+        fs::create_dir_all(&git).expect("git dir");
+        fs::write(git.join("HEAD"), "ref: refs/heads/main").expect("head");
+        assert_eq!(guard(&backend), Ok(()));
+        fs::create_dir_all(git.join("refs")).expect("empty refs");
+        assert_eq!(
+            hierarchy(&backend),
+            Err(StorageError::EmptyDirectoryForbidden {
+                key: "obj/v1/content/repo/.git/refs".to_string()
+            })
+        );
+        fs::remove_dir(git.join("refs")).expect("remove refs");
+        fs::write(scratch.0.join("outside"), b"x").expect("outside");
+        symlink(scratch.0.join("outside"), git.join("config")).expect("link");
+        assert_eq!(
+            hierarchy(&backend),
+            Err(StorageError::SymlinkForbidden {
+                key: "obj/v1/content/repo/.git/config".to_string()
             })
         );
     }

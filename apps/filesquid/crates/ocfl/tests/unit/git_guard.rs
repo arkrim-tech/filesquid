@@ -131,13 +131,26 @@ fn reject_git_in_root_refuses_invalid_prefixes() {
     }
 }
 
-/// A backend that serves listings in pages of at most `page` keys. With
-/// `stall`, every listing returns the first key again with a continuation
-/// that never moves past it.
+/// How the [`Paging`] backend serves listings.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// Correct pages of at most the configured size.
+    Honest,
+    /// Every listing returns the first key again with a continuation that
+    /// never moves past it.
+    Stall,
+    /// The continuation jumps past keys the page never returned.
+    JumpAhead,
+    /// An empty page that still carries a continuation.
+    EmptyWithNext,
+}
+
+/// A backend that serves listings in pages of at most `page` keys, in the
+/// given [`Mode`].
 struct Paging {
     inner: MemoryBackend,
     page: usize,
-    stall: bool,
+    mode: Mode,
 }
 
 impl StorageBackend for Paging {
@@ -172,15 +185,30 @@ impl StorageBackend for Paging {
         start_after: Option<&StorageKey>,
         limit: usize,
     ) -> Result<ListPage, StorageError> {
-        if !self.stall {
-            return self
-                .inner
-                .list(prefix, start_after, limit.min(self.page))
-                .await;
+        let size = limit.min(self.page);
+        match self.mode {
+            Mode::Honest => self.inner.list(prefix, start_after, size).await,
+            Mode::Stall => {
+                let mut page = self.inner.list(prefix, None, 1).await?;
+                page.next = page.keys.first().cloned();
+                Ok(page)
+            }
+            Mode::JumpAhead => {
+                let mut page = self.inner.list(prefix, start_after, size).await?;
+                let Some(after) = page.next.clone() else {
+                    return Ok(page);
+                };
+                let skipped = self.inner.list(prefix, Some(&after), 2).await?;
+                page.next = skipped.keys.last().cloned().or(Some(after));
+                Ok(page)
+            }
+            Mode::EmptyWithNext => {
+                let mut page = self.inner.list(prefix, start_after, size).await?;
+                page.next = page.keys.pop();
+                page.keys.clear();
+                Ok(page)
+            }
         }
-        let mut page = self.inner.list(prefix, None, 1).await?;
-        page.next = page.keys.first().cloned();
-        Ok(page)
     }
 
     async fn delete(&self, key: &StorageKey) -> Result<(), StorageError> {
@@ -217,7 +245,7 @@ impl StorageBackend for Paging {
 }
 
 /// `count` keys under `obj/v1/content/`, served `page` keys at a time.
-fn paged_root(count: usize, page: usize, stall: bool) -> Paging {
+fn paged_root(count: usize, page: usize, mode: Mode) -> Paging {
     let keys: Vec<String> = (0..count)
         .map(|i| format!("obj/v1/content/f{i:05}"))
         .collect();
@@ -225,20 +253,20 @@ fn paged_root(count: usize, page: usize, stall: bool) -> Paging {
     Paging {
         inner: root_with(&refs),
         page,
-        stall,
+        mode,
     }
 }
 
 #[test]
 fn short_pages_do_not_shrink_the_key_bound() {
-    let backend = paged_root(1_001, 1, false);
+    let backend = paged_root(1_001, 1, Mode::Honest);
     let result = complete_immediately(check_storage_root(&backend)).expect("ready");
     assert_eq!(result, Ok(()));
 }
 
 #[test]
 fn a_continuation_that_makes_no_progress_is_refused() {
-    let backend = paged_root(3, 1, true);
+    let backend = paged_root(3, 1, Mode::Stall);
     let result = complete_immediately(check_storage_root(&backend)).expect("ready");
     assert!(
         matches!(
@@ -247,6 +275,35 @@ fn a_continuation_that_makes_no_progress_is_refused() {
         ),
         "{result:?}"
     );
+}
+
+/// The guard over `backend` must refuse its listing as a backend fault.
+fn assert_listing_refused(backend: &Paging) {
+    let result = complete_immediately(check_storage_root(backend)).expect("ready");
+    assert!(
+        matches!(
+            result,
+            Err(OcflError::Storage(StorageError::Backend { .. }))
+        ),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn a_continuation_that_skips_keys_is_refused() {
+    // The only .git sits in the keys the continuation jumps over, so a guard
+    // that trusts the continuation passes the root.
+    let backend = paged_root(6, 2, Mode::JumpAhead);
+    let git = StorageKey::new("obj/v1/content/f00002/.git/HEAD").expect("key");
+    complete_immediately(backend.inner.put(&git, b"x"))
+        .expect("ready")
+        .expect("put");
+    assert_listing_refused(&backend);
+}
+
+#[test]
+fn an_empty_page_with_a_continuation_is_refused() {
+    assert_listing_refused(&paged_root(4, 2, Mode::EmptyWithNext));
 }
 
 #[test]

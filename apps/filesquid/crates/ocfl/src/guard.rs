@@ -17,7 +17,10 @@
 //!   pointer) in the storage root, in any directory of the storage hierarchy
 //!   above the objects, or in an object root;
 //! - a `.git` entry inside an object's content is preserved content (for
-//!   example an archived Git repository) and is allowed.
+//!   example an archived Git repository) and is allowed (owner decision,
+//!   2026-10-18). It may hold only ordinary files and non-empty directories:
+//!   links and empty directories inside it are refused by the hierarchy check
+//!   like anywhere else.
 //!
 //! An object root is a directory that holds an OCFL object declaration
 //! (`0=ocfl_object_*`) and is not itself inside another object.
@@ -75,7 +78,8 @@ pub async fn reject_git_in_root<B: StorageBackend>(
 /// one paged listing of every key for forbidden Git metadata: a `.git`
 /// entry in the storage root, in a storage-hierarchy directory above the
 /// objects, or in an object root. A `.git` inside an object's content is
-/// preserved content and passes. An object root is a directory holding an
+/// preserved content and passes when it holds only ordinary files and
+/// non-empty directories. An object root is a directory holding an
 /// OCFL object declaration (`0=ocfl_object_*`) that is not itself inside
 /// another object.
 ///
@@ -154,10 +158,15 @@ fn over_key_bound() -> OcflError {
 
 /// The continuation after `page`, or `None` on the last page.
 ///
+/// The [`StorageBackend::list`] contract makes the continuation the last key
+/// the page returned. Anything else could skip keys, and with them a `.git`,
+/// so it is refused rather than trusted.
+///
 /// # Errors
 ///
-/// [`StorageError::Backend`] when the backend hands back a continuation that
-/// does not move past `previous`, which would otherwise repeat forever.
+/// [`StorageError::Backend`] when a page with a continuation is empty, when
+/// the continuation is not the page's last key, or when it does not move past
+/// `previous` (which would otherwise repeat forever).
 fn next_start(
     page: &ListPage,
     previous: Option<&StorageKey>,
@@ -165,13 +174,27 @@ fn next_start(
     let Some(next) = page.next.clone() else {
         return Ok(None);
     };
+    let Some(last) = page.keys.last() else {
+        return Err(listing_fault(format!(
+            "an empty listing page carries the continuation {next}"
+        )));
+    };
+    if *last != next {
+        return Err(listing_fault(format!(
+            "listing continuation {next} is not the page's last key {last}"
+        )));
+    }
     if previous.is_some_and(|before| next <= *before) {
-        return Err(StorageError::Backend {
-            reason: format!("listing continuation {next} made no progress"),
-        }
-        .into());
+        return Err(listing_fault(format!(
+            "listing continuation {next} made no progress"
+        )));
     }
     Ok(Some(next))
+}
+
+/// The error for a backend listing that breaks the paging contract.
+fn listing_fault(reason: String) -> OcflError {
+    StorageError::Backend { reason }.into()
 }
 
 /// What the storage-root scan learned about the hierarchy: pure data, no I/O.
