@@ -23,9 +23,9 @@ Feature: Reusable filesquid-metadata engine
     Then metadata.md YAML front matter should contain dcterms title Harbour
     And catalogs should be rebuildable from that file
 
-  Scenario: Persistence uses filesquid-ocfl
+  Scenario: Persistence is pluggable and filesquid-ocfl is optional
     When I inspect filesquid-metadata library dependencies
-    Then filesquid-ocfl should be present
+    Then filesquid-ocfl should be an optional dependency outside the default features
     And axum, tauri, libvips, and filesquid-core should be absent
 
   Scenario: CLI is the stand-alone UI
@@ -80,13 +80,32 @@ Feature: Reusable filesquid-metadata engine
     Then it should remain installable without the FileSquid app
     And it should build and publish without FileSquid application crates
 
+  @wasm32
   Scenario: Engine builds for the browser
     When I build filesquid-metadata for wasm32-unknown-unknown with default features off
+    Then the build should succeed
+
+  @wasm32
+  Scenario: Engine builds for the browser with the OCFL store
+    When I build filesquid-metadata for wasm32-unknown-unknown with the ocfl feature
     Then the build should succeed
 
   Scenario: Extraction reads bytes from filesquid-ocfl
     When I extract metadata from a logical file in an OCFL object
     Then the extractor should read bytes supplied by filesquid-ocfl, not a filesystem path
+
+  Scenario: Extraction takes a reader and a file reference, independent of any store
+    When I inspect the filesquid-metadata extraction API
+    Then extraction should take bytes or a reader plus a FileRef and no path
+
+  Scenario: Sidecar store keeps a record beside a plain file
+    Given a plain file in a directory
+    When I save a record through the sidecar store
+    Then the record should be loadable from the sidecar beside the file
+
+  Scenario: CLI and path helpers are native-only
+    When I inspect the filesquid-metadata native-only modules
+    Then the CLI and the sidecar store should be compiled out for wasm32
 
   Scenario: Metadata panel plugs into a file browser sidebar
     Given the filesquid-ocfl file browser with a selected file

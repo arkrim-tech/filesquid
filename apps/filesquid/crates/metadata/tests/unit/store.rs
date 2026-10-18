@@ -1,7 +1,8 @@
 //! Persist metadata.md through filesquid-ocfl helpers.
 
 use filesquid_metadata::record::Record;
-use filesquid_metadata::store::{load, save, METADATA_MD};
+use filesquid_metadata::store::ocfl::{load, save};
+use filesquid_metadata::store::METADATA_MD;
 use filesquid_metadata::MetadataNamespace;
 
 #[test]
@@ -49,7 +50,8 @@ fn csv_line_break_survives_save_and_load() {
 /// local directory (IO-0.1, ADR 025).
 mod backend_store {
     use filesquid_metadata::record::Record;
-    use filesquid_metadata::store::{load_from, metadata_key, save_to, METADATA_MD};
+    use filesquid_metadata::store::ocfl::{load_from, metadata_key, save_to};
+    use filesquid_metadata::store::METADATA_MD;
     use filesquid_metadata::MetadataNamespace;
     use filesquid_ocfl::storage::{complete_immediately, MemoryBackend, StorageBackend};
 
@@ -117,5 +119,41 @@ mod backend_store {
             .unwrap()
             .unwrap();
         assert_eq!(loaded.get("dcterms:title").unwrap().value, "Harbour");
+    }
+
+    #[test]
+    fn ocfl_store_implements_the_metadata_store_interface() {
+        use filesquid_metadata::file_ref::FileRef;
+        use filesquid_metadata::store::ocfl::OcflStore;
+        use filesquid_metadata::store::MetadataStore;
+
+        let store = OcflStore::new(MemoryBackend::new());
+        let file = FileRef::new("objects/a", "photo.jpg")
+            .unwrap()
+            .with_version("v1");
+        let mut record = Record::default();
+        record
+            .set(MetadataNamespace::Dcterms, "title", "Harbour")
+            .unwrap();
+        complete_immediately(store.save(&file, &record))
+            .unwrap()
+            .unwrap();
+        let loaded = complete_immediately(store.load(&file)).unwrap().unwrap();
+        assert_eq!(loaded.get("dcterms:title").unwrap().value, "Harbour");
+        let other = FileRef::new("objects/b", "photo.jpg").unwrap();
+        let empty = complete_immediately(store.load(&other)).unwrap().unwrap();
+        assert!(empty.statements.is_empty());
+    }
+
+    #[test]
+    fn ocfl_store_rejects_an_absolute_object_prefix() {
+        use filesquid_metadata::file_ref::FileRef;
+        use filesquid_metadata::store::ocfl::OcflStore;
+        use filesquid_metadata::store::{MetadataStore, StoreError};
+
+        let store = OcflStore::new(MemoryBackend::new());
+        let file = FileRef::new("/objects/a", "photo.jpg").unwrap();
+        let result = complete_immediately(store.load(&file)).unwrap();
+        assert!(matches!(result, Err(StoreError::InvalidPath)));
     }
 }

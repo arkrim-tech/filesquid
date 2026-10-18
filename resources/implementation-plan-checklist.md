@@ -1,9 +1,9 @@
 # Implementation Plan Checklist: FileSquid
 
 <!-- mvp-progress:start -->
-![MVP progress: 39% complete](./assets/mvp-progress.svg)
+![MVP progress: 40% complete](./assets/mvp-progress.svg)
 
-**MVP progress: 39%**, about 315 of 816 estimated hours. 10 of 26 tasks are done and 4 more are under way. Each segment of the bar is one task below, as wide as its estimated hours in the implementation plan; an open task fills by the share of its module rows that are ticked. Regenerate with `python3 scripts/docs/update_mvp_progress.py` after ticking boxes.
+**MVP progress: 40%**, about 323 of 816 estimated hours. 11 of 26 tasks are done and 4 more are under way. Each segment of the bar is one task below, as wide as its estimated hours in the implementation plan; an open task fills by the share of its module rows that are ticked. Regenerate with `python3 scripts/docs/update_mvp_progress.py` after ticking boxes.
 <!-- mvp-progress:end -->
 
 This is a short, ordered view of [implementation-plan.md](./implementation-plan.md). Each numbered item is a global task in the order the dev team expects to finish it, and the nested items are the module tasks it dispatches, taken from each module's `resources/plan.md`. Task codes link to the full task description. A box is ticked when the matching box is ticked in the source plan.
@@ -61,8 +61,8 @@ FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by ga
     - [x] [IO-0.8](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Opaque bytes; dual profile is a caller
     - [ ] [IO-0.9](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Enumerate committed logical state
     - [ ] [IO-0.10](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Forward-delta change model
-12. [ ] [Task 0.15](./implementation-plan.md#task-0.15) filesquid-metadata WASM build and OCFL-sourced extraction
-    - [ ] [MD-0.4](../apps/filesquid/crates/metadata/resources/plan.md#phase-f0-webassembly-build-global-task-015) WASM build and OCFL-sourced extraction
+12. [x] [Task 0.15](./implementation-plan.md#task-0.15) filesquid-metadata WASM build and OCFL-sourced extraction
+    - [x] [MD-0.4](../apps/filesquid/crates/metadata/resources/plan.md#phase-f0-webassembly-build-global-task-015) WASM build and OCFL-sourced extraction
 13. [ ] [Task FS-1.2](./implementation-plan.md#task-fs-1.2) File operations through the API
     - [ ] [IO-1.2](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f1f2-view-api-and-file-browser-global-tasks-fs-12-19-superseded) UI view API
     - [ ] [API-F1.3](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-api-f19-in-fs-310-and-api-f15-in-fs-c1) File operation routes

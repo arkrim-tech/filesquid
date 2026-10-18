@@ -73,7 +73,7 @@ Putting every backend capability in FileSquid means a FileSquid user gets thumbn
 
 - A product-local Cargo workspace does not stop a member crate from being published on crates.io on its own, provided its default dependencies stay inside the rules in Decision 4.
 - Distributions can express every photo- or archive-specific need as views over the internal vocabulary plus enabled modules. If one cannot, that is a new ADR, not an exception.
-- `filesquid-metadata` currently has an unconditional dependency on `filesquid-ocfl`. Making it the optional `ocfl` feature is existing planned work (Task 0.15 in the [implementation plan](../implementation-plan.md); MD-0.4 in the [metadata plan](../../apps/filesquid/crates/metadata/resources/plan.md)). Until then the crate does not yet satisfy Decision 4.
+- `filesquid-ocfl` is an optional dependency of `filesquid-metadata`, behind its `ocfl` feature and absent from the default features (Task 0.15 in the [implementation plan](../implementation-plan.md); MD-0.4 in the [metadata plan](../../apps/filesquid/crates/metadata/resources/plan.md), completed 2026-10-18). The crate satisfies Decision 4.
 - FileSquid's open product decisions (hosting region, server datastore) are out of scope for this code layout.
 
 ## Alternatives Considered

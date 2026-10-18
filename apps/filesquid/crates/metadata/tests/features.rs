@@ -11,12 +11,29 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use cucumber::{given, then, when, writer, StatsWriter as _, World, WriterExt as _};
 use filesquid_metadata::cli::USAGE;
 use filesquid_metadata::csv::{apply_csv, to_csv};
+use filesquid_metadata::extract::{extract_from_bytes, extract_from_reader};
+use filesquid_metadata::file_ref::FileRef;
 use filesquid_metadata::json::{apply_json, parse_json, sha256_hex, to_json, JsonTarget};
 use filesquid_metadata::markdown::to_markdown;
 use filesquid_metadata::record::Record;
-use filesquid_metadata::store::{load, save, METADATA_MD};
+use filesquid_metadata::store::ocfl::{load, save};
+use filesquid_metadata::store::sidecar::SidecarStore;
+use filesquid_metadata::store::MetadataStore;
+use filesquid_metadata::store::METADATA_MD;
 use filesquid_metadata::xmp::{from_xmp, to_xmp};
 use filesquid_metadata::{MetadataError, MetadataNamespace};
+use filesquid_ocfl::storage::{
+    complete_immediately, read_verified, MemoryBackend, StorageBackend, StorageKey, MAX_CHUNK_BYTES,
+};
+
+#[path = "support/wasm.rs"]
+mod wasm;
+
+/// Big-endian TIFF with one ASCII `ImageDescription` ("Cat").
+const TIFF_DESCRIPTION: &[u8] = &[
+    b'M', b'M', 0, 42, 0, 0, 0, 8, 0, 1, 0x01, 0x0E, 0, 2, 0, 0, 0, 4, b'C', b'a', b't', 0, 0, 0,
+    0, 0,
+];
 
 /// Crates the library MUST NOT depend on (MD-S-003).
 const FORBIDDEN_DEPS: &[&str] = &[
@@ -52,6 +69,10 @@ struct MetadataWorld {
     target_before: String,
     /// Error text of the last JSON import, if it failed.
     json_error: Option<String>,
+    /// Outcome of the last `wasm32` build check.
+    wasm_build: Option<Result<(), String>>,
+    /// Whether the last extraction found an EXIF block and a description.
+    extracted_description: bool,
 }
 
 impl Drop for MetadataWorld {
@@ -400,9 +421,153 @@ fn inspect_dependencies(world: &mut MetadataWorld) {
     world.inspected = library_dependencies();
 }
 
-#[then("filesquid-ocfl should be present")]
-fn ocfl_present(world: &mut MetadataWorld) {
-    assert!(world.inspected.contains("filesquid-ocfl"));
+#[then("filesquid-ocfl should be an optional dependency outside the default features")]
+fn ocfl_optional(world: &mut MetadataWorld) {
+    let line = world
+        .inspected
+        .lines()
+        .find(|line| line.starts_with("filesquid-ocfl"))
+        .expect("filesquid-ocfl dependency");
+    assert!(line.contains("optional = true"), "{line}");
+    let manifest = read_crate_file("Cargo.toml");
+    let default = manifest
+        .lines()
+        .find(|line| line.starts_with("default"))
+        .expect("default features");
+    assert!(
+        !default.contains("ocfl") && !default.contains("cli"),
+        "{default}"
+    );
+}
+
+#[when("I build filesquid-metadata for wasm32-unknown-unknown with default features off")]
+fn build_wasm_core(world: &mut MetadataWorld) {
+    world.wasm_build = Some(wasm::check_for_wasm(""));
+}
+
+#[when("I build filesquid-metadata for wasm32-unknown-unknown with the ocfl feature")]
+fn build_wasm_ocfl(world: &mut MetadataWorld) {
+    world.wasm_build = Some(wasm::check_for_wasm("ocfl"));
+}
+
+#[then("the build should succeed")]
+fn build_succeeded(world: &mut MetadataWorld) {
+    let outcome = world.wasm_build.take().expect("build ran");
+    if let Err(output) = outcome {
+        panic!("wasm32 build check failed:\n{output}");
+    }
+}
+
+#[when("I extract metadata from a logical file in an OCFL object")]
+fn extract_from_ocfl(world: &mut MetadataWorld) {
+    let backend = MemoryBackend::new();
+    let key = StorageKey::new("objects/a/photo.tif").expect("key");
+    complete_immediately(backend.put(&key, TIFF_DESCRIPTION))
+        .expect("poll")
+        .expect("put");
+    let bytes = complete_immediately(read_verified(&backend, &key, MAX_CHUNK_BYTES))
+        .expect("poll")
+        .expect("read");
+    let file = FileRef::new("objects/a", "photo.tif").expect("file ref");
+    let mut record = Record::default();
+    let found = extract_from_bytes(&bytes, &file, &mut record).expect("extract");
+    world.extracted_description = found.exif
+        && record
+            .get("dcterms:description")
+            .is_some_and(|s| s.value.contains("Cat"));
+}
+
+#[then("the extractor should read bytes supplied by filesquid-ocfl, not a filesystem path")]
+fn extractor_reads_supplied_bytes(world: &mut MetadataWorld) {
+    assert!(
+        world.extracted_description,
+        "bytes read through OCFL extract"
+    );
+    let source = read_crate_file("src/extract.rs");
+    for forbidden in ["std::fs", "std::path", "read_from_path", "File::open"] {
+        assert!(
+            !source.contains(forbidden),
+            "extract.rs must not use {forbidden}"
+        );
+    }
+}
+
+#[when("I inspect the filesquid-metadata extraction API")]
+fn inspect_extraction_api(world: &mut MetadataWorld) {
+    world.inspected = read_crate_file("src/extract.rs");
+}
+
+#[then("extraction should take bytes or a reader plus a FileRef and no path")]
+fn extraction_signature(world: &mut MetadataWorld) {
+    assert!(world.inspected.contains("pub fn extract_from_bytes("));
+    assert!(world.inspected.contains("pub fn extract_from_reader<"));
+    assert!(world.inspected.contains("file: &FileRef"));
+    assert!(!world.inspected.contains("&Path"));
+    let mut record = Record::default();
+    let file = FileRef::new("", "a.tif").expect("file ref");
+    let mut reader = std::io::Cursor::new(TIFF_DESCRIPTION.to_vec());
+    let found = extract_from_reader(&mut reader, &file, &mut record).expect("extract");
+    assert!(found.exif);
+}
+
+#[given("a plain file in a directory")]
+fn plain_file(world: &mut MetadataWorld) {
+    let dir = fresh_object_dir();
+    fs::write(dir.join("photo.jpg"), b"pixels").expect("plain file");
+    world.object_dir = Some(dir);
+}
+
+#[when("I save a record through the sidecar store")]
+fn save_through_sidecar(world: &mut MetadataWorld) {
+    let dir = world.object_dir.clone().expect("dir");
+    let store = SidecarStore::new(&dir);
+    let file = FileRef::new("", "photo.jpg").expect("file ref");
+    let mut record = Record::default();
+    record
+        .set(MetadataNamespace::Dcterms, "title", "Harbour")
+        .expect("title");
+    complete_immediately(store.save(&file, &record))
+        .expect("poll")
+        .expect("save");
+}
+
+#[then("the record should be loadable from the sidecar beside the file")]
+fn load_from_sidecar(world: &mut MetadataWorld) {
+    let dir = world.object_dir.clone().expect("dir");
+    assert!(dir.join("photo.jpg.metadata.md").is_file());
+    let store = SidecarStore::new(&dir);
+    let file = FileRef::new("", "photo.jpg").expect("file ref");
+    let loaded = complete_immediately(store.load(&file))
+        .expect("poll")
+        .expect("load");
+    assert_eq!(loaded.get("dcterms:title").expect("title").value, "Harbour");
+}
+
+#[when("I inspect the filesquid-metadata native-only modules")]
+fn inspect_native_only(world: &mut MetadataWorld) {
+    world.inspected = format!(
+        "{}\n{}",
+        read_crate_file("src/lib.rs"),
+        read_crate_file("src/store/mod.rs")
+    );
+}
+
+#[then("the CLI and the sidecar store should be compiled out for wasm32")]
+fn native_only_gated(world: &mut MetadataWorld) {
+    let gate = "not(target_arch = \"wasm32\")";
+    for module in ["pub mod cli;", "pub mod sidecar;"] {
+        let at = world.inspected.find(module).expect(module);
+        let before = &world.inspected[..at];
+        let attribute = before
+            .lines()
+            .rev()
+            .find(|l| l.starts_with("#[cfg"))
+            .expect("cfg");
+        assert!(
+            attribute.contains(gate),
+            "{module} lacks {gate}: {attribute}"
+        );
+    }
 }
 
 #[then("axum, tauri, libvips, and filesquid-core should be absent")]
@@ -448,7 +613,7 @@ fn inspect_interchange(world: &mut MetadataWorld) {
 }
 
 #[then("CSV, JSON sidecar, XMP sidecar, and embedded extract should be available")]
-fn interchange_round_trips(world: &mut MetadataWorld) {
+fn interchange_round_trips(_world: &mut MetadataWorld) {
     let mut record = Record::default();
     record
         .set(MetadataNamespace::Dcterms, "creator", "George")
@@ -460,7 +625,7 @@ fn interchange_round_trips(world: &mut MetadataWorld) {
         "George"
     );
     assert_json_round_trip(&record);
-    assert!(world.inspected.contains("pub fn extract_into"));
+    assert!(read_crate_file("src/extract.rs").contains("pub fn extract_from_reader"));
 }
 
 /// Export `record` as a JSON sidecar, import it, and compare the statements.
@@ -530,6 +695,12 @@ async fn main() {
     fs::create_dir_all(&results_dir).expect("allure-results");
     let features = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/features");
     let junit = fs::File::create(results_dir.join("cucumber-junit.xml")).expect("junit file");
+    // cucumber-rs has no runtime skip, so an explicit opt-out removes the
+    // @wasm32 scenarios from the run and says so; it never reports a pass.
+    let wasm_skip = wasm::opted_out();
+    if let Some(reason) = &wasm_skip {
+        println!("SKIPPED @wasm32 scenarios: {reason}");
+    }
     let writer = MetadataWorld::cucumber()
         .with_writer(
             writer::Basic::stdout()
@@ -537,7 +708,9 @@ async fn main() {
                 .tee::<MetadataWorld, _>(writer::JUnit::for_tee(junit, 0))
                 .normalized(),
         )
-        .run(features)
+        .filter_run(features, move |_, _, scenario| {
+            wasm_skip.is_none() || !scenario.tags.iter().any(|tag| tag == "wasm32")
+        })
         .await;
     if writer.execution_has_failed() {
         std::process::exit(1);

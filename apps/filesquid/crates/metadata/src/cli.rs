@@ -3,16 +3,19 @@
 //! The `filesquid-cli` crate builds the only CLI binary, `fsquid`, and routes
 //! metadata commands here through [`run`]. This module ships no binary of its own.
 
+use std::fs::File;
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
 use filesquid_ocfl::read_logical_file;
 
 use crate::csv::{apply_csv, to_csv};
-use crate::extract::extract_into;
+use crate::extract::extract_from_reader;
+use crate::file_ref::FileRef;
 use crate::json::{apply_json, sha256_hex, to_json, JsonTarget};
 use crate::record::{parse_curie, Record};
 use crate::reject_file_dcterms_term;
-use crate::store::{load, save};
+use crate::store::ocfl::{load, save};
 use crate::xmp::{from_xmp, to_xmp};
 
 /// Usage text for the metadata commands of `fsquid`.
@@ -143,6 +146,26 @@ fn validate_args(rest: &[String]) -> Result<i32, String> {
     }
 }
 
+/// Open `path` and extract its embedded tags into `record` (file I/O).
+///
+/// The CLI is the native path helper: it opens the file and hands the reader
+/// to [`extract_from_reader`], which never sees a path. The [`FileRef`] is the
+/// file's name, since a plain file has no object.
+fn extract_file(path: &Path, record: &mut Record) -> Result<(), String> {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| format!("{} has no file name", path.display()))?;
+    let file_ref = FileRef::new("", name).map_err(|e| e.to_string())?;
+    let file = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let found = extract_from_reader(&mut BufReader::new(file), &file_ref, record)
+        .map_err(|e| e.to_string())?;
+    if found.rejected > 0 {
+        eprintln!("{} statements were refused by the register", found.rejected);
+    }
+    Ok(())
+}
+
 fn cmd_extract(rest: &[String]) -> Result<i32, String> {
     let pos = positional(rest, OBJECT_FLAGS);
     let Some(file) = pos.first() else {
@@ -150,7 +173,7 @@ fn cmd_extract(rest: &[String]) -> Result<i32, String> {
     };
     let object = object_dir(rest);
     let mut record = load(&object).map_err(|e| e.to_string())?;
-    extract_into(Path::new(file), &mut record);
+    extract_file(Path::new(file), &mut record)?;
     save(&object, &record).map_err(|e| e.to_string())?;
     println!("extracted into {}/metadata.md", object.display());
     Ok(0)

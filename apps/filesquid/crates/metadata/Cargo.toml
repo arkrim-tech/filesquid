@@ -2,15 +2,26 @@
 name = "filesquid-metadata"
 version = "0.1.0"
 edition = "2021"
-description = "FileSquid metadata module: extract, CRUD and interchange with Dublin Core and Schema.org; OCFL store through filesquid-ocfl. Installable without the FileSquid app."
+description = "FileSquid metadata module: extract, CRUD and interchange with Dublin Core and Schema.org; sidecar store by default, optional OCFL store through filesquid-ocfl. Installable without the FileSquid app."
 license = "MIT"
 publish = false
 
 [lib]
 path = "src/lib.rs"
 
+[features]
+# `sidecar` is the default store and native only (compiled out for wasm32).
+# `ocfl` adds the OCFL store through filesquid-ocfl; the default build excludes
+# it (ADR 027). `ocfl-fs` adds the native path helpers over the local OCFL
+# filesystem backend and `cli` the native `fsquid` metadata commands.
+default = ["sidecar"]
+sidecar = []
+ocfl = ["dep:filesquid-ocfl"]
+ocfl-fs = ["ocfl", "filesquid-ocfl/fs"]
+cli = ["ocfl-fs"]
+
 [dependencies]
-filesquid-ocfl = { path = "../ocfl" }
+filesquid-ocfl = { path = "../ocfl", optional = true, default-features = false }
 id3 = "1"
 kamadak-exif = "0.5"
 serde = { version = "1", features = ["derive"] }
@@ -33,6 +44,7 @@ path = "tests/unit/csv.rs"
 [[test]]
 name = "unit_cli"
 path = "tests/unit/cli.rs"
+required-features = ["cli"]
 
 [[test]]
 name = "unit_json"
@@ -45,11 +57,25 @@ path = "tests/unit/markdown.rs"
 [[test]]
 name = "unit_store"
 path = "tests/unit/store.rs"
+required-features = ["ocfl-fs"]
+
+[[test]]
+name = "unit_file_ref"
+path = "tests/unit/file_ref.rs"
+
+[[test]]
+name = "unit_extract"
+path = "tests/unit/extract.rs"
+
+[[test]]
+name = "unit_sidecar"
+path = "tests/unit/sidecar.rs"
 
 [[test]]
 name = "features"
 path = "tests/features.rs"
 harness = false
+required-features = ["cli"]
 
 [dev-dependencies]
 cucumber = { version = "0.23", features = ["macros", "output-junit"] }
