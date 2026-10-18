@@ -32,8 +32,8 @@ Reading used for "release 2": the repository already calls the ImageSquid releas
 |---|---|---|
 | MVP (phases F0–F3) | 856 hours (the plan said 864; F0 was over-counted by 8) | 758 hours |
 | Release 1 (phase F3R) | 424 hours | 338 hours |
-| Phase C (release 2) | none | 217 hours |
-| All FileSquid phases | 2,560 hours | 2,593 hours |
+| Phase C (release 2) | none | 221 hours |
+| All FileSquid phases | 2,560 hours | 2,597 hours |
 
 118 hours leave the MVP, of which 46 (CP-0.1 to CP-0.3; CP-0.3 merged on main while this PR was open) were already done, so open MVP work falls by about 72 hours. Phase C adds 13 hours: the record backfill (+4 on API-F1.5), the `generator:` operator (+1) and the Content Credentials gate (8). The import file record (round 2) adds 20 hours back to the MVP: MD-0.8 (8), DE-1.2 (+6), API-F1.4 (+4, including the upload's file record), UI-F2.4 (+2).
 

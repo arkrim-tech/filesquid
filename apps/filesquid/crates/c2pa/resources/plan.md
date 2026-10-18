@@ -42,7 +42,7 @@ CP-0.1 created the crate (`apps/filesquid/crates/c2pa/`, a workspace member) wit
 
 - [ ] **Task CP-0.5: Validation report and `fsquid` read/verify**
   - **Description:** Assemble a validation report with the specification's status codes (success, informational, failure) per manifest and ingredient. Add the `read` and `verify` commands to `fsquid` (a command runner in this library, registered as the `c2pa` group in [filesquid-cli](../../cli/resources/plan.md), [ADR 036](../../../../../resources/architecture/036-single-fsquid-cli.md)). Decompress Brotli `c2cm` compressed manifest boxes before parsing, with a decompressed-size cap in `ParseLimits`, so compressed manifests are validated instead of reported as not checked. Report an assertion the claim does not reference as `assertion.undeclared` (C2PA 2.4 section 15.10.3.1); CP-0.3 already ignores such assertions when choosing the hard binding. Oracle suite MUST agree with `c2patool` verdicts on the conformance files.
-  - **Estimated Time:** 10 hours
+  - **Estimated Time:** 14 hours
   - **Dependencies:** Task CP-0.3, Task CP-0.4
   - **Related Requirements:** [F-054](../../../../../resources/prd.md#f-054-c2pa-module), [C-054](../../../../../resources/product-vision.md#module-rules), [ADR 026](../../../../../resources/architecture/026-filesquid-provenance-engine.md)
   - **Related Tests:** [`reusable_provenance_engine_F-054.feature`](../tests/features/reusable_provenance_engine_F-054.feature)
@@ -123,5 +123,5 @@ CP-0.1 created the crate (`apps/filesquid/crates/c2pa/`, a workspace member) wit
 
 ## Summary Timeline
 
-- **Total Estimated Time:** 184 hours
+- **Total Estimated Time:** 188 hours (CP-0.5 went from 10 to 14 hours when Brotli `c2cm` decompression and `assertion.undeclared` reporting joined it)
 - **Critical Path:** CP-0.1 → CP-0.2 → CP-0.3/CP-0.4 → CP-0.5 → CP-0.6 → CP-0.7 → CP-2.1/CP-2.2

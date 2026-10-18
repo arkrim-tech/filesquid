@@ -52,7 +52,7 @@ Accepted: 2026-10-18. Amends [ADR 035](./035-macos-first-desktop-mvp.md) (the MV
 
 - Easier: the MVP critical path loses Tasks 0.17 and 0.18 and the credential routes and panel; 118 planned hours leave the MVP, of which 46 were already done. The import file record that replaces the C2PA record ([ADR 038](./038-import-file-record.md)) adds 20, so the MVP falls from about 856 to 758 hours.
 - Easier: release 1 loses 86 hours and its RC-009 gate.
-- Harder: release 2 carries more work (phase C, about 217 hours) and a backfill job whose records must be clearly distinguishable from import-time records.
+- Harder: release 2 carries more work (phase C, about 221 hours) and a backfill job whose records must be clearly distinguishable from import-time records.
 - Harder: until release 2, a library has no Content Credentials. The MVP and release-1 privacy and feature statements MUST NOT claim C2PA, and the F-040 register lists Content Credentials as unsupported until the phase C gate.
 - The Phase F3 MVP gate and the release-1 gate no longer demonstrate RC-009; the Content Credentials gate (Task FS-C.3) does.
 - The pre-existing inconsistency where an MVP row (API-F1.5) depended on a post-MVP signing row (CP-0.7) disappears, because both now sit in phase C.
