@@ -133,6 +133,11 @@ path = "tests/integration/opaque_bytes.rs"
 required-features = ["fs"]
 
 [[test]]
+name = "integration_enumerate_state"
+path = "tests/integration/enumerate_state.rs"
+required-features = ["fs"]
+
+[[test]]
 name = "features"
 path = "tests/features.rs"
 harness = false
