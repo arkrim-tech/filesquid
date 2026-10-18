@@ -12,6 +12,10 @@
 //! subscriptions and resync hints). It holds no transport code of its own, so the same router
 //! answers on every host.
 //!
+//! It is also FileSquid's application layer: [`library`] holds the versioned library
+//! commands and queries (collections, virtual collections, membership, the hide and delete
+//! policy, paged listing) that every host runs over the catalog it injects.
+//!
 //! Each host describes itself once at startup with [`ApiState::describe_host`] (its
 //! [`host::HostType`], a server's operator name and its hosted-service enrolment port), and
 //! `GET /api/v1/host` answers that [`host::HostDescriptor`] to every authenticated caller.
@@ -32,6 +36,7 @@ pub mod health;
 pub mod host;
 pub mod journal;
 pub mod journal_writer;
+pub mod library;
 pub mod metrics;
 pub mod monitor;
 pub mod operation;

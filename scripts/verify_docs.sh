@@ -10,6 +10,7 @@
 #   - check_plan_traceability.py: every PRD, SRS and module SRS requirement is cited by a plan task.
 #   - check_links.py: every relative Markdown link and anchor resolves.
 #   - check_distribution_links.py: no link crosses the FileSquid/ImageSquid boundary.
+#   - update_mvp_progress.py --check: the checklist's MVP progress bar matches its ticked boxes.
 #   - verify_task_cleanup.sh: no Plan/ToDos file survives next to its Walkthrough.
 #
 # Usage: ./scripts/verify_docs.sh   (from the repository root)
@@ -36,6 +37,7 @@ run_check "PRD allocation" python3 scripts/docs/check_prd_allocation.py
 run_check "Plan traceability" python3 scripts/docs/check_plan_traceability.py
 run_check "Relative links and anchors" python3 scripts/docs/check_links.py
 run_check "FileSquid and ImageSquid document boundary" python3 scripts/docs/check_distribution_links.py
+run_check "MVP progress bar" python3 scripts/docs/update_mvp_progress.py --check
 run_check "Task cleanup" ./scripts/verify_task_cleanup.sh
 
 if [ "$FAILED" -ne 0 ]; then

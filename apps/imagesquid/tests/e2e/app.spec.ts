@@ -3,6 +3,7 @@
  * ImageSquid is FileSquid underneath: same deny-by-default API, ImageSquid brand, vocabulary
  * and tokens.
  */
+import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 import { ADMIN_TOKEN } from "./admin-token";
 
@@ -188,6 +189,62 @@ for (const scheme of ["light", "dark"] as const) {
     await expect(
       page.locator("fs-monitor").getByRole("table", { name: "Processes" }),
     ).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+}
+
+/** ImageSquid's label table, as built into the distribution. */
+const labels = JSON.parse(
+  readFileSync(new URL("../../src/theme/labels.en.json", import.meta.url), "utf8"),
+) as Record<string, string>;
+
+for (const scheme of ["light", "dark"] as const) {
+  test(`the navigation tree and view states speak ImageSquid in ${scheme} (UI-F2.1a)`, async ({
+    page,
+  }) => {
+    const errors = trackErrors(page);
+    await page.addInitScript((value) => {
+      Object.defineProperty(window, "__FILESQUID_LAUNCH_TOKEN__", { value, enumerable: false });
+    }, ADMIN_TOKEN);
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.goto("/");
+    await expect(page.locator("fs-app-shell").getByRole("status")).toBeVisible();
+    const alertColour = await page.evaluate((table) => {
+      type Configurable = HTMLElement & { configure(o: unknown): void; state?: unknown };
+      const node = (id: string, kind: string, name: string | null, children: boolean) => ({
+        node: id,
+        kind,
+        name,
+        has_children: children,
+      });
+      const levels: Record<string, unknown[]> = {
+        root: [node("r", "repository", null, true)],
+        r: [node("l1", "library", "Family", true)],
+        l1: [node("a1", "collection", "Coastal Days", false)],
+      };
+      const source = {
+        list: async (parent: string | null) => ({
+          nodes: levels[parent ?? "root"] ?? [],
+          ancestors: [],
+          next_cursor: null,
+        }),
+      };
+      const tree = document.createElement("fs-nav-tree") as Configurable;
+      tree.slot = "navigation";
+      tree.configure({ labels: table, source });
+      const states = document.createElement("fs-states") as Configurable;
+      states.configure({ labels: table });
+      states.state = { kind: "offline" };
+      document.querySelector("fs-app-shell")?.append(tree, states);
+      const title = states.shadowRoot?.querySelector('[role="alert"] p');
+      return title ? getComputedStyle(title).color : "";
+    }, labels);
+    const tree = page.locator("fs-nav-tree");
+    await expect(tree.locator("section h2")).toHaveText(["Albums", "Galleries", "Folders"]);
+    await expect(tree.getByRole("treeitem", { name: "Coastal Days" })).toBeVisible();
+    await expect(tree.getByRole("button", { name: "Move Albums down" })).toBeVisible();
+    await expect(page.locator("fs-states").getByRole("alert")).toContainText("You are offline");
+    expect(alertColour).toBe(await token(page, "--fs-error"));
     expect(errors).toEqual([]);
   });
 }

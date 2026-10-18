@@ -108,6 +108,7 @@ test("landmarks, headings and control names come from the label table", async ({
         - listitem: Collections
         - listitem: Virtual collections
         - listitem: Virtual exhibits
+      - list:
         - listitem:
           - link "Monitor"
     - main:

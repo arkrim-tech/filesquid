@@ -1,5 +1,11 @@
 # Implementation Plan Checklist: FileSquid
 
+<!-- mvp-progress:start -->
+![MVP progress: 39% complete](./assets/mvp-progress.svg)
+
+**MVP progress: 39%**, about 315 of 816 estimated hours. 10 of 26 tasks are done and 4 more are under way. Each segment of the bar is one task below, as wide as its estimated hours in the implementation plan; an open task fills by the share of its module rows that are ticked. Regenerate with `python3 scripts/docs/update_mvp_progress.py` after ticking boxes.
+<!-- mvp-progress:end -->
+
 This is a short, ordered view of [implementation-plan.md](./implementation-plan.md). Each numbered item is a global task in the order the dev team expects to finish it, and the nested items are the module tasks it dispatches, taken from each module's `resources/plan.md`. Task codes link to the full task description. A box is ticked when the matching box is ticked in the source plan.
 
 Order follows the **Dependencies** fields and the [release sequence](./implementation-plan.md#release-sequence-assumptions-do-not-reorder) of the implementation plan; where the plan allows tasks to run in parallel, the order shown is the dev team's current dispatch order. Finished tasks come first in each release, in the order they were finished, even when one was finished ahead of a listed dependency (Task FS-2.4 was delivered before Tasks FS-2.1, 0.5 and FS-1.4); open tasks follow in dependency order. The implementation plan stays authoritative: if the two disagree, the implementation plan wins and this file is corrected.
@@ -51,8 +57,8 @@ FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by ga
     - [x] [IO-0.5](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Structural validation
 11. [ ] [Task 0.4](./implementation-plan.md#task-0.4) filesquid-ocfl write and logical-state enumerator
     - [x] [IO-0.6](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Local write order and unpublished vN
-    - [ ] [IO-0.7](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Generic object payload
-    - [ ] [IO-0.8](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Opaque bytes; dual profile is a caller
+    - [x] [IO-0.7](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Generic object payload
+    - [x] [IO-0.8](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Opaque bytes; dual profile is a caller
     - [ ] [IO-0.9](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Enumerate committed logical state
     - [ ] [IO-0.10](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Forward-delta change model
 12. [ ] [Task 0.15](./implementation-plan.md#task-0.15) filesquid-metadata WASM build and OCFL-sourced extraction
@@ -62,13 +68,13 @@ FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by ga
     - [ ] [API-F1.3](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-api-f19-in-fs-310-and-api-f15-in-fs-c1) File operation routes
 14. [ ] [Task 0.10](./implementation-plan.md#task-0.10) Private-client library (ADR 001)
     - [x] [CL-0.1](../apps/filesquid/crates/api/resources/plan.md#phase-f1-application-layer-global-task-010-cl-04-in-global-task-011-phase-f4-cl-05-in-global-task-012-phase-i1) Confirm crate name, SRS, and graph guards
-    - [ ] [CL-0.2](../apps/filesquid/crates/api/resources/plan.md#phase-f1-application-layer-global-task-010-cl-04-in-global-task-011-phase-f4-cl-05-in-global-task-012-phase-i1) Library domain commands and queries
+    - [x] [CL-0.2](../apps/filesquid/crates/api/resources/plan.md#phase-f1-application-layer-global-task-010-cl-04-in-global-task-011-phase-f4-cl-05-in-global-task-012-phase-i1) Library domain commands and queries
     - [ ] [CL-0.3](../apps/filesquid/crates/api/resources/plan.md#phase-f1-application-layer-global-task-010-cl-04-in-global-task-011-phase-f4-cl-05-in-global-task-012-phase-i1) Replica, cache identity, and pending mutations
 15. [ ] [Task FS-2.1](./implementation-plan.md#task-fs-2.1) Default UI shell, host adapter, tokens and accessibility
     - [x] [UI-0.1](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Host adapter (HTTP vs custom URI scheme)
     - [x] [UI-0.2](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Official branding and light/dark tokens
     - [x] [UI-0.5](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Accessibility contracts in the shell
-    - [ ] [UI-F2.1a](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) States, and the navigation tree and breadcrumb elements
+    - [x] [UI-F2.1a](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) States, and the navigation tree and breadcrumb elements
     - [x] [API-F1.10](../apps/filesquid/crates/api/resources/plan.md#phase-f2-host-descriptor-and-navigation-listing-for-the-default-ui-global-task-fs-21) Host descriptor route and change event
     - [ ] [API-F1.11](../apps/filesquid/crates/api/resources/plan.md#phase-f2-host-descriptor-and-navigation-listing-for-the-default-ui-global-task-fs-21) Navigation listing route
     - [ ] [UI-F2.1b](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Host privacy indicator and live navigation data
@@ -95,6 +101,9 @@ FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by ga
     - [ ] [DE-1.1](../apps/filesquid/crates/desktop/resources/plan.md#phases-f2-i1-and-f5-library-import-gallery-organize-and-setup-global-tasks-1116) Create, open, copy, rebuild library
     - [ ] [UI-1.1](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Library create/open/recover UI
     - [ ] [IO-1.1](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f2-independent-recovery-global-task-11) Ordinary-tool copy and independent recovery fixtures
+    - [ ] [IO-1.4](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f2-independent-recovery-global-task-11) Version-inventory repair for heads without one (W010)
+    - [ ] [API-F2.7](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) OCFL validation findings in health and the Monitor
+    - [ ] [UI-F2.14](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) OCFL validation findings in the Monitor
 21. [ ] [Task FS-2.2](./implementation-plan.md#task-fs-2.2) Drive-style browser and sidebar panels
     - [ ] [UI-F2.2](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) `<fs-file-browser>`
     - [ ] [UI-F2.3](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Details and Versions panels
