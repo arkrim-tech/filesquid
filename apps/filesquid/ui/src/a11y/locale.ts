@@ -25,7 +25,8 @@ export const DEFAULT_LOCALE: Readonly<Locale> = Object.freeze({ lang: "en", dir:
  *
  * @param distribution The active distribution.
  * @returns Its language and direction.
- * @throws Error when the direction is not `ltr` or `rtl`, or the language is blank.
+ * @throws Error when the direction is not `ltr` or `rtl`, or the language is blank or not a
+ *   well-formed BCP 47 tag. The returned language is trimmed and canonical ("en-US").
  */
 export function resolveLocale(distribution: Distribution): Locale {
   const locale = distribution.locale ?? DEFAULT_LOCALE;
@@ -34,10 +35,27 @@ export function resolveLocale(distribution: Distribution): Locale {
       `Distribution ${distribution.id}: direction "${String(locale.dir)}" is not ltr or rtl`,
     );
   }
-  if (locale.lang.trim() === "") {
-    throw new Error(`Distribution ${distribution.id}: the locale needs a language tag`);
+  return { lang: canonicalLanguage(distribution.id, locale.lang), dir: locale.dir };
+}
+
+/**
+ * Trim a BCP 47 language tag and return its canonical form. Pure.
+ *
+ * @param id The distribution's id, for the error message.
+ * @param lang The declared tag, for example " en-us ".
+ * @returns The canonical tag, for example "en-US".
+ * @throws Error when the tag is blank or not a well-formed BCP 47 tag.
+ */
+function canonicalLanguage(id: string, lang: string): string {
+  const tag = lang.trim();
+  if (tag === "") throw new Error(`Distribution ${id}: the locale needs a language tag`);
+  try {
+    return Intl.getCanonicalLocales(tag)[0] ?? tag;
+  } catch (error) {
+    throw new Error(`Distribution ${id}: language "${tag}" is not a BCP 47 tag`, {
+      cause: error,
+    });
   }
-  return { lang: locale.lang, dir: locale.dir };
 }
 
 /**

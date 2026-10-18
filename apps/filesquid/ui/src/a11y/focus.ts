@@ -71,14 +71,25 @@ export function recoverFocus(
   if (element) focusElement(element);
 }
 
-/** True for elements the browser focuses without a `tabindex`. */
+/**
+ * Elements the browser focuses without a `tabindex`: links and image-map areas with `href`,
+ * form controls, the summary of a `<details>`, media with controls, frames and editing hosts.
+ */
+const NATIVELY_FOCUSABLE = [
+  "a[href]",
+  "area[href]",
+  "button",
+  "input:not([type='hidden'])",
+  "select",
+  "textarea",
+  "details > summary:first-of-type",
+  "audio[controls]",
+  "video[controls]",
+  "iframe",
+  "[contenteditable]:not([contenteditable='false'])",
+].join(", ");
+
+/** True for elements the browser focuses without help, or that already carry a `tabindex`. */
 function focusable(element: HTMLElement): boolean {
-  if (element.hasAttribute("tabindex")) return true;
-  if (element instanceof HTMLAnchorElement) return element.hasAttribute("href");
-  return (
-    element instanceof HTMLButtonElement ||
-    element instanceof HTMLInputElement ||
-    element instanceof HTMLSelectElement ||
-    element instanceof HTMLTextAreaElement
-  );
+  return element.hasAttribute("tabindex") || element.matches(NATIVELY_FOCUSABLE);
 }

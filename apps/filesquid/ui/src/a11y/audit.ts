@@ -17,17 +17,65 @@ export interface A11yViolation {
   element: string;
 }
 
+/** ARIA widget roles that require an accessible name. */
+const NAMED_ROLES = [
+  "button",
+  "link",
+  "checkbox",
+  "radio",
+  "switch",
+  "tab",
+  "menuitem",
+  "menuitemcheckbox",
+  "menuitemradio",
+  "option",
+  "treeitem",
+  "combobox",
+  "listbox",
+  "slider",
+  "spinbutton",
+  "searchbox",
+  "textbox",
+];
+
+/** Roles whose name may come from their content (WAI-ARIA "name from content"). */
+const CONTENT_ROLES = new Set([
+  "button",
+  "link",
+  "checkbox",
+  "radio",
+  "switch",
+  "tab",
+  "menuitem",
+  "menuitemcheckbox",
+  "menuitemradio",
+  "option",
+  "treeitem",
+]);
+
 /** Elements that need an accessible name when they can be operated. */
-const CONTROLS =
-  "a[href], button, input:not([type='hidden']), select, textarea, [role='button'], [role='link'], [role='radio'], [role='checkbox'], [role='tab'], [role='menuitem']";
+const CONTROLS = [
+  "a[href]",
+  "button",
+  "input:not([type='hidden'])",
+  "select",
+  "textarea",
+  ...NAMED_ROLES.map((role) => `[role='${role}']`),
+].join(", ");
 
 /** Landmarks that must be named so a screen reader can tell them apart. */
 const LANDMARKS = "nav, [role='region'], [role='navigation']";
 
+/** Input types whose `value` is their visible name, with the browser's default when empty. */
+const VALUE_NAMED: Record<string, string> = { button: "", submit: "Submit", reset: "Reset" };
+
 /**
- * Compute a simplified accessible name: `aria-labelledby` (resolved in the element's own
- * document or shadow root), `aria-label`, an associated or wrapping `<label>`, `alt`, `title`,
- * then the text content. Whitespace is collapsed.
+ * Compute a simplified accessible name, in the order of the accname rules: `aria-labelledby`
+ * (resolved in the element's own document or shadow root), `aria-label`, an associated or
+ * wrapping `<label>`, `alt` (only on `img` and image inputs), the `value` of button, submit and
+ * reset inputs, `title`, then the content (text plus the `alt` of descendant images) for
+ * elements whose role takes its name from content. `select`, `textarea` and other inputs never
+ * take a name from their content. Whitespace is collapsed.
  *
  * @param element The element to name.
  * @returns The name, or "" when it has none.
@@ -37,9 +85,10 @@ export function accessibleName(element: Element): string {
     labelledBy(element),
     element.getAttribute("aria-label") ?? "",
     labelText(element),
-    element.getAttribute("alt") ?? "",
+    altText(element),
+    valueText(element),
     element.getAttribute("title") ?? "",
-    element instanceof HTMLInputElement ? "" : (element.textContent ?? ""),
+    namedFromContent(element) ? contentText(element) : "",
   ];
   return candidates.map(collapse).find((name) => name !== "") ?? "";
 }
@@ -48,24 +97,27 @@ export function accessibleName(element: Element): string {
  * Audit a subtree, including every open shadow root inside it.
  *
  * @param root The element, shadow root or document to audit.
- * @returns The violations, grouped by rule and in document order within a rule; empty when
- *   the subtree passes.
+ * @returns The violations grouped by rule, in the order positive-tabindex, unnamed-control,
+ *   missing-alt, unnamed-landmark. Within a rule: the root's own tree first, then each open
+ *   shadow root depth first, each in document order. Empty when the subtree passes.
  */
 export function accessibilityViolations(root: ParentNode): A11yViolation[] {
-  return scopes(root).flatMap((scope) => [
-    ...matches(scope, "[tabindex]")
+  const trees = scopes(root);
+  const all = (selector: string) => trees.flatMap((scope) => matches(scope, selector));
+  return [
+    ...all("[tabindex]")
       .filter((el) => Number(el.getAttribute("tabindex")) > 0)
       .map((el) => violation("positive-tabindex", el)),
-    ...matches(scope, CONTROLS)
+    ...all(CONTROLS)
       .filter((el) => operable(el) && accessibleName(el) === "")
       .map((el) => violation("unnamed-control", el)),
-    ...matches(scope, "img")
+    ...all("img")
       .filter((el) => !el.hasAttribute("alt"))
       .map((el) => violation("missing-alt", el)),
-    ...matches(scope, LANDMARKS)
+    ...all(LANDMARKS)
       .filter((el) => landmarkName(el) === "")
       .map((el) => violation("unnamed-landmark", el)),
-  ]);
+  ];
 }
 
 /** The root and every open shadow root below it, depth first. */
@@ -82,15 +134,50 @@ function matches(scope: ParentNode, selector: string): Element[] {
   return [...self, ...scope.querySelectorAll(selector)];
 }
 
-/** True when a control can be reached: not disabled and not inside a `hidden` subtree. */
+/**
+ * True when a control can be reached: not `:disabled` (which includes controls inside a
+ * disabled `<fieldset>`) and not inside a `hidden` or `inert` subtree.
+ */
 function operable(element: Element): boolean {
-  if (element.hasAttribute("disabled")) return false;
-  return element.closest("[hidden]") === null;
+  if (element.matches(":disabled")) return false;
+  return element.closest("[hidden], [inert]") === null;
 }
 
 /** A landmark is named only by `aria-labelledby` or `aria-label`, never by its content. */
 function landmarkName(element: Element): string {
   return collapse(`${labelledBy(element)} ${element.getAttribute("aria-label") ?? ""}`);
+}
+
+/** `alt` names only an `<img>` or an image input. */
+function altText(element: Element): string {
+  const image =
+    element instanceof HTMLImageElement ||
+    (element instanceof HTMLInputElement && element.type === "image");
+  return image ? (element.getAttribute("alt") ?? "") : "";
+}
+
+/** The `value` of a button, submit or reset input, or the browser's default label. */
+function valueText(element: Element): string {
+  if (!(element instanceof HTMLInputElement) || !(element.type in VALUE_NAMED)) return "";
+  return element.value || (VALUE_NAMED[element.type] ?? "");
+}
+
+/** True when the element's role takes its name from its content. */
+function namedFromContent(element: Element): boolean {
+  const role = element.getAttribute("role");
+  if (role) return CONTENT_ROLES.has(role);
+  return element instanceof HTMLAnchorElement || element instanceof HTMLButtonElement;
+}
+
+/** The text of an element's content, with descendant images contributing their `alt`. */
+function contentText(element: Element): string {
+  return [...element.childNodes]
+    .map((node) => {
+      if (node instanceof HTMLImageElement) return ` ${node.getAttribute("alt") ?? ""} `;
+      if (node instanceof Element) return contentText(node);
+      return node.textContent ?? "";
+    })
+    .join("");
 }
 
 /** The text of the elements named by `aria-labelledby`, looked up in the element's own root. */

@@ -109,9 +109,12 @@ describe("component stylesheets", () => {
   });
 });
 
-/** CSS system colours (CSS Color Module Level 4), used only for forced-colours mode. */
+/**
+ * CSS system colours (CSS Color Module Level 4), used only for forced-colours mode. CSS
+ * keywords are case-insensitive, so the match is too.
+ */
 const SYSTEM_COLOUR =
-  /(?<![\w-])(?:Canvas|CanvasText|LinkText|VisitedText|ActiveText|ButtonFace|ButtonText|ButtonBorder|Field|FieldText|Highlight|HighlightText|SelectedItem|SelectedItemText|Mark|MarkText|GrayText|AccentColor|AccentColorText)(?![\w-])/;
+  /(?<![\w-])(?:Canvas|CanvasText|LinkText|VisitedText|ActiveText|ButtonFace|ButtonText|ButtonBorder|Field|FieldText|Highlight|HighlightText|SelectedItem|SelectedItemText|Mark|MarkText|GrayText|AccentColor|AccentColorText)(?![\w-])/i;
 
 /** Physical (left/right) properties and values that would not mirror under `dir="rtl"`. */
 const PHYSICAL =
@@ -162,16 +165,30 @@ function untokenisedMotion(css: string): string[] {
   ];
   return declarations
     .filter(([, property]) => /^(?:transition|animation)(?:-duration)?$/.test(property ?? ""))
-    .filter(
-      ([, , value]) =>
-        !(value ?? "").includes("var(--fs-motion-duration)") && (value ?? "").trim() !== "none",
-    )
+    .filter(([, , value]) => !motionFromToken(value ?? ""))
     .map(([declaration]) => (declaration ?? "").trim());
 }
 
-/** Height declarations fixed in pixels, other than the 1px of a visually hidden element. */
+/** A literal CSS time such as `150ms`, `.2s` or `0s`. */
+const LITERAL_TIME = /(?<![\w-])\d*\.?\d+m?s(?![\w-])/;
+
+/**
+ * True when a transition or animation value is `none`, or takes its duration from
+ * `--fs-motion-duration` and has no literal time anywhere else (in any of its comma-separated
+ * parts).
+ */
+function motionFromToken(value: string): boolean {
+  if (value.trim() === "none") return true;
+  if (!value.includes("var(--fs-motion-duration)")) return false;
+  return !LITERAL_TIME.test(value.replace(/var\(--fs-motion-duration\)/g, ""));
+}
+
+/**
+ * Height declarations, physical (`height`) or logical (`block-size`), fixed in pixels, other
+ * than the 1px of a visually hidden element.
+ */
 function fixedPixelHeights(css: string): string[] {
-  return [...css.matchAll(/((?:min-|max-)?height)\s*:\s*([^;{}]+)/g)]
+  return [...css.matchAll(/(?<![\w-])((?:min-|max-)?(?:height|block-size))\s*:\s*([^;{}]+)/g)]
     .filter(([, , value]) => /\d+px/.test(value ?? "") && (value ?? "").trim() !== "1px")
     .map(([declaration]) => (declaration ?? "").trim());
 }
@@ -195,7 +212,10 @@ describe("UI-S-016 accessibility contracts in component stylesheets", () => {
     expect(mediaBlock(shared, "forced-colors: active")).toMatch(/outline-color:\s*Highlight/);
   });
   it.each(ELEMENTS)("%s includes the shared accessibility stylesheet", (name) => {
-    expect(sources.find((s) => s.name === name)?.source).toMatch(/A11Y_STYLE/);
+    // The rendering expression, not just the import: the shared rules go first in the style.
+    expect(sources.find((s) => s.name === name)?.source).toMatch(
+      /A11Y_STYLE\s*\+\s*STYLE|\$\{A11Y_STYLE\}\$\{STYLE\}/,
+    );
   });
   it.each(sources)("$name uses logical properties only", ({ css }) => {
     expect(css.match(PHYSICAL)?.[0]).toBeUndefined();
@@ -218,6 +238,21 @@ describe("UI-S-016 accessibility contracts in component stylesheets", () => {
       "transition: color 150ms",
     ]);
     expect(untokenisedMotion("a { transition: color var(--fs-motion-duration); }")).toEqual([]);
+    expect(
+      untokenisedMotion(
+        "a { transition: color var(--fs-motion-duration), background-color 300ms; }",
+      ),
+    ).toEqual(["transition: color var(--fs-motion-duration), background-color 300ms"]);
+    expect(untokenisedMotion("a { animation-duration: .2s; }")).toEqual([
+      "animation-duration: .2s",
+    ]);
+    expect(SYSTEM_COLOUR.test("a { color: highlight; }")).toBe(true);
+    expect(SYSTEM_COLOUR.test("a { background: canvastext; }")).toBe(true);
+    expect(SYSTEM_COLOUR.test("fieldset { border: 0; }")).toBe(false);
+    expect(fixedPixelHeights("a { block-size: 40px; min-block-size: 2rem; }")).toEqual([
+      "block-size: 40px",
+    ]);
+    expect(fixedPixelHeights("a { max-block-size: 300px; }")).toEqual(["max-block-size: 300px"]);
     expect(SYSTEM_COLOUR.test("a { color: Highlight; }")).toBe(true);
     expect(SYSTEM_COLOUR.test("a { color: var(--fs-highlight); }")).toBe(false);
     expect(

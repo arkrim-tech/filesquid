@@ -68,12 +68,12 @@ Every custom element meets the contracts of [UI-S-016](./resources/srs.md) ([SRS
 
 - **Keyboard.** Everything is a native control (`a[href]`, `button`, `input`); nothing has a positive `tabindex`. The shell's Tab order is the skip control, the theme control (one stop; arrow keys choose), the navigation links, then the main area.
 - **Skip control and landmarks.** The first Tab shows a "Skip to main content" button (`skipToContent` label) that focuses `main` without touching the hash route. `header`, a `nav` named by the `navigationMain` label and `main` are the landmarks; the product name is the only `h1`. Monitor tables are named by their section heading inside focusable scroll regions.
-- **Focus.** Every element in the Tab order shows a `2px` solid `--fs-primary` outline offset by `2px`; `contrastFailures` keeps `--fs-primary` at 3:1 on `--fs-surface`, `--fs-surface-container` and `--fs-primary-container` (`FOCUS_CONTRAST_PAIRS`). A route change moves focus to `main`; a Monitor re-render moves it to the token field, the alert or the first section heading. Nothing takes focus on first load.
+- **Focus.** Every element in the Tab order shows a `2px` solid `--fs-primary` outline offset by `2px`; `contrastFailures` keeps `--fs-primary` at 3:1 on `--fs-surface`, `--fs-surface-container` and `--fs-primary-container` (`FOCUS_CONTRAST_PAIRS`). A route change moves focus to `main`; a Monitor re-render moves it to the token field, the alert or the first section heading. Nothing takes focus on first load, and a background load, poll or failed poll never takes focus from outside the content it replaces.
 - **Motion and contrast preferences.** Durations come from `--fs-motion-duration` and are `0s` under `prefers-reduced-motion: reduce`; script-driven motion checks `prefersReducedMotion(window)`. Under `prefers-contrast: more` borders use `--fs-on-surface-variant`; under `forced-colors: active` the chosen theme option uses `Highlight` and focus rings use `Highlight`.
-- **Text size and reflow.** Type sizes are `rem` tokens and no text container has a fixed pixel height. At 320 CSS px or 200 % text the page never scrolls sideways; below `40rem` the navigation stacks above `main`.
-- **Locale.** A distribution may set `locale: { lang, dir }` (default `en`, `ltr`); `applyLocale(document, resolveLocale(distribution))` writes them to `<html>`. Component stylesheets use logical properties only, so `dir="rtl"` mirrors the layout.
+- **Text size and reflow.** Type sizes are `rem` tokens and no text container has a fixed pixel height. At 320 CSS px, at 200 % text, and at both together, the page never scrolls sideways; below `40rem` the navigation stacks above `main`.
+- **Locale.** A distribution may set `locale: { lang, dir }` (default `en`, `ltr`); `resolveLocale` trims the language, writes it in canonical BCP 47 form (`en-us` becomes `en-US`) and refuses a malformed tag or a direction other than `ltr` or `rtl`; `applyLocale(document, resolveLocale(distribution))` writes them to `<html>`. Component stylesheets use logical properties only, so `dir="rtl"` mirrors the layout.
 
-The shared rules live in [`src/components/a11y-style.ts`](./src/components/a11y-style.ts) (`A11Y_STYLE`), which every component puts first in its shadow root. A distribution's own UI tests can audit what it renders:
+The shared rules live in [`src/components/a11y-style.ts`](./src/components/a11y-style.ts) (`A11Y_STYLE`), which every component puts first in its shadow root. Shadow-root styles cannot reach light-DOM content a distribution slots into a component, so `<fs-app-shell>` also adds one document-level copy (`installDocumentA11yStyle`, `<style id="fs-a11y-style">`). A distribution's own UI tests can audit what it renders:
 
 ```ts
 import { accessibilityViolations } from "@filesquid/ui";
@@ -81,7 +81,7 @@ import { accessibilityViolations } from "@filesquid/ui";
 expect(accessibilityViolations(shell)).toEqual([]); // positive tabindex, unnamed controls, missing alt, unnamed landmarks
 ```
 
-`npm test` covers the helpers and component states in jsdom; `npm run test:e2e` checks Chromium's accessibility tree, Tab order, focus rings in light and dark, reduced motion, contrast preferences, reflow and RTL against the built UI ([`tests/e2e/accessibility.spec.ts`](./tests/e2e/accessibility.spec.ts)).
+`npm test` covers the helpers and component states in jsdom; `npm run test:e2e` checks Chromium's accessibility tree, Tab order, focus rings in light and dark, slotted content, reduced motion, contrast preferences, reflow (320 px at 100 % and 200 % text, 640 px and 1280 px at 200 %) and RTL against the built UI ([`tests/e2e/accessibility.spec.ts`](./tests/e2e/accessibility.spec.ts)).
 
 ## Host adapter and client interface
 

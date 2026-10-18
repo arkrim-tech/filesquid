@@ -7,9 +7,10 @@
 export const AA_TEXT_CONTRAST = 4.5;
 
 /**
- * Minimum contrast ratio for user-interface components and focus indicators against the
- * colours next to them under WCAG 2.2 AA (success criteria 1.4.11 and 2.4.13), used for the
- * focus ring (UI-S-016).
+ * Minimum contrast ratio for user-interface components and visual focus indicators against the
+ * colours next to them under WCAG 2.2 AA (success criterion 1.4.11 Non-text Contrast), used for
+ * the focus ring (UI-S-016). The 3:1 figure also appears in 2.4.13 Focus Appearance, which is
+ * Level AAA; FileSquid does not claim AAA conformance.
  */
 export const NON_TEXT_CONTRAST = 3;
 

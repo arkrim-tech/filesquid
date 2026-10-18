@@ -7,6 +7,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiError } from "../../src/api/client";
 import {
+  A11Y_DOCUMENT_STYLE_ID,
+  A11Y_STYLE,
   MONITOR_ROUTE,
   accessibilityViolations,
   bindMonitorRoute,
@@ -90,6 +92,18 @@ function submitToken(monitor: FsMonitor, token: string): void {
 
 describe("<fs-app-shell> accessibility (UI-S-016)", () => {
   beforeEach(() => defineElements());
+  afterEach(() => {
+    window.location.hash = "";
+  });
+
+  it("installs one document-level copy of the shared rules for slotted light-DOM content", () => {
+    document.getElementById(A11Y_DOCUMENT_STYLE_ID)?.remove();
+    mountShell();
+    mountShell();
+    const copies = document.head.querySelectorAll(`#${A11Y_DOCUMENT_STYLE_ID}`);
+    expect(copies).toHaveLength(1);
+    expect(copies[0]?.textContent).toBe(A11Y_STYLE);
+  });
 
   it("passes the accessibility audit, theme control included", async () => {
     const shell = mountShell();
@@ -122,7 +136,6 @@ describe("<fs-app-shell> accessibility (UI-S-016)", () => {
     skip?.click();
     expect(deepActiveElement(document)).toBe(shell.shadowRoot?.querySelector("main"));
     expect(window.location.hash).toBe("#/somewhere");
-    window.location.hash = "";
   });
 
   it("moves focus to main when a re-render removes the focused element", () => {
@@ -267,5 +280,40 @@ describe("<fs-monitor> accessibility (UI-S-016)", () => {
     outside.focus();
     await settle();
     expect(document.activeElement).toBe(outside);
+  });
+
+  /** Mount a polling Monitor next to an outside button; `fail()` makes later polls fail. */
+  async function pollingMonitor() {
+    let status = 0; // 0: every call succeeds
+    const outside = document.createElement("button");
+    const monitor = document.createElement("fs-monitor") as FsMonitor;
+    monitor.configure({ labels, client: monitorClient(() => status), pollMs: 5 });
+    document.body.replaceChildren(outside, monitor);
+    await settle();
+    return { outside, monitor, fail: () => (status = 500) };
+  }
+
+  /** Wait long enough for at least one 5ms poll to run and settle. */
+  const afterPoll = () => new Promise((resolve) => setTimeout(resolve, 40));
+
+  it("keeps focus where it is outside the Monitor when a poll fails", async () => {
+    const { outside, monitor, fail } = await pollingMonitor();
+    outside.focus();
+    fail();
+    await afterPoll();
+    expect(monitor.shadowRoot?.querySelector('[role="alert"]')).not.toBeNull();
+    expect(document.activeElement).toBe(outside);
+    monitor.remove();
+  });
+
+  it("moves focus to the alert when a poll fails while focus is in the replaced dashboard", async () => {
+    const { monitor, fail } = await pollingMonitor();
+    monitor.shadowRoot?.querySelector<HTMLInputElement>("#journal-operation")?.focus();
+    fail();
+    await afterPoll();
+    const alert = monitor.shadowRoot?.querySelector('[role="alert"]');
+    expect(alert).not.toBeNull();
+    expect(deepActiveElement(document)).toBe(alert);
+    monitor.remove();
   });
 });

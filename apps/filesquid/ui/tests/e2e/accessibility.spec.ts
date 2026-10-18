@@ -143,6 +143,26 @@ for (const scheme of ["light", "dark"] as const) {
   });
 }
 
+test("light-DOM content slotted into the shell gets the same focus ring", async ({ page }) => {
+  const errors = trackErrors(page);
+  await withLaunchToken(page);
+  await page.goto("/");
+  await expect(page.locator("fs-app-shell").getByRole("status")).toBeVisible();
+  await page.evaluate(() => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "Slotted action";
+    document.querySelector("fs-app-shell")?.append(button);
+  });
+  const ring = `solid 2px ${await tokenColour(page, "--fs-primary")}`;
+  for (let step = 0; step < 4; step += 1) await page.keyboard.press("Tab");
+  const item = await focused(page);
+  expect(item.text).toBe("Slotted action");
+  expect(item.outline).toBe(ring);
+  expect(item.offset).toBe("2px");
+  expect(errors).toEqual([]);
+});
+
 test("the skip control appears on focus and moves focus to main without routing", async ({
   page,
 }) => {
@@ -274,6 +294,7 @@ test("more contrast strengthens borders; forced colours keep the chosen option",
 
 for (const { width, scale } of [
   { width: 320, scale: 100 },
+  { width: 320, scale: 200 },
   { width: 1280, scale: 200 },
   { width: 640, scale: 200 },
 ]) {

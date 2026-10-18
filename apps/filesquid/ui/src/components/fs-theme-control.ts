@@ -27,8 +27,8 @@ export interface ThemeControlOptions {
 }
 
 const STYLE = `
-  :host { display: inline-block; font-family: var(--fs-font-sans); color: var(--fs-on-surface); }
-  fieldset { position: relative; display: flex; gap: var(--fs-space-1); margin: 0; padding: var(--fs-space-1); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface-container); }
+  :host { display: inline-block; max-width: 100%; font-family: var(--fs-font-sans); color: var(--fs-on-surface); }
+  fieldset { position: relative; display: flex; flex-wrap: wrap; gap: var(--fs-space-1); margin: 0; padding: var(--fs-space-1); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface-container); }
   legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   label { position: relative; display: inline-flex; align-items: center; padding: var(--fs-space-1) var(--fs-space-3); border-radius: var(--fs-radius); font-size: var(--fs-font-size-small); font-weight: 600; color: var(--fs-on-surface-variant); background: var(--fs-surface-container); cursor: pointer; transition: color var(--fs-motion-duration), background-color var(--fs-motion-duration); }
   label:has(input:checked) { color: var(--fs-on-primary-container); background: var(--fs-primary-container); }
@@ -94,17 +94,17 @@ export class FsThemeControl extends HTMLElement {
   private render(): void {
     const root = this.shadowRoot;
     if (!root || !this.options) return;
-    const { labels } = this.options;
+    const { labels, store } = this.options;
     const fieldset = document.createElement("fieldset");
     const legend = document.createElement("legend");
     legend.textContent = labels.theme;
-    fieldset.append(legend, ...THEME_CHOICES.map((choice) => option(choice, labels)));
+    const radios = THEME_CHOICES.map((choice) => option(choice, labels));
+    fieldset.append(legend, ...radios);
     fieldset.addEventListener("change", this.onInput);
+    const chosen = fieldset.querySelector<HTMLInputElement>(`input[value="${store.choice}"]`);
     const style = document.createElement("style");
     style.textContent = A11Y_STYLE + STYLE;
-    replaceKeepingFocus(root, [style, fieldset], () =>
-      root.querySelector<HTMLInputElement>("input:checked"),
-    );
+    replaceKeepingFocus(root, [style, fieldset], () => chosen);
     this.reflect();
   }
 

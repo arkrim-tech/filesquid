@@ -7,7 +7,8 @@
  * Accessibility (UI-S-016): each table is named by its section heading and sits in a named,
  * focusable scroll region, so narrow windows scroll the table rather than the page; when a
  * re-render removes the focused element, focus moves to the token field, the alert or the first
- * section heading, and never moves on a background load.
+ * section heading. Focus moves only when it was inside the Monitor's replaced content: a
+ * background load, poll or failed poll never takes focus from anywhere else on the page.
  */
 import {
   ApiError,
@@ -76,7 +77,8 @@ const STYLE = `
   .scroll { overflow-x: auto; }
   th, td { text-align: start; padding: var(--fs-space-1) var(--fs-space-2); border-block-end: 1px solid var(--fs-outline); }
   td { font-family: var(--fs-font-mono); }
-  dl { display: grid; grid-template-columns: max-content 1fr; gap: var(--fs-space-1) var(--fs-space-4); margin: 0; }
+  dl { display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr); gap: var(--fs-space-1) var(--fs-space-4); margin: 0; }
+  dt, dd { min-width: 0; overflow-wrap: anywhere; }
   dd { margin: 0; font-family: var(--fs-font-mono); }
   [data-status="ok"] .status { color: var(--fs-primary); }
   [data-status="degraded"] .status, [data-status="failing"] .status, tr[data-state="stalled"], tr[data-state="failed"] { color: var(--fs-error); }

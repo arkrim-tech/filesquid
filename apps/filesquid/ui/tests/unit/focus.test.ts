@@ -4,7 +4,12 @@
  * focused element hands focus to a defined target instead of leaving it on <body>.
  */
 import { describe, expect, it } from "vitest";
-import { deepActiveElement, focusElement, replaceKeepingFocus } from "../../src/a11y/focus";
+import {
+  deepActiveElement,
+  focusElement,
+  recoverFocus,
+  replaceKeepingFocus,
+} from "../../src/a11y/focus";
 
 /** A host element in the document with an open shadow root holding `markup`. */
 function shadowHost(markup: string): ShadowRoot {
@@ -80,5 +85,48 @@ describe("replaceKeepingFocus", () => {
     (root.querySelector("button") as HTMLButtonElement).focus();
     replaceKeepingFocus(root, [], () => null);
     expect(root.activeElement).toBeNull();
+  });
+});
+
+describe("focusElement leaves natively focusable elements in the Tab order (review round 1)", () => {
+  it.each([
+    ["details summary", `<details><summary>More</summary><p>x</p></details>`, "summary"],
+    ["editing host", `<div contenteditable="true">Note</div>`, "div"],
+    ["link", `<a href="#/x">Go</a>`, "a"],
+    ["select", `<select><option>A</option></select>`, "select"],
+  ])("does not add tabindex to a %s", (_name, markup, selector) => {
+    const root = shadowHost(markup);
+    const element = root.querySelector(selector) as HTMLElement;
+    focusElement(element);
+    expect(element.hasAttribute("tabindex")).toBe(false);
+  });
+  it("still makes a plain div programmatically focusable", () => {
+    const root = shadowHost(`<div contenteditable="false">Static</div>`);
+    const element = root.querySelector("div") as HTMLElement;
+    focusElement(element);
+    expect(element.getAttribute("tabindex")).toBe("-1");
+  });
+});
+
+describe("recoverFocus", () => {
+  it("focuses the target when focus was inside and is now lost", () => {
+    const root = shadowHost(`<button type="button">Old</button>`);
+    (root.querySelector("button") as HTMLButtonElement).focus();
+    root.innerHTML = `<h2>New</h2>`;
+    recoverFocus(root, true, () => root.querySelector("h2"));
+    expect(root.activeElement?.textContent).toBe("New");
+  });
+  it("does nothing when focus was not inside before the re-render", () => {
+    const root = shadowHost(`<h2>New</h2>`);
+    recoverFocus(root, false, () => root.querySelector("h2"));
+    expect(root.activeElement).toBeNull();
+    expect(root.querySelector("h2")?.hasAttribute("tabindex")).toBe(false);
+  });
+  it("does nothing when focus is still inside", () => {
+    const root = shadowHost(`<input><h2>New</h2>`);
+    const input = root.querySelector("input") as HTMLInputElement;
+    input.focus();
+    recoverFocus(root, true, () => root.querySelector("h2"));
+    expect(root.activeElement).toBe(input);
   });
 });

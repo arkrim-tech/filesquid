@@ -28,3 +28,22 @@ const STYLE = `
 
 /** CSS text of the shared accessibility stylesheet; components prepend it to their own. */
 export const A11Y_STYLE = STYLE;
+
+/** Id of the document-level copy of the stylesheet. */
+export const A11Y_DOCUMENT_STYLE_ID = "fs-a11y-style";
+
+/**
+ * Add one document-level copy of the shared rules to `doc.head`, so light-DOM content that a
+ * distribution slots into a component (which shadow-root styles cannot reach beyond the
+ * slotted element itself) gets the same focus ring, motion and contrast rules. Idempotent.
+ * Side effect: mutates the document head.
+ *
+ * @param doc The document the component is connected to.
+ */
+export function installDocumentA11yStyle(doc: Document): void {
+  if (doc.getElementById(A11Y_DOCUMENT_STYLE_ID)) return;
+  const style = doc.createElement("style");
+  style.id = A11Y_DOCUMENT_STYLE_ID;
+  style.textContent = STYLE;
+  doc.head.append(style);
+}

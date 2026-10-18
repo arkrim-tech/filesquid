@@ -17,7 +17,7 @@ import type { HealthStatus } from "../api/client";
 import { MONITOR_ROUTE } from "../app/routes";
 import { denialLabel } from "./denial";
 import type { FsThemeControl } from "./fs-theme-control";
-import { A11Y_STYLE } from "./a11y-style";
+import { A11Y_STYLE, installDocumentA11yStyle } from "./a11y-style";
 import { focusElement, recoverFocus } from "../a11y/focus";
 
 /** The part of the API client the shell needs (injectable in tests). */
@@ -37,7 +37,7 @@ export interface ShellOptions {
 }
 
 const STYLE = `
-  :host { position: relative; display: grid; grid-template-rows: auto 1fr; min-height: 100vh; background: var(--fs-surface); color: var(--fs-on-surface); font-family: var(--fs-font-sans); }
+  :host { position: relative; display: grid; grid-template-rows: auto 1fr; grid-template-columns: minmax(0, 1fr); min-height: 100vh; background: var(--fs-surface); color: var(--fs-on-surface); font-family: var(--fs-font-sans); }
   .skip { position: absolute; inset-inline-start: var(--fs-space-2); inset-block-start: var(--fs-space-2); z-index: 1; padding: var(--fs-space-2) var(--fs-space-3); border: 0; border-radius: var(--fs-radius); background: var(--fs-primary); color: var(--fs-on-primary); font-family: inherit; font-size: var(--fs-font-size-body); font-weight: 600; cursor: pointer; }
   .skip:not(:focus) { width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   header { display: flex; flex-wrap: wrap; align-items: center; gap: var(--fs-space-3); padding: var(--fs-space-3) var(--fs-space-4); border-block-end: 1px solid var(--fs-outline); }
@@ -96,8 +96,12 @@ export class FsAppShell extends HTMLElement {
     this.theme?.removeEventListener("change", this.onThemeChange);
   }
 
-  /** Subscribe to the theme store and render. */
+  /**
+   * Install the document-level accessibility rules for slotted content, subscribe to the theme
+   * store and render.
+   */
   private connect(): void {
+    if (this.isConnected) installDocumentA11yStyle(this.ownerDocument);
     this.theme?.addEventListener("change", this.onThemeChange);
     this.render();
   }

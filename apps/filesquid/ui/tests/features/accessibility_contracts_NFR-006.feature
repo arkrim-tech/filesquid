@@ -55,17 +55,24 @@ Feature: Accessibility contracts in the shell
     When my operating system forces its own colours
     Then the chosen theme option should use the system highlight colours
 
-  Scenario Outline: Large text and narrow windows never need horizontal scrolling
+  Scenario Outline: A narrow window, large text, or both together never need horizontal scrolling
     Given the window is <width> CSS pixels wide and text is at <scale> percent
     When I open the app
     Then the page should not scroll horizontally
     And the product name should not be clipped
 
+    # 320 px at 200 % is the narrowest window with the largest text, both together.
     Examples:
       | width | scale |
       | 320   | 100   |
-      | 1280  | 200   |
+      | 320   | 200   |
       | 640   | 200   |
+
+  Scenario: Large text on a wide window keeps the side-by-side layout
+    Given the window is 1280 CSS pixels wide and text is at 200 percent
+    When I open the app
+    Then the page should not scroll horizontally
+    And the navigation should sit beside the main area
 
   Scenario: A right-to-left language mirrors the layout
     Given the distribution's locale is right-to-left
@@ -86,6 +93,6 @@ Feature: Accessibility contracts in the shell
     Then the test should fail and name the focus pair and theme
 
   # Source
-  # - ../../../../resources/srs.md SRS-NFR-006
-  # - ../resources/srs.md UI-S-016
-  # - ../../../../resources/prd.md NFR-006, NFR-007, RC-005
+  # - ../../../../../resources/srs.md SRS-NFR-006
+  # - ../../resources/srs.md UI-S-016
+  # - ../../../../../resources/prd.md NFR-006, NFR-007, RC-005

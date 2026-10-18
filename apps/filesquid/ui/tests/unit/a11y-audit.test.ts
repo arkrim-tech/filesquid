@@ -90,3 +90,66 @@ describe("accessibilityViolations", () => {
     expect(entry.accessibilityViolations).toBe(accessibilityViolations);
   });
 });
+
+describe("accessibleName and the audit follow the accname rules (review round 1)", () => {
+  /** Name of the first element matching `selector` in `markup`. */
+  const nameOf = (markup: string, selector: string) =>
+    accessibleName(html(markup).querySelector(selector) as Element);
+
+  it("checks name-required widget roles: switch, combobox, slider, menuitemcheckbox and more", () => {
+    const roles = ["switch", "combobox", "slider", "menuitemcheckbox", "spinbutton", "textbox"];
+    const root = html(roles.map((role) => `<div role="${role}" tabindex="0"></div>`).join(""));
+    expect(accessibilityViolations(root)).toEqual(
+      roles.map(() => ({ rule: "unnamed-control", element: "div" })),
+    );
+  });
+  it("counts alt as a name only on img and image inputs", () => {
+    expect(nameOf(`<button type="button" alt="Close"></button>`, "button")).toBe("");
+    expect(nameOf(`<input type="image" alt="Search" src="/s.svg">`, "input")).toBe("Search");
+    expect(nameOf(`<img alt="Logo">`, "img")).toBe("Logo");
+  });
+  it("counts a descendant image's alt toward a link or button name", () => {
+    expect(nameOf(`<a href="/"><img alt="FileSquid home"></a>`, "a")).toBe("FileSquid home");
+    expect(nameOf(`<button type="button">Open <img alt="menu"></button>`, "button")).toBe(
+      "Open menu",
+    );
+    expect(accessibilityViolations(html(`<a href="/"><img alt="Home"></a>`))).toEqual([]);
+  });
+  it("names button, submit and reset inputs by their value or the default label", () => {
+    expect(nameOf(`<input type="submit" value="Sign in">`, "input")).toBe("Sign in");
+    expect(nameOf(`<input type="submit">`, "input")).toBe("Submit");
+    expect(nameOf(`<input type="reset">`, "input")).toBe("Reset");
+    expect(nameOf(`<input type="button" value="Go">`, "input")).toBe("Go");
+    expect(nameOf(`<input type="text" value="typed">`, "input")).toBe("");
+  });
+  it("never names select or textarea from their content", () => {
+    const root = html(`<select><option>Light</option></select><textarea>draft</textarea>`);
+    expect(accessibilityViolations(root)).toEqual([
+      { rule: "unnamed-control", element: "select" },
+      { rule: "unnamed-control", element: "textarea" },
+    ]);
+  });
+  it("does not name a slider or textbox role from its content", () => {
+    expect(nameOf(`<div role="slider">50</div>`, "div")).toBe("");
+    expect(nameOf(`<div role="switch">Wi-Fi</div>`, "div")).toBe("Wi-Fi");
+  });
+  it("skips controls disabled through a fieldset or inside an inert subtree", () => {
+    const root = html(`
+      <fieldset disabled><button type="button"></button><input></fieldset>
+      <div inert><a href="/x"></a></div>`);
+    expect(accessibilityViolations(root)).toEqual([]);
+  });
+  it("groups by rule across shadow roots, the root's own tree first", () => {
+    const outer = html(`<img src="/a.svg"><span></span>`);
+    const shadow = (outer.querySelector("span") as HTMLElement).attachShadow({ mode: "open" });
+    shadow.innerHTML = `<button type="button"></button><img src="/b.svg">`;
+    outer.prepend(document.createElement("i"));
+    outer.insertAdjacentHTML("beforeend", `<input>`);
+    expect(accessibilityViolations(outer)).toEqual([
+      { rule: "unnamed-control", element: "input" },
+      { rule: "unnamed-control", element: "button" },
+      { rule: "missing-alt", element: "img" },
+      { rule: "missing-alt", element: "img" },
+    ]);
+  });
+});

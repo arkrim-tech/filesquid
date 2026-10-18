@@ -32,6 +32,18 @@ describe("resolveLocale", () => {
     expect(() => resolveLocale(bad)).toThrow(/direction "auto"/);
     expect(() => resolveLocale({ ...base, locale: { lang: " ", dir: "ltr" } })).toThrow(/language/);
   });
+  it("trims the language tag and returns its canonical form", () => {
+    expect(resolveLocale({ ...base, locale: { lang: " ar ", dir: "rtl" } }).lang).toBe("ar");
+    expect(resolveLocale({ ...base, locale: { lang: "en-us", dir: "ltr" } }).lang).toBe("en-US");
+  });
+  it("refuses a malformed language tag", () => {
+    expect(() => resolveLocale({ ...base, locale: { lang: "en US", dir: "ltr" } })).toThrow(
+      /language "en US" is not a BCP 47 tag/,
+    );
+    expect(() => resolveLocale({ ...base, locale: { lang: "e", dir: "ltr" } })).toThrow(
+      /not a BCP 47 tag/,
+    );
+  });
 });
 
 describe("applyLocale", () => {
