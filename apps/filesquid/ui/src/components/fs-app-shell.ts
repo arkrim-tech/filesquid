@@ -1,10 +1,13 @@
 /**
  * `<fs-app-shell>`: application frame shared by every distribution. Shows the
  * distribution's brand, its vocabulary for the main destinations, and the API status.
+ * An authorisation denial is shown with the label for its reason (API-S-004).
  */
 import type { Distribution } from "../distribution";
+import type { LabelTable } from "../theme/labels";
 import type { HealthStatus } from "../api/client";
 import { MONITOR_ROUTE } from "../app/routes";
+import { denialLabel } from "./denial";
 
 /** The part of the API client the shell needs (injectable in tests). */
 export interface ShellClient {
@@ -86,21 +89,46 @@ export class FsAppShell extends HTMLElement {
     void this.loadHealth();
   }
 
+  /**
+   * Read API health again and update the status line, for example after a token was entered.
+   * Network I/O via the client.
+   *
+   * @returns Resolves once the status line shows the new answer.
+   */
+  async refreshHealth(): Promise<void> {
+    await this.loadHealth();
+  }
+
   /** Read API health and show it as a status line or an alert. Network I/O via the client. */
   private async loadHealth(): Promise<void> {
-    const target = this.shadowRoot?.querySelector(".api");
+    const target = this.shadowRoot?.querySelector<HTMLElement>(".api");
     const labels = this.distribution?.labels;
     if (!target || !labels || !this.client) return;
     try {
       const health = await this.client.health();
       target.setAttribute("role", "status");
+      delete target.dataset.reason;
       target.textContent = `${labels.apiStatus}: ${health.status} (${health.product})`;
     } catch (error) {
-      target.setAttribute("role", "alert");
-      const message = error instanceof Error ? error.message : String(error);
-      target.textContent = `${labels.apiUnavailable}: ${message}`;
+      showHealthError(target, labels, error);
     }
   }
+}
+
+/**
+ * Show a failed health read as an alert: the label of a denial reason, or the error message.
+ *
+ * @param target The status paragraph.
+ * @param labels The distribution's label table.
+ * @param error What the client rejected with.
+ */
+function showHealthError(target: HTMLElement, labels: LabelTable, error: unknown): void {
+  const denial = denialLabel(error, labels);
+  target.setAttribute("role", "alert");
+  if (denial) target.dataset.reason = denial.reason;
+  else delete target.dataset.reason;
+  const message = denial?.text ?? (error instanceof Error ? error.message : String(error));
+  target.textContent = `${labels.apiUnavailable}: ${message}`;
 }
 
 /** Create a list item with text content, wrapped in a link when `href` is given. */

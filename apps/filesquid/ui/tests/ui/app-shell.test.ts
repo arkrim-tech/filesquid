@@ -5,7 +5,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { FsAppShell, defineElements } from "../../src/index";
 import type { Distribution } from "../../src/distribution";
-import type { HealthStatus } from "../../src/api/client";
+import { ApiError, type HealthStatus } from "../../src/api/client";
 import labels from "../../src/theme/labels.en.json";
 
 const distribution: Distribution = {
@@ -67,5 +67,35 @@ describe("<fs-app-shell>", () => {
     await settle();
     const alert = shell.shadowRoot?.querySelector('[role="alert"]');
     expect(alert?.textContent).toBe("API unavailable: offline");
+  });
+
+  it.each([
+    [401, "unauthorized", "missing_credentials", "API unavailable: Missing credentials"],
+    [403, "forbidden", "invalid_credentials", "API unavailable: Invalid credentials"],
+    [403, "forbidden", "not_permitted", "API unavailable: Not permitted"],
+  ] as const)("shows HTTP %i %s (%s) with its own label", async (status, code, reason, text) => {
+    const shell = mount(async () => {
+      throw new ApiError(status, "/api/v1/health", { code, reason, retryable: false });
+    });
+    await settle();
+    const alert = shell.shadowRoot?.querySelector('[role="alert"]');
+    expect(alert?.textContent).toBe(text);
+    expect(alert?.getAttribute("data-reason")).toBe(reason);
+  });
+
+  it("reloads the API status on refreshHealth (after a token is entered)", async () => {
+    let calls = 0;
+    const shell = mount(async () => {
+      calls += 1;
+      if (calls === 1) throw new ApiError(401, "/api/v1/health", { reason: "missing_credentials" });
+      return { status: "ok", product: "filesquid", schema_version: 1 };
+    });
+    await settle();
+    expect(shell.shadowRoot?.querySelector('[role="alert"]')).not.toBeNull();
+    await shell.refreshHealth();
+    expect(shell.shadowRoot?.querySelector('[role="status"]')?.textContent).toBe(
+      "API: ok (filesquid)",
+    );
+    expect(shell.shadowRoot?.querySelector('[role="alert"]')).toBeNull();
   });
 });

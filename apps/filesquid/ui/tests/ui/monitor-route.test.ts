@@ -1,13 +1,13 @@
 /**
- * UI tests for the `#/monitor` hash route and the session token store: the Monitor is
- * mounted only on its route, removed when leaving it, and storage failures never throw.
+ * UI tests for the `#/monitor` hash route and the in-memory token store: the Monitor is
+ * mounted only on its route and removed when leaving it.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   MONITOR_ROUTE,
   bindMonitorRoute,
   defineElements,
-  sessionTokenStore,
+  memoryTokenStore,
   type MonitorClient,
 } from "../../src/index";
 import labels from "../../src/theme/labels.en.json";
@@ -47,28 +47,12 @@ describe("bindMonitorRoute", () => {
   });
 });
 
-describe("sessionTokenStore", () => {
-  it("round-trips a token through the given storage", () => {
-    const store = sessionTokenStore(window.sessionStorage);
+describe("memoryTokenStore", () => {
+  it("round-trips a token and keeps separate stores apart", () => {
+    const store = memoryTokenStore();
+    const other = memoryTokenStore();
     store.set("abc");
     expect(store.get()).toBe("abc");
-    window.sessionStorage.clear();
-  });
-
-  it("returns undefined and warns instead of throwing when storage is blocked", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const blocked = {
-      getItem: () => {
-        throw new Error("blocked");
-      },
-      setItem: () => {
-        throw new Error("blocked");
-      },
-    } as unknown as Storage;
-    const store = sessionTokenStore(blocked);
-    expect(() => store.set("abc")).not.toThrow();
-    expect(store.get()).toBeUndefined();
-    expect(warn).toHaveBeenCalledTimes(2);
-    warn.mockRestore();
+    expect(other.get()).toBeUndefined();
   });
 });

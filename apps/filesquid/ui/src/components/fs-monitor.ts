@@ -14,6 +14,7 @@ import {
   type ProcessView,
 } from "../api/client";
 import type { LabelKey, LabelTable } from "../theme/labels";
+import { denialLabel, type DenialText } from "./denial";
 
 /** The part of the API client the Monitor needs (injectable in tests). */
 export type MonitorClient = Pick<
@@ -26,7 +27,7 @@ export type MonitorClient = Pick<
   | "subscribe"
 >;
 
-/** Where the server host's admin token is kept between page loads. */
+/** Where the server host's token is kept while the page is open (in memory only). */
 export interface TokenStore {
   /** The stored token, if any. */
   get(): string | undefined;
@@ -135,14 +136,14 @@ export class FsMonitor extends HTMLElement {
     this.stop();
     const generation = this.generation;
     let buffered: JournalEntry[] | undefined = [];
-    this.unsubscribe = options.client.subscribe((event) => {
-      if (!buffered) return this.applyEvent(event);
-      if (event.topic === "journal.entry" && isObject(event.data)) {
-        if (buffered.length < MAX_BUFFERED_ENTRIES) buffered.push(event.data as JournalEntry);
-      }
-    });
     let snapshot: Snapshot;
     try {
+      this.unsubscribe = options.client.subscribe((event) => {
+        if (!buffered) return this.applyEvent(event);
+        if (event.topic === "journal.entry" && isObject(event.data)) {
+          if (buffered.length < MAX_BUFFERED_ENTRIES) buffered.push(event.data as JournalEntry);
+        }
+      });
       snapshot = await this.fetchAll(options.client);
     } catch (error) {
       if (generation === this.generation) this.showError(error);
@@ -227,24 +228,31 @@ export class FsMonitor extends HTMLElement {
     this.renderJournal();
   }
 
-  /** Show the sign-in form for 401/403 when a token store exists, otherwise an alert. */
+  /**
+   * Show the sign-in form with the denial reason for 401/403 when a token store exists,
+   * otherwise an alert naming the reason (or the error message for other failures).
+   */
   private showError(error: unknown): void {
     this.stop();
     const root = this.shadowRoot;
     const labels = this.options?.labels;
     if (!root || !labels) return;
+    const denial = denialLabel(error, labels);
     const denied = error instanceof ApiError && (error.status === 401 || error.status === 403);
-    if (denied && this.options?.tokens) {
-      root.replaceChildren(style(), this.tokenForm(labels, this.options.tokens));
+    const tokens = this.options?.tokens;
+    if (tokens && (denied || denial)) {
+      const note = denial ? [denialNote(denial)] : [];
+      root.replaceChildren(style(), ...note, this.tokenForm(labels, tokens));
       return;
     }
-    const message = error instanceof Error ? error.message : String(error);
+    const message = denial?.text ?? (error instanceof Error ? error.message : String(error));
     const alert = el("p", `${labels.monitorUnavailable}: ${message}`);
     alert.setAttribute("role", "alert");
+    if (denial) alert.dataset.reason = denial.reason;
     root.replaceChildren(style(), alert);
   }
 
-  /** Build the admin token form; submitting stores the token and reloads. */
+  /** Build the token form; submitting keeps the token in the store, clears the field, reloads. */
   private tokenForm(labels: LabelTable, tokens: TokenStore): HTMLFormElement {
     const form = document.createElement("form");
     form.dataset.form = "token";
@@ -261,6 +269,7 @@ export class FsMonitor extends HTMLElement {
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       tokens.set(input.value.trim());
+      input.value = "";
       void this.start();
     });
     return form;
@@ -514,4 +523,19 @@ function downloadText(text: string, filename: string, type: string): void {
   link.download = filename;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+/**
+ * A note naming why the API refused the call. A missing credential is the expected first
+ * state on the server host, so it is a status; a refused credential is an alert.
+ *
+ * @param denial The reason and its label.
+ * @returns The paragraph to show above the token form.
+ */
+function denialNote(denial: DenialText): HTMLParagraphElement {
+  const note = document.createElement("p");
+  note.textContent = denial.text;
+  note.dataset.reason = denial.reason;
+  note.setAttribute("role", denial.reason === "missing_credentials" ? "status" : "alert");
+  return note;
 }
