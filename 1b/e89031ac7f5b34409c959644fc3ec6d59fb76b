@@ -1,0 +1,31 @@
+apps/filesquid/ui/README.md
+  s_16ff3e8fafb907::t_43ea80fa496d74 22
+apps/filesquid/ui/resources/tasks/Task-UI-0.2-Walkthrough.md
+  s_16ff3e8fafb907::t_26627c2ffa0b48 11
+apps/filesquid/ui/src/theme/tokens.css
+  s_16ff3e8fafb907::t_83f52dc2f8dcc5 3
+resources/tasks/Task-ui-mockups-v1-Plan.md
+  s_16ff3e8fafb907::t_a2482fea5355ac 7
+resources/tasks/Task-ui-mockups-v2-Walkthrough.md
+  s_16ff3e8fafb907::t_dfb35df85e5c55 8
+resources/ui-mockups/v1/README.md
+  s_16ff3e8fafb907::t_cbb11529e2a023 3
+resources/ui-mockups/v2/README.md
+  s_16ff3e8fafb907::t_a3f88daed5c74f 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1be89031ac7f5b34409c959644fc3ec6d59fb76b",
+  "prompts": {},
+  "sessions": {
+    "s_16ff3e8fafb907": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "510491ce-568b-4538-9ac8-91a8d53b9106",
+        "model": "unknown"
+      },
+      "human_author": "Peter Van Garderen <vangarderen.peter@gmail.com>"
+    }
+  }
+}
