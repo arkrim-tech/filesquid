@@ -14,7 +14,7 @@ name = "fsquid"
 path = "src/main.rs"
 
 [dependencies]
-filesquid-metadata = { path = "../metadata" }
+filesquid-metadata = { path = "../metadata", features = ["cli"] }
 
 [dev-dependencies]
 cucumber = { version = "0.23", features = ["macros", "output-junit"] }

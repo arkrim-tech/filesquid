@@ -25,7 +25,7 @@
 //! Pure data and validation, plus one publish on the in-process event bus; no I/O.
 
 use crate::events::{topic, ApiEvent, EventBus};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 
 /// Version of the [`HostDescriptor`] schema.
@@ -41,7 +41,7 @@ const MAX_HOST_NAME_CHARS: usize = 253;
 const MAX_LABEL_CHARS: usize = 63;
 
 /// The kind of host the API runs on.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum HostType {
     /// `filesquid-desktop`: the owner's own device.

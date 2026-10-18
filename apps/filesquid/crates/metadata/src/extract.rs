@@ -1,41 +1,126 @@
-//! Extract EXIF and ID3 from a media file and map onto statements.
+//! Extract EXIF and ID3 from caller-supplied bytes and map onto statements.
+//!
+//! Extraction never opens a path ([ADR 027](../../../../../resources/architecture/027-filesquid-metadata-pluggable-stores.md),
+//! MD-S-009): the caller reads the bytes (through `filesquid-ocfl`, a browser
+//! file handle or anything else) and hands them over with the [`FileRef`] they
+//! belong to. It is independent of any [`MetadataStore`](crate::store::MetadataStore).
 
-use std::fs::File;
-use std::io::BufReader;
-use std::path::Path;
+use std::io::{BufRead, Cursor, ErrorKind, Seek};
 
 use exif::Reader;
 use id3::TagLike;
+use thiserror::Error;
 
+use crate::file_ref::FileRef;
 use crate::record::Record;
 use crate::MetadataNamespace;
 
-/// Read embedded tags from `path` and merge them into `record`.
-pub fn extract_into(path: &Path, record: &mut Record) {
-    try_exif(path, record);
-    try_id3(path, record);
+/// Errors from reading the supplied bytes.
+#[derive(Debug, Error)]
+pub enum ExtractError {
+    /// The reader failed (other than by ending early inside a tag block).
+    #[error("could not read the file bytes: {0}")]
+    Io(#[from] std::io::Error),
 }
 
-fn try_exif(path: &Path, record: &mut Record) {
-    let Ok(file) = File::open(path) else {
-        return;
+/// What an extraction found in one file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Extracted {
+    /// The file the report describes, as the caller supplied it.
+    pub file: FileRef,
+    /// An EXIF block was found and read.
+    pub exif: bool,
+    /// An ID3 tag was found and read.
+    pub id3: bool,
+    /// Statements the record refused (a failed register check); never silently dropped.
+    pub rejected: usize,
+}
+
+/// Read embedded tags from `bytes` and merge them into `record`.
+///
+/// # Errors
+///
+/// [`ExtractError::Io`] when the in-memory reader fails, which it does not do
+/// in practice; unreadable or absent tag blocks are not errors.
+pub fn extract_from_bytes(
+    bytes: &[u8],
+    file: &FileRef,
+    record: &mut Record,
+) -> Result<Extracted, ExtractError> {
+    extract_from_reader(&mut Cursor::new(bytes), file, record)
+}
+
+/// Read embedded tags from `reader` and merge them into `record`.
+///
+/// The reader is rewound between the EXIF and ID3 passes. A file with no EXIF
+/// block or no ID3 tag is not an error; the returned [`Extracted`] says which
+/// blocks were found.
+///
+/// # Errors
+///
+/// [`ExtractError::Io`] when the reader fails for a reason other than the data
+/// ending inside a tag block. `record` may then hold the statements of the
+/// passes that finished before the failure, so discard it on `Err`.
+pub fn extract_from_reader<R: BufRead + Seek>(
+    reader: &mut R,
+    file: &FileRef,
+    record: &mut Record,
+) -> Result<Extracted, ExtractError> {
+    let mut out = Extracted {
+        file: file.clone(),
+        exif: false,
+        id3: false,
+        rejected: 0,
     };
-    let mut reader = BufReader::new(file);
-    let Ok(exif) = Reader::new().read_from_container(&mut reader) else {
-        return;
+    reader.rewind()?;
+    read_exif(reader, record, &mut out)?;
+    reader.rewind()?;
+    read_id3(reader, record, &mut out)?;
+    Ok(out)
+}
+
+/// Set a statement, counting a refusal in `out` instead of dropping it silently.
+fn apply(
+    record: &mut Record,
+    out: &mut Extracted,
+    namespace: MetadataNamespace,
+    term: &str,
+    value: impl Into<String>,
+) {
+    if record.set(namespace, term, value).is_err() {
+        out.rejected += 1;
+    }
+}
+
+/// Return whether an I/O failure only means the data ended inside a block.
+fn is_truncation(err: &std::io::Error) -> bool {
+    err.kind() == ErrorKind::UnexpectedEof
+}
+
+fn read_exif<R: BufRead + Seek>(
+    reader: &mut R,
+    record: &mut Record,
+    out: &mut Extracted,
+) -> Result<(), ExtractError> {
+    let exif = match Reader::new().read_from_container(reader) {
+        Ok(exif) => exif,
+        Err(exif::Error::Io(err)) if !is_truncation(&err) => return Err(err.into()),
+        Err(_) => return Ok(()),
     };
+    out.exif = true;
     for field in exif.fields() {
         let tag = format!("{}", field.tag);
         if tag.is_empty() || tag.starts_with("0x") {
             continue;
         }
         let value = field.display_value().with_unit(&exif).to_string();
-        let _ = record.set(MetadataNamespace::Exif, &tag, value.clone());
-        map_exif_to_dcterms(&tag, &value, record);
+        apply(record, out, MetadataNamespace::Exif, &tag, value.clone());
+        map_exif_to_dcterms(&tag, &value, record, out);
     }
+    Ok(())
 }
 
-fn map_exif_to_dcterms(tag: &str, value: &str, record: &mut Record) {
+fn map_exif_to_dcterms(tag: &str, value: &str, record: &mut Record, out: &mut Extracted) {
     let dcterms = match tag {
         "ImageDescription" | "UserComment" => Some("description"),
         "Artist" | "XPAuthor" => Some("creator"),
@@ -46,29 +131,43 @@ fn map_exif_to_dcterms(tag: &str, value: &str, record: &mut Record) {
     };
     if let Some(term) = dcterms {
         if record.get(&format!("dcterms:{term}")).is_none() {
-            let _ = record.set(MetadataNamespace::Dcterms, term, value);
+            apply(record, out, MetadataNamespace::Dcterms, term, value);
         }
     }
 }
 
-fn try_id3(path: &Path, record: &mut Record) {
-    let Ok(tag) = id3::Tag::read_from_path(path) else {
-        return;
+fn read_id3<R: BufRead + Seek>(
+    reader: &mut R,
+    record: &mut Record,
+    out: &mut Extracted,
+) -> Result<(), ExtractError> {
+    let tag = match id3::Tag::read_from2(reader) {
+        Ok(tag) => tag,
+        Err(id3::Error {
+            kind: id3::ErrorKind::Io(err),
+            ..
+        }) if !is_truncation(&err) => return Err(err.into()),
+        Err(_) => return Ok(()),
     };
+    out.id3 = true;
     if let Some(title) = tag.title() {
-        let _ = record.set(MetadataNamespace::Dcterms, "title", title);
+        apply(record, out, MetadataNamespace::Dcterms, "title", title);
     }
     if let Some(artist) = tag.artist() {
-        let _ = record.set(MetadataNamespace::Dcterms, "creator", artist);
+        apply(record, out, MetadataNamespace::Dcterms, "creator", artist);
     }
     if let Some(album) = tag.album() {
-        let _ = record.set(MetadataNamespace::SchemaOrg, "album", album);
+        apply(record, out, MetadataNamespace::SchemaOrg, "album", album);
     }
     if let Some(year) = tag.year() {
-        let _ = record.set(
+        let year = year.to_string();
+        apply(
+            record,
+            out,
             MetadataNamespace::Dcterms,
             "dateCopyrighted",
-            year.to_string(),
+            year,
         );
     }
+    Ok(())
 }

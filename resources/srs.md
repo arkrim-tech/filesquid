@@ -582,6 +582,7 @@ The system MUST implement [PRD F-036](./prd.md#f-036-browser-and-mobile-web-expe
 
 **Tests**
 - [`browser_and_mobileweb_experience_F-036.feature`](../apps/filesquid/ui/tests/features/browser_and_mobileweb_experience_F-036.feature)
+- [`replica_cache_identity_and_pending_changes_API-S-024.feature`](../apps/filesquid/crates/api/tests/features/replica_cache_identity_and_pending_changes_API-S-024.feature)
 
 ### SRS-F-037: Setup, updates and diagnostics
 
@@ -1517,7 +1518,7 @@ The FileSquid default UI has no screenshot yet; [SRS-F-055](#srs-f-055-default-u
 | F-033 | SRS-F-033 | `../apps/filesquid/ui/tests/features/shared_albums_and_hosted_galleries_F-033.feature` |
 | F-034 | SRS-F-034 | `../apps/filesquid/ui/tests/features/family_accounts_and_shared_libraries_F-034.feature` |
 | F-035 | SRS-F-035 | `../apps/filesquid/crates/server/tests/features/optional_service_extensions_F-035.feature` |
-| F-036 | SRS-F-036 | `../apps/filesquid/ui/tests/features/browser_and_mobileweb_experience_F-036.feature` |
+| F-036 | SRS-F-036 | `../apps/filesquid/ui/tests/features/browser_and_mobileweb_experience_F-036.feature`, `../apps/filesquid/crates/api/tests/features/replica_cache_identity_and_pending_changes_API-S-024.feature` |
 | F-037 | SRS-F-037 | `../apps/filesquid/ui/tests/features/setup_updates_and_diagnostics_F-037.feature`, `../apps/filesquid/crates/core/tests/features/shared_health_status_CORE-S-004.feature`, `../apps/filesquid/crates/desktop/tests/features/desktop_capabilities_F-037.feature`, `../apps/filesquid/crates/desktop/tests/features/desktop_refusals_F-061.feature` |
 | F-038 | SRS-F-038 | `../apps/filesquid/crates/server/tests/features/open_interfaces_and_product_exit_F-038.feature`, `../apps/filesquid/crates/core/tests/features/command_query_ports_F-038.feature` |
 | F-039 | SRS-F-039 | `../apps/filesquid/ui/tests/features/consent_notifications_and_activity_privacy_F-039.feature` |

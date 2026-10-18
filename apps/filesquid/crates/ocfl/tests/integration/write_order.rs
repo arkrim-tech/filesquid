@@ -423,6 +423,37 @@ fn a_head_without_its_version_inventory_is_refused() {
     on_both!(head_without_version_inventory_refused);
 }
 
+fn head_version_inventory_mismatch_refused(rig: &Rig<impl StorageBackend>) {
+    rig.commit_v1();
+    let root = rig.bytes("obj/inventory.json");
+    let mut differs = root.clone();
+    differs.extend_from_slice(b"\n");
+    let wrong_sidecar = format!("{}  inventory.json\n", sha256(b"other"));
+    let damages: [(&str, &[u8]); 2] = [
+        ("obj/v1/inventory.json", &differs),
+        ("obj/v1/inventory.json.sha256", wrong_sidecar.as_bytes()),
+    ];
+    for (raw, bytes) in damages {
+        let original = rig.bytes(raw);
+        ready(rig.storage.put(&key(raw), bytes)).expect("damage");
+        rig.clear_log();
+        let err = rig
+            .commit("writer-a", Some("v1"), &v2_draft(rig))
+            .expect_err("mismatching head version inventory");
+        assert!(
+            matches!(&err, CommitError::VersionInventoryMismatch { key } if key == raw),
+            "{err:?}"
+        );
+        assert_eq!(rig.writes(), Vec::<String>::new());
+        ready(rig.storage.put(&key(raw), &original)).expect("restore");
+    }
+}
+
+#[test]
+fn a_head_version_inventory_that_does_not_match_is_refused() {
+    on_both!(head_version_inventory_mismatch_refused);
+}
+
 fn crash_leaves_v2_flagged(rig: &Rig<impl StorageBackend>) {
     rig.commit_v1();
     rig.storage.crash_at("obj/inventory.json");
