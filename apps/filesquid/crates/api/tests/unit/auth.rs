@@ -61,6 +61,10 @@ fn journaled_owner_state() -> (ApiState, LaunchToken, Monitor, Arc<MemoryJournal
         state.events.clone(),
     );
     state.install_monitor(monitor.clone());
+    state.describe_host(
+        filesquid_api::host::HostIdentity::desktop(),
+        Arc::new(filesquid_api::host::NotEnrolled),
+    );
     (state, token, monitor, store)
 }
 
@@ -251,6 +255,7 @@ fn every_routed_path_declares_its_action() {
             "/api/v1/health" => Action::ReadHealth,
             "/api/v1/health/live" => Action::Public,
             "/api/v1/openapi.json" => Action::ReadContract,
+            "/api/v1/host" => Action::ReadHost,
             admin if admin.starts_with("/api/v1/admin/") => Action::ReadMonitor,
             other => panic!("{other} has no expected action in this test"),
         };
@@ -268,6 +273,7 @@ fn action_names_are_unique_dotted_identifiers() {
             "contract.read",
             "events.subscribe",
             "monitor.read",
+            "host.read",
             "public"
         ]
     );

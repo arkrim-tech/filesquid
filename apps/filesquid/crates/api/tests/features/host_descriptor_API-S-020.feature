@@ -6,7 +6,10 @@
 # API-S-003: One bounded event channel; a client rereads state after a resync hint
 # API-S-015: The liveness probe is the only public route
 #
-# Step definitions arrive with Task API-F1.10; until then these scenarios are reported as skipped.
+# Steps: the filesquid-api harness (tests/features.rs) runs every scenario except those tagged
+# @server-start, which the filesquid-server harness (crates/server/tests/features.rs) runs against
+# the real server start-up. A "signed-in member who is not an administrator" is, until server
+# accounts arrive (API-F1.9), a credential the host accepts under a policy that grants nothing else.
 Feature: Host descriptor
   As a person using any FileSquid distribution
   I want the API to tell my UI which host it is connected to, who operates it and whether encrypted backup and sync are on
@@ -36,9 +39,10 @@ Feature: Host descriptor
     When a caller reads the host descriptor with headers that claim a server origin and a browser user agent
     Then the descriptor should still say host type "desktop"
 
+  @server-start
   Scenario Outline: A server without a usable operator name starts and says so
     Given a FileSquid server host started with FILESQUID_OPERATOR_NAME <setting>
-    When a signed-in member who is not an administrator reads the host descriptor
+    When a caller signed in to the server reads the host descriptor
     Then the descriptor should say host type "server" with no operator name
     And stdout should carry one "server.operator_unnamed" warning that names the variable
     And the activity journal should hold one "server.operator_unnamed" warning that names the variable
@@ -55,6 +59,7 @@ Feature: Host descriptor
     When a signed-in member who is not an administrator reads the host descriptor
     Then the descriptor should say host type "server" with operator name "Garderen Family"
 
+  @server-start
   Scenario Outline: An unusable operator name stops the server
     Given FILESQUID_OPERATOR_NAME is set to <value>
     When filesquid-server starts

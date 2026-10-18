@@ -43,8 +43,16 @@ pub mod topic {
     pub const HEALTH_CHANGE: &str = "health.change";
     /// The subscriber missed events and MUST reread the state it shows; payload `EventResync`.
     pub const RESYNC: &str = "events.resync";
+    /// A field of the host descriptor changed; payload the whole new `HostDescriptor`.
+    pub const HOST_CHANGE: &str = "host.change";
     /// Every documented topic, in contract order.
-    pub const ALL: [&str; 4] = [PROCESS_UPDATE, JOURNAL_ENTRY, HEALTH_CHANGE, RESYNC];
+    pub const ALL: [&str; 5] = [
+        PROCESS_UPDATE,
+        JOURNAL_ENTRY,
+        HEALTH_CHANGE,
+        RESYNC,
+        HOST_CHANGE,
+    ];
 }
 
 /// One push event: a topic and that topic's payload.

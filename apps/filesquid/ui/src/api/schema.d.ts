@@ -58,6 +58,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/host": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Host descriptor: host type, operator name and hosted backup and sync state
+         * @description Which host this API runs on (host_type, supplied by the host when it starts, never derived from the request), who operates it (operator_name, a server's FILESQUID_OPERATOR_NAME; null on desktop and browser hosts and on an unnamed server) and the state of encrypted backup and sync to the ciphertext-only hosted service (hosted_service; backup and sync are reported separately because they are distinct guarantees). Every caller the host authenticates may read it (action host.read is granted to every accepted credential, not to administrators only); it is never public. A host.change event carries the whole new descriptor whenever a field changes; a client MUST read this route again after events.resync or a reconnect. A successful read is not journaled. The descriptor carries no token, content handle, key or key identifier, account or device identifier, e-mail address, quota, object count, size, timestamp, path or file name.
+         */
+        get: operations["getHost"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/events": {
         parameters: {
             query?: never;
@@ -174,10 +194,10 @@ export interface components {
             data: unknown;
         };
         /**
-         * @description Documented event topics: process.update (a process or job changed), journal.entry (an activity journal entry was written), health.change (the health status changed), events.resync (events were missed; reread state).
+         * @description Documented event topics: process.update (a process or job changed), journal.entry (an activity journal entry was written), health.change (the health status changed), events.resync (events were missed; reread state), host.change (a host descriptor field changed; the payload is the whole new HostDescriptor; reread GET /api/v1/host after events.resync or a reconnect).
          * @enum {string}
          */
-        EventTopic: "process.update" | "journal.entry" | "health.change" | "events.resync";
+        EventTopic: "process.update" | "journal.entry" | "health.change" | "events.resync" | "host.change";
         /** @description Payload of events.resync: the subscriber missed events and MUST reread the state it shows. */
         EventResync: {
             /** @description How many events this subscriber did not receive. */
@@ -319,6 +339,28 @@ export interface components {
             /** @description The module error when kind is error, otherwise null. */
             error: components["schemas"]["PortError"] | null;
         };
+        /**
+         * @description The kind of host the API runs on, supplied by the host itself: desktop (filesquid-desktop), server (filesquid-server, whose operator can read what it stores) or browser (the encrypted browser host).
+         * @enum {string}
+         */
+        HostType: "desktop" | "server" | "browser";
+        /** @description Encrypted backup and sync to the ciphertext-only hosted service. When enrolled is false, backup_enabled and sync_enabled are false and service_host is null. When enrolled is true, service_host is the service's lowercase DNS host name (no scheme, port, path, user information or query) and backup_enabled and sync_enabled are reported separately. */
+        HostedService: {
+            enrolled: boolean;
+            backup_enabled: boolean;
+            sync_enabled: boolean;
+            /** @description Lowercase DNS host name of the hosted service, or null when not enrolled. */
+            service_host: string | null;
+        };
+        /** @description The answer of GET /api/v1/host and the payload of a host.change event. */
+        HostDescriptor: {
+            /** @constant */
+            schema_version: 1;
+            host_type: components["schemas"]["HostType"];
+            /** @description The server operator's display name (trimmed, 1 to 256 characters, no control characters); null on desktop and browser hosts and on a server without FILESQUID_OPERATOR_NAME. */
+            operator_name: string | null;
+            hosted_service: components["schemas"]["HostedService"];
+        };
     };
     responses: {
         /** @description Invalid or malformed request (invalid_request). */
@@ -359,6 +401,15 @@ export interface components {
         };
         /** @description Monitor not started yet (unavailable; retryable). */
         Unavailable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description The host has not described itself yet (unavailable; retryable). */
+        HostNotDescribed: {
             headers: {
                 [name: string]: unknown;
             };
@@ -441,6 +492,29 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+        };
+    };
+    getHost: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The host descriptor. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostDescriptor"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            503: components["responses"]["HostNotDescribed"];
         };
     };
     subscribeEvents: {

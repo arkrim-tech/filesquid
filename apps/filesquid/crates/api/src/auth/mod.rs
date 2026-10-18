@@ -11,7 +11,10 @@
 //! bypasses authentication.
 //!
 //! - **Deny by default.** A host that installed no [`Authoriser`] refuses every guarded call. An
-//!   authoriser grants only what its [`Policy`] explicitly permits.
+//!   authoriser grants only what its [`Policy`] explicitly permits, with one exception:
+//!   `host.read` ([`Action::ReadHost`], the host descriptor) is granted to every authenticated
+//!   caller whatever the policy says ([`Action::granted_to_every_credential`], API-S-020).
+//!   Authentication is still required for it.
 //! - **Credentials.** `Authorization: Bearer <token>` on any request, WebSocket upgrades
 //!   included; browsers, which cannot set headers on a WebSocket, offer the
 //!   `filesquid.bearer.<token>` subprotocol instead ([`presented_credential`]). A present but
@@ -105,14 +108,16 @@ impl Authoriser {
     }
 
     /// Whether `principal` may perform `action` on `resource`; `not_permitted` otherwise.
-    /// Pure; no I/O.
+    /// An action [granted to every credential](Action::granted_to_every_credential) is
+    /// permitted to every authenticated principal before the policy is consulted. Pure; no I/O.
     pub fn authorise(
         &self,
         principal: &Principal,
         action: Action,
         resource: &Resource,
     ) -> Result<(), DenialReason> {
-        if self.policy.permits(principal, action, resource) {
+        if action.granted_to_every_credential() || self.policy.permits(principal, action, resource)
+        {
             Ok(())
         } else {
             Err(DenialReason::NotPermitted)

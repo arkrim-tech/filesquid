@@ -1,9 +1,9 @@
 # Implementation Plan Checklist: FileSquid
 
 <!-- mvp-progress:start -->
-![MVP progress: 37% complete](./assets/mvp-progress.svg)
+![MVP progress: 39% complete](./assets/mvp-progress.svg)
 
-**MVP progress: 37%**, about 291 of 778 estimated hours. 10 of 26 tasks are done and 4 more are under way. Each segment of the bar is one task below, as wide as its estimated hours in the implementation plan; an open task fills by the share of its module rows that are ticked. Regenerate with `python3 scripts/docs/update_mvp_progress.py` after ticking boxes.
+**MVP progress: 39%**, about 315 of 816 estimated hours. 10 of 26 tasks are done and 4 more are under way. Each segment of the bar is one task below, as wide as its estimated hours in the implementation plan; an open task fills by the share of its module rows that are ticked. Regenerate with `python3 scripts/docs/update_mvp_progress.py` after ticking boxes.
 <!-- mvp-progress:end -->
 
 This is a short, ordered view of [implementation-plan.md](./implementation-plan.md). Each numbered item is a global task in the order the dev team expects to finish it, and the nested items are the module tasks it dispatches, taken from each module's `resources/plan.md`. Task codes link to the full task description. A box is ticked when the matching box is ticked in the source plan.
@@ -75,7 +75,7 @@ FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by ga
     - [x] [UI-0.2](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Official branding and light/dark tokens
     - [x] [UI-0.5](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Accessibility contracts in the shell
     - [x] [UI-F2.1a](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) States, and the navigation tree and breadcrumb elements
-    - [ ] [API-F1.10](../apps/filesquid/crates/api/resources/plan.md#phase-f2-host-descriptor-and-navigation-listing-for-the-default-ui-global-task-fs-21) Host descriptor route and change event
+    - [x] [API-F1.10](../apps/filesquid/crates/api/resources/plan.md#phase-f2-host-descriptor-and-navigation-listing-for-the-default-ui-global-task-fs-21) Host descriptor route and change event
     - [ ] [API-F1.11](../apps/filesquid/crates/api/resources/plan.md#phase-f2-host-descriptor-and-navigation-listing-for-the-default-ui-global-task-fs-21) Navigation listing route
     - [ ] [UI-F2.1b](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Host privacy indicator and live navigation data
 16. [ ] [Task 0.5](./implementation-plan.md#task-0.5) Desktop catalog, jobs, and OCFL coordinator

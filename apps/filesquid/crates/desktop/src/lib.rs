@@ -10,6 +10,9 @@
 //! ([ADR 033](../../../../../resources/architecture/033-activity-journal-and-live-health-monitoring.md)).
 //! Logs go to stdout as JSON; no log files.
 //!
+//! The host describes itself to the API as `desktop` at every launch
+//! ([`describe_desktop_host`]), so `GET /api/v1/host` tells the UI where it runs.
+//!
 //! Every launch generates a new per-launch token ([`install_launch_token`]). The API refuses
 //! any request without it (deny-by-default, API-S-004), and the host hands it only to its
 //! own pages through a webview initialization script ([`api_protocol::launch_token_script`]).
@@ -28,6 +31,7 @@ pub use event_channel::EVENT_NAME;
 
 use event_channel::{Forwarding, TauriSink, FORWARDER_HEARTBEAT};
 use filesquid_api::auth::{record_token_issue, Authoriser, LaunchToken, Principal};
+use filesquid_api::host::{HostIdentity, NotEnrolled};
 use filesquid_api::registry::ProcessHandle;
 use filesquid_api::trace_layer::JournalLayer;
 use filesquid_api::ApiState;
@@ -79,6 +83,16 @@ pub fn install_launch_token(state: &ApiState) -> Result<LaunchToken, String> {
     Ok(token)
 }
 
+/// Describe this host to the API (API-S-020): host type `desktop`, no operator name, and not
+/// enrolled with the hosted service until enrolment exists (API-F4.1). Fails when the state
+/// already describes a host.
+pub fn describe_desktop_host(state: &ApiState) -> Result<(), String> {
+    if !state.describe_host(HostIdentity::desktop(), Arc::new(NotEnrolled)) {
+        return Err("the host was already described".to_string());
+    }
+    Ok(())
+}
+
 /// A plugin with no commands that guards the app's pages: its initialization script gives
 /// app pages the per-launch token, and its navigation hook refuses any navigation off the
 /// app's own origins ([`event_channel::navigation_allowed`]), so the token and the event
@@ -110,6 +124,7 @@ pub fn builder() -> Result<tauri::Builder<tauri::Wry>, String> {
     init_tracing(layer.clone());
     let state = ApiState::new();
     let token = install_launch_token(&state)?;
+    describe_desktop_host(&state)?;
     let scheme_state = state.clone();
     let builder = with_test_driver(tauri::Builder::default())
         .plugin(app_pages_plugin(&token))

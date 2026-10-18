@@ -67,6 +67,8 @@ FILESQUID_BIND=127.0.0.1:8083 FILESQUID_UI_DIR=ui/dist cargo run -p filesquid-se
 
 Open `http://127.0.0.1:8083`. Without `FILESQUID_UI_DIR` the server serves the API only. `FILESQUID_BIND` defaults to `127.0.0.1:8083`.
 
+`FILESQUID_OPERATOR_NAME` names who runs the server, for example `FILESQUID_OPERATOR_NAME="Garderen Family"`. A server's operator can read the files it stores, so the name belongs in the UI's privacy disclosure; the host descriptor reports it now, and the default UI does not display it yet (its host privacy indicator is a later task). Surrounding whitespace is trimmed, and the name must be 1 to 256 characters with no control characters; a longer name, one with a control character, or a value that is not valid Unicode stops the server with an error that names the variable but not the value. When it is unset or blank, the server still starts, reports no operator name, and writes one `server.operator_unnamed` warning to stdout (whatever `RUST_LOG` says) and to the activity journal at every start. Any authenticated caller (any accepted credential, the administrator token included) can read the host descriptor (host type, operator name and hosted backup and sync state) at `GET /api/v1/host`.
+
 Every API route except the liveness probe, plus the WebSocket event channel and `/metrics`, is **deny-by-default**: a call without the token answers `401 unauthorized`, and one with a wrong token `403 forbidden`, with a typed error body. HTTP requests, `/metrics` included, send the token as `Authorization: Bearer <token>`. The WebSocket event channel accepts that header too, but a browser cannot set headers on a WebSocket, so it offers the subprotocols `filesquid.events.v1` and `filesquid.bearer.<token>` instead. The liveness probe `GET /api/v1/health/live` is public for process supervisors and load balancers and answers only `{"status":"up"}`; the static UI is public too.
 
 Until server accounts arrive, the token is the administrator token: the value of `FILESQUID_ADMIN_TOKEN` (surrounding whitespace is trimmed and a blank value counts as unset; any other value must be 64 hexadecimal characters, 256 bits, like a generated token, and the server refuses to start otherwise, never printing the value), or, on Linux and macOS only, the token generated at first start into `admin-token` in the data directory (`FILESQUID_DATA_DIR`, default `filesquid-data`). On Windows the server stores no token file and refuses to start until `FILESQUID_ADMIN_TOKEN` is set. On Linux and macOS the server refuses to start when the token file is unsafe, and names the case:
@@ -82,9 +84,10 @@ In a second terminal in `apps/filesquid` (with the default data directory):
 curl http://127.0.0.1:8083/api/v1/health/live
 TOKEN=$(cat filesquid-data/admin-token)
 curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8083/api/v1/health
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8083/api/v1/host
 ```
 
-The full health route returns `{"schema_version":1,"status":"ok","product":"filesquid"}`.
+The full health route returns `{"schema_version":1,"status":"ok","product":"filesquid"}`. The host route returns `{"schema_version":1,"host_type":"server","operator_name":null,"hosted_service":{"enrolled":false,"backup_enabled":false,"sync_enabled":false,"service_host":null}}` until a non-blank, valid `FILESQUID_OPERATOR_NAME` is set; encrypted backup and sync are reported as not enrolled until they exist.
 
 On Windows, set `FILESQUID_ADMIN_TOKEN` yourself (the server stores no token file there) and reuse the same value for requests. In PowerShell 7, from `apps/filesquid`:
 
@@ -189,6 +192,15 @@ Deny-by-default authorisation (API-S-004) is tested on every route, the 404/405 
 cd apps/filesquid
 cargo test -p filesquid-api --locked --test unit_auth --test features
 cargo test -p filesquid-server --locked --test integration_auth
+cargo test -p filesquid-desktop --locked --test integration_api_protocol
+```
+
+The host descriptor (API-S-020, `GET /api/v1/host` and the `host.change` event) is tested through the router on every host type, with spoofed request headers, the operator-name bounds, the not-enrolled default and redaction of the answer, the event and the `server.operator_unnamed` entry. The `@server-start` scenarios of `crates/api/tests/features/host_descriptor_API-S-020.feature` run in the server's own cucumber harness, which starts the server in-process and runs the real `filesquid-server` binary for the refusal to start (JUnit in `crates/server/tests/allure-results/`):
+
+```sh
+cd apps/filesquid
+cargo test -p filesquid-api --locked --test unit_host --test features
+cargo test -p filesquid-server --locked --test integration_host --test features
 cargo test -p filesquid-desktop --locked --test integration_api_protocol
 ```
 

@@ -34,6 +34,7 @@ fn route_table() -> Vec<Route> {
         // Public on purpose: a liveness probe that says only that the process is up.
         (LIVENESS_PATH, get(liveness_handler), Action::Public),
         ("/openapi.json", get(contract_handler), Action::ReadContract),
+        ("/host", get(host_handler), Action::ReadHost),
     ];
     table.extend(crate::admin::routes());
     table
@@ -145,6 +146,18 @@ async fn liveness_handler() -> Json<Liveness> {
 /// `GET /api/v1/health`: process health from `filesquid-core`.
 async fn health_handler() -> Json<HealthStatus> {
     Json(health())
+}
+
+/// `GET /api/v1/host`: the host descriptor (API-S-020), or a retryable `unavailable` error
+/// until the host has described itself. A successful read is not journaled (API-S-017).
+async fn host_handler(State(state): State<ApiState>) -> Response {
+    match state.host() {
+        Some(host) => Json(host.descriptor()).into_response(),
+        None => {
+            let message = "The host has not described itself yet; try again shortly.";
+            ApiError::new(ErrorCode::Unavailable, message).into_response()
+        }
+    }
 }
 
 /// `GET /api/v1/openapi.json`: the API contract this build serves.

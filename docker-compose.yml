@@ -31,6 +31,9 @@ services:
       - TZ=UTC
       - FILESQUID_BIND=0.0.0.0:8083
       - FILESQUID_UI_DIR=/srv/filesquid-ui
+      # Who runs this server, shown in the UI's privacy statement (1 to 256 characters).
+      # Leave it empty to start with no operator name and a server.operator_unnamed warning.
+      - FILESQUID_OPERATOR_NAME=${FILESQUID_OPERATOR_NAME:-}
     ports:
       - "8083:8083"
     depends_on:

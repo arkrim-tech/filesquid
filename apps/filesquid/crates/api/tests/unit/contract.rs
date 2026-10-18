@@ -11,6 +11,9 @@ use axum::http::{Method, Request, StatusCode};
 use filesquid_api::auth::{Action, Authoriser, DenialReason};
 use filesquid_api::events::{topic, EventResync};
 use filesquid_api::health::{HealthInputs, HealthReason, HealthReport, HealthStatus};
+use filesquid_api::host::{
+    EnrolmentPort, HostIdentity, HostInfo, HostType, HostedService, NotEnrolled, OperatorName,
+};
 use filesquid_api::journal::{JournalEntry, JournalPage, Level, MemoryJournal, Outcome};
 use filesquid_api::monitor::{Monitor, MonitorConfig};
 use filesquid_api::operation::{
@@ -55,7 +58,7 @@ fn contract_is_openapi_3_1_with_the_crate_api_version() {
     let doc = contract();
     assert_eq!(doc["openapi"], "3.1.0");
     assert_eq!(doc["info"]["version"], API_VERSION);
-    assert_eq!(API_VERSION, "0.5.0");
+    assert_eq!(API_VERSION, "0.6.0");
 }
 
 #[test]
@@ -225,6 +228,7 @@ fn owner_state() -> (ApiState, Monitor) {
         state.events.clone(),
     );
     state.install_monitor(monitor.clone());
+    state.describe_host(HostIdentity::desktop(), Arc::new(NotEnrolled));
     (state, monitor)
 }
 
@@ -582,6 +586,7 @@ fn samples() -> Vec<(&'static str, Vec<Value>)> {
         ("HealthInputs", vec![to_value(sample_inputs())]),
         ("HealthReport", vec![to_value(sample_report())]),
     ];
+    all.extend(host_samples());
     all.extend(operation_samples());
     all
 }
@@ -606,6 +611,31 @@ fn operation_samples() -> Vec<(&'static str, Vec<Value>)> {
             all_outcome_kinds().map(to_value).to_vec(),
         ),
         ("CommandOutcome", command_outcomes().map(to_value).to_vec()),
+    ]
+}
+
+/// Serialized samples of the host descriptor schemas (API-S-020): every host type, a named
+/// and an unnamed operator, and both enrolment states.
+fn host_samples() -> Vec<(&'static str, Vec<Value>)> {
+    let types = [HostType::Desktop, HostType::Server, HostType::Browser];
+    let enrolled = HostedService::enrolled_at("backup.filesquid.tech", true, false).expect("host");
+    let services = [HostedService::not_enrolled(), enrolled];
+    let named = OperatorName::parse(&"o".repeat(256)).expect("valid");
+    let identities = [
+        HostIdentity::desktop(),
+        HostIdentity::browser(),
+        HostIdentity::server(named),
+        HostIdentity::server(None),
+    ];
+    let descriptors = identities
+        .into_iter()
+        .map(|identity| HostInfo::new(identity, Arc::new(NotEnrolled), Default::default()))
+        .map(|host| to_value(host.descriptor()))
+        .collect();
+    vec![
+        ("HostType", types.map(to_value).to_vec()),
+        ("HostedService", services.map(to_value).to_vec()),
+        ("HostDescriptor", descriptors),
     ]
 }
 
@@ -901,7 +931,33 @@ async fn events_from_every_publisher() -> Vec<ApiEvent> {
         lagging.publish(sample_event());
     });
     events.extend(slow.next().await);
+    events.extend(host_change_event().await);
     events
+}
+
+/// An enrolment port that reports enrolled once switched on.
+#[derive(Default)]
+struct SwitchedPort(std::sync::atomic::AtomicBool);
+
+impl EnrolmentPort for SwitchedPort {
+    fn hosted_service(&self) -> HostedService {
+        if self.0.load(std::sync::atomic::Ordering::SeqCst) {
+            HostedService::enrolled_at("backup.filesquid.tech", true, true).expect("host")
+        } else {
+            HostedService::not_enrolled()
+        }
+    }
+}
+
+/// The `host.change` event a described host publishes when its enrolment changes.
+async fn host_change_event() -> Option<ApiEvent> {
+    let bus = filesquid_api::EventBus::new();
+    let mut sub = bus.subscription().expect("slot");
+    let port = Arc::new(SwitchedPort::default());
+    let host = HostInfo::new(HostIdentity::server(None), port.clone(), bus);
+    port.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(host.refresh_hosted_service());
+    sub.next().await
 }
 
 #[tokio::test]

@@ -12,6 +12,7 @@ use filesquid_api::auth::{
     self, Action, Authoriser, Guard, LaunchToken, Policy, Principal, Resource, TokenAuthenticator,
     BEARER_SUBPROTOCOL_PREFIX, EVENTS_SUBPROTOCOL,
 };
+use filesquid_api::host::{HostIdentity, NotEnrolled};
 use filesquid_api::journal::{JournalQuery, JournalStore, MemoryJournal};
 use filesquid_api::monitor::{Monitor, MonitorConfig};
 use filesquid_api::{route_actions, router, ApiState};
@@ -52,6 +53,7 @@ fn desktop_api(w: &mut MonitorWorld) {
     let token = launch_token();
     let state = ApiState::new();
     state.install_authoriser(Authoriser::desktop_owner(&token));
+    state.describe_host(HostIdentity::desktop(), Arc::new(NotEnrolled));
     start_monitor(w, &state);
     w.secret = Some(token.secret().to_string());
     w.state = Some(state);

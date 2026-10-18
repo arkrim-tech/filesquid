@@ -1,8 +1,9 @@
 //! Cucumber harness for the `filesquid-api` Gherkin under `tests/features/` (F-061, and the
 //! versioned contract, typed errors, deny-by-default authorisation, transport-agnostic routes
 //! and event channel of F-056: API-S-002, API-S-003, API-S-004, API-S-009; and the
-//! application-layer isolation of API-S-006; and the library domain commands and queries of
-//! API-S-019).
+//! application-layer isolation of API-S-006; the library domain commands and queries of
+//! API-S-019; and the host descriptor of API-S-020, except its `@server-start` scenarios, which
+//! the `filesquid-server` harness runs).
 //!
 //! Scenarios that need domain operations not built yet (import, rename, metadata writes, C2PA
 //! scans, sync) or the optional OTLP export (Task FS-3.6) have no step definitions and are
@@ -40,6 +41,9 @@ mod source_scan;
 
 #[path = "support/isolation_steps.rs"]
 mod isolation_steps;
+
+#[path = "support/host_steps.rs"]
+mod host_steps;
 
 #[path = "support/library_fixture.rs"]
 mod library_fixture;
@@ -84,6 +88,7 @@ struct MonitorWorld {
     secret: Option<String>,
     presented: Option<String>,
     isolation: isolation_steps::IsolationWorld,
+    host: host_steps::HostWorld,
     library: library_steps::LibraryWorld,
 }
 
@@ -607,6 +612,9 @@ fn shutdown_monitor(w: &mut MonitorWorld) {
     }
 }
 
+/// Scenarios with this tag start `filesquid-server` and run in that crate's harness.
+const SERVER_START_TAG: &str = "server-start";
+
 #[tokio::main]
 async fn main() {
     let results = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/allure-results");
@@ -620,6 +628,9 @@ async fn main() {
                 .tee::<MonitorWorld, _>(writer::JUnit::for_tee(junit, 0))
                 .normalized(),
         )
-        .run_and_exit(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/features"))
+        .filter_run_and_exit(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/features"),
+            |_, _, scenario| !scenario.tags.iter().any(|tag| tag == SERVER_START_TAG),
+        )
         .await;
 }

@@ -24,16 +24,26 @@ use axum::response::Response;
 use axum::routing::{get, MethodRouter};
 use axum::Router;
 use filesquid_api::auth::{self, Action, Authoriser, Guard, Principal, EVENTS_SUBPROTOCOL};
+use filesquid_api::host::{HostIdentity, NotEnrolled, OperatorName};
+use filesquid_api::journal::{format_rfc3339_ms, now_ms, JournalEntry, Level, Outcome};
 use filesquid_api::trace_layer::JournalLayer;
 use filesquid_api::{ApiError, ApiState, ErrorCode, API_PREFIX};
 use filesquid_native::HostMonitor;
+use std::io::Write;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::sync::broadcast::error::RecvError;
 use tower_http::services::{ServeDir, ServeFile};
 
 /// Default listen address: loopback only, so a fresh install is not exposed on the network.
 pub const DEFAULT_BIND: &str = "127.0.0.1:8083";
+
+/// Environment variable that names the server's operator in the host descriptor (API-S-020).
+pub const OPERATOR_NAME_VARIABLE: &str = "FILESQUID_OPERATOR_NAME";
+
+/// Journal operation of the warning written at every start without an operator name.
+pub const OPERATOR_UNNAMED_OPERATION: &str = "server.operator_unnamed";
 
 /// Default data directory (operational store and admin token), relative to the working directory.
 pub const DEFAULT_DATA_DIR: &str = "filesquid-data";
@@ -52,6 +62,9 @@ pub struct ServerConfig {
     /// the token stored in the data dir, or create one there if none exists; other platforms
     /// refuse to start.
     pub admin_token: Option<String>,
+    /// The operator's display name for the host descriptor (`FILESQUID_OPERATOR_NAME`,
+    /// trimmed, 1 to 256 characters, no control characters). `None` when unset or blank.
+    pub operator_name: Option<OperatorName>,
 }
 
 impl std::fmt::Debug for ServerConfig {
@@ -64,6 +77,7 @@ impl std::fmt::Debug for ServerConfig {
                 "admin_token",
                 &self.admin_token.as_ref().map(|_| "[redacted]"),
             )
+            .field("operator_name", &self.operator_name)
             .finish()
     }
 }
@@ -77,6 +91,7 @@ impl Default for ServerConfig {
             ui_dir: None,
             data_dir: PathBuf::from(DEFAULT_DATA_DIR),
             admin_token: None,
+            operator_name: None,
         }
     }
 }
@@ -84,7 +99,9 @@ impl Default for ServerConfig {
 impl ServerConfig {
     /// Build configuration from a variable lookup (for example `std::env::var`).
     ///
-    /// Returns an error message naming the variable when `FILESQUID_BIND` is not `host:port`.
+    /// Returns an error message naming the variable when `FILESQUID_BIND` is not `host:port`,
+    /// or when `FILESQUID_OPERATOR_NAME` is too long or has a control character (the message
+    /// never contains that value).
     pub fn from_lookup(lookup: impl Fn(&str) -> Option<String>) -> Result<Self, String> {
         let bind_text = lookup("FILESQUID_BIND").unwrap_or_else(|| DEFAULT_BIND.to_string());
         let bind = bind_text
@@ -95,12 +112,144 @@ impl ServerConfig {
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(DEFAULT_DATA_DIR));
         let admin_token = lookup("FILESQUID_ADMIN_TOKEN");
+        let operator_name = operator_name_from(lookup(OPERATOR_NAME_VARIABLE))?;
         Ok(Self {
             bind,
             ui_dir,
             data_dir,
             admin_token,
+            operator_name,
         })
+    }
+}
+
+/// Every environment variable [`ServerConfig::from_env`] reads.
+pub const ENV_VARIABLES: [&str; 5] = [
+    "FILESQUID_BIND",
+    "FILESQUID_UI_DIR",
+    "FILESQUID_DATA_DIR",
+    "FILESQUID_ADMIN_TOKEN",
+    OPERATOR_NAME_VARIABLE,
+];
+
+impl ServerConfig {
+    /// Build configuration from the process environment: read each of [`ENV_VARIABLES`]
+    /// once, refuse any that is set but not valid Unicode ([`unicode_value`]), then apply
+    /// [`from_lookup`](Self::from_lookup). Performs environment reads.
+    ///
+    /// # Errors
+    /// A variable that is not valid Unicode, which would otherwise read as unset, or any
+    /// [`from_lookup`](Self::from_lookup) error. No message contains a value.
+    pub fn from_env() -> Result<Self, String> {
+        let mut values = Vec::with_capacity(ENV_VARIABLES.len());
+        for variable in ENV_VARIABLES {
+            let value = unicode_value(variable, std::env::var_os(variable).as_deref())?;
+            values.push((variable, value));
+        }
+        Self::from_lookup(|key| {
+            values
+                .iter()
+                .find(|(variable, _)| *variable == key)
+                .and_then(|(_, value)| value.clone())
+        })
+    }
+}
+
+/// The value of environment `variable` as text: `None` when unset. Pure.
+///
+/// # Errors
+/// The value is set but not valid Unicode. The message names the variable and never the
+/// value.
+pub fn unicode_value(
+    variable: &str,
+    value: Option<&std::ffi::OsStr>,
+) -> Result<Option<String>, String> {
+    let Some(raw) = value else {
+        return Ok(None);
+    };
+    raw.to_str().map(|text| Some(text.to_string())).ok_or_else(|| {
+        format!("{variable} is not usable: its value is not valid Unicode; set it to valid text or leave it unset")
+    })
+}
+
+/// Parse the configured `FILESQUID_OPERATOR_NAME`: unset or blank is `None`. Pure.
+///
+/// # Errors
+/// A message that names the variable and the rule broken, never the value.
+fn operator_name_from(configured: Option<String>) -> Result<Option<OperatorName>, String> {
+    let Some(raw) = configured else {
+        return Ok(None);
+    };
+    OperatorName::parse(&raw).map_err(|err| {
+        format!(
+            "{OPERATOR_NAME_VARIABLE} is not usable: {err}; set 1 to 256 characters with no control characters, or leave it unset"
+        )
+    })
+}
+
+/// The journal record of a start without an operator name: operation
+/// [`OPERATOR_UNNAMED_OPERATION`], level warn, the variable's name as target. It holds no
+/// value, token, path or identifier.
+pub fn operator_unnamed_entry() -> JournalEntry {
+    JournalEntry::new(OPERATOR_UNNAMED_OPERATION, Outcome::Info)
+        .level(Level::Warn)
+        .target(OPERATOR_NAME_VARIABLE)
+}
+
+/// Describe this server to the API (API-S-020): host type `server`, the configured operator
+/// name, and not enrolled with the hosted service. Without an operator name, write one
+/// [`OPERATOR_UNNAMED_OPERATION`] warning line to `stdout` and queue
+/// [`operator_unnamed_entry`] on `host`'s activity journal.
+///
+/// The warning bypasses `tracing` on purpose: the stdout log filter (`RUST_LOG=error` or
+/// `off`) cannot hide it, and the journal layer cannot journal it a second time.
+///
+/// # Errors
+/// The API state already describes a host.
+pub fn describe_server_host(
+    config: &ServerConfig,
+    state: &ApiState,
+    host: &HostMonitor,
+    stdout: &mut dyn Write,
+) -> Result<(), String> {
+    let identity = HostIdentity::server(config.operator_name.clone());
+    if !state.describe_host(identity, Arc::new(NotEnrolled)) {
+        return Err("the host was already described".to_string());
+    }
+    if config.operator_name.is_none() {
+        write_operator_unnamed_warning(stdout);
+        host.monitor().journal().send(operator_unnamed_entry());
+    }
+    Ok(())
+}
+
+/// The stdout line of the unnamed-operator warning: one JSON object shaped like the server's
+/// other log lines (RFC 3339 UTC timestamp, `WARN`, the operation and the variable's name).
+/// It holds no value, token or path. Pure.
+pub fn operator_unnamed_line(timestamp: &str) -> String {
+    let message = format!(
+        "{OPERATOR_NAME_VARIABLE} is unset or blank; the host descriptor reports no operator name"
+    );
+    serde_json::json!({
+        "timestamp": timestamp,
+        "level": "WARN",
+        "fields": {
+            "message": message,
+            "operation": OPERATOR_UNNAMED_OPERATION,
+            "variable": OPERATOR_NAME_VARIABLE,
+        },
+        "target": "filesquid_server",
+    })
+    .to_string()
+}
+
+/// Write the unnamed-operator warning line to `stdout` and flush it. A failed write is
+/// reported through `tracing`; the journal entry is written either way.
+fn write_operator_unnamed_warning(stdout: &mut dyn Write) {
+    let timestamp = format_rfc3339_ms(now_ms());
+    let line = operator_unnamed_line(&timestamp);
+    if let Err(err) = writeln!(stdout, "{line}").and_then(|()| stdout.flush()) {
+        tracing::error!(%err, operation = OPERATOR_UNNAMED_OPERATION, "stdout write failed");
     }
 }
 
@@ -122,17 +271,32 @@ pub fn install_admin_authoriser(config: &ServerConfig, state: &ApiState) -> Resu
 }
 
 /// Start the server's authorisation and monitor in order: install the administrator
-/// authoriser, open the monitor, then journal `api.auth.token_issued` for the administrator
-/// credential this run accepts, whether it was generated now or loaded (API-S-017).
-/// Performs filesystem and database I/O.
+/// authoriser, open the monitor, journal `api.auth.token_issued` for the administrator
+/// credential this run accepts, whether it was generated now or loaded (API-S-017), then
+/// describe the host ([`describe_server_host`]). Performs filesystem and database I/O.
 pub fn start_server(
     config: &ServerConfig,
     state: &ApiState,
     layer: Option<&JournalLayer>,
 ) -> Result<HostMonitor, String> {
+    start_server_writing_to(config, state, layer, &mut std::io::stdout())
+}
+
+/// [`start_server`], writing its unfiltered startup warnings to `stdout` instead of the
+/// process's standard output (tests capture them this way).
+pub fn start_server_writing_to(
+    config: &ServerConfig,
+    state: &ApiState,
+    layer: Option<&JournalLayer>,
+    stdout: &mut dyn Write,
+) -> Result<HostMonitor, String> {
     install_admin_authoriser(config, state)?;
     let host = start_host_monitor(config, state, layer)?;
     auth::record_token_issue(host.monitor(), &Principal::Administrator);
+    if let Err(message) = describe_server_host(config, state, &host, stdout) {
+        host.stop();
+        return Err(message);
+    }
     Ok(host)
 }
 
