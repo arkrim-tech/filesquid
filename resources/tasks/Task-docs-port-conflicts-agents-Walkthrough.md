@@ -4,7 +4,7 @@ Documentation-only task on branch `docs/port-conflicts-agents`. TDD-ENFORCE: Not
 
 ## Owner request (2026-10-18)
 
-Cubic flagged (P1) on PR #60 that [port-conflicts.md](../../.agents/rules/port-conflicts.md) still prescribed `lsof -ti:<port> | xargs kill -9`, which on a shared machine can kill another agent's process. Owner decision: keep the command as advice for the human, and forbid agents from running it.
+Cubic flagged (P1) on PR #60 that [port-conflicts.md](../../.agents/rules/port-conflicts.md) still prescribed the unsafe port-clearing one-liner, which on a shared machine can kill another agent's process. Owner decision: keep the hint as advice for the human, and forbid agents from running it.
 
 ## Changes
 

@@ -5,7 +5,7 @@ license: CC-BY
 
 # Language-Agnostic Port Conflict Resolution
 
-When the user encounters an error indicating that a network port is already in use (e.g., `EADDRINUSE`, `address already in use`), you MUST provide a framework-agnostic command the user can run to forcefully terminate the lingering process. 
+When the user encounters an error indicating that a network port is already in use (e.g., `EADDRINUSE`, `address already in use`), you MUST provide a framework-agnostic command the user can run to forcefully terminate the lingering process.
 
 This happens frequently during development when server processes crash or fail to shut down gracefully, regardless of the technology stack (Node.js, Python, Elixir, Go, etc.).
 
