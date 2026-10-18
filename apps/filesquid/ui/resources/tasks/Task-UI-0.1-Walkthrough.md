@@ -1,6 +1,6 @@
 # Task UI-0.1 Walkthrough
 
-## UI-S-012: The UI reaches FileSquid only through `FileSquidClient` (`request()`, `read()`, `upload()`, `subscribe()`), which selects the HTTP-plus-event-channel adapter on `filesquid-server`, the custom-scheme adapter on `filesquid-desktop`, and later the browser-host adapter. The desktop base URL MUST be `filesquid://localhost` on macOS, iOS and Linux and `http://filesquid.localhost` on Windows and Android; desktop events MUST arrive as the Tauri event `filesquid-event`. Every command and upload MUST carry a `CommandEnvelope` (schema version 1, non-empty operation id, expected revision and scope) and resolve to a `CommandOutcome` (`committed`, `pending`, `conflict` or `error`) for the same operation id; HTTP 409 MUST resolve to `conflict`; only `committed` is completion evidence. Without a range, `read()` MUST send no `Range` header; with one, it MUST send an inclusive `Range: bytes=<start>-<end>`, or `Range: bytes=<start>-` when no end is given (start ≥ 0, end ≥ start), and MUST refuse an invalid range before sending.
+## UI-S-012: The UI reaches FileSquid only through `FileSquidClient` (`request()`, `read()`, `command()`, `upload()`, `subscribe()`), which selects the HTTP-plus-event-channel adapter on `filesquid-server`, the custom-scheme adapter on `filesquid-desktop`, and later the browser-host adapter. The desktop base URL MUST be `filesquid://localhost` on macOS, iOS and Linux and `http://filesquid.localhost` on Windows and Android; desktop events MUST arrive as the Tauri event `filesquid-event`. Every command and upload MUST carry a `CommandEnvelope` (schema version 1, non-empty operation id, expected revision and scope) and resolve to a `CommandOutcome` (`committed`, `pending`, `conflict` or `error`) for the same operation id; HTTP 409 MUST resolve to `conflict`; only `committed` is completion evidence. Without a range, `read()` MUST send no `Range` header; with one, it MUST send an inclusive `Range: bytes=<start>-<end>`, or `Range: bytes=<start>-` when no end is given (start ≥ 0, end ≥ start), and MUST refuse an invalid range before sending.
 
 Plan row: [UI-0.1 Host adapter (HTTP vs custom URI scheme)](../plan.md), part of global [Task FS-2.1](../../../../../resources/implementation-plan.md#task-fs-2.1). UI-0.2, UI-0.5 and UI-F2.1 remain, so the global box stays open. Requirements: [UI-S-012](../srs.md), [UI-S-011](../srs.md), [UI-S-014](../srs.md), [CORE-S-005](../../../crates/core/resources/srs.md), [F-037](../../../../../resources/prd.md#f-037-setup-updates-and-diagnostics), [F-056](../../../../../resources/prd.md#f-056-single-filesquid-api), [architecture 3.2](../../../../../resources/architecture.md#32-frontend-architecture), [ADR 030](../../../../../resources/architecture/030-filesquid-api-and-transports.md). Scenarios: [`host_adapter_UI-S-012.feature`](../../tests/features/host_adapter_UI-S-012.feature).
 
@@ -24,7 +24,7 @@ UI-F0.1 and the auth-token fix (PR #23) had delivered part of this row. This bra
 - **Command helpers** ([`commands.ts`](../../src/api/commands.ts), new; pure except `newOperationId`): `commandEnvelope` (schema version 1; non-empty operation id, expected revision and scope; a supplied operation id is kept, so a retry is idempotent), `newOperationId` (version 4 UUID from `crypto.getRandomValues`, which also works outside secure contexts), `commandOutcome` (validates the kind, a `PortError` only for `error`, and the operation id), `conflictOutcome`, `isCommitted` (only `committed` is completion evidence), `rangeHeader`, `parseContentRange`.
 - [`complete-list.ts`](../../src/api/complete-list.ts): the compile-time completeness type for run-time copies of contract enums, now shared by `client.ts` and `commands.ts`.
 - [`index.ts`](../../src/index.ts) exports the new helpers and types.
-- **Tests**: `tests/unit/commands.test.ts` (45), `tests/unit/client-io.test.ts` (21), `tests/unit/host-adapter.test.ts` (13), and a Playwright test that runs the built bundle inside an emulated Windows desktop webview. In it every API call goes to `http://filesquid.localhost` (bridged to the real `filesquid-server`) with the launch token, none goes to the page's origin, no WebSocket opens, the Monitor listens to the Tauri event `filesquid-event`, and an emitted desktop event appears in its journal.
+- **Tests**: `tests/unit/commands.test.ts` (45), `tests/unit/client-io.test.ts` (22), `tests/unit/host-adapter.test.ts` (13), and a Playwright test that runs the built bundle inside an emulated Windows desktop webview. In it every API call goes to `http://filesquid.localhost` (bridged to the real `filesquid-server`) with the launch token, none goes to the page's origin, no WebSocket opens, the Monitor listens to the Tauri event `filesquid-event`, and an emitted desktop event appears in its journal.
 - **Docs**: [UI SRS](../srs.md) UI-S-012 now states the base URLs, the desktop event name, the command envelope and outcome rules and the range rule, with [CORE-S-005](../../../crates/core/resources/srs.md) as a parent. The [UI README](../../README.md) has a new "Host adapter and client interface" section. The [plan](../plan.md) row names its tests and is ticked, as is the row in the [checklist](../../../../../resources/implementation-plan-checklist.md).
 
 ## Assumptions for the platform engineer
@@ -47,19 +47,27 @@ All 15 findings were valid and fixed in the second commit; the new tests were wr
 - The `DELETE` command test asserts the method the transport saw.
 - UI-S-012 names uploads and the no-range and open-ended range cases; the UI README documents `bytes=start-` and the full error contract; the plan row cites UI-S-014 and its feature; the feature adds a server-token precondition, an iOS example and an upload scenario; this heading carries the full requirement text.
 
+## Review round 2 (Cubic, 3 findings)
+
+All 3 findings were valid and fixed in one commit:
+
+- `readJsonAnswer` reads the body before the `try`, so an abort or transport failure during the read rejects with its own error; only a `JSON.parse` failure becomes the `TypeError` (with the parse error as `cause`). The new test "lets an abort during the body read reject with the AbortError, not a TypeError" failed first (see the failing run for round 2 below).
+- UI-S-012 now lists `command()` among the `FileSquidClient` methods; this heading and the header of `host_adapter_UI-S-012.feature` quote the updated text.
+- Every count in the traceability table below was recounted from the verbose Vitest run of `commands.test.ts`, `client-io.test.ts`, `host-adapter.test.ts` and `client.test.ts` (`parseContentRange` has 12 tests, not 14).
+
 ## SRS traceability
 
 | Constraint | Tests |
 |---|---|
-| Server: same-origin base URL and WebSocket events | `host-adapter.test.ts` "same-origin HTTP adapter" (5), "opens the WebSocket event channel"; e2e "the desktop launch token authorises ... the event channel" |
-| Desktop: `filesquid://localhost` (macOS, iOS, Linux) and `http://filesquid.localhost` (Windows, Android) | `host-adapter.test.ts` (5), "detectHost on iOS"; `client.test.ts` `apiBaseUrl` (4); e2e "inside the desktop webview" |
+| Server: same-origin base URL and WebSocket events | `host-adapter.test.ts` "same-origin HTTP adapter" (5 of the 10 `selectHostAdapter` tests), "opens the WebSocket event channel"; e2e "the desktop launch token authorises ... the event channel" |
+| Desktop: `filesquid://localhost` (macOS, iOS, Linux) and `http://filesquid.localhost` (Windows, Android) | `host-adapter.test.ts` (the other 5 `selectHostAdapter` tests), "detectHost on iOS" (1); `client.test.ts` `apiBaseUrl` (4); e2e "inside the desktop webview" |
 | Desktop events through Tauri `filesquid-event`, no WebSocket | `host-adapter.test.ts` "listens to the Tauri event"; e2e "inside the desktop webview" |
 | Envelope: schema version 1, non-empty fields, a retry keeps the id; ids work without a secure context | `commands.test.ts` "commandEnvelope" (6), "newOperationId" (2) |
-| Outcome kinds, `PortError` only for `error`, same non-empty operation id; non-JSON 2xx is a `TypeError` | `commands.test.ts` "commandOutcome" (13), "refuses to build a conflict outcome for an empty operation id"; `client-io.test.ts` "command" (8) |
+| Outcome kinds, `PortError` only for `error`, same non-empty operation id; non-JSON 2xx is a `TypeError`; an abort while reading the body keeps its `AbortError` | `commands.test.ts` "commandOutcome" (13), "refuses to build a conflict outcome for an empty operation id"; `client-io.test.ts` "FileSquidClient.command" (9) |
 | Only `committed` is completion | `commands.test.ts` "treats only committed as durable"; `client-io.test.ts` "returns pending for a 202 answer" |
 | HTTP 409 to `conflict`; other failures stay `ApiError` with their reason | `client-io.test.ts` "maps HTTP 409" (command and upload), "raises ApiError for a denial" |
 | Range `bytes=start-end`, start >= 0, end >= start; refused before sending | `commands.test.ts` "rangeHeader" (9); `client-io.test.ts` "refuses an invalid range before sending anything" |
-| 206 partial with `Content-Range` (safe offsets, size > end), 200 whole | `client-io.test.ts` "read" (3); `commands.test.ts` "parseContentRange" (14) |
+| 206 partial with `Content-Range` (safe offsets, size > end), 200 whole | `client-io.test.ts` "FileSquidClient.read" (4, one of them the invalid-range test); `commands.test.ts` "parseContentRange" (12) |
 | UI-S-014 on every new method (Bearer, unusable token refused, no token in errors) | `client-io.test.ts` "GETs JSON ... bearer", "sends no credential without a token", "refuses an unusable token before sending, without echoing it", header checks in read and upload |
 | UI-S-011, UI-S-013: built bundle, no console errors | e2e suite (9 tests) against `npm run build` and `filesquid-server` |
 
@@ -105,6 +113,16 @@ Error: Failed to resolve import "../../src/api/commands" from "tests/unit/comman
       Tests  9 failed | 70 passed (79)
 ```
 
+## TDD: failing run for review round 2
+
+```text
+× lets an abort during the body read reject with the AbortError, not a TypeError 11ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+AssertionError: expected TypeError: command answer is not a Comman… to not be an instance of TypeError
+ Test Files  1 failed (1)
+      Tests  1 failed | 21 passed (22)
+```
+
 ## Lint, format and type checks (`apps/filesquid/ui`)
 
 ```text
@@ -121,11 +139,11 @@ $ npx tsc --noEmit
 
 ```text
 RUN  v4.1.12 <apps/filesquid/ui>
- ✓ tests/unit/commands.test.ts > commandEnvelope > builds a schema version 1 envelope with the caller's scope and revision 10ms
- ✓ tests/unit/commands.test.ts > commandEnvelope > generates a fresh operation id when none is given 3ms
- ✓ tests/unit/commands.test.ts > commandEnvelope > keeps a supplied operation id, so a retry is the same idempotent operation 0ms
+ ✓ tests/unit/commands.test.ts > commandEnvelope > builds a schema version 1 envelope with the caller's scope and revision 3ms
+ ✓ tests/unit/commands.test.ts > commandEnvelope > generates a fresh operation id when none is given 5ms
+ ✓ tests/unit/commands.test.ts > commandEnvelope > keeps a supplied operation id, so a retry is the same idempotent operation 1ms
  ✓ tests/unit/commands.test.ts > commandEnvelope > refuses an empty scope (contract minLength 1) 1ms
- ✓ tests/unit/commands.test.ts > commandEnvelope > refuses an empty expected_revision (contract minLength 1) 0ms
+ ✓ tests/unit/commands.test.ts > commandEnvelope > refuses an empty expected_revision (contract minLength 1) 1ms
  ✓ tests/unit/commands.test.ts > commandEnvelope > refuses an empty operation_id (contract minLength 1) 0ms
  ✓ tests/unit/commands.test.ts > newOperationId > returns a UUID from the platform's secure random source 1ms
  ✓ tests/unit/commands.test.ts > newOperationId > works without crypto.randomUUID (plain HTTP is not a secure context) 1ms
@@ -156,7 +174,7 @@ RUN  v4.1.12 <apps/filesquid/ui>
  ✓ tests/unit/commands.test.ts > rangeHeader > refuses {"start":9007199254740992} 0ms
  ✓ tests/unit/commands.test.ts > parseContentRange > reads start, end and complete length 0ms
  ✓ tests/unit/commands.test.ts > parseContentRange > leaves size undefined when the length is unknown 0ms
- ✓ tests/unit/commands.test.ts > parseContentRange > accepts a last byte one below the complete length 1ms
+ ✓ tests/unit/commands.test.ts > parseContentRange > accepts a last byte one below the complete length 0ms
  ✓ tests/unit/commands.test.ts > parseContentRange > returns undefined for null 0ms
  ✓ tests/unit/commands.test.ts > parseContentRange > returns undefined for "" 0ms
  ✓ tests/unit/commands.test.ts > parseContentRange > returns undefined for "bytes */1000" 0ms
@@ -166,7 +184,29 @@ RUN  v4.1.12 <apps/filesquid/ui>
  ✓ tests/unit/commands.test.ts > parseContentRange > returns undefined for "bytes 0-9/5" 0ms
  ✓ tests/unit/commands.test.ts > parseContentRange > returns undefined for "bytes 0-9007199254740992/*" 0ms
  ✓ tests/unit/commands.test.ts > parseContentRange > returns undefined for "bytes 0-1/9007199254740993" 0ms
- ✓ tests/unit/host-adapter.test.ts > selectHostAdapter > uses the same-origin HTTP adapter and WebSocket events outside the desktop (windows) 6ms
+ ✓ tests/unit/client-io.test.ts > FileSquidClient.request > GETs JSON under the base URL with the bearer token 13ms
+ ✓ tests/unit/client-io.test.ts > FileSquidClient.request > sends a JSON body with its content type and the chosen method 1ms
+ ✓ tests/unit/client-io.test.ts > FileSquidClient.request > returns undefined for 204 No Content 1ms
+ ✓ tests/unit/client-io.test.ts > FileSquidClient.request > passes the abort signal to the transport 1ms
+ ✓ tests/unit/client-io.test.ts > FileSquidClient.request > raises ApiError with the contract's code and reason 2ms
+ ✓ tests/unit/client-io.test.ts > FileSquidClient.request > sends no credential without a token 1ms
+ ✓ tests/unit/client-io.test.ts > FileSquidClient.read > sends an inclusive Range and reports a partial answer with its Content-Range 1ms
+ ✓ tests/unit/client-io.test.ts > FileSquidClient.read > reads the whole representation without a Range header 1ms
+ ✓ tests/unit/client-io.test.ts > FileSquidClient.read > raises ApiError for 416 Range Not Satisfiable 11ms
+ ✓ tests/unit/client-io.test.ts > FileSquidClient.read > refuses an invalid range before sending anything 1ms
+ ✓ tests/unit/client-io.test.ts > FileSquidClient.command > POSTs the envelope and input as JSON and returns a committed outcome 9ms
+ ✓ tests/unit/client-io.test.ts > FileSquidClient.command > returns pending for a 202 answer, which is not completion 1ms
+ ✓ tests/unit/client-io.test.ts > FileSquidClient.command > lets an abort during the body read reject with the AbortError, not a TypeError 6ms
+ ✓ tests/unit/client-io.test.ts > FileSquidClient.command > rejects a 2xx answer that is not JSON with a TypeError 1ms
+ ✓ tests/unit/client-io.test.ts > FileSquidClient.command > returns a module error with its PortError 1ms
+ ✓ tests/unit/client-io.test.ts > FileSquidClient.command > maps HTTP 409 conflict to a conflict outcome for the sent operation 1ms
+ ✓ tests/unit/client-io.test.ts > FileSquidClient.command > raises ApiError for a denial instead of an outcome 1ms
+ ✓ tests/unit/client-io.test.ts > FileSquidClient.command > rejects an answer for another operation id 5ms
+ ✓ tests/unit/client-io.test.ts > FileSquidClient.command > refuses an unusable token before sending, without echoing it 1ms
+ ✓ tests/unit/client-io.test.ts > FileSquidClient.upload > POSTs multipart form data with an envelope part and a file part 7ms
+ ✓ tests/unit/client-io.test.ts > FileSquidClient.upload > keeps a File's own name when no filename is given 1ms
+ ✓ tests/unit/client-io.test.ts > FileSquidClient.upload > maps HTTP 409 conflict to a conflict outcome 1ms
+ ✓ tests/unit/host-adapter.test.ts > selectHostAdapter > uses the same-origin HTTP adapter and WebSocket events outside the desktop (windows) 2ms
  ✓ tests/unit/host-adapter.test.ts > selectHostAdapter > uses the same-origin HTTP adapter and WebSocket events outside the desktop (android) 0ms
  ✓ tests/unit/host-adapter.test.ts > selectHostAdapter > uses the same-origin HTTP adapter and WebSocket events outside the desktop (macos) 0ms
  ✓ tests/unit/host-adapter.test.ts > selectHostAdapter > uses the same-origin HTTP adapter and WebSocket events outside the desktop (linux) 0ms
@@ -174,36 +214,15 @@ RUN  v4.1.12 <apps/filesquid/ui>
  ✓ tests/unit/host-adapter.test.ts > selectHostAdapter > uses filesquid://localhost and Tauri events on the macos desktop 0ms
  ✓ tests/unit/host-adapter.test.ts > selectHostAdapter > uses filesquid://localhost and Tauri events on the linux desktop 0ms
  ✓ tests/unit/host-adapter.test.ts > selectHostAdapter > uses filesquid://localhost and Tauri events on the other desktop 0ms
- ✓ tests/unit/host-adapter.test.ts > selectHostAdapter > uses http://filesquid.localhost and Tauri events on the windows desktop 3ms
+ ✓ tests/unit/host-adapter.test.ts > selectHostAdapter > uses http://filesquid.localhost and Tauri events on the windows desktop 1ms
  ✓ tests/unit/host-adapter.test.ts > selectHostAdapter > uses http://filesquid.localhost and Tauri events on the android desktop 0ms
  ✓ tests/unit/host-adapter.test.ts > detectHost on iOS > selects filesquid://localhost inside the iOS desktop webview 0ms
- ✓ tests/unit/host-adapter.test.ts > createHostClient event transport > listens to the Tauri event filesquid-event on the desktop and opens no WebSocket 58ms
+ ✓ tests/unit/host-adapter.test.ts > createHostClient event transport > listens to the Tauri event filesquid-event on the desktop and opens no WebSocket 56ms
  ✓ tests/unit/host-adapter.test.ts > createHostClient event transport > opens the WebSocket event channel on the server host 1ms
- ✓ tests/unit/client-io.test.ts > FileSquidClient.request > GETs JSON under the base URL with the bearer token 6ms
- ✓ tests/unit/client-io.test.ts > FileSquidClient.request > sends a JSON body with its content type and the chosen method 1ms
- ✓ tests/unit/client-io.test.ts > FileSquidClient.request > returns undefined for 204 No Content 3ms
- ✓ tests/unit/client-io.test.ts > FileSquidClient.request > passes the abort signal to the transport 1ms
- ✓ tests/unit/client-io.test.ts > FileSquidClient.request > raises ApiError with the contract's code and reason 1ms
- ✓ tests/unit/client-io.test.ts > FileSquidClient.request > sends no credential without a token 1ms
- ✓ tests/unit/client-io.test.ts > FileSquidClient.read > sends an inclusive Range and reports a partial answer with its Content-Range 1ms
- ✓ tests/unit/client-io.test.ts > FileSquidClient.read > reads the whole representation without a Range header 0ms
- ✓ tests/unit/client-io.test.ts > FileSquidClient.read > raises ApiError for 416 Range Not Satisfiable 3ms
- ✓ tests/unit/client-io.test.ts > FileSquidClient.read > refuses an invalid range before sending anything 1ms
- ✓ tests/unit/client-io.test.ts > FileSquidClient.command > POSTs the envelope and input as JSON and returns a committed outcome 1ms
- ✓ tests/unit/client-io.test.ts > FileSquidClient.command > returns pending for a 202 answer, which is not completion 1ms
- ✓ tests/unit/client-io.test.ts > FileSquidClient.command > rejects a 2xx answer that is not JSON with a TypeError 1ms
- ✓ tests/unit/client-io.test.ts > FileSquidClient.command > returns a module error with its PortError 0ms
- ✓ tests/unit/client-io.test.ts > FileSquidClient.command > maps HTTP 409 conflict to a conflict outcome for the sent operation 1ms
- ✓ tests/unit/client-io.test.ts > FileSquidClient.command > raises ApiError for a denial instead of an outcome 0ms
- ✓ tests/unit/client-io.test.ts > FileSquidClient.command > rejects an answer for another operation id 1ms
- ✓ tests/unit/client-io.test.ts > FileSquidClient.command > refuses an unusable token before sending, without echoing it 0ms
- ✓ tests/unit/client-io.test.ts > FileSquidClient.upload > POSTs multipart form data with an envelope part and a file part 4ms
- ✓ tests/unit/client-io.test.ts > FileSquidClient.upload > keeps a File's own name when no filename is given 1ms
- ✓ tests/unit/client-io.test.ts > FileSquidClient.upload > maps HTTP 409 conflict to a conflict outcome 0ms
  Test Files  3 passed (3)
-      Tests  79 passed (79)
-   Start at  05:24:50
-   Duration  1.48s (transform 428ms, setup 0ms, import 535ms, tests 132ms, environment 2.84s)
+      Tests  80 passed (80)
+   Start at  05:33:34
+   Duration  1.36s (transform 468ms, setup 0ms, import 626ms, tests 159ms, environment 2.48s)
 ```
 
 ## Vitest: `@filesquid/ui` (`npm test`)
@@ -219,22 +238,22 @@ RUN  v4.1.12 <apps/filesquid/ui>
 
  RUN  v4.1.12 <apps/filesquid/ui>
 
- ✓ tests/unit/client-auth.test.ts (23 tests) 75ms
- ✓ tests/unit/client-io.test.ts (21 tests) 92ms
- ✓ tests/ui/monitor.test.ts (14 tests) 451ms
- ✓ tests/unit/commands.test.ts (45 tests) 96ms
- ✓ tests/ui/app-shell.test.ts (9 tests) 144ms
- ✓ tests/unit/host-adapter.test.ts (13 tests) 66ms
- ✓ tests/ui/monitor-route.test.ts (2 tests) 24ms
- ✓ tests/unit/theme.test.ts (6 tests) 19ms
- ✓ tests/unit/admin-client.test.ts (6 tests) 14ms
+ ✓ tests/unit/client-io.test.ts (22 tests) 61ms
+ ✓ tests/unit/client-auth.test.ts (23 tests) 60ms
+ ✓ tests/ui/monitor.test.ts (14 tests) 227ms
+ ✓ tests/unit/commands.test.ts (45 tests) 15ms
+ ✓ tests/ui/app-shell.test.ts (9 tests) 124ms
+ ✓ tests/unit/host-adapter.test.ts (13 tests) 70ms
+ ✓ tests/unit/admin-client.test.ts (6 tests) 25ms
+ ✓ tests/unit/theme.test.ts (6 tests) 7ms
  ✓ tests/unit/client.test.ts (8 tests) 12ms
- ✓ tests/unit/contract.test.ts (1 test) 66ms
+ ✓ tests/ui/monitor-route.test.ts (2 tests) 22ms
+ ✓ tests/unit/contract.test.ts (1 test) 59ms
 
  Test Files  11 passed (11)
-      Tests  148 passed (148)
-   Start at  05:24:53
-   Duration  5.86s (transform 738ms, setup 0ms, import 1.92s, tests 1.06s, environment 9.57s)
+      Tests  149 passed (149)
+   Start at  05:33:36
+   Duration  4.28s (transform 477ms, setup 0ms, import 1.44s, tests 684ms, environment 6.67s)
 
 JUNIT report written to <apps/filesquid/ui>/tests/allure-results/vitest-junit.xml
 ```
@@ -243,16 +262,16 @@ JUNIT report written to <apps/filesquid/ui>/tests/allure-results/vitest-junit.xm
 
 ```text
 Running 9 tests using 1 worker
-  ✓  1 [chromium] › tests/e2e/app.spec.ts:44:1 › shell mounts with FileSquid brand, internal vocabulary and live API health (259ms)
-  ✓  2 [chromium] › tests/e2e/app.spec.ts:68:1 › design tokens switch between light and dark (181ms)
-  ✓  3 [chromium] › tests/e2e/app.spec.ts:79:1 › client-side routes fall back to the distribution index (143ms)
-  ✓  4 [chromium] › tests/e2e/app.spec.ts:85:1 › without a token the shell names the missing credentials from the label table (163ms)
-  ✓  5 [chromium] › tests/e2e/app.spec.ts:97:1 › Monitor asks for the admin token, then shows live health, processes and the journal (356ms)
-  ✓  6 [chromium] › tests/e2e/app.spec.ts:130:1 › a wrong token is named as invalid credentials (260ms)
-  ✓  7 [chromium] › tests/e2e/app.spec.ts:141:1 › the signed-in token stays in memory: not in storage, URL or DOM, gone on reload (489ms)
-  ✓  8 [chromium] › tests/e2e/app.spec.ts:172:1 › the desktop launch token authorises the shell, the Monitor and the event channel (192ms)
-  ✓  9 [chromium] › tests/e2e/app.spec.ts:257:3 › inside the desktop webview (custom URI scheme adapter) › requests use the custom scheme and events use Tauri, not same-origin HTTP or WebSocket (278ms)
-  9 passed (26.6s)
+  ✓  1 [chromium] › tests/e2e/app.spec.ts:44:1 › shell mounts with FileSquid brand, internal vocabulary and live API health (288ms)
+  ✓  2 [chromium] › tests/e2e/app.spec.ts:68:1 › design tokens switch between light and dark (133ms)
+  ✓  3 [chromium] › tests/e2e/app.spec.ts:79:1 › client-side routes fall back to the distribution index (113ms)
+  ✓  4 [chromium] › tests/e2e/app.spec.ts:85:1 › without a token the shell names the missing credentials from the label table (174ms)
+  ✓  5 [chromium] › tests/e2e/app.spec.ts:97:1 › Monitor asks for the admin token, then shows live health, processes and the journal (277ms)
+  ✓  6 [chromium] › tests/e2e/app.spec.ts:130:1 › a wrong token is named as invalid credentials (265ms)
+  ✓  7 [chromium] › tests/e2e/app.spec.ts:141:1 › the signed-in token stays in memory: not in storage, URL or DOM, gone on reload (431ms)
+  ✓  8 [chromium] › tests/e2e/app.spec.ts:172:1 › the desktop launch token authorises the shell, the Monitor and the event channel (190ms)
+  ✓  9 [chromium] › tests/e2e/app.spec.ts:257:3 › inside the desktop webview (custom URI scheme adapter) › requests use the custom scheme and events use Tauri, not same-origin HTTP or WebSocket (237ms)
+  9 passed (10.1s)
 ```
 
 ## Playwright: `@imagesquid/ui` (built UI and real `filesquid-server`)

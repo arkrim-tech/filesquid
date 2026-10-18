@@ -248,15 +248,18 @@ async function readErrorBody(response: Response): Promise<Partial<ApiErrorBody>>
 /**
  * Parse the JSON body of a 2xx command answer. A body that is not JSON (for example a proxy
  * page) is not an outcome, so it is reported as the same `TypeError` as any other invalid
- * answer, with the parser's error as its `cause`. Network I/O: consumes the response body.
+ * answer, with the parser's error as its `cause`. Reading the body happens outside that
+ * conversion, so an abort or transport failure rejects with its own error.
+ * Network I/O: consumes the response body.
  *
  * @param response A 2xx command answer.
  * @returns The parsed JSON value.
  * @throws TypeError when the body is not JSON.
  */
 async function readJsonAnswer(response: Response): Promise<unknown> {
+  const text = await response.text();
   try {
-    return JSON.parse(await response.text()) as unknown;
+    return JSON.parse(text) as unknown;
   } catch (error) {
     throw new TypeError("command answer is not a CommandOutcome", { cause: error });
   }

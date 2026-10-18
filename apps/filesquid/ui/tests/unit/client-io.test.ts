@@ -168,6 +168,19 @@ describe("FileSquidClient.command", () => {
     expect(seen[0]?.init.method).toBe("DELETE");
   });
 
+  it("lets an abort during the body read reject with the AbortError, not a TypeError", async () => {
+    const abort = new DOMException("The operation was aborted.", "AbortError");
+    const body = new ReadableStream({
+      start(controller) {
+        controller.error(abort);
+      },
+    });
+    const { client } = clientWith(() => new Response(body, { status: 200 }));
+    const error = await client.command("/api/v1/x", ENVELOPE).catch((e: unknown) => e);
+    expect(error).not.toBeInstanceOf(TypeError);
+    expect((error as Error).name).toBe("AbortError");
+  });
+
   it("rejects a 2xx answer that is not JSON with a TypeError", async () => {
     const { client } = clientWith(() => new Response("<html>proxy</html>", { status: 200 }));
     const error = await client.command("/api/v1/x", ENVELOPE).catch((e: unknown) => e);

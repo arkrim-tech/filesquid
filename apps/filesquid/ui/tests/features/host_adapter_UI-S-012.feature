@@ -1,4 +1,4 @@
-# UI-S-012: The UI reaches FileSquid only through FileSquidClient (request, read, upload, subscribe),
+# UI-S-012: The UI reaches FileSquid only through FileSquidClient (request, read, command, upload, subscribe),
 # which selects the HTTP-plus-event-channel adapter on filesquid-server, the custom-scheme adapter
 # on filesquid-desktop, and later the browser-host adapter.
 Feature: One client for every FileSquid host
