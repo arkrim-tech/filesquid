@@ -1,9 +1,11 @@
 //! Bounded directory walks for filesystem listings and hierarchy audits.
 //!
-//! One walker visits every entry below a start directory without following
+//! One walker visits the entries below a start directory without following
 //! links, within [`MAX_WALK_DEPTH`] and [`MAX_WALK_ENTRIES`]. A [`Visitor`]
-//! decides what each entry means and which names to skip: the listing skips
-//! the backend's reserved names and keeps regular files, the audit (see
+//! decides what each entry means, which names to skip and which entries to
+//! prune ([`Visitor::prunes`]; a pruned directory's subtree is never read):
+//! the listing skips the backend's reserved names, prunes every entry and
+//! subtree its prefix cannot match and keeps regular files; the audit (see
 //! `audit.rs`) sees every entry and refuses anything that is not a plain file.
 
 use std::fs::{self, DirEntry, FileType};
@@ -27,12 +29,13 @@ pub(super) trait Visitor {
         false
     }
 
-    /// Whether to leave out the entry whose storage key is `key`, after
-    /// [`Visitor::skips`] kept its name. A pruned directory is not entered.
+    /// Whether to leave out the entry whose storage key is `key` (a
+    /// directory when `is_dir`), after [`Visitor::skips`] kept its name. A
+    /// pruned directory is not entered, so nothing in its subtree is read.
     /// Pruned entries still count toward the entry bound. Prunes nothing by
     /// default.
-    fn prunes(&self, key: &str) -> bool {
-        let _ = key;
+    fn prunes(&self, key: &str, is_dir: bool) -> bool {
+        let _ = (key, is_dir);
         false
     }
 
@@ -78,10 +81,17 @@ impl Visitor for KeyCollector {
     }
 
     /// Prune an entry when no key at or below it can start with the
-    /// prefix: its key neither starts with the prefix nor is a leading part
-    /// of it.
-    fn prunes(&self, key: &str) -> bool {
-        !(key.starts_with(&self.prefix) || self.prefix.starts_with(key))
+    /// prefix. A file is kept only when its key starts with the prefix. A
+    /// directory is entered only when the keys inside it (`<key>/...`) can:
+    /// `<key>/` starts with the prefix, or the prefix continues below it
+    /// (the prefix starts with `<key>/`). A directory whose name is only a
+    /// leading part of a prefix segment (`0=oc` for `0=ocfl_`) is pruned.
+    fn prunes(&self, key: &str, is_dir: bool) -> bool {
+        if !is_dir {
+            return !key.starts_with(&self.prefix);
+        }
+        let inside = format!("{key}/");
+        !(inside.starts_with(&self.prefix) || self.prefix.starts_with(&inside))
     }
 
     /// Keep a regular file's key. Symbolic links, FIFOs, sockets and devices
@@ -118,8 +128,9 @@ pub(super) fn walk_keys(
     Ok(collector.keys)
 }
 
-/// Visit every entry under `start` (whose key prefix is `key_prefix`) with
-/// `visitor`, skipping the names [`Visitor::skips`] names. A missing
+/// Visit the entries under `start` (whose key prefix is `key_prefix`) with
+/// `visitor`, skipping the names [`Visitor::skips`] names and the entries,
+/// with their whole subtrees, that [`Visitor::prunes`] prunes. A missing
 /// start, or one that is a file, visits nothing. Bounded by
 /// [`MAX_WALK_DEPTH`] and [`MAX_WALK_ENTRIES`]; links to directories are not
 /// followed.
@@ -209,10 +220,10 @@ fn visit_entry(
         return Ok(());
     }
     let key = format!("{}{name}", parent.key_prefix);
-    if visitor.prunes(&key) {
+    let file_type = entry.file_type().map_err(|e| io_error(&key, e))?;
+    if visitor.prunes(&key, file_type.is_dir()) {
         return Ok(());
     }
-    let file_type = entry.file_type().map_err(|e| io_error(&key, e))?;
     if !file_type.is_dir() {
         return visitor.entry(entry, key, file_type);
     }

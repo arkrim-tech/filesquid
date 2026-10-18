@@ -466,6 +466,30 @@ Feature: Inspection and copy never edit a completed object
    ✔  And "export/b.txt" should be unchanged
 ```
 
+## Review round 2 (Cubic)
+
+Cubic's review of `595a1b8` raised four findings, all fixed:
+
+- **Partial-name directories (P2).** `KeyCollector::prunes` entered a directory whose key was only a leading part of the prefix (`0=oc` for `0=ocfl_`). `Visitor::prunes` now receives whether the entry is a directory; a directory is entered only when `<key>/` starts with the prefix or the prefix starts with `<key>/`, and a file is kept only when its key starts with the prefix. New test `fs_prefix_listing_skips_a_partial_name_sibling` puts an entry the walk refuses (a name that is not UTF-8) inside `0=oc/`; before the fix the `0=ocfl_` listing entered it:
+
+  ```text
+  test fs_prefix_listing_skips_a_partial_name_sibling ... FAILED
+  list: InvalidKey { key: "not-utf8-�", reason: "a key must be valid UTF-8" }
+  ```
+
+- **Filesystem bound in the README (P2).** The crate README and the `copy_guard.rs` module doc now say what the listing reads: the directory's entries, plus any subdirectory whose name starts with `0=ocfl_`; every other subtree is pruned unread.
+- **Depth bound in the README (P3).** The README names both `StorageError::LimitExceeded` refusals: a key deeper than 64 levels (`MAX_DESTINATION_DEPTH`) and a directory with more than 1,000 keys under the declaration prefix.
+- **Walk docs (P3).** The `walk.rs` module doc and the `walk` rustdoc say that a visitor can prune entries and their subtrees through `Visitor::prunes`.
+
+After the fix:
+
+```text
+running 2 tests
+test fs_prefix_listing_skips_a_partial_name_sibling ... ok
+test fs_prefix_listing_skips_unrelated_subtrees ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 46 filtered out; finished in 0.05s
+```
+
 ## SRS traceability
 
 | Requirement | Tests |
@@ -481,7 +505,7 @@ Feature: Inspection and copy never edit a completed object
 | OCFL-S-019 a root declared for any OCFL version is refused | `a_copy_under_an_unknown_version_declaration_is_refused` (`0=ocfl_object_2.0`, `0=ocfl_2.0`) |
 | OCFL-S-019 a copy outside OCFL roots still works | `a_logical_file_copies_into_another_key`, `a_copy_into_a_storage_root_is_refused` (to another backend), `a_copy_beside_a_declaration_lookalike_succeeds`; BDD "A logical file copies out to another backend" (the copy is stored at its destination only) |
 | OCFL-S-019 a copy never changes the source object | BDD step "the source object should be byte-identical to before the copy" (every key of the object, after the happy path and after each refusal) |
-| OCFL-S-007 a prefix listing reads only what the prefix can match | `integration_fs_conformance`: `fs_prefix_listing_skips_unrelated_subtrees` |
+| OCFL-S-007 a prefix listing reads only what the prefix can match | `integration_fs_conformance`: `fs_prefix_listing_skips_unrelated_subtrees`, `fs_prefix_listing_skips_a_partial_name_sibling` |
 | OCFL-S-003 caller-supplied logical files, no FileSquid application-layer type | every write test builds drafts from `VersionDraft` and bytes only; BDD "Core API is generic OCFL 1.1" now scans all of `src/` |
 | OCFL-S-011 fixtures pinned, unchanged, test data only | BDD "Community fixtures are pinned test data only"; no file under `tests/fixtures/` changed |
 | OCFL-S-007 no direct I/O in the engine; wasm32 build | `unit_source_scan` (covers the new `src/read/copy_guard.rs`); BDD "Engine builds for the browser" |

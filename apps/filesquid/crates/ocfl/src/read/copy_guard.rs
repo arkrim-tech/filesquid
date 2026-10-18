@@ -15,9 +15,10 @@
 //!
 //! Each directory is asked for its declarations with one listing of the
 //! keys that start with `<dir>/0=ocfl_`, at most [`MAX_LIST_PAGE`] keys.
-//! Backends list only what such a prefix can match (the filesystem backend
-//! reads one directory and enters no unrelated subdirectory), so the check
-//! never walks a whole root.
+//! Backends list only what such a prefix can match: the filesystem backend
+//! reads that directory's entries and enters only subdirectories whose
+//! names start with `0=ocfl_`, pruning every other subtree unread, so the
+//! check never walks a whole root.
 
 use super::error::ReadError;
 use crate::storage::{StorageBackend, StorageError, StorageKey, MAX_LIST_PAGE};
