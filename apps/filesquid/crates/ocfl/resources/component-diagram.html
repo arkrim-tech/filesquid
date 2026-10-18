@@ -81,7 +81,7 @@ code{font-size:13px}
 </ul>
 <h2>Inside the engine</h2>
 <figure>
-<svg class="diagram" viewBox="0 0 1320 690" role="img" aria-label="filesquid-ocfl internals: callers use a Rust API that today wraps a Git guard, the inventory model (SHA-256 digests, inventory, sidecar and NAMASTE types) the read resolver, the validator and logical-file helpers over the async storage backend trait (local filesystem and in-memory backends built); the core still to come adds the change model, version publisher and enumerator over one async storage backend trait with an S3 backend still planned."><defs><marker id="o1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+<svg class="diagram" viewBox="0 0 1320 690" role="img" aria-label="filesquid-ocfl internals: callers use a Rust API that today wraps a Git guard, the inventory model (SHA-256 digests, inventory, sidecar and NAMASTE types) the read resolver, the validator, the version publisher and logical-file helpers over the async storage backend trait (local filesystem and in-memory backends built); the core still to come adds the change model and enumerator over one async storage backend trait with an S3 backend still planned."><defs><marker id="o1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
 <rect class="panel" x="270" y="20" width="790" height="620" rx="10"/><text class="ptitle" x="290" y="47">filesquid-ocfl · Rust library</text><text class="psub" x="1040" y="47" text-anchor="end">OCFL 1.1 · MIT · extractable</text>
 <text class="small" x="20" y="62" text-anchor="start">Callers</text>
 <g class="box actor"><rect x="20" y="80" width="220" height="52" rx="6"/>
@@ -191,14 +191,14 @@ code{font-size:13px}
 </g>
 <polyline class="edge planned-edge" points="405,422 405,460" marker-end="url(#o1)"/>
 <text class="elabel" x="413" y="446" text-anchor="start">commit</text>
-<g class="box planned">
+<g class="box built">
 <rect x="290" y="460" width="230" height="52" rx="6"/>
-<text class="badge" x="512" y="475" text-anchor="end">PLANNED</text>
+<text class="badge" x="512" y="475" text-anchor="end">BUILT</text>
 <text class="name" x="300" y="481">Version publisher</text>
 <text class="sub" x="300" y="499">reserve vN · root inventory last · CAS</text>
 </g>
-<text class="note" x="540" y="491" text-anchor="start">One write path: the API, the CLI and the</text>
-<text class="note" x="540" y="507" text-anchor="start">view API's file operations all commit here.</text>
+<text class="note" x="540" y="491" text-anchor="start">One write path: callers commit here today; the planned</text>
+<text class="note" x="540" y="507" text-anchor="start">change model, CLI and view API will commit through it.</text>
 <g class="box built">
 <rect x="290" y="560" width="750" height="52" rx="6"/>
 <text class="badge" x="1032" y="575" text-anchor="end">BUILT</text>
@@ -237,11 +237,11 @@ code{font-size:13px}
 <polyline class="edge planned-edge" points="1040,586 1068,586 1068,506 1090,506" marker-end="url(#o1)"/>
 <polyline class="edge planned-edge" points="1068,576 1090,576" marker-end="url(#o1)"/>
 <polyline class="edge planned-edge" points="1068,586 1068,646 1090,646" marker-end="url(#o1)"/></svg>
-<figcaption>Callers reach the engine only through its Rust API (and later its CLI). Today that API is the Git guard, the inventory model (SHA-256 and SHA-512 digests, a strict inventory parser with OCFL 1.1 validation codes, digest sidecars and NAMASTE declarations), the read resolver (storage-root and object open, pinned logical state, digest-checked streams, history and diff), the validator (each broken rule it reaches as a finding with its OCFL 1.1 code, one inventory checked up to its first broken rule; md5, sha1, sha256, sha512 and blake2b-512 fixity), the async storage-backend trait with its built local filesystem (<code>FsBackend</code>) and in-memory (<code>MemoryBackend</code>) backends, and two logical-file helpers that go through <code>FsBackend</code>; filesquid-metadata stores <code>metadata.md</code> through the backend. The rest of the core is inventory-driven: the change model, version publisher and enumerator will all work through that trait (an S3-compatible backend is planned), so the same code runs natively in <code>filesquid-desktop</code> and <code>filesquid-server</code> and, later, as WebAssembly in the E2EE browser host. Every write, from the library API, the CLI or the view API that <code>filesquid-api</code> routes, goes through the change model, which computes the delta by digest and commits it through the version publisher. The validator passes the pinned community fixture suite: every good and warning object with zero errors, every bad object rejected.</figcaption>
+<figcaption>Callers reach the engine only through its Rust API (and later its CLI). Today that API is the Git guard, the inventory model (SHA-256 and SHA-512 digests, a strict inventory parser with OCFL 1.1 validation codes, digest sidecars and NAMASTE declarations), the read resolver (storage-root and object open, pinned logical state, digest-checked streams, history and diff), the validator (each broken rule it reaches as a finding with its OCFL 1.1 code, one inventory checked up to its first broken rule; md5, sha1, sha256, sha512 and blake2b-512 fixity), the version publisher (a fenced lease reserves <code>vN</code> before any of its bytes; content, version inventory, root inventory and root sidecar last; an incomplete <code>vN</code> stays unpublished), the async storage-backend trait with its built local filesystem (<code>FsBackend</code>) and in-memory (<code>MemoryBackend</code>) backends, and two logical-file helpers that go through <code>FsBackend</code>; filesquid-metadata stores <code>metadata.md</code> through the backend. The rest of the core is inventory-driven: the change model and enumerator will work through that trait, as the version publisher does (an S3-compatible backend is planned), so the same code runs natively in <code>filesquid-desktop</code> and <code>filesquid-server</code> and, later, as WebAssembly in the E2EE browser host. Today callers write through the version publisher (<code>ObjectWriter::commit</code>) directly. Once the change model lands (IO-0.10), every write, from the library API, the CLI or the view API that <code>filesquid-api</code> routes, will go through it, computing the delta by digest and committing through the version publisher. The validator passes the pinned community fixture suite: every good and warning object with zero errors, every bad object rejected.</figcaption>
 </figure>
 <h2>Change, commit and read</h2>
 <figure>
-<svg class="diagram" viewBox="0 0 1320 510" role="img" aria-label="OCFL change, commit and read sequence: the change model takes a working state, computes the delta by digest and shows status and diff before commit; commit reserves the version, write content, write the version inventory, then write the root inventory last, which publishes the version; reads go from the root inventory through the pinned version state and manifest to a verified content stream."><defs><marker id="o2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+<svg class="diagram" viewBox="0 0 1320 510" role="img" aria-label="OCFL change, commit and read sequence: the change model takes a working state, computes the delta by digest and shows status and diff before commit; commit (built) reserves the version, writes content, writes the version inventory, then writes the root inventory and its sidecar last, which publishes the version, while the change model is still planned; reads go from the root inventory through the pinned version state and manifest to a verified content stream."><defs><marker id="o2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
 <text class="small" x="40" y="36" text-anchor="start">Change · Task 0.4 · planned</text>
 <g class="box planned">
 <rect x="40" y="48" width="190" height="52" rx="6"/>
@@ -268,34 +268,34 @@ code{font-size:13px}
 <polyline class="edge planned-edge" points="670,74 700,74" marker-end="url(#o2)"/>
 <text class="note" x="40" y="132" text-anchor="start">Only bytes not already in the manifest are written. Renames, deletes, reinstatements and reverts change the new version's state only; earlier versions are never touched.</text>
 <g transform="translate(0,150)">
-<text class="small" x="40" y="36" text-anchor="start">Commit · Task 0.4 · planned</text>
-<g class="box planned">
+<text class="small" x="40" y="36" text-anchor="start">Commit · IO-0.6 · built</text>
+<g class="box built">
 <rect x="40" y="48" width="190" height="52" rx="6"/>
 
 <text class="name" x="50" y="69">1 · Reserve vN</text>
 <text class="sub" x="50" y="87">lease, or fenced S3 reservation</text>
 </g>
-<g class="box planned">
+<g class="box built">
 <rect x="260" y="48" width="190" height="52" rx="6"/>
 
 <text class="name" x="270" y="69">2 · Write content</text>
 <text class="sub" x="270" y="87">vN/content/ · opaque bytes</text>
 </g>
-<polyline class="edge planned-edge" points="230,74 260,74" marker-end="url(#o2)"/>
-<g class="box planned">
+<polyline class="edge" points="230,74 260,74" marker-end="url(#o2)"/>
+<g class="box built">
 <rect x="480" y="48" width="190" height="52" rx="6"/>
 
 <text class="name" x="490" y="69">3 · Version inventory</text>
 <text class="sub" x="490" y="87">vN/inventory.json + sidecar</text>
 </g>
-<polyline class="edge planned-edge" points="450,74 480,74" marker-end="url(#o2)"/>
-<g class="box planned">
+<polyline class="edge" points="450,74 480,74" marker-end="url(#o2)"/>
+<g class="box built">
 <rect x="700" y="48" width="190" height="52" rx="6"/>
 
 <text class="name" x="710" y="69">4 · Root inventory</text>
-<text class="sub" x="710" y="87">written last · head CAS</text>
+<text class="sub" x="710" y="87">CAS, then root sidecar last</text>
 </g>
-<polyline class="edge planned-edge" points="670,74 700,74" marker-end="url(#o2)"/>
+<polyline class="edge" points="670,74 700,74" marker-end="url(#o2)"/>
 <line class="slot" x1="905" y1="40" x2="905" y2="110"/>
 <text class="elabel" x="913" y="66" text-anchor="start">publish point</text>
 <text class="sub" x="913" y="82" text-anchor="start">head = vN</text>
@@ -360,8 +360,9 @@ code{font-size:13px}
 <tr><td>Inventory model, NAMASTE, sidecars, SHA-256 (<code>Inventory::parse</code>, <code>DigestAlgorithm</code>, <code>verify_sidecar</code>, <code>Declaration</code>)</td><td><span class="tag built">BUILT</span></td><td><a href="./plan.md">IO-0.3</a></td><td>0.3</td><td>OCFL-S-002; writes sha256, reads sha256 and sha512; strict parsing of untrusted bytes (64 MiB, nesting 8, no repeated keys) with OCFL 1.1 codes; every target including wasm32</td></tr>
 <tr><td>Read and browse (<code>StorageRoot::open</code>, <code>Object::open</code>, <code>Object::state</code>, <code>Object::stream_file</code>, <code>Object::copy_file</code>, <code>Object::history</code>, <code>Object::diff</code>)</td><td><span class="tag built">BUILT</span></td><td><a href="./plan.md">IO-0.4</a></td><td>0.3</td><td>OCFL-S-004, OCFL-S-010 (a); caller-pinned versions through <code>state</code> and <code>manifest</code>; guards run on open; versions above the root head unpublished; E092 on a digest mismatch; every target including wasm32</td></tr>
 <tr><td>Structural validation (<code>validate_object</code>) and fixture conformance in the local pre-commit hook</td><td><span class="tag built">BUILT</span></td><td><a href="./plan.md">IO-0.5</a></td><td>0.3</td><td>OCFL-S-009, -011; OCFL 1.1 codes for every finding; only the root inventory commits (E046); fixtures pinned at d323fc2 and committed as test data</td></tr>
-<tr><td>Version publisher (root inventory last, head CAS)</td><td><span class="tag planned">PLANNED</span></td><td><a href="./plan.md">IO-0.6</a></td><td>0.4</td><td>OCFL-S-004</td></tr>
-<tr><td>Generic payloads and opaque bytes</td><td><span class="tag planned">PLANNED</span></td><td><a href="./plan.md">IO-0.7, IO-0.8</a></td><td>0.4</td><td>OCFL-S-003, -010</td></tr>
+<tr><td>Version publisher (<code>ObjectWriter::commit</code>, <code>VersionReservations</code>, <code>LeaseStore</code>)</td><td><span class="tag built">BUILT</span></td><td><a href="./plan.md">IO-0.6</a></td><td>0.4</td><td>OCFL-S-018, OCFL-S-004; <code>vN</code> reserved by a fenced lease before any of its bytes; content, version inventory, then root inventory (CAS) and root sidecar last; stale holders refused; unpublished <code>vN</code> reconciled; every target including wasm32</td></tr>
+<tr><td>Generic object payload (caller-supplied logical files through <code>ObjectWriter</code>; copies refused inside OCFL roots) and content-fixture write conformance</td><td><span class="tag built">BUILT</span></td><td><a href="./plan.md">IO-0.7</a></td><td>0.4</td><td>OCFL-S-003, OCFL-S-010 (b), OCFL-S-019; every pinned <code>1.1/content</code> fixture written one version per directory, zero errors in the engine and, when installed, in <code>ocfl-py</code> and <code>rocfl</code> (test oracles only)</td></tr>
+<tr><td>Opaque bytes; dual profile is a caller</td><td><span class="tag planned">PLANNED</span></td><td><a href="./plan.md">IO-0.8</a></td><td>0.4</td><td>OCFL-S-003</td></tr>
 <tr><td>Forward-delta change model (delta by digest; stage, status, diff, commit, log, checkout, revert, reinstate)</td><td><span class="tag planned">PLANNED</span></td><td><a href="./plan.md">IO-0.10</a></td><td>0.4</td><td>OCFL-S-014, -015, -016</td></tr>
 <tr><td>Logical-state enumerator</td><td><span class="tag planned">PLANNED</span></td><td><a href="./plan.md">IO-0.9</a></td><td>0.4</td><td>OCFL-S-004</td></tr>
 <tr><td>Independent recovery fixtures</td><td><span class="tag planned">PLANNED</span></td><td><a href="./plan.md">IO-1.1</a></td><td>1.1</td><td>OCFL-S-001</td></tr>

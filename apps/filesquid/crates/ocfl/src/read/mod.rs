@@ -17,7 +17,9 @@
 //!   its [`LogicalFile`]s carry the object id, version, logical path, digest
 //!   and content path that T-039 names.
 //! - [`Object::stream_file`] and [`Object::copy_file`]: read one logical file
-//!   in bounded chunks and check it against its inventory digest (E092).
+//!   in bounded chunks and check it against its inventory digest (E092). A
+//!   copy refuses a destination inside an OCFL object root or storage root,
+//!   so inspection and copy never edit an object (OCFL-S-019).
 //! - [`Object::history`] / [`version_history`] and [`Object::diff`] /
 //!   [`diff_versions`]: version history and the diff of two versions.
 //!
@@ -25,6 +27,8 @@
 //! [`crate::validate`]. A reader checks what it needs to return correct
 //! bytes and refuses with the OCFL 1.1 code of the rule it meets broken.
 
+pub(crate) mod committed;
+mod copy_guard;
 pub(crate) mod declaration;
 mod error;
 mod history;

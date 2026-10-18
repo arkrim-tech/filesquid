@@ -114,6 +114,20 @@ path = "tests/integration/fixture_conformance.rs"
 required-features = ["fs"]
 
 [[test]]
+name = "unit_lease"
+path = "tests/unit/lease.rs"
+
+[[test]]
+name = "integration_write_order"
+path = "tests/integration/write_order.rs"
+required-features = ["fs"]
+
+[[test]]
+name = "integration_content_fixtures"
+path = "tests/integration/content_fixtures.rs"
+required-features = ["fs"]
+
+[[test]]
 name = "features"
 path = "tests/features.rs"
 harness = false

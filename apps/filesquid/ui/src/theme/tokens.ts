@@ -3,7 +3,7 @@
  * A distribution MUST define every token for light and dark, and its colour tokens MUST
  * meet WCAG 2.2 AA on their surfaces in both themes (ADR 031, SRS-UI-007).
  */
-import { AA_TEXT_CONTRAST, contrastRatio, parseHexColour } from "./contrast";
+import { AA_TEXT_CONTRAST, NON_TEXT_CONTRAST, contrastRatio, parseHexColour } from "./contrast";
 
 /** Tokens every distribution MUST define. */
 export const REQUIRED_TOKENS = [
@@ -29,13 +29,14 @@ export const REQUIRED_TOKENS = [
   "--fs-space-4",
   "--fs-space-5",
   "--fs-radius",
+  "--fs-motion-duration",
 ] as const;
 
 /** One required token name. */
 export type TokenName = (typeof REQUIRED_TOKENS)[number];
 
 /**
- * Tokens that do not change between themes (fonts, type sizes, spacing, radius), so only the
+ * Tokens that do not change between themes (fonts, type sizes, spacing, radius, motion), so only the
  * light block must declare them. Every other required token is a colour and MUST be declared
  * in both themes.
  */
@@ -52,6 +53,7 @@ export const THEME_INDEPENDENT_TOKENS: readonly TokenName[] = [
   "--fs-space-4",
   "--fs-space-5",
   "--fs-radius",
+  "--fs-motion-duration",
 ];
 
 /** The colour tokens: every required token that changes between themes. */
@@ -84,6 +86,16 @@ export const CONTRAST_PAIRS: readonly (readonly [TokenName, TokenName])[] = [
   ["--fs-on-primary-container", "--fs-primary-container"],
   ["--fs-error", "--fs-surface"],
   ["--fs-error", "--fs-surface-container"],
+];
+
+/**
+ * Pairs the focus ring is drawn on (UI-S-016): the `--fs-primary` outline against the page, the
+ * sidebar and a selected item. Each MUST reach {@link NON_TEXT_CONTRAST} in both themes.
+ */
+export const FOCUS_CONTRAST_PAIRS: readonly (readonly [TokenName, TokenName])[] = [
+  ["--fs-primary", "--fs-surface"],
+  ["--fs-primary", "--fs-surface-container"],
+  ["--fs-primary", "--fs-primary-container"],
 ];
 
 /** A token pair below AA in one theme; `ratio` is undefined when a colour cannot be read. */
@@ -168,21 +180,36 @@ export function invalidColourTokens(css: string): InvalidColourToken[] {
   );
 }
 
-/** Check every contrast pair against the values of one theme. */
+/** Check text pairs at 4.5:1 and focus pairs at 3:1 against the values of one theme. */
 function themeFailures(
   theme: ContrastFailure["theme"],
   values: Record<string, string>,
 ): ContrastFailure[] {
-  return CONTRAST_PAIRS.flatMap(([foreground, background]) => {
+  return [
+    ...pairFailures(theme, values, CONTRAST_PAIRS, AA_TEXT_CONTRAST),
+    ...pairFailures(theme, values, FOCUS_CONTRAST_PAIRS, NON_TEXT_CONTRAST),
+  ];
+}
+
+/** Check each pair against `minimum` with the values of one theme. */
+function pairFailures(
+  theme: ContrastFailure["theme"],
+  values: Record<string, string>,
+  pairs: readonly (readonly [TokenName, TokenName])[],
+  minimum: number,
+): ContrastFailure[] {
+  return pairs.flatMap(([foreground, background]) => {
     const ratio = contrastRatio(values[foreground] ?? "", values[background] ?? "");
-    if (ratio !== undefined && ratio >= AA_TEXT_CONTRAST) return [];
+    if (ratio !== undefined && ratio >= minimum) return [];
     const rounded = ratio === undefined ? undefined : Math.round(ratio * 100) / 100;
     return [{ theme, foreground, background, ratio: rounded }];
   });
 }
 
 /**
- * Return every contrast pair below WCAG 2.2 AA in the light or dark theme of a stylesheet.
+ * Return every contrast pair below WCAG 2.2 AA in the light or dark theme of a stylesheet:
+ * text pairs ({@link CONTRAST_PAIRS}) below 4.5:1 and focus-ring pairs
+ * ({@link FOCUS_CONTRAST_PAIRS}) below 3:1.
  * Colour tokens MUST be `#rgb` or `#rrggbb`; any other value is reported with an undefined ratio.
  *
  * @param css Token stylesheet text.

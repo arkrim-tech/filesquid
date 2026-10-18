@@ -28,6 +28,7 @@
   --fs-space-4: 16px;
   --fs-space-5: 24px;
   --fs-radius: 10px;
+  --fs-motion-duration: 150ms;
   color-scheme: light;
 }
 

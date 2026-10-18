@@ -8,12 +8,14 @@
 import "../theme/tokens.css";
 import labels from "../theme/labels.en.json";
 import {
+  applyLocale,
   bindMonitorRoute,
   createHostClient,
   createThemeStore,
   defineElements,
   detectHost,
   memoryTokenStore,
+  resolveLocale,
   type Distribution,
   type FsAppShell,
 } from "../index";
@@ -26,6 +28,7 @@ const filesquid: Distribution = {
   labels,
 };
 
+applyLocale(document, resolveLocale(filesquid));
 const theme = createThemeStore(window);
 theme.start();
 defineElements();

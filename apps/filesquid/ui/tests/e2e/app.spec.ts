@@ -72,6 +72,12 @@ test("design tokens switch between light and dark", async ({ page }) => {
   expect(await background()).toBe("rgb(255, 255, 255)");
   await page.emulateMedia({ colorScheme: "dark" });
   expect(await background()).toBe("rgb(20, 20, 20)");
+  // Wait until the theme store has handled the OS change, so its listener cannot run after
+  // (and undo) the explicit data-theme set below.
+  await expect(page.locator("fs-app-shell fs-theme-control")).toHaveAttribute(
+    "data-resolved",
+    "dark",
+  );
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
   expect(await background()).toBe("rgb(255, 255, 255)");
 });

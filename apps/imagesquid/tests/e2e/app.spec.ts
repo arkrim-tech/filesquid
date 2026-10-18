@@ -149,3 +149,45 @@ test("ImageSquid reaches the FileSquid Monitor with its own vocabulary", async (
   );
   expect(errors).toEqual([]);
 });
+
+for (const scheme of ["light", "dark"] as const) {
+  test(`ImageSquid inherits the keyboard, naming and focus contracts in ${scheme} (UI-S-016)`, async ({
+    page,
+  }) => {
+    const errors = trackErrors(page);
+    await page.addInitScript((value) => {
+      Object.defineProperty(window, "__FILESQUID_LAUNCH_TOKEN__", { value, enumerable: false });
+    }, ADMIN_TOKEN);
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.goto("/");
+    const shell = page.locator("fs-app-shell");
+    await expect(shell.getByRole("navigation", { name: "Main navigation" })).toBeVisible();
+    await expect(shell.getByRole("heading", { level: 1 })).toHaveText("ImageSquid");
+    const ring = `solid 2px ${await token(page, "--fs-primary")}`;
+    const seen: string[] = [];
+    for (let step = 0; step < 3; step += 1) {
+      await page.keyboard.press("Tab");
+      seen.push(
+        await page.evaluate(() => {
+          let active = document.activeElement;
+          while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+          const ringOn = active?.closest("label") ?? active;
+          const style = ringOn ? getComputedStyle(ringOn) : undefined;
+          const text = ringOn?.textContent?.trim() ?? "";
+          return `${text} | ${style?.outlineStyle} ${style?.outlineWidth} ${style?.outlineColor}`;
+        }),
+      );
+    }
+    expect(seen).toEqual([
+      `Skip to main content | ${ring}`,
+      `System | ${ring}`,
+      `Monitor | ${ring}`,
+    ]);
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(/#\/monitor$/);
+    await expect(
+      page.locator("fs-monitor").getByRole("table", { name: "Processes" }),
+    ).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+}

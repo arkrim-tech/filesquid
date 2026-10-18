@@ -1,9 +1,17 @@
 /**
  * Hash routing shared by every distribution until the full navigation model (FS-2.1):
  * `#/monitor` shows the Monitor dashboard inside the shell; any other hash shows the shell
- * alone. Also provides the in-memory token store used on the server host.
+ * alone. After a route change focus moves to the shell's main area (UI-S-016), so keyboard and
+ * screen-reader users land on the new content instead of on a link that may have been removed.
+ * Also provides the in-memory token store used on the server host.
  */
 import type { MonitorOptions, TokenStore } from "../components/fs-monitor";
+
+/** An element the routed views are mounted in; the app shell also offers `focusMain`. */
+export type RouteHost = HTMLElement & {
+  /** Move focus to the host's main area (`<fs-app-shell>` implements it). */
+  focusMain?: () => void;
+};
 
 /** Hash of the Monitor route. */
 export const MONITOR_ROUTE = "#/monitor";
@@ -33,7 +41,9 @@ export function memoryTokenStore(onSet?: () => void): TokenStore {
 
 /**
  * Show or hide an `<fs-monitor>` child of `shell` to match the current hash, now and on
- * every `hashchange`. Side effect: adds a window listener and mutates the shell's children.
+ * every `hashchange`. After a `hashchange` (not on the first apply) focus moves to the shell's
+ * main area when it offers `focusMain`. Side effect: adds a window listener, mutates the shell's
+ * children and moves focus.
  *
  * @param shell Element the Monitor is slotted into (the app shell).
  * @param options Monitor configuration.
@@ -41,14 +51,17 @@ export function memoryTokenStore(onSet?: () => void): TokenStore {
  * @returns A function that removes the listener.
  */
 export function bindMonitorRoute(
-  shell: HTMLElement,
+  shell: RouteHost,
   options: MonitorOptions,
   win: Window = window,
 ): () => void {
-  const apply = () => applyMonitorRoute(shell, options, win.location.hash);
-  apply();
-  win.addEventListener("hashchange", apply);
-  return () => win.removeEventListener("hashchange", apply);
+  applyMonitorRoute(shell, options, win.location.hash);
+  const onChange = () => {
+    applyMonitorRoute(shell, options, win.location.hash);
+    shell.focusMain?.();
+  };
+  win.addEventListener("hashchange", onChange);
+  return () => win.removeEventListener("hashchange", onChange);
 }
 
 /** Mount the Monitor when `hash` is the Monitor route, otherwise remove it. */

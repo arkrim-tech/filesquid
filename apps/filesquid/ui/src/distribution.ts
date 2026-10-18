@@ -4,6 +4,7 @@
  */
 import type { LabelTable } from "./theme/labels";
 import type { ResolvedTheme } from "./theme/theme-store";
+import type { Locale } from "./a11y/locale";
 
 /** A distribution's logo, with an optional variant for dark surfaces. */
 export interface DistributionLogo {
@@ -25,6 +26,11 @@ export interface Distribution {
   logo: DistributionLogo;
   /** Visible nouns keyed by internal names. */
   labels: LabelTable;
+  /**
+   * Language and writing direction of the label table, applied to the page's root element
+   * with `applyLocale`. Optional; English, left to right when absent (UI-S-016).
+   */
+  locale?: Locale;
 }
 
 /**
