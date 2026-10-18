@@ -200,6 +200,7 @@ pub fn navigation_allowed(url: &Url) -> bool {
     }
     tracing::warn!(
         operation = NAVIGATION_OPERATION,
+        outcome = "failed",
         error_code = "foreign_origin",
         "app webview kept from leaving the app's origins"
     );

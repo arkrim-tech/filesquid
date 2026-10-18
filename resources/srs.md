@@ -598,6 +598,7 @@ The system MUST implement [PRD F-037](./prd.md#f-037-setup-updates-and-diagnosti
 - [`setup_updates_and_diagnostics_F-037.feature`](../apps/filesquid/ui/tests/features/setup_updates_and_diagnostics_F-037.feature)
 - [`shared_health_status_CORE-S-004.feature`](../apps/filesquid/crates/core/tests/features/shared_health_status_CORE-S-004.feature)
 - [`desktop_capabilities_F-037.feature`](../apps/filesquid/crates/desktop/tests/features/desktop_capabilities_F-037.feature)
+- [`desktop_refusals_F-061.feature`](../apps/filesquid/crates/desktop/tests/features/desktop_refusals_F-061.feature) (every desktop shell refusal journaled)
 
 ### SRS-F-038: Open interfaces and product exit
 
@@ -1166,6 +1167,7 @@ The system MUST implement [PRD F-061](./prd.md#f-061-activity-journal-and-live-h
 **Tests**
 - [`activity_journal_and_live_health_monitoring_F-061.feature`](../apps/filesquid/crates/api/tests/features/activity_journal_and_live_health_monitoring_F-061.feature) (scenarios; step definitions, unit, load and redaction tests come with Task FS-2.4)
 - [`native_journal_store_F-061.feature`](../apps/filesquid/crates/native/tests/features/native_journal_store_F-061.feature) (SQLite journal store and data-directory checks)
+- [`desktop_refusals_F-061.feature`](../apps/filesquid/crates/desktop/tests/features/desktop_refusals_F-061.feature) (desktop shell refusals: IPC, navigation, new windows, permissions, downloads)
 
 ### SRS-F-062: Drive-style views, sorting, selection and layout preferences
 
@@ -1516,7 +1518,7 @@ The FileSquid default UI has no screenshot yet; [SRS-F-055](#srs-f-055-default-u
 | F-034 | SRS-F-034 | `../apps/filesquid/ui/tests/features/family_accounts_and_shared_libraries_F-034.feature` |
 | F-035 | SRS-F-035 | `../apps/filesquid/crates/server/tests/features/optional_service_extensions_F-035.feature` |
 | F-036 | SRS-F-036 | `../apps/filesquid/ui/tests/features/browser_and_mobileweb_experience_F-036.feature` |
-| F-037 | SRS-F-037 | `../apps/filesquid/ui/tests/features/setup_updates_and_diagnostics_F-037.feature`, `../apps/filesquid/crates/core/tests/features/shared_health_status_CORE-S-004.feature`, `../apps/filesquid/crates/desktop/tests/features/desktop_capabilities_F-037.feature` |
+| F-037 | SRS-F-037 | `../apps/filesquid/ui/tests/features/setup_updates_and_diagnostics_F-037.feature`, `../apps/filesquid/crates/core/tests/features/shared_health_status_CORE-S-004.feature`, `../apps/filesquid/crates/desktop/tests/features/desktop_capabilities_F-037.feature`, `../apps/filesquid/crates/desktop/tests/features/desktop_refusals_F-061.feature` |
 | F-038 | SRS-F-038 | `../apps/filesquid/crates/server/tests/features/open_interfaces_and_product_exit_F-038.feature`, `../apps/filesquid/crates/core/tests/features/command_query_ports_F-038.feature` |
 | F-039 | SRS-F-039 | `../apps/filesquid/ui/tests/features/consent_notifications_and_activity_privacy_F-039.feature` |
 | F-040 | SRS-F-040 | `../apps/filesquid/crates/server/tests/features/compatibility_and_parity_register_F-040.feature`, `../apps/filesquid/crates/core/tests/features/capability_register_F-040.feature` |
@@ -1540,7 +1542,7 @@ The FileSquid default UI has no screenshot yet; [SRS-F-055](#srs-f-055-default-u
 | F-058 | SRS-F-058 | `../apps/filesquid/ui/tests/features/theme_tokens_SRS-UI-007.feature`, `../apps/filesquid/ui/tests/features/product_component_terminology_and_item_type_F-049.feature`, `../apps/filesquid/ui/tests/features/composable_filesquid_ui_F-055.feature` (dedicated feature file not yet written) |
 | F-059 | SRS-F-059 | `../apps/filesquid/crates/server/tests/features/client_encryption_and_key_custody_F-029.feature`, `../apps/filesquid/crates/server/tests/features/endpoint_processing_and_hosted_encryption_TC-002.feature`, `../apps/filesquid/ui/tests/features/personal_synchronization_and_availability_F-030.feature`, `../apps/filesquid/ui/tests/features/encrypted_backup_and_verified_restore_F-031.feature` |
 | F-060 | SRS-F-060 | `../apps/filesquid/crates/ocfl/tests/features/reusable_ocfl_engine_F-051.feature`, `../apps/filesquid/crates/core/tests/features/job_checkpoint_protocol_NFR-003.feature` (dedicated feature file not yet written) |
-| F-061 | SRS-F-061 | `../apps/filesquid/crates/api/tests/features/activity_journal_and_live_health_monitoring_F-061.feature`, `../apps/filesquid/crates/native/tests/features/native_journal_store_F-061.feature` |
+| F-061 | SRS-F-061 | `../apps/filesquid/crates/api/tests/features/activity_journal_and_live_health_monitoring_F-061.feature`, `../apps/filesquid/crates/native/tests/features/native_journal_store_F-061.feature`, `../apps/filesquid/crates/desktop/tests/features/desktop_refusals_F-061.feature` |
 | F-062 | SRS-F-062 | `../apps/filesquid/ui/tests/features/drive_style_views_and_preferences_F-062.feature` (scenarios only; step definitions pending) |
 | F-063 | SRS-F-063 | `../apps/filesquid/crates/api/tests/features/file_search_query_language_F-063.feature` (scenarios only; step definitions pending) |
 | F-064 | SRS-F-064 | `../apps/filesquid/crates/api/tests/features/file_activity_and_comments_F-064.feature` (scenarios only; step definitions pending) |

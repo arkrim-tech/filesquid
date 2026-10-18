@@ -1,5 +1,6 @@
 //! Cucumber harness for the `filesquid-desktop` Gherkin under `tests/features/` (F-057 and
-//! F-056: DE-S-001, DE-S-005; F-037: DE-S-001, DE-S-002, DE-S-006). Needs the `test-webdriver`
+//! F-056: DE-S-001, DE-S-005; F-037: DE-S-001, DE-S-002, DE-S-006; F-061: DE-S-002, DE-S-003).
+//! Needs the `test-webdriver`
 //! feature for the 100 MB test file.
 //! Writes a JUnit report to `tests/allure-results/`, cleared before each run.
 
@@ -9,12 +10,16 @@ use filesquid_api::events::{topic, EVENT_BUFFER};
 use filesquid_api::journal::JournalEntry;
 use filesquid_api::{ApiEvent, ApiState, EventSubscription};
 use filesquid_desktop_lib::api_protocol::{handle, into_scheme_response};
+use filesquid_desktop_lib::app_window::{
+    refuse_new_window, refuse_permission, screen_download_request,
+};
 use filesquid_desktop_lib::capability_policy::{
     check_capability, check_command_placement, Violation, APP_COMMANDS, GRANTED_PERMISSIONS,
 };
 use filesquid_desktop_lib::event_channel::{
     navigation_allowed, open_subscription, pump, EventSink, Forwarding,
 };
+use filesquid_desktop_lib::ipc_gate::{decide, handle as ipc_handle, Gate, Reply, RESPONSE_HEADER};
 use filesquid_desktop_lib::test_fixture::{fixture_byte, FIXTURE_LEN, FIXTURE_PATH};
 use filesquid_desktop_lib::{install_launch_token, open_host_monitor};
 use filesquid_native::HostMonitor;
@@ -41,6 +46,10 @@ mod capability_inputs;
 #[path = "support/policy.rs"]
 mod policy_support;
 
+#[allow(dead_code)]
+#[path = "support/mock_app.rs"]
+mod mock_app;
+
 /// State shared by the steps of one scenario.
 #[derive(Debug, Default, World)]
 struct DesktopWorld {
@@ -57,6 +66,10 @@ struct DesktopWorld {
     launched: Option<Launched>,
     capabilities: Vec<serde_json::Value>,
     violations: Vec<Violation>,
+    forwarded: Option<bool>,
+    ipc_reply: Option<http::Response<Vec<u8>>>,
+    invoke_keys: Vec<String>,
+    download_allowed: Option<bool>,
 }
 
 /// The host monitor opened by the real launch path, in a scratch data directory that is
@@ -321,6 +334,138 @@ fn journal_records(world: &mut DesktopWorld, operation: String) {
         .expect("journaled");
     let text = serde_json::to_string(entry).expect("json");
     assert!(!text.contains("example.com"), "{text}");
+}
+
+/// A payload with a private path and title, which must never be journaled.
+const PRIVATE_PAYLOAD: &str =
+    r#"{"path":"/home/owner/Private/holiday.jpg","title":"Secret Title"}"#;
+
+impl DesktopWorld {
+    /// Send one IPC request for `cmd` through the host's gate on a mock-runtime app, as a page
+    /// that holds the invoke key (`forged` false) or not, and keep the answer and the journal.
+    fn invoke_through_gate(&mut self, cmd: &str, body: &str, forged: bool) {
+        let (app, _window) = mock_app::mock_app();
+        let real = app.invoke_key().to_string();
+        let presented = if forged {
+            "forged-key-789".to_string()
+        } else {
+            real.clone()
+        };
+        let slot = Arc::new(Mutex::new(None));
+        let filler = slot.clone();
+        let reply: Reply = Box::new(move |response| {
+            *filler.lock().expect("reply slot") = Some(response);
+        });
+        let request = mock_app::ipc_request(cmd, &presented, body);
+        self.journal = journal::journaled(|| ipc_handle(app.handle(), "main", request, reply));
+        self.ipc_reply = slot.lock().expect("reply slot").take();
+        self.invoke_keys = vec![real, presented];
+    }
+}
+
+#[when("an app page asks to listen for FileSquid events with the invoke key")]
+fn listen_with_key(world: &mut DesktopWorld) {
+    let request = mock_app::ipc_request("plugin:event|listen", "key-1", "{}");
+    world.forwarded = Some(matches!(decide(&request, "key-1"), Gate::Forward(_)));
+    let body = r#"{"event":"filesquid-event","target":{"kind":"Any"},"handler":3}"#;
+    world.invoke_through_gate("plugin:event|listen", body, false);
+}
+
+#[then("the host should hand the call to Tauri")]
+fn handed_to_tauri(world: &mut DesktopWorld) {
+    assert_eq!(world.forwarded, Some(true));
+}
+
+#[when(expr = "an app page invokes {string} with a private path in its payload")]
+fn invoke_refused(world: &mut DesktopWorld, command: String) {
+    world.invoke_through_gate(&command, PRIVATE_PAYLOAD, false);
+}
+
+#[when(expr = "a page invokes {string} with a forged invoke key")]
+fn invoke_forged(world: &mut DesktopWorld, command: String) {
+    world.invoke_through_gate(&command, PRIVATE_PAYLOAD, true);
+}
+
+#[given("a window whose capabilities grant nothing")]
+fn window_granting_nothing(_world: &mut DesktopWorld) {
+    // The mock context of `mock_app` has no capability, so Tauri refuses every command.
+}
+
+#[then("the page should be told the command is not allowed")]
+fn told_not_allowed(world: &mut DesktopWorld) {
+    let reply = world.ipc_reply.as_ref().expect("an answer");
+    assert_eq!(reply.headers()[RESPONSE_HEADER], "error");
+    let message: String = serde_json::from_slice(reply.body()).expect("JSON string");
+    assert!(message.contains("not allowed"), "{message}");
+}
+
+/// The single journaled IPC refusal.
+fn ipc_refusal(world: &DesktopWorld) -> &JournalEntry {
+    let found: Vec<&JournalEntry> = world
+        .journal
+        .iter()
+        .filter(|e| e.operation == "desktop.ipc.refused")
+        .collect();
+    assert_eq!(found.len(), 1, "{:?}", world.journal);
+    found[0]
+}
+
+#[then(expr = "the activity journal should record the IPC refusal {string} for {string}")]
+fn ipc_refusal_for(world: &mut DesktopWorld, code: String, command: String) {
+    let entry = ipc_refusal(world);
+    assert_eq!(entry.error_code.as_deref(), Some(code.as_str()));
+    assert_eq!(entry.target_ids, vec![command]);
+    assert_eq!(entry.actor, "webview:main");
+}
+
+#[then("no journal entry should contain the payload or the invoke key")]
+fn no_payload_or_key(world: &mut DesktopWorld) {
+    let text = serde_json::to_string(&world.journal).expect("json");
+    let mut secrets = vec!["/home/owner", "holiday", "Secret Title"];
+    secrets.extend(world.invoke_keys.iter().map(String::as_str));
+    for secret in secrets {
+        assert!(!text.contains(secret), "{secret} leaked into {text}");
+    }
+}
+
+#[when("a page asks to open a new window")]
+fn open_new_window(world: &mut DesktopWorld) {
+    world.journal = journal::journaled(|| refuse_new_window("main"));
+}
+
+#[when("a page asks for the camera")]
+fn ask_for_camera(world: &mut DesktopWorld) {
+    world.journal =
+        journal::journaled(|| refuse_permission("main", &tauri::webview::PermissionKind::Camera));
+}
+
+#[when(expr = "a page starts a download from {string}")]
+fn start_download(world: &mut DesktopWorld, address: String) {
+    let url = tauri::Url::parse(&address).expect("url");
+    let mut allowed = None;
+    world.journal = journal::journaled(|| allowed = Some(screen_download_request("main", &url)));
+    world.download_allowed = allowed;
+}
+
+#[then("the download should be refused")]
+fn download_refused(world: &mut DesktopWorld) {
+    assert_eq!(world.download_allowed, Some(false));
+}
+
+#[then(expr = "the activity journal should record {string} with the code {string}")]
+fn journal_records_code(world: &mut DesktopWorld, operation: String, code: String) {
+    let entry = world
+        .journal
+        .iter()
+        .find(|e| e.operation == operation)
+        .unwrap_or_else(|| panic!("{operation} not journaled: {:?}", world.journal));
+    assert_eq!(entry.error_code.as_deref(), Some(code.as_str()));
+}
+
+#[then(expr = "no journal entry should contain {string}")]
+fn journal_lacks(world: &mut DesktopWorld, needle: String) {
+    let text = serde_json::to_string(&world.journal).expect("json");
+    assert!(!text.contains(&needle), "{text}");
 }
 
 /// The crate's shipped capability files, read from `capabilities/` and its subdirectories as
