@@ -101,7 +101,7 @@ C-056 and ADR 035 move these after the MVP, or no MVP task delivers them. v2 dra
 | Favorites, Tags view, Manage tags, `tag:` and `is:favorite` operators | Favorites and keyword views come with CL-1.4 in phase I1. `dcterms:subject` can still be edited in the Metadata panel. |
 | Virtual collections, virtual exhibits | F-006 rules are in phase I1; virtual exhibits (UI-F2.13) follow the MVP. |
 | People chip, `owner:` and the other server-only operators | One owner on the desktop; server operators need sharing records. `sharedwith:` is shown as unsupported in mockup 21. |
-| Signing, embedding and "Scan collection" in Content Credentials | C2PA signing and embedding move to Task FS-3.12; collection scans follow the MVP. The MVP records an unsigned import-time record. |
+| Signing, embedding and "Scan collection" in Content Credentials | C2PA signing and embedding move to Task FS-3.12; collection scans follow the MVP. The MVP records an unsigned import-time record. Since [ADR 037](../../architecture/037-c2pa-in-release-2.md) the MVP has no C2PA at all: the Content Credentials panel (mockup 30) and its sidebar tab are release-2 designs, and the MVP sidebar shows Details, Versions and Metadata only. |
 | Managed or referenced storage choice, default library, watched folders | The MVP imports by copying into the library (F-002 managed import). Referenced storage and watched folders have no MVP task. |
 | Permanent delete and retention expiry | The MVP offers remove and restore only; nothing in the API deletes history. |
 | Hover card, start-view setting, help button | Optional hover card skipped; the start view chooses between Home and the personal library, neither of which exists on the MVP desktop; no help surface is planned. |

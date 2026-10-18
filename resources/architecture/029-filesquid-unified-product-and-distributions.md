@@ -12,6 +12,8 @@ Accepted
 
 Accepted: 2026-10-15. Supersedes the "stand-alone product" and "own repository" parts of [ADR 023](./023-filesquid-ocfl-engine-and-parquet.md), [ADR 024](./024-filesquid-metadata-engine.md) and [ADR 026](./026-filesquid-provenance-engine.md). Amends [ADR 001](./001-shared-rust-core-with-tauri-and-axum-hosts.md) and [ADR 013](./013-cargo-svelte-workspaces.md).
 
+Amended: 2026-10-18 by [ADR 037](./037-c2pa-in-release-2.md): the first consumer release ships the `ocfl` and `metadata` modules; the `c2pa` module ships with the ImageSquid release.
+
 ## Context / Requirement Reference
 
 Until now this repository delivered ImageSquid, a photo and video manager. Three engines (`filesquid-ocfl`, `filesquid-metadata`, `filesquid-provenance`) were separate products that ImageSquid called, each meant to move to its own repository ([ADR 023](./023-filesquid-ocfl-engine-and-parquet.md), [ADR 024](./024-filesquid-metadata-engine.md), [ADR 026](./026-filesquid-provenance-engine.md)). A generic FileSquid product was planned for after ImageSquid 1.0.

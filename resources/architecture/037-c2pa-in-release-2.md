@@ -1,0 +1,63 @@
+# Architecture Decision Record - FileSquid
+
+037-c2pa-in-release-2.md
+
+## Title
+
+C2PA leaves the FileSquid MVP and release 1 and ships with release 2
+
+## Status
+
+Accepted
+
+Accepted: 2026-10-18. Amends [ADR 035](./035-macos-first-desktop-mvp.md) (the MVP scope it cites from [C-056](../product-vision.md#release-sequence)) and the release-1 module set of [ADR 029](./029-filesquid-unified-product-and-distributions.md) ([C-025](../product-vision.md#release-sequence)). Does not change [ADR 026](./026-filesquid-provenance-engine.md): the `filesquid-c2pa` engine, its design and its isolation rules stay as decided; only its delivery moves.
+
+## Context / Requirement Reference
+
+- Requirements: [C-056](../product-vision.md#release-sequence) (FileSquid MVP scope), [C-025](../product-vision.md#release-sequence) (release sequence), [PRD F-043](../prd.md#f-043-import-time-c2pa-records-and-action-disclosure), [PRD F-054](../prd.md#f-054-c2pa-module), [PRD RC-009](../prd.md#rc-009-source-evidence-and-c2pa-lifecycle) and the [release order and dependency gates](../prd.md#release-order-and-dependency-gates).
+- Until this decision the MVP carried C2PA read, validation and an unsigned import-time record, with the Content Credentials routes and panel; release 1 added signing, embedding, edits, scans and the published crate. That is about 118 planned hours inside the MVP (global Tasks 0.17 and 0.18, API-F1.5, UI-F2.5) and 86 more in release 1 (Tasks FS-3.12 and 2.6, CP-F3.1). The `filesquid-c2pa` engine is written from scratch ([ADR 026](./026-filesquid-provenance-engine.md)), so it carries specification, signature, certificate-chain and oracle risk on the MVP's critical path.
+- The owner decided on 2026-10-18 to reach the MVP sooner: basic file management on top of OCFL is the MVP's story, and the C2PA narrative comes later, in release 2 (the ImageSquid release).
+
+## Decision
+
+1. **No C2PA in the MVP.** The MVP ([C-056](../product-vision.md#release-sequence)) ships no C2PA read, validation or import-time record, no Content Credentials routes and no Content Credentials panel. No MVP host and no MVP build of `filesquid-api` links `filesquid-c2pa`.
+2. **No C2PA in release 1.** The first consumer release ships the `ocfl` and `metadata` modules. C2PA signing, embedding, edits, scans and the published `filesquid-c2pa` crate move with the rest of the module.
+3. **C2PA ships with release 2.** The whole `c2pa` module, its API routes, the Content Credentials panel and the RC-009 evidence ship with the ImageSquid release, as FileSquid features behind the API ([ADR 029](./029-filesquid-unified-product-and-distributions.md)). The implementation plan collects them in phase C (Content Credentials), which precedes phase I1 and closes with a Content Credentials gate.
+4. **Records for files imported earlier.** When the `c2pa` module is enabled for a library, FileSquid MUST give every file imported before then an initial record through a resumable backfill job. That record states its own creation time and cites the OCFL version (`created` time and SHA-256 digest) as the import evidence; it MUST NOT claim FileSquid import time ([F-043](../prd.md#f-043-import-time-c2pa-records-and-action-disclosure)). From then on every import initialises its record at import time, as F-043 requires.
+5. **Work already done stays.** CP-0.1 and CP-0.2 (crate foundation and manifest-store parsing) and the `filesquid-core` C2PA and PROV-O record types (CO-0.8) remain in the repository and in the workspace test run. The remaining C2PA rows MAY start after the MVP gate and MAY run beside release-1 work, but MUST NOT delay the MVP gate or the release-1 gate.
+
+## Rationale
+
+- The MVP's purpose is to show durable, recoverable, versioned file management on OCFL. C2PA adds a second, complex story that the first users do not need to judge that.
+- Taking the from-scratch C2PA engine off the critical path removes its specification and cryptography risk from the MVP and from release 1.
+- The panel-slot architecture ([ADR 031](./031-vanilla-typescript-ui-and-white-label-theming.md)) and the one-owner rule for file facts ([C-055](../product-vision.md#module-rules)) let the Content Credentials panel and routes join later without changing the browser, the other panels or the OCFL layout.
+- C2PA's strongest audience is photo and media work, which is what the ImageSquid release delivers.
+- Not linking `filesquid-c2pa` shrinks the MVP DMG's linked inventory, and with it the [ADR 011](./011-native-media-adapters-and-ffmpeg-license.md) licence review on the MVP path.
+
+## Assumptions
+
+- OCFL version metadata (`created`, digests, `user`, `message`) is enough evidence to give files imported before the module shipped honest initial records without back-dating them.
+- MVP and release-1 users do not need Content Credentials to judge FileSquid's file management.
+- No regulatory or partner commitment requires C2PA in the MVP or release 1.
+
+## Alternatives Considered
+
+- **Keep read, validate and unsigned import records in the MVP (ADR 035 scope).** Rejected by the owner: it keeps the C2PA engine on the MVP critical path.
+- **Move C2PA to release 1 only.** Rejected by the owner: release 2 is where the C2PA narrative belongs, and release 1 then stays focused on the server host, sharing and installers.
+- **Keep only unsigned import records in the MVP, without the engine's read and validate.** Rejected: the records still need the manifest builder (CP-0.6), which depends on the parser and validation work, so it saves little.
+- **Drop the backfill and start records only at the next import.** Rejected: files imported before release 2 would have no record at all, which contradicts F-043's every-file intent.
+
+## Consequences / Implications
+
+- Easier: the MVP critical path loses Tasks 0.17 and 0.18 and the credential routes and panel; MVP estimates fall from about 856 to 738 hours, of which 26 removed hours were already done.
+- Easier: release 1 loses 86 hours and its RC-009 gate.
+- Harder: release 2 carries more work (phase C, about 216 hours) and a backfill job whose records must be clearly distinguishable from import-time records.
+- Harder: until release 2, a library has no Content Credentials. The MVP and release-1 privacy and feature statements MUST NOT claim C2PA, and the F-040 register lists Content Credentials as unsupported until the phase C gate.
+- The Phase F3 MVP gate and the release-1 gate no longer demonstrate RC-009; the Content Credentials gate (Task FS-C.3) does.
+- The pre-existing inconsistency where an MVP row (API-F1.5) depended on a post-MVP signing row (CP-0.7) disappears, because both now sit in phase C.
+- The owner-maintained "Current milestone" in [pr-review-loop.md](../../.agents/rules/pr-review-loop.md) names phases F0 to F3 as its scope, so phase C tasks fall outside the current milestone without any change to that section.
+
+## Related Decisions / Notes
+
+- [ADR 015](./015-prov-o-jsonld-and-c2pa-sdk.md) (PROV-O and C2PA records), [ADR 026](./026-filesquid-provenance-engine.md) (the C2PA engine), [ADR 029](./029-filesquid-unified-product-and-distributions.md) (release order), [ADR 031](./031-vanilla-typescript-ui-and-white-label-theming.md) (panel slots), [ADR 035](./035-macos-first-desktop-mvp.md) (MVP scope), [ADR 011](./011-native-media-adapters-and-ffmpeg-license.md) (installer licence review).
+- Open: the owner MAY pull phase C earlier (for example beside release 1) once the MVP has shipped; that changes only the implementation plan.

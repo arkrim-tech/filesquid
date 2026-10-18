@@ -12,6 +12,8 @@ Accepted
 
 Accepted: 2026-10-17. Amends [ADR 002](./002-tauri2-desktop-shell.md), [ADR 006](./006-libvips-native-stills-not-imagemagick.md) (its Linux-first profile statement only; libvips workers stay in the MVP), [ADR 013](./013-cargo-svelte-workspaces.md) and [ADR 020](./020-distribution-web-and-tauri.md) where they name Linux desktop as the first target. Does not change the release order of [ADR 029](./029-filesquid-unified-product-and-distributions.md); it inserts an early-access MVP before the first consumer release.
 
+Amended: 2026-10-18 by [ADR 037](./037-c2pa-in-release-2.md), which removes C2PA (read, validation, unsigned import-time records, the Content Credentials routes and panel) from the MVP scope this record cites from C-056.
+
 ## Context / Requirement Reference
 
 - Requirements: [C-056](../product-vision.md#release-sequence) (FileSquid MVP scope), [C-025](../product-vision.md#release-sequence) (release sequence), [FE-017](../product-vision.md#cross-platform-access), [FE-075](../product-vision.md#platform-api-and-hosts), [U-34](../product-vision.md#one-api-hosts-and-distributions), [T-011](../product-vision.md#technical-requirements); [PRD F-057](../prd.md#f-057-desktop-and-server-hosts) and the [release order and dependency gates](../prd.md#release-order-and-dependency-gates).

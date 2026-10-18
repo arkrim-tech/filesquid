@@ -37,7 +37,7 @@ Commands run inside `apps/filesquid/ui/` (Vite dev `127.0.0.1:5173`, preview `41
   - **Related Tests:** `tests/e2e/` Playwright suite (planned)
   - **Agent Prompt:** `@AGENTS.md Begin by creating a new feature branch for Task UI-0.6. Then begin development, executing all commands strictly within apps/filesquid/ui/. Additionally, invoke the @feature-writer skill to translate SRS requirements into executable BDD feature tests. Upon completion, YOU MUST generate apps/filesquid/ui/resources/tasks/Task-UI-0.6-Walkthrough.md directly in the project repository with clear SRS mapping (including BOTH the ID and full human-readable title text) in the secondary section, and strictly delete the internal tracking Plan/ToDos documents before checking off the Markdown box locally in apps/filesquid/ui/resources/plan.md, and the matching boxes in the repository-root resources/implementation-plan-checklist.md. Then commit your changes and push the branch to origin.`
 
-## Phase F2: Default UI (global Tasks FS-2.1, FS-2.2, FS-2.4, FS-2.5, 1.1, 1.2; after the MVP: UI-F2.6 in global Task FS-2.3, UI-F2.10 and UI-F2.12 in global Task FS-2.7, UI-F2.13 in global Task FS-2.6)
+## Phase F2: Default UI (global Tasks FS-2.1, FS-2.2, FS-2.4, FS-2.5, 1.1, 1.2; after the MVP: UI-F2.6 in global Task FS-2.3, UI-F2.10 and UI-F2.12 in global Task FS-2.7, UI-F2.13 in global Task FS-2.6; UI-F2.5 in global Task FS-C.1, phase C)
 
 - [ ] **Task UI-0.1: Host adapter (HTTP vs custom URI scheme)**
   - **Status:** Moved from the ImageSquid plan (former `apps/frontend`) to `@filesquid/ui` because it is generic shell, host-adapter, token or file-management work.
@@ -99,6 +99,7 @@ Commands run inside `apps/filesquid/ui/` (Vite dev `127.0.0.1:5173`, preview `41
   - **Agent Prompt:** `@AGENTS.md Begin by creating a new feature branch for Task UI-F2.4. Then begin development, executing all commands strictly within apps/filesquid/ui/. Write Playwright UI tests against vite build plus vite preview with strict DOM assertions (custom element defined, labels from the active label table, computed token values in light and dark, no console errors). Additionally, invoke the @feature-writer skill to translate SRS requirements into executable BDD feature tests. Upon completion, YOU MUST generate apps/filesquid/ui/resources/tasks/Task-UI-F2.4-Walkthrough.md directly in the project repository with clear SRS mapping (including BOTH the ID and full human-readable title text) in the secondary section, and strictly delete the internal tracking Plan/ToDos documents before checking off the Markdown box locally in apps/filesquid/ui/resources/plan.md, and the matching boxes in the repository-root resources/implementation-plan-checklist.md. Then commit your changes and push the branch to origin.`
 
 - [ ] **Task UI-F2.5: `<fs-credentials-panel>`**
+  - **Status:** Moved out of the MVP (global Task FS-2.2) to global Task FS-C.1 in phase C, release 2, by [ADR 037](../../../../resources/architecture/037-c2pa-in-release-2.md). The MVP sidebar ships without it; the panel joins its slot later without changes to the other panels.
   - **Description:** Content Credentials panel for a selected file: active manifest, signer, assertions, ingredients and validation status codes, with unsigned, signed, invalid and unavailable states distinct; C2PA is not presented as EU AI Act certification. Over the API's credentials routes. Replaces the superseded `@filesquid/provenance-ui` package (CP-0.8).
   - **Estimated Time:** 12 hours
   - **Dependencies:** UI-F2.2, API-F1.5
@@ -329,4 +330,4 @@ FileSquid's default UI stays a Drive-style file manager. These rows present the 
 ## Summary Timeline
 
 - **Total Estimated Time:** see each task
-- **Critical Path:** client and shell → white-label contract → host adapter, tokens and accessibility → navigation and states → file browser → Details, Versions, Metadata and Content Credentials panels → views, search, Activity and Sharing panels → users and groups → library lifecycle and import → performance → protection UI → browser host → media capabilities in the default UI
+- **Critical Path:** client and shell → white-label contract → host adapter, tokens and accessibility → navigation and states → file browser → Details, Versions and Metadata panels → views, search, Activity and Sharing panels → users and groups → library lifecycle and import → performance → protection UI → Content Credentials panel (phase C) → browser host → media capabilities in the default UI
