@@ -72,6 +72,10 @@ name = "unit_admin"
 path = "tests/unit/admin.rs"
 
 [[test]]
+name = "unit_host"
+path = "tests/unit/host.rs"
+
+[[test]]
 name = "unit_isolation"
 path = "tests/unit/isolation.rs"
 

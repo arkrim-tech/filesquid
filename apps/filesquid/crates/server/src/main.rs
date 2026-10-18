@@ -2,7 +2,8 @@
 //!
 //! Reads `FILESQUID_BIND` (default `127.0.0.1:8083`), `FILESQUID_UI_DIR` (optional built
 //! distribution UI), `FILESQUID_DATA_DIR` (default `./filesquid-data`; operational store and
-//! admin token) and `FILESQUID_ADMIN_TOKEN` (optional). Every API call needs the administrator
+//! admin token), `FILESQUID_ADMIN_TOKEN` (optional) and `FILESQUID_OPERATOR_NAME` (optional; the
+//! operator's name in the host descriptor). Every API call needs the administrator
 //! token (deny-by-default, API-S-004). Logs JSON to stdout only; activity is recorded in the
 //! activity journal (ADR 033).
 

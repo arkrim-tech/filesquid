@@ -21,6 +21,7 @@ pub const KEYWORDS: &[&str] = &[
     "items",
     "maximum",
     "minimum",
+    "maxLength",
     "minLength",
     "properties",
     "required",
@@ -236,7 +237,12 @@ fn check_bounds(value: &Value, schema: &Value, at: &str) -> Result<(), String> {
         .and_then(Value::as_u64)
         .zip(value.as_str())
         .is_some_and(|(min, s)| (s.chars().count() as u64) < min);
-    if below || above || short {
+    let long = schema
+        .get("maxLength")
+        .and_then(Value::as_u64)
+        .zip(value.as_str())
+        .is_some_and(|(max, s)| (s.chars().count() as u64) > max);
+    if below || above || short || long {
         return Err(format!("{at}: {value} is outside the documented bounds"));
     }
     Ok(())

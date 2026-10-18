@@ -24,16 +24,25 @@ use axum::response::Response;
 use axum::routing::{get, MethodRouter};
 use axum::Router;
 use filesquid_api::auth::{self, Action, Authoriser, Guard, Principal, EVENTS_SUBPROTOCOL};
+use filesquid_api::host::{HostIdentity, NotEnrolled, OperatorName};
+use filesquid_api::journal::{JournalEntry, Level, Outcome};
 use filesquid_api::trace_layer::JournalLayer;
 use filesquid_api::{ApiError, ApiState, ErrorCode, API_PREFIX};
 use filesquid_native::HostMonitor;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::sync::broadcast::error::RecvError;
 use tower_http::services::{ServeDir, ServeFile};
 
 /// Default listen address: loopback only, so a fresh install is not exposed on the network.
 pub const DEFAULT_BIND: &str = "127.0.0.1:8083";
+
+/// Environment variable that names the server's operator in the host descriptor (API-S-020).
+pub const OPERATOR_NAME_VARIABLE: &str = "FILESQUID_OPERATOR_NAME";
+
+/// Journal operation of the warning written at every start without an operator name.
+pub const OPERATOR_UNNAMED_OPERATION: &str = "server.operator_unnamed";
 
 /// Default data directory (operational store and admin token), relative to the working directory.
 pub const DEFAULT_DATA_DIR: &str = "filesquid-data";
@@ -52,6 +61,9 @@ pub struct ServerConfig {
     /// the token stored in the data dir, or create one there if none exists; other platforms
     /// refuse to start.
     pub admin_token: Option<String>,
+    /// The operator's display name for the host descriptor (`FILESQUID_OPERATOR_NAME`,
+    /// trimmed, 1 to 256 characters, no control characters). `None` when unset or blank.
+    pub operator_name: Option<OperatorName>,
 }
 
 impl std::fmt::Debug for ServerConfig {
@@ -64,6 +76,7 @@ impl std::fmt::Debug for ServerConfig {
                 "admin_token",
                 &self.admin_token.as_ref().map(|_| "[redacted]"),
             )
+            .field("operator_name", &self.operator_name)
             .finish()
     }
 }
@@ -77,6 +90,7 @@ impl Default for ServerConfig {
             ui_dir: None,
             data_dir: PathBuf::from(DEFAULT_DATA_DIR),
             admin_token: None,
+            operator_name: None,
         }
     }
 }
@@ -84,7 +98,9 @@ impl Default for ServerConfig {
 impl ServerConfig {
     /// Build configuration from a variable lookup (for example `std::env::var`).
     ///
-    /// Returns an error message naming the variable when `FILESQUID_BIND` is not `host:port`.
+    /// Returns an error message naming the variable when `FILESQUID_BIND` is not `host:port`,
+    /// or when `FILESQUID_OPERATOR_NAME` is too long or has a control character (the message
+    /// never contains that value).
     pub fn from_lookup(lookup: impl Fn(&str) -> Option<String>) -> Result<Self, String> {
         let bind_text = lookup("FILESQUID_BIND").unwrap_or_else(|| DEFAULT_BIND.to_string());
         let bind = bind_text
@@ -95,12 +111,76 @@ impl ServerConfig {
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(DEFAULT_DATA_DIR));
         let admin_token = lookup("FILESQUID_ADMIN_TOKEN");
+        let operator_name = operator_name_from(lookup(OPERATOR_NAME_VARIABLE))?;
         Ok(Self {
             bind,
             ui_dir,
             data_dir,
             admin_token,
+            operator_name,
         })
+    }
+}
+
+/// Parse the configured `FILESQUID_OPERATOR_NAME`: unset or blank is `None`. Pure.
+///
+/// # Errors
+/// A message that names the variable and the rule broken, never the value.
+fn operator_name_from(configured: Option<String>) -> Result<Option<OperatorName>, String> {
+    let Some(raw) = configured else {
+        return Ok(None);
+    };
+    OperatorName::parse(&raw).map_err(|err| {
+        format!(
+            "{OPERATOR_NAME_VARIABLE} is not usable: {err}; set 1 to 256 characters with no control characters, or leave it unset"
+        )
+    })
+}
+
+/// The journal record of a start without an operator name: operation
+/// [`OPERATOR_UNNAMED_OPERATION`], level warn, the variable's name as target. It holds no
+/// value, token, path or identifier.
+pub fn operator_unnamed_entry() -> JournalEntry {
+    JournalEntry::new(OPERATOR_UNNAMED_OPERATION, Outcome::Info)
+        .level(Level::Warn)
+        .target(OPERATOR_NAME_VARIABLE)
+}
+
+/// Describe this server to the API (API-S-020): host type `server`, the configured operator
+/// name, and not enrolled with the hosted service. Without an operator name, write one
+/// [`OPERATOR_UNNAMED_OPERATION`] warning to stdout and to the activity journal: through
+/// `layer` when it is attached (it MUST then be the layer installed in this process's
+/// subscriber), otherwise straight to `host`'s journal.
+///
+/// # Errors
+/// The API state already describes a host.
+pub fn describe_server_host(
+    config: &ServerConfig,
+    state: &ApiState,
+    host: &HostMonitor,
+    layer: Option<&JournalLayer>,
+) -> Result<(), String> {
+    let identity = HostIdentity::server(config.operator_name.clone());
+    if !state.describe_host(identity, Arc::new(NotEnrolled)) {
+        return Err("the host was already described".to_string());
+    }
+    if config.operator_name.is_none() {
+        warn_operator_unnamed(host, layer.is_some());
+    }
+    Ok(())
+}
+
+/// Write the unnamed-operator warning once to stdout (and, through the journal layer, to the
+/// journal); when no layer journals it, queue [`operator_unnamed_entry`] on the journal.
+fn warn_operator_unnamed(host: &HostMonitor, journaled_by_layer: bool) {
+    tracing::warn!(
+        operation = OPERATOR_UNNAMED_OPERATION,
+        target_id = OPERATOR_NAME_VARIABLE,
+        variable = OPERATOR_NAME_VARIABLE,
+        "{OPERATOR_NAME_VARIABLE} is unset or blank; the host descriptor reports no operator name"
+    );
+    if !journaled_by_layer {
+        host.monitor().journal().send(operator_unnamed_entry());
     }
 }
 
@@ -122,9 +202,9 @@ pub fn install_admin_authoriser(config: &ServerConfig, state: &ApiState) -> Resu
 }
 
 /// Start the server's authorisation and monitor in order: install the administrator
-/// authoriser, open the monitor, then journal `api.auth.token_issued` for the administrator
-/// credential this run accepts, whether it was generated now or loaded (API-S-017).
-/// Performs filesystem and database I/O.
+/// authoriser, open the monitor, journal `api.auth.token_issued` for the administrator
+/// credential this run accepts, whether it was generated now or loaded (API-S-017), then
+/// describe the host ([`describe_server_host`]). Performs filesystem and database I/O.
 pub fn start_server(
     config: &ServerConfig,
     state: &ApiState,
@@ -133,6 +213,10 @@ pub fn start_server(
     install_admin_authoriser(config, state)?;
     let host = start_host_monitor(config, state, layer)?;
     auth::record_token_issue(host.monitor(), &Principal::Administrator);
+    if let Err(message) = describe_server_host(config, state, &host, layer) {
+        host.stop();
+        return Err(message);
+    }
     Ok(host)
 }
 

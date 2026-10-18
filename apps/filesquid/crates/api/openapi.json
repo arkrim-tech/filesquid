@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "FileSquid API",
-    "version": "0.5.0",
+    "version": "0.6.0",
     "description": "The single FileSquid API served by every FileSquid host. See resources/architecture/030-filesquid-api-and-transports.md. Conventions: a command (mutation) sends a CommandEnvelope as the `envelope` member of its JSON request body (operation_id is the idempotency key, expected_revision the revision last read) and answers with a CommandOutcome; a query (list) takes the PageSize (`limit`, 1-1000) and Cursor (`cursor`) parameters; every failed request answers with an ApiError body (code, message, retryable). Router-wide fallbacks: any /api/v1/ path not in this contract answers 404 not_found, and a documented path called with a method it does not document answers 405 method_not_allowed; both carry the ApiError body. They are not listed per operation because no operation sends them. Authorisation is deny-by-default: every operation, including health, the contract and the event channel, requires the bearerAuth credential and is authorised before anything else runs, so a call without it answers 401 unauthorized and a call whose credential is not accepted or does not grant the operation answers 403 forbidden, before any 404 or 405; both carry the ApiError body with a DenialReason in `reason`. Each operation names the authorisation action it performs in x-filesquid-action. The one deliberate exception is GET /api/v1/health/live (x-filesquid-action public, security []), a liveness probe that answers only {\"status\":\"up\"} without a credential. Paths marked x-filesquid-host-route are served by the hosts, not by the filesquid-api router."
   },
   "security": [
@@ -78,6 +78,35 @@
         }
       }
     },
+    "/api/v1/host": {
+      "get": {
+        "operationId": "getHost",
+        "summary": "Host descriptor: host type, operator name and hosted backup and sync state",
+        "description": "Which host this API runs on (host_type, supplied by the host when it starts, never derived from the request), who operates it (operator_name, a server's FILESQUID_OPERATOR_NAME; null on desktop and browser hosts and on an unnamed server) and the state of encrypted backup and sync to the ciphertext-only hosted service (hosted_service; backup and sync are reported separately because they are distinct guarantees). Every caller the host authenticates may read it (action host.read is granted to every accepted credential, not to administrators only); it is never public. A host.change event carries the whole new descriptor whenever a field changes; a client MUST read this route again after events.resync or a reconnect. A successful read is not journaled. The descriptor carries no token, content handle, key or key identifier, account or device identifier, e-mail address, quota, object count, size, timestamp, path or file name.",
+        "x-filesquid-action": "host.read",
+        "responses": {
+          "200": {
+            "description": "The host descriptor.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostDescriptor"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "503": {
+            "$ref": "#/components/responses/HostNotDescribed"
+          }
+        }
+      }
+    },
     "/api/v1/events": {
       "get": {
         "operationId": "subscribeEvents",
@@ -109,6 +138,9 @@
         },
         "events.resync": {
           "$ref": "#/components/schemas/EventResync"
+        },
+        "host.change": {
+          "$ref": "#/components/schemas/HostDescriptor"
         }
       }
     },
@@ -477,9 +509,10 @@
           "process.update",
           "journal.entry",
           "health.change",
-          "events.resync"
+          "events.resync",
+          "host.change"
         ],
-        "description": "Documented event topics: process.update (a process or job changed), journal.entry (an activity journal entry was written), health.change (the health status changed), events.resync (events were missed; reread state)."
+        "description": "Documented event topics: process.update (a process or job changed), journal.entry (an activity journal entry was written), health.change (the health status changed), events.resync (events were missed; reread state), host.change (a host descriptor field changed; the payload is the whole new HostDescriptor; reread GET /api/v1/host after events.resync or a reconnect)."
       },
       "EventResync": {
         "type": "object",
@@ -947,6 +980,78 @@
             "description": "The module error when kind is error, otherwise null."
           }
         }
+      },
+      "HostType": {
+        "type": "string",
+        "enum": [
+          "desktop",
+          "server",
+          "browser"
+        ],
+        "description": "The kind of host the API runs on, supplied by the host itself: desktop (filesquid-desktop), server (filesquid-server, whose operator can read what it stores) or browser (the encrypted browser host)."
+      },
+      "HostedService": {
+        "type": "object",
+        "description": "Encrypted backup and sync to the ciphertext-only hosted service. When enrolled is false, backup_enabled and sync_enabled are false and service_host is null. When enrolled is true, service_host is the service's lowercase DNS host name (no scheme, port, path, user information or query) and backup_enabled and sync_enabled are reported separately.",
+        "required": [
+          "enrolled",
+          "backup_enabled",
+          "sync_enabled",
+          "service_host"
+        ],
+        "properties": {
+          "enrolled": {
+            "type": "boolean"
+          },
+          "backup_enabled": {
+            "type": "boolean"
+          },
+          "sync_enabled": {
+            "type": "boolean"
+          },
+          "service_host": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 253,
+            "description": "Lowercase DNS host name of the hosted service, or null when not enrolled."
+          }
+        },
+        "additionalProperties": false
+      },
+      "HostDescriptor": {
+        "type": "object",
+        "description": "The answer of GET /api/v1/host and the payload of a host.change event.",
+        "required": [
+          "schema_version",
+          "host_type",
+          "operator_name",
+          "hosted_service"
+        ],
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "const": 1
+          },
+          "host_type": {
+            "$ref": "#/components/schemas/HostType"
+          },
+          "operator_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 256,
+            "description": "The server operator's display name (trimmed, 1 to 256 characters, no control characters); null on desktop and browser hosts and on a server without FILESQUID_OPERATOR_NAME."
+          },
+          "hosted_service": {
+            "$ref": "#/components/schemas/HostedService"
+          }
+        },
+        "additionalProperties": false
       }
     },
     "parameters": {
@@ -1014,6 +1119,16 @@
       },
       "Unavailable": {
         "description": "Monitor not started yet (unavailable; retryable).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "HostNotDescribed": {
+        "description": "The host has not described itself yet (unavailable; retryable).",
         "content": {
           "application/json": {
             "schema": {

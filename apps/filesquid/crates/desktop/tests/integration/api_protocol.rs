@@ -10,7 +10,7 @@ use filesquid_desktop_lib::api_protocol::{
 
 #[path = "../support/journal.rs"]
 mod journal;
-use filesquid_desktop_lib::install_launch_token;
+use filesquid_desktop_lib::{describe_desktop_host, install_launch_token};
 use journal::{block_on, journaled};
 
 /// API state with a freshly generated per-launch token installed, as the desktop host does.
@@ -46,6 +46,48 @@ async fn health_is_served_through_the_custom_scheme() {
     assert_eq!(response.status(), http::StatusCode::OK);
     let json: serde_json::Value = serde_json::from_slice(response.body()).expect("json");
     assert_eq!(json["product"], "filesquid");
+}
+
+/// API-S-020: the desktop describes itself as `desktop`, with no operator name and not
+/// enrolled, through the custom scheme, whatever the request claims.
+#[tokio::test]
+async fn the_host_descriptor_is_served_through_the_custom_scheme() {
+    let (state, token) = launched();
+    describe_desktop_host(&state).expect("described");
+    assert!(describe_desktop_host(&state).is_err(), "described once");
+    for uri in [
+        "filesquid://localhost/api/v1/host",
+        "http://filesquid.localhost/api/v1/host",
+    ] {
+        let mut request = get_with(uri, Some("tauri://localhost"), Some(token.secret()));
+        request.headers_mut().insert(
+            http::header::USER_AGENT,
+            "server browser".parse().expect("value"),
+        );
+        let response = handle(state.clone(), request).await;
+        assert_eq!(response.status(), http::StatusCode::OK, "{uri}");
+        let json: serde_json::Value = serde_json::from_slice(response.body()).expect("json");
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "schema_version": 1,
+                "host_type": "desktop",
+                "operator_name": null,
+                "hosted_service": {
+                    "enrolled": false,
+                    "backup_enabled": false,
+                    "sync_enabled": false,
+                    "service_host": null
+                }
+            })
+        );
+    }
+    let anonymous = handle(
+        state,
+        get_with("filesquid://localhost/api/v1/host", None, None),
+    )
+    .await;
+    assert_eq!(anonymous.status(), http::StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]

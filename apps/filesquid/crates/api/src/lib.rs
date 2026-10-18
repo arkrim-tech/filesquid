@@ -12,6 +12,10 @@
 //! subscriptions and resync hints). It holds no transport code of its own, so the same router
 //! answers on every host.
 //!
+//! Each host describes itself once at startup with [`ApiState::describe_host`] (its
+//! [`host::HostType`], a server's operator name and its hosted-service enrolment port), and
+//! `GET /api/v1/host` answers that [`host::HostDescriptor`] to every authenticated caller.
+//!
 //! Every routed operation except the public liveness probe (`GET /api/v1/health/live`) is
 //! authenticated and authorised by the [`auth`] layer before its handler runs. The 404 and 405
 //! fallbacks are authentication-only: they answer only a caller with an accepted credential
@@ -25,6 +29,7 @@ pub mod auth;
 pub mod error;
 pub mod events;
 pub mod health;
+pub mod host;
 pub mod journal;
 pub mod journal_writer;
 pub mod metrics;
@@ -41,7 +46,7 @@ pub use routes::{route_actions, routed_paths, router, Liveness};
 use std::sync::{Arc, OnceLock};
 
 /// Version of the FileSquid API contract. Bumped when the contract changes.
-pub const API_VERSION: &str = "0.5.0";
+pub const API_VERSION: &str = "0.6.0";
 
 /// URL prefix shared by every API route.
 pub const API_PREFIX: &str = "/api/v1";
@@ -61,6 +66,9 @@ pub struct ApiState {
     monitor: Arc<OnceLock<monitor::Monitor>>,
     /// The host's authoriser, installed once at startup (every guarded call is refused until then).
     authoriser: Arc<OnceLock<auth::Authoriser>>,
+    /// The host's description of itself, installed once at startup (`GET /api/v1/host`
+    /// answers 503 until then).
+    host: Arc<OnceLock<host::HostInfo>>,
 }
 
 impl std::fmt::Debug for ApiState {
@@ -68,6 +76,7 @@ impl std::fmt::Debug for ApiState {
         f.debug_struct("ApiState")
             .field("monitor_installed", &self.monitor.get().is_some())
             .field("authoriser_installed", &self.authoriser.get().is_some())
+            .field("host", &self.host.get())
             .finish()
     }
 }
@@ -80,7 +89,26 @@ impl ApiState {
             events: EventBus::new(),
             monitor: Arc::new(OnceLock::new()),
             authoriser: Arc::new(OnceLock::new()),
+            host: Arc::new(OnceLock::new()),
         }
+    }
+
+    /// Describe the host this API runs on (API-S-020): its `identity` (type and, for a server,
+    /// operator name) and the `enrolment` port its hosted-service state comes from. Each host
+    /// calls it once at startup; the API never derives these from a request. Returns false,
+    /// keeping the first description, if the host was already described.
+    pub fn describe_host(
+        &self,
+        identity: host::HostIdentity,
+        enrolment: Arc<dyn host::EnrolmentPort>,
+    ) -> bool {
+        let info = host::HostInfo::new(identity, enrolment, self.events.clone());
+        self.host.set(info).is_ok()
+    }
+
+    /// The described host, if the host has described itself.
+    pub fn host(&self) -> Option<host::HostInfo> {
+        self.host.get().cloned()
     }
 
     /// Install the host's authoriser. Returns false, keeping the first, if one was already

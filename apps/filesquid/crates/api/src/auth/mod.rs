@@ -105,14 +105,16 @@ impl Authoriser {
     }
 
     /// Whether `principal` may perform `action` on `resource`; `not_permitted` otherwise.
-    /// Pure; no I/O.
+    /// An action [granted to every credential](Action::granted_to_every_credential) is
+    /// permitted to every authenticated principal before the policy is consulted. Pure; no I/O.
     pub fn authorise(
         &self,
         principal: &Principal,
         action: Action,
         resource: &Resource,
     ) -> Result<(), DenialReason> {
-        if self.policy.permits(principal, action, resource) {
+        if action.granted_to_every_credential() || self.policy.permits(principal, action, resource)
+        {
             Ok(())
         } else {
             Err(DenialReason::NotPermitted)
