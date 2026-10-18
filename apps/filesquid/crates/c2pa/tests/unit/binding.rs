@@ -33,6 +33,7 @@ fn check(asset: &[u8]) -> BindingReport {
         &store,
         &mut MemorySource::new(asset.to_vec()),
         Some(&layout),
+        &ParseLimits::default(),
         &RustCryptoBackend,
     ))
     .expect("asset readable")
@@ -45,6 +46,7 @@ fn check_sidecar(store: Vec<u8>, asset: &[u8]) -> BindingReport {
         &store,
         &mut MemorySource::new(asset.to_vec()),
         None,
+        &ParseLimits::default(),
         &RustCryptoBackend,
     ))
     .expect("asset readable")
@@ -586,4 +588,98 @@ fn bytes_after_the_last_box_are_covered_by_c2pa_after() {
     let last = asset.len() - 1;
     asset[last] ^= 1;
     assert_eq!(code(&check(&asset)), "assertion.boxesHash.mismatch");
+}
+
+/// A standard manifest whose assertion store holds `assertions` and whose
+/// claim references only `referenced`.
+fn manifest_referencing(label: &str, assertions: &[Vec<u8>], referenced: &[&str]) -> Vec<u8> {
+    manifest(
+        b"c2ma",
+        label,
+        &[
+            assertion_store(assertions),
+            claim_box("c2pa.claim.v2", &encode(&claim_v2(referenced))),
+            signature_box(),
+        ],
+    )
+}
+
+#[test]
+fn a_hard_binding_the_claim_does_not_reference_is_ignored() {
+    let asset = b"asset".to_vec();
+    let good = data_hash_map(&[], &sha256(&asset));
+    let unreferenced = store(&[manifest_referencing(
+        ACTIVE_LABEL,
+        &[
+            cbor_assertion("c2pa.actions.v2", &actions_value()),
+            cbor_assertion("c2pa.hash.data", &good),
+        ],
+        &["c2pa.actions.v2"],
+    )]);
+    assert_eq!(
+        code(&check_sidecar(unreferenced, &asset)),
+        "claim.hardBindings.missing"
+    );
+    // An unreferenced second binding neither counts as a second binding
+    // nor replaces the referenced one.
+    let bad = data_hash_map(&[], &[0; 32]);
+    let extra = store(&[manifest_referencing(
+        ACTIVE_LABEL,
+        &[
+            cbor_assertion("c2pa.hash.data", &good),
+            cbor_assertion("c2pa.hash.data__1", &bad),
+        ],
+        &["c2pa.hash.data"],
+    )]);
+    let report = check_sidecar(extra, &asset);
+    assert_eq!(code(&report), "assertion.dataHash.match");
+    assert_eq!(report.assertion.as_deref(), Some("c2pa.hash.data"));
+}
+
+#[test]
+fn a_parent_ingredient_the_claim_does_not_reference_is_ignored() {
+    let asset = b"asset".to_vec();
+    let std_label = "urn:c2pa:aaaaaaaa-1111-4222-8333-444444444444";
+    let parent = manifest_referencing(
+        std_label,
+        &[cbor_assertion(
+            "c2pa.hash.data",
+            &data_hash_map(&[], &sha256(&asset)),
+        )],
+        &["c2pa.hash.data"],
+    );
+    let update = manifest(
+        b"c2um",
+        ACTIVE_LABEL,
+        &[
+            assertion_store(&[
+                cbor_assertion("c2pa.actions.v2", &actions_value()),
+                cbor_assertion("c2pa.ingredient.v3", &parent_ingredient(std_label)),
+            ]),
+            claim_box("c2pa.claim.v2", &encode(&claim_v2(&["c2pa.actions.v2"]))),
+            signature_box(),
+        ],
+    );
+    let report = check_sidecar(store(&[parent, update]), &asset);
+    assert_eq!(code(&report), "claim.hardBindings.missing");
+}
+
+#[test]
+fn an_unusable_update_manifest_is_not_checked() {
+    let asset = b"asset".to_vec();
+    let std_label = "urn:c2pa:aaaaaaaa-1111-4222-8333-444444444444";
+    let parent = manifest_referencing(
+        std_label,
+        &[cbor_assertion(
+            "c2pa.hash.data",
+            &data_hash_map(&[], &sha256(&asset)),
+        )],
+        &["c2pa.hash.data"],
+    );
+    let broken_update = manifest(b"c2um", ACTIVE_LABEL, &[signature_box()]);
+    let report = check_sidecar(store(&[parent, broken_update]), &asset);
+    assert_eq!(
+        code(&report),
+        "not checked: an update manifest on the way to the hard binding is unusable"
+    );
 }

@@ -31,22 +31,25 @@ pub fn mp4_manifest_store(bytes: &[u8]) -> Result<Option<Vec<u8>>, String> {
         };
         let body = bytes.get(at + 8..end).ok_or("box runs past the end")?;
         if &header[4..] == b"uuid" && body.get(..16) == Some(&C2PA_UUID[..]) {
-            return manifest_payload(&body[16..]).map(Some);
+            if let Some(store) = manifest_payload(&body[16..])? {
+                return Ok(Some(store));
+            }
         }
         at = end;
     }
     Err("too many boxes".into())
 }
 
-/// The store inside a C2PA `uuid` box body after its extended type.
-fn manifest_payload(body: &[u8]) -> Result<Vec<u8>, String> {
+/// The store inside a C2PA `uuid` box body after its extended type, or
+/// `None` when the box has another purpose (such as `merkle`).
+fn manifest_payload(body: &[u8]) -> Result<Option<Vec<u8>>, String> {
     let rest = body.get(4..).ok_or("short FullBox")?;
     let nul = rest
         .iter()
         .position(|b| *b == 0)
         .ok_or("unterminated purpose")?;
     if &rest[..nul] != b"manifest" {
-        return Err("not a manifest purpose".into());
+        return Ok(None);
     }
     let store = rest.get(nul + 1 + 8..).ok_or("short merkle offset")?;
     let declared = store.get(..4).ok_or("short JUMBF header")?;
@@ -57,5 +60,5 @@ fn manifest_payload(body: &[u8]) -> Result<Vec<u8>, String> {
     if padding.iter().any(|b| *b != 0) {
         return Err("non-zero bytes after the manifest store".into());
     }
-    Ok(jumbf.to_vec())
+    Ok(Some(jumbf.to_vec()))
 }

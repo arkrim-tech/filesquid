@@ -57,8 +57,6 @@ struct Tally {
     bindings_agree: usize,
     /// Hard bindings that differ from the corpus as C2PA 2.4 requires.
     bindings_stricter: usize,
-    /// Hard bindings with no corpus verdict to compare.
-    bindings_unrecorded: usize,
     /// Failures, as `file: reason`.
     failures: Vec<String>,
 }
@@ -156,6 +154,7 @@ fn check_file(path: &Path, tally: &mut Tally) {
         &store,
         &mut MemorySource::new(bytes),
         layout.as_ref(),
+        &ParseLimits::default(),
         &RustCryptoBackend,
     ))
     .expect("asset readable");
@@ -174,24 +173,29 @@ fn stricter_reason(path: &Path) -> Option<&'static str> {
 }
 
 /// Compare `report` with the corpus verdict for `path`.
+///
+/// Every binding needs a recorded verdict. A file in
+/// [`STRICTER_THAN_CORPUS`] must be recorded as a match and reported by the
+/// engine as the listed mismatch.
 fn compare(path: &Path, report: &BindingReport, tally: &mut Tally) {
+    let Some(recorded) = recorded_verdict(path) else {
+        let failure = format!("{}: the corpus records no hash verdict", path.display());
+        return tally.failures.push(failure);
+    };
     if let Some(reason) = stricter_reason(path) {
         let expected = BindingStatus::Invalid {
             code: "assertion.dataHash.mismatch",
             reason,
         };
-        match report.status == expected {
+        match recorded && report.status == expected {
             true => tally.bindings_stricter += 1,
-            false => tally
-                .failures
-                .push(format!("{}: expected {expected:?}", path.display())),
+            false => tally.failures.push(format!(
+                "{}: expected a recorded match (corpus match={recorded}) and {expected:?}",
+                path.display()
+            )),
         }
         return;
     }
-    let Some(recorded) = recorded_verdict(path) else {
-        tally.bindings_unrecorded += 1;
-        return;
-    };
     if engine_verdict(report) == Some(recorded) {
         tally.bindings_agree += 1;
     } else {
@@ -221,13 +225,12 @@ fn every_conformance_asset_is_located_parsed_and_binding_checked() {
         check_file(file, &mut tally);
     }
     eprintln!(
-        "conformance parse: {} stores, {} files without a store, {} manifests parsed, {} hard bindings agree with the corpus, {} stricter under C2PA 2.4, {} without a recorded verdict, {} failures",
+        "conformance parse: {} stores, {} files without a store, {} manifests parsed, {} hard bindings agree with the corpus, {} stricter under C2PA 2.4, {} failures",
         tally.stores,
         tally.no_store,
         tally.manifests_ok,
         tally.bindings_agree,
         tally.bindings_stricter,
-        tally.bindings_unrecorded,
         tally.failures.len()
     );
     assert!(tally.stores > 0, "no manifest stores found");

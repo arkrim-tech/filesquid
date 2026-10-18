@@ -14,9 +14,11 @@ use std::ops::Range;
 
 use assets::*;
 use filesquid_c2pa::format::{
-    asset_layout, detect_format, read_store_bytes, AssetFormat, AssetLayout, FormatError,
+    asset_layout, detect_format, read_store_bytes, AssetFormat, AssetLayout, EmbeddedStore,
+    FormatError, FormatHandler, PngHandler,
 };
 use filesquid_c2pa::io::MemorySource;
+use filesquid_c2pa::jumbf::toggles;
 use filesquid_c2pa::manifest::ParseLimits;
 use filesquid_c2pa::read::{read_asset, AssetManifest, ReadError};
 use fixtures::*;
@@ -370,4 +372,127 @@ fn truncated_and_corrupted_assets_never_panic() {
             ));
         }
     }
+}
+
+/// A JPEG whose only APP11 data is the `JP` packet carrying `body`.
+fn jpeg_with_packet(body: &[u8]) -> Vec<u8> {
+    let mut payload = vec![b'J', b'P', 0, 1, 0, 0, 0, 1];
+    payload.extend_from_slice(body);
+    let mut bytes = vec![0xFF, 0xD8];
+    bytes.extend_from_slice(&segment(0xEB, &payload));
+    bytes.extend_from_slice(&[0xFF, 0xD9]);
+    bytes
+}
+
+#[test]
+fn a_c2pa_store_without_the_requestable_and_label_toggles_is_malformed() {
+    // Byte 32 is the store description box's toggles (8-byte `jumb`
+    // header, then `jumd` length, type and 16-byte UUID).
+    let store = sample_store();
+    assert_eq!(store[32] & 0x03, 0x03, "fixture sets both toggles");
+    let mut unrequestable = store.clone();
+    unrequestable[32] &= !toggles::REQUESTABLE;
+    let (bytes, _) = assemble(&jpeg_pieces(app11_segments(&unrequestable, 1, 200)));
+    assert!(matches!(layout(&bytes), Err(FormatError::Malformed { .. })));
+}
+
+#[test]
+fn a_first_packet_cut_inside_a_c2pa_description_box_is_malformed() {
+    // Cut before the end of the type UUID, and after the UUID but inside
+    // the label: neither is passed over as an ordinary APP11 segment.
+    let store = sample_store();
+    for cut in [30usize, 36] {
+        assert!(
+            matches!(
+                layout(&jpeg_with_packet(&store[..cut])),
+                Err(FormatError::Malformed { .. })
+            ),
+            "cut at {cut}"
+        );
+    }
+}
+
+#[test]
+fn a_continuation_packet_must_repeat_the_first_box_header() {
+    let store = sample_store();
+    let mut segments = app11_segments(&store, 1, 400);
+    let first_len = 2 + usize::from(u16::from_be_bytes([segments[2], segments[3]]));
+    // Marker and length (4), JP/En/Z (8), then the repeated LBox.
+    segments[first_len + 4 + 8 + 3] ^= 0x01;
+    let (bytes, _) = assemble(&jpeg_pieces(segments));
+    assert!(matches!(layout(&bytes), Err(FormatError::Malformed { .. })));
+}
+
+#[test]
+fn the_png_handler_checks_the_signature_itself() {
+    let (jpeg, _) = assemble(&jpeg_pieces(app11_segments(&sample_store(), 1, 200)));
+    let direct = block_on(PngHandler.layout(&mut MemorySource::new(jpeg), 10_000));
+    assert!(matches!(
+        direct,
+        Err(FormatError::Malformed { offset: 0, .. })
+    ));
+}
+
+#[test]
+fn an_iend_chunk_with_data_is_malformed() {
+    let mut pieces = png_pieces(chunk(b"caBX", &sample_store()));
+    let last = pieces.len() - 1;
+    pieces[last] = ("IEND".into(), chunk(b"IEND", &[1]));
+    let (bytes, _) = assemble(&pieces);
+    assert!(matches!(layout(&bytes), Err(FormatError::Malformed { .. })));
+}
+
+#[test]
+fn store_parts_must_be_well_formed_and_fill_the_store() {
+    let read = |store: EmbeddedStore| {
+        block_on(read_store_bytes(
+            &mut MemorySource::new(vec![0; 64]),
+            &store,
+            u64::MAX,
+        ))
+    };
+    let reversed = EmbeddedStore {
+        container: 0..64,
+        parts: vec![Range { start: 10, end: 4 }],
+        len: 6,
+    };
+    assert!(matches!(read(reversed), Err(FormatError::Malformed { .. })));
+    let short = EmbeddedStore {
+        container: 0..64,
+        parts: vec![Range { start: 4, end: 10 }],
+        len: 8,
+    };
+    assert!(matches!(read(short), Err(FormatError::Malformed { .. })));
+    let exact = EmbeddedStore {
+        container: 0..64,
+        parts: vec![4..10, 20..22],
+        len: 8,
+    };
+    assert_eq!(read(exact), Ok(vec![0; 8]));
+}
+
+#[test]
+fn an_unreservable_store_is_an_allocation_error_not_an_abort() {
+    // More than `isize::MAX` bytes can never be reserved, on any platform.
+    let size = isize::MAX as u64 + 1;
+    let huge = EmbeddedStore {
+        container: 0..64,
+        parts: vec![Range { start: 0, end: 64 }],
+        len: size,
+    };
+    let result = block_on(read_store_bytes(
+        &mut MemorySource::new(vec![0; 64]),
+        &huge,
+        u64::MAX,
+    ));
+    let expected = if usize::try_from(size).is_ok() {
+        FormatError::Allocation { size }
+    } else {
+        FormatError::StoreTooLarge {
+            size,
+            max: u64::MAX,
+        }
+    };
+    assert_eq!(result, Err(expected));
+    assert_eq!(FormatError::Allocation { size }.category(), "allocation");
 }

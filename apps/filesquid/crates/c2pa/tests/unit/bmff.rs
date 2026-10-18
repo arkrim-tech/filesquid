@@ -5,6 +5,8 @@
 #[path = "../support/assets.rs"]
 #[allow(dead_code)]
 mod assets;
+#[path = "../support/bmff_store.rs"]
+mod bmff_store;
 #[path = "../support/fixtures.rs"]
 #[allow(dead_code)]
 mod fixtures;
@@ -37,6 +39,7 @@ fn check_labelled(label: &str, value: &CborValue, asset: &[u8]) -> BindingReport
         &store,
         &mut MemorySource::new(asset.to_vec()),
         None,
+        &ParseLimits::default(),
         &RustCryptoBackend,
     ))
     .expect("asset readable")
@@ -96,11 +99,27 @@ fn a_changed_byte_is_a_mismatch() {
 
 #[test]
 fn moving_a_root_box_changes_the_hash() {
-    // The offset is part of the input, so the same asset elsewhere differ.
+    // Move the excluded `free` box in front of `moov`: every hashed byte
+    // stays the same and in the same order, and only `moov`'s offset
+    // changes. The offset is part of the input, so the old hash fails.
     let (asset, all) = mp4();
-    let shifted = all[MOOV].start + 1..all[MOOV].end + 1;
-    let wrong = bmff_expected_hash(&asset, &[shifted], &[]);
-    let report = check(&bmff_hash_map(bmff_required_exclusions(), &wrong), &asset);
+    let piece = |i: usize| asset[all[i].start as usize..all[i].end as usize].to_vec();
+    let moved = [
+        piece(FTYP),
+        piece(UUID),
+        piece(FREE),
+        piece(MOOV),
+        piece(MDAT),
+    ]
+    .concat();
+    let free_len = all[FREE].end - all[FREE].start;
+    let moved_moov = all[MOOV].start + free_len..all[MOOV].end + free_len;
+    let list = exclusions(vec![bmff_exclusion("/free", &[])]);
+    let old = bmff_expected_hash(&asset, &[all[MOOV].clone(), all[MDAT].clone()], &[]);
+    let new = bmff_expected_hash(&moved, &[moved_moov, all[MDAT].clone()], &[]);
+    let report = check(&bmff_hash_map(list.clone(), &new), &moved);
+    assert_eq!(code(&report), "assertion.bmffHash.match", "control");
+    let report = check(&bmff_hash_map(list, &old), &moved);
     assert_eq!(code(&report), "assertion.bmffHash.mismatch");
 }
 
@@ -344,4 +363,67 @@ fn truncated_and_corrupted_bmff_assets_never_panic() {
         mutated[at] = rng.next_u64() as u8;
         let _ = check(&map, &mutated);
     }
+}
+
+#[test]
+fn the_test_store_locator_skips_c2pa_boxes_of_other_purposes() {
+    // A `merkle` C2PA box before the `manifest` box is passed over.
+    let (asset, all) = mp4();
+    let mut merkle = C2PA_BMFF_UUID.to_vec();
+    merkle.extend_from_slice(&[0, 0, 0, 0]);
+    merkle.extend_from_slice(b"merkle\0");
+    merkle.extend_from_slice(&[1; 8]);
+    let store = binding_store(
+        "c2pa.hash.bmff.v3",
+        &bmff_hash_map(bmff_required_exclusions(), &[0; 32]),
+    );
+    let mut manifest = C2PA_BMFF_UUID.to_vec();
+    manifest.extend_from_slice(&[0, 0, 0, 0]);
+    manifest.extend_from_slice(b"manifest\0");
+    manifest.extend_from_slice(&[0; 8]);
+    manifest.extend_from_slice(&store);
+    let ftyp = &asset[all[FTYP].start as usize..all[FTYP].end as usize];
+    let built = [
+        ftyp.to_vec(),
+        bmff_box(b"uuid", &merkle),
+        bmff_box(b"uuid", &manifest),
+    ]
+    .concat();
+    let found = bmff_store::mp4_manifest_store(&built).expect("located");
+    assert_eq!(found, Some(store));
+}
+
+#[test]
+fn the_asset_box_limit_bounds_the_bmff_walk() {
+    // The required exclusions are all root-level, so the walk visits the
+    // five root boxes: five pass, four are reported as not checked.
+    let (asset, all) = mp4();
+    let hash = expected(&asset, &all, &[MOOV, FREE, MDAT], &[]);
+    let store = ManifestStore::from_bytes(
+        binding_store(
+            "c2pa.hash.bmff.v3",
+            &bmff_hash_map(bmff_required_exclusions(), &hash),
+        ),
+        &ParseLimits::default(),
+    )
+    .expect("store");
+    let run = |max_asset_boxes| {
+        let limits = ParseLimits {
+            max_asset_boxes,
+            ..ParseLimits::default()
+        };
+        block_on(validate_hard_binding(
+            &store,
+            &mut MemorySource::new(asset.clone()),
+            None,
+            &limits,
+            &RustCryptoBackend,
+        ))
+        .expect("asset readable")
+    };
+    assert_eq!(code(&run(5)), "assertion.bmffHash.match");
+    assert_eq!(
+        code(&run(4)),
+        "not checked: the asset has more boxes than ParseLimits::max_asset_boxes"
+    );
 }

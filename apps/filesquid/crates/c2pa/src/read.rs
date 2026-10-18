@@ -15,7 +15,7 @@ use crate::fetch::{fetch_bounded, FetchError, FetchPurpose, FetchRequest, Fetche
 use crate::format::{
     asset_layout, read_store_bytes as read_embedded_store, AssetLayout, FormatError,
 };
-use crate::io::{read_exact_at, ByteIoError, ByteSource};
+use crate::io::{read_exact_at, try_zeroed, ByteIoError, ByteSource};
 use crate::manifest::{ManifestStore, ParseLimits, StoreError};
 
 /// Why a manifest store could not be read.
@@ -183,12 +183,21 @@ async fn read_embedded<S: ByteSource + ?Sized>(
     };
     let bytes = read_embedded_store(source, &embedded, limits.max_store_bytes)
         .await
-        .map_err(ReadError::Format)?;
+        .map_err(embedded_error)?;
     let store = ManifestStore::from_bytes(bytes, limits).map_err(ReadError::Store)?;
     Ok(AssetManifest::Embedded {
         layout,
         store: Box::new(store),
     })
+}
+
+/// An embedded-store read failure as a [`ReadError`]: an allocation
+/// failure is reported as [`ReadError::Allocation`], as for a sidecar.
+fn embedded_error(err: FormatError) -> ReadError {
+    match err {
+        FormatError::Allocation { size } => ReadError::Allocation { size },
+        other => ReadError::Format(other),
+    }
 }
 
 /// A fixed name for an asset read outcome, for logs.
@@ -222,12 +231,7 @@ async fn read_store_bytes<S: ByteSource + ?Sized>(
 /// the memory cannot be reserved. Nothing is written until the reservation
 /// has succeeded.
 fn zeroed_buffer(size: u64) -> Result<Vec<u8>, ReadError> {
-    let failed = ReadError::Allocation { size };
-    let len = usize::try_from(size).map_err(|_| failed.clone())?;
-    let mut bytes = Vec::new();
-    bytes.try_reserve_exact(len).map_err(|_| failed)?;
-    bytes.resize(len, 0);
-    Ok(bytes)
+    try_zeroed(size).ok_or(ReadError::Allocation { size })
 }
 
 /// Check `url`, fetch it and parse the body.
@@ -282,7 +286,8 @@ fn log_outcome(source: &'static str, result: &Result<ManifestStore, ReadError>) 
 
 #[cfg(test)]
 mod tests {
-    use super::{zeroed_buffer, ReadError};
+    use super::{embedded_error, zeroed_buffer, ReadError};
+    use crate::format::FormatError;
 
     /// A request above `isize::MAX` bytes can never be reserved, on any
     /// platform or allocator, so the failure path is exercised
@@ -292,6 +297,19 @@ mod tests {
         let size = isize::MAX as u64 + 1;
         assert_eq!(zeroed_buffer(size), Err(ReadError::Allocation { size }));
         assert_eq!(ReadError::Allocation { size }.category(), "allocation");
+    }
+
+    /// An embedded store that cannot be reserved is reported as for a
+    /// sidecar store; other format errors keep their own variant.
+    #[test]
+    fn embedded_allocation_failures_are_allocation_errors() {
+        let size = 7;
+        assert_eq!(
+            embedded_error(FormatError::Allocation { size }),
+            ReadError::Allocation { size }
+        );
+        let other = FormatError::Truncated { offset: 3 };
+        assert_eq!(embedded_error(other.clone()), ReadError::Format(other));
     }
 
     #[test]

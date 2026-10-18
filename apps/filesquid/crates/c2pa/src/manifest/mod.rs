@@ -65,9 +65,10 @@ pub struct ParseLimits {
     pub max_cbor_depth: usize,
     /// Most CBOR data items decoded across the whole store.
     pub max_cbor_items: usize,
-    /// Most boxes a format handler lays out in one asset: JPEG segments
-    /// (each APP11 packet of the store counts) and restart markers, PNG
-    /// chunks, BMFF boxes.
+    /// Most boxes laid out or walked in one asset: JPEG segments (each
+    /// APP11 packet of the store counts) and restart markers, PNG chunks,
+    /// and the BMFF boxes a BMFF-hash check walks
+    /// (`binding::validate_hard_binding` reports more as not checked).
     pub max_asset_boxes: usize,
 }
 

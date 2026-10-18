@@ -10,14 +10,14 @@
 use std::ops::Range;
 
 use filesquid_c2pa::cbor::CborValue;
-use filesquid_c2pa::crypto::{CryptoBackend, HashAlgorithm, RustCryptoBackend};
-use futures::executor::block_on;
+use sha2::{Digest, Sha256};
 
 use super::fixtures::*;
 
-/// SHA-256 of `bytes`, through the crate's default backend.
+/// SHA-256 of `bytes`, from the `sha2` crate directly, so the helpers
+/// need neither the crate's crypto backend nor its `rust-crypto` feature.
 pub fn sha256(bytes: &[u8]) -> Vec<u8> {
-    block_on(RustCryptoBackend.digest(HashAlgorithm::Sha256, bytes)).expect("sha256")
+    Sha256::digest(bytes).to_vec()
 }
 
 /// SHA-256 of `bytes` without the `excluded` ranges (sorted, in bounds).

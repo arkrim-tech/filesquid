@@ -4,14 +4,21 @@
 //! segment holds the common identifier `JP`, a box instance number `En`, a
 //! packet sequence number `Z` (from 1) and a slice of the box; every packet
 //! after the first repeats the box header, which reassembly drops
-//! (ISO 19566-5 D.2). The store's segments must be contiguous and in
-//! sequence. APP11 segments for other uses (no `JP`, or JUMBF that is not a
-//! `c2pa` store) are ordinary `APP11` boxes.
+//! (ISO 19566-5 D.2) after checking that it equals the first packet's. The
+//! store's segments must be contiguous and in sequence. The store is
+//! identified by its JUMBF type UUID and the label `c2pa` (section
+//! 18.7.3.1); a store whose description box lacks the requestable and label
+//! toggles (section 11.1.4.1.2), or a first packet cut off before those
+//! fields, is malformed. APP11 segments for other uses (no `JP`, or JUMBF
+//! of another type or label) are ordinary `APP11` boxes.
 //!
 //! Boxes are named by ISO 10918-1 Table B.1. `SOS` and `RSTn` boxes include
 //! the entropy-coded data after them. Like libjpeg, the handler skips 0xFF
 //! fill bytes and stray bytes before a marker; a segment that runs past the
-//! end of the asset, or an asset without `EOI`, is truncated.
+//! end of the asset, or an asset without `EOI`, is truncated. Skipped bytes
+//! belong to no box: section 18.7.1 hashes "only data within the listed
+//! box" when boxes are listed separately, and the bytes between boxes when
+//! one entry lists a run of boxes.
 
 use super::reader::Reader;
 use super::{
@@ -75,8 +82,9 @@ struct Building {
     next_z: u32,
     /// Start of the first segment.
     start: u64,
-    /// Length of the repeated box header (8, or 16 with `XLBox`).
-    header_len: usize,
+    /// The box header (8 bytes, or 16 with `XLBox`) that every
+    /// continuation packet repeats.
+    header: Vec<u8>,
     /// Box length the header declares.
     declared: u64,
     /// Bytes collected so far.
@@ -244,24 +252,24 @@ impl<S: ByteSource + ?Sized> Parser<'_, S> {
         let z = u32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]);
         let body = &payload[PACKET_PREFIX..];
         match self.building.as_ref().map(|b| b.en) {
-            Some(current) if current == en => self.continue_store(at, end, z, body.len()),
+            Some(current) if current == en => self.continue_store(at, end, z, body),
             Some(_) => Err(malformed(at, "C2PA APP11 segments are not contiguous")),
-            None => match store_header(body) {
-                Some(header) => self.start_store(at, end, z, en, header, body.len()),
+            None => match store_header(body).map_err(|reason| malformed(at, reason))? {
+                Some(declared) => self.start_store(at, end, (z, en), declared, body),
                 None => self.push("APP11".into(), at..end),
             },
         }
     }
 
-    /// The first packet of a C2PA store.
+    /// The first packet of a C2PA store: sequence `z`, instance `en`, a box
+    /// of `(header_len, declared)` bytes, and the packet's `body`.
     fn start_store(
         &mut self,
         at: u64,
         end: u64,
-        z: u32,
-        en: u16,
+        (z, en): (u32, u16),
         (header_len, declared): (usize, u64),
-        body_len: usize,
+        body: &[u8],
     ) -> Result<(), FormatError> {
         if z != 1 {
             return Err(malformed(at, "C2PA APP11 packets are out of sequence"));
@@ -272,31 +280,38 @@ impl<S: ByteSource + ?Sized> Parser<'_, S> {
             en,
             next_z: 2,
             start: at,
-            header_len,
+            header: body[..header_len].to_vec(),
             declared,
-            collected: body_len as u64,
+            collected: body.len() as u64,
             parts: vec![first_part],
         });
         self.finish_store(end)
     }
 
-    /// A continuation packet, whose repeated box header is dropped.
+    /// A continuation packet, whose repeated box header must equal the first
+    /// packet's and is dropped.
     fn continue_store(
         &mut self,
         at: u64,
         end: u64,
         z: u32,
-        body_len: usize,
+        body: &[u8],
     ) -> Result<(), FormatError> {
         self.budget.take(at)?;
         let Some(building) = self.building.as_mut() else {
             return Err(malformed(at, "no store is being reassembled"));
         };
-        if z != building.next_z || body_len < building.header_len {
+        if z != building.next_z {
             return Err(malformed(at, "C2PA APP11 packets are out of sequence"));
         }
+        if !body.starts_with(&building.header) {
+            return Err(malformed(
+                at,
+                "a C2PA continuation packet repeats a different box header",
+            ));
+        }
         building.next_z = building.next_z.saturating_add(1);
-        let data_start = at + 4 + (PACKET_PREFIX + building.header_len) as u64;
+        let data_start = at + 4 + (PACKET_PREFIX + building.header.len()) as u64;
         building.collected += end - data_start;
         building.parts.push(data_start..end);
         self.finish_store(end)
@@ -332,24 +347,44 @@ impl<S: ByteSource + ?Sized> Parser<'_, S> {
     }
 }
 
-/// When `body` starts a JUMBF `c2pa` manifest store (C2PA 2.4 11.1.4.2):
-/// its box header length and declared length.
-fn store_header(body: &[u8]) -> Option<(usize, u64)> {
-    let lbox = u32::from_be_bytes(body.get(..4)?.try_into().ok()?);
-    if body.get(4..8)? != b"jumb" {
-        return None;
+/// Why a packet that starts a JUMBF superbox is too short to tell its type.
+const SHORT: &str = "JUMBF APP11 packet ends inside its description box";
+
+/// Whether the first JUMBF packet `body` starts a C2PA manifest store
+/// (C2PA 2.4 sections 11.1.4.2 and 18.7.3.1): `Some((header_len,
+/// declared))` for a store, `None` for another use of APP11, and an error
+/// for a malformed store or a packet too short to tell.
+fn store_header(body: &[u8]) -> Result<Option<(usize, u64)>, &'static str> {
+    if body.get(4..8) != Some(&b"jumb"[..]) {
+        return Ok(None);
     }
+    let lbox = u32::from_be_bytes([body[0], body[1], body[2], body[3]]);
     let (header_len, declared) = match lbox {
-        1 => (16, u64::from_be_bytes(body.get(8..16)?.try_into().ok()?)),
+        1 => {
+            let xl = body.get(8..16).ok_or(SHORT)?;
+            (16, u64::from_be_bytes(xl.try_into().map_err(|_| SHORT)?))
+        }
         n if n >= 8 => (8, u64::from(n)),
-        _ => return None,
+        _ => return Ok(None),
     };
-    let jumd = body.get(header_len..)?;
-    let is_store = jumd.get(4..8)? == b"jumd"
-        && jumd.get(8..24)? == types::MANIFEST_STORE.0
-        && jumd.get(24)? & toggles::LABEL != 0
-        && jumd.get(25..30)? == b"c2pa\0";
-    is_store.then_some((header_len, declared))
+    let jumd = body.get(header_len..).unwrap_or_default();
+    let (Some(kind), Some(uuid)) = (jumd.get(4..8), jumd.get(8..24)) else {
+        return Err(SHORT);
+    };
+    if kind != b"jumd" || uuid != types::MANIFEST_STORE.0 {
+        return Ok(None);
+    }
+    let (Some(found), Some(label)) = (jumd.get(24), jumd.get(25..30)) else {
+        return Err(SHORT);
+    };
+    if label != b"c2pa\0" {
+        return Ok(None);
+    }
+    let wanted = toggles::REQUESTABLE | toggles::LABEL;
+    if found & wanted != wanted {
+        return Err("C2PA store description box lacks the requestable and label toggles");
+    }
+    Ok(Some((header_len, declared)))
 }
 
 /// The ISO 10918-1 Table B.1 symbol of marker `code`.

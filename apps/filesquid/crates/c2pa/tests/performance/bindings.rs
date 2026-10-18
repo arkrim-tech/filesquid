@@ -62,6 +62,7 @@ fn a_large_jpeg_is_laid_out_and_hashed_within_the_budget() {
         &store,
         &mut MemorySource::new(asset),
         Some(&layout),
+        &ParseLimits::default(),
         &RustCryptoBackend,
     ))
     .expect("asset readable");

@@ -1,9 +1,18 @@
 //! Choosing the manifest and the hard-binding assertion to validate
 //! (C2PA 2.4 sections 9.1, 11.2.3, 15.12 and 18.6.1).
+//!
+//! Only assertions the claim references (`created_assertions` and
+//! `gathered_assertions` in a v2 claim, `assertions` in a v1 claim) are
+//! considered. A box in the assertion store that the claim does not name is
+//! not part of the signed claim, so it can neither supply the hard binding
+//! nor redirect an update manifest to another parent.
 
 use super::{BindingKind, BindingStatus};
 use crate::cbor::CborValue;
-use crate::manifest::{AssertionContent, JumbfUri, Manifest, ManifestKind, ManifestStore};
+use crate::jumbf::BoxRange;
+use crate::manifest::{
+    Assertion, AssertionContent, JumbfUri, Manifest, ManifestKind, ManifestStore,
+};
 
 /// The manifest whose binding applies.
 pub(super) struct Selected {
@@ -46,6 +55,32 @@ pub(super) fn base_label(label: &str) -> &str {
     }
 }
 
+/// The assertions of the manifest at `index` that its claim references,
+/// in assertion-store order. A reference that does not resolve to one of
+/// the manifest's own assertions selects nothing. The hashes in the
+/// references are checked by claim validation, not here.
+pub(super) fn referenced<'m>(
+    store: &ManifestStore,
+    index: usize,
+    manifest: &'m Manifest,
+) -> Vec<&'m Assertion> {
+    let claim = &manifest.claim;
+    let targets: Vec<BoxRange> = claim
+        .created_assertions
+        .iter()
+        .chain(&claim.gathered_assertions)
+        .filter_map(|reference| {
+            let uri = JumbfUri::parse(&reference.url).ok()?;
+            store.resolve(&uri, index).ok().map(|target| target.range)
+        })
+        .collect();
+    manifest
+        .assertions
+        .iter()
+        .filter(|assertion| targets.contains(&assertion.range))
+        .collect()
+}
+
 /// The standard manifest whose hard binding applies: the active manifest,
 /// or for an update manifest its `parentOf` chain. Every step visits a
 /// different manifest, so the store's manifest count bounds the walk.
@@ -68,8 +103,13 @@ pub(super) fn standard_manifest(store: &ManifestStore) -> Result<Selected, Bindi
             }
             ManifestKind::Update => {}
         }
+        let Ok(update) = &manifests[index].content else {
+            return Err(BindingStatus::NotChecked {
+                reason: "an update manifest on the way to the hard binding is unusable",
+            });
+        };
         updates_seen = true;
-        index = parent_of(store, index).ok_or(invalid(
+        index = parent_of(store, index, update).ok_or(invalid(
             "claim.hardBindings.missing",
             "an update manifest has no parent manifest in the store",
         ))?;
@@ -80,11 +120,11 @@ pub(super) fn standard_manifest(store: &ManifestStore) -> Result<Selected, Bindi
     ))
 }
 
-/// The index of the manifest that the update manifest at `index` names in
-/// its one `parentOf` ingredient assertion.
-fn parent_of(store: &ManifestStore, index: usize) -> Option<usize> {
-    let manifest = store.manifests()[index].content.as_ref().ok()?;
-    let mut parents = manifest.assertions.iter().filter_map(|assertion| {
+/// The index of the manifest that the update manifest `update` (at
+/// `index`) names in its one claim-referenced `parentOf` ingredient.
+fn parent_of(store: &ManifestStore, index: usize, update: &Manifest) -> Option<usize> {
+    let assertions = referenced(store, index, update);
+    let mut parents = assertions.iter().filter_map(|assertion| {
         let label = base_label(&assertion.label);
         if !matches!(
             label,
@@ -121,23 +161,23 @@ fn parent_url(value: &CborValue) -> Option<&str> {
     reference.get("url")?.as_text()
 }
 
-/// The manifest's one hard-binding assertion.
-pub(super) fn hard_binding(manifest: &Manifest) -> Result<Binding<'_>, BindingStatus> {
-    let mut found = manifest.assertions.iter().filter_map(|assertion| {
+/// The one hard-binding assertion among the claim-referenced `assertions`.
+pub(super) fn hard_binding<'a>(assertions: &[&'a Assertion]) -> Result<Binding<'a>, BindingStatus> {
+    let mut found = assertions.iter().filter_map(|assertion| {
         let base = base_label(&assertion.label);
         let (_, kind) = HARD_BINDINGS.iter().find(|(label, _)| *label == base)?;
-        Some((assertion, *kind))
+        Some((*assertion, *kind))
     });
     let Some((assertion, kind)) = found.next() else {
         return Err(invalid(
             "claim.hardBindings.missing",
-            "the manifest has no hard binding",
+            "the claim references no hard binding",
         ));
     };
     if found.next().is_some() {
         return Err(invalid(
             "assertion.multipleHardBindings",
-            "the manifest has more than one hard binding",
+            "the claim references more than one hard binding",
         ));
     }
     let Some(kind) = kind else {

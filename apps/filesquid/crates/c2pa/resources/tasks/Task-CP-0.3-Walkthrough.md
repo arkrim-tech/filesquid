@@ -21,11 +21,11 @@ Also covered: [C2PA-S-008](../srs.md) (every asset byte goes through the caller'
 Verified against the published HTML of the [C2PA 2.4 specification](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html):
 
 - 13.1 and 15.4.1: the hash algorithm is the structure's `alg`, else the claim's `alg`; only `sha256`, `sha384` and `sha512` are allowed; otherwise `algorithm.unsupported`.
-- 9.1, 11.2.2 and 15.12: exactly one hard binding per standard manifest (`claim.hardBindings.missing`, `assertion.multipleHardBindings`); an update manifest has none and its parent's applies, reached through its one `parentOf` ingredient (`activeManifest` in v3, `c2pa_manifest` in v1 and v2). 18.6.1: `c2pa.hash.bmff` (v1) is ignored by validators.
+- 9.1, 10.2 and 15.12: only assertions the claim references (`created_assertions` and `gathered_assertions`, or `assertions` in a v1 claim) are part of the claim (15.10.3.1 rejects an unreferenced one as `assertion.undeclared`, which claim validation reports in CP-0.5; hard-binding selection ignores it); exactly one hard binding per standard manifest (`claim.hardBindings.missing`, `assertion.multipleHardBindings`); an update manifest has none and its parent's applies, reached through its one `parentOf` ingredient (`activeManifest` in v3, `c2pa_manifest` in v1 and v2). 18.6.1: `c2pa.hash.bmff` (v1) is ignored by validators.
 - 15.12.1 and 18.5: data-hash exclusions are ordered and do not overlap; "the data contained within the exclusion range containing the C2PA Manifest Store consists of only the C2PA Manifest Store and any appropriate padding ... If a validator encounters any data other than what is permitted, then the manifest shall be rejected with a failure code of `assertion.dataHash.mismatch`"; other exclusions give `assertion.dataHash.additionalExclusionsPresent`; with update manifests the store exclusion takes the current store length. JPEG: the APP11 segments including markers and lengths; PNG: the `caBX` chunk including length and type.
 - 15.12.3 and 18.7: box-hash names in asset order (`mismatch` when out of order, `assertion.boxesHash.unknownBox` for a box not listed), `exclusions` relative to the box at `boxIndex`, `excluded` entries skipped, the store box `C2PA` never hashed, `PNGh` for the PNG signature, `c2pa.after` for bytes after the last box; JPEG names from ISO 10918-1 Table B.1 with `SOS` and `RSTn` including the entropy-coded data after them.
 - 15.12.2, 18.6 and A.5.6: BMFF exclusions with the restricted xpath, `length`, `version`, `flags` + `exact`, `data` and `subset`; each root box not wholly excluded is hashed as its 64-bit big-endian offset followed by its included bytes; the C2PA `uuid` box, `ftyp` and `mfra` are the expected exclusions.
-- A.3.4 (JPEG): APP11 packets `JP`, `En` (box instance), `Z` (sequence from 1), then the JUMBF box; continuation packets repeat the box header; packets are contiguous and in sequence. A.3.3 (PNG): the store is the data of a `caBX` chunk.
+- A.3.1 (JPEG): APP11 packets `JP`, `En` (box instance), `Z` (sequence from 1), then the JUMBF box; continuation packets repeat the box header; packets are contiguous and in sequence. A.3.2 (PNG): the store is the data of a `caBX` chunk.
 - 15.5.2.1: more than one embedded store is reported as `AssetManifest::MultipleStores`, not as a store.
 
 ## What changed
@@ -35,7 +35,7 @@ Verified against the published HTML of the [C2PA 2.4 specification](https://spec
 - **`src/read.rs`:** `read_asset` and `AssetManifest` (`Unsupported`, `NotEmbedded`, `MultipleStores`, `Embedded`), `ReadError::Format`.
 - **`src/manifest/mod.rs`:** `ParseLimits::max_asset_boxes` (default 262 144).
 - **`src/crypto/mod.rs`:** `hash_range` is `pub(crate)` for the BMFF hasher.
-- **Tests:** `unit_format`, `unit_binding`, `unit_bmff`, `performance_bindings` (new); `integration_conformance_parse` now reads JPEGs through `read_asset`, validates every hard binding and compares it with the corpus; synthetic JPEG, PNG and MP4 builders with independently computed hashes in `tests/support/assets.rs`; a test-only MP4 store locator in `tests/support/bmff_store.rs` until the BMFF handler (CP-2.2); `tests/support/jpeg_app11.rs` deleted.
+- **Tests:** `unit_format`, `unit_binding`, `unit_bmff`, `performance_bindings` (new); `integration_conformance_parse` now reads JPEGs through `read_asset`, validates the selected hard binding of each store and compares it with the recorded verdict, which every store must have; synthetic JPEG, PNG and MP4 builders with independently computed hashes in `tests/support/assets.rs`; a test-only MP4 store locator in `tests/support/bmff_store.rs` until the BMFF handler (CP-2.2); `tests/support/jpeg_app11.rs` deleted.
 - **BDD:** seven new scenarios (unsupported format, PNG read, JPEG data hash match and mismatch, PNG box hash match and unknown box, MP4 BMFF match); "Read a manifest store" (JPEG) is no longer skipped.
 - **Docs:** crate README (status, public surface, format handlers and hard bindings, limits, conformance test), component diagram (format handlers and hard bindings built), module plan box, root checklist box.
 - **Dependencies:** none added.
@@ -44,31 +44,39 @@ Verified against the published HTML of the [C2PA 2.4 specification](https://spec
 
 | Limit | Default | Boundary tests |
 |---|---|---|
-| `ParseLimits::max_asset_boxes` (JPEG segments, each APP11 packet and RST marker; PNG chunks) | 262 144 | `unit_format::the_asset_box_limit_holds_at_the_boundary` (JPEG 7 and PNG 5 boxes pass at 7 and 5, fail at 6 and 4); `unit_manifest::default_limits_are_documented_values` |
-| `ParseLimits::max_store_bytes` for an embedded store | 64 MiB | `unit_format::a_store_over_the_size_limit_is_rejected_before_reading_it` (`FormatError::StoreTooLarge` before any store byte is read) |
+| `ParseLimits::max_asset_boxes` (JPEG segments, each APP11 packet and RST marker; PNG chunks; BMFF boxes walked by a BMFF hash) | 262 144 | `unit_format::the_asset_box_limit_holds_at_the_boundary` (JPEG 7 and PNG 5 boxes pass at 7 and 5, fail at 6 and 4); `unit_bmff::the_asset_box_limit_bounds_the_bmff_walk` (5 root boxes pass at 5; at 4 the binding is not checked); `unit_manifest::default_limits_are_documented_values` |
+| `ParseLimits::max_store_bytes` for an embedded store | 64 MiB | `unit_format::a_store_over_the_size_limit_is_rejected_before_reading_it` (`FormatError::StoreTooLarge` before any store byte is read); `unit_format::an_unreservable_store_is_an_allocation_error_not_an_abort` and `read::tests::embedded_allocation_failures_are_allocation_errors` (`ReadError::Allocation`) |
 | BMFF xpath nodes | 16 | `unit_bmff::an_xpath_at_the_node_limit_is_accepted` (16 nodes), `malformed_bmff_maps_are_malformed` (17 nodes) |
-| BMFF boxes walked per hash | 262 144 (`DEFAULT_MAX_ASSET_BOXES`) | covered by the shared `BoxBudget`; see open questions |
 | Update-manifest chain | the number of manifests in the store | `unit_binding::an_update_manifest_without_a_parent_has_no_hard_binding` (orphan and cycle) |
 
 Malformed and truncated input: every prefix and 2 000 random corruptions of a synthetic JPEG and PNG (`unit_format::truncated_and_corrupted_assets_never_panic`) and of the synthetic MP4 (`unit_bmff::truncated_and_corrupted_bmff_assets_never_panic`) are rejected or validated without a panic. Every scan loop moves forward through the asset.
 
 ## Conformance corpus (end to end)
 
-`integration_conformance_parse` with `FILESQUID_C2PA_CONFORMANCE_DIR` set to a checkout of `c2pa-org/public-testfiles`: 25 stores located (24 JPEG through `read_asset`, 1 MP4 through the test-only locator), 41 manifests parsed, every hard binding checked. 22 agree with the `*Hash.match` or `*Hash.mismatch` verdict recorded in `detailed.json`, including the three recorded mismatches (`E-dat-CA`, `XCA`, `XCI`) and the MP4's BMFF hash.
+`integration_conformance_parse` with `FILESQUID_C2PA_CONFORMANCE_DIR` set to a checkout of `c2pa-org/public-testfiles`: 25 stores located (24 JPEG through `read_asset`, 1 MP4 through the test-only locator), 41 manifests parsed, and the selected hard binding of each store (the active manifest's, or for an update manifest its parent's) checked against a verdict every store must have. 22 agree with the `*Hash.match` or `*Hash.mismatch` verdict recorded in `detailed.json`, including the three recorded mismatches (`E-dat-CA`, `XCA`, `XCI`) and the MP4's BMFF hash.
 
-Three Truepic JPEGs (`truepic-20230212-camera`, `-landscape`, `-library`) record a match, and their digest does match the bytes outside the exclusion. Their single exclusion, however, starts at byte 0 and ends after the C2PA APP11 segments, so SOI and the whole APP1 Exif segment are unhashed. C2PA 2.4 section 15.12.1 makes that `assertion.dataHash.mismatch`, and the test requires exactly that code with the reason "the store's exclusion covers other bytes" for those three files (`STRICTER_THAN_CORPUS`). The corpus has no PNG with a manifest, so PNG coverage is synthetic.
+Three Truepic JPEGs (`truepic-20230212-camera`, `-landscape`, `-library`) record a match, and their digest does match the bytes outside the exclusion. Their single exclusion, however, starts at byte 0 and ends after the C2PA APP11 segments, so SOI and the whole APP1 Exif segment are unhashed. C2PA 2.4 section 15.12.1 makes that `assertion.dataHash.mismatch`, and the test requires both the recorded match and exactly that code with the reason "the store's exclusion covers other bytes" for those three files (`STRICTER_THAN_CORPUS`). The corpus has no PNG with a manifest, so PNG coverage is synthetic.
 
 ## SRS traceability
 
 | Requirement | Tests |
 |---|---|
 | C2PA-S-005 | `unit_format::formats_are_detected_by_signature`, `assets_without_a_store_and_unsupported_formats_are_reported`; BDD "Unsupported formats are reported" |
-| C2PA-S-001 (embedded) | `unit_format::a_jpeg_store_is_located_across_app11_segments`, `fill_bytes_and_stray_bytes_before_markers_are_skipped`, `other_app11_segments_are_ordinary_boxes`, `a_short_jp_packet_is_malformed`, `truncated_segments_are_errors`, `c2pa_segments_must_be_contiguous_and_in_sequence`, `a_reassembled_store_must_match_its_box_length`, `two_embedded_stores_are_reported_as_multiple`, `a_png_store_is_located_in_its_cabx_chunk`, `malformed_pngs_are_errors`, `two_cabx_chunks_are_two_stores`, `embedded_stores_are_read_and_parsed`; `integration_conformance_parse`; BDD "Read a manifest store", "Read a manifest store embedded in a PNG" |
-| C2PA-S-002 algorithm and selection | `unit_binding::the_hash_algorithm_must_be_allowed_and_known`, `the_claim_alg_applies_when_the_assertion_has_none`, `hard_binding_presence_rules`, `bindings_the_engine_cannot_check_are_reported_as_not_checked`, `a_mismatch_with_a_multi_asset_hash_present_is_not_checked`, `an_update_manifest_uses_its_parent_binding_and_the_current_store_length`, `an_update_manifest_without_a_parent_has_no_hard_binding` |
+| C2PA-S-001 (embedded) | `unit_format::a_jpeg_store_is_located_across_app11_segments`, `fill_bytes_and_stray_bytes_before_markers_are_skipped`, `other_app11_segments_are_ordinary_boxes`, `a_short_jp_packet_is_malformed`, `truncated_segments_are_errors`, `c2pa_segments_must_be_contiguous_and_in_sequence`, `a_reassembled_store_must_match_its_box_length`, `two_embedded_stores_are_reported_as_multiple`, `a_png_store_is_located_in_its_cabx_chunk`, `malformed_pngs_are_errors`, `two_cabx_chunks_are_two_stores`, `embedded_stores_are_read_and_parsed`, `a_c2pa_store_without_the_requestable_and_label_toggles_is_malformed`, `a_first_packet_cut_inside_a_c2pa_description_box_is_malformed`, `a_continuation_packet_must_repeat_the_first_box_header`, `the_png_handler_checks_the_signature_itself`, `an_iend_chunk_with_data_is_malformed`, `store_parts_must_be_well_formed_and_fill_the_store`; `integration_conformance_parse`; BDD "Read a manifest store", "Read a manifest store embedded in a PNG" |
+| C2PA-S-002 algorithm and selection | `unit_binding::the_hash_algorithm_must_be_allowed_and_known`, `the_claim_alg_applies_when_the_assertion_has_none`, `hard_binding_presence_rules`, `bindings_the_engine_cannot_check_are_reported_as_not_checked`, `a_mismatch_with_a_multi_asset_hash_present_is_not_checked`, `an_update_manifest_uses_its_parent_binding_and_the_current_store_length`, `an_update_manifest_without_a_parent_has_no_hard_binding`, `a_hard_binding_the_claim_does_not_reference_is_ignored`, `a_parent_ingredient_the_claim_does_not_reference_is_ignored`, `an_unusable_update_manifest_is_not_checked` |
 | C2PA-S-002 data hash | `unit_binding::a_valid_data_hash_matches`, `a_changed_byte_outside_the_exclusion_is_a_data_hash_mismatch`, `overlapping_or_unordered_exclusions_are_malformed`, `an_exclusion_past_the_end_of_the_asset_is_a_mismatch`, `the_store_exclusion_must_cover_only_the_store`, `a_store_that_is_not_excluded_cannot_match`, `other_exclusions_are_reported_as_informational`, `malformed_exclusion_values_are_malformed`, `a_missing_hash_field_is_a_mismatch`, `a_sidecar_store_binds_a_whole_asset`; BDD "A JPEG's data hash matches its content", "A changed JPEG fails its data hash" |
 | C2PA-S-002 box hash | `unit_format::every_jpeg_marker_has_its_iso_10918_name`, `scan_data_runs_to_the_next_marker_and_restart_markers_are_boxes`; `unit_binding::a_valid_box_hash_matches`, `a_changed_box_is_a_box_hash_mismatch`, `boxes_out_of_order_are_a_mismatch_and_unlisted_boxes_are_unknown`, `one_entry_can_hash_a_run_of_boxes`, `box_exclusions_are_applied_and_reported`, `bad_box_exclusions_are_malformed_or_mismatched`, `an_excluded_box_is_not_compared`, `malformed_box_maps_are_malformed`, `bytes_after_the_last_box_are_covered_by_c2pa_after`; BDD "A PNG's box hash matches its chunks", "A chunk the box hash does not list is rejected" |
-| C2PA-S-002 BMFF hash | `unit_bmff::*` (12 tests); `integration_conformance_parse` (real MP4); BDD "An MP4's BMFF hash matches its boxes" |
+| C2PA-S-002 BMFF hash | `unit_bmff::*` (14 tests); `integration_conformance_parse` (real MP4); BDD "An MP4's BMFF hash matches its boxes" |
 | Performance | `performance_bindings::a_large_jpeg_is_laid_out_and_hashed_within_the_budget` (16 MiB scan with 20 000 RST markers, budget 60 s) |
+
+## Review round 1 (Cubic)
+
+- Hard-binding and `parentOf` selection consider only assertions the claim references; an unreferenced binding or ingredient is ignored (it is not part of the signed claim). An unreadable update manifest on the way to the binding is not checked rather than `claim.hardBindings.missing`.
+- `validate_hard_binding` takes the `ParseLimits`, and `max_asset_boxes` bounds the BMFF walk; more boxes is not checked. BMFF xpath indexes convert to `usize` without truncation on 32-bit targets.
+- JPEG: the store is identified by type UUID and the label `c2pa`, and must set the requestable and label toggles; a first packet cut inside a C2PA description box is malformed; each continuation packet must repeat the first packet's box header. Fill and stray bytes stay outside every box, as section 18.7.1 hashes "only data within the listed box" when boxes are listed separately.
+- PNG: the handler checks the signature itself and rejects an `IEND` chunk with data.
+- `read_store_bytes` checks each part's range, requires the parts to fill the store, and reserves the buffer fallibly (`ReadError::Allocation` from `read_asset`).
+- Tests: the conformance test fails on a store without a recorded verdict and checks the recorded match of the three stricter files; the BMFF offset test moves an identical box; the test MP4 locator skips C2PA boxes of other purposes; `unit_format` no longer needs `rust-crypto` (the fixtures hash with `sha2` directly, a dev-dependency).
 
 ## Mocked environment values
 
@@ -104,19 +112,19 @@ From `apps/filesquid/`: `cargo fmt --all --check`, `cargo clippy --workspace --a
 
 ```text
 cargo fmt --all --check: no changes
-    Finished `dev` profile [unoptimized] target(s) in 9.03s
-    Finished `dev` profile [unoptimized] target(s) in 2.15s
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 17.57s
+    Finished `dev` profile [unoptimized] target(s) in 0.44s
+    Finished `dev` profile [unoptimized] target(s) in 2.14s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 18.37s
    Generated <target>/doc/filesquid_api/index.html and 9 other files
 ```
 
 ### Full crate run
 
-`FILESQUID_C2PA_CONFORMANCE_DIR=<corpus> cargo test -p filesquid-c2pa --locked --no-fail-fast`: 279 tests passed, 0 failed; 38 scenarios (30 passed, 8 skipped: the UI panel scenarios, owned by `@filesquid/ui`). Without default features (`--no-default-features`, which leaves out the targets that need `rust-crypto`): 199 passed, 0 failed.
+`FILESQUID_C2PA_CONFORMANCE_DIR=<corpus> cargo test -p filesquid-c2pa --locked --no-fail-fast`: 292 tests passed, 0 failed; 38 scenarios (30 passed, 8 skipped: the UI panel scenarios, owned by `@filesquid/ui`). Without default features (`--no-default-features`, which leaves out the targets that need `rust-crypto`; `unit_format` now runs here too): 226 passed, 0 failed.
 
 ```text
      Running unittests src/lib.rs (<target>/debug/deps/filesquid_c2pa-d65bcc9dd41296d9)
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests/features.rs (<target>/debug/deps/features-8655cb2d4004b238)
 SKIPPED c2patool oracle: c2patool not found: set FILESQUID_C2PATOOL or put c2patool on PATH (cargo install c2patool --locked)
 38 scenarios (30 passed, 8 skipped)
@@ -126,33 +134,33 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
      Running tests/integration/oracle.rs (<target>/debug/deps/integration_oracle-94666cdf1f8605b4)
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests/integration/wasm_build.rs (<target>/debug/deps/integration_wasm_build-35bc3b66d2b65aee)
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.37s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.40s
      Running tests/performance/bindings.rs (<target>/debug/deps/performance_bindings-09be1d8c0ae554d1)
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.64s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.61s
      Running tests/performance/parse.rs (<target>/debug/deps/performance_parse-f035af314bbfc222)
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
      Running tests/unit/binding.rs (<target>/debug/deps/unit_binding-f93190ce513933d0)
-test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
      Running tests/unit/bmff.rs (<target>/debug/deps/unit_bmff-27a5c7e6bd6f43d1)
-test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
      Running tests/unit/cbor.rs (<target>/debug/deps/unit_cbor-c7040e8e8f10e2a2)
-test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
      Running tests/unit/claim.rs (<target>/debug/deps/unit_claim-f9b9284008e60bf6)
 test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests/unit/crypto.rs (<target>/debug/deps/unit_crypto-432f2a37df2000a3)
-test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
      Running tests/unit/fetch.rs (<target>/debug/deps/unit_fetch-738758fb7279fcdb)
 test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests/unit/format.rs (<target>/debug/deps/unit_format-30666b288ba03faa)
-test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.33s
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
      Running tests/unit/io.rs (<target>/debug/deps/unit_io-c003cdb6bb92b265)
 test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests/unit/isolation.rs (<target>/debug/deps/unit_isolation-fe596040567ca446)
 test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s
      Running tests/unit/jumbf.rs (<target>/debug/deps/unit_jumbf-f69096fce7fab3ff)
-test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
      Running tests/unit/manifest.rs (<target>/debug/deps/unit_manifest-e0b825c7c5ed2037)
-test result: ok. 39 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+test result: ok. 39 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
      Running tests/unit/oracle_harness.rs (<target>/debug/deps/unit_oracle_harness-6d4b880861972b3f)
 test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
      Running tests/unit/read.rs (<target>/debug/deps/unit_read-d590eb7c9591cd5b)
@@ -170,71 +178,83 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 ```text
      Running tests/unit/binding.rs (<target>/debug/deps/unit_binding-f93190ce513933d0)
-running 26 tests
-test a_missing_hash_field_is_a_mismatch ... ok
+running 29 tests
 test a_mismatch_with_a_multi_asset_hash_present_is_not_checked ... ok
+test a_hard_binding_the_claim_does_not_reference_is_ignored ... ok
+test a_missing_hash_field_is_a_mismatch ... ok
+test a_parent_ingredient_the_claim_does_not_reference_is_ignored ... ok
 test a_sidecar_store_binds_a_whole_asset ... ok
-test a_changed_byte_outside_the_exclusion_is_a_data_hash_mismatch ... ok
 test a_changed_box_is_a_box_hash_mismatch ... ok
 test a_store_that_is_not_excluded_cannot_match ... ok
-test a_valid_box_hash_matches ... ok
+test a_changed_byte_outside_the_exclusion_is_a_data_hash_mismatch ... ok
 test an_excluded_box_is_not_compared ... ok
-test an_exclusion_past_the_end_of_the_asset_is_a_mismatch ... ok
-test an_update_manifest_without_a_parent_has_no_hard_binding ... ok
+test an_unusable_update_manifest_is_not_checked ... ok
+test a_valid_box_hash_matches ... ok
 test a_valid_data_hash_matches ... ok
+test an_exclusion_past_the_end_of_the_asset_is_a_mismatch ... ok
 test bindings_the_engine_cannot_check_are_reported_as_not_checked ... ok
+test an_update_manifest_without_a_parent_has_no_hard_binding ... ok
 test bad_box_exclusions_are_malformed_or_mismatched ... ok
 test an_update_manifest_uses_its_parent_binding_and_the_current_store_length ... ok
-test boxes_out_of_order_are_a_mismatch_and_unlisted_boxes_are_unknown ... ok
-test bytes_after_the_last_box_are_covered_by_c2pa_after ... ok
 test box_exclusions_are_applied_and_reported ... ok
-test malformed_exclusion_values_are_malformed ... ok
+test bytes_after_the_last_box_are_covered_by_c2pa_after ... ok
+test boxes_out_of_order_are_a_mismatch_and_unlisted_boxes_are_unknown ... ok
 test hard_binding_presence_rules ... ok
+test malformed_exclusion_values_are_malformed ... ok
 test one_entry_can_hash_a_run_of_boxes ... ok
 test other_exclusions_are_reported_as_informational ... ok
-test the_claim_alg_applies_when_the_assertion_has_none ... ok
 test malformed_box_maps_are_malformed ... ok
+test the_claim_alg_applies_when_the_assertion_has_none ... ok
 test the_hash_algorithm_must_be_allowed_and_known ... ok
 test overlapping_or_unordered_exclusions_are_malformed ... ok
 test the_store_exclusion_must_cover_only_the_store ... ok
-test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
      Running tests/unit/bmff.rs (<target>/debug/deps/unit_bmff-27a5c7e6bd6f43d1)
-running 12 tests
-test a_changed_byte_is_a_mismatch ... ok
+running 14 tests
 test a_uuid_box_with_other_data_is_not_excluded ... ok
-test a_missing_hash_is_a_mismatch_and_merkle_trees_are_not_checked ... ok
+test a_changed_byte_is_a_mismatch ... ok
 test an_index_selects_one_sibling ... ok
+test a_missing_hash_is_a_mismatch_and_merkle_trees_are_not_checked ... ok
 test an_xpath_at_the_node_limit_is_accepted ... ok
-test malformed_bmff_maps_are_malformed ... ok
-test length_version_flags_and_data_conditions_select_boxes ... ok
-test nested_boxes_can_be_excluded_and_are_reported ... ok
 test moving_a_root_box_changes_the_hash ... ok
-test the_required_exclusions_alone_match ... ok
+test nested_boxes_can_be_excluded_and_are_reported ... ok
+test the_asset_box_limit_bounds_the_bmff_walk ... ok
+test length_version_flags_and_data_conditions_select_boxes ... ok
 test subsets_exclude_part_of_a_box ... ok
+test the_test_store_locator_skips_c2pa_boxes_of_other_purposes ... ok
+test the_required_exclusions_alone_match ... ok
+test malformed_bmff_maps_are_malformed ... ok
 test truncated_and_corrupted_bmff_assets_never_panic ... ok
-test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
      Running tests/unit/format.rs (<target>/debug/deps/unit_format-30666b288ba03faa)
-running 19 tests
-test a_reassembled_store_must_match_its_box_length ... ok
-test a_short_jp_packet_is_malformed ... ok
+running 26 tests
+test a_first_packet_cut_inside_a_c2pa_description_box_is_malformed ... ok
+test a_continuation_packet_must_repeat_the_first_box_header ... ok
 test a_jpeg_store_is_located_across_app11_segments ... ok
-test assets_without_a_store_and_unsupported_formats_are_reported ... ok
-test c2pa_segments_must_be_contiguous_and_in_sequence ... ok
+test a_short_jp_packet_is_malformed ... ok
+test a_reassembled_store_must_match_its_box_length ... ok
+test a_png_store_is_located_in_its_cabx_chunk ... ok
+test a_c2pa_store_without_the_requestable_and_label_toggles_is_malformed ... ok
+test an_iend_chunk_with_data_is_malformed ... ok
 test a_store_over_the_size_limit_is_rejected_before_reading_it ... ok
-test embedded_stores_are_read_and_parsed ... ok
+test an_unreservable_store_is_an_allocation_error_not_an_abort ... ok
+test assets_without_a_store_and_unsupported_formats_are_reported ... ok
 test every_jpeg_marker_has_its_iso_10918_name ... ok
-test formats_are_detected_by_signature ... ok
+test c2pa_segments_must_be_contiguous_and_in_sequence ... ok
 test fill_bytes_and_stray_bytes_before_markers_are_skipped ... ok
+test malformed_pngs_are_errors ... ok
 test other_app11_segments_are_ordinary_boxes ... ok
+test formats_are_detected_by_signature ... ok
+test store_parts_must_be_well_formed_and_fill_the_store ... ok
 test scan_data_runs_to_the_next_marker_and_restart_markers_are_boxes ... ok
 test the_asset_box_limit_holds_at_the_boundary ... ok
-test a_png_store_is_located_in_its_cabx_chunk ... ok
-test malformed_pngs_are_errors ... ok
+test the_png_handler_checks_the_signature_itself ... ok
 test truncated_segments_are_errors ... ok
-test two_cabx_chunks_are_two_stores ... ok
 test two_embedded_stores_are_reported_as_multiple ... ok
+test two_cabx_chunks_are_two_stores ... ok
+test embedded_stores_are_read_and_parsed ... ok
 test truncated_and_corrupted_assets_never_panic ... ok
-test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.33s
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
 ```
 
 ### New and enabled BDD scenarios
@@ -307,13 +327,13 @@ running 1 test
   $FILESQUID_C2PA_CONFORMANCE_DIR/legacy/1.4/image/jpeg/truepic-20230212-landscape.jpg: Invalid { code: "assertion.dataHash.mismatch", reason: "the store's exclusion covers other bytes" }
   $FILESQUID_C2PA_CONFORMANCE_DIR/legacy/1.4/image/jpeg/truepic-20230212-library.jpg: Invalid { code: "assertion.dataHash.mismatch", reason: "the store's exclusion covers other bytes" }
   $FILESQUID_C2PA_CONFORMANCE_DIR/legacy/1.4/video/mp4/truepic-20230212-zoetrope.mp4: Valid { code: "assertion.bmffHash.match" }
-conformance parse: 25 stores, 91 files without a store, 41 manifests parsed, 22 hard bindings agree with the corpus, 3 stricter under C2PA 2.4, 0 without a recorded verdict, 0 failures
+conformance parse: 25 stores, 91 files without a store, 41 manifests parsed, 22 hard bindings agree with the corpus, 3 stricter under C2PA 2.4, 0 failures
 test every_conformance_asset_is_located_parsed_and_binding_checked ... ok
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.60s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.62s
      Running tests/performance/bindings.rs (<target>/debug/deps/performance_bindings-09be1d8c0ae554d1)
 running 1 test
-laid out 20007 boxes in 73.731543ms, validated in 492.70672ms
+laid out 20007 boxes in 69.36213ms, validated in 466.940468ms
 test a_large_jpeg_is_laid_out_and_hashed_within_the_budget ... ok
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.63s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.60s
 ```
 

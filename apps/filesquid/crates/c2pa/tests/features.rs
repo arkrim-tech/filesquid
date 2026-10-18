@@ -699,9 +699,15 @@ async fn validate_binding(world: &mut C2paWorld) {
         },
     };
     let mut source = MemorySource::new(world.asset.clone());
-    let report = validate_hard_binding(&store, &mut source, layout.as_ref(), &RustCryptoBackend)
-        .await
-        .expect("asset readable");
+    let report = validate_hard_binding(
+        &store,
+        &mut source,
+        layout.as_ref(),
+        &limits,
+        &RustCryptoBackend,
+    )
+    .await
+    .expect("asset readable");
     world.binding = Some(report);
 }
 

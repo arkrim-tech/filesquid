@@ -20,7 +20,7 @@ pub use png::PngHandler;
 use std::future::Future;
 use std::ops::Range;
 
-use crate::io::{read_exact_at, ByteIoError, ByteSource};
+use crate::io::{read_exact_at, try_zeroed, ByteIoError, ByteSource};
 
 /// A format with a handler.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,6 +108,12 @@ pub enum FormatError {
         /// The limit.
         max: u64,
     },
+    /// The memory for the embedded store could not be reserved.
+    #[error("could not reserve {size} bytes for the embedded manifest store")]
+    Allocation {
+        /// The store's size.
+        size: u64,
+    },
 }
 
 impl FormatError {
@@ -119,6 +125,7 @@ impl FormatError {
             Self::Malformed { .. } => "malformed_asset",
             Self::TooManyBoxes { .. } => "too_many_boxes",
             Self::StoreTooLarge { .. } => "store_too_large",
+            Self::Allocation { .. } => "allocation",
         }
     }
 }
@@ -187,7 +194,9 @@ pub async fn asset_layout<S: ByteSource + ?Sized>(
 }
 
 /// Read the bytes of the embedded `store` from `source`, refusing a store
-/// over `max_bytes` before reading or allocating anything.
+/// over `max_bytes` before reading or allocating anything. The buffer is
+/// reserved fallibly ([`FormatError::Allocation`]), and the parts must be
+/// well-formed ranges that fill the store exactly.
 pub async fn read_store_bytes<S: ByteSource + ?Sized>(
     source: &mut S,
     store: &EmbeddedStore,
@@ -199,10 +208,17 @@ pub async fn read_store_bytes<S: ByteSource + ?Sized>(
             max: max_bytes,
         });
     }
-    let mut bytes = vec![0u8; store.len as usize];
+    let mut bytes = try_zeroed(store.len).ok_or(FormatError::Allocation { size: store.len })?;
     let mut at = 0usize;
     for part in &store.parts {
-        let len = (part.end - part.start) as usize;
+        let len = part
+            .end
+            .checked_sub(part.start)
+            .and_then(|n| usize::try_from(n).ok());
+        let len = len.ok_or(FormatError::Malformed {
+            offset: part.start,
+            reason: "a store part range is reversed or too long",
+        })?;
         let end = at.checked_add(len).filter(|end| *end <= bytes.len());
         let end = end.ok_or(FormatError::Malformed {
             offset: part.start,
@@ -210,6 +226,12 @@ pub async fn read_store_bytes<S: ByteSource + ?Sized>(
         })?;
         read_exact_at(source, part.start, &mut bytes[at..end]).await?;
         at = end;
+    }
+    if at != bytes.len() {
+        return Err(FormatError::Malformed {
+            offset: store.container.start,
+            reason: "store parts are shorter than the store",
+        });
     }
     Ok(bytes)
 }

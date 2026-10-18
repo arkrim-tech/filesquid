@@ -30,7 +30,7 @@ use crate::cbor::CborValue;
 use crate::crypto::{CryptoBackend, CryptoError, HashAlgorithm};
 use crate::format::AssetLayout;
 use crate::io::{ByteIoError, ByteSource};
-use crate::manifest::{Manifest, ManifestStore};
+use crate::manifest::{Assertion, ManifestStore, ParseLimits};
 
 /// The kind of hard binding validated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -167,6 +167,9 @@ pub(crate) struct Check<'a, S: ?Sized, C> {
     pub(crate) claim_alg: Option<&'a str>,
     /// Whether an update manifest was passed on the way to this binding.
     pub(crate) updates_seen: bool,
+    /// The most boxes a BMFF walk visits
+    /// ([`ParseLimits::max_asset_boxes`]).
+    pub(crate) max_boxes: usize,
 }
 
 /// Validate the hard binding of `store` against the asset in `asset`.
@@ -174,10 +177,15 @@ pub(crate) struct Check<'a, S: ?Sized, C> {
 /// Pass the `layout` from [`crate::read::read_asset`] when the store is
 /// embedded in the asset: data hashes need the store's location and box
 /// hashes need the boxes. For a sidecar or remote store pass `None`.
+/// `limits.max_asset_boxes` bounds the boxes a BMFF hash walks.
+///
+/// Only assertions the claim references are considered, both for the hard
+/// binding and for an update manifest's `parentOf` ingredient.
 pub async fn validate_hard_binding<S, C>(
     store: &ManifestStore,
     asset: &mut S,
     layout: Option<&AssetLayout>,
+    limits: &ParseLimits,
     crypto: &C,
 ) -> Result<BindingReport, BindingError>
 where
@@ -196,7 +204,8 @@ where
         };
         return Ok(report(label, None, None, status));
     };
-    let binding = match select::hard_binding(manifest) {
+    let assertions = select::referenced(store, selected.index, manifest);
+    let binding = match select::hard_binding(&assertions) {
         Ok(binding) => binding,
         Err(status) => return Ok(report(label, None, None, status)),
     };
@@ -206,13 +215,14 @@ where
         layout,
         claim_alg: manifest.claim.alg.as_deref(),
         updates_seen: selected.updates_seen,
+        max_boxes: limits.max_asset_boxes,
     };
     let outcome = match binding.kind {
         BindingKind::DataHash => data::validate(&mut check, binding.value).await?,
         BindingKind::BoxHash => boxes::validate(&mut check, binding.value).await?,
         BindingKind::BmffHash => bmff::validate(&mut check, binding.value).await?,
     };
-    let outcome = multi_asset_fallback(manifest, outcome);
+    let outcome = multi_asset_fallback(&assertions, outcome);
     let mut out = report(
         label,
         Some(binding.label),
@@ -242,13 +252,12 @@ fn report(
 /// After a hash mismatch, a multi-asset hash assertion decides instead
 /// (sections 15.12.1.1, 15.12.2, 15.12.3); it is not supported yet, so the
 /// binding is reported as not checked rather than as a mismatch.
-fn multi_asset_fallback(manifest: &Manifest, outcome: Outcome) -> Outcome {
+fn multi_asset_fallback(assertions: &[&Assertion], outcome: Outcome) -> Outcome {
     let mismatch = matches!(
         outcome.status,
         BindingStatus::Invalid { code, .. } if code.ends_with("Hash.mismatch")
     );
-    let has_multi = manifest
-        .assertions
+    let has_multi = assertions
         .iter()
         .any(|a| select::base_label(&a.label) == "c2pa.hash.multi-asset");
     if !(mismatch && has_multi) {

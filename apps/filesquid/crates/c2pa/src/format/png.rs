@@ -39,6 +39,9 @@ impl FormatHandler for PngHandler {
         max_boxes: usize,
     ) -> Result<AssetLayout, FormatError> {
         let mut reader = Reader::new(source).await?;
+        if reader.bytes(0, SIGNATURE.len()).await? != SIGNATURE {
+            return Err(malformed(0, "not a PNG signature"));
+        }
         let mut budget = BoxBudget::new(max_boxes);
         let mut layout = AssetLayout {
             format: AssetFormat::Png,
@@ -89,6 +92,9 @@ async fn next_chunk<S: ByteSource + ?Sized>(
     let end = at + CHUNK_OVERHEAD + u64::from(len);
     if end > reader.size() {
         return Err(FormatError::Truncated { offset: at });
+    }
+    if kind == b"IEND" && len != 0 {
+        return Err(malformed(at, "IEND chunk has data"));
     }
     if kind != b"caBX" {
         return Ok((String::from_utf8_lossy(kind).into_owned(), end));

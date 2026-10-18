@@ -15,7 +15,6 @@ use crate::crypto::{hash_range, CryptoBackend};
 use crate::format::reader::Reader;
 use crate::format::{BoxBudget, FormatError};
 use crate::io::ByteSource;
-use crate::manifest::DEFAULT_MAX_ASSET_BOXES;
 
 /// Success code.
 const MATCH: &str = "assertion.bmffHash.match";
@@ -95,10 +94,11 @@ where
     let Some(expected) = value.get("hash").and_then(CborValue::as_bytes) else {
         return Ok(Outcome::invalid(MISMATCH, "the hash field is missing"));
     };
-    let (roots, excluded) = match layout_exclusions(check.asset, &exclusions).await? {
-        Ok(found) => found,
-        Err(outcome) => return Ok(outcome),
-    };
+    let (roots, excluded) =
+        match layout_exclusions(check.asset, &exclusions, check.max_boxes).await? {
+            Ok(found) => found,
+            Err(outcome) => return Ok(outcome),
+        };
     let mut hasher = check.crypto.incremental_hasher(alg)?;
     for root in &roots {
         if excluded
@@ -129,13 +129,22 @@ where
 async fn layout_exclusions<S: ByteSource + ?Sized>(
     asset: &mut S,
     exclusions: &[Exclusion<'_>],
+    max_boxes: usize,
 ) -> Result<Result<(Vec<Range<u64>>, Vec<Range<u64>>), Outcome>, BindingError> {
     let mut reader = Reader::new(asset).await.map_err(io_error)?;
-    let mut budget = BoxBudget::new(DEFAULT_MAX_ASSET_BOXES);
+    let mut budget = BoxBudget::new(max_boxes);
     let size = reader.size();
     let roots = match boxes(&mut reader, 0..size, &mut budget).await {
         Ok(roots) => roots,
         Err(FormatError::Io(err)) => return Err(err.into()),
+        Err(FormatError::TooManyBoxes { .. }) => {
+            return Ok(Err(Outcome {
+                status: BindingStatus::NotChecked {
+                    reason: "the asset has more boxes than ParseLimits::max_asset_boxes",
+                },
+                informational: Vec::new(),
+            }))
+        }
         Err(_) => {
             return Ok(Err(Outcome::invalid(
                 MISMATCH,
@@ -263,7 +272,7 @@ fn select(list: &[BmffBox], (kind, index): &Node) -> Vec<BmffBox> {
     match index {
         None => same.into_iter().cloned().collect(),
         Some(n) => same
-            .get((*n as usize).wrapping_sub(1))
+            .get(usize::try_from(n.wrapping_sub(1)).unwrap_or(usize::MAX))
             .map(|b| vec![(*b).clone()])
             .unwrap_or_default(),
     }
