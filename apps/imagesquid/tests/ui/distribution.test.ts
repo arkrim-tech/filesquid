@@ -4,11 +4,17 @@
  */
 import { beforeEach, expect, it } from "vitest";
 import {
+  MemoryNavigationSource,
+  NavigationStore,
   ThemeStore,
   accessibilityViolations,
+  breadcrumbItems,
   defineElements,
   resolveLocale,
   type FsAppShell,
+  type FsBreadcrumb,
+  type FsNavTree,
+  type FsStates,
   type ThemeMedia,
 } from "@filesquid/ui";
 import manifest from "../../distribution.json";
@@ -81,4 +87,57 @@ it("keeps the official mark in the dark theme and shows the theme control", asyn
   expect(
     [...(control?.shadowRoot?.querySelectorAll("label") ?? [])].map((l) => l.textContent),
   ).toEqual(["System", "Light", "Dark"]);
+});
+
+it("words the navigation tree, breadcrumb and states in ImageSquid's vocabulary (UI-F2.1a)", async () => {
+  const { labels } = imagesquid;
+  const source = new MemoryNavigationSource({
+    node: "r",
+    kind: "repository",
+    name: null,
+    children: [
+      {
+        node: "l1",
+        kind: "library",
+        name: "Family",
+        children: [{ node: "a1", kind: "collection", name: "Coastal Days" }],
+      },
+    ],
+  });
+  const store = new NavigationStore({});
+  store.start();
+  const tree = document.createElement("fs-nav-tree") as FsNavTree;
+  tree.configure({ labels, source, store });
+  const crumb = document.createElement("fs-breadcrumb") as FsBreadcrumb;
+  crumb.configure({ labels });
+  const { ancestors } = await source.list("a1");
+  crumb.items = breadcrumbItems(ancestors, labels);
+  const states = document.createElement("fs-states") as FsStates;
+  states.configure({ labels });
+  states.state = { kind: "offline" };
+  document.body.replaceChildren(tree, crumb, states);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const treeRoot = tree.shadowRoot;
+  expect([...(treeRoot?.querySelectorAll("section h2") ?? [])].map((h) => h.textContent)).toEqual([
+    "Albums",
+    "Galleries",
+    "Folders",
+  ]);
+  expect(treeRoot?.querySelector("button.down")?.getAttribute("aria-label")).toBe(
+    "Move Albums down",
+  );
+  expect([...(crumb.shadowRoot?.querySelectorAll("a") ?? [])].map((a) => a.textContent)).toEqual([
+    "Repo",
+    "Family",
+    "Coastal Days",
+  ]);
+  expect(crumb.shadowRoot?.querySelector("nav")?.getAttribute("aria-label")).toBe(
+    labels.navigationBreadcrumb,
+  );
+  expect(states.shadowRoot?.querySelector('[role="alert"] p')?.textContent).toBe(
+    labels.stateOffline,
+  );
+  for (const element of [tree, crumb, states]) {
+    expect(accessibilityViolations(element)).toEqual([]);
+  }
 });

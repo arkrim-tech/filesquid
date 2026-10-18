@@ -9,6 +9,7 @@
  * per-user preferences arrive (UI-F2.8), a storage backed by the API can replace this one
  * through {@link ThemeStorage} without changing the control.
  */
+import { deviceStorage, type DeviceStorage } from "../app/device-storage";
 
 /** What the owner chose: follow the OS, or force light or dark. */
 export type ThemeChoice = "system" | "light" | "dark";
@@ -26,7 +27,7 @@ export const THEME_STORAGE_KEY = "filesquid.theme";
 export const DARK_SCHEME_QUERY = "(prefers-color-scheme: dark)";
 
 /** The part of Web Storage the store uses. */
-export type ThemeStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+export type ThemeStorage = DeviceStorage;
 
 /** The part of a `MediaQueryList` the store uses. */
 export interface ThemeMedia {
@@ -183,19 +184,9 @@ export class ThemeStore extends EventTarget {
  */
 export function createThemeStore(win: Window, key?: string): ThemeStore {
   return new ThemeStore({
-    storage: deviceStorage(win),
+    storage: deviceStorage(win, "the theme choice"),
     media: win.matchMedia(DARK_SCHEME_QUERY),
     root: win.document.documentElement,
     key,
   });
-}
-
-/** Return the window's `localStorage`, or undefined when the browser refuses access. */
-function deviceStorage(win: Window): ThemeStorage | undefined {
-  try {
-    return win.localStorage;
-  } catch (error) {
-    console.warn("FileSquid cannot use device storage; the theme choice will not be kept", error);
-    return undefined;
-  }
 }

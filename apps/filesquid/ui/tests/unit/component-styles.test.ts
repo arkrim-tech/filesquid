@@ -18,7 +18,14 @@ const sources = readdirSync(dir)
     return { name, source, css: stylesheet(source) };
   });
 /** The components that render a shadow root, and so must include the shared stylesheet. */
-const ELEMENTS = ["fs-app-shell.ts", "fs-monitor.ts", "fs-theme-control.ts"];
+const ELEMENTS = [
+  "fs-app-shell.ts",
+  "fs-breadcrumb.ts",
+  "fs-monitor.ts",
+  "fs-nav-tree.ts",
+  "fs-states.ts",
+  "fs-theme-control.ts",
+];
 /** The shared accessibility stylesheet. */
 const shared = sources.find((s) => s.name === "a11y-style.ts")?.css ?? "";
 
@@ -72,10 +79,8 @@ function untokenisedSizes(css: string): string[] {
 
 describe("component stylesheets", () => {
   it("cover every component source", () => {
-    expect(sources.map((s) => s.name)).toEqual(
-      expect.arrayContaining(["fs-app-shell.ts", "fs-monitor.ts", "fs-theme-control.ts"]),
-    );
-    for (const name of ["fs-app-shell.ts", "fs-monitor.ts", "fs-theme-control.ts"]) {
+    expect(sources.map((s) => s.name)).toEqual(expect.arrayContaining(ELEMENTS));
+    for (const name of ELEMENTS) {
       expect(sources.find((s) => s.name === name)?.css).toContain("var(--fs-");
     }
   });

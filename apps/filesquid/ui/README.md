@@ -1,6 +1,6 @@
 # @filesquid/ui
 
-FileSquid's default distribution and the component library every distribution builds on: the `FileSquidClient` API client and host adapter, vanilla TypeScript custom elements (`<fs-app-shell>`, `<fs-monitor>`), design tokens and label tables ([ADR 031](../../../resources/architecture/031-vanilla-typescript-ui-and-white-label-theming.md)). Requirements: [SRS](./resources/srs.md). Plan: [plan](./resources/plan.md).
+FileSquid's default distribution and the component library every distribution builds on: the `FileSquidClient` API client and host adapter, vanilla TypeScript custom elements (`<fs-app-shell>`, `<fs-monitor>`, `<fs-nav-tree>`, `<fs-breadcrumb>`, `<fs-states>`), design tokens and label tables ([ADR 031](../../../resources/architecture/031-vanilla-typescript-ui-and-white-label-theming.md)). Requirements: [SRS](./resources/srs.md). Plan: [plan](./resources/plan.md).
 
 ## Develop and test
 
@@ -66,7 +66,7 @@ shell.configure({ distribution, client: createHostClient(window), theme });
 
 Every custom element meets the contracts of [UI-S-016](./resources/srs.md) ([SRS-NFR-006](../../../resources/srs.md#srs-nfr-006-accessibility-and-usability)), so a distribution inherits them by composing the elements and supplying its tokens and labels:
 
-- **Keyboard.** Everything is a native control (`a[href]`, `button`, `input`); nothing has a positive `tabindex`. The shell's Tab order is the skip control, the theme control (one stop; arrow keys choose), the navigation links, then the main area.
+- **Keyboard.** Everything is a native control (`a[href]`, `button`, `input`); nothing has a positive `tabindex`. The shell's Tab order is the skip control, the theme control (one stop; arrow keys choose), the navigation (links, or a slotted tree's controls), then the main area.
 - **Skip control and landmarks.** The first Tab shows a "Skip to main content" button (`skipToContent` label) that focuses `main` without touching the hash route. `header`, a `nav` named by the `navigationMain` label and `main` are the landmarks; the product name is the only `h1`. Monitor tables are named by their section heading inside focusable scroll regions.
 - **Focus.** Every element in the Tab order shows a `2px` solid `--fs-primary` outline offset by `2px`; `contrastFailures` keeps `--fs-primary` at 3:1 on `--fs-surface`, `--fs-surface-container` and `--fs-primary-container` (`FOCUS_CONTRAST_PAIRS`). A route change moves focus to `main`; a Monitor re-render moves it to the token field, the alert or the first section heading. Nothing takes focus on first load, and a background load, poll or failed poll never takes focus from outside the content it replaces.
 - **Motion and contrast preferences.** Durations come from `--fs-motion-duration` and are `0s` under `prefers-reduced-motion: reduce`; script-driven motion checks `prefersReducedMotion(window)`. Under `prefers-contrast: more` borders use `--fs-on-surface-variant`; under `forced-colors: active` the chosen theme option uses `Highlight` and focus rings use `Highlight`.
@@ -82,6 +82,27 @@ expect(accessibilityViolations(shell)).toEqual([]); // positive tabindex, unname
 ```
 
 `npm test` covers the helpers and component states in jsdom; `npm run test:e2e` checks Chromium's accessibility tree, Tab order, focus rings in light and dark, slotted content, reduced motion, contrast preferences, reflow (320 px at 100 % and 200 % text, 640 px and 1280 px at 200 %) and RTL against the built UI ([`tests/e2e/accessibility.spec.ts`](./tests/e2e/accessibility.spec.ts)).
+
+## Navigation, breadcrumb and view states
+
+These elements need no API route of their own (the first half of Task UI-F2.1 in the [plan](./resources/plan.md), described in [Task-UI-F2.1a-Walkthrough.md](./resources/tasks/Task-UI-F2.1a-Walkthrough.md)). Data flows down as properties and changes flow up as events ([ADR 031](../../../resources/architecture/031-vanilla-typescript-ui-and-white-label-theming.md) Decision 6); none of them fetches by itself.
+
+- **`<fs-states>`** shows one `ViewState` instead of content: `loading` and `empty` in a polite `role="status"` region, `error`, `offline` and `denied` (with the denial reason's label) in a `role="alert"` region. Both regions exist from the first render and are updated in place. Error and offline offer Retry, which dispatches a bubbling, composed `fs-retry` event. `failureState(error, navigator.onLine)` picks offline, denied or error for a failed load.
+- **`<fs-nav-tree>`** takes `{ labels, source, store?, href? }`. The `NavigationSource` answers the navigation listing one level at a time, in the shape of the API's `GET /api/v1/navigation`: `list(parent, cursor, limit)` returns `{ nodes, ancestors, next_cursor }`, each node an opaque `node` handle with `kind` (`repository`, `library`, `collection`, `virtual_collection`, `folder`), `name` (or `null`, shown as the kind's label) and `has_children`, and an unknown node is refused `not_found`; `subscribe(listener)` is optional. `MemoryNavigationSource` answers from a fixture tree; the live source over `FileSquidClient` arrives with Task UI-F2.1b. The tree reads the repository, its libraries and their children at start, and a deeper node's children when it opens (every page, at most 50 pages per level). It groups a library's children into Collections, Virtual collections and Folders sections, after a Pinned section when something is pinned; with several libraries each section lists the libraries as parents. Each section has a heading, Move up and Move down buttons (`aria-disabled` at the ends; Alt+Shift+Up and Alt+Shift+Down anywhere in the section), a WAI-ARIA treeview (one Tab stop; Up, Down, Home, End, Right, Left, `*` and type-ahead; Right and Left swap in RTL) and a Pin toggle (`aria-pressed`) for the tree's active item. A pin the source answers `not_found` for shows as unavailable with a Remove button.
+- **`<fs-breadcrumb>`** shows `items` as a `nav` named by `navigationBreadcrumb`, with `aria-current="page"` on the last link; `breadcrumbItems(ancestors, labels)` builds them from a listing's `ancestors`. It is hidden while the trail is empty.
+- **The shell's `navigation` slot.** `<fs-nav-tree slot="navigation">` inside `<fs-app-shell>` replaces the static destination list in the `nav` landmark; the Monitor link stays after it.
+
+**Navigation choices** are kept on the device in Web Storage under `filesquid.navigation` until per-user preferences reach the API: `{ "version": 1, "pinned": [{ "node", "kind" }], "order": [section ids], "collapsed": [node handles] }`, with at most 100 pins and 1,000 collapsed nodes and handles of at most 512 bytes. It holds no name, path, token or content handle. Repositories and libraries are open unless collapsed (kept); deeper nodes open for the session only. A stored value that does not parse, has another version, has another field or breaks a bound is ignored with a console message; if the browser refuses storage, the choices apply until the page closes and the console says why. Every tree on a page shares one store (`sharedNavigationStore(window)`) unless it is given its own.
+
+```ts
+const source = new MemoryNavigationSource(fixtureTree); // UI-F2.1b: a source over FileSquidClient
+const tree = document.createElement("fs-nav-tree") as FsNavTree;
+tree.slot = "navigation";
+tree.configure({ labels: distribution.labels, source });
+shell.append(tree);
+```
+
+`npm test` covers the model, store, source, loader, key rules and elements in jsdom; `npm run test:e2e` checks them in the built UI ([`tests/e2e/navigation.spec.ts`](./tests/e2e/navigation.spec.ts)): accessibility tree, treeview keys, persistence across a reload, refused storage, the five states in light and dark, focus rings, motion, forced colours and reflow.
 
 ## Host adapter and client interface
 

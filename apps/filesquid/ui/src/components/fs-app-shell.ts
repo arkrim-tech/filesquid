@@ -8,6 +8,10 @@
  * `main`; `header`, a named `nav` and `main` are the landmarks; the layout uses logical
  * properties, wraps at large text sizes and stacks the navigation above `main` below 40rem;
  * when a re-render removes the focused element, focus moves to `main`.
+ *
+ * Navigation (UI-F2.1a): the `nav` landmark has a `navigation` named slot for the distribution's
+ * navigation tree (`<fs-nav-tree slot="navigation">`); until one is slotted it shows the
+ * vocabulary of the main destinations as a static list. The Monitor link follows the slot.
  */
 import type { Distribution } from "../distribution";
 import { logoSource } from "../distribution";
@@ -45,7 +49,7 @@ const STYLE = `
   img { height: 2rem; width: auto; }
   fs-theme-control { margin-inline-start: auto; }
   .body { display: flex; min-width: 0; }
-  nav { flex: 0 0 15rem; box-sizing: border-box; padding: var(--fs-space-4); background: var(--fs-surface-container); }
+  nav { display: flex; flex-direction: column; gap: var(--fs-space-4); flex: 0 0 15rem; box-sizing: border-box; min-width: 0; padding: var(--fs-space-4); background: var(--fs-surface-container); }
   ul { list-style: none; margin: 0; padding: 0; }
   li { padding: var(--fs-space-2) var(--fs-space-3); border-radius: var(--fs-radius); }
   a { color: inherit; text-decoration: none; border-radius: var(--fs-radius); }
@@ -141,7 +145,7 @@ export class FsAppShell extends HTMLElement {
         <h1></h1>
       </header>
       <div class="body">
-        <nav><ul></ul></nav>
+        <nav><slot name="navigation"><ul class="destinations"></ul></slot><ul class="tools"></ul></nav>
         <main tabindex="-1"><p class="api"></p><slot></slot></main>
       </div>`;
     this.fillText(root, dist);
@@ -153,9 +157,8 @@ export class FsAppShell extends HTMLElement {
       labels.virtualCollections,
       labels.virtualExhibits,
     ];
-    root
-      .querySelector("ul")
-      ?.replaceChildren(...items.map((text) => li(text)), li(labels.monitor, MONITOR_ROUTE));
+    root.querySelector("ul.destinations")?.replaceChildren(...items.map((text) => li(text)));
+    root.querySelector("ul.tools")?.replaceChildren(li(labels.monitor, MONITOR_ROUTE));
     recoverFocus(root, hadFocus, () => root.querySelector("main"));
     void this.loadHealth();
   }

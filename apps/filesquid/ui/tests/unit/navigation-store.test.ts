@@ -1,0 +1,161 @@
+/**
+ * UI-S-017 (UI-F2.1a): the navigation choices (pins, section order, collapsed nodes) are kept
+ * on the device under `filesquid.navigation` and survive a restart; refused device storage
+ * keeps them for this page and says why; a stored value that does not parse, has another
+ * version or breaks a bound is ignored with a console message (as the theme store, UI-S-015).
+ */
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  NAVIGATION_STORAGE_KEY,
+  NavigationStore,
+  createNavigationStore,
+} from "../../src/navigation/store";
+import { MAX_PINNED } from "../../src/navigation/model";
+import type { DeviceStorage } from "../../src/app/device-storage";
+import { fakeStorage } from "../support/theme-fakes";
+
+afterEach(() => vi.restoreAllMocks());
+
+/** A started store over an in-memory storage. */
+function started(initial: Record<string, string> = {}) {
+  const { storage, data } = fakeStorage(initial);
+  const store = new NavigationStore({ storage });
+  store.start();
+  return { store, data };
+}
+
+/** The saved JSON value, parsed. */
+function saved(data: Map<string, string>): unknown {
+  return JSON.parse(data.get(NAVIGATION_STORAGE_KEY) ?? "null");
+}
+
+describe("NavigationStore", () => {
+  it("uses the namespaced key filesquid.navigation", () => {
+    expect(NAVIGATION_STORAGE_KEY).toBe("filesquid.navigation");
+  });
+
+  it("starts with no saved choices", () => {
+    expect(started().store.preferences).toEqual({ pinned: [], order: [], collapsed: [] });
+  });
+
+  it("restores the choices saved at an earlier launch", () => {
+    const value = JSON.stringify({
+      version: 1,
+      pinned: [{ node: "c1", kind: "collection" }],
+      order: ["folder"],
+      collapsed: ["l1"],
+    });
+    const { store } = started({ [NAVIGATION_STORAGE_KEY]: value });
+    expect(store.preferences.pinned).toEqual([{ node: "c1", kind: "collection" }]);
+    expect(store.preferences.collapsed).toEqual(["l1"]);
+  });
+
+  it("saves every change as handles, kinds and section ids, and dispatches change", () => {
+    const { store, data } = started();
+    const changes: string[] = [];
+    store.addEventListener("change", () => changes.push("change"));
+    store.moveSection("folder", -1, ["collection", "virtual_collection", "folder"]);
+    store.setCollapsed("l1", true);
+    store.setPinned({ node: "c1", kind: "collection" }, true);
+    expect(saved(data)).toEqual({
+      version: 1,
+      pinned: [{ node: "c1", kind: "collection" }],
+      order: ["collection", "folder", "virtual_collection"],
+      collapsed: ["l1"],
+    });
+    expect(changes).toHaveLength(3);
+    store.setPinned({ node: "c1", kind: "collection" }, false);
+    store.setCollapsed("l1", false);
+    expect(saved(data)).toMatchObject({ pinned: [], collapsed: [] });
+  });
+
+  it("dispatches nothing and writes nothing when a change changes nothing", () => {
+    const { store, data } = started();
+    const listener = vi.fn();
+    store.addEventListener("change", listener);
+    store.moveSection("collection", -1, ["collection", "folder"]);
+    store.setCollapsed("l1", false);
+    store.setPinned({ node: "x", kind: "folder" }, false);
+    expect(listener).not.toHaveBeenCalled();
+    expect(data.has(NAVIGATION_STORAGE_KEY)).toBe(false);
+  });
+
+  it("refuses a pin beyond the bound, with a console message", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { store } = started();
+    for (let i = 0; i < MAX_PINNED; i += 1)
+      store.setPinned({ node: `n${i}`, kind: "folder" }, true);
+    expect(store.setPinned({ node: "one-more", kind: "folder" }, true)).toBe(false);
+    expect(store.preferences.pinned).toHaveLength(MAX_PINNED);
+    expect(warn).toHaveBeenCalledOnce();
+    expect(store.setPinned({ node: "n0", kind: "folder" }, true)).toBe(true);
+  });
+
+  it.each([
+    ["text that is not JSON", "{not json", /could not read/],
+    ["another version", JSON.stringify({ version: 2 }), /ignored .*version is not 1/],
+    [
+      "a stored name",
+      JSON.stringify({ version: 1, pinned: [{ node: "a", kind: "folder", name: "n" }] }),
+      /ignored/,
+    ],
+  ])("ignores %s and says why", (_case, value, reason) => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { store } = started({ [NAVIGATION_STORAGE_KEY]: value });
+    expect(store.preferences).toEqual({ pinned: [], order: [], collapsed: [] });
+    expect(warn).toHaveBeenCalledOnce();
+    expect(String(warn.mock.calls[0]?.[0])).toMatch(reason);
+  });
+
+  it("still applies choices when storage throws, and logs why", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const broken: DeviceStorage = {
+      getItem: () => {
+        throw new Error("blocked");
+      },
+      setItem: () => {
+        throw new Error("quota");
+      },
+      removeItem: () => {
+        throw new Error("blocked");
+      },
+    };
+    const store = new NavigationStore({ storage: broken });
+    store.start();
+    store.setCollapsed("l1", true);
+    expect(store.preferences.collapsed).toEqual(["l1"]);
+    expect(warn).toHaveBeenCalledTimes(2);
+  });
+
+  it("works without storage (choices last for this page only)", () => {
+    const store = new NavigationStore({});
+    store.start();
+    store.setCollapsed("l1", true);
+    expect(store.preferences.collapsed).toEqual(["l1"]);
+  });
+});
+
+describe("createNavigationStore", () => {
+  it("uses the window's localStorage", () => {
+    const { storage, data } = fakeStorage();
+    const store = createNavigationStore({ localStorage: storage } as unknown as Window);
+    store.start();
+    store.setCollapsed("l1", true);
+    expect(data.has(NAVIGATION_STORAGE_KEY)).toBe(true);
+  });
+
+  it("falls back to no storage when reading localStorage throws", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const win = {
+      get localStorage(): Storage {
+        throw new Error("SecurityError");
+      },
+    } as unknown as Window;
+    const store = createNavigationStore(win);
+    store.start();
+    store.setCollapsed("l1", true);
+    expect(store.preferences.collapsed).toEqual(["l1"]);
+    expect(warn).toHaveBeenCalledOnce();
+    expect(String(warn.mock.calls[0]?.[0])).toMatch(/navigation choices will not be kept/);
+  });
+});
