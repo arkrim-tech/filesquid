@@ -47,6 +47,7 @@ Feature: Every refusal in the desktop shell is journaled
   Scenario: A page that asks for the camera is refused and journaled by kind only
     When a page asks for the camera
     Then the activity journal should record "desktop.permission.refused" with the code "permission_denied"
+    And that entry should name only the permission kind "camera"
 
   Scenario: A download from outside the app is refused and journaled without its address
     When a page starts a download from "https://example.com/holiday-photos.zip"

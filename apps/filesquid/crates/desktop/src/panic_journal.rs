@@ -5,6 +5,10 @@
 //! hook that journals [`PANIC_OPERATION`] (error code `panic`, never the panic message, which
 //! may hold content) through the host's tracing layer, then flushes the journal so the entry
 //! survives a panic that ends the process, and then runs the previous hook.
+//!
+//! Two panics cannot reach the journal: one before the journal opens (the hook is installed
+//! first, so it reaches stdout only), and one on the journal writer's own thread, which is
+//! printed to stdout as a JSON line marked `journal_unavailable` ([`writer_panic_line`]).
 
 use filesquid_api::journal_writer::JournalSender;
 use std::sync::{Arc, Once, OnceLock, RwLock};
@@ -12,8 +16,20 @@ use std::sync::{Arc, Once, OnceLock, RwLock};
 /// Journal operation of a host thread panic.
 pub const PANIC_OPERATION: &str = "desktop.panic";
 
-/// Name of the journal writer's own thread (`filesquid_api::journal_writer`). A panic there
-/// is journaled but not flushed, because the flush would wait on that thread.
+/// The stdout record of a panic on the journal writer's own thread: the panic entry's fields,
+/// marked `journal_unavailable`. Pure.
+pub fn writer_panic_line() -> String {
+    serde_json::json!({
+        "operation": PANIC_OPERATION,
+        "outcome": "failed",
+        "level": "error",
+        "error_code": "panic",
+        "journal_unavailable": true,
+    })
+    .to_string()
+}
+
+/// Name of the journal writer's own thread (`filesquid_api::journal_writer`).
 const JOURNAL_THREAD: &str = "filesquid-journal";
 
 /// The journal the hook flushes; replaced by each [`install_panic_hook`] call.
@@ -40,18 +56,20 @@ pub fn install_panic_hook(journal: Arc<OnceLock<JournalSender>>) {
     });
 }
 
-/// Journal one panic without its message, then flush the journal unless this is the journal
-/// writer's thread. Writes to the journal.
+/// Journal one panic without its message and flush the journal. On the journal writer's own
+/// thread nothing is queued (the queue may be full and that thread is its only consumer), so
+/// the record goes to stdout only. Writes to the journal or stdout.
 fn journal_panic() {
+    if std::thread::current().name() == Some(JOURNAL_THREAD) {
+        println!("{}", writer_panic_line());
+        return;
+    }
     tracing::error!(
         operation = PANIC_OPERATION,
         outcome = "failed",
         error_code = "panic",
         "a FileSquid host thread panicked"
     );
-    if std::thread::current().name() == Some(JOURNAL_THREAD) {
-        return;
-    }
     let sender = FLUSH
         .read()
         .ok()

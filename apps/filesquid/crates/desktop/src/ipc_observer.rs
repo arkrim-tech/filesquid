@@ -27,7 +27,10 @@
 //! skip it ([`outside_observed`]), so neither a request body Tauri records in its IPC spans
 //! nor the invoke key in its message reaches stdout or the journal, whatever `RUST_LOG` says.
 //! The other webview errors (an invalid window `data_directory`) are journaled as
-//! `tauri::webview.error`, without their text.
+//! `tauri::webview.error` with the code `webview_error`, without their text.
+//!
+//! Tauri's trace does not name the webview, so these entries carry the actor `webview`
+//! rather than `webview:<label>`.
 
 use crate::ipc_gate::{command_id, Refusal, REFUSED_OPERATION};
 use filesquid_api::journal::{JournalEntry, Level as JournalLevel, Outcome};
@@ -66,17 +69,39 @@ const INVOKE_KEY_MESSAGE: &str = "__TAURI_INVOKE_KEY__";
 /// Start of a refused answer in the `response` field (`format!("{:?}", InvokeError)`).
 const REFUSED_ANSWER: &str = "InvokeError(";
 
+/// Where the observer prints each redacted entry as one JSON line.
+pub type StdoutSink = Arc<dyn Fn(&str) + Send + Sync>;
+
+/// Journal error code of a Tauri webview error other than an invoke-key refusal.
+pub const WEBVIEW_ERROR_CODE: &str = "webview_error";
+
 /// The `tracing` layer that journals Tauri's own IPC refusals. Clone it to keep a handle for
-/// [`attach`](Self::attach) after installing it.
-#[derive(Clone, Default)]
+/// [`attach`](Self::attach) after installing it; clones share the journal.
+#[derive(Clone)]
 pub struct TauriIpcObserver {
     journal: Arc<OnceLock<JournalSender>>,
+    stdout: StdoutSink,
+}
+
+impl Default for TauriIpcObserver {
+    fn default() -> Self {
+        Self {
+            journal: Arc::new(OnceLock::new()),
+            stdout: Arc::new(|line| println!("{line}")),
+        }
+    }
 }
 
 impl TauriIpcObserver {
-    /// An observer with no journal yet: until [`attach`](Self::attach), entries go to stdout only.
+    /// An observer that prints to the process's stdout and has no journal yet: until
+    /// [`attach`](Self::attach), entries go to stdout only.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// This observer printing its lines through `stdout` instead (the host's stdout writer).
+    pub fn with_stdout(self, stdout: StdoutSink) -> Self {
+        Self { stdout, ..self }
     }
 
     /// Attach the journal. Only the first call has an effect.
@@ -91,7 +116,7 @@ impl TauriIpcObserver {
         match serde_json::to_value(&entry) {
             Ok(mut line) => {
                 line["journal_unavailable"] = serde_json::Value::Bool(attached.is_none());
-                println!("{line}");
+                (self.stdout)(&line.to_string());
             }
             Err(err) => eprintln!("journal entry not printable: {err}"),
         }
@@ -194,7 +219,7 @@ fn event_entry(meta: &Metadata<'_>, text: &str) -> Option<JournalEntry> {
     if text.starts_with(INVOKE_KEY_MESSAGE) {
         return Some(observed_refusal(Refusal::InvalidInvokeKey, None));
     }
-    Some(JournalEntry::new(WEBVIEW_ERROR_OPERATION, Outcome::Failed))
+    Some(JournalEntry::new(WEBVIEW_ERROR_OPERATION, Outcome::Failed).error_code(WEBVIEW_ERROR_CODE))
 }
 
 impl TauriIpcObserver {

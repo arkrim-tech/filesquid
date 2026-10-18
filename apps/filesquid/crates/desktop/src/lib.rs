@@ -55,6 +55,7 @@ use filesquid_api::trace_layer::JournalLayer;
 use filesquid_api::ApiState;
 use filesquid_native::HostMonitor;
 use ipc_observer::TauriIpcObserver;
+use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -115,8 +116,9 @@ pub fn host_subscriber<W>(
     filter: EnvFilter,
 ) -> impl Subscriber + Send + Sync + 'static
 where
-    W: for<'w> MakeWriter<'w> + Send + Sync + 'static,
+    W: for<'w> MakeWriter<'w> + Clone + Send + Sync + 'static,
 {
+    let observer = observer.with_stdout(line_sink(stdout.clone()));
     let kept = filter_fn(ipc_observer::outside_observed);
     let stdout = tracing_subscriber::fmt::layer()
         .json()
@@ -126,6 +128,20 @@ where
         .with(stdout)
         .with(journal.with_filter(kept))
         .with(observer.with_filter(filter_fn(ipc_observer::observed)))
+}
+
+/// A sink that writes one line through `stdout`. Performs I/O when called; a write error is
+/// reported on stderr, since the stdout stream itself failed.
+fn line_sink<W>(stdout: W) -> ipc_observer::StdoutSink
+where
+    W: for<'w> MakeWriter<'w> + Send + Sync + 'static,
+{
+    Arc::new(move |line: &str| {
+        let mut writer = stdout.make_writer();
+        if let Err(err) = writeln!(writer, "{line}") {
+            eprintln!("stdout line not written: {err}");
+        }
+    })
 }
 
 /// Install the host's `tracing` stack ([`host_subscriber`]) with stdout filtered by `RUST_LOG`
@@ -173,7 +189,7 @@ pub fn describe_desktop_host(state: &ApiState) -> Result<(), String> {
 fn app_pages_plugin(token: &LaunchToken) -> tauri::plugin::TauriPlugin<tauri::Wry> {
     tauri::plugin::Builder::new(APP_PAGES_PLUGIN)
         .js_init_script(api_protocol::launch_token_script(token))
-        .on_navigation(|_webview, url| event_channel::navigation_allowed(url))
+        .on_navigation(|webview, url| event_channel::navigation_allowed(webview.label(), url))
         .build()
 }
 

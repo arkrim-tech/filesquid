@@ -316,7 +316,7 @@ fn received_hint(world: &mut DesktopWorld, expected: String, missed: u64) {
 fn navigate(world: &mut DesktopWorld, address: String) {
     let url = tauri::Url::parse(&address).expect("url");
     let mut allowed = None;
-    world.journal = journal::journaled(|| allowed = Some(navigation_allowed(&url)));
+    world.journal = journal::journaled(|| allowed = Some(navigation_allowed("main", &url)));
     world.navigation = allowed;
 }
 
@@ -460,6 +460,17 @@ fn journal_records_code(world: &mut DesktopWorld, operation: String, code: Strin
         .find(|e| e.operation == operation)
         .unwrap_or_else(|| panic!("{operation} not journaled: {:?}", world.journal));
     assert_eq!(entry.error_code.as_deref(), Some(code.as_str()));
+}
+
+#[then(expr = "that entry should name only the permission kind {string}")]
+fn names_permission_kind(world: &mut DesktopWorld, kind: String) {
+    let entry = world
+        .journal
+        .iter()
+        .find(|e| e.operation == "desktop.permission.refused")
+        .expect("permission refusal journaled");
+    assert_eq!(entry.target_ids, vec![kind]);
+    assert_eq!(entry.actor, "webview:main");
 }
 
 #[then(expr = "no journal entry should contain {string}")]

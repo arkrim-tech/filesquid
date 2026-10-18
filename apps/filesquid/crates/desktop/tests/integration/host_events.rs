@@ -20,7 +20,9 @@ use filesquid_desktop_lib::app_window::{
 };
 use filesquid_desktop_lib::host_subscriber;
 use filesquid_desktop_lib::ipc_observer::TauriIpcObserver;
-use filesquid_desktop_lib::panic_journal::{install_panic_hook, PANIC_OPERATION};
+use filesquid_desktop_lib::panic_journal::{
+    install_panic_hook, writer_panic_line, PANIC_OPERATION,
+};
 use std::io::Write;
 use std::sync::{Arc, Mutex, OnceLock};
 use tauri::test::{mock_builder, mock_context, noop_assets, MockRuntime};
@@ -133,6 +135,10 @@ fn tauris_invoke_key_refusal_is_journaled_once_and_the_key_stays_out_of_the_logs
     });
     let entry = only(&entries, "desktop.ipc.refused");
     assert_eq!(entry.error_code.as_deref(), Some("invalid_invoke_key"));
+    assert!(
+        stdout.contains("invalid_invoke_key"),
+        "the observer's line: {stdout}"
+    );
     assert_eq!(entry.outcome, Outcome::Failed);
     assert_eq!(entry.level, Level::Warn);
     assert!(
@@ -185,6 +191,10 @@ fn a_refusal_tauri_reports_on_its_post_message_path_is_journaled_with_the_comman
         vec!["plugin:fs.read_text_file".to_string()]
     );
     assert!(!as_json(&entries).contains("/home/owner"));
+    assert!(
+        stdout.contains("plugin:fs.read_text_file"),
+        "the observer's line: {stdout}"
+    );
     assert!(!stdout.contains("/home/owner"), "{stdout}");
 }
 
@@ -225,6 +235,10 @@ fn an_unreadable_post_message_call_is_journaled_without_its_text() {
     });
     let entry = only(&entries, "desktop.ipc.refused");
     assert_eq!(entry.error_code.as_deref(), Some("malformed_request"));
+    assert!(
+        stdout.contains("malformed_request"),
+        "the observer's line: {stdout}"
+    );
     assert!(!as_json(&entries).contains("/home/owner"));
     assert!(!stdout.contains("/home/owner"), "{stdout}");
 }
@@ -238,6 +252,11 @@ fn other_tauri_webview_errors_are_journaled_without_their_text() {
         );
     });
     let entry = only(&entries, "tauri::webview.error");
+    assert_eq!(entry.error_code.as_deref(), Some("webview_error"));
+    assert!(
+        stdout.contains("webview_error"),
+        "the observer's line: {stdout}"
+    );
     assert_eq!(entry.level, Level::Error);
     assert!(!as_json(&entries).contains("/home/owner"));
     assert!(!stdout.contains("/home/owner"), "{stdout}");
@@ -381,6 +400,31 @@ fn a_panic_is_journaled_without_its_message() {
         !text.contains("Secret Title") && !text.contains("/home/owner"),
         "{text}"
     );
+}
+
+#[test]
+fn a_panic_on_the_journal_writer_thread_is_never_queued_and_reaches_stdout_redacted() {
+    let _serial = PANIC_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    install_panic_hook(Arc::new(OnceLock::new()));
+    // The thread carries the journal writer's name and its own journal layer: the hook must
+    // queue nothing from it.
+    let thread = std::thread::Builder::new()
+        .name("filesquid-journal".into())
+        .spawn(|| {
+            journaled(|| {
+                assert!(std::panic::catch_unwind(|| panic!("Secret Title")).is_err());
+            })
+        })
+        .expect("thread");
+    let entries = thread.join().expect("joined");
+    assert!(
+        entries.iter().all(|e| e.operation != PANIC_OPERATION),
+        "{entries:?}"
+    );
+    let line: serde_json::Value = serde_json::from_str(&writer_panic_line()).expect("JSON");
+    assert_eq!(line["operation"], PANIC_OPERATION);
+    assert_eq!(line["journal_unavailable"], true);
+    assert!(!writer_panic_line().contains("Secret"));
 }
 
 #[test]

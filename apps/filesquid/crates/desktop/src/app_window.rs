@@ -170,7 +170,7 @@ pub fn download_allowed(url: &Url) -> bool {
 
 /// Decide one download event of webview `label` and journal it: a request is screened
 /// ([`screen_download_request`]), a finished download is journaled. Any other event is
-/// refused.
+/// refused and journaled.
 fn screen_download(label: &str, event: DownloadEvent<'_>) -> bool {
     match event {
         DownloadEvent::Requested { url, .. } => screen_download_request(label, &url),
@@ -178,7 +178,10 @@ fn screen_download(label: &str, event: DownloadEvent<'_>) -> bool {
             journal_download_finished(label, success);
             true
         }
-        _ => false,
+        _ => {
+            journal_download_refused(label);
+            false
+        }
     }
 }
 
@@ -195,15 +198,20 @@ pub fn screen_download_request(label: &str, url: &Url) -> bool {
             "download started"
         );
     } else {
-        tracing::warn!(
-            operation = DOWNLOAD_REFUSED_OPERATION,
-            outcome = "failed",
-            actor = actor(label).as_str(),
-            error_code = "download_denied",
-            "download refused"
-        );
+        journal_download_refused(label);
     }
     allowed
+}
+
+/// Journal that a download of webview `label` was refused, without its address.
+fn journal_download_refused(label: &str) {
+    tracing::warn!(
+        operation = DOWNLOAD_REFUSED_OPERATION,
+        outcome = "failed",
+        actor = actor(label).as_str(),
+        error_code = "download_denied",
+        "download refused"
+    );
 }
 
 /// Journal that a download of webview `label` finished, with whether it succeeded.

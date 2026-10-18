@@ -190,10 +190,11 @@ pub fn is_app_url(url: &Url) -> bool {
     app_origins().contains(&origin.as_str())
 }
 
-/// Decide whether an app webview may navigate to `url`: app pages and blank documents
+/// Decide whether app webview `label` may navigate to `url`: app pages and blank documents
 /// (`about:blank`, `about:srcdoc`) only. A refusal is journaled as
-/// `desktop.navigation.refused` with error code `foreign_origin`, never with the address.
-pub fn navigation_allowed(url: &Url) -> bool {
+/// `desktop.navigation.refused` with the actor `webview:<label>` and error code
+/// `foreign_origin`, never with the address.
+pub fn navigation_allowed(label: &str, url: &Url) -> bool {
     let blank = url.scheme() == "about" && matches!(url.path(), "blank" | "srcdoc");
     if blank || is_app_url(url) {
         return true;
@@ -201,6 +202,7 @@ pub fn navigation_allowed(url: &Url) -> bool {
     tracing::warn!(
         operation = NAVIGATION_OPERATION,
         outcome = "failed",
+        actor = format!("webview:{label}").as_str(),
         error_code = "foreign_origin",
         "app webview kept from leaving the app's origins"
     );

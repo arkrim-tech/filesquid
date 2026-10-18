@@ -103,17 +103,36 @@ async function invokeFromPage(command, args) {
   );
 }
 
+/** Most journal pages read by one redaction check (a fresh test journal holds a few). */
+const MAX_PAGES = 100;
+
 /**
- * Assert that the whole journal holds neither `PRIVATE_PATH` nor the launch token.
+ * Assert that the whole journal, every page followed through `next_cursor`, holds neither
+ * `PRIVATE_PATH` nor the launch token.
  */
 async function expectJournalRedacted() {
-  const result = await browser.execute(async (base) => {
-    const token = window.__FILESQUID_LAUNCH_TOKEN__;
-    const response = await fetch(`${base}/api/v1/admin/journal?order=desc&limit=500`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    return { text: await response.text(), token };
-  }, apiBase());
+  const result = await browser.execute(
+    async (base, maxPages) => {
+      const token = window.__FILESQUID_LAUNCH_TOKEN__;
+      let text = "";
+      let after = null;
+      for (let page = 0; page < maxPages; page += 1) {
+        const query = new URLSearchParams({ limit: "500" });
+        if (after !== null) query.set("after", String(after));
+        const response = await fetch(`${base}/api/v1/admin/journal?${query}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const body = await response.text();
+        text += body;
+        after = JSON.parse(body).next_cursor ?? null;
+        if (after === null) return { text, token, complete: true };
+      }
+      return { text, token, complete: false };
+    },
+    apiBase(),
+    MAX_PAGES,
+  );
+  expect(result.complete).toBe(true);
   expect(result.text).not.toContain(PRIVATE_PATH);
   expect(result.text).not.toContain("holiday");
   expect(result.text).not.toContain(result.token);

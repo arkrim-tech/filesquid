@@ -49,12 +49,12 @@ No option needs a Tauri patch. The `ipc` gate uses public API and is exact; the 
 | `desktop.ipc.refused` (Tauri via gate) | `acl_denied`, `no_response` | `tauris_own_access_control_refusal_of_a_forwarded_call_is_journaled`, `a_call_tauri_never_answers_is_journaled_and_answered` |
 | `desktop.ipc.refused` (observer) | `acl_denied`, `invalid_invoke_key`, `malformed_request` | `a_refusal_tauri_reports_on_its_post_message_path_is_journaled_with_the_command`, `tauris_invoke_key_refusal_is_journaled_once_and_the_key_stays_out_of_the_logs`, `an_unreadable_post_message_call_is_journaled_without_its_text`, e2e postMessage cases |
 | `desktop.ipc.failed` | `command_failed` | same redaction path as `acl_denied` (`journal_tauri_error`); no reachable trigger while only event commands are forwarded |
-| `tauri::webview.error` | none | `other_tauri_webview_errors_are_journaled_without_their_text` |
+| `tauri::webview.error` | `webview_error` | `other_tauri_webview_errors_are_journaled_without_their_text` |
 | `desktop.window.refused` | `new_window_denied` | `a_new_window_is_refused_and_journaled_without_its_address`, e2e "refuses and journals a new window" |
 | `desktop.permission.refused` | `permission_denied` (target: kind) | `a_permission_request_is_refused_and_journaled_by_kind_only` |
 | `desktop.download`, `desktop.download.refused` | `download_denied` | `a_download_is_journaled_without_its_address_or_file_name` |
 | `desktop.window.opened`, `desktop.window.closed`, `desktop.window.create` | `window_create_failed` | `the_main_window_is_built_by_the_host_and_its_opening_and_closing_journaled`, `a_main_window_that_cannot_be_built_is_journaled` |
-| `desktop.panic` | `panic` | `a_panic_is_journaled_without_its_message`, `the_panic_hook_flushes_the_journal_it_is_given` |
+| `desktop.panic` | `panic` | `a_panic_is_journaled_without_its_message`, `the_panic_hook_flushes_the_journal_it_is_given`, `a_panic_on_the_journal_writer_thread_is_never_queued_and_reaches_stdout_redacted` |
 
 ## Desktop host audit (events that bypassed the journal)
 
@@ -69,7 +69,7 @@ No option needs a Tauri patch. The `ipc` gate uses public API and is exact; the 
 | Tauri's own `log::` records | already journaled (tracing-subscriber's `tracing-log` installs `LogTracer`) as `<target>.warn/error`, no text | unchanged |
 | Host start/stop, event forwarder, monitor tick, scheme host failures | already journaled | unchanged |
 
-Remaining, out of scope for this branch: a failure before the journal opens (the per-launch token cannot be generated, the data directory or journal cannot be opened, Tauri cannot build the app before `setup`) can only go to stdout, as the API's own pre-monitor refusals do; a panic on the journal writer's own thread is journaled but not flushed (the flush would wait on that thread); the previous panic hook still prints the panic message to stderr.
+Remaining, out of scope for this branch: a failure before the journal opens (the per-launch token cannot be generated, the data directory or journal cannot be opened, Tauri cannot build the app before `setup`) can only go to stdout, as the API's own pre-monitor refusals do; a panic on the journal writer's own thread is printed to stdout as a JSON line marked `journal_unavailable` and not queued (that thread is the queue's only consumer); refusals read from Tauri's trace carry the actor `webview` because Tauri's trace does not name the webview; the previous panic hook still prints the panic message to stderr.
 
 ## Constraint gates
 
@@ -266,3 +266,11 @@ $ FULL=1 FILESQUID_DESKTOP_E2E=1 bash scripts/pre-commit.sh
 ## Mocked Environment Variables
 
 None.
+
+## Cubic round 1 fixes
+
+- A panic on the journal writer's thread no longer queues its record (it could block on a full queue whose only consumer is that thread); it prints a redacted stdout line instead.
+- The observer prints through the host's stdout writer (`with_stdout`), so the redaction tests now read the observer's own lines; `tauri::webview.error` carries the code `webview_error`.
+- Navigation refusals carry the actor `webview:<label>`; a future download event kind is refused and journaled.
+- The BDD permission scenario asserts the `camera` target; the packaged-window redaction check pages through the whole journal.
+- DE-S-002, DE-S-003, ADR 002, the plan row, README and the root SRS note now state the `postMessage` path, the `webview` actor of trace-read refusals and the panic exceptions exactly.

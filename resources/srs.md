@@ -1168,7 +1168,7 @@ The system MUST implement [PRD F-061](./prd.md#f-061-activity-journal-and-live-h
 **Tests**
 - [`activity_journal_and_live_health_monitoring_F-061.feature`](../apps/filesquid/crates/api/tests/features/activity_journal_and_live_health_monitoring_F-061.feature) (scenarios; step definitions, unit, load and redaction tests come with Task FS-2.4)
 - [`native_journal_store_F-061.feature`](../apps/filesquid/crates/native/tests/features/native_journal_store_F-061.feature) (SQLite journal store and data-directory checks)
-- [`desktop_refusals_F-061.feature`](../apps/filesquid/crates/desktop/tests/features/desktop_refusals_F-061.feature) (desktop shell refusals: IPC, navigation, new windows, permissions, downloads)
+- [`desktop_refusals_F-061.feature`](../apps/filesquid/crates/desktop/tests/features/desktop_refusals_F-061.feature) (desktop shell refusals: IPC, new windows, permissions, downloads)
 
 ### SRS-F-062: Drive-style views, sorting, selection and layout preferences
 
