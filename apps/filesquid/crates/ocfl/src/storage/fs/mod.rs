@@ -77,8 +77,12 @@ pub struct FsBackend {
     staging: PathBuf,
     uploads: PathBuf,
     lock_file: PathBuf,
-    next_id: AtomicU64,
 }
+
+/// The next sequence number for [`FsBackend::unique_suffix`]. It is shared by
+/// every instance in the process, so two backends on one root never draw the
+/// same number, however coarse the clock.
+static NEXT_SUFFIX: AtomicU64 = AtomicU64::new(0);
 
 /// Map an I/O error on `what` to a storage error; `NotFound` stays not found.
 fn io_error(what: &str, err: std::io::Error) -> StorageError {
@@ -170,7 +174,6 @@ impl FsBackend {
             staging,
             uploads,
             lock_file,
-            next_id: AtomicU64::new(0),
         })
     }
 
@@ -191,9 +194,16 @@ impl FsBackend {
         &self.root
     }
 
-    /// A process-unique suffix for temporary names and upload identifiers.
+    /// A process-unique suffix for temporary names and upload identifiers:
+    /// `<pid>-<nanos>-<n>`. The process-wide sequence number `n` keeps
+    /// instances in one process apart, and the process id keeps concurrent
+    /// processes apart. The timestamp only lowers the chance that a reused
+    /// process id meets stale files left by an earlier process; wall-clock
+    /// time is not a uniqueness guarantee. If a stale path does exist,
+    /// `create_new_checked` refuses it with `AlreadyExists` rather than
+    /// reusing it.
     fn unique_suffix(&self) -> String {
-        let n = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let n = NEXT_SUFFIX.fetch_add(1, Ordering::Relaxed);
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| d.as_nanos());
@@ -435,5 +445,76 @@ impl StorageBackend for FsBackend {
 
     async fn abort_multipart(&self, upload: &UploadId) -> Result<(), StorageError> {
         self.abort_multipart_blocking(upload)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    /// A scratch directory under the system temporary directory, removed on
+    /// drop.
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(label: &str) -> Self {
+            let dir =
+                std::env::temp_dir().join(format!("ocfl-fs-mod-{label}-{}", std::process::id()));
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(&dir).expect("scratch");
+            Self(dir)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// The sequence number, the last `-` separated field, of a suffix.
+    fn sequence(suffix: &str) -> &str {
+        suffix.rsplit('-').next().expect("sequence field")
+    }
+
+    #[test]
+    fn fresh_instances_on_one_root_never_share_a_sequence_number() {
+        let scratch = Scratch::new("sequence");
+        let root = scratch.0.join("root");
+        let first = FsBackend::new(&root, scratch.0.join("staging-1")).expect("backend");
+        let second = FsBackend::new(&root, scratch.0.join("staging-2")).expect("backend");
+        let (a, b) = (first.unique_suffix(), second.unique_suffix());
+        assert_ne!(sequence(&a), sequence(&b), "{a} and {b} share a sequence");
+    }
+
+    #[test]
+    fn concurrent_instances_on_one_root_never_repeat_a_suffix() {
+        const THREADS: usize = 16;
+        const PER_THREAD: usize = 200;
+        let scratch = Scratch::new("concurrent");
+        let root = scratch.0.join("root");
+        let barrier = std::sync::Barrier::new(THREADS);
+        let suffixes: Vec<String> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..THREADS)
+                .map(|i| {
+                    let staging = scratch.0.join(format!("staging-{i}"));
+                    let backend = FsBackend::new(&root, staging).expect("backend");
+                    let barrier = &barrier;
+                    scope.spawn(move || {
+                        barrier.wait();
+                        (0..PER_THREAD)
+                            .map(|_| backend.unique_suffix())
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .flat_map(|h| h.join().expect("thread"))
+                .collect()
+        });
+        let unique: HashSet<&String> = suffixes.iter().collect();
+        assert_eq!(unique.len(), THREADS * PER_THREAD, "duplicate suffixes");
     }
 }

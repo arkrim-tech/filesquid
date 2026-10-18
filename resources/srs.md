@@ -78,6 +78,7 @@ The system MUST implement [PRD F-001](./prd.md#f-001-independent-local-library-a
 
 **Tests**
 - [`independent_local_library_and_ownership_F-001.feature`](../apps/filesquid/ui/tests/features/independent_local_library_and_ownership_F-001.feature)
+- [`library_domain_commands_and_queries_API-S-019.feature`](../apps/filesquid/crates/api/tests/features/library_domain_commands_and_queries_API-S-019.feature)
 
 ### SRS-F-002: Safe file, folder and device import
 
@@ -779,6 +780,7 @@ The system MUST implement [PRD F-049](./prd.md#f-049-product-component-terminolo
 - [`product_component_terminology_and_item_type_F-049.feature`](../apps/filesquid/ui/tests/features/product_component_terminology_and_item_type_F-049.feature)
 - [`opaque_identifiers_CORE-S-001.feature`](../apps/filesquid/crates/core/tests/features/opaque_identifiers_CORE-S-001.feature)
 - [`item_type_is_file_CORE-S-002.feature`](../apps/filesquid/crates/core/tests/features/item_type_is_file_CORE-S-002.feature)
+- [`library_domain_commands_and_queries_API-S-019.feature`](../apps/filesquid/crates/api/tests/features/library_domain_commands_and_queries_API-S-019.feature)
 
 ### SRS-F-050: FileSquid platform and distributions
 
