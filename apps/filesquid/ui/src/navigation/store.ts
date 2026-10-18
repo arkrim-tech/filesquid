@@ -8,7 +8,8 @@
  * a version 1 JSON value of handles, kinds and section ids only, never a name, path, token or
  * content handle. When device storage refuses access the choices still apply until the page
  * closes and the console says why; a stored value that does not parse, has another version or
- * breaks a bound is ignored with a console message and the defaults are used.
+ * breaks a bound is ignored with a console message, and the choices this page already has are
+ * kept (the defaults at first start).
  */
 import { deviceStorage, type DeviceStorage } from "../app/device-storage";
 import {
@@ -171,9 +172,14 @@ export class NavigationStore extends EventTarget {
       if (text === null) return EMPTY_NAVIGATION_PREFERENCES;
       const stored = readStoredPreferences(JSON.parse(text));
       if (stored.ok) return stored.prefs;
-      console.warn(`FileSquid ignored the saved navigation choices: ${stored.problem}`);
+      console.warn(
+        `FileSquid ignored the saved navigation choices (${stored.problem}); keeping this page's choices`,
+      );
     } catch (error) {
-      console.warn("FileSquid could not read the saved navigation choices; using none", error);
+      console.warn(
+        "FileSquid could not read the saved navigation choices; keeping this page's choices",
+        error,
+      );
     }
     return undefined;
   }
