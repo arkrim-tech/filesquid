@@ -119,6 +119,12 @@ Running Pre-Commit Hooks... (test scope: full)
 ✅ All Pre-Commit Hooks Passed! Test scope: full (646s)
 ```
 
+## Review fixes (Cubic round 1)
+
+- P2, [task-workflow.md](../../.agents/rules/task-workflow.md): the rule now names the npm exception exactly: only the top-level `package.json` and `package-lock.json` of `apps/filesquid/ui` and `apps/imagesquid`. The scope table and the README say that a nested manifest gives `full`.
+- P2, [local-verification.md](../../.agents/rules/local-verification.md): the shared-target advice for the final `FULL=1` gate now applies only when the PR's scope is `full` or includes `rust:`.
+- P3, [pr-review-loop.md](../../.agents/rules/pr-review-loop.md): step 1 reads "the head-commit hook run required by its scope passes".
+
 ## Mocked Environment Variables
 
 None.
