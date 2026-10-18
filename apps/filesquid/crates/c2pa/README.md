@@ -7,7 +7,7 @@ The C2PA module of FileSquid. It is a FOSS [C2PA](https://spec.c2pa.org/specific
 | Cargo package | `filesquid-c2pa` |
 | Rust import | `filesquid_c2pa` |
 | Path | `apps/filesquid/crates/c2pa/` (member of the `apps/filesquid/` Cargo workspace) |
-| Status | Foundation only (CP-0.1): byte I/O, fetcher and crypto-backend traits, isolation tests, `wasm32` build check and `c2patool` oracle harness. No C2PA reading, validation, minting or editing exists yet; manifest reading starts in CP-0.2. `publish = false` until the API is versioned (CP-F3.1). |
+| Status | Foundation (CP-0.1: byte I/O, fetcher and crypto-backend traits, isolation tests, `wasm32` build check, `c2patool` oracle harness) and manifest store parsing (CP-0.2: JUMBF, CBOR, claims v1 and v2, assertions, sidecar and remote stores). Locating stores inside JPEG and PNG (CP-0.3), validation (CP-0.3 to CP-0.5), minting and editing do not exist yet. `publish = false` until the API is versioned (CP-F3.1). |
 | Specification | Pinned specification: C2PA Technical Specification 2.4 (`filesquid_c2pa::C2PA_SPEC_VERSION`) |
 
 - C2PA logic (JUMBF, CBOR claims and assertions, bindings, validation, manifest assembly, format handlers) is this module's own code. Cryptographic primitives come from established crates behind a crypto-backend trait; they are never hand-rolled.
@@ -26,6 +26,31 @@ The Content Credentials sidebar panel is part of `@filesquid/ui` in `apps/filesq
 | `io` | `ByteSource`, `ByteSink`, `read_exact_at`, `MemorySource`, `MemorySink`, `ByteIoError` | The caller supplies every byte. The core never calls `std::fs`. |
 | `fetch` | `Fetcher`, `FetchRequest`, `FetchPurpose`, `FetchResponse`, `FetchError`, `BoundedBody`, `OfflineFetcher`, `fetch_bounded`, `redacted_origin`, `DEFAULT_MAX_FETCH_BYTES` | Remote manifests, revocation data and timestamps go through the caller's fetcher. A fetcher MUST enforce `max_bytes` while reading (push chunks into `BoundedBody`); `fetch_bounded` checks again and logs failures with the redacted origin and an error category only. `OfflineFetcher` refuses everything. The core has no network client. |
 | `crypto` | `CryptoBackend`, `IncrementalHasher`, `HashAlgorithm`, `SigningAlgorithm`, `CryptoError`, `RustCryptoBackend`, `DIGEST_CHUNK_BYTES` | Every hash and signature check goes through the backend trait. `digest_ranges` hashes ranges of a `ByteSource` in 64 KiB chunks without buffering the asset; an async-only backend such as WebCrypto overrides it. |
+| `jumbf` | `parse_superbox`, `Superbox`, `DescriptionBox`, `ContentBox`, `JumbfChild`, `BoxRange`, `ByteRange`, `BoxType`, `TypeUuid`, `types`, `toggles`, `JumbfLimits`, `JumbfError`, `MAX_SUPPORTED_DEPTH` | JUMBF superboxes and description boxes (ISO 19566-5, C2PA 2.4 section 11.1) with the byte range of every box. `BoxRange::payload` is the superbox content without its header, which is what a hashed URI covers (section 8.4.2.3). |
+| `cbor` | `decode`, `CborValue`, `CborFloat`, `ItemBudget`, `CborError`, `MAX_SUPPORTED_DEPTH` | A CBOR decoder written for this crate (RFC 8949). Accepts well-formed CBOR and rejects invalid UTF-8 and duplicate map keys. |
+| `manifest` | `ManifestStore`, `ManifestEntry`, `Manifest`, `ManifestKind`, `ClaimSignature`, `Claim`, `ClaimVersion`, `HashedUri`, `GeneratorInfo`, `Assertion`, `AssertionContent`, `JumbfUri`, `IgnoredBox`, `IgnoreReason`, `ParseLimits`, `StoreError`, `ManifestError`, `ClaimError`, `AssertionError`, `UriError`, `ResolveError` | A parsed C2PA Manifest Store: every manifest in order (the last is active), each with its claim (`c2pa.claim.v2` or the legacy `c2pa.claim`), the claim's CBOR bytes, the raw `COSE_Sign1` claim signature and its assertions (CBOR decoded, JSON checked, embedded files and UUID boxes located). `ManifestStore::resolve` follows `self#jumbf` URIs. |
+| `read` | `read_manifest_store`, `fetch_remote_manifest_store`, `ReadError` | Read a store from a `ByteSource` (a sidecar `.c2pa` file) or by remote reference through the caller's `Fetcher` (`http` and `https` only). |
+
+### Manifest store parsing
+
+Every byte is treated as hostile. Errors come in layers. Manifest and assertion content errors do not hide other entries; framing, missing-label, size and engine-limit errors reject the whole store:
+
+- `StoreError`: the store cannot be used at all (over `max_store_bytes`, broken JUMBF framing, not a requestable `c2pa` store, no manifests, two manifests with one label, a C2PA box without a label, or an engine limit).
+- `ManifestError`, in `ManifestEntry::content`: one manifest is unusable. `status_code()` gives the C2PA 2.4 failure code: `claim.missing`, `claim.multiple`, `claim.cbor.invalid`, `claim.malformed` (including a signature or assertion reference that is not a `self#jumbf` URI, or a malformed generator `icon`), `claimSignature.missing`, `assertion.missing`, or `general.error` for a manifest box without the requestable toggle. C2PA 2.4 section 11.1.4.1.2 requires the requestable and label toggles on every C2PA box; a claim, signature or assertion store without them reports `claim.malformed`, `claimSignature.missing` or `assertion.missing`. A compressed manifest (`c2cm`) is `CompressedUnsupported` (no code): Brotli decompression is not implemented yet.
+- `AssertionError`, in `Assertion::content`: one assertion is unusable (`assertion.cbor.invalid`, `assertion.json.invalid`, `assertion.missing` when the box is not requestable, or malformed embedded-file or UUID content, which has no code). Validation decides whether the claim references it.
+- `ReadError`: reading failed. A remote store the fetcher cannot deliver is `manifest.inaccessible`.
+
+Boxes the specification says to skip (unknown type UUIDs, time-stamp manifests `c2tm`, data box stores `c2db`, content boxes where only superboxes belong, C2PA boxes with an unexpected label) are listed in `ManifestStore::ignored`, never dropped silently. Hashes and signatures are not checked here; the parser keeps the byte ranges the validation tasks need. Error messages and logs never carry text from the input as is: labels are escaped and shortened, a fetch error shows only its category, and `tracing` logs record an error category and counts.
+
+| Limit (`ParseLimits`) | Default | Exceeded |
+|---|---|---|
+| `max_store_bytes` | 64 MiB | `ReadError::TooLarge` before anything is read or allocated; a remote fetch uses it as `max_bytes`; `ManifestStore::from_bytes` returns `StoreError::TooLarge` |
+| `max_box_depth` (store superbox is depth 1) | 16, never above 256 | `JumbfError::TooDeep` |
+| `max_boxes` (every box header in the store) | 65 536 | `JumbfError::TooManyBoxes` |
+| `max_cbor_depth` (a scalar is depth 1) | 64, never above 256 | `StoreError::CborLimit(CborError::TooDeep)` |
+| `max_cbor_items` (shared by the CBOR decoded in the store; claim signatures are kept as raw bytes) | 1 048 576 | `StoreError::CborLimit(CborError::TooManyItems)` |
+
+A CBOR string, array or map that declares more data than remains fails as truncated, and an array or map that declares more items than the item budget has left fails at its head, both before anything is allocated; at most 1 024 slots are reserved up front. Map keys are compared as RFC 8949 section 5.6.1 says (`0.0` equals `-0.0`, map keys ignore pair order). JSON assertions are checked for well-formedness without building a value tree, and `serde_json` skips nested values iteratively, so JSON nesting needs no separate limit.
 
 Trait methods return futures without a `Send` bound so single-threaded `wasm32` hosts can implement them; on native hosts the futures are `Send` whenever the implementation's are.
 
@@ -52,7 +77,7 @@ cargo test -p filesquid-c2pa --locked
 cargo build -p filesquid-c2pa --lib --target wasm32-unknown-unknown --no-default-features --locked
 ```
 
-`cargo test` runs the unit tests, the dependency-isolation and source-scan tests, the `wasm32-unknown-unknown` build check (default features on and off, built into `filesquid-c2pa-wasm32-check/` under the Cargo target directory), the oracle run and the Cucumber features. The cucumber JUnit report is written to `tests/allure-results/cucumber-junit.xml`. The `wasm32` check **fails** when the target is missing; install it once with:
+`cargo test` runs the unit tests (including fuzz tests over truncated and corrupted manifest stores), the dependency-isolation and source-scan tests, the `wasm32-unknown-unknown` build check (default features on and off, built into `filesquid-c2pa-wasm32-check/` under the Cargo target directory), the conformance parse test, the oracle run, the parsing performance test and the Cucumber features. The cucumber JUnit report is written to `tests/allure-results/cucumber-junit.xml`. The `wasm32` check **fails** when the target is missing; install it once with:
 
 ```bash
 rustup target add wasm32-unknown-unknown
@@ -62,7 +87,7 @@ To skip the check on purpose, set `FILESQUID_SKIP_WASM32=1`. The integration tes
 
 ### Interoperability oracle
 
-The oracle harness runs the official `c2patool` on the C2PA public conformance files and records its verdict and failure codes. It is built to compare them with the engine's and fail on any disagreement, but **no comparison happens yet**: the engine cannot read manifests until CP-0.2 to CP-0.5, so every file is counted as pending and only `c2patool`'s verdict is recorded. An unexpected `c2patool` exit or output that is not a report fails the test. Without the tool or the corpus the test is skipped and prints why.
+The oracle harness runs the official `c2patool` on the C2PA public conformance files and records its verdict and failure codes. It is built to compare them with the engine's and fail on any disagreement, but **no comparison happens yet**: the engine parses manifest stores (CP-0.2) but cannot yet locate them inside a JPEG or PNG (CP-0.3) or produce a validation verdict (CP-0.5), so every file is counted as pending and only `c2patool`'s verdict is recorded. An unexpected `c2patool` exit or output that is not a report fails the test. Without the tool or the corpus the test is skipped and prints why.
 
 From the repository root, in a POSIX shell (Linux, macOS, or Git Bash or WSL on Windows). The corpus is cloned next to the repository, and its path is passed as an absolute path because the test runs with the crate directory as its working directory:
 
@@ -78,6 +103,13 @@ cargo test -p filesquid-c2pa --locked --test integration_oracle -- --nocapture
 |---|---|
 | `FILESQUID_C2PATOOL` | Path to `c2patool`; default: `c2patool` on `PATH` |
 | `FILESQUID_C2PA_CONFORMANCE_DIR` | Checkout of `c2pa-org/public-testfiles` (CC BY-SA 4.0; not vendored) |
+
+The same corpus also drives the conformance parse test, which needs no `c2patool`: it reassembles every JPEG's APP11 JUMBF in test-only code and requires every manifest store, and every manifest in it, to parse completely. Without the variable it is skipped and prints why:
+
+```bash
+cd apps/filesquid
+cargo test -p filesquid-c2pa --locked --test integration_conformance_parse -- --nocapture
+```
 
 `cargo install c2patool` compiles a vendored OpenSSL (`openssl-src`), so it needs a C compiler and Perl on `PATH` on every platform (on Windows, for example, the MSVC build tools and Strawberry Perl). It takes several minutes and about 3 GB of build space; the oracle never enters this crate's dependency graph.
 

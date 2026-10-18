@@ -9,6 +9,9 @@
 #[path = "support/deps.rs"]
 #[allow(dead_code)]
 mod deps;
+#[path = "support/fixtures.rs"]
+#[allow(dead_code)]
+mod fixtures;
 #[path = "support/oracle.rs"]
 #[allow(dead_code)]
 mod oracle;
@@ -27,7 +30,12 @@ use filesquid_c2pa::crypto::{CryptoBackend, CryptoError, RustCryptoBackend, Sign
 use filesquid_c2pa::fetch::{
     fetch_bounded, FetchError, FetchPurpose, FetchRequest, FetchResponse, Fetcher, OfflineFetcher,
 };
-use filesquid_c2pa::io::{read_exact_at, ByteIoError, MemorySource};
+use filesquid_c2pa::io::{read_exact_at, ByteIoError, ByteSource, MemorySource};
+use filesquid_c2pa::jumbf::JumbfError;
+use filesquid_c2pa::manifest::{
+    AssertionContent, ClaimVersion, IgnoreReason, ManifestStore, ParseLimits, StoreError,
+};
+use filesquid_c2pa::read::{fetch_remote_manifest_store, read_manifest_store, ReadError};
 
 /// RFC 8032 section 7.1 TEST 1 public key as an Ed25519 SubjectPublicKeyInfo.
 const RFC8032_T1_SPKI: &str =
@@ -44,6 +52,8 @@ enum CallerFetcher {
     Offline,
     /// A fetcher returning a body of this many bytes.
     Fixed(usize),
+    /// A fetcher serving these manifest store bytes.
+    Store(Vec<u8>),
 }
 
 /// A fetcher returning a fixed-size body.
@@ -55,6 +65,47 @@ impl Fetcher for FixedFetcher {
             content_type: None,
             body: vec![0u8; self.0],
         })
+    }
+}
+
+/// A fetcher serving fixed bytes and recording each request's purpose.
+struct StoreFetcher {
+    /// The served body.
+    body: Vec<u8>,
+    /// Purposes of the requests seen.
+    purposes: std::sync::Mutex<Vec<FetchPurpose>>,
+}
+
+impl Fetcher for StoreFetcher {
+    async fn fetch(&self, request: &FetchRequest) -> Result<FetchResponse, FetchError> {
+        self.purposes
+            .lock()
+            .expect("purposes")
+            .push(request.purpose);
+        Ok(FetchResponse {
+            content_type: Some("application/c2pa".to_string()),
+            body: self.body.clone(),
+        })
+    }
+}
+
+/// A sidecar source that counts reads, for the size-limit scenario.
+#[derive(Debug, Default)]
+struct SidecarSource {
+    /// The sidecar bytes.
+    inner: MemorySource,
+    /// Number of `read_at` calls.
+    reads: usize,
+}
+
+impl ByteSource for SidecarSource {
+    async fn size(&mut self) -> Result<u64, ByteIoError> {
+        self.inner.size().await
+    }
+
+    async fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> Result<usize, ByteIoError> {
+        self.reads += 1;
+        self.inner.read_at(offset, buf).await
     }
 }
 
@@ -77,6 +128,32 @@ struct C2paWorld {
     fetcher: CallerFetcher,
     /// Outcome of the last fetch.
     fetched: Option<Result<FetchResponse, FetchError>>,
+    /// The sidecar a scenario reads.
+    sidecar: SidecarSource,
+    /// Limits for the read; `None` means the defaults.
+    limits: Option<ParseLimits>,
+    /// Outcome of the last manifest store read.
+    store: Option<Result<ManifestStore, ReadError>>,
+    /// Request purposes seen by a store-serving fetcher.
+    purposes: Vec<FetchPurpose>,
+}
+
+impl C2paWorld {
+    /// The parsed store of the last read, which must have succeeded.
+    fn parsed(&self) -> &ManifestStore {
+        match self.store.as_ref().expect("a read ran") {
+            Ok(store) => store,
+            Err(err) => panic!("read failed: {err}"),
+        }
+    }
+
+    /// The error of the last read, which must have failed.
+    fn read_error(&self) -> &ReadError {
+        match self.store.as_ref().expect("a read ran") {
+            Ok(_) => panic!("read succeeded"),
+            Err(err) => err,
+        }
+    }
 }
 
 /// Decode lowercase hex from a published test vector.
@@ -261,11 +338,211 @@ async fn request_manifest(world: &mut C2paWorld, max_bytes: u64) {
         FetchPurpose::RemoteManifest,
         max_bytes,
     );
-    let result = match world.fetcher {
+    let result = match &world.fetcher {
         CallerFetcher::Offline => fetch_bounded(&OfflineFetcher, &request).await,
-        CallerFetcher::Fixed(len) => fetch_bounded(&FixedFetcher(len), &request).await,
+        CallerFetcher::Fixed(len) => fetch_bounded(&FixedFetcher(*len), &request).await,
+        CallerFetcher::Store(body) => fetch_bounded(&FixedFetcher(body.len()), &request).await,
     };
     world.fetched = Some(result);
+}
+
+#[given("a sidecar manifest store with an ingredient manifest and an active manifest")]
+fn sidecar_sample(world: &mut C2paWorld) {
+    world.sidecar.inner = MemorySource::new(fixtures::sample_store());
+}
+
+#[given("a sidecar manifest store whose claim uses the legacy c2pa.claim label")]
+fn sidecar_legacy(world: &mut C2paWorld) {
+    let bytes = fixtures::store(&[fixtures::legacy_manifest(fixtures::ACTIVE_LABEL)]);
+    world.sidecar.inner = MemorySource::new(bytes);
+}
+
+#[given("a sidecar manifest store cut short by one byte")]
+fn sidecar_truncated(world: &mut C2paWorld) {
+    let mut bytes = fixtures::sample_store();
+    bytes.pop();
+    world.sidecar.inner = MemorySource::new(bytes);
+}
+
+#[given("a sidecar manifest store one byte larger than the store size limit")]
+fn sidecar_over_limit(world: &mut C2paWorld) {
+    let bytes = fixtures::sample_store();
+    world.limits = Some(ParseLimits {
+        max_store_bytes: bytes.len() as u64 - 1,
+        ..ParseLimits::default()
+    });
+    world.sidecar.inner = MemorySource::new(bytes);
+}
+
+#[given("a sidecar manifest store nested one level deeper than the box depth limit")]
+fn sidecar_too_deep(world: &mut C2paWorld) {
+    // The sample store nests four superboxes: store, manifest, assertion
+    // store, assertion.
+    world.limits = Some(ParseLimits {
+        max_box_depth: 3,
+        ..ParseLimits::default()
+    });
+    world.sidecar.inner = MemorySource::new(fixtures::sample_store());
+}
+
+#[given("a sidecar manifest store whose ingredient claim is not valid CBOR")]
+fn sidecar_broken_ingredient(world: &mut C2paWorld) {
+    let broken = fixtures::manifest(
+        b"c2ma",
+        fixtures::INGREDIENT_LABEL,
+        &[
+            fixtures::assertion_store(&fixtures::standard_assertions()),
+            fixtures::claim_box("c2pa.claim.v2", &[0xFF]),
+            fixtures::signature_box(),
+        ],
+    );
+    let bytes = fixtures::store(&[broken, fixtures::standard_manifest(fixtures::ACTIVE_LABEL)]);
+    world.sidecar.inner = MemorySource::new(bytes);
+}
+
+#[given("a sidecar manifest store with a vendor box of an unknown type")]
+fn sidecar_vendor_box(world: &mut C2paWorld) {
+    let vendor = fixtures::superbox(fixtures::uuid(b"zzzz"), "vendor.box", &[]);
+    let bytes = fixtures::store(&[vendor, fixtures::standard_manifest(fixtures::ACTIVE_LABEL)]);
+    world.sidecar.inner = MemorySource::new(bytes);
+}
+
+#[given("a caller fetcher that serves a manifest store")]
+fn fetcher_serving_store(world: &mut C2paWorld) {
+    world.fetcher = CallerFetcher::Store(fixtures::sample_store());
+}
+
+#[when("I read the sidecar with filesquid-c2pa")]
+async fn read_sidecar(world: &mut C2paWorld) {
+    let limits = world.limits.clone().unwrap_or_default();
+    let result = read_manifest_store(&mut world.sidecar, &limits).await;
+    world.store = Some(result);
+}
+
+#[when(expr = "I read the remote manifest store {string}")]
+async fn read_remote(world: &mut C2paWorld, url: String) {
+    let limits = world.limits.clone().unwrap_or_default();
+    let result = match &world.fetcher {
+        CallerFetcher::Store(body) => {
+            let fetcher = StoreFetcher {
+                body: body.clone(),
+                purposes: std::sync::Mutex::new(Vec::new()),
+            };
+            let result = fetch_remote_manifest_store(&fetcher, &url, &limits).await;
+            world.purposes = fetcher.purposes.into_inner().expect("purposes");
+            result
+        }
+        CallerFetcher::Offline => fetch_remote_manifest_store(&OfflineFetcher, &url, &limits).await,
+        CallerFetcher::Fixed(len) => {
+            fetch_remote_manifest_store(&FixedFetcher(*len), &url, &limits).await
+        }
+    };
+    world.store = Some(result);
+}
+
+#[then("the active manifest should be the last manifest in the store")]
+fn active_is_last(world: &mut C2paWorld) {
+    let store = world.parsed();
+    let last = store.manifests().last().expect("a manifest");
+    assert_eq!(store.active_manifest().label, last.label);
+    assert_eq!(last.label, fixtures::ACTIVE_LABEL);
+}
+
+#[then("its v2 claim and its CBOR, JSON and embedded-file assertions should be returned")]
+fn v2_claim_and_assertions(world: &mut C2paWorld) {
+    let manifest = world
+        .parsed()
+        .active_manifest()
+        .content
+        .as_ref()
+        .expect("manifest");
+    assert_eq!(manifest.claim.version, ClaimVersion::V2);
+    assert_eq!(manifest.claim.created_assertions.len(), 4);
+    let kinds: Vec<_> = manifest
+        .assertions
+        .iter()
+        .map(|a| match a.content.as_ref().expect("assertion") {
+            AssertionContent::Cbor(_) => "cbor",
+            AssertionContent::Json(_) => "json",
+            AssertionContent::EmbeddedFile { .. } => "embedded",
+            _ => "other",
+        })
+        .collect();
+    assert_eq!(kinds, ["cbor", "cbor", "json", "embedded"]);
+}
+
+#[then("the claim should be reported as version 1 with its assertions")]
+fn v1_claim(world: &mut C2paWorld) {
+    let manifest = world
+        .parsed()
+        .active_manifest()
+        .content
+        .as_ref()
+        .expect("manifest");
+    assert_eq!(manifest.claim.version, ClaimVersion::V1);
+    assert_eq!(manifest.claim.created_assertions.len(), 1);
+    assert_eq!(manifest.assertions.len(), 1);
+}
+
+#[then("the fetcher should have been asked for a remote manifest")]
+fn fetcher_asked(world: &mut C2paWorld) {
+    assert_eq!(world.purposes, [FetchPurpose::RemoteManifest]);
+}
+
+#[then(expr = "the read should fail with status code {string}")]
+fn read_status_code(world: &mut C2paWorld, code: String) {
+    assert_eq!(world.read_error().status_code(), Some(code.as_str()));
+}
+
+#[then("the read should fail with a truncated JUMBF box error")]
+fn read_truncated(world: &mut C2paWorld) {
+    let err = world.read_error();
+    assert!(
+        matches!(
+            err,
+            ReadError::Store(StoreError::Jumbf(JumbfError::Truncated { .. }))
+        ),
+        "{err:?}"
+    );
+}
+
+#[then("the read should fail as too large without reading the source")]
+fn read_too_large(world: &mut C2paWorld) {
+    let err = world.read_error();
+    assert!(matches!(err, ReadError::TooLarge { .. }), "{err:?}");
+    assert_eq!(world.sidecar.reads, 0);
+}
+
+#[then("the read should fail with a box depth limit error")]
+fn read_too_deep(world: &mut C2paWorld) {
+    let err = world.read_error();
+    assert!(
+        matches!(
+            err,
+            ReadError::Store(StoreError::Jumbf(JumbfError::TooDeep { max: 3, .. }))
+        ),
+        "{err:?}"
+    );
+}
+
+#[then(expr = "the ingredient manifest should report {string}")]
+fn ingredient_reports(world: &mut C2paWorld, code: String) {
+    let ingredient = &world.parsed().manifests()[0];
+    let err = ingredient.content.as_ref().expect_err("broken ingredient");
+    assert_eq!(err.status_code(), Some(code.as_str()));
+}
+
+#[then("the active manifest should still be readable")]
+fn active_readable(world: &mut C2paWorld) {
+    assert!(world.parsed().active_manifest().content.is_ok());
+}
+
+#[then("the vendor box should be listed as ignored with an unknown type")]
+fn vendor_box_ignored(world: &mut C2paWorld) {
+    let ignored = world.parsed().ignored();
+    assert_eq!(ignored.len(), 1);
+    assert_eq!(ignored[0].path, "c2pa/vendor.box");
+    assert_eq!(ignored[0].reason, IgnoreReason::UnknownType);
 }
 
 #[then("the request should be refused as offline")]

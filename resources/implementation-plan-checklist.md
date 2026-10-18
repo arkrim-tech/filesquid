@@ -51,7 +51,7 @@ FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by ga
     - [ ] [IO-0.5](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Structural validation
 11. [ ] [Task 0.17](./implementation-plan.md#task-0.17) filesquid-c2pa read and validate
     - [x] [CP-0.1](../apps/filesquid/crates/c2pa/resources/plan.md#phase-f0-read-and-validate-global-task-017) Scaffold, isolation, crypto backend and oracle harness
-    - [ ] [CP-0.2](../apps/filesquid/crates/c2pa/resources/plan.md#phase-f0-read-and-validate-global-task-017) JUMBF and CBOR manifest store parsing
+    - [x] [CP-0.2](../apps/filesquid/crates/c2pa/resources/plan.md#phase-f0-read-and-validate-global-task-017) JUMBF and CBOR manifest store parsing
     - [ ] [CP-0.3](../apps/filesquid/crates/c2pa/resources/plan.md#phase-f0-read-and-validate-global-task-017) Hard bindings and JPEG/PNG handlers
     - [ ] [CP-0.4](../apps/filesquid/crates/c2pa/resources/plan.md#phase-f0-read-and-validate-global-task-017) Signatures, certificate chains, timestamps and revocation
     - [ ] [CP-0.5](../apps/filesquid/crates/c2pa/resources/plan.md#phase-f0-read-and-validate-global-task-017) Validation report and `fsquid` read/verify
