@@ -1,8 +1,9 @@
 //! `filesquid-desktop`: the FileSquid desktop host (Tauri 2).
 //!
 //! Serves the single FileSquid API to the webview through the `filesquid://` custom URI
-//! scheme ([`api_protocol`]) and forwards API events to the UI as Tauri events named
-//! [`EVENT_NAME`]. There is no TCP listener and no per-feature IPC command
+//! scheme ([`api_protocol`]), ranged reads included, and pushes API events to the app's own
+//! webviews as Tauri events named [`EVENT_NAME`] ([`event_channel`]). There is no TCP listener
+//! and no per-feature IPC command
 //! ([ADR 030](../../../../../resources/architecture/030-filesquid-api-and-transports.md)).
 //! Activity is recorded in the activity journal in the app data directory and the host's
 //! health is tracked by the process registry
@@ -12,31 +13,40 @@
 //! Every launch generates a new per-launch token ([`install_launch_token`]). The API refuses
 //! any request without it (deny-by-default, API-S-004), and the host hands it only to its
 //! own pages through a webview initialization script ([`api_protocol::launch_token_script`]).
+//! The same plugin keeps every webview on the app's own origins, so the token and the events
+//! reach app pages only.
+//!
+//! The test-instrumented build (`--features test-webdriver`, never shipped) adds the embedded
+//! WebDriver server for the packaged-window tests and a 100 MB range fixture (`test_fixture`).
 
 pub mod api_protocol;
+pub mod event_channel;
+#[cfg(feature = "test-webdriver")]
+pub mod test_fixture;
 
+pub use event_channel::EVENT_NAME;
+
+use event_channel::{Forwarding, TauriSink, FORWARDER_HEARTBEAT};
 use filesquid_api::auth::{record_token_issue, Authoriser, LaunchToken, Principal};
 use filesquid_api::monitor::HostMonitor;
+use filesquid_api::registry::ProcessHandle;
 use filesquid_api::trace_layer::JournalLayer;
 use filesquid_api::ApiState;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tauri::{Emitter, Manager, RunEvent};
-use tokio::sync::broadcast::error::RecvError;
+use tauri::{Manager, RunEvent};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::Layer;
 
-/// Tauri event name that carries every [`filesquid_api::ApiEvent`] to the UI.
-pub const EVENT_NAME: &str = "filesquid-event";
-
 /// Interval between monitor ticks (host heartbeat, stalled checks, health).
 const TICK: Duration = Duration::from_secs(1);
 
-/// Desktop monitor plus the flag that ends its ticker.
+/// Desktop monitor, the event forwarder's process, and the flag that ends both loops.
 struct DesktopMonitor {
     host: Arc<HostMonitor>,
+    forwarder: Arc<ProcessHandle>,
     stop: Arc<AtomicBool>,
 }
 
@@ -55,8 +65,9 @@ fn init_tracing(journal: JournalLayer) {
         .ok();
 }
 
-/// Name of the plugin that carries the per-launch token's initialization script.
-const TOKEN_PLUGIN: &str = "filesquid-launch-token";
+/// Name of the plugin that gives app pages the per-launch token and keeps every webview on
+/// the app's own origins.
+const APP_PAGES_PLUGIN: &str = "filesquid-app-pages";
 
 /// Generate this launch's token and install it as the only credential `state` accepts.
 /// Fails when the random source fails or an authoriser is already installed.
@@ -68,12 +79,28 @@ pub fn install_launch_token(state: &ApiState) -> Result<LaunchToken, String> {
     Ok(token)
 }
 
-/// A plugin with no commands whose only job is the initialization script that gives app
-/// pages the per-launch token.
-fn launch_token_plugin(token: &LaunchToken) -> tauri::plugin::TauriPlugin<tauri::Wry> {
-    tauri::plugin::Builder::new(TOKEN_PLUGIN)
+/// A plugin with no commands that guards the app's pages: its initialization script gives
+/// app pages the per-launch token, and its navigation hook refuses any navigation off the
+/// app's own origins ([`event_channel::navigation_allowed`]), so the token and the event
+/// channel reach app pages only.
+fn app_pages_plugin(token: &LaunchToken) -> tauri::plugin::TauriPlugin<tauri::Wry> {
+    tauri::plugin::Builder::new(APP_PAGES_PLUGIN)
         .js_init_script(api_protocol::launch_token_script(token))
+        .on_navigation(|_webview, url| event_channel::navigation_allowed(url))
         .build()
+}
+
+/// Add the embedded WebDriver server of the packaged-window tests. Test-instrumented builds
+/// only: it listens on `127.0.0.1`, on the port in `TAURI_WEBDRIVER_PORT`.
+#[cfg(feature = "test-webdriver")]
+fn with_test_driver(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
+    builder.plugin(tauri_plugin_wdio_webdriver::init())
+}
+
+/// Shipping builds add no WebDriver server and open no TCP listener.
+#[cfg(not(feature = "test-webdriver"))]
+fn with_test_driver(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
+    builder
 }
 
 /// Build the Tauri application with the per-launch token, the API scheme, event forwarding
@@ -84,8 +111,8 @@ pub fn builder() -> Result<tauri::Builder<tauri::Wry>, String> {
     let state = ApiState::new();
     let token = install_launch_token(&state)?;
     let scheme_state = state.clone();
-    let builder = tauri::Builder::default()
-        .plugin(launch_token_plugin(&token))
+    let builder = with_test_driver(tauri::Builder::default())
+        .plugin(app_pages_plugin(&token))
         .manage(state)
         .register_asynchronous_uri_scheme_protocol(
             api_protocol::SCHEME,
@@ -98,14 +125,14 @@ pub fn builder() -> Result<tauri::Builder<tauri::Wry>, String> {
         )
         .setup(move |app| {
             start_monitor(app.handle(), &layer)?;
-            forward_events(app.handle().clone());
+            forward_events(app.handle());
             Ok(())
         });
     Ok(builder)
 }
 
-/// Open the journal in the app data directory, install the monitor and start its ticker.
-/// Performs filesystem and database I/O.
+/// Open the journal in the app data directory, install the monitor, register the event
+/// forwarder's process and start the ticker. Performs filesystem and database I/O.
 fn start_monitor(
     app: &tauri::AppHandle,
     layer: &JournalLayer,
@@ -119,9 +146,14 @@ fn start_monitor(
         Some(layer),
     )?);
     record_token_issue(host.monitor(), &Principal::Owner);
+    let forwarder = Arc::new(event_channel::register_forwarder(host.monitor().registry()));
     let stop = Arc::new(AtomicBool::new(false));
     spawn_ticker(host.clone(), stop.clone());
-    app.manage(DesktopMonitor { host, stop });
+    app.manage(DesktopMonitor {
+        host,
+        forwarder,
+        stop,
+    });
     Ok(())
 }
 
@@ -141,32 +173,47 @@ fn spawn_ticker(host: Arc<HostMonitor>, stop: Arc<AtomicBool>) {
     });
 }
 
-/// Forward API bus events to every webview until the bus closes.
-///
-/// A lagging receiver logs the dropped count and keeps forwarding; only a closed bus ends the task.
-fn forward_events(app: tauri::AppHandle) {
-    let mut events = app.state::<ApiState>().events.subscribe();
+/// Start forwarding the API bus to the app's webviews through one counted subscription
+/// ([`event_channel::pump`]) until the bus closes or the app exits. When no subscription slot
+/// is free, the refusal is journaled, the forwarder's process fails, and the API keeps
+/// working without push.
+fn forward_events(app: &tauri::AppHandle) {
+    let Some(monitor) = app.try_state::<DesktopMonitor>() else {
+        tracing::error!(
+            operation = "desktop.events.subscription",
+            error_code = "internal",
+            "event forwarder started before the monitor"
+        );
+        return;
+    };
+    let Some(subscription) = event_channel::open_subscription(&app.state::<ApiState>().events)
+    else {
+        monitor.forwarder.fail("unavailable");
+        return;
+    };
+    let forwarding = Forwarding {
+        stop: monitor.stop.clone(),
+        heartbeat: FORWARDER_HEARTBEAT,
+        process: Some(monitor.forwarder.clone()),
+    };
+    let sink = TauriSink(app.clone());
     tauri::async_runtime::spawn(async move {
-        loop {
-            let event = match events.recv().await {
-                Ok(event) => event,
-                Err(RecvError::Lagged(skipped)) => {
-                    tracing::warn!(skipped, "event forwarder lagged; events dropped");
-                    continue;
-                }
-                Err(RecvError::Closed) => return,
-            };
-            if let Err(err) = app.emit(EVENT_NAME, &event) {
-                tracing::error!(%err, "event forwarding failed");
-            }
-        }
+        let report = event_channel::pump(subscription, &sink, forwarding).await;
+        tracing::info!(
+            delivered = report.delivered,
+            failed = report.failed,
+            end = ?report.end,
+            "desktop event forwarder ended"
+        );
     });
 }
 
-/// Stop the ticker, journal `host.stopped` and flush the journal.
+/// Stop the ticker and the event forwarder, complete the forwarder's process, journal
+/// `host.stopped` and flush the journal.
 fn stop_monitor(app: &tauri::AppHandle) {
     if let Some(monitor) = app.try_state::<DesktopMonitor>() {
         monitor.stop.store(true, Ordering::SeqCst);
+        monitor.forwarder.complete();
         monitor.host.stop();
     }
 }

@@ -39,10 +39,10 @@ FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by ga
 8. [x] [Task FS-2.4](./implementation-plan.md#task-fs-2.4) Activity journal, process registry and Monitor dashboard (finished early, ahead of its listed dependencies)
     - [x] [API-F2.1](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) Activity journal, process registry, health and admin routes
     - [x] [UI-F2.7](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Monitor dashboard
-9. [ ] [Task FS-1.1](./implementation-plan.md#task-fs-1.1) API contract, router and transports
+9. [x] [Task FS-1.1](./implementation-plan.md#task-fs-1.1) API contract, router and transports
     - [x] [API-F1.1](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-api-f19-in-fs-310-and-api-f15-in-fs-c1) Versioned contract and generated TypeScript types
     - [x] [API-F1.2](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-api-f19-in-fs-310-and-api-f15-in-fs-c1) Routes and the event channel
-    - [ ] [DE-F1.1](../apps/filesquid/crates/desktop/resources/plan.md#phase-f1-desktop-transport-global-task-fs-11) Per-launch token, event channel and ranged reads
+    - [x] [DE-F1.1](../apps/filesquid/crates/desktop/resources/plan.md#phase-f1-desktop-transport-global-task-fs-11) Per-launch token, event channel and ranged reads
 10. [ ] [Task 0.3](./implementation-plan.md#task-0.3) filesquid-ocfl read, validate, and git guard
     - [x] [IO-0.1](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Storage backend trait
     - [x] [IO-0.2](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Git guard
