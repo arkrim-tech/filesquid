@@ -7,8 +7,9 @@
 //! listing does not refuse: links, extra hard links, empty directories and
 //! other non-regular entries are errors instead of being skipped.
 
-use std::fs::{DirEntry, FileType};
-use std::path::PathBuf;
+use std::fs::{self, DirEntry, FileType};
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
 
 use super::super::error::StorageError;
 use super::internal::{link_count, not_regular_entry};
@@ -53,8 +54,10 @@ impl Visitor for Audit {
 }
 
 /// Audit the hierarchy under `start`, whose key prefix is `key_prefix` (empty
-/// for the root, otherwise ending in `/`). A missing start passes. Stops at
-/// the first violation.
+/// for the root, otherwise ending in `/`). A missing start passes; an
+/// existing start that is not a directory (a regular file, a FIFO) is
+/// refused, because it cannot hold a storage hierarchy. Stops at the first
+/// violation.
 ///
 /// Hard links are detected where the standard library reports a link count
 /// (Unix, including macOS); elsewhere they cannot be seen and pass.
@@ -63,7 +66,34 @@ impl Visitor for Audit {
 ///
 /// [`StorageError::SymlinkForbidden`], [`StorageError::HardLinkForbidden`],
 /// [`StorageError::EmptyDirectoryForbidden`], [`StorageError::Io`] for
-/// another non-regular entry, or a walk bound or I/O error.
+/// another non-regular entry or a start that is not a directory, or a walk
+/// bound or I/O error.
 pub(super) fn audit_tree(start: PathBuf, key_prefix: String) -> Result<(), StorageError> {
+    if !start_is_directory(&start)? {
+        return Ok(());
+    }
     walk(start, key_prefix, &mut Audit)
+}
+
+/// Whether the audit's start exists as a directory, read without following
+/// links. `Ok(false)` when it is missing.
+///
+/// # Errors
+///
+/// [`StorageError::Io`] with [`ErrorKind::NotADirectory`] when something
+/// other than a directory is there, or the inspection error.
+fn start_is_directory(start: &Path) -> Result<bool, StorageError> {
+    let what = start.display().to_string();
+    match fs::symlink_metadata(start) {
+        Ok(meta) if meta.is_dir() => Ok(true),
+        Ok(_) => Err(StorageError::Io {
+            key: what,
+            kind: ErrorKind::NotADirectory,
+            message: "the storage hierarchy must be a directory".to_string(),
+        }),
+        Err(err) if matches!(err.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => {
+            Ok(false)
+        }
+        Err(err) => Err(io_error(&what, err)),
+    }
 }

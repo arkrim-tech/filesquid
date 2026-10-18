@@ -62,7 +62,8 @@ Feature: Git guard and plain storage hierarchy
     When I run the storage root guard
     Then the guard should refuse an empty directory at "ab/obj-1/v1/content/empty"
 
-  # Error case: soft links
+  # Error case: soft links (Unix only; the steps make links with Unix calls)
+  @unix
   Scenario: A soft link in the storage hierarchy is refused
     Given an empty local filesystem storage backend
     And an OCFL storage root with the object "ab/obj-1"
@@ -70,7 +71,8 @@ Feature: Git guard and plain storage hierarchy
     When I run the storage root guard
     Then the guard should refuse a soft link at "ab/obj-1/v1/content/link.txt"
 
-  # Error case: hard links
+  # Error case: hard links (Unix only; Windows link counts are not visible to std)
+  @unix
   Scenario: A hard link in the storage hierarchy is refused
     Given an empty local filesystem storage backend
     And an OCFL storage root with the object "ab/obj-1"

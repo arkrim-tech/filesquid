@@ -46,9 +46,12 @@ Path-based helpers (feature `fs`) keep their signatures for existing callers:
 
 ## Git guard
 
-Git MUST NOT be the OCFL store, and the storage hierarchy MUST stay plain files ([OCFL-S-001](./resources/srs.md), [ADR 016](../../../../resources/architecture/016-rust-ocfl-library.md)). The guards run on every backend and target, `wasm32` included:
+Git MUST NOT be the OCFL store, and the storage hierarchy MUST stay plain files ([OCFL-S-001](./resources/srs.md), [ADR 016](../../../../resources/architecture/016-rust-ocfl-library.md)). The guards can be run against every backend and target, `wasm32` included. They check only when called: backend reads and writes do not run them. Callers MUST run them when they open a storage root or an object (object discovery and reads, IO-0.4) and before they publish a version (IO-0.6 onward).
 
-- `check_storage_root(&backend)` runs the backend's hierarchy check, then pages through every key (at most `MAX_WALK_ENTRIES`, one million; a larger root is reported as over the limit, never passed). It refuses a `.git` entry in the storage root, in a storage-hierarchy directory above the objects, or in an object root (a directory holding an `0=ocfl_object_*` declaration that is not inside another object). A `.git` inside an object's content, such as an archived Git repository, is preserved content and passes.
+**Scope (owner decision, 2026-10-18):** the guard covers the storage root, the storage-hierarchy directories between it and the object roots, and each object root. A `.git` inside an object's preserved content, such as an archived Git repository under `v1/content/`, is content the owner chose to keep, and the guard allows it.
+
+
+- `check_storage_root(&backend)` runs the backend's hierarchy check, then pages through every key (at most `MAX_WALK_ENTRIES`, one million; a larger root is reported as over the limit, never passed). It refuses a `.git` entry in the storage root, in a storage-hierarchy directory above the objects, or in an object root (a directory holding an `0=ocfl_object_*` declaration that is not inside another object), and allows one inside object content.
 - `reject_git_in_root(&backend, root)` checks one storage or object root for a `.git` file or any key under `.git/`.
 - `StorageBackend::check_hierarchy(prefix)` refuses soft links (`StorageError::SymlinkForbidden`), hard links (`HardLinkForbidden`), empty directories below the root (`EmptyDirectoryForbidden`) and other non-regular entries. Object stores have neither links nor directories, so the default implementation only validates the prefix. `FsBackend` walks the directory under its root write lock, with the same bounds as listings. Hard links are detected where the standard library reports link counts (Unix, macOS included); on Windows they cannot be seen yet and pass.
 - An empty `.git` directory holds no keys; on a file system it is refused as an empty directory.

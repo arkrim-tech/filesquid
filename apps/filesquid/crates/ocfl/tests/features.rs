@@ -526,6 +526,13 @@ fn write_junit_report(path: &PathBuf, passed: usize, failed: usize, skipped: usi
     fs::write(path, xml).expect("write junit");
 }
 
+/// Whether `scenario` runs on this platform: scenarios tagged `@unix` need
+/// Unix links and run on Unix only (macOS and Linux); elsewhere they are left
+/// out instead of failing on steps compiled only for Unix.
+fn runs_here(scenario: &cucumber::gherkin::Scenario) -> bool {
+    cfg!(unix) || !scenario.tags.iter().any(|tag| tag == "unix")
+}
+
 #[tokio::main]
 async fn main() {
     let results_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/allure-results");
@@ -534,7 +541,7 @@ async fn main() {
     let features = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/features");
     let writer = OcflWorld::cucumber()
         .with_writer(writer::Basic::stdout().summarized())
-        .run(features)
+        .filter_run(features, |_, _, scenario| runs_here(scenario))
         .await;
     write_junit_report(
         &results_dir.join("cucumber-junit.xml"),

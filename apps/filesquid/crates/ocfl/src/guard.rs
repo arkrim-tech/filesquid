@@ -25,7 +25,10 @@
 use std::collections::BTreeSet;
 
 use crate::error::OcflError;
-use crate::storage::{StorageBackend, StorageError, StorageKey, MAX_LIST_PAGE, MAX_WALK_ENTRIES};
+use crate::storage::{
+    validate_prefix, ListPage, StorageBackend, StorageError, StorageKey, MAX_LIST_PAGE,
+    MAX_WALK_ENTRIES,
+};
 
 /// The name Git gives its repository directory or work-tree pointer file.
 const GIT_DIR: &str = ".git";
@@ -33,9 +36,10 @@ const GIT_DIR: &str = ".git";
 /// Prefix of the NAMASTE file that declares an OCFL object root.
 const OBJECT_DECLARATION_PREFIX: &str = "0=ocfl_object_";
 
-/// Most listing pages the storage-root guard reads: together at most
-/// [`MAX_WALK_ENTRIES`] keys, the bound every walk of a root shares.
-const MAX_GUARD_PAGES: usize = MAX_WALK_ENTRIES / MAX_LIST_PAGE;
+/// Most keys, and most listing requests, the storage-root guard reads: the
+/// bound every walk of a root shares. Pages may be short, so requests are
+/// bounded separately; each must move the continuation forward.
+const MAX_GUARD_KEYS: usize = MAX_WALK_ENTRIES;
 
 /// Refuse a `.git` entry directly in one root: the storage root (`""`) or an
 /// object root (a key prefix, with or without a trailing `/`).
@@ -47,12 +51,13 @@ const MAX_GUARD_PAGES: usize = MAX_WALK_ENTRIES / MAX_LIST_PAGE;
 /// # Errors
 ///
 /// [`OcflError::GitDirectoryForbidden`] naming `root` without its trailing
-/// `/`; [`OcflError::Storage`] when `root` could escape the storage root or
-/// the backend fails.
+/// `/`; [`OcflError::Storage`] with [`StorageError::InvalidKey`] when `root`
+/// is not a valid prefix (such as `/`, `.` or `..`), or a backend failure.
 pub async fn reject_git_in_root<B: StorageBackend>(
     backend: &B,
     root: &str,
 ) -> Result<(), OcflError> {
+    validate_prefix(root)?;
     let dir = root.strip_suffix('/').unwrap_or(root);
     let git_key = StorageKey::new(&child(dir, GIT_DIR))?;
     if backend.exists(&git_key).await? {
@@ -107,27 +112,66 @@ fn git_forbidden(dir: &str) -> OcflError {
 }
 
 /// Page through every key of the storage root, recording object roots and
-/// Git metadata. Bounded by [`MAX_GUARD_PAGES`].
+/// Git metadata. At most [`MAX_GUARD_KEYS`] keys and as many requests; every
+/// continuation must move past the previous one.
 async fn scan_layout<B: StorageBackend>(backend: &B) -> Result<Layout, OcflError> {
     let mut layout = Layout::default();
     let mut start_after: Option<StorageKey> = None;
-    for _ in 0..MAX_GUARD_PAGES {
+    let mut seen = 0usize;
+    for _ in 0..=MAX_GUARD_KEYS {
         let page = backend
             .list("", start_after.as_ref(), MAX_LIST_PAGE)
             .await?;
+        seen = seen.saturating_add(page.keys.len());
+        check_key_bound(seen)?;
         page.keys
             .iter()
             .for_each(|key| layout.note_key(key.as_str()));
-        if page.next.is_none() {
+        let Some(next) = next_start(&page, start_after.as_ref())? else {
             return Ok(layout);
-        }
-        start_after = page.next;
+        };
+        start_after = Some(next);
     }
-    Err(StorageError::LimitExceeded {
+    Err(over_key_bound())
+}
+
+/// Fail once the scan has read more than [`MAX_GUARD_KEYS`] keys.
+fn check_key_bound(seen: usize) -> Result<(), OcflError> {
+    if seen > MAX_GUARD_KEYS {
+        return Err(over_key_bound());
+    }
+    Ok(())
+}
+
+/// The error for a storage root above [`MAX_GUARD_KEYS`] keys.
+fn over_key_bound() -> OcflError {
+    StorageError::LimitExceeded {
         what: "keys checked by the storage root guard",
-        limit: MAX_WALK_ENTRIES as u64,
+        limit: MAX_GUARD_KEYS as u64,
     }
-    .into())
+    .into()
+}
+
+/// The continuation after `page`, or `None` on the last page.
+///
+/// # Errors
+///
+/// [`StorageError::Backend`] when the backend hands back a continuation that
+/// does not move past `previous`, which would otherwise repeat forever.
+fn next_start(
+    page: &ListPage,
+    previous: Option<&StorageKey>,
+) -> Result<Option<StorageKey>, OcflError> {
+    let Some(next) = page.next.clone() else {
+        return Ok(None);
+    };
+    if previous.is_some_and(|before| next <= *before) {
+        return Err(StorageError::Backend {
+            reason: format!("listing continuation {next} made no progress"),
+        }
+        .into());
+    }
+    Ok(Some(next))
 }
 
 /// What the storage-root scan learned about the hierarchy: pure data, no I/O.

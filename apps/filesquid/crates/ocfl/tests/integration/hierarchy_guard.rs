@@ -131,6 +131,26 @@ fn a_populated_git_directory_is_rejected() {
 }
 
 #[test]
+fn a_root_that_is_a_regular_file_is_rejected() {
+    let scratch = Scratch::new("file-root");
+    let file = scratch.0.join("root");
+    fs::write(&file, b"not a directory").expect("file root");
+    let backend = FsBackend::new(&file, scratch.0.join("staging")).expect("fs backend");
+    let checked = hierarchy(&backend);
+    assert!(
+        matches!(
+            checked,
+            Err(StorageError::Io {
+                kind: std::io::ErrorKind::NotADirectory,
+                ..
+            })
+        ),
+        "{checked:?}"
+    );
+    assert!(matches!(guard(&backend), Err(OcflError::Storage(_))));
+}
+
+#[test]
 fn a_hierarchy_check_below_a_prefix_skips_the_rest() {
     let (backend, _scratch) = fs_root("prefix");
     fs::create_dir_all(root(&backend).join("other/empty")).expect("dir");
@@ -174,6 +194,19 @@ mod unix {
     }
 
     #[test]
+    fn a_link_with_a_reserved_name_is_rejected() {
+        let (backend, scratch) = fs_root("link-reserved");
+        fs::write(scratch.0.join("outside"), b"x").expect("outside");
+        symlink(scratch.0.join("outside"), root(&backend).join(".fsquid-x")).expect("link");
+        assert_eq!(
+            hierarchy(&backend),
+            Err(StorageError::SymlinkForbidden {
+                key: ".fsquid-x".to_string()
+            })
+        );
+    }
+
+    #[test]
     fn a_dangling_symlink_is_rejected() {
         let (backend, scratch) = fs_root("link-dangling");
         symlink(scratch.0.join("missing"), root(&backend).join("dangling")).expect("link");
@@ -206,11 +239,11 @@ mod unix {
     fn a_fifo_is_rejected() {
         let (backend, _scratch) = fs_root("fifo");
         let fifo = root(&backend).join("obj/pipe");
-        let made = std::process::Command::new("mkfifo")
-            .arg(&fifo)
-            .status()
-            .expect("run mkfifo");
-        assert!(made.success(), "mkfifo failed");
+        let made = std::process::Command::new("mkfifo").arg(&fifo).status();
+        if !made.is_ok_and(|status| status.success()) {
+            eprintln!("mkfifo unavailable; skipping");
+            return;
+        }
         let checked = hierarchy(&backend);
         assert!(
             matches!(checked, Err(StorageError::Io { ref key, .. }) if key == "obj/pipe"),

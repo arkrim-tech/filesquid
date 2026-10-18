@@ -10,7 +10,9 @@ pub enum OcflError {
     /// A `.git` entry (directory, file or link) was found in an OCFL object
     /// root, the storage root, or a directory of the storage hierarchy above
     /// the objects.
-    #[error("a .git directory MUST NOT appear in an OCFL object root or storage root (found in {root:?})")]
+    #[error(
+        "a .git entry MUST NOT appear in an OCFL object root or storage root (found in {root:?})"
+    )]
     GitDirectoryForbidden {
         /// The root that holds `.git`: a key prefix without a trailing `/`
         /// (empty for the storage root) for the backend guards, or the

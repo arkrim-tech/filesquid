@@ -2,8 +2,9 @@
 //!
 //! One walker visits every entry below a start directory without following
 //! links, within [`MAX_WALK_DEPTH`] and [`MAX_WALK_ENTRIES`]. A [`Visitor`]
-//! decides what each entry means: the listing keeps regular files, the audit
-//! (see `audit.rs`) refuses anything that is not a plain file.
+//! decides what each entry means and which names to skip: the listing skips
+//! the backend's reserved names and keeps regular files, the audit (see
+//! `audit.rs`) sees every entry and refuses anything that is not a plain file.
 
 use std::fs::{self, DirEntry, FileType};
 use std::io::ErrorKind;
@@ -18,6 +19,14 @@ use super::paths::RESERVED_PREFIX;
 /// walker itself; every other entry, including links to directories, goes to
 /// [`Visitor::entry`].
 pub(super) trait Visitor {
+    /// Whether to skip the entry called `name`. A skipped directory is not
+    /// entered. Skipped entries still count toward the entry bound and make
+    /// their parent non-empty. Skips nothing by default.
+    fn skips(&self, name: &str) -> bool {
+        let _ = name;
+        false
+    }
+
     /// Handle one entry that is not a directory. `key` is its storage key and
     /// `file_type` is read without following links.
     fn entry(
@@ -46,6 +55,12 @@ struct WalkDir {
 struct KeyCollector(Vec<String>);
 
 impl Visitor for KeyCollector {
+    /// Skip the backend's reserved internal names (temporary files), which
+    /// are never keys.
+    fn skips(&self, name: &str) -> bool {
+        name.starts_with(RESERVED_PREFIX)
+    }
+
     /// Keep a regular file's key. Symbolic links, FIFOs, sockets and devices
     /// are not objects and are not listed.
     fn entry(
@@ -72,7 +87,7 @@ pub(super) fn walk_keys(start: PathBuf, key_prefix: String) -> Result<Vec<String
 }
 
 /// Visit every entry under `start` (whose key prefix is `key_prefix`) with
-/// `visitor`, skipping names with the backend's reserved prefix. A missing
+/// `visitor`, skipping the names [`Visitor::skips`] names. A missing
 /// start, or one that is a file, visits nothing. Bounded by
 /// [`MAX_WALK_DEPTH`] and [`MAX_WALK_ENTRIES`]; links to directories are not
 /// followed.
@@ -141,7 +156,7 @@ fn check_walk_bounds(visited: usize, depth: usize) -> Result<(), StorageError> {
     Ok(())
 }
 
-/// Route one directory entry: skip a reserved name, queue a directory
+/// Route one directory entry: skip a name the visitor skips, queue a directory
 /// (failing when it would be deeper than [`MAX_WALK_DEPTH`]) and hand
 /// anything else to the visitor.
 fn visit_entry(
@@ -157,7 +172,7 @@ fn visit_entry(
             key: raw.to_string_lossy().into_owned(),
             reason: "a key must be valid UTF-8",
         })?;
-    if name.starts_with(RESERVED_PREFIX) {
+    if visitor.skips(&name) {
         return Ok(());
     }
     let key = format!("{}{name}", parent.key_prefix);

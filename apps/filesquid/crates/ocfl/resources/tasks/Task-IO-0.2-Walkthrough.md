@@ -2,7 +2,7 @@
 
 Module plan row: [IO-0.2](../plan.md). Global task: Task 0.3 in the [implementation plan](../../../../../../resources/implementation-plan.md). Branch `feat/io-0.2-git-guard`, based on `main` at `fe31229` (IO-0.1 merged).
 
-## OCFL-S-001: Git MUST NOT be the OCFL library; `.git` MUST NOT appear in an OCFL object or storage root. Hard links, soft links and empty directories MUST NOT be used under the storage hierarchy.
+## OCFL-S-001: Git MUST NOT be the OCFL library; `.git` MUST NOT appear in an OCFL object or storage root. The guard covers the storage root, the storage-hierarchy directories between the storage root and the object roots, and each object root. A `.git` entry inside an object's preserved content (for example an archived Git repository under `v1/content/`) is content and MUST be allowed (owner decision, 2026-10-18). Hard links, soft links and empty directories MUST NOT be used under the storage hierarchy.
 
 Sources: [OCFL-S-001](../srs.md), [PRD F-042](../../../../../../resources/prd.md#f-042-ocfl-preservation-and-portable-recovery), [ADR 016](../../../../../../resources/architecture/016-rust-ocfl-library.md) (Layout constraints).
 
@@ -21,6 +21,18 @@ Sources: [OCFL-S-001](../srs.md), [PRD F-042](../../../../../../resources/prd.md
 - **Tests.** `tests/unit/git_guard.rs` now runs without the `fs` feature (its path-helper tests are gated on `fs`); new `tests/integration/hierarchy_guard.rs` on real directories; new [`git_guard_OCFL-S-001.feature`](../../tests/features/git_guard_OCFL-S-001.feature) with steps in `tests/features.rs`. `tests/integration/logical_file.rs` follows the new variant shape.
 - **Docs.** Module [SRS](../srs.md) OCFL-S-001 now also carries ADR 016's link and empty-directory rule; crate [README](../../README.md) "Git guard" section; [component diagram](../component-diagram.html); module [plan](../plan.md) (IO-0.2 checked, test links).
 
+## Review round 1 (Cubic)
+
+Each finding got a failing test first where it can be tested on Linux (see "TDD: round 1").
+
+- The audit skipped `.fsquid-*` names. The walker now asks its visitor which names to skip: the listing still skips the reserved prefix, and the audit sees every entry (`a_link_with_a_reserved_name_is_rejected`).
+- An existing root that is not a directory passed as clean. The audit now refuses a start that exists but is not a directory, and a missing root still passes (`a_root_that_is_a_regular_file_is_rejected`).
+- The scan bounded pages instead of keys. It now counts keys (at most `MAX_WALK_ENTRIES`), caps requests at the same number, and refuses a continuation that does not move forward (`short_pages_do_not_shrink_the_key_bound`, `a_continuation_that_makes_no_progress_is_refused`).
+- `reject_git_in_root` accepted `/` and `.`. It now validates the prefix first (`reject_git_in_root_refuses_invalid_prefixes`).
+- The FIFO test now skips when `mkfifo` cannot run.
+- The soft-link and hard-link scenarios are tagged `@unix`. The harness leaves `@unix` scenarios out on other platforms instead of reporting undefined steps. This cannot fail on Linux, so it has no red run.
+- The crate docs say that the guard runs only when a caller invokes it, and name the expected call sites (IO-0.4, IO-0.6 onward). The component diagram says hard links pass on Windows. The error message says "a .git entry". The traceability rows carry the full OCFL-S-001 title.
+
 ## Remaining limits
 
 - Hard links are detected only where the standard library reports link counts (Unix, macOS included). On Windows `std` exposes no stable link count, so a hard link passes there. Closing this needs a reviewed Windows API dependency.
@@ -32,20 +44,20 @@ Sources: [OCFL-S-001](../srs.md), [PRD F-042](../../../../../../resources/prd.md
 
 | Requirement | Tests |
 |---|---|
-| OCFL-S-001: `.git` MUST NOT appear in an OCFL storage root | `unit_git_guard`: `git_in_the_storage_root_is_rejected`, `a_git_file_in_the_storage_root_is_rejected`; BDD outline rows `.git/HEAD` (both backends) |
-| OCFL-S-001: `.git` MUST NOT appear in an OCFL object root | `unit_git_guard`: `git_in_an_object_root_is_rejected`, `reject_git_in_root_checks_one_root`; `integration_hierarchy_guard`: `a_populated_git_directory_is_rejected`, `an_empty_git_directory_is_rejected`; BDD "An empty .git directory is refused" and outline rows `ab/obj-1/.git/config` |
-| ADR 016: storage roots add no extra directories (Git in a hierarchy directory) | `unit_git_guard`: `git_in_a_storage_hierarchy_directory_is_rejected`; BDD outline row `ab/.git` |
-| ADR 016: reconstruction never needs Git; preserved content stays intact | `unit_git_guard`: `git_inside_object_content_is_preserved_content`, `a_declaration_inside_content_is_not_an_object_root`; BDD "A Git repository preserved as object content is allowed" |
-| ADR 016: soft links MUST NOT be used | `integration_hierarchy_guard`: `unix::a_symlinked_file_is_rejected`, `unix::a_symlinked_directory_is_rejected`, `unix::a_dangling_symlink_is_rejected`, `unix::a_symlinked_prefix_is_rejected`; `unit_git_guard`: `path_helper::dangling_git_link_is_rejected`; BDD "A soft link in the storage hierarchy is refused" |
-| ADR 016: hard links MUST NOT be used | `integration_hierarchy_guard`: `unix::a_hard_link_is_rejected`; BDD "A hard link in the storage hierarchy is refused" |
-| ADR 016: empty directories MUST NOT be used | `integration_hierarchy_guard`: `an_empty_directory_is_rejected`, `deletes_leave_no_empty_directories`; BDD "An empty directory in the storage hierarchy is refused" |
-| Plain files only (other non-regular entries) | `integration_hierarchy_guard`: `unix::a_fifo_is_rejected` |
-| Clean roots pass | `unit_git_guard`: `a_clean_storage_root_passes`, `an_empty_storage_root_passes`, `object_stores_have_no_links_or_empty_directories`; `integration_hierarchy_guard`: `a_root_written_through_the_backend_passes`, `a_root_that_was_never_written_passes`, `a_hierarchy_check_below_a_prefix_skips_the_rest`; BDD "A plain storage root passes the guard" (both backends) |
+| OCFL-S-001: Git MUST NOT be the OCFL library; `.git` MUST NOT appear in an OCFL object or storage root (storage root) | `unit_git_guard`: `git_in_the_storage_root_is_rejected`, `a_git_file_in_the_storage_root_is_rejected`; BDD outline rows `.git/HEAD` (both backends) |
+| OCFL-S-001: Git MUST NOT be the OCFL library; `.git` MUST NOT appear in an OCFL object or storage root (object root) | `unit_git_guard`: `git_in_an_object_root_is_rejected`, `reject_git_in_root_checks_one_root`, `reject_git_in_root_refuses_invalid_prefixes`; `integration_hierarchy_guard`: `a_populated_git_directory_is_rejected`, `an_empty_git_directory_is_rejected`; BDD "An empty .git directory is refused" and outline rows `ab/obj-1/.git/config` |
+| OCFL-S-001: Git MUST NOT be the OCFL library; `.git` MUST NOT appear in an OCFL object or storage root (storage-hierarchy directories) | `unit_git_guard`: `git_in_a_storage_hierarchy_directory_is_rejected`; BDD outline row `ab/.git` |
+| OCFL-S-001: Git MUST NOT be the OCFL library; `.git` MUST NOT appear in an OCFL object or storage root (`.git` inside preserved object content is allowed, owner decision 2026-10-18) | `unit_git_guard`: `git_inside_object_content_is_preserved_content`, `a_declaration_inside_content_is_not_an_object_root`; BDD "A Git repository preserved as object content is allowed" |
+| OCFL-S-001: Git MUST NOT be the OCFL library; `.git` MUST NOT appear in an OCFL object or storage root; soft links MUST NOT be used under the storage hierarchy | `integration_hierarchy_guard`: `unix::a_symlinked_file_is_rejected`, `unix::a_symlinked_directory_is_rejected`, `unix::a_dangling_symlink_is_rejected`, `unix::a_symlinked_prefix_is_rejected`, `unix::a_link_with_a_reserved_name_is_rejected`; `unit_git_guard`: `path_helper::dangling_git_link_is_rejected`; BDD "A soft link in the storage hierarchy is refused" |
+| OCFL-S-001: Git MUST NOT be the OCFL library; `.git` MUST NOT appear in an OCFL object or storage root; hard links MUST NOT be used under the storage hierarchy | `integration_hierarchy_guard`: `unix::a_hard_link_is_rejected`; BDD "A hard link in the storage hierarchy is refused" |
+| OCFL-S-001: Git MUST NOT be the OCFL library; `.git` MUST NOT appear in an OCFL object or storage root; empty directories MUST NOT be used under the storage hierarchy | `integration_hierarchy_guard`: `an_empty_directory_is_rejected`, `deletes_leave_no_empty_directories`; BDD "An empty directory in the storage hierarchy is refused" |
+| OCFL-S-001: Git MUST NOT be the OCFL library; `.git` MUST NOT appear in an OCFL object or storage root; the storage hierarchy holds plain files only (other non-regular entries, a root that is not a directory) | `integration_hierarchy_guard`: `unix::a_fifo_is_rejected` (skipped when `mkfifo` is unavailable), `a_root_that_is_a_regular_file_is_rejected` |
+| Clean roots pass | `unit_git_guard`: `a_clean_storage_root_passes`, `an_empty_storage_root_passes`, `short_pages_do_not_shrink_the_key_bound`, `a_continuation_that_makes_no_progress_is_refused`, `object_stores_have_no_links_or_empty_directories`; `integration_hierarchy_guard`: `a_root_written_through_the_backend_passes`, `a_root_that_was_never_written_passes`, `a_hierarchy_check_below_a_prefix_skips_the_rest`; BDD "A plain storage root passes the guard" (both backends) |
 | OCFL-S-007: engine core has no direct I/O; builds for `wasm32` | `unit_source_scan`; BDD "Storage goes through one async backend interface" and "Engine builds for the browser"; `cargo build -p filesquid-ocfl --no-default-features --target wasm32-unknown-unknown` |
 
 ## Coverage
 
-[ADR 017](../../../../../../resources/architecture/017-test-runners-and-reporting.md) defines no Rust line-coverage tool, so no percentage is reported. Every public function added here (`check_storage_root`, `reject_git_in_root`, `StorageBackend::check_hierarchy` on both shipped backends, `reject_git_in_ocfl_root`) and every new error variant has a direct test. The page cap of `check_storage_root` (one million keys) is not exercised by a test.
+[ADR 017](../../../../../../resources/architecture/017-test-runners-and-reporting.md) defines no Rust line-coverage tool, so no percentage is reported. Every public function added here (`check_storage_root`, `reject_git_in_root`, `StorageBackend::check_hierarchy` on both shipped backends, `reject_git_in_ocfl_root`) and every new error variant has a direct test. The one-million-key bound of `check_storage_root` is not reached by a test; short pages and a stalled continuation are.
 
 ## TDD: failing runs before implementation
 
@@ -79,6 +91,27 @@ error[E0599]: no variant, associated function, or constant named `Storage` found
 error: could not compile `filesquid-ocfl` (test "features") due to 7 previous errors
 ```
 
+## TDD: round 1
+
+Regression tests for the Cubic findings, written before the fixes (`cargo test -p filesquid-ocfl --locked --test integration_hierarchy_guard`, then `--test unit_git_guard`):
+
+```text
+test a_root_that_is_a_regular_file_is_rejected ... FAILED
+test unix::a_link_with_a_reserved_name_is_rejected ... FAILED
+thread 'a_root_that_is_a_regular_file_is_rejected' (30944) panicked at crates/ocfl/tests/integration/hierarchy_guard.rs:140:5:
+thread 'unix::a_link_with_a_reserved_name_is_rejected' (30954) panicked at crates/ocfl/tests/integration/hierarchy_guard.rs:201:9:
+test result: FAILED. 13 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+error: test failed, to rerun pass `-p filesquid-ocfl --test integration_hierarchy_guard`
+test reject_git_in_root_refuses_invalid_prefixes ... FAILED
+test a_continuation_that_makes_no_progress_is_refused ... FAILED
+test short_pages_do_not_shrink_the_key_bound ... FAILED
+thread 'reject_git_in_root_refuses_invalid_prefixes' (30990) panicked at crates/ocfl/tests/unit/git_guard.rs:124:9:
+thread 'a_continuation_that_makes_no_progress_is_refused' (30975) panicked at crates/ocfl/tests/unit/git_guard.rs:237:5:
+thread 'short_pages_do_not_shrink_the_key_bound' (30991) panicked at crates/ocfl/tests/unit/git_guard.rs:230:5:
+test result: FAILED. 15 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+error: test failed, to rerun pass `-p filesquid-ocfl --test unit_git_guard`
+```
+
 ## Gates
 
 Run from `apps/filesquid/` with `CARGO_TARGET_DIR` on a shared target:
@@ -100,24 +133,23 @@ None. The tests use scratch directories under Cargo's per-target temporary direc
 
 ## Raw test output
 
-### `cargo test -p filesquid-ocfl --locked` (summary lines)
+### `cargo test -p filesquid-ocfl --locked --no-fail-fast` (summary lines)
 
 ```text
      Running unittests src/lib.rs
-test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.21s
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.25s
      Running tests/features.rs
 42 scenarios (33 passed, 9 skipped)
-150 steps (141 passed, 9 skipped)
      Running tests/integration/fs_conformance.rs
-test result: ok. 46 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.93s
+test result: ok. 46 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.00s
      Running tests/integration/hierarchy_guard.rs
-test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
      Running tests/integration/logical_file.rs
-test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.52s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.63s
      Running tests/integration/memory_conformance.rs
-test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.77s
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.90s
      Running tests/unit/git_guard.rs
-test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
      Running tests/unit/source_scan.rs
 test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests/unit/storage_key.rs
@@ -128,42 +160,47 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 ### `cargo test -p filesquid-ocfl --locked --test unit_git_guard --test integration_hierarchy_guard`
 
 ```text
-running 13 tests
+running 15 tests
 test a_root_that_was_never_written_passes ... ok
-test a_root_written_through_the_backend_passes ... ok
-test a_hierarchy_check_below_a_prefix_skips_the_rest ... ok
+test a_root_that_is_a_regular_file_is_rejected ... ok
 test a_populated_git_directory_is_rejected ... ok
+test a_hierarchy_check_below_a_prefix_skips_the_rest ... ok
+test a_root_written_through_the_backend_passes ... ok
 test an_empty_directory_is_rejected ... ok
 test deletes_leave_no_empty_directories ... ok
 test an_empty_git_directory_is_rejected ... ok
 test unix::a_dangling_symlink_is_rejected ... ok
+test unix::a_hard_link_is_rejected ... ok
+test unix::a_link_with_a_reserved_name_is_rejected ... ok
 test unix::a_fifo_is_rejected ... ok
 test unix::a_symlinked_directory_is_rejected ... ok
-test unix::a_hard_link_is_rejected ... ok
 test unix::a_symlinked_file_is_rejected ... ok
 test unix::a_symlinked_prefix_is_rejected ... ok
 
-test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
 
 
-running 15 tests
-test an_empty_storage_root_passes ... ok
+running 18 tests
+test a_continuation_that_makes_no_progress_is_refused ... ok
+test a_git_file_in_the_storage_root_is_rejected ... ok
 test a_clean_storage_root_passes ... ok
 test a_declaration_inside_content_is_not_an_object_root ... ok
-test a_git_file_in_the_storage_root_is_rejected ... ok
+test an_empty_storage_root_passes ... ok
 test git_in_a_storage_hierarchy_directory_is_rejected ... ok
 test git_in_an_object_root_is_rejected ... ok
 test git_in_the_storage_root_is_rejected ... ok
-test git_inside_object_content_is_preserved_content ... ok
 test object_stores_have_no_links_or_empty_directories ... ok
+test git_inside_object_content_is_preserved_content ... ok
 test path_helper::a_root_without_git_passes ... ok
 test reject_git_in_root_checks_one_root ... ok
 test reject_git_in_root_refuses_an_escaping_root ... ok
+test path_helper::git_directory_is_rejected ... ok
+test reject_git_in_root_refuses_invalid_prefixes ... ok
 test path_helper::git_file_is_rejected ... ok
 test path_helper::dangling_git_link_is_rejected ... ok
-test path_helper::git_directory_is_rejected ... ok
+test short_pages_do_not_shrink_the_key_bound ... ok
 
-test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
 ```
 
 ### Cucumber: `git_guard_OCFL-S-001.feature`

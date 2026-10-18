@@ -3,7 +3,10 @@
 //! The engine guard runs over the in-memory backend, so these tests need no
 //! Cargo features. The path-based helper is checked when `fs` is on.
 
-use filesquid_ocfl::storage::{complete_immediately, MemoryBackend, StorageBackend, StorageKey};
+use filesquid_ocfl::storage::{
+    complete_immediately, ByteRange, CompletedPart, ListPage, MemoryBackend, ObjectMeta,
+    Precondition, StorageBackend, StorageError, StorageKey, UploadId,
+};
 use filesquid_ocfl::{check_storage_root, reject_git_in_root, OcflError};
 
 /// The OCFL 1.1 object declaration file name.
@@ -111,6 +114,139 @@ fn reject_git_in_root_refuses_an_escaping_root() {
     let backend = MemoryBackend::new();
     let result = complete_immediately(reject_git_in_root(&backend, "../up")).expect("ready");
     assert!(matches!(result, Err(OcflError::Storage(_))), "{result:?}");
+}
+
+#[test]
+fn reject_git_in_root_refuses_invalid_prefixes() {
+    let backend = root_with(&[".git/HEAD"]);
+    for root in ["/", ".", "./", "..", "a//"] {
+        let result = complete_immediately(reject_git_in_root(&backend, root)).expect("ready");
+        assert!(
+            matches!(
+                result,
+                Err(OcflError::Storage(StorageError::InvalidKey { .. }))
+            ),
+            "{root:?}: {result:?}"
+        );
+    }
+}
+
+/// A backend that serves listings in pages of at most `page` keys. With
+/// `stall`, every listing returns the first key again with a continuation
+/// that never moves past it.
+struct Paging {
+    inner: MemoryBackend,
+    page: usize,
+    stall: bool,
+}
+
+impl StorageBackend for Paging {
+    async fn put(&self, key: &StorageKey, bytes: &[u8]) -> Result<ObjectMeta, StorageError> {
+        self.inner.put(key, bytes).await
+    }
+
+    async fn put_if(
+        &self,
+        key: &StorageKey,
+        bytes: &[u8],
+        precondition: &Precondition,
+    ) -> Result<ObjectMeta, StorageError> {
+        self.inner.put_if(key, bytes, precondition).await
+    }
+
+    async fn get_range(&self, key: &StorageKey, range: ByteRange) -> Result<Vec<u8>, StorageError> {
+        self.inner.get_range(key, range).await
+    }
+
+    async fn head(&self, key: &StorageKey) -> Result<ObjectMeta, StorageError> {
+        self.inner.head(key).await
+    }
+
+    async fn exists(&self, key: &StorageKey) -> Result<bool, StorageError> {
+        self.inner.exists(key).await
+    }
+
+    async fn list(
+        &self,
+        prefix: &str,
+        start_after: Option<&StorageKey>,
+        limit: usize,
+    ) -> Result<ListPage, StorageError> {
+        if !self.stall {
+            return self
+                .inner
+                .list(prefix, start_after, limit.min(self.page))
+                .await;
+        }
+        let mut page = self.inner.list(prefix, None, 1).await?;
+        page.next = page.keys.first().cloned();
+        Ok(page)
+    }
+
+    async fn delete(&self, key: &StorageKey) -> Result<(), StorageError> {
+        self.inner.delete(key).await
+    }
+
+    async fn create_multipart(&self, key: &StorageKey) -> Result<UploadId, StorageError> {
+        self.inner.create_multipart(key).await
+    }
+
+    async fn upload_part(
+        &self,
+        upload: &UploadId,
+        part_number: u32,
+        bytes: &[u8],
+    ) -> Result<CompletedPart, StorageError> {
+        self.inner.upload_part(upload, part_number, bytes).await
+    }
+
+    async fn complete_multipart(
+        &self,
+        upload: &UploadId,
+        parts: &[CompletedPart],
+        precondition: Option<&Precondition>,
+    ) -> Result<ObjectMeta, StorageError> {
+        self.inner
+            .complete_multipart(upload, parts, precondition)
+            .await
+    }
+
+    async fn abort_multipart(&self, upload: &UploadId) -> Result<(), StorageError> {
+        self.inner.abort_multipart(upload).await
+    }
+}
+
+/// `count` keys under `obj/v1/content/`, served `page` keys at a time.
+fn paged_root(count: usize, page: usize, stall: bool) -> Paging {
+    let keys: Vec<String> = (0..count)
+        .map(|i| format!("obj/v1/content/f{i:05}"))
+        .collect();
+    let refs: Vec<&str> = keys.iter().map(String::as_str).collect();
+    Paging {
+        inner: root_with(&refs),
+        page,
+        stall,
+    }
+}
+
+#[test]
+fn short_pages_do_not_shrink_the_key_bound() {
+    let backend = paged_root(1_001, 1, false);
+    let result = complete_immediately(check_storage_root(&backend)).expect("ready");
+    assert_eq!(result, Ok(()));
+}
+
+#[test]
+fn a_continuation_that_makes_no_progress_is_refused() {
+    let backend = paged_root(3, 1, true);
+    let result = complete_immediately(check_storage_root(&backend)).expect("ready");
+    assert!(
+        matches!(
+            result,
+            Err(OcflError::Storage(StorageError::Backend { .. }))
+        ),
+        "{result:?}"
+    );
 }
 
 #[test]
