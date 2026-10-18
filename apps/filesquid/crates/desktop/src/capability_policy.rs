@@ -79,6 +79,15 @@ pub enum Violation {
     CommandInLib(String),
     /// A `#[tauri::command]` is defined that is not in [`APP_COMMANDS`].
     UnlistedCommand(String),
+    /// `tauri.conf.json` (or an overlay) creates a window whose label is not in
+    /// [`APP_WINDOWS`].
+    ConfiguredWindow(String),
+    /// The app ACL manifest (`permissions/app-acl.toml`) is missing or allows a command; the
+    /// text says which.
+    AppAcl(String),
+    /// A Tauri configuration file in a format the policy cannot read (JSON5 or TOML) exists,
+    /// so the effective configuration cannot be checked.
+    UncheckedConfig(String),
 }
 
 impl fmt::Display for Violation {
@@ -99,6 +108,9 @@ impl fmt::Display for Violation {
             Self::LinkedPlugin(c) => write!(f, "the build links the Tauri plugin {c:?}; only core plugins (and {TEST_ONLY_PLUGIN_CRATES:?} in test builds) may be linked"),
             Self::CommandInLib(c) => write!(f, "Tauri command {c:?} is defined in lib.rs; define commands in a submodule"),
             Self::UnlistedCommand(c) => write!(f, "Tauri command {c:?} is not in APP_COMMANDS; list it and grant it in a capability"),
+            Self::ConfiguredWindow(w) => write!(f, "the Tauri configuration creates window {w:?}; only {APP_WINDOWS:?} may exist"),
+            Self::AppAcl(what) => write!(f, "permissions/app-acl.toml {what}; it must declare one permission with `commands.allow = []`"),
+            Self::UncheckedConfig(file) => write!(f, "{file} cannot be checked by the capability policy; use JSON (tauri.<platform>.conf.json)"),
         }
     }
 }
@@ -164,12 +176,13 @@ fn check_permission(entry: &Value) -> Option<Violation> {
     (!granted).then(|| Violation::PermissionNotGranted(identifier.to_string()))
 }
 
-/// Check the `app` block of `tauri.conf.json`: the enabled capability list, the global Tauri
-/// object and the asset protocol.
+/// Check the `app` block of the effective Tauri configuration (`tauri.conf.json` with its
+/// overlays merged, see [`merge_config`]): the windows it creates, the enabled capability
+/// list, the global Tauri object and the asset protocol.
 pub fn check_app_security(conf: &Value) -> Vec<Violation> {
     let app = conf.get("app").unwrap_or(&Value::Null);
     let security = app.get("security").unwrap_or(&Value::Null);
-    let mut found = Vec::new();
+    let mut found = check_configured_windows(app);
     let list = security.get("capabilities").and_then(Value::as_array);
     let entries = list.map(Vec::as_slice).unwrap_or_default();
     if entries.iter().any(|entry| !entry.is_string()) {
@@ -194,6 +207,77 @@ pub fn check_app_security(conf: &Value) -> Vec<Violation> {
     found
 }
 
+/// Check the windows `app.windows` creates: each label (Tauri's default label is `main`)
+/// must be in [`APP_WINDOWS`].
+fn check_configured_windows(app: &Value) -> Vec<Violation> {
+    let Some(windows) = app.get("windows") else {
+        return Vec::new();
+    };
+    let Some(windows) = windows.as_array() else {
+        return vec![Violation::Malformed("`app.windows` is not a list".into())];
+    };
+    windows
+        .iter()
+        .map(|w| w.get("label").and_then(Value::as_str).unwrap_or("main"))
+        .filter(|label| !APP_WINDOWS.contains(label))
+        .map(|label| Violation::ConfiguredWindow(label.to_string()))
+        .collect()
+}
+
+/// Merge a Tauri configuration overlay into `base` the way Tauri does (JSON Merge Patch,
+/// RFC 7396): objects merge key by key, `null` removes a key, anything else replaces.
+/// Tauri applies the platform file (`tauri.<platform>.conf.json`) and then the CLI's
+/// `--config` (passed to the build as `TAURI_CONFIG`), so the policy checks the result.
+pub fn merge_config(base: &mut Value, overlay: &Value) {
+    let Some(patch) = overlay.as_object() else {
+        *base = overlay.clone();
+        return;
+    };
+    if !base.is_object() {
+        *base = Value::Object(serde_json::Map::new());
+    }
+    let Some(target) = base.as_object_mut() else {
+        return;
+    };
+    for (key, value) in patch {
+        if value.is_null() {
+            target.remove(key);
+        } else {
+            merge_config(target.entry(key.clone()).or_insert(Value::Null), value);
+        }
+    }
+}
+
+/// Check the app ACL manifest text (`permissions/app-acl.toml`, `None` when it is missing):
+/// it must declare at least one permission, so Tauri builds an app ACL manifest and checks
+/// every custom command, and every `commands.allow` in it must be empty. Line-based TOML
+/// reading, matching the file's dotted-key style; any other `allow` key is refused.
+pub fn check_app_acl(text: Option<&str>) -> Vec<Violation> {
+    let Some(text) = text else {
+        return vec![Violation::AppAcl("is missing".into())];
+    };
+    let code: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.starts_with('#'))
+        .collect();
+    let mut found = Vec::new();
+    if !code.contains(&"[[permission]]") {
+        found.push(Violation::AppAcl("declares no permission".into()));
+    }
+    let allows: Vec<&&str> = code.iter().filter(|l| l.contains("allow")).collect();
+    if allows.is_empty() {
+        found.push(Violation::AppAcl("has no `commands.allow = []`".into()));
+    }
+    found.extend(
+        allows
+            .into_iter()
+            .filter(|l| **l != "commands.allow = []")
+            .map(|l| Violation::AppAcl(format!("has `{l}`"))),
+    );
+    found
+}
+
 /// Check the crate manifest text for Tauri plugin dependencies and the asset protocol
 /// feature. Line-based: a test-only plugin must be declared on one line with
 /// `optional = true`, as in this crate; a plugin in a `[dependencies.<name>]` table is always
@@ -204,7 +288,7 @@ pub fn check_plugin_dependencies(manifest: &str) -> Vec<Violation> {
         if line.contains("protocol-asset") {
             found.push(Violation::AssetProtocol);
         }
-        if let Some(name) = plugin_table_name(line) {
+        if let Some(name) = plugin_table_name(line).or_else(|| renamed_plugin_package(line)) {
             found.push(Violation::PluginDependency(name));
             continue;
         }
@@ -227,6 +311,18 @@ fn plugin_table_name(line: &str) -> Option<String> {
     }
     let start = line.find("tauri-plugin-")?;
     let name: String = line[start..]
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+        .collect();
+    Some(name)
+}
+
+/// The plugin crate a renamed dependency such as `fs = { package = "tauri-plugin-fs" }`
+/// declares.
+fn renamed_plugin_package(line: &str) -> Option<String> {
+    let (_, rest) = line.split_once("package")?;
+    let start = rest.find("tauri-plugin-")?;
+    let name: String = rest[start..]
         .chars()
         .take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
         .collect();
@@ -265,14 +361,21 @@ fn linked_plugin_crate(key: &str) -> Option<String> {
     Some(crate_var.to_lowercase().replace('_', "-"))
 }
 
-/// Check one source file for `#[tauri::command]` attributes: none may be in `lib.rs`, and
-/// each elsewhere must be listed in [`APP_COMMANDS`]. `file_name` is the file's name (for
-/// example `lib.rs`). Only attribute lines count; comments that mention it do not.
+/// Check one source file for Tauri commands: none may be in `lib.rs`, and each elsewhere
+/// must be listed in [`APP_COMMANDS`]. `file_name` is the path relative to `src/` (`lib.rs`
+/// is the crate root). A command is marked by any code line that names `tauri::command`
+/// (`#[tauri::command]`, `#[cfg_attr(…, tauri::command)]`, a multi-line attribute) or, in a
+/// file that imports it, by a `#[command…]` attribute; comment lines do not count, and the
+/// import itself is not a command. The command's name is the next function declared.
 pub fn check_command_placement(file_name: &str, source: &str) -> Vec<Violation> {
+    let imported = source
+        .lines()
+        .map(str::trim)
+        .any(|l| l.starts_with("use ") && l.contains(COMMAND_PATH));
     let mut found = Vec::new();
     let mut lines = source.lines().map(str::trim);
     while let Some(line) = lines.next() {
-        if !line.starts_with("#[tauri::command") {
+        if !is_command_marker(line, imported) {
             continue;
         }
         let name = lines.find_map(command_name).unwrap_or_default();
@@ -283,6 +386,20 @@ pub fn check_command_placement(file_name: &str, source: &str) -> Vec<Violation> 
         }
     }
     found
+}
+
+/// The attribute path of a Tauri command, spelled with `concat!` so this file's own code
+/// never names it and so never marks itself.
+const COMMAND_PATH: &str = concat!("tauri", "::", "command");
+
+/// Whether the trimmed `line` marks a Tauri command; `imported` says whether the file
+/// imports `tauri::command`, which makes a bare `#[command]` attribute one.
+fn is_command_marker(line: &str, imported: bool) -> bool {
+    let comment = line.starts_with("//") || line.starts_with("/*") || line.starts_with('*');
+    if comment || line.starts_with("use ") {
+        return false;
+    }
+    line.contains(COMMAND_PATH) || (imported && line.starts_with("#[command"))
 }
 
 /// The function name declared on `line`, if it declares one (`fn`, `pub fn`, `async fn`, …).

@@ -252,14 +252,14 @@ cargo clippy -p filesquid-desktop --all-targets --features test-webdriver --lock
 cargo test -p filesquid-desktop --features test-webdriver --locked
 ```
 
-The desktop capability policy (DE-S-001, DE-S-002): the main window may only listen for and stop listening for API events; no fs, SQL, shell, dialog, HTTP, process or opener plugin, no `core:path`, no asset protocol, no remote pages and no custom command. `build.rs` checks the capability files, `tauri.conf.json`, `Cargo.toml`, the linked Tauri plugins and the sources against `src/capability_policy.rs` and fails the build on a violation; the same checks run as tests:
+The desktop capability policy (DE-S-001, DE-S-002): the main window may only listen for and stop listening for API events; no fs, SQL, shell, dialog, HTTP, process or opener plugin, no `core:path`, no asset protocol, no remote pages and no custom command. `build.rs` checks the capability files, the effective Tauri configuration (`tauri.conf.json` with the platform file and any `--config` overlay merged), `Cargo.toml`, the linked Tauri plugins, `permissions/app-acl.toml` and the sources against `src/capability_policy.rs` and fails the build on a violation; the same checks run as tests:
 
 ```sh
 cd apps/filesquid
 cargo test -p filesquid-desktop --locked --test integration_capabilities
 ```
 
-Packaged-window tests (ADR 017): WebdriverIO with `@wdio/tauri-service` drives the test-instrumented desktop binary through its embedded WebDriver server (on `127.0.0.1`, port `TAURI_WEBDRIVER_PORT`, default 4445): the per-launch token, a 100 MB `Range` read through the scheme, an event subscription, a refused navigation to a foreign site, and the IPC commands Tauri allows (event listen and unlisten) and refuses (every other core, plugin and app command). Build the binary, then run the suite from `apps/filesquid/crates/desktop/tests/e2e`. On Linux the webview is WebKitGTK and a headless machine needs Xvfb (`xvfb-run`, from your distribution's `xvfb` package); on macOS and Windows run `npm run test:e2e` without it:
+Packaged-window tests (ADR 017): WebdriverIO with `@wdio/tauri-service` drives the test-instrumented desktop binary through its embedded WebDriver server (on `127.0.0.1`, port `TAURI_WEBDRIVER_PORT`, default 4445): the per-launch token, a 100 MB `Range` read through the scheme, an event subscription, a refused navigation to a foreign site, and the IPC commands Tauri allows (event listen and unlisten) and a selection it refuses (core event emit, path, window, webview and app commands; the fs, sql, shell, dialog and http plugins; an unlisted app command). Build the binary, then run the suite from `apps/filesquid/crates/desktop/tests/e2e`. On Linux the webview is WebKitGTK and a headless machine needs Xvfb (`xvfb-run`, from your distribution's `xvfb` package); on macOS and Windows run `npm run test:e2e` without it:
 
 ```sh
 cd apps/filesquid

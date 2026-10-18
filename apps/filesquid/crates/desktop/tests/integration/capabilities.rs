@@ -1,16 +1,29 @@
 //! Integration tests for the desktop capability policy (Task DE-0.1; DE-S-001, DE-S-002,
 //! DE-S-006; ADR 002 minimum IPC policy): the shipped capability files, Tauri configuration,
 //! crate manifest and sources pass the deny-by-default policy, and every way of widening the
-//! webview's access is refused. The same checks run in `build.rs`, so a widened capability
-//! fails the build.
+//! webview's access is refused. The same checks run in `build.rs` (through the same
+//! `src/capability_inputs.rs`), so a widened capability fails the build.
 
 use filesquid_desktop_lib::capability_policy::{
-    check_app_security, check_capability, check_command_placement, check_linked_plugins,
-    check_plugin_dependencies, Violation, APP_COMMANDS, APP_WINDOWS, ENABLED_CAPABILITIES,
-    FORBIDDEN_PLUGINS, GRANTED_PERMISSIONS,
+    check_app_acl, check_app_security, check_capability, check_command_placement,
+    check_linked_plugins, check_plugin_dependencies, merge_config, Violation, APP_COMMANDS,
+    APP_WINDOWS, ENABLED_CAPABILITIES, FORBIDDEN_PLUGINS, GRANTED_PERMISSIONS,
 };
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
+
+/// The policy module the shared input reader expects at `crate::capability_policy`.
+mod capability_policy {
+    pub use filesquid_desktop_lib::capability_policy::*;
+}
+
+#[allow(dead_code)]
+#[path = "../../src/capability_inputs.rs"]
+mod capability_inputs;
+
+#[allow(dead_code)]
+#[path = "../support/policy.rs"]
+mod policy_support;
 
 /// The desktop crate root.
 fn crate_root() -> PathBuf {
@@ -23,32 +36,30 @@ fn read_json(path: &Path) -> Value {
     serde_json::from_str(&text).expect("valid JSON")
 }
 
-/// Every regular file under `dir`, at most eight levels down, sorted. Performs filesystem I/O.
-fn files_under(dir: &Path) -> Vec<PathBuf> {
-    let mut files = Vec::new();
-    let mut pending = vec![(dir.to_path_buf(), 0usize)];
-    while let Some((current, depth)) = pending.pop() {
-        assert!(depth <= 8, "{} is nested too deeply", current.display());
-        for entry in std::fs::read_dir(&current).expect("readable directory") {
-            let path = entry.expect("directory entry").path();
-            if path.is_dir() {
-                pending.push((path, depth + 1));
-            } else {
-                files.push(path);
-            }
-        }
-    }
-    files.sort();
-    files
-}
-
 /// Every capability file under `capabilities/`, subdirectories included. Performs
 /// filesystem I/O.
 fn read_capability_files() -> Vec<(PathBuf, Value)> {
-    files_under(&crate_root().join("capabilities"))
+    capability_inputs::files_under(&crate_root().join("capabilities"))
+        .expect("capabilities directory")
         .into_iter()
         .map(|p| (p.clone(), read_json(&p)))
         .collect()
+}
+
+#[test]
+fn the_shipped_crate_passes_the_whole_policy_the_build_enforces() {
+    assert_eq!(policy_support::read_shipped_violations(), Vec::new());
+}
+
+#[test]
+fn the_tests_see_the_plugins_the_build_links() {
+    let keys = policy_support::linked_plugin_keys();
+    assert!(
+        keys.iter().any(|k| k.contains("__CORE_PLUGIN__")),
+        "{keys:?}"
+    );
+    let test_driver = keys.iter().any(|k| k.contains("WDIO_WEBDRIVER"));
+    assert_eq!(test_driver, cfg!(feature = "test-webdriver"), "{keys:?}");
 }
 
 /// A capability for the main window granting `permissions`.
@@ -112,7 +123,7 @@ fn the_shipped_manifest_has_no_forbidden_tauri_plugin() {
 #[test]
 fn the_shipped_sources_define_no_unlisted_tauri_command() {
     let src = crate_root().join("src");
-    for path in files_under(&src) {
+    for path in capability_inputs::files_under(&src).expect("src directory") {
         let relative = path
             .strip_prefix(&src)
             .expect("under src")
@@ -197,10 +208,227 @@ fn a_window_list_that_is_not_a_list_of_strings_is_refused() {
 fn an_app_acl_manifest_makes_tauri_check_every_custom_command() {
     let acl = std::fs::read_to_string(crate_root().join("permissions/app-acl.toml"))
         .expect("permissions/app-acl.toml declares the app ACL manifest");
-    assert!(acl.contains("[[permission]]"));
+    assert!(acl.lines().any(|line| line.trim() == "[[permission]]"));
     assert!(
-        acl.contains("allow = []"),
+        acl.lines().any(|line| line.trim() == "commands.allow = []"),
         "the app permission must allow nothing"
+    );
+    assert_eq!(check_app_acl(Some(&acl)), Vec::new());
+}
+
+#[test]
+fn a_missing_app_acl_is_refused() {
+    assert_eq!(
+        check_app_acl(None),
+        vec![Violation::AppAcl("is missing".to_string())]
+    );
+}
+
+#[test]
+fn an_app_acl_without_a_permission_is_refused() {
+    let acl = "# commands.allow = []\n";
+    assert_eq!(
+        check_app_acl(Some(acl)),
+        vec![
+            Violation::AppAcl("declares no permission".to_string()),
+            Violation::AppAcl("has no `commands.allow = []`".to_string())
+        ]
+    );
+}
+
+#[test]
+fn an_app_acl_that_allows_a_command_is_refused() {
+    let acl = "[[permission]]\nidentifier = \"x\"\ncommands.allow = [\"read_any_file\"]\n";
+    assert_eq!(
+        check_app_acl(Some(acl)),
+        vec![Violation::AppAcl(
+            "has `commands.allow = [\"read_any_file\"]`".to_string()
+        )]
+    );
+}
+
+#[test]
+fn a_second_configured_window_is_refused() {
+    let conf = json!({ "app": { "withGlobalTauri": false,
+        "windows": [{ "label": "main" }, { "label": "preview" }, { "title": "unlabelled" }],
+        "security": { "capabilities": ["default"] } } });
+    assert_eq!(
+        check_app_security(&conf),
+        vec![Violation::ConfiguredWindow("preview".to_string())]
+    );
+}
+
+#[test]
+fn an_overlay_merges_the_way_tauri_merges_it() {
+    let mut conf = json!({ "app": { "withGlobalTauri": false,
+        "security": { "capabilities": ["default"], "csp": "default-src 'self'" } } });
+    merge_config(
+        &mut conf,
+        &json!({ "productName": "ImageSquid", "app": { "security": { "csp": null } } }),
+    );
+    assert_eq!(
+        conf,
+        json!({ "productName": "ImageSquid", "app": { "withGlobalTauri": false,
+            "security": { "capabilities": ["default"] } } })
+    );
+}
+
+#[test]
+fn an_overlay_that_widens_the_configuration_is_refused() {
+    let mut conf = read_json(&crate_root().join("tauri.conf.json"));
+    merge_config(
+        &mut conf,
+        &json!({ "app": { "withGlobalTauri": true,
+            "windows": [{ "label": "other" }],
+            "security": { "capabilities": ["default", "extra"],
+                "assetProtocol": { "enable": true } } } }),
+    );
+    assert_eq!(
+        check_app_security(&conf),
+        vec![
+            Violation::ConfiguredWindow("other".to_string()),
+            Violation::CapabilityList(vec!["default".to_string(), "extra".to_string()]),
+            Violation::GlobalTauri,
+            Violation::AssetProtocol
+        ]
+    );
+}
+
+/// A scratch copy of the crate's policy inputs under the scratch directory, removed on drop.
+struct ScratchCrate(PathBuf);
+
+impl ScratchCrate {
+    /// Copy the crate's policy inputs into a fresh directory named after `name`. Performs
+    /// filesystem I/O.
+    fn copy(name: &str) -> Self {
+        let dir = std::env::temp_dir().join(format!("de-0.1-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        for relative in [
+            "capabilities/default.json",
+            "permissions/app-acl.toml",
+            "tauri.conf.json",
+            "Cargo.toml",
+            "src/lib.rs",
+        ] {
+            let target = dir.join(relative);
+            std::fs::create_dir_all(target.parent().expect("parent")).expect("scratch dir");
+            std::fs::copy(crate_root().join(relative), target).expect("copy input");
+        }
+        Self(dir)
+    }
+
+    /// The violations of this copy for `platform` and an optional CLI overlay.
+    fn violations(&self, platform: &str, cli: Option<&str>) -> Vec<Violation> {
+        let ctx = capability_inputs::PolicyContext {
+            root: &self.0,
+            platform,
+            cli_config: cli,
+            plugin_keys: &[],
+            test_build: false,
+        };
+        capability_inputs::read_policy_violations(&ctx).expect("readable inputs")
+    }
+}
+
+impl Drop for ScratchCrate {
+    fn drop(&mut self) {
+        if let Err(err) = std::fs::remove_dir_all(&self.0) {
+            eprintln!("scratch crate not removed: {err}");
+        }
+    }
+}
+
+#[test]
+fn a_platform_configuration_that_widens_the_window_is_refused() {
+    let scratch = ScratchCrate::copy("platform");
+    std::fs::write(
+        scratch.0.join("tauri.macos.conf.json"),
+        r#"{ "app": { "withGlobalTauri": true } }"#,
+    )
+    .expect("platform file");
+    assert_eq!(scratch.violations("linux", None), Vec::new());
+    assert_eq!(
+        scratch.violations("macos", None),
+        vec![Violation::GlobalTauri]
+    );
+}
+
+#[test]
+fn a_cli_configuration_that_adds_a_capability_is_refused() {
+    let scratch = ScratchCrate::copy("cli");
+    let overlay = r#"{ "app": { "security": { "capabilities": ["default", "wide"] } } }"#;
+    assert_eq!(
+        scratch.violations("linux", Some(overlay)),
+        vec![Violation::CapabilityList(vec![
+            "default".to_string(),
+            "wide".to_string()
+        ])]
+    );
+}
+
+#[test]
+fn the_image_squid_style_overlay_passes() {
+    let scratch = ScratchCrate::copy("overlay");
+    let overlay = r#"{ "productName": "ImageSquid", "identifier": "app.imagesquid.desktop",
+        "app": { "windows": [{ "label": "main", "title": "ImageSquid" }] } }"#;
+    assert_eq!(scratch.violations("linux", Some(overlay)), Vec::new());
+}
+
+#[test]
+fn a_configuration_file_the_policy_cannot_read_is_refused() {
+    let scratch = ScratchCrate::copy("json5");
+    std::fs::write(scratch.0.join("tauri.linux.conf.json5"), "{}").expect("json5 file");
+    assert_eq!(
+        scratch.violations("linux", None),
+        vec![Violation::UncheckedConfig(
+            "tauri.linux.conf.json5".to_string()
+        )]
+    );
+}
+
+#[test]
+fn a_removed_app_acl_fails_the_policy() {
+    let scratch = ScratchCrate::copy("acl");
+    std::fs::remove_file(scratch.0.join("permissions/app-acl.toml")).expect("remove acl");
+    assert_eq!(
+        scratch.violations("linux", None),
+        vec![Violation::AppAcl("is missing".to_string())]
+    );
+}
+
+#[test]
+fn a_renamed_plugin_dependency_is_refused() {
+    let manifest = "[dependencies]\nfs = { package = \"tauri-plugin-fs\", version = \"2\" }\n";
+    assert_eq!(
+        check_plugin_dependencies(manifest),
+        vec![Violation::PluginDependency("tauri-plugin-fs".to_string())]
+    );
+}
+
+#[test]
+fn a_conditional_tauri_command_attribute_is_refused() {
+    let source = "#[cfg_attr(feature = \"x\", tauri::command)]\npub fn read_any_file() {}\n";
+    assert_eq!(
+        check_command_placement("files.rs", source),
+        vec![Violation::UnlistedCommand("read_any_file".to_string())]
+    );
+}
+
+#[test]
+fn a_multi_line_tauri_command_attribute_is_refused() {
+    let source = "#[cfg_attr(\n    feature = \"x\",\n    tauri::command\n)]\nfn run_shell() {}\n";
+    assert_eq!(
+        check_command_placement("files.rs", source),
+        vec![Violation::UnlistedCommand("run_shell".to_string())]
+    );
+}
+
+#[test]
+fn an_imported_command_attribute_is_refused() {
+    let source = "use tauri::command;\n\n#[command]\nasync fn open_sql() {}\n";
+    assert_eq!(
+        check_command_placement("lib.rs", source),
+        vec![Violation::CommandInLib("open_sql".to_string())]
     );
 }
 
@@ -424,6 +652,9 @@ fn every_violation_names_its_fix() {
         Violation::AssetProtocol,
         Violation::PluginDependency("tauri-plugin-fs".into()),
         Violation::LinkedPlugin("tauri-plugin-fs".into()),
+        Violation::ConfiguredWindow("preview".into()),
+        Violation::AppAcl("is missing".into()),
+        Violation::UncheckedConfig("Tauri.toml".into()),
         Violation::CommandInLib("x".into()),
         Violation::UnlistedCommand("x".into()),
     ];

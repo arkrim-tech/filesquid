@@ -4,7 +4,7 @@ Module task [DE-0.1](../plan.md) of global [Task 0.5](../../../../../../resource
 
 ## DE-S-002: Capabilities are deny-by-default; no fs/shell/sql plugins at scaffold
 
-> Capabilities are deny-by-default; no fs/shell/sql plugins at scaffold. The webview's Tauri capabilities MUST grant the main window only `core:event:allow-listen` and `core:event:allow-unlisten`; they MUST NOT grant any permission of the fs, shell, sql, dialog, http, process or opener plugins, `core:path` (which returns filesystem paths), the asset protocol, remote pages, webview labels or windows other than `main`. Filesystem and SQLite access stay in the Rust host behind the API authoriser. The host MUST declare an app ACL manifest so Tauri refuses every custom command that no capability grants, and the build MUST fail when a capability file, the Tauri configuration, the crate manifest, a linked non-core Tauri plugin (outside test-instrumented builds' WebDriver plugin) or a `#[tauri::command]` breaks this policy.
+> Capabilities are deny-by-default; no fs/shell/sql plugins at scaffold. The webview's Tauri capabilities MUST grant the main window only `core:event:allow-listen` and `core:event:allow-unlisten`; they MUST NOT grant any permission of the fs, shell, sql, dialog, http, process or opener plugins, `core:path` (which returns filesystem paths), the asset protocol, remote pages, webview labels or windows other than `main`. Filesystem and SQLite access stay in the Rust host behind the API authoriser. The host MUST declare an app ACL manifest so Tauri refuses every custom command that no capability grants, and the build MUST fail when a capability file, the effective Tauri configuration (base, platform file and CLI overlay merged; it MUST create no window other than `main`), the crate manifest, a linked non-core Tauri plugin (outside test-instrumented builds' WebDriver plugin), the app ACL file or a `#[tauri::command]` breaks this policy.
 
 Everything after the first sentence was added to [DE-S-002](../srs.md) in this task. Parents: [F-037 Setup, updates and diagnostics](../../../../../../resources/prd.md#f-037-setup-updates-and-diagnostics), [SRS-F-037 Setup, updates and diagnostics](../../../../../../resources/srs.md#srs-f-037-setup-updates-and-diagnostics), [ADR 002](../../../../../../resources/architecture/002-tauri2-desktop-shell.md).
 
@@ -20,9 +20,10 @@ The row predates [ADR 030](../../../../../../resources/architecture/030-filesqui
 
 ## What changed
 
-- [`src/capability_policy.rs`](../../src/capability_policy.rs) (new, pure): the policy constants (`APP_WINDOWS`, `ENABLED_CAPABILITIES`, `GRANTED_PERMISSIONS`, `FORBIDDEN_PLUGINS`, `APP_COMMANDS`, `TEST_ONLY_PLUGIN_CRATES`) and five checks returning `Violation`s: `check_capability`, `check_app_security`, `check_plugin_dependencies`, `check_linked_plugins`, `check_command_placement`. Each `Violation` displays the fix. `check_linked_plugins` reads the `DEP_<CRATE>_PERMISSION_FILES_PATH` variables every Tauri plugin publishes to dependent build scripts (how `tauri-build` itself finds plugins), so a linked plugin is caught however the manifest declares it.
-- [`build.rs`](../../build.rs): includes the same module, reads every file under `capabilities/` and `src/` (subdirectories included, at most eight levels), `tauri.conf.json`, `Cargo.toml` and its environment, and panics with the list of violations before `tauri_build::build`. `serde_json` is a build dependency (already in `Cargo.lock`).
-- [`permissions/app-acl.toml`](../../permissions/app-acl.toml) (new): the permission `no-app-commands`, which allows nothing, declares the app ACL manifest.
+- [`src/capability_policy.rs`](../../src/capability_policy.rs) (new, pure): the policy constants (`APP_WINDOWS`, `ENABLED_CAPABILITIES`, `GRANTED_PERMISSIONS`, `FORBIDDEN_PLUGINS`, `APP_COMMANDS`, `TEST_ONLY_PLUGIN_CRATES`) plus checks that return `Violation`s: `check_capability`, `check_app_security` (which includes the windows the configuration creates), `check_plugin_dependencies` (which includes renamed and table-form dependencies), `check_linked_plugins`, `check_app_acl` and `check_command_placement` (which covers `cfg_attr`, multi-line and imported `#[command]` forms). It also has `merge_config` (JSON Merge Patch, as Tauri merges overlays). Each `Violation` displays its fix. `check_linked_plugins` reads the `DEP_<CRATE>_PERMISSION_FILES_PATH` variables that every Tauri plugin publishes to dependent build scripts; `tauri-build` finds plugins the same way. A linked plugin is therefore caught however the manifest declares it.
+- [`src/capability_inputs.rs`](../../src/capability_inputs.rs) (new, I/O, not a library module): `build.rs` and the tests both include it, so they read the same inputs. It reads every file under `capabilities/` and `src/` (subdirectories included, at most eight levels) and builds the effective configuration: `tauri.conf.json`, then `tauri.<platform>.conf.json`, then the CLI's `TAURI_CONFIG`. It refuses JSON5 and TOML configuration files it cannot read, and also reads `Cargo.toml` and `permissions/app-acl.toml`.
+- [`build.rs`](../../build.rs): runs the reader and panics with the list of violations, then calls `tauri_build::try_build` with `AppManifest::new().commands(APP_COMMANDS)`. It reruns when the platform file or `TAURI_CONFIG` changes. It also hands the linked-plugin keys to the tests (`FILESQUID_TAURI_PLUGIN_KEYS`), so the tests check the same plugin set. `serde_json` is a build dependency (already in `Cargo.lock`).
+- [`permissions/app-acl.toml`](../../permissions/app-acl.toml) (new): the permission `no-app-commands`, which allows nothing. `tauri-build` creates the app ACL manifest only when the app has a permission, and this permission ensures there is one while `APP_COMMANDS` is empty.
 - `capabilities/default.json` and `tauri.conf.json` are unchanged: they already matched the policy, which now pins them.
 - Docs: [DE-S-002](../srs.md), [ADR 002](../../../../../../resources/architecture/002-tauri2-desktop-shell.md) amendment, [plan row](../plan.md), [SRS-F-037](../../../../../../resources/srs.md#srs-f-037-setup-updates-and-diagnostics) tests and traceability table, root [README](../../../../../../README.md#run-tests).
 
@@ -42,7 +43,11 @@ The row predates [ADR 030](../../../../../../resources/architecture/030-filesqui
 | No global Tauri object, no asset protocol | `the_global_tauri_object_is_refused`, `the_asset_protocol_is_refused_in_the_configuration`, `the_asset_protocol_feature_is_refused_in_the_manifest` |
 | Unlisted custom command refused by Tauri | `an_app_acl_manifest_makes_tauri_check_every_custom_command`, `the_policy_defines_no_app_command`, e2e "refuses health_ping" |
 | `#[tauri::command]` never in `lib.rs`; listed when elsewhere | `a_tauri_command_in_lib_rs_is_refused`, `an_unlisted_tauri_command_in_a_submodule_is_refused`, `a_documented_mention_of_the_attribute_is_not_a_command`, `the_shipped_sources_define_no_unlisted_tauri_command`, two scenarios |
-| Build fails on a widened capability | `every_shipped_capability_file_passes_the_policy`, `every_violation_names_its_fix`, and the manual build below |
+| Build fails on a widened capability | `every_shipped_capability_file_passes_the_policy`, `every_violation_names_its_fix`, `the_shipped_crate_passes_the_whole_policy_the_build_enforces`, scenario "The shipped capability set passes the deny-by-default policy" (both use the build's reader), and the manual build below |
+| Effective configuration checked: platform file and CLI overlay merged, no window but `main` | `a_second_configured_window_is_refused`, `an_overlay_merges_the_way_tauri_merges_it`, `an_overlay_that_widens_the_configuration_is_refused`, `a_platform_configuration_that_widens_the_window_is_refused`, `a_cli_configuration_that_adds_a_capability_is_refused`, `the_image_squid_style_overlay_passes`, `a_configuration_file_the_policy_cannot_read_is_refused` |
+| App ACL present and allowing nothing | `an_app_acl_manifest_makes_tauri_check_every_custom_command`, `a_missing_app_acl_is_refused`, `an_app_acl_without_a_permission_is_refused`, `an_app_acl_that_allows_a_command_is_refused`, `a_removed_app_acl_fails_the_policy` |
+| Linked plugins seen by the tests as by the build | `the_tests_see_the_plugins_the_build_links` |
+| Every command form detected | `a_renamed_plugin_dependency_is_refused`, `a_conditional_tauri_command_attribute_is_refused`, `a_multi_line_tauri_command_attribute_is_refused`, `an_imported_command_attribute_is_refused` |
 
 [ADR 017](../../../../../../resources/architecture/017-test-runners-and-reporting.md) defines no Rust line-coverage tool, so no coverage percentage is reported. Every public item of `capability_policy` is exercised by the tests above.
 
@@ -102,7 +107,7 @@ Feature: Desktop transport: per-launch token, event channel and ranged reads
      Running tests/integration/api_protocol.rs (<target>/debug/deps/integration_api_protocol-0df96af0e7868500)
 test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
      Running tests/integration/capabilities.rs (<target>/debug/deps/integration_capabilities-9ca5b31c8da030ff)
-test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 54 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
      Running tests/integration/event_channel.rs (<target>/debug/deps/integration_event_channel-a7f2299e8a8c2ee7)
 test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
      Running tests/integration/range_fixture.rs (<target>/debug/deps/integration_range_fixture-562c0ef8cd0a473d)
@@ -112,7 +117,7 @@ test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 `cargo test -p filesquid-desktop --locked --test integration_capabilities` (tail):
 
 ```text
-test result: ok. 37 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 54 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
 ```
 
 Packaged window (`cargo build -p filesquid-desktop --features test-webdriver --locked`, then `xvfb-run -a npm run test:e2e` in `tests/e2e`):
@@ -165,8 +170,8 @@ The linked-plugin check sees the real build: with `test_build` forced to `false`
 `FULL=1 FILESQUID_DESKTOP_E2E=1 bash scripts/pre-commit.sh` from the repository root:
 
 ```text
-✅ Desktop packaged-window e2e passed (14s).
-✅ All Pre-Commit Hooks Passed! Test scope: full (631s)
+✅ Desktop packaged-window e2e passed (11s).
+✅ All Pre-Commit Hooks Passed! Test scope: full (153s)
 ```
 
 ## Mocked Environment Variables

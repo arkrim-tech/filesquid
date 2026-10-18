@@ -10,8 +10,7 @@ use filesquid_api::journal::JournalEntry;
 use filesquid_api::{ApiEvent, ApiState, EventSubscription};
 use filesquid_desktop_lib::api_protocol::{handle, into_scheme_response};
 use filesquid_desktop_lib::capability_policy::{
-    check_app_security, check_capability, check_command_placement, check_plugin_dependencies,
-    Violation, APP_COMMANDS, GRANTED_PERMISSIONS,
+    check_capability, check_command_placement, Violation, APP_COMMANDS, GRANTED_PERMISSIONS,
 };
 use filesquid_desktop_lib::event_channel::{
     navigation_allowed, open_subscription, pump, EventSink, Forwarding,
@@ -28,6 +27,19 @@ use std::time::Duration;
 #[allow(dead_code)]
 #[path = "support/journal.rs"]
 mod journal;
+
+/// The policy module the shared input reader expects at `crate::capability_policy`.
+mod capability_policy {
+    pub use filesquid_desktop_lib::capability_policy::*;
+}
+
+#[allow(dead_code)]
+#[path = "../src/capability_inputs.rs"]
+mod capability_inputs;
+
+#[allow(dead_code)]
+#[path = "support/policy.rs"]
+mod policy_support;
 
 /// State shared by the steps of one scenario.
 #[derive(Debug, Default, World)]
@@ -311,21 +323,18 @@ fn journal_records(world: &mut DesktopWorld, operation: String) {
     assert!(!text.contains("example.com"), "{text}");
 }
 
-/// The crate's shipped capability files, read from `capabilities/`. Performs filesystem I/O.
+/// The crate's shipped capability files, read from `capabilities/` and its subdirectories as
+/// `build.rs` reads them. Performs filesystem I/O.
 fn read_shipped_capabilities() -> Vec<serde_json::Value> {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("capabilities");
-    std::fs::read_dir(dir)
+    capability_inputs::files_under(&dir)
         .expect("capabilities directory")
-        .map(|entry| {
-            let text = std::fs::read_to_string(entry.expect("entry").path()).expect("file");
+        .into_iter()
+        .map(|path| {
+            let text = std::fs::read_to_string(path).expect("file");
             serde_json::from_str(&text).expect("capability JSON")
         })
         .collect()
-}
-
-/// Read one file of the crate as text. Performs filesystem I/O.
-fn read_crate_file(name: &str) -> String {
-    std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(name)).expect(name)
 }
 
 /// Check a capability for the main window that grants `permissions`.
@@ -343,19 +352,10 @@ fn shipped_capability_set(world: &mut DesktopWorld) {
 
 #[then("the capability set should have no policy violations")]
 fn no_policy_violations(world: &mut DesktopWorld) {
-    let mut violations: Vec<Violation> = world
-        .capabilities
-        .iter()
-        .flat_map(check_capability)
-        .collect();
-    let conf = serde_json::from_str(&read_crate_file("tauri.conf.json")).expect("conf");
-    violations.extend(check_app_security(&conf));
-    violations.extend(check_plugin_dependencies(&read_crate_file("Cargo.toml")));
-    violations.extend(check_command_placement(
-        "lib.rs",
-        &read_crate_file("src/lib.rs"),
-    ));
-    assert_eq!(violations, Vec::new());
+    assert!(!world.capabilities.is_empty(), "no capability file found");
+    // The same reader as build.rs: every capability file, the effective configuration, the
+    // manifest, the linked plugins, the app ACL and every source file.
+    assert_eq!(policy_support::read_shipped_violations(), Vec::new());
 }
 
 #[then(expr = "the main window should be granted exactly {string} and {string}")]
