@@ -42,10 +42,19 @@
 //!   the inventory; stream or copy a logical file checked against its digest;
 //!   version history and the diff of two versions.
 //!
-//! Structural validation and `vN` publication are later work.
+//! Structural validation (OCFL-S-009), on every backend and target:
+//!
+//! - [`validate`]: [`validate_object`] reports every OCFL 1.1 rule an object
+//!   breaks as a [`Finding`] with its validation code (`E###`, `W###`);
+//!   only the root inventory commits a version.
+//! - [`fixity`]: the fixity-table algorithms a validator verifies (md5,
+//!   sha1, sha256, sha512, blake2b-512).
+//!
+//! `vN` publication is later work.
 
 pub mod digest;
 mod error;
+pub mod fixity;
 mod guard;
 pub mod inventory;
 #[cfg(all(feature = "fs", not(target_arch = "wasm32")))]
@@ -53,6 +62,7 @@ mod logical_file;
 pub mod namaste;
 pub mod read;
 pub mod storage;
+pub mod validate;
 
 pub use digest::DigestAlgorithm;
 pub use error::{OcflError, WriteError};
@@ -62,3 +72,4 @@ pub use inventory::{FormatError, Inventory, VersionNum};
 pub use logical_file::{read_logical_file, reject_git_in_ocfl_root, write_logical_file};
 pub use namaste::{Declaration, SpecVersion};
 pub use read::{LogicalFile, LogicalState, Object, ReadError, StorageRoot};
+pub use validate::{validate_object, Finding, ValidationReport};

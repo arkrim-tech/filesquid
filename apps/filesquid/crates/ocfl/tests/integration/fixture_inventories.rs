@@ -2,9 +2,8 @@
 //! community fixtures (OCFL-S-002, OCFL-S-011; `OCFL/fixtures` commit
 //! `d323fc207126becec066998b43408d998bf0fb1b`).
 //!
-//! Set `FILESQUID_OCFL_FIXTURES` to the fixtures' `1.1` directory to run it.
-//! Without it the test reports that it skipped and passes: the fixtures are
-//! committed under `tests/` by IO-0.5, which then points this test at them.
+//! The fixtures are committed under `tests/fixtures/ocfl/1.1` (IO-0.5), so
+//! this test always runs; `FILESQUID_OCFL_FIXTURES` may name another copy.
 //!
 //! Checked here, from one root inventory and its sidecar only:
 //! - every `good-objects` and `warn-objects` fixture parses, its sidecar
@@ -53,16 +52,8 @@ const INVENTORY_LEVEL: &[&str] = &[
     "E107_file_in_manifest_not_used",
 ];
 
-/// The fixtures' `1.1` directory, when the environment names it.
-fn fixtures() -> Option<PathBuf> {
-    let dir = PathBuf::from(std::env::var_os("FILESQUID_OCFL_FIXTURES")?);
-    assert!(
-        dir.join("good-objects").is_dir(),
-        "{} is not the 1.1 tree",
-        dir.display()
-    );
-    Some(dir)
-}
+#[path = "../support/fixtures.rs"]
+mod fixtures;
 
 /// The object directories in `dir`, sorted by name.
 fn objects(dir: &Path) -> Vec<PathBuf> {
@@ -114,10 +105,7 @@ fn check_declaration(object: &Path) {
 
 #[test]
 fn valid_and_warning_fixtures_parse_and_verify() {
-    let Some(root) = fixtures() else {
-        eprintln!("FILESQUID_OCFL_FIXTURES is not set; skipped");
-        return;
-    };
+    let root = fixtures::tree();
     let mut checked = 0;
     for group in ["good-objects", "warn-objects"] {
         for object in objects(&root.join(group)) {
@@ -137,10 +125,7 @@ fn valid_and_warning_fixtures_parse_and_verify() {
 
 #[test]
 fn inventory_level_bad_fixtures_are_refused() {
-    let Some(root) = fixtures() else {
-        eprintln!("FILESQUID_OCFL_FIXTURES is not set; skipped");
-        return;
-    };
+    let root = fixtures::tree();
     for name in INVENTORY_LEVEL {
         let object = root.join("bad-objects").join(name);
         let code = check_root(&object).expect_err(name);
@@ -155,10 +140,7 @@ fn inventory_level_bad_fixtures_are_refused() {
 
 #[test]
 fn other_bad_fixtures_report_how_their_root_inventory_reads() {
-    let Some(root) = fixtures() else {
-        eprintln!("FILESQUID_OCFL_FIXTURES is not set; skipped");
-        return;
-    };
+    let root = fixtures::tree();
     for object in objects(&root.join("bad-objects")) {
         let name = object.file_name().and_then(|n| n.to_str()).expect("name");
         if INVENTORY_LEVEL.contains(&name) {
@@ -168,6 +150,6 @@ fn other_bad_fixtures_report_how_their_root_inventory_reads() {
             Ok(_) => "root inventory and sidecar read".to_string(),
             Err(code) => format!("refused with {code}"),
         };
-        println!("{name}: {outcome} (object-level fault, IO-0.5)");
+        println!("{name}: {outcome} (object-level fault: integration_fixture_conformance)");
     }
 }

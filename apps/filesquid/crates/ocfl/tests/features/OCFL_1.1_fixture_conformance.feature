@@ -1,6 +1,7 @@
 # F-051: Reusable filesquid-ocfl engine
 # OCFL-S-009, OCFL-S-010, OCFL-S-011: OCFL 1.1 community fixture conformance
-# @fixtures: runs only when FILESQUID_OCFL_FIXTURES names the pinned 1.1 tree.
+# @fixtures: reads the pinned 1.1 tree committed under tests/fixtures/ocfl/1.1 (always present).
+# The write scenario's steps arrive with IO-0.10; until then cucumber reports it as skipped.
 @fixtures
 Feature: OCFL 1.1 community fixture conformance
   As a preservation programme using filesquid-ocfl

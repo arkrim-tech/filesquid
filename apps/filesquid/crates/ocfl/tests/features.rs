@@ -11,12 +11,16 @@ use cucumber::{given, then, when, writer, StatsWriter as _, World, WriterExt as 
 mod builder;
 #[path = "support/inventory_example.rs"]
 mod example;
+#[path = "support/fixtures.rs"]
+mod fixtures;
 #[path = "support/inventory_steps.rs"]
 mod inventory_steps;
 #[path = "support/read_steps.rs"]
 mod read_steps;
 #[path = "support/source_scan.rs"]
 mod source_scan;
+#[path = "support/validate_steps.rs"]
+mod validate_steps;
 use filesquid_ocfl::storage::{
     ChunkReader, ETag, FsBackend, MemoryBackend, MultipartWriter, Precondition, StorageBackend,
     StorageError, StorageKey, MAX_CHUNK_BYTES,
@@ -60,6 +64,7 @@ struct OcflWorld {
     guard_result: Option<Result<(), OcflError>>,
     inventory: inventory_steps::InventoryState,
     read: read_steps::ReadState,
+    validate: validate_steps::ValidateState,
 }
 
 /// Run `$body` with `$b` bound to the scenario's concrete backend.
@@ -539,13 +544,10 @@ fn write_junit_report(path: &PathBuf, passed: usize, failed: usize, skipped: usi
 /// Whether `scenario` runs here. Scenarios tagged `@unix` need Unix links
 /// and run on Unix only (macOS and Linux); elsewhere they are left out
 /// instead of failing on steps compiled only for Unix. Features tagged
-/// `@fixtures` read the pinned OCFL community fixtures and run only when
-/// `FILESQUID_OCFL_FIXTURES` names them (OCFL-S-011; IO-0.5 commits them).
-fn runs_here(feature: &cucumber::gherkin::Feature, scenario: &cucumber::gherkin::Scenario) -> bool {
-    let unix_ok = cfg!(unix) || !scenario.tags.iter().any(|tag| tag == "unix");
-    let needs_fixtures = feature.tags.iter().any(|tag| tag == "fixtures");
-    let fixtures_ok = !needs_fixtures || std::env::var_os("FILESQUID_OCFL_FIXTURES").is_some();
-    unix_ok && fixtures_ok
+/// `@fixtures` read the pinned OCFL community fixtures, which are committed
+/// under `tests/fixtures/ocfl/1.1` (OCFL-S-011), so they always run.
+fn runs_here(scenario: &cucumber::gherkin::Scenario) -> bool {
+    cfg!(unix) || !scenario.tags.iter().any(|tag| tag == "unix")
 }
 
 #[tokio::main]
@@ -556,9 +558,7 @@ async fn main() {
     let features = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/features");
     let writer = OcflWorld::cucumber()
         .with_writer(writer::Basic::stdout().summarized())
-        .filter_run(features, |feature, _, scenario| {
-            runs_here(feature, scenario)
-        })
+        .filter_run(features, |_, _, scenario| runs_here(scenario))
         .await;
     write_junit_report(
         &results_dir.join("cucumber-junit.xml"),
