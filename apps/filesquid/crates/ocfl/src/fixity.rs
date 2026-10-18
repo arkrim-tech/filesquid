@@ -82,10 +82,27 @@ impl FixityAlgorithm {
         hasher.finalize_hex()
     }
 
-    /// Whether `a` and `b` are the same hexadecimal digest without regard to
-    /// case. Fixity digests, unlike state digests, have no exact-case rule.
+    /// The number of hexadecimal digits in one digest.
+    pub fn hex_len(self) -> usize {
+        match self {
+            Self::Md5 => 32,
+            Self::Sha1 => 40,
+            Self::Sha256 => 64,
+            Self::Sha512 | Self::Blake2b512 => 128,
+        }
+    }
+
+    /// Whether `digest` is a digest of this algorithm: exactly
+    /// [`hex_len`](Self::hex_len) ASCII hexadecimal digits, in either case.
+    pub fn is_digest(self, digest: &str) -> bool {
+        digest.len() == self.hex_len() && digest.bytes().all(|b| b.is_ascii_hexdigit())
+    }
+
+    /// Whether `a` and `b` are both digests of this algorithm (see
+    /// [`is_digest`](Self::is_digest)) and equal without regard to case.
+    /// Fixity digests, unlike state digests, have no exact-case rule.
     pub fn matches(self, a: &str, b: &str) -> bool {
-        a.len() == b.len() && a.eq_ignore_ascii_case(b)
+        self.is_digest(a) && self.is_digest(b) && a.eq_ignore_ascii_case(b)
     }
 }
 

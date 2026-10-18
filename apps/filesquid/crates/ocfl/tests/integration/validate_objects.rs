@@ -14,7 +14,9 @@ use filesquid_ocfl::inventory::{DigestMap, Inventory};
 use filesquid_ocfl::namaste::SpecVersion;
 use filesquid_ocfl::read::ReadError;
 use filesquid_ocfl::storage::{
-    complete_immediately, read_verified, FsBackend, MemoryBackend, StorageBackend, MAX_CHUNK_BYTES,
+    complete_immediately, read_verified, ByteRange, CompletedPart, FsBackend, ListPage,
+    MemoryBackend, ObjectMeta, Precondition, StorageBackend, StorageError, StorageKey, UploadId,
+    MAX_CHUNK_BYTES, MAX_LIST_PAGE,
 };
 use filesquid_ocfl::validate::{validate_object, ValidationReport};
 use filesquid_ocfl::VersionNum;
@@ -271,6 +273,52 @@ fn version_directory_entries_are_e015_and_w002() {
 }
 
 #[test]
+fn a_version_directory_holds_only_its_own_inventorys_sidecar() {
+    let backend = object();
+    let sha256 = DigestAlgorithm::Sha256.digest_hex(b"other");
+    let sidecar = format!("{sha256} inventory.json\n");
+    put(
+        &backend,
+        ROOT,
+        "v1/inventory.json.sha256",
+        sidecar.as_bytes(),
+    );
+    let report = validate(&backend);
+    assert_error(&report, "E015");
+    assert!(report
+        .errors()
+        .iter()
+        .any(|f| f.at == "obj/v1/inventory.json.sha256"));
+}
+
+#[test]
+fn a_sidecar_without_its_version_inventory_is_e015() {
+    let backend = object();
+    delete(&backend, ROOT, "v1/inventory.json");
+    let report = validate(&backend);
+    assert_error(&report, "E015");
+    assert!(report.warning_codes().contains("W010"));
+}
+
+#[test]
+fn a_version_inventory_manifest_path_outside_a_content_directory_is_e042() {
+    let backend = object();
+    rewrite(&backend, &["v1"], |inv| {
+        for paths in inv.manifest.values_mut() {
+            for path in paths.iter_mut().filter(|p| *p == "v1/content/a.txt") {
+                *path = "v1/a.txt".into();
+            }
+        }
+    });
+    let report = validate(&backend);
+    assert_error(&report, "E042");
+    assert!(report
+        .errors()
+        .iter()
+        .any(|f| f.code == "E042" && f.at == "obj/v1/a.txt"));
+}
+
+#[test]
 fn a_missing_version_inventory_is_w010() {
     let backend = object();
     delete(&backend, ROOT, "v1/inventory.json");
@@ -514,6 +562,16 @@ fn an_empty_directory_is_e024() {
     assert_error(&validate(&backend), "E024");
 }
 
+#[test]
+fn validation_goes_on_after_an_empty_directory() {
+    let (backend, _scratch) = fs_object();
+    std::fs::create_dir_all(backend.root().join("obj/v1/content/empty")).expect("dir");
+    put(&backend, ROOT, "extra.txt", b"x");
+    let report = validate(&backend);
+    assert_error(&report, "E024");
+    assert_error(&report, "E001");
+}
+
 #[cfg(unix)]
 #[test]
 fn a_soft_link_is_e090() {
@@ -530,4 +588,84 @@ fn a_root_that_is_not_a_key_prefix_is_refused() {
     let backend = object();
     let result = ready(validate_object(&backend, "../obj"));
     assert!(matches!(result, Err(ReadError::Storage(_))), "{result:?}");
+}
+
+/// A backend whose listing pages hold at most one key, as a backend may
+/// return (`list` promises at most `limit` keys).
+struct ShortPages(MemoryBackend);
+
+impl StorageBackend for ShortPages {
+    async fn put(&self, k: &StorageKey, b: &[u8]) -> Result<ObjectMeta, StorageError> {
+        self.0.put(k, b).await
+    }
+    async fn put_if(
+        &self,
+        k: &StorageKey,
+        b: &[u8],
+        p: &Precondition,
+    ) -> Result<ObjectMeta, StorageError> {
+        self.0.put_if(k, b, p).await
+    }
+    async fn get_range(&self, k: &StorageKey, r: ByteRange) -> Result<Vec<u8>, StorageError> {
+        self.0.get_range(k, r).await
+    }
+    async fn head(&self, k: &StorageKey) -> Result<ObjectMeta, StorageError> {
+        self.0.head(k).await
+    }
+    async fn exists(&self, k: &StorageKey) -> Result<bool, StorageError> {
+        self.0.exists(k).await
+    }
+    async fn list(
+        &self,
+        p: &str,
+        a: Option<&StorageKey>,
+        _limit: usize,
+    ) -> Result<ListPage, StorageError> {
+        self.0.list(p, a, 1).await
+    }
+    async fn delete(&self, k: &StorageKey) -> Result<(), StorageError> {
+        self.0.delete(k).await
+    }
+    async fn create_multipart(&self, k: &StorageKey) -> Result<UploadId, StorageError> {
+        self.0.create_multipart(k).await
+    }
+    async fn upload_part(
+        &self,
+        u: &UploadId,
+        n: u32,
+        b: &[u8],
+    ) -> Result<CompletedPart, StorageError> {
+        self.0.upload_part(u, n, b).await
+    }
+    async fn complete_multipart(
+        &self,
+        u: &UploadId,
+        p: &[CompletedPart],
+        c: Option<&Precondition>,
+    ) -> Result<ObjectMeta, StorageError> {
+        self.0.complete_multipart(u, p, c).await
+    }
+    async fn abort_multipart(&self, u: &UploadId) -> Result<(), StorageError> {
+        self.0.abort_multipart(u).await
+    }
+}
+
+#[test]
+fn an_object_listed_in_short_pages_validates() {
+    let count = MAX_LIST_PAGE + 100;
+    let names: Vec<String> = (0..count).map(|n| format!("f{n:05}.txt")).collect();
+    let bodies: Vec<Vec<u8>> = (0..count)
+        .map(|n| format!("file {n}").into_bytes())
+        .collect();
+    let files = names
+        .iter()
+        .zip(&bodies)
+        .map(|(name, body)| (name.as_str(), body.as_slice()))
+        .collect();
+    let mut spec = ObjectSpec::new("urn:example:many", vec![files]);
+    spec.algorithm = DigestAlgorithm::Sha512;
+    let inner = MemoryBackend::new();
+    build(&inner, ROOT, &spec);
+    let report = validate(&ShortPages(inner));
+    assert!(report.is_valid(), "{:#?}", report.errors());
 }

@@ -62,3 +62,18 @@ fn digests_match_without_regard_to_case() {
     ));
     assert!(!md5.matches("900150983cd24fb0d6963f7d28e17f72", "900150983cd24fb0"));
 }
+
+#[test]
+fn only_hex_digests_of_the_algorithms_length_match() {
+    let md5 = FixityAlgorithm::from_name("md5").expect("md5");
+    let not_hex = "z".repeat(32);
+    assert!(!md5.matches(&not_hex, &not_hex), "equal non-hex strings");
+    let sha1 = "a9993e364706816aba3e25717850c26c9cd0d89d";
+    assert!(!md5.matches(sha1, sha1), "a digest of another length");
+    assert!(!md5.matches("", ""), "empty strings");
+    for algorithm in FixityAlgorithm::ALL {
+        let digest = algorithm.digest_hex(b"abc");
+        assert_eq!(digest.len(), algorithm.hex_len(), "{}", algorithm.name());
+        assert!(algorithm.is_digest(&digest));
+    }
+}

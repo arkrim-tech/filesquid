@@ -1,18 +1,19 @@
 //! Version directories and the inventories they hold.
 //!
-//! A version directory holds its inventory and sidecar and the content
-//! directory only (E015; another directory is W002 and ignored). Its
-//! inventory SHOULD be there (W010) and, when it is, must be valid, name
-//! its own version as `head` (E040), keep the object id (E037) and content
-//! directory (E019), never go back to an older specification (E103), equal
-//! the root inventory for the head version (E064), describe every earlier
-//! version as the root inventory does (E066; `created`, `message` and
-//! `user` differences are W011) and list every content file of its
-//! versions (E023).
+//! A version directory holds its inventory, the sidecar for that
+//! inventory's `digestAlgorithm` and the content directory only (E015;
+//! another directory is W002 and ignored). Its inventory SHOULD be there
+//! (W010) and, when it is, must be valid, name its own version as `head`
+//! (E040), keep the object id (E037) and content directory (E019), never go
+//! back to an older specification (E103), equal the root inventory for the
+//! head version (E064), describe every earlier version as the root
+//! inventory does (E066; `created`, `message` and `user` differences are
+//! W011), keep every manifest path inside a content directory (E042) and
+//! list every content file of its versions (E023).
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::content::{check_listed, expect_manifest, Expectations};
+use super::content::{check_listed, check_manifest_paths, expect_manifest, Expectations};
 use super::listing::Listing;
 use super::report::ValidationReport;
 use super::root::{read_inventory, ReadInventory};
@@ -48,13 +49,16 @@ pub(crate) async fn check_versions<B: StorageBackend>(
         if !listing.has_dir(&dir) {
             continue;
         }
-        check_version_entries(listing, &dir, content, report);
-        let Some(prior) = read_version_inventory(backend, listing, &dir, report).await? else {
+        let prior = read_version_inventory(backend, listing, &dir, report).await?;
+        let sidecars = sidecar_rule(listing, &dir, prior.as_ref());
+        check_version_entries(listing, &dir, content, sidecars, report);
+        let Some(prior) = prior else {
             continue;
         };
         let at = listing.key(&child(&dir, INVENTORY_FILE));
         check_spec_order(&mut newest, prior.inventory.spec, &at, report);
         compare_with_root(&prior, version, root, &at, report);
+        check_manifest_paths(listing, &prior.inventory, report);
         check_listed(
             listing,
             &prior.inventory,
@@ -66,18 +70,52 @@ pub(crate) async fn check_versions<B: StorageBackend>(
     Ok(())
 }
 
-/// A version directory holds only its inventory, its sidecar and the
-/// content directory (E015); other directories are W002 and ignored.
+/// Which inventory sidecars a version directory may hold.
+#[derive(Debug, Clone, Copy)]
+enum Sidecars {
+    /// No inventory, so no sidecar either.
+    None,
+    /// An inventory whose algorithm is unknown (it breaks a rule, already
+    /// reported): any content-addressing sidecar.
+    Any,
+    /// The sidecar of the inventory's `digestAlgorithm` only.
+    Only(DigestAlgorithm),
+}
+
+impl Sidecars {
+    /// Whether a sidecar stating `algorithm` is allowed.
+    fn allows(self, algorithm: Option<DigestAlgorithm>) -> bool {
+        match (self, algorithm) {
+            (_, None) | (Self::None, _) => false,
+            (Self::Any, Some(_)) => true,
+            (Self::Only(expected), Some(stated)) => expected == stated,
+        }
+    }
+}
+
+/// The sidecars allowed in the version directory `dir`, from its inventory.
+fn sidecar_rule(listing: &Listing, dir: &str, prior: Option<&ReadInventory>) -> Sidecars {
+    match prior {
+        Some(read) => Sidecars::Only(read.inventory.digest_algorithm),
+        None if listing.contains(&child(dir, INVENTORY_FILE)) => Sidecars::Any,
+        None => Sidecars::None,
+    }
+}
+
+/// A version directory holds only its inventory, the sidecar of that
+/// inventory's `digestAlgorithm` and the content directory (E015); other
+/// directories are W002 and ignored.
 fn check_version_entries(
     listing: &Listing,
     dir: &str,
     content: &str,
+    sidecars: Sidecars,
     report: &mut ValidationReport,
 ) {
     let children = listing.children(dir);
     for name in &children.files {
-        let sidecar = sidecar_algorithm(name).and_then(DigestAlgorithm::from_name);
-        if name != INVENTORY_FILE && sidecar.is_none() {
+        let stated = sidecar_algorithm(name).and_then(DigestAlgorithm::from_name);
+        if name != INVENTORY_FILE && !sidecars.allows(stated) {
             let message = "a version directory holds only its inventory, sidecar and content";
             report.add("E015", listing.key(&child(dir, name)), message);
         }

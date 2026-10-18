@@ -44,8 +44,9 @@
 //!
 //! Structural validation (OCFL-S-009), on every backend and target:
 //!
-//! - [`validate`]: [`validate_object`] reports every OCFL 1.1 rule an object
-//!   breaks as a [`Finding`] with its validation code (`E###`, `W###`);
+//! - [`validate`]: [`validate_object`] reports each broken OCFL 1.1 rule it
+//!   reaches as a [`Finding`] with its validation code (`E###`, `W###`);
+//!   one inventory is checked up to its first broken rule;
 //!   only the root inventory commits a version.
 //! - [`fixity`]: the fixity-table algorithms a validator verifies (md5,
 //!   sha1, sha256, sha512, blake2b-512).

@@ -218,7 +218,8 @@ fn report_mismatches(
 ) {
     for expectation in expected {
         let actual = digests.get(&expectation.algorithm).map(String::as_str);
-        if actual == Some(expectation.digest.as_str()) {
+        let algorithm = expectation.algorithm;
+        if actual.is_some_and(|actual| algorithm.matches(actual, &expectation.digest)) {
             continue;
         }
         let source = if expectation.code == "E093" {

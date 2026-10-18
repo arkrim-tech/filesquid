@@ -17,10 +17,10 @@ Sources: [OCFL-S-004](../srs.md), ADR 016 "Published head (readers)", module pla
 ## What changed
 
 - **`src/validate/` (new public module `validate`).** `validate_object(&backend, root)` returns a `ValidationReport` of `Finding`s (`code`, `at`, `message`); `is_valid()` means no errors. It builds on the IO-0.4 `read` module (`root_dir`, `key_in`, `read_small`, `choose_declaration`, `check_declaration`) and the guard's `next_start`; those `read` submodules are now `pub(crate)`. It returns `Err(ReadError)` only when the object cannot be validated (backend failure, listing bound, OCFL-S-017 bound, OCFL version other than 1.1). No `std::fs`; builds for `wasm32-unknown-unknown`.
-  - `listing.rs`: one paged listing of the object (at most `MAX_WALK_ENTRIES` keys and `MAX_WALK_ENTRIES / MAX_LIST_PAGE + 1` pages; continuations checked); the backend hierarchy check maps an empty directory to E024 and a link to E090.
+  - `listing.rs`: one paged listing of the object (at most `MAX_WALK_ENTRIES` keys; pages may be short, every continuation is checked and must add a key, so the key bound also bounds the requests); the backend hierarchy check maps an empty directory to E024 (validation goes on) and a link to E090 (validation stops, since the listing cannot be trusted).
   - `root.rs`: declaration (E003, E007); root inventory (E063, every `Inventory::parse` code, E038) and sidecar (E058, E060, E061); root entries (E001; E046 for a version directory the root inventory does not list; E010 for a listed version without a directory; E067 and W013 for `extensions`; `logs` allowed).
   - `warnings.rs`: W001, W004, W005, W007, W008, W009 (a URI is an RFC 3986 scheme, a colon and a rest).
-  - `versions.rs`: version directories (E015, W002, W010) and version inventories (all inventory codes with their own sidecar, E040, E037, E019, E103, E064, E066, W011, E023 against each earlier manifest, W004).
+  - `versions.rs`: version directories (E015, including any sidecar but the one for the version inventory's `digestAlgorithm`; W002, W010) and version inventories (all inventory codes with their own sidecar, E040, E037, E019, E103, E064, E066, W011, E042 and E023 against each earlier manifest, W004).
   - `content.rs`: content files against the manifest (E023, E042) and every stated digest against the bytes: root manifest, earlier version manifests in whatever algorithm (E092), root fixity (E093). Each file is streamed once in chunks of at most 8 MiB through one hasher per algorithm it needs; the chunk loop is bounded by the object size bound. A missing content path is E092 and, when the fixity block lists it, E093 (the case IO-0.4 left open).
 - **`src/fixity.rs` (new public module `fixity`).** `FixityAlgorithm` (md5, sha1, sha256, sha512, blake2b-512: the OCFL 1.1 fixity table, E027); other algorithms are `None` and ignored (E028).
 - **Dependencies.** `md-5`, `sha1` and `blake2` 0.11 (RustCrypto, the `sha2` 0.11 family already used; current per `cargo search`; pure Rust, the `wasm32` build passes). A search of `resources/architecture/` found no rule against them: ADR 009 fixes the digest FileSquid writes (SHA-256), not the fixity values a validator must read.
@@ -236,6 +236,84 @@ $ cargo build -p filesquid-ocfl --locked --no-default-features --target wasm32-u
 exit 0
 ```
 
+## Review round 1 (Cubic)
+
+Cubic reviewed `38ef8b9` and raised 10 findings. Each was checked against the code, the OCFL 1.1 specification and the upstream fixtures. Nine are fixed; one was not valid.
+
+- **E042 for version inventories (`versions.rs`).** Valid. Only the root manifest was checked for paths outside a content directory. `check_manifest_paths` now runs for every version inventory too. Test: `a_version_inventory_manifest_path_outside_a_content_directory_is_e042`.
+- **Extra sidecar in a version directory (`versions.rs`).** Valid. Any `inventory.json.sha256` or `.sha512` was accepted. A version directory may now hold only the sidecar for its inventory's `digestAlgorithm`; any other sidecar, or a sidecar with no inventory, is E015. Tests: `a_version_directory_holds_only_its_own_inventorys_sidecar`, `a_sidecar_without_its_version_inventory_is_e015`.
+- **E024 hid other findings (`mod.rs`, `listing.rs`).** Valid. An empty directory does not change which files a listing shows, so validation now goes on after E024. Links (E090) still end it, since the listing cannot be trusted. Test: `validation_goes_on_after_an_empty_directory`.
+- **Short listing pages (`listing.rs`).** Valid. The page count assumed full pages of `MAX_LIST_PAGE` keys, but `list` promises *at most* that many. The loop is now bounded by keys (`MAX_WALK_ENTRIES`, at most one more request than keys, since every page with a continuation must hold a key). Test: `an_object_listed_in_short_pages_validates` (1,100 content files through a backend that returns one key per page).
+- **`is_uri` too loose (`warnings.rs`).** Valid. The rest of a URI is now checked against RFC 3986 characters with two-hex-digit percent escapes; `[` and `]` are allowed only around an IP-literal host. Unit test: `malformed_characters_and_escapes_are_not_uris` (`urn:^`, `https://exa[mple` and others). All fixture results are unchanged.
+- **`FixityAlgorithm::matches` (`fixity.rs`).** Valid. Both sides must now be ASCII hex of the algorithm's length (`hex_len`, `is_digest`), and the validator compares fixity and manifest digests through it. Test: `only_hex_digests_of_the_algorithms_length_match`.
+- **"Every broken rule" (component diagram).** Valid. The diagram, `lib.rs`, the module docs and the README now say the validator reports each broken rule it reaches, with one inventory checked up to its first broken rule.
+- **Checklist summary.** Valid: "9 of 26 done" is now "10 of 26 done".
+- **Fixture feature header.** Valid: it now says the committed tree is the default and `FILESQUID_OCFL_FIXTURES` may override it.
+- **`E011_E013_invalid_padded_head_version/v04/inventory.json` head `v04`.** Not valid, and not changed. Both the root and `v04` inventories are byte-identical to upstream `OCFL/fixtures` at `d323fc207126becec066998b43408d998bf0fb1b` (checked against `raw.githubusercontent.com` with `cmp`). The fixture's fault is in the root inventory, whose `head` is `v10` in a `v01` convention (E011). The validator reports exactly that. `v04/inventory.json` is a correct earlier version inventory. Pinned fixtures are never edited (OCFL-S-011).
+
+### TDD: round 1
+
+The new integration tests were run against the round-0 `listing.rs`, `versions.rs` and `mod.rs` (the committed files restored, then the round-1 files put back):
+
+```text
+test a_sidecar_without_its_version_inventory_is_e015 ... FAILED
+test a_version_directory_holds_only_its_own_inventorys_sidecar ... FAILED
+test a_version_inventory_manifest_path_outside_a_content_directory_is_e042 ... FAILED
+test validation_goes_on_after_an_empty_directory ... FAILED
+test an_object_listed_in_short_pages_validates ... FAILED
+test result: FAILED. 35 passed; 5 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+error: test failed, to rerun pass `-p filesquid-ocfl --test integration_validate_objects`
+```
+
+### Raw test output, round 1
+
+`cargo test -p filesquid-ocfl --locked` (result lines):
+
+```text
+     Running unittests src/lib.rs
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.25s
+     Running tests/features.rs
+7 features
+85 scenarios (81 passed, 4 skipped)
+345 steps (341 passed, 4 skipped)
+     Running tests/integration/fixture_conformance.rs
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+     Running tests/integration/fixture_inventories.rs
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/integration/fixture_reads.rs
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.58s
+     Running tests/integration/fs_conformance.rs
+test result: ok. 46 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.23s
+     Running tests/integration/hierarchy_guard.rs
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+     Running tests/integration/logical_file.rs
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.67s
+     Running tests/integration/memory_conformance.rs
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.79s
+     Running tests/integration/read_objects.rs
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+     Running tests/integration/validate_objects.rs
+test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.40s
+     Running tests/unit/digest.rs
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/unit/fixity.rs
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/git_guard.rs
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+     Running tests/unit/inventory.rs
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+     Running tests/unit/namaste_sidecar.rs
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/read_state.rs
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/source_scan.rs
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/storage_key.rs
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   Doc-tests filesquid_ocfl
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
 ## SRS traceability
 
 | Requirement | Tests |
@@ -247,7 +325,7 @@ exit 0
 | OCFL-S-009 (e): no fixture skipped or excluded | `the_tree_is_the_pinned_one_with_no_object_left_out` and the pinned counts (12, 13, 55) in every group test |
 | OCFL-S-009 (f): every finding reported with code and location; errors only when validation cannot run | `every_finding_carries_an_ocfl_code_and_its_location`, `an_ocfl_1_0_object_is_outside_the_validators_scope`, `a_root_that_is_not_a_key_prefix_is_refused` |
 | OCFL-S-009 (g) and OCFL-S-004: only the root inventory commits a version (E046) | `a_version_directory_inventory_alone_is_not_a_commit`; fixture `E046_root_not_most_recent`; BDD "A version directory that the root inventory does not list is not a commit" |
-| OCFL-S-009 (h): fixity in the OCFL 1.1 table verified, other algorithms ignored | `unit_fixity` (4 tests); `fixity_values_are_verified_and_unknown_algorithms_ignored`, `a_missing_content_path_that_has_fixity_is_e092_and_e093`; fixtures `E093_fixity_digest_mismatch`, `E092_E093_content_path_does_not_exist`, `ocfl_object_all_fixity_digests` |
+| OCFL-S-009 (h): fixity in the OCFL 1.1 table verified, other algorithms ignored | `unit_fixity` (5 tests); `fixity_values_are_verified_and_unknown_algorithms_ignored`, `a_missing_content_path_that_has_fixity_is_e092_and_e093`; fixtures `E093_fixity_digest_mismatch`, `E092_E093_content_path_does_not_exist`, `ocfl_object_all_fixity_digests` |
 | OCFL-S-009 (i): every stated digest checked, earlier manifests in any algorithm included | `content_that_does_not_match_its_digest_is_e092`, `a_missing_content_file_is_e092`; fixtures `E092_algorithm_change_incorrect_digest`, `E066_E092_old_manifest_digest_incorrect`, `W004_versions_diff_digests` |
 | OCFL-S-011: pinned commit, CC-BY-4.0 attribution, test data only, not packaged or loaded, offline in `cargo test --locked` and the hook | BDD "Community fixtures are pinned test data only" (NOTICE pin and licence, `.zenodo.json`, no `1.0/`, `exclude`, no `src/` reference); `tests/support/fixtures.rs` fails when the tree is missing; `scripts/verify_tests.sh` runs `cargo test -p filesquid-ocfl --locked` |
 | OCFL-S-010 (a): reads of every good fixture version (IO-0.4, now on the committed fixtures) | `integration_fixture_reads` (3 tests); BDD "Valid OCFL 1.1 fixture objects are readable at every version" |

@@ -9,9 +9,11 @@ use crate::read::small::child;
 use crate::read::ReadError;
 use crate::storage::{StorageBackend, StorageError, StorageKey, MAX_LIST_PAGE, MAX_WALK_ENTRIES};
 
-/// Most listing pages read for one object: enough for [`MAX_WALK_ENTRIES`]
-/// keys in full pages, plus the last one.
-const MAX_PAGES: usize = MAX_WALK_ENTRIES / MAX_LIST_PAGE + 1;
+/// Most listing requests for one object. Pages may be short (a backend
+/// returns *at most* the page size), but every page that carries a
+/// continuation holds at least one new key (checked by [`next_start`]), so
+/// the key bound [`MAX_WALK_ENTRIES`] also bounds the requests.
+const MAX_REQUESTS: usize = MAX_WALK_ENTRIES + 1;
 
 /// The files of one object, as paths relative to its root.
 #[derive(Debug, Clone, Default)]
@@ -32,8 +34,9 @@ pub(crate) struct Children {
 impl Listing {
     /// List every key under `root` (a key prefix without a trailing `/`,
     /// empty for the backend root), at most [`MAX_WALK_ENTRIES`] keys in at
-    /// most [`MAX_PAGES`] pages. Each continuation must be the page's last
-    /// key and move forward, so a faulty listing cannot skip a file.
+    /// most [`MAX_REQUESTS`] pages of any length. Each continuation must be
+    /// the page's last key and move forward, so a faulty listing cannot skip
+    /// a file or repeat forever.
     ///
     /// # Errors
     ///
@@ -53,27 +56,28 @@ impl Listing {
             files: BTreeSet::new(),
         };
         let mut after: Option<StorageKey> = None;
-        for _ in 0..MAX_PAGES {
+        let mut seen = 0usize;
+        for _ in 0..MAX_REQUESTS {
             let page = backend.list(&prefix, after.as_ref(), MAX_LIST_PAGE).await?;
-            listing.note_page(&prefix, &page.keys)?;
+            seen = seen.saturating_add(page.keys.len());
+            if seen > MAX_WALK_ENTRIES {
+                return Err(over_bound("keys listed for one object", MAX_WALK_ENTRIES));
+            }
+            listing.note_page(&prefix, &page.keys);
             match next_start(&page, after.as_ref())? {
                 None => return Ok(listing),
                 Some(next) => after = Some(next),
             }
         }
-        Err(over_bound("listing pages read for one object", MAX_PAGES))
+        Err(over_bound("listing requests for one object", MAX_REQUESTS))
     }
 
-    /// Add one page of keys, refusing an object above the key bound.
-    fn note_page(&mut self, prefix: &str, keys: &[StorageKey]) -> Result<(), ReadError> {
+    /// Add one page of keys, relative to the object root.
+    fn note_page(&mut self, prefix: &str, keys: &[StorageKey]) {
         let relative = keys
             .iter()
             .filter_map(|key| key.as_str().strip_prefix(prefix));
         self.files.extend(relative.map(str::to_string));
-        if self.files.len() > MAX_WALK_ENTRIES {
-            return Err(over_bound("keys listed for one object", MAX_WALK_ENTRIES));
-        }
-        Ok(())
     }
 
     /// The storage key of `rel` inside the object root (the root itself for
@@ -132,10 +136,13 @@ fn over_bound(what: &'static str, limit: usize) -> ReadError {
     .into()
 }
 
-/// Run the backend's hierarchy check on the object root. An empty
-/// directory is E024 and a soft or hard link is E090; either ends the
-/// validation, since the stored files cannot be trusted to be what a
-/// listing shows. Returns whether validation can go on.
+/// Run the backend's hierarchy check on the object root and report what
+/// it finds. An empty directory is E024; validation goes on, since it does
+/// not change which files a listing shows. A soft or hard link is E090 and
+/// ends the validation, since the stored files cannot be trusted to be what
+/// a listing shows. Returns whether validation can go on. The backend
+/// reports the first fault it meets, so one hierarchy fault may hide
+/// another.
 ///
 /// # Errors
 ///
@@ -145,21 +152,18 @@ pub(crate) async fn check_hierarchy<B: StorageBackend>(
     root: &str,
     report: &mut ValidationReport,
 ) -> Result<bool, ReadError> {
-    let fault = match backend.check_hierarchy(root).await {
-        Ok(()) => return Ok(true),
-        Err(StorageError::EmptyDirectoryForbidden { key }) => (
-            "E024",
-            key,
-            "empty directories must not appear in an object",
-        ),
-        Err(StorageError::SymlinkForbidden { key } | StorageError::HardLinkForbidden { key }) => (
-            "E090",
-            key,
-            "hard and soft links must not be used in a storage hierarchy",
-        ),
-        Err(other) => return Err(other.into()),
-    };
-    let (code, key, message) = fault;
-    report.add(code, key, message);
-    Ok(false)
+    match backend.check_hierarchy(root).await {
+        Ok(()) => Ok(true),
+        Err(StorageError::EmptyDirectoryForbidden { key }) => {
+            let message = "empty directories must not appear in an object";
+            report.add("E024", key, message);
+            Ok(true)
+        }
+        Err(StorageError::SymlinkForbidden { key } | StorageError::HardLinkForbidden { key }) => {
+            let message = "hard and soft links must not be used in a storage hierarchy";
+            report.add("E090", key, message);
+            Ok(false)
+        }
+        Err(other) => Err(other.into()),
+    }
 }

@@ -3,22 +3,23 @@
 //! [ADR 023](../../../../../../resources/architecture/023-filesquid-ocfl-engine-and-parquet.md)).
 //!
 //! [`validate_object`] checks one object through any
-//! [`StorageBackend`] and returns a [`ValidationReport`]: every broken rule
-//! as a [`Finding`] with its OCFL 1.1 validation code, errors (`E###`) for
+//! [`StorageBackend`] and returns a [`ValidationReport`]: each broken rule
+//! it reaches as a [`Finding`] with its OCFL 1.1 validation code, errors (`E###`) for
 //! MUST rules and warnings (`W###`) for SHOULD rules. An object is valid
 //! when it has no errors.
 //!
 //! Where reading stops at the first fault it meets ([`crate::read`]),
 //! validation goes on and reports what it can:
 //!
-//! 1. the storage hierarchy under the object root (E024, E090);
+//! 1. the storage hierarchy under the object root (E024; E090 for a link,
+//!    which ends validation);
 //! 2. the declaration (E003, E007), the root inventory (E063, every code
 //!    [`Inventory::parse`](crate::Inventory::parse) gives, E038) and its
 //!    sidecar (E058, E060, E061), and the entries of the object root
 //!    (E001, E010, E046, E067, W013);
 //! 3. inventory warnings (W001, W004, W005, W007, W008, W009);
 //! 4. each version directory and its inventory (E015, W002, W010, E040,
-//!    E037, E019, E103, E064, E066, W011, E023);
+//!    E037, E019, E103, E064, E066, W011, E042, E023);
 //! 5. content: files against the manifest (E023, E042) and every stated
 //!    digest against the bytes, the root manifest and fixity block and the
 //!    manifests of earlier version inventories (E092, E093).
