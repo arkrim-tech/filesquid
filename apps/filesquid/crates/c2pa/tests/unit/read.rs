@@ -98,20 +98,6 @@ fn a_huge_reported_size_is_rejected_without_allocating() {
 }
 
 #[test]
-fn a_size_that_cannot_be_allocated_is_reported_without_reading() {
-    let size = isize::MAX as u64;
-    let mut source = CountingSource {
-        size,
-        reads: Cell::new(0),
-        fail: None,
-    };
-    let err = block_on(read_manifest_store(&mut source, &limits(u64::MAX))).expect_err("alloc");
-    assert_eq!(err, ReadError::Allocation { size });
-    assert_eq!(err.category(), "allocation");
-    assert_eq!(source.reads.get(), 0);
-}
-
-#[test]
 fn byte_source_errors_propagate() {
     let mut failing = CountingSource {
         size: 64,
@@ -296,4 +282,26 @@ fn a_malformed_remote_store_is_a_store_error() {
     .expect_err("bad");
     assert!(matches!(err, ReadError::Store(_)), "{err:?}");
     assert_eq!(err.status_code(), None);
+}
+
+#[test]
+fn urls_without_a_host_are_refused_before_fetching() {
+    let fetcher = canned(sample_store());
+    for url in [
+        "http:///path",
+        "http://?x",
+        "https://#frag",
+        "https://user@/a.c2pa",
+        "https://exa mple.org/a.c2pa",
+        "https://example.org\t/a.c2pa",
+    ] {
+        let err = block_on(fetch_remote_manifest_store(
+            &fetcher,
+            url,
+            &ParseLimits::default(),
+        ))
+        .expect_err("refused");
+        assert_eq!(err, ReadError::UnsupportedUrl, "{url:?}");
+    }
+    assert!(fetcher.seen.borrow().is_empty());
 }

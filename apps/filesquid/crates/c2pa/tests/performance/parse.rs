@@ -13,8 +13,10 @@ use std::time::{Duration, Instant};
 use filesquid_c2pa::manifest::{ManifestStore, ParseLimits};
 use fixtures::*;
 
-/// Assertions in the large store: each is three boxes (superbox,
-/// description, content), so this stays just under 65 536 boxes in total.
+/// CBOR assertions in the large store. Each CBOR assertion is three boxes
+/// (superbox, description, content); the thumbnail adds four (superbox,
+/// description, `bfdb`, `bidb`). With the store, manifest, assertion store,
+/// claim and signature boxes the total is 65 416, under 65 536.
 const ASSERTIONS: usize = 21_800;
 
 /// Time allowed for one parse.

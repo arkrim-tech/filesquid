@@ -4,9 +4,12 @@
 //! [`Claim::from_cbor`] checks the fields the CDDL defines and keeps the
 //! whole decoded map, so fields this crate does not interpret (for example
 //! the deprecated `metadata`) are still available. Unknown fields are kept,
-//! not rejected. A missing or mistyped field is a [`ClaimError`], which a
-//! validator reports as `claim.malformed`.
+//! not rejected. The signature and every assertion reference must be a
+//! `self#jumbf` URI ([`JumbfUri::parse`]); resolving them is validation's
+//! job. A missing or mistyped field is a [`ClaimError`], which a validator
+//! reports as `claim.malformed`.
 
+use super::uri::JumbfUri;
 use crate::cbor::CborValue;
 
 /// Which claim map a claim uses, from its box label.
@@ -99,13 +102,15 @@ const MISSING_ARRAY: &str = "required array is missing";
 /// Reason text for [`ClaimError`].
 const BAD_ARRAY: &str = "must be a non-empty array";
 /// Reason text for [`ClaimError`].
-const BAD_HASHED_URI: &str = "each entry must be a map with a text url, a byte-string hash and an optional non-empty text alg";
+const BAD_HASHED_URI: &str = "each entry must be a map with a self#jumbf URI url, a byte-string hash and an optional non-empty text alg";
 /// Reason text for [`ClaimError`].
-const BAD_URI_LIST: &str = "each entry must be a text URI";
+const BAD_URI_LIST: &str = "each entry must be a self#jumbf URI";
+/// Reason text for [`ClaimError`].
+const BAD_SIGNATURE_URI: &str = "must be a self#jumbf URI";
 /// Reason text for [`ClaimError`].
 const MISSING_GENERATOR: &str = "required map is missing";
 /// Reason text for [`ClaimError`].
-const BAD_GENERATOR: &str = "must be a map with a non-empty text name and text version, operating_system and specVersion when present";
+const BAD_GENERATOR: &str = "must be a map with text keys, a non-empty text name, text version, operating_system and specVersion when present, and a hashed URI icon when present";
 
 impl Claim {
     /// Read a claim of `version` from its decoded CBOR `map`.
@@ -132,7 +137,7 @@ fn from_v2(map: CborValue) -> Result<Claim, ClaimError> {
     Ok(Claim {
         version: ClaimVersion::V2,
         instance_id: required_text(&map, "instanceID", true)?,
-        signature: required_text(&map, "signature", false)?,
+        signature: signature_uri(&map)?,
         created_assertions: hashed_uris(&map, "created_assertions")?
             .ok_or(error("created_assertions", MISSING_ARRAY))?,
         gathered_assertions: hashed_uris(&map, "gathered_assertions")?.unwrap_or_default(),
@@ -153,7 +158,7 @@ fn from_v1(map: CborValue) -> Result<Claim, ClaimError> {
     Ok(Claim {
         version: ClaimVersion::V1,
         claim_generator: Some(required_text(&map, "claim_generator", false)?),
-        signature: required_text(&map, "signature", false)?,
+        signature: signature_uri(&map)?,
         created_assertions: hashed_uris(&map, "assertions")?
             .ok_or(error("assertions", MISSING_ARRAY))?,
         format: Some(required_text(&map, "dc:format", false)?),
@@ -171,6 +176,15 @@ fn from_v1(map: CborValue) -> Result<Claim, ClaimError> {
 /// A claim error.
 fn error(field: &'static str, reason: &'static str) -> ClaimError {
     ClaimError { field, reason }
+}
+
+/// The `signature` field: a `self#jumbf` URI (C2PA 2.4 section 10.2.1).
+fn signature_uri(map: &CborValue) -> Result<String, ClaimError> {
+    let uri = required_text(map, "signature", false)?;
+    if JumbfUri::parse(&uri).is_err() {
+        return Err(error("signature", BAD_SIGNATURE_URI));
+    }
+    Ok(uri)
 }
 
 /// The text value of `field`, which must be present (and non-empty when
@@ -220,7 +234,11 @@ fn hashed_uris(map: &CborValue, field: &'static str) -> Result<Option<Vec<Hashed
     };
     items
         .iter()
-        .map(|item| hashed_uri(item).ok_or(error(field, BAD_HASHED_URI)))
+        .map(|item| {
+            hashed_uri(item)
+                .filter(|uri| JumbfUri::parse(&uri.url).is_ok())
+                .ok_or(error(field, BAD_HASHED_URI))
+        })
         .collect::<Result<Vec<_>, _>>()
         .map(Some)
 }
@@ -245,6 +263,7 @@ fn uri_list(map: &CborValue, field: &'static str) -> Result<Vec<String>, ClaimEr
         .iter()
         .map(|item| {
             item.as_text()
+                .filter(|uri| JumbfUri::parse(uri).is_ok())
                 .map(str::to_string)
                 .ok_or(error(field, BAD_URI_LIST))
         })
@@ -263,7 +282,10 @@ fn generator_list(map: &CborValue) -> Result<Vec<GeneratorInfo>, ClaimError> {
 /// One `generator-info-map`.
 fn generator(value: &CborValue, field: &'static str) -> Result<GeneratorInfo, ClaimError> {
     let bad = error(field, BAD_GENERATOR);
-    if value.as_map().is_none() {
+    let text_keys = value
+        .as_map()
+        .is_some_and(|pairs| pairs.iter().all(|(k, _)| k.as_text().is_some()));
+    if !text_keys || value.get("icon").is_some_and(|icon| !valid_icon(icon)) {
         return Err(bad);
     }
     let name = optional_text(value, "name", true)
@@ -278,4 +300,16 @@ fn generator(value: &CborValue, field: &'static str) -> Result<GeneratorInfo, Cl
         version,
         map: value.clone(),
     })
+}
+
+/// Whether `icon` is a `hashed-uri-map` to an embedded assertion or a
+/// `hashed-ext-uri-map` to an `http` or `https` resource, which must name
+/// its `alg` (C2PA 2.4 sections 8.4.2.1, 8.4.2.2 and 10.2.3.2).
+fn valid_icon(icon: &CborValue) -> bool {
+    let Some(uri) = hashed_uri(icon) else {
+        return false;
+    };
+    let lower = uri.url.to_ascii_lowercase();
+    let external = lower.starts_with("https://") || lower.starts_with("http://");
+    JumbfUri::parse(&uri.url).is_ok() || (external && uri.alg.is_some())
 }

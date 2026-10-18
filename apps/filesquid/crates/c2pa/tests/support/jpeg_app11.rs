@@ -54,12 +54,19 @@ struct Segment<'a> {
 /// The segment at `at`, or `None` at the start of scan or the end of the
 /// data.
 fn segment(bytes: &[u8], at: usize) -> Result<Option<Segment<'_>>, String> {
-    let Some(&[prefix, marker]) = bytes.get(at..at + 2) else {
+    // Like libjpeg, skip extraneous bytes before a marker (some writers
+    // understate a segment length) and any 0xFF fill bytes
+    // (ITU-T T.81 B.1.1.2). Both scans only move forward through the input.
+    let rest = &bytes[at.min(bytes.len())..];
+    let extraneous = rest.iter().take_while(|b| **b != MARKER).count();
+    let fill = rest[extraneous..]
+        .windows(2)
+        .take_while(|pair| pair == &[MARKER, MARKER])
+        .count();
+    let at = at + extraneous + fill;
+    let Some(&[_, marker]) = bytes.get(at..at + 2) else {
         return Ok(None);
     };
-    if prefix != MARKER {
-        return Err(format!("expected a marker at {at}"));
-    }
     if marker == SOS {
         return Ok(None);
     }

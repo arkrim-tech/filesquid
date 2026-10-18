@@ -47,7 +47,8 @@ fn corpus_dir() -> Result<PathBuf, String> {
 /// Parse every store in the JPEG at `path` into `tally`.
 fn parse_file(path: &Path, tally: &mut Tally) {
     let bytes = fs::read(path).expect("asset bytes");
-    let stores = jpeg_app11::jpeg_jumbf(&bytes).unwrap_or_default();
+    let stores = jpeg_app11::jpeg_jumbf(&bytes)
+        .unwrap_or_else(|err| panic!("{}: APP11 extraction failed: {err}", path.display()));
     if stores.is_empty() {
         tally.no_store += 1;
         return;
@@ -111,4 +112,31 @@ fn has_extension(path: &Path, extensions: &[&str]) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| extensions.iter().any(|x| e.eq_ignore_ascii_case(x)))
+}
+
+#[test]
+fn app11_extraction_skips_marker_fill_bytes() {
+    // SOI, then an APP11 segment preceded by two 0xFF fill bytes, then SOS.
+    let jumbf = [0, 0, 0, 8, b'j', b'u', b'm', b'b'];
+    let mut payload = b"JP".to_vec();
+    payload.extend_from_slice(&[0, 1, 0, 0, 0, 1]);
+    payload.extend_from_slice(&jumbf);
+    let len = u16::try_from(payload.len() + 2).expect("length");
+    let mut jpeg = vec![0xFF, 0xD8, 0xFF, 0xFF, 0xFF, 0xEB];
+    jpeg.extend_from_slice(&len.to_be_bytes());
+    jpeg.extend_from_slice(&payload);
+    jpeg.extend_from_slice(&[0xFF, 0xDA]);
+    assert_eq!(jpeg_app11::jpeg_jumbf(&jpeg), Ok(vec![jumbf.to_vec()]));
+}
+
+#[test]
+fn app11_extraction_skips_extraneous_bytes_but_not_truncation() {
+    // An APP1 segment whose length is two bytes short, as in the corpus's
+    // Truepic ingredient thumbnail, leaves two stray bytes before the next
+    // marker; decoders skip them.
+    let mut jpeg = vec![0xFF, 0xD8, 0xFF, 0xE1, 0x00, 0x04, 0xAA, 0xBB, 0x00, 0x00];
+    jpeg.extend_from_slice(&[0xFF, 0xDA]);
+    assert_eq!(jpeg_app11::jpeg_jumbf(&jpeg), Ok(Vec::new()));
+    let truncated = [0xFF, 0xD8, 0xFF, 0xEB, 0x00, 0x40, b'J', b'P'];
+    assert!(jpeg_app11::jpeg_jumbf(&truncated).is_err());
 }

@@ -182,7 +182,7 @@ fn hashed_uris_need_a_url_and_a_hash() {
         );
     }
     let with_alg = map(&[
-        ("url", text("u")),
+        ("url", text("self#jumbf=c2pa.assertions/a")),
         ("alg", text("sha384")),
         ("hash", bytes(&[1])),
     ]);
@@ -289,4 +289,86 @@ fn malformed_claims_are_claim_malformed_in_the_store() {
         })
     );
     assert_eq!(err.status_code(), Some("claim.malformed"));
+}
+
+#[test]
+fn claim_references_must_be_self_jumbf_uris() {
+    let base = claim_v2(&["a"]);
+    let bad_url = |url: &str| CborValue::Array(vec![hashed_uri(url, &[1])]);
+    let cases = [
+        ("signature", text("c2pa.signature")),
+        ("signature", text("self#jumbf=../c2pa.signature")),
+        ("created_assertions", bad_url("c2pa.assertions/a")),
+        ("created_assertions", bad_url("https://example.org/a")),
+        ("gathered_assertions", bad_url("self#jumbf=a//b")),
+        (
+            "redacted_assertions",
+            CborValue::Array(vec![text("self#jumbf=")]),
+        ),
+    ];
+    for (field, value) in cases {
+        let claim = with(&base, field, value.clone());
+        assert_eq!(
+            failing_field(ClaimVersion::V2, claim),
+            field,
+            "{field} = {value:?}"
+        );
+    }
+    let legacy = with(
+        &claim_v1(&["a"]),
+        "assertions",
+        bad_url("c2pa.assertions/a"),
+    );
+    assert_eq!(failing_field(ClaimVersion::V1, legacy), "assertions");
+}
+
+#[test]
+fn generator_icons_must_be_hashed_uri_maps() {
+    let info = |icon: CborValue| map(&[("name", text("Tool")), ("icon", icon)]);
+    let bad = [
+        text("https://example.org/icon.svg"),
+        map(&[("url", text("self#jumbf=c2pa.assertions/c2pa.icon"))]),
+        map(&[
+            ("url", text("self#jumbf=c2pa.assertions/c2pa.icon")),
+            ("hash", text("x")),
+        ]),
+    ];
+    for icon in bad {
+        let claim = with(
+            &claim_v2(&["a"]),
+            "claim_generator_info",
+            info(icon.clone()),
+        );
+        assert_eq!(
+            failing_field(ClaimVersion::V2, claim),
+            "claim_generator_info",
+            "{icon:?}"
+        );
+    }
+    let embedded = map(&[
+        ("url", text("self#jumbf=c2pa.assertions/c2pa.icon")),
+        ("hash", bytes(&[1])),
+    ]);
+    let external = map(&[
+        ("url", text("https://example.org/icon.svg")),
+        ("alg", text("sha256")),
+        ("hash", bytes(&[1])),
+    ]);
+    for icon in [embedded, external] {
+        let claim = with(&claim_v2(&["a"]), "claim_generator_info", info(icon));
+        assert!(Claim::from_cbor(ClaimVersion::V2, claim).is_ok());
+    }
+}
+
+#[test]
+fn generator_info_keys_must_be_text() {
+    let info = CborValue::Map(vec![
+        (text("name"), text("Tool")),
+        (CborValue::Unsigned(1), CborValue::Null),
+    ]);
+    let claim = with(&claim_v2(&["a"]), "claim_generator_info", info);
+    assert_eq!(
+        failing_field(ClaimVersion::V2, claim),
+        "claim_generator_info"
+    );
 }

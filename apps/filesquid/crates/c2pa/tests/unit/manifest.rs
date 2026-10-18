@@ -409,7 +409,7 @@ fn signature_location_errors_are_claim_signature_missing() {
         ManifestError::SignatureMissing,
         ManifestError::SignatureMultiple,
         ManifestError::SignatureBox {
-            reason: "a claim signature box holds exactly one cbor box",
+            reason: "a claim signature box is requestable and holds exactly one cbor box",
         },
     ];
     for (store, want) in [missing, two, empty].iter().zip(expected) {
@@ -769,4 +769,117 @@ fn random_multi_byte_corruption_is_handled_without_panicking() {
         }
         let _ = parse(bytes);
     }
+}
+
+/// Label-only toggles: present but not requestable.
+const NOT_REQUESTABLE: u8 = 0x02;
+
+#[test]
+fn c2pa_boxes_must_be_requestable() {
+    let claim = || claim_box("c2pa.claim.v2", &encode(&claim_v2(&STANDARD_LABELS)));
+    let cbor_claim = encode(&claim_v2(&STANDARD_LABELS));
+    let store_box = assertion_store(&standard_assertions());
+    let cases = [
+        (
+            vec![
+                store_box.clone(),
+                superbox_toggled(
+                    uuid(b"c2cl"),
+                    "c2pa.claim.v2",
+                    NOT_REQUESTABLE,
+                    &[boxed(b"cbor", &cbor_claim)],
+                ),
+                signature_box(),
+            ],
+            "claim.malformed",
+        ),
+        (
+            vec![
+                store_box.clone(),
+                claim(),
+                superbox_toggled(
+                    uuid(b"c2cs"),
+                    "c2pa.signature",
+                    NOT_REQUESTABLE,
+                    &[boxed(b"cbor", &cose_placeholder())],
+                ),
+            ],
+            "claimSignature.missing",
+        ),
+        (
+            vec![
+                superbox_toggled(
+                    uuid(b"c2as"),
+                    "c2pa.assertions",
+                    NOT_REQUESTABLE,
+                    &standard_assertions(),
+                ),
+                claim(),
+                signature_box(),
+            ],
+            "assertion.missing",
+        ),
+    ];
+    for (children, code) in cases {
+        let store = one_manifest(b"c2ma", &children);
+        let err = content(&store).as_ref().expect_err("not requestable");
+        assert_eq!(err.status_code(), Some(code), "{err:?}");
+    }
+}
+
+#[test]
+fn a_manifest_box_must_be_requestable() {
+    let children = with_claim(claim_box(
+        "c2pa.claim.v2",
+        &encode(&claim_v2(&STANDARD_LABELS)),
+    ));
+    let unrequestable = superbox_toggled(uuid(b"c2ma"), ACTIVE_LABEL, NOT_REQUESTABLE, &children);
+    let store = parse(store(&[unrequestable])).expect("store");
+    let err = content(&store).as_ref().expect_err("not requestable");
+    assert_eq!(err, &ManifestError::NotRequestable);
+    assert_eq!(err.status_code(), Some("general.error"));
+}
+
+#[test]
+fn an_assertion_box_must_be_requestable() {
+    let hidden = superbox_toggled(
+        uuid(b"cbor"),
+        "a",
+        NOT_REQUESTABLE,
+        &[boxed(b"cbor", &encode(&actions_value()))],
+    );
+    let err = assertion_content(hidden).expect_err("not requestable");
+    assert_eq!(err, AssertionError::NotRequestable);
+    assert_eq!(err.status_code(), Some("assertion.missing"));
+}
+
+#[test]
+fn the_store_box_must_be_requestable() {
+    let bytes = superbox_toggled(
+        uuid(b"c2pa"),
+        "c2pa",
+        NOT_REQUESTABLE,
+        &[standard_manifest(ACTIVE_LABEL)],
+    );
+    assert_eq!(parse(bytes).map(|_| ()), Err(StoreError::NotAManifestStore));
+}
+
+#[test]
+fn from_bytes_enforces_the_store_size_limit() {
+    let bytes = sample_store();
+    let size = bytes.len() as u64;
+    let limits = |max_store_bytes| ParseLimits {
+        max_store_bytes,
+        ..ParseLimits::default()
+    };
+    assert!(ManifestStore::from_bytes(bytes.clone(), &limits(size)).is_ok());
+    let err = ManifestStore::from_bytes(bytes, &limits(size - 1)).expect_err("too large");
+    assert_eq!(
+        err,
+        StoreError::TooLarge {
+            size,
+            max: size - 1
+        }
+    );
+    assert_eq!(err.category(), "too_large");
 }

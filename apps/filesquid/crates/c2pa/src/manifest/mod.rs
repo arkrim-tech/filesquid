@@ -180,6 +180,10 @@ pub struct IgnoredBox {
 /// the C2PA 2.4 failure code a validator reports for it.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ManifestError {
+    /// The manifest box lacks the requestable toggle that C2PA 2.4 section
+    /// 11.1.4.1.2 requires, so it cannot be referenced (`general.error`).
+    #[error("the manifest box is not requestable")]
+    NotRequestable,
     /// A compressed manifest; Brotli decompression is not implemented.
     #[error("compressed manifests are not supported yet")]
     CompressedUnsupported,
@@ -189,7 +193,8 @@ pub enum ManifestError {
     /// More than one claim box (`claim.multiple`).
     #[error("the manifest has more than one claim")]
     ClaimMultiple,
-    /// The claim box does not hold exactly one CBOR box (`claim.malformed`).
+    /// The claim box is not requestable or does not hold exactly one CBOR
+    /// box (`claim.malformed`).
     #[error("the claim box is malformed: {reason}")]
     ClaimBox {
         /// Which rule was broken.
@@ -208,7 +213,8 @@ pub enum ManifestError {
     /// cannot be resolved (`claimSignature.missing`).
     #[error("the manifest has more than one claim signature")]
     SignatureMultiple,
-    /// The claim signature box does not hold exactly one CBOR box
+    /// The claim signature box is not requestable or does not hold exactly
+    /// one CBOR box, so the claim's reference cannot resolve to it
     /// (`claimSignature.missing`).
     #[error("the claim signature box is malformed: {reason}")]
     SignatureBox {
@@ -218,6 +224,10 @@ pub enum ManifestError {
     /// No assertion store (`assertion.missing`).
     #[error("the manifest has no assertion store")]
     AssertionStoreMissing,
+    /// The assertion store is not requestable, so references into it
+    /// cannot resolve (`assertion.missing`).
+    #[error("the assertion store is not requestable")]
+    AssertionStoreNotRequestable,
     /// An assertion store without assertions (`assertion.missing`).
     #[error("the assertion store is empty")]
     AssertionStoreEmpty,
@@ -246,8 +256,10 @@ impl ManifestError {
                 Some("claimSignature.missing")
             }
             Self::AssertionStoreMissing
+            | Self::AssertionStoreNotRequestable
             | Self::AssertionStoreEmpty
             | Self::AssertionStoreMultiple => Some("assertion.missing"),
+            Self::NotRequestable => Some("general.error"),
             Self::CompressedUnsupported | Self::DuplicateAssertionLabel { .. } => None,
         }
     }
@@ -256,13 +268,22 @@ impl ManifestError {
 /// Why a manifest store cannot be used at all.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum StoreError {
+    /// The bytes exceed [`ParseLimits::max_store_bytes`].
+    #[error("the manifest store is {size} bytes, over the {max}-byte limit")]
+    TooLarge {
+        /// The store size.
+        size: u64,
+        /// The limit.
+        max: u64,
+    },
     /// The JUMBF framing is broken or exceeds a box limit.
     #[error("invalid JUMBF: {0}")]
     Jumbf(#[from] JumbfError),
     /// CBOR in the store exceeds the depth or item limit.
     #[error("CBOR limit exceeded: {0}")]
     CborLimit(CborError),
-    /// The superbox is not labelled `c2pa` with the manifest store UUID.
+    /// The superbox is not a requestable box labelled `c2pa` with the
+    /// manifest store UUID.
     #[error("the superbox is not a C2PA manifest store")]
     NotAManifestStore,
     /// The store holds no manifest.
@@ -287,6 +308,7 @@ impl StoreError {
     /// A fixed category name for logs and metrics.
     pub fn category(&self) -> &'static str {
         match self {
+            Self::TooLarge { .. } => "too_large",
             Self::Jumbf(err) => err.category(),
             Self::CborLimit(err) => err.category(),
             Self::NotAManifestStore => "not_a_manifest_store",
@@ -312,8 +334,16 @@ pub struct ManifestStore {
 }
 
 impl ManifestStore {
-    /// Parse `bytes` as a complete manifest store within `limits`.
+    /// Parse `bytes` as a complete manifest store within `limits`, starting
+    /// with [`ParseLimits::max_store_bytes`].
     pub fn from_bytes(bytes: Vec<u8>, limits: &ParseLimits) -> Result<Self, StoreError> {
+        let size = bytes.len() as u64;
+        if size > limits.max_store_bytes {
+            return Err(StoreError::TooLarge {
+                size,
+                max: limits.max_store_bytes,
+            });
+        }
         let root = crate::jumbf::parse_superbox(&bytes, &limits.jumbf())?;
         let (manifests, ignored) = parse::store_contents(&bytes, &root, limits)?;
         Ok(Self {
@@ -361,6 +391,13 @@ impl ManifestStore {
     pub fn ignored(&self) -> &[IgnoredBox] {
         &self.ignored
     }
+}
+
+/// Whether `sb` has the requestable toggle C2PA 2.4 section 11.1.4.1.2
+/// requires of every C2PA box (the label toggle is checked by requiring a
+/// label).
+pub(crate) fn requestable(sb: &Superbox) -> bool {
+    sb.description.toggles & crate::jumbf::toggles::REQUESTABLE != 0
 }
 
 /// Longest label shown in errors and paths, in characters of the label.

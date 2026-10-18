@@ -73,6 +73,22 @@ pub fn superbox(type_uuid: [u8; 16], label: &str, children: &[Vec<u8>]) -> Vec<u
     boxed(b"jumb", &payload)
 }
 
+/// A superbox whose description box has `toggles` (a label is written when
+/// the label bit is set).
+pub fn superbox_toggled(
+    type_uuid: [u8; 16],
+    label: &str,
+    toggles: u8,
+    children: &[Vec<u8>],
+) -> Vec<u8> {
+    let label = (toggles & 0x02 != 0).then_some(label);
+    let mut payload = boxed(b"jumd", &jumd_payload(type_uuid, toggles, label));
+    for child in children {
+        payload.extend_from_slice(child);
+    }
+    boxed(b"jumb", &payload)
+}
+
 /// Text value.
 pub fn text(value: &str) -> CborValue {
     CborValue::Text(value.to_string())
@@ -119,7 +135,8 @@ pub fn encode(value: &CborValue) -> Vec<u8> {
         CborValue::Bool(true) => vec![0xF5],
         CborValue::Null => vec![0xF6],
         CborValue::Undefined => vec![0xF7],
-        CborValue::Simple(n) if *n < 24 => vec![0xE0 | n],
+        CborValue::Simple(n) if *n < 20 => vec![0xE0 | n],
+        CborValue::Simple(n) if *n < 32 => panic!("simple value {n} has no encoding of its own"),
         CborValue::Simple(n) => vec![0xF8, *n],
         CborValue::Float(f) => [vec![0xFB], f.value().to_bits().to_be_bytes().to_vec()].concat(),
     }

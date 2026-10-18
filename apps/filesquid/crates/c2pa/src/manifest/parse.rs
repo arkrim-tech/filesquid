@@ -5,8 +5,8 @@ use std::collections::HashSet;
 
 use super::assertion::{parse_assertion, CborContext};
 use super::{
-    display_label, Assertion, Claim, ClaimSignature, ClaimVersion, IgnoreReason, IgnoredBox,
-    Manifest, ManifestEntry, ManifestError, ManifestKind, ParseLimits, StoreError,
+    display_label, requestable, Assertion, Claim, ClaimSignature, ClaimVersion, IgnoreReason,
+    IgnoredBox, Manifest, ManifestEntry, ManifestError, ManifestKind, ParseLimits, StoreError,
 };
 use crate::cbor::{CborError, ItemBudget};
 use crate::jumbf::{types, BoxType, ByteRange, ContentBox, JumbfChild, Superbox};
@@ -25,9 +25,9 @@ const ASSERTIONS_LABEL: &str = "c2pa.assertions";
 const NO_LABEL: &str = "<unlabelled>";
 
 /// Reason text for [`ManifestError::ClaimBox`].
-const CLAIM_BOX: &str = "a claim box holds exactly one cbor box";
+const CLAIM_BOX: &str = "a claim box is requestable and holds exactly one cbor box";
 /// Reason text for [`ManifestError::SignatureBox`].
-const SIGNATURE_BOX: &str = "a claim signature box holds exactly one cbor box";
+const SIGNATURE_BOX: &str = "a claim signature box is requestable and holds exactly one cbor box";
 
 /// Parse the manifests inside the store superbox `root`, returning them in
 /// order with the boxes that were skipped.
@@ -36,7 +36,8 @@ pub(super) fn store_contents(
     root: &Superbox,
     limits: &ParseLimits,
 ) -> Result<(Vec<ManifestEntry>, Vec<IgnoredBox>), StoreError> {
-    if root.type_uuid() != types::MANIFEST_STORE || root.label() != Some(STORE_LABEL) {
+    let is_store = root.type_uuid() == types::MANIFEST_STORE && root.label() == Some(STORE_LABEL);
+    if !is_store || !requestable(root) {
         return Err(StoreError::NotAManifestStore);
     }
     let mut ctx = Context {
@@ -159,6 +160,7 @@ impl Context<'_> {
         };
         let label = required_label(sb)?;
         let content = match kind {
+            _ if !requestable(sb) => Err(ManifestError::NotRequestable),
             ManifestKind::Compressed => Err(ManifestError::CompressedUnsupported),
             _ => match self.manifest(&child_path(path, sb), sb) {
                 Ok(manifest) => Ok(manifest),
@@ -194,10 +196,15 @@ impl Context<'_> {
             ManifestError::AssertionStoreMissing,
             ManifestError::AssertionStoreMultiple,
         )?;
+        if !requestable(store_box) {
+            return Err(ManifestError::AssertionStoreNotRequestable.into());
+        }
         let (claim, claim_cbor) = self.claim(claim_box, version)?;
-        let cose_sign1 = only_cbor_box(signature_box).ok_or(ManifestError::SignatureBox {
-            reason: SIGNATURE_BOX,
-        })?;
+        let cose_sign1 = only_cbor_box(signature_box)
+            .filter(|_| requestable(signature_box))
+            .ok_or(ManifestError::SignatureBox {
+                reason: SIGNATURE_BOX,
+            })?;
         let assertions = self.assertions(path, store_box)?;
         Ok(Manifest {
             claim,
@@ -263,7 +270,9 @@ impl Context<'_> {
         sb: &Superbox,
         version: ClaimVersion,
     ) -> Result<(Claim, ByteRange), Failure> {
-        let range = only_cbor_box(sb).ok_or(ManifestError::ClaimBox { reason: CLAIM_BOX })?;
+        let range = only_cbor_box(sb)
+            .filter(|_| requestable(sb))
+            .ok_or(ManifestError::ClaimBox { reason: CLAIM_BOX })?;
         let value = self
             .cbor
             .decode(&self.bytes[range.start..range.end])?

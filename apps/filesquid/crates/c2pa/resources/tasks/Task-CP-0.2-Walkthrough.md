@@ -44,11 +44,11 @@ Verified against the published HTML of the [C2PA 2.4 specification](https://spec
 
 | `ParseLimits` field | Default | Boundary tests (limit passes, limit minus one fails) |
 |---|---|---|
-| `max_store_bytes` | 64 MiB | `unit_read::store_size_limit_holds_at_the_boundary_before_reading` (no read when over), `oversized_remote_stores_are_rejected_at_the_boundary`, `a_huge_reported_size_is_rejected_without_allocating`, `a_size_that_cannot_be_allocated_is_reported_without_reading` |
+| `max_store_bytes` | 64 MiB | `unit_read::store_size_limit_holds_at_the_boundary_before_reading` (no read when over), `oversized_remote_stores_are_rejected_at_the_boundary`, `a_huge_reported_size_is_rejected_without_allocating`, the in-crate `read::tests::an_unreservable_size_is_an_allocation_error`; `unit_manifest::from_bytes_enforces_the_store_size_limit` |
 | `max_box_depth` | 16 (ceiling 256) | `unit_jumbf::superbox_depth_limit_holds_at_the_boundary`, `a_caller_depth_above_the_supported_ceiling_is_lowered_to_it`, `hostile_nesting_does_not_overflow_the_stack`; `unit_manifest::box_depth_limit_holds_at_the_boundary` |
 | `max_boxes` | 65 536 | `unit_jumbf::box_count_limit_holds_at_the_boundary` (count from an independent walker), `private_boxes_count_toward_the_box_limit`; `performance_parse` (65 416 boxes) |
 | `max_cbor_depth` | 64 (ceiling 256) | `unit_cbor::nesting_depth_limit_holds_at_the_boundary`, `a_caller_depth_above_the_supported_ceiling_is_lowered_to_it`, `deep_nesting_from_untrusted_input_does_not_overflow_the_stack`; `unit_manifest::cbor_depth_limit_rejects_the_whole_store` |
-| `max_cbor_items` | 1 048 576 per store | `unit_cbor::item_budget_holds_at_the_boundary_and_is_shared`; `unit_manifest::cbor_item_budget_is_shared_across_the_store_and_holds_at_the_boundary` (count from an independent counter) |
+| `max_cbor_items` | 1 048 576 per store | `unit_cbor::item_budget_holds_at_the_boundary_and_is_shared`, `a_declared_count_beyond_the_item_budget_fails_at_the_container_head` (a million declared elements fail at the array head, before any reservation); `unit_manifest::cbor_item_budget_is_shared_across_the_store_and_holds_at_the_boundary` (count from an independent counter) |
 | CBOR declared lengths | remaining input | `unit_cbor::declared_lengths_longer_than_the_input_fail_without_allocating` |
 | JSON nesting | none needed: validation is iterative and builds no tree | `unit_manifest::deeply_nested_json_is_checked_without_recursion` (200 000 levels) |
 
@@ -59,9 +59,9 @@ Malformed and truncated input: every prefix and every single-byte corruption of 
 | Requirement | Tests |
 |---|---|
 | C2PA-S-001 JUMBF superboxes and description boxes | `unit_jumbf` (25 tests: header lengths, `XLBox`, `LBox` 0, overruns, description fields and toggles, reserved bits, labels and forbidden characters, trailing bytes, depth and box limits, prefixes and corruptions, display escaping) |
-| C2PA-S-001 CBOR claims and assertions | `unit_cbor` (24 tests: RFC 8949 Appendix A vectors, indefinite lengths, floats, well-formedness errors, duplicate keys, UTF-8, truncation, limits, random input) |
-| C2PA-S-001 manifest store, manifests, signature, assertion store, status codes | `unit_manifest` (34 tests); features "Read a sidecar manifest store", "A manifest with a broken claim is reported with its status code", "Unknown boxes are reported, not silently dropped", "A truncated manifest store is rejected", "Nesting deeper than the limit is rejected" |
-| C2PA-S-001 claims v1 and v2 | `unit_claim` (10 tests: every required field of each version, CDDL types and sizes, hashed URIs, generator info, unknown fields kept); feature "Read a legacy v1 claim" |
+| C2PA-S-001 CBOR claims and assertions | `unit_cbor` (27 tests: RFC 8949 Appendix A vectors, indefinite lengths, floats, well-formedness errors, duplicate keys, UTF-8, truncation, limits, random input) |
+| C2PA-S-001 manifest store, manifests, signature, assertion store, status codes | `unit_manifest` (39 tests, including the requestable toggle on every C2PA box); features "Read a sidecar manifest store", "A manifest with a broken claim is reported with its status code", "Unknown boxes are reported, not silently dropped", "A truncated manifest store is rejected", "Nesting deeper than the limit is rejected" |
+| C2PA-S-001 claims v1 and v2 | `unit_claim` (13 tests: every required field of each version, CDDL types and sizes, `self#jumbf` URIs for the signature and every assertion reference, generator info keys and `icon`, unknown fields kept); feature "Read a legacy v1 claim" |
 | C2PA-S-001 `self#jumbf` URIs | `unit_uri` (7 tests: absolute and relative, `..`, empty segments, segment cap, resolution, ambiguity) |
 | C2PA-S-001 sidecar `.c2pa` files | `unit_read::a_sidecar_store_is_read_from_a_byte_source` and the size, allocation and I/O tests; feature "A manifest store over the size limit is rejected before it is read" |
 | C2PA-S-001 remote reference; SRS-F-054 caller-supplied fetcher | `unit_read` remote tests (purpose, `max_bytes`, `http`/`https` only, `#jumbf=` refused before fetching, `manifest.inaccessible`, messages without the URL); features "Read a remote manifest store through the caller fetcher", "A remote manifest store without a caller fetcher is inaccessible" |
@@ -71,13 +71,50 @@ Malformed and truncated input: every prefix and every single-byte corruption of 
 
 ## Coverage
 
-[ADR 017](../../../../../../resources/architecture/017-test-runners-and-reporting.md) defines no Rust line-coverage tool, so no coverage percentage is reported. Every public function of `cbor`, `jumbf`, `manifest` and `read` is called by the tests above, and every error variant is produced by at least one test (`ReadError::Allocation` by `a_size_that_cannot_be_allocated_is_reported_without_reading`). This is a manual inventory, not a measured figure. The cucumber JUnit report is `tests/allure-results/cucumber-junit.xml`.
+[ADR 017](../../../../../../resources/architecture/017-test-runners-and-reporting.md) defines no Rust line-coverage tool, so no coverage percentage is reported. Every public function of `cbor`, `jumbf`, `manifest` and `read` is called by the tests above, and every error variant is produced by at least one test (`ReadError::Allocation` by the in-crate `read::tests::an_unreservable_size_is_an_allocation_error`, which asks for more than `isize::MAX` bytes so the failure is deterministic). This is a manual inventory, not a measured figure. The cucumber JUnit report is `tests/allure-results/cucumber-junit.xml`.
 
 ## Known gaps
 
 - **Compressed manifests (`c2cm`):** reported as `ManifestError::CompressedUnsupported`, with no status code; Brotli decompression needs a decompressor crate and a size cap, and no plan task names it yet.
 - **Embedded stores:** locating a store inside JPEG or PNG is CP-0.3; the oracle comparison stays pending until CP-0.5.
-- **Requestable toggle:** C2PA 11.1.4.1.2 says C2PA description boxes set the requestable and label toggles. The parser requires labels on C2PA boxes and records the toggles, but does not reject a box without the requestable bit.
+
+## Cubic review round 1
+
+Cubic's first review of `5913738` raised 21 findings. Each fix started with a failing test.
+
+- **CBOR (P1):** an array or map declaring more items than the item budget has left now fails at its head, and at most 1 024 slots are reserved up front. Map keys follow RFC 8949 section 5.6.1 equivalence (`0.0` equals `-0.0`, NaNs compare by significand, map keys ignore pair order), and NaN significands survive widening from half and single precision.
+- **Requestable toggle (C2PA 2.4 section 11.1.4.1.2):** all 451 description boxes in the 24 corpus stores set it (toggles `0x03` or `0x13`), so it is now required. A store box without it is `StoreError::NotAManifestStore`. A manifest box gets `ManifestError::NotRequestable` (`general.error`), a claim box `claim.malformed`, a signature box `claimSignature.missing`, an assertion store `assertion.missing`, and an assertion `AssertionError::NotRequestable` (`assertion.missing`).
+- **Claim references:** the signature, created, gathered and redacted references must parse as `self#jumbf` URIs. The generator `icon` must be a hashed URI (embedded, or `http`/`https` with `alg`), and generator keys must be text. All are `claim.malformed`.
+- **Limits and reading:** `ManifestStore::from_bytes` enforces `max_store_bytes` (`StoreError::TooLarge`). Remote URLs need a host, with no whitespace or control characters. A failed fetch logs one warning, not two. Buffer reservation moved into `zeroed_buffer`, tested in-crate with a size above `isize::MAX`. The old `isize::MAX` integration test depended on the allocator and was removed.
+- **Test support:** the APP11 extractor skips 0xFF fill bytes and, like libjpeg, extraneous bytes before a marker. The conformance test now fails on any extraction error. Propagating the error exposed one file, an ingredient thumbnail whose APP1 length is two bytes short (`legacy/1.4/image/jpeg/manifests/truepic-20230212-camera/com.truepic-urn-uuid-37742c5e-....jpg`); with libjpeg behaviour it reads as having no store, which matches `c2patool`. The test encoder no longer emits simple values 20 to 23.
+- **Not changed, with reasons given on the PR:**
+  - Exact `=` version pins: every crate in the workspace pins through the committed `Cargo.lock` and `--locked`.
+  - Padding in claim and signature boxes: C2PA 2.4 section 11.1.4.4 says each "shall consist of a single CBOR Content Type box", while padding is allowed only in assertion boxes (11.1.4.3).
+  - The `serde_json` recursion claim: `deserialize_ignored_any` calls the iterative `ignore_value`, and `deeply_nested_json_is_checked_without_recursion` accepts 200 000 levels.
+
+Failing run before the fixes (`unit_cbor`, then the other new tests):
+
+```text
+thread 'map_keys_follow_rfc_8949_equivalence' (8923) panicked at tests/unit/cbor.rs:389:5:
+thread 'item_budget_holds_at_the_boundary_and_is_shared' (8922) panicked at tests/unit/cbor.rs:348:5:
+thread 'a_declared_count_beyond_the_item_budget_fails_at_the_container_head' (8909) panicked at tests/unit/cbor.rs:368:5:
+thread 'nan_payloads_survive_widening' (8927) panicked at tests/unit/cbor.rs:407:5:
+test result: FAILED. 23 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+1 error: could not compile `filesquid-c2pa` (test "unit_manifest") due to 3 previous errors
+      1 error[E0599]: no variant named `TooLarge` found for enum `StoreError`
+      1 error[E0599]: no variant, associated function, or constant named `NotRequestable` found for enum `AssertionError` in the current scope
+      1 error[E0599]: no variant, associated function, or constant named `NotRequestable` found for enum `ManifestError` in the current scope
+thread 'app11_extraction_skips_marker_fill_bytes' (15591) panicked at tests/integration/conformance_parse.rs:129:5:
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+thread 'generator_icons_must_be_hashed_uri_maps' (15609) panicked at tests/unit/claim.rs:40:10:
+thread 'claim_references_must_be_self_jumbf_uris' (15606) panicked at tests/unit/claim.rs:40:10:
+thread 'generator_info_keys_must_be_text' (15610) panicked at tests/unit/claim.rs:40:10:
+test result: FAILED. 10 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+thread 'urls_without_a_host_are_refused_before_fetching' (15654) panicked at tests/unit/read.rs:299:14:
+test result: FAILED. 13 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+thread 'rejection_logs_carry_categories_only' (15668) panicked at tests/unit/read_logs.rs:101:5:
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+```
 
 ## Mocked Environment Variables
 

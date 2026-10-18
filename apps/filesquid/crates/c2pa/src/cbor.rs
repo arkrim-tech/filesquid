@@ -261,6 +261,10 @@ pub fn decode(
     Ok(value)
 }
 
+/// Most container slots reserved up front; larger containers grow as their
+/// items are decoded.
+const MAX_PREALLOCATED_ITEMS: usize = 1024;
+
 /// Reason text for [`CborError::Malformed`].
 const RESERVED_INFO: &str = "reserved additional information value";
 /// Reason text for [`CborError::Malformed`].
@@ -444,7 +448,7 @@ impl Decoder<'_, '_> {
         if len > self.remaining() as u64 {
             return Err(CborError::Truncated { offset: self.pos });
         }
-        let mut items = Vec::with_capacity(len as usize);
+        let mut items = Vec::with_capacity(self.capacity_for(len, head.start)?);
         for _ in 0..len {
             items.push(self.item(depth + 1)?);
         }
@@ -466,27 +470,28 @@ impl Decoder<'_, '_> {
     /// Decode a map (major type 5) and check that its keys are unique.
     fn map(&mut self, head: &Head, depth: usize) -> Result<CborValue, CborError> {
         let pairs = match head.arg {
-            Some(len) => self.definite_pairs(len, depth)?,
+            Some(len) => self.definite_pairs(len, head.start, depth)?,
             None => self.indefinite_pairs(depth)?,
         };
         let mut seen = HashSet::with_capacity(pairs.len());
-        if pairs.iter().any(|(key, _)| !seen.insert(key)) {
+        if pairs.iter().any(|(key, _)| !seen.insert(key_repr(key))) {
             return Err(CborError::DuplicateKey { offset: head.start });
         }
         Ok(CborValue::Map(pairs))
     }
 
-    /// Decode `len` key-value pairs.
+    /// Decode `len` key-value pairs of the map whose head is at `start`.
     fn definite_pairs(
         &mut self,
         len: u64,
+        start: usize,
         depth: usize,
     ) -> Result<Vec<(CborValue, CborValue)>, CborError> {
         // Every pair needs at least two bytes.
         if len > (self.remaining() / 2) as u64 {
             return Err(CborError::Truncated { offset: self.pos });
         }
-        let mut pairs = Vec::with_capacity(len as usize);
+        let mut pairs = Vec::with_capacity(self.capacity_for(len.saturating_mul(2), start)? / 2);
         for _ in 0..len {
             let key = self.item(depth + 1)?;
             let value = self.item(depth + 1)?;
@@ -508,6 +513,20 @@ impl Decoder<'_, '_> {
             pairs.push((key, value));
         }
         Err(CborError::Truncated { offset: self.pos })
+    }
+
+    /// The capacity to reserve for a container at `start` that declares
+    /// `items` child items. Fails at once when the item budget cannot cover
+    /// them, and never reserves more than [`MAX_PREALLOCATED_ITEMS`], so a
+    /// declared count costs no memory before its items are decoded.
+    fn capacity_for(&self, items: u64, start: usize) -> Result<usize, CborError> {
+        if items > self.budget.remaining as u64 {
+            return Err(CborError::TooManyItems {
+                offset: start,
+                max: self.budget.max,
+            });
+        }
+        Ok((items as usize).min(MAX_PREALLOCATED_ITEMS))
     }
 
     /// Decode a tag (major type 6) and its content.
@@ -537,7 +556,7 @@ fn simple(head: &Head) -> Result<CborValue, CborError> {
         23 => Ok(CborValue::Undefined),
         24 if arg < 32 => Err(malformed(head.start, BAD_SIMPLE)),
         25 => Ok(float(half_to_f64(arg as u16))),
-        26 => Ok(float(f64::from(f32::from_bits(arg as u32)))),
+        26 => Ok(float(single_to_f64(arg as u32))),
         27 => Ok(float(f64::from_bits(arg))),
         // 0 to 19 inline, or 32 to 255 in the following byte.
         _ => Ok(CborValue::Simple(arg as u8)),
@@ -557,8 +576,75 @@ fn half_to_f64(bits: u16) -> f64 {
     match exponent {
         0 => sign * mantissa * 2f64.powi(-24),
         31 if mantissa == 0.0 => sign * f64::INFINITY,
-        31 => f64::NAN,
+        31 => nan(u64::from(bits >> 15), u64::from(bits & 0x03FF) << 42),
         _ => sign * (1.0 + mantissa / 1024.0) * 2f64.powi(exponent - 15),
+    }
+}
+
+/// Widen an IEEE 754 binary32 bit pattern to `f64`, keeping a NaN's
+/// significand (zero-extended) so NaN keys compare as RFC 8949 section
+/// 5.6.1 requires.
+fn single_to_f64(bits: u32) -> f64 {
+    let value = f32::from_bits(bits);
+    if !value.is_nan() {
+        return f64::from(value);
+    }
+    nan(u64::from(bits >> 31), u64::from(bits & 0x007F_FFFF) << 29)
+}
+
+/// The `f64` NaN with `sign` (0 or 1) and the 52-bit `significand`.
+fn nan(sign: u64, significand: u64) -> f64 {
+    f64::from_bits((sign << 63) | (0x7FF << 52) | significand)
+}
+
+/// A map key in the form RFC 8949 section 5.6.1 compares: `0.0` and `-0.0`
+/// are one key, NaNs are equal when their significands are, and maps are
+/// equal whatever the order of their pairs. Integers and floats, and byte
+/// and text strings, stay distinct.
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord)]
+enum KeyRepr {
+    /// An integer: `true` for major type 1.
+    Int(bool, u64),
+    /// A byte string.
+    Bytes(Vec<u8>),
+    /// A text string.
+    Text(String),
+    /// An array, element by element.
+    Array(Vec<KeyRepr>),
+    /// A map, pairs sorted.
+    Map(Vec<(KeyRepr, KeyRepr)>),
+    /// A tag and its content.
+    Tag(u64, Box<KeyRepr>),
+    /// A simple value (false, true, null and undefined are 20 to 23).
+    Simple(u8),
+    /// A float's bits, with `-0.0` folded into `0.0`.
+    Float(u64),
+}
+
+/// The comparable form of `value`. Recursion is bounded by the decode
+/// depth limit.
+fn key_repr(value: &CborValue) -> KeyRepr {
+    match value {
+        CborValue::Unsigned(n) => KeyRepr::Int(false, *n),
+        CborValue::Negative(n) => KeyRepr::Int(true, *n),
+        CborValue::Bytes(b) => KeyRepr::Bytes(b.clone()),
+        CborValue::Text(t) => KeyRepr::Text(t.clone()),
+        CborValue::Array(items) => KeyRepr::Array(items.iter().map(key_repr).collect()),
+        CborValue::Map(pairs) => {
+            let mut sorted: Vec<_> = pairs
+                .iter()
+                .map(|(k, v)| (key_repr(k), key_repr(v)))
+                .collect();
+            sorted.sort();
+            KeyRepr::Map(sorted)
+        }
+        CborValue::Tag(tag, inner) => KeyRepr::Tag(*tag, Box::new(key_repr(inner))),
+        CborValue::Bool(b) => KeyRepr::Simple(20 + u8::from(*b)),
+        CborValue::Null => KeyRepr::Simple(22),
+        CborValue::Undefined => KeyRepr::Simple(23),
+        CborValue::Simple(n) => KeyRepr::Simple(*n),
+        CborValue::Float(f) if f.value() == 0.0 => KeyRepr::Float(0),
+        CborValue::Float(f) => KeyRepr::Float(f.value().to_bits()),
     }
 }
 

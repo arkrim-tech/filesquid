@@ -343,9 +343,11 @@ fn item_budget_holds_at_the_boundary_and_is_shared() {
     let mut exact = ItemBudget::new(4);
     assert!(decode(&input, 8, &mut exact).is_ok());
     assert_eq!(exact.remaining(), 0);
+    // The array declares three items when only two remain in the budget,
+    // so it fails at its head before any element is decoded.
     assert_eq!(
         decode(&input, 8, &mut ItemBudget::new(3)),
-        Err(CborError::TooManyItems { offset: 3, max: 3 })
+        Err(CborError::TooManyItems { offset: 0, max: 3 })
     );
     let mut shared = ItemBudget::new(6);
     assert!(decode(&input, 8, &mut shared).is_ok());
@@ -354,6 +356,74 @@ fn item_budget_holds_at_the_boundary_and_is_shared() {
         decode(&input, 8, &mut shared),
         Err(CborError::TooManyItems { max: 6, .. })
     ));
+}
+
+#[test]
+fn a_declared_count_beyond_the_item_budget_fails_at_the_container_head() {
+    // A million-element array whose elements are all present: it fits the
+    // input, so only the item budget can stop it, and it must do so before
+    // reserving room for a million values.
+    let mut array = from_hex("9a000f4240");
+    array.extend(std::iter::repeat_n(0u8, 1_000_000));
+    assert_eq!(
+        decode(&array, 8, &mut ItemBudget::new(100)),
+        Err(CborError::TooManyItems {
+            offset: 0,
+            max: 100
+        })
+    );
+    // A map declaring 500 000 pairs needs a million items.
+    let mut pairs = from_hex("ba0007a120");
+    pairs.extend(std::iter::repeat_n(0u8, 1_000_000));
+    assert_eq!(
+        decode(&pairs, 8, &mut ItemBudget::new(100)),
+        Err(CborError::TooManyItems {
+            offset: 0,
+            max: 100
+        })
+    );
+    // Nested: the inner array's head is where the budget runs out.
+    assert_eq!(
+        decode(&from_hex("8283010203820405"), 8, &mut ItemBudget::new(4)),
+        Err(CborError::TooManyItems { offset: 1, max: 4 })
+    );
+}
+
+#[test]
+fn map_keys_follow_rfc_8949_equivalence() {
+    let dup = |hex: &str| matches!(dec_hex(hex), Err(CborError::DuplicateKey { .. }));
+    assert!(dup("a2f9000001f9800002"), "0.0 and -0.0 are one key");
+    assert!(dup("a2f93c0001fb3ff000000000000002"), "1.0 at two widths");
+    assert!(
+        dup("a2f97e0001fa7fc0000002"),
+        "NaNs with the same significand"
+    );
+    assert!(
+        !dup("a2f97e0001f97e0102"),
+        "NaNs with different significands"
+    );
+    assert!(
+        dup("a2a2616101616202 01 a2616202616101 02"
+            .replace(' ', "")
+            .as_str()),
+        "maps with the same pairs in another order"
+    );
+    assert!(!dup("a201f93c0002"), "an integer and a float differ");
+    assert!(
+        !dup("a24161616102"),
+        "a byte string and a text string differ"
+    );
+}
+
+#[test]
+fn nan_payloads_survive_widening() {
+    let bits = |hex: &str| match dec_hex(hex) {
+        Ok(CborValue::Float(f)) => f.value().to_bits(),
+        other => panic!("{hex}: {other:?}"),
+    };
+    assert_eq!(bits("f97e01"), 0x7FF8_0400_0000_0000);
+    assert_eq!(bits("fa7fc00001"), 0x7FF8_0000_2000_0000);
+    assert_eq!(bits("f9fe00") >> 63, 1, "sign kept");
 }
 
 #[test]

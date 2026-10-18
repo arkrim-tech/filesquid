@@ -33,24 +33,24 @@ The Content Credentials sidebar panel is part of `@filesquid/ui` in `apps/filesq
 
 ### Manifest store parsing
 
-Every byte is treated as hostile. Errors come in three layers, so one damaged manifest never hides the others:
+Every byte is treated as hostile. Errors come in layers. Manifest and assertion content errors do not hide other entries; framing, missing-label, size and engine-limit errors reject the whole store:
 
-- `StoreError`: the store cannot be used at all (broken JUMBF framing, not a `c2pa` store, no manifests, two manifests with one label, a C2PA box without a label, or an engine limit).
-- `ManifestError`, in `ManifestEntry::content`: one manifest is unusable. `status_code()` gives the C2PA 2.4 failure code: `claim.missing`, `claim.multiple`, `claim.cbor.invalid`, `claim.malformed`, `claimSignature.missing` or `assertion.missing`. A compressed manifest (`c2cm`) is `CompressedUnsupported` (no code): Brotli decompression is not implemented yet.
-- `AssertionError`, in `Assertion::content`: one assertion is unusable (`assertion.cbor.invalid` or `assertion.json.invalid`). Validation decides whether the claim references it.
+- `StoreError`: the store cannot be used at all (over `max_store_bytes`, broken JUMBF framing, not a requestable `c2pa` store, no manifests, two manifests with one label, a C2PA box without a label, or an engine limit).
+- `ManifestError`, in `ManifestEntry::content`: one manifest is unusable. `status_code()` gives the C2PA 2.4 failure code: `claim.missing`, `claim.multiple`, `claim.cbor.invalid`, `claim.malformed` (including a signature or assertion reference that is not a `self#jumbf` URI, or a malformed generator `icon`), `claimSignature.missing`, `assertion.missing`, or `general.error` for a manifest box without the requestable toggle. C2PA 2.4 section 11.1.4.1.2 requires the requestable and label toggles on every C2PA box; a claim, signature or assertion store without them reports `claim.malformed`, `claimSignature.missing` or `assertion.missing`. A compressed manifest (`c2cm`) is `CompressedUnsupported` (no code): Brotli decompression is not implemented yet.
+- `AssertionError`, in `Assertion::content`: one assertion is unusable (`assertion.cbor.invalid`, `assertion.json.invalid`, `assertion.missing` when the box is not requestable, or malformed embedded-file or UUID content, which has no code). Validation decides whether the claim references it.
 - `ReadError`: reading failed. A remote store the fetcher cannot deliver is `manifest.inaccessible`.
 
 Boxes the specification says to skip (unknown type UUIDs, time-stamp manifests `c2tm`, data box stores `c2db`, content boxes where only superboxes belong, C2PA boxes with an unexpected label) are listed in `ManifestStore::ignored`, never dropped silently. Hashes and signatures are not checked here; the parser keeps the byte ranges the validation tasks need. Error messages and logs never carry text from the input as is: labels are escaped and shortened, a fetch error shows only its category, and `tracing` logs record an error category and counts.
 
 | Limit (`ParseLimits`) | Default | Exceeded |
 |---|---|---|
-| `max_store_bytes` | 64 MiB | `ReadError::TooLarge` before anything is read or allocated; a remote fetch uses it as `max_bytes` |
+| `max_store_bytes` | 64 MiB | `ReadError::TooLarge` before anything is read or allocated; a remote fetch uses it as `max_bytes`; `ManifestStore::from_bytes` returns `StoreError::TooLarge` |
 | `max_box_depth` (store superbox is depth 1) | 16, never above 256 | `JumbfError::TooDeep` |
 | `max_boxes` (every box header in the store) | 65 536 | `JumbfError::TooManyBoxes` |
 | `max_cbor_depth` (a scalar is depth 1) | 64, never above 256 | `StoreError::CborLimit(CborError::TooDeep)` |
-| `max_cbor_items` (shared by all CBOR in the store) | 1 048 576 | `StoreError::CborLimit(CborError::TooManyItems)` |
+| `max_cbor_items` (shared by the CBOR decoded in the store; claim signatures are kept as raw bytes) | 1 048 576 | `StoreError::CborLimit(CborError::TooManyItems)` |
 
-A CBOR string, array or map that declares more data than remains fails as truncated before anything is allocated. JSON assertions are checked for well-formedness without building a value tree, and `serde_json` skips nested values iteratively, so JSON nesting needs no separate limit.
+A CBOR string, array or map that declares more data than remains fails as truncated, and an array or map that declares more items than the item budget has left fails at its head, both before anything is allocated; at most 1 024 slots are reserved up front. Map keys are compared as RFC 8949 section 5.6.1 says (`0.0` equals `-0.0`, map keys ignore pair order). JSON assertions are checked for well-formedness without building a value tree, and `serde_json` skips nested values iteratively, so JSON nesting needs no separate limit.
 
 Trait methods return futures without a `Send` bound so single-threaded `wasm32` hosts can implement them; on native hosts the futures are `Send` whenever the implementation's are.
 

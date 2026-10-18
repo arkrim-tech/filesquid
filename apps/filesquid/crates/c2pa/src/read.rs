@@ -107,7 +107,10 @@ pub async fn fetch_remote_manifest_store<F: Fetcher + ?Sized>(
     limits: &ParseLimits,
 ) -> Result<ManifestStore, ReadError> {
     let result = fetch_store(fetcher, url, limits).await;
-    log_outcome("remote", &result);
+    // `fetch_bounded` has already logged a fetch failure.
+    if !matches!(result, Err(ReadError::Fetch(_))) {
+        log_outcome("remote", &result);
+    }
     result
 }
 
@@ -121,15 +124,22 @@ async fn read_store_bytes<S: ByteSource + ?Sized>(
     if size > max {
         return Err(ReadError::TooLarge { size, max });
     }
-    let len = usize::try_from(size).map_err(|_| ReadError::TooLarge { size, max })?;
-    let mut bytes = Vec::new();
-    bytes
-        .try_reserve_exact(len)
-        .map_err(|_| ReadError::Allocation { size })?;
-    bytes.resize(len, 0);
+    let mut bytes = zeroed_buffer(size)?;
     read_exact_at(source, 0, &mut bytes)
         .await
         .map_err(ReadError::Io)?;
+    Ok(bytes)
+}
+
+/// A zero-filled buffer of `size` bytes, or [`ReadError::Allocation`] when
+/// the memory cannot be reserved. Nothing is written until the reservation
+/// has succeeded.
+fn zeroed_buffer(size: u64) -> Result<Vec<u8>, ReadError> {
+    let failed = ReadError::Allocation { size };
+    let len = usize::try_from(size).map_err(|_| failed.clone())?;
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(len).map_err(|_| failed)?;
+    bytes.resize(len, 0);
     Ok(bytes)
 }
 
@@ -147,13 +157,17 @@ async fn fetch_store<F: Fetcher + ?Sized>(
     ManifestStore::from_bytes(response.body, limits).map_err(ReadError::Store)
 }
 
-/// Accept only `http` and `https` URLs without a `#jumbf=` fragment.
+/// Accept only `http` and `https` URLs with a host and without a
+/// `#jumbf=` fragment.
 fn check_remote_url(url: &str) -> Result<(), ReadError> {
     let Some((scheme, rest)) = url.split_once("://") else {
         return Err(ReadError::UnsupportedUrl);
     };
     let web = scheme.eq_ignore_ascii_case("https") || scheme.eq_ignore_ascii_case("http");
-    if !web || rest.is_empty() {
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host = authority.rsplit('@').next().unwrap_or("");
+    let host_ok = !host.is_empty() && !url.chars().any(|c| c.is_control() || c.is_whitespace());
+    if !web || !host_ok {
         return Err(ReadError::UnsupportedUrl);
     }
     if url.contains("#jumbf=") {
@@ -176,5 +190,25 @@ fn log_outcome(source: &'static str, result: &Result<ManifestStore, ReadError>) 
             category = err.category(),
             "c2pa manifest store rejected"
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{zeroed_buffer, ReadError};
+
+    /// A request above `isize::MAX` bytes can never be reserved, on any
+    /// platform or allocator, so the failure path is exercised
+    /// deterministically and no memory is touched.
+    #[test]
+    fn an_unreservable_size_is_an_allocation_error() {
+        let size = isize::MAX as u64 + 1;
+        assert_eq!(zeroed_buffer(size), Err(ReadError::Allocation { size }));
+        assert_eq!(ReadError::Allocation { size }.category(), "allocation");
+    }
+
+    #[test]
+    fn a_reservable_size_is_zero_filled() {
+        assert_eq!(zeroed_buffer(3), Ok(vec![0, 0, 0]));
     }
 }

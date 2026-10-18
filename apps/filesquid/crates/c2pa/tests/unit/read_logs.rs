@@ -13,7 +13,7 @@ use std::cell::RefCell;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 
-use filesquid_c2pa::fetch::{FetchError, FetchRequest, FetchResponse, Fetcher};
+use filesquid_c2pa::fetch::{FetchError, FetchRequest, FetchResponse, Fetcher, OfflineFetcher};
 use filesquid_c2pa::io::MemorySource;
 use filesquid_c2pa::manifest::ParseLimits;
 use filesquid_c2pa::read::{fetch_remote_manifest_store, read_manifest_store};
@@ -76,4 +76,28 @@ fn rejection_logs_carry_categories_only() {
     for secret in ["SECRET-LABEL", "SECRET-PATH", "\u{202e}"] {
         assert!(!log.contains(secret), "{secret} leaked: {log}");
     }
+    a_failed_remote_fetch_is_logged_once();
+}
+
+/// A remote fetch failure is logged once (by `fetch_bounded`), not again by
+/// the reader. Called from the test above so the two captures never run on
+/// parallel threads.
+fn a_failed_remote_fetch_is_logged_once() {
+    let captured = Captured::default();
+    let writer = captured.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || writer.clone())
+        .with_ansi(false)
+        .finish();
+    tracing::subscriber::with_default(subscriber, || {
+        block_on(fetch_remote_manifest_store(
+            &OfflineFetcher,
+            "https://example.org/a.c2pa",
+            &ParseLimits::default(),
+        ))
+        .expect_err("offline");
+    });
+    let log = String::from_utf8(captured.0.lock().expect("log").clone()).expect("utf-8");
+    assert_eq!(log.matches("WARN").count(), 1, "{log}");
+    assert!(log.contains("category=\"offline\""), "{log}");
 }

@@ -7,6 +7,7 @@
 //! specification permits every JUMBF content type). Padding (`free`) boxes
 //! are allowed everywhere.
 
+use super::requestable;
 use crate::cbor::{decode, CborError, CborValue, ItemBudget};
 use crate::jumbf::{
     types, BoxRange, BoxType, ByteRange, ContentBox, JumbfChild, Superbox, TypeUuid,
@@ -60,6 +61,11 @@ pub enum AssertionContent {
 /// references the assertion.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AssertionError {
+    /// The assertion box lacks the requestable toggle (C2PA 2.4 section
+    /// 11.1.4.1.2), so a claim's reference cannot resolve to it
+    /// (`assertion.missing`).
+    #[error("the assertion box is not requestable")]
+    NotRequestable,
     /// The CBOR is not valid (`assertion.cbor.invalid`).
     #[error("the assertion is not valid CBOR: {0}")]
     Cbor(CborError),
@@ -91,6 +97,7 @@ impl AssertionError {
     /// specification defines none.
     pub fn status_code(&self) -> Option<&'static str> {
         match self {
+            Self::NotRequestable => Some("assertion.missing"),
             Self::Cbor(_) | Self::CborBoxes => Some("assertion.cbor.invalid"),
             Self::Json | Self::JsonBoxes => Some("assertion.json.invalid"),
             Self::EmbeddedFile { .. } | Self::UuidBox => None,
@@ -130,6 +137,7 @@ pub(crate) fn parse_assertion(
 ) -> Result<Assertion, CborError> {
     let content_type = sb.type_uuid();
     let content = match content_type {
+        _ if !requestable(sb) => Err(AssertionError::NotRequestable),
         types::CBOR => cbor_content(bytes, sb, cbor)?,
         types::JSON => json_content(bytes, sb),
         types::EMBEDDED_FILE => embedded_content(bytes, sb),
