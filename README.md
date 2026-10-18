@@ -43,11 +43,20 @@ cd apps/filesquid/ui && npm ci
 cd ../../imagesquid && npm ci
 ```
 
-Or let one script do all of the setup. `scripts/setup-dev-environment.sh` is idempotent and safe to run at the start of every session. It installs the toolchain pinned in `apps/filesquid/rust-toolchain.toml` and the `wasm32-unknown-unknown` target. It runs `cargo fetch --locked` and `npm ci` in both UI packages. When `python3` exists, it installs the community OCFL validator `ocfl-py` 2.1.0 with pip (it does not install `rocfl`). It then pre-warms the Cargo target with `cargo build --workspace --tests --locked`, using the same shared-target lock and Cargo settings as the pre-commit hook. Every step logs to stdout with a UTC timestamp. Each install, download or build command (rustup, cargo, npm, pip) has a time limit (`FILESQUID_SETUP_STEP_TIMEOUT`, default 1800 seconds; `FILESQUID_SETUP_BUILD_TIMEOUT`, default 3600 seconds for the pre-warm) when a `timeout` or `gtimeout` program is installed. Quick local checks such as `pip show` and `python3 -m venv` are not wrapped. Without a timeout program, the script warns and runs those commands without a limit (macOS has neither unless coreutils is installed); the lock wait is bounded either way. A failed required step (toolchain, fetch, `npm ci`) exits non-zero and names the step. A failed optional step (`ocfl-py`, pre-warm) prints a warning and the script continues. In a cloud environment, put this one line in the environment's setup script; it runs from the repository checkout:
+Or let one script do all of the setup. `scripts/setup-dev-environment.sh` is idempotent and safe to run at the start of every session. It installs the toolchain pinned in `apps/filesquid/rust-toolchain.toml` and the `wasm32-unknown-unknown` target. It runs `cargo fetch --locked` and `npm ci` in both UI packages. When `python3` exists, it installs the community OCFL validator `ocfl-py` 2.1.0 with pip (it does not install `rocfl`). It registers the MVP progress merge driver (below) in the clone's git config. It then pre-warms the Cargo target with `cargo build --workspace --tests --locked`, using the same shared-target lock and Cargo settings as the pre-commit hook. Every step logs to stdout with a UTC timestamp. Each install, download or build command (rustup, cargo, npm, pip) has a time limit (`FILESQUID_SETUP_STEP_TIMEOUT`, default 1800 seconds; `FILESQUID_SETUP_BUILD_TIMEOUT`, default 3600 seconds for the pre-warm) when a `timeout` or `gtimeout` program is installed. Quick local checks such as `pip show` and `python3 -m venv` are not wrapped. Without a timeout program, the script warns and runs those commands without a limit (macOS has neither unless coreutils is installed); the lock wait is bounded either way. A failed required step (toolchain, fetch, `npm ci`) exits non-zero and names the step. A failed optional step (`ocfl-py`, merge driver, pre-warm) prints a warning and the script continues. In a cloud environment, put this one line in the environment's setup script; it runs from the repository checkout:
 
 ```sh
 bash scripts/setup-dev-environment.sh
 ```
+
+**MVP progress merge driver** (once per clone; the setup script does it for you). Every task PR regenerates the progress block in [`resources/implementation-plan-checklist.md`](./resources/implementation-plan-checklist.md) and its bar `resources/assets/mvp-progress.svg`, so two open PRs would conflict there whenever one merges. [`.gitattributes`](./.gitattributes) assigns both files the `mvp-progress` merge driver, [`scripts/docs/merge_mvp_progress.py`](./scripts/docs/merge_mvp_progress.py). Register it from the repository root, in any shell on Windows, macOS or Linux (the settings live in the clone's `.git/config` and cover all its worktrees):
+
+```sh
+git config merge.mvp-progress.name "MVP progress block"
+git config merge.mvp-progress.driver "python3 scripts/docs/merge_mvp_progress.py %O %A %B %L %P"
+```
+
+Git runs the driver from the repository's top-level directory, so the relative path works from any subdirectory. Where Python 3 is installed as `python` or `py` instead of `python3` (some Windows installs), use that name in the second command. The driver merges the rest of the checklist with `git merge-file` and regenerates the block offline from the merged ticks (no GitHub call): the recorded PRs are the union of both sides minus tasks that are now ticked, and the timestamp is the newer one. The SVG carries a hidden tick record, so the bar is merged row by row and redrawn whichever file git merges first. A real conflict outside the block (the same line edited differently, or ticks on adjacent lines) still stops the merge with conflict markers. The driver reads the module plans and the implementation plan from the working tree, which still holds your side while git merges; if the other side changed a Dependencies line, a plan tick or an estimate, the pre-commit hook's `update_mvp_progress.py --check` reports the block as stale, and `python3 scripts/docs/update_mvp_progress.py` fixes it. Without these two settings git ignores the undefined driver name and uses its normal text merge for both files, so the generated lines conflict as before.
 
 ## Project naming
 
@@ -279,7 +288,11 @@ python3 scripts/docs/check_prd_allocation.py        # every vision ID allocated 
 python3 scripts/docs/check_links.py                 # relative links and anchors resolve
 python3 scripts/docs/check_distribution_links.py    # no link crosses the FileSquid/ImageSquid boundary
 node --test scripts/docs/validate-adrs.test.mjs    # ADR structure (ISO 42010)
+python3 scripts/docs/update_mvp_progress.py --check # MVP progress block and bar match the ticks (offline)
+python3 -m unittest discover -s scripts/docs -p 'test_*.py'   # MVP queue and merge driver tests
 ```
+
+The merge driver tests (`scripts/docs/test_merge_mvp_progress.py`) build throwaway git repositories in the system temporary directory (`TMPDIR` is honoured), run real `git merge`s with the global and system git config ignored, and delete the repositories afterwards. They take a few seconds.
 
 ## View logs
 
