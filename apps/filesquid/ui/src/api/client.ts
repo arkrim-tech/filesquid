@@ -32,6 +32,9 @@ export type HealthStatus = components["schemas"]["HealthStatus"];
 /** One push event from the API event channel. */
 export type ApiEvent = components["schemas"]["ApiEvent"];
 
+/** The host descriptor, generated from the API contract (`GET /api/v1/host`, API-S-020). */
+export type HostDescriptor = components["schemas"]["HostDescriptor"];
+
 /** Error code of a failed request, generated from the API contract. */
 export type ErrorCode = components["schemas"]["ErrorCode"];
 
@@ -441,16 +444,20 @@ export class FileSquidClient {
    * browser cannot set an `Authorization` header on an upgrade.
    *
    * @param listener Called once per event.
+   * @param onOpen Called each time the WebSocket channel opens, so a subscriber can read the
+   *   state it shows again (events may have been missed while it was closed). Never called on
+   *   the desktop host, whose event channel is in-process and does not disconnect.
    * @returns A function that ends the subscription and releases its connection.
    * @throws ApiError (status 0, `invalid_credentials`) when the token cannot be sent.
    */
-  subscribe(listener: EventListener): () => void {
+  subscribe(listener: EventListener, onOpen?: () => void): () => void {
     if (this.options.subscribeHost) return this.options.subscribeHost(listener);
     const path = "/api/v1/events";
     const token = this.currentToken(path);
     const Socket = this.options.WebSocket ?? globalThis.WebSocket;
     const url = this.options.eventsUrl ?? eventsUrl(new URL(globalThis.location.href));
     const socket = new Socket(url, eventProtocols(token));
+    if (onOpen) socket.onopen = () => onOpen();
     socket.onmessage = (message: MessageEvent<string>) => {
       try {
         listener(JSON.parse(message.data) as ApiEvent);
@@ -459,6 +466,17 @@ export class FileSquidClient {
       }
     };
     return () => socket.close();
+  }
+
+  /**
+   * Read the host descriptor (`GET /api/v1/host`, API-S-020): host type, operator name and
+   * the hosted backup and sync state. Network I/O.
+   *
+   * @returns The descriptor as the host sent it; callers validate it before showing it.
+   * @throws ApiError when the host refuses the call or has not described itself yet.
+   */
+  async host(): Promise<HostDescriptor> {
+    return this.request<HostDescriptor>("/api/v1/host");
   }
 
   /** Overall health with reasons (`GET /api/v1/admin/health`). Network I/O. */
