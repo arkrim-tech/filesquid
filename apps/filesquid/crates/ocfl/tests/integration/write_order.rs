@@ -165,7 +165,7 @@ fn writes_follow_the_order(rig: &Rig<impl StorageBackend>) {
             "put_if obj/v2/inventory.json",
             "put_if obj/v2/inventory.json.sha256",
             "put_if obj/inventory.json",
-            "put obj/inventory.json.sha256",
+            "put_if obj/inventory.json.sha256",
         ]
     );
 }
@@ -182,7 +182,7 @@ fn v1_reserves_before_its_declaration(rig: &Rig<impl StorageBackend>) {
     assert_eq!(writes.first(), Some(&format!("leases put_if {lease}")));
     assert_eq!(writes[1], "storage put_if obj/0=ocfl_object_1.1");
     let tail: Vec<&String> = writes.iter().rev().skip(1).take(2).collect();
-    assert_eq!(tail[0], "storage put obj/inventory.json.sha256");
+    assert_eq!(tail[0], "storage put_if obj/inventory.json.sha256");
     assert_eq!(tail[1], "storage put_if obj/inventory.json");
 }
 
@@ -255,9 +255,15 @@ fn creating_an_object_that_exists_is_refused() {
 
 // ---- C11, C12, C13: crash injection --------------------------------------
 
-/// Crash at `crash_key` while committing v2, then check that readers see v1
-/// and that a second writer recovers once the lease lapsed.
-fn crash_then_recover<B: StorageBackend>(rig: &Rig<B>, crash_key: &str, unpublished: bool) {
+/// Crash at `crash_key` while committing v2, check that readers see v1 and
+/// that every key in `left` survived the crash, then that a second writer
+/// recovers once the lease lapsed.
+fn crash_then_recover<B: StorageBackend>(
+    rig: &Rig<B>,
+    crash_key: &str,
+    unpublished: bool,
+    left: &[&str],
+) {
     rig.commit_v1();
     rig.storage.crash_at(crash_key);
     let crashed = rig.try_commit("writer-a", Some("v1"), &two_new_files(rig, "v2"));
@@ -275,6 +281,9 @@ fn crash_then_recover<B: StorageBackend>(rig: &Rig<B>, crash_key: &str, unpublis
         matches!(pinned, ReadError::VersionNotFound { .. }),
         "{pinned:?}"
     );
+    for raw in left {
+        assert!(rig.stored(raw), "{raw} was left by the crashed writer");
+    }
     recover_v2(rig);
 }
 
@@ -309,7 +318,12 @@ fn recover_v2<B: StorageBackend>(rig: &Rig<B>) {
 }
 
 fn crash_during_content(rig: &Rig<impl StorageBackend>) {
-    crash_then_recover(rig, "obj/v2/content/e.txt", false);
+    crash_then_recover(
+        rig,
+        "obj/v2/content/e.txt",
+        false,
+        &["obj/v2/content/d.txt"],
+    );
 }
 
 #[test]
@@ -318,8 +332,8 @@ fn a_crash_while_writing_content_leaves_vn_unpublished() {
 }
 
 fn crash_before_version_inventory(rig: &Rig<impl StorageBackend>) {
-    crash_then_recover(rig, "obj/v2/inventory.json", false);
-    assert!(rig.stored("obj/v2/content/d.txt"));
+    let left = ["obj/v2/content/d.txt", "obj/v2/content/e.txt"];
+    crash_then_recover(rig, "obj/v2/inventory.json", false, &left);
 }
 
 #[test]
@@ -328,7 +342,8 @@ fn a_crash_between_content_and_inventories_leaves_vn_unpublished() {
 }
 
 fn crash_before_root_inventory(rig: &Rig<impl StorageBackend>) {
-    crash_then_recover(rig, "obj/inventory.json", false);
+    let left = ["obj/v2/inventory.json.sha256"];
+    crash_then_recover(rig, "obj/inventory.json", false, &left);
 }
 
 #[test]
@@ -337,7 +352,12 @@ fn a_crash_before_the_root_inventory_leaves_vn_unpublished() {
 }
 
 fn crash_before_root_sidecar(rig: &Rig<impl StorageBackend>) {
-    crash_then_recover(rig, "obj/inventory.json.sha256", true);
+    crash_then_recover(
+        rig,
+        "obj/inventory.json.sha256",
+        true,
+        &["obj/v2/inventory.json"],
+    );
 }
 
 #[test]
@@ -360,6 +380,47 @@ fn crash_before_v1_sidecar(rig: &Rig<impl StorageBackend>) {
 #[test]
 fn a_crash_before_the_first_root_sidecar_publishes_nothing() {
     on_both!(crash_before_v1_sidecar);
+}
+
+fn uncommitted_first_keeps_its_id(rig: &Rig<impl StorageBackend>) {
+    rig.storage.crash_at("obj/inventory.json.sha256");
+    let draft = rig.draft("v1", &[("a.txt", b"alpha")]);
+    assert!(rig.try_commit("writer-a", None, &draft).is_err(), "crashed");
+    rig.expire_leases();
+    let mut other = VersionDraft::new("urn:example:other", rig.now());
+    other.stage("a.txt", key("stage/v1/a.txt"));
+    let err = rig
+        .commit("writer-b", None, &other)
+        .expect_err("another id");
+    assert!(matches!(err, CommitError::InvalidDraft { .. }), "{err:?}");
+    rig.commit("writer-b", None, &draft)
+        .expect("same id recovers");
+    rig.assert_valid();
+}
+
+#[test]
+fn an_uncommitted_first_version_cannot_be_taken_over_by_another_object() {
+    on_both!(uncommitted_first_keeps_its_id);
+}
+
+fn head_without_version_inventory_refused(rig: &Rig<impl StorageBackend>) {
+    rig.commit_v1();
+    builder::delete(&rig.storage, ROOT, "v1/inventory.json");
+    builder::delete(&rig.storage, ROOT, "v1/inventory.json.sha256");
+    rig.clear_log();
+    let err = rig
+        .commit("writer-a", Some("v1"), &v2_draft(rig))
+        .expect_err("no v1 inventory");
+    assert!(
+        matches!(err, CommitError::MissingVersionInventory { .. }),
+        "{err:?}"
+    );
+    assert_eq!(rig.writes(), Vec::<String>::new());
+}
+
+#[test]
+fn a_head_without_its_version_inventory_is_refused() {
+    on_both!(head_without_version_inventory_refused);
 }
 
 fn crash_leaves_v2_flagged(rig: &Rig<impl StorageBackend>) {
@@ -520,7 +581,11 @@ fn bad_drafts_reserve_nothing(rig: &Rig<impl StorageBackend>) {
     wrong_id.keep("a.txt", sha256(b"alpha"));
     let mut escaping = VersionDraft::new(OBJECT_ID, rig.now());
     escaping.keep("../a.txt", sha256(b"alpha"));
-    for draft in [offset, unknown, wrong_id, escaping] {
+    let staged = key("stage/bad/ab.txt");
+    ready(rig.staging.put(&staged, b"backslash")).expect("stage");
+    let mut backslash = VersionDraft::new(OBJECT_ID, rig.now());
+    backslash.stage("a\\b.txt", staged);
+    for draft in [offset, unknown, wrong_id, escaping, backslash] {
         let err = rig.commit("writer-a", Some("v1"), &draft).expect_err("bad");
         assert!(matches!(err, CommitError::InvalidDraft { .. }), "{err:?}");
     }

@@ -22,8 +22,8 @@ impl ManualClock {
 }
 
 impl Clock for ManualClock {
-    fn now_millis(&self) -> u64 {
-        self.0.load(Ordering::SeqCst)
+    fn now_millis(&self) -> Option<u64> {
+        Some(self.0.load(Ordering::SeqCst))
     }
 }
 
@@ -182,6 +182,56 @@ fn a_margin_of_half_the_ttl_or_more_is_refused() {
         result,
         Err(ReservationError::InvalidConfig { .. })
     ));
+}
+
+#[test]
+fn an_expired_lease_cannot_be_released() {
+    let (store, clock) = store();
+    let held = reserve(&store, "urn:example:a", "v1", "writer-a").expect("reserve");
+    clock.advance(CONFIG.ttl_ms);
+    let err = ready(store.release(&held)).expect_err("expired");
+    assert!(matches!(err, ReservationError::Lost { .. }), "{err:?}");
+}
+
+#[test]
+fn a_record_at_the_largest_token_is_not_wrapped() {
+    let (store, _clock) = store();
+    let key = store.lease_key("urn:example:a").expect("key");
+    let record = format!(
+        r#"{{"objectId":"urn:example:a","version":"v1","holder":"w","token":{},"expires":0,"released":true}}"#,
+        u64::MAX
+    );
+    ready(store.backend().put(&key, record.as_bytes())).expect("put");
+    let err = reserve(&store, "urn:example:a", "v2", "writer-a").expect_err("no next token");
+    assert!(matches!(err, ReservationError::Corrupt { .. }), "{err:?}");
+}
+
+#[test]
+fn a_record_too_large_to_read_back_is_not_written() {
+    let (store, _clock) = store();
+    let holder = "h".repeat(5_000);
+    let err = reserve(&store, "urn:example:a", "v1", &holder).expect_err("too large");
+    assert!(matches!(err, ReservationError::Storage(_)), "{err:?}");
+    let key = store.lease_key("urn:example:a").expect("key");
+    assert!(!ready(store.backend().exists(&key)).expect("exists"));
+}
+
+/// A clock that cannot tell the time.
+#[derive(Debug, Clone, Copy)]
+struct BrokenClock;
+
+impl Clock for BrokenClock {
+    fn now_millis(&self) -> Option<u64> {
+        None
+    }
+}
+
+#[test]
+fn a_clock_that_cannot_tell_the_time_fails_closed() {
+    let store =
+        LeaseStore::new(MemoryBackend::new(), "leases", BrokenClock, CONFIG).expect("valid config");
+    let err = ready(store.reserve("urn:example:a", &v("v1"), "writer-a")).expect_err("no time");
+    assert_eq!(err, ReservationError::ClockUnavailable);
 }
 
 #[test]

@@ -18,7 +18,7 @@
 
 use std::fmt;
 
-use super::base::{read_base, Base};
+use super::base::{read_base, require_head_inventory, Base};
 use super::draft::VersionDraft;
 use super::error::{CommitError, ReservationError};
 use super::fence::Fence;
@@ -94,6 +94,8 @@ impl<'a, B: StorageBackend, R: VersionReservations> ObjectWriter<'a, B, R> {
         let root = root_dir(root)?;
         let base = read_base(self.storage, &root).await?;
         check_head(&base, expected_head)?;
+        base.check_pending_id(draft.object_id())?;
+        require_head_inventory(self.storage, &root, &base).await?;
         let plan = assemble(base.inventory(), staging, draft).await?;
         let reservation = self
             .reservations

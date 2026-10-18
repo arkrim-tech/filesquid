@@ -10,8 +10,10 @@ use crate::storage::{MaybeSend, MaybeSync};
 
 /// A source of the current time.
 pub trait Clock: MaybeSend + MaybeSync {
-    /// Milliseconds since 1970-01-01T00:00:00Z.
-    fn now_millis(&self) -> u64;
+    /// Milliseconds since 1970-01-01T00:00:00Z, or `None` when the clock
+    /// cannot tell (for example a system clock set before 1970). Lease
+    /// operations then fail closed rather than guess.
+    fn now_millis(&self) -> Option<u64>;
 }
 
 /// The operating system's clock (native targets only).
@@ -21,15 +23,15 @@ pub struct SystemClock;
 
 #[cfg(not(target_arch = "wasm32"))]
 impl Clock for SystemClock {
-    /// The system time; a clock set before 1970 reads as 0 and is logged,
-    /// which makes every lease look expired rather than everlasting.
-    fn now_millis(&self) -> u64 {
+    /// The system time, or `None` (logged) for a clock set before 1970 or
+    /// beyond what `u64` milliseconds hold.
+    fn now_millis(&self) -> Option<u64> {
         let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
         match since {
-            Ok(duration) => u64::try_from(duration.as_millis()).unwrap_or(u64::MAX),
+            Ok(duration) => u64::try_from(duration.as_millis()).ok(),
             Err(err) => {
                 tracing::warn!(error = %err, "the system clock is set before 1970");
-                0
+                None
             }
         }
     }

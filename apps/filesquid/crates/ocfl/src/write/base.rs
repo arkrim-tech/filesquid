@@ -20,6 +20,10 @@ pub(crate) struct Base {
     pub committed: Option<Committed>,
     /// The root inventory's entity tag, or `None` when there is none.
     pub root_tag: Option<ETag>,
+    /// The object id of a first version that was never committed: its root
+    /// inventory stays in place until a commit of the same object replaces
+    /// it, so a commit for another id cannot take the object root over.
+    pub pending_id: Option<String>,
 }
 
 impl Base {
@@ -31,6 +35,21 @@ impl Base {
     /// The committed head.
     pub fn head(&self) -> Option<&VersionNum> {
         self.inventory().map(|i| &i.head)
+    }
+
+    /// Refuse a draft for another object than the one an uncommitted first
+    /// version names.
+    ///
+    /// # Errors
+    ///
+    /// [`CommitError::InvalidDraft`] when the ids differ.
+    pub fn check_pending_id(&self, object_id: &str) -> Result<(), CommitError> {
+        match &self.pending_id {
+            Some(id) if id != object_id => Err(CommitError::draft(format!(
+                "the draft is for {object_id:?}, the uncommitted object is {id:?}"
+            ))),
+            _ => Ok(()),
+        }
     }
 
     /// Whether the root inventory names a head its sidecar does not commit.
@@ -61,6 +80,7 @@ pub(crate) async fn read_base<B: StorageBackend>(
         Ok(committed) => Ok(Base {
             root_tag: Some(committed.root_tag.clone()),
             committed: Some(committed),
+            pending_id: None,
         }),
         Err(err) if err.code() == Some("E058") => uncommitted_first(storage, root, err).await,
         Err(err) => Err(err.into()),
@@ -84,5 +104,32 @@ async fn uncommitted_first<B: StorageBackend>(
     Ok(Base {
         committed: None,
         root_tag: Some(tag),
+        pending_id: Some(inventory.id),
+    })
+}
+
+/// Require the committed head's own version inventory. A reader finds the
+/// committed version through it while a new root inventory is not yet
+/// committed by its sidecar, so without it a crash mid-publication would
+/// leave the object unreadable (E060).
+///
+/// # Errors
+///
+/// [`CommitError::MissingVersionInventory`] when it is absent, or a backend
+/// error.
+pub(crate) async fn require_head_inventory<B: StorageBackend>(
+    storage: &B,
+    root: &str,
+    base: &Base,
+) -> Result<(), CommitError> {
+    let Some(head) = base.head() else {
+        return Ok(());
+    };
+    let key = key_in(root, &format!("{head}/{INVENTORY_FILE}"))?;
+    if storage.exists(&key).await? {
+        return Ok(());
+    }
+    Err(CommitError::MissingVersionInventory {
+        key: key.to_string(),
     })
 }

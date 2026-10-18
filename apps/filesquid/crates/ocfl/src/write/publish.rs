@@ -10,8 +10,9 @@ use std::collections::BTreeMap;
 
 use super::error::CommitError;
 use super::fence::Fence;
+use super::listing::list_version_keys;
 use super::plan::{Upload, VersionPlan};
-use super::reconcile::{foreign, relative, MAX_PAGES};
+use super::reconcile::{foreign, relative};
 use super::reservation::VersionReservations;
 use crate::digest::DigestAlgorithm;
 use crate::inventory::{sidecar_contents, sidecar_name, INVENTORY_FILE};
@@ -20,7 +21,7 @@ use crate::read::small::{child, key_in, read_small};
 use crate::read::{LogicalFile, LogicalFileReader, ReadError};
 use crate::storage::{
     ETag, MultipartWriter, Precondition, StorageBackend, StorageError, StorageKey, MAX_CHUNK_BYTES,
-    MAX_LIST_PAGE, MAX_OBJECT_BYTES, MAX_PART_BYTES,
+    MAX_OBJECT_BYTES, MAX_PART_BYTES,
 };
 
 /// Most chunks one upload reads.
@@ -246,7 +247,8 @@ pub(crate) async fn verify_version_dir<B: StorageBackend>(
     plan: &VersionPlan,
     tags: &BTreeMap<String, ETag>,
 ) -> Result<(), CommitError> {
-    let listed = list_version_dir(storage, root, plan).await?;
+    let keys = list_version_keys(storage, root, &plan.version).await?;
+    let listed: Vec<String> = keys.iter().map(|k| relative(root, k).to_string()).collect();
     let version = plan.version.to_string();
     let mut expected: Vec<String> = tags.keys().cloned().collect();
     expected.push(format!("{version}/{INVENTORY_FILE}"));
@@ -271,30 +273,6 @@ pub(crate) async fn verify_version_dir<B: StorageBackend>(
     Ok(())
 }
 
-/// Every key under `vN/`, relative to the object root, in order.
-async fn list_version_dir<B: StorageBackend>(
-    storage: &B,
-    root: &str,
-    plan: &VersionPlan,
-) -> Result<Vec<String>, CommitError> {
-    let prefix = format!("{}/", child(root, &plan.version.to_string()));
-    let mut listed = Vec::new();
-    let mut after: Option<StorageKey> = None;
-    for _ in 0..MAX_PAGES {
-        let page = storage.list(&prefix, after.as_ref(), MAX_LIST_PAGE).await?;
-        listed.extend(page.keys.iter().map(|k| relative(root, k).to_string()));
-        match page.next {
-            Some(next) => after = Some(next),
-            None => return Ok(listed),
-        }
-    }
-    Err(StorageError::LimitExceeded {
-        what: "listing pages of one version",
-        limit: MAX_PAGES as u64,
-    }
-    .into())
-}
-
 /// The first entry of `listed` or `expected` that the other lacks.
 fn first_difference<'a>(listed: &'a [String], expected: &'a [String]) -> Option<&'a str> {
     let extra = listed.iter().find(|k| expected.binary_search(k).is_err());
@@ -303,12 +281,15 @@ fn first_difference<'a>(listed: &'a [String], expected: &'a [String]) -> Option<
 }
 
 /// Publish the head: the root inventory by compare-and-swap on the base,
-/// then the root sidecar, which commits the version.
+/// then the root sidecar, which commits the version, by compare-and-swap on
+/// the sidecar read before the root inventory was replaced. A writer that
+/// lost its reservation after its last fence check therefore cannot
+/// overwrite a sidecar another writer published meanwhile.
 ///
 /// # Errors
 ///
-/// [`CommitError::ForeignWrite`] when the root inventory changed since it
-/// was read, a fence failure or a backend error.
+/// [`CommitError::ForeignWrite`] when the root inventory or its sidecar
+/// changed since it was read, a fence failure or a backend error.
 pub(crate) async fn publish_head<B: StorageBackend, R: VersionReservations>(
     storage: &B,
     root: &str,
@@ -317,18 +298,38 @@ pub(crate) async fn publish_head<B: StorageBackend, R: VersionReservations>(
     fence: &Fence<'_, R>,
 ) -> Result<(), CommitError> {
     let key = key_in(root, INVENTORY_FILE)?;
-    let precondition = match base_tag {
-        Some(tag) => Precondition::IfMatch(tag.clone()),
-        None => Precondition::IfAbsent,
-    };
+    let sidecar_key = key_in(root, &sidecar_name(DigestAlgorithm::ENGINE))?;
+    let sidecar_precondition = current_precondition(storage, &sidecar_key).await?;
     fence.check().await?;
     storage
-        .put_if(&key, &plan.bytes, &precondition)
+        .put_if(&key, &plan.bytes, &precondition_for(base_tag))
         .await
         .map_err(|err| foreign(err, &key))?;
-    let sidecar_key = key_in(root, &sidecar_name(DigestAlgorithm::ENGINE))?;
     let sidecar = sidecar_contents(DigestAlgorithm::ENGINE, &plan.bytes);
     fence.check().await?;
-    storage.put(&sidecar_key, sidecar.as_bytes()).await?;
+    storage
+        .put_if(&sidecar_key, sidecar.as_bytes(), &sidecar_precondition)
+        .await
+        .map_err(|err| foreign(err, &sidecar_key))?;
     Ok(())
+}
+
+/// `IfMatch` the tag, or `IfAbsent` when there is none.
+fn precondition_for(tag: Option<&ETag>) -> Precondition {
+    match tag {
+        Some(tag) => Precondition::IfMatch(tag.clone()),
+        None => Precondition::IfAbsent,
+    }
+}
+
+/// The precondition that `key` is still what it is now.
+async fn current_precondition<B: StorageBackend>(
+    storage: &B,
+    key: &StorageKey,
+) -> Result<Precondition, CommitError> {
+    match storage.head(key).await {
+        Ok(meta) => Ok(precondition_for(Some(&meta.etag))),
+        Err(StorageError::NotFound { .. }) => Ok(Precondition::IfAbsent),
+        Err(err) => Err(err.into()),
+    }
 }

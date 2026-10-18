@@ -93,6 +93,11 @@ impl<B: StorageBackend> FaultBackend<B> {
         result
     }
 
+    /// Drop the key mapping of a finished upload.
+    fn forget_upload(&self, upload: &UploadId) {
+        self.uploads.lock().expect("lock").remove(upload.as_str());
+    }
+
     /// Append one entry to the shared log.
     fn record(&self, entry: &str) {
         let line = format!("{} {entry}", self.label);
@@ -192,10 +197,18 @@ impl<B: StorageBackend> StorageBackend for FaultBackend<B> {
             .cloned();
         let key = key.unwrap_or_default();
         let write = self.inner.complete_multipart(upload, parts, precondition);
-        self.write("complete", &key, write).await
+        let result = self.write("complete", &key, write).await;
+        if result.is_ok() {
+            self.forget_upload(upload);
+        }
+        result
     }
 
     async fn abort_multipart(&self, upload: &UploadId) -> Result<(), StorageError> {
-        self.inner.abort_multipart(upload).await
+        let result = self.inner.abort_multipart(upload).await;
+        if result.is_ok() {
+            self.forget_upload(upload);
+        }
+        result
     }
 }

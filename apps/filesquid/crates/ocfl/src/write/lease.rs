@@ -133,14 +133,17 @@ impl<B: StorageBackend, C: Clock> LeaseStore<B, C> {
         holder: &str,
     ) -> Result<Reservation, ReservationError> {
         let key = self.lease_key(object_id)?;
-        let now = self.clock.now_millis();
+        let now = self.now()?;
         let current = self.read_record(&key).await?;
         let (token, precondition) = match &current {
             None => (1, Precondition::IfAbsent),
             Some((record, _)) if record.is_live(now) => {
                 return Err(held(object_id, &record.holder))
             }
-            Some((record, tag)) => (record.token + 1, Precondition::IfMatch(tag.clone())),
+            Some((record, tag)) => (
+                next_token(record, &key)?,
+                Precondition::IfMatch(tag.clone()),
+            ),
         };
         let record = LeaseRecord {
             object_id: object_id.to_string(),
@@ -161,7 +164,7 @@ impl<B: StorageBackend, C: Clock> LeaseStore<B, C> {
     /// margin left, renewing it when less than half the TTL is left.
     async fn check(&self, reservation: &Reservation) -> Result<(), ReservationError> {
         let key = self.lease_key(reservation.object_id())?;
-        let now = self.clock.now_millis();
+        let now = self.now()?;
         let (mut record, tag) = self.owned_record(&key, reservation).await?;
         let left = record.expires_ms.saturating_sub(now);
         if left <= self.config.margin_ms {
@@ -177,9 +180,14 @@ impl<B: StorageBackend, C: Clock> LeaseStore<B, C> {
     }
 
     /// Mark the lease released, so the next reservation takes it at once.
+    /// An expired lease is no longer this holder's to release.
     async fn give_up(&self, reservation: &Reservation) -> Result<(), ReservationError> {
         let key = self.lease_key(reservation.object_id())?;
+        let now = self.now()?;
         let (mut record, tag) = self.owned_record(&key, reservation).await?;
+        if !record.is_live(now) {
+            return Err(lost(reservation));
+        }
         record.released = true;
         self.write_record(&key, &record, &Precondition::IfMatch(tag))
             .await
@@ -191,6 +199,13 @@ impl<B: StorageBackend, C: Clock> LeaseStore<B, C> {
             "released the version reservation"
         );
         Ok(())
+    }
+
+    /// The current time.
+    fn now(&self) -> Result<u64, ReservationError> {
+        self.clock
+            .now_millis()
+            .ok_or(ReservationError::ClockUnavailable)
     }
 
     /// The lease record, when `reservation` still owns it.
@@ -232,7 +247,9 @@ impl<B: StorageBackend, C: Clock> LeaseStore<B, C> {
         .into())
     }
 
-    /// Write `record` at `key` if `precondition` holds.
+    /// Write `record` at `key` if `precondition` holds. A record larger
+    /// than [`read_record`](Self::read_record) accepts (long object ids or
+    /// holder names) is refused before it is written.
     async fn write_record(
         &self,
         key: &StorageKey,
@@ -240,6 +257,12 @@ impl<B: StorageBackend, C: Clock> LeaseStore<B, C> {
         precondition: &Precondition,
     ) -> Result<(), StorageError> {
         let bytes = record.to_json();
+        if bytes.len() as u64 > MAX_RECORD_BYTES {
+            return Err(StorageError::LimitExceeded {
+                what: "lease record size",
+                limit: MAX_RECORD_BYTES,
+            });
+        }
         self.backend
             .put_if(key, &bytes, precondition)
             .await
@@ -342,6 +365,15 @@ fn log_take(previous: Option<&LeaseRecord>, record: &LeaseRecord) {
             "reserved a version"
         ),
     }
+}
+
+/// The token after `record`'s; a record at the largest token can have no
+/// later holder and is reported rather than wrapped.
+fn next_token(record: &LeaseRecord, key: &StorageKey) -> Result<u64, ReservationError> {
+    record
+        .token
+        .checked_add(1)
+        .ok_or_else(|| corrupt(key, "the fencing token cannot grow any further"))
 }
 
 /// The refusal for a lease that `holder` holds.

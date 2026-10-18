@@ -54,8 +54,8 @@ impl ManualClock {
 }
 
 impl Clock for ManualClock {
-    fn now_millis(&self) -> u64 {
-        self.0.load(Ordering::SeqCst)
+    fn now_millis(&self) -> Option<u64> {
+        Some(self.0.load(Ordering::SeqCst))
     }
 }
 
@@ -115,7 +115,7 @@ impl<B: StorageBackend> Rig<B> {
 
     /// The current time as RFC 3339 UTC.
     pub fn now(&self) -> String {
-        rfc3339_utc(self.clock.now_millis())
+        rfc3339_utc(self.clock.now_millis().expect("the manual clock"))
     }
 
     /// A draft that stages every file in `files` under `stage/<tag>/`.

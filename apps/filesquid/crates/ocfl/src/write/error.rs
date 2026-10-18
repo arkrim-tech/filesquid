@@ -43,6 +43,10 @@ pub enum ReservationError {
         /// What is wrong with the configuration.
         reason: String,
     },
+    /// The clock could not tell the time, so no lease can be taken,
+    /// confirmed or released safely.
+    #[error("the clock cannot tell the time")]
+    ClockUnavailable,
     /// The store's backend failed.
     #[error(transparent)]
     Storage(#[from] StorageError),
@@ -98,6 +102,15 @@ pub enum CommitError {
         /// The storage key.
         key: String,
     },
+    /// The committed head has no version inventory (OCFL allows that, W010).
+    /// The writer refuses such a base: a crash between its root inventory
+    /// and root sidecar could not be read back, because readers find the
+    /// committed version through that version inventory.
+    #[error("the committed head has no version inventory at {key}")]
+    MissingVersionInventory {
+        /// The missing key.
+        key: String,
+    },
     /// The Git guard refused the object root (OCFL-S-001).
     #[error(transparent)]
     Guard(OcflError),
@@ -140,8 +153,13 @@ impl CommitError {
 }
 
 impl From<FormatError> for CommitError {
-    /// A version that would break an OCFL rule is an invalid draft.
+    /// A version that would break an OCFL rule is an invalid draft; an
+    /// inventory above the engine's parsing bound (no OCFL code) is not the
+    /// draft's fault and stays a format error.
     fn from(err: FormatError) -> Self {
-        Self::draft(err.to_string())
+        match err {
+            FormatError::Invalid { .. } => Self::draft(err.to_string()),
+            other => Self::Read(ReadError::Format(other)),
+        }
     }
 }

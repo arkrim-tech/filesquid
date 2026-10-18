@@ -116,7 +116,7 @@ fn writes_end_in_order(world: &mut OcflWorld) {
             "storage put_if obj/v2/inventory.json",
             "storage put_if obj/v2/inventory.json.sha256",
             "storage put_if obj/inventory.json",
-            "storage put obj/inventory.json.sha256",
+            "storage put_if obj/inventory.json.sha256",
         ]
     );
 }

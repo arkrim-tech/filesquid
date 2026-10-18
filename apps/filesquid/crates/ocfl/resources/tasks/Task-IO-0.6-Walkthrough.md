@@ -31,7 +31,7 @@ IO-0.6 builds the reservation and the head compare-and-swap. Rebase onto a moved
     2. Assemble outside the object root: hash every staged file (sha256, 8 MiB chunks), build the new inventory (earlier versions kept, full state, manifest extended, `head` = `vN`), and check it with `Inventory::parse`. Only digests the manifest lacks get a content path, `vN/<contentDirectory>/<first logical path>`, once each; manifest digests keep the manifest's spelling (no E050/E096 from case). Invalid drafts (`created` not ending in `Z` or not RFC 3339, unknown digest, another object's id, forbidden path) are `CommitError::InvalidDraft`; a base that is not sha256 is `CommitError::UnsupportedAlgorithm`. Nothing is reserved or written for these.
     3. Reserve `vN` (`VersionReservations::reserve`).
     4. Under the reservation: re-read the base and re-check the head, run the Git guard and the hierarchy check on the object root, and reconcile `vN`: restore a root inventory whose sidecar was never written (compare-and-swap on its tag), keep each content file whose bytes are exactly the planned upload for that path, delete every other key under `vN/`.
-    5. Write the declaration (new objects; an identical leftover is kept), each new bitstream (multipart, parts of at most 64 MiB, re-verified against the assembled digest, `IfAbsent`), the version inventory and its sidecar (`IfAbsent`), check that `vN/` lists exactly the planned keys with unchanged tags, then the root inventory (`IfMatch` the base tag, `IfAbsent` for `v1`) and the root sidecar last. A fence check (`VersionReservations::confirm`) precedes every part, every inventory write and both root writes.
+    5. Write the declaration (new objects; an identical leftover is kept), each new bitstream (multipart, parts of at most 64 MiB, re-verified against the assembled digest, `IfAbsent`), the version inventory and its sidecar (`IfAbsent`), check that `vN/` lists exactly the planned keys with unchanged tags, then the root inventory (`IfMatch` the base tag, `IfAbsent` for `v1`) and the root sidecar last (`IfMatch` the sidecar read just before, `IfAbsent` for `v1`). A fence check (`VersionReservations::confirm`) precedes every part, every inventory write and both root writes.
     6. Release the reservation (not when it was lost) and return `CommitReceipt { object_id, version, created, inventory_digest, written }`. The caller records it; the engine owns no database (ADR 016 steps 1 and 7).
   - `VersionReservations` (reserve, confirm, release) and `Reservation` (object id, version, holder, fencing token). A host MAY implement the trait over a PostgreSQL generation (ADR 012).
   - `LeaseStore<B, C>` with `LeaseConfig { ttl_ms, margin_ms }` (defaults 60 s / 10 s): one JSON lease record per object at `<prefix>/<sha256 of object id>.json` in any compare-and-swap backend outside the storage root, written only with `put_if`. A takeover of an expired or released lease increments the token; records are never deleted, so tokens only grow. `confirm` fails (`ReservationError::Lost`) when the record no longer names this holder, token and version, or when no more than the margin is left; it renews through compare-and-swap once less than half the TTL is left. A margin of half the TTL or more is refused.
@@ -79,48 +79,54 @@ error: could not compile `filesquid-ocfl` (test "features") due to 2 previous er
 ```text
      Running tests/integration/write_order.rs
 
-running 21 tests
+running 23 tests
 test a_crash_before_the_first_root_sidecar_publishes_nothing ... ok
-test a_crash_between_content_and_inventories_leaves_vn_unpublished ... ok
 test a_crash_before_the_root_inventory_leaves_vn_unpublished ... ok
+test a_crash_between_content_and_inventories_leaves_vn_unpublished ... ok
 test a_crash_before_the_root_sidecar_reads_as_unpublished ... ok
+test a_crash_while_writing_content_leaves_vn_unpublished ... ok
 test a_git_directory_in_the_object_root_refuses_the_commit ... ok
+test a_head_without_its_version_inventory_is_refused ... ok
+test a_moved_head_is_refused_without_publishing ... ok
+test a_reservation_held_by_another_writer_refuses_the_commit ... ok
 test a_new_object_commits_as_v1_and_validates ... ok
 test a_new_object_is_reserved_before_any_object_root_byte ... ok
-test a_crash_while_writing_content_leaves_vn_unpublished ... ok
-test a_moved_head_is_refused_without_publishing ... ok
 test an_object_that_does_not_use_sha256_is_refused ... ok
-test a_reservation_held_by_another_writer_refuses_the_commit ... ok
+test an_uncommitted_first_version_cannot_be_taken_over_by_another_object ... ok
 test a_stale_lease_holder_cannot_publish_the_head_after_reassignment ... ok
-test creating_an_object_that_exists_is_refused ... ok
 test a_stale_lease_holder_cannot_write_content_after_reassignment ... ok
+test creating_an_object_that_exists_is_refused ... ok
 test an_unpublished_vn_is_reported_by_the_validator ... ok
 test invalid_drafts_are_refused_before_any_reservation ... ok
 test earlier_versions_and_inventories_are_never_changed ... ok
-test leftovers_of_an_unpublished_vn_are_reconciled_under_the_reservation ... ok
 test staged_bytes_that_change_after_assembly_are_refused ... ok
+test leftovers_of_an_unpublished_vn_are_reconciled_under_the_reservation ... ok
 test the_next_version_writes_only_new_bytes ... ok
 test writes_follow_the_publication_order ... ok
 
-test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.52s
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
      Running tests/unit/lease.rs
 
-running 13 tests
-test a_corrupt_lease_record_is_reported ... ok
-test a_held_lease_refuses_every_other_reservation ... ok
+running 17 tests
 test a_lease_within_its_safety_margin_fails_its_fence_check ... ok
-test a_reservation_names_its_object_version_holder_and_first_token ... ok
-test an_expired_lease_fails_its_fence_check_even_before_takeover ... ok
+test a_corrupt_lease_record_is_reported ... ok
+test a_clock_that_cannot_tell_the_time_fails_closed ... ok
 test a_margin_of_half_the_ttl_or_more_is_refused ... ok
+test a_record_too_large_to_read_back_is_not_written ... ok
+test a_released_lease_is_lost_and_its_token_keeps_growing ... ok
+test a_record_at_the_largest_token_is_not_wrapped ... ok
+test a_held_lease_refuses_every_other_reservation ... ok
+test an_expired_lease_fails_its_fence_check_even_before_takeover ... ok
+test a_reservation_names_its_object_version_holder_and_first_token ... ok
+test an_expired_lease_cannot_be_released ... ok
+test objects_are_reserved_independently ... ok
 test confirming_renews_a_lease_past_half_its_ttl ... ok
 test lease_records_live_under_the_store_prefix ... ok
-test objects_are_reserved_independently ... ok
-test releasing_a_lost_reservation_is_refused_and_changes_nothing ... ok
 test rfc3339_utc_formats_unix_milliseconds ... ok
 test an_expired_lease_is_taken_over_with_a_higher_token ... ok
-test a_released_lease_is_lost_and_its_token_keeps_growing ... ok
+test releasing_a_lost_reservation_is_refused_and_changes_nothing ... ok
 
-test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
 ```
 
 The BDD feature (part of `tests/features.rs`):
@@ -211,40 +217,40 @@ The whole crate (each test binary's result line):
 
 ```text
      Running unittests src/lib.rs
-test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.34s
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.36s
      Running tests/features.rs
 95 scenarios (91 passed, 4 skipped)
 413 steps (409 passed, 4 skipped)
      Running tests/integration/fixture_conformance.rs
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
      Running tests/integration/fixture_inventories.rs
 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
      Running tests/integration/fixture_reads.rs
-test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.49s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.52s
      Running tests/integration/fs_conformance.rs
-test result: ok. 46 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.93s
+test result: ok. 46 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.09s
      Running tests/integration/hierarchy_guard.rs
-test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
      Running tests/integration/logical_file.rs
-test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.79s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.47s
      Running tests/integration/memory_conformance.rs
-test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.89s
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.95s
      Running tests/integration/read_objects.rs
-test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.33s
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
      Running tests/integration/validate_objects.rs
-test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.48s
+test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.43s
      Running tests/integration/write_order.rs
-test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.52s
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
      Running tests/unit/digest.rs
-test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
      Running tests/unit/fixity.rs
 test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests/unit/git_guard.rs
-test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
      Running tests/unit/inventory.rs
-test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
      Running tests/unit/lease.rs
-test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
      Running tests/unit/namaste_sidecar.rs
 test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests/unit/read_state.rs
@@ -253,6 +259,7 @@ test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests/unit/storage_key.rs
 test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 ```
 
 The 4 skipped scenarios are unchanged from `main`: they belong to IO-0.7 (content-fixture writes), the server crate and the UI package.
@@ -283,7 +290,24 @@ The 4 skipped scenarios are unchanged from `main`: they belong to IO-0.7 (conten
 
 ## Coverage
 
-[ADR 017](../../../../../../resources/architecture/017-test-runners-and-reporting.md) defines no Rust line-coverage tool, so no percentage is reported. Every `CommitError` variant except `Read` and `Storage` (backend failures) is produced by a test: `Reservation` (`Held`, `Lost`), `HeadMoved`, `InvalidDraft`, `UnsupportedAlgorithm`, `StagingChanged`, `Guard`; `ForeignWrite` is reached only through the residual race described under "Remaining limits". `unit_lease` produces every `ReservationError` variant except `Storage` (backend failures): `Held`, `Lost`, `Corrupt` and `InvalidConfig`. Every publication step has a crash test.
+[ADR 017](../../../../../../resources/architecture/017-test-runners-and-reporting.md) defines no Rust line-coverage tool, so no percentage is reported. These `CommitError` variants are produced by a test: `Reservation` (`Held`, `Lost`), `HeadMoved`, `InvalidDraft`, `UnsupportedAlgorithm`, `StagingChanged`, `MissingVersionInventory` and `Guard`. `Read` and `Storage` (backend failures) are not; `ForeignWrite` is reached only through the residual race described under "Remaining limits". `unit_lease` produces every `ReservationError` variant except `Storage` (backend failures): `Held`, `Lost`, `Corrupt` and `InvalidConfig`. Crash tests cover these publication keys: a content file, the version inventory, the version sidecar (BDD), the root inventory, the root sidecar and the first root sidecar. The object declaration and individual multipart parts are not crash-injected.
+
+## Review round 1 (Cubic)
+
+Cubic reviewed `fcd83b6` and raised 22 findings. Fixed in code or docs:
+
+- `base.rs`: an uncommitted first version keeps its object id (`Base::pending_id`); a draft for another id is `InvalidDraft` (test `an_uncommitted_first_version_cannot_be_taken_over_by_another_object`).
+- `committed.rs`: the writer refuses a base whose committed head has no version inventory (`CommitError::MissingVersionInventory`, test `a_head_without_its_version_inventory_is_refused`), since readers need it to read past an interrupted publication.
+- `publish.rs`: the root sidecar is now a compare-and-swap on the sidecar read before the root inventory is replaced, so a writer that lost its lease after its last fence check cannot overwrite a sidecar another writer published.
+- `reconcile.rs`: on backends whose tags are content digests, a kept leftover must also hash to its tag (no change-and-change-back mix).
+- `reconcile.rs` and `publish.rs`: one listing helper (`write/listing.rs`) bounds the walk by keys (`MAX_WALK_ENTRIES`) and checks every continuation with `guard::next_start`.
+- `lease.rs`: the fencing token uses checked addition (`Corrupt` at `u64::MAX`), records above 4 KiB are refused before they are written, and an expired lease cannot be released (`Lost`). `Clock::now_millis` returns `Option<u64>`; a clock that cannot tell the time fails closed (`ReservationError::ClockUnavailable`). Tests for each in `unit_lease`.
+- `error.rs`: an inventory above the engine's parsing bound is `CommitError::Read` (format error), not `InvalidDraft`.
+- `plan.rs`: a content path no storage key can name (`\`, NUL) is `InvalidDraft` before anything is reserved (added to `invalid_drafts_are_refused_before_any_reservation`).
+- Tests: crash scenarios check the leftovers before recovery; the fault backend forgets finished uploads.
+- Docs: the README says `vN/<contentDirectory>/` and describes the first-version crash (E058); the component diagram shows the publisher as built in both SVGs and their accessible descriptions, and the caption no longer claims the change model routes writes yet; this Walkthrough's coverage claims are narrowed; the module SRS row OCFL-S-018 now states what the writer guarantees, including the open check-to-write window.
+
+Answered rather than fixed: the stale-writer findings on the residual check-to-write window (SRS wording, a stalled recovering writer's delete). Storage-side token enforcement is not possible through the current `StorageBackend` trait and is an owner decision (see "Remaining limits").
 
 ## Sync Execution Report
 
@@ -301,7 +325,7 @@ None. The tests use a hand-moved clock and in-memory or scratch-directory backen
 
 ## Remaining limits
 
-- **Fencing is checked, not storage-enforced.** A writer confirms its lease before every write and stops once no more than the margin (default 10 s) is left. A writer that stalls longer than the margin between a fence check and its next write can still make that one write after its lease passed on. It cannot overwrite another writer's bytes (`IfAbsent` under `vN/`) or head (compare-and-swap), but an extra file it adds under `vN/` after the new holder's final listing check would be published and reported by the validator (E023). Closing this fully needs storage-side token checks (for example a conditional write keyed on the token in the S3 backend, IO-5.1, or a host PostgreSQL generation checked in the same transaction as the receipt).
+- **Fencing is checked, not storage-enforced (owner decision).** A writer confirms its lease before every write and stops once no more than the margin (default 10 s) is left. A writer that stalls longer than the margin between a fence check and its next write can still make that one write after its lease passed on. It cannot overwrite another writer's bytes (`IfAbsent` under `vN/`), root inventory or root sidecar (both compare-and-swaps). But an extra file it adds under `vN/` after the new holder's final listing check would be published and reported by the validator (E023), and a stalled recovering writer could delete a leftover the new holder had already verified. Closing this fully needs storage-side token checks (for example a conditional write keyed on the token in the S3 backend, IO-5.1, or a host PostgreSQL generation checked in the same transaction as the receipt).
 - **One commit, one object.** The writer publishes one version of one object; FileSquid collection snapshots stay callers (ADR 023).
 - **Rebase** onto a moved head is IO-0.10; this layer reports `HeadMoved`.
 - **Base objects must use sha256.** Extending an object another tool wrote with sha512 is refused (`UnsupportedAlgorithm`), since the engine writes sha256 only (OCFL-S-002) and one inventory has one content-addressing algorithm.

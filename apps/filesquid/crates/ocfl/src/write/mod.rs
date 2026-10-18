@@ -32,6 +32,7 @@ mod draft;
 mod error;
 mod fence;
 mod lease;
+mod listing;
 mod plan;
 mod publish;
 mod reconcile;

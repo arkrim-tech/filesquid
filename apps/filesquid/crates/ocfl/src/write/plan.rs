@@ -231,6 +231,10 @@ fn extend_manifest(
             )));
         };
         let content_path = format!("{version}/{content_dir}/{first}");
+        // Refuse a path no storage key can name (such as one with `\` or
+        // NUL) now, before anything is reserved or written.
+        StorageKey::new(&content_path)
+            .map_err(|err| CommitError::draft(format!("{first}: {err}")))?;
         inventory
             .manifest
             .insert(digest.clone(), vec![content_path.clone()]);

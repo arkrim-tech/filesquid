@@ -16,18 +16,16 @@ use std::collections::BTreeMap;
 use super::base::Base;
 use super::error::CommitError;
 use super::fence::Fence;
+use super::listing::list_version_keys;
 use super::plan::VersionPlan;
 use super::reservation::VersionReservations;
 use crate::digest::DigestAlgorithm;
 use crate::inventory::INVENTORY_FILE;
-use crate::read::small::{child, key_in};
+use crate::read::small::key_in;
 use crate::storage::{
     ChunkReader, ETag, Precondition, StorageBackend, StorageError, StorageKey, MAX_CHUNK_BYTES,
-    MAX_LIST_PAGE, MAX_OBJECT_BYTES, MAX_WALK_ENTRIES,
+    MAX_OBJECT_BYTES,
 };
-
-/// Most listing pages one reconciliation reads.
-pub(crate) const MAX_PAGES: usize = MAX_WALK_ENTRIES / MAX_LIST_PAGE + 1;
 
 /// Most chunks one kept file is hashed in.
 const MAX_CHUNKS: u64 = MAX_OBJECT_BYTES / MAX_CHUNK_BYTES + 2;
@@ -40,7 +38,7 @@ const MAX_CHUNKS: u64 = MAX_OBJECT_BYTES / MAX_CHUNK_BYTES + 2;
 ///
 /// [`CommitError::Reservation`] when the fence fails,
 /// [`CommitError::ForeignWrite`] when the root inventory changed, or a
-/// backend error.
+/// backend error (a faulty listing included).
 pub(crate) async fn reconcile<B: StorageBackend, R: VersionReservations>(
     storage: &B,
     root: &str,
@@ -49,24 +47,12 @@ pub(crate) async fn reconcile<B: StorageBackend, R: VersionReservations>(
     fence: &Fence<'_, R>,
 ) -> Result<BTreeMap<String, ETag>, CommitError> {
     roll_back_root(storage, root, base, fence).await?;
-    let prefix = format!("{}/", child(root, &plan.version.to_string()));
+    let keys = list_version_keys(storage, root, &plan.version).await?;
     let mut kept = BTreeMap::new();
-    let mut after: Option<StorageKey> = None;
-    for _ in 0..MAX_PAGES {
-        let page = storage.list(&prefix, after.as_ref(), MAX_LIST_PAGE).await?;
-        for key in &page.keys {
-            reconcile_key(storage, root, plan, key, fence, &mut kept).await?;
-        }
-        match page.next {
-            Some(next) => after = Some(next),
-            None => return Ok(kept),
-        }
+    for key in &keys {
+        reconcile_key(storage, root, plan, key, fence, &mut kept).await?;
     }
-    Err(StorageError::LimitExceeded {
-        what: "listing pages of one unpublished version",
-        limit: MAX_PAGES as u64,
-    }
-    .into())
+    Ok(kept)
 }
 
 /// Keep `key` when it holds exactly the bytes the plan uploads there;
@@ -138,11 +124,20 @@ async fn stored_digest<B: StorageBackend>(
         let Some(bytes) = reader.next_chunk().await? else {
             let after = storage.head(key).await?;
             let digest = hasher.finalize_hex();
-            return Ok((after.etag == before.etag).then_some((digest, before.etag)));
+            return Ok(one_version(storage, &before.etag, &after.etag, &digest)
+                .then_some((digest, before.etag)));
         };
         hasher.update(&bytes);
     }
     Ok(None)
+}
+
+/// Whether bytes hashed to `digest` between two heads with tags `before`
+/// and `after` are one version of the object. On a backend whose tags are
+/// content digests the bytes must also hash to the tag, which catches a
+/// change and change back during the read.
+fn one_version<B: StorageBackend>(storage: &B, before: &ETag, after: &ETag, digest: &str) -> bool {
+    before == after && (!storage.content_addressed_tags() || before.as_str() == digest)
 }
 
 /// `key` relative to the object root.
