@@ -13,6 +13,10 @@ mod builder;
 mod community;
 #[path = "support/content_fixtures.rs"]
 mod content;
+#[path = "support/enumerate.rs"]
+mod enumerate;
+#[path = "support/enumerate_steps.rs"]
+mod enumerate_steps;
 #[path = "support/inventory_example.rs"]
 mod example;
 #[path = "support/fault_backend.rs"]
@@ -87,6 +91,7 @@ struct OcflWorld {
     repair: repair_steps::RepairState,
     payload: payload_steps::PayloadState,
     opaque: opaque_steps::OpaqueState,
+    enumerate: enumerate_steps::EnumerateState,
 }
 
 /// Run `$body` with `$b` bound to the scenario's concrete backend.

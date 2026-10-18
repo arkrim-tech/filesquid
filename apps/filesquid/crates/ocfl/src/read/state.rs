@@ -13,8 +13,9 @@ use crate::digest::DigestAlgorithm;
 use crate::inventory::{Inventory, VersionNum};
 
 /// One logical file of a pinned version. With the state's object id and
-/// version it carries every field T-039 names for committed logical state
-/// (the storage-root-wide enumerator itself is IO-0.9).
+/// version it carries every field T-039 names for committed logical state;
+/// the storage-root-wide enumerator is
+/// [`StorageRoot::enumerate`](super::StorageRoot::enumerate).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogicalFile {
     /// The logical path, `/`-separated.
@@ -74,6 +75,12 @@ impl LogicalState {
     /// Whether the version has no logical files.
     pub fn is_empty(&self) -> bool {
         self.files.is_empty()
+    }
+
+    /// Every logical file, owned, in logical-path order (the enumerator,
+    /// IO-0.9).
+    pub(crate) fn into_files(self) -> std::collections::btree_map::IntoValues<String, LogicalFile> {
+        self.files.into_values()
     }
 }
 
