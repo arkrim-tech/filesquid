@@ -107,7 +107,13 @@ The `features` harness runs the new feature (12 scenarios, all steps passed). Th
 
 ## Hook and full suite
 
-HOOK_PLACEHOLDER
+`bash scripts/pre-commit.sh` passed on both commits of the branch. `FULL=1 bash scripts/pre-commit.sh` on the merged head (main at `5fa177e`) ended with:
+
+```text
+✅ All Pre-Commit Hooks Passed! Test scope: full (507s)
+```
+
+The desktop packaged-window e2e is skipped by default (`FILESQUID_DESKTOP_E2E=1` runs it).
 
 ## Mocked Environment Variables
 
