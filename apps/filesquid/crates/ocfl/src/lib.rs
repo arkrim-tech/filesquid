@@ -35,8 +35,14 @@
 //!   first rule an inventory breaks; digest sidecars; version names.
 //! - [`namaste`]: object and storage-root conformance declarations.
 //!
-//! Object discovery and reads, structural validation and `vN` publication
-//! are later work.
+//! Read and browse (OCFL-S-004), on every backend and target:
+//!
+//! - [`read`]: open a [`StorageRoot`] and discover its objects; open an
+//!   [`Object`]; resolve the logical state of a caller-pinned version through
+//!   the inventory; stream or copy a logical file checked against its digest;
+//!   version history and the diff of two versions.
+//!
+//! Structural validation and `vN` publication are later work.
 
 pub mod digest;
 mod error;
@@ -45,6 +51,7 @@ pub mod inventory;
 #[cfg(all(feature = "fs", not(target_arch = "wasm32")))]
 mod logical_file;
 pub mod namaste;
+pub mod read;
 pub mod storage;
 
 pub use digest::DigestAlgorithm;
@@ -54,3 +61,4 @@ pub use inventory::{FormatError, Inventory, VersionNum};
 #[cfg(all(feature = "fs", not(target_arch = "wasm32")))]
 pub use logical_file::{read_logical_file, reject_git_in_ocfl_root, write_logical_file};
 pub use namaste::{Declaration, SpecVersion};
+pub use read::{LogicalFile, LogicalState, Object, ReadError, StorageRoot};
