@@ -214,7 +214,7 @@ impl SubscriberSlot {
     /// Take a slot if fewer than [`MAX_SUBSCRIBERS`] are taken. Check and increment are one
     /// atomic step, so concurrent callers never exceed the cap.
     fn claim(open: &Arc<AtomicUsize>) -> Option<Self> {
-        open.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+        open.try_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
             (n < MAX_SUBSCRIBERS).then_some(n + 1)
         })
         .ok()?;
