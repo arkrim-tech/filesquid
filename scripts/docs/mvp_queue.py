@@ -27,7 +27,7 @@ PLAN_DEPS = re.compile(r"^\s+- \*\*Dependencies:\*\* (.*)$")
 ID = r"[A-Za-z]{1,4}-[A-Za-z0-9]+(?:\.\d+[a-z]?)?|\d+(?:\.\d+)?"
 DEP_PART = re.compile(rf"^(?:(global|metadata)\s+)?(?:Tasks?\s+)?({ID})(?:\s+through\s+({ID}))?$")
 RECORDED_PRS = re.compile(r"<!-- in-progress-prs: ([^>]*?) -->")
-RECORDED_TIME = re.compile(r"<!-- generated-at: ([^>]*?) -->")
+RECORDED_TIME = re.compile(r"<!-- generated-at: (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z) -->")
 
 
 @dataclass
@@ -183,8 +183,9 @@ def expand_range(first: str, last: str, ordered_ids: list):
 def dependency_parts(text: str) -> list:
     """Split a Dependencies string into candidate references.
 
-    Drops parenthetical notes, anything after the first `. ` or `:`, and a
-    trailing `for ...` explanation on each item.
+    Drops parenthetical notes, anything after the first `. ` or `:`, a
+    trailing `for ...` explanation on each item, and items that are ADR
+    references (`ADR 011 licence ...`), which are review notes, not tasks.
 
     Args:
         text: The Dependencies text without the bold label.
@@ -196,6 +197,8 @@ def dependency_parts(text: str) -> list:
     cleaned = cleaned.split(". ")[0].split(":")[0].strip().rstrip(".")
     parts = []
     for item in re.split(r"[;,]", cleaned):
+        if re.match(r"ADR\s+\d+", item.strip()):
+            continue
         head = re.split(r"\s+for\s+", item.strip())[0]
         parts.extend(p.strip() for p in re.split(r"\s+and\s+", head) if p.strip())
     return parts
@@ -232,7 +235,9 @@ def id_regex(task_id: str):
 
     A `.` in the ID also matches `-`. The ID must not be glued to other
     letters or digits, nor continue as `.N`/`-N` (so IO-0.1 never matches
-    inside IO-0.10). A bare global number such as `0.4` needs `task` before it.
+    inside IO-0.10). A bare global number such as `0.4` needs `task` before it or must start
+    the branch name or follow a `/` (as in `feat/0.4-write`); a number in the
+    middle of a title never matches.
 
     Args:
         task_id: A task ID from the checklist.
@@ -241,7 +246,7 @@ def id_regex(task_id: str):
         A compiled regular expression.
     """
     body = re.escape(task_id.lower()).replace(r"\.", r"[.\-]")
-    prefix = r"task[\s_\-/]*" if task_id[0].isdigit() else ""
+    prefix = r"(?:task[\s_\-/]*|^|(?<=/))" if task_id[0].isdigit() else ""
     return re.compile(rf"(?<![a-z0-9.]){prefix}{body}(?![a-z0-9])(?![.\-]\d)")
 
 
@@ -278,11 +283,9 @@ def compute_in_progress(rows: list, pr_ids: dict) -> InProgress:
     entries = []
     active = set()
     for task in rows:
-        if task.done:
-            continue
         open_rows = [m for m in task.modules if not m.done]
         partial = 0 < len(open_rows) < len(task.modules)
-        if partial or task.task_id in pr_ids:
+        if not task.done and (partial or task.task_id in pr_ids):
             entries.append(Entry(task, open_rows, True))
             active.update([task.task_id, *(m.task_id for m in open_rows)])
             continue
@@ -438,7 +441,8 @@ def parse_recorded(text: str):
         text: Any text containing the generated comments.
 
     Returns:
-        A tuple of (dict from task ID to PR number, timestamp or None).
+        A tuple of (dict from task ID to PR number, timestamp or None). A
+        timestamp that is not RFC 3339 UTC (`YYYY-MM-DDTHH:MM:SSZ`) reads as None.
     """
     found = RECORDED_PRS.search(text)
     stamp = RECORDED_TIME.search(text)

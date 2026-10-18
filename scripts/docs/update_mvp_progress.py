@@ -49,6 +49,8 @@ PLAN_FILES = sorted((ROOT / "apps" / "filesquid" / "crates").glob("*/resources/p
 ]
 PULLS_ENDPOINT = "repos/arkrim-tech/filesquid/pulls?state=open&per_page=100"
 GH_TIMEOUT_SECONDS = 30
+PULLS_PER_PAGE = 100
+MAX_PULL_PAGES = 10
 START = "<!-- mvp-progress:start -->"
 END = "<!-- mvp-progress:end -->"
 GLOBAL_ROW = re.compile(r"^\d+\. \[([ x])\] \[Task ([^\]]+)\]")
@@ -252,15 +254,18 @@ def replace_block(checklist: str, block: str) -> str:
     return f"{title}\n\n{block}\n\n{rest}"
 
 
-def fetch_open_prs():
-    """Ask GitHub for the open pull requests with `gh api` (one bounded call).
+def fetch_pulls_page(page: int):
+    """Fetch one page of open pull requests with a single bounded `gh api` call.
+
+    Args:
+        page: One-based page number.
 
     Returns:
         A tuple of (list of pull request dicts, None) on success, or
         (None, cause string) when `gh` is missing, times out, exits non-zero or
         returns something that is not a JSON list. Never raises.
     """
-    command = ["gh", "api", PULLS_ENDPOINT]
+    command = ["gh", "api", f"{PULLS_ENDPOINT}&page={page}"]
     try:
         done = subprocess.run(command, capture_output=True, text=True, timeout=GH_TIMEOUT_SECONDS, check=False)
     except subprocess.TimeoutExpired:
@@ -276,6 +281,27 @@ def fetch_open_prs():
     if not isinstance(prs, list):
         return None, "gh api did not return a list of pull requests"
     return prs, None
+
+
+def fetch_open_prs():
+    """Ask GitHub for every open pull request, one page at a time.
+
+    Stops at the first short page, or after `MAX_PULL_PAGES` pages, which is
+    reported as a failure so the recorded list is kept rather than truncated.
+
+    Returns:
+        A tuple of (list of pull request dicts, None) on success, or
+        (None, cause string) on any failure. Never raises.
+    """
+    found = []
+    for page in range(1, MAX_PULL_PAGES + 1):
+        prs, cause = fetch_pulls_page(page)
+        if prs is None:
+            return None, cause
+        found.extend(prs)
+        if len(prs) < PULLS_PER_PAGE:
+            return found, None
+    return None, f"more than {MAX_PULL_PAGES * PULLS_PER_PAGE} open pull requests; not all were fetched"
 
 
 def now_utc() -> str:

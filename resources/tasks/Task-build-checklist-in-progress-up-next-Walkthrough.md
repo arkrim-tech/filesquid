@@ -9,10 +9,10 @@ No PRD or SRS requirement. The generated block at the top of [implementation-pla
 | File | Change |
 |---|---|
 | [`scripts/docs/mvp_queue.py`](../../scripts/docs/mvp_queue.py) | New. Pure logic: checklist and plan parsing, Dependencies parsing, PR-to-task matching, In progress and Up next selection, rendering. No file, network or clock access. |
-| [`scripts/docs/test_mvp_queue.py`](../../scripts/docs/test_mvp_queue.py) | New. 27 stdlib `unittest` tests, written first. |
+| [`scripts/docs/test_mvp_queue.py`](../../scripts/docs/test_mvp_queue.py) | New. stdlib `unittest` tests, written first. |
 | [`scripts/docs/update_mvp_progress.py`](../../scripts/docs/update_mvp_progress.py) | Fetches open PRs with `gh api` in write mode only (30 s timeout; on failure keeps the recorded PRs and prints a warning naming the cause to stderr). Renders the new sections and a UTC timestamp. |
 | [`scripts/verify_docs.sh`](../../scripts/verify_docs.sh) | Runs the unit tests as a new docs-gate step. |
-| [`implementation-plan-checklist.md`](../implementation-plan-checklist.md) | Regenerated block; the explanatory sentence describes the new sections. At the owner's request the line "Superseded tasks (0.7, 1.9, 9.5, 10.4 and their superseded module rows) are left out. ImageSquid (`IS-`) and Arkrim (`ARK-`) view rows ..." is removed. Nothing else reproduces or checks that sentence, and no listed row changed. |
+| [`implementation-plan-checklist.md`](../implementation-plan-checklist.md) | Regenerated block; the explanatory sentence describes the new sections. At the owner's request the line "Superseded tasks (0.7, 1.9, 9.5, 10.4 and their superseded module rows) are left out. ImageSquid (`IS-`) and Arkrim (`ARK-`) view rows ..." is removed from the checklist. No script or docs check reproduces or depends on that sentence, and no listed row changed. [implementation-plan.md](../implementation-plan.md) keeps its own statement that it sequences FileSquid only and does not dispatch ImageSquid rows; it is untouched. |
 
 ## Rules
 
@@ -24,9 +24,9 @@ No PRD or SRS requirement. The generated block at the top of [implementation-pla
 
 ```text
 $ python3 scripts/docs/test_mvp_queue.py
-...........................
+.................................
 ----------------------------------------------------------------------
-Ran 27 tests in 0.004s
+Ran 33 tests in 0.006s
 
 OK
 

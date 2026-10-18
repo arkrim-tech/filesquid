@@ -4,6 +4,7 @@
 Run with `python3 -m unittest discover -s scripts/docs -p 'test_*.py'` from the
 repository root; `scripts/verify_docs.sh` runs them as part of the docs gate.
 """
+import json
 import pathlib
 import subprocess
 import sys
@@ -104,6 +105,11 @@ class ParseDependencies(unittest.TestCase):
         self.assertEqual([d.task_id for d in deps], ["SV-F1.3", "0.4"])
         self.assertEqual(self.ids("metadata Task MD-0.8 (file record)"), ["MD-0.8"])
 
+    def test_adr_review_notes_are_ignored(self):
+        """An ADR review clause after the IDs is not a task reference."""
+        text = "DE-F0.1, global Task FS-2.2; ADR 011 licence and patent review of the DMG's linked inventory before distribution"
+        self.assertEqual(self.ids(text), ["DE-F0.1", "FS-2.2"])
+
     def test_range_expands(self):
         """`A through B` expands over the known module order."""
         self.assertEqual(self.ids("Task CO-0.1 through CO-0.3"), ["CO-0.1", "CO-0.2", "CO-0.3"])
@@ -112,7 +118,7 @@ class ParseDependencies(unittest.TestCase):
     def test_unparseable(self):
         """Prose that is not an ID list yields None."""
         self.assertIsNone(self.ids("F-047 gates"))
-        self.assertIsNone(self.ids("ADR 011 licence and patent review"))
+        self.assertIsNone(self.ids("patent review of the DMG"))
         self.assertIsNone(self.ids("global Tasks 7.1–7.5"))
 
 
@@ -142,6 +148,13 @@ class MatchPrs(unittest.TestCase):
         self.assertEqual(self.match("feat/task-0.4-write"), {"0.4": 1})
         self.assertEqual(self.match("x", "Task FS-1.2 file ops"), {"FS-1.2": 1})
 
+    def test_bare_global_after_branch_separator(self):
+        """`feat/0.4-write` and `0.4-write` name Task 0.4; 0.4 mid-branch or as a version does not."""
+        self.assertEqual(self.match("feat/0.4-write"), {"0.4": 1})
+        self.assertEqual(self.match("0.4-write"), {"0.4": 1})
+        self.assertEqual(self.match("feat/bump-0.4"), {})
+        self.assertEqual(self.match("release/0.4.1"), {})
+
     def test_lowest_pr_number_wins(self):
         """Two PRs for one task keep the lowest number."""
         prs = [
@@ -168,6 +181,15 @@ class InProgress(unittest.TestCase):
         self.assertEqual([(e.global_row.task_id, e.modules[0].task_id) for e in flat], [("0.5", "DE-0.2")])
         self.assertIn("DE-0.2", result.active)
         self.assertNotIn("DE-0.1", result.active)
+
+    def test_pr_module_under_ticked_global(self):
+        """An unticked module with a PR is listed even when its global box is ticked."""
+        parsed = rows()
+        parsed[0].modules.append(q.ModuleRow("IO-0.2", False, "[IO-0.2](../a/plan.md#x)", "Two"))
+        result = q.compute_in_progress(parsed, {"IO-0.2": 52})
+        flat = [e for e in result.entries if not e.nested]
+        self.assertEqual([e.modules[0].task_id for e in flat], ["IO-0.2"])
+        self.assertIn("IO-0.2", result.active)
 
     def test_pr_on_global_without_modules(self):
         """A PR on a global task lists it, even with no module rows."""
@@ -248,6 +270,11 @@ class Render(unittest.TestCase):
         self.assertIn("2026-10-18T17:40:00Z", text)
         self.assertEqual(q.parse_recorded(text), (prs, "2026-10-18T17:40:00Z"))
 
+    def test_malformed_timestamp_reads_as_missing(self):
+        """Only RFC 3339 UTC timestamps are read back."""
+        self.assertIsNone(q.parse_recorded("<!-- generated-at: yesterday -->")[1])
+        self.assertIsNone(q.parse_recorded("<!-- generated-at: 2026-10-18T17:40:00+02:00 -->")[1])
+
     def test_parse_recorded_empty(self):
         """A block without the comments records nothing."""
         self.assertEqual(q.parse_recorded("nothing"), ({}, None))
@@ -262,17 +289,41 @@ class Render(unittest.TestCase):
 
 
 class Fetch(unittest.TestCase):
-    """GitHub fetch failure handling."""
+    """GitHub fetch bounds and failure handling."""
 
     def run_fetch(self, **kwargs):
-        """Call fetch_open_prs with subprocess.run patched."""
-        with mock.patch.object(u.subprocess, "run", **kwargs):
-            return u.fetch_open_prs()
+        """Call fetch_open_prs with subprocess.run patched; return (result, mock)."""
+        with mock.patch.object(u.subprocess, "run", **kwargs) as run:
+            return u.fetch_open_prs(), run
 
-    def test_success(self):
-        """Valid JSON is returned with no error."""
+    def test_success_is_one_bounded_gh_call(self):
+        """The call is `gh api` on the open-pulls endpoint with the 30 second timeout."""
         done = subprocess.CompletedProcess([], 0, stdout='[{"number": 1}]', stderr="")
-        self.assertEqual(self.run_fetch(return_value=done), ([{"number": 1}], None))
+        result, run = self.run_fetch(return_value=done)
+        self.assertEqual(result, ([{"number": 1}], None))
+        run.assert_called_once()
+        command = run.call_args.args[0]
+        self.assertEqual(command[:2], ["gh", "api"])
+        self.assertIn("repos/arkrim-tech/filesquid/pulls?state=open&per_page=100", command[2])
+        self.assertEqual(run.call_args.kwargs["timeout"], 30)
+
+    def test_pages_are_flattened(self):
+        """A full page is followed by the next one until a short page."""
+        full = subprocess.CompletedProcess([], 0, stdout=json.dumps([{"number": n} for n in range(100)]), stderr="")
+        short = subprocess.CompletedProcess([], 0, stdout='[{"number": 100}]', stderr="")
+        (prs, cause), run = self.run_fetch(side_effect=[full, short])
+        self.assertIsNone(cause)
+        self.assertEqual(len(prs), 101)
+        self.assertEqual(run.call_count, 2)
+        self.assertIn("page=2", run.call_args.args[0][2])
+
+    def test_page_cap_is_a_failure(self):
+        """Endless full pages stop at the cap and report it instead of truncating."""
+        full = subprocess.CompletedProcess([], 0, stdout=json.dumps([{"number": n} for n in range(100)]), stderr="")
+        (prs, cause), run = self.run_fetch(return_value=full)
+        self.assertIsNone(prs)
+        self.assertIn("not all were fetched", cause)
+        self.assertEqual(run.call_count, u.MAX_PULL_PAGES)
 
     def test_failures_report_cause(self):
         """Timeouts, a missing gh, a bad exit and bad JSON never raise."""
@@ -281,9 +332,10 @@ class Fetch(unittest.TestCase):
             {"side_effect": FileNotFoundError("gh")},
             {"return_value": subprocess.CompletedProcess([], 1, stdout="", stderr="auth required")},
             {"return_value": subprocess.CompletedProcess([], 0, stdout="not json", stderr="")},
+            {"return_value": subprocess.CompletedProcess([], 0, stdout='{"a": 1}', stderr="")},
         ]
         for case in cases:
-            prs, cause = self.run_fetch(**case)
+            (prs, cause), _ = self.run_fetch(**case)
             self.assertIsNone(prs)
             self.assertTrue(cause)
 
