@@ -9,6 +9,7 @@ import {
   NAVIGATION_STORAGE_KEY,
   NavigationStore,
   createNavigationStore,
+  sharedNavigationStore,
 } from "../../src/navigation/store";
 import { MAX_PINNED } from "../../src/navigation/model";
 import type { DeviceStorage } from "../../src/app/device-storage";
@@ -134,6 +135,28 @@ describe("NavigationStore", () => {
     store.start();
     store.setCollapsed("l1", true);
     expect(store.preferences.collapsed).toEqual(["l1"]);
+    store.start();
+    expect(store.preferences.collapsed).toEqual(["l1"]);
+  });
+
+  it("keeps this page's choices when started again while storage cannot be read", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    let refuse = false;
+    const { storage } = fakeStorage();
+    const flaky: DeviceStorage = {
+      getItem: (key) => {
+        if (refuse) throw new Error("blocked");
+        return storage.getItem(key);
+      },
+      setItem: (key, value) => storage.setItem(key, value),
+      removeItem: (key) => storage.removeItem(key),
+    };
+    const store = new NavigationStore({ storage: flaky });
+    store.start();
+    store.setPinned({ node: "c1", kind: "collection" }, true);
+    refuse = true;
+    store.start();
+    expect(store.preferences.pinned).toEqual([{ node: "c1", kind: "collection" }]);
   });
 });
 
@@ -184,6 +207,20 @@ describe("createNavigationStore", () => {
     data.set(NAVIGATION_STORAGE_KEY, JSON.stringify({ version: 1, collapsed: ["l9"] }));
     win.dispatchEvent(new StorageEvent("storage", { key: NAVIGATION_STORAGE_KEY }));
     expect(store.preferences.collapsed).toEqual(["l9"]);
+    store.dispose();
+  });
+
+  it("gives every caller the same store, started again after a dispose", () => {
+    const { storage, data } = fakeStorage();
+    const win = Object.assign(new EventTarget(), { localStorage: storage }) as unknown as Window;
+    const store = sharedNavigationStore(win);
+    store.setCollapsed("l1", true);
+    store.dispose();
+    expect(sharedNavigationStore(win)).toBe(store);
+    expect(store.preferences.collapsed).toEqual(["l1"]);
+    data.set(NAVIGATION_STORAGE_KEY, JSON.stringify({ version: 1, collapsed: ["l4"] }));
+    win.dispatchEvent(new StorageEvent("storage", { key: NAVIGATION_STORAGE_KEY }));
+    expect(store.preferences.collapsed).toEqual(["l4"]);
     store.dispose();
   });
 

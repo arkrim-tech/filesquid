@@ -6,6 +6,7 @@
  * it; UI-F2.1b swaps in a source over `FileSquidClient` without changing the elements.
  */
 import { ApiError } from "../api/client";
+import { newOperationId } from "../api/commands";
 import type {
   NavigationChange,
   NavigationKind,
@@ -97,7 +98,7 @@ export class MemoryNavigationSource implements NavigationSource {
 
   /** Issue an opaque cursor for the page at `offset`, keeping at most MAX_CURSORS issued. */
   private issueCursor(parent: string | null, offset: number): string {
-    const cursor = crypto.randomUUID();
+    const cursor = newOperationId();
     this.cursors.set(cursor, { parent, offset });
     if (this.cursors.size > MAX_CURSORS) {
       this.cursors.delete(this.cursors.keys().next().value as string);

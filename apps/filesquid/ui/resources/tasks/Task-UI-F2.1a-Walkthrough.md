@@ -53,49 +53,56 @@ Every finding was valid and fixed in one commit, with tests for each behaviour f
 - `MemoryNavigationSource`: limits that are not integers from 1 to 1,000 are refused with `invalid_request`. Cursors are opaque random tokens; one this source did not issue for that parent, or issued before `replace`, is refused.
 - Tests and docs: the serialisation test now covers names, titles, logical paths, tokens and content handles. The breadcrumb scenario asserts the full trail. The plan's Related Tests list every test file this task changes.
 
+## Review round 2 (Cubic, 5 findings)
+
+- `MemoryNavigationSource` makes cursors with `newOperationId()` (from `crypto.getRandomValues`), because `crypto.randomUUID` is missing outside secure contexts.
+- `NavigationStore.start()` is safe to call again: when storage is absent, refused or holds an unusable value, it keeps this page's choices. `sharedNavigationStore` starts a disposed store again, so it follows other tabs again.
+- The `<fs-states>` test now asserts that focus moves to the alert when another alert state replaces Retry.
+- The README describes what happens to libraries whose children cannot be read, and to sections that are empty or hold only unavailable pins.
+
 ## Raw test output
 
 ### `npm test` in `apps/filesquid/ui`
 
 ```
 
- RUN  v4.1.12 apps/filesquid/ui
-
- ✓ tests/unit/component-styles.test.ts (81 tests) 25ms
- ✓ tests/unit/client-auth.test.ts (23 tests) 102ms
- ✓ tests/ui/accessibility.test.ts (19 tests) 928ms
-     ✓ keeps one document-level copy while any shell is connected and removes it after the last  333ms
- ✓ tests/ui/nav-tree.test.ts (26 tests) 1946ms
-     ✓ moves through visible items with the arrow keys, Home and End  486ms
- ✓ tests/unit/client-io.test.ts (22 tests) 62ms
- ✓ tests/unit/theme.test.ts (26 tests) 40ms
- ✓ tests/ui/monitor.test.ts (14 tests) 297ms
- ✓ tests/unit/navigation-model.test.ts (30 tests) 30ms
- ✓ tests/unit/a11y-audit.test.ts (19 tests) 318ms
- ✓ tests/ui/app-shell.test.ts (16 tests) 803ms
- ✓ tests/unit/navigation-source.test.ts (18 tests) 57ms
- ✓ tests/unit/navigation-store.test.ts (17 tests) 126ms
- ✓ tests/unit/commands.test.ts (45 tests) 13ms
- ✓ tests/unit/theme-store.test.ts (23 tests) 125ms
- ✓ tests/unit/focus.test.ts (16 tests) 318ms
- ✓ tests/unit/host-adapter.test.ts (13 tests) 85ms
- ✓ tests/ui/states.test.ts (16 tests) 313ms
- ✓ tests/ui/theme-control.test.ts (8 tests) 133ms
- ✓ tests/unit/nav-tree-keys.test.ts (8 tests) 18ms
- ✓ tests/unit/client.test.ts (8 tests) 18ms
- ✓ tests/unit/admin-client.test.ts (6 tests) 27ms
- ✓ tests/ui/monitor-route.test.ts (2 tests) 26ms
- ✓ tests/ui/breadcrumb.test.ts (6 tests) 177ms
- ✓ tests/unit/preferences.test.ts (10 tests) 37ms
- ✓ tests/unit/view-state.test.ts (4 tests) 9ms
- ✓ tests/unit/contrast.test.ts (13 tests) 8ms
+ ✓ tests/unit/component-styles.test.ts (81 tests) 52ms
+ ✓ tests/unit/client-auth.test.ts (23 tests) 33ms
+ ✓ tests/ui/accessibility.test.ts (19 tests) 1162ms
+     ✓ keeps one document-level copy while any shell is connected and removes it after the last  445ms
+ ✓ tests/ui/nav-tree.test.ts (26 tests) 1588ms
+     ✓ moves through visible items with the arrow keys, Home and End  315ms
+ ✓ tests/unit/theme.test.ts (26 tests) 64ms
+ ✓ tests/unit/client-io.test.ts (22 tests) 91ms
+ ✓ tests/ui/monitor.test.ts (14 tests) 753ms
+     ✓ is registered and shows health with its reasons  322ms
+ ✓ tests/unit/navigation-store.test.ts (19 tests) 87ms
+ ✓ tests/unit/navigation-model.test.ts (30 tests) 17ms
+ ✓ tests/unit/a11y-audit.test.ts (19 tests) 210ms
+ ✓ tests/unit/navigation-source.test.ts (18 tests) 38ms
+ ✓ tests/ui/app-shell.test.ts (16 tests) 956ms
+     ✓ renders the distribution's product name, logo and labels in its shadow DOM  333ms
+ ✓ tests/unit/theme-store.test.ts (23 tests) 77ms
+ ✓ tests/unit/commands.test.ts (45 tests) 14ms
+ ✓ tests/unit/focus.test.ts (16 tests) 129ms
+ ✓ tests/ui/states.test.ts (16 tests) 304ms
+ ✓ tests/unit/host-adapter.test.ts (13 tests) 76ms
+ ✓ tests/unit/admin-client.test.ts (6 tests) 22ms
+ ✓ tests/ui/theme-control.test.ts (8 tests) 278ms
+ ✓ tests/unit/nav-tree-keys.test.ts (8 tests) 17ms
+ ✓ tests/unit/client.test.ts (8 tests) 28ms
+ ✓ tests/unit/preferences.test.ts (10 tests) 24ms
+ ✓ tests/ui/breadcrumb.test.ts (6 tests) 246ms
+ ✓ tests/unit/view-state.test.ts (4 tests) 17ms
+ ✓ tests/unit/contrast.test.ts (13 tests) 15ms
  ✓ tests/unit/distribution.test.ts (3 tests) 4ms
- ✓ tests/unit/contract.test.ts (1 test) 79ms
+ ✓ tests/ui/monitor-route.test.ts (2 tests) 23ms
+ ✓ tests/unit/contract.test.ts (1 test) 94ms
 
  Test Files  28 passed (28)
-      Tests  493 passed (493)
-   Start at  16:36:33
-   Duration  18.73s (transform 2.05s, setup 0ms, import 4.81s, tests 6.12s, environment 30.57s)
+      Tests  495 passed (495)
+   Start at  17:11:46
+   Duration  21.36s (transform 2.04s, setup 0ms, import 5.33s, tests 6.42s, environment 35.82s)
 
 JUNIT report written to tests/allure-results/vitest-junit.xml
 ```

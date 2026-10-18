@@ -66,12 +66,15 @@ export class NavigationStore extends EventTarget {
 
   /**
    * Restore the saved choices, dispatch `change` when they differ from the current ones, and
-   * follow other tabs' saves. Safe to call again. I/O: reads Web Storage.
+   * follow other tabs' saves. Safe to call again, also after `dispose()`: when storage is absent,
+   * refused or holds an unusable value, the choices made on this page are kept. I/O: reads Web
+   * Storage.
    */
   start(): void {
     if (!this.listening) this.env.events?.addEventListener("storage", this.onStorage);
     this.listening = true;
-    this.adopt(this.readSaved());
+    const saved = this.readSaved();
+    if (saved) this.adopt(saved);
   }
 
   /** Stop following other tabs' saves. */
@@ -83,7 +86,9 @@ export class NavigationStore extends EventTarget {
   /** Take another tab's save of this key (or a cleared storage) as the current choices. */
   private otherTabSaved(event: Event): void {
     const key = (event as StorageEvent).key;
-    if (key === this.key || key === null) this.adopt(this.readSaved());
+    if (key !== this.key && key !== null) return;
+    const saved = this.readSaved();
+    if (saved) this.adopt(saved);
   }
 
   /** Make `prefs` current and dispatch `change` when they differ from the current ones. */
@@ -154,21 +159,23 @@ export class NavigationStore extends EventTarget {
   }
 
   /**
-   * Read the saved choices. Unreadable storage, text that is not JSON, and a value
-   * `readStoredPreferences` refuses each mean the defaults, with a console message. I/O: Web
-   * Storage.
+   * Read the saved choices: none saved means the defaults. Without storage, unreadable
+   * storage, text that is not JSON, and a value `readStoredPreferences` refuses each give
+   * undefined (the last three with a console message), so the caller keeps the choices it has,
+   * which are the defaults at first start. I/O: Web Storage.
    */
-  private readSaved(): NavigationPreferences {
+  private readSaved(): NavigationPreferences | undefined {
+    if (!this.env.storage) return undefined;
     try {
-      const text = this.env.storage?.getItem(this.key);
-      if (text === null || text === undefined) return EMPTY_NAVIGATION_PREFERENCES;
+      const text = this.env.storage.getItem(this.key);
+      if (text === null) return EMPTY_NAVIGATION_PREFERENCES;
       const stored = readStoredPreferences(JSON.parse(text));
       if (stored.ok) return stored.prefs;
       console.warn(`FileSquid ignored the saved navigation choices: ${stored.problem}`);
     } catch (error) {
       console.warn("FileSquid could not read the saved navigation choices; using none", error);
     }
-    return EMPTY_NAVIGATION_PREFERENCES;
+    return undefined;
   }
 
   /** Write the choices to device storage. I/O: Web Storage. */
@@ -207,14 +214,18 @@ const shared = new WeakMap<Window, NavigationStore>();
 
 /**
  * The window's shared, started navigation store, created on first use, so every tree on the
- * page follows the same choices. I/O: reads Web Storage on first use.
+ * page follows the same choices. A store a caller disposed is started again here, so it
+ * follows other tabs' saves again. I/O: reads Web Storage.
  *
  * @param win The window.
  * @returns The shared store.
  */
 export function sharedNavigationStore(win: Window): NavigationStore {
   const existing = shared.get(win);
-  if (existing) return existing;
+  if (existing) {
+    existing.start(); // follows other tabs again if a caller disposed it; keeps its choices
+    return existing;
+  }
   const store = createNavigationStore(win);
   store.start();
   shared.set(win, store);

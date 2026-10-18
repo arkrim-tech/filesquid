@@ -101,12 +101,12 @@ describe("<fs-states>", () => {
     expect(active?.textContent).toContain(labels.stateError);
   });
 
-  it("keeps focus on Retry when the state stays an alert", () => {
+  it("moves focus to the alert when another alert state replaces the focused Retry", () => {
     const states = mount({ kind: "error" });
-    const retry = states.shadowRoot?.querySelector<HTMLButtonElement>("button");
-    retry?.focus();
+    states.shadowRoot?.querySelector<HTMLButtonElement>("button")?.focus();
     states.state = { kind: "offline" };
-    expect(states.shadowRoot?.activeElement?.getAttribute("role")).toBe("alert");
+    const alert = states.shadowRoot?.querySelector('[role="alert"]');
+    expect(states.shadowRoot?.activeElement).toBe(alert);
   });
 
   it("does not take focus when the state changes while focus is elsewhere", () => {
