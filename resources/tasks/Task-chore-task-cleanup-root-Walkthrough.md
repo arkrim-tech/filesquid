@@ -28,6 +28,18 @@ exit=1
 exit=0
 ```
 
+Cubic review fix: a failed `find` must not let the gate pass. The scan now runs into a temporary file (removed by an `EXIT` trap) and a scan failure exits 1. Verified with a stub `find` that exits 1:
+
+```text
+== find fails
+find: simulated traversal error
+❌ ERROR: Task cleanup scan failed: could not search for Walkthrough documents under: apps resources/tasks
+exit=1
+== find works
+exit=0
+== temp files left behind: 0
+```
+
 ## Hook run
 
 `FULL=1 bash scripts/pre-commit.sh`:
@@ -37,6 +49,6 @@ exit=0
 ✅ Documentation validation passed.
 ✅ Lint and test validation passed (test scope: full).
 ========================================
-✅ All Pre-Commit Hooks Passed! Test scope: full (696s)
+✅ All Pre-Commit Hooks Passed! Test scope: full (133s, rerun after the Cubic fix)
 ========================================
 ```
