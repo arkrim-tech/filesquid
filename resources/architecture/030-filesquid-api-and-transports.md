@@ -59,7 +59,7 @@ Generators (owner decision, 2026-10-17):
 Working recommendation, to be confirmed or overturned by S1:
 
 - **Requests and bytes** use the HTTP resource API on every host.
-- **Push** uses **one event channel**: a WebSocket at `GET /api/v1/events` on `filesquid-server` (Axum `ws` feature), and a `tauri::ipc::Channel` on the desktop.
+- **Push** uses **one event channel**: a WebSocket at `GET /api/v1/events` on `filesquid-server` (Axum `ws` feature), and a `tauri::ipc::Channel` on the desktop. Superseded for the desktop by S1 (b), which adopted Tauri events named `filesquid-event` (see **S1 results** and the desktop binding recorded below); `tauri::ipc::Channel` remains only the fallback if event throughput becomes a problem.
 - The TypeScript client `FileSquidClient` in `@filesquid/ui` hides which transport answered. Its interface is `request()`, `read()`, `upload()` and `subscribe()`. Views MUST NOT call `fetch`, `WebSocket` or Tauri APIs directly.
 
 Recorded 2026-10-17 (Task API-F1.2): event channel semantics. These implement the decision above inside `filesquid-api` (`events` module) and change no transport.

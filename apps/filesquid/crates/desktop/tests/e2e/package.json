@@ -4,7 +4,8 @@
   "description": "Packaged-window tests for filesquid-desktop: WebdriverIO with the Tauri service and the embedded WebDriver provider (ADR 017, ADR 035).",
   "type": "module",
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.12.0",
+    "npm": ">=11.0.0"
   },
   "scripts": {
     "pretest:e2e": "node -e \"require('fs').rmSync('../allure-results/wdio', { recursive: true, force: true })\"",

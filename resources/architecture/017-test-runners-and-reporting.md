@@ -10,7 +10,7 @@ cargo test, Vitest, Playwright, and Allure under each app
 
 Accepted
 
-Accepted: 2026-09-22T07:00:00Z. Amended: 2026-10-18, in Task DE-F1.1, to record the first desktop native-window tests and their test-only dependencies.
+Accepted: 2026-09-22T07:00:00Z. Amended: 2026-10-18T05:36:00Z, in Task DE-F1.1, to record the first desktop native-window tests and their test-only dependencies.
 
 ## Context / Requirement Reference
 

@@ -4,7 +4,7 @@ Module task [DE-F1.1](../plan.md) of global [Task FS-1.1](../../../../../../reso
 
 ## DE-S-005: Every API request through the scheme MUST carry a per-launch token, and the event channel MUST sit behind the same client interface as the server's
 
-> Every API request through the scheme MUST carry a per-launch token, and the event channel MUST sit behind the same client interface as the server's. The event channel MUST use one counted event-bus subscription, forward its resync hints, and reach only the app's own webviews (navigation off the app's origins is refused). `Range` requests MUST pass through the scheme with their `206` status and `Content-Range`, and the handler MUST buffer at most 16 MiB of one response, answering a larger one with a typed `internal` error.
+> Every API request through the scheme MUST carry a per-launch token, and the event channel MUST sit behind the same client interface as the server's. The event channel MUST use one counted event-bus subscription, forward its resync hints, and reach only the app's own webviews (navigation to any other origin is refused; only the blank documents `about:blank` and `about:srcdoc` are also allowed). A satisfiable `Range` request MUST pass through the scheme with its `206` status and `Content-Range`; an unsatisfiable one MUST keep its `416` status and `Content-Range: bytes */<length>`. The handler MUST buffer at most 16 MiB of one response, answering a larger one with a typed `internal` error.
 
 The second and third sentences were added to [DE-S-005](../srs.md) in this task. Parents: [F-057 Desktop and server hosts](../../../../../../resources/prd.md#f-057-desktop-and-server-hosts), [SRS-F-057 Desktop and server hosts](../../../../../../resources/srs.md#srs-f-057-desktop-and-server-hosts), [F-056 Single FileSquid API](../../../../../../resources/prd.md#f-056-single-filesquid-api), FileSquid [U-17, U-18](../../../../../../resources/product-vision.md#one-api-hosts-and-distributions), [T-049, T-050](../../../../../../resources/product-vision.md#api-and-hosts), [ADR 030](../../../../../../resources/architecture/030-filesquid-api-and-transports.md).
 
@@ -29,7 +29,7 @@ The second and third sentences were added to [DE-S-005](../srs.md) in this task.
 
 | Constraint | Test |
 |---|---|
-| Token required on every scheme request (fixture too) | `a_call_without_the_per_launch_token_is_refused`, `a_ranged_read_without_the_per_launch_token_is_refused`, e2e "answers API calls with the token and refuses them without it" |
+| Token required on every non-preflight API request through the scheme except the public liveness probe `GET /api/v1/health/live` (fixture too) | `a_call_without_the_per_launch_token_is_refused`, `a_ranged_read_without_the_per_launch_token_is_refused`, e2e "answers API calls with the token and refuses them without it" |
 | One counted subscription | `the_forwarder_counts_against_the_subscriber_cap` |
 | Resync hints forwarded (lag past 256, events over 65,536 bytes) | `a_webview_that_fell_behind_is_told_to_reread`, `an_oversized_event_reaches_the_webview_as_a_resync_hint` |
 | Refusal at 64 subscriptions journaled | `a_refused_subscription_is_journaled_as_an_error` |
@@ -252,6 +252,119 @@ Execution of 1 workers started at 2026-10-18T05:26:41.202Z
 [WebKitGTK 605.1.15 linux #0-0] 6 passing (5.5s)
 
 
+Spec Files:	 1 passed, 1 total (100% completed) in 00:00:07
+```
+
+## Review round 1
+
+Cubic reviewed head `5bf3b03` and opened 16 threads. Each was checked against the code; all were valid and are fixed in one commit:
+
+- **Journal capture:** `tests/support/journal.rs` now follows `next_cursor` (`all_entries`), so `journaled` returns every entry, not only the first page of 100.
+- **Whole-file read:** `the_whole_100_mb_file_is_read_through_capped_ranges` and the packaged-window spec now check every byte of every range against the fixture pattern, and each answer's `Content-Range`, not only the ends.
+- **Launch journaling in the BDD background:** the step "the desktop host has started" now goes through the real launch path. The new `open_host_monitor` is what `start_monitor` calls: it opens the SQLite journal in a scratch data directory, installs the monitor and journals `api.auth.token_issued`. A new Background step asserts exactly one such entry, with target `owner` and without the secret. The scratch directory is removed when the scenario ends.
+- **Binary path for the packaged-window run** (`wdio.conf.mjs`, `verify_tests.sh`, README):
+  - A relative `CARGO_TARGET_DIR` is resolved against `apps/filesquid`, where Cargo ran.
+  - The chosen binary is copied into a run-specific temporary directory before launch, so a concurrent Cargo build in a shared target cannot replace it. The directory is removed in `onComplete`.
+  - `FILESQUID_DESKTOP_BIN` still overrides the binary.
+- **DE-S-005:** the requirement now names the `about:blank`/`about:srcdoc` exceptions. It requires `206` with `Content-Range` only for satisfiable ranges, and `416` with `Content-Range: bytes */<length>` otherwise. The quote at the top of this walkthrough follows.
+- **Engines:** the e2e package now requires node `>=22.12.0` and npm `>=11.0.0`.
+- **ADRs:** ADR 017's amendment carries an RFC 3339 UTC timestamp. ADR 030's working recommendation marks `tauri::ipc::Channel` as superseded on the desktop by S1 (b)'s Tauri events.
+- **Checklist:** the MVP summary reads 9 of 26 done.
+- **README:** names both scheme origins, shows plain `npm run test:e2e` by default with the headless-Linux `xvfb-run` form as a comment, and describes the binary resolution and copy.
+- **This walkthrough:** the token gate now says "every non-preflight API request except the public liveness probe".
+
+`cargo test -p filesquid-desktop --features test-webdriver --locked --test features --test integration_range_fixture` (the stdout lines of refused calls are left out):
+
+```text
+     Running tests/features.rs (<target>/debug/deps/features-27868679ccc9f319)
+Feature: Desktop transport: per-launch token, event channel and ranged reads
+  Scenario: An app page reads the end of a 100 MB file as partial content
+   ✔> Given the desktop host has started with a new per-launch token
+   ✔> Then the activity journal should record one token issue for the owner without the secret
+   ✔  When an app page reads the last 100 bytes of the 100 MB test file with the token
+   ✔  Then the read should succeed as partial content
+   ✔  And the answer should name the range "bytes 104857500-104857599/104857600"
+   ✔  And the answer should carry exactly the requested bytes
+  Scenario: An app window receives a published event
+   ✔> Given the desktop host has started with a new per-launch token
+   ✔> Then the activity journal should record one token issue for the owner without the secret
+   ✔  Given an app window subscribed to the event channel
+   ✔  When a process update is published
+   ✔  Then the window should receive a "process.update" event
+  Scenario: An open-ended range is capped so memory stays bounded
+   ✔> Given the desktop host has started with a new per-launch token
+   ✔> Then the activity journal should record one token issue for the owner without the secret
+   ✔  When an app page reads the 100 MB test file from its first byte with the token
+   ✔  Then the read should succeed as partial content
+   ✔  And the answer should name the range "bytes 0-8388607/104857600"
+  Scenario: The whole 100 MB file can be read in capped ranges
+   ✔> Given the desktop host has started with a new per-launch token
+   ✔> Then the activity journal should record one token issue for the owner without the secret
+   ✔  When an app page reads the whole 100 MB test file range by range with the token
+   ✔  Then it should have read 104857600 bytes in 13 reads
+  Scenario: A window that fell behind is told to reread
+   ✔> Given the desktop host has started with a new per-launch token
+   ✔> Then the activity journal should record one token issue for the owner without the secret
+   ✔  Given an app window subscribed to the event channel that is not reading
+   ✔  When one more event than the buffer holds is published
+   ✔  Then the window should first receive an "events.resync" hint for 1 missed event
+  Scenario: A response larger than the scheme buffer is refused, not buffered
+   ✔> Given the desktop host has started with a new per-launch token
+   ✔> Then the activity journal should record one token issue for the owner without the secret
+   ✔  When the host answers with a body one byte over its buffer cap
+   ✔  Then the answer should be the typed error "internal"
+  Scenario: A read without the per-launch token is refused
+   ✔> Given the desktop host has started with a new per-launch token
+   ✔> Then the activity journal should record one token issue for the owner without the secret
+   ✔  When a page reads the last 100 bytes of the 100 MB test file without the token
+   ✔  Then the answer should be the typed error "unauthorized"
+  Scenario: A range past the end of the file is refused
+   ✔> Given the desktop host has started with a new per-launch token
+   ✔> Then the activity journal should record one token issue for the owner without the secret
+   ✔  When an app page reads past the end of the 100 MB test file with the token
+   ✔  Then the answer should be "range not satisfiable" naming the length 104857600
+  Scenario: An app window cannot be navigated to a foreign site
+   ✔> Given the desktop host has started with a new per-launch token
+   ✔> Then the activity journal should record one token issue for the owner without the secret
+   ✔  When an app window is asked to navigate to "https://example.com/"
+   ✔  Then the navigation should be refused
+   ✔  And the activity journal should record "desktop.navigation.refused" without the address
+[Summary]
+1 feature
+9 scenarios (9 passed)
+42 steps (42 passed)
+     Running tests/integration/range_fixture.rs (<target>/debug/deps/integration_range_fixture-dd7bda2eb135fa1c)
+
+running 9 tests
+test a_suffix_range_reads_the_end_of_the_file ... ok
+test a_read_without_a_range_is_an_invalid_request ... ok
+test an_unsatisfiable_range_is_refused_with_the_file_length ... ok
+test app_pages_can_read_the_range_headers ... ok
+test the_fixture_is_a_100_mb_file_read_in_ranges_under_the_scheme_cap ... ok
+test the_last_bytes_of_a_100_mb_file_are_read_as_partial_content ... ok
+test a_ranged_read_without_the_per_launch_token_is_refused ... ok
+test an_open_ended_range_is_capped_so_memory_stays_bounded ... ok
+test the_whole_100_mb_file_is_read_through_capped_ranges ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.65s
+```
+
+Packaged window with the default binary resolution (no `FILESQUID_DESKTOP_BIN`), `xvfb-run -a npm run test:e2e`:
+
+```text
+[WebKitGTK 605.1.15 linux #0-0] Running: WebKitGTK (v605.1.15) on linux
+[WebKitGTK 605.1.15 linux #0-0] Session ID: 551cd371-031d-4c55-a58f-2c07d290e2cd
+[WebKitGTK 605.1.15 linux #0-0]
+[WebKitGTK 605.1.15 linux #0-0] » specs/transport.e2e.mjs
+[WebKitGTK 605.1.15 linux #0-0] filesquid-desktop transport in a packaged window
+[WebKitGTK 605.1.15 linux #0-0]    ✓ gives the app page a 64-hex per-launch token
+[WebKitGTK 605.1.15 linux #0-0]    ✓ answers API calls with the token and refuses them without it
+[WebKitGTK 605.1.15 linux #0-0]    ✓ reads the last bytes of a 100 MB file as partial content
+[WebKitGTK 605.1.15 linux #0-0]    ✓ reads the whole 100 MB file through capped ranges
+[WebKitGTK 605.1.15 linux #0-0]    ✓ pushes events to the app window on the event channel
+[WebKitGTK 605.1.15 linux #0-0]    ✓ keeps the app window on the app's own origin
+[WebKitGTK 605.1.15 linux #0-0]
+[WebKitGTK 605.1.15 linux #0-0] 6 passing (5.4s)
 Spec Files:	 1 passed, 1 total (100% completed) in 00:00:07
 ```
 

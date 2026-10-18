@@ -7,23 +7,42 @@
  *
  * Environment:
  * - `FILESQUID_DESKTOP_BIN`: the binary to drive. Default: `<target>/debug/filesquid-desktop`,
- *   where `<target>` is `CARGO_TARGET_DIR` or `apps/filesquid/target`.
+ *   where `<target>` is `CARGO_TARGET_DIR` (a relative value is resolved against the Cargo
+ *   workspace `apps/filesquid`, as Cargo does when it is run from there) or
+ *   `apps/filesquid/target`. A relative `FILESQUID_DESKTOP_BIN` is resolved against the
+ *   current directory.
  * - `TAURI_WEBDRIVER_PORT`: the embedded WebDriver port (default 4445, on 127.0.0.1).
+ *
+ * The chosen binary is copied into a fresh temporary directory before the run, so a concurrent
+ * Cargo build that replaces the shared output cannot change the binary under test.
  */
-import { mkdtempSync } from "node:fs";
+import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const targetDir = process.env.CARGO_TARGET_DIR ?? path.resolve(here, "../../../../target");
+const workspace = path.resolve(here, "../../../..");
+const targetDir = path.resolve(workspace, process.env.CARGO_TARGET_DIR ?? "target");
 const binaryName = process.platform === "win32" ? "filesquid-desktop.exe" : "filesquid-desktop";
-const binary = process.env.FILESQUID_DESKTOP_BIN ?? path.join(targetDir, "debug", binaryName);
+const built = process.env.FILESQUID_DESKTOP_BIN
+  ? path.resolve(process.env.FILESQUID_DESKTOP_BIN)
+  : path.join(targetDir, "debug", binaryName);
+// The launcher and every worker load this file; the launcher makes the run directory and
+// copies the binary once, and the workers (which inherit its environment) reuse both.
+const run =
+  process.env.FILESQUID_DESKTOP_E2E_RUN ??
+  mkdtempSync(path.join(tmpdir(), "filesquid-desktop-e2e-"));
+const binary = path.join(run, binaryName);
+if (!process.env.FILESQUID_DESKTOP_E2E_RUN) {
+  copyFileSync(built, binary);
+  process.env.FILESQUID_DESKTOP_E2E_RUN = run;
+}
 const port = Number(process.env.TAURI_WEBDRIVER_PORT ?? "4445");
 
 // On Linux the app keeps its journal under XDG_DATA_HOME; give each run a fresh one so the
 // tests never write into the developer's own FileSquid data.
-process.env.XDG_DATA_HOME = mkdtempSync(path.join(tmpdir(), "filesquid-desktop-e2e-"));
+process.env.XDG_DATA_HOME = path.join(run, "data");
 
 export const config = {
   runner: "local",
@@ -43,4 +62,8 @@ export const config = {
   waitforTimeout: 15000,
   connectionRetryTimeout: 120000,
   connectionRetryCount: 1,
+  /** Remove the run directory (binary copy and app data) once every worker has finished. */
+  onComplete() {
+    rmSync(run, { recursive: true, force: true });
+  },
 };

@@ -131,6 +131,23 @@ pub fn builder() -> Result<tauri::Builder<tauri::Wry>, String> {
     Ok(builder)
 }
 
+/// The desktop's launch journaling: open the journal in `data_dir`, install the monitor in
+/// `state` (attaching `layer` when given, so warnings and errors are journaled), journal
+/// `host.started`, and journal `api.auth.token_issued` for the owner, naming the principal
+/// only, never the secret. Performs filesystem and database I/O.
+///
+/// # Errors
+/// The journal could not be opened in `data_dir`.
+pub fn open_host_monitor(
+    state: &ApiState,
+    data_dir: &std::path::Path,
+    layer: Option<&JournalLayer>,
+) -> Result<HostMonitor, String> {
+    let host = HostMonitor::open(data_dir, "filesquid-desktop", state, layer)?;
+    record_token_issue(host.monitor(), &Principal::Owner);
+    Ok(host)
+}
+
 /// Open the journal in the app data directory, install the monitor, register the event
 /// forwarder's process and start the ticker. Performs filesystem and database I/O.
 fn start_monitor(
@@ -139,13 +156,7 @@ fn start_monitor(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let data_dir = app.path().app_data_dir()?;
     let state = app.state::<ApiState>();
-    let host = Arc::new(HostMonitor::open(
-        &data_dir,
-        "filesquid-desktop",
-        &state,
-        Some(layer),
-    )?);
-    record_token_issue(host.monitor(), &Principal::Owner);
+    let host = Arc::new(open_host_monitor(&state, &data_dir, Some(layer))?);
     let forwarder = Arc::new(event_channel::register_forwarder(host.monitor().registry()));
     let stop = Arc::new(AtomicBool::new(false));
     spawn_ticker(host.clone(), stop.clone());

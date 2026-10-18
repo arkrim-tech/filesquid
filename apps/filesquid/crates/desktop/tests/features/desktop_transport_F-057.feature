@@ -10,6 +10,7 @@ Feature: Desktop transport: per-launch token, event channel and ranged reads
 
   Background:
     Given the desktop host has started with a new per-launch token
+    Then the activity journal should record one token issue for the owner without the secret
 
   # Happy path
   Scenario: An app page reads the end of a 100 MB file as partial content

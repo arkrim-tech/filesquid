@@ -24,12 +24,24 @@ pub fn journaled(body: impl FnOnce()) -> Vec<JournalEntry> {
     layer.attach(writer.sender());
     tracing::subscriber::with_default(tracing_subscriber::registry().with(layer), body);
     writer.sender().flush();
-    let entries = store
-        .query(&JournalQuery::default())
-        .expect("query journal")
-        .entries;
+    let entries = all_entries(store.as_ref());
     writer.shutdown();
     entries
+}
+
+/// Every entry in `store`, oldest first, following `next_cursor` page by page. Bounded: each
+/// page advances the cursor past at least one entry, and the store is finite.
+pub fn all_entries(store: &dyn JournalStore) -> Vec<JournalEntry> {
+    let mut query = JournalQuery::default();
+    let mut entries = Vec::new();
+    loop {
+        let page = store.query(&query).expect("query journal");
+        entries.extend(page.entries);
+        match page.next_cursor {
+            Some(cursor) => query.after_id = Some(cursor),
+            None => return entries,
+        }
+    }
 }
 
 /// Block on `future` with a current-thread runtime, so its tracing events stay on this thread.

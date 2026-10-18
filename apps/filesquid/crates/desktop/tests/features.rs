@@ -6,15 +6,16 @@ use cucumber::{given, then, when, writer, World, WriterExt as _};
 use filesquid_api::auth::LaunchToken;
 use filesquid_api::events::{topic, EVENT_BUFFER};
 use filesquid_api::journal::JournalEntry;
+use filesquid_api::monitor::HostMonitor;
 use filesquid_api::{ApiEvent, ApiState, EventSubscription};
 use filesquid_desktop_lib::api_protocol::{handle, into_scheme_response};
 use filesquid_desktop_lib::event_channel::{
     navigation_allowed, open_subscription, pump, EventSink, Forwarding,
 };
-use filesquid_desktop_lib::install_launch_token;
 use filesquid_desktop_lib::test_fixture::{fixture_byte, FIXTURE_LEN, FIXTURE_PATH};
+use filesquid_desktop_lib::{install_launch_token, open_host_monitor};
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -36,7 +37,33 @@ struct DesktopWorld {
     received: Vec<ApiEvent>,
     navigation: Option<bool>,
     journal: Vec<JournalEntry>,
+    launched: Option<Launched>,
 }
+
+/// The host monitor opened by the real launch path, in a scratch data directory that is
+/// removed (after the monitor stops) when the scenario ends.
+struct Launched {
+    host: HostMonitor,
+    dir: PathBuf,
+}
+
+impl std::fmt::Debug for Launched {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Launched").field("dir", &self.dir).finish()
+    }
+}
+
+impl Drop for Launched {
+    fn drop(&mut self) {
+        self.host.stop();
+        if let Err(err) = std::fs::remove_dir_all(&self.dir) {
+            eprintln!("scenario data directory not removed: {err}");
+        }
+    }
+}
+
+/// Scenario counter, so concurrent scenarios get separate data directories.
+static SCENARIOS: AtomicU32 = AtomicU32::new(0);
 
 /// A sink that keeps every event it is given.
 #[derive(Default)]
@@ -102,7 +129,29 @@ impl DesktopWorld {
 fn host_started(world: &mut DesktopWorld) {
     let state = ApiState::new();
     world.token = Some(install_launch_token(&state).expect("token"));
+    let n = SCENARIOS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let name = format!("filesquid-desktop-features-{}-{n}", std::process::id());
+    let dir = std::env::temp_dir().join(name);
+    let host = open_host_monitor(&state, &dir, None).expect("launch journaling");
+    world.launched = Some(Launched { host, dir });
     world.state = Some(state);
+}
+
+#[then("the activity journal should record one token issue for the owner without the secret")]
+fn token_issue_journaled(world: &mut DesktopWorld) {
+    let launched = world.launched.as_ref().expect("host started");
+    let monitor = launched.host.monitor();
+    monitor.journal().flush();
+    let store = monitor.store();
+    let issued: Vec<JournalEntry> = journal::all_entries(store.as_ref())
+        .into_iter()
+        .filter(|e| e.operation == "api.auth.token_issued")
+        .collect();
+    assert_eq!(issued.len(), 1, "{issued:?}");
+    assert_eq!(issued[0].target_ids, ["owner"]);
+    let text = serde_json::to_string(&issued[0]).expect("json");
+    let secret = world.token.as_ref().expect("token").secret();
+    assert!(!text.contains(secret), "{text}");
 }
 
 #[when("an app page reads the last 100 bytes of the 100 MB test file with the token")]

@@ -99,10 +99,11 @@ describe("filesquid-desktop transport in a packaged window", () => {
           });
           if (response.status !== 206) return { failedStatus: response.status, reads };
           const bytes = new Uint8Array(await response.arrayBuffer());
-          for (let i = 0; i < bytes.length; i += 4093) {
-            exact = exact && bytes[i] === (next + i) % 251;
+          const range = `bytes ${next}-${next + bytes.length - 1}/${length}`;
+          exact = exact && response.headers.get("Content-Range") === range;
+          for (let i = 0; i < bytes.length && exact; i += 1) {
+            exact = bytes[i] === (next + i) % 251;
           }
-          exact = exact && bytes[bytes.length - 1] === (next + bytes.length - 1) % 251;
           next += bytes.length;
           reads += 1;
         }

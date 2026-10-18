@@ -96,11 +96,14 @@ async fn the_whole_100_mb_file_is_read_through_capped_ranges() {
         let response = handle(state.clone(), read(Some(token.secret()), Some(&range))).await;
         assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
         let body = response.body();
-        assert_eq!(body[0], fixture_byte(next));
-        assert_eq!(
-            body[body.len() - 1],
-            fixture_byte(next + body.len() as u64 - 1)
-        );
+        let end = next + body.len() as u64 - 1;
+        let expected_range = format!("bytes {next}-{end}/{FIXTURE_LEN}");
+        assert_eq!(response.headers()[CONTENT_RANGE], expected_range.as_str());
+        let mismatch = body
+            .iter()
+            .zip(next..)
+            .position(|(byte, offset)| *byte != fixture_byte(offset));
+        assert_eq!(mismatch, None, "first wrong byte in the range from {next}");
         total += body.len() as u64;
         next += body.len() as u64;
         requests += 1;

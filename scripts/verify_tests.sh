@@ -87,6 +87,8 @@ run_desktop_e2e() {
     FAILED=1
     return
   fi
+  # Built from $WORKSPACE, so a relative CARGO_TARGET_DIR is relative to it; wdio.conf.mjs
+  # resolves it the same way and copies the binary to a run-specific directory before launch.
   run_step "Desktop test-instrumented build" "$WORKSPACE" cargo build -p filesquid-desktop --features test-webdriver --locked
   run_step "Prettier (desktop e2e)" "$dir" npm run format:check
   if [ "$(uname -s)" = "Linux" ] && [ -z "$DISPLAY" ]; then
