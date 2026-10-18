@@ -34,7 +34,21 @@ async function mount(dark: boolean) {
   const shell = document.createElement("fs-app-shell") as FsAppShell;
   shell.configure({
     distribution: imagesquid,
-    client: { health: async () => ({ schema_version: 1, status: "ok", product: "filesquid" }) },
+    client: {
+      health: async () => ({ schema_version: 1, status: "ok", product: "filesquid" }),
+      host: async () => ({
+        schema_version: 1,
+        host_type: "desktop",
+        operator_name: null,
+        hosted_service: {
+          enrolled: false,
+          backup_enabled: false,
+          sync_enabled: false,
+          service_host: null,
+        },
+      }),
+      subscribe: () => () => undefined,
+    },
     theme,
   });
   document.body.replaceChildren(shell);

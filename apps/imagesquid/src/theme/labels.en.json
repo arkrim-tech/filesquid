@@ -73,5 +73,20 @@
   "stateError": "Something went wrong",
   "stateOffline": "You are offline",
   "stateDenied": "You do not have permission to see this",
-  "stateRetry": "Try again"
+  "stateRetry": "Try again",
+  "hostIndicator": "Where your files are",
+  "hostDesktop": "Your files stay on this device. Only you can read them.",
+  "hostDesktopBackup": "Backup copies are encrypted on this device before upload.",
+  "hostServer": "Your files are stored on a server run by {operator}. That operator can read them. Other users see only what they are permitted to.",
+  "hostOperatorUnnamed": "an operator who has not given a name",
+  "hostServerAtRest": "Protecting this server's storage at rest is the operator's disk or bucket encryption.",
+  "hostBrowser": "Your files are decrypted only in this browser.",
+  "hostServiceTitle": "Backup and sync service",
+  "hostNotEnrolled": "Not enrolled. Backup and sync are off.",
+  "hostBackup": "Backup",
+  "hostSync": "Sync",
+  "hostOn": "On",
+  "hostOff": "Off",
+  "hostServiceAt": "Service:",
+  "hostServiceCiphertext": "Your files are encrypted on your device before upload. FileSquid's service stores ciphertext and never has your keys."
 }
