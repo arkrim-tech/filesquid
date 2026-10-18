@@ -41,7 +41,7 @@ license: CC-BY
 | 5 | `verify_workspace_boundaries.sh` | No language manifests at the root; distributions hold no Rust ([workspace-boundaries.md](./workspace-boundaries.md)) |
 | 6 | `verify_centralized_logging.sh` | No file logging ([logging-enforce.md](./logging-enforce.md)) |
 | 7 | `verify_formatting.sh` | `cargo fmt --check` per Cargo workspace (skipped when the scope is `docs` or npm-only; it runs for every `rust:` and `full` scope), `prettier --check` per npm package |
-| 8 | `verify_docs.sh` | ADR structure, PRD allocation, relative links and anchors, FileSquid/ImageSquid document boundary, task cleanup (`scripts/docs/`) |
+| 8 | `verify_docs.sh` | ADR structure, PRD allocation, relative links and anchors, FileSquid/ImageSquid document boundary, task cleanup (`scripts/docs/`), and the MVP progress merge-driver tests (`test_merge_mvp_progress.py`, throwaway git repositories under `TMPDIR`) |
 | 9 | `verify_changed_scope.sh` | Tests of the change-scope helper and the hook libraries against a temporary git repository |
 | 10 | `verify_tests.sh` | Clippy, Cargo tests, each module crate alone (ADR 029), rustdoc, then ESLint, `tsc` and Vitest per UI package, **limited to the change scope**; Playwright with `FILESQUID_E2E=1` |
 
