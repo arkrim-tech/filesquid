@@ -48,11 +48,11 @@ Follow `.agents/rules/task-workflow.md` and the Shared agent prompt contract in 
 
 ## Rust builds
 
-UI-only changes do not build Rust: the hook's `npm:` scope runs no Cargo step ([local-verification.md](../../.agents/rules/local-verification.md#change-aware-test-scope)). Do not run cargo for a UI task. Run the full `bash scripts/pre-commit.sh` once per push, not once per edit.
+UI-only changes do not build Rust: when the hook reports `Test scope: npm:<packages>` or `docs`, it runs no Cargo step ([local-verification.md](../../.agents/rules/local-verification.md#change-aware-test-scope)), so run no cargo yourself. If it reports `full` or `rust:`, the head-commit run is `FULL=1 bash scripts/pre-commit.sh` as that rule requires. Otherwise run `bash scripts/pre-commit.sh` once per push, not once per edit.
 
 ## Process rules
 
-- Merge `origin/main` into your branch by merge commit. Never rebase and never force-push. Commit the merge on its own, with no code changes in it, then commit code separately: Cubic skips merge commits ([pr-review-loop.md](../../.agents/rules/pr-review-loop.md)).
+- Merge `origin/main` into your branch by merge commit. Never rebase and never force-push. Commit the merge on its own; the only code it may contain is conflict resolution. Commit feature and fix code separately, because Cubic skips merge commits and would not review it (owner decision).
 - Never put the owner's email address in any request, URL or header (for example a `User-Agent`). Use a generic `User-Agent`.
 - Keep model names out of code, pull request text and docs. The commit attribution trailer your own session supplies is the only place one may appear.
 
