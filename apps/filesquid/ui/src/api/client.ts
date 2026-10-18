@@ -5,8 +5,8 @@
  * host answers: `filesquid-server` over HTTP and WebSocket, or the desktop host through
  * the `filesquid://` custom URI scheme and Tauri events (ADR 030).
  *
- * Authorisation is deny-by-default (API-S-004): every request carries
- * `Authorization: Bearer <token>`, and the event channel WebSocket offers the token as the
+ * Authorisation is deny-by-default (API-S-004): every request made with a known token carries
+ * `Authorization: Bearer <token>`, and the event channel WebSocket offers that token as the
  * subprotocol `filesquid.bearer.<token>`. The client keeps no copy of the token: it asks its
  * token source on every call, never stores, logs or renders it, and never puts it in an error.
  */
@@ -78,12 +78,39 @@ const MAX_EXPORT_REQUESTS = 10;
 export const EVENTS_SUBPROTOCOL = "filesquid.events.v1";
 /** Prefix of the subprotocol that carries the bearer token on a browser WebSocket. */
 const BEARER_SUBPROTOCOL_PREFIX = "filesquid.bearer.";
-/** Every {@link DenialReason} the contract defines, for validating response bodies. */
-const DENIAL_REASONS: readonly DenialReason[] = [
+/**
+ * Every {@link DenialReason} the contract defines, for validating response bodies at run time.
+ * The generated type has no run-time value; {@link CONTRACT_LISTS_COMPLETE} fails the build
+ * when this list and the generated union drift apart in either direction.
+ */
+const DENIAL_REASONS = [
   "missing_credentials",
   "invalid_credentials",
   "not_permitted",
-];
+] as const satisfies readonly DenialReason[];
+/** Every {@link ErrorCode} the contract defines, checked like {@link DENIAL_REASONS}. */
+const ERROR_CODES = [
+  "invalid_request",
+  "unauthorized",
+  "forbidden",
+  "not_found",
+  "method_not_allowed",
+  "conflict",
+  "internal",
+  "unavailable",
+] as const satisfies readonly ErrorCode[];
+/** Generated union members missing from a run-time list (`never` when it is complete). */
+type Unlisted<Union, List extends readonly unknown[]> = Exclude<Union, List[number]>;
+/**
+ * Compile-time proof that both lists name every member of their generated union; a contract
+ * change that adds a value makes this assignment a type error until the list is updated.
+ */
+export const CONTRACT_LISTS_COMPLETE: [
+  Unlisted<DenialReason, typeof DENIAL_REASONS>,
+  Unlisted<ErrorCode, typeof ERROR_CODES>,
+] extends [never, never]
+  ? true
+  : never = true;
 /** RFC 7230 `token`: the only characters both a header value and a subprotocol accept here. */
 const TOKEN_CHARS = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 
@@ -173,14 +200,16 @@ export function eventProtocols(token: string | undefined): string[] {
  * Keep only the contract fields of a parsed error body; anything else is dropped. Pure.
  *
  * @param value Parsed JSON of a failed response.
- * @returns The code, retryable flag and a reason from the contract's enum.
+ * @returns A code and a reason from the contract's enums (others are dropped) and the
+ *   retryable flag.
  */
 export function errorBody(value: unknown): Partial<ApiErrorBody> {
   if (typeof value !== "object" || value === null) return {};
   const record = value as Record<string, unknown>;
   const reason = DENIAL_REASONS.find((known) => known === record.reason);
+  const code = ERROR_CODES.find((known) => known === record.code);
   return {
-    code: typeof record.code === "string" ? (record.code as ErrorCode) : undefined,
+    code,
     retryable: typeof record.retryable === "boolean" ? record.retryable : undefined,
     reason,
   };
@@ -188,7 +217,8 @@ export function errorBody(value: unknown): Partial<ApiErrorBody> {
 
 /**
  * Read the contract error body of a failed response. A body that is not JSON (for example a
- * proxy's HTML page) yields no fields; that case is logged as a warning without the body.
+ * proxy's HTML page) yields no fields; that case is logged as a warning with the status only,
+ * never the body or the parser's message (which can quote the body).
  * Network I/O: consumes the response body.
  *
  * @param response A non-2xx response.
@@ -198,7 +228,9 @@ async function readErrorBody(response: Response): Promise<Partial<ApiErrorBody>>
   try {
     return errorBody(JSON.parse(await response.text()));
   } catch (error) {
-    console.warn(`FileSquid API error body (HTTP ${response.status}) was not JSON`, error);
+    // The parser's message can quote the body, so only its kind and the status are logged.
+    const kind = error instanceof Error ? error.name : typeof error;
+    console.warn(`FileSquid API error body (HTTP ${response.status}) was not JSON (${kind})`);
     return {};
   }
 }
@@ -383,7 +415,7 @@ export class FileSquidClient {
   private currentToken(path: string): string | undefined {
     const source = this.options.token;
     const token = typeof source === "function" ? source() : source;
-    if (token === undefined || token === "") return undefined;
+    if (token === undefined) return undefined;
     if (!isUsableToken(token)) throw unusableToken(path);
     return token;
   }

@@ -69,6 +69,17 @@ TDD: the tests above were written first and failed before the implementation (28
      ✓ mounts <fs-monitor> on #/monitor and removes it on other hashes 21ms
 ```
 
+## Review round 1 (Cubic, 17 findings)
+
+All 17 were valid and are fixed in one commit:
+
+- **Shell race:** `<fs-app-shell>` numbers its health reads and discards an answer from an older read, so a slow pre-sign-in 401 cannot overwrite the signed-in status. Test: `app-shell.test.ts` "ignores a stale pre-sign-in answer", which fails without the fix.
+- **Empty token:** an explicitly supplied empty token is unusable (status 0, `invalid_credentials`); only `undefined` means no token. `memoryTokenStore` returns undefined for an empty entry, so the signed-out flow still sends no credential and reads `missing_credentials`. Both are tested.
+- **Error codes:** `errorBody` keeps a `code` only when it is in the contract's `ErrorCode` enum. The run-time lists are tied to the generated unions by `CONTRACT_LISTS_COMPLETE`, which fails `tsc` if a contract value is missing.
+- **Non-JSON warning:** it now logs only the status and the parser error's kind, because V8's `SyntaxError` message quotes the body. A test checks that no body text is logged.
+- **Tests:** stubs and spies are restored in `afterEach`, and the wrong-token e2e test now asserts no unexpected console errors.
+- **Docs:** UI-S-014 says "when a token is known" and covers empty tokens. `DenialText` is exported. Mermaid edge labels no longer contain semicolons, and the architecture doc says WebSocket upgrades accept the header for clients that can set it. The README gives the per-platform token rules (Linux/macOS file vs Windows variable), the 64-hex format and blank-as-unset. The plan's UI-F0.1 Related Tests links the feature file, and the UI-F2.6 parenthetical is gone. The feature file asserts status 0, and the `routes.ts`, `fs-monitor.ts` and `client.ts` doc comments match the code.
+
 ## SRS traceability
 
 | Constraint | Tests |
@@ -158,18 +169,18 @@ IS lint/tsc OK
 > @filesquid/ui@0.1.0 test
 > vitest run
  RUN  v4.1.12 apps/filesquid/ui
- ✓ tests/unit/client-auth.test.ts (19 tests) 68ms
- ✓ tests/ui/app-shell.test.ts (8 tests) 112ms
- ✓ tests/ui/monitor.test.ts (14 tests) 260ms
- ✓ tests/unit/admin-client.test.ts (6 tests) 20ms
- ✓ tests/unit/client.test.ts (8 tests) 16ms
- ✓ tests/ui/monitor-route.test.ts (2 tests) 32ms
+ ✓ tests/unit/client-auth.test.ts (23 tests) 28ms
+ ✓ tests/ui/app-shell.test.ts (9 tests) 92ms
+ ✓ tests/ui/monitor.test.ts (14 tests) 193ms
+ ✓ tests/unit/client.test.ts (8 tests) 12ms
+ ✓ tests/unit/admin-client.test.ts (6 tests) 14ms
  ✓ tests/unit/theme.test.ts (6 tests) 7ms
- ✓ tests/unit/contract.test.ts (1 test) 109ms
+ ✓ tests/ui/monitor-route.test.ts (2 tests) 27ms
+ ✓ tests/unit/contract.test.ts (1 test) 58ms
  Test Files  8 passed (8)
-      Tests  64 passed (64)
-   Start at  04:23:37
-   Duration  3.71s (transform 638ms, setup 0ms, import 1.69s, tests 625ms, environment 5.08s)
+      Tests  69 passed (69)
+   Start at  04:39:48
+   Duration  2.73s (transform 471ms, setup 0ms, import 1.25s, tests 429ms, environment 3.82s)
 JUNIT report written to tests/allure-results/vitest-junit.xml
 ```
 
@@ -194,16 +205,15 @@ JUNIT report written to tests/allure-results/vitest-junit.xml
 
 ```text
 Running 8 tests using 1 worker
-  ✓  1 [chromium] › tests/e2e/app.spec.ts:44:1 › shell mounts with FileSquid brand, internal vocabulary and live API health (258ms)
-  ✓  2 [chromium] › tests/e2e/app.spec.ts:68:1 › design tokens switch between light and dark (110ms)
-  ✓  3 [chromium] › tests/e2e/app.spec.ts:79:1 › client-side routes fall back to the distribution index (153ms)
-  ✓  4 [chromium] › tests/e2e/app.spec.ts:85:1 › without a token the shell names the missing credentials from the label table (158ms)
-  ✓  5 [chromium] › tests/e2e/app.spec.ts:97:1 › Monitor asks for the admin token, then shows live health, processes and the journal (270ms)
-  ✓  6 [chromium] › tests/e2e/app.spec.ts:130:1 › a wrong token is named as invalid credentials (245ms)
-  ✓  7 [chromium] › tests/e2e/app.spec.ts:140:1 › the signed-in token stays in memory: not in storage, URL or DOM, gone on reload (412ms)
-  ✓  8 [chromium] › tests/e2e/app.spec.ts:171:1 › the desktop launch token authorises the shell, the Monitor and the event channel (166ms)
-  8 passed (32.3s)
-exit 0
+  ✓  1 [chromium] › tests/e2e/app.spec.ts:44:1 › shell mounts with FileSquid brand, internal vocabulary and live API health (274ms)
+  ✓  2 [chromium] › tests/e2e/app.spec.ts:68:1 › design tokens switch between light and dark (141ms)
+  ✓  3 [chromium] › tests/e2e/app.spec.ts:79:1 › client-side routes fall back to the distribution index (152ms)
+  ✓  4 [chromium] › tests/e2e/app.spec.ts:85:1 › without a token the shell names the missing credentials from the label table (172ms)
+  ✓  5 [chromium] › tests/e2e/app.spec.ts:97:1 › Monitor asks for the admin token, then shows live health, processes and the journal (260ms)
+  ✓  6 [chromium] › tests/e2e/app.spec.ts:130:1 › a wrong token is named as invalid credentials (236ms)
+  ✓  7 [chromium] › tests/e2e/app.spec.ts:141:1 › the signed-in token stays in memory: not in storage, URL or DOM, gone on reload (402ms)
+  ✓  8 [chromium] › tests/e2e/app.spec.ts:172:1 › the desktop launch token authorises the shell, the Monitor and the event channel (201ms)
+  8 passed (7.0s)
 ```
 
 ## Playwright: `@imagesquid/ui` (built UI + real `filesquid-server`)

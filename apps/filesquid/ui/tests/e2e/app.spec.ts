@@ -128,13 +128,14 @@ test("Monitor asks for the admin token, then shows live health, processes and th
 });
 
 test("a wrong token is named as invalid credentials", async ({ page }) => {
-  trackErrors(page, REFUSED_CALL);
+  const errors = trackErrors(page, REFUSED_CALL);
   await page.goto("/#/monitor");
   await signIn(page, "f".repeat(64));
   const note = page.locator('fs-monitor [data-reason="invalid_credentials"]');
   await expect(note).toHaveText("Invalid credentials");
   await expect(note).toHaveAttribute("role", "alert");
   await expect(page.locator("fs-monitor form[data-form='token']")).toBeVisible();
+  expect(errors).toEqual([]);
 });
 
 test("the signed-in token stays in memory: not in storage, URL or DOM, gone on reload", async ({

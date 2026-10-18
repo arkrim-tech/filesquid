@@ -3,7 +3,7 @@
  * the bearer header on every request, the token sources, the WebSocket subprotocol carrier,
  * the typed denial reasons and that the token never appears in an error.
  */
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
   EVENTS_SUBPROTOCOL,
@@ -15,6 +15,12 @@ import { LAUNCH_TOKEN_GLOBAL, createHostClient, launchToken } from "../../src/ap
 import { memoryTokenStore } from "../../src/app/routes";
 
 const TOKEN = "0123456789abcdef".repeat(4);
+
+// Restore global stubs and spies even when an assertion fails mid-test.
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 /** A fetch stub that records URL and Authorization header, answering `status` with `body`. */
 function recorder(status = 200, body = "{}") {
@@ -96,7 +102,6 @@ describe("token sources", () => {
     const desktop = { __TAURI_INTERNALS__: {}, navigator, [LAUNCH_TOKEN_GLOBAL]: "launch" };
     await createHostClient(desktop as unknown as Window, () => "typed").health();
     await createHostClient({ navigator } as unknown as Window, () => "typed").health();
-    vi.unstubAllGlobals();
     expect(calls).toEqual(["Bearer launch", "Bearer typed"]);
   });
 
@@ -108,7 +113,17 @@ describe("token sources", () => {
     expect(store.get()).toBe(TOKEN);
     expect(setItem).not.toHaveBeenCalled();
     expect(JSON.stringify({ ...localStorage, ...sessionStorage })).not.toContain(TOKEN);
-    setItem.mockRestore();
+  });
+
+  it("treats an empty entry as no token, so the signed-out flow sends no credential", async () => {
+    const r = recorder(401, denial("unauthorized", "missing_credentials"));
+    const store = memoryTokenStore();
+    store.set("");
+    expect(store.get()).toBeUndefined();
+    const client = new FileSquidClient({ baseUrl: "", fetch: r.fetch, token: () => store.get() });
+    const error = (await client.health().catch((e: unknown) => e)) as ApiError;
+    expect(r.calls).toEqual([{ url: "/api/v1/health", auth: null }]);
+    expect(error.reason).toBe("missing_credentials");
   });
 
   it("notifies the listener after a token is set, without passing the token", () => {
@@ -212,6 +227,37 @@ describe("denial reasons", () => {
     expect(JSON.stringify(error)).not.toContain(TOKEN);
     expect(error.message).not.toContain(TOKEN);
     expect(String(error.stack)).not.toContain(TOKEN);
+  });
+
+  it("drops an error code outside the contract's ErrorCode enum", async () => {
+    const r = recorder(500, JSON.stringify({ code: "<b>made up</b>", retryable: false }));
+    const error = (await new FileSquidClient({ baseUrl: "", fetch: r.fetch })
+      .health()
+      .catch((e: unknown) => e)) as ApiError;
+    expect(error.code).toBeUndefined();
+    expect(error.message).toBe("FileSquid API /api/v1/health failed with HTTP 500");
+  });
+
+  it("warns about a non-JSON error body without quoting any of it", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const body = "secret-body-text echoed by a proxy";
+    const r = recorder(502, body);
+    await new FileSquidClient({ baseUrl: "", fetch: r.fetch }).health().catch(() => undefined);
+    expect(warn).toHaveBeenCalledOnce();
+    const logged = warn.mock.calls[0]?.map((arg) => String(arg)).join(" ") ?? "";
+    expect(logged).toContain("HTTP 502");
+    expect(logged).not.toContain("secret");
+  });
+
+  it("refuses an explicitly supplied empty token (status 0, invalid_credentials)", async () => {
+    const r = recorder();
+    for (const token of ["", () => ""]) {
+      const error = (await new FileSquidClient({ baseUrl: "", fetch: r.fetch, token })
+        .health()
+        .catch((e: unknown) => e)) as ApiError;
+      expect(error).toMatchObject({ status: 0, reason: "invalid_credentials", retryable: false });
+    }
+    expect(r.calls).toEqual([]);
   });
 
   it("refuses an unusable HTTP token before sending (status 0, invalid_credentials)", async () => {

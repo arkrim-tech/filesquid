@@ -2,7 +2,7 @@
  * UI tests for <fs-app-shell>: strict DOM assertions on what the shell renders
  * for a distribution, with a fake API client.
  */
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FsAppShell, defineElements } from "../../src/index";
 import type { Distribution } from "../../src/distribution";
 import { ApiError, type HealthStatus } from "../../src/api/client";
@@ -97,5 +97,27 @@ describe("<fs-app-shell>", () => {
       "API: ok (filesquid)",
     );
     expect(shell.shadowRoot?.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("ignores a stale pre-sign-in answer that arrives after the signed-in one", async () => {
+    let rejectFirst: (error: unknown) => void = () => undefined;
+    const first = new Promise<HealthStatus>((_, reject) => (rejectFirst = reject));
+    let calls = 0;
+    const shell = mount(() => {
+      calls += 1;
+      if (calls === 1) return first;
+      return Promise.resolve({ status: "ok", product: "filesquid", schema_version: 1 });
+    });
+    await shell.refreshHealth();
+    const debug = vi.spyOn(console, "debug").mockImplementation(() => undefined);
+    rejectFirst(new ApiError(401, "/api/v1/health", { reason: "missing_credentials" }));
+    await settle();
+    expect(calls).toBe(2);
+    expect(shell.shadowRoot?.querySelector('[role="status"]')?.textContent).toBe(
+      "API: ok (filesquid)",
+    );
+    expect(shell.shadowRoot?.querySelector('[role="alert"]')).toBeNull();
+    expect(debug).toHaveBeenCalledOnce();
+    debug.mockRestore();
   });
 });

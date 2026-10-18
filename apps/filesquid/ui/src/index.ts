@@ -12,7 +12,7 @@ export type { MonitorClient, MonitorOptions, TokenStore } from "./components/fs-
 export * from "./api/client";
 export { createHostClient, DESKTOP_EVENT, LAUNCH_TOKEN_GLOBAL, launchToken } from "./api/host";
 export { MONITOR_ROUTE, bindMonitorRoute, memoryTokenStore } from "./app/routes";
-export { denialLabel } from "./components/denial";
+export { denialLabel, type DenialText } from "./components/denial";
 export type { Distribution } from "./distribution";
 export { REQUIRED_LABEL_KEYS, missingLabels, type LabelKey, type LabelTable } from "./theme/labels";
 export { REQUIRED_TOKENS, missingTokens } from "./theme/tokens";

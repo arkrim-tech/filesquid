@@ -19,11 +19,16 @@ npm run contract:types # regenerate src/api/schema.d.ts from crates/api/openapi.
 
 ## Authenticating to the FileSquid API
 
-The API is deny-by-default ([ADR 030](../../../resources/architecture/030-filesquid-api-and-transports.md) Decision 5, [API-S-004](../crates/api/resources/srs.md)). Every request from `FileSquidClient` carries `Authorization: Bearer <token>`. A browser cannot set headers on a WebSocket, so the event channel offers the subprotocols `filesquid.events.v1` and `filesquid.bearer.<token>` instead. Only the liveness probe `GET /api/v1/health/live` is public.
+The API is deny-by-default ([ADR 030](../../../resources/architecture/030-filesquid-api-and-transports.md) Decision 5, [API-S-004](../crates/api/resources/srs.md)). With a known token, every request from `FileSquidClient` carries `Authorization: Bearer <token>`; without one it sends no credential and the API answers `missing_credentials`. A browser cannot set headers on a WebSocket, so the event channel offers the subprotocols `filesquid.events.v1` and `filesquid.bearer.<token>` instead. Only the liveness probe `GET /api/v1/health/live` is public.
 
 **Desktop host.** Nothing to configure. `filesquid-desktop` generates a new token at every launch and defines it as `window.__FILESQUID_LAUNCH_TOKEN__` for its own pages only. `createHostClient()` reads it on every request.
 
-**Server host.** Until server accounts arrive, the token is the administrator token (`FILESQUID_ADMIN_TOKEN`, or the generated `<data dir>/admin-token`; see the root [README](../../../README.md)). Pass it through client configuration:
+**Server host.** Until server accounts arrive, the token is the administrator token ([API-S-016](../crates/api/resources/srs.md); details in the root [README](../../../README.md)):
+
+- `FILESQUID_ADMIN_TOKEN`, on every platform. Surrounding whitespace is trimmed and a blank value counts as unset; any other value must be exactly 64 hexadecimal characters (256 bits), or the server refuses to start. Generate one with `openssl rand -hex 32`.
+- Otherwise, on Linux and macOS only, the token the server generates at first start into `admin-token` in its data directory (`FILESQUID_DATA_DIR`, owner-only permissions). On Windows the server writes no token file and refuses to start until `FILESQUID_ADMIN_TOKEN` is set.
+
+Pass the token through client configuration:
 
 ```ts
 import { FileSquidClient, createHostClient, memoryTokenStore } from "@filesquid/ui";
@@ -38,7 +43,7 @@ const hostClient = createHostClient(window, () => tokens.get());
 
 `token` is either a string or a function the client asks on every request, so a token entered later is used at once. On the desktop the launch token takes precedence. In the default FileSquid and ImageSquid apps, open **Monitor** (`#/monitor`) and enter the administrator token; the shell's API status reloads with it.
 
-The token is kept in memory only: never in localStorage, sessionStorage, a cookie or the URL, and never logged, rendered or put in an error message. Reloading the page forgets it. A token with characters that neither a header nor a subprotocol can carry is refused before anything is sent.
+The token is kept in memory only: never in localStorage, sessionStorage, a cookie or the URL, and never logged, rendered or put in an error message. Reloading the page forgets it. A supplied token that is empty, or has characters that neither a header nor a subprotocol can carry, is refused before anything is sent. `memoryTokenStore` returns no token for an empty entry, so a blank sign-in reads as missing credentials.
 
 **Errors.** A refused call rejects with `ApiError`, which carries the contract's `status`, `code`, `retryable` and, for authorisation denials, `reason`:
 

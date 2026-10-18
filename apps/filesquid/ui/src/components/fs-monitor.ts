@@ -229,8 +229,10 @@ export class FsMonitor extends HTMLElement {
   }
 
   /**
-   * Show the sign-in form with the denial reason for 401/403 when a token store exists,
-   * otherwise an alert naming the reason (or the error message for other failures).
+   * Show the sign-in form, with the denial reason when there is one, when a token store exists
+   * and the error is a 401/403 or carries a denial reason (including a token the client
+   * refused to send, status 0). Otherwise show an alert naming the reason, or the error
+   * message for other failures.
    */
   private showError(error: unknown): void {
     this.stop();

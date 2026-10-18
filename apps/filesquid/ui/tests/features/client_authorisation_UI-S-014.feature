@@ -46,10 +46,11 @@ Feature: Client authorisation against the deny-by-default API
     And reloading the page should ask for the token again
 
   Scenario: An unusable token is refused before sending
-    Given the configured token contains characters a header or subprotocol cannot carry
+    Given the configured token is empty or contains characters a header or subprotocol cannot carry
     When the client makes a call
     Then no request should be sent
-    And the call should fail as invalid credentials without echoing the token
+    And the call should fail with status 0 and reason "invalid_credentials"
+    And the error should not echo the token
 
   # Source
   # - apps/filesquid/ui/resources/srs.md UI-S-014

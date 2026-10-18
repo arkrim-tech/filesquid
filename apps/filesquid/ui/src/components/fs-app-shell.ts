@@ -34,6 +34,8 @@ const STYLE = `
 export class FsAppShell extends HTMLElement {
   private distribution?: Distribution;
   private client?: ShellClient;
+  /** Number of the newest health read; answers to older reads are discarded. */
+  private healthRequest = 0;
 
   constructor() {
     super();
@@ -99,17 +101,27 @@ export class FsAppShell extends HTMLElement {
     await this.loadHealth();
   }
 
-  /** Read API health and show it as a status line or an alert. Network I/O via the client. */
+  /**
+   * Read API health and show it as a status line or an alert. Reads may overlap (the first
+   * render and a refresh after sign-in); only the newest one updates the line, so a slow
+   * answer from before sign-in cannot overwrite the signed-in status. Network I/O via the client.
+   */
   private async loadHealth(): Promise<void> {
     const target = this.shadowRoot?.querySelector<HTMLElement>(".api");
     const labels = this.distribution?.labels;
     if (!target || !labels || !this.client) return;
+    const request = ++this.healthRequest;
     try {
       const health = await this.client.health();
+      if (request !== this.healthRequest) return;
       target.setAttribute("role", "status");
       delete target.dataset.reason;
       target.textContent = `${labels.apiStatus}: ${health.status} (${health.product})`;
     } catch (error) {
+      if (request !== this.healthRequest) {
+        console.debug("FileSquid discarded a superseded API health answer", error);
+        return;
+      }
       showHealthError(target, labels, error);
     }
   }

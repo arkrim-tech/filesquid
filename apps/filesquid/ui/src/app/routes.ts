@@ -12,14 +12,18 @@ export const MONITOR_ROUTE = "#/monitor";
  * Keep a token typed in at run time (the server host's administrator token) in memory only:
  * no localStorage, no sessionStorage, no URL. It is gone when the page reloads or closes.
  *
+ * An empty value (for example a blank form field) is not a token: `get` then returns
+ * undefined, so the client sends no credential and the API answers `missing_credentials`.
+ *
  * @param onSet Called with no arguments after a token is set, for example to reload the
  *   shell's API status; it never receives the token.
- * @returns A token store for {@link FileSquidClient} and `<fs-monitor>`.
+ * @returns A token store for `<fs-monitor>`; give the client its getter as the `token`
+ *   function (`() => store.get()`), not the store itself.
  */
 export function memoryTokenStore(onSet?: () => void): TokenStore {
   let token: string | undefined;
   return {
-    get: () => token,
+    get: () => (token === "" ? undefined : token),
     set(value: string) {
       token = value;
       onSet?.();
