@@ -16,7 +16,7 @@ use filesquid_ocfl::storage::{
 use filesquid_ocfl::validate::{validate_object, ValidationReport};
 use filesquid_ocfl::write::{
     rfc3339_utc, Clock, CommitError, CommitReceipt, LeaseConfig, LeaseStore, ObjectWriter,
-    VersionDraft,
+    RepairError, RepairReceipt, VersionDraft,
 };
 use filesquid_ocfl::VersionNum;
 
@@ -151,6 +151,21 @@ impl<B: StorageBackend> Rig<B> {
     ) -> Result<CommitReceipt, CommitError> {
         self.try_commit(holder, expected, draft)
             .expect("the commit completed")
+    }
+
+    /// Repair the version inventory of the object's head as `holder`
+    /// (OCFL-S-020). `Err` when the writer "crashed".
+    pub fn try_repair(
+        &self,
+        holder: &str,
+    ) -> Result<Result<RepairReceipt, RepairError>, StorageError> {
+        let writer = self.writer(holder);
+        complete_immediately(writer.repair_version_inventory(ROOT))
+    }
+
+    /// Repair the head's version inventory; the writer must not crash.
+    pub fn repair(&self, holder: &str) -> Result<RepairReceipt, RepairError> {
+        self.try_repair(holder).expect("the repair completed")
     }
 
     /// Commit v1 with `a.txt` and `b.txt` and return its receipt.

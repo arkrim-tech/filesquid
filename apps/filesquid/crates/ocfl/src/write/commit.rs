@@ -53,9 +53,9 @@ pub struct CommitReceipt {
 /// Writes versions of objects into one storage root, reserving each
 /// version in `R` as the writer `holder`.
 pub struct ObjectWriter<'a, B, R> {
-    storage: &'a B,
-    reservations: &'a R,
-    holder: String,
+    pub(super) storage: &'a B,
+    pub(super) reservations: &'a R,
+    pub(super) holder: String,
 }
 
 impl<'a, B: StorageBackend, R: VersionReservations> ObjectWriter<'a, B, R> {

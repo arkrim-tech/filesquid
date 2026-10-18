@@ -6,7 +6,7 @@
 //! ([`next_start`](crate::guard::next_start)), so a faulty backend cannot
 //! make the writer skip a key it must reconcile or verify.
 
-use super::error::CommitError;
+use crate::error::OcflError;
 use crate::guard::next_start;
 use crate::inventory::VersionNum;
 use crate::read::small::child;
@@ -21,13 +21,13 @@ const MAX_REQUESTS: usize = MAX_WALK_ENTRIES + 1;
 ///
 /// # Errors
 ///
-/// [`CommitError::Storage`] for a backend error, a faulty continuation, or
+/// [`OcflError::Storage`] for a backend error, a faulty continuation, or
 /// more than [`MAX_WALK_ENTRIES`] keys.
 pub(crate) async fn list_version_keys<B: StorageBackend>(
     storage: &B,
     root: &str,
     version: &VersionNum,
-) -> Result<Vec<StorageKey>, CommitError> {
+) -> Result<Vec<StorageKey>, OcflError> {
     let prefix = format!("{}/", child(root, &version.to_string()));
     let mut keys = Vec::new();
     let mut after: Option<StorageKey> = None;
@@ -46,7 +46,7 @@ pub(crate) async fn list_version_keys<B: StorageBackend>(
 }
 
 /// The error for a listing above `limit`.
-fn over_bound(what: &'static str, limit: usize) -> CommitError {
+fn over_bound(what: &'static str, limit: usize) -> OcflError {
     StorageError::LimitExceeded {
         what,
         limit: limit as u64,

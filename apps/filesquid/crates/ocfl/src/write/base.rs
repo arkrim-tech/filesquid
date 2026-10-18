@@ -7,11 +7,14 @@
 //! (root inventory for `v1` written, sidecar not yet: E058).
 
 use super::error::CommitError;
-use crate::inventory::{Inventory, VersionNum, INVENTORY_FILE, MAX_INVENTORY_BYTES};
+use crate::inventory::{
+    sidecar_name, verify_sidecar, Inventory, VersionNum, INVENTORY_FILE, MAX_INVENTORY_BYTES,
+    MAX_SIDECAR_BYTES,
+};
 use crate::read::committed::{at_inventory, read_committed, Committed};
-use crate::read::small::{key_in, read_small_tagged};
+use crate::read::small::{key_in, read_small, read_small_tagged};
 use crate::read::ReadError;
-use crate::storage::{ETag, StorageBackend, StorageError};
+use crate::storage::{ETag, StorageBackend, StorageError, StorageKey};
 
 /// The base of a commit.
 #[derive(Debug, Clone, Default)]
@@ -108,28 +111,71 @@ async fn uncommitted_first<B: StorageBackend>(
     })
 }
 
-/// Require the committed head's own version inventory. A reader finds the
-/// committed version through it while a new root inventory is not yet
-/// committed by its sidecar, so without it a crash mid-publication would
-/// leave the object unreadable (E060).
+/// Require the committed head's own version inventory, byte-identical to
+/// the committed inventory, and a sidecar that matches it. A reader finds
+/// the committed version through that inventory while a new root inventory
+/// is not yet committed by its sidecar, so without it a crash
+/// mid-publication would leave the object unreadable (E060). A head whose
+/// version inventory has no sidecar (an interrupted version-inventory
+/// repair, OCFL-S-020) is refused too, so the repair is completed before
+/// the head becomes an older version.
 ///
 /// # Errors
 ///
-/// [`CommitError::MissingVersionInventory`] when it is absent, or a backend
-/// error.
+/// [`CommitError::MissingVersionInventory`] naming the first missing file,
+/// [`CommitError::VersionInventoryMismatch`] for a version inventory that
+/// differs from the committed inventory or a sidecar that does not match
+/// it, or a backend error.
 pub(crate) async fn require_head_inventory<B: StorageBackend>(
     storage: &B,
     root: &str,
     base: &Base,
 ) -> Result<(), CommitError> {
-    let Some(head) = base.head() else {
+    let Some(committed) = base.committed.as_ref() else {
         return Ok(());
     };
+    let inventory = &committed.inventory;
+    let head = &inventory.head;
     let key = key_in(root, &format!("{head}/{INVENTORY_FILE}"))?;
-    if storage.exists(&key).await? {
-        return Ok(());
+    let bytes = read_head_file(storage, &key, MAX_INVENTORY_BYTES).await?;
+    if bytes != committed.bytes {
+        return Err(CommitError::VersionInventoryMismatch {
+            key: key.to_string(),
+        });
     }
-    Err(CommitError::MissingVersionInventory {
-        key: key.to_string(),
-    })
+    let algorithm = inventory.digest_algorithm;
+    let sidecar_key = key_in(root, &format!("{head}/{}", sidecar_name(algorithm)))?;
+    let sidecar = read_head_file(storage, &sidecar_key, MAX_SIDECAR_BYTES).await?;
+    if verify_sidecar(algorithm, &bytes, &sidecar).is_err() {
+        return Err(CommitError::VersionInventoryMismatch {
+            key: sidecar_key.to_string(),
+        });
+    }
+    Ok(())
+}
+
+/// Read one file of the head version directory, at most `limit` bytes.
+///
+/// # Errors
+///
+/// [`CommitError::MissingVersionInventory`] when it is absent,
+/// [`CommitError::VersionInventoryMismatch`] when it is above `limit`, or a
+/// backend error.
+async fn read_head_file<B: StorageBackend>(
+    storage: &B,
+    key: &StorageKey,
+    limit: usize,
+) -> Result<Vec<u8>, CommitError> {
+    match read_small(storage, key, limit, "head version inventory").await {
+        Ok(bytes) => Ok(bytes),
+        Err(ReadError::Storage(StorageError::NotFound { .. })) => {
+            Err(CommitError::MissingVersionInventory {
+                key: key.to_string(),
+            })
+        }
+        Err(ReadError::Format(_)) => Err(CommitError::VersionInventoryMismatch {
+            key: key.to_string(),
+        }),
+        Err(err) => Err(err.into()),
+    }
 }
