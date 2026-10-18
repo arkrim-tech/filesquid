@@ -20,9 +20,7 @@ use filesquid_desktop_lib::app_window::{
 };
 use filesquid_desktop_lib::host_subscriber;
 use filesquid_desktop_lib::ipc_observer::TauriIpcObserver;
-use filesquid_desktop_lib::panic_journal::{
-    install_panic_hook, writer_panic_line, PANIC_OPERATION,
-};
+use filesquid_desktop_lib::panic_journal::{install_panic_hook, record_panic, PANIC_OPERATION};
 use std::io::Write;
 use std::sync::{Arc, Mutex, OnceLock};
 use tauri::test::{mock_builder, mock_context, noop_assets, MockRuntime};
@@ -411,20 +409,24 @@ fn a_panic_on_the_journal_writer_thread_is_never_queued_and_reaches_stdout_redac
     let thread = std::thread::Builder::new()
         .name("filesquid-journal".into())
         .spawn(|| {
-            journaled(|| {
+            let mut stdout = Vec::new();
+            let entries = journaled(|| {
                 assert!(std::panic::catch_unwind(|| panic!("Secret Title")).is_err());
-            })
+                record_panic(&mut stdout);
+            });
+            (entries, String::from_utf8(stdout).expect("UTF-8"))
         })
         .expect("thread");
-    let entries = thread.join().expect("joined");
+    let (entries, stdout) = thread.join().expect("joined");
     assert!(
         entries.iter().all(|e| e.operation != PANIC_OPERATION),
         "{entries:?}"
     );
-    let line: serde_json::Value = serde_json::from_str(&writer_panic_line()).expect("JSON");
+    let line: serde_json::Value = serde_json::from_str(stdout.trim()).expect("one JSON line");
     assert_eq!(line["operation"], PANIC_OPERATION);
+    assert_eq!(line["actor"], "system");
     assert_eq!(line["journal_unavailable"], true);
-    assert!(!writer_panic_line().contains("Secret"));
+    assert!(!stdout.contains("Secret"), "{stdout}");
 }
 
 #[test]

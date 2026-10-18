@@ -6,11 +6,13 @@
 //! may hold content) through the host's tracing layer, then flushes the journal so the entry
 //! survives a panic that ends the process, and then runs the previous hook.
 //!
-//! Two panics cannot reach the journal: one before the journal opens (the hook is installed
-//! first, so it reaches stdout only), and one on the journal writer's own thread, which is
-//! printed to stdout as a JSON line marked `journal_unavailable` ([`writer_panic_line`]).
+//! Two panics cannot reach the journal: one before the journal opens (its record reaches
+//! stdout only), and one on the journal writer's own thread, whose record is printed to stdout
+//! as a JSON line marked `journal_unavailable` ([`writer_panic_line`]). In every case the
+//! previous hook (Rust's default) still prints the panic message to stderr.
 
 use filesquid_api::journal_writer::JournalSender;
+use std::io::Write;
 use std::sync::{Arc, Once, OnceLock, RwLock};
 
 /// Journal operation of a host thread panic.
@@ -21,6 +23,7 @@ pub const PANIC_OPERATION: &str = "desktop.panic";
 pub fn writer_panic_line() -> String {
     serde_json::json!({
         "operation": PANIC_OPERATION,
+        "actor": "system",
         "outcome": "failed",
         "level": "error",
         "error_code": "panic",
@@ -50,18 +53,21 @@ pub fn install_panic_hook(journal: Arc<OnceLock<JournalSender>>) {
     INSTALL.call_once(|| {
         let previous = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
-            journal_panic();
+            record_panic(&mut std::io::stdout());
             previous(info);
         }));
     });
 }
 
-/// Journal one panic without its message and flush the journal. On the journal writer's own
-/// thread nothing is queued (the queue may be full and that thread is its only consumer), so
-/// the record goes to stdout only. Writes to the journal or stdout.
-fn journal_panic() {
+/// Record one panic of the current thread without its message: journal it and flush the
+/// journal; on the journal writer's own thread nothing is queued (the queue may be full and
+/// that thread is its only consumer), so [`writer_panic_line`] is written to `stdout` instead.
+/// The panic hook calls it with the process's stdout. Writes to the journal or `stdout`.
+pub fn record_panic(stdout: &mut dyn Write) {
     if std::thread::current().name() == Some(JOURNAL_THREAD) {
-        println!("{}", writer_panic_line());
+        if let Err(err) = writeln!(stdout, "{}", writer_panic_line()) {
+            eprintln!("panic record not written: {err}");
+        }
         return;
     }
     tracing::error!(

@@ -274,3 +274,8 @@ None.
 - Navigation refusals carry the actor `webview:<label>`; a future download event kind is refused and journaled.
 - The BDD permission scenario asserts the `camera` target; the packaged-window redaction check pages through the whole journal.
 - DE-S-002, DE-S-003, ADR 002, the plan row, README and the root SRS note now state the `postMessage` path, the `webview` actor of trace-read refusals and the panic exceptions exactly.
+
+## Cubic round 2 fixes
+
+- `record_panic(stdout)` takes its output stream, so the test reads the writer-thread fallback line the hook actually writes; the line carries `actor: system`.
+- ADR 002, README, the plan row and `panic_journal` state that Rust's default hook still prints the panic message to stderr, and which fields each entry kind carries (error codes on refusals and failures; `system` actor for host events).

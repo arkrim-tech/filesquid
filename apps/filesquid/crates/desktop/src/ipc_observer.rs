@@ -29,8 +29,8 @@
 //! The other webview errors (an invalid window `data_directory`) are journaled as
 //! `tauri::webview.error` with the code `webview_error`, without their text.
 //!
-//! Tauri's trace does not name the webview, so these entries carry the actor `webview`
-//! rather than `webview:<label>`.
+//! Tauri's trace does not name the webview, so the refusal entries carry the actor `webview`
+//! rather than `webview:<label>`; `tauri::webview.error` entries carry the actor `system`.
 
 use crate::ipc_gate::{command_id, Refusal, REFUSED_OPERATION};
 use filesquid_api::journal::{JournalEntry, Level as JournalLevel, Outcome};
