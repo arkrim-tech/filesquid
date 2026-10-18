@@ -3,6 +3,11 @@
  * health with reasons, live processes, storage, throughput and queues, and the activity
  * journal with search, live tail and JSON Lines export. Every value is rendered with
  * `textContent`; journal data never becomes markup.
+ *
+ * Accessibility (UI-S-016): each table is named by its section heading and sits in a named,
+ * focusable scroll region, so narrow windows scroll the table rather than the page; when a
+ * re-render removes the focused element, focus moves to the token field, the alert or the first
+ * section heading, and never moves on a background load.
  */
 import {
   ApiError,
@@ -15,6 +20,8 @@ import {
 } from "../api/client";
 import type { LabelKey, LabelTable } from "../theme/labels";
 import { denialLabel, type DenialText } from "./denial";
+import { A11Y_STYLE } from "./a11y-style";
+import { replaceKeepingFocus } from "../a11y/focus";
 
 /** The part of the API client the Monitor needs (injectable in tests). */
 export type MonitorClient = Pick<
@@ -63,17 +70,18 @@ const GIB = 1024 ** 3;
 
 const STYLE = `
   :host { display: block; color: var(--fs-on-surface); font-family: var(--fs-font-sans); }
-  section { margin-bottom: var(--fs-space-5); padding: var(--fs-space-4); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface); }
+  section { margin-block-end: var(--fs-space-5); padding: var(--fs-space-4); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface); }
   h2 { margin: 0 0 var(--fs-space-2); font-size: var(--fs-font-size-body); }
   table { width: 100%; border-collapse: collapse; }
-  th, td { text-align: left; padding: var(--fs-space-1) var(--fs-space-2); border-bottom: 1px solid var(--fs-outline); }
+  .scroll { overflow-x: auto; }
+  th, td { text-align: start; padding: var(--fs-space-1) var(--fs-space-2); border-block-end: 1px solid var(--fs-outline); }
   td { font-family: var(--fs-font-mono); }
   dl { display: grid; grid-template-columns: max-content 1fr; gap: var(--fs-space-1) var(--fs-space-4); margin: 0; }
   dd { margin: 0; font-family: var(--fs-font-mono); }
   [data-status="ok"] .status { color: var(--fs-primary); }
   [data-status="degraded"] .status, [data-status="failing"] .status, tr[data-state="stalled"], tr[data-state="failed"] { color: var(--fs-error); }
-  form { display: flex; gap: var(--fs-space-2); align-items: center; margin-bottom: var(--fs-space-2); }
-  [role="alert"] { color: var(--fs-error); }
+  form { display: flex; flex-wrap: wrap; gap: var(--fs-space-2); align-items: center; margin-block-end: var(--fs-space-2); }
+  [role="alert"] { color: var(--fs-error); overflow-wrap: anywhere; }
 `;
 
 /** Custom element that renders the Monitor dashboard. */
@@ -232,7 +240,8 @@ export class FsMonitor extends HTMLElement {
    * Show the sign-in form, with the denial reason when there is one, when a token store exists
    * and the error is a 401/403 or carries a denial reason (including a token the client
    * refused to send, status 0). Otherwise show an alert naming the reason, or the error
-   * message for other failures.
+   * message for other failures. When this removed the focused element, focus moves to the
+   * token field or the alert.
    */
   private showError(error: unknown): void {
     this.stop();
@@ -244,14 +253,15 @@ export class FsMonitor extends HTMLElement {
     const tokens = this.options?.tokens;
     if (tokens && (denied || denial)) {
       const note = denial ? [denialNote(denial)] : [];
-      root.replaceChildren(style(), ...note, this.tokenForm(labels, tokens));
+      const form = this.tokenForm(labels, tokens);
+      replaceKeepingFocus(root, [style(), ...note, form], () => form.querySelector("input"));
       return;
     }
     const message = denial?.text ?? (error instanceof Error ? error.message : String(error));
     const alert = el("p", `${labels.monitorUnavailable}: ${message}`);
     alert.setAttribute("role", "alert");
     if (denial) alert.dataset.reason = denial.reason;
-    root.replaceChildren(style(), alert);
+    replaceKeepingFocus(root, [style(), alert], () => alert);
   }
 
   /** Build the token form; submitting keeps the token in the store, clears the field, reloads. */
@@ -277,19 +287,31 @@ export class FsMonitor extends HTMLElement {
     return form;
   }
 
-  /** Create the dashboard's empty sections. */
+  /**
+   * Create the dashboard's empty sections. When this removed the focused element (the sign-in
+   * form), focus moves to the first section heading.
+   */
   private renderLayout(): void {
     const root = this.shadowRoot;
     const labels = this.options?.labels;
     if (!root || !labels) return;
-    root.replaceChildren(
-      style(),
+    const sections = [
       section("health", labels.monitorHealth, el("p", ""), document.createElement("ul")),
-      section("processes", labels.monitorProcesses, processTable(labels)),
+      section(
+        "processes",
+        labels.monitorProcesses,
+        scrollRegion("processes", processTable(labels)),
+      ),
       section("storage", labels.monitorStorage, document.createElement("dl")),
       section("rates", labels.monitorRates, document.createElement("dl")),
-      section("journal", labels.monitorJournal, this.journalForm(labels), journalTable(labels)),
-    );
+      section(
+        "journal",
+        labels.monitorJournal,
+        this.journalForm(labels),
+        scrollRegion("journal", journalTable(labels)),
+      ),
+    ];
+    replaceKeepingFocus(root, [style(), ...sections], () => root.querySelector("h2"));
     root.querySelector('[data-section="health"] p')?.classList.add("status");
   }
 
@@ -487,12 +509,34 @@ function emptyRow(text: string, columns: number): HTMLTableRowElement {
   return row;
 }
 
+/** Id of a section's heading, which names the section's table and scroll region. */
+function headingId(name: string): string {
+  return `monitor-${name}-heading`;
+}
+
 /** Build a titled dashboard section. */
 function section(name: string, title: string, ...children: Node[]): HTMLElement {
   const result = document.createElement("section");
   result.dataset.section = name;
-  result.append(el("h2", title), ...children);
+  const heading = el("h2", title);
+  heading.id = headingId(name);
+  result.append(heading, ...children);
   return result;
+}
+
+/**
+ * Wrap a section's table in a scroll region named by the section heading. The region is
+ * focusable so a keyboard user can scroll a wide table in a narrow window.
+ */
+function scrollRegion(name: string, content: HTMLTableElement): HTMLDivElement {
+  const region = document.createElement("div");
+  region.className = "scroll";
+  region.setAttribute("role", "region");
+  region.setAttribute("tabindex", "0");
+  region.setAttribute("aria-labelledby", headingId(name));
+  content.setAttribute("aria-labelledby", headingId(name));
+  region.append(content);
+  return region;
 }
 
 /** Build a term/value pair for a definition list. */
@@ -507,9 +551,9 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, text: string): HTMLEl
   return result;
 }
 
-/** Create the component stylesheet. */
+/** Create the component stylesheet, the shared accessibility rules first. */
 function style(): HTMLStyleElement {
-  return el("style", STYLE);
+  return el("style", A11Y_STYLE + STYLE);
 }
 
 /** True for non-null objects (event payload guard). */

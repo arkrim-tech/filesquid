@@ -8,16 +8,19 @@
 import "@filesquid/ui/theme/tokens.css";
 import "./theme/tokens.css";
 import {
+  applyLocale,
   bindMonitorRoute,
   createHostClient,
   createThemeStore,
   defineElements,
   detectHost,
   memoryTokenStore,
+  resolveLocale,
   type FsAppShell,
 } from "@filesquid/ui";
 import { imagesquid } from "./distribution";
 
+applyLocale(document, resolveLocale(imagesquid));
 const theme = createThemeStore(window);
 theme.start();
 defineElements();

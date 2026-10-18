@@ -29,7 +29,23 @@ export {
   type PortError,
 } from "./api/commands";
 export { createHostClient, DESKTOP_EVENT, LAUNCH_TOKEN_GLOBAL, launchToken } from "./api/host";
-export { MONITOR_ROUTE, bindMonitorRoute, memoryTokenStore } from "./app/routes";
+export { MONITOR_ROUTE, bindMonitorRoute, memoryTokenStore, type RouteHost } from "./app/routes";
+export {
+  accessibilityViolations,
+  accessibleName,
+  type A11yRule,
+  type A11yViolation,
+} from "./a11y/audit";
+export { deepActiveElement, focusElement, recoverFocus, replaceKeepingFocus } from "./a11y/focus";
+export {
+  DEFAULT_LOCALE,
+  applyLocale,
+  resolveLocale,
+  type Locale,
+  type TextDirection,
+} from "./a11y/locale";
+export { REDUCED_MOTION_QUERY, prefersReducedMotion, type MotionEnvironment } from "./a11y/motion";
+export { A11Y_STYLE } from "./components/a11y-style";
 export { denialLabel, type DenialText } from "./components/denial";
 export { logoSource, type Distribution, type DistributionLogo } from "./distribution";
 export * from "./theme/index";

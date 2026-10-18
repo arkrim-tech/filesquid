@@ -3,6 +3,11 @@
  * distribution's brand (logo and product name, with a dark-surface logo in the dark theme),
  * the theme control, its vocabulary for the main destinations, and the API status.
  * An authorisation denial is shown with the label for its reason (API-S-004).
+ *
+ * Accessibility contracts (UI-S-016): a skip control first in the Tab order moves focus to
+ * `main`; `header`, a named `nav` and `main` are the landmarks; the layout uses logical
+ * properties, wraps at large text sizes and stacks the navigation above `main` below 40rem;
+ * when a re-render removes the focused element, focus moves to `main`.
  */
 import type { Distribution } from "../distribution";
 import { logoSource } from "../distribution";
@@ -12,6 +17,8 @@ import type { HealthStatus } from "../api/client";
 import { MONITOR_ROUTE } from "../app/routes";
 import { denialLabel } from "./denial";
 import type { FsThemeControl } from "./fs-theme-control";
+import { A11Y_STYLE } from "./a11y-style";
+import { focusElement, recoverFocus } from "../a11y/focus";
 
 /** The part of the API client the shell needs (injectable in tests). */
 export interface ShellClient {
@@ -30,19 +37,25 @@ export interface ShellOptions {
 }
 
 const STYLE = `
-  :host { display: block; min-height: 100vh; background: var(--fs-surface); color: var(--fs-on-surface); font-family: var(--fs-font-sans); }
-  header { display: flex; align-items: center; gap: var(--fs-space-3); padding: var(--fs-space-3) var(--fs-space-4); border-bottom: 1px solid var(--fs-outline); }
-  h1 { margin: 0; font-family: var(--fs-font-heading); font-size: var(--fs-font-size-title); font-weight: 700; color: var(--fs-on-surface); }
-  img { height: 32px; width: auto; }
-  fs-theme-control { margin-left: auto; }
-  .body { display: flex; }
-  nav { width: 240px; padding: var(--fs-space-4); background: var(--fs-surface-container); min-height: calc(100vh - 57px); box-sizing: border-box; }
+  :host { position: relative; display: grid; grid-template-rows: auto 1fr; min-height: 100vh; background: var(--fs-surface); color: var(--fs-on-surface); font-family: var(--fs-font-sans); }
+  .skip { position: absolute; inset-inline-start: var(--fs-space-2); inset-block-start: var(--fs-space-2); z-index: 1; padding: var(--fs-space-2) var(--fs-space-3); border: 0; border-radius: var(--fs-radius); background: var(--fs-primary); color: var(--fs-on-primary); font-family: inherit; font-size: var(--fs-font-size-body); font-weight: 600; cursor: pointer; }
+  .skip:not(:focus) { width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: var(--fs-space-3); padding: var(--fs-space-3) var(--fs-space-4); border-block-end: 1px solid var(--fs-outline); }
+  h1 { margin: 0; min-width: 0; overflow-wrap: anywhere; font-family: var(--fs-font-heading); font-size: var(--fs-font-size-title); font-weight: 700; color: var(--fs-on-surface); }
+  img { height: 2rem; width: auto; }
+  fs-theme-control { margin-inline-start: auto; }
+  .body { display: flex; min-width: 0; }
+  nav { flex: 0 0 15rem; box-sizing: border-box; padding: var(--fs-space-4); background: var(--fs-surface-container); }
   ul { list-style: none; margin: 0; padding: 0; }
   li { padding: var(--fs-space-2) var(--fs-space-3); border-radius: var(--fs-radius); }
-  a { color: inherit; text-decoration: none; }
-  main { flex: 1; padding: var(--fs-space-4); }
-  [role="status"] { font-family: var(--fs-font-mono); color: var(--fs-on-surface-variant); }
-  [role="alert"] { color: var(--fs-error); }
+  a { color: inherit; text-decoration: none; border-radius: var(--fs-radius); }
+  main { flex: 1 1 auto; min-width: 0; padding: var(--fs-space-4); }
+  [role="status"] { font-family: var(--fs-font-mono); color: var(--fs-on-surface-variant); overflow-wrap: anywhere; }
+  [role="alert"] { color: var(--fs-error); overflow-wrap: anywhere; }
+  @media (max-width: 40rem) {
+    .body { flex-direction: column; }
+    nav { flex-basis: auto; }
+  }
 `;
 
 /** Custom element that renders the application frame. */
@@ -89,26 +102,38 @@ export class FsAppShell extends HTMLElement {
     this.render();
   }
 
-  /** Build the frame, then load API status. */
+  /**
+   * Move focus to the main area, for the skip control and after a route change. Side effect:
+   * changes focus.
+   */
+  focusMain(): void {
+    const main = this.shadowRoot?.querySelector("main");
+    if (main) focusElement(main);
+  }
+
+  /**
+   * Build the frame, then load API status. When the re-render removed the focused element,
+   * focus moves to `main`.
+   */
   private render(): void {
     const root = this.shadowRoot;
     const dist = this.distribution;
     if (!root || !dist) return;
     const { labels } = dist;
+    const hadFocus = root.activeElement !== null;
     root.innerHTML = `
-      <style>${STYLE}</style>
+      <style>${A11Y_STYLE}${STYLE}</style>
+      <button class="skip" type="button"></button>
       <header>
         <img alt="">
         <h1></h1>
       </header>
       <div class="body">
-        <nav aria-label="Main"><ul></ul></nav>
-        <main><p class="api"></p><slot></slot></main>
+        <nav><ul></ul></nav>
+        <main tabindex="-1"><p class="api"></p><slot></slot></main>
       </div>`;
-    root.querySelector("img")?.setAttribute("alt", dist.logo.alt);
+    this.fillText(root, dist);
     this.showLogo();
-    const h1 = root.querySelector("h1");
-    if (h1) h1.textContent = dist.productName;
     this.mountThemeControl(root, labels);
     const items = [
       labels.libraries,
@@ -119,7 +144,21 @@ export class FsAppShell extends HTMLElement {
     root
       .querySelector("ul")
       ?.replaceChildren(...items.map((text) => li(text)), li(labels.monitor, MONITOR_ROUTE));
+    recoverFocus(root, hadFocus, () => root.querySelector("main"));
     void this.loadHealth();
+  }
+
+  /** Word the frame from the distribution: logo alt, product name, skip control and nav name. */
+  private fillText(root: ShadowRoot, dist: Distribution): void {
+    root.querySelector("img")?.setAttribute("alt", dist.logo.alt);
+    const h1 = root.querySelector("h1");
+    if (h1) h1.textContent = dist.productName;
+    const skip = root.querySelector<HTMLButtonElement>(".skip");
+    if (skip) {
+      skip.textContent = dist.labels.skipToContent;
+      skip.addEventListener("click", () => this.focusMain());
+    }
+    root.querySelector("nav")?.setAttribute("aria-label", dist.labels.navigationMain);
   }
 
   /** Point the header logo at the variant for the theme shown now. */

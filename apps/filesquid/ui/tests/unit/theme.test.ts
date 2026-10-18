@@ -10,12 +10,15 @@ import labels from "../../src/theme/labels.en.json";
 import { REQUIRED_LABEL_KEYS, missingLabels } from "../../src/theme/labels";
 import {
   CONTRAST_PAIRS,
+  FOCUS_CONTRAST_PAIRS,
   REQUIRED_TOKENS,
+  THEME_INDEPENDENT_TOKENS,
   contrastFailures,
   invalidColourTokens,
   missingTokens,
   tokenValues,
 } from "../../src/theme/tokens";
+import { NON_TEXT_CONTRAST } from "../../src/theme/contrast";
 import * as themeEntry from "../../src/theme/index";
 
 const tokensCss = readFileSync(new URL("../../src/theme/tokens.css", import.meta.url), "utf8");
@@ -189,5 +192,57 @@ describe("WCAG 2.2 AA contrast", () => {
     expect(themeEntry.contrastFailures).toBe(contrastFailures);
     expect(typeof themeEntry.contrastRatio).toBe("function");
     expect(typeof themeEntry.tokenValues).toBe("function");
+  });
+});
+
+describe("UI-S-016 accessibility tokens and labels", () => {
+  it("words the skip control and the main navigation from the label table", () => {
+    expect(REQUIRED_LABEL_KEYS).toContain("skipToContent");
+    expect(REQUIRED_LABEL_KEYS).toContain("navigationMain");
+    expect(labels.skipToContent).toBe("Skip to main content");
+    expect(labels.navigationMain).toBe("Main navigation");
+  });
+  it("requires a theme-independent motion duration of 150ms", () => {
+    expect(REQUIRED_TOKENS).toContain("--fs-motion-duration");
+    expect(THEME_INDEPENDENT_TOKENS).toContain("--fs-motion-duration");
+    expect(tokenValues(tokensCss).light["--fs-motion-duration"]).toBe("150ms");
+    expect(missingTokens(tokensCss)).toEqual({ light: [], dark: [] });
+  });
+  it("checks the focus ring (primary) at 3:1 on every surface it is drawn on", () => {
+    expect(NON_TEXT_CONTRAST).toBe(3);
+    expect(FOCUS_CONTRAST_PAIRS).toEqual([
+      ["--fs-primary", "--fs-surface"],
+      ["--fs-primary", "--fs-surface-container"],
+      ["--fs-primary", "--fs-primary-container"],
+    ]);
+  });
+  it("reports a focus ring below 3:1 on the sidebar, in the theme it fails in", () => {
+    const css = tokensCss.replace(
+      /--fs-surface-container: #1c1c1c;/g,
+      "--fs-surface-container: #18a04a;",
+    );
+    expect(contrastFailures(css)).toContainEqual({
+      theme: "dark",
+      foreground: "--fs-primary",
+      background: "--fs-surface-container",
+      ratio: 1.14,
+    });
+  });
+  it("accepts a focus pair between 3:1 and 4.5:1, which text pairs would reject", () => {
+    // #767676 on #ffffff is 4.54:1; #949494 on #ffffff is 3.03:1.
+    const css = tokensCss
+      .replace(/--fs-primary-container: #f0faf4;/, "--fs-primary-container: #ffffff;")
+      .replace(/--fs-primary: #0b7a32;/, "--fs-primary: #949494;");
+    const failures = contrastFailures(css).filter((f) => f.theme === "light");
+    expect(failures.map((f) => `${f.foreground} on ${f.background}`)).not.toContain(
+      "--fs-primary on --fs-primary-container",
+    );
+    expect(failures.map((f) => `${f.foreground} on ${f.background}`)).toContain(
+      "--fs-primary on --fs-surface",
+    );
+  });
+  it("exports the focus pairs for distributions", () => {
+    expect(themeEntry.FOCUS_CONTRAST_PAIRS).toBe(FOCUS_CONTRAST_PAIRS);
+    expect(themeEntry.NON_TEXT_CONTRAST).toBe(3);
   });
 });

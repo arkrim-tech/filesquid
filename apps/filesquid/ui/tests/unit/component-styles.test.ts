@@ -1,7 +1,10 @@
 // @vitest-environment node
 /**
  * SRS-UI-007: custom elements style colour, type size, spacing and radius only through
- * tokens. The checks read the component stylesheets (the `STYLE` template of each component),
+ * tokens. UI-S-016: every component includes the shared accessibility stylesheet, uses
+ * logical properties only (so `dir="rtl"` mirrors it), takes motion from
+ * `--fs-motion-duration`, uses system colours only for forced colours, and fixes no text
+ * container to a pixel height. The checks read the component stylesheets (the `STYLE` template of each component),
  * not the rest of the source, so routes such as `#/monitor` or ids are never mistaken for CSS.
  */
 import { readFileSync, readdirSync } from "node:fs";
@@ -10,7 +13,14 @@ import { describe, expect, it } from "vitest";
 const dir = new URL("../../src/components/", import.meta.url);
 const sources = readdirSync(dir)
   .filter((name) => name.endsWith(".ts"))
-  .map((name) => ({ name, css: stylesheet(readFileSync(new URL(name, dir), "utf8")) }));
+  .map((name) => {
+    const source = readFileSync(new URL(name, dir), "utf8");
+    return { name, source, css: stylesheet(source) };
+  });
+/** The components that render a shadow root, and so must include the shared stylesheet. */
+const ELEMENTS = ["fs-app-shell.ts", "fs-monitor.ts", "fs-theme-control.ts"];
+/** The shared accessibility stylesheet. */
+const shared = sources.find((s) => s.name === "a11y-style.ts")?.css ?? "";
 
 /** The CSS of a component: the contents of its `const STYLE = \`...\`` template, if any. */
 function stylesheet(source: string): string {
@@ -96,5 +106,128 @@ describe("component stylesheets", () => {
     expect(
       untokenisedSizes("a { margin: 0 0 var(--fs-space-2); gap: var(--fs-space-1); }"),
     ).toEqual([]);
+  });
+});
+
+/** CSS system colours (CSS Color Module Level 4), used only for forced-colours mode. */
+const SYSTEM_COLOUR =
+  /(?<![\w-])(?:Canvas|CanvasText|LinkText|VisitedText|ActiveText|ButtonFace|ButtonText|ButtonBorder|Field|FieldText|Highlight|HighlightText|SelectedItem|SelectedItemText|Mark|MarkText|GrayText|AccentColor|AccentColorText)(?![\w-])/;
+
+/** Physical (left/right) properties and values that would not mirror under `dir="rtl"`. */
+const PHYSICAL =
+  /(?<![\w-])(?:(?:margin|padding|border|inset|scroll-margin|scroll-padding)-(?:left|right)(?:-[a-z]+)?|left|right)\s*:|(?:text-align|float|clear)\s*:\s*(?:left|right)\b|border-(?:top|bottom)-(?:left|right)-radius/;
+
+/**
+ * Find the first `@media` block whose query contains `query`.
+ *
+ * @param css Stylesheet text.
+ * @param query Text the media query must contain, for example `forced-colors`.
+ * @returns The start and end (exclusive) of the block, or undefined when there is none.
+ */
+function mediaRange(css: string, query: string): [number, number] | undefined {
+  const start = css.search(new RegExp(`@media[^{]*${query}[^{]*\\{`));
+  if (start < 0) return undefined;
+  let depth = 0;
+  for (let end = css.indexOf("{", start); end < css.length; end += 1) {
+    if (css[end] === "{") depth += 1;
+    if (css[end] === "}") depth -= 1;
+    if (depth === 0) return [start, end + 1];
+  }
+  throw new Error(`unbalanced @media ${query} block`);
+}
+
+/** Remove every `@media` block whose query contains `query` (at most 20). */
+function withoutMedia(css: string, query: string): string {
+  let result = css;
+  for (let guard = 0; guard < 20; guard += 1) {
+    const range = mediaRange(result, query);
+    if (!range) return result;
+    result = result.slice(0, range[0]) + result.slice(range[1]);
+  }
+  throw new Error(`more than 20 @media ${query} blocks`);
+}
+
+/** The text of the first `@media` block whose query contains `query`, or "". */
+function mediaBlock(css: string, query: string): string {
+  const range = mediaRange(css, query);
+  return range ? css.slice(range[0], range[1]) : "";
+}
+
+/** Transition and animation declarations whose durations do not come from the motion token. */
+function untokenisedMotion(css: string): string[] {
+  const declarations = [
+    ...withoutMedia(css, "prefers-reduced-motion").matchAll(
+      /((?:transition|animation)(?:-[a-z-]+)?)\s*:\s*([^;{}]+)/g,
+    ),
+  ];
+  return declarations
+    .filter(([, property]) => /^(?:transition|animation)(?:-duration)?$/.test(property ?? ""))
+    .filter(
+      ([, , value]) =>
+        !(value ?? "").includes("var(--fs-motion-duration)") && (value ?? "").trim() !== "none",
+    )
+    .map(([declaration]) => (declaration ?? "").trim());
+}
+
+/** Height declarations fixed in pixels, other than the 1px of a visually hidden element. */
+function fixedPixelHeights(css: string): string[] {
+  return [...css.matchAll(/((?:min-|max-)?height)\s*:\s*([^;{}]+)/g)]
+    .filter(([, , value]) => /\d+px/.test(value ?? "") && (value ?? "").trim() !== "1px")
+    .map(([declaration]) => (declaration ?? "").trim());
+}
+
+describe("UI-S-016 accessibility contracts in component stylesheets", () => {
+  it("the shared stylesheet draws a 2px primary focus ring offset by 2px", () => {
+    expect(shared).toMatch(/:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--fs-primary\)/);
+    expect(shared).toMatch(/:focus-visible\s*\{[^}]*outline-offset:\s*2px/);
+  });
+  it("the shared stylesheet stops motion under prefers-reduced-motion", () => {
+    const block = mediaBlock(shared, "prefers-reduced-motion: reduce");
+    expect(block).toMatch(/transition-duration:\s*0s !important/);
+    expect(block).toMatch(/animation-duration:\s*0s !important/);
+  });
+  it("the shared stylesheet strengthens borders under prefers-contrast: more", () => {
+    expect(mediaBlock(shared, "prefers-contrast: more")).toMatch(
+      /border-color:\s*var\(--fs-on-surface-variant\)/,
+    );
+  });
+  it("the shared stylesheet draws focus in Highlight under forced colours", () => {
+    expect(mediaBlock(shared, "forced-colors: active")).toMatch(/outline-color:\s*Highlight/);
+  });
+  it.each(ELEMENTS)("%s includes the shared accessibility stylesheet", (name) => {
+    expect(sources.find((s) => s.name === name)?.source).toMatch(/A11Y_STYLE/);
+  });
+  it.each(sources)("$name uses logical properties only", ({ css }) => {
+    expect(css.match(PHYSICAL)?.[0]).toBeUndefined();
+  });
+  it.each(sources)("$name takes motion durations from --fs-motion-duration", ({ css }) => {
+    expect(untokenisedMotion(css)).toEqual([]);
+  });
+  it.each(sources)("$name uses system colours only inside forced-colors blocks", ({ css }) => {
+    expect(withoutMedia(css, "forced-colors").match(SYSTEM_COLOUR)?.[0]).toBeUndefined();
+  });
+  it.each(sources)("$name fixes no text container to a pixel height", ({ css }) => {
+    expect(fixedPixelHeights(css)).toEqual([]);
+  });
+  it("the checks catch what they are meant to catch", () => {
+    expect(PHYSICAL.test("a { margin-left: auto; }")).toBe(true);
+    expect(PHYSICAL.test("th { text-align: left; }")).toBe(true);
+    expect(PHYSICAL.test("a { left: 0; }")).toBe(true);
+    expect(PHYSICAL.test("a { margin-inline-start: auto; text-align: start; }")).toBe(false);
+    expect(untokenisedMotion("a { transition: color 150ms; }")).toEqual([
+      "transition: color 150ms",
+    ]);
+    expect(untokenisedMotion("a { transition: color var(--fs-motion-duration); }")).toEqual([]);
+    expect(SYSTEM_COLOUR.test("a { color: Highlight; }")).toBe(true);
+    expect(SYSTEM_COLOUR.test("a { color: var(--fs-highlight); }")).toBe(false);
+    expect(
+      withoutMedia(
+        "@media (forced-colors: active) { a { color: Highlight; } } b {}",
+        "forced-colors",
+      ),
+    ).toBe(" b {}");
+    expect(fixedPixelHeights("nav { min-height: calc(100vh - 57px); } i { height: 1px; }")).toEqual(
+      ["min-height: calc(100vh - 57px)"],
+    );
   });
 });

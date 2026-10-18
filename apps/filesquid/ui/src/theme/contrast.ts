@@ -6,6 +6,13 @@
 /** Minimum contrast ratio for normal-size text under WCAG 2.2 AA (success criterion 1.4.3). */
 export const AA_TEXT_CONTRAST = 4.5;
 
+/**
+ * Minimum contrast ratio for user-interface components and focus indicators against the
+ * colours next to them under WCAG 2.2 AA (success criteria 1.4.11 and 2.4.13), used for the
+ * focus ring (UI-S-016).
+ */
+export const NON_TEXT_CONTRAST = 3;
+
 /** An sRGB colour as 0–255 red, green and blue channels. */
 export type Rgb = readonly [number, number, number];
 
