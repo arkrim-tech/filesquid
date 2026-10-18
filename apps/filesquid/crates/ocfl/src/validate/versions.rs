@@ -1,8 +1,10 @@
 //! Version directories and the inventories they hold.
 //!
-//! A version directory holds its inventory, the sidecar for that
-//! inventory's `digestAlgorithm` and the content directory only (E015;
-//! another directory is W002 and ignored). Its inventory SHOULD be there
+//! A version directory holds its inventory, its sidecar and the content
+//! directory only (E015; another directory is W002 and ignored). When the
+//! inventory parses, only the sidecar for its `digestAlgorithm` is allowed;
+//! when it does not, its error is reported and any recognised sidecar is
+//! allowed; with no inventory, no sidecar is. Its inventory SHOULD be there
 //! (W010) and, when it is, must be valid, name its own version as `head`
 //! (E040), keep the object id (E037) and content directory (E019), never go
 //! back to an older specification (E103), equal the root inventory for the
@@ -102,9 +104,11 @@ fn sidecar_rule(listing: &Listing, dir: &str, prior: Option<&ReadInventory>) -> 
     }
 }
 
-/// A version directory holds only its inventory, the sidecar of that
-/// inventory's `digestAlgorithm` and the content directory (E015); other
-/// directories are W002 and ignored.
+/// A version directory holds only its inventory, the sidecars `sidecars`
+/// allows (the one for a parsed inventory's `digestAlgorithm`, any
+/// recognised one beside a malformed inventory, none without an inventory)
+/// and the content directory (E015); other directories are W002 and
+/// ignored.
 fn check_version_entries(
     listing: &Listing,
     dir: &str,
