@@ -45,6 +45,20 @@ Follow `.agents/rules/task-workflow.md` and the Shared agent prompt contract in 
 6. Write `Task-<ID>-Walkthrough.md` with the SRS ID and full title at heading 2 and the raw test output. Delete the Plan and ToDos. Check the box in the crate `plan.md` and the matching box in the repository-root `resources/implementation-plan-checklist.md`. When this task completes its global task, also check the global box in `resources/implementation-plan.md` and the matching global box in `resources/implementation-plan-checklist.md`.
 7. If you add an environment variable, service or command, update the root `README.md` in the same change, after running the command yourself. Update upstream docs as `.agents/rules/pr-documentation-update.md` requires. Run `bash scripts/pre-commit.sh` from the repo root, commit with Conventional Commits, and push the branch. Do not open a pull request unless asked.
 
+## Rust builds
+
+- Run every ad hoc cargo command under the shared-target lock and as narrowly as possible, never `--workspace` while iterating: `. scripts/lib/cargo_shared.sh && (cd apps/filesquid && cargo_locked test -p <crate> --test <bin> <name> --locked)` ([shared Cargo target](../../.agents/rules/local-verification.md#shared-cargo-target)).
+- Run the full `bash scripts/pre-commit.sh` once per push, not once per edit.
+- If a shared target gives "could not find `X`", touch the crate's `.rs` files and rerun once.
+- `FULL=1` is required only when the change scope is `full` or includes `rust:` ([local-verification.md](../../.agents/rules/local-verification.md#change-aware-test-scope)).
+- Once the workspace-hack crate of [ADR 039](../../resources/architecture/039-cargo-hakari-workspace-hack.md) exists, regenerate it after any Cargo dependency change and commit the result with that change.
+
+## Process rules
+
+- Merge `origin/main` into your branch by merge commit. Never rebase and never force-push. Commit the merge on its own, with no code changes in it, then commit code separately: Cubic skips merge commits ([pr-review-loop.md](../../.agents/rules/pr-review-loop.md)).
+- Never put the owner's email address in any request, URL or header (for example a `User-Agent`). Use a generic `User-Agent`.
+- Keep model names out of code, pull request text and docs. The commit attribution trailer your own session supplies is the only place one may appear.
+
 ## Report back
 
 Finish with: the branch name and commits; the tests you ran and their results; any docs you cascaded (a `## Sync Execution Report`); any mocked environment values the owner must replace; and any API routes or event types that the UI engineer can now call.

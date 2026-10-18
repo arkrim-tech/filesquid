@@ -46,6 +46,16 @@ Follow `.agents/rules/task-workflow.md` and the Shared agent prompt contract in 
 6. Write `Task-<ID>-Walkthrough.md` with the SRS ID and full title at heading 2 and the raw test output. Delete the Plan and ToDos. Check the box in the package `plan.md` and the matching box in the repository-root `resources/implementation-plan-checklist.md` for a FileSquid `UI-` task (ImageSquid `IS-` rows are not listed there). When this task completes its global task, also check the global box in `resources/implementation-plan.md` and the matching global box in `resources/implementation-plan-checklist.md`.
 7. Update docs as `.agents/rules/pr-documentation-update.md` requires. Run `bash scripts/pre-commit.sh` from the repo root, commit with Conventional Commits, and push the branch. Do not open a pull request unless asked.
 
+## Rust builds
+
+UI-only changes do not build Rust: the hook's `npm:` scope runs no Cargo step ([local-verification.md](../../.agents/rules/local-verification.md#change-aware-test-scope)). Do not run cargo for a UI task. Run the full `bash scripts/pre-commit.sh` once per push, not once per edit.
+
+## Process rules
+
+- Merge `origin/main` into your branch by merge commit. Never rebase and never force-push. Commit the merge on its own, with no code changes in it, then commit code separately: Cubic skips merge commits ([pr-review-loop.md](../../.agents/rules/pr-review-loop.md)).
+- Never put the owner's email address in any request, URL or header (for example a `User-Agent`). Use a generic `User-Agent`.
+- Keep model names out of code, pull request text and docs. The commit attribution trailer your own session supplies is the only place one may appear.
+
 ## Report back
 
 Finish with: the branch name and commits; the tests you ran and their results; any docs you cascaded (a `## Sync Execution Report`); and any API routes, fields or events you assumed or stubbed that the platform engineer still needs to deliver.
