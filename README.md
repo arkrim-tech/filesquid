@@ -140,7 +140,7 @@ bash scripts/pre-commit.sh                     # run all gates now
 ln -s ../../scripts/pre-commit.sh .git/hooks/pre-commit   # or install as the git pre-commit hook
 ```
 
-`FILESQUID_SKIP_TESTS=1 git commit ...` skips the lint and test step for a work-in-progress commit; run `bash scripts/verify_tests.sh` before pushing. `FILESQUID_E2E=1` adds the Playwright end-to-end suites. The individual commands the hook runs are listed below.
+`FILESQUID_SKIP_TESTS=1 git commit ...` skips the lint and test step for a work-in-progress commit; run `bash scripts/verify_tests.sh` before pushing. `FILESQUID_E2E=1` adds the Playwright end-to-end suites, and `FILESQUID_DESKTOP_E2E=1` the desktop packaged-window suite. The individual commands the hook runs are listed below.
 
 Rust workspace (lint first; the cucumber BDD features in each crate's `tests/features/` run as part of `cargo test` and write `tests/allure-results/cucumber-junit.xml` per crate):
 
@@ -191,6 +191,28 @@ cargo test -p filesquid-api --locked --test unit_auth --test features
 cargo test -p filesquid-server --locked --test integration_auth
 cargo test -p filesquid-desktop --locked --test integration_api_protocol
 ```
+
+The desktop transport (DE-S-005): the event channel's forwarder (one counted subscription, resync hints, the `event-forwarder` process, navigation kept on the app's origins), ranged reads through the `filesquid://localhost` scheme (`http://filesquid.localhost` on Windows and Android) with its 16 MiB response cap, and typed host errors. The 100 MB range fixture and the BDD features in `crates/desktop/tests/features/` exist only in the test-instrumented build (`--features test-webdriver`, never shipped), so the hook runs the desktop crate a second time with that feature:
+
+```sh
+cd apps/filesquid
+cargo test -p filesquid-desktop --locked --test integration_event_channel
+cargo clippy -p filesquid-desktop --all-targets --features test-webdriver --locked -- -D warnings
+cargo test -p filesquid-desktop --features test-webdriver --locked
+```
+
+Packaged-window tests (ADR 017): WebdriverIO with `@wdio/tauri-service` drives the test-instrumented desktop binary through its embedded WebDriver server (on `127.0.0.1`, port `TAURI_WEBDRIVER_PORT`, default 4445): the per-launch token, a 100 MB `Range` read through the scheme, an event subscription, and a refused navigation to a foreign site. Build the binary, then run the suite from `apps/filesquid/crates/desktop/tests/e2e`. On Linux the webview is WebKitGTK and a headless machine needs Xvfb (`xvfb-run`, from your distribution's `xvfb` package); on macOS and Windows run `npm run test:e2e` without it:
+
+```sh
+cd apps/filesquid
+cargo build -p filesquid-desktop --features test-webdriver --locked
+cd crates/desktop/tests/e2e
+npm ci
+npm run test:e2e                  # macOS, Windows, or Linux with a display
+# headless Linux instead: xvfb-run -a npm run test:e2e
+```
+
+The suite drives `<target>/debug/filesquid-desktop`, where `<target>` is `CARGO_TARGET_DIR` (a relative value is resolved against `apps/filesquid`, where the build ran) or `apps/filesquid/target`; set `FILESQUID_DESKTOP_BIN` to drive another binary. Before launching, it copies the binary into a fresh temporary directory, so a concurrent Cargo build cannot replace it mid-run, and removes that directory afterwards. On Linux each run uses a fresh temporary `XDG_DATA_HOME`, so the tests never write into your own FileSquid data. `npm run test:e2e` clears and rewrites `apps/filesquid/crates/desktop/tests/allure-results/wdio/` (JUnit). `FILESQUID_DESKTOP_E2E=1 bash scripts/verify_tests.sh` builds the binary and runs the suite as part of the hook (with `xvfb-run` on Linux when no display is set).
 
 Documentation checks, from the repository root:
 

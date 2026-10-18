@@ -1046,6 +1046,7 @@ The system MUST implement [PRD F-057](./prd.md#f-057-desktop-and-server-hosts) w
 
 **Tests**
 - [`health.feature`](../apps/filesquid/crates/server/tests/features/health.feature)
+- [`desktop_transport_F-057.feature`](../apps/filesquid/crates/desktop/tests/features/desktop_transport_F-057.feature)
 - [`shared_health_status_CORE-S-004.feature`](../apps/filesquid/crates/core/tests/features/shared_health_status_CORE-S-004.feature)
 - [`setup_updates_and_diagnostics_F-037.feature`](../apps/filesquid/ui/tests/features/setup_updates_and_diagnostics_F-037.feature)
 - Test gap: a dedicated `desktop_and_server_hosts_F-057.feature` (no TCP listener on desktop, multi-user permissions, privacy boundary text) is not yet written.
