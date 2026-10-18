@@ -5,22 +5,13 @@
  */
 import { expect, test, type Page } from "@playwright/test";
 import { ADMIN_TOKEN } from "./admin-token";
+import { trackErrors } from "./support/strict-dom";
 
 /**
  * The browser itself logs a refused fetch or WebSocket upgrade as a console error. Tests that
  * expect a 401 or 403 tolerate exactly those lines and nothing else.
  */
 const REFUSED_CALL = /status of 40[13] \(|WebSocket connection to .* failed/;
-
-/** Collect console errors and uncaught page errors for the whole test. */
-function trackErrors(page: Page, tolerate?: RegExp): string[] {
-  const errors: string[] = [];
-  page.on("console", (msg) => {
-    if (msg.type() === "error" && !tolerate?.test(msg.text())) errors.push(msg.text());
-  });
-  page.on("pageerror", (err) => errors.push(err.message));
-  return errors;
-}
 
 /** Define the desktop host's per-launch token global before any page script runs. */
 async function injectLaunchToken(page: Page, token: string): Promise<void> {

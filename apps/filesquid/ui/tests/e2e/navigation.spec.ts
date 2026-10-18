@@ -12,6 +12,7 @@
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 import { ADMIN_TOKEN } from "./admin-token";
+import { tokenColour, trackErrors } from "./support/strict-dom";
 import type { LabelTable } from "../../src/theme/labels";
 
 /** The active (default) label table, as built into the UI. */
@@ -72,16 +73,6 @@ const twoLibraries: Fixture = {
     },
   ],
 };
-
-/** Collect console errors and uncaught page errors. */
-function trackErrors(page: Page): string[] {
-  const errors: string[] = [];
-  page.on("console", (msg) => {
-    if (msg.type() === "error") errors.push(msg.text());
-  });
-  page.on("pageerror", (err) => errors.push(err.message));
-  return errors;
-}
 
 /** Collect console warnings. */
 function trackWarnings(page: Page): string[] {
@@ -166,18 +157,6 @@ async function mountNavigation(
 /** Section headings of the tree, in display order. */
 function headings(page: Page) {
   return page.locator("fs-nav-tree").locator("section h2");
-}
-
-/** Resolve a colour token to its computed `rgb(...)` form through a probe element. */
-function tokenColour(page: Page, name: string): Promise<string> {
-  return page.evaluate((prop) => {
-    const probe = document.createElement("span");
-    probe.style.color = `var(${prop})`;
-    document.body.append(probe);
-    const colour = getComputedStyle(probe).color;
-    probe.remove();
-    return colour;
-  }, name);
 }
 
 /** The focused element (followed into shadow roots) and the focus ring it draws. */

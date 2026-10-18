@@ -1,6 +1,7 @@
 /**
  * End-to-end tests against the BUILT UI served by the real `filesquid-server`
- * (production artifacts, real API). Port 4173 is this workspace's preview port.
+ * (production artifacts, real API). Port 4173 is this workspace's preview port. The static
+ * `vite preview` proofs under `tests/e2e/preview/` run from `playwright.preview.config.ts`.
  */
 import { defineConfig, devices } from "@playwright/test";
 import { ADMIN_TOKEN } from "./tests/e2e/admin-token";
@@ -10,7 +11,12 @@ const PORT = 4173;
 export default defineConfig({
   testDir: "tests/e2e",
   outputDir: "tests/test-results",
-  reporter: [["list"], ["junit", { outputFile: "tests/allure-results/playwright-junit.xml" }]],
+  testIgnore: "**/preview/**",
+  reporter: [
+    ["list"],
+    ["junit", { outputFile: "tests/allure-results/playwright-junit.xml" }],
+    ["allure-playwright", { resultsDir: "tests/allure-results/playwright" }],
+  ],
   use: { baseURL: `http://127.0.0.1:${PORT}` },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {

@@ -7,8 +7,10 @@
 #
 # Builds a throwaway git repository under TMPDIR (prefix precommit-scope-test.)
 # that mirrors the FileSquid layout and crate graph, with a fake origin/main,
-# and checks every scope: docs, rust:<crates> with reverse dependencies,
-# npm:<packages> with file: links, mixed scopes, every full trigger, and the
+# and checks every scope: docs (with the always-run checker scripts and the
+# root .claude/ and docs/), rust:<crates> with reverse dependencies,
+# npm:<packages> with file: links and the packages' own manifests, mixed
+# scopes, every full trigger (gate-logic and unknown scripts included), and the
 # fallbacks to full (FULL=1, unknown base, not a git repository, cargo
 # metadata failure, unknown crate directory, missing file list). It also
 # checks that the hook ignores the fixture-only overrides, the scope grammar
@@ -166,14 +168,60 @@ test_file_lists() {
 test_full_triggers() {
   local path
   for path in apps/filesquid/Cargo.toml apps/filesquid/Cargo.lock apps/filesquid/rust-toolchain.toml \
-    apps/filesquid/rust-toolchain apps/filesquid/ui/package.json apps/imagesquid/package-lock.json \
-    apps/filesquid/crates/desktop/tests/e2e/package.json scripts/verify_tests.sh scripts/lib/cargo_shared.sh \
+    apps/filesquid/rust-toolchain package.json package-lock.json apps/package.json \
+    apps/filesquid/crates/desktop/tests/e2e/package.json apps/filesquid/crates/desktop/tests/e2e/package-lock.json \
     apps/filesquid/crates/api/openapi.json apps/filesquid/ui/src/api/schema.d.ts docker-compose.yml \
     apps/filesquid/distribution.json apps/filesquid/crates/newcrate/src/lib.rs apps/other/main.rs; do
     expect_list full "$path"
   done
   expect_list full README.md apps/filesquid/crates/c2pa/src/lib.rs scripts/pre-commit.sh
+  expect_list full .claude/agents/x.md apps/filesquid/ui/package.json package.json
   assert_eq "missing file list" full "$(scope_in "$FIXTURE" CHANGED_SCOPE_FILES="$WORK/none.txt")"
+}
+
+# Text checkers that steps 0 to 9 run on every commit, whatever the scope.
+DOCS_CHECKERS="scripts/verify_branch.sh scripts/verify_isolated_ports.sh scripts/verify_doc_sync.sh
+  scripts/verify_srs_traceability.sh scripts/verify_relative_links.sh scripts/verify_workspace_boundaries.sh
+  scripts/verify_centralized_logging.sh scripts/verify_docs.sh scripts/verify_task_cleanup.sh
+  scripts/docs/check_links.py scripts/docs/validate-adrs.test.mjs scripts/docs/new_checker.py"
+# Scripts that decide or run the scope; any other script also stays full.
+GATE_SCRIPTS="scripts/pre-commit.sh scripts/changed_scope.sh scripts/verify_changed_scope.sh
+  scripts/verify_tests.sh scripts/verify_formatting.sh scripts/lib/cargo_shared.sh scripts/lib/hook_scope.sh
+  scripts/lib/new_lib.sh scripts/setup-dev-environment.sh scripts/verify_new_gate.sh scripts/tool.py
+  scripts/verify_docs.sh.bak scripts/docs"
+
+test_script_split() {
+  local path
+  for path in $DOCS_CHECKERS; do
+    expect_list docs "$path"
+  done
+  for path in $GATE_SCRIPTS; do
+    expect_list full "$path"
+  done
+  expect_list docs scripts/verify_docs.sh scripts/docs/check_links.py README.md .agents/rules/rule.md
+  expect_list full scripts/verify_docs.sh scripts/verify_tests.sh
+  expect_list "rust:filesquid-c2pa" scripts/verify_branch.sh apps/filesquid/crates/c2pa/src/lib.rs
+}
+
+test_npm_manifests() {
+  expect_list "$UI_SCOPE" apps/filesquid/ui/package-lock.json
+  expect_list "$UI_SCOPE" apps/filesquid/ui/package.json
+  expect_list "npm:apps/imagesquid" apps/imagesquid/package.json
+  expect_list "npm:apps/imagesquid" apps/imagesquid/package-lock.json apps/imagesquid/src/main.ts
+  expect_list "rust:filesquid-c2pa $UI_SCOPE" apps/filesquid/ui/package-lock.json apps/filesquid/crates/c2pa/src/lib.rs
+  expect_list full apps/filesquid/ui/package.json apps/filesquid/ui/src/api/schema.d.ts
+  expect_list full apps/imagesquid/package.json apps/filesquid/Cargo.lock
+}
+
+test_docs_directories() {
+  expect_list docs .claude/agents/x.md
+  expect_list docs docs/x.md
+  expect_list docs .claude/settings.json docs/diagram.svg
+  expect_list docs .claude/agents/x.md docs/x.md scripts/verify_docs.sh resources/prd.md
+  expect_list "$UI_SCOPE" .claude/agents/x.md docs/x.md apps/filesquid/ui/package-lock.json
+  expect_list full .claude/agents/x.md docs/x.md scripts/changed_scope.sh
+  expect_list full apps/docs/x.ts
+  expect_list full apps/filesquid/.claude/settings.json
 }
 
 test_git_changes() {
@@ -331,6 +379,9 @@ fi
 write_metadata_fixture
 test_file_lists
 test_full_triggers
+test_script_split
+test_npm_manifests
+test_docs_directories
 test_git_changes
 test_fallbacks
 test_hook_ignores_overrides

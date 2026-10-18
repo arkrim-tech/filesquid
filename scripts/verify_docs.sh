@@ -13,7 +13,7 @@
 #   - update_mvp_progress.py --check: the checklist's MVP progress bar, In progress and Up next
 #     lists match its ticked boxes and the module plans (offline: no GitHub call).
 #   - test_mvp_queue.py: unit tests for the checklist's In progress and Up next logic.
-#   - verify_task_cleanup.sh: no Plan/ToDos file survives next to its Walkthrough.
+#   - verify_task_cleanup.sh: no Plan/ToDos file survives next to its Walkthrough, under apps/ and the root resources/tasks/.
 #
 # Usage: ./scripts/verify_docs.sh   (from the repository root)
 

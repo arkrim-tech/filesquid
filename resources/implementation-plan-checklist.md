@@ -1,35 +1,36 @@
 # Implementation Plan Checklist: FileSquid
 
 <!-- mvp-progress:start -->
-![MVP progress: 40% complete](./assets/mvp-progress.svg)
+![MVP progress: 42% complete](./assets/mvp-progress.svg)
 
-**MVP progress: 40%**, about 324 of 816 estimated hours. 10 of 26 tasks are done and 4 more are under way. Each segment of the bar is one task below, as wide as its estimated hours in the implementation plan; an open task fills by the share of its module rows that are ticked. Below the bar, In progress lists the open tasks being worked on (global tasks with some but not all module rows ticked, and tasks with an open pull request) and Up next lists the next five new module tasks whose listed dependencies are done or in progress. Regenerate with `python3 scripts/docs/update_mvp_progress.py` after ticking boxes or opening a pull request; the check run by `scripts/verify_docs.sh` does not call GitHub and uses the pull requests recorded in the block.
+**MVP progress: 42%**, about 340 of 816 estimated hours. 10 of 26 tasks are done and 5 more are under way. Each segment of the bar is one task below, as wide as its estimated hours in the implementation plan; an open task fills by the share of its module rows that are ticked. Below the bar, In progress lists the open tasks being worked on (global tasks with some but not all module rows ticked, and tasks with an open pull request) and Up next lists the next five new module tasks whose listed dependencies are done or in progress. Regenerate with `python3 scripts/docs/update_mvp_progress.py` after ticking boxes or opening a pull request; the check run by `scripts/verify_docs.sh` does not call GitHub and uses the pull requests recorded in the block.
 
 **In progress**
 
 - [Task 0.4](./implementation-plan.md#task-0.4) filesquid-ocfl write and logical-state enumerator: 4 of 5 module rows ticked
     - [IO-0.10](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f0-read-validate-write-global-tasks-03-04) Forward-delta change model
+- [MD-0.4](../apps/filesquid/crates/metadata/resources/plan.md#phase-f0-webassembly-build-global-task-015) WASM build and OCFL-sourced extraction (part of [Task 0.15](./implementation-plan.md#task-0.15); [PR #54](https://github.com/arkrim-tech/filesquid/pull/54))
 - [Task 0.10](./implementation-plan.md#task-0.10) Private-client library (ADR 001): 2 of 3 module rows ticked
-    - [CL-0.3](../apps/filesquid/crates/api/resources/plan.md#phase-f1-application-layer-global-task-010-cl-04-in-global-task-011-phase-f4-cl-05-in-global-task-012-phase-i1) Replica, cache identity, and pending mutations
+    - [CL-0.3](../apps/filesquid/crates/api/resources/plan.md#phase-f1-application-layer-global-task-010-cl-04-in-global-task-011-phase-f4-cl-05-in-global-task-012-phase-i1) Replica, cache identity, and pending mutations ([PR #53](https://github.com/arkrim-tech/filesquid/pull/53))
 - [Task FS-2.1](./implementation-plan.md#task-fs-2.1) Default UI shell, host adapter, tokens and accessibility: 5 of 7 module rows ticked
     - [API-F1.11](../apps/filesquid/crates/api/resources/plan.md#phase-f2-host-descriptor-and-navigation-listing-for-the-default-ui-global-task-fs-21) Navigation listing route
     - [UI-F2.1b](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Host privacy indicator and live navigation data
 - [DE-0.1](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Capability expansion (deny-by-default) (part of [Task 0.5](./implementation-plan.md#task-0.5); [PR #47](https://github.com/arkrim-tech/filesquid/pull/47))
 - [Task FS-1.4](./implementation-plan.md#task-fs-1.4) Jobs, events and the authorisation layer: 1 of 2 module rows ticked
     - [API-F1.6](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-api-f19-in-fs-310-and-api-f15-in-fs-c1) Job and event routes
-- [UI-0.6](../apps/filesquid/ui/resources/plan.md#phase-f0-test-reporting-global-task-08) Playwright production suite and Allure (part of [Task 0.8](./implementation-plan.md#task-0.8); [PR #46](https://github.com/arkrim-tech/filesquid/pull/46))
+- [IO-1.4](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f2-independent-recovery-global-task-11) Version-inventory repair for heads without one (W010) (part of [Task 1.1](./implementation-plan.md#task-1.1); [PR #56](https://github.com/arkrim-tech/filesquid/pull/56))
 
 **Up next** (the next 5 new module tasks, once their listed dependencies are done or in progress)
 
-- [MD-0.4](../apps/filesquid/crates/metadata/resources/plan.md#phase-f0-webassembly-build-global-task-015) WASM build and OCFL-sourced extraction (part of [Task 0.15](./implementation-plan.md#task-0.15))
 - [IO-1.2](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f1f2-view-api-and-file-browser-global-tasks-fs-12-19-superseded) UI view API (part of [Task FS-1.2](./implementation-plan.md#task-fs-1.2))
 - [DE-0.2](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Per-library SQLite catalog (part of [Task 0.5](./implementation-plan.md#task-0.5))
 - [DE-0.6](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Stdout JSON logging (part of [Task 0.5](./implementation-plan.md#task-0.5))
 - [MD-0.2](../apps/filesquid/crates/metadata/resources/plan.md#phase-f1-persist-through-ocfl-and-namespace-registry-global-task-fs-13) Commit statements through filesquid-ocfl (part of [Task FS-1.3](./implementation-plan.md#task-fs-1.3))
+- [CL-1.1](../apps/filesquid/crates/api/resources/plan.md#phases-f2-i1-and-f5-application-meaning-global-tasks-11-14-18) Local library create/open/recover commands (part of [Task 1.1](./implementation-plan.md#task-1.1))
 
-Generated 2026-10-18T19:48:57Z (RFC 3339, UTC) from the ticked boxes, the module plans and the open pull requests at that time.
-<!-- generated-at: 2026-10-18T19:48:57Z -->
-<!-- in-progress-prs: DE-0.1=#47,UI-0.6=#46 -->
+Generated 2026-10-18T20:06:26Z (RFC 3339, UTC) from the ticked boxes, the module plans and the open pull requests at that time.
+<!-- generated-at: 2026-10-18T20:06:26Z -->
+<!-- in-progress-prs: CL-0.3=#53,DE-0.1=#47,IO-1.4=#56,MD-0.4=#54 -->
 <!-- mvp-progress:end -->
 
 This is a short, ordered view of [implementation-plan.md](./implementation-plan.md). Each numbered item is a global task in the order the dev team expects to finish it, and the nested items are the module tasks it dispatches, taken from each module's `resources/plan.md`. Task codes link to the full task description. A box is ticked when the matching box is ticked in the source plan.
@@ -119,7 +120,7 @@ FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by ga
     - [ ] [API-F1.6](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-api-f19-in-fs-310-and-api-f15-in-fs-c1) Job and event routes
     - [x] [API-F1.7](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-api-f19-in-fs-310-and-api-f15-in-fs-c1) Authentication and authorisation
 19. [ ] [Task 0.8](./implementation-plan.md#task-0.8) Test reporting, capability register, and foundation evidence
-    - [ ] [UI-0.6](../apps/filesquid/ui/resources/plan.md#phase-f0-test-reporting-global-task-08) Playwright production suite and Allure
+    - [x] [UI-0.6](../apps/filesquid/ui/resources/plan.md#phase-f0-test-reporting-global-task-08) Playwright production suite and Allure
 20. [ ] [Task 1.1](./implementation-plan.md#task-1.1) Independent local library create, open, copy, and recover
     - [ ] [CL-1.1](../apps/filesquid/crates/api/resources/plan.md#phases-f2-i1-and-f5-application-meaning-global-tasks-11-14-18) Local library create/open/recover commands
     - [ ] [DE-1.1](../apps/filesquid/crates/desktop/resources/plan.md#phases-f2-i1-and-f5-library-import-gallery-organize-and-setup-global-tasks-1116) Create, open, copy, rebuild library
