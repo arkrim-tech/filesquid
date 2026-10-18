@@ -39,13 +39,13 @@ Commands run inside `apps/filesquid/ui/` (Vite dev `127.0.0.1:5173`, preview `41
 
 ## Phase F2: Default UI (global Tasks FS-2.1, FS-2.2, FS-2.4, FS-2.5, 1.1, 1.2; after the MVP: UI-F2.6 in global Task FS-2.3, UI-F2.10 and UI-F2.12 in global Task FS-2.7, UI-F2.13 in global Task FS-2.6; UI-F2.5 in global Task FS-C.1, phase C)
 
-- [ ] **Task UI-0.1: Host adapter (HTTP vs custom URI scheme)**
+- [x] **Task UI-0.1: Host adapter (HTTP vs custom URI scheme)**
   - **Status:** Moved from the ImageSquid plan (former `apps/frontend`) to `@filesquid/ui` because it is generic shell, host-adapter, token or file-management work.
   - **Description:** `FileSquidClient` (`request()`, `read()`, `upload()`, `subscribe()`) selects the HTTP-plus-event-channel adapter (server) or the Tauri custom-scheme adapter (desktop) at runtime and builds the base URL; later the browser-host adapter (UI-F5.1). The same interface serves every distribution. Commands use operation IDs and return committed/pending/error/conflict. UI state is never durable completion evidence.
   - **Estimated Time:** 6 hours
   - **Dependencies:** Task UI-F0.1
   - **Related Requirements:** [UI-S-011](./srs.md), [UI-S-012](./srs.md), [F-037](../../../../resources/prd.md#f-037-setup-updates-and-diagnostics), [architecture 3.2](../../../../resources/architecture.md#32-frontend-architecture)
-  - **Related Tests:** `tests/unit/` client tests (planned)
+  - **Related Tests:** [`host_adapter_UI-S-012.feature`](../tests/features/host_adapter_UI-S-012.feature), `tests/unit/host-adapter.test.ts`, `tests/unit/client-io.test.ts`, `tests/unit/commands.test.ts`, `tests/e2e/app.spec.ts` (desktop custom-scheme adapter); walkthrough [Task-UI-0.1-Walkthrough.md](./tasks/Task-UI-0.1-Walkthrough.md)
   - **Agent Prompt:** `@AGENTS.md Begin by creating a new feature branch for Task UI-0.1. Then begin development, executing all commands strictly within apps/filesquid/ui/. Write Playwright UI tests against npm run build plus preview with strict DOM assertions that catch hydration mismatches and SSR crashes. Additionally, invoke the @feature-writer skill to translate SRS requirements into executable BDD feature tests. Upon completion, YOU MUST generate apps/filesquid/ui/resources/tasks/Task-UI-0.1-Walkthrough.md directly in the project repository with clear SRS mapping (including BOTH the ID and full human-readable title text) in the secondary section, and strictly delete the internal tracking Plan/ToDos documents before checking off the Markdown box locally in apps/filesquid/ui/resources/plan.md, and the matching boxes in the repository-root resources/implementation-plan-checklist.md. Then commit your changes and push the branch to origin.`
 
 - [ ] **Task UI-0.2: Official branding and light/dark tokens**

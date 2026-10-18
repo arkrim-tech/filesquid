@@ -10,6 +10,22 @@ export type { ShellClient } from "./components/fs-app-shell";
 export { FsMonitor, formatGiB, processCells } from "./components/fs-monitor";
 export type { MonitorClient, MonitorOptions, TokenStore } from "./components/fs-monitor";
 export * from "./api/client";
+export {
+  commandEnvelope,
+  commandOutcome,
+  conflictOutcome,
+  isCommitted,
+  newOperationId,
+  parseContentRange,
+  rangeHeader,
+  type ByteRange,
+  type CommandEnvelope,
+  type CommandOutcome,
+  type CommandOutcomeKind,
+  type ContentRange,
+  type EnvelopeInput,
+  type PortError,
+} from "./api/commands";
 export { createHostClient, DESKTOP_EVENT, LAUNCH_TOKEN_GLOBAL, launchToken } from "./api/host";
 export { MONITOR_ROUTE, bindMonitorRoute, memoryTokenStore } from "./app/routes";
 export { denialLabel, type DenialText } from "./components/denial";

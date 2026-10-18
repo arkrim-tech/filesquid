@@ -183,3 +183,129 @@ test("the desktop launch token authorises the shell, the Monitor and the event c
   await expect.poll(() => upgrades).toEqual(["ws://127.0.0.1:4173/api/v1/events"]);
   expect(errors).toEqual([]);
 });
+
+/** A Windows desktop webview's user agent: the custom scheme is then `http://filesquid.localhost`. */
+const WINDOWS_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0";
+/** Origin of the built UI under test. */
+const UI_ORIGIN = "http://127.0.0.1:4173";
+
+/**
+ * Stand in for the Tauri webview before any page script runs: `__TAURI_INTERNALS__` records
+ * every IPC call and keeps event callbacks so the test can emit a desktop event.
+ */
+async function emulateDesktopWebview(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const record = window as unknown as Record<string, unknown>;
+    const calls: { cmd: string; args: Record<string, unknown> }[] = [];
+    const callbacks = new Map<number, (payload: unknown) => void>();
+    let next = 1;
+    record.__fsIpcCalls = calls;
+    record.__fsEmit = (handler: number, payload: unknown) => callbacks.get(handler)?.(payload);
+    record.__TAURI_INTERNALS__ = {
+      transformCallback(callback: (payload: unknown) => void) {
+        const id = next++;
+        callbacks.set(id, callback);
+        return id;
+      },
+      invoke(cmd: string, args: Record<string, unknown> = {}) {
+        calls.push({ cmd, args });
+        return Promise.resolve(cmd === "plugin:event|listen" ? next++ : null);
+      },
+    };
+    record.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} };
+  });
+}
+
+/**
+ * Serve the Windows custom-scheme origin from the real `filesquid-server`, with the CORS
+ * answers `filesquid-desktop` gives its own pages. Records each forwarded request.
+ */
+async function bridgeCustomScheme(page: Page): Promise<{ path: string; auth?: string }[]> {
+  const forwarded: { path: string; auth?: string }[] = [];
+  const cors = {
+    "access-control-allow-origin": UI_ORIGIN,
+    "access-control-allow-headers": "authorization, content-type",
+    "access-control-allow-methods": "GET, HEAD, POST, PUT, PATCH, DELETE",
+  };
+  await page.route("http://filesquid.localhost/**", async (route) => {
+    const request = route.request();
+    if (request.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
+    const url = new URL(request.url());
+    forwarded.push({ path: url.pathname, auth: request.headers()["authorization"] });
+    const response = await route.fetch({ url: `${UI_ORIGIN}${url.pathname}${url.search}` });
+    return route.fulfill({ response, headers: { ...response.headers(), ...cors } });
+  });
+  return forwarded;
+}
+
+/** Emit one `filesquid-event` to the page's Tauri listener, as the desktop host would. */
+async function emitDesktopEvent(page: Page, payload: unknown): Promise<void> {
+  await page.evaluate((data) => {
+    const win = window as unknown as {
+      __fsIpcCalls: { cmd: string; args: { handler?: number } }[];
+      __fsEmit: (handler: number, payload: unknown) => void;
+    };
+    const listen = win.__fsIpcCalls.find((call) => call.cmd === "plugin:event|listen");
+    win.__fsEmit(listen?.args.handler ?? -1, { event: "filesquid-event", id: 1, payload: data });
+  }, payload);
+}
+
+test.describe("inside the desktop webview (custom URI scheme adapter)", () => {
+  test.use({ userAgent: WINDOWS_UA });
+
+  test("requests use the custom scheme and events use Tauri, not same-origin HTTP or WebSocket", async ({
+    page,
+  }) => {
+    const errors = trackErrors(page);
+    const sameOrigin: string[] = [];
+    const upgrades: string[] = [];
+    page.on("request", (request) => {
+      if (request.url().startsWith(`${UI_ORIGIN}/api/`)) sameOrigin.push(request.url());
+    });
+    page.on("websocket", (socket) => upgrades.push(socket.url()));
+    await emulateDesktopWebview(page);
+    await injectLaunchToken(page, ADMIN_TOKEN);
+    const forwarded = await bridgeCustomScheme(page);
+
+    await page.goto("/#/monitor");
+    const shell = page.locator("fs-app-shell");
+    await expect(shell.locator('[role="status"]')).toHaveText("API: ok (filesquid)");
+    const monitor = shell.locator("fs-monitor");
+    await expect(monitor.locator('[data-section="health"] h2')).toHaveText("Health");
+    await expect(monitor.locator("form[data-form='token']")).toHaveCount(0);
+
+    const paths = forwarded.map((call) => call.path);
+    expect(paths).toContain("/api/v1/health");
+    expect(paths).toContain("/api/v1/admin/health");
+    expect(forwarded.every((call) => call.auth === `Bearer ${ADMIN_TOKEN}`)).toBe(true);
+    const listened = await page.evaluate(() =>
+      (
+        window as unknown as { __fsIpcCalls: { cmd: string; args: { event?: string } }[] }
+      ).__fsIpcCalls
+        .filter((call) => call.cmd === "plugin:event|listen")
+        .map((call) => call.args.event),
+    );
+    expect(listened).toEqual(["filesquid-event"]);
+
+    await emitDesktopEvent(page, {
+      topic: "journal.entry",
+      data: {
+        id: Number.MAX_SAFE_INTEGER,
+        time: "2026-10-18T00:00:00Z",
+        host: "desktop",
+        actor: "owner",
+        operation: "ui.e2e.desktop_event",
+        outcome: "succeeded",
+        level: "info",
+        target_ids: [],
+      },
+    });
+    const newest = monitor.locator('[data-section="journal"] tbody tr').first();
+    await expect(newest.locator("td").nth(1)).toHaveText("ui.e2e.desktop_event");
+
+    expect(sameOrigin).toEqual([]);
+    expect(upgrades).toEqual([]);
+    expect(errors).toEqual([]);
+  });
+});

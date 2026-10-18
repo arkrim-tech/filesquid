@@ -1,15 +1,29 @@
 /**
  * FileSquid API client.
  *
- * Every UI reaches FileSquid only through this client (FileSquid U-16). It hides which
- * host answers: `filesquid-server` over HTTP and WebSocket, or the desktop host through
- * the `filesquid://` custom URI scheme and Tauri events (ADR 030).
+ * Every UI reaches FileSquid only through this client (FileSquid U-16, UI-S-012). It hides
+ * which host answers: `filesquid-server` over HTTP and WebSocket, or the desktop host through
+ * the `filesquid://` custom URI scheme and Tauri events (ADR 030). {@link selectHostAdapter}
+ * picks the adapter at run time. Its interface is `request()` (JSON), `read()` (bytes, with
+ * ranges), `command()` and `upload()` (mutations that return a `CommandOutcome`) and
+ * `subscribe()` (push events), plus typed shortcuts for existing routes.
  *
  * Authorisation is deny-by-default (API-S-004): every request made with a known token carries
  * `Authorization: Bearer <token>`, and the event channel WebSocket offers that token as the
  * subprotocol `filesquid.bearer.<token>`. The client keeps no copy of the token: it asks its
  * token source on every call, never stores, logs or renders it, and never puts it in an error.
  */
+import {
+  commandOutcome,
+  conflictOutcome,
+  parseContentRange,
+  rangeHeader,
+  type ByteRange,
+  type CommandEnvelope,
+  type CommandOutcome,
+  type ContentRange,
+} from "./commands";
+import type { CompleteList } from "./complete-list";
 import type { components } from "./schema";
 
 /** Process health payload, generated from the API contract. */
@@ -78,17 +92,12 @@ const MAX_EXPORT_REQUESTS = 10;
 export const EVENTS_SUBPROTOCOL = "filesquid.events.v1";
 /** Prefix of the subprotocol that carries the bearer token on a browser WebSocket. */
 const BEARER_SUBPROTOCOL_PREFIX = "filesquid.bearer.";
-/**
- * The list itself when it names every member of the generated `Union`, otherwise `never`.
- * Type-only: declaring a list with this type makes `tsc` fail when the contract adds a value
- * the list lacks, and `satisfies` rejects values the contract does not define. The generated
- * types have no run-time values, so the run-time lists are written out and checked this way.
- */
-type CompleteList<Union, List extends readonly Union[]> = [Exclude<Union, List[number]>] extends [
-  never,
-]
-  ? List
-  : never;
+/** HTTP status of a `conflict` answer: the command's expected revision did not match. */
+const HTTP_CONFLICT = 409;
+/** HTTP status of a partial (ranged) answer. */
+const HTTP_PARTIAL = 206;
+/** HTTP status of an answer with no body. */
+const HTTP_NO_CONTENT = 204;
 
 /** Literal {@link DenialReason} values; only checked, then used through {@link DENIAL_REASONS}. */
 const DENIAL_REASON_VALUES = [
@@ -286,6 +295,80 @@ export function apiBaseUrl(env: HostEnvironment): string {
 }
 
 /**
+ * Which adapter answers the client: the desktop custom URI scheme with Tauri events, or
+ * same-origin HTTP with the WebSocket event channel. The encrypted browser host (UI-F5.1)
+ * adds its own kind here; views never see the difference.
+ */
+export interface HostAdapter {
+  /** Adapter name. */
+  kind: "desktop-scheme" | "server-http";
+  /** Prefix for API paths, from {@link apiBaseUrl}. */
+  baseUrl: string;
+  /** Event transport: Tauri events on the desktop, the WebSocket channel on the server. */
+  events: "tauri" | "websocket";
+}
+
+/**
+ * Select the adapter for a host environment (ADR 030 Decision 3). Pure.
+ *
+ * @param env Host facts from {@link detectHost}.
+ * @returns The adapter kind, base URL and event transport.
+ */
+export function selectHostAdapter(env: HostEnvironment): HostAdapter {
+  const baseUrl = apiBaseUrl(env);
+  return env.isTauri
+    ? { kind: "desktop-scheme", baseUrl, events: "tauri" }
+    : { kind: "server-http", baseUrl, events: "websocket" };
+}
+
+/** HTTP methods the API uses. */
+export type HttpMethod = "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE";
+
+/** Options for {@link FileSquidClient.request}. */
+export interface RequestOptions {
+  /** HTTP method; `GET` by default. */
+  method?: HttpMethod;
+  /** JSON-serialisable body; sent as `application/json` when given. */
+  body?: unknown;
+  /** Cancels the request, for example when a view is left. */
+  signal?: AbortSignal;
+}
+
+/** Options for {@link FileSquidClient.read}. */
+export interface ReadOptions {
+  /** Inclusive byte range; the whole representation when omitted. */
+  range?: ByteRange;
+  /** Cancels the read. */
+  signal?: AbortSignal;
+}
+
+/** Result of {@link FileSquidClient.read}. */
+export interface ReadResult {
+  /** The 2xx response; its body is not consumed yet. */
+  response: Response;
+  /** True for a 206 answer (part of the representation), false for the whole of it. */
+  partial: boolean;
+  /** The returned range of a partial answer, when the server named it. */
+  contentRange?: ContentRange;
+}
+
+/** Options for {@link FileSquidClient.command}. */
+export interface CommandOptions {
+  /** HTTP method; `POST` by default. */
+  method?: Exclude<HttpMethod, "GET" | "HEAD">;
+  /** Cancels the request. The command may still apply; retry with the same operation id. */
+  signal?: AbortSignal;
+}
+
+/** Options for {@link FileSquidClient.upload}. */
+export interface UploadOptions {
+  /** File name sent with the `file` part. */
+  filename?: string;
+  /** Cancels the upload. The command may still apply; retry with the same operation id. */
+  signal?: AbortSignal;
+}
+
+/**
  * Return the WebSocket URL of the event channel for a page served by `filesquid-server`.
  *
  * @param location The page URL.
@@ -327,7 +410,7 @@ export class FileSquidClient {
 
   /** Read process health (`GET /api/v1/health`). Network I/O. */
   async health(): Promise<HealthStatus> {
-    return this.getJson<HealthStatus>("/api/v1/health");
+    return this.request<HealthStatus>("/api/v1/health");
   }
 
   /**
@@ -360,22 +443,22 @@ export class FileSquidClient {
 
   /** Overall health with reasons (`GET /api/v1/admin/health`). Network I/O. */
   async adminHealth(): Promise<HealthReport> {
-    return this.getJson<HealthReport>("/api/v1/admin/health");
+    return this.request<HealthReport>("/api/v1/admin/health");
   }
 
   /** Live and recently finished processes (`GET /api/v1/admin/processes`). Network I/O. */
   async adminProcesses(): Promise<ProcessView[]> {
-    return this.getJson<ProcessView[]>("/api/v1/admin/processes");
+    return this.request<ProcessView[]>("/api/v1/admin/processes");
   }
 
   /** One page of the activity journal (`GET /api/v1/admin/journal`). Network I/O. */
   async adminJournal(filters: JournalFilters = {}): Promise<JournalPage> {
-    return this.getJson<JournalPage>(`/api/v1/admin/journal${queryString(filters)}`);
+    return this.request<JournalPage>(`/api/v1/admin/journal${queryString(filters)}`);
   }
 
   /** Counters and gauges (`GET /api/v1/admin/metrics`). Network I/O. */
   async adminMetrics(): Promise<MetricsSnapshot> {
-    return this.getJson<MetricsSnapshot>("/api/v1/admin/metrics");
+    return this.request<MetricsSnapshot>("/api/v1/admin/metrics");
   }
 
   /**
@@ -391,7 +474,7 @@ export class FileSquidClient {
     let after: number | undefined;
     for (let i = 0; i < MAX_EXPORT_REQUESTS; i++) {
       const path = `/api/v1/admin/journal/export${queryString({ ...filters, after })}`;
-      const response = await this.request(path);
+      const response = await this.send(path);
       text += await response.text();
       const next = response.headers.get(NEXT_CURSOR_HEADER);
       if (next === null) return text;
@@ -400,10 +483,126 @@ export class FileSquidClient {
     throw new Error(`journal export exceeds ${MAX_EXPORT_REQUESTS} requests; narrow the filters`);
   }
 
-  /** GET a JSON resource under the base URL; throws {@link ApiError} on non-2xx. */
-  private async getJson<T>(path: string): Promise<T> {
-    const response = await this.request(path);
+  /**
+   * Call a JSON route under the base URL. Network I/O.
+   *
+   * @param path API path, for example `/api/v1/health`.
+   * @param options Method (`GET` by default), JSON body and abort signal.
+   * @returns The parsed JSON body, or undefined for `204 No Content`.
+   * @throws ApiError on a non-2xx answer, or (status 0) when the token cannot be sent.
+   */
+  async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+    const hasBody = options.body !== undefined;
+    const response = await this.send(path, {
+      method: options.method ?? "GET",
+      headers: hasBody ? { "Content-Type": "application/json" } : undefined,
+      body: hasBody ? JSON.stringify(options.body) : undefined,
+      signal: options.signal,
+    });
+    if (response.status === HTTP_NO_CONTENT) return undefined as T;
     return (await response.json()) as T;
+  }
+
+  /**
+   * Read bytes, the whole representation or an inclusive range. Network I/O; the body is
+   * left unread for the caller to stream.
+   *
+   * @param path API path of the content.
+   * @param options Optional byte range and abort signal.
+   * @returns The response, whether it is partial (206) and its `Content-Range`.
+   * @throws RangeError for an invalid range, before anything is sent.
+   * @throws ApiError on a non-2xx answer (for example 416), or when the token cannot be sent.
+   */
+  async read(path: string, options: ReadOptions = {}): Promise<ReadResult> {
+    const range = options.range ? rangeHeader(options.range) : undefined;
+    const response = await this.send(path, {
+      method: "GET",
+      headers: range ? { Range: range } : undefined,
+      signal: options.signal,
+    });
+    const partial = response.status === HTTP_PARTIAL;
+    const contentRange = partial
+      ? parseContentRange(response.headers.get("Content-Range"))
+      : undefined;
+    return { response, partial, contentRange };
+  }
+
+  /**
+   * Send a command: JSON body `{ envelope, input }`. Network I/O.
+   *
+   * @param path API path of the command.
+   * @param envelope Envelope from `commandEnvelope`; reuse it to retry.
+   * @param input Command input, omitted from the body when undefined.
+   * @param options Method (`POST` by default) and abort signal.
+   * @returns The outcome; only `committed` is durable completion evidence.
+   * @throws ApiError on a non-2xx answer other than 409, or when the token cannot be sent.
+   * @throws TypeError when the answer is not an outcome for this operation.
+   */
+  async command(
+    path: string,
+    envelope: CommandEnvelope,
+    input?: unknown,
+    options: CommandOptions = {},
+  ): Promise<CommandOutcome> {
+    const response = await this.transmit(path, {
+      method: options.method ?? "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ envelope, input }),
+      signal: options.signal,
+    });
+    return this.outcome(path, envelope.operation_id, response);
+  }
+
+  /**
+   * Upload one file as `multipart/form-data` with an `envelope` part (JSON) and a `file`
+   * part. The transport sets the multipart boundary. Network I/O.
+   *
+   * @param path API path of the upload.
+   * @param file File bytes.
+   * @param envelope Envelope from `commandEnvelope`; reuse it to retry.
+   * @param options File name and abort signal.
+   * @returns The outcome; only `committed` is durable completion evidence.
+   * @throws ApiError on a non-2xx answer other than 409, or when the token cannot be sent.
+   * @throws TypeError when the answer is not an outcome for this operation.
+   */
+  async upload(
+    path: string,
+    file: Blob,
+    envelope: CommandEnvelope,
+    options: UploadOptions = {},
+  ): Promise<CommandOutcome> {
+    const form = new FormData();
+    form.append("envelope", new Blob([JSON.stringify(envelope)], { type: "application/json" }));
+    form.append("file", file, options.filename ?? "file");
+    const response = await this.transmit(path, {
+      method: "POST",
+      body: form,
+      signal: options.signal,
+    });
+    return this.outcome(path, envelope.operation_id, response);
+  }
+
+  /**
+   * Turn a command answer into its outcome: 2xx bodies are validated, 409 becomes
+   * `conflict`, anything else is an {@link ApiError}. Network I/O: consumes the body.
+   *
+   * @param path API path, named in an error.
+   * @param operationId The id the command was sent with.
+   * @param response The raw answer.
+   * @returns The validated outcome.
+   */
+  private async outcome(
+    path: string,
+    operationId: string,
+    response: Response,
+  ): Promise<CommandOutcome> {
+    if (response.ok) return commandOutcome(await response.json(), operationId);
+    if (response.status !== HTTP_CONFLICT) {
+      throw new ApiError(response.status, path, await readErrorBody(response));
+    }
+    // The conflict body adds nothing the outcome needs; release it.
+    await response.body?.cancel();
+    return conflictOutcome(operationId);
   }
 
   /**
@@ -422,20 +621,33 @@ export class FileSquidClient {
   }
 
   /**
-   * GET `path` with the bearer token, when one is known. Network I/O.
+   * Send `init` to `path` and require a 2xx answer. Network I/O.
    *
    * @param path API path under the base URL.
+   * @param init Method, headers, body and signal.
    * @returns The 2xx response.
    * @throws ApiError on a non-2xx answer, with the body's code, reason and retryable flag.
    */
-  private async request(path: string): Promise<Response> {
-    const doFetch = this.options.fetch ?? globalThis.fetch.bind(globalThis);
-    const token = this.currentToken(path);
-    const init: RequestInit | undefined = token
-      ? { headers: { Authorization: `Bearer ${token}` } }
-      : undefined;
-    const response = await doFetch(`${this.options.baseUrl}${path}`, init);
+  private async send(path: string, init: RequestInit = {}): Promise<Response> {
+    const response = await this.transmit(path, init);
     if (!response.ok) throw new ApiError(response.status, path, await readErrorBody(response));
     return response;
+  }
+
+  /**
+   * Send `init` to `path` with the bearer token, when one is known, whatever the status of
+   * the answer. Network I/O.
+   *
+   * @param path API path under the base URL.
+   * @param init Method, headers, body and signal; `Authorization` is added here only.
+   * @returns The response.
+   * @throws ApiError (status 0, `invalid_credentials`) when the token cannot be sent.
+   */
+  private async transmit(path: string, init: RequestInit): Promise<Response> {
+    const doFetch = this.options.fetch ?? globalThis.fetch.bind(globalThis);
+    const token = this.currentToken(path);
+    const headers = new Headers(init.headers);
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+    return doFetch(`${this.options.baseUrl}${path}`, { ...init, headers });
   }
 }
