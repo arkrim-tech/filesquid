@@ -10,7 +10,7 @@ mod telemetry;
 
 use filesquid_api::trace_layer::JournalLayer;
 use filesquid_api::ApiState;
-use filesquid_server::{app, install_admin_authoriser, start_host_monitor, ServerConfig};
+use filesquid_server::{app, start_server, ServerConfig};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
@@ -31,14 +31,10 @@ async fn main() {
         }
     };
     let state = ApiState::new();
-    if let Err(message) = install_admin_authoriser(&config, &state) {
-        tracing::error!(%message, "cannot set up API authorisation");
-        std::process::exit(2);
-    }
-    let host = match start_host_monitor(&config, &state, Some(&layer)) {
+    let host = match start_server(&config, &state, Some(&layer)) {
         Ok(host) => Arc::new(host),
         Err(message) => {
-            tracing::error!(%message, "cannot start the activity journal");
+            tracing::error!(%message, "cannot start API authorisation or the activity journal");
             std::process::exit(2);
         }
     };

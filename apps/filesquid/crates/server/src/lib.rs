@@ -21,7 +21,7 @@ use axum::middleware::from_fn_with_state;
 use axum::response::Response;
 use axum::routing::{get, MethodRouter};
 use axum::Router;
-use filesquid_api::auth::{self, Action, Authoriser, Guard, EVENTS_SUBPROTOCOL};
+use filesquid_api::auth::{self, Action, Authoriser, Guard, Principal, EVENTS_SUBPROTOCOL};
 use filesquid_api::monitor::HostMonitor;
 use filesquid_api::trace_layer::JournalLayer;
 use filesquid_api::{ApiError, ApiState, ErrorCode, API_PREFIX};
@@ -101,8 +101,9 @@ impl ServerConfig {
 
 /// Resolve the administrator token (configured, stored, or generated into
 /// `<data_dir>/admin-token`) and install the administrator authoriser in `state`. Until this
-/// runs, every call is refused. Performs filesystem I/O. The token itself is never logged.
-pub fn install_admin_authoriser(config: &ServerConfig, state: &ApiState) -> Result<(), String> {
+/// runs, every call is refused. Returns whether a new token was issued (generated) by this
+/// call. Performs filesystem I/O. The token itself is never logged.
+pub fn install_admin_authoriser(config: &ServerConfig, state: &ApiState) -> Result<bool, String> {
     let configured = config.admin_token.as_deref();
     let (token, created) = admin_token::load_or_create_token(&config.data_dir, configured)?;
     if created {
@@ -112,7 +113,23 @@ pub fn install_admin_authoriser(config: &ServerConfig, state: &ApiState) -> Resu
     if !state.install_authoriser(Authoriser::server_administrator(token)) {
         return Err("an authoriser was already installed".to_string());
     }
-    Ok(())
+    Ok(created)
+}
+
+/// Start the server's authorisation and monitor in order: install the administrator
+/// authoriser, open the monitor, then journal `api.auth.token_issued` for the administrator
+/// credential this run accepts, whether it was generated now or loaded (API-S-017).
+/// Performs filesystem and database I/O.
+pub fn start_server(
+    config: &ServerConfig,
+    state: &ApiState,
+    layer: Option<&JournalLayer>,
+) -> Result<HostMonitor, String> {
+    install_admin_authoriser(config, state)?;
+    let host = start_host_monitor(config, state, layer)?;
+    let entry = auth::token_issued_entry(&Principal::Administrator);
+    host.monitor().journal().send(entry);
+    Ok(host)
 }
 
 /// Start the activity journal, process registry and admin routes for this server (FileSquid

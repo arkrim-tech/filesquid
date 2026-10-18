@@ -73,7 +73,12 @@ mod tests {
             assert!(!secret_eq("abc", other), "{other:?}");
             assert!(!secret_eq(other, "abc"), "{other:?}");
         }
-        assert_eq!(digest("abc").len(), 32);
+        // FIPS 180-4 test vector: SHA-256("abc").
+        let hex: String = digest("abc").iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(
+            hex,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 
     #[test]

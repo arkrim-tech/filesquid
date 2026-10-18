@@ -29,19 +29,35 @@ fn route_table() -> Vec<Route> {
     let mut table: Vec<Route> = vec![
         ("/health", get(health_handler), Action::ReadHealth),
         // Public on purpose: a liveness probe that says only that the process is up.
-        ("/health/live", get(liveness_handler), Action::Public),
+        (LIVENESS_PATH, get(liveness_handler), Action::Public),
         ("/openapi.json", get(contract_handler), Action::ReadContract),
     ];
     table.extend(crate::admin::routes());
     table
 }
 
+/// The one path, relative to [`API_PREFIX`], that may be public: the liveness probe.
+pub(crate) const LIVENESS_PATH: &str = "/health/live";
+
 /// Wrap `handlers` so they run only after the caller is authorised for `action`.
+///
+/// The one exception is the liveness probe: its entry carries [`Action::Public`] and is left
+/// unguarded on purpose. Any other path declaring [`Action::Public`] panics while the router
+/// is built, so the exception cannot spread by mistake; [`auth::require`] itself never
+/// bypasses authentication.
 fn guarded(
     state: &ApiState,
+    path: &str,
     handlers: MethodRouter<ApiState>,
     action: Action,
 ) -> MethodRouter<ApiState> {
+    if action == Action::Public {
+        assert!(
+            path == LIVENESS_PATH,
+            "only the liveness probe may be public, not {path}"
+        );
+        return handlers;
+    }
     let guard = Guard::new(state.clone(), action);
     handlers.route_layer(from_fn_with_state(guard, auth::require))
 }
@@ -59,7 +75,7 @@ pub fn router(state: ApiState) -> Router {
     let api = route_table()
         .into_iter()
         .fold(Router::new(), |api, (path, handlers, action)| {
-            api.route(path, guarded(&state, handlers, action))
+            api.route(path, guarded(&state, path, handlers, action))
         })
         // After the routes: axum applies this to the method routers registered so far.
         .method_not_allowed_fallback(method_not_allowed)
@@ -130,4 +146,31 @@ async fn health_handler() -> Json<HealthStatus> {
 /// `GET /api/v1/openapi.json`: the API contract this build serves.
 async fn contract_handler() -> impl IntoResponse {
     ([(CONTENT_TYPE, "application/json")], CONTRACT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "only the liveness probe may be public")]
+    fn a_route_other_than_the_liveness_probe_cannot_be_public() {
+        let _ = guarded(
+            &ApiState::new(),
+            "/health",
+            get(health_handler),
+            Action::Public,
+        );
+    }
+
+    #[test]
+    fn the_liveness_probe_is_the_one_public_path() {
+        let _ = guarded(
+            &ApiState::new(),
+            LIVENESS_PATH,
+            get(liveness_handler),
+            Action::Public,
+        );
+        assert_eq!(LIVENESS_PATH, "/health/live");
+    }
 }

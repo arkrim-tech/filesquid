@@ -44,7 +44,9 @@ pub enum Action {
     ReadMonitor,
     /// Deliberately public, unauthenticated: only the liveness probe
     /// (`GET /api/v1/health/live`), which says that the process is up and nothing else. The
-    /// guard lets these calls through without a credential; nothing else may use this action.
+    /// router leaves the route-table entry with this action unguarded; the guard itself
+    /// ([`crate::auth::require`]) still authenticates any route it wraps, so a host cannot
+    /// make a route public with it.
     Public,
 }
 

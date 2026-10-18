@@ -300,3 +300,73 @@ fn concurrent_first_starts_agree_on_one_token() {
         std::fs::remove_dir_all(dir).expect("cleanup");
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn a_blank_owner_only_token_file_left_by_a_crash_is_replaced() {
+    use filesquid_server::admin_token::load_or_create_token;
+    use std::os::unix::fs::PermissionsExt;
+    let dir = data_dir("blank");
+    std::fs::create_dir_all(&dir).expect("dir");
+    let path = dir.join("admin-token");
+    std::fs::write(&path, "").expect("blank file");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+    let (token, created) = load_or_create_token(&dir, None).expect("replaced");
+    assert!(created);
+    assert_eq!(token.len(), 64);
+    let stored = std::fs::read_to_string(&path).expect("stored");
+    assert_eq!(stored.trim(), token);
+    let mode = std::fs::metadata(&path)
+        .expect("metadata")
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o600);
+    let leftovers = std::fs::read_dir(&dir).expect("dir").count();
+    assert_eq!(leftovers, 1, "no temporary file is left behind");
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_blank_token_file_open_to_others_is_still_refused() {
+    use filesquid_server::admin_token::load_or_create_token;
+    use std::os::unix::fs::PermissionsExt;
+    let dir = data_dir("blank-open");
+    std::fs::create_dir_all(&dir).expect("dir");
+    let path = dir.join("admin-token");
+    std::fs::write(&path, "").expect("blank file");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).expect("chmod");
+    let error = load_or_create_token(&dir, None).expect_err("refused");
+    assert!(error.contains("chmod 600"), "{error}");
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+#[tokio::test]
+async fn every_start_journals_the_administrator_token_issue() {
+    use filesquid_api::journal::JournalQuery;
+    use filesquid_server::start_server;
+    let dir = data_dir("issued");
+    let config = ServerConfig {
+        data_dir: dir.clone(),
+        admin_token: None,
+        ..ServerConfig::default()
+    };
+    for start in 0..2 {
+        let state = ApiState::new();
+        let host = start_server(&config, &state, None).expect("server");
+        host.monitor().journal().flush();
+        let query = JournalQuery {
+            operation: Some("api.auth.token_issued".into()),
+            ..Default::default()
+        };
+        let page = host.monitor().store().query(&query).expect("query");
+        assert_eq!(page.entries.len(), start + 1, "one issue record per start");
+        for entry in &page.entries {
+            assert_eq!(entry.target_ids, vec!["administrator".to_string()]);
+        }
+        host.stop();
+        drop(host);
+        drop(state);
+    }
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}

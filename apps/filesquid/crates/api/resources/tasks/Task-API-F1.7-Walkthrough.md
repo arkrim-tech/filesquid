@@ -47,7 +47,7 @@ This task also keeps three module requirements for everything it adds. Their ful
   - `api.auth.token_issued` is journaled at launch.
 - **Docs**:
   - [ADR 030](../../../../../../resources/architecture/030-filesquid-api-and-transports.md) Decision 5 records the layer.
-  - [API-S-004](../srs.md) lists the granular constraints.
+  - [API-S-004](../srs.md) lists the granular constraints. After review round 2 the liveness exception, the server token file and the journaling rule are their own requirements: [API-S-015, API-S-016 and API-S-017](../srs.md).
   - The [SRS-F-056](../../../../../../resources/srs.md#srs-f-056-single-filesquid-api) test gap is replaced by the new tests.
   - [DE-F1.1](../../../desktop/resources/plan.md) notes what landed here.
   - The root README covers the token in the server commands (run first, see below), `/metrics` with the token, and the authorisation test commands.
@@ -368,7 +368,7 @@ $ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8083/
 ### Owner decisions
 
 - **Public liveness probe.** `GET /api/v1/health/live` answers `{"status":"up"}` without a credential: no version, component detail or journal. Its route-table entry carries the action `public` (`Action::Public`), the one action the guard lets through, so the exception is explicit rather than a gap. The contract gives it `security: []` and `x-filesquid-action: public`, and adds the `Liveness` schema. Full health stays behind the token. Tests: `only_the_liveness_route_is_public`, `the_liveness_route_answers_without_a_token_and_says_only_that_the_process_is_up`, `the_liveness_route_still_refuses_an_anonymous_wrong_method`, `a_public_host_route_runs_without_a_token`, `the_only_public_operation_is_the_liveness_probe`, server `the_liveness_probe_answers_without_a_token`, desktop `the_liveness_probe_needs_no_token`, BDD "A liveness probe needs no token and learns only that the process is up". The deny-by-default tests now loop over every protected route, which is every route except the probe.
-- **Journaling.** The journal records refusals plus credential issue and rotation. Successful calls are not journaled one by one; they are visible as the API calls and operations they lead to. The rule text now says exactly that in [API-S-004](../srs.md), the [PRD](../../../../../../resources/prd.md) 100% logging bullet, the [product vision](../../../../../../resources/product-vision.md) FE-081, [ADR 033](../../../../../../resources/architecture/033-activity-journal-and-live-health-monitoring.md) and `.agents/rules/logging-enforce.md`.
+- **Journaling.** The journal records refusals plus credential issue (no rotation event exists, so none is claimed). Successful calls are not journaled one by one; what they change is journaled as the operations they cause. The rule text now says exactly that in [API-S-017](../srs.md), the [PRD](../../../../../../resources/prd.md) 100% logging bullet, the [product vision](../../../../../../resources/product-vision.md) FE-081, [ADR 033](../../../../../../resources/architecture/033-activity-journal-and-live-health-monitoring.md) and `.agents/rules/logging-enforce.md`.
 - **UI client.** Wiring `FileSquidClient` to send the token ships as a separate small `@filesquid/ui` pull request right after this one merges. [DE-F1.1](../../../desktop/resources/plan.md) says so.
 
 ### Cubic findings
@@ -488,6 +488,118 @@ $ curl -s -X POST -w ' %{http_code}\n' http://127.0.0.1:8083/metrics
 $ chmod 644 filesquid-data/admin-token && cargo run -q -p filesquid-server
 {"level":"ERROR","fields":{"message":"cannot set up API authorisation","message":"filesquid-data/admin-token is readable by other users; run chmod 600 on it and restart"}, ...}
 exit=2
+```
+
+## Review round 2: Cubic findings on 779ca42
+
+| Finding | Fix | Test (written first) |
+|---|---|---|
+| P1: the token file was checked with `symlink_metadata`, then reopened by path (TOCTOU) | On Unix the file is opened once with `O_NOFOLLOW`. The owner, mode and regular-file checks run on that handle's metadata (`fstat`), and the token is read from the same handle. | `the_token_file_is_opened_once_without_following_a_link` (lib), `a_symlinked_token_file_is_refused` |
+| P2: a blank `admin-token` was a permanent startup failure | `create_with` removes the file when the write or sync fails. A blank, owner-only, regular file is treated as left by a crashed first start: after a bounded wait (50 x 20 ms) for a concurrent writer, it is replaced atomically (temporary file, then rename). The permission checks still apply to blank files. | `a_failed_write_removes_the_partly_written_file` (lib), `a_blank_owner_only_token_file_left_by_a_crash_is_replaced`, `a_blank_token_file_open_to_others_is_still_refused` |
+| P2: `Action::Public` bypassed the guard on any route | `auth::require` never bypasses authentication. Only the router leaves a `public` entry unguarded, and building the router panics if any path other than `/health/live` declares `public`. | `a_host_route_cannot_be_made_public_through_the_guard`, `a_route_other_than_the_liveness_probe_cannot_be_public` (lib, `should_panic`), `the_liveness_probe_is_the_one_public_path` (lib) |
+| P2: the server never journaled its administrator token issue | `start_server` installs the authoriser, opens the monitor, then journals `api.auth.token_issued` (target `administrator`) at every start, whether the token was generated or loaded. `main` uses it. | `every_start_journals_the_administrator_token_issue` |
+| P2: ADR 033 Status and Rationale contradicted the narrowed journaling rule | Status now defines "activity" with the owner decision (successful API calls are not journaled one by one); Decision 2 refers to it; Rationale explains the exclusion and states that stdout is not a durable record. The "visible as API calls" claim is gone everywhere. | Documentation |
+| P2: README remedy was `chmod` only, with a hard-coded path | Separate remedies for permissions, ownership and symbolic links, using `$FILESQUID_DATA_DIR`. The server's error messages name the same remedies. | Run against the real binary (below) |
+| P3: API-S-004 packed too many rules | Split into [API-S-004](../srs.md) (deny-by-default layer), API-S-015 (liveness exception), API-S-016 (server token file) and API-S-017 (journaling). The plan row and the feature file cite them. | Documentation |
+| P3: feature steps said "every API route" | They say "every protected API route", matching `protected_paths()` | BDD run |
+| P3: vacuous digest-length check | The test checks the FIPS 180-4 vector SHA-256("abc") = `ba7816bf...f20015ad`. It passed on first run because the digest was already correct; it now proves the algorithm, not the array length. | `secrets_compare_by_digest_whatever_their_lengths` |
+| P3: "rotation" claimed without a rotation event | Removed from the walkthrough, API-S-017, ADR 030, ADR 033, the PRD, FE-081 and `logging-enforce.md`; the rule now says "credential issue" only | Documentation |
+| P3: README said every API call needs a token | It now says every route except the liveness probe | Documentation |
+| P3: layer.rs comment said "instead", and ADR 030 said "one JSON line" | Both now say the entry is printed in addition to the INFO line | Documentation |
+| P3: DE-F1.1 still listed "guard every request with a per-launch token" | Phrase removed | Documentation |
+
+### Red: round 2 tests before the fixes
+
+```text
+error[E0425]: cannot find function `create_with` in this scope
+error[E0425]: cannot find function `read_token_file` in this scope
+error: could not compile `filesquid-server` (lib test) due to 2 previous errors
+error[E0432]: unresolved import `filesquid_server::start_server`
+error: could not compile `filesquid-server` (test "integration_auth") due to 1 previous error
+---- a_host_route_cannot_be_made_public_through_the_guard stdout ----
+test result: FAILED. 29 passed; 1 failed (unit_auth)
+error[E0061]: this function takes 3 arguments but 4 arguments were supplied
+error[E0425]: cannot find value `LIVENESS_PATH` in this scope
+error: could not compile `filesquid-api` (lib test) due to 4 previous errors
+```
+
+### Green: round 2 raw output
+
+`cargo test -p filesquid-api -p filesquid-server -p filesquid-desktop --locked` (exit code 0):
+
+```text
+     Running unittests src/lib.rs
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+     Running tests/features.rs
+86 scenarios (27 passed, 59 skipped)
+     Running tests/unit/admin.rs
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/auth.rs
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/unit/contract.rs
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+     Running tests/unit/errors.rs
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/unit/events.rs
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+     Running tests/unit/health.rs
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/health_rules.rs
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/journal.rs
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/unit/metrics.rs
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/unit/registry.rs
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/unit/routes.rs
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/unit/writer.rs
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running unittests src/lib.rs
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/main.rs
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/integration/api_protocol.rs
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running unittests src/lib.rs
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/main.rs
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/integration/auth.rs
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.01s
+     Running tests/integration/events.rs
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+     Running tests/integration/health.rs
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/integration/monitor.rs
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/integration/static_ui.rs
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/unit/health.rs
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+The README token-file remedies, run against the real `filesquid-server` binary with `FILESQUID_DATA_DIR` set (the ownership case needs a second user and was not run here; its message is pinned by `check_private`):
+
+```text
+--- first start
+"$FILESQUID_DATA_DIR/admin-token"
+"filesquid-server listening"
+--- chmod 644
+"cannot start API authorisation or the activity journal"
+".../admin-token is readable by other users; run chmod 600 on it and restart"
+--- chmod 600 "$FILESQUID_DATA_DIR/admin-token"
+"filesquid-server listening"
+--- symbolic link
+"cannot start API authorisation or the activity journal"
+".../admin-token is a symbolic link; delete it and restart to generate a new token, or replace it with a regular file holding the token (then chmod 600 it)"
+--- delete the link and restart
+"$FILESQUID_DATA_DIR/admin-token"
+"filesquid-server listening"
 ```
 
 ## Work left to other tasks

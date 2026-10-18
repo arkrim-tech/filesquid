@@ -67,7 +67,13 @@ FILESQUID_BIND=127.0.0.1:8083 FILESQUID_UI_DIR=ui/dist cargo run -p filesquid-se
 
 Open `http://127.0.0.1:8083`. Without `FILESQUID_UI_DIR` the server serves the API only. `FILESQUID_BIND` defaults to `127.0.0.1:8083`.
 
-Every API call, the WebSocket event channel and `/metrics` are **deny-by-default**: they need `Authorization: Bearer <token>`, or the call answers `401 unauthorized` (no token) or `403 forbidden` (wrong token) with a typed error body. Until server accounts arrive, the token is the administrator token: the value of `FILESQUID_ADMIN_TOKEN`, or the token generated at first start into `<data dir>/admin-token`. On Linux and macOS the server refuses to start if that file is a symbolic link, belongs to another user, or is readable by group or others; fix it with `chmod 600 filesquid-data/admin-token`. The static UI itself is public, and so is one probe for process supervisors and load balancers, `GET /api/v1/health/live`, which answers only `{"status":"up"}`. In a second terminal in `apps/filesquid`:
+Every API route except the liveness probe, plus the WebSocket event channel and `/metrics`, is **deny-by-default**: a call needs `Authorization: Bearer <token>`, or it answers `401 unauthorized` (no token) or `403 forbidden` (wrong token) with a typed error body. The liveness probe `GET /api/v1/health/live` is public for process supervisors and load balancers and answers only `{"status":"up"}`; the static UI is public too. Until server accounts arrive, the token is the administrator token: the value of `FILESQUID_ADMIN_TOKEN`, or the token generated at first start into `admin-token` in the data directory (`FILESQUID_DATA_DIR`, default `filesquid-data`). On Linux and macOS the server refuses to start when that file is unsafe, and names the case:
+
+- **Readable by group or others:** `chmod 600 "$FILESQUID_DATA_DIR/admin-token"`, then restart.
+- **Owned by another user:** `chown <server user> "$FILESQUID_DATA_DIR/admin-token"` (as an administrator), or delete the file and restart to generate a new token.
+- **A symbolic link:** delete the link and restart to generate a new token, or replace it with a regular file that holds the token and `chmod 600` it.
+
+In a second terminal in `apps/filesquid` (with the default data directory):
 
 ```sh
 curl http://127.0.0.1:8083/api/v1/health/live

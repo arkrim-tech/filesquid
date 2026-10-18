@@ -116,21 +116,21 @@ fn event_channel(state: &ApiState) -> Router {
     )
 }
 
-#[when(expr = "the owner's webview calls every API route with the per-launch token")]
+#[when(expr = "the owner's webview calls every protected API route with the per-launch token")]
 async fn call_all_with_token(w: &mut MonitorWorld) {
     for path in protected_paths() {
         call(w, &path, w.secret.clone()).await;
     }
 }
 
-#[when(expr = "a client calls every API route without a token")]
+#[when(expr = "a client calls every protected API route without a token")]
 async fn call_all_anonymous(w: &mut MonitorWorld) {
     for path in protected_paths() {
         call(w, &path, None).await;
     }
 }
 
-#[when(expr = "a client calls every API route with a token from another launch")]
+#[when(expr = "a client calls every protected API route with a token from another launch")]
 async fn call_all_with_other_token(w: &mut MonitorWorld) {
     let other = launch_token().secret().to_string();
     w.presented = Some(other.clone());

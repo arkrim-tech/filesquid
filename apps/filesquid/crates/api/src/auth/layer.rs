@@ -46,15 +46,13 @@ impl Guard {
 /// Axum middleware: authenticate the caller, authorise [`Guard`]'s action on the host, and
 /// only then run the route. A refused call answers the typed [`ApiError`] denial and is
 /// journaled; the route never runs. On success the [`Principal`] is added to the request
-/// extensions for the handler. A route guarded with [`Action::Public`] runs without a
-/// credential: that is the one deliberate exception (the liveness probe).
+/// extensions for the handler. The guard never bypasses authentication, whatever its action:
+/// a host cannot make a route public through it. The only public route is the router's
+/// liveness probe, which the router's route table leaves unguarded on purpose.
 ///
 /// Use with `axum::middleware::from_fn_with_state(Guard::new(state, action), require)` as a
 /// `route_layer`.
 pub async fn require(State(guard): State<Guard>, mut request: Request, next: Next) -> Response {
-    if guard.action == Action::Public {
-        return next.run(request).await;
-    }
     let checked = authorise_call(&guard.state, request.headers(), guard.action).await;
     match checked {
         Ok(principal) => {
@@ -102,7 +100,8 @@ async fn deny(
     let actor = principal.map_or(ANONYMOUS_ACTOR, Principal::actor);
     let action_name = action.map_or("none", Action::as_str);
     // INFO under a non-activity target: stdout only, so the journal gets exactly one record.
-    // Without a monitor, `journal_entry` prints the record unfiltered instead.
+    // Without a monitor, `journal_entry` also prints the record to stdout, unfiltered, so a
+    // refusal before the monitor starts gives this line (when the filter shows INFO) plus that one.
     tracing::info!(
         target: "filesquid::auth",
         reason = reason.as_str(),

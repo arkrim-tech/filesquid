@@ -325,15 +325,23 @@ async fn host_routes_are_denied_by_default() {
 }
 
 #[tokio::test]
-async fn a_public_host_route_runs_without_a_token() {
-    let (state, _token) = owner_state();
+async fn a_host_route_cannot_be_made_public_through_the_guard() {
+    let (state, token) = owner_state();
     let guard = Guard::new(state.clone(), Action::Public);
-    let router = Router::new().route(
-        "/api/v1/events",
-        get(|| async { "open" })
-            .route_layer(axum::middleware::from_fn_with_state(guard, auth::require)),
-    );
-    let (status, _) = host_call(router, &[]).await;
+    let router = || {
+        Router::new().route(
+            "/api/v1/events",
+            get(|| async { "open" }).route_layer(axum::middleware::from_fn_with_state(
+                guard.clone(),
+                auth::require,
+            )),
+        )
+    };
+    let (status, json) = host_call(router(), &[]).await;
+    assert_eq!(status, 401, "the guard never bypasses authentication");
+    assert_denial(&json, "unauthorized", "missing_credentials", "public guard");
+    let bearer = format!("Bearer {}", token.secret());
+    let (status, _) = host_call(router(), &[("authorization", &bearer)]).await;
     assert_eq!(status, 200);
 }
 
