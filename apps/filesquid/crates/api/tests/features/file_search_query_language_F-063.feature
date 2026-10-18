@@ -50,7 +50,6 @@ Feature: File search query language and filter chips
       | after:2026-01-01           | the latest OCFL version was created on or after 2026-01-01   |
       | createdbefore:2020-01-01   | the original creation date is before 2020-01-01              |
       | source:example.org         | the acquisition origin recorded by the clipping module       |
-      | generator:"Camera App"     | the C2PA claim generator matches                             |
       | size>100MB                 | the file is larger than 100 MB                               |
       | in:Campaign                | the file's logical path is under the folder Campaign         |
       | sharedwith:public          | the file is reachable through a public link or exhibit       |
@@ -68,6 +67,18 @@ Feature: File search query language and filter chips
     When Ana searches for "colour:blue"
     Then the API should return an explicit unknown-operator error
     And no results should be returned
+
+  Scenario: generator: is not part of the grammar without the c2pa module
+    Given the c2pa module is not enabled
+    When Ana searches for "generator:\"Camera App\""
+    Then the API should return an explicit unknown-operator error
+    And no results should be returned
+
+  Scenario: generator: matches the C2PA claim generator once the c2pa module is enabled
+    Given the c2pa module is enabled
+    And one file Ana may read whose C2PA claim generator is "Camera App" and one whose generator is not
+    When Ana searches for "generator:\"Camera App\""
+    Then exactly the file whose claim generator is "Camera App" should be returned
 
   Scenario: Case folding and Unicode normalisation follow the declared contract
     Given a file titled "Café Résumé"

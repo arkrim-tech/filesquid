@@ -52,7 +52,7 @@ Draft mockups of every screen a person uses in the **FileSquid MVP**: the early-
 | File | Surface | States shown | Plan task | PRD |
 |---|---|---|---|---|
 | [17-import-drag-drop.svg](./17-import-drag-drop.svg) | Drag-and-drop target naming the destination folder | 12 files dragged from Finder | [UI-1.2](../../../apps/filesquid/ui/resources/plan.md), DE-1.2 | [F-002](../../prd.md#f-002-safe-file-folder-and-device-import) |
-| [18-import-review.svg](./18-import-review.svg) | Import review: proposed and already-imported items, destination, counts, space and staging limit | Camera card with 18 duplicates skipped | UI-1.2, DE-1.2 | [F-002](../../prd.md#f-002-safe-file-folder-and-device-import), [F-043](../../prd.md#f-043-import-time-c2pa-records-and-action-disclosure) |
+| [18-import-review.svg](./18-import-review.svg) | Import review: proposed and already-imported items, destination, counts, space and staging limit | Camera card with 18 duplicates skipped | UI-1.2, DE-1.2 | [F-002](../../prd.md#f-002-safe-file-folder-and-device-import) |
 | [19-import-progress.svg](./19-import-progress.svg) | Import jobs panel | Committed, verifying SHA-256, copying, waiting, failed with retry; a paused job resumed from its checkpoint | UI-1.2, DE-0.4, API-F1.6 | [F-002](../../prd.md#f-002-safe-file-folder-and-device-import) |
 
 ## Search
@@ -79,7 +79,6 @@ Draft mockups of every screen a person uses in the **FileSquid MVP**: the early-
 | [27-version-restore.svg](./27-version-restore.svg) | Restore a version as a new version with an optional label | v5 restored as v8 | UI-F2.11, API-F2.5 | [F-065](../../prd.md#f-065-file-version-history-and-retention) |
 | [28-panel-metadata.svg](./28-panel-metadata.svg) | Metadata: populated `dcterms:` and `exif:` properties with their source | Owner-entered and extracted values | [UI-F2.4](../../../apps/filesquid/ui/resources/plan.md), API-F1.4 | [F-046](../../prd.md#f-046-media-metadata-inspection-correction-and-privacy-exports), [F-052](../../prd.md#f-052-metadata-module) |
 | [29-metadata-add-property.svg](./29-metadata-add-property.svg) | Add property: `/terms/` first, then a Schema.org suggestion, registered namespaces, or a custom namespace key | Searching "righ" | UI-F2.4, MD-0.7, API-F1.4 | [F-046](../../prd.md#f-046-media-metadata-inspection-correction-and-privacy-exports), [F-052](../../prd.md#f-052-metadata-module) |
-| [30-panel-credentials.svg](./30-panel-credentials.svg) | Content Credentials: unsigned import-time record, history, validation codes of a prior credential | Prepared record, not signed; camera signer not in a trust list | [UI-F2.5](../../../apps/filesquid/ui/resources/plan.md), API-F1.5 | [F-043](../../prd.md#f-043-import-time-c2pa-records-and-action-disclosure), [F-054](../../prd.md#f-054-c2pa-module) |
 
 ## Monitor, settings and states
 
@@ -101,7 +100,7 @@ C-056 and ADR 035 move these after the MVP, or no MVP task delivers them. v2 dra
 | Favorites, Tags view, Manage tags, `tag:` and `is:favorite` operators | Favorites and keyword views come with CL-1.4 in phase I1. `dcterms:subject` can still be edited in the Metadata panel. |
 | Virtual collections, virtual exhibits | F-006 rules are in phase I1; virtual exhibits (UI-F2.13) follow the MVP. |
 | People chip, `owner:` and the other server-only operators | One owner on the desktop; server operators need sharing records. `sharedwith:` is shown as unsupported in mockup 21. |
-| Signing, embedding and "Scan collection" in Content Credentials | C2PA signing and embedding move to Task FS-3.12; collection scans follow the MVP. The MVP records an unsigned import-time record. |
+| Content Credentials tab, panel (former mockup 30), import-time C2PA records, signing, embedding and "Scan collection" | No C2PA in the MVP or release 1 ([ADR 037](../../architecture/037-c2pa-in-release-2.md)). C2PA ships with the ImageSquid release (release 2), when the default FileSquid sidebar regains a Credentials tab and the ImageSquid inspector shows its C2PA tab. Import review and library recovery mention the file record instead. |
 | Managed or referenced storage choice, default library, watched folders | The MVP imports by copying into the library (F-002 managed import). Referenced storage and watched folders have no MVP task. |
 | Permanent delete and retention expiry | The MVP offers remove and restore only; nothing in the API deletes history. |
 | Hover card, start-view setting, help button | Optional hover card skipped; the start view chooses between Home and the personal library, neither of which exists on the MVP desktop; no help surface is planned. |

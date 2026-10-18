@@ -72,7 +72,7 @@
 <rect x="318" y="662" width="804" height="58" rx="8" fill="#F5F5F5"/>
 <g transform="translate(334 680) scale(0.750000)" fill="none" stroke="#555555" stroke-width="2.13" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/></g>
 <text x="364" y="686" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#111111">Files are copied and checked with SHA-256. The card is only read.</text>
-<text x="364" y="706" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#555555">Each file gets an unsigned Content Credentials record of its import.</text>
+<text x="364" y="706" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#555555">Each file gets a file record of where it came from and how it was imported.</text>
 <line x1="290" y1="744" x2="1150" y2="744" stroke="#E0E0E0" stroke-width="1"/>
 <rect x="962" y="762" width="160" height="38" rx="7" fill="#16AC49"/><text x="993.617" y="785.68" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#FFFFFF">Import 196 files</text>
 <rect x="860" y="762" width="90" height="38" rx="7" fill="#FFFFFF" stroke="#CCCCCC" stroke-width="1.5"/><text x="883.164" y="785.68" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#111111">Cancel</text>

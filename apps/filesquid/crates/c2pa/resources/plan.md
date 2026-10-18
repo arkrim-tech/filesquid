@@ -2,9 +2,11 @@
 
 The `c2pa` module of FileSquid and a stand-alone FOSS C2PA engine implemented from scratch in Rust (Cargo package `filesquid-c2pa`, import `filesquid_c2pa`). It owns **Content Credentials** ([C-055](../../../../../resources/product-vision.md#module-rules)): it reads, validates, mints, edits and embeds C2PA manifests and produces scan reports. Any developer can integrate it without the FileSquid app. Cryptographic primitives come from established crates behind a crypto-backend trait and are never hand-rolled. The official `c2pa` crate and `c2patool` are test-time interoperability oracles only. Default dependencies exclude `filesquid-ocfl`, Axum, Tauri and distribution code. `filesquid-api` links it in the desktop host and `filesquid-server`, and the encrypted browser host links its `wasm32` build; the ciphertext-only hosted service MUST NOT link it ([ADR 025](../../../../../resources/architecture/025-client-side-filesquid-engines.md), [ADR 026](../../../../../resources/architecture/026-filesquid-provenance-engine.md), [ADR 032](../../../../../resources/architecture/032-hosting-and-privacy-model.md)). It MUST build, test and publish on its own ([C-054](../../../../../resources/product-vision.md#module-rules)). Global sequence: [implementation-plan.md](../../../../../resources/implementation-plan.md).
 
+C2PA is not part of the FileSquid MVP or the first consumer release: every task below is in global phase C (Content Credentials) and ships with the ImageSquid release, release 2 ([ADR 037](../../../../../resources/architecture/037-c2pa-in-release-2.md)). CP-0.1, CP-0.2 and CP-0.3 were finished before or alongside that decision and stay done; the remaining rows MAY start once the MVP gate (global Task FS-3.9) passes and MUST NOT delay it or the release-1 gate (global Task FS-3.5).
+
 CP-0.1 created the crate (`apps/filesquid/crates/c2pa/`, a workspace member) with its foundation: the byte source and sink, fetcher and crypto-backend traits, the default RustCrypto backend, isolation tests, the `wasm32` build check and the `c2patool` oracle harness. C2PA reading, validation, minting and editing are the later tasks below. Cargo commands run from `apps/filesquid/` with `-p filesquid-c2pa`: `cargo test -p filesquid-c2pa --locked`, rustfmt, Clippy, `cargo build -p filesquid-c2pa --target wasm32-unknown-unknown`, and the oracle suite. Allure/JUnit under `tests/allure-results/`.
 
-## Phase F0: Read and validate (global Task 0.17)
+## Phase C: Read and validate (global Task 0.17)
 
 - [x] **Task CP-0.1: Scaffold, isolation, crypto backend and oracle harness**
   - **Description:** Scaffold the crate with `publish = false`. Isolation tests MUST fail if it depends on `filesquid-ocfl`, axum, tauri, SQLite crates (including rusqlite, sqlite and libsqlite3-sys), sqlx, libvips, ffmpeg-sys, `filesquid-core` or any other FileSquid crate, distribution crates, or the official `c2pa` crate outside dev-dependencies. Add a source-scan test that fails on direct `std::fs` use or a direct network-client dependency (for example reqwest, hyper, ureq) in the core. Define async byte source/sink traits, a caller-supplied fetcher trait and the crypto-backend trait; choose and record the primitive crates (SHA-2, ECDSA, Ed25519, RSA-PSS, X.509, CMS) in the README. Add a `wasm32-unknown-unknown` build check to the local pre-commit hook and an oracle harness that compares results with `c2patool` on C2PA conformance files. Pin the C2PA specification version in the README.
@@ -39,15 +41,15 @@ CP-0.1 created the crate (`apps/filesquid/crates/c2pa/`, a workspace member) wit
   - **Agent Prompt:** `@AGENTS.md Begin by creating a new feature branch for Task CP-0.4. Then begin development, running Cargo from apps/filesquid/ with -p filesquid-c2pa (module directory apps/filesquid/crates/c2pa/). Additionally, invoke the @feature-writer skill to translate SRS requirements into executable BDD feature tests. Upon completion, YOU MUST generate apps/filesquid/crates/c2pa/resources/tasks/Task-CP-0.4-Walkthrough.md directly in the project repository with clear SRS mapping (including BOTH the ID and full human-readable title text) in the secondary section, and strictly delete the internal tracking Plan/ToDos documents before checking off the Markdown box locally in apps/filesquid/crates/c2pa/resources/plan.md, and the matching boxes in the repository-root resources/implementation-plan-checklist.md. Then commit your changes and push the branch to origin.`
 
 - [ ] **Task CP-0.5: Validation report and `fsquid` read/verify**
-  - **Description:** Assemble a validation report with the specification's status codes (success, informational, failure) per manifest and ingredient. Add the `read` and `verify` commands to `fsquid` (a command runner in this library, registered as the `c2pa` group in [filesquid-cli](../../cli/resources/plan.md), [ADR 036](../../../../../resources/architecture/036-single-fsquid-cli.md)). Oracle suite MUST agree with `c2patool` verdicts on the conformance files.
-  - **Estimated Time:** 10 hours
+  - **Description:** Assemble a validation report with the specification's status codes (success, informational, failure) per manifest and ingredient. Add the `read` and `verify` commands to `fsquid` (a command runner in this library, registered as the `c2pa` group in [filesquid-cli](../../cli/resources/plan.md), [ADR 036](../../../../../resources/architecture/036-single-fsquid-cli.md)). Decompress Brotli `c2cm` compressed manifest boxes before parsing, with a decompressed-size cap in `ParseLimits`, so compressed manifests are validated instead of reported as not checked. Report an assertion the claim does not reference as `assertion.undeclared` (C2PA 2.4 section 15.10.3.1); CP-0.3 already ignores such assertions when choosing the hard binding. Oracle suite MUST agree with `c2patool` verdicts on the conformance files.
+  - **Estimated Time:** 14 hours
   - **Dependencies:** Task CP-0.3, Task CP-0.4
   - **Related Requirements:** [F-054](../../../../../resources/prd.md#f-054-c2pa-module), [C-054](../../../../../resources/product-vision.md#module-rules), [ADR 026](../../../../../resources/architecture/026-filesquid-provenance-engine.md)
   - **Related Tests:** [`reusable_provenance_engine_F-054.feature`](../tests/features/reusable_provenance_engine_F-054.feature)
   - **Agent Prompt:** `@AGENTS.md Begin by creating a new feature branch for Task CP-0.5. Then begin development, running Cargo from apps/filesquid/ with -p filesquid-c2pa (module directory apps/filesquid/crates/c2pa/). Additionally, invoke the @feature-writer skill to translate SRS requirements into executable BDD feature tests. Upon completion, YOU MUST generate apps/filesquid/crates/c2pa/resources/tasks/Task-CP-0.5-Walkthrough.md directly in the project repository with clear SRS mapping (including BOTH the ID and full human-readable title text) in the secondary section, and strictly delete the internal tracking Plan/ToDos documents before checking off the Markdown box locally in apps/filesquid/crates/c2pa/resources/plan.md, and the matching boxes in the repository-root resources/implementation-plan-checklist.md. Then commit your changes and push the branch to origin.`
 
 - [ ] **Task CP-0.8: Content Credentials sidebar panel UI package**
-  - **Status:** **Superseded** — the Content Credentials panel is the vanilla TypeScript custom element `<fs-credentials-panel>` in `@filesquid/ui` over the API's credentials routes: see [UI-F2.5](../../../ui/resources/plan.md) (global Task FS-2.2) and [API-F1.5](../../api/resources/plan.md). The panel requirements in this row (manifest, signer, assertions, ingredients, validation status codes; unsigned, signed, invalid and unavailable distinct) carry over unchanged.
+  - **Status:** **Superseded** — the Content Credentials panel is the vanilla TypeScript custom element `<fs-credentials-panel>` in `@filesquid/ui` over the API's credentials routes (global Task FS-C.1): see [UI-F2.5](../../../ui/resources/plan.md) and [API-F1.5](../../api/resources/plan.md). The panel requirements in this row (manifest, signer, assertions, ingredients, validation status codes; unsigned, signed, invalid and unavailable distinct) carry over unchanged.
   - **Description:** Scaffold `apps/filesquid-provenance/ui/` (former path) as npm package `@filesquid/provenance-ui` (Svelte 5 plus Web Component build, dev port 5176). A Content Credentials panel for a selected file: active manifest, signer, assertions, ingredients and validation status codes, with unsigned, signed, invalid and unavailable states distinct. Mounts in the `@filesquid/ocfl-ui` sidebar slot or any host. Tokens, string tables, Playwright tests against the production build ([ADR 028](../../../../../resources/architecture/028-filesquid-ui-packages-and-panel-composition.md)).
   - **Estimated Time:** 8 hours
   - **Dependencies:** Task CP-0.5
@@ -55,7 +57,7 @@ CP-0.1 created the crate (`apps/filesquid/crates/c2pa/`, a workspace member) wit
   - **Related Tests:** [`reusable_provenance_engine_F-054.feature`](../tests/features/reusable_provenance_engine_F-054.feature)
   - **Agent Prompt:** None. Superseded; execute the replacement named in **Status**.
 
-## Phase F0: Manifest building (global Task 0.18)
+## Phase C: Manifest building (global Task 0.18)
 
 - [ ] **Task CP-0.6: Manifest builder and prepared records**
   - **Description:** Build claims and manifests: actions, ingredients (parent and component), hard bindings, AI-generation and training/mining assertions, and custom assertions. Support prepared/unsigned claim data so callers can record provenance before signing.
@@ -65,7 +67,7 @@ CP-0.1 created the crate (`apps/filesquid/crates/c2pa/`, a workspace member) wit
   - **Related Tests:** [`reusable_provenance_engine_F-054.feature`](../tests/features/reusable_provenance_engine_F-054.feature)
   - **Agent Prompt:** `@AGENTS.md Begin by creating a new feature branch for Task CP-0.6. Then begin development, running Cargo from apps/filesquid/ with -p filesquid-c2pa (module directory apps/filesquid/crates/c2pa/). Additionally, invoke the @feature-writer skill to translate SRS requirements into executable BDD feature tests. Upon completion, YOU MUST generate apps/filesquid/crates/c2pa/resources/tasks/Task-CP-0.6-Walkthrough.md directly in the project repository with clear SRS mapping (including BOTH the ID and full human-readable title text) in the secondary section, and strictly delete the internal tracking Plan/ToDos documents before checking off the Markdown box locally in apps/filesquid/crates/c2pa/resources/plan.md, and the matching boxes in the repository-root resources/implementation-plan-checklist.md. Then commit your changes and push the branch to origin.`
 
-## Phase F3R: Signing and embedding (global Task FS-3.12, after the MVP)
+## Phase C: Signing and embedding (global Task FS-3.12)
 
 - [ ] **Task CP-0.7: Signer interface, signing and embedding**
   - **Description:** Define the `Signer` interface for local keys, hardware modules and remote/third-party signers; produce COSE_Sign1 signatures with optional RFC 3161 timestamps. Embed manifests into JPEG and PNG and write sidecar `.c2pa` files. Add the `fsquid` commands `sign` and `embed`. Oracle suite MUST read every manifest this crate writes.
@@ -75,7 +77,7 @@ CP-0.1 created the crate (`apps/filesquid/crates/c2pa/`, a workspace member) wit
   - **Related Tests:** [`reusable_provenance_engine_F-054.feature`](../tests/features/reusable_provenance_engine_F-054.feature)
   - **Agent Prompt:** `@AGENTS.md Begin by creating a new feature branch for Task CP-0.7. Then begin development, running Cargo from apps/filesquid/ with -p filesquid-c2pa (module directory apps/filesquid/crates/c2pa/). Additionally, invoke the @feature-writer skill to translate SRS requirements into executable BDD feature tests. Upon completion, YOU MUST generate apps/filesquid/crates/c2pa/resources/tasks/Task-CP-0.7-Walkthrough.md directly in the project repository with clear SRS mapping (including BOTH the ID and full human-readable title text) in the secondary section, and strictly delete the internal tracking Plan/ToDos documents before checking off the Markdown box locally in apps/filesquid/crates/c2pa/resources/plan.md, and the matching boxes in the repository-root resources/implementation-plan-checklist.md. Then commit your changes and push the branch to origin.`
 
-## Phase F3R: Edits, formats, scans and PROV-O (global Task 2.6, after the MVP)
+## Phase C: Edits, formats, scans and PROV-O (global Task 2.6)
 
 - [ ] **Task CP-2.1: Edits, update manifests and redaction**
   - **Description:** Record edits as new manifests referencing the prior asset as a parent ingredient; support update manifests and assertion redaction as the specification allows. A signed manifest is never modified in place. Add the `fsquid` command `edit`.
@@ -109,7 +111,7 @@ CP-0.1 created the crate (`apps/filesquid/crates/c2pa/`, a workspace member) wit
   - **Related Tests:** [`reusable_provenance_engine_F-054.feature`](../tests/features/reusable_provenance_engine_F-054.feature)
   - **Agent Prompt:** `@AGENTS.md Begin by creating a new feature branch for Task CP-2.4. Then begin development, running Cargo from apps/filesquid/ with -p filesquid-c2pa (module directory apps/filesquid/crates/c2pa/). Additionally, invoke the @feature-writer skill to translate SRS requirements into executable BDD feature tests. Upon completion, YOU MUST generate apps/filesquid/crates/c2pa/resources/tasks/Task-CP-2.4-Walkthrough.md directly in the project repository with clear SRS mapping (including BOTH the ID and full human-readable title text) in the secondary section, and strictly delete the internal tracking Plan/ToDos documents before checking off the Markdown box locally in apps/filesquid/crates/c2pa/resources/plan.md, and the matching boxes in the repository-root resources/implementation-plan-checklist.md. Then commit your changes and push the branch to origin.`
 
-## Phase F3R: Publish the crate (global Task FS-3.3, after the MVP)
+## Phase C: Publish the crate (global Task FS-C.2)
 
 - [ ] **Task CP-F3.1: Version and publish `filesquid-c2pa`**
   - **Description:** Set `publish = true` once the public API is semver-stable (CP-0.1 scaffolds with `publish = false`); rustdoc, CHANGELOG, MIT licence, pinned C2PA specification version; publish to crates.io; its commands ship in the `fsquid` release binary. FileSquid keeps its workspace path dependency.
@@ -121,5 +123,5 @@ CP-0.1 created the crate (`apps/filesquid/crates/c2pa/`, a workspace member) wit
 
 ## Summary Timeline
 
-- **Total Estimated Time:** 184 hours
+- **Total Estimated Time:** 188 hours (CP-0.5 went from 10 to 14 hours when Brotli `c2cm` decompression and `assertion.undeclared` reporting joined it)
 - **Critical Path:** CP-0.1 → CP-0.2 → CP-0.3/CP-0.4 → CP-0.5 → CP-0.6 → CP-0.7 → CP-2.1/CP-2.2

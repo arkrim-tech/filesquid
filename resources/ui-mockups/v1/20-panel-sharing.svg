@@ -264,12 +264,12 @@
 <text x="1278" y="181.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="500" fill="#555555" text-anchor="middle">Versions</text>
 <rect x="1326.67" y="162" width="89.3333" height="30" rx="6" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1"/>
 <text x="1371.33" y="181.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="500" fill="#555555" text-anchor="middle">Metadata</text>
+
+
 <rect x="1140" y="196" width="89.3333" height="30" rx="6" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1"/>
-<text x="1184.67" y="215.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="500" fill="#555555" text-anchor="middle">Credentials</text>
-<rect x="1233.33" y="196" width="89.3333" height="30" rx="6" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1"/>
-<text x="1278" y="215.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="500" fill="#555555" text-anchor="middle">Activity</text>
-<rect x="1326.67" y="196" width="89.3333" height="30" rx="6" fill="#F0FAF4" stroke="#16AC49" stroke-width="1"/>
-<text x="1371.33" y="215.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#0f8a39" text-anchor="middle">Sharing</text>
+<text x="1184.67" y="215.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="500" fill="#555555" text-anchor="middle">Activity</text>
+<rect x="1233.33" y="196" width="89.3333" height="30" rx="6" fill="#F0FAF4" stroke="#16AC49" stroke-width="1"/>
+<text x="1278" y="215.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#0f8a39" text-anchor="middle">Sharing</text>
 <line x1="1120" y1="242" x2="1440" y2="242" stroke="#E0E0E0" stroke-width="1"/>
 <text x="1140" y="268" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="11" font-weight="500" fill="#777777" letter-spacing="0.1em">INTERNAL</text>
 <rect x="1140" y="280" width="182" height="34" rx="6" fill="#FFFFFF" stroke="#CCCCCC" stroke-width="1.5"/>
