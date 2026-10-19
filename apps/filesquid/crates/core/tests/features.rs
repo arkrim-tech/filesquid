@@ -1472,7 +1472,9 @@ fn last_parse(world: &CoreWorld) -> &ParsedMessage {
 )]
 fn format_operation_message(world: &mut CoreWorld, op: String, kind: String, label: String) {
     let kind = OperationKind::parse(&kind).expect("kind");
-    let message = OperationMessage::new(OperationId::new(op).expect("op"), kind).with_label(label);
+    let message = OperationMessage::new(OperationId::new(op).expect("op"), kind)
+        .with_label(label)
+        .expect("label");
     remember_message(world, message.format());
 }
 

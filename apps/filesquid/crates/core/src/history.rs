@@ -25,6 +25,10 @@ pub const OPERATION_MESSAGE_PREFIX: &str = "filesquid.operation.v1 ";
 /// Largest operation message [`OperationMessage::parse`] reads, in bytes.
 pub const MAX_OPERATION_MESSAGE_BYTES: usize = 4096;
 
+/// Largest version label, in bytes: escaped (at most six bytes per byte),
+/// it still fits a message [`OperationMessage::parse`] reads.
+pub const MAX_LABEL_BYTES: usize = 512;
+
 /// Most members a `filesquid.operation.v1` object may hold.
 const MAX_MESSAGE_MEMBERS: usize = 8;
 
@@ -226,10 +230,18 @@ impl OperationMessage {
     }
 
     /// The same message with a version `label` (PRD F-065).
-    #[must_use]
-    pub fn with_label(mut self, label: impl Into<String>) -> Self {
-        self.label = Some(label.into());
-        self
+    ///
+    /// # Errors
+    ///
+    /// [`OperationMessageError::TooLarge`] for a label over [`MAX_LABEL_BYTES`],
+    /// which would make the message unreadable once committed.
+    pub fn with_label(mut self, label: impl Into<String>) -> Result<Self, OperationMessageError> {
+        let label = label.into();
+        if label.len() > MAX_LABEL_BYTES {
+            return Err(OperationMessageError::TooLarge);
+        }
+        self.label = Some(label);
+        Ok(self)
     }
 
     /// The same message naming the identifier the operation `created`.

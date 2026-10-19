@@ -49,7 +49,7 @@ pub use file::{
 pub use health::{health, HealthStatus, HEALTH_SCHEMA_VERSION};
 pub use history::{
     HistoryEntry, InstallationId, InvalidHistoryRef, InvalidInstallationId, JournalLink,
-    OperationKind, OperationMessage, OperationMessageError, VersionRef,
+    OperationKind, OperationMessage, OperationMessageError, VersionRef, MAX_LABEL_BYTES,
     MAX_OPERATION_MESSAGE_BYTES, OPERATION_MESSAGE_PREFIX,
 };
 pub use ids::{

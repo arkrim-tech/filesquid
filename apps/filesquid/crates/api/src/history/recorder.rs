@@ -18,14 +18,16 @@
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-use filesquid_core::{InstallationId, OperationId, OperationKind, OperationMessage, VersionRef};
+use filesquid_core::{
+    InstallationId, OperationId, OperationKind, OperationMessage, OperationMessageError, VersionRef,
+};
 use filesquid_ocfl::change::VersionMeta;
 use filesquid_ocfl::inventory::User;
 use filesquid_ocfl::write::{BoundContext, CommitReceipt, VersionBoundFiles};
 use filesquid_prov::ocfl::{bound_record, OperationFacts};
 use filesquid_prov::{HostFacts, OcflUser, RECORD_PREFIX};
 
-use crate::journal::commit::{ocfl_commit_entries, CommitFacts};
+use crate::journal::commit::{ocfl_commit_entries, CommitFacts, LEASE_TAKEOVER};
 use crate::journal::{now_ms, parse_rfc3339_ms, JournalEntry};
 
 /// The OCFL version `user.name` of every FileSquid commit; the address names the
@@ -91,10 +93,17 @@ impl CommitOperation {
     }
 
     /// The same operation with a version label.
-    #[must_use]
-    pub fn with_label(mut self, label: impl Into<String>) -> Self {
-        self.label = Some(label.into());
-        self
+    ///
+    /// # Errors
+    /// [`OperationMessageError::TooLarge`] for a label over
+    /// [`filesquid_core::MAX_LABEL_BYTES`], which no committed message could carry.
+    pub fn with_label(mut self, label: impl Into<String>) -> Result<Self, OperationMessageError> {
+        let label = label.into();
+        if label.len() > filesquid_core::MAX_LABEL_BYTES {
+            return Err(OperationMessageError::TooLarge);
+        }
+        self.label = Some(label);
+        Ok(self)
     }
 
     /// The same operation with the logical moves of its commit.
@@ -114,10 +123,11 @@ impl CommitOperation {
     /// The `filesquid.operation.v1` version message of this operation.
     pub fn message(&self) -> String {
         let message = OperationMessage::new(self.operation_id.clone(), self.kind);
-        match &self.label {
-            Some(label) => message.with_label(label.clone()).format(),
-            None => message.format(),
-        }
+        let labelled = self
+            .label
+            .as_ref()
+            .and_then(|label| message.clone().with_label(label.clone()).ok());
+        labelled.unwrap_or(message).format()
     }
 }
 
@@ -141,6 +151,7 @@ pub struct CommitRecorder {
     context: ProvenanceContext,
     operation: CommitOperation,
     journal_id: i64,
+    takeover_id: Option<i64>,
     entries: Vec<JournalEntry>,
     last: Mutex<Vec<JournalEntry>>,
 }
@@ -157,9 +168,20 @@ impl CommitRecorder {
             context,
             operation,
             journal_id,
+            takeover_id: None,
             entries: Vec::new(),
             last: Mutex::new(Vec::new()),
         }
+    }
+
+    /// The same recorder writing, when the version's reservation took over a held lease, the
+    /// `ocfl.lease.takeover` warning into the version under `id` (allocated before the
+    /// commit, like the commit entry's), so a replay recovers it too. Without it the warning
+    /// is only appended after the commit.
+    #[must_use]
+    pub fn with_takeover_id(mut self, id: i64) -> Self {
+        self.takeover_id = Some(id);
+        self
     }
 
     /// The same recorder also writing the operation's own journal `entries` (each carrying
@@ -200,8 +222,11 @@ impl CommitRecorder {
             return entries;
         }
         let takeover = entries.split_off(1);
+        let carried = kept.iter().any(|entry| entry.operation == LEASE_TAKEOVER);
         let mut out = kept;
-        out.extend(takeover);
+        if !carried {
+            out.extend(takeover);
+        }
         out
     }
 
@@ -230,9 +255,11 @@ impl CommitRecorder {
     }
 
     /// The IDs of every entry the commit writes: `ocfl.commit` first, then the operation's.
-    fn journal_ids(&self) -> Vec<String> {
+    fn journal_ids(&self, took_over: bool) -> Vec<String> {
         let own = self.entries.iter().filter_map(|entry| entry.id);
+        let takeover = self.takeover_id.filter(|_| took_over);
         std::iter::once(self.journal_id)
+            .chain(takeover)
             .chain(own)
             .map(|id| id.to_string())
             .collect()
@@ -247,23 +274,25 @@ impl CommitRecorder {
     }
 
     /// The `ocfl.commit` entry of the version `context` describes, with the pre-allocated ID.
-    fn commit_entry(&self, context: &BoundContext<'_>) -> Result<JournalEntry, String> {
+    fn commit_entries(&self, context: &BoundContext<'_>) -> Result<Vec<JournalEntry>, String> {
         let reference = VersionRef::new(context.object_id, context.version.to_string())
             .map_err(|err| err.to_string())?;
         let facts = CommitFacts {
             operation_id: &self.operation.operation_id,
             version: &reference,
-            took_over: false,
+            took_over: context.took_over && self.takeover_id.is_some(),
         };
         let at_ms = parse_rfc3339_ms(context.created).unwrap_or_else(now_ms);
         let mut entries = self.stamped(ocfl_commit_entries(&facts), at_ms);
-        let mut entry = entries.remove(0);
-        entry.id = Some(self.journal_id);
-        Ok(entry)
+        let ids = std::iter::once(Some(self.journal_id)).chain(std::iter::once(self.takeover_id));
+        for (entry, id) in entries.iter_mut().zip(ids) {
+            entry.id = id;
+        }
+        Ok(entries)
     }
 
     /// The `filesquid-prov` facts of this operation, naming the commit's journal entry.
-    fn operation_facts(&self) -> OperationFacts {
+    fn operation_facts(&self, took_over: bool) -> OperationFacts {
         let user = version_user(&self.context.installation);
         OperationFacts {
             operation_id: self.operation.operation_id.as_str().to_string(),
@@ -271,7 +300,7 @@ impl CommitRecorder {
             started: self.operation.started.clone(),
             installation: Some(self.context.installation.as_str().to_string()),
             host: Some(self.context.host.clone()),
-            journal_entries: self.journal_ids(),
+            journal_entries: self.journal_ids(took_over),
             moves: self.operation.moves.clone(),
             user: Some(OcflUser {
                 name: user.name,
@@ -295,11 +324,10 @@ fn journal_lines(entries: &[JournalEntry]) -> Result<Vec<u8>, String> {
 
 impl VersionBoundFiles for CommitRecorder {
     fn files(&self, context: &BoundContext<'_>) -> Result<BTreeMap<String, Vec<u8>>, String> {
-        let entry = self.commit_entry(context)?;
-        let (record_path, record) =
-            bound_record(context, &self.operation_facts()).map_err(|err| err.to_string())?;
-        let object_ref = entry.object_ref.clone().unwrap_or_default();
-        let mut entries = vec![entry];
+        let mut entries = self.commit_entries(context)?;
+        let (record_path, record) = bound_record(context, &self.operation_facts(context.took_over))
+            .map_err(|err| err.to_string())?;
+        let object_ref = entries[0].object_ref.clone().unwrap_or_default();
         entries.extend(self.operation_entries(&object_ref));
         let lines = journal_lines(&entries)?;
         let mut last = self

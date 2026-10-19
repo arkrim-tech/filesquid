@@ -167,7 +167,9 @@ fn the_version_user_names_the_installation_and_never_a_person() {
 
 #[test]
 fn commit_meta_sets_the_user_and_the_operation_message() {
-    let op = operation("op-1", OperationKind::MetadataEdit).with_label("Final cut");
+    let op = operation("op-1", OperationKind::MetadataEdit)
+        .with_label("Final cut")
+        .expect("label");
     let meta = commit_meta(&context(), &op, created(2));
     assert_eq!(meta.created, created(2));
     assert_eq!(meta.user, Some(version_user(&context().installation)));
@@ -824,4 +826,46 @@ async fn history_routes_answer_unavailable_before_the_host_installs_a_source() {
         assert_eq!(status, 503, "{path}");
         assert_eq!(json(&body)["retryable"], true, "{path}");
     }
+}
+
+#[test]
+fn a_takeover_with_an_allocated_id_rides_the_version() {
+    use filesquid_ocfl::write::{BoundContext, VersionBoundFiles};
+    let op = operation("op-8", OperationKind::Import);
+    let recorder = CommitRecorder::new(context(), op, 5).with_takeover_id(6);
+    let empty = std::collections::BTreeMap::new();
+    let state = std::collections::BTreeMap::from([("a.txt".to_string(), "d".repeat(64))]);
+    let version = v("v1");
+    let created = created(1);
+    let bound = BoundContext {
+        object_id: OBJECT_ID,
+        version: &version,
+        created: &created,
+        base: None,
+        base_state: &empty,
+        state: &state,
+        took_over: true,
+    };
+    let files = recorder.files(&bound).expect("files");
+    let lines: Vec<JournalEntry> = std::str::from_utf8(&files[&journal_path("v1")])
+        .expect("utf-8")
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("entry"))
+        .collect();
+    let ops: Vec<&str> = lines.iter().map(|e| e.operation.as_str()).collect();
+    assert_eq!(ops, ["ocfl.commit", "ocfl.lease.takeover"]);
+    assert_eq!(lines[1].id, Some(6));
+    let receipt = CommitReceipt {
+        object_id: OBJECT_ID.into(),
+        version: version.clone(),
+        created: created.clone(),
+        inventory_digest: "0".repeat(64),
+        written: Vec::new(),
+        took_over: true,
+    };
+    assert_eq!(
+        recorder.journal_entries(&receipt),
+        lines,
+        "no second warning"
+    );
 }

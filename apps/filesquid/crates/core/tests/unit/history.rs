@@ -64,7 +64,8 @@ fn every_operation_kind_has_a_stable_token() {
 fn an_operation_message_formats_and_parses_back() {
     let message = OperationMessage::new(op("op-1"), OperationKind::Rename)
         .with_revision(7)
-        .with_label("Before \"cleanup\" \\ n\u{e9}");
+        .with_label("Before \"cleanup\" \\ n\u{e9}")
+        .expect("label");
     let text = message.format();
     assert!(text.starts_with(OPERATION_MESSAGE_PREFIX));
     assert_eq!(
@@ -333,5 +334,20 @@ fn the_sidecar_operation_is_the_journal_links_only() {
     assert!(
         parsed.map(|s| s.operation().is_none()).unwrap_or(true),
         "a stray operation member never names the operation"
+    );
+}
+
+#[test]
+fn an_oversized_label_is_refused_before_it_is_committed() {
+    use filesquid_core::MAX_LABEL_BYTES;
+    let base = OperationMessage::new(op("op-9"), OperationKind::Label);
+    let longest = "\u{1}".repeat(MAX_LABEL_BYTES);
+    let message = base.clone().with_label(longest).expect("fits");
+    assert!(OperationMessage::parse(&message.format())
+        .unwrap()
+        .is_some());
+    assert_eq!(
+        base.with_label("x".repeat(MAX_LABEL_BYTES + 1)),
+        Err(OperationMessageError::TooLarge)
     );
 }

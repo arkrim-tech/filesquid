@@ -18,8 +18,10 @@ use filesquid_core::{OperationId, VersionRef};
 use filesquid_ocfl::change::VersionMeta;
 use filesquid_ocfl::write::{rfc3339_utc, CommitReceipt, VersionBoundFiles};
 
-/// Journal IDs one recorded commit allocates: its `ocfl.commit` entry and the operation's.
-const RECORDED_IDS: usize = CommitRecorder::JOURNAL_IDS + 1;
+/// Journal IDs one recorded commit allocates: its `ocfl.commit` entry, an
+/// `ocfl.lease.takeover` warning should the reservation take over a lease, and the
+/// operation's own entry.
+const RECORDED_IDS: usize = CommitRecorder::JOURNAL_IDS + 2;
 
 /// Who records the catalog's commits and where their journal IDs come from.
 pub(crate) struct History<'a> {
@@ -75,8 +77,8 @@ pub(crate) fn plan_commit(
     plan
 }
 
-/// The recorder of a commit, its `ocfl.commit` entry under `ids[0]` and the operation's
-/// entry under `ids[1]`. Pure.
+/// The recorder of a commit: its `ocfl.commit` entry under `ids[0]`, a takeover warning
+/// under `ids[1]` and the operation's entry under `ids[2]`. Pure.
 fn recorder(
     history: &History<'_>,
     entry: &JournalEntry,
@@ -87,8 +89,10 @@ fn recorder(
     let operation =
         CommitOperation::new(operation_id, kind, started(entry)).with_actor(entry.actor.clone());
     let mut own = entry.clone();
-    own.id = Some(ids[1]);
-    CommitRecorder::new(history.context.clone(), operation, ids[0]).with_entries(vec![own])
+    own.id = Some(ids[2]);
+    CommitRecorder::new(history.context.clone(), operation, ids[0])
+        .with_takeover_id(ids[1])
+        .with_entries(vec![own])
 }
 
 /// When the operation started: its journal entry's time, RFC 3339 UTC. Pure.
