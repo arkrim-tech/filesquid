@@ -6,7 +6,9 @@
 //! the open findings publishes the health report on `health.change`.
 
 use super::error::ValidationError;
-use super::run::{check_object, index, pass, read_error, Indexed, PassResult, RunContext};
+use super::run::{
+    check_object, index, is_outage, pass, read_error, Indexed, PassResult, RunContext,
+};
 use super::service::{RunLock, ValidationService};
 use super::store::{RunOutcome, RunRecord, RunTrigger};
 use super::{LOG_TARGET, RUN_OPERATION};
@@ -140,7 +142,8 @@ impl<B: StorageBackend + 'static> ValidationService<B> {
     /// commit is not validated here. This is not a run: it takes no run lock and does not
     /// move the cursor, but it holds the library's object lock, so it never interleaves with
     /// a run on the same object. Only that object is read. An object at that root with
-    /// another identifier is left alone.
+    /// another identifier is left alone; one that can no longer be opened is validated under
+    /// its stand-in identifier, as a run indexes it, so the damage becomes an error finding.
     ///
     /// # Errors
     ///
@@ -157,14 +160,15 @@ impl<B: StorageBackend + 'static> ValidationService<B> {
             return Ok(());
         }
         let access = self.access(library_id)?;
-        let object = Object::open(access.backend.as_ref(), object_root)
-            .await
-            .map_err(|e| read_error(&e))?;
-        if object.id() != object_id {
-            tracing::info!(target: LOG_TARGET, "takeover check skipped: another object at the root");
-            return Ok(());
-        }
-        let indexed = Indexed::of(&object, object_root);
+        let indexed = match Object::open(access.backend.as_ref(), object_root).await {
+            Ok(object) if object.id() == object_id => Indexed::of(&object, object_root),
+            Ok(_) => {
+                tracing::info!(target: LOG_TARGET, "takeover check skipped: another object at the root");
+                return Ok(());
+            }
+            Err(err) if is_outage(&err) => return Err(read_error(&err)),
+            Err(_) => Indexed::unreadable(object_root),
+        };
         let journal = self.inner.monitor.journal();
         let cancel = AtomicBool::new(false);
         let ctx = RunContext {

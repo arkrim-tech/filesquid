@@ -49,6 +49,30 @@ pub struct Finding {
 }
 
 impl Finding {
+    /// `findings` as a store keeps them: each under `library_id` and `object_id`, whatever
+    /// it names itself, and once per code and location (a later one replaces an earlier
+    /// one). Every store normalizes with this before it writes and before it answers the
+    /// change, so both stores answer the same.
+    pub fn normalize(
+        library_id: &LibraryId,
+        object_id: &str,
+        findings: Vec<Finding>,
+    ) -> Vec<Finding> {
+        let mut kept: Vec<Finding> = Vec::with_capacity(findings.len());
+        for found in findings {
+            let found = Finding {
+                library_id: library_id.clone(),
+                object_id: object_id.to_string(),
+                ..found
+            };
+            match kept.iter_mut().find(|k| k.same_as(&found)) {
+                Some(existing) => *existing = found,
+                None => kept.push(found),
+            }
+        }
+        kept
+    }
+
     /// The identity of a finding within its object: the same code at the same location is
     /// the same finding, whatever the version.
     pub fn same_as(&self, other: &Finding) -> bool {
@@ -203,8 +227,9 @@ impl std::fmt::Display for StoreError {
 pub trait FindingsStore: Send + Sync {
     /// Replace the findings of `object_id` in `library_id` with `findings` (all of one
     /// validation of that object), in one transaction, and answer what opened and closed
-    /// ([`FindingChange::between`]). Each finding is stored under `library_id` and
-    /// `object_id` whatever it names itself, once per code and location. An empty
+    /// ([`FindingChange::between`]). The findings are first normalized with
+    /// [`Finding::normalize`]: each under `library_id` and `object_id`, once per code and
+    /// location. An empty
     /// `findings` closes every open finding of the object; replacing findings with the same
     /// ones answers an empty change.
     ///

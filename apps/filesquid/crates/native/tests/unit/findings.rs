@@ -42,6 +42,17 @@ fn contract(store: &dyn FindingsStore) {
         .replace_findings(&library(), "urn:b", vec![e023.clone(), w004.clone()])
         .expect("replace");
     assert_eq!((change.opened.len(), change.closed.len()), (2, 0));
+    let repeated = store
+        .replace_findings(&library(), "urn:c", vec![e023.clone(), e023.clone()])
+        .expect("replace");
+    assert_eq!(repeated.opened.len(), 1, "a repeat is one finding");
+    assert_eq!(
+        repeated.opened[0].object_id, "urn:c",
+        "stored under the call's object"
+    );
+    store
+        .replace_findings(&library(), "urn:c", Vec::new())
+        .expect("close");
     let again = store
         .replace_findings(&library(), "urn:b", vec![e023.clone(), w004.clone()])
         .expect("replace");

@@ -18,7 +18,7 @@ Parents: [F-061 Activity journal and live health monitoring](../../../../../../r
 | (4) Only the owner or an administrator may call; locations hidden from a caller who may not read the object | `anyone_else_is_refused_and_the_refusal_is_journaled`, `locations_are_shown_only_to_a_caller_who_may_read_the_object`, scenario 4, contract and auth tests | Met |
 | (5) Redaction: no logical path, content path, title or content in journal rows or health reasons | `journal_rows_and_health_reasons_carry_no_path_title_or_content`, scenario steps | Met |
 | (6) A run stops at its cap and reports the unchecked objects; never twice at once per library | `a_run_stops_at_its_cap_and_reports_what_it_did_not_check`, `a_run_never_starts_twice_at_once_for_one_library`, `start_runs_refuses_an_unknown_library_and_a_busy_one`, `a_cancelled_run_stops_and_reports_the_rest` | Met |
-| (7) The route reports the last run and the next scheduled run, and both change after a run | `the_findings_view_reports_the_last_run_and_the_next_scheduled_run`, `the_scheduler_starts_a_run_when_one_is_due` | Met |
+| (7) The route reports the last run and the next scheduled run, and both change after a run | `the_findings_view_reports_the_last_run_and_the_next_scheduled_run`, `a_library_is_due_one_interval_after_it_was_opened`, `the_scheduler_tick_starts_a_scheduled_run_when_one_is_due` | Met |
 | (8) Capped runs resume from the stored cursor (also after a restart) in ID order; an object deleted ahead is skipped; one created behind is checked on the next pass; the end wraps; on request continues unless asked to start over | `capped_runs_resume_from_the_cursor_in_object_id_order_and_wrap`, `an_on_request_run_continues_from_the_cursor_unless_asked_to_start_over`, `the_sqlite_store_keeps_findings_cursor_and_run_across_a_restart`, scenario 5 | Met |
 | (9) Deleting an object with an open E023 closes it, journals one `ocfl.validation.finding_closed`, and health returns to `ok` | `deleting_an_object_with_an_open_e023_closes_its_finding`, scenario 6 | Met |
 
@@ -29,7 +29,7 @@ Other constraints: defaults of 7 days and 100,000 objects, both bounded and jour
 - **Settings.** The schedule and the cap are changed by the desktop owner or a server administrator through `PUT /api/v1/admin/ocfl/validation-settings`, journaled as `ocfl.validation.configure`.
 - **SRS-F-061: Activity journal and live health monitoring.** Validation findings are a health input. Every run, refusal, finding and closure is journaled with opaque IDs and codes. The run is a registered process with a heartbeat.
 - **SRS-F-042: OCFL preservation and portable recovery.** External edits to an object (the E023 stray file, a tampered file) are detected and reported, not adopted.
-- **API-S-002: versioned contract.** `openapi.json` 0.7.0 adds the two routes, the action `ocfl.validation.run` and the schemas; `ui/src/api/schema.d.ts` is regenerated and the UI contract test passes.
+- **API-S-002: versioned contract.** `openapi.json` 0.7.0 adds the three routes (findings, validation runs, validation settings), the actions `ocfl.validation.run` and `ocfl.validation.configure`, and the schemas; `ui/src/api/schema.d.ts` is regenerated and the UI contract test passes.
 - **API-S-006: application-layer isolation.** The findings store is injected through `FindingsStore`, like `JournalStore`. The SQLite store is `filesquid_native::SqliteFindings`.
 
 ## What changed
@@ -77,32 +77,34 @@ error[E0609]: no field `codes` on type `HealthReason`
 error[E0609]: no field `objects` on type `HealthReason`
 ```
 
-After the implementation and Cubic round 1, `cargo test -p filesquid-api --locked --test unit_ocfl_validation --test unit_health_rules`:
+After the implementation and Cubic rounds 1 and 2, `cargo test -p filesquid-api --locked --test unit_ocfl_validation --test unit_health_rules`:
 
 ```text
 running 8 tests
-test all_clear_is_ok_without_reasons ... ok
+test free_space_thresholds ... ok
 test error_rate_thresholds ... ok
 test open_ocfl_error_findings_degrade_health_with_codes_and_object_count ... ok
-test queue_fill_threshold ... ok
-test free_space_thresholds ... ok
 test stalled_processes_degrade ... ok
+test queue_fill_threshold ... ok
+test all_clear_is_ok_without_reasons ... ok
 test unreachable_store_or_read_only_data_dir_fail ... ok
 test worst_condition_wins_and_all_reasons_are_listed ... ok
 test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-running 30 tests
-test a_failing_findings_store_fails_health_and_the_run ... ok
+running 32 tests
 test a_change_in_the_open_findings_is_pushed_on_health_change ... ok
+test a_failing_findings_store_fails_health_and_the_run ... ok
 test a_library_is_due_one_interval_after_it_was_opened ... ok
 test a_finding_stays_open_until_a_later_validation_no_longer_reports_it ... ok
 test a_cancelled_run_stops_and_reports_the_rest ... ok
+test a_findings_change_journals_a_health_transition_once ... ok
 test a_run_registers_in_the_process_registry_with_progress ... ok
 test a_run_never_starts_twice_at_once_for_one_library ... ok
 test a_run_stopped_by_an_outage_reports_what_it_checked_and_publishes_health ... ok
+test a_takeover_check_on_a_damaged_object_opens_an_error_finding ... ok
 test a_takeover_check_reads_only_the_named_object ... ok
-test a_takeover_check_that_cannot_start_is_journaled ... ok
 test a_run_stops_at_its_cap_and_reports_what_it_did_not_check ... ok
 test a_takeover_commit_triggers_validation_of_that_object ... ok
+test a_takeover_check_that_cannot_start_is_journaled ... ok
 test a_w010_object_is_listed_as_a_warning_and_leaves_health_ok ... ok
 test a_run_request_starts_runs_and_a_malformed_one_is_refused ... ok
 test an_e023_object_degrades_health_until_it_is_fixed_and_revalidated ... ok
@@ -110,18 +112,18 @@ test anyone_else_is_refused_and_the_refusal_is_journaled ... ok
 test defaults_are_seven_days_and_one_hundred_thousand_objects ... ok
 test deleting_an_object_with_an_open_e023_closes_its_finding ... ok
 test an_on_request_run_continues_from_the_cursor_unless_asked_to_start_over ... ok
-test capped_runs_resume_from_the_cursor_in_object_id_order_and_wrap ... ok
 test locations_are_shown_only_to_a_caller_who_may_read_the_object ... ok
-test start_runs_refuses_an_unknown_library_and_a_busy_one ... ok
 test journal_rows_and_health_reasons_carry_no_path_title_or_content ... ok
+test capped_runs_resume_from_the_cursor_in_object_id_order_and_wrap ... ok
 test the_configuration_is_bounded_and_journaled ... ok
-test an_e023_object_on_a_real_directory_is_found ... ok
+test start_runs_refuses_an_unknown_library_and_a_busy_one ... ok
 test the_findings_view_reports_the_last_run_and_the_next_scheduled_run ... ok
 test the_owner_sees_locations_and_the_administrator_does_not ... ok
+test an_e023_object_on_a_real_directory_is_found ... ok
 test the_settings_route_changes_the_schedule_and_refuses_bad_values ... ok
 test the_scheduler_tick_starts_a_scheduled_run_when_one_is_due ... ok
 test shutting_down_cancels_runs_and_refuses_new_ones ... ok
-test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
 ```
 
 `cargo test -p filesquid-native --locked --test unit_findings --test unit_host`:
@@ -140,7 +142,7 @@ test the_write_probe_never_touches_an_existing_file ... ok
 test a_second_host_monitor_is_refused_before_any_file_is_created ... ok
 test host_monitor_opens_the_store_and_journals_start_and_stop ... ok
 test host_monitor_starts_ocfl_validation_once ... ok
-test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 ```
 
 `cargo test -p filesquid-api --locked --test features` (this task's feature, then the harness summary; the skipped scenarios belong to features whose steps land with later tasks):
@@ -212,6 +214,14 @@ Round 1 on `b967a96`: 31 findings (P1 3, P2 14, P3 14). Fixed in the next commit
   - Test names and assertions are tightened (scheduler tick, configure journal, unknown status).
 
 Answered without code: no production host opens a library yet, because the library-open lifecycle is DE-1.1; and the plan box is checked while criterion (3) waits on the engine, now stated in the plan row's Status line and the Conflict Artifact.
+
+Round 2 on `8d4cb1f`: 6 new findings (P1 0, P2 4, P3 2), fixed in the next commit:
+
+- Both stores normalize findings with `Finding::normalize` before they write and answer the change, so a repeat opens one finding (`unit_findings` contract).
+- Health evaluation and status recording are serialized by a monitor lock, so a report never records over a newer one.
+- A health transition through `publish_health` is journaled once (`a_findings_change_journals_a_health_transition_once`).
+- A takeover check on an object that no longer opens validates it under its stand-in identifier (`a_takeover_check_on_a_damaged_object_opens_an_error_finding`).
+- Walkthrough route and test names corrected.
 
 ## Mocked Environment Variables
 

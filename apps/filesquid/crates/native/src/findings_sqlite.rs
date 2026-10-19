@@ -215,6 +215,7 @@ impl FindingsStore for SqliteFindings {
         object_id: &str,
         findings: Vec<Finding>,
     ) -> Result<FindingChange, StoreError> {
+        let findings = Finding::normalize(library_id, object_id, findings);
         let mut conn = self.lock()?;
         let tx = conn.transaction().map_err(sql_err)?;
         let previous = object_findings(&tx, library_id, object_id).map_err(sql_err)?;

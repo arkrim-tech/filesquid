@@ -46,6 +46,15 @@ pub(super) struct Indexed {
 }
 
 impl Indexed {
+    /// An object at `root` that cannot be opened, under its stand-in identifier.
+    pub(super) fn unreadable(root: &str) -> Self {
+        Self {
+            id: unreadable_id(root),
+            root: root.to_string(),
+            version: None,
+        }
+    }
+
     /// The opened object at `root`.
     pub(super) fn of<B: StorageBackend>(object: &Object<'_, B>, root: &str) -> Self {
         Self {
@@ -80,7 +89,7 @@ impl PassResult {
 }
 
 /// Whether `err` is a storage outage rather than a broken object.
-fn is_outage(err: &ReadError) -> bool {
+pub(super) fn is_outage(err: &ReadError) -> bool {
     matches!(
         err,
         ReadError::Storage(StorageError::Io { .. } | StorageError::Backend { .. })
@@ -116,11 +125,7 @@ pub(super) async fn index<B: StorageBackend>(backend: &B) -> Result<Vec<Indexed>
         let indexed = match Object::open(backend, root).await {
             Ok(object) => Indexed::of(&object, root),
             Err(err) if is_outage(&err) => return Err(read_error(&err)),
-            Err(_) => Indexed {
-                id: unreadable_id(root),
-                root: root.clone(),
-                version: None,
-            },
+            Err(_) => Indexed::unreadable(root),
         };
         objects.push(indexed);
     }

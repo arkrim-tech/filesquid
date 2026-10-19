@@ -91,6 +91,9 @@ struct Inner {
     config: MonitorConfig,
     events: EventBus,
     last_status: Mutex<Option<HealthStatus>>,
+    /// Held while health is evaluated and its status recorded, so a report never records
+    /// over a newer one.
+    health: Mutex<()>,
     findings: OnceLock<Arc<dyn FindingsStore>>,
 }
 
@@ -132,6 +135,7 @@ impl Monitor {
                 config,
                 events,
                 last_status: Mutex::new(None),
+                health: Mutex::new(()),
                 findings: OnceLock::new(),
             }),
         }
@@ -174,6 +178,7 @@ impl Monitor {
     /// health change. Performs I/O through [`health_report`](Self::health_report).
     pub fn tick(&self) -> HealthReport {
         self.inner.registry.check_stalled();
+        let _serial = self.inner.health.lock().unwrap_or_else(|p| p.into_inner());
         let report = self.health_report();
         self.record_status(&report, false);
         report
@@ -220,6 +225,7 @@ impl Monitor {
     /// `health.changed` as [`tick`](Self::tick) does. Performs I/O through
     /// [`health_report`](Self::health_report).
     pub fn publish_health(&self) -> HealthReport {
+        let _serial = self.inner.health.lock().unwrap_or_else(|p| p.into_inner());
         let report = self.health_report();
         self.record_status(&report, true);
         report

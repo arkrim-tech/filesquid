@@ -999,3 +999,50 @@ async fn the_settings_route_changes_the_schedule_and_refuses_bad_values() {
         .collect();
     assert_eq!(refusals.len(), 2, "both refusals are journaled");
 }
+
+#[test]
+fn a_findings_change_journals_a_health_transition_once() {
+    let rig = ValidationRig::new();
+    rig.monitor.tick();
+    let before = rig.journaled("health.changed").len();
+    rig.monitor.publish_health();
+    assert_eq!(
+        rig.journaled("health.changed").len(),
+        before,
+        "no transition, no entry"
+    );
+    rig.e023_object("obj-b", "urn:uuid:b");
+    rig.run(RunTrigger::Requested, false).expect("run");
+    let after = rig.journaled("health.changed");
+    assert_eq!(after.len(), before + 1, "ok to degraded journaled once");
+    assert_eq!(
+        after.last().expect("entry").error_code.as_deref(),
+        Some("ocfl_validation_errors")
+    );
+    rig.monitor.tick();
+    assert_eq!(
+        rig.journaled("health.changed").len(),
+        before + 1,
+        "the tick sees no new transition"
+    );
+}
+
+#[test]
+fn a_takeover_check_on_a_damaged_object_opens_an_error_finding() {
+    let rig = ValidationRig::new();
+    rig.object("obj-b", "urn:uuid:b");
+    rig.remove("obj-b/inventory.json");
+    vfix::ready_async(
+        rig.service
+            .validate_after_commit(&library(), "obj-b", "urn:uuid:b", true),
+    )
+    .expect("checked");
+    let open = open_errors(rig.store.as_ref());
+    assert!(!open.is_empty(), "the damage is a finding");
+    assert!(
+        open[0].object_id.starts_with("root:"),
+        "{:?}",
+        open[0].object_id
+    );
+    assert_eq!(rig.monitor.health_report().status, HealthStatus::Degraded);
+}

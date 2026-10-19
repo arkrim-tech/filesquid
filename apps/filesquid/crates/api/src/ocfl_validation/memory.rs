@@ -46,24 +46,6 @@ impl MemoryFindingsStore {
     }
 }
 
-/// `findings` stored under `library_id` and `object_id`, once per code and location (as the
-/// SQLite store's primary key keeps them).
-fn normalized(library_id: &LibraryId, object_id: &str, findings: Vec<Finding>) -> Vec<Finding> {
-    let mut kept: Vec<Finding> = Vec::with_capacity(findings.len());
-    for found in findings {
-        let found = Finding {
-            library_id: library_id.clone(),
-            object_id: object_id.to_string(),
-            ..found
-        };
-        match kept.iter_mut().find(|k| k.same_as(&found)) {
-            Some(existing) => *existing = found,
-            None => kept.push(found),
-        }
-    }
-    kept
-}
-
 impl FindingsStore for MemoryFindingsStore {
     fn replace_findings(
         &self,
@@ -74,7 +56,7 @@ impl FindingsStore for MemoryFindingsStore {
         self.with(|state| {
             let key = (library_id.as_str().to_string(), object_id.to_string());
             let previous = state.findings.remove(&key).unwrap_or_default();
-            let findings = normalized(library_id, object_id, findings);
+            let findings = Finding::normalize(library_id, object_id, findings);
             let change = FindingChange::between(&previous, &findings);
             if !findings.is_empty() {
                 state.findings.insert(key, findings);
