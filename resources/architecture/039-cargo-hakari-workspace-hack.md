@@ -12,6 +12,8 @@ Accepted
 
 Accepted (2026-10-18) — implementation subject to the measurement gate in Decision 7. If the gate fails, this ADR is marked Rejected, the crate and its gates are removed, and the index records why. Owner-requested decision. Changes no earlier ADR: module crates still build, test and publish alone ([ADR 029](./029-filesquid-unified-product-and-distributions.md) Decision 4), and Cargo features are still never the only boundary ([ADR 001](./001-shared-rust-core-with-tauri-and-axum-hosts.md)).
 
+Amended 2026-10-19 (owner decision of 2026-10-18): the Context below records the toolchain as measured on 2026-10-18 (channel `stable`, then 1.97.0 in the containers). `apps/filesquid/rust-toolchain.toml` now pins the exact release 1.99.1 instead of the channel ([ADR 013](./013-cargo-svelte-workspaces.md) Versions amendment); the decision and its measurement gate are unchanged.
+
 ## Context / Requirement Reference
 
 - Requirements: [T-052](../product-vision.md#api-and-hosts) (one Cargo workspace; each module crate builds and tests on its own), [C-047](../product-vision.md#module-rules) and [C-048](../product-vision.md#module-rules) (modules build, test and publish alone), AGENTS.md section 5 (every gate runs locally in `scripts/pre-commit.sh`) and section 17 (minimise and pin dependencies).
