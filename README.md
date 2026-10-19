@@ -8,7 +8,8 @@ It is designed to look and work like a familiar cloud drive: folders, list and g
 
 - **OCFL 1.1** objects on disk or S3-compatible storage: versioned, checksummed, readable without FileSquid, and enough to rebuild the whole application if its database is lost (`ocfl` module).
 - **Metadata** in a human-readable `metadata.md` record using ISO 15836-2 Dublin Core `/terms/` (`dcterms:`), with Schema.org for anything Dublin Core cannot say and, once the planned namespace registry ships, any additional schema you register (for example RiC-O, or your own key:value namespace), next to the embedded EXIF, ID3, IPTC and XMP (`metadata` module).
-- **C2PA Content Credentials** that start at import and record what was done to a file and whether AI was involved (`c2pa` module; ships with the second consumer release, not the MVP or the first release, [ADR 037](./resources/architecture/037-c2pa-in-release-2.md)).
+- **A W3C PROV-O history** of every version and change, from the first import: what was done to a file and its metadata, by which FileSquid installation and tool, and when, written into the OCFL object with the change and readable without FileSquid (`prov` module, from the MVP; [ADR 040](./resources/architecture/040-prov-o-history.md)). Every imported file is stored under a universally unique name with a `<file-uuid>.metadata.md` record beside it that keeps its original file name, which the app shows everywhere.
+- **C2PA Content Credentials** for media, recording what was done to a file and whether AI was involved (`c2pa` module; ships with the second consumer release, not the MVP or the first release, [ADR 037](./resources/architecture/037-c2pa-in-release-2.md)); files imported earlier receive honestly dated backfilled records.
 
 FileSquid is one Rust backend with **one API**. Every user interface is plain HTML, CSS and TypeScript that calls that API. A **distribution** puts views, a theme, a vocabulary and a module set on top of the same backend:
 
