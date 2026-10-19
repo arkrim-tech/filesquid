@@ -146,31 +146,3 @@ fn concurrent_launches_agree_on_one_installation() {
     assert_eq!(again.id, ids[0]);
     std::fs::remove_dir_all(&dir).expect("cleanup");
 }
-
-/// A launch whose file copy cannot be written leaves no store copy behind, so the next
-/// launch creates (and journals) the installation instead of reporting a restore.
-#[cfg(unix)]
-#[test]
-fn a_failed_file_write_does_not_keep_a_created_store_copy() {
-    use std::os::unix::fs::PermissionsExt;
-    let dir =
-        std::env::temp_dir().join(format!("fs-installation-unwritten-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("dir");
-    load_or_create(&dir).expect("seed the store file");
-    std::fs::remove_file(dir.join(INSTALLATION_FILE)).expect("drop the file copy");
-    let conn = rusqlite::Connection::open(dir.join(filesquid_native::JOURNAL_FILE)).expect("store");
-    conn.execute("DELETE FROM host_installation", [])
-        .expect("empty store");
-    drop(conn);
-    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).expect("read-only");
-    let failed = load_or_create(&dir);
-    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).expect("writable");
-    if failed.is_ok() {
-        std::fs::remove_dir_all(&dir).expect("cleanup");
-        return; // running as root: directory permissions do not apply
-    }
-    let next = load_or_create(&dir).expect("next launch");
-    assert_eq!(next.source, InstallationSource::Created);
-    std::fs::remove_dir_all(&dir).expect("cleanup");
-}

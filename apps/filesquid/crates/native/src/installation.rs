@@ -296,3 +296,49 @@ fn store_error(err: &rusqlite::Error) -> InstallationError {
         kind: std::io::ErrorKind::Other,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! The rollback of a created store copy whose file copy could not be written.
+
+    use super::*;
+
+    /// A store in a fresh temporary directory named after `name`.
+    fn store(name: &str) -> (Connection, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("fs-install-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+        (open_store(&dir.join(JOURNAL_FILE)).expect("store"), dir)
+    }
+
+    #[test]
+    fn a_created_store_copy_is_forgotten_so_the_next_launch_creates_again() {
+        let (mut conn, dir) = store("forget");
+        let (id, source) = settle_store(&mut conn, None).expect("settle");
+        assert_eq!(source, InstallationSource::Created);
+        assert_eq!(read_store(&conn).expect("read"), Some(id.clone()));
+        forget_created(&conn, &id, source);
+        assert_eq!(read_store(&conn).expect("read"), None);
+        let (_, next) = settle_store(&mut conn, None).expect("next launch");
+        assert_eq!(next, InstallationSource::Created);
+        drop(conn);
+        std::fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    #[test]
+    fn a_restored_or_foreign_store_copy_is_kept() {
+        let (mut conn, dir) = store("keep");
+        let (id, source) = settle_store(&mut conn, None).expect("settle");
+        forget_created(&conn, &id, InstallationSource::RestoredFile);
+        assert_eq!(read_store(&conn).expect("read"), Some(id.clone()));
+        let other = mint().expect("uuid");
+        forget_created(&conn, &other, source);
+        assert_eq!(
+            read_store(&conn).expect("read"),
+            Some(id),
+            "another ID's row stays"
+        );
+        drop(conn);
+        std::fs::remove_dir_all(dir).expect("cleanup");
+    }
+}

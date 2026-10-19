@@ -331,3 +331,21 @@ fn backfill_refuses_an_object_its_change_model_does_not_commit_to() {
         "{err}"
     );
 }
+
+#[test]
+fn a_record_a_revert_removed_from_the_head_is_not_reconstructed() {
+    let rig = Rig::new();
+    rig.commit_plain(&[("a.txt", b"alpha")], VersionMeta::new(created(1)));
+    let m = rig.model("writer");
+    ready(m.stage_bytes("b.txt", b"bravo")).unwrap();
+    let hook = RecordHook::new(operation("op-2", "import"));
+    ready(m.commit_with(VersionMeta::new(created(2)), Some(&hook))).unwrap();
+    ready(m.revert(&v("v1"), VersionMeta::new(created(3)))).unwrap();
+    let object = rig.object();
+    assert!(ready(read_record(&object, &v("v2"))).unwrap().is_some());
+    assert_eq!(
+        missing_records(&object),
+        [v("v1"), v("v3")],
+        "v2 keeps its own record"
+    );
+}

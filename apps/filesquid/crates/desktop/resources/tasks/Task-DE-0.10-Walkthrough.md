@@ -58,7 +58,7 @@ test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 | Requirement | Tests |
 |---|---|
-| DE-S-012 | `filesquid-native` `unit_installation` (9 tests); desktop `integration_library_catalog::the_installation_uuid_is_created_once_and_journaled` |
+| DE-S-012 | `filesquid-native` `unit_installation` (8 tests) and the in-module rollback tests of `installation.rs` (2); desktop `integration_library_catalog::the_installation_uuid_is_created_once_and_journaled` |
 | DE-S-011 journal columns and migration | `unit_journal::both_stores_keep_the_operation_id_and_object_reference`, `an_older_journal_gains_the_linkage_columns_on_open`, `both_stores_assign_ids_before_the_entries_are_written` |
 | DE-S-011 outbox events | desktop `integration_library_catalog::catalog_commits_raise_journal_entry_events` |
 | DE-S-011 commit linkage, history in the same version | desktop `integration_library_catalog::a_catalog_commit_carries_its_history_in_the_same_version`; native `unit_canonical_commit::an_unrecorded_catalog_still_links_its_commits` |

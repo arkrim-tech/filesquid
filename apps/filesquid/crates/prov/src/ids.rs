@@ -2,7 +2,7 @@
 //!
 //! | Node | Identifier |
 //! |---|---|
-//! | Activity | `urn:filesquid:activity:<operation-id with `:` as `%3A`>:<object-id>:<version>` |
+//! | Activity | ``urn:filesquid:activity:<operation-id, each `:` as %3A>:<object-id>:<version>`` |
 //! | Entity | `urn:filesquid:entity:<object-id>:<version>:<percent-encoded logical path>` |
 //! | Installation agent | `urn:uuid:<installation-uuid>` |
 //! | Host software agent | `urn:filesquid:software:<product>:<distribution>:<version>` (each part percent-encoded) |

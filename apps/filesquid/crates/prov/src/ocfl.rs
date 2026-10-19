@@ -191,17 +191,26 @@ pub fn list_records<B: StorageBackend>(object: &Object<'_, B>) -> Vec<VersionNum
     recorded_versions(object.inventory()).into_iter().collect()
 }
 
-/// The versions of the object that have no record in its head, in version
-/// order: what a reconstruction would derive.
+/// The versions of the object that have no record, in version order: what a
+/// reconstruction would derive. A version counts as recorded when its record
+/// is in the head or in its own state, as [`read_record`] reads it, so a
+/// record a later revert removed from the head is never reconstructed over.
 pub fn missing_records<B: StorageBackend>(object: &Object<'_, B>) -> Vec<VersionNum> {
     let inventory = object.inventory();
     let recorded = recorded_versions(inventory);
     inventory
         .versions
-        .keys()
-        .filter(|version| !recorded.contains(*version))
-        .cloned()
+        .iter()
+        .filter(|(version, _)| !recorded.contains(*version))
+        .filter(|(version, block)| !holds_own_record(version, &block.state))
+        .map(|(version, _)| version.clone())
         .collect()
+}
+
+/// Whether a version's own `state` holds the record of `version`.
+fn holds_own_record(version: &VersionNum, state: &DigestMap) -> bool {
+    let path = record_path(&version.to_string());
+    state.values().flatten().any(|held| *held == path)
 }
 
 /// The versions named by record paths in the head's state, as an ordered

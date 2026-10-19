@@ -25,7 +25,7 @@ Also OCFL-S-024 (the record is written through the change-model hook) and PROV-S
 
 | Requirement | Tests |
 |---|---|
-| PROV-S-006 | `unit_ocfl` (7 tests): record per commit, rebase regeneration, listing, reconstruction without invented agents, backfill in one version and idempotent, cap per run |
+| PROV-S-006 | `unit_ocfl` (12 tests): record per commit, rebase regeneration, listing, reconstruction without invented agents, backfill in one version and idempotent, cap per run |
 | PROV-S-001 | `unit_isolation::library_dependencies_are_serde_serde_json_and_thiserror` (one optional dependency), wasm32 check with `--features ocfl` |
 
 ## TDD: failing run before implementation
@@ -78,7 +78,7 @@ test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 ## Review round 1
 
-Cubic's findings on the crate are fixed: timestamps refuse over-long fractions and allow a leap second only at `23:59:60`; activity identifiers escape `:` in the operation ID so they are injective, and cursors validate the activity-ID form; `read_record` checks the version before the head; a record's agents must all be associated with its activity and every host must act on behalf of the installation; an invalidated entity cannot be of the committed version; the reader refuses entities under `provenance/`; reconstruction falls back per field on a malformed operation ID or kind and keeps the operation ID of a catalog message without a kind; `missing_records` uses a set; chained and swapped moves build; `stage_reconstructed` refuses another object's model; the isolation tests read every dependency table, dotted and quoted keys, underscore spellings and grouped `std` imports; the crate doc and README describe the `ocfl` feature.
+Cubic's findings on the crate are fixed: timestamps refuse over-long fractions and allow a leap second only at `23:59:60`; activity identifiers escape `:` in the operation ID so they are injective, and cursors validate the activity-ID form; `read_record` first checks that the version is committed (so a head record never answers for an uncommitted version), then still reads the head copy when the head holds the record, else the version's own; `missing_records` also counts a record held only in its own version as present; a record's agents must all be associated with its activity and every host must act on behalf of the installation; an invalidated entity cannot be of the committed version; the reader refuses entities under `provenance/`; reconstruction falls back per field on a malformed operation ID or kind and keeps the operation ID of a catalog message without a kind; `missing_records` uses a set; chained and swapped moves build; `stage_reconstructed` refuses another object's model; the isolation tests read every dependency table, dotted and quoted keys, underscore spellings and grouped `std` imports; the crate doc and README describe the `ocfl` feature.
 
 `cargo test -p filesquid-prov --all-features`:
 
