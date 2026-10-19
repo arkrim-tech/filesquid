@@ -33,6 +33,14 @@ fn host_journal(dir: &std::path::Path) -> Vec<JournalEntry> {
     journal::all_entries(&store)
 }
 
+/// The installation UUID of these tests.
+const INSTALLATION: &str = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+
+/// The installation of these tests.
+fn installation() -> filesquid_core::InstallationId {
+    filesquid_core::InstallationId::parse(INSTALLATION).expect("installation")
+}
+
 /// A create-library request on a fixed repository.
 fn create_library() -> CommandRequest {
     CommandRequest {
@@ -53,7 +61,7 @@ fn the_host_keeps_one_catalog_file_per_library_and_journals_its_commits() {
     let dir = data_dir("open");
     let state = ApiState::new();
     let host = open_host_monitor(&state, &dir, None).expect("monitor");
-    let catalog = Arc::new(open_library_catalog(&dir, &host).expect("catalog"));
+    let catalog = Arc::new(open_library_catalog(&dir, &host, &installation()).expect("catalog"));
     let service = LibraryService::new(catalog.clone(), host.monitor().journal());
     let result = service.execute("owner", create_library()).expect("create");
     let library = result.created_id.expect("library id");
@@ -85,7 +93,7 @@ fn a_catalog_directory_that_cannot_be_opened_is_journaled_without_its_path() {
     std::fs::write(dir.join(CATALOG_DIR), b"not a directory").expect("block");
     let state = ApiState::new();
     let host = open_host_monitor(&state, &dir, None).expect("monitor");
-    let err = open_library_catalog(&dir, &host).expect_err("refused");
+    let err = open_library_catalog(&dir, &host, &installation()).expect_err("refused");
     host.stop();
     assert!(!err.contains(dir.to_string_lossy().as_ref()), "{err}");
     let failures: Vec<JournalEntry> = host_journal(&dir)
@@ -107,7 +115,7 @@ fn catalog_commits_raise_journal_entry_events() {
     let state = ApiState::new();
     let mut rx = state.events.subscribe();
     let host = open_host_monitor(&state, &dir, None).expect("monitor");
-    let catalog = Arc::new(open_library_catalog(&dir, &host).expect("catalog"));
+    let catalog = Arc::new(open_library_catalog(&dir, &host, &installation()).expect("catalog"));
     let service = LibraryService::new(catalog.clone(), host.monitor().journal());
     service.execute("owner", create_library()).expect("create");
     let mut operations = Vec::new();
@@ -150,6 +158,88 @@ fn the_installation_uuid_is_created_once_and_journaled() {
     assert!(
         !text.contains(first.as_str()),
         "the UUID is not journaled: {text}"
+    );
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+/// DE-0.10: a catalog commit publishes one snapshot version whose OCFL `user` is the
+/// installation, whose message names the operation and its kind, and which carries the
+/// operation's PROV-O record and journal entries; the host journal stores those same entries
+/// (same IDs), linked by operation ID and object version (ADR 040 Decisions 3, 4 and 6).
+#[test]
+fn a_catalog_commit_carries_its_history_in_the_same_version() {
+    let dir = data_dir("history");
+    let state = ApiState::new();
+    let host = open_host_monitor(&state, &dir, None).expect("monitor");
+    let catalog = Arc::new(open_library_catalog(&dir, &host, &installation()).expect("catalog"));
+    let service = LibraryService::new(catalog.clone(), host.monitor().journal());
+    let library = service
+        .execute("owner", create_library())
+        .expect("create")
+        .created_id
+        .expect("library id");
+    drop(service);
+    drop(catalog);
+    host.stop();
+    let object = dir
+        .join(CATALOG_DIR)
+        .join(format!("{library}.ocfl"))
+        .join("snapshot");
+    let inventory: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(object.join("inventory.json")).expect("inventory"))
+            .expect("inventory json");
+    let v1 = &inventory["versions"]["v1"];
+    assert_eq!(
+        v1["user"]["address"],
+        format!("urn:uuid:{INSTALLATION}"),
+        "{v1}"
+    );
+    let message = v1["message"].as_str().expect("message");
+    assert!(
+        message.starts_with("filesquid.operation.v1 ") && message.contains("\"kind\":\"catalog\""),
+        "{message}"
+    );
+    let paths: Vec<&str> = v1["state"]
+        .as_object()
+        .expect("state")
+        .values()
+        .flat_map(|paths| paths.as_array().expect("paths").iter())
+        .filter_map(|path| path.as_str())
+        .collect();
+    assert!(paths.contains(&"provenance/v1.jsonld"), "{paths:?}");
+    assert!(paths.contains(&"provenance/v1.journal.jsonl"), "{paths:?}");
+    let lines = std::fs::read_to_string(object.join("v1/content/provenance/v1.journal.jsonl"))
+        .expect("journal lines");
+    let carried: Vec<JournalEntry> = lines
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("entry"))
+        .collect();
+    let operations: Vec<&str> = carried.iter().map(|e| e.operation.as_str()).collect();
+    assert_eq!(operations, ["ocfl.commit", "library.create"]);
+    let object_ref = format!("{}@v1", inventory["id"].as_str().expect("id"));
+    for entry in &carried {
+        assert_eq!(entry.operation_id.as_deref(), Some("op-create"));
+        assert_eq!(entry.object_ref.as_deref(), Some(object_ref.as_str()));
+    }
+    let stored = host_journal(&dir);
+    for entry in &carried {
+        let id = entry.id.expect("pre-allocated id");
+        let same = stored
+            .iter()
+            .find(|e| e.id == Some(id))
+            .expect("stored once");
+        assert_eq!(same.operation, entry.operation);
+        assert_eq!(same.object_ref, entry.object_ref);
+    }
+    let record =
+        std::fs::read_to_string(object.join("v1/content/provenance/v1.jsonld")).expect("record");
+    assert!(
+        record.contains(&format!("urn:uuid:{INSTALLATION}")),
+        "{record}"
+    );
+    assert!(
+        !record.contains("Family"),
+        "no title in the record: {record}"
     );
     std::fs::remove_dir_all(dir).expect("cleanup");
 }

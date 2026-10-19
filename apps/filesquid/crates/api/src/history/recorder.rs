@@ -33,7 +33,7 @@ use crate::journal::{now_ms, parse_rfc3339_ms, JournalEntry};
 pub const INSTALLATION_USER_NAME: &str = "FileSquid installation";
 
 /// File-name suffix of a commit's journal entries.
-pub const JOURNAL_SUFFIX: &str = ".journal.jsonl";
+pub const JOURNAL_SUFFIX: &str = crate::canonical::JOURNAL_SUFFIX;
 
 /// The logical path of the journal entries of `version`: `provenance/<version>.journal.jsonl`.
 pub fn journal_path(version: &str) -> String {
@@ -141,7 +141,8 @@ pub struct CommitRecorder {
     context: ProvenanceContext,
     operation: CommitOperation,
     journal_id: i64,
-    last: Mutex<Option<JournalEntry>>,
+    entries: Vec<JournalEntry>,
+    last: Mutex<Vec<JournalEntry>>,
 }
 
 impl CommitRecorder {
@@ -156,8 +157,19 @@ impl CommitRecorder {
             context,
             operation,
             journal_id,
-            last: Mutex::new(None),
+            entries: Vec::new(),
+            last: Mutex::new(Vec::new()),
         }
+    }
+
+    /// The same recorder also writing the operation's own journal `entries` (each carrying
+    /// its ID, allocated before the commit) after the `ocfl.commit` entry: each gets the
+    /// operation ID and the object reference of the version described, and is redacted. The
+    /// record names their IDs too, so the commit and its journal entries land together.
+    #[must_use]
+    pub fn with_entries(mut self, entries: Vec<JournalEntry>) -> Self {
+        self.entries = entries;
+        self
     }
 
     /// The journal entries to append after the commit `receipt` published: the `ocfl.commit`
@@ -177,23 +189,53 @@ impl CommitRecorder {
             took_over: receipt.took_over,
         };
         let mut entries = self.stamped(ocfl_commit_entries(&facts), now_ms());
-        let kept = self
-            .last_entry()
-            .filter(|entry| entry.object_ref.as_deref() == Some(reference.object_ref().as_str()));
-        match kept {
-            Some(entry) => entries[0] = entry,
-            None => tracing::warn!("the recorded commit entry names another version"),
+        let object_ref = reference.object_ref();
+        let kept = self.last_entries();
+        let matches = kept
+            .first()
+            .is_some_and(|entry| entry.object_ref.as_deref() == Some(object_ref.as_str()));
+        if !matches {
+            tracing::warn!("the recorded commit entry names another version");
+            entries.extend(self.operation_entries(&object_ref));
+            return entries;
         }
-        entries
+        let takeover = entries.split_off(1);
+        let mut out = kept;
+        out.extend(takeover);
+        out
     }
 
-    /// The commit entry generated last, if any.
-    fn last_entry(&self) -> Option<JournalEntry> {
+    /// The entries generated last (the `ocfl.commit` entry first), if any.
+    fn last_entries(&self) -> Vec<JournalEntry> {
         let guard = self
             .last
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.clone()
+    }
+
+    /// The operation's own entries for the version `object_ref`, redacted.
+    fn operation_entries(&self, object_ref: &str) -> Vec<JournalEntry> {
+        let operation_id = self.operation.operation_id.as_str();
+        self.entries
+            .iter()
+            .map(|entry| {
+                entry
+                    .clone()
+                    .operation_id(operation_id)
+                    .object_ref(object_ref)
+                    .redacted()
+            })
+            .collect()
+    }
+
+    /// The IDs of every entry the commit writes: `ocfl.commit` first, then the operation's.
+    fn journal_ids(&self) -> Vec<String> {
+        let own = self.entries.iter().filter_map(|entry| entry.id);
+        std::iter::once(self.journal_id)
+            .chain(own)
+            .map(|id| id.to_string())
+            .collect()
     }
 
     /// `entries` with this operation's actor and time `at_ms`, redacted.
@@ -229,7 +271,7 @@ impl CommitRecorder {
             started: self.operation.started.clone(),
             installation: Some(self.context.installation.as_str().to_string()),
             host: Some(self.context.host.clone()),
-            journal_entries: vec![self.journal_id.to_string()],
+            journal_entries: self.journal_ids(),
             moves: self.operation.moves.clone(),
             user: Some(OcflUser {
                 name: user.name,
@@ -256,12 +298,15 @@ impl VersionBoundFiles for CommitRecorder {
         let entry = self.commit_entry(context)?;
         let (record_path, record) =
             bound_record(context, &self.operation_facts()).map_err(|err| err.to_string())?;
-        let lines = journal_lines(std::slice::from_ref(&entry))?;
+        let object_ref = entry.object_ref.clone().unwrap_or_default();
+        let mut entries = vec![entry];
+        entries.extend(self.operation_entries(&object_ref));
+        let lines = journal_lines(&entries)?;
         let mut last = self
             .last
             .lock()
             .map_err(|_| "the recorder lock is poisoned")?;
-        *last = Some(entry);
+        *last = entries;
         let version = context.version.to_string();
         Ok(BTreeMap::from([
             (record_path, record),

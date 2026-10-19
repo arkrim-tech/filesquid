@@ -16,10 +16,66 @@ Also API-S-017 (activity journal entry shape and redaction).
 - `AnnouncingJournal` (and `Monitor::announcing_store`) announces entries appended outside the writer with the same `journal.entry` events and counters. The desktop hands it to the catalog, so outbox entries are announced (DE-0.10).
 - Version-inventory repair: consent, every outcome and the answer share one repair run ID as their `operation_id` (`RepairAnswer::run_id`), and an outcome names `object@version`.
 
+## Commit paths linked so far
+
+- Library snapshot commits (DE-0.3, merged while this task was open) set the installation `user`, write the `filesquid.operation.v1` message with the operation `kind` (`canonical::OperationRecord.kind`, mapped by `canonical::operation_kind`), and journal `ocfl.commit` plus the operation's own entry with `operation_id` and `object_ref`; with a provenance context both entries ride the version (`CommitRecorder::with_entries`). See the DE-0.10 walkthrough.
+- One message format: `filesquid_core::OperationMessage` reads the catalog's message (revision as a decimal string, `created_id`, `deletion`; a message without `kind` reads as `unknown`) and writes the same shape.
+- Repair follow-up versions are recorded by API-F2.9.
+
 ## Not delivered in this task, and why
 
-- "Every commit the API makes or drives sets the version `user` and the `filesquid.operation.v1` message and emits `ocfl.commit`": no API path commits an OCFL version yet. File operations (API-F1.3), metadata routes (API-F1.4) and the desktop coordinator (DE-0.3) do not exist. The repair adds no version. The building blocks are in place (`CommitOptions`, the `OperationMessage` type, `ocfl_commit_entries`, `allocate_ids`); the PROV-O record path is in API-F2.9.
-- "Every metadata write is journaled as `metadata.edit`": no API metadata write path exists (API-F1.4). The stand-alone `fsquid` metadata CLI keeps no host journal.
+- File operations (API-F1.3) and metadata routes (API-F1.4) do not exist, so no API path commits file objects or journals `metadata.edit` yet; they use `CommitRecorder` and `CommitOptions` when they land. The stand-alone `fsquid` metadata CLI keeps no host journal.
+
+```text
+$ cargo test -p filesquid-api --test unit_canonical --test unit_history
+test a_head_without_its_version_inventory_is_refused_and_nothing_is_written ... ok
+test a_file_original_is_its_own_object_with_its_metadata_record ... ok
+test a_recorded_kind_is_written_and_read_back_by_both_readers ... ok
+test a_root_without_a_snapshot_has_no_commit_journal ... ok
+test a_metadata_record_without_its_original_is_refused_on_read ... ok
+test a_storage_root_is_created_only_in_an_empty_folder ... ok
+test a_committed_snapshot_reads_back_entity_for_entity ... ok
+test an_entity_that_does_not_match_its_path_is_refused_on_read ... ok
+test an_entity_whose_identifier_cannot_name_a_path_is_a_decode_error ... ok
+test an_original_name_or_media_type_that_is_not_valid_is_refused ... ok
+test a_stale_draft_left_in_staging_is_never_published ... ok
+test an_unreadable_operation_message_is_refused_on_read ... ok
+test canonical_failures_keep_their_meaning_at_the_catalog_port ... ok
+test catalog_operations_map_to_history_kinds ... ok
+test each_change_touches_the_library_and_its_own_entity ... ok
+test an_owner_name_round_trips_through_its_metadata_record ... ok
+test every_entity_has_one_logical_path_and_back ... ok
+test identifiers_that_cannot_name_a_path_segment_are_refused ... ok
+test the_metadata_record_is_readable_front_matter ... ok
+test the_operation_message_carries_its_receipt ... ok
+test the_stored_name_is_the_file_identifier_and_its_extension_only ... ok
+test a_later_version_changes_only_the_entities_it_touches ... ok
+test history_files_ride_the_snapshot_version_and_are_not_entities ... ok
+test an_entity_file_larger_than_the_bound_is_refused_before_it_is_read ... ok
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.37s
+test a_history_entry_carries_the_label_and_marks_reconstruction ... ok
+test a_memory_history_indexes_its_records_and_refuses_conflicts ... ok
+test a_receipt_for_another_version_still_journals_the_commit ... ok
+test a_record_that_cannot_be_built_stops_the_commit ... ok
+test a_file_history_lists_its_object_only ... ok
+test a_redacted_record_names_no_installation_message_or_path ... ok
+test a_takeover_adds_a_warning_after_the_commit_entry ... ok
+test a_version_record_is_raw_json_ld_or_not_found ... ok
+test a_commit_writes_its_record_and_journal_entries_in_the_same_version ... ok
+test an_ocfl_history_without_a_storage_root_is_unavailable ... ok
+test commit_meta_sets_the_user_and_the_operation_message ... ok
+test every_new_journal_event_keeps_its_opaque_fields_and_loses_paths ... ok
+test history_routes_answer_unavailable_before_the_host_installs_a_source ... ok
+test bad_history_parameters_answer_invalid_request ... ok
+test a_rebased_commit_regenerates_both_files_for_the_new_version ... ok
+test redaction_keeps_derivations_linked_and_paths_numbered_across_records ... ok
+test the_export_is_a_json_ld_array_and_can_be_redacted ... ok
+test the_version_user_names_the_installation_and_never_a_person ... ok
+test an_ocfl_history_is_rebuilt_from_the_records_in_the_storage_root ... ok
+test the_history_lists_everything_or_one_filter_in_cursor_pages ... ok
+test the_operations_own_entries_ride_the_version_with_their_ids ... ok
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+```
 
 ## SRS traceability
 

@@ -22,6 +22,7 @@
 //! [`LibraryService`]: filesquid_api::library::LibraryService
 
 mod canonical;
+mod history;
 mod intent;
 mod outbox;
 mod project;
@@ -35,6 +36,7 @@ pub use intent::PendingIntent;
 pub use reconcile::RECONCILE_OPERATION;
 
 use filesquid_api::canonical::{operation_kind, OperationRecord, SnapshotKey};
+use filesquid_api::history::ProvenanceContext;
 use filesquid_api::journal::{JournalEntry, JournalStore, Outcome};
 use filesquid_api::library::mint_uuid_v4;
 use filesquid_api::library::{
@@ -127,6 +129,7 @@ pub struct SqliteCatalog {
     root: PathBuf,
     journal: Arc<dyn JournalStore>,
     probe: Arc<dyn CommitProbe>,
+    provenance: Option<ProvenanceContext>,
     libraries: Mutex<BTreeMap<String, OpenLibrary>>,
 }
 
@@ -169,10 +172,22 @@ impl SqliteCatalog {
             root: root.to_path_buf(),
             journal,
             probe,
+            provenance: None,
             libraries: Mutex::new(libraries),
         };
         catalog.forward_all()?;
         Ok(catalog)
+    }
+
+    /// The same catalog recording the PROV-O history of every commit it publishes (Task
+    /// DE-0.10): each snapshot version names `context`'s installation as its OCFL `user` and
+    /// carries the operation's PROV-O record and journal entries, whose IDs the host journal
+    /// allocates before the commit. Without it, versions still name their operation and kind,
+    /// and the outbox still stores the `ocfl.commit` entry linked to each version.
+    #[must_use]
+    pub fn with_provenance(mut self, context: ProvenanceContext) -> Self {
+        self.provenance = Some(context);
+        self
     }
 
     /// Store `files` (each with its listing order) in `library_id`'s catalog, as an import
@@ -306,11 +321,20 @@ impl SqliteCatalog {
         write(&tx)?;
         let delta = write::delta_of_keys(&tx, library_id, keys)?;
         let record = index_record(&tx, &journal.operation)?;
-        let published = library.canonical.commit(&delta, &record, journal.time_ms)?;
+        let plan = history::plan_commit(self.history().as_ref(), &record, &journal);
+        let published = library
+            .canonical
+            .commit(&delta, plan.meta(), plan.bound())?;
+        let entries = match &published {
+            Some(published) => plan.published(published),
+            None => plan.unpublished(),
+        };
         if let Some(published) = published {
             reconcile::set_snapshot_version(&tx, &published.version.to_string())?;
         }
-        outbox::push(&tx, &journal)?;
+        for entry in &entries {
+            outbox::push(&tx, entry)?;
+        }
         tx.commit().map_err(sql)?;
         self.forward_logged(&library.conn);
         Ok(())
@@ -400,7 +424,16 @@ impl SqliteCatalog {
         write::Canonical {
             root,
             probe: self.probe.as_ref(),
+            history: self.history(),
         }
+    }
+
+    /// Who records this catalog's commits, when the host configured provenance.
+    fn history(&self) -> Option<history::History<'_>> {
+        self.provenance.as_ref().map(|context| history::History {
+            context,
+            journal: self.journal.as_ref(),
+        })
     }
 
     /// Lock the open libraries, mapping a poisoned lock to a store failure.

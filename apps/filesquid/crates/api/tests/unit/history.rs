@@ -245,6 +245,45 @@ fn a_rebased_commit_regenerates_both_files_for_the_new_version() {
 }
 
 #[test]
+fn the_operations_own_entries_ride_the_version_with_their_ids() {
+    let rig = Rig::new();
+    rig.commit_plain(&[("a.txt", b"alpha")], 1);
+    let mine = rig.model("mine");
+    ready(mine.stage_bytes("b.txt", b"bravo")).unwrap();
+    rig.commit_plain(&[("c.txt", b"charlie")], 2);
+    let op = operation("op-6", OperationKind::Delete);
+    let own = JournalEntry::new("library.file.delete", Outcome::Succeeded)
+        .target("f-1")
+        .target("/home/owner/Holiday.jpg");
+    let mut own = own;
+    own.id = Some(12);
+    let recorder = CommitRecorder::new(context(), op.clone(), 11).with_entries(vec![own]);
+    let meta = commit_meta(&context(), &op, created(3));
+    let receipt = ready(mine.commit_with(meta, Some(&recorder))).unwrap();
+    assert_eq!(receipt.version, v("v3"), "rebased past v2");
+    let record = ready(read_record(&rig.object(), &v("v3")))
+        .unwrap()
+        .expect("record");
+    assert_eq!(record.activity().journal_entries(), ["11", "12"]);
+    let lines = journal_lines(&rig.logical("v3", &journal_path("v3")));
+    assert_eq!(lines.len(), 2);
+    assert_eq!(lines[0].operation, "ocfl.commit");
+    let deleted = &lines[1];
+    assert_eq!(deleted.id, Some(12));
+    assert_eq!(deleted.operation, "library.file.delete");
+    assert_eq!(deleted.operation_id.as_deref(), Some("op-6"));
+    assert_eq!(
+        deleted.object_ref.as_deref(),
+        Some(format!("{OBJECT_ID}@v3").as_str())
+    );
+    assert_eq!(
+        deleted.target_ids[1], REDACTED,
+        "a path never reaches the version"
+    );
+    assert_eq!(recorder.journal_entries(&receipt), lines);
+}
+
+#[test]
 fn a_takeover_adds_a_warning_after_the_commit_entry() {
     let rig = Rig::new();
     let model = rig.model("writer");

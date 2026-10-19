@@ -50,6 +50,7 @@ pub use stdout_log::LOGGING_OPERATION;
 
 use event_channel::{Forwarding, TauriSink, FORWARDER_HEARTBEAT};
 use filesquid_api::auth::{record_token_issue, Authoriser, LaunchToken, Principal};
+use filesquid_api::history::{HostFacts, ProvenanceContext};
 use filesquid_api::host::{HostIdentity, NotEnrolled};
 use filesquid_api::journal::{JournalEntry, Outcome};
 use filesquid_api::journal_writer::JournalSender;
@@ -376,8 +377,8 @@ pub struct DesktopCatalog(pub Arc<SqliteCatalog>);
 
 /// Open the per-library SQLite catalogs in `<data_dir>/libraries/`, forwarding their journal
 /// entries to `host`'s journal store through its announcing store, so outbox entries raise
-/// `journal.entry` events and count in the metrics like every other entry (DE-0.10). A
-/// failure is journaled as
+/// `journal.entry` events and count in the metrics like every other entry, and recording the
+/// PROV-O history of every commit as `installation` (DE-0.10). A failure is journaled as
 /// [`CATALOG_OPEN_OPERATION`] `failed` with its error code only (no path). Performs
 /// filesystem and database I/O.
 ///
@@ -386,15 +387,33 @@ pub struct DesktopCatalog(pub Arc<SqliteCatalog>);
 pub fn open_library_catalog(
     data_dir: &std::path::Path,
     host: &HostMonitor,
+    installation: &InstallationId,
 ) -> Result<SqliteCatalog, String> {
     let journal = host.monitor().announcing_store();
-    SqliteCatalog::open(&data_dir.join(CATALOG_DIR), journal).map_err(|err| {
-        let code = catalog_error_code(&err);
-        host.monitor()
-            .journal()
-            .send(JournalEntry::new(CATALOG_OPEN_OPERATION, Outcome::Failed).error_code(code));
-        format!("library catalogs could not be opened ({code})")
-    })
+    let context = ProvenanceContext {
+        installation: installation.clone(),
+        host: host_facts(),
+    };
+    let opened = SqliteCatalog::open(&data_dir.join(CATALOG_DIR), journal);
+    opened
+        .map(|catalog| catalog.with_provenance(context))
+        .map_err(|err| {
+            let code = catalog_error_code(&err);
+            host.monitor()
+                .journal()
+                .send(JournalEntry::new(CATALOG_OPEN_OPERATION, Outcome::Failed).error_code(code));
+            format!("library catalogs could not be opened ({code})")
+        })
+}
+
+/// The software agent of this host's PROV-O records: the product, its distribution and this
+/// build's version, never a host name. Pure.
+pub fn host_facts() -> HostFacts {
+    HostFacts {
+        product: "filesquid".into(),
+        distribution: "filesquid".into(),
+        version: env!("CARGO_PKG_VERSION").into(),
+    }
 }
 
 /// The journal error code of a catalog failure. Pure.
@@ -428,8 +447,9 @@ fn start_monitor(
             .send(stdout_log::logging_failure_entry());
     }
     let installation = load_installation(&data_dir, &host).inspect_err(|_| host.stop())?;
+    let catalog =
+        open_library_catalog(&data_dir, &host, &installation).inspect_err(|_| host.stop())?;
     app.manage(DesktopInstallation(installation));
-    let catalog = open_library_catalog(&data_dir, &host).inspect_err(|_| host.stop())?;
     app.manage(DesktopCatalog(Arc::new(catalog)));
     let forwarder = Arc::new(event_channel::register_forwarder(host.monitor().registry()));
     let stop = Arc::new(AtomicBool::new(false));

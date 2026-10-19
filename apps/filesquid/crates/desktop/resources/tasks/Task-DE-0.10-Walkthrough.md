@@ -17,10 +17,41 @@ Branch: `feat/prov-o-history` (global Task FS-2.8; ADR 040 Decisions 4 and 6; [A
 - The SQLite journal gains the `operation_id` and `object_ref` columns and indexes, added to an existing journal by an idempotent forward migration (`ALTER TABLE ... ADD COLUMN`; old rows read them as absent). It also gains `allocate_ids` (it advances the AUTOINCREMENT counter) and stores an entry with a preset ID under that ID, once.
 - The catalog's journal outbox reaches the host journal through `Monitor::announcing_store`, so outbox entries raise `journal.entry` events and count in the metrics. The new test fails with the previous plain store, as recorded below.
 
-## Not delivered in this task, and why
+## Catalog commit linkage (after DE-0.3 merged)
 
-- "Every commit of the desktop OCFL coordinator (library snapshots of DE-0.3, file objects of DE-1.2) sets the version `user`, carries the `filesquid.operation.v1` message and its PROV-O record and emits `ocfl.commit`", and "at reconcile write the journal entries a crash left unwritten from the version's PROV-O record": the desktop OCFL coordinator does not exist yet. DE-0.3 and DE-1.2 are open, and `filesquid-native` and the desktop make no OCFL commit today. The pieces the coordinator will use exist: the installation UUID, `CommitOptions`, the version-bound hook, `allocate_ids` and the per-commit `provenance/<version>.journal.jsonl` of API-F2.9.
-- The plan lists DE-0.3 and DE-0.8 as dependencies; neither is done.
+DE-0.3 reached `main` while this task was open, so the catalog's snapshot commits are now linked:
+
+- `SqliteCatalog::with_provenance(ProvenanceContext)` (the desktop passes its installation UUID and `host_facts()`) makes every snapshot version carry the installation as its OCFL `user`, a `filesquid.operation.v1` message with the operation `kind`, and the operation's PROV-O record and journal entries (`provenance/<version>.jsonld`, `provenance/<version>.journal.jsonl`) in the same version, through `api::history::CommitRecorder`.
+- The commit's journal IDs (its `ocfl.commit` entry and the operation's own entry) are allocated from the host journal before the commit; the outbox stores exactly the entries the version carries, with the same IDs.
+- Reconcile replays the journal entries of every version a behind (or lost) catalog missed into its outbox; the stores keep a pre-allocated ID once (`ON CONFLICT(id) DO NOTHING`), so nothing is stored twice.
+- Without a provenance context, or when the IDs cannot be allocated, the version is still published with its message; the outbox stores `ocfl.commit` and the operation's entry linked by operation ID and object version, plus a `prov.record` warning (error code only) when the IDs were unavailable.
+
+File objects (DE-1.2) do not exist yet; they use the same recorder when they land. DE-0.8, a listed dependency, is not done.
+
+```text
+$ cargo test -p filesquid-native --features desktop --test unit_canonical_commit
+test a_commit_without_journal_ids_publishes_and_warns_without_identifying_data ... ok
+test a_command_publishes_one_snapshot_version_before_the_catalog_answers ... ok
+test a_crash_after_the_snapshot_replays_the_commits_journal_entries_once ... ok
+test a_crash_after_the_snapshot_loses_no_acknowledged_state ... ok
+test a_crash_before_the_snapshot_leaves_the_work_pending_and_a_retry_completes_once ... ok
+test a_library_directory_that_is_a_symbolic_link_is_refused ... ok
+test a_head_without_its_version_inventory_is_refused_and_not_repaired ... ok
+test a_deleted_catalog_is_rebuilt_from_the_snapshot_with_its_receipts ... ok
+test a_missing_snapshot_is_published_again_in_full_by_the_next_commit ... ok
+test an_unpublished_version_left_by_a_crash_is_ignored_and_replaced ... ok
+test every_library_keeps_its_ocfl_root_beside_its_catalog_file ... ok
+test a_snapshot_of_another_library_is_never_loaded ... ok
+test an_unrecorded_catalog_still_links_its_commits ... ok
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+$ cargo test -p filesquid-desktop --test integration_library_catalog
+test a_catalog_directory_that_cannot_be_opened_is_journaled_without_its_path ... ok
+test catalog_commits_raise_journal_entry_events ... ok
+test the_installation_uuid_is_created_once_and_journaled ... ok
+test a_catalog_commit_carries_its_history_in_the_same_version ... ok
+test the_host_keeps_one_catalog_file_per_library_and_journals_its_commits ... ok
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+```
 
 ## SRS traceability
 
@@ -29,6 +60,9 @@ Branch: `feat/prov-o-history` (global Task FS-2.8; ADR 040 Decisions 4 and 6; [A
 | DE-S-012 | `filesquid-native` `unit_installation` (7 tests); desktop `integration_library_catalog::the_installation_uuid_is_created_once_and_journaled` |
 | DE-S-011 journal columns and migration | `unit_journal::both_stores_keep_the_operation_id_and_object_reference`, `an_older_journal_gains_the_linkage_columns_on_open`, `both_stores_assign_ids_before_the_entries_are_written` |
 | DE-S-011 outbox events | desktop `integration_library_catalog::catalog_commits_raise_journal_entry_events` |
+| DE-S-011 commit linkage, history in the same version | desktop `integration_library_catalog::a_catalog_commit_carries_its_history_in_the_same_version`; native `unit_canonical_commit::an_unrecorded_catalog_still_links_its_commits` |
+| DE-S-011 replay after a crash | native `unit_canonical_commit::a_crash_after_the_snapshot_replays_the_commits_journal_entries_once` |
+| `prov.record` redaction | native `unit_canonical_commit::a_commit_without_journal_ids_publishes_and_warns_without_identifying_data` |
 
 ## TDD: failing runs
 

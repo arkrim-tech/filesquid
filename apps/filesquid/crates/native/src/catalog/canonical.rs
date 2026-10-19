@@ -8,16 +8,18 @@
 
 use super::{failed, schema};
 use filesquid_api::canonical::{
-    commit_snapshot, create_storage_root, operation_message, read_commit_journal, read_snapshot,
-    snapshot_object_id, CanonicalError, LibrarySnapshot, OperationRecord, OwnerReadable,
-    SnapshotDelta, SNAPSHOT_ROOT,
+    commit_snapshot_with, create_storage_root, read_commit_journal, read_snapshot,
+    snapshot_object_id, CanonicalError, LibrarySnapshot, OwnerReadable, SnapshotDelta,
+    SNAPSHOT_ROOT,
 };
 use filesquid_api::journal::JournalEntry;
 use filesquid_api::library::CatalogError;
 use filesquid_core::LibraryId;
 use filesquid_ocfl::change::{ChangeModel, StagingArea, VersionMeta};
 use filesquid_ocfl::storage::{complete_immediately, FsBackend};
-use filesquid_ocfl::write::{rfc3339_utc, CommitReceipt, LeaseConfig, LeaseStore, SystemClock};
+use filesquid_ocfl::write::{
+    CommitReceipt, LeaseConfig, LeaseStore, SystemClock, VersionBoundFiles,
+};
 use std::path::{Path, PathBuf};
 
 /// Suffix of a library's OCFL storage root in the catalog directory.
@@ -118,17 +120,18 @@ impl CanonicalRoot {
         drive(self.ocfl.exists(&key))?.map_err(unavailable("OCFL root"))
     }
 
-    /// Commit `delta` as the snapshot version that publishes `operation`, created at
-    /// `created_ms` (Unix milliseconds, UTC); `None` when the delta changes nothing, so no
-    /// version is written. Filesystem I/O.
+    /// Commit `delta` as the snapshot version described by `meta` (its operation message,
+    /// installation `user` and creation time), with `bound` writing the commit's history files
+    /// into the same version; `None` when the delta changes nothing, so no version is
+    /// written. Filesystem I/O.
     ///
     /// # Errors
     /// As [`commit_snapshot`], mapped to the catalog port.
     pub(crate) fn commit(
         &self,
         delta: &SnapshotDelta,
-        operation: &OperationRecord,
-        created_ms: i64,
+        meta: VersionMeta,
+        bound: Option<&dyn VersionBoundFiles>,
     ) -> Result<Option<CommitReceipt>, CatalogError> {
         let area = StagingArea::new(&self.staging, "snapshot")
             .map_err(|e| CatalogError::from(CanonicalError::from(e)))?;
@@ -140,9 +143,14 @@ impl CanonicalRoot {
             self.object_id.clone(),
             area,
         );
-        let created = rfc3339_utc(u64::try_from(created_ms).unwrap_or(0));
-        let meta = VersionMeta::new(created).with_message(operation_message(operation));
-        drive(commit_snapshot(&model, &OwnerReadable, delta, meta))?.map_err(CatalogError::from)
+        drive(commit_snapshot_with(
+            &model,
+            &OwnerReadable,
+            delta,
+            meta,
+            bound,
+        ))?
+        .map_err(CatalogError::from)
     }
 
     /// The journal entries the snapshot versions after `after` (every version when `None` or

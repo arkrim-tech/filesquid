@@ -29,6 +29,7 @@ mod redact;
 pub(crate) mod routes;
 mod source;
 
+pub use filesquid_prov::HostFacts;
 pub use recorder::{
     commit_meta, journal_path, version_user, CommitOperation, CommitRecorder, ProvenanceContext,
     INSTALLATION_USER_NAME, JOURNAL_SUFFIX,
