@@ -104,14 +104,34 @@ fn real_dir(dir: &Path, what: &str) -> Result<(), String> {
 
 /// The storage root at `root` by its canonical path, with every symbolic link on the way
 /// resolved once here, so the backend never follows a link that changes later. Refused when
-/// it is a symbolic link itself or not a directory.
+/// it is a symbolic link itself or not a directory. The path is resolved first and then
+/// checked without following links; on Unix the directory found at `root` must be the very
+/// directory (device and inode) the resolved path names, so swapping `root` for a link
+/// between the two steps is refused rather than served.
 fn storage_root(root: &Path) -> Result<std::path::PathBuf, String> {
-    let meta =
-        std::fs::symlink_metadata(root).map_err(|_| "the storage root could not be opened")?;
-    if !meta.file_type().is_dir() {
+    let unopened = || "the storage root could not be opened".to_string();
+    let canonical = std::fs::canonicalize(root).map_err(|_| unopened())?;
+    let at_root = std::fs::symlink_metadata(root).map_err(|_| unopened())?;
+    let at_canonical = std::fs::symlink_metadata(&canonical).map_err(|_| unopened())?;
+    let plain = at_root.file_type().is_dir() && at_canonical.file_type().is_dir();
+    if !plain || !same_directory(&at_root, &at_canonical) {
         return Err("the storage root is not a plain directory".to_string());
     }
-    std::fs::canonicalize(root).map_err(|_| "the storage root could not be opened".to_string())
+    Ok(canonical)
+}
+
+/// Whether two no-follow metadata reads are of one directory: same device and inode.
+#[cfg(unix)]
+fn same_directory(a: &std::fs::Metadata, b: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    a.dev() == b.dev() && a.ino() == b.ino()
+}
+
+/// Whether two no-follow metadata reads are of one directory. The standard library has no
+/// stable file identity here, so both being plain directories is the check.
+#[cfg(not(unix))]
+fn same_directory(_: &std::fs::Metadata, _: &std::fs::Metadata) -> bool {
+    true
 }
 
 /// A filesystem backend at `<dir>/<name>`, with its multipart parts beside it.

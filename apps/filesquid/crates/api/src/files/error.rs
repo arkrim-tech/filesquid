@@ -165,8 +165,10 @@ impl From<ChangeError> for FileError {
 impl From<CommitError> for FileError {
     fn from(err: CommitError) -> Self {
         match err {
-            CommitError::MissingVersionInventory { .. }
-            | CommitError::VersionInventoryMismatch { .. } => Self::conflict(
+            CommitError::VersionInventoryMismatch { .. } => Self::conflict(
+                "This object's latest version does not match its inventory, so files cannot change until it is checked.",
+            ),
+            CommitError::MissingVersionInventory { .. } => Self::conflict(
                 "This object's latest version is incomplete; repair it before changing files.",
             ),
             CommitError::HeadMoved { .. } => {

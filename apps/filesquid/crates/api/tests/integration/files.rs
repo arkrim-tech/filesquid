@@ -347,6 +347,8 @@ async fn head_with_a_range_describes_the_get_for_that_range() {
     assert_eq!(part.status, StatusCode::PARTIAL_CONTENT);
     assert_eq!(part.header("content-range"), "bytes 10-19/5000");
     assert_eq!(part.header("content-length"), "10");
+    assert_eq!(part.header("accept-ranges"), "bytes");
+    assert_eq!(part.header("content-type"), "video/mp4");
     assert!(part.body.is_empty());
     let past = rig
         .call(Method::HEAD, &uri, &[("range", "bytes=5000-")], Vec::new())
