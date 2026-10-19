@@ -54,6 +54,7 @@ use filesquid_api::history::{HostFacts, ProvenanceContext};
 use filesquid_api::host::{HostIdentity, NotEnrolled};
 use filesquid_api::journal::{JournalEntry, Outcome};
 use filesquid_api::journal_writer::JournalSender;
+use filesquid_api::ocfl_validation::ValidationService;
 use filesquid_api::registry::ProcessHandle;
 use filesquid_api::trace_layer::JournalLayer;
 use filesquid_api::ApiState;
@@ -62,6 +63,7 @@ use filesquid_native::installation::{
     self, InstallationError, InstallationSource, INSTALLATION_CREATED,
 };
 use filesquid_native::{HostMonitor, SqliteCatalog, CATALOG_DIR};
+use filesquid_ocfl::storage::FsBackend;
 use ipc_observer::TauriIpcObserver;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -312,6 +314,12 @@ pub fn open_host_monitor(
     Ok(host)
 }
 
+/// The host's OCFL validation (API-S-022), held in Tauri's managed state. Opening a library
+/// (DE-1.1) opens its storage root here with
+/// [`ValidationService::open_library`](filesquid_api::ocfl_validation::ValidationService::open_library);
+/// the monitor ticker starts the scheduled runs.
+pub struct DesktopValidation(pub ValidationService<FsBackend>);
+
 /// Journal operation of an installation UUID copy restored from the other copy.
 pub const INSTALLATION_RESTORED: &str = "host.installation.restored";
 
@@ -400,7 +408,8 @@ pub struct DesktopCatalog(pub Arc<SqliteCatalog>);
 /// Open the per-library SQLite catalogs in `<data_dir>/libraries/`, forwarding their journal
 /// entries to `host`'s journal store through its announcing store, so outbox entries raise
 /// `journal.entry` events and count in the metrics like every other entry, and recording the
-/// PROV-O history of every commit as `installation` (DE-0.10). A failure is journaled as
+/// PROV-O history of every commit as `installation` (DE-0.10), and sending refusals that
+/// come before any library is open through `host`'s bounded journal queue. A failure is journaled as
 /// [`CATALOG_OPEN_OPERATION`] `failed` with its error code only (no path). Performs
 /// filesystem and database I/O.
 ///
@@ -418,7 +427,11 @@ pub fn open_library_catalog(
     };
     let opened = SqliteCatalog::open(&data_dir.join(CATALOG_DIR), journal);
     opened
-        .map(|catalog| catalog.with_provenance(context))
+        .map(|catalog| {
+            catalog
+                .with_provenance(context)
+                .with_failure_journal(host.monitor().journal())
+        })
         .map_err(|err| {
             let code = catalog_error_code(&err);
             host.monitor()
@@ -473,6 +486,10 @@ fn start_monitor(
         open_library_catalog(&data_dir, &host, &installation).inspect_err(|_| host.stop())?;
     app.manage(DesktopInstallation(installation));
     app.manage(DesktopCatalog(Arc::new(catalog)));
+    let validation = host
+        .start_validation::<FsBackend>(&data_dir, &state)
+        .inspect_err(|_| host.stop())?;
+    app.manage(DesktopValidation(validation));
     open_test_library(app, &data_dir);
     let forwarder = Arc::new(event_channel::register_forwarder(host.monitor().registry()));
     let stop = Arc::new(AtomicBool::new(false));

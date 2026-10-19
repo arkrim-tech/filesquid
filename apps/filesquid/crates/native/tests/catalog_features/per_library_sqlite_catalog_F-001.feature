@@ -31,6 +31,27 @@ Feature: Per-library SQLite catalog
     And the library "Family archive" should be at revision 2
 
   # Edge case
+  Scenario: A command that changes nothing stores nothing
+    Given an empty catalog directory
+    And the owner created the library "Family archive" with the collection "Summer"
+    When the owner renames the collection "Summer" to "Summer"
+    Then the catalog should hold no receipt for the rename
+    And the host journal should not record "library.collection.rename"
+    And the library "Family archive" should be at revision 2
+
+  # Edge case
+  Scenario: An index refresh that changes nothing journals nothing
+    Given an empty catalog directory
+    And the owner created the library "Family archive" with the collection "Summer"
+    And the file "f-1" was indexed in the collection "Summer" at listing order 3
+    When the file "f-1" is indexed in the collection "Summer" at listing order 3 again
+    Then the host journal should hold no entry since the first index
+    And the library's OCFL snapshot should be at version "v3"
+    When the file "f-1" is indexed in the collection "Summer" at listing order 4 again
+    Then the host journal should record "library.file.index" 2 times
+    And the library's OCFL snapshot should be at version "v4"
+
+  # Edge case
   Scenario: Journal entries survive an unreachable host journal
     Given an empty catalog directory whose host journal is unreachable
     When the owner creates the library "Family archive"

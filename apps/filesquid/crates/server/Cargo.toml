@@ -18,6 +18,8 @@ path = "src/main.rs"
 axum = { version = "0.8", features = ["ws"] }
 filesquid-api = { path = "../api" }
 filesquid-native = { path = "../native" }
+# The filesystem OCFL backend type the server's validation service is built for (API-S-022).
+filesquid-ocfl = { path = "../ocfl" }
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "time", "sync"] }
 tower-http = { version = "0.6", features = ["fs", "trace"] }

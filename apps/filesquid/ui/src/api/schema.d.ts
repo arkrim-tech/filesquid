@@ -511,6 +511,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/ocfl/findings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Open OCFL validation findings and validation runs
+         * @description API-S-022. The open findings of every open library (at most 1,000, ordered by library, object, code and location; `truncated` when more are open) the schedule and cap in force and, per open library, whether a run is going, the last run and the next scheduled run. A finding's `location` is null for a caller who may not read the object: the server administrator, until per-object permissions arrive.
+         */
+        get: operations["getOcflFindings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/ocfl/validation-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start OCFL validation runs
+         * @description API-S-022. Starts a validation run of the named library, or of every open library when the body is empty or names none. A run continues from the library's stored cursor unless `from_start` is true. Runs go in the background and report in the process registry (`ocfl.validation`) and on the event channel. Starting a job changes no library content or organisation, so the body is a RunRequest, not a CommandEnvelope. Every refusal is journaled as `ocfl.validation.run`.
+         */
+        post: operations["startOcflValidationRuns"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/ocfl/validation-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Change the OCFL validation schedule and cap
+         * @description API-S-022. The desktop owner or a server administrator changes the time between scheduled runs and the object cap of a run. The next scheduled run of each open library moves with the new interval. Answers the settings now in force. Changing settings changes no library content or organisation, so the body is the settings, not a CommandEnvelope. Every change and refusal is journaled as `ocfl.validation.configure`.
+         */
+        put: operations["putOcflValidationSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -578,6 +638,10 @@ export interface components {
             code: string;
             severity: components["schemas"]["MonitorStatus"];
             detail: string;
+            /** @description Machine-readable codes behind the reason, when it has any: for ocfl_validation_errors, the OCFL error codes of the open findings, sorted. Absent otherwise. */
+            codes?: string[];
+            /** @description How many objects the reason concerns (ocfl_validation_errors). Absent otherwise. */
+            objects?: number;
         };
         HealthInputs: {
             stalled: number;
@@ -586,6 +650,8 @@ export interface components {
             free_bytes: number | null;
             queue_fill: number;
             errors_last_5m: number;
+            ocfl_error_codes: string[];
+            ocfl_error_objects: number;
         };
         HealthReport: {
             status: components["schemas"]["MonitorStatus"];
@@ -949,6 +1015,65 @@ export interface components {
             url: string;
             /** @description Its absolute expiry, RFC 3339 UTC: 3,600 s after the mint. It also ends after 300 s without a request, and when the credential that minted it ends. */
             expires_at: string;
+        };
+        /** @enum {string} */
+        FindingSeverity: "error" | "warning";
+        FindingView: {
+            library_id: string;
+            object_id: string;
+            version: string | null;
+            code: string;
+            severity: components["schemas"]["FindingSeverity"];
+            /** @description Storage key (and JSON pointer) of the fault; null for a caller who may not read the object. */
+            location: string | null;
+        };
+        /** @enum {string} */
+        RunTrigger: "scheduled" | "requested";
+        /** @enum {string} */
+        RunOutcome: "completed" | "capped" | "cancelled" | "failed";
+        RunView: {
+            trigger: components["schemas"]["RunTrigger"];
+            /** Format: date-time */
+            started: string;
+            /** Format: date-time */
+            ended: string;
+            outcome: components["schemas"]["RunOutcome"];
+            checked: number;
+            not_checked: number;
+            error_code: string | null;
+        };
+        LibraryRuns: {
+            library_id: string;
+            running: boolean;
+            last_run: components["schemas"]["RunView"] | null;
+            /** Format: date-time */
+            next_run: string | null;
+        };
+        FindingsView: {
+            findings: components["schemas"]["FindingView"][];
+            truncated: boolean;
+            settings: components["schemas"]["ValidationSettings"];
+            libraries: components["schemas"]["LibraryRuns"][];
+        };
+        RunRequest: {
+            /** @description The one library to run; every open library when absent or null. */
+            library_id?: string | null;
+            /** @description Start at the beginning of the object order instead of the stored cursor (default false). */
+            from_start?: boolean;
+        };
+        RunRefusal: {
+            library_id: string;
+            error_code: string;
+        };
+        RunAccepted: {
+            started: string[];
+            refused: components["schemas"]["RunRefusal"][];
+        };
+        ValidationSettings: {
+            /** @description Time between scheduled runs of a library, in milliseconds (one hour to 366 days; default 7 days). */
+            interval_ms: number;
+            /** @description Most objects one run checks (default 100,000). */
+            object_cap: number;
         };
     };
     responses: {
@@ -2098,6 +2223,106 @@ export interface operations {
             416: components["responses"]["RangeNotSatisfiable"];
             500: components["responses"]["Internal"];
             503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    getOcflFindings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Findings and runs. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FindingsView"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    startOcflValidationRuns: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["RunRequest"];
+            };
+        };
+        responses: {
+            /** @description The libraries whose run started, and those refused. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunAccepted"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description The named library is not open on this host (`not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description A run of the named library is already going (`already_running`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            500: components["responses"]["Internal"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    putOcflValidationSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ValidationSettings"];
+            };
+        };
+        responses: {
+            /** @description The settings now in force. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationSettings"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["Unavailable"];
         };
     };
 }

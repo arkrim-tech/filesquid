@@ -1190,6 +1190,7 @@ The system MUST implement [PRD F-061](./prd.md#f-061-activity-journal-and-live-h
 - [`activity_journal_and_live_health_monitoring_F-061.feature`](../apps/filesquid/crates/api/tests/features/activity_journal_and_live_health_monitoring_F-061.feature) (scenarios; step definitions, unit, load and redaction tests come with Task FS-2.4)
 - [`native_journal_store_F-061.feature`](../apps/filesquid/crates/native/tests/features/native_journal_store_F-061.feature) (SQLite journal store and data-directory checks)
 - [`desktop_refusals_F-061.feature`](../apps/filesquid/crates/desktop/tests/features/desktop_refusals_F-061.feature) (desktop shell refusals: IPC, new windows, permissions, downloads)
+- [`ocfl_validation_findings_API-S-022.feature`](../apps/filesquid/crates/api/tests/features/ocfl_validation_findings_API-S-022.feature) (OCFL validation findings in health and the Monitor)
 - [`durable_journal_and_journal_tab_F-061.feature`](../apps/filesquid/crates/api/tests/features/durable_journal_and_journal_tab_F-061.feature) (scenarios only; step definitions arrive with Task FS-2.9)
 
 ### SRS-F-062: Drive-style views, sorting, selection and layout preferences
@@ -1590,7 +1591,7 @@ The FileSquid default UI has no screenshot yet; [SRS-F-055](#srs-f-055-default-u
 | F-058 | SRS-F-058 | `../apps/filesquid/ui/tests/features/theme_tokens_SRS-UI-007.feature`, `../apps/filesquid/ui/tests/features/product_component_terminology_and_item_type_F-049.feature`, `../apps/filesquid/ui/tests/features/composable_filesquid_ui_F-055.feature` (dedicated feature file not yet written) |
 | F-059 | SRS-F-059 | `../apps/filesquid/crates/server/tests/features/client_encryption_and_key_custody_F-029.feature`, `../apps/filesquid/crates/server/tests/features/endpoint_processing_and_hosted_encryption_TC-002.feature`, `../apps/filesquid/ui/tests/features/personal_synchronization_and_availability_F-030.feature`, `../apps/filesquid/ui/tests/features/encrypted_backup_and_verified_restore_F-031.feature` |
 | F-060 | SRS-F-060 | `../apps/filesquid/crates/ocfl/tests/features/reusable_ocfl_engine_F-051.feature`, `../apps/filesquid/crates/core/tests/features/job_checkpoint_protocol_NFR-003.feature` (dedicated feature file not yet written) |
-| F-061 | SRS-F-061 | `../apps/filesquid/crates/api/tests/features/activity_journal_and_live_health_monitoring_F-061.feature`, `../apps/filesquid/crates/native/tests/features/native_journal_store_F-061.feature`, `../apps/filesquid/crates/desktop/tests/features/desktop_refusals_F-061.feature` |
+| F-061 | SRS-F-061 | `../apps/filesquid/crates/api/tests/features/activity_journal_and_live_health_monitoring_F-061.feature`, `../apps/filesquid/crates/native/tests/features/native_journal_store_F-061.feature`, `../apps/filesquid/crates/desktop/tests/features/desktop_refusals_F-061.feature`, `../apps/filesquid/crates/api/tests/features/ocfl_validation_findings_API-S-022.feature` |
 | F-062 | SRS-F-062 | `../apps/filesquid/ui/tests/features/drive_style_views_and_preferences_F-062.feature` (scenarios only; step definitions pending) |
 | F-063 | SRS-F-063 | `../apps/filesquid/crates/api/tests/features/file_search_query_language_F-063.feature` (scenarios only; step definitions pending) |
 | F-064 | SRS-F-064 | `../apps/filesquid/crates/api/tests/features/file_activity_and_comments_F-064.feature` (scenarios only; step definitions pending) |

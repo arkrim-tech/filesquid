@@ -26,9 +26,11 @@ use axum::Router;
 use filesquid_api::auth::{self, Action, Authoriser, Guard, Principal, EVENTS_SUBPROTOCOL};
 use filesquid_api::host::{HostIdentity, NotEnrolled, OperatorName};
 use filesquid_api::journal::{format_rfc3339_ms, now_ms, JournalEntry, Level, Outcome};
+use filesquid_api::ocfl_validation::ValidationService;
 use filesquid_api::trace_layer::JournalLayer;
 use filesquid_api::{ApiError, ApiState, ErrorCode, API_PREFIX};
 use filesquid_native::HostMonitor;
+use filesquid_ocfl::storage::FsBackend;
 use std::io::Write;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -294,6 +296,10 @@ pub fn start_server_writing_to(
     install_admin_authoriser(config, state)?;
     let host = start_host_monitor(config, state, layer)?;
     auth::record_token_issue(host.monitor(), &Principal::Administrator);
+    if let Err(message) = start_validation(config, state, &host) {
+        host.stop();
+        return Err(message);
+    }
     let described = describe_server_host(config, state, &host, stdout);
     if let Err(message) = described.and_then(|()| install_server_files(state)) {
         host.stop();
@@ -311,6 +317,24 @@ pub fn start_server_writing_to(
 /// A file service is already installed.
 pub fn install_server_files(state: &ApiState) -> Result<(), String> {
     filesquid_native::install_file_service(state).map(|_| ())
+}
+
+/// Start OCFL validation (API-S-022) over the findings store in the data directory and
+/// answer the service. The server has no OCFL library model yet (its libraries arrive with
+/// SV-F1.2), so it opens no library: the findings route answers the administrator an empty
+/// list with the settings, and the settings route works. A later task keeps the service this
+/// answers and opens each server library with
+/// [`open_library`](filesquid_api::ocfl_validation::ValidationService::open_library).
+/// Performs database I/O.
+///
+/// # Errors
+/// The findings store could not be opened.
+pub fn start_validation(
+    config: &ServerConfig,
+    state: &ApiState,
+    host: &HostMonitor,
+) -> Result<ValidationService<FsBackend>, String> {
+    host.start_validation::<FsBackend>(&config.data_dir, state)
 }
 
 /// Start the activity journal, process registry and admin routes for this server (FileSquid

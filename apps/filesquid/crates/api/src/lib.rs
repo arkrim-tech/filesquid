@@ -58,6 +58,7 @@ pub mod library;
 pub mod local_library;
 pub mod metrics;
 pub mod monitor;
+pub mod ocfl_validation;
 pub mod operation;
 pub mod registry;
 pub mod replica;
@@ -71,7 +72,7 @@ pub use routes::{route_actions, routed_paths, router, Liveness};
 use std::sync::{Arc, OnceLock};
 
 /// Version of the FileSquid API contract. Bumped when the contract changes.
-pub const API_VERSION: &str = "0.9.0";
+pub const API_VERSION: &str = "0.10.0";
 
 /// URL prefix shared by every API route.
 pub const API_PREFIX: &str = "/api/v1";
@@ -99,6 +100,9 @@ pub struct ApiState {
     files: Arc<OnceLock<Arc<dyn files::FileOperations>>>,
     /// The live content handles, in memory only: they end with this state (API-S-018).
     content_handles: Arc<content::ContentHandles>,
+    /// The host's OCFL validation, installed once at startup (the validation routes answer
+    /// 503 until then).
+    validation: Arc<OnceLock<Arc<dyn ocfl_validation::OcflValidation>>>,
     /// The host's history source, installed once at startup (the history routes answer 503
     /// until then).
     history: Arc<OnceLock<Arc<dyn history::HistorySource>>>,
@@ -112,6 +116,7 @@ impl std::fmt::Debug for ApiState {
             .field("host", &self.host.get())
             .field("files_installed", &self.files.get().is_some())
             .field("content_handles", &self.content_handles)
+            .field("validation_installed", &self.validation.get().is_some())
             .field("history_installed", &self.history.get().is_some())
             .finish()
     }
@@ -134,6 +139,7 @@ impl ApiState {
             host: Arc::new(OnceLock::new()),
             files: Arc::new(OnceLock::new()),
             content_handles: Arc::new(content::ContentHandles::new(clock)),
+            validation: Arc::new(OnceLock::new()),
             history: Arc::new(OnceLock::new()),
         }
     }
@@ -213,6 +219,17 @@ impl ApiState {
     /// The installed monitor, if any.
     pub fn monitor(&self) -> Option<monitor::Monitor> {
         self.monitor.get().cloned()
+    }
+
+    /// Install the host's OCFL validation (API-S-022). Returns false if one was already
+    /// installed.
+    pub fn install_validation(&self, validation: Arc<dyn ocfl_validation::OcflValidation>) -> bool {
+        self.validation.set(validation).is_ok()
+    }
+
+    /// The installed OCFL validation, if any.
+    pub fn validation(&self) -> Option<Arc<dyn ocfl_validation::OcflValidation>> {
+        self.validation.get().cloned()
     }
 }
 
