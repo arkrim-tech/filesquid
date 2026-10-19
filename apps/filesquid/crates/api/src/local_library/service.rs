@@ -12,16 +12,18 @@
 use super::candidates::candidates;
 use super::error::LocalLibraryError;
 use super::ledger::{RepairLedger, RepairRecord};
+use super::provenance::{commit_repair_record, Provenance, Repaired, PROVENANCE_NOT_CONFIGURED};
 use super::rebuild::{rebuild, RebuildReport};
 use super::repair::{
-    locate, recorded, repair_object, ObjectRefusal, ObjectRepair, RepairAnswer, RepairCandidates,
-    RepairRequest, RepairResult, REPAIR_OPERATION,
+    locate, recorded, repair_object, Located, ObjectRefusal, ObjectRepair, RepairAnswer,
+    RepairCandidates, RepairRequest, RepairResult, REPAIR_OPERATION,
 };
 use super::root::{create_root, open_root, RootSummary};
 use super::snapshot::{copy_snapshot, CopyReport};
 use super::LOG_TARGET;
 use crate::auth::Principal;
-use crate::journal::{now_ms, JournalEntry, Level, Outcome};
+use crate::history::{ProvenanceContext, PROV_RECORD_OPERATION};
+use crate::journal::{now_ms, JournalEntry, JournalStore, Level, Outcome};
 use crate::journal_writer::JournalSender;
 use crate::library::mint_uuid_v4;
 use crate::registry::Clock;
@@ -48,6 +50,7 @@ pub struct LocalLibraryService {
     journal: JournalSender,
     ledger: Arc<dyn RepairLedger>,
     clock: Clock,
+    provenance: Option<Provenance>,
 }
 
 impl std::fmt::Debug for LocalLibraryService {
@@ -65,7 +68,21 @@ impl LocalLibraryService {
             journal,
             ledger,
             clock: Arc::new(now_ms),
+            provenance: None,
         }
+    }
+
+    /// Record provenance as `context`: after each repaired object, commit a provenance-only
+    /// version whose PROV-O record (kind `repair`) shares the repair run's ID, naming a
+    /// journal entry ID that `ids` allocates before the commit (API-S-028). Without it a
+    /// repair writes no record and journals that it did not.
+    pub fn with_provenance(
+        mut self,
+        context: ProvenanceContext,
+        ids: Arc<dyn JournalStore>,
+    ) -> Self {
+        self.provenance = Some(Provenance { context, ids });
+        self
     }
 
     /// Use `clock` (Unix milliseconds, UTC) for journal times.
@@ -201,7 +218,8 @@ impl LocalLibraryService {
         self.record_consent(actor, &request, &run_id)?;
         let mut objects = Vec::with_capacity(request.object_ids.len());
         for object_id in &request.object_ids {
-            let outcome = match located.get(object_id) {
+            let found = located.get(object_id);
+            let outcome = match found {
                 Some(found) => repair_object(root, reservations, &holder, object_id, found).await,
                 None => Err(ObjectRefusal::fixed("object_not_found")),
             };
@@ -211,13 +229,72 @@ impl LocalLibraryService {
                 object_id,
                 run_id: &run_id,
             };
-            objects.push(self.record_outcome(&target, outcome));
+            let mut answer = self.record_outcome(&target, outcome);
+            if let (RepairResult::Repaired, Some(found)) = (answer.result, found) {
+                let follow_up = (root, reservations, holder.as_str(), found);
+                self.record_provenance(&target, follow_up, &mut answer)
+                    .await;
+            }
+            objects.push(answer);
         }
         Ok(RepairAnswer {
             library_id: request.library_id,
             run_id,
             objects,
         })
+    }
+
+    /// Commit the provenance record of a repaired object and journal its entries; without a
+    /// provenance context, or when the commit fails, journal why no record was written and
+    /// say so in `answer`. Never silent (API-S-028).
+    async fn record_provenance<B: StorageBackend, R: VersionReservations>(
+        &self,
+        target: &Target<'_>,
+        (root, reservations, holder, found): (&B, &R, &str, &Located),
+        answer: &mut ObjectRepair,
+    ) {
+        let Some(provenance) = &self.provenance else {
+            self.journal_unrecorded(target, PROVENANCE_NOT_CONFIGURED, Level::Warn);
+            answer.provenance_error_code = Some(PROVENANCE_NOT_CONFIGURED.to_string());
+            return;
+        };
+        let repaired = Repaired {
+            object_root: &found.root,
+            object_id: target.object_id,
+            run_id: target.run_id,
+            actor: target.actor,
+            holder,
+            now_ms: (self.clock)(),
+        };
+        match commit_repair_record(provenance, root, reservations, &repaired).await {
+            Ok((version, entries)) => {
+                entries
+                    .into_iter()
+                    .for_each(|entry| self.journal.send(entry));
+                answer.provenance_version = Some(version);
+            }
+            Err(code) => {
+                self.journal_unrecorded(target, code, Level::Error);
+                answer.provenance_error_code = Some(code.to_string());
+            }
+        }
+    }
+
+    /// Journal that no provenance record was written for `target`, and why.
+    fn journal_unrecorded(&self, target: &Target<'_>, code: &'static str, level: Level) {
+        let outcome = match level {
+            Level::Error => Outcome::Failed,
+            _ => Outcome::Info,
+        };
+        self.journal.send(
+            JournalEntry::new(PROV_RECORD_OPERATION, outcome)
+                .level(level)
+                .error_code(code)
+                .actor(target.actor)
+                .operation_id(target.run_id)
+                .target(target.object_id)
+                .at_ms((self.clock)()),
+        );
     }
 
     /// Durably record the consent entry before any repair, under the run's ID.
@@ -387,5 +464,7 @@ fn object_answer(
         result,
         error_code,
         retryable,
+        provenance_version: None,
+        provenance_error_code: None,
     }
 }

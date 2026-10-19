@@ -1328,6 +1328,7 @@ dependencies = [
  "cucumber",
  "filesquid-core",
  "filesquid-ocfl",
+ "filesquid-prov",
  "getrandom 0.4.3",
  "http-body-util",
  "serde",

@@ -183,6 +183,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List PROV-O activities of the library history
+         * @description Every activity, or those of one object, operation or agent, or of a time range: at most one filter dimension (object, operation, agent, or from/to). Pages of 1-1000 entries (default 100) linked by an opaque cursor. Answered from an index rebuilt from the OCFL records (API-S-029).
+         */
+        get: operations["listHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/{id}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the PROV-O activities of one file
+         * @description The activities that committed a version of the OCFL object urn:uuid:<id>, oldest first, in pages of 1-1000 entries (default 100).
+         */
+        get: operations["listFileHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/{id}/history/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export a file's PROV-O history as JSON-LD
+         * @description Every record of the OCFL object urn:uuid:<id> as one JSON-LD array (profile filesquid-prov/1), as an attachment. With redact=true, agent identities, version messages and logical paths are removed for sharing (PRD F-046).
+         */
+        get: operations["exportFileHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/{id}/versions/{version}/prov": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the PROV-O record of one version
+         * @description The JSON-LD record (profile filesquid-prov/1) of version {version} of the OCFL object urn:uuid:<id>.
+         */
+        get: operations["getVersionProvenance"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -365,6 +445,48 @@ export interface components {
             operator_name: string | null;
             hosted_service: components["schemas"]["HostedService"];
         };
+        /**
+         * @description The kind of a committed operation: one activity of the PROV-O history.
+         * @enum {string}
+         */
+        OperationKind: "import" | "upload" | "copy" | "rename" | "move" | "hide" | "unhide" | "delete" | "restore" | "purge" | "metadata.edit" | "label" | "revert" | "reinstate" | "snapshot" | "catalog" | "repair" | "export" | "scrub" | "backfill" | "unknown";
+        /** @description One OCFL object version. */
+        VersionRef: {
+            object_id: string;
+            version: string;
+        };
+        /** @description The journal entries of one committed operation. */
+        JournalLink: {
+            operation_id: string;
+            journal_entry_ids: string[];
+        };
+        /** @description One activity of the history as the API and UI show it (API-S-029). Agents are opaque identifiers, never a person identity. */
+        HistoryEntry: {
+            kind: components["schemas"]["OperationKind"];
+            operation_id: string;
+            version: components["schemas"]["VersionRef"];
+            agents: string[];
+            /**
+             * Format: date-time
+             * @description When the operation started; null for a reconstructed record.
+             */
+            started_at: string | null;
+            /**
+             * Format: date-time
+             * @description When the version was committed (the inventory created time).
+             */
+            ended_at: string;
+            journal: components["schemas"]["JournalLink"];
+            /** @description The version label, when set. */
+            label: string | null;
+            /** @description Whether the record was reconstructed from the inventory afterwards. */
+            reconstructed: boolean;
+        };
+        HistoryPage: {
+            items: components["schemas"]["HistoryEntry"][];
+            /** @description Pass as `cursor` for the next page; null on the last page. */
+            next_cursor: string | null;
+        };
     };
     responses: {
         /** @description Invalid or malformed request (invalid_request). */
@@ -414,6 +536,24 @@ export interface components {
         };
         /** @description The host has not described itself yet (unavailable; retryable). */
         HostNotDescribed: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description Nothing is recorded there (not_found). */
+        NotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description The host has not installed its history source yet, or its storage cannot be read now (unavailable; retryable). */
+        HistoryUnavailable: {
             headers: {
                 [name: string]: unknown;
             };
@@ -703,6 +843,141 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             500: components["responses"]["Internal"];
             503: components["responses"]["Unavailable"];
+        };
+    };
+    listHistory: {
+        parameters: {
+            query?: {
+                /** @description Activities that committed a version of this OCFL object ID (urn:uuid:<id>). */
+                object?: string;
+                /** @description Activities of this operation ID (one per object version it committed). */
+                operation?: string;
+                /** @description Activities associated with this agent ID (urn:uuid:<installation> or a software agent). */
+                agent?: string;
+                /** @description Earliest commit time, RFC 3339 UTC (inclusive). */
+                from?: string;
+                /** @description Latest commit time, RFC 3339 UTC (exclusive). */
+                to?: string;
+                /** @description Page size for a query (1-1000). Each operation states its default; the activity journal defaults to 100. */
+                limit?: components["parameters"]["PageSize"];
+                /** @description Opaque cursor from the previous page. */
+                cursor?: components["parameters"]["Cursor"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of history entries, ordered by commit time and then activity. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HistoryPage"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["HistoryUnavailable"];
+        };
+    };
+    listFileHistory: {
+        parameters: {
+            query?: {
+                /** @description Page size for a query (1-1000). Each operation states its default; the activity journal defaults to 100. */
+                limit?: components["parameters"]["PageSize"];
+                /** @description Opaque cursor from the previous page. */
+                cursor?: components["parameters"]["Cursor"];
+            };
+            header?: never;
+            path: {
+                /** @description The file ID: the UUID of the OCFL object `urn:uuid:<id>`. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of history entries, ordered by commit time and then activity. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HistoryPage"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["HistoryUnavailable"];
+        };
+    };
+    exportFileHistory: {
+        parameters: {
+            query?: {
+                /** @description Remove agent identities, version messages and logical paths (default false). */
+                redact?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description The file ID: the UUID of the OCFL object `urn:uuid:<id>`. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A JSON-LD array of records. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/ld+json": string;
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["HistoryUnavailable"];
+        };
+    };
+    getVersionProvenance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The file ID: the UUID of the OCFL object `urn:uuid:<id>`. */
+                id: string;
+                /** @description The OCFL version name, for example v3. */
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The JSON-LD record. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/ld+json": string;
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["HistoryUnavailable"];
         };
     };
 }

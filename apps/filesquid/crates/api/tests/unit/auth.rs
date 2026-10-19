@@ -5,6 +5,9 @@
 //! [`Authoriser`] accepts, before any handler runs. Denials are typed [`ApiError`]s the UI can
 //! show, and every denial is journaled without the presented credential.
 
+#[path = "../support/history_fixture.rs"]
+mod history_fixture;
+
 use axum::body::Body;
 use axum::http::{header, HeaderMap, HeaderValue, Method, Request};
 use axum::routing::get;
@@ -65,6 +68,7 @@ fn journaled_owner_state() -> (ApiState, LaunchToken, Monitor, Arc<MemoryJournal
         filesquid_api::host::HostIdentity::desktop(),
         Arc::new(filesquid_api::host::NotEnrolled),
     );
+    history_fixture::install_sample_history(&state);
     (state, token, monitor, store)
 }
 
@@ -132,6 +136,7 @@ async fn every_route_denies_a_wrong_token() {
 async fn every_route_answers_the_per_launch_token_holder() {
     let (state, token, monitor, _) = journaled_owner_state();
     for path in routed_paths() {
+        let path = history_fixture::concrete(&path);
         let (status, json) = call(&state, Method::GET, &path, Some(token.secret())).await;
         assert_eq!(status, 200, "{path}: {json}");
     }
@@ -257,6 +262,8 @@ fn every_routed_path_declares_its_action() {
             "/api/v1/openapi.json" => Action::ReadContract,
             "/api/v1/host" => Action::ReadHost,
             admin if admin.starts_with("/api/v1/admin/") => Action::ReadMonitor,
+            "/api/v1/history" => Action::ReadHistory,
+            file if file.starts_with("/api/v1/files/") => Action::ReadHistory,
             other => panic!("{other} has no expected action in this test"),
         };
         assert_eq!(*action, expected, "{path}");
@@ -274,6 +281,7 @@ fn action_names_are_unique_dotted_identifiers() {
             "events.subscribe",
             "monitor.read",
             "host.read",
+            "history.read",
             "public"
         ]
     );
