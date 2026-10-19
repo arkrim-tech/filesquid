@@ -72,6 +72,8 @@ const FORBIDDEN: &[&str] = &[
     "filesquid-core",
     "filesquid_core",
     "imagesquid_core",
+    "filesquid-prov",
+    "filesquid_prov",
     "rusqlite",
     "sqlx",
 ];

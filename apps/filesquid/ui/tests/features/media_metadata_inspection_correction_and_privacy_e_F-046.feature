@@ -59,6 +59,16 @@ Feature: Media metadata inspection, correction and privacy exports
     When I inspect the library
     Then originals and committed OCFL snapshots should remain
 
+  Scenario: Shared files default to FileId names
+    Given a file shown as "Holiday 2023.jpg"
+    When I share it with the default outgoing policy
+    Then the shared file should be named by its FileId plus ".jpg"
+
+  Scenario: The owner may keep the original name for shares
+    Given a saved outgoing policy that selects the original name
+    When I share a file shown as "Holiday 2023.jpg"
+    Then the shared file should be named "Holiday 2023.jpg"
+
   # Source
   # - srs.md SRS-F-046
   # - prd.md F-046

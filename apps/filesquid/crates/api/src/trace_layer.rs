@@ -2,6 +2,7 @@
 //! `filesquid::activity` target, as structured [`JournalEntry`]s.
 //!
 //! Only whitelisted fields are copied (`operation`, `outcome`, `actor`, `process_id`,
+//! `operation_id`, `object_ref`,
 //! `target_id`, `error_code`, `duration_ms`). The free-text message and every other field
 //! are never journaled; they appear on stdout only. This is the structural redaction rule of
 //! FileSquid T-055.
@@ -43,6 +44,8 @@ struct Whitelist {
     process_id: Option<String>,
     target_id: Option<String>,
     error_code: Option<String>,
+    operation_id: Option<String>,
+    object_ref: Option<String>,
     duration_ms: Option<u64>,
 }
 
@@ -56,6 +59,8 @@ impl Whitelist {
             "process_id" => Some(&mut self.process_id),
             "target_id" => Some(&mut self.target_id),
             "error_code" => Some(&mut self.error_code),
+            "operation_id" => Some(&mut self.operation_id),
+            "object_ref" => Some(&mut self.object_ref),
             _ => None,
         }
     }
@@ -115,6 +120,8 @@ impl<S: Subscriber> Layer<S> for JournalLayer {
         entry.process_id = fields.process_id;
         entry.target_ids = fields.target_id.into_iter().collect();
         entry.error_code = fields.error_code;
+        entry.operation_id = fields.operation_id;
+        entry.object_ref = fields.object_ref;
         entry.duration_ms = fields.duration_ms;
         sender.send(entry);
     }

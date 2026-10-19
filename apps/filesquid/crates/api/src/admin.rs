@@ -51,7 +51,7 @@ fn installed_monitor(state: &ApiState) -> Result<Monitor, ApiError> {
 
 /// Run blocking store or filesystem work off the async executor; a panicked task becomes
 /// an `internal` error for `operation`.
-async fn blocking<T: Send + 'static>(
+pub(crate) async fn blocking<T: Send + 'static>(
     operation: &str,
     f: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, ApiError> {

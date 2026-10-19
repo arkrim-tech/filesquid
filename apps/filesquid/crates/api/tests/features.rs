@@ -3,8 +3,10 @@
 //! and event channel of F-056: API-S-002, API-S-003, API-S-004, API-S-009; and the
 //! application-layer isolation of API-S-006; the library domain commands and queries of
 //! API-S-019; the local library operations and the version-inventory repair of CL-1.1 and
-//! API-S-023; the OCFL validation findings of API-S-022; the replica, cache identity and pending changes of API-S-024; and the host descriptor of API-S-020, except its `@server-start` scenarios, which
-//! the `filesquid-server` harness runs).
+//! API-S-023; the OCFL validation findings of API-S-022; the replica, cache identity and
+//! pending changes of API-S-024; the PROV-O records, history routes and backfill of API-S-028,
+//! API-S-029 and API-S-032; and the host descriptor of API-S-020, except its `@server-start`
+//! scenarios, which the `filesquid-server` harness runs).
 //!
 //! Scenarios that need domain operations not built yet (import, rename, metadata writes, C2PA
 //! scans, sync) or the optional OTLP export (Task FS-3.6) have no step definitions and are
@@ -70,6 +72,12 @@ mod validation_fixture;
 #[path = "support/validation_steps.rs"]
 mod validation_steps;
 
+#[path = "support/history_steps.rs"]
+mod history_steps;
+
+#[path = "support/history_fixture.rs"]
+mod history_fixture;
+
 /// Administrator token accepted by [`admin_state`].
 const ADMIN_TOKEN: &str = "admin";
 
@@ -112,6 +120,8 @@ struct MonitorWorld {
     replica: replica_steps::ReplicaWorld,
     local: local_library_steps::LocalWorld,
     validation: validation_steps::ValidationWorld,
+
+    history: history_steps::HistoryWorld,
 }
 
 impl std::fmt::Debug for MonitorWorld {

@@ -18,6 +18,7 @@ mod crypto;
 mod error;
 mod file;
 mod health;
+mod history;
 mod ids;
 mod item;
 mod job;
@@ -46,6 +47,11 @@ pub use file::{
     ResourceRole, Sha256Digest,
 };
 pub use health::{health, HealthStatus, HEALTH_SCHEMA_VERSION};
+pub use history::{
+    HistoryEntry, InstallationId, InvalidHistoryRef, InvalidInstallationId, JournalLink,
+    OperationKind, OperationMessage, OperationMessageError, VersionRef, MAX_LABEL_BYTES,
+    MAX_OPERATION_MESSAGE_BYTES, OPERATION_MESSAGE_PREFIX,
+};
 pub use ids::{
     CollectionId, FileId, FileResourceId, FileVersionId, FolderId, KeyId, LibraryId, OpaqueId,
     OperationId, RepositoryId, VirtualCollectionId, VirtualExhibitId,
@@ -60,5 +66,5 @@ pub use job::{
 pub use library::{Library, Repository};
 pub use provenance::{
     C2paAction, C2paImportRecord, C2paValidationStatus, DigestAlgorithm, ProvOSidecar, Rfc3339Utc,
-    PROV_O_CONTEXT, PROV_O_PROFILE_VERSION,
+    PROV_O_CONTEXT, PROV_O_PROFILE, PROV_O_PROFILE_VERSION,
 };

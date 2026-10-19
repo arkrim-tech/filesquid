@@ -50,6 +50,9 @@ pub enum Action {
     /// Read the host descriptor (`GET /api/v1/host`). Granted to every authenticated caller,
     /// whatever the policy says ([`Action::granted_to_every_credential`], API-S-020).
     ReadHost,
+    /// Read the PROV-O history: activities, records and their export (`/history`,
+    /// `/files/{id}/history`, `/files/{id}/versions/{version}/prov`; API-S-029).
+    ReadHistory,
     /// Deliberately public, unauthenticated: only the liveness probe
     /// (`GET /api/v1/health/live`), which says that the process is up and nothing else. The
     /// router leaves the route-table entry with this action unguarded; the guard itself
@@ -60,7 +63,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, in declaration order.
-    pub const ALL: [Action; 8] = [
+    pub const ALL: [Action; 9] = [
         Action::ReadHealth,
         Action::ReadContract,
         Action::SubscribeEvents,
@@ -68,6 +71,7 @@ impl Action {
         Action::RunValidation,
         Action::ConfigureValidation,
         Action::ReadHost,
+        Action::ReadHistory,
         Action::Public,
     ];
 
@@ -81,6 +85,7 @@ impl Action {
             Action::RunValidation => "ocfl.validation.run",
             Action::ConfigureValidation => "ocfl.validation.configure",
             Action::ReadHost => "host.read",
+            Action::ReadHistory => "history.read",
             Action::Public => "public",
         }
     }

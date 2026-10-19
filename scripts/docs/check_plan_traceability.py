@@ -33,7 +33,7 @@ import re
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-ID = r"(?:SRS-(?:F|NFR|TC|UI)|F|NFR|TC|RC|IS-S|UI-S|CORE-S|OCFL-S|MD-S|C2PA-S|API-S|DE-S|SV-S|BE-S)-\d+"
+ID = r"(?:SRS-(?:F|NFR|TC|UI)|F|NFR|TC|RC|IS-S|UI-S|CORE-S|OCFL-S|MD-S|C2PA-S|PROV-S|API-S|DE-S|SV-S|BE-S)-\d+"
 LINKED = rf"\[?(?:PRD )?({ID})\]?(?:\([^)]*\))?"
 RANGE = re.compile(rf"{LINKED}\s*[–-]\s*{LINKED}")
 TASK = re.compile(r"^- \[[ x]\] \*\*Task ([A-Za-z0-9.\-]+):")
@@ -103,7 +103,7 @@ def check_filesquid() -> list:
                 if rid not in cited and f"SRS-{rid}" not in cited]
     for srs in sorted((ROOT / "apps" / "filesquid").glob("**/resources/srs.md")):
         for line in srs.read_text().splitlines():
-            row = re.match(r"^\|\s*((?:CORE|OCFL|MD|C2PA|API|DE|SV|BE|UI)-S-\d+)\b", line)
+            row = re.match(r"^\|\s*((?:CORE|OCFL|MD|C2PA|PROV|API|DE|SV|BE|UI)-S-\d+)\b", line)
             if not row:
                 continue
             rel = srs.relative_to(ROOT)

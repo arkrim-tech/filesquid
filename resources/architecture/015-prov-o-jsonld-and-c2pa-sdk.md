@@ -12,6 +12,8 @@ Accepted
 
 Accepted: 2026-09-16T22:24:57Z. Revised: 2026-09-22T04:34:37Z. Revised: 2026-10-15T05:24:52Z. Amended by [ADR 026](./026-filesquid-provenance-engine.md): C2PA processing and the PROV-O projection are the from-scratch `filesquid-c2pa` engine; PROV-O JSON-LD and no graph database remain.
 
+Amended: 2026-10-19T05:18:43Z by [ADR 040](./040-prov-o-history.md) (owner decision): the PROV-O history is independent of C2PA. It is produced for every OCFL version by the stand-alone `filesquid-prov` module and FileSquid's application layer from the MVP on; the `filesquid-c2pa` engine keeps only its optional projection of C2PA actions into the same profile. The versioned JSON-LD profile is `filesquid-prov/1` with an embedded context (W3C publishes no PROV-O JSON-LD context document) and records live at `provenance/<version>.jsonld` in the object they describe.
+
 ## Context / Requirement Reference
 
 Acquisition and retained transformations MUST be recorded ([FE-031](../product-vision.md#source-aware-clipping), [FE-036](../product-vision.md#c2pa-from-import-onward)). Paid publication uses C2PA ([FE-042](../product-vision.md#paid-c2pa-publication-watermarking-and-ai-disclosure)). A graph database is not part of the stack. The vision listed these standards but not an SDK ADR.

@@ -8,7 +8,7 @@ use crate::health::{evaluate, HealthInputs, HealthReport, HealthStatus, ERROR_WI
 use crate::journal::{
     JournalEntry, JournalError, JournalQuery, JournalStore, Level, Outcome, RetentionPolicy,
 };
-use crate::journal_writer::{JournalSender, JournalWriter, WriterConfig};
+use crate::journal_writer::{AnnouncingJournal, JournalSender, JournalWriter, WriterConfig};
 use crate::metrics::Metrics;
 use crate::ocfl_validation::{ErrorSummary, FindingsStore};
 use crate::registry::{system_clock, Clock, ProcessRegistry, ProcessState};
@@ -159,6 +159,18 @@ impl Monitor {
     /// The journal store (for queries).
     pub fn store(&self) -> Arc<dyn JournalStore> {
         self.inner.store.clone()
+    }
+
+    /// The journal store for a host component that appends to it directly
+    /// (the catalog outbox, DE-0.10): every accepted append is announced as
+    /// `journal.entry` events and counted in this monitor's metrics, like
+    /// the writer's entries.
+    pub fn announcing_store(&self) -> Arc<dyn JournalStore> {
+        Arc::new(AnnouncingJournal::new(
+            self.inner.store.clone(),
+            self.inner.events.clone(),
+            self.inner.metrics.clone(),
+        ))
     }
 
     /// Host name.

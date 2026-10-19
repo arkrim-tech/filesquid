@@ -6,11 +6,15 @@
 #[path = "schema_check.rs"]
 mod schema_check;
 
+#[path = "../support/history_fixture.rs"]
+mod history_fixture;
+
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use filesquid_api::auth::{Action, Authoriser, DenialReason};
 use filesquid_api::events::{topic, EventResync};
 use filesquid_api::health::{HealthInputs, HealthReason, HealthReport, HealthStatus};
+use filesquid_api::history::HistoryPage;
 use filesquid_api::host::{
     EnrolmentPort, HostIdentity, HostInfo, HostType, HostedService, NotEnrolled, OperatorName,
 };
@@ -30,6 +34,7 @@ use filesquid_api::{
     route_actions, routed_paths, router, ApiError, ApiEvent, ApiState, ErrorCode, API_VERSION,
     CONTRACT,
 };
+use history_fixture::{concrete, install_sample_history, sample_record};
 use http_body_util::BodyExt;
 use schema_check::{required, unsupported_keywords, Checker};
 use serde_json::{json, Value};
@@ -63,7 +68,7 @@ fn contract_is_openapi_3_1_with_the_crate_api_version() {
     let doc = contract();
     assert_eq!(doc["openapi"], "3.1.0");
     assert_eq!(doc["info"]["version"], API_VERSION);
-    assert_eq!(API_VERSION, "0.7.0");
+    assert_eq!(API_VERSION, "0.8.0");
 }
 
 #[test]
@@ -237,6 +242,7 @@ fn owner_state() -> (ApiState, Monitor) {
     let validation: ValidationService<filesquid_ocfl::storage::MemoryBackend> =
         ValidationService::new(Arc::new(MemoryFindingsStore::new()), monitor.clone());
     state.install_validation(Arc::new(validation));
+    install_sample_history(&state);
     (state, monitor)
 }
 
@@ -297,6 +303,7 @@ async fn every_documented_operation_answers_a_documented_status_and_body() {
     let (ready, monitor) = owner_state();
     let mut checked_ok = 0;
     for (method, path, op) in &operations {
+        let path = &concrete(path);
         let (status, body) = call(&ApiState::new(), method, path).await;
         let expected = match op[ACTION].as_str() {
             Some("public") => StatusCode::OK,
@@ -605,6 +612,7 @@ fn samples() -> Vec<(&'static str, Vec<Value>)> {
     ];
     all.extend(host_samples());
     all.extend(validation_samples());
+    all.extend(history_samples());
     all.extend(operation_samples());
     all
 }
@@ -756,6 +764,43 @@ fn all_run_outcomes() -> [RunOutcome; 4] {
     all
 }
 
+/// Serialized samples of the history schemas (API-S-029): a recorded and a reconstructed
+/// entry, every operation kind, and a page with and without a next cursor, complete and
+/// truncated.
+fn history_samples() -> Vec<(&'static str, Vec<Value>)> {
+    let recorded = filesquid_api::history::entry_of(sample_record().activity()).expect("entry");
+    let mut reconstructed = recorded.clone();
+    reconstructed.started_at = None;
+    reconstructed.reconstructed = true;
+    let mut labelled = recorded.clone();
+    labelled.label = Some("Final cut".into());
+    let pages = [
+        HistoryPage {
+            items: vec![recorded.clone(), labelled.clone()],
+            next_cursor: Some("2026-10-19T10:00:01Z urn:filesquid:activity:op-1".into()),
+            truncated: false,
+        },
+        HistoryPage {
+            items: Vec::new(),
+            next_cursor: None,
+            truncated: true,
+        },
+    ];
+    vec![
+        (
+            "OperationKind",
+            filesquid_core::OperationKind::ALL.map(to_value).to_vec(),
+        ),
+        ("VersionRef", vec![to_value(&recorded.version)]),
+        ("JournalLink", vec![to_value(&recorded.journal)]),
+        (
+            "HistoryEntry",
+            [recorded, reconstructed, labelled].map(to_value).to_vec(),
+        ),
+        ("HistoryPage", pages.map(to_value).to_vec()),
+    ]
+}
+
 #[test]
 fn every_component_schema_has_a_rust_sample() {
     let doc = contract();
@@ -818,7 +863,9 @@ fn full_entry() -> JournalEntry {
         .process("proc-1")
         .level(Level::Error)
         .error_code("store_unavailable")
-        .duration_ms(12);
+        .duration_ms(12)
+        .operation_id("op-1")
+        .object_ref("urn:uuid:6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b@v3");
     entry.id = Some(7);
     entry.host = "host-a".into();
     entry

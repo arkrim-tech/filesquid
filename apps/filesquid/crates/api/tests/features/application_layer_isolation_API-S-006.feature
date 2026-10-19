@@ -35,6 +35,7 @@ Feature: Application-layer isolation of filesquid-api
       | filesquid-ocfl     |
       | filesquid-metadata |
       | filesquid-c2pa     |
+      | filesquid-prov     |
 
   # Error case
   Scenario Outline: A forbidden dependency fails the guard

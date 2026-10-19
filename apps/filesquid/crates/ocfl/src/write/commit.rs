@@ -4,7 +4,9 @@
 //! 1. Assemble the version outside the object root: hash the staged bytes
 //!    and build the new inventory. Nothing is written.
 //! 2. Reserve `vN` (fenced). Before this, no `vN` byte and no object-root
-//!    byte of the version is written.
+//!    byte of the version is written. A commit that carries a
+//!    [`VersionBoundFiles`] function calls it now, with the reserved
+//!    version, and adds its files to the plan (OCFL-S-024).
 //! 3. Under the reservation: re-read the committed head and refuse a moved
 //!    one, run the Git and hierarchy guards, and reconcile what a crashed
 //!    or stale writer left of `vN`.
@@ -19,6 +21,7 @@
 use std::fmt;
 
 use super::base::{read_base, require_head_inventory, Base};
+use super::bound::{bind_files, VersionBoundFiles};
 use super::draft::VersionDraft;
 use super::error::{CommitError, ReservationError};
 use super::fence::Fence;
@@ -98,6 +101,27 @@ impl<'a, B: StorageBackend, R: VersionReservations> ObjectWriter<'a, B, R> {
         staging: &S,
         draft: &VersionDraft,
     ) -> Result<CommitReceipt, CommitError> {
+        self.commit_bound(root, expected_head, staging, draft, None)
+            .await
+    }
+
+    /// Publish `draft` as [`commit`](Self::commit) does, adding the files
+    /// `bound` returns for the reserved version (OCFL-S-024). `bound` is
+    /// called after `vN` is reserved and before any `vN` byte is written;
+    /// when it fails, or returns files the version cannot hold, nothing is
+    /// published and the reservation is released.
+    ///
+    /// # Errors
+    ///
+    /// As [`commit`](Self::commit), and [`CommitError::BoundFiles`].
+    pub async fn commit_bound<S: StorageBackend>(
+        &self,
+        root: &str,
+        expected_head: Option<&VersionNum>,
+        staging: &S,
+        draft: &VersionDraft,
+        bound: Option<&dyn VersionBoundFiles>,
+    ) -> Result<CommitReceipt, CommitError> {
         let root = root_dir(root)?;
         let base = read_base(self.storage, &root).await?;
         check_head(&base, expected_head)?;
@@ -108,13 +132,22 @@ impl<'a, B: StorageBackend, R: VersionReservations> ObjectWriter<'a, B, R> {
             .reservations
             .reserve(plan.object_id(), &plan.version, &self.holder)
             .await?;
-        let job = Job {
-            root: &root,
-            plan: &plan,
-            reservation: &reservation,
-            expected_head,
+        let bound_plan = match bound {
+            Some(bound) => bind_files(&plan, bound, reservation.took_over()),
+            None => Ok(plan),
         };
-        let outcome = self.publish(&job, staging).await;
+        let outcome = match bound_plan {
+            Ok(plan) => {
+                let job = Job {
+                    root: &root,
+                    plan: &plan,
+                    reservation: &reservation,
+                    expected_head,
+                };
+                self.publish(&job, staging).await
+            }
+            Err(err) => Err(err),
+        };
         self.finish(&reservation, outcome).await
     }
 

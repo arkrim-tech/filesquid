@@ -36,6 +36,11 @@ Feature: Reusable filesquid-metadata engine
     When I set dcterms:title Harbour through the ocfl store
     Then no version should be published
 
+  # MD-S-014: commit options (FileSquid's user, message and PROV-O record)
+  Scenario: A caller's commit options go into the same OCFL version
+    When I commit a metadata edit with a version user, an operation message and a version-bound record
+    Then the edit should publish one version carrying that user, that message and the record
+
   Scenario: A head without its version inventory stays refused
     Given an OCFL object whose head has no version inventory
     When I set dcterms:title Dawn through the ocfl store
@@ -141,7 +146,7 @@ Feature: Reusable filesquid-metadata engine
   # Source
   # - resources/prd.md F-052
   # - resources/srs.md SRS-F-052
-  # - apps/filesquid/crates/metadata/resources/srs.md MD-S-007 extraction, MD-S-008 canonical metadata.md, MD-S-010 JSON sidecar import/export
+  # - apps/filesquid/crates/metadata/resources/srs.md MD-S-007 extraction, MD-S-008 canonical metadata.md, MD-S-010 JSON sidecar import/export, MD-S-014 commit options
   # - resources/architecture/027-filesquid-metadata-pluggable-stores.md (per-edit OCFL versioning)
   # - resources/architecture/022-dublin-core-descriptive-metadata.md (Sidecar JSON)
   # - resources/architecture/024-filesquid-metadata-engine.md

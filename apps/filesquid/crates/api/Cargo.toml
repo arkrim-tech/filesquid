@@ -14,6 +14,8 @@ axum = "0.8"
 filesquid-core = { path = "../core" }
 # The OCFL engine, without its filesystem backend: hosts inject the storage root (API-S-006).
 filesquid-ocfl = { path = "../ocfl", default-features = false }
+# PROV-O records and the history index, with records in OCFL objects (API-S-028, API-S-029).
+filesquid-prov = { path = "../prov", features = ["ocfl"] }
 getrandom = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -58,6 +60,10 @@ path = "tests/unit/auth.rs"
 [[test]]
 name = "unit_writer"
 path = "tests/unit/writer.rs"
+
+[[test]]
+name = "unit_journal_linkage"
+path = "tests/unit/journal_linkage.rs"
 
 [[test]]
 name = "unit_registry"
@@ -106,6 +112,14 @@ path = "tests/unit/version_inventory_repair.rs"
 [[test]]
 name = "unit_ocfl_validation"
 path = "tests/unit/ocfl_validation.rs"
+
+[[test]]
+name = "unit_history"
+path = "tests/unit/history.rs"
+
+[[test]]
+name = "unit_history_jobs"
+path = "tests/unit/history_jobs.rs"
 
 [[test]]
 name = "features"

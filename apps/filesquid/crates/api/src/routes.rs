@@ -38,6 +38,7 @@ fn route_table() -> Vec<Route> {
     ];
     table.extend(crate::admin::routes());
     table.extend(crate::ocfl_validation::routes());
+    table.extend(crate::history::routes::routes());
     table
 }
 
