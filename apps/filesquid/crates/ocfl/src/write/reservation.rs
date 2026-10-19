@@ -48,9 +48,10 @@ impl Reservation {
 
     /// The same reservation, marked as a takeover: it replaced a
     /// reservation of the object that was still held (not released) when it
-    /// expired or passed to this holder. For [`VersionReservations`]
-    /// implementations, so callers learn that a writer crashed or stalled
-    /// and may have left a stray file under `vN/` (OCFL-S-018 "Known gap").
+    /// expired or passed to this holder. Every [`VersionReservations`]
+    /// implementation MUST mark its takeovers with it (OCFL-S-023), so
+    /// callers learn that a writer crashed or stalled and may have left a
+    /// stray file under `vN/` (OCFL-S-018 "Known gap").
     pub fn with_takeover(mut self) -> Self {
         self.took_over = true;
         self

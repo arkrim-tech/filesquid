@@ -175,6 +175,7 @@ fn fixture_is_repaired(rig: &Rig<impl StorageBackend>) {
     let before = rig.snapshot("");
     rig.clear_log();
     let receipt = rig.repair("writer-a").expect("repaired");
+    assert!(!receipt.took_over, "the refused commit released its lease");
     assert_eq!(receipt.object_id, FIXTURE_ID);
     assert_eq!(receipt.version, v("v1"));
     assert_eq!(receipt.digest_algorithm, DigestAlgorithm::Sha512);
@@ -525,4 +526,20 @@ fn inspection_never_repairs(rig: &Rig<impl StorageBackend>) {
 #[test]
 fn opening_reading_and_validating_never_repair() {
     on_both!(inspection_never_repairs);
+}
+
+fn repair_reports_a_takeover(rig: &Rig<impl StorageBackend>) {
+    sha256_without_head_inventory(rig);
+    ready(rig.leases.reserve(OBJECT_ID, &v("v2"), "stalled")).expect("a stalled writer holds v2");
+    rig.expire_leases();
+    let receipt = rig.repair("writer-a").expect("repaired");
+    assert!(
+        receipt.took_over,
+        "the stalled writer's reservation was taken over"
+    );
+}
+
+#[test]
+fn a_repair_reports_whether_it_took_over_a_lapsed_reservation() {
+    on_both!(repair_reports_a_takeover);
 }

@@ -4,17 +4,19 @@ Module plan row: [IO-0.6](../plan.md) (Status note: follow-up). Owner decision 2
 
 ## OCFL-S-018: Write order and unpublished versions — every commit receipt reports whether its reservation took over one that was still held
 
+## OCFL-S-023: Takeover reporting — commit and repair receipts, and every reservation store, report reservation takeovers
+
 ## OCFL-S-020: Version-inventory repair — the repair receipt reports the same
 
-Sources: [OCFL-S-018, OCFL-S-020](../srs.md), [API-S-022](../../../api/resources/srs.md), [ADR 007](../../../../../../resources/architecture/007-durable-jobs-and-interactive-performance.md), [ADR 016](../../../../../../resources/architecture/016-rust-ocfl-library.md), [ADR 033](../../../../../../resources/architecture/033-activity-journal-and-live-health-monitoring.md).
+Sources: [OCFL-S-018, OCFL-S-020, OCFL-S-023](../srs.md), [API-S-022](../../../api/resources/srs.md), [ADR 007](../../../../../../resources/architecture/007-durable-jobs-and-interactive-performance.md), [ADR 016](../../../../../../resources/architecture/016-rust-ocfl-library.md), [ADR 033](../../../../../../resources/architecture/033-activity-journal-and-live-health-monitoring.md).
 
 ## What changed
 
 - `Reservation::took_over() -> bool` and `Reservation::with_takeover(self) -> Self` (additive; `Reservation::new` is unchanged and starts `false`). The `VersionReservations::reserve` contract now says the returned reservation reports a takeover.
 - `LeaseStore` marks the reservation it grants as a takeover when it replaces a lease record that was not released (it can only replace a live record once it has expired, so this is exactly the expired-or-reassigned case). A released or absent record is not a takeover. The existing `tracing::warn!` ("took over an expired version reservation") is unchanged.
 - `CommitReceipt::took_over` and `RepairReceipt::took_over` (additive public fields) copy the flag from the reservation the commit or repair published under. `ChangeModel::commit`, `revert`, `reinstate` and the view writes return the same `CommitReceipt`, so they carry it too.
-- No change to `filesquid-api` (wiring follows API-F2.7 on `main`); the IO-0.10 and IO-1.2 public APIs keep their shape (one added field and two added methods). Inside the workspace no crate builds `filesquid_ocfl::write::CommitReceipt` or `RepairReceipt` by struct literal (`cargo clippy --workspace` passes).
-- Module SRS OCFL-S-018, crate README "Write", and the IO-0.6 plan row (Status note naming API-F2.7) are updated.
+- No change to `filesquid-api` (wiring follows API-F2.7 on `main`). **Compatibility:** the two methods are additive, but a new public field on `CommitReceipt` and `RepairReceipt` (neither is `#[non_exhaustive]`) is a source-breaking change for code outside the crate that builds them with a struct literal or destructures them exhaustively. The crate is unpublished (`publish = false`) and no workspace crate does either (`cargo clippy --workspace` passes), so nothing breaks today; the published API is versioned later (IO-D.1), which decides `#[non_exhaustive]` for result types.
+- New module SRS row OCFL-S-023 (OCFL-S-018 points to it), crate README "Write" and its repair section, and the IO-0.6 plan row (Status note naming API-F2.7) are updated.
 
 ## TDD
 
@@ -129,17 +131,34 @@ error: could not compile `filesquid-ocfl` (test "integration_write_order") due t
 
 ## Test output
 
-`cargo test -p filesquid-ocfl --locked --test unit_lease takeover`:
+`cargo test -p filesquid-ocfl --locked --test unit_lease`:
 
 ```text
-    Finished `test` profile [unoptimized] target(s) in 0.23s
+    Finished `test` profile [unoptimized] target(s) in 4.60s
      Running tests/unit/lease.rs ($CARGO_TARGET_DIR/debug/deps/unit_lease-196772f0f0361667)
 
-running 2 tests
+running 19 tests
+test a_clock_that_cannot_tell_the_time_fails_closed ... ok
+test a_corrupt_lease_record_is_reported ... ok
+test a_lease_within_its_safety_margin_fails_its_fence_check ... ok
+test a_held_lease_refuses_every_other_reservation ... ok
+test a_margin_of_half_the_ttl_or_more_is_refused ... ok
 test a_new_reservation_is_not_a_takeover_unless_marked ... ok
+test a_record_at_the_largest_token_is_not_wrapped ... ok
+test a_released_lease_is_lost_and_its_token_keeps_growing ... ok
+test a_record_too_large_to_read_back_is_not_written ... ok
+test a_reservation_names_its_object_version_holder_and_first_token ... ok
+test an_expired_lease_cannot_be_released ... ok
+test a_reservation_reports_whether_it_took_over_an_unreleased_lease ... ok
 test an_expired_lease_fails_its_fence_check_even_before_takeover ... ok
+test an_expired_lease_is_taken_over_with_a_higher_token ... ok
+test objects_are_reserved_independently ... ok
+test rfc3339_utc_formats_unix_milliseconds ... ok
+test releasing_a_lost_reservation_is_refused_and_changes_nothing ... ok
+test confirming_renews_a_lease_past_half_its_ttl ... ok
+test lease_records_live_under_the_store_prefix ... ok
 
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.00s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
 ```
 
@@ -158,6 +177,33 @@ test a_crash_between_content_and_inventories_leaves_vn_unpublished ... ok
 test a_crash_while_writing_content_leaves_vn_unpublished ... ok
 
 test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.15s
+
+```
+
+`cargo test -p filesquid-ocfl --locked --test integration_version_inventory_repair`:
+
+```text
+    Finished `test` profile [unoptimized] target(s) in 1.49s
+     Running tests/integration/version_inventory_repair.rs ($CARGO_TARGET_DIR/debug/deps/integration_version_inventory_repair-ec3ea182e8864a75)
+
+running 15 tests
+test a_head_that_already_has_its_version_inventory_is_refused ... ok
+test a_head_with_an_unlisted_file_is_refused ... ok
+test a_head_version_inventory_that_differs_from_the_root_is_refused ... ok
+test a_lost_reservation_stops_the_repair_before_its_next_write ... ok
+test a_repair_reports_whether_it_took_over_a_lapsed_reservation ... ok
+test a_reservation_held_by_another_writer_refuses_the_repair ... ok
+test an_interrupted_repair_on_damaged_content_is_refused ... ok
+test an_interrupted_repair_is_completed_by_running_it_again ... ok
+test an_interrupted_repair_whose_root_sidecar_does_not_match_is_refused ... ok
+test a_repaired_sha256_object_becomes_editable ... ok
+test opening_reading_and_validating_never_repair ... ok
+test an_object_whose_root_sidecar_does_not_match_is_refused ... ok
+test the_w010_fixture_is_repaired_and_stays_closed_to_commits_as_sha512 ... ok
+test an_interrupted_repair_with_another_unlisted_file_is_refused ... ok
+test an_object_with_a_validator_error_is_refused ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
 
 ```
 
@@ -268,45 +314,45 @@ test result: ok. 43 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 151 scenarios (148 passed, 3 skipped)
 706 steps (703 passed, 3 skipped)
      Running tests/integration/change_model.rs ($CARGO_TARGET_DIR/debug/deps/integration_change_model-97a7db5939f6743a)
-test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.78s
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.66s
      Running tests/integration/content_fixtures.rs ($CARGO_TARGET_DIR/debug/deps/integration_content_fixtures-2450cd9c4beef973)
-test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.75s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.71s
      Running tests/integration/enumerate_state.rs ($CARGO_TARGET_DIR/debug/deps/integration_enumerate_state-c992207f0a36f4c4)
-test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.27s
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.74s
      Running tests/integration/fixture_conformance.rs ($CARGO_TARGET_DIR/debug/deps/integration_fixture_conformance-6188b5d43aaacb5e)
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
      Running tests/integration/fixture_inventories.rs ($CARGO_TARGET_DIR/debug/deps/integration_fixture_inventories-49912e26c8122bb4)
 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
      Running tests/integration/fixture_reads.rs ($CARGO_TARGET_DIR/debug/deps/integration_fixture_reads-f992725a1bd4ec37)
-test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.31s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.18s
      Running tests/integration/fs_conformance.rs ($CARGO_TARGET_DIR/debug/deps/integration_fs_conformance-4c054563d204acfb)
-test result: ok. 48 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.27s
+test result: ok. 48 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.17s
      Running tests/integration/hierarchy_guard.rs ($CARGO_TARGET_DIR/debug/deps/integration_hierarchy_guard-3efdbaf82d970047)
 test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
      Running tests/integration/independent_recovery.rs ($CARGO_TARGET_DIR/debug/deps/integration_independent_recovery-cff125f4c379a44f)
-test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.15s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.13s
      Running tests/integration/logical_file.rs ($CARGO_TARGET_DIR/debug/deps/integration_logical_file-c870615487e03f53)
-test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.33s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.07s
      Running tests/integration/memory_conformance.rs ($CARGO_TARGET_DIR/debug/deps/integration_memory_conformance-bbed81d294b9c269)
-test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.23s
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.29s
      Running tests/integration/opaque_bytes.rs ($CARGO_TARGET_DIR/debug/deps/integration_opaque_bytes-1ba5398c372ee9d8)
-test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.19s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.71s
      Running tests/integration/read_objects.rs ($CARGO_TARGET_DIR/debug/deps/integration_read_objects-777c46e5ca575e3e)
-test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
      Running tests/integration/validate_objects.rs ($CARGO_TARGET_DIR/debug/deps/integration_validate_objects-f628c102e60642ab)
 test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s
      Running tests/integration/version_inventory_repair.rs ($CARGO_TARGET_DIR/debug/deps/integration_version_inventory_repair-ec3ea182e8864a75)
-test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
      Running tests/integration/view_api.rs ($CARGO_TARGET_DIR/debug/deps/integration_view_api-2f58d1662313bbd6)
-test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.79s
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.70s
      Running tests/integration/write_order.rs ($CARGO_TARGET_DIR/debug/deps/integration_write_order-22dd8487357674b8)
-test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.42s
      Running tests/unit/digest.rs ($CARGO_TARGET_DIR/debug/deps/unit_digest-84296ab96d185c1f)
 test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
      Running tests/unit/fixity.rs ($CARGO_TARGET_DIR/debug/deps/unit_fixity-595c41ef01df1b6c)
 test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests/unit/git_guard.rs ($CARGO_TARGET_DIR/debug/deps/unit_git_guard-dfd4d18dbb6d3248)
-test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
      Running tests/unit/inventory.rs ($CARGO_TARGET_DIR/debug/deps/unit_inventory-73e97bdd05e073f7)
 test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
      Running tests/unit/lease.rs ($CARGO_TARGET_DIR/debug/deps/unit_lease-196772f0f0361667)
@@ -328,13 +374,20 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
     Finished `dev` profile [unoptimized] target(s) in 4.93s
 ```
 
+## Cubic round 1 fixes
+
+- Takeover reporting has its own requirement, OCFL-S-023; the README and `Reservation::with_takeover` rustdoc say every reservation store MUST mark takeovers.
+- README repair section lists `took_over`; repair receipts are tested in both cases.
+- The compatibility note states that the new public fields are source-breaking for external struct literals and exhaustive patterns.
+- The unit transcript runs the whole `unit_lease` target, so both new tests appear.
+
 ## Coverage
 
-[ADR 017](../../../../../../resources/architecture/017-test-runners-and-reporting.md) defines no Rust line-coverage tool. Both `LeaseStore` outcomes (fresh or released record: no takeover; unreleased expired record: takeover) and both receipts' sources are tested; the repair receipt copies the same flag and is covered by the existing repair tests for its `false` case.
+[ADR 017](../../../../../../resources/architecture/017-test-runners-and-reporting.md) defines no Rust line-coverage tool. Both `LeaseStore` outcomes (fresh or released record: no takeover; unreleased expired record: takeover) are tested, and both receipts are tested in both cases: `a_commit_reports_whether_it_took_over_a_lapsed_reservation` and the crash-recovery tests for commits; `the_w010_fixture_is_repaired_and_stays_closed_to_commits_as_sha512` (false) and `a_repair_reports_whether_it_took_over_a_lapsed_reservation` (true) for repairs.
 
 ## Sync Execution Report
 
-- **Module SRS:** OCFL-S-018 requires every commit receipt to report a takeover and every reservation store to report it for each reservation it grants.
+- **Module SRS:** new OCFL-S-023 (Takeover reporting) requires commit and repair receipts and every reservation store to report takeovers; OCFL-S-018 refers to it.
 - **Module plan:** Status note on IO-0.6 naming API-F2.7 as the consumer and this Walkthrough. No new task row, so the checklist and MVP progress are unchanged.
 - **Crate README:** "Write" describes `took_over`.
 - **PRD, root SRS, ADRs:** no change.

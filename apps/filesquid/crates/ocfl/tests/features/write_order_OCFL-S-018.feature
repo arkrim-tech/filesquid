@@ -1,4 +1,5 @@
 # OCFL-S-018: Write order and unpublished versions. The commit receipt reports whether the commit took over an expired, unreleased reservation, so the host can validate the object at once. `vN` MUST be reserved before any `vN` byte through an exclusive, fenced lease or reservation; a writer whose lease expired or was reassigned MUST NOT write content or publish the head; content, then version inventory and sidecar, then root inventory and sidecar last; an incomplete `vN` is unpublished.
+# OCFL-S-023: Takeover reporting (every commit receipt reports whether its reservation took over an unreleased, expired one)
 # F-042: OCFL preservation and portable recovery (writes serialize per object and recover interrupted publication)
 # NFR-001: Preservation and transactional integrity (zero silent loss, zero false-complete versions)
 Feature: Local write order and unpublished versions
