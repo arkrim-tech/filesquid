@@ -9,7 +9,7 @@ use super::canonical::CanonicalRoot;
 use super::intent::PendingIntent;
 use super::rows::{sort_name, sql};
 use super::{failed, intent, outbox, project, reconcile, CommitProbe};
-use filesquid_api::canonical::{OperationRecord, SnapshotDelta, SnapshotKey};
+use filesquid_api::canonical::{operation_kind, OperationRecord, SnapshotDelta, SnapshotKey};
 use filesquid_api::library::{
     CatalogChange, CatalogCommit, CatalogError, CommitReceipt, FileState, LibraryRecord,
 };
@@ -204,6 +204,7 @@ fn publish(
     canonical.probe.before_snapshot(op).map_err(Stopped::keep)?;
     let record = OperationRecord {
         operation_id: op.to_string(),
+        kind: Some(operation_kind(&commit.journal.operation).as_str().to_string()),
         revision: receipt.revision.clone(),
         created_id: receipt.created_id.clone(),
         deletion: receipt.deletion,

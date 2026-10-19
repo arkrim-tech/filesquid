@@ -34,7 +34,7 @@ pub use canonical::{library_ocfl_root, OCFL_ROOT_SUFFIX, WORK_DIR_SUFFIX};
 pub use intent::PendingIntent;
 pub use reconcile::RECONCILE_OPERATION;
 
-use filesquid_api::canonical::{OperationRecord, SnapshotKey};
+use filesquid_api::canonical::{operation_kind, OperationRecord, SnapshotKey};
 use filesquid_api::journal::{JournalEntry, JournalStore, Outcome};
 use filesquid_api::library::mint_uuid_v4;
 use filesquid_api::library::{
@@ -305,7 +305,7 @@ impl SqliteCatalog {
         let tx = library.conn.transaction().map_err(sql)?;
         write(&tx)?;
         let delta = write::delta_of_keys(&tx, library_id, keys)?;
-        let record = index_record(&tx)?;
+        let record = index_record(&tx, &journal.operation)?;
         let published = library.canonical.commit(&delta, &record, journal.time_ms)?;
         if let Some(published) = published {
             reconcile::set_snapshot_version(&tx, &published.version.to_string())?;
@@ -454,9 +454,10 @@ fn open_library_mut<'a>(
         .ok_or_else(|| failed("unknown library"))
 }
 
-/// The operation record of an index write: a fresh operation ID at the current revision.
+/// The operation record of an index write journaled as `operation`: a fresh operation ID at
+/// the current revision.
 /// Database I/O.
-fn index_record(tx: &Transaction<'_>) -> Result<OperationRecord, CatalogError> {
+fn index_record(tx: &Transaction<'_>, operation: &str) -> Result<OperationRecord, CatalogError> {
     let operation_id = mint_uuid_v4()
         .map_err(|_| CatalogError::Unavailable("random source unavailable".into()))?;
     let revision = rows::library(tx)?
@@ -464,6 +465,7 @@ fn index_record(tx: &Transaction<'_>) -> Result<OperationRecord, CatalogError> {
         .ok_or_else(|| failed("unknown library"))?;
     Ok(OperationRecord {
         operation_id,
+        kind: Some(operation_kind(operation).as_str().to_string()),
         revision,
         created_id: None,
         deletion: None,

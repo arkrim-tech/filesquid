@@ -127,6 +127,7 @@ fn meta(record: &OperationRecord) -> VersionMeta {
 fn record(op: &str, revision: &str) -> OperationRecord {
     OperationRecord {
         operation_id: op.into(),
+        kind: None,
         revision: revision.into(),
         created_id: None,
         deletion: None,
@@ -613,4 +614,39 @@ fn an_entity_whose_identifier_cannot_name_a_path_is_a_decode_error() {
         matches!(&refused, Err(CanonicalError::Decode { path, .. }) if path == "folders/a.json"),
         "{refused:?}"
     );
+}
+
+#[test]
+fn a_recorded_kind_is_written_and_read_back_by_both_readers() {
+    let kinded = OperationRecord {
+        kind: Some("delete".into()),
+        ..record("op-k", "3")
+    };
+    let text = operation_message(&kinded);
+    assert_eq!(parse_operation_message(&text), Ok(Some(kinded)));
+    let core = filesquid_core::OperationMessage::parse(&text)
+        .expect("core reads the catalog message")
+        .expect("a FileSquid message");
+    assert_eq!(core.kind(), filesquid_core::OperationKind::Delete);
+    assert_eq!(core.revision(), Some(3));
+}
+
+#[test]
+fn catalog_operations_map_to_history_kinds() {
+    use filesquid_api::canonical::operation_kind;
+    use filesquid_core::OperationKind;
+    let cases = [
+        ("library.file.hide", OperationKind::Hide),
+        ("library.file.unhide", OperationKind::Unhide),
+        ("library.file.delete", OperationKind::Delete),
+        ("library.file.restore", OperationKind::Restore),
+        ("library.file.purge", OperationKind::Purge),
+        ("library.snapshot.copy", OperationKind::Copy),
+        ("library.create", OperationKind::CatalogOrganisation),
+        ("library.virtual_collection.add", OperationKind::CatalogOrganisation),
+        ("monitor.report", OperationKind::Unknown),
+    ];
+    for (operation, kind) in cases {
+        assert_eq!(operation_kind(operation), kind, "{operation}");
+    }
 }

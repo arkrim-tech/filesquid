@@ -16,7 +16,7 @@ use filesquid_ocfl::read::{LogicalFile, Object, ReadError};
 use filesquid_ocfl::storage::{
     read_verified, Precondition, StorageBackend, StorageError, StorageKey,
 };
-use filesquid_ocfl::write::{CommitReceipt, VersionReservations};
+use filesquid_ocfl::write::{BoundContext, CommitReceipt, VersionBoundFiles, VersionReservations};
 use filesquid_ocfl::VersionNum;
 use filesquid_ocfl::{Declaration, SpecVersion};
 use std::collections::{BTreeMap, BTreeSet};
@@ -26,6 +26,17 @@ pub const MAX_SNAPSHOT_ENTITIES: usize = 1_000_000;
 
 /// Largest logical file of a snapshot entity.
 pub const MAX_ENTITY_BYTES: u64 = 1 << 20;
+
+/// Prefix of the version-bound history files (PROV-O record and journal entries) a commit
+/// writes beside its entities; they are not entities and a snapshot read skips them.
+pub const HISTORY_PREFIX: &str = "provenance/";
+
+/// Suffix of the journal entries a commit writes beside its PROV-O record:
+/// `provenance/<version>.journal.jsonl`.
+pub const JOURNAL_SUFFIX: &str = ".journal.jsonl";
+
+/// Most journal lines one version's history file may hold (AGENTS.md §22).
+pub const MAX_JOURNAL_LINES: usize = 256;
 
 /// The entity files one commit writes and removes.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -134,6 +145,27 @@ where
     R: VersionReservations,
     S: StorageBackend,
 {
+    commit_snapshot_with(model, transform, delta, meta, None).await
+}
+
+/// [`commit_snapshot`], with `bound` writing version-bound files (the commit's PROV-O record
+/// and journal entries, OCFL-S-024) into the same version, sealed by `transform` like the
+/// entities. A delta that changes nothing still writes no version.
+///
+/// # Errors
+/// As [`commit_snapshot`]; a `bound` failure publishes nothing.
+pub async fn commit_snapshot_with<B, R, S>(
+    model: &ChangeModel<'_, B, R, S>,
+    transform: &dyn ProfileTransform,
+    delta: &SnapshotDelta,
+    meta: VersionMeta,
+    bound: Option<&dyn VersionBoundFiles>,
+) -> Result<Option<CommitReceipt>, CanonicalError>
+where
+    B: StorageBackend,
+    R: VersionReservations,
+    S: StorageBackend,
+{
     model.reset().await?;
     for (path, bytes) in &delta.puts {
         let sealed = transform.seal(path, bytes.clone())?;
@@ -145,9 +177,83 @@ where
             Err(err) => return Err(err.into()),
         }
     }
-    match model.commit(meta).await {
+    let sealed = bound.map(|inner| Sealed { inner, transform });
+    let sealed = sealed.as_ref().map(|s| s as &dyn VersionBoundFiles);
+    match model.commit_with(meta, sealed).await {
         Err(ChangeError::NothingToCommit) => Ok(None),
         result => published(result).map(Some),
+    }
+}
+
+/// Version-bound files sealed by the profile transform, like every entity.
+struct Sealed<'a> {
+    inner: &'a dyn VersionBoundFiles,
+    transform: &'a dyn ProfileTransform,
+}
+
+impl VersionBoundFiles for Sealed<'_> {
+    fn files(&self, context: &BoundContext<'_>) -> Result<BTreeMap<String, Vec<u8>>, String> {
+        let mut out = BTreeMap::new();
+        for (path, bytes) in self.inner.files(context)? {
+            let sealed = self
+                .transform
+                .seal(&path, bytes)
+                .map_err(|e| e.code().to_string())?;
+            out.insert(path, sealed);
+        }
+        Ok(out)
+    }
+}
+
+/// The journal entry lines a commit wrote into each version of the snapshot object after
+/// `after` (every version when `None`), oldest version first: what a catalog that missed
+/// those commits replays into its outbox. Versions without a journal file are skipped.
+///
+/// # Errors
+/// [`CanonicalError::Decode`] for a journal file larger than [`MAX_ENTITY_BYTES`] or with
+/// more than [`MAX_JOURNAL_LINES`] lines, or a read failure.
+pub async fn read_commit_journal<B: StorageBackend>(
+    backend: &B,
+    transform: &dyn ProfileTransform,
+    after: Option<&VersionNum>,
+) -> Result<Vec<String>, CanonicalError> {
+    if !has_snapshot(backend).await? {
+        return Ok(Vec::new());
+    }
+    let object = Object::open(backend, SNAPSHOT_ROOT).await?;
+    let head = object.head().clone();
+    let state = object.state(&head)?;
+    let mut lines = Vec::new();
+    for version in object.inventory().versions.keys() {
+        if after.is_some_and(|seen| version <= seen) {
+            continue;
+        }
+        let path = format!("{HISTORY_PREFIX}{version}{JOURNAL_SUFFIX}");
+        let Some(file) = state.get(&path) else {
+            continue;
+        };
+        let stored = read_entity(&object, backend, file).await?;
+        let plain = transform.open(&path, stored)?;
+        lines.extend(journal_lines(&path, &plain)?);
+    }
+    Ok(lines)
+}
+
+/// The non-empty lines of one journal file, bounded by [`MAX_JOURNAL_LINES`]. Pure.
+fn journal_lines(path: &str, bytes: &[u8]) -> Result<Vec<String>, CanonicalError> {
+    let refuse = |reason: &str| CanonicalError::Decode {
+        path: path.to_string(),
+        reason: reason.into(),
+    };
+    let text = std::str::from_utf8(bytes).map_err(|_| refuse("journal is not UTF-8"))?;
+    let lines: Vec<String> = text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(str::to_string)
+        .collect();
+    match lines.len() > MAX_JOURNAL_LINES {
+        true => Err(refuse("journal holds too many lines")),
+        false => Ok(lines),
     }
 }
 
@@ -305,13 +411,14 @@ async fn read_entities<B: StorageBackend>(
     version: &VersionNum,
 ) -> Result<Vec<SnapshotEntity>, CanonicalError> {
     let state = object.state(version)?;
-    if state.files().count() > MAX_SNAPSHOT_ENTITIES {
+    let is_entity = |file: &&LogicalFile| !file.path.starts_with(HISTORY_PREFIX);
+    if state.files().filter(is_entity).count() > MAX_SNAPSHOT_ENTITIES {
         return Err(CanonicalError::Failed(
             "snapshot holds too many entities".into(),
         ));
     }
     let mut entities = Vec::new();
-    for file in state.files() {
+    for file in state.files().filter(is_entity) {
         let stored = read_entity(object, backend, file).await?;
         let plain = transform.open(&file.path, stored)?;
         entities.push(decode(&file.path, &plain)?);

@@ -70,7 +70,7 @@ fn an_operation_message_formats_and_parses_back() {
     assert_eq!(
         text,
         "filesquid.operation.v1 {\"operation_id\":\"op-1\",\"kind\":\"rename\",\
-         \"revision\":7,\"label\":\"Before \\\"cleanup\\\" \\\\ n\u{e9}\"}"
+         \"revision\":\"7\",\"label\":\"Before \\\"cleanup\\\" \\\\ n\u{e9}\"}"
     );
     assert_eq!(OperationMessage::parse(&text), Ok(Some(message)));
 }
@@ -97,7 +97,6 @@ fn an_unreadable_prefixed_message_is_refused_not_dropped() {
     let cases = [
         "filesquid.operation.v1 ",
         "filesquid.operation.v1 {",
-        "filesquid.operation.v1 {\"operation_id\":\"op\"}",
         "filesquid.operation.v1 {\"kind\":\"import\"}",
         "filesquid.operation.v1 {\"operation_id\":\"op\",\"kind\":\"teleport\"}",
         "filesquid.operation.v1 {\"operation_id\":\"\",\"kind\":\"import\"}",
@@ -105,7 +104,11 @@ fn an_unreadable_prefixed_message_is_refused_not_dropped() {
         "filesquid.operation.v1 {\"operation_id\":\"op\",\"kind\":\"import\",\"extra\":1}",
         "filesquid.operation.v1 {\"operation_id\":\"op\",\"kind\":\"import\"} trailing",
         "filesquid.operation.v1 {\"operation_id\":\"op\",\"kind\":\"import\",\"revision\":-1}",
-        "filesquid.operation.v1 {\"operation_id\":\"op\",\"kind\":\"import\",\"revision\":\"1\"}",
+        "filesquid.operation.v1 {\"operation_id\":\"op\",\"kind\":\"import\",\"revision\":\"01\"}",
+        "filesquid.operation.v1 {\"operation_id\":\"op\",\"kind\":\"import\",\"revision\":\"x\"}",
+        "filesquid.operation.v1 {\"operation_id\":\"op\",\"deletion\":{\"deleted_at\":\"t\"}}",
+        "filesquid.operation.v1 {\"operation_id\":\"op\",\"deletion\":{\"a\":{\"b\":\"c\"}}}",
+        "filesquid.operation.v1 {\"operation_id\":\"op\",\"created_id\":7}",
         "filesquid.operation.v1 {\"operation_id\":\"op\",\"kind\":\"import\",\"label\":\"\\q\"}",
         "filesquid.operation.v1 [1]",
     ];
@@ -259,4 +262,31 @@ fn the_sidecar_keeps_its_gate_and_links_version_operation_and_journal() {
     let old = r#"{"time":"2026-09-23T12:00:00Z","context":"http://www.w3.org/ns/prov#","profile_version":1,"activity":"prov:Activity","ephemeral":false,"retained":true}"#;
     let parsed: ProvOSidecar = serde_json::from_str(old).expect("records without links still read");
     assert_eq!(parsed.version(), None);
+}
+
+#[test]
+fn the_catalog_receipt_message_is_read() {
+    let text = "filesquid.operation.v1 {\"operation_id\":\"op-9\",\"revision\":\"4\",\
+                \"created_id\":\"c-1\",\"deletion\":{\"deleted_at\":\"2026-10-19T00:00:00Z\",\
+                \"purge_after\":\"2026-11-18T00:00:00Z\"}}";
+    let message = OperationMessage::parse(text).unwrap().unwrap();
+    assert_eq!(message.operation_id().as_str(), "op-9");
+    assert_eq!(message.kind(), OperationKind::Unknown, "written before kinds");
+    assert_eq!(message.revision(), Some(4));
+    assert_eq!(message.created_id(), Some("c-1"));
+    let kinded = text.replacen("\"revision\"", "\"kind\":\"delete\",\"revision\"", 1);
+    let message = OperationMessage::parse(&kinded).unwrap().unwrap();
+    assert_eq!(message.kind(), OperationKind::Delete);
+}
+
+#[test]
+fn the_revision_is_written_as_a_decimal_string_and_read_back() {
+    let message = OperationMessage::new(op("op-3"), OperationKind::CatalogOrganisation)
+        .with_revision(12)
+        .with_created_id("c-2");
+    let text = message.format();
+    assert!(text.contains("\"revision\":\"12\""), "{text}");
+    assert_eq!(OperationMessage::parse(&text), Ok(Some(message)));
+    let numeric = "filesquid.operation.v1 {\"operation_id\":\"op\",\"kind\":\"import\",\"revision\":12}";
+    assert_eq!(OperationMessage::parse(numeric).unwrap().unwrap().revision(), Some(12));
 }

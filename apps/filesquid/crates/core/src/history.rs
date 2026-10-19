@@ -190,13 +190,20 @@ impl fmt::Display for OperationMessageError {
 impl std::error::Error for OperationMessageError {}
 
 /// The structured OCFL version message of a FileSquid commit:
-/// `filesquid.operation.v1 {"operation_id", "kind", "revision"?, "label"?}`.
+/// `filesquid.operation.v1 {"operation_id", "kind"?, "revision"?, "label"?,
+/// "created_id"?, "deletion"?}`. The catalog writes the same object with its
+/// receipt (`created_id`, and `deletion` as an object of two RFC 3339
+/// strings), so this reader accepts those members and keeps only
+/// `created_id`; `revision` is a decimal string (a JSON number is also read),
+/// and a message without `kind` (one written before kinds were recorded)
+/// reads as [`OperationKind::Unknown`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OperationMessage {
     operation_id: OperationId,
     kind: OperationKind,
     revision: Option<u64>,
     label: Option<String>,
+    created_id: Option<String>,
 }
 
 impl OperationMessage {
@@ -207,6 +214,7 @@ impl OperationMessage {
             kind,
             revision: None,
             label: None,
+            created_id: None,
         }
     }
 
@@ -222,6 +230,18 @@ impl OperationMessage {
     pub fn with_label(mut self, label: impl Into<String>) -> Self {
         self.label = Some(label.into());
         self
+    }
+
+    /// The same message naming the identifier the operation `created`.
+    #[must_use]
+    pub fn with_created_id(mut self, created: impl Into<String>) -> Self {
+        self.created_id = Some(created.into());
+        self
+    }
+
+    /// The identifier the operation created, when it names one.
+    pub fn created_id(&self) -> Option<&str> {
+        self.created_id.as_deref()
     }
 
     /// The operation ID, shared by every object version one operation commits.
@@ -245,7 +265,8 @@ impl OperationMessage {
     }
 
     /// The message text: the prefix and one compact JSON object with members
-    /// in the order `operation_id`, `kind`, `revision`, `label`.
+    /// in the order `operation_id`, `kind`, `revision` (a decimal string, as
+    /// the catalog writes it), `label`, `created_id`.
     pub fn format(&self) -> String {
         let mut out = String::from(OPERATION_MESSAGE_PREFIX);
         out.push_str("{\"operation_id\":");
@@ -253,11 +274,15 @@ impl OperationMessage {
         out.push_str(",\"kind\":");
         push_json_string(&mut out, self.kind.as_str());
         if let Some(revision) = self.revision {
-            out.push_str(&format!(",\"revision\":{revision}"));
+            out.push_str(&format!(",\"revision\":\"{revision}\""));
         }
         if let Some(label) = &self.label {
             out.push_str(",\"label\":");
             push_json_string(&mut out, label);
+        }
+        if let Some(created) = &self.created_id {
+            out.push_str(",\"created_id\":");
+            push_json_string(&mut out, created);
         }
         out.push('}');
         out
@@ -291,13 +316,16 @@ impl OperationMessage {
         }
         let operation_id = fields.operation_id.ok_or("missing-operation-id")?;
         let operation_id = OperationId::new(operation_id).map_err(|_| "empty-operation-id")?;
-        let kind = fields.kind.ok_or("missing-kind")?;
-        let kind = OperationKind::parse(&kind).ok_or("unknown-kind")?;
+        let kind = match fields.kind {
+            Some(token) => OperationKind::parse(&token).ok_or("unknown-kind")?,
+            None => OperationKind::Unknown,
+        };
         Ok(Self {
             operation_id,
             kind,
             revision: fields.revision,
             label: fields.label,
+            created_id: fields.created_id,
         })
     }
 }
@@ -309,21 +337,51 @@ struct MessageFields {
     kind: Option<String>,
     revision: Option<u64>,
     label: Option<String>,
+    created_id: Option<String>,
 }
 
 impl MessageFields {
     /// Record member `name`, refusing an unknown or mistyped one.
     fn set(&mut self, name: &str, value: flat_json::Value) -> Result<(), &'static str> {
-        use flat_json::Value::{Str, Uint};
+        use flat_json::Value::{Obj, Str, Uint};
         match (name, value) {
             ("operation_id", Str(text)) => self.operation_id = Some(text),
             ("kind", Str(text)) => self.kind = Some(text),
             ("revision", Uint(number)) => self.revision = Some(number),
+            ("revision", Str(text)) => self.revision = Some(decimal(&text)?),
             ("label", Str(text)) => self.label = Some(text),
-            ("operation_id" | "kind" | "revision" | "label", _) => return Err("wrong-type"),
+            ("created_id", Str(text)) => self.created_id = Some(text),
+            ("deletion", Obj(members)) => check_deletion(&members)?,
+            ("operation_id" | "kind" | "revision" | "label" | "created_id" | "deletion", _) => {
+                return Err("wrong-type")
+            }
             _ => return Err("unknown-member"),
         }
         Ok(())
+    }
+}
+
+/// A revision written as a decimal string, without sign or leading zero.
+fn decimal(text: &str) -> Result<u64, &'static str> {
+    let digits_only = !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit());
+    let leading_zero = text.len() > 1 && text.starts_with('0');
+    if !digits_only || leading_zero || text.len() > MAX_REVISION_DIGITS {
+        return Err("invalid-number");
+    }
+    text.parse().map_err(|_| "invalid-number")
+}
+
+/// Check the catalog's `deletion` receipt: exactly the string members
+/// `deleted_at` and `purge_after`. Read, not kept: the catalog owns it.
+fn check_deletion(members: &[(String, flat_json::Value)]) -> Result<(), &'static str> {
+    let is_string = |name: &str| {
+        members
+            .iter()
+            .any(|(n, v)| n == name && matches!(v, flat_json::Value::Str(_)))
+    };
+    match members.len() == 2 && is_string("deleted_at") && is_string("purge_after") {
+        true => Ok(()),
+        false => Err("invalid-deletion"),
     }
 }
 
@@ -349,9 +407,9 @@ fn push_json_string(out: &mut String, text: &str) {
     out.push('"');
 }
 
-/// A bounded reader of one flat JSON object whose members are strings or
-/// unsigned integers: all an operation message needs, without a JSON
-/// dependency in this crate.
+/// A bounded reader of one JSON object whose members are strings, unsigned
+/// integers or (one level deep) objects of those: all an operation message
+/// needs, without a JSON dependency in this crate.
 mod flat_json {
     /// A member value.
     pub(super) enum Value {
@@ -359,7 +417,12 @@ mod flat_json {
         Str(String),
         /// An unsigned integer.
         Uint(u64),
+        /// A nested object (only directly inside the top-level object).
+        Obj(Vec<(String, Value)>),
     }
+
+    /// Deepest object nesting read: the top-level object and its members.
+    const MAX_DEPTH: usize = 1;
 
     /// The bytes being read and the read position.
     struct Cursor<'a> {
@@ -377,7 +440,7 @@ mod flat_json {
             bytes: text.as_bytes(),
             pos: 0,
         };
-        let members = cursor.object(max_members)?;
+        let members = cursor.object(max_members, 0)?;
         cursor.skip_ws();
         if cursor.pos != cursor.bytes.len() {
             return Err("trailing-data");
@@ -386,8 +449,12 @@ mod flat_json {
     }
 
     impl Cursor<'_> {
-        /// Read `{ "name": value, ... }`.
-        fn object(&mut self, max_members: usize) -> Result<Vec<(String, Value)>, &'static str> {
+        /// Read `{ "name": value, ... }` at nesting `depth`.
+        fn object(
+            &mut self,
+            max_members: usize,
+            depth: usize,
+        ) -> Result<Vec<(String, Value)>, &'static str> {
             self.skip_ws();
             self.expect(b'{')?;
             let mut members: Vec<(String, Value)> = Vec::new();
@@ -397,7 +464,7 @@ mod flat_json {
                 return Ok(members);
             }
             for _ in 0..max_members {
-                let (name, value) = self.member()?;
+                let (name, value) = self.member(max_members, depth)?;
                 if members.iter().any(|(seen, _)| *seen == name) {
                     return Err("duplicate-member");
                 }
@@ -412,8 +479,12 @@ mod flat_json {
             Err("too-many-members")
         }
 
-        /// Read `"name": value`.
-        fn member(&mut self) -> Result<(String, Value), &'static str> {
+        /// Read `"name": value` inside an object at nesting `depth`.
+        fn member(
+            &mut self,
+            max_members: usize,
+            depth: usize,
+        ) -> Result<(String, Value), &'static str> {
             self.skip_ws();
             let name = self.string()?;
             self.skip_ws();
@@ -422,6 +493,7 @@ mod flat_json {
             let value = match self.peek() {
                 Some(b'"') => Value::Str(self.string()?),
                 Some(b'0'..=b'9') => Value::Uint(self.uint()?),
+                Some(b'{') if depth < MAX_DEPTH => Value::Obj(self.object(max_members, depth + 1)?),
                 _ => return Err("unsupported-value"),
             };
             Ok((name, value))
