@@ -62,6 +62,11 @@ fn the_host_keeps_one_catalog_file_per_library_and_journals_its_commits() {
     host.stop();
     let file = dir.join(CATALOG_DIR).join(format!("{library}.sqlite"));
     assert!(file.exists(), "{file:?}");
+    let ocfl = dir.join(CATALOG_DIR).join(format!("{library}.ocfl"));
+    assert!(
+        ocfl.join("snapshot").join("0=ocfl_object_1.1").exists(),
+        "{ocfl:?}"
+    );
     let entries = host_journal(&dir);
     let created: Vec<&JournalEntry> = entries
         .iter()
