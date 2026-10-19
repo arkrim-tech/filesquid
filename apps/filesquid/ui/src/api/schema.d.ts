@@ -220,6 +220,10 @@ export interface components {
             target_ids: string[];
             duration_ms?: number;
             error_code?: string;
+            /** @description Opaque operation ID shared by every entry and OCFL version of one operation (ADR 040). */
+            operation_id?: string;
+            /** @description OCFL object version the entry is about: `<object-id>@vN`. */
+            object_ref?: string;
         };
         JournalPage: {
             entries: components["schemas"]["JournalEntry"][];
