@@ -33,6 +33,8 @@ Feature: Intent, OCFL snapshot commit and receipt reconcile
     And the host restarts
     Then the collection "Summer" should be listed
     And no intent should be pending
+    And the library's OCFL snapshot should be at version "v2"
+    And replaying "op-summer" should answer its first result without a new version
 
   # Edge case
   Scenario: A lost catalog is rebuilt from the OCFL snapshot
@@ -41,3 +43,4 @@ Feature: Intent, OCFL snapshot commit and receipt reconcile
     When the catalog file is deleted and the host restarts
     Then the collection "Summer" should be listed
     And the library "Family archive" should be at revision 2
+    And replaying "op-summer" should answer its first result without a new version

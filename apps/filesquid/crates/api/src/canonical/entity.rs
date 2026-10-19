@@ -105,7 +105,9 @@ pub fn decode(path: &str, bytes: &[u8]) -> Result<SnapshotEntity, CanonicalError
         path: path.to_string(),
         reason,
     };
-    let stored: Stored = serde_json::from_slice(bytes).map_err(|e| refuse(e.to_string()))?;
+    // A fixed reason: serde's message can quote a stored value, such as a title.
+    let stored: Stored =
+        serde_json::from_slice(bytes).map_err(|_| refuse("not a snapshot entity".into()))?;
     if stored.schema != ENTITY_SCHEMA {
         return Err(refuse(format!("unknown schema {}", stored.schema)));
     }

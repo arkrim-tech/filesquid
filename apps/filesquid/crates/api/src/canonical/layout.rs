@@ -55,7 +55,8 @@ impl SnapshotKey {
             Self::Folder(id) => ("folders", id.as_str()),
             Self::File(id) => ("files", id.as_str()),
         };
-        Ok(format!("{dir}/{}.json", segment(id)?))
+        let file = format!("{}.json", segment(id)?);
+        Ok(format!("{dir}/{}", segment(&file)?))
     }
 
     /// The entity a logical path names, or `None` for a path outside the layout.
@@ -121,12 +122,12 @@ pub fn original_path(name: &str) -> Result<String, CanonicalError> {
     Ok(format!("{ORIGINAL_DIR}/{}", segment(name)?))
 }
 
-/// The snapshot entities `change` writes or removes. Every change also touches the library
-/// entity, whose revision advances. A purged file also changes the virtual collections it
+/// The snapshot entities `change` writes or removes, each once. Every change also touches the
+/// library entity, whose revision advances. A purged file also changes the virtual collections it
 /// belonged to; only the catalog knows those, so the caller adds them.
 pub fn touched(change: &CatalogChange) -> Vec<SnapshotKey> {
     let key = match change {
-        CatalogChange::CreateLibrary(_) => SnapshotKey::Library,
+        CatalogChange::CreateLibrary(_) => return vec![SnapshotKey::Library],
         CatalogChange::PutCollection(c) => SnapshotKey::Collection(c.id().clone()),
         CatalogChange::RemoveCollection(id) => SnapshotKey::Collection(id.clone()),
         CatalogChange::PutVirtualCollection(v) => SnapshotKey::VirtualCollection(v.id().clone()),

@@ -152,10 +152,14 @@ fn commit_in_transaction(
 ) -> Result<CommitReceipt, Stopped> {
     let tx = conn.transaction().map_err(|e| Stopped::discard(sql(e)))?;
     let (receipt, purged) = apply_changes(&tx, commit, creates).map_err(Stopped::discard)?;
-    if !commit.changes.is_empty() {
+    let published = !commit.changes.is_empty();
+    if published {
         publish(&tx, commit, &receipt, purged, canonical)?;
     }
-    finish(tx, commit, &receipt).map_err(Stopped::keep)?;
+    finish(tx, commit, &receipt).map_err(|err| match published {
+        true => Stopped::keep(err),
+        false => Stopped::discard(err),
+    })?;
     Ok(receipt)
 }
 
@@ -195,6 +199,7 @@ fn publish(
 ) -> Result<(), Stopped> {
     let delta = snapshot_delta(tx, &commit.library_id, &commit.changes, purged)
         .map_err(Stopped::discard)?;
+    project::check_entity_count(tx).map_err(Stopped::discard)?;
     let op = commit.operation_id.as_str();
     canonical.probe.before_snapshot(op).map_err(Stopped::keep)?;
     let record = OperationRecord {
@@ -206,7 +211,8 @@ fn publish(
     let published = canonical
         .root
         .commit(&delta, &record, commit.journal.time_ms)
-        .map_err(Stopped::discard)?;
+        .map_err(Stopped::discard)?
+        .ok_or_else(|| Stopped::discard(failed("the changes left the snapshot as it was")))?;
     canonical.probe.after_snapshot(op).map_err(Stopped::keep)?;
     reconcile::set_snapshot_version(tx, &published.version.to_string()).map_err(Stopped::keep)
 }
@@ -232,6 +238,7 @@ pub(crate) fn delta_of_keys(
     library_id: &LibraryId,
     keys: Vec<SnapshotKey>,
 ) -> Result<SnapshotDelta, CatalogError> {
+    project::check_entity_count(tx)?;
     let has_snapshot = reconcile::snapshot_version(tx)?.is_some();
     let delta = if has_snapshot {
         project::delta_of(tx, library_id, keys)?
@@ -284,7 +291,7 @@ fn store_receipt(
 }
 
 /// Refuse a record that names a library other than this file's. Pure.
-fn same_library(library_id: &LibraryId, named: &LibraryId) -> Result<(), CatalogError> {
+pub(crate) fn same_library(library_id: &LibraryId, named: &LibraryId) -> Result<(), CatalogError> {
     (library_id == named)
         .then_some(())
         .ok_or_else(|| failed("change names another library"))

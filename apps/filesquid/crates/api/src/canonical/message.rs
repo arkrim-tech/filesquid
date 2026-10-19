@@ -29,7 +29,17 @@ pub fn operation_message(record: &OperationRecord) -> String {
     format!("{OPERATION_PREFIX}{json}")
 }
 
-/// The operation a version message names, or `None` for any other message.
-pub fn parse_operation_message(message: &str) -> Option<OperationRecord> {
-    serde_json::from_str(message.strip_prefix(OPERATION_PREFIX)?).ok()
+/// The operation a version message names: `Ok(None)` for any message without
+/// [`OPERATION_PREFIX`] (a version made by another tool).
+///
+/// # Errors
+/// A fixed reason for a prefixed message that cannot be read, so its receipt is never
+/// silently dropped.
+pub fn parse_operation_message(message: &str) -> Result<Option<OperationRecord>, String> {
+    let Some(json) = message.strip_prefix(OPERATION_PREFIX) else {
+        return Ok(None);
+    };
+    serde_json::from_str(json)
+        .map(Some)
+        .map_err(|_| "unreadable operation message".to_string())
 }

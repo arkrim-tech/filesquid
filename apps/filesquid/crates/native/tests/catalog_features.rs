@@ -342,10 +342,15 @@ fn host_restarts(w: &mut CatalogWorld) {
 fn catalog_deleted(w: &mut CatalogWorld) {
     let file = w.fx().file_of(&w.library("Family archive"));
     w.close();
-    for suffix in ["", "-wal", "-shm"] {
+    std::fs::remove_file(&file).expect("remove the catalog file");
+    for suffix in ["-wal", "-shm"] {
         let mut name = file.clone().into_os_string();
         name.push(suffix);
-        let _ = std::fs::remove_file(PathBuf::from(name));
+        match std::fs::remove_file(PathBuf::from(name)) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => panic!("remove a catalog sidecar: {err}"),
+        }
     }
     let root = w.root.clone().expect("root");
     w.fixture = Some(Fixture::over(root, Arc::new(MemoryJournal::new("desktop"))));
@@ -361,6 +366,22 @@ fn snapshot_version(w: &mut CatalogWorld, version: String) {
         .expect("read")
         .expect("snapshot");
     assert_eq!(snapshot.version.to_string(), version);
+}
+
+#[then(expr = "replaying {string} should answer its first result without a new version")]
+fn replay_answers(w: &mut CatalogWorld, operation: String) {
+    let id = w.library("Family archive");
+    let before = w.fx().revision(&id);
+    let command = LibraryCommand::CreateCollection {
+        library_id: id.clone(),
+        title: "Summer".into(),
+        folder_id: None,
+        sort: Default::default(),
+    };
+    let op = OperationId::new(operation).expect("op");
+    let replay = w.fx().run_as(op, "1", command).expect("replay");
+    assert_eq!(replay.revision.as_deref(), Some(before.as_str()));
+    snapshot_version(w, "v2".to_string());
 }
 
 #[then(expr = "no intent should be pending")]

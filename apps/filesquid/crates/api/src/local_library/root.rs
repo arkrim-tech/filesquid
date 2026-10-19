@@ -59,7 +59,7 @@ pub(super) async fn is_empty<B: StorageBackend>(backend: &B) -> Result<bool, Loc
 ///
 /// `root_not_empty` when the folder holds any file (nothing is written); `unavailable` for a
 /// storage failure; the errors of [`open_root`].
-pub(crate) async fn create_root<B: StorageBackend>(
+pub(super) async fn create_root<B: StorageBackend>(
     backend: &B,
 ) -> Result<RootSummary, LocalLibraryError> {
     if !is_empty(backend).await? {

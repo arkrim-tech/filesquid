@@ -20,6 +20,21 @@ use filesquid_ocfl::storage::{complete_immediately, FsBackend};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+/// Remove `path` and SQLite's `-wal` and `-shm` files beside it. The main file must exist;
+/// only a missing sidecar is tolerated, so a failed removal fails the test.
+fn remove_catalog_files(path: &std::path::Path) {
+    std::fs::remove_file(path).expect("remove the catalog file");
+    for suffix in ["-wal", "-shm"] {
+        let mut name = path.as_os_str().to_owned();
+        name.push(suffix);
+        match std::fs::remove_file(PathBuf::from(name)) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => panic!("remove a catalog sidecar: {err}"),
+        }
+    }
+}
+
 /// Stops the commit of one operation where a crash would.
 struct CrashAt {
     operation: &'static str,
@@ -187,11 +202,7 @@ fn a_deleted_catalog_is_rebuilt_from_the_snapshot_with_its_receipts() {
     let revision = fx.revision(&lib);
     let file_path = fx.file_of(&lib);
     let root = fx.release();
-    for suffix in ["", "-wal", "-shm"] {
-        let mut name = file_path.clone().into_os_string();
-        name.push(suffix);
-        let _ = std::fs::remove_file(PathBuf::from(name));
-    }
+    remove_catalog_files(&file_path);
     let fx = Fixture::over(root, Arc::new(MemoryJournal::new("desktop")));
     assert_eq!(fx.revision(&lib), revision);
     assert_eq!(collections(&fx, &lib), ["Summer"]);
@@ -219,6 +230,13 @@ fn a_head_without_its_version_inventory_is_refused_and_not_repaired() {
     assert!(!inventory.exists(), "the head is never repaired implicitly");
     assert_eq!(fx.revision(&lib), "1");
     assert!(collections(&fx, &lib).is_empty());
+    assert!(
+        fx.catalog
+            .pending_intents(&lib, 10)
+            .expect("intents")
+            .is_empty(),
+        "a refusal before publication discards its intent"
+    );
 }
 
 #[test]
@@ -250,5 +268,83 @@ fn every_library_keeps_its_ocfl_root_beside_its_catalog_file() {
     assert!(ocfl.join(SNAPSHOT_ROOT).join("0=ocfl_object_1.1").exists());
     assert!(catalog_file(&fx.root, &lib).exists());
     let text = serde_json::to_string(&all_entries(fx.journal.as_ref())).unwrap();
-    assert!(!text.contains(fx.root.to_string_lossy().as_ref()), "{text}");
+    let escaped = serde_json::to_string(&fx.root.to_string_lossy()).unwrap();
+    assert!(!text.contains(escaped.trim_matches('"')), "{text}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_library_directory_that_is_a_symbolic_link_is_refused() {
+    let fx = Fixture::new("symlinked-work");
+    let outside = temp_root("symlinked-work-target");
+    let lib = LibraryId::new("0b0f8a52-3f0e-4c4b-9a59-5b3c0e7d1a07").unwrap();
+    let work = fx.root.join(format!(
+        "{}{}",
+        lib.as_str(),
+        filesquid_native::WORK_DIR_SUFFIX
+    ));
+    std::os::unix::fs::symlink(&outside, &work).expect("link");
+    let create = filesquid_api::library::CatalogCommit {
+        operation_id: OperationId::new("op-create").unwrap(),
+        library_id: lib.clone(),
+        expected_revision: filesquid_api::operation::ExpectedRevision::new(
+            filesquid_api::library::NEW_LIBRARY_REVISION,
+        )
+        .unwrap(),
+        changes: vec![filesquid_api::library::CatalogChange::CreateLibrary(
+            filesquid_api::library::LibraryRecord {
+                library: filesquid_core::Library::new(
+                    lib.clone(),
+                    filesquid_core::RepositoryId::new("repo-1").unwrap(),
+                ),
+                name: "Family archive".into(),
+            },
+        )],
+        journal: JournalEntry::new("library.create", Outcome::Succeeded),
+        created_id: None,
+        deletion: None,
+    };
+    assert!(fx.catalog.commit(create).is_err());
+    assert!(
+        std::fs::read_dir(&outside).unwrap().next().is_none(),
+        "nothing written outside"
+    );
+    std::fs::remove_dir_all(outside).expect("cleanup");
+}
+
+#[test]
+fn a_missing_snapshot_is_published_again_in_full_by_the_next_commit() {
+    let fx = Fixture::new("snapshot-missing");
+    let lib = fx.create_library("Family archive");
+    fx.create_collection(&lib, "Summer");
+    let ocfl = library_ocfl_root(&fx.root, &lib).unwrap();
+    std::fs::remove_dir_all(ocfl.join(SNAPSHOT_ROOT)).expect("remove snapshot");
+    let fx = restart(fx);
+    fx.create_collection(&lib, "Winter");
+    let snap = snapshot(&fx.root, &lib).expect("snapshot");
+    assert_eq!(snap.version.to_string(), "v1");
+    assert_eq!(
+        snap.collections.len(),
+        2,
+        "every entity, not only the new one"
+    );
+}
+
+#[test]
+fn a_snapshot_of_another_library_is_never_loaded() {
+    let fx = Fixture::new("foreign-snapshot");
+    let lib = fx.create_library("Family archive");
+    let other = fx.create_library("Work");
+    fx.create_collection(&other, "Work only");
+    let root = fx.release();
+    let theirs = library_ocfl_root(&root, &other)
+        .unwrap()
+        .join(SNAPSHOT_ROOT);
+    let ours = library_ocfl_root(&root, &lib).unwrap().join(SNAPSHOT_ROOT);
+    std::fs::remove_dir_all(&ours).expect("remove ours");
+    std::fs::rename(&theirs, &ours).expect("move theirs");
+    let file = catalog_file(&root, &lib);
+    remove_catalog_files(&file);
+    let again = Fixture::over(root, Arc::new(MemoryJournal::new("desktop")));
+    assert!(again.catalog.library(&lib).expect("read").is_none());
 }

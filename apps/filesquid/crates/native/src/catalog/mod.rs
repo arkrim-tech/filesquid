@@ -290,8 +290,9 @@ impl SqliteCatalog {
     }
 
     /// Run `write`, publish the snapshot version of the entities `keys` (every entity when
-    /// the library has no snapshot yet), and store its version and `journal` in one
-    /// transaction; then forward the outbox. Database and filesystem I/O.
+    /// the library has no snapshot yet; no version when they are unchanged), and store its
+    /// version and `journal` in one transaction; then forward the outbox. Database and
+    /// filesystem I/O.
     fn write_journaled(
         &self,
         library_id: &LibraryId,
@@ -306,7 +307,9 @@ impl SqliteCatalog {
         let delta = write::delta_of_keys(&tx, library_id, keys)?;
         let record = index_record(&tx)?;
         let published = library.canonical.commit(&delta, &record, journal.time_ms)?;
-        reconcile::set_snapshot_version(&tx, &published.version.to_string())?;
+        if let Some(published) = published {
+            reconcile::set_snapshot_version(&tx, &published.version.to_string())?;
+        }
         outbox::push(&tx, &journal)?;
         tx.commit().map_err(sql)?;
         self.forward_logged(&library.conn);
@@ -545,8 +548,24 @@ fn reconcile_library(
 ) -> Result<(), CatalogError> {
     match canonical.read()? {
         Some(snapshot) => reconcile::reconcile(conn, id, &snapshot).map(drop),
-        None => Ok(()),
+        None => forget_missing_snapshot(conn, id),
     }
+}
+
+/// Forget the snapshot version of a catalog whose OCFL root holds no snapshot, and log it as a
+/// warning (which the journal layer journals): its next commit publishes every entity again.
+/// Database I/O.
+fn forget_missing_snapshot(conn: &Connection, id: &LibraryId) -> Result<(), CatalogError> {
+    if reconcile::forget_snapshot(conn)? {
+        tracing::warn!(
+            target: LOG_TARGET,
+            operation = reconcile::RECONCILE_OPERATION,
+            error_code = "snapshot_missing",
+            library = id.as_str(),
+            "the library's OCFL root holds no snapshot; the next commit publishes all of it"
+        );
+    }
+    Ok(())
 }
 
 /// Whether the catalog file named after `id` holds the row of another library (a renamed or

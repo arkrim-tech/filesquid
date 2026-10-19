@@ -2,7 +2,7 @@
 
 use crate::library::CatalogError;
 use filesquid_ocfl::change::ChangeError;
-use filesquid_ocfl::write::CommitError;
+use filesquid_ocfl::write::{CommitError, ReservationError};
 use filesquid_ocfl::ReadError;
 
 /// The detail of every storage failure: a backend message can name a filesystem path, which
@@ -72,10 +72,22 @@ impl From<CommitError> for CanonicalError {
         match err {
             CommitError::HeadMoved { .. } => Self::Conflict,
             CommitError::MissingVersionInventory { .. } => Self::HeadWithoutInventory,
-            CommitError::Reservation(_) => Self::Unavailable("version reservation".into()),
+            CommitError::Reservation(e) => reservation(e),
             CommitError::Storage(_) => Self::Unavailable(STORAGE.into()),
             other => Self::Failed(other.to_string()),
         }
+    }
+}
+
+/// A reservation failure: a held or lost lease, an unreadable clock or a storage failure may
+/// clear on retry; a corrupt record or an invalid configuration will not.
+fn reservation(err: ReservationError) -> CanonicalError {
+    match err {
+        ReservationError::Held { .. }
+        | ReservationError::Lost { .. }
+        | ReservationError::ClockUnavailable
+        | ReservationError::Storage(_) => CanonicalError::Unavailable("version reservation".into()),
+        other => CanonicalError::Failed(format!("version reservation: {other}")),
     }
 }
 

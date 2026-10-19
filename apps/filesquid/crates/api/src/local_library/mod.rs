@@ -37,7 +37,7 @@ mod error;
 mod ledger;
 mod rebuild;
 mod repair;
-pub(crate) mod root;
+mod root;
 mod service;
 mod snapshot;
 mod transfer;

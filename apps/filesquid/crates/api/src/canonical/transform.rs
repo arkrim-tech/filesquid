@@ -1,7 +1,10 @@
-//! The dual-profile seam (ADR 010, ADR 023): the engine stores the bytes the caller gives
-//! it; a profile transforms them before staging and after reading. The owner-readable local
-//! profile is the identity ([`OwnerReadable`]). The encrypted profile seals names and
-//! content per ADR 009 and plugs in here once that cipher exists.
+//! The dual-profile seam for content (ADR 010, ADR 023): the engine stores the bytes the
+//! caller gives it; a profile transforms them before staging and after reading. The
+//! owner-readable local profile is the identity ([`OwnerReadable`]). This trait transforms
+//! bytes only: logical paths are built by [`super::layout`] from opaque identifiers, never
+//! from titles. The encrypted hosted profile, which ADR 010 also requires to encode names,
+//! needs a path-mapping hook as well; it is added with the ADR 009 cipher, which does not
+//! exist yet.
 
 use super::CanonicalError;
 

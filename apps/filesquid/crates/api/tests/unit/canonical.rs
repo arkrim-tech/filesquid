@@ -187,6 +187,11 @@ fn each_change_touches_the_library_and_its_own_entity() {
         touched(&change),
         vec![SnapshotKey::Library, SnapshotKey::VirtualCollection(vc)]
     );
+    let create = CatalogChange::CreateLibrary(LibraryRecord {
+        library: Library::new(library_id(), RepositoryId::new("repo-1").unwrap()),
+        name: "Family archive".into(),
+    });
+    assert_eq!(touched(&create), vec![SnapshotKey::Library]);
     let purge = CatalogChange::PurgeFile(FileId::new("f").unwrap());
     assert_eq!(
         touched(&purge),
@@ -205,9 +210,10 @@ fn the_operation_message_carries_its_receipt() {
     };
     assert_eq!(
         parse_operation_message(&operation_message(&first)),
-        Some(first)
+        Ok(Some(first))
     );
-    assert_eq!(parse_operation_message("imported by hand"), None);
+    assert_eq!(parse_operation_message("imported by hand"), Ok(None));
+    assert!(parse_operation_message("filesquid.operation.v1 {broken").is_err());
 }
 
 #[test]
@@ -236,7 +242,8 @@ fn a_committed_snapshot_reads_back_entity_for_entity() {
         &delta,
         meta(&record("op-1", "2")),
     ))
-    .unwrap();
+    .unwrap()
+    .expect("a version");
     assert_eq!(receipt.object_id, snapshot_object_id(&library_id()));
     let snapshot = ready(read_snapshot(&rig.root, &OwnerReadable))
         .unwrap()
@@ -271,6 +278,17 @@ fn a_later_version_changes_only_the_entities_it_touches() {
         meta(&record("op-1", "1")),
     ))
     .unwrap();
+    let unchanged = ready(commit_snapshot(
+        &model,
+        &OwnerReadable,
+        &first,
+        meta(&record("op-same", "1")),
+    ))
+    .unwrap();
+    assert_eq!(
+        unchanged, None,
+        "a delta that changes nothing writes no version"
+    );
     let mut second = SnapshotDelta::default();
     second.put(&head(2)).unwrap();
     second
@@ -379,5 +397,76 @@ fn canonical_failures_keep_their_meaning_at_the_catalog_port() {
     let refused = CatalogError::from(CanonicalError::HeadWithoutInventory);
     assert!(
         matches!(refused, CatalogError::Failed(detail) if detail.contains("head_without_inventory"))
+    );
+}
+
+#[test]
+fn a_head_without_its_version_inventory_is_refused_and_nothing_is_written() {
+    use filesquid_ocfl::storage::{StorageBackend, StorageKey};
+    let rig = Rig::new();
+    let model = rig.model(SNAPSHOT_ROOT, &snapshot_object_id(&library_id()));
+    let mut delta = SnapshotDelta::default();
+    delta.put(&head(1)).unwrap();
+    ready(commit_snapshot(
+        &model,
+        &OwnerReadable,
+        &delta,
+        meta(&record("op-1", "1")),
+    ))
+    .unwrap();
+    for name in [
+        "inventory.json",
+        "inventory.json.sha512",
+        "inventory.json.sha256",
+    ] {
+        let key = StorageKey::new(&format!("{SNAPSHOT_ROOT}/v1/{name}")).unwrap();
+        ready(rig.root.delete(&key)).unwrap();
+    }
+    let mut next = SnapshotDelta::default();
+    next.put(&head(2)).unwrap();
+    let refused = ready(commit_snapshot(
+        &model,
+        &OwnerReadable,
+        &next,
+        meta(&record("op-2", "2")),
+    ));
+    assert_eq!(refused, Err(CanonicalError::HeadWithoutInventory));
+    let v2 = StorageKey::new(&format!("{SNAPSHOT_ROOT}/v2/inventory.json")).unwrap();
+    assert!(
+        !ready(rig.root.exists(&v2)).unwrap(),
+        "nothing of v2 is written"
+    );
+    let v1 = StorageKey::new(&format!("{SNAPSHOT_ROOT}/v1/inventory.json")).unwrap();
+    assert!(
+        !ready(rig.root.exists(&v1)).unwrap(),
+        "the head is never repaired here"
+    );
+}
+
+#[test]
+fn an_unreadable_operation_message_is_refused_on_read() {
+    let rig = Rig::new();
+    let model = rig.model(SNAPSHOT_ROOT, &snapshot_object_id(&library_id()));
+    let mut delta = SnapshotDelta::default();
+    delta.put(&head(1)).unwrap();
+    let broken = VersionMeta::new(CREATED).with_message("filesquid.operation.v1 {broken");
+    ready(commit_snapshot(&model, &OwnerReadable, &delta, broken)).unwrap();
+    let refused = ready(read_snapshot(&rig.root, &OwnerReadable));
+    assert!(
+        matches!(refused, Err(CanonicalError::Decode { .. })),
+        "{refused:?}"
+    );
+}
+
+#[test]
+fn an_entity_file_larger_than_the_bound_is_refused_before_it_is_read() {
+    let rig = Rig::new();
+    let model = rig.model(SNAPSHOT_ROOT, &snapshot_object_id(&library_id()));
+    ready(model.stage_bytes("library.json", &vec![b' '; (1 << 20) + 1])).unwrap();
+    ready(model.commit(meta(&record("op-1", "1")))).unwrap();
+    let refused = ready(read_snapshot(&rig.root, &OwnerReadable));
+    assert!(
+        matches!(refused, Err(CanonicalError::Decode { .. })),
+        "{refused:?}"
     );
 }

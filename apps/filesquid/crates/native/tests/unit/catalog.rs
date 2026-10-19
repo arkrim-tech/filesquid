@@ -918,4 +918,12 @@ fn a_version_1_catalog_is_migrated_and_brought_to_its_snapshot() {
             .len(),
         1
     );
+    let reflected: Option<String> = conn
+        .query_row("SELECT snapshot_version FROM library", [], |r| r.get(0))
+        .expect("snapshot version");
+    assert_eq!(
+        reflected.as_deref(),
+        Some("v2"),
+        "the catalog was brought to its snapshot"
+    );
 }

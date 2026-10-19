@@ -77,7 +77,7 @@ impl CanonicalRoot {
         let ocfl_dir = library_ocfl_root(root, library_id)?;
         let work = sibling(root, library_id, WORK_DIR_SUFFIX)?;
         for dir in [&ocfl_dir, &work] {
-            create_owner_dir(dir)?;
+            create_owner_dir(root, dir)?;
         }
         let ocfl = FsBackend::new(&ocfl_dir, work.join("root-scratch"))
             .map_err(unavailable("OCFL root"))?;
@@ -117,7 +117,8 @@ impl CanonicalRoot {
     }
 
     /// Commit `delta` as the snapshot version that publishes `operation`, created at
-    /// `created_ms` (Unix milliseconds, UTC). Filesystem I/O.
+    /// `created_ms` (Unix milliseconds, UTC); `None` when the delta changes nothing, so no
+    /// version is written. Filesystem I/O.
     ///
     /// # Errors
     /// As [`commit_snapshot`], mapped to the catalog port.
@@ -126,7 +127,7 @@ impl CanonicalRoot {
         delta: &SnapshotDelta,
         operation: &OperationRecord,
         created_ms: i64,
-    ) -> Result<CommitReceipt, CatalogError> {
+    ) -> Result<Option<CommitReceipt>, CatalogError> {
         let area = StagingArea::new(&self.staging, "snapshot")
             .map_err(|e| CatalogError::from(CanonicalError::from(e)))?;
         let model = ChangeModel::new(
@@ -156,16 +157,31 @@ fn drive<F: std::future::Future>(future: F) -> Result<F::Output, CatalogError> {
     complete_immediately(future).map_err(|_| failed("a storage future did not complete"))
 }
 
-/// Create `dir` if missing and make it owner-only (0700) on Unix. Filesystem I/O; the error
-/// names no path.
-fn create_owner_dir(dir: &Path) -> Result<(), CatalogError> {
+/// Create `dir` if missing and make it owner-only (0700) on Unix. A symbolic link at `dir`,
+/// or a `dir` that does not resolve to a direct child of the catalog directory `root`, is
+/// refused before any backend opens it, so no library data is read or written outside the
+/// catalog directory. Filesystem I/O; the error names no path.
+fn create_owner_dir(root: &Path, dir: &Path) -> Result<(), CatalogError> {
     let unavailable =
         |e: std::io::Error| CatalogError::Unavailable(format!("library directory: {e}"));
+    if dir
+        .symlink_metadata()
+        .is_ok_and(|m| m.file_type().is_symlink())
+    {
+        return Err(failed("a library directory is a symbolic link"));
+    }
     std::fs::create_dir_all(dir).map_err(unavailable)?;
+    let resolved = std::fs::canonicalize(dir).map_err(unavailable)?;
+    let parent = std::fs::canonicalize(root).map_err(unavailable)?;
+    if resolved.parent() != Some(parent.as_path()) {
+        return Err(failed(
+            "a library directory resolves outside the catalog directory",
+        ));
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+        std::fs::set_permissions(&resolved, std::fs::Permissions::from_mode(0o700))
             .map_err(unavailable)?;
     }
     Ok(())

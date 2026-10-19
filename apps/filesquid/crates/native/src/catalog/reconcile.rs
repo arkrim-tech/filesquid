@@ -7,6 +7,10 @@
 //! messages, so replays keep answering their first outcome; and intents whose operation was
 //! published are cleared. An intent with no published version stays pending. The work is one
 //! SQLite transaction, journaled as `library.reconcile`.
+//!
+//! Known gap: a command that changed nothing publishes no version, so its receipt lives only
+//! in the catalog. After the catalog is lost, a retry of that operation ID is planned again;
+//! with the revision it carries it is answered `conflict` or the same no-op, never a change.
 
 use super::rows::sql;
 use super::{outbox, write};
@@ -42,7 +46,8 @@ pub(crate) fn set_snapshot_version(
 /// whether anything changed. Database I/O.
 ///
 /// # Errors
-/// [`CatalogError::Failed`] when a snapshot entity cannot be stored; nothing changes.
+/// [`CatalogError::Failed`] when the snapshot names another library or holds an entity of
+/// another library, or an entity cannot be stored; nothing changes.
 pub(crate) fn reconcile(
     conn: &mut Connection,
     library_id: &LibraryId,
@@ -50,13 +55,16 @@ pub(crate) fn reconcile(
 ) -> Result<bool, CatalogError> {
     let version = snapshot.version.to_string();
     let behind = snapshot_version(conn)?.as_deref() != Some(version.as_str());
+    if snapshot.library.record.library.id() != library_id {
+        return Err(super::failed("the snapshot names another library"));
+    }
     let tx = conn.transaction().map_err(sql)?;
     if behind {
         rebuild(&tx, library_id, snapshot)?;
     }
-    restore_receipts(&tx, &snapshot.operations)?;
+    let restored = restore_receipts(&tx, &snapshot.operations)?;
     let cleared = clear_published(&tx, &snapshot.operations)?;
-    let changed = behind || cleared > 0;
+    let changed = behind || restored > 0 || cleared > 0;
     if changed {
         let entry = JournalEntry::new(RECONCILE_OPERATION, Outcome::Succeeded)
             .target(library_id.as_str())
@@ -104,9 +112,17 @@ fn rebuild_collections(
     snapshot: &LibrarySnapshot,
 ) -> Result<(), CatalogError> {
     for collection in &snapshot.collections {
+        write::same_library(
+            &snapshot.library.record.library.id().clone(),
+            collection.library_id(),
+        )?;
         write::put_collection(tx, collection)?;
     }
     for entry in &snapshot.virtual_collections {
+        write::same_library(
+            &snapshot.library.record.library.id().clone(),
+            entry.collection.library_id(),
+        )?;
         write::put_virtual(tx, &entry.collection)?;
         for member in &entry.members {
             write::add_member(tx, member)?;
@@ -115,12 +131,12 @@ fn rebuild_collections(
     Ok(())
 }
 
-/// Store the receipt of every published operation the catalog does not hold yet.
-/// Database I/O.
+/// Store the receipt of every published operation the catalog does not hold yet; answer
+/// how many were stored. Database I/O.
 fn restore_receipts(
     tx: &Transaction<'_>,
     operations: &[OperationRecord],
-) -> Result<(), CatalogError> {
+) -> Result<usize, CatalogError> {
     let mut stmt = tx
         .prepare(
             "INSERT OR IGNORE INTO receipts
@@ -128,17 +144,32 @@ fn restore_receipts(
              VALUES (?1, ?2, ?3, ?4, ?5)",
         )
         .map_err(sql)?;
+    let mut restored = 0;
     for op in operations {
-        stmt.execute(params![
-            op.operation_id,
-            op.revision,
-            op.created_id,
-            op.deletion.map(|d| d.deleted_at_ms),
-            op.deletion.map(|d| d.purge_after_ms),
-        ])
-        .map_err(sql)?;
+        restored += stmt
+            .execute(params![
+                op.operation_id,
+                op.revision,
+                op.created_id,
+                op.deletion.map(|d| d.deleted_at_ms),
+                op.deletion.map(|d| d.purge_after_ms),
+            ])
+            .map_err(sql)?;
     }
-    Ok(())
+    Ok(restored)
+}
+
+/// Forget the snapshot version the catalog claims to reflect: its library's OCFL root holds
+/// no snapshot (it was moved or deleted), so the next commit publishes every entity again
+/// instead of a partial delta. Database I/O.
+pub(crate) fn forget_snapshot(conn: &Connection) -> Result<bool, CatalogError> {
+    let changed = conn
+        .execute(
+            "UPDATE library SET snapshot_version = NULL WHERE snapshot_version IS NOT NULL",
+            [],
+        )
+        .map_err(sql)?;
+    Ok(changed > 0)
 }
 
 /// Remove the intents of published operations; answer how many. Database I/O.

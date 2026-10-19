@@ -37,22 +37,25 @@ The coordinator tests were written before the coordinator and failed to compile 
 `cargo test -p filesquid-api --locked --test unit_canonical`, `cargo test -p filesquid-native --features desktop --locked --test unit_canonical_commit --test catalog_features` and `cargo test -p filesquid-desktop --locked --test integration_library_catalog`, from `apps/filesquid/`:
 
 ```text
-    Finished `test` profile [unoptimized] target(s) in 0.18s
+    Finished `test` profile [unoptimized] target(s) in 0.23s
      Running tests/unit/canonical.rs (/home/user/.cargo-target-shared/debug/deps/unit_canonical-3d451467f1cf537e)
-running 11 tests
-test a_stale_draft_left_in_staging_is_never_published ... ok
-test a_storage_root_is_created_only_in_an_empty_folder ... ok
+running 14 tests
 test a_file_original_is_its_own_object ... ok
+test a_head_without_its_version_inventory_is_refused_and_nothing_is_written ... ok
+test a_storage_root_is_created_only_in_an_empty_folder ... ok
+test a_stale_draft_left_in_staging_is_never_published ... ok
+test a_committed_snapshot_reads_back_entity_for_entity ... ok
 test an_entity_that_does_not_match_its_path_is_refused_on_read ... ok
 test canonical_failures_keep_their_meaning_at_the_catalog_port ... ok
 test each_change_touches_the_library_and_its_own_entity ... ok
 test every_entity_has_one_logical_path_and_back ... ok
 test identifiers_that_cannot_name_a_path_segment_are_refused ... ok
 test the_operation_message_carries_its_receipt ... ok
-test a_committed_snapshot_reads_back_entity_for_entity ... ok
+test an_unreadable_operation_message_is_refused_on_read ... ok
 test a_later_version_changes_only_the_entities_it_touches ... ok
-test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
-    Finished `test` profile [unoptimized] target(s) in 0.19s
+test an_entity_file_larger_than_the_bound_is_refused_before_it_is_read ... ok
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+    Finished `test` profile [unoptimized] target(s) in 0.18s
      Running tests/catalog_features.rs (/home/user/.cargo-target-shared/debug/deps/catalog_features-4ca93b63c5ddbdf7)
 Feature: Intent, OCFL snapshot commit and receipt reconcile
   Scenario: A change is published as an OCFL version before it is acknowledged
@@ -77,12 +80,15 @@ Feature: Intent, OCFL snapshot commit and receipt reconcile
    ✔  And the host restarts
    ✔  Then the collection "Summer" should be listed
    ✔  And no intent should be pending
+   ✔  And the library's OCFL snapshot should be at version "v2"
+   ✔  And replaying "op-summer" should answer its first result without a new version
   Scenario: A lost catalog is rebuilt from the OCFL snapshot
    ✔  Given an empty catalog directory
    ✔  And the owner created the library "Family archive" with the collection "Summer"
    ✔  When the catalog file is deleted and the host restarts
    ✔  Then the collection "Summer" should be listed
    ✔  And the library "Family archive" should be at revision 2
+   ✔  And replaying "op-summer" should answer its first result without a new version
 Feature: Per-library SQLite catalog
   Scenario: Each library keeps its own catalog file
    ✔  Given an empty catalog directory
@@ -121,24 +127,36 @@ Feature: Per-library SQLite catalog
 [Summary]
 2 features
 10 scenarios (10 passed)
-52 steps (52 passed)
+55 steps (55 passed)
      Running tests/unit/canonical_commit.rs (/home/user/.cargo-target-shared/debug/deps/unit_canonical_commit-b7a31ff4032fc7da)
-running 7 tests
+running 10 tests
+test a_crash_before_the_snapshot_leaves_the_work_pending_and_a_retry_completes_once ... ok
 test a_command_publishes_one_snapshot_version_before_the_catalog_answers ... ok
 test a_crash_after_the_snapshot_loses_no_acknowledged_state ... ok
-test a_crash_before_the_snapshot_leaves_the_work_pending_and_a_retry_completes_once ... ok
-test every_library_keeps_its_ocfl_root_beside_its_catalog_file ... ok
+test a_library_directory_that_is_a_symbolic_link_is_refused ... ok
 test a_head_without_its_version_inventory_is_refused_and_not_repaired ... ok
 test a_deleted_catalog_is_rebuilt_from_the_snapshot_with_its_receipts ... ok
+test every_library_keeps_its_ocfl_root_beside_its_catalog_file ... ok
 test an_unpublished_version_left_by_a_crash_is_ignored_and_replaced ... ok
-test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
-    Finished `test` profile [unoptimized] target(s) in 0.32s
+test a_missing_snapshot_is_published_again_in_full_by_the_next_commit ... ok
+test a_snapshot_of_another_library_is_never_loaded ... ok
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+    Finished `test` profile [unoptimized] target(s) in 16.38s
      Running tests/integration/library_catalog.rs (/home/user/.cargo-target-shared/debug/deps/integration_library_catalog-70df91da0dbf1111)
 running 2 tests
 test a_catalog_directory_that_cannot_be_opened_is_journaled_without_its_path ... ok
 test the_host_keeps_one_catalog_file_per_library_and_journals_its_commits ... ok
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
 ```
+
+## Review fixes (Cubic round 1)
+
+- Entity reads refuse a file over 1 MiB before reading it and a snapshot of more than 1,000,000 entities before reading any; commits refuse a catalog above that bound before publishing, and projections never truncate.
+- A catalog whose OCFL root lost its snapshot forgets its snapshot version at open (logged as a warning), so the next commit publishes every entity again (`a_missing_snapshot_is_published_again_in_full_by_the_next_commit`).
+- Library directories that are symbolic links, or resolve outside the catalog directory, are refused before any backend opens them (`a_library_directory_that_is_a_symbolic_link_is_refused`).
+- Reconcile refuses a snapshot of another library, or one holding another library's collections (`a_snapshot_of_another_library_is_never_loaded`), and journals restored receipts too.
+- The API writes the storage-root declaration itself, so `local_library` stays private; a delta that changes nothing writes no version (index writes then commit without one); a prefixed operation message that cannot be read is refused instead of dropping its receipt; decode errors carry a fixed reason; reservation failures that cannot clear map to `Failed`; `<id>.json` must fit 255 bytes; `CreateLibrary` touches the library entity once; the W010 refusal is also tested in the API on the in-memory backend.
+- The no-op receipt gap, the original-name contract and the transform's byte-only scope are documented in DE-S-010, API-S-025 and ADR 010.
 
 ## Owner decisions and follow-ups
 

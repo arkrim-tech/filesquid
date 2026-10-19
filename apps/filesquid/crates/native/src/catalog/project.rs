@@ -12,10 +12,34 @@ use filesquid_api::library::{CatalogChange, CatalogError};
 use filesquid_core::{
     CollectionId, FileId, FolderId, LibraryId, VirtualCollectionId, VirtualMembership,
 };
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection};
 
-/// Most entities one full projection reads (AGENTS.md §22).
-const MAX_PROJECTED: i64 = 1_000_000;
+/// Most entities a library's snapshot may hold: the API's read bound, so a snapshot published
+/// here can always be read back (AGENTS.md §22).
+const MAX_ENTITIES: usize = filesquid_api::canonical::store::MAX_SNAPSHOT_ENTITIES;
+
+/// Refuse a commit that would give the library's snapshot more than [`MAX_ENTITIES`]
+/// entities (its library entity included), before anything is published. Database I/O.
+///
+/// # Errors
+/// [`CatalogError::Failed`] when the catalog holds too many entities.
+pub(crate) fn check_entity_count(conn: &Connection) -> Result<(), CatalogError> {
+    let count: i64 = conn
+        .query_row(
+            "SELECT 1 + (SELECT COUNT(*) FROM collections)
+                 + (SELECT COUNT(*) FROM virtual_collections)
+                 + (SELECT COUNT(*) FROM folders) + (SELECT COUNT(*) FROM files)",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(sql)?;
+    if usize::try_from(count).unwrap_or(usize::MAX) > MAX_ENTITIES {
+        return Err(failed(format!(
+            "a library snapshot holds at most {MAX_ENTITIES} entities"
+        )));
+    }
+    Ok(())
+}
 
 /// A canonical-layer failure as a catalog error.
 fn canonical(err: CanonicalError) -> CatalogError {
@@ -102,8 +126,8 @@ pub(crate) fn full_delta(
     delta_of(conn, library_id, keys)
 }
 
-/// The key of every row of `table` (a fixed table name), made by `make`, at most
-/// [`MAX_PROJECTED`]. Database I/O.
+/// The key of every row of `table` (a fixed table name), made by `make`; more than
+/// [`MAX_ENTITIES`] rows are refused, never truncated. Database I/O.
 fn keys_of(
     conn: &Connection,
     table: &str,
@@ -112,11 +136,19 @@ fn keys_of(
     let mut stmt = conn
         .prepare(&format!("SELECT id FROM {table} ORDER BY id LIMIT ?1"))
         .map_err(sql)?;
+    let limit = i64::try_from(MAX_ENTITIES)
+        .unwrap_or(i64::MAX)
+        .saturating_add(1);
     let rows = stmt
-        .query_map(params![MAX_PROJECTED], |r| r.get::<_, String>(0))
+        .query_map(params![limit], |r| r.get::<_, String>(0))
         .map_err(sql)?;
-    rows.map(|r| make(r.map_err(sql)?).ok_or_else(|| failed("empty identifier in the catalog")))
-        .collect()
+    let keys: Vec<SnapshotKey> = rows
+        .map(|r| make(r.map_err(sql)?).ok_or_else(|| failed("empty identifier in the catalog")))
+        .collect::<Result<_, _>>()?;
+    if keys.len() > MAX_ENTITIES {
+        return Err(failed("too many entities to project"));
+    }
+    Ok(keys)
 }
 
 /// The entity `key` names, or `None` when the catalog no longer holds it. Database I/O.
@@ -159,10 +191,13 @@ fn virtual_entry(
         return Ok(None);
     };
     let mut stmt = conn
-        .prepare("SELECT file_id, order_key FROM virtual_members WHERE virtual_collection_id = ?1 ORDER BY order_key, file_id LIMIT ?2")
+        .prepare(
+            "SELECT file_id, order_key FROM virtual_members
+             WHERE virtual_collection_id = ?1 ORDER BY order_key, file_id",
+        )
         .map_err(sql)?;
     let rows = stmt
-        .query_map(params![id.as_str(), MAX_PROJECTED], |r| {
+        .query_map(params![id.as_str()], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
         })
         .map_err(sql)?;
@@ -185,20 +220,11 @@ fn snapshot_file(
     library_id: &LibraryId,
     id: &FileId,
 ) -> Result<Option<SnapshotFile>, CatalogError> {
-    let Some(entry) = rows::file(conn, library_id, id)? else {
-        return Ok(None);
-    };
-    let order: Option<i64> = conn
-        .query_row(
-            "SELECT list_order FROM files WHERE id = ?1",
-            params![id.as_str()],
-            |r| r.get(0),
-        )
-        .optional()
-        .map_err(sql)?;
-    Ok(order.map(|order| SnapshotFile {
-        file: entry.file,
-        order,
-        state: entry.state,
-    }))
+    Ok(
+        rows::keyed_file(conn, library_id, id)?.map(|keyed| SnapshotFile {
+            file: keyed.item.file,
+            order: keyed.key.order,
+            state: keyed.item.state,
+        }),
+    )
 }
