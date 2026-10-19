@@ -133,7 +133,7 @@ impl<'a, B: StorageBackend, R: VersionReservations> ObjectWriter<'a, B, R> {
             .reserve(plan.object_id(), &plan.version, &self.holder)
             .await?;
         let bound_plan = match bound {
-            Some(bound) => bind_files(&plan, bound),
+            Some(bound) => bind_files(&plan, bound, reservation.took_over()),
             None => Ok(plan),
         };
         let outcome = match bound_plan {

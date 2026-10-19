@@ -19,7 +19,7 @@ use std::path::Path;
 use filesquid_core::InstallationId;
 use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::owner_only::create_owner_only;
+use crate::owner_only::{create_owner_only, open_owner_only};
 use crate::JOURNAL_FILE;
 
 /// The file copy of the installation UUID in the data directory.
@@ -106,9 +106,22 @@ impl std::error::Error for InstallationError {}
 /// copy cannot be read or written, or the random source fails.
 pub fn load_or_create(data_dir: &Path) -> Result<Installation, InstallationError> {
     let file_path = data_dir.join(INSTALLATION_FILE);
-    let store = open_store(&data_dir.join(JOURNAL_FILE))?;
-    let in_file = read_file(&file_path)?;
-    let in_store = read_store(&store)?;
+    let mut store = open_store(&data_dir.join(JOURNAL_FILE))?;
+    let guard = store
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|err| store_error(&err))?;
+    let installation = settle(&file_path, &guard)?;
+    guard.commit().map_err(|err| store_error(&err))?;
+    Ok(installation)
+}
+
+/// Read both copies and restore or create what is missing, inside the store's immediate
+/// transaction `store`, which serialises concurrent launches over the same data directory:
+/// a second launch waits, then reads the copies the first one wrote. Filesystem and
+/// database I/O.
+fn settle(file_path: &Path, store: &Connection) -> Result<Installation, InstallationError> {
+    let in_file = read_file(file_path)?;
+    let in_store = read_store(store)?;
     let (id, source) = match (in_file, in_store) {
         (Some(a), Some(b)) if a == b => (a, InstallationSource::Stored),
         (Some(_), Some(_)) => return Err(InstallationError::Mismatch),
@@ -120,13 +133,13 @@ pub fn load_or_create(data_dir: &Path) -> Result<Installation, InstallationError
         source,
         InstallationSource::Created | InstallationSource::RestoredFile
     ) {
-        write_file(&file_path, &id)?;
+        write_file(file_path, &id)?;
     }
     if matches!(
         source,
         InstallationSource::Created | InstallationSource::RestoredStore
     ) {
-        write_store(&store, &id)?;
+        write_store(store, &id)?;
     }
     if source != InstallationSource::Stored {
         tracing::info!(source = ?source, "installation ID restored or created");
@@ -177,14 +190,17 @@ fn write_file(path: &Path, id: &InstallationId) -> Result<(), InstallationError>
         kind: err.kind(),
     };
     let staging = path.with_extension("json.tmp");
-    let _ = std::fs::remove_file(&staging);
-    create_owner_only(&staging).map_err(io)?;
+    if let Err(err) = std::fs::remove_file(&staging) {
+        if err.kind() != std::io::ErrorKind::NotFound {
+            return Err(io(err));
+        }
+    }
     let text = format!("{{\"installation_id\":\"{}\"}}\n", id.as_str());
-    let written = std::fs::OpenOptions::new()
-        .write(true)
-        .truncate(true)
-        .open(&staging)
-        .and_then(|mut file| file.write_all(text.as_bytes()).and(file.sync_all()));
+    let written = open_owner_only(&staging).and_then(|mut file| {
+        file.set_len(0)?;
+        file.write_all(text.as_bytes())?;
+        file.sync_all()
+    });
     if let Err(err) = written.and_then(|()| std::fs::rename(&staging, path)) {
         if let Err(cleanup) = std::fs::remove_file(&staging) {
             tracing::warn!(error = %cleanup.kind(), "could not remove the installation staging file");

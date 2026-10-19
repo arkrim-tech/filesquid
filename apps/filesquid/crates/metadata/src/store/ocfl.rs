@@ -353,7 +353,9 @@ where
 /// Publish the staged change set as one version, binding `bound`'s files to
 /// it. An unchanged record publishes nothing and clears the staging area; a
 /// published version whose staging area could not be cleared is still the
-/// edit, and is logged; any other failure clears the change set it staged.
+/// edit, and is logged; any other failure leaves the staging area as it is,
+/// so a change another edit staged meanwhile is never lost (the next edit
+/// restages `metadata.md` over it).
 async fn publish<B, R, S>(
     model: &ChangeModel<'_, B, R, S>,
     meta: VersionMeta,
@@ -379,9 +381,6 @@ where
         }
         Err(err) => err,
     };
-    if let Err(reset) = model.reset().await {
-        tracing::warn!(error = %reset, "could not clear a failed metadata change set");
-    }
     Err(match err {
         ChangeError::Conflict { .. } | ChangeError::TooManyRebases { .. } => StoreError::Conflict {
             reason: err.to_string(),

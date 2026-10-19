@@ -2,9 +2,10 @@
 
 Branch: `feat/prov-o-history` (global Task FS-2.8; ADR 040 Decisions 4 and 6; [ADR 021](../../../../../../resources/architecture/021-uuid-v4-identifiers.md)).
 
-## DE-S-012: Installation UUID
+## Requirements
 
-## DE-S-011: Native journal linkage and coordinator commits
+- DE-S-012, installation UUID: one UUID v4 per installation, generated once on first run, persisted with the host's data and stable across restarts; it is the owner agent of every PROV-O record and the OCFL version `user` address.
+- DE-S-011, native journal linkage and coordinator commits: the native journal stores `operation_id` and `object_ref`, hands out IDs before a commit, and every catalog commit carries its PROV-O record and journal entries in the version it publishes.
 
 ## What changed
 

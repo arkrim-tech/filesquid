@@ -279,20 +279,31 @@ impl JournalStore for AnnouncingJournal {
         self.inner.host()
     }
 
-    /// Append through the inner store, then announce the accepted entries,
-    /// redacted as the store holds them. A refused append announces nothing.
+    /// Append through the inner store, then announce the entries it stored
+    /// now, redacted as the store holds them: a replayed entry the store
+    /// already held is neither announced nor counted again. A refused append
+    /// announces nothing.
     fn append(&self, entries: &[JournalEntry]) -> Result<Vec<i64>, JournalError> {
-        let ids = self.inner.append(entries)?;
-        let mut accepted: Vec<JournalEntry> =
-            entries.iter().map(|e| e.clone().redacted()).collect();
+        let stored = self.append_new(entries)?;
+        Ok(stored.into_iter().map(|(id, _)| id).collect())
+    }
+
+    fn append_new(&self, entries: &[JournalEntry]) -> Result<Vec<(i64, bool)>, JournalError> {
+        let stored = self.inner.append_new(entries)?;
+        let (mut fresh, ids): (Vec<JournalEntry>, Vec<i64>) = entries
+            .iter()
+            .zip(&stored)
+            .filter(|(_, (_, new))| *new)
+            .map(|(entry, (id, _))| (entry.clone().redacted(), *id))
+            .unzip();
         announce(
-            &mut accepted,
+            &mut fresh,
             &ids,
             self.inner.host(),
             &self.events,
             &self.metrics,
         );
-        Ok(ids)
+        Ok(stored)
     }
 
     fn allocate_ids(&self, count: usize) -> Result<Vec<i64>, JournalError> {

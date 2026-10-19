@@ -371,15 +371,17 @@ fn decimal(text: &str) -> Result<u64, &'static str> {
     text.parse().map_err(|_| "invalid-number")
 }
 
-/// Check the catalog's `deletion` receipt: exactly the string members
-/// `deleted_at` and `purge_after`. Read, not kept: the catalog owns it.
+/// Check the catalog's `deletion` receipt: exactly the members `deleted_at`
+/// and `purge_after`, each an RFC 3339 UTC timestamp. Read, not kept: the
+/// catalog owns it.
 fn check_deletion(members: &[(String, flat_json::Value)]) -> Result<(), &'static str> {
-    let is_string = |name: &str| {
-        members
-            .iter()
-            .any(|(n, v)| n == name && matches!(v, flat_json::Value::Str(_)))
+    let is_time = |name: &str| {
+        members.iter().any(|(n, v)| {
+            n == name
+                && matches!(v, flat_json::Value::Str(t) if crate::Rfc3339Utc::parse(t.as_str()).is_ok())
+        })
     };
-    match members.len() == 2 && is_string("deleted_at") && is_string("purge_after") {
+    match members.len() == 2 && is_time("deleted_at") && is_time("purge_after") {
         true => Ok(()),
         false => Err("invalid-deletion"),
     }
@@ -794,13 +796,17 @@ impl VersionRef {
     }
 }
 
+/// Most digits a version name may carry: far beyond any real object, and
+/// only a bound on input size, since OCFL version numbers are unbounded.
+const MAX_VERSION_DIGITS: usize = 255;
+
 /// Whether `text` is an OCFL version name above zero.
 fn is_version_name(text: &str) -> bool {
     let Some(digits) = text.strip_prefix('v') else {
         return false;
     };
     !digits.is_empty()
-        && digits.len() <= 18
+        && digits.len() <= MAX_VERSION_DIGITS
         && digits.bytes().all(|b| b.is_ascii_digit())
         && digits.bytes().any(|b| b != b'0')
 }

@@ -463,6 +463,16 @@ pub trait JournalStore: Send + Sync {
     /// and stored once: appending an id the store already holds stores nothing and returns
     /// the id, so replaying a commit's entries never duplicates them.
     fn append(&self, entries: &[JournalEntry]) -> Result<Vec<i64>, JournalError>;
+    /// [`append`](Self::append), also answering for each entry whether this call stored it
+    /// (`false` for a preset id the store already held), so a caller announces a replayed
+    /// entry once. The default reports every entry as newly stored.
+    ///
+    /// # Errors
+    /// As [`append`](Self::append).
+    fn append_new(&self, entries: &[JournalEntry]) -> Result<Vec<(i64, bool)>, JournalError> {
+        let ids = self.append(entries)?;
+        Ok(ids.into_iter().map(|id| (id, true)).collect())
+    }
     /// Hand out `count` ids (at most [`MAX_ALLOCATED_IDS`]), in increasing order, that no
     /// stored entry has and [`append`](Self::append) never assigns, so a caller can name a
     /// commit's entries before writing them (API-S-028; ADR 040 Decision 6). The default

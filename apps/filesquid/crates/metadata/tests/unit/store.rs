@@ -579,10 +579,16 @@ mod commit_options {
         );
         assert!(matches!(result, Err(StoreError::Backend(_))), "{result:?}");
         assert_eq!(rig.versions(OBJECT_ID), ["v1"]);
-        let page = ready(rig.staging.list("metadata-changes/", None, 100)).unwrap();
+        let retried = ready(rig.store().commit_record_with(
+            &photo(),
+            &titled("Harbour"),
+            &CommitOptions::default(),
+        ))
+        .unwrap();
         assert!(
-            page.keys.is_empty(),
-            "the failed change set is not left staged"
+            retried.is_some(),
+            "the staging area was kept, and the next save publishes the edit"
         );
+        assert_eq!(rig.versions(OBJECT_ID), ["v1", "v2"]);
     }
 }

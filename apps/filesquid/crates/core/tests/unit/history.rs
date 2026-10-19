@@ -109,6 +109,7 @@ fn an_unreadable_prefixed_message_is_refused_not_dropped() {
         "filesquid.operation.v1 {\"operation_id\":\"op\",\"deletion\":{\"deleted_at\":\"t\"}}",
         "filesquid.operation.v1 {\"operation_id\":\"op\",\"deletion\":{\"a\":{\"b\":\"c\"}}}",
         "filesquid.operation.v1 {\"operation_id\":\"op\",\"created_id\":7}",
+        "filesquid.operation.v1 {\"operation_id\":\"op\",\"deletion\":{\"deleted_at\":\"yesterday\",\"purge_after\":\"2026-11-18T00:00:00Z\"}}",
         "filesquid.operation.v1 {\"operation_id\":\"op\",\"kind\":\"import\",\"label\":\"\\q\"}",
         "filesquid.operation.v1 [1]",
     ];
@@ -267,7 +268,7 @@ fn the_sidecar_keeps_its_gate_and_links_version_operation_and_journal() {
 #[test]
 fn the_catalog_receipt_message_is_read() {
     let text = "filesquid.operation.v1 {\"operation_id\":\"op-9\",\"revision\":\"4\",\
-                \"created_id\":\"c-1\",\"deletion\":{\"deleted_at\":\"2026-10-19T00:00:00Z\",\
+                \"created_id\":\"c-1\",\"deletion\":{\"deleted_at\":\"2026-10-19T00:00:00.000Z\",\
                 \"purge_after\":\"2026-11-18T00:00:00Z\"}}";
     let message = OperationMessage::parse(text).unwrap().unwrap();
     assert_eq!(message.operation_id().as_str(), "op-9");
@@ -299,5 +300,38 @@ fn the_revision_is_written_as_a_decimal_string_and_read_back() {
             .unwrap()
             .revision(),
         Some(12)
+    );
+}
+
+#[test]
+fn version_names_beyond_eighteen_digits_are_valid_object_versions() {
+    let long = format!("v{}", "9".repeat(25));
+    let reference = VersionRef::new(
+        "urn:uuid:6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b",
+        long.clone(),
+    )
+    .expect("OCFL version numbers are unbounded");
+    assert_eq!(reference.version(), long);
+    let absurd = format!("v{}", "9".repeat(300));
+    assert!(VersionRef::new("urn:uuid:6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b", absurd).is_err());
+}
+
+#[test]
+fn the_sidecar_operation_is_the_journal_links_only() {
+    let sidecar = ProvOSidecar::retained(time("2026-10-19T10:00:01Z"));
+    assert_eq!(sidecar.operation(), None);
+    let json = serde_json::json!({
+        "time": "2026-10-19T10:00:01Z",
+        "context": "http://www.w3.org/ns/prov#",
+        "profile_version": 1,
+        "activity": "prov:Activity",
+        "ephemeral": false,
+        "retained": true,
+        "operation": "op-elsewhere"
+    });
+    let parsed: Result<ProvOSidecar, _> = serde_json::from_value(json);
+    assert!(
+        parsed.map(|s| s.operation().is_none()).unwrap_or(true),
+        "a stray operation member never names the operation"
     );
 }

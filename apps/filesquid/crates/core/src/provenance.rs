@@ -296,8 +296,6 @@ pub struct ProvOSidecar {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     version: Option<VersionRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    operation: Option<OperationId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     journal: Option<JournalLink>,
 }
 
@@ -312,7 +310,6 @@ impl ProvOSidecar {
             ephemeral: false,
             retained: true,
             version: None,
-            operation: None,
             journal: None,
         }
     }
@@ -327,7 +324,6 @@ impl ProvOSidecar {
             ephemeral: true,
             retained: false,
             version: None,
-            operation: None,
             journal: None,
         }
     }
@@ -370,10 +366,9 @@ impl ProvOSidecar {
     }
 
     /// The same sidecar linking the activity's journal entries; the link's
-    /// operation becomes the sidecar's operation.
+    /// operation is the sidecar's operation (one source, never two copies).
     #[must_use]
     pub fn with_journal(mut self, journal: JournalLink) -> Self {
-        self.operation = Some(journal.operation_id().clone());
         self.journal = Some(journal);
         self
     }
@@ -383,9 +378,9 @@ impl ProvOSidecar {
         self.version.as_ref()
     }
 
-    /// The operation the activity belongs to, when linked.
+    /// The operation the activity belongs to: the journal link's, when linked.
     pub fn operation(&self) -> Option<&OperationId> {
-        self.operation.as_ref()
+        self.journal.as_ref().map(JournalLink::operation_id)
     }
 
     /// The journal entries of the activity's commit, when linked.

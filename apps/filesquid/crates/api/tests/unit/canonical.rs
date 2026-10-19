@@ -726,3 +726,41 @@ fn a_root_without_a_snapshot_has_no_commit_journal() {
     let lines = ready(read_commit_journal(&rig.root, &OwnerReadable, None)).unwrap();
     assert!(lines.is_empty());
 }
+
+#[test]
+fn a_provenance_only_message_names_no_receipt() {
+    let text = "filesquid.operation.v1 {\"operation_id\":\"run-1\",\"kind\":\"backfill\"}";
+    assert_eq!(parse_operation_message(text), Ok(None));
+    assert!(parse_operation_message("filesquid.operation.v1 {\"kind\":\"backfill\"}").is_err());
+}
+
+#[test]
+fn a_commit_journal_a_replay_could_not_read_is_refused_before_publishing() {
+    use filesquid_api::canonical::{commit_snapshot_with, MAX_JOURNAL_LINES};
+    let rig = Rig::new();
+    let model = rig.model(SNAPSHOT_ROOT, &snapshot_object_id(&library_id()));
+    let mut delta = SnapshotDelta::default();
+    delta.put(&head(1)).unwrap();
+    let lines = "{}\n".repeat(MAX_JOURNAL_LINES + 1);
+    let oversized = move |context: &filesquid_ocfl::write::BoundContext<'_>| {
+        let path = format!("provenance/{}.journal.jsonl", context.version);
+        Ok(std::collections::BTreeMap::from([(
+            path,
+            lines.clone().into_bytes(),
+        )]))
+    };
+    let bound = &oversized as &dyn filesquid_ocfl::write::VersionBoundFiles;
+    let meta1 = meta(&record("op-1", "1"));
+    let result = ready(commit_snapshot_with(
+        &model,
+        &OwnerReadable,
+        &delta,
+        meta1,
+        Some(bound),
+    ));
+    assert!(result.is_err(), "{result:?}");
+    assert_eq!(
+        ready(read_snapshot(&rig.root, &OwnerReadable)).unwrap(),
+        None
+    );
+}

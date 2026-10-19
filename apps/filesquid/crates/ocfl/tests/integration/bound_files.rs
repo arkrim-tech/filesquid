@@ -115,7 +115,9 @@ fn bound_files_carry_the_reserved_version_and_created_time() {
 #[test]
 fn the_function_runs_under_the_version_reservation() {
     let rig = Rig::new(MemoryBackend::new());
+    let calls = std::sync::atomic::AtomicUsize::new(0);
     let probe = |context: &BoundContext<'_>| {
+        calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let other = ready(rig.leases.reserve(OBJECT_ID, context.version, "probe"));
         match other {
             Err(ReservationError::Held { .. }) => Ok(BTreeMap::new()),
@@ -125,6 +127,11 @@ fn the_function_runs_under_the_version_reservation() {
     let m = model(&rig, "writer-a");
     ready(m.stage_bytes("a.txt", b"alpha")).expect("stage");
     ready(m.commit_with(meta(&rig, "v1"), Some(&probe))).expect("commit under reservation");
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "the function ran exactly once"
+    );
 }
 
 #[test]
@@ -304,4 +311,45 @@ fn a_bound_only_commit_leaves_staged_changes_alone() {
     let receipt = ready(m.commit(meta(&rig, "staged"))).expect("staged change still commits");
     assert_eq!(receipt.version, v("v3"));
     assert!(state_of(&rig, "v3").contains_key("b.txt"));
+}
+
+#[test]
+fn bound_files_over_the_commit_byte_bound_publish_nothing() {
+    use filesquid_ocfl::write::MAX_BOUND_BYTES;
+    let rig = Rig::new(MemoryBackend::new());
+    commit_v1(&rig);
+    let half = usize::try_from(MAX_BOUND_BYTES / 2 + 1).expect("fits");
+    let large = move |_: &BoundContext<'_>| {
+        Ok(BTreeMap::from([
+            ("big/a.bin".to_string(), vec![0u8; half]),
+            ("big/b.bin".to_string(), vec![1u8; half]),
+        ]))
+    };
+    let m = model(&rig, "writer-a");
+    ready(m.stage_bytes("b.txt", b"bravo")).expect("stage");
+    let err = ready(m.commit_with(meta(&rig, "v2"), Some(&large))).expect_err("refused");
+    assert!(
+        matches!(err, ChangeError::Commit(CommitError::BoundFiles { .. })),
+        "{err:?}"
+    );
+    assert_eq!(rig.open().expect("open").head(), &v("v1"));
+    assert!(!rig.stored("obj/v2/inventory.json"));
+}
+
+#[test]
+fn the_function_is_told_when_the_reservation_took_over_a_lease() {
+    let rig = Rig::new(MemoryBackend::new());
+    commit_v1(&rig);
+    ready(rig.leases.reserve(OBJECT_ID, &v("v2"), "crashed")).expect("held by a crashed writer");
+    rig.expire_leases();
+    let seen = Mutex::new(Vec::new());
+    let probe = |context: &BoundContext<'_>| {
+        seen.lock().expect("lock").push(context.took_over);
+        Ok(BTreeMap::new())
+    };
+    let m = model(&rig, "writer-a");
+    ready(m.stage_bytes("b.txt", b"bravo")).expect("stage");
+    let receipt = ready(m.commit_with(meta(&rig, "v2"), Some(&probe))).expect("commit");
+    assert!(receipt.took_over);
+    assert_eq!(*seen.lock().expect("lock"), [true]);
 }

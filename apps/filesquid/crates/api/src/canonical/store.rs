@@ -194,11 +194,13 @@ struct Sealed<'a> {
 impl VersionBoundFiles for Sealed<'_> {
     fn files(&self, context: &BoundContext<'_>) -> Result<BTreeMap<String, Vec<u8>>, String> {
         let mut out = BTreeMap::new();
-        for (path, bytes) in self.inner.files(context)? {
+        let files = self.inner.files(context)?;
+        check_journal_files(&files)?;
+        for (path, bytes) in files {
             let sealed = self
                 .transform
                 .seal(&path, bytes)
-                .map_err(|e| e.code().to_string())?;
+                .map_err(|e| format!("{path}: {e:?}"))?;
             out.insert(path, sealed);
         }
         Ok(out)
@@ -206,8 +208,9 @@ impl VersionBoundFiles for Sealed<'_> {
 }
 
 /// The journal entry lines a commit wrote into each version of the snapshot object after
-/// `after` (every version when `None`), oldest version first: what a catalog that missed
-/// those commits replays into its outbox. Versions without a journal file are skipped.
+/// `after` (every version when `None`), oldest version first, each read from the version
+/// that wrote it (a later revert never hides it): what a catalog that missed those commits
+/// replays into its outbox. Versions without a journal file are skipped.
 ///
 /// # Errors
 /// [`CanonicalError::Decode`] for a journal file larger than [`MAX_ENTITY_BYTES`] or with
@@ -221,14 +224,13 @@ pub async fn read_commit_journal<B: StorageBackend>(
         return Ok(Vec::new());
     }
     let object = Object::open(backend, SNAPSHOT_ROOT).await?;
-    let head = object.head().clone();
-    let state = object.state(&head)?;
     let mut lines = Vec::new();
     for version in object.inventory().versions.keys() {
         if after.is_some_and(|seen| version <= seen) {
             continue;
         }
         let path = format!("{HISTORY_PREFIX}{version}{JOURNAL_SUFFIX}");
+        let state = object.state(version)?;
         let Some(file) = state.get(&path) else {
             continue;
         };
@@ -237,6 +239,24 @@ pub async fn read_commit_journal<B: StorageBackend>(
         lines.extend(journal_lines(&path, &plain)?);
     }
     Ok(lines)
+}
+
+/// Refuse a journal file that a replay could not read back: more than
+/// [`MAX_JOURNAL_LINES`] lines or more than [`MAX_ENTITY_BYTES`] bytes. Pure.
+fn check_journal_files(files: &BTreeMap<String, Vec<u8>>) -> Result<(), String> {
+    let journals = files
+        .iter()
+        .filter(|(path, _)| path.starts_with(HISTORY_PREFIX) && path.ends_with(JOURNAL_SUFFIX));
+    for (path, bytes) in journals {
+        let lines = bytes
+            .split(|b| *b == b'\n')
+            .filter(|l| !l.is_empty())
+            .count();
+        if lines > MAX_JOURNAL_LINES || bytes.len() as u64 > MAX_ENTITY_BYTES {
+            return Err(format!("{path}: journal exceeds what a replay reads"));
+        }
+    }
+    Ok(())
 }
 
 /// The non-empty lines of one journal file, bounded by [`MAX_JOURNAL_LINES`]. Pure.

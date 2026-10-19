@@ -46,7 +46,7 @@ mod reconcile;
 mod repair;
 mod reservation;
 
-pub use bound::{BoundContext, VersionBoundFiles, MAX_BOUND_FILES};
+pub use bound::{BoundContext, VersionBoundFiles, MAX_BOUND_BYTES, MAX_BOUND_FILES};
 #[cfg(not(target_arch = "wasm32"))]
 pub use clock::SystemClock;
 pub use clock::{rfc3339_utc, Clock};

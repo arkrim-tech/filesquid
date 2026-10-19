@@ -35,7 +35,9 @@ pub fn operation_message(record: &OperationRecord) -> String {
 }
 
 /// The operation a version message names: `Ok(None)` for any message without
-/// [`OPERATION_PREFIX`] (a version made by another tool).
+/// [`OPERATION_PREFIX`] (a version made by another tool), and for a FileSquid message that
+/// carries no receipt (no `revision`: a provenance-only or backfill version, which published
+/// no catalog operation).
 ///
 /// # Errors
 /// A fixed reason for a prefixed message that cannot be read, so its receipt is never
@@ -44,9 +46,12 @@ pub fn parse_operation_message(message: &str) -> Result<Option<OperationRecord>,
     let Some(json) = message.strip_prefix(OPERATION_PREFIX) else {
         return Ok(None);
     };
-    serde_json::from_str(json)
-        .map(Some)
-        .map_err(|_| "unreadable operation message".to_string())
+    let unreadable = |_| "unreadable operation message".to_string();
+    let value: serde_json::Value = serde_json::from_str(json).map_err(unreadable)?;
+    if value.get("revision").is_none() && value.get("operation_id").is_some() {
+        return Ok(None);
+    }
+    serde_json::from_value(value).map(Some).map_err(unreadable)
 }
 
 /// The PROV-O operation kind of a catalog commit journaled as `operation` (ADR 040

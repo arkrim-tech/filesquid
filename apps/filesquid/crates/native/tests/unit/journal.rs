@@ -418,11 +418,14 @@ fn both_stores_assign_ids_before_the_entries_are_written() {
         assert!(later[0] > reserved[1], "allocated IDs are never reused");
         let mut commit = JournalEntry::new("ocfl.commit", Outcome::Succeeded).operation_id("op-1");
         commit.id = Some(reserved[0]);
-        assert_eq!(store.append(&[commit.clone()]).unwrap(), [reserved[0]]);
         assert_eq!(
-            store.append(&[commit]).unwrap(),
-            [reserved[0]],
-            "a replay keeps its ID"
+            store.append_new(&[commit.clone()]).unwrap(),
+            [(reserved[0], true)]
+        );
+        assert_eq!(
+            store.append_new(&[commit]).unwrap(),
+            [(reserved[0], false)],
+            "a replay keeps its ID and says it stored nothing"
         );
         let entries = store.query(&JournalQuery::default()).unwrap().entries;
         let commits: Vec<_> = entries

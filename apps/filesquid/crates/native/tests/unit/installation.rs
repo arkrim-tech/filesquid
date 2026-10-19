@@ -123,3 +123,26 @@ fn the_file_is_owner_only() {
     assert_eq!(mode & 0o777, 0o600);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+/// Concurrent launches over one data directory agree on a single installation ID: the
+/// store's immediate transaction serialises the read, both writes and any restore.
+#[test]
+fn concurrent_launches_agree_on_one_installation() {
+    let dir = std::env::temp_dir().join(format!("fs-installation-race-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("dir");
+    let handles: Vec<_> = (0..4)
+        .map(|_| {
+            let dir = dir.clone();
+            std::thread::spawn(move || load_or_create(&dir).map(|i| i.id))
+        })
+        .collect();
+    let ids: Vec<_> = handles
+        .into_iter()
+        .map(|h| h.join().expect("thread").expect("launch"))
+        .collect();
+    assert!(ids.windows(2).all(|w| w[0] == w[1]), "{ids:?}");
+    let again = load_or_create(&dir).expect("next launch");
+    assert_eq!(again.id, ids[0]);
+    std::fs::remove_dir_all(&dir).expect("cleanup");
+}

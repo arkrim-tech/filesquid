@@ -95,7 +95,7 @@ impl SqliteJournal {
         host: &str,
         entry: &JournalEntry,
     ) -> Result<i64, JournalError> {
-        insert(tx, host, entry)
+        insert(tx, host, entry).map(|(id, _)| id)
     }
 
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, JournalError> {
@@ -142,7 +142,11 @@ fn journal_columns(conn: &Connection) -> Result<Vec<String>, JournalError> {
 }
 
 /// Insert one entry and return its id.
-fn insert(conn: &Connection, default_host: &str, e: &JournalEntry) -> Result<i64, JournalError> {
+fn insert(
+    conn: &Connection,
+    default_host: &str,
+    e: &JournalEntry,
+) -> Result<(i64, bool), JournalError> {
     let e = &e.clone().redacted();
     let host = if e.host.is_empty() {
         default_host
@@ -151,26 +155,28 @@ fn insert(conn: &Connection, default_host: &str, e: &JournalEntry) -> Result<i64
     };
     let targets =
         serde_json::to_string(&e.target_ids).map_err(|err| JournalError(err.to_string()))?;
-    conn.execute(
-        INSERT,
-        rusqlite::params![
-            e.time_ms,
-            host,
-            e.process_id,
-            e.actor,
-            e.operation,
-            e.outcome.as_str(),
-            e.level.as_str(),
-            targets,
-            e.duration_ms.map(|d| d as i64),
-            e.error_code,
-            e.operation_id,
-            e.object_ref,
-            e.id
-        ],
-    )
-    .map_err(sql_err)?;
-    Ok(e.id.unwrap_or_else(|| conn.last_insert_rowid()))
+    let changed = conn
+        .execute(
+            INSERT,
+            rusqlite::params![
+                e.time_ms,
+                host,
+                e.process_id,
+                e.actor,
+                e.operation,
+                e.outcome.as_str(),
+                e.level.as_str(),
+                targets,
+                e.duration_ms.map(|d| d as i64),
+                e.error_code,
+                e.operation_id,
+                e.object_ref,
+                e.id
+            ],
+        )
+        .map_err(sql_err)?;
+    let id = e.id.unwrap_or_else(|| conn.last_insert_rowid());
+    Ok((id, changed > 0))
 }
 
 /// Reserve `count` ids above every stored and every earlier reserved id by advancing the
@@ -283,6 +289,11 @@ impl JournalStore for SqliteJournal {
     }
 
     fn append(&self, entries: &[JournalEntry]) -> Result<Vec<i64>, JournalError> {
+        let stored = self.append_new(entries)?;
+        Ok(stored.into_iter().map(|(id, _)| id).collect())
+    }
+
+    fn append_new(&self, entries: &[JournalEntry]) -> Result<Vec<(i64, bool)>, JournalError> {
         let mut conn = self.lock()?;
         let tx = conn.transaction().map_err(sql_err)?;
         let ids = entries

@@ -310,7 +310,9 @@ fn commit_record_only(world: &mut OcflWorld, holder: String) {
 fn commit_with_failing_record(world: &mut OcflWorld, holder: String) {
     let rig = rig(world);
     let failing = |_: &BoundContext<'_>| Err("no record".to_string());
+    let before = rig.snapshot(ROOT);
     let result = ready(model(rig, &holder).commit_with(meta(rig, "fails"), Some(&failing)));
+    world.change.before = before;
     world.change.result = Some(result);
 }
 
@@ -332,5 +334,10 @@ fn refused_for_bound_files(world: &mut OcflWorld) {
         ),
         "{:?}",
         error(world)
+    );
+    assert_eq!(
+        rig(world).snapshot(ROOT),
+        world.change.before,
+        "nothing was published"
     );
 }

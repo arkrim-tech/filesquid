@@ -155,11 +155,12 @@ impl CanonicalRoot {
 
     /// The journal entries the snapshot versions after `after` (every version when `None` or
     /// not a version name) wrote beside their PROV-O records, oldest first, keeping their
-    /// pre-allocated IDs: what a catalog that missed those commits replays. A line that is not
-    /// a journal entry is skipped and logged as a warning. Filesystem I/O.
+    /// pre-allocated IDs: what a catalog that missed those commits replays. Filesystem I/O.
     ///
     /// # Errors
-    /// As [`read_commit_journal`], mapped to the catalog port.
+    /// As [`read_commit_journal`], mapped to the catalog port; [`CatalogError::Failed`] for a
+    /// line that is not a journal entry, so the catalog never advances past history it did
+    /// not replay.
     pub(crate) fn read_journal(
         &self,
         after: Option<&str>,
@@ -171,7 +172,7 @@ impl CanonicalRoot {
             after.as_ref(),
         ))?
         .map_err(CatalogError::from)?;
-        Ok(lines.iter().filter_map(|line| journal_line(line)).collect())
+        lines.iter().map(|line| journal_line(line)).collect()
     }
 
     /// The snapshot at the head, or `None` when nothing was published yet. Filesystem I/O.
@@ -183,21 +184,14 @@ impl CanonicalRoot {
     }
 }
 
-/// The journal entry one line holds, or `None` (logged as a warning) when it holds none.
-/// Pure apart from the log line.
-fn journal_line(line: &str) -> Option<JournalEntry> {
-    match serde_json::from_str::<JournalEntry>(line) {
-        Ok(entry) => Some(entry.redacted()),
-        Err(_) => {
-            tracing::warn!(
-                target: super::LOG_TARGET,
-                operation = super::reconcile::RECONCILE_OPERATION,
-                error_code = "journal_line_unreadable",
-                "a commit's journal line is not a journal entry; it is not replayed"
-            );
-            None
-        }
-    }
+/// The journal entry one line holds, redacted. Pure.
+///
+/// # Errors
+/// [`CatalogError::Failed`] (`journal_line_unreadable`) when the line holds none.
+fn journal_line(line: &str) -> Result<JournalEntry, CatalogError> {
+    serde_json::from_str::<JournalEntry>(line)
+        .map(JournalEntry::redacted)
+        .map_err(|_| failed("journal_line_unreadable: a commit's journal line is unreadable"))
 }
 
 /// Run a backend future that never waits (the filesystem backend's futures complete at once).

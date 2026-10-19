@@ -22,6 +22,11 @@ use crate::storage::{MaybeSync, StorageKey, MAX_PUT_BYTES};
 /// Most version-bound files one commit may add.
 pub const MAX_BOUND_FILES: usize = 64;
 
+/// Most bytes all version-bound files of one commit may hold together: they
+/// are held in memory until written, so the bound is the commit's, not only
+/// each file's.
+pub const MAX_BOUND_BYTES: u64 = 16 * 1024 * 1024;
+
 /// What a [`VersionBoundFiles`] function is told about the version it
 /// writes into.
 #[derive(Debug, Clone, Copy)]
@@ -40,14 +45,18 @@ pub struct BoundContext<'a> {
     /// The new version's logical state before the bound files are added
     /// (logical path → digest).
     pub state: &'a BTreeMap<String, String>,
+    /// Whether the version's reservation took over a lease another holder
+    /// still held (the receipt's `took_over`), so a record written into the
+    /// version can say so.
+    pub took_over: bool,
 }
 
 /// A caller-supplied function that returns the logical files bound to the
 /// version being committed (logical path → bytes).
 ///
 /// Paths MUST be new to the version's state (a bound file never replaces a
-/// staged one), at most [`MAX_BOUND_FILES`] per commit and each at most
-/// [`MAX_PUT_BYTES`] bytes. An `Err` stops the commit before anything is
+/// staged one), at most [`MAX_BOUND_FILES`] per commit, each at most
+/// [`MAX_PUT_BYTES`] bytes and together at most [`MAX_BOUND_BYTES`]. An `Err` stops the commit before anything is
 /// written; its text is carried in [`CommitError::BoundFiles`].
 pub trait VersionBoundFiles: MaybeSync {
     /// The bound files of the version `context` describes.
@@ -67,8 +76,9 @@ where
     }
 }
 
-/// Call `bound` for `plan`'s reserved version and return the plan with its
-/// files added to the version's state, the manifest and the uploads.
+/// Call `bound` for `plan`'s reserved version (whose reservation `took_over`
+/// a held lease or not) and return the plan with its files added to the
+/// version's state, the manifest and the uploads.
 ///
 /// # Errors
 ///
@@ -79,6 +89,7 @@ where
 pub(crate) fn bind_files(
     plan: &VersionPlan,
     bound: &dyn VersionBoundFiles,
+    took_over: bool,
 ) -> Result<VersionPlan, CommitError> {
     let base = previous_version(&plan.inventory, &plan.version);
     let base_state = flat_state(&plan.inventory, base.as_ref());
@@ -91,6 +102,7 @@ pub(crate) fn bind_files(
         base: base.as_ref(),
         base_state: &base_state,
         state: &state,
+        took_over,
     };
     let files = bound.files(&context).map_err(bound_error)?;
     check_files(&files, &state)?;
@@ -132,7 +144,8 @@ fn head_created(plan: &VersionPlan) -> String {
 }
 
 /// Refuse more than [`MAX_BOUND_FILES`] files, a file over
-/// [`MAX_PUT_BYTES`] or a path the state already holds.
+/// [`MAX_PUT_BYTES`], more than [`MAX_BOUND_BYTES`] in all, or a path the
+/// state already holds.
 fn check_files(
     files: &BTreeMap<String, Vec<u8>>,
     state: &BTreeMap<String, String>,
@@ -141,6 +154,12 @@ fn check_files(
         return Err(bound_error(format!(
             "{} files exceed the bound of {MAX_BOUND_FILES}",
             files.len()
+        )));
+    }
+    let total: u64 = files.values().map(|bytes| bytes.len() as u64).sum();
+    if total > MAX_BOUND_BYTES {
+        return Err(bound_error(format!(
+            "{total} bytes exceed the bound of {MAX_BOUND_BYTES}"
         )));
     }
     for (path, bytes) in files {

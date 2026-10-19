@@ -172,3 +172,25 @@ fn an_announcing_store_publishes_and_counts_what_the_store_accepted() {
     assert_eq!(announcing.host(), "host-a");
     assert_eq!(store.count(&JournalQuery::default()).unwrap(), 2);
 }
+
+#[test]
+fn a_replayed_entry_the_store_already_holds_is_announced_once() {
+    use filesquid_api::journal_writer::AnnouncingJournal;
+    let store = Arc::new(MemoryJournal::new("host-a"));
+    let events = EventBus::new();
+    let mut rx = events.subscribe();
+    let metrics = Arc::new(Metrics::default());
+    let announcing = AnnouncingJournal::new(store.clone(), events, metrics.clone());
+    let id = store.allocate_ids(1).expect("id")[0];
+    let mut entry = JournalEntry::new("ocfl.commit", Outcome::Succeeded);
+    entry.id = Some(id);
+    announcing
+        .append(std::slice::from_ref(&entry))
+        .expect("first");
+    let again = announcing.append_new(&[entry]).expect("replay");
+    assert_eq!(again, [(id, false)]);
+    rx.try_recv().expect("the first append is announced");
+    assert!(rx.try_recv().is_err(), "the replay is not announced again");
+    assert_eq!(metrics.snapshot()["filesquid_journal_entries_total"], 1);
+    assert_eq!(store.count(&JournalQuery::default()).unwrap(), 1);
+}
