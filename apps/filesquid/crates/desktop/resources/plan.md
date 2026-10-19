@@ -68,12 +68,12 @@ Logs: stdout JSON ([DE-S-003](./srs.md)). Default: checkpoint-on-quit. `bundle.a
   - **Related Tests:** Worker scenarios written by `@feature-writer` under `tests/features/` (ImageSquid owns the UI scenarios)
   - **Agent Prompt:** `@AGENTS.md Begin by creating a new feature branch for Task DE-0.5. Then begin development with Cargo commands run from apps/filesquid/ with -p filesquid-desktop. Write integration tests. Additionally, invoke the @feature-writer skill to translate SRS requirements into executable BDD feature tests. Upon completion, YOU MUST generate apps/filesquid/crates/desktop/resources/tasks/Task-DE-0.5-Walkthrough.md directly in the project repository with clear SRS mapping (including BOTH the ID and full human-readable title text) in the secondary section, and strictly delete the internal tracking Plan/ToDos documents before checking off the Markdown box locally in apps/filesquid/crates/desktop/resources/plan.md, and the matching boxes in the repository-root resources/implementation-plan-checklist.md. Then commit your changes and push the branch to origin.`
 
-- [ ] **Task DE-0.6: Stdout JSON logging**
+- [x] **Task DE-0.6: Stdout JSON logging**
   - **Description:** tracing JSON to stdout only. No Tauri log-plugin file targets.
   - **Estimated Time:** 2 hours
   - **Dependencies:** Task DE-0.1
   - **Related Requirements:** [DE-S-003](./srs.md), [NFR-009](../../../../../resources/prd.md#nfr-009-observability-and-capacity-economics), [ADR 014](../../../../../resources/architecture/014-stdout-observability.md)
-  - **Related Tests:** N/A (unit assertion on subscriber)
+  - **Related Tests:** [`tests/integration/stdout_logging.rs`](../tests/integration/stdout_logging.rs), [`tests/integration/capabilities.rs`](../tests/integration/capabilities.rs) (Tauri log plugin refused); walkthrough [Task-DE-0.6-Walkthrough.md](./tasks/Task-DE-0.6-Walkthrough.md)
   - **Agent Prompt:** `@AGENTS.md Begin by creating a new feature branch for Task DE-0.6. Then begin development with Cargo commands run from apps/filesquid/ with -p filesquid-desktop. TDD-ENFORCE: Not applicable - configuration. Upon completion, YOU MUST generate apps/filesquid/crates/desktop/resources/tasks/Task-DE-0.6-Walkthrough.md directly in the project repository with clear SRS mapping (including BOTH the ID and full human-readable title text) in the secondary section, and strictly delete the internal tracking Plan/ToDos documents before checking off the Markdown box locally in apps/filesquid/crates/desktop/resources/plan.md, and the matching boxes in the repository-root resources/implementation-plan-checklist.md. Then commit your changes and push the branch to origin.`
 
 - [ ] **Task DE-0.7: Recorder, publisher, and recipe/color feasibility**
