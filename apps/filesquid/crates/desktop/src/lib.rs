@@ -378,7 +378,8 @@ pub struct DesktopCatalog(pub Arc<SqliteCatalog>);
 /// Open the per-library SQLite catalogs in `<data_dir>/libraries/`, forwarding their journal
 /// entries to `host`'s journal store through its announcing store, so outbox entries raise
 /// `journal.entry` events and count in the metrics like every other entry, and recording the
-/// PROV-O history of every commit as `installation` (DE-0.10). A failure is journaled as
+/// PROV-O history of every commit as `installation` (DE-0.10), and sending refusals that
+/// come before any library is open through `host`'s bounded journal queue. A failure is journaled as
 /// [`CATALOG_OPEN_OPERATION`] `failed` with its error code only (no path). Performs
 /// filesystem and database I/O.
 ///
@@ -396,7 +397,11 @@ pub fn open_library_catalog(
     };
     let opened = SqliteCatalog::open(&data_dir.join(CATALOG_DIR), journal);
     opened
-        .map(|catalog| catalog.with_provenance(context))
+        .map(|catalog| {
+            catalog
+                .with_provenance(context)
+                .with_failure_journal(host.monitor().journal())
+        })
         .map_err(|err| {
             let code = catalog_error_code(&err);
             host.monitor()

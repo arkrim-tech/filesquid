@@ -9,13 +9,16 @@ mod catalog_fixture;
 
 use catalog_fixture::{all_entries, catalog_file, temp_root, Fixture};
 use filesquid_api::canonical::{read_snapshot, OwnerReadable, SNAPSHOT_ROOT};
-use filesquid_api::journal::{JournalEntry, MemoryJournal, Outcome};
+use filesquid_api::journal::{JournalEntry, JournalStore, MemoryJournal, Outcome};
+use filesquid_api::journal_writer::{JournalWriter, WriterConfig};
 use filesquid_api::library::{
     CatalogError, FileListing, FileScope, LibraryCatalog, LibraryCommand, VisibilityFilter,
 };
+use filesquid_api::metrics::Metrics;
 use filesquid_api::operation::OperationId;
+use filesquid_api::EventBus;
 use filesquid_core::{CollectionId, File, FileId, Folder, FolderId, LibraryId};
-use filesquid_native::{library_ocfl_root, CommitProbe};
+use filesquid_native::{library_ocfl_root, CommitProbe, SqliteCatalog};
 use filesquid_ocfl::storage::{complete_immediately, FsBackend};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -645,21 +648,32 @@ fn a_failed_index_refresh_is_journaled_as_failed() {
 }
 
 /// A refresh of a library the catalog does not hold has no outbox to journal into: it is
-/// refused and journaled as `failed` straight to the host journal, targeting that library.
+/// refused, and its `failed` entry, targeting that library, goes through the host's bounded
+/// failure journal queue (never dropped, producers wait), not straight to the store.
 #[test]
 fn a_refresh_of_an_unknown_library_is_journaled_as_failed() {
-    let fx = Fixture::new("index-unknown");
+    let root = temp_root("index-unknown");
+    let journal: Arc<dyn JournalStore> = Arc::new(MemoryJournal::new("desktop"));
+    let failures: Arc<dyn JournalStore> = Arc::new(MemoryJournal::new("desktop"));
+    let writer = JournalWriter::start(
+        failures.clone(),
+        WriterConfig::default(),
+        EventBus::new(),
+        Arc::new(Metrics::default()),
+    );
+    let catalog = SqliteCatalog::open(&root, journal.clone())
+        .expect("open")
+        .with_failure_journal(writer.sender());
     let unknown = LibraryId::new("0b0f8a52-3f0e-4c4b-9a59-5b3c0e7d1a02").unwrap();
-    let before = all_entries(fx.journal.as_ref()).len();
     let entry = JournalEntry::new("library.folder.index", Outcome::Succeeded);
-    let refused = fx
-        .catalog
-        .index_folders(&unknown, &[years(&unknown, "Years")], entry);
+    let refused = catalog.index_folders(&unknown, &[years(&unknown, "Years")], entry);
     assert!(
         matches!(refused, Err(CatalogError::Failed(_))),
         "{refused:?}"
     );
-    let journaled = journaled_since(fx.journal.as_ref(), before);
+    writer.sender().flush();
+    assert!(all_entries(journal.as_ref()).is_empty());
+    let journaled = all_entries(failures.as_ref());
     let seen: Vec<(&str, Outcome, Option<&str>, &[String])> = journaled
         .iter()
         .map(|e| {
@@ -683,6 +697,8 @@ fn a_refresh_of_an_unknown_library_is_journaled_as_failed() {
         )]
     );
     assert!(!format!("{journaled:?}").contains("Years"), "{journaled:?}");
+    writer.shutdown();
+    std::fs::remove_dir_all(root).expect("cleanup");
 }
 
 /// The same rule in a catalog that records PROV-O history (DE-0.10): an index refresh that
