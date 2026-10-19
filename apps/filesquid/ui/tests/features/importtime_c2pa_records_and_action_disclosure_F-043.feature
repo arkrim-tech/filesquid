@@ -1,5 +1,5 @@
-# SRS-F-043: Import-time C2PA records and action disclosure
-Feature: Import-time C2PA records and action disclosure
+# SRS-F-043: C2PA records and action disclosure
+Feature: C2PA records and action disclosure
   As a library owner
   I want import-time c2pa records and action disclosure
   So that the product matches the SRS
@@ -23,14 +23,14 @@ Feature: Import-time C2PA records and action disclosure
     Given a library holds files imported before the c2pa module was enabled
     When the c2pa module is enabled and the backfill job runs, is interrupted and resumes
     Then every such file should have exactly one initial record
-    And each record should state its own creation time and cite its import file record and the OCFL version created time and SHA-256 digest
+    And each record should state its own creation time and cite its import record and the OCFL version created time and SHA-256 digest
     And no record should claim FileSquid import time
 
-  Scenario: A backfilled record for a file without a file record says so
-    Given a library holds a file imported before the c2pa module was enabled that has no file record
+  Scenario: A backfilled record for a file without an import record says so
+    Given a library holds a file imported before the c2pa module was enabled that has no import record
     When the c2pa module is enabled and the backfill job runs
     Then the file's initial record should cite the OCFL version created time and SHA-256 digest alone
-    And it should state that no file record exists
+    And it should state that no import record exists
     And it should not claim FileSquid import time
 
   # Source
