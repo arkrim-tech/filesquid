@@ -37,6 +37,14 @@ Sources: [OCFL-S-022, OCFL-S-019, OCFL-S-020](../srs.md), [PRD F-001](../../../.
 
 None.
 
+## Pre-commit on the head commit
+
+`FULL=1 bash scripts/pre-commit.sh` after merging `origin/main` (which carries the `fetch_update` clippy fix):
+
+```text
+✅ All Pre-Commit Hooks Passed! Test scope: full (334s)
+```
+
 ## Test output
 
 `cargo test -p filesquid-ocfl --locked` (exit 0), per-target summary:
