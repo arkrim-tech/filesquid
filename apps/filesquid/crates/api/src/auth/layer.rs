@@ -93,7 +93,7 @@ pub async fn check_caller(state: &ApiState, headers: &HeaderMap) -> Result<Princ
 }
 
 /// Log a refusal to stdout, journal it, and return the typed denial.
-async fn deny(
+pub(crate) async fn deny(
     state: &ApiState,
     reason: DenialReason,
     principal: Option<&Principal>,
@@ -141,7 +141,7 @@ pub fn record_token_issue(monitor: &crate::monitor::Monitor, principal: &Princip
 
 /// Where a record went.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Recorded {
+pub(crate) enum Recorded {
     /// Queued on the monitor's activity journal.
     Journal,
     /// No monitor yet: printed to stdout as one JSON line, whatever `RUST_LOG` says.
@@ -151,7 +151,7 @@ enum Recorded {
 /// Queue `entry` on the monitor's journal without blocking the async executor. Before the
 /// monitor starts there is no journal, so the redacted entry is printed straight to stdout,
 /// bypassing the log-level filter, and is never lost.
-async fn journal_entry(state: &ApiState, entry: JournalEntry) -> Recorded {
+pub(crate) async fn journal_entry(state: &ApiState, entry: JournalEntry) -> Recorded {
     let Some(monitor) = state.monitor() else {
         print_unjournaled(&entry.redacted());
         return Recorded::Stdout;

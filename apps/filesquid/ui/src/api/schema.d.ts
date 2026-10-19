@@ -263,6 +263,254 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/files/listing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List one folder of an object version
+         * @description The folders and files directly below a logical-path prefix, folders first, with an opaque cursor; limit 1-1000, default 200. Answers storage facts only; a successful read is not journaled, a refusal is journaled once (API-S-017).
+         */
+        get: operations["listFolder"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/details": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Storage facts about one file
+         * @description Object identifier, logical path, digest, size, fixity values, the version that last set the content and the media type; never the OCFL content path. Answers storage facts only; a successful read is not journaled, a refusal is journaled once (API-S-017).
+         */
+        get: operations["getFileDetails"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The versions that changed one file
+         * @description Oldest first; versions that left the file as it was are not listed. Answers storage facts only; a successful read is not journaled, a refusal is journaled once (API-S-017).
+         */
+        get: operations["getFileHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every version of an object
+         * @description Oldest first, with the head. Answers storage facts only; a successful read is not journaled, a refusal is journaled once (API-S-017).
+         */
+        get: operations["listObjectVersions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Ranged read of one file version
+         * @description One Range per request; each answer carries at most 16 MiB (the desktop scheme's buffer cap, DE-S-005). Media elements, which cannot send Authorization, read through a content handle instead (POST /api/v1/content-handles). Answers storage facts only; a successful read is not journaled, a refusal is journaled once (API-S-017).
+         */
+        get: operations["readFileContent"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        /**
+         * Describe one file version without its bytes
+         * @description The headers of the ranged read with no body; no content is read. With a `Range` header it answers the status and headers the GET for that range answers (`206` with `Content-Range`, or `416` with `bytes *\/<length>`); without one it describes the whole file, so the client learns its length.
+         */
+        head: operations["describeFileContent"];
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Add or replace one file
+         * @description The body is the file's bytes, at most 64 MiB. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once.
+         */
+        put: operations["uploadFile"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/folders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a folder (pending until a file is added)
+         * @description Writes nothing: OCFL stores no empty folder, so a new folder stays pending in the client and is persisted only when a file is added beneath its prefix. A file at the path or at a parent of it is a conflict.
+         */
+        post: operations["createFolder"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/moves": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move or rename one file or folder
+         * @description A folder moves every file below it; no bytes are written. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once.
+         */
+        post: operations["moveFiles"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/removals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Remove one file or folder
+         * @description The bytes stay in the object for history and restore. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once.
+         */
+        post: operations["removeFiles"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/restorations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore files or folders from an earlier version
+         * @description The new version points at the content the earlier version holds. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once.
+         */
+        post: operations["restoreFiles"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/content-handles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mint a content handle for one file version
+         * @description For media elements (img, video, audio, source), which cannot send Authorization (API-S-018, ADR 030 Decision 5). Authorised exactly like the ranged read of that file version (action files.read; a refusal is the refusal that read gets); a content handle cannot mint another. The handle is 256 bits from the operating system's CSPRNG; the API keeps only its SHA-256 digest, in memory. At most 1,024 live handles per credential: another mint evicts the least recently used one. Journaled as api.content_handle.issued (actor, library, object, version and expiry; never the handle).
+         */
+        post: operations["mintContentHandle"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/content/{handle}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read one file version through a content handle
+         * @description Serves only the file version the handle names, with the ranged read's single-range handling and 16 MiB cap. The handle is accepted at the start of each request: 300 s after its mint or last accepted request, or 3,600 s after its mint, or once its minting credential ends or may no longer read files, it is refused; an answer that has started is never cut off. Every answer, denials included, carries Referrer-Policy: no-referrer, Cache-Control: private, no-store, X-Content-Type-Options: nosniff and Content-Security-Policy: default-src 'none'; sandbox.
+         */
+        get: operations["readContentByHandle"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        /**
+         * Describe one file version through a content handle
+         * @description Serves only the file version the handle names, with the ranged read's single-range handling and 16 MiB cap. The handle is accepted at the start of each request: 300 s after its mint or last accepted request, or 3,600 s after its mint, or once its minting credential ends or may no longer read files, it is refused; an answer that has started is never cut off. Every answer, denials included, carries Referrer-Policy: no-referrer, Cache-Control: private, no-store, X-Content-Type-Options: nosniff and Content-Security-Policy: default-src 'none'; sandbox.
+         */
+        head: operations["describeContentByHandle"];
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/ocfl/findings": {
         parameters: {
             query?: never;
@@ -425,10 +673,10 @@ export interface components {
             status: "up";
         };
         /**
-         * @description Stable error code. HTTP status: invalid_request 400, unauthorized 401, forbidden 403, not_found 404, method_not_allowed 405, conflict 409, internal 500, unavailable 503. Only unavailable is retryable. The router-wide fallbacks use 404 not_found (path not in the contract) and 405 method_not_allowed (method not documented for the path).
+         * @description Stable error code. HTTP status: invalid_request 400, unauthorized 401, forbidden 403, not_found 404, method_not_allowed 405, conflict 409, range_not_satisfiable 416, internal 500, unavailable 503. Only unavailable is retryable. The router-wide fallbacks use 404 not_found (path not in the contract) and 405 method_not_allowed (method not documented for the path). A 416 range_not_satisfiable answer also carries Content-Range: bytes *\/<length>.
          * @enum {string}
          */
-        ErrorCode: "invalid_request" | "unauthorized" | "forbidden" | "not_found" | "method_not_allowed" | "conflict" | "internal" | "unavailable";
+        ErrorCode: "invalid_request" | "unauthorized" | "forbidden" | "not_found" | "method_not_allowed" | "conflict" | "range_not_satisfiable" | "internal" | "unavailable";
         /**
          * @description Why the authorisation layer refused a call: missing_credentials (401 unauthorized), invalid_credentials (403 forbidden: the credential is not accepted by this host) or not_permitted (403 forbidden: the caller is known but may not perform this operation). Never retryable.
          * @enum {string}
@@ -555,6 +803,219 @@ export interface components {
             /** @description True when the history index stopped at its record or object cap (100 000 each) or skipped an object it could not open, so this page may miss activities. */
             truncated: boolean;
         };
+        /** @description Who made a version, as the OCFL inventory records it. */
+        VersionUser: {
+            /** @description A readable name. */
+            name: string;
+            /** @description A URI for the user, when recorded. */
+            address: string | null;
+        };
+        /** @description One version of an OCFL object. */
+        VersionRecord: {
+            /** @description The version: v1, v2, ... */
+            version: string;
+            /** @description When it was created, RFC 3339 as recorded. */
+            created: string;
+            /** @description Why it was made, when recorded. */
+            message: string | null;
+            /** @description Who made it, when recorded. */
+            user: components["schemas"]["VersionUser"] | null;
+        };
+        /** @description One entry of a folder listing: a folder or a file, told apart by kind. */
+        FolderEntry: {
+            /** @constant */
+            kind: "folder";
+            /** @description Its last path segment. */
+            name: string;
+            /** @description Its logical path. */
+            path: string;
+        } | {
+            /** @constant */
+            kind: "file";
+            /** @description Its last path segment: the name it is stored under. */
+            name: string;
+            /** @description The name users see: the owner's original file name from the host's file record, made safe (no path separator or control character), or the stored name when no record holds one. Users never see the stored name in its place. */
+            display_name: string;
+            /** @description Its logical path. */
+            path: string;
+            /** @description Its content digest (the inventory's digest algorithm). */
+            digest: string;
+            /** @description Its size in bytes. */
+            size: number;
+            /** @description The version that last set its content. */
+            modified_version: string;
+            /** @description When that version was created, RFC 3339. */
+            modified: string;
+            /** @description The lowercase extension: a display hint only, never a format identification. */
+            type_hint: string | null;
+        };
+        /** @description One page of a folder listing: folders first, then files, at most the requested limit (1-1000, default 200). */
+        FolderPage: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The OCFL object identifier. */
+            object_id: string;
+            /** @description The version listed. */
+            version: string;
+            /** @description The folder listed, a logical-path prefix without a trailing /; empty for the root. */
+            prefix: string;
+            /** @description The entries of this page. */
+            entries: components["schemas"]["FolderEntry"][];
+            /** @description The opaque cursor of the next page, or null on the last page. */
+            next_cursor: string | null;
+        };
+        /** @description Storage facts about one file of one version. The OCFL content path, storage keys and filesystem paths are never answered (API-S-005). */
+        FileDetails: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The OCFL object identifier. */
+            object_id: string;
+            /** @description The version read. */
+            version: string;
+            /** @description The file's logical path. */
+            path: string;
+            /** @description Its last path segment: the name it is stored under. */
+            name: string;
+            /** @description The name users see: the owner's original file name from the host's file record, made safe (no path separator or control character), or the stored name when no record holds one. Users never see the stored name in its place. */
+            display_name: string;
+            /** @description Its content digest. */
+            digest: string;
+            /** @description The digest algorithm: sha512 or sha256. */
+            digest_algorithm: string;
+            /** @description Its size in bytes. */
+            size: number;
+            /** @description Fixity values the inventory records for its content, by algorithm. */
+            fixity: {
+                [key: string]: string[];
+            };
+            last_change: components["schemas"]["VersionRecord"];
+            /** @description The lowercase extension: a display hint only. */
+            type_hint: string | null;
+            /** @description The media type content answers carry, from the extension until the file record of MD-0.8 stores the type given at import; never sniffed. */
+            media_type: string;
+        };
+        /**
+         * @description How a version changed one file.
+         * @enum {string}
+         */
+        FileChange: "added" | "changed" | "deleted";
+        /** @description One version that changed a file. */
+        FileHistoryEntry: {
+            version: components["schemas"]["VersionRecord"];
+            change: components["schemas"]["FileChange"];
+            /** @description The file's digest after the change, or null when it was removed. */
+            digest: string | null;
+        };
+        /** @description The versions that changed one file, oldest first. */
+        FileHistory: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The OCFL object identifier. */
+            object_id: string;
+            /** @description The file's logical path. */
+            path: string;
+            /** @description The versions that changed it. */
+            entries: components["schemas"]["FileHistoryEntry"][];
+        };
+        /** @description Every version of an OCFL object, oldest first. */
+        ObjectVersions: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The OCFL object identifier. */
+            object_id: string;
+            /** @description The head version. */
+            head: string;
+            /** @description Every version. */
+            versions: components["schemas"]["VersionRecord"][];
+        };
+        /** @description The one OCFL version a write published (API-S-008). */
+        FileCommit: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The OCFL object identifier. */
+            object_id: string;
+            /** @description The new head version. */
+            version: string;
+            /** @description When it was created, RFC 3339 UTC. */
+            created: string;
+        };
+        /** @description The answer to creating a folder. Nothing is written: OCFL stores no empty folder. */
+        FolderAnswer: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The OCFL object identifier. */
+            object_id: string;
+            /** @description The folder's logical path. */
+            path: string;
+            /** @description True when no file lies below the folder yet, so it exists only in the client until a file is added beneath it; false when it already exists. */
+            pending: boolean;
+        };
+        /** @description Body of POST /api/v1/files/folders. */
+        CreateFolderRequest: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The OCFL object identifier. */
+            object_id: string;
+            /** @description The folder's logical path. */
+            path: string;
+        };
+        /** @description Body of POST /api/v1/files/moves: move or rename one file or folder (every file below it) in one new version. */
+        MoveRequest: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The OCFL object identifier. */
+            object_id: string;
+            /** @description The file or folder to move. */
+            from: string;
+            /** @description Its new logical path. */
+            to: string;
+            /** @description The version message, 1 to 1,024 bytes and not blank. */
+            message?: string;
+        };
+        /** @description Body of POST /api/v1/files/removals: remove one file or folder in one new version; its bytes stay in the object for history and restore. */
+        RemoveRequest: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The OCFL object identifier. */
+            object_id: string;
+            /** @description The file or folder to remove. */
+            path: string;
+            /** @description The version message, 1 to 1,024 bytes and not blank. */
+            message?: string;
+        };
+        /** @description Body of POST /api/v1/files/restorations: restore files or folders to their content in an earlier version, in one new version. */
+        RestoreRequest: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The OCFL object identifier. */
+            object_id: string;
+            /** @description The earlier version: v1, v2, ... */
+            version: string;
+            /** @description The files or folders to restore, 1 to 1,000. */
+            paths: string[];
+            /** @description The version message, 1 to 1,024 bytes and not blank. */
+            message?: string;
+        };
+        /** @description Body of POST /api/v1/content-handles: exactly one file object, OCFL version and logical path. */
+        ContentHandleRequest: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The OCFL object identifier. */
+            object_id: string;
+            /** @description The one version the handle reads: v1, v2, ... (head is not accepted). */
+            version: string;
+            /** @description The file's logical path in that version. */
+            path: string;
+        };
+        /** @description A content handle for media elements (API-S-018): the handle is answered here and nowhere else, and never logged or journaled. */
+        ContentHandle: {
+            /** @description The handle: 256 random bits as 43 base64url characters without padding. */
+            handle: string;
+            /** @description Its relative URL, /api/v1/content/<handle>, for a media element's src. */
+            url: string;
+            /** @description Its absolute expiry, RFC 3339 UTC: 3,600 s after the mint. It also ends after 300 s without a request, and when the credential that minted it ends. */
+            expires_at: string;
+        };
         /** @enum {string} */
         FindingSeverity: "error" | "warning";
         FindingView: {
@@ -670,7 +1131,7 @@ export interface components {
                 "application/json": components["schemas"]["ApiError"];
             };
         };
-        /** @description Nothing is recorded there (not_found). */
+        /** @description Nothing is recorded there, or the library, object, version, folder or file does not exist (not_found). One answer for all of them. */
         NotFound: {
             headers: {
                 [name: string]: unknown;
@@ -688,12 +1149,68 @@ export interface components {
                 "application/json": components["schemas"]["ApiError"];
             };
         };
+        /** @description The write would change nothing, another change is staged, the object changed at the same paths meanwhile, a file has that path, or the head is incomplete (conflict); nothing was published. */
+        Conflict: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description The range starts at or past the end of the file (range_not_satisfiable). Carries Content-Range: bytes *\/<length>. */
+        RangeNotSatisfiable: {
+            headers: {
+                /** @description bytes *\/<length> */
+                "Content-Range"?: string;
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description The library's storage is not reachable, or the host has not installed its file service yet (unavailable; retryable). */
+        FilesUnavailable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description The one identical denial of the content route (forbidden, reason invalid_credentials, not retryable) for any unusable handle: unknown, malformed, missing, expired, evicted, revoked, or one whose minting credential no longer may read files. Same status, headers and body every time; a HEAD denial has no body. No file is read first. */
+        ContentDenied: {
+            headers: {
+                /** @description no-referrer */
+                "Referrer-Policy"?: string;
+                /** @description private, no-store */
+                "Cache-Control"?: string;
+                /** @description nosniff */
+                "X-Content-Type-Options"?: string;
+                /** @description default-src 'none'; sandbox */
+                "Content-Security-Policy"?: string;
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
     };
     parameters: {
         /** @description Page size for a query (1-1000). Each operation states its default; the activity journal defaults to 100. */
         PageSize: number;
         /** @description Opaque cursor from the previous page. */
         Cursor: string;
+        /** @description The library. */
+        LibraryId: string;
+        /** @description The OCFL object identifier. */
+        ObjectId: string;
+        /** @description The version: head (the default) or one such as v1. */
+        Version: string;
+        /** @description The file's logical path. */
+        LogicalPath: string;
+        /** @description One byte range: bytes=a-b, bytes=a- or bytes=-n. A malformed header, another unit or several ranges are ignored. */
+        Range: string;
     };
     requestBodies: never;
     headers: never;
@@ -1107,6 +1624,605 @@ export interface operations {
             404: components["responses"]["NotFound"];
             500: components["responses"]["Internal"];
             503: components["responses"]["HistoryUnavailable"];
+        };
+    };
+    listFolder: {
+        parameters: {
+            query: {
+                /** @description The library. */
+                library_id: components["parameters"]["LibraryId"];
+                /** @description The OCFL object identifier. */
+                object_id: components["parameters"]["ObjectId"];
+                /** @description The version: head (the default) or one such as v1. */
+                version?: components["parameters"]["Version"];
+                /** @description The folder, a logical-path prefix without a trailing /; the root when absent. */
+                prefix?: string;
+                /** @description Opaque cursor from the previous page. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size for a query (1-1000). Each operation states its default; the activity journal defaults to 100. */
+                limit?: components["parameters"]["PageSize"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of the folder. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FolderPage"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    getFileDetails: {
+        parameters: {
+            query: {
+                /** @description The library. */
+                library_id: components["parameters"]["LibraryId"];
+                /** @description The OCFL object identifier. */
+                object_id: components["parameters"]["ObjectId"];
+                /** @description The version: head (the default) or one such as v1. */
+                version?: components["parameters"]["Version"];
+                /** @description The file's logical path. */
+                path: components["parameters"]["LogicalPath"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The file's storage facts. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileDetails"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    getFileHistory: {
+        parameters: {
+            query: {
+                /** @description The library. */
+                library_id: components["parameters"]["LibraryId"];
+                /** @description The OCFL object identifier. */
+                object_id: components["parameters"]["ObjectId"];
+                /** @description The file's logical path. */
+                path: components["parameters"]["LogicalPath"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The file's history. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileHistory"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    listObjectVersions: {
+        parameters: {
+            query: {
+                /** @description The library. */
+                library_id: components["parameters"]["LibraryId"];
+                /** @description The OCFL object identifier. */
+                object_id: components["parameters"]["ObjectId"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The object's versions. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObjectVersions"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    readFileContent: {
+        parameters: {
+            query: {
+                /** @description The library. */
+                library_id: components["parameters"]["LibraryId"];
+                /** @description The OCFL object identifier. */
+                object_id: components["parameters"]["ObjectId"];
+                /** @description The version: head (the default) or one such as v1. */
+                version?: components["parameters"]["Version"];
+                /** @description The file's logical path. */
+                path: components["parameters"]["LogicalPath"];
+                /** @description true to offer the file as a download (Content-Disposition attachment); shown in place (inline) otherwise. */
+                download?: boolean;
+            };
+            header?: {
+                /** @description One byte range: bytes=a-b, bytes=a- or bytes=-n. A malformed header, another unit or several ranges are ignored. */
+                Range?: components["parameters"]["Range"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The whole file, when the request names no usable range and the file has at most 16 MiB. */
+            200: {
+                headers: {
+                    /** @description bytes */
+                    "Accept-Ranges"?: string;
+                    /** @description The file's media type. */
+                    "Content-Type"?: string;
+                    /** @description The bytes this answer carries. */
+                    "Content-Length"?: number;
+                    /** @description inline or attachment, naming the file by its display name: an ASCII filename fallback and the display name as RFC 5987 filename* UTF-8 (RFC 6266). */
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+            /** @description One range, at most 16 MiB: the requested range, or the first 16 MiB of a larger file or range. */
+            206: {
+                headers: {
+                    /** @description bytes */
+                    "Accept-Ranges"?: string;
+                    /** @description The file's media type. */
+                    "Content-Type"?: string;
+                    /** @description The bytes this answer carries. */
+                    "Content-Length"?: number;
+                    /** @description bytes <first>-<last>/<length> */
+                    "Content-Range"?: string;
+                    /** @description inline or attachment, naming the file by its display name: an ASCII filename fallback and the display name as RFC 5987 filename* UTF-8 (RFC 6266). */
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            416: components["responses"]["RangeNotSatisfiable"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    describeFileContent: {
+        parameters: {
+            query: {
+                /** @description The library. */
+                library_id: components["parameters"]["LibraryId"];
+                /** @description The OCFL object identifier. */
+                object_id: components["parameters"]["ObjectId"];
+                /** @description The version: head (the default) or one such as v1. */
+                version?: components["parameters"]["Version"];
+                /** @description The file's logical path. */
+                path: components["parameters"]["LogicalPath"];
+                /** @description true to offer the file as a download (Content-Disposition attachment); shown in place (inline) otherwise. */
+                download?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The file's length (Content-Length), Accept-Ranges and media type, with no body; no content is read. */
+            200: {
+                headers: {
+                    /** @description bytes */
+                    "Accept-Ranges"?: string;
+                    /** @description The file's media type. */
+                    "Content-Type"?: string;
+                    /** @description The bytes this answer carries. */
+                    "Content-Length"?: number;
+                    /** @description inline or attachment, naming the file by its display name: an ASCII filename fallback and the display name as RFC 5987 filename* UTF-8 (RFC 6266). */
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description One range, at most 16 MiB: the requested range, or the first 16 MiB of a larger file or range. */
+            206: {
+                headers: {
+                    /** @description bytes */
+                    "Accept-Ranges"?: string;
+                    /** @description The file's media type. */
+                    "Content-Type"?: string;
+                    /** @description The bytes this answer carries. */
+                    "Content-Length"?: number;
+                    /** @description bytes <first>-<last>/<length> */
+                    "Content-Range"?: string;
+                    /** @description inline or attachment, naming the file by its display name: an ASCII filename fallback and the display name as RFC 5987 filename* UTF-8 (RFC 6266). */
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            416: components["responses"]["RangeNotSatisfiable"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    uploadFile: {
+        parameters: {
+            query: {
+                /** @description The library. */
+                library_id: components["parameters"]["LibraryId"];
+                /** @description The OCFL object identifier. */
+                object_id: components["parameters"]["ObjectId"];
+                /** @description The file's logical path. */
+                path: components["parameters"]["LogicalPath"];
+                /** @description The version message, 1 to 1,024 bytes and not blank. */
+                message?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/octet-stream": string;
+            };
+        };
+        responses: {
+            /** @description The version published. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileCommit"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    createFolder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateFolderRequest"];
+            };
+        };
+        responses: {
+            /** @description Whether the folder exists or stays pending. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FolderAnswer"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    moveFiles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MoveRequest"];
+            };
+        };
+        responses: {
+            /** @description The version published. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileCommit"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    removeFiles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RemoveRequest"];
+            };
+        };
+        responses: {
+            /** @description The version published. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileCommit"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    restoreFiles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RestoreRequest"];
+            };
+        };
+        responses: {
+            /** @description The version published. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileCommit"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    mintContentHandle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContentHandleRequest"];
+            };
+        };
+        responses: {
+            /** @description The handle, its URL and its absolute expiry. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContentHandle"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    readContentByHandle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The content handle: this route's only credential. Never logged, journaled or echoed; hosts that record request paths record /api/v1/content/{handle}. */
+                handle: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The whole file, when the request names no usable range and the file has at most 16 MiB. */
+            200: {
+                headers: {
+                    /** @description bytes */
+                    "Accept-Ranges"?: string;
+                    /** @description The file's media type. */
+                    "Content-Type"?: string;
+                    /** @description The bytes this answer carries. */
+                    "Content-Length"?: number;
+                    /** @description no-referrer */
+                    "Referrer-Policy"?: string;
+                    /** @description private, no-store */
+                    "Cache-Control"?: string;
+                    /** @description nosniff */
+                    "X-Content-Type-Options"?: string;
+                    /** @description default-src 'none'; sandbox */
+                    "Content-Security-Policy"?: string;
+                    /** @description inline or attachment, naming the file by its display name: an ASCII filename fallback and the display name as RFC 5987 filename* UTF-8 (RFC 6266). */
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+            /** @description One range, at most 16 MiB: the requested range, or the first 16 MiB of a larger file or range. */
+            206: {
+                headers: {
+                    /** @description bytes */
+                    "Accept-Ranges"?: string;
+                    /** @description The file's media type. */
+                    "Content-Type"?: string;
+                    /** @description The bytes this answer carries. */
+                    "Content-Length"?: number;
+                    /** @description bytes <first>-<last>/<length> */
+                    "Content-Range"?: string;
+                    /** @description no-referrer */
+                    "Referrer-Policy"?: string;
+                    /** @description private, no-store */
+                    "Cache-Control"?: string;
+                    /** @description nosniff */
+                    "X-Content-Type-Options"?: string;
+                    /** @description default-src 'none'; sandbox */
+                    "Content-Security-Policy"?: string;
+                    /** @description inline or attachment, naming the file by its display name: an ASCII filename fallback and the display name as RFC 5987 filename* UTF-8 (RFC 6266). */
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+            403: components["responses"]["ContentDenied"];
+            404: components["responses"]["NotFound"];
+            416: components["responses"]["RangeNotSatisfiable"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    describeContentByHandle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The content handle: this route's only credential. Never logged, journaled or echoed; hosts that record request paths record /api/v1/content/{handle}. */
+                handle: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The file's length (Content-Length), Accept-Ranges and media type, with no body; no content is read. */
+            200: {
+                headers: {
+                    /** @description bytes */
+                    "Accept-Ranges"?: string;
+                    /** @description The file's media type. */
+                    "Content-Type"?: string;
+                    /** @description The bytes this answer carries. */
+                    "Content-Length"?: number;
+                    /** @description no-referrer */
+                    "Referrer-Policy"?: string;
+                    /** @description private, no-store */
+                    "Cache-Control"?: string;
+                    /** @description nosniff */
+                    "X-Content-Type-Options"?: string;
+                    /** @description default-src 'none'; sandbox */
+                    "Content-Security-Policy"?: string;
+                    /** @description inline or attachment, naming the file by its display name: an ASCII filename fallback and the display name as RFC 5987 filename* UTF-8 (RFC 6266). */
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description One range, at most 16 MiB: the requested range, or the first 16 MiB of a larger file or range. */
+            206: {
+                headers: {
+                    /** @description bytes */
+                    "Accept-Ranges"?: string;
+                    /** @description The file's media type. */
+                    "Content-Type"?: string;
+                    /** @description The bytes this answer carries. */
+                    "Content-Length"?: number;
+                    /** @description bytes <first>-<last>/<length> */
+                    "Content-Range"?: string;
+                    /** @description no-referrer */
+                    "Referrer-Policy"?: string;
+                    /** @description private, no-store */
+                    "Cache-Control"?: string;
+                    /** @description nosniff */
+                    "X-Content-Type-Options"?: string;
+                    /** @description default-src 'none'; sandbox */
+                    "Content-Security-Policy"?: string;
+                    /** @description inline or attachment, naming the file by its display name: an ASCII filename fallback and the display name as RFC 5987 filename* UTF-8 (RFC 6266). */
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["ContentDenied"];
+            404: components["responses"]["NotFound"];
+            416: components["responses"]["RangeNotSatisfiable"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
         };
     };
     getOcflFindings: {

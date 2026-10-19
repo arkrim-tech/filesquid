@@ -8,7 +8,9 @@
 # DE-S-005: Every API request through the scheme carries a per-launch token, except the liveness probe and the content route
 # UI-S-014: Content handles are the only credential the UI may put in a URL
 #
-# Step definitions arrive with Task API-F1.3; until then these scenarios are reported as skipped.
+# Step definitions: tests/support/content_steps.rs (Task API-F1.3). The server scenarios stand in
+# for filesquid-server accounts (API-F1.9) with a credential whose acceptance and permission the
+# steps withdraw.
 Feature: Content handles for media elements
   As a library owner
   I want my previews and videos to play in native media elements without my token appearing in any URL

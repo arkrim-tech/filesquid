@@ -154,9 +154,15 @@ async fn the_desktop_owner_reaches_admin_routes_with_the_per_launch_token() {
 #[tokio::test]
 async fn a_call_without_the_per_launch_token_is_refused() {
     let (state, _token) = launched();
+    // The content route's only credential is a content handle; its denial is tested below.
     let protected = filesquid_api::route_actions()
         .into_iter()
-        .filter(|(_, action)| *action != filesquid_api::auth::Action::Public);
+        .filter(|(_, action)| {
+            !matches!(
+                action,
+                filesquid_api::auth::Action::Public | filesquid_api::auth::Action::ReadContent
+            )
+        });
     for (path, _) in protected {
         let uri = format!("filesquid://localhost{path}");
         let request = get_with(&uri, Some("tauri://localhost"), None);
@@ -441,4 +447,151 @@ fn an_oversized_response_is_journaled_without_its_detail() {
     let text = serde_json::to_string(entry).expect("json");
     assert!(!text.contains("private"), "{text}");
     assert!(!text.contains("Users"), "{text}");
+}
+
+/// The privacy headers every content-route answer carries (API-S-018).
+const PRIVACY_HEADERS: [(&str, &str); 4] = [
+    ("referrer-policy", "no-referrer"),
+    ("cache-control", "private, no-store"),
+    ("x-content-type-options", "nosniff"),
+    ("content-security-policy", "default-src 'none'; sandbox"),
+];
+
+/// DE-S-005: the scheme passes a content-route request to the router without a token and
+/// hands back its answer, headers included, unchanged: the one denial for an unusable
+/// handle, and `206` with `Content-Range` for a real handle's range.
+#[tokio::test]
+async fn content_route_answers_pass_through_the_scheme_unchanged() {
+    let (state, token) = launched();
+    let unknown =
+        "filesquid://localhost/api/v1/content/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    let denied = handle(
+        state.clone(),
+        get_with(unknown, Some("tauri://localhost"), None),
+    )
+    .await;
+    assert_eq!(denied.status(), http::StatusCode::FORBIDDEN);
+    let json: serde_json::Value = serde_json::from_slice(denied.body()).expect("json");
+    assert_eq!(json["code"], "forbidden");
+    assert_eq!(json["reason"], "invalid_credentials");
+    assert_eq!(json["retryable"], false);
+    let expected = filesquid_api::error::ApiError::denied(
+        filesquid_api::error::DenialReason::InvalidCredentials,
+    );
+    assert_eq!(json["message"], expected.message());
+    for (name, value) in PRIVACY_HEADERS {
+        assert_eq!(denied.headers()[name], value, "{name}");
+    }
+    let mut denied_head = get_with(unknown, Some("tauri://localhost"), None);
+    *denied_head.method_mut() = http::Method::HEAD;
+    let denied_head = handle(state.clone(), denied_head).await;
+    assert_eq!(denied_head.status(), http::StatusCode::FORBIDDEN);
+    for (name, value) in PRIVACY_HEADERS {
+        assert_eq!(denied_head.headers()[name], value, "HEAD {name}");
+    }
+    assert!(denied_head.body().is_empty(), "a HEAD denial has no body");
+    let url = content::minted_url(&state, token.secret()).await;
+    let mut request = get_with(&format!("filesquid://localhost{url}"), None, None);
+    let range = http::HeaderValue::from_static("bytes=2-5");
+    request.headers_mut().insert(http::header::RANGE, range);
+    let answer = handle(state.clone(), request).await;
+    assert_eq!(answer.status(), http::StatusCode::PARTIAL_CONTENT);
+    assert_eq!(answer.headers()["content-range"], "bytes 2-5/10");
+    assert_eq!(answer.headers()["accept-ranges"], "bytes");
+    assert_eq!(answer.headers()["content-type"], "video/webm");
+    assert_eq!(answer.body(), b"2345");
+    for (name, value) in PRIVACY_HEADERS {
+        assert_eq!(answer.headers()[name], value, "{name}");
+    }
+    let mut past = get_with(&format!("filesquid://localhost{url}"), None, None);
+    let beyond = http::HeaderValue::from_static("bytes=10-10");
+    past.headers_mut().insert(http::header::RANGE, beyond);
+    let past = handle(state.clone(), past).await;
+    assert_eq!(past.status(), http::StatusCode::RANGE_NOT_SATISFIABLE);
+    assert_eq!(past.headers()["content-range"], "bytes */10");
+    let mut head = get_with(&format!("filesquid://localhost{url}"), None, None);
+    *head.method_mut() = http::Method::HEAD;
+    let head = handle(state, head).await;
+    assert_eq!(head.status(), http::StatusCode::OK);
+    assert_eq!(head.headers()["accept-ranges"], "bytes");
+    assert_eq!(head.headers()["content-type"], "video/webm");
+    assert_eq!(head.headers()["content-length"], "10");
+    for (name, value) in PRIVACY_HEADERS {
+        assert_eq!(head.headers()[name], value, "HEAD {name}");
+    }
+    assert!(head.body().is_empty(), "a HEAD answer has no body");
+}
+
+/// A file service over an in-memory OCFL root whose object holds `clip.webm`, and a content
+/// handle minted for it.
+mod content {
+    use filesquid_api::files::{FileLibrary, FileService};
+    use filesquid_api::ApiState;
+    use filesquid_core::LibraryId;
+    use filesquid_ocfl::change::{ChangeModel, StagingArea, VersionMeta};
+    use filesquid_ocfl::storage::MemoryBackend;
+    use filesquid_ocfl::write::{LeaseConfig, LeaseStore, SystemClock};
+    use serde_json::json;
+    use std::sync::Arc;
+
+    const LIBRARY: &str = "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b";
+    const OBJECT: &str = "urn:uuid:clip";
+
+    /// Install the file service on `state`, commit the clip, and mint a handle with `token`
+    /// through the scheme; answer its content URL.
+    pub async fn minted_url(state: &ApiState, token: &str) -> String {
+        let root = Arc::new(MemoryBackend::new());
+        let leases = Arc::new(
+            LeaseStore::new(
+                MemoryBackend::new(),
+                "leases",
+                SystemClock,
+                LeaseConfig::default(),
+            )
+            .expect("leases"),
+        );
+        commit(&root, &leases).await;
+        let files = FileService::new();
+        let library = FileLibrary {
+            backend: root,
+            reservations: leases,
+            staging: Arc::new(MemoryBackend::new()),
+            staging_prefix: "api".into(),
+        };
+        assert!(files.open_library(&LibraryId::new(LIBRARY).expect("id"), library));
+        assert!(state.install_files(Arc::new(files)));
+        mint(state, token).await
+    }
+
+    /// Write the storage-root declaration and commit `clip.webm` at v1.
+    async fn commit(root: &MemoryBackend, leases: &LeaseStore<MemoryBackend, SystemClock>) {
+        use filesquid_ocfl::storage::{StorageBackend, StorageKey};
+        let key = StorageKey::new("0=ocfl_1.1").expect("key");
+        root.put(&key, b"ocfl_1.1\n").await.expect("declaration");
+        let staging = MemoryBackend::new();
+        let area = StagingArea::new(&staging, "fixture").expect("area");
+        let model = ChangeModel::new(root, leases, "fixture", "objects/clip", OBJECT, area);
+        model
+            .stage_bytes("clip.webm", b"0123456789")
+            .await
+            .expect("stage");
+        let meta = VersionMeta::new("2026-10-18T00:00:00Z");
+        model.commit(meta).await.expect("commit");
+    }
+
+    /// `POST /api/v1/content-handles` through the scheme; answer the handle's URL.
+    async fn mint(state: &ApiState, token: &str) -> String {
+        let body = json!({
+            "library_id": LIBRARY, "object_id": OBJECT, "version": "v1", "path": "clip.webm"
+        });
+        let request = http::Request::post("filesquid://localhost/api/v1/content-handles")
+            .header(http::header::AUTHORIZATION, format!("Bearer {token}"))
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .body(body.to_string().into_bytes())
+            .expect("request");
+        let answer = filesquid_desktop_lib::api_protocol::handle(state.clone(), request).await;
+        assert_eq!(answer.status(), http::StatusCode::OK);
+        let json: serde_json::Value = serde_json::from_slice(answer.body()).expect("json");
+        json["url"].as_str().expect("url").to_string()
+    }
 }

@@ -6,6 +6,9 @@
 #[path = "schema_check.rs"]
 mod schema_check;
 
+#[path = "../support/files_contract.rs"]
+mod files_contract;
+
 #[path = "../support/history_fixture.rs"]
 mod history_fixture;
 
@@ -42,6 +45,9 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use tower::ServiceExt;
 
+/// OpenAPI extension naming the content route's credential, the handle in its path.
+const CREDENTIAL: &str = "x-filesquid-credential";
+
 /// OpenAPI extension that marks a path served by the hosts, not by [`router`].
 const HOST_ROUTE: &str = "x-filesquid-host-route";
 
@@ -68,7 +74,7 @@ fn contract_is_openapi_3_1_with_the_crate_api_version() {
     let doc = contract();
     assert_eq!(doc["openapi"], "3.1.0");
     assert_eq!(doc["info"]["version"], API_VERSION);
-    assert_eq!(API_VERSION, "0.9.0");
+    assert_eq!(API_VERSION, "0.10.0");
 }
 
 #[test]
@@ -123,6 +129,11 @@ fn every_operation_requires_the_bearer_scheme_and_none_makes_it_optional() {
     for (method, path, op) in all_operations(&doc) {
         match op[ACTION].as_str() {
             Some("public") => assert_eq!(op["security"], json!([]), "{method} {path}"),
+            // The content route's only credential is the handle in its path (API-S-018).
+            Some("content.read") => {
+                assert_eq!(op["security"], json!([]), "{method} {path}");
+                assert_eq!(op[CREDENTIAL], "content-handle", "{method} {path}");
+            }
             _ => assert!(
                 op.get("security").is_none(),
                 "{method} {path} overrides security"
@@ -149,6 +160,19 @@ fn every_operation_documents_both_denials() {
         if op[ACTION] == "public" {
             let responses = op["responses"].as_object().expect("responses");
             assert!(!responses.contains_key("401") && !responses.contains_key("403"));
+            continue;
+        }
+        if op[ACTION] == "content.read" {
+            let responses = op["responses"].as_object().expect("responses");
+            assert!(
+                !responses.contains_key("401"),
+                "{method} {path} never answers 401"
+            );
+            let denied = &op["responses"]["403"]["$ref"];
+            assert_eq!(
+                denied, "#/components/responses/ContentDenied",
+                "{method} {path}"
+            );
             continue;
         }
         for (status, response) in [("401", "Unauthorized"), ("403", "Forbidden")] {
@@ -228,8 +252,9 @@ fn authorised_state() -> ApiState {
     state
 }
 
-/// Authorised API state whose monitor is running, so admin routes answer 200.
-fn owner_state() -> (ApiState, Monitor) {
+/// Authorised API state whose monitor is running, so admin routes answer 200, with a file
+/// service whose library holds the objects the sample requests name.
+async fn owner_state() -> (ApiState, Monitor) {
     let state = authorised_state();
     let monitor = Monitor::start(
         Arc::new(MemoryJournal::new("host-a")),
@@ -239,6 +264,7 @@ fn owner_state() -> (ApiState, Monitor) {
     );
     state.install_monitor(monitor.clone());
     state.describe_host(HostIdentity::desktop(), Arc::new(NotEnrolled));
+    files_contract::install(&state, &monitor).await;
     let validation: ValidationService<filesquid_ocfl::storage::MemoryBackend> =
         ValidationService::new(Arc::new(MemoryFindingsStore::new()), monitor.clone());
     state.install_validation(Arc::new(validation));
@@ -246,15 +272,22 @@ fn owner_state() -> (ApiState, Monitor) {
     (state, monitor)
 }
 
-/// Send one empty-bodied request carrying [`TOKEN`] through the router; return the status
-/// and body bytes.
+/// Send one request carrying [`TOKEN`] through the router, with the sample query and body of
+/// its route ([`files_contract::sample`]); return the status and body bytes.
 async fn call(state: &ApiState, method: &Method, path: &str) -> (StatusCode, Vec<u8>) {
-    let request = Request::builder()
+    let (uri, body) = files_contract::sample(state, method, path, TOKEN);
+    let mut request = Request::builder()
         .method(method.clone())
-        .uri(path)
-        .header("authorization", format!("Bearer {TOKEN}"))
-        .body(sample_body(method, path))
-        .expect("request");
+        .uri(uri)
+        .header("authorization", format!("Bearer {TOKEN}"));
+    if let Some((content_type, _)) = &body {
+        request = request.header("content-type", *content_type);
+    }
+    let body = match body {
+        Some((_, bytes)) => Body::from(bytes),
+        None => sample_body(method, path),
+    };
+    let request = request.body(body).expect("request");
     let response = router(state.clone())
         .oneshot(request)
         .await
@@ -279,8 +312,14 @@ fn sample_body(method: &Method, path: &str) -> Body {
 }
 
 /// Assert `status` is one the operation documents and, when the documented response has a
-/// JSON schema, that `body` conforms to it. Returns whether a body was checked.
-fn assert_documented_answer(doc: &Value, op: &Value, status: StatusCode, body: &[u8]) -> bool {
+/// JSON schema, that `body` conforms to it. A `HEAD` answer has no body, so only its status
+/// is checked. Returns whether a body was checked.
+fn assert_documented_answer(
+    doc: &Value,
+    (method, op): (&Method, &Value),
+    status: StatusCode,
+    body: &[u8],
+) -> bool {
     let checker = Checker::new(doc);
     let documented = &op["responses"][status.as_str()];
     assert!(documented.is_object(), "status {status} is not documented");
@@ -288,6 +327,10 @@ fn assert_documented_answer(doc: &Value, op: &Value, status: StatusCode, body: &
     let Some(schema) = response.pointer("/content/application~1json/schema") else {
         return false;
     };
+    if *method == Method::HEAD {
+        assert!(body.is_empty(), "a HEAD answer has no body");
+        return false;
+    }
     let value: Value = serde_json::from_slice(body).expect("documented JSON body");
     if let Err(e) = checker.check(&value, schema, status.as_str()) {
         panic!("body drifted from the documented {status} schema: {e}");
@@ -300,7 +343,7 @@ async fn every_documented_operation_answers_a_documented_status_and_body() {
     let doc = contract();
     let operations = routed_operations(&doc);
     assert!(!operations.is_empty());
-    let (ready, monitor) = owner_state();
+    let (ready, monitor) = owner_state().await;
     let mut checked_ok = 0;
     for (method, path, op) in &operations {
         let path = &concrete(path);
@@ -310,16 +353,16 @@ async fn every_documented_operation_answers_a_documented_status_and_body() {
             _ => StatusCode::FORBIDDEN,
         };
         assert_eq!(status, expected, "{method} {path} without an authoriser");
-        assert_documented_answer(&doc, op, status, &body);
+        assert_documented_answer(&doc, (method, op), status, &body);
         let (status, body) = call(&authorised_state(), method, path).await;
-        assert_documented_answer(&doc, op, status, &body);
+        assert_documented_answer(&doc, (method, op), status, &body);
         let (status, body) = call(&ready, method, path).await;
         assert_eq!(
             status,
             StatusCode::OK,
             "{method} {path} when the host is ready"
         );
-        checked_ok += usize::from(assert_documented_answer(&doc, op, status, &body));
+        checked_ok += usize::from(assert_documented_answer(&doc, (method, op), status, &body));
     }
     monitor.shutdown();
     let checker = Checker::new(&doc);
@@ -390,8 +433,15 @@ async fn router_fallbacks_answer_as_documented() {
         for name in undocumented.iter().filter(|m| item.get(**m).is_none()) {
             let method = Method::from_bytes(name.to_uppercase().as_bytes()).expect("method");
             let (status, body) = call(&state, &method, &path).await;
-            assert_eq!(status.as_u16(), FALLBACKS[1].0, "{method} {path}");
-            assert_fallback_body(&body, FALLBACKS[1].1, &format!("{method} {path}"));
+            let at = format!("{method} {path}");
+            if path.starts_with("/api/v1/content/") {
+                // The content route answers its one denial to every other method (API-S-018).
+                assert_eq!(status, StatusCode::FORBIDDEN, "{at}");
+                assert_fallback_body(&body, "forbidden", &at);
+                continue;
+            }
+            assert_eq!(status.as_u16(), FALLBACKS[1].0, "{at}");
+            assert_fallback_body(&body, FALLBACKS[1].1, &at);
         }
     }
 }
@@ -576,6 +626,7 @@ fn error_codes_match_the_rust_enum_with_status_and_retryability() {
         (ErrorCode::NotFound, 404, false),
         (ErrorCode::MethodNotAllowed, 405, false),
         (ErrorCode::Conflict, 409, false),
+        (ErrorCode::RangeNotSatisfiable, 416, false),
         (ErrorCode::Internal, 500, false),
         (ErrorCode::Unavailable, 503, true),
     ];
@@ -614,6 +665,7 @@ fn samples() -> Vec<(&'static str, Vec<Value>)> {
     all.extend(validation_samples());
     all.extend(history_samples());
     all.extend(operation_samples());
+    all.extend(files_contract::samples());
     all
 }
 
@@ -1022,10 +1074,11 @@ fn error_code_all_lists_every_variant() {
         | ErrorCode::NotFound
         | ErrorCode::MethodNotAllowed
         | ErrorCode::Conflict
+        | ErrorCode::RangeNotSatisfiable
         | ErrorCode::Internal
         | ErrorCode::Unavailable => (),
     });
-    assert_eq!(ErrorCode::ALL.len(), 8);
+    assert_eq!(ErrorCode::ALL.len(), 9);
 }
 
 // ---- Event channel: documented topics and payloads (API-S-003) ----
@@ -1080,7 +1133,7 @@ async fn drain(sub: &mut filesquid_api::events::EventSubscription) -> Vec<ApiEve
 
 /// Events emitted by every publisher in the crate: registry, monitor, journal writer, lag.
 async fn events_from_every_publisher() -> Vec<ApiEvent> {
-    let (state, monitor) = owner_state();
+    let (state, monitor) = owner_state().await;
     let mut sub = state.events.subscription().expect("slot");
     let handle = monitor
         .registry()
