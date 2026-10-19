@@ -1,7 +1,9 @@
 //! Applying a [`CatalogCommit`] to one library's file in one SQLite transaction, in the order
 //! `LibraryCatalog::commit` states: the create or revision rule, every change, the new
 //! revision, the receipt, the pending intent's removal and the journal entry (into the
-//! outbox). A failure at any step rolls the whole transaction back.
+//! outbox). A commit with no change only removes the pending intent: it stores no receipt,
+//! no journal entry and no new revision. A failure at any step rolls the whole transaction
+//! back.
 
 use super::rows::{sort_name, sql};
 use super::{failed, intent, outbox};
@@ -63,20 +65,36 @@ pub(crate) fn apply_commit(
     let tx = conn.transaction().map_err(sql)?;
     let current = current_revision(&tx)?;
     let revision = next_revision(creates, current, commit)?;
-    for change in &commit.changes {
-        apply_change(&tx, &commit.library_id, change, commit.journal.time_ms)?;
-    }
-    tx.execute("UPDATE library SET revision = ?1", params![revision])
-        .map_err(sql)?;
     let receipt = CommitReceipt {
         library_id: commit.library_id.clone(),
         revision: revision.to_string(),
         created_id: commit.created_id.clone(),
         deletion: commit.deletion,
     };
+    if commit.changes.is_empty() {
+        return clear_unchanged_intent(tx, commit, receipt);
+    }
+    for change in &commit.changes {
+        apply_change(&tx, &commit.library_id, change, commit.journal.time_ms)?;
+    }
+    tx.execute("UPDATE library SET revision = ?1", params![revision])
+        .map_err(sql)?;
     store_receipt(&tx, commit.operation_id.as_str(), &receipt)?;
     intent::clear(&tx, commit.operation_id.as_str())?;
     outbox::push(&tx, &commit.journal)?;
+    tx.commit().map_err(sql)?;
+    Ok(receipt)
+}
+
+/// Finish a checked commit with no change: remove the operation's pending intent (no work
+/// remains) and store nothing else, neither a receipt, a journal entry nor a new revision
+/// (owner decision, 2026-10-19), then answer `receipt` at the current revision. Database I/O.
+fn clear_unchanged_intent(
+    tx: Transaction<'_>,
+    commit: &CatalogCommit,
+    receipt: CommitReceipt,
+) -> Result<CommitReceipt, CatalogError> {
+    intent::clear(&tx, commit.operation_id.as_str())?;
     tx.commit().map_err(sql)?;
     Ok(receipt)
 }

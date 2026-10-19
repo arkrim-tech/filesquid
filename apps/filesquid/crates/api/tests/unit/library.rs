@@ -744,8 +744,10 @@ fn renaming_to_the_same_title_commits_nothing() {
     assert_eq!(fx.catalog.commit_count(), commits);
 }
 
-#[test]
-fn a_no_op_is_journaled_and_replays_under_its_operation_id() {
+/// A library with one file that is already a member of the hand-picked virtual collection
+/// "Best", and a request adding it again (a present member) as operation `op-noop` at the
+/// current revision.
+fn present_member_noop() -> (Fixture, VirtualCollectionId, FileId, CommandRequest) {
     let fx = Fixture::with_library();
     let file = fx.add_file("f-1");
     let vc = fx.create_virtual_collection("Best", None);
@@ -755,18 +757,74 @@ fn a_no_op_is_journaled_and_replays_under_its_operation_id() {
         file_ids: vec![file.clone()],
     };
     fx.run(add.clone());
+    let request = CommandRequest {
+        envelope: CommandEnvelope::new(
+            OperationId::new("op-noop").expect("op"),
+            ExpectedRevision::new(fx.revision()).expect("revision"),
+            OperationScope::new("library").expect("scope"),
+        ),
+        command: add,
+    };
+    (fx, vc, file, request)
+}
+
+#[test]
+fn a_no_op_stores_no_receipt_journal_entry_or_version() {
+    let (fx, _vc, _file, noop) = present_member_noop();
     let journal = fx.catalog.journal_entries().len();
-    let noop = fx.request(&fx.revision(), add);
+    let receipts = fx.catalog.operation_count();
+    let commits = fx.catalog.commit_count();
+    let revision = fx.revision();
+    let result = fx.service.execute("user:ana", noop).expect("no-op");
+    assert_eq!(result.outcome.kind(), CommandOutcomeKind::Committed);
+    assert_eq!(result.revision.as_deref(), Some(revision.as_str()));
+    assert_eq!(fx.revision(), revision);
+    let op = OperationId::new("op-noop").expect("op");
+    assert_eq!(fx.catalog.receipt(&op).expect("read"), None);
+    assert_eq!(fx.catalog.operation_count(), receipts);
+    assert_eq!(fx.catalog.journal_entries().len(), journal);
+    assert_eq!(fx.catalog.commit_count(), commits);
+    assert!(fx.failure_journal().is_empty());
+}
+
+#[test]
+fn a_retried_no_op_is_planned_again_against_current_state() {
+    let (fx, vc, file, noop) = present_member_noop();
     let first = fx.service.execute("user:ana", noop.clone()).expect("no-op");
-    assert_eq!(fx.catalog.journal_entries().len(), journal + 1);
+    let unchanged = fx.service.execute("user:ana", noop.clone()).expect("again");
+    assert_eq!(unchanged, first);
     fx.run(LibraryCommand::RemoveFromVirtualCollection {
         library_id: fx.library(),
         virtual_collection_id: vc.clone(),
         file_ids: vec![file.clone()],
     });
-    let again = fx.service.execute("user:ana", noop).expect("replay");
-    assert_eq!(again, first);
+    let err = fx
+        .service
+        .execute("user:ana", noop)
+        .expect_err("re-planned against the new revision");
+    assert!(matches!(err, LibraryError::Conflict), "{err:?}");
     assert!(!fx.catalog.is_virtual_member(&vc, &file).expect("read"));
+}
+
+#[test]
+fn an_empty_raw_commit_stores_nothing_in_the_memory_catalog() {
+    let fx = Fixture::with_library();
+    let revision = fx.revision();
+    let journal = fx.catalog.journal_entries().len();
+    let receipts = fx.catalog.operation_count();
+    let receipt = fx
+        .catalog
+        .commit(raw_commit("op-empty", &fx.library(), &revision, Vec::new()))
+        .expect("empty commit");
+    assert_eq!(receipt.revision, revision);
+    let op = OperationId::new("op-empty").expect("op");
+    assert_eq!(fx.catalog.receipt(&op).expect("read"), None);
+    assert_eq!(fx.catalog.operation_count(), receipts);
+    assert_eq!(fx.catalog.journal_entries().len(), journal);
+    let stale = fx
+        .catalog
+        .commit(raw_commit("op-stale", &fx.library(), "0", Vec::new()));
+    assert_eq!(stale, Err(CatalogError::Conflict));
 }
 
 #[test]

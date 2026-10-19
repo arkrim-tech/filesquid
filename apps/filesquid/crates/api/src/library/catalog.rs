@@ -7,8 +7,10 @@
 //! operation ID first, then check the create or revision rule, apply every [`CatalogChange`],
 //! commit the change as one OCFL version through the `filesquid-ocfl` change model
 //! (API-S-008), store the commit's journal entry and receipt in the same transaction, and
-//! answer the library's new revision. A commit with no change (a command that changed
-//! nothing) stores only its journal entry and receipt, at the current revision. Listing
+//! answer the library's new revision. [`super::LibraryService`] never hands the catalog a
+//! command that changes nothing (owner decision, 2026-10-19); a commit with no change that
+//! reaches a catalog anyway stores nothing (no receipt, no journal entry, no OCFL version)
+//! and answers the current revision. Listing
 //! methods page by [`PageKey`] in ascending (order, ID) order. No method takes or answers a
 //! filesystem path or SQL.
 
@@ -146,7 +148,7 @@ pub struct CatalogCommit {
     /// [`CatalogError::Conflict`]. For every other commit the library MUST exist at exactly
     /// this revision, or the commit is [`CatalogError::Conflict`].
     pub expected_revision: ExpectedRevision,
-    /// The changes, in order; empty when the command changed nothing.
+    /// The changes, in order. The service sends none empty; an empty commit stores nothing.
     pub changes: Vec<CatalogChange>,
     /// The journal entry stored in the same transaction (opaque IDs only).
     pub journal: JournalEntry,
@@ -164,7 +166,8 @@ pub struct CatalogCommit {
 pub struct CommitReceipt {
     /// The library changed.
     pub library_id: LibraryId,
-    /// The library's revision after the commit (unchanged for a commit with no change).
+    /// The library's revision after the commit (unchanged for a commit with no change, whose
+    /// receipt is answered but never stored).
     pub revision: String,
     /// Identifier the command created, if any.
     pub created_id: Option<String>,
@@ -261,10 +264,11 @@ pub trait LibraryCatalog: Send + Sync {
     ///    attempt, which the first attempt has since advanced.
     /// 2. Check the create or revision rule of [`CatalogCommit::expected_revision`]; a
     ///    mismatch is [`CatalogError::Conflict`] with no change.
-    /// 3. Apply every change; when there is at least one, commit one OCFL version and
-    ///    advance the revision. A commit with no change keeps the revision and writes no
-    ///    version.
-    /// 4. Store the journal entry and the receipt, then answer the receipt.
+    /// 3. A commit with no change stops here: it keeps the revision, writes no version,
+    ///    stores neither its journal entry nor a receipt, and answers the current revision.
+    ///    A host MAY remove the operation's pending intent, since no work remains.
+    /// 4. Apply every change, commit one OCFL version and advance the revision.
+    /// 5. Store the journal entry and the receipt, then answer the receipt.
     ///
     /// A failure at any step MUST leave the catalog as it was.
     fn commit(&self, commit: CatalogCommit) -> Result<CommitReceipt, CatalogError>;

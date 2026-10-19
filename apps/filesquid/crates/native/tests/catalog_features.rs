@@ -140,6 +140,19 @@ fn retry_after_restart(w: &mut CatalogWorld) {
     w.retry = Some(w.fx().run_as(op, "1", summer(&id)).expect("retry"));
 }
 
+#[when(expr = "the owner renames the collection {string} to {string}")]
+fn rename_collection(w: &mut CatalogWorld, _title: String, new_title: String) {
+    let id = w.library("Family archive");
+    let op = OperationId::new("op-rename").expect("op");
+    let revision = w.fx().revision(&id);
+    let command = LibraryCommand::RenameCollection {
+        library_id: id,
+        collection_id: w.collection.clone().expect("collection"),
+        title: new_title,
+    };
+    w.fx().run_as(op, &revision, command).expect("rename");
+}
+
 #[when(expr = "the host journal is reachable again when the catalog reopens")]
 fn journal_back(w: &mut CatalogWorld) {
     let flaky = w.flaky.clone().expect("flaky journal");
@@ -237,6 +250,21 @@ fn journal_records(w: &mut CatalogWorld, operation: String) {
     let entries = all_entries(w.fx().journal.as_ref());
     assert!(
         entries.iter().any(|e| e.operation == operation),
+        "{entries:?}"
+    );
+}
+
+#[then(expr = "the catalog should hold no receipt for the rename")]
+fn no_rename_receipt(w: &mut CatalogWorld) {
+    let op = OperationId::new("op-rename").expect("op");
+    assert_eq!(w.fx().catalog.receipt(&op).expect("read"), None);
+}
+
+#[then(expr = "the host journal should not record {string}")]
+fn journal_lacks(w: &mut CatalogWorld, operation: String) {
+    let entries = all_entries(w.fx().journal.as_ref());
+    assert!(
+        entries.iter().all(|e| e.operation != operation),
         "{entries:?}"
     );
 }

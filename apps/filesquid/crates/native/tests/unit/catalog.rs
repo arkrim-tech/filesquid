@@ -97,6 +97,18 @@ fn raw(library_id: &str, revision: &str, op: &str, changes: Vec<CatalogChange>) 
     }
 }
 
+/// A change storing the collection `id` titled "Summer" in `library_id`, so a raw commit
+/// changes something (a commit with no change stores nothing).
+fn put_collection(library_id: &LibraryId, id: &str) -> CatalogChange {
+    let collection = Collection::new(
+        CollectionId::new(id).expect("id"),
+        library_id.clone(),
+        "Summer",
+    )
+    .expect("collection");
+    CatalogChange::PutCollection(collection)
+}
+
 fn record(library_id: &str) -> LibraryRecord {
     LibraryRecord {
         library: Library::new(
@@ -206,14 +218,60 @@ fn revisions_start_at_one_advance_on_change_and_stale_ones_conflict() {
 }
 
 #[test]
-fn a_commit_without_change_keeps_the_revision_but_stores_its_receipt() {
+fn a_commit_without_change_keeps_the_revision_and_stores_nothing() {
     let fx = Fixture::new("no-change");
     let lib = fx.create_library("Family archive");
     let op = OperationId::new("op-empty").expect("op");
+    let intent = PendingIntent {
+        library_id: lib.clone(),
+        operation_id: op.clone(),
+        operation: "library.collection.rename".into(),
+        expected_revision: ExpectedRevision::new("1").expect("rev"),
+        recorded_at_ms: 1_792_281_600_000,
+    };
+    fx.catalog.record_intent(&intent).expect("record");
+    let journal = all_entries(fx.journal.as_ref()).len();
     let commit = raw(lib.as_str(), "1", "op-empty", Vec::new());
     let receipt = fx.catalog.commit(commit).expect("commit");
     assert_eq!(receipt.revision, "1");
-    assert_eq!(fx.catalog.receipt(&op).expect("read"), Some(receipt));
+    assert_eq!(fx.revision(&lib), "1");
+    assert_eq!(fx.catalog.receipt(&op).expect("read"), None);
+    assert_eq!(all_entries(fx.journal.as_ref()).len(), journal);
+    assert_eq!(fx.catalog.outbox_len(&lib).expect("outbox"), 0);
+    assert!(fx
+        .catalog
+        .pending_intents(&lib, 10)
+        .expect("list")
+        .is_empty());
+    let stale = fx
+        .catalog
+        .commit(raw(lib.as_str(), "0", "op-stale", Vec::new()));
+    assert_eq!(stale, Err(CatalogError::Conflict));
+}
+
+#[test]
+fn a_command_that_changes_nothing_stores_no_receipt_or_journal_entry() {
+    let fx = Fixture::new("no-op");
+    let lib = fx.create_library("Family archive");
+    let collection = fx.create_collection(&lib, "Summer");
+    let journal = all_entries(fx.journal.as_ref()).len();
+    let op = OperationId::new("op-same-title").expect("op");
+    let result = fx
+        .run_as(
+            op.clone(),
+            "2",
+            LibraryCommand::RenameCollection {
+                library_id: lib.clone(),
+                collection_id: collection,
+                title: "Summer".into(),
+            },
+        )
+        .expect("no-op");
+    assert_eq!(result.revision.as_deref(), Some("2"));
+    assert_eq!(fx.revision(&lib), "2");
+    assert_eq!(fx.catalog.receipt(&op).expect("read"), None);
+    assert_eq!(all_entries(fx.journal.as_ref()).len(), journal);
+    assert_eq!(fx.catalog.outbox_len(&lib).expect("outbox"), 0);
 }
 
 #[test]
@@ -242,13 +300,24 @@ fn a_receipt_in_one_library_answers_a_commit_naming_another() {
     let b = fx.create_library("B");
     let first = fx
         .catalog
-        .commit(raw(a.as_str(), "1", "op-x", Vec::new()))
+        .commit(raw(
+            a.as_str(),
+            "1",
+            "op-x",
+            vec![put_collection(&a, "c-a")],
+        ))
         .expect("a");
     let second = fx
         .catalog
-        .commit(raw(b.as_str(), "1", "op-x", Vec::new()))
+        .commit(raw(
+            b.as_str(),
+            "1",
+            "op-x",
+            vec![put_collection(&b, "c-b")],
+        ))
         .expect("b");
     assert_eq!(second, first);
+    assert_eq!(fx.revision(&b), "1");
 }
 
 #[test]
@@ -542,7 +611,12 @@ fn pending_intent_is_recorded_and_cleared_by_its_commit() {
     );
     again
         .catalog
-        .commit(raw(lib.as_str(), "1", "op-intent", Vec::new()))
+        .commit(raw(
+            lib.as_str(),
+            "1",
+            "op-intent",
+            vec![put_collection(&lib, "c-intent")],
+        ))
         .expect("commit");
     assert!(again
         .catalog
@@ -855,7 +929,12 @@ fn an_intent_recorded_after_its_commit_is_not_stored() {
     let fx = Fixture::new("late-intent");
     let lib = fx.create_library("Family archive");
     fx.catalog
-        .commit(raw(lib.as_str(), "1", "op-done", Vec::new()))
+        .commit(raw(
+            lib.as_str(),
+            "1",
+            "op-done",
+            vec![put_collection(&lib, "c-done")],
+        ))
         .expect("commit");
     let intent = PendingIntent {
         library_id: lib.clone(),

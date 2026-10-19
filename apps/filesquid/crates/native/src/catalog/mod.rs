@@ -10,7 +10,8 @@
 //! that file: the stored receipt of its operation ID is answered first (looked up in every
 //! library), then the create or revision rule, every change, the new revision, the receipt,
 //! the removal of the operation's pending intent and its journal entry (into the file's
-//! journal outbox). The outbox is then forwarded to the host's activity journal store; what
+//! journal outbox). A commit with no change stores nothing but the removal of its pending
+//! intent: no receipt, no journal entry and no new revision. The outbox is then forwarded to the host's activity journal store; what
 //! the store refuses is forwarded later, so nothing is dropped.
 //!
 //! The catalog is an index, never the only copy of accepted data: committed state is

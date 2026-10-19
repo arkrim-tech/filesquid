@@ -292,7 +292,9 @@ pub struct CommandRequest {
 /// The answer to a library command.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommandResult {
-    /// `committed` (with the operation ID) when the change is durable in the catalog.
+    /// `committed` (with the operation ID) when the change is durable in the catalog, or
+    /// when the command changes nothing (then nothing is stored and a retry is planned
+    /// again).
     pub outcome: CommandOutcome,
     /// The library the command changed.
     pub library_id: Option<LibraryId>,
