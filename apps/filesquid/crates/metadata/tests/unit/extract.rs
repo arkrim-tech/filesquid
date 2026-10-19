@@ -136,3 +136,43 @@ fn an_unterminated_xmp_packet_is_not_an_error() {
     assert!(!found.xmp);
     assert!(record.get("dcterms:title").is_none());
 }
+
+#[test]
+fn a_name_that_only_starts_like_xmpmeta_is_not_a_packet() {
+    let bytes = b"<x:xmpmetadata><dc:title>Harbour</dc:title></x:xmpmeta>";
+    let mut record = Record::default();
+    let found = extract_from_bytes(bytes, &file_ref("a.jpg"), &mut record).unwrap();
+    assert!(!found.xmp);
+    assert!(record.get("dcterms:title").is_none());
+}
+
+#[test]
+fn xmp_values_decode_every_entity_reference_and_cdata() {
+    let bytes = "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF><rdf:Description>\
+<dc:title><rdf:Alt><rdf:li xml:lang=\"x-default\">&quot;Dawn&quot; &apos;24 &#233;t&#xE9; &amp; &lt;b&gt;</rdf:li></rdf:Alt></dc:title>\
+<dc:description><![CDATA[a <raw> & value]]></dc:description>\
+</rdf:Description></rdf:RDF></x:xmpmeta>";
+    let mut record = Record::default();
+    extract_from_bytes(bytes.as_bytes(), &file_ref("a.jpg"), &mut record).unwrap();
+    assert_eq!(
+        record.get("dcterms:title").unwrap().value,
+        "\"Dawn\" '24 \u{e9}t\u{e9} & <b>"
+    );
+    assert_eq!(
+        record.get("dcterms:description").unwrap().value,
+        "a <raw> & value"
+    );
+}
+
+#[test]
+fn an_unclosed_element_ends_the_scan_without_an_error() {
+    let mut packet = String::from("<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">");
+    for _ in 0..10_000 {
+        packet.push_str("<dc:title>open ");
+    }
+    packet.push_str("</x:xmpmeta>");
+    let mut record = Record::default();
+    let found = extract_from_bytes(packet.as_bytes(), &file_ref("a.jpg"), &mut record).unwrap();
+    assert!(found.xmp);
+    assert!(record.get("dcterms:title").is_none());
+}

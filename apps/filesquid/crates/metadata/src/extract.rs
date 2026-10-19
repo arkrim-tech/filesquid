@@ -215,11 +215,20 @@ fn read_xmp<R: BufRead + Seek>(
     Ok(())
 }
 
-/// The first `<x:xmpmeta>`…`</x:xmpmeta>` span of `bytes`.
+/// The first `<x:xmpmeta>`…`</x:xmpmeta>` span of `bytes`. The opening name
+/// must end at whitespace, `>` or `/`, so `<x:xmpmetadata>` is not a packet.
 fn find_packet(bytes: &[u8]) -> Option<&[u8]> {
-    let start = find(bytes, XMP_OPEN)?;
-    let length = find(&bytes[start..], XMP_CLOSE)? + XMP_CLOSE.len();
-    Some(&bytes[start..start + length])
+    let mut offset = 0;
+    while let Some(found) = find(&bytes[offset..], XMP_OPEN) {
+        let start = offset + found;
+        let after = bytes.get(start + XMP_OPEN.len()).copied();
+        if matches!(after, Some(b' ' | b'\t' | b'\r' | b'\n' | b'>' | b'/')) {
+            let length = find(&bytes[start..], XMP_CLOSE)? + XMP_CLOSE.len();
+            return Some(&bytes[start..start + length]);
+        }
+        offset = start + XMP_OPEN.len();
+    }
+    None
 }
 
 /// The offset of the first `needle` in `haystack`.

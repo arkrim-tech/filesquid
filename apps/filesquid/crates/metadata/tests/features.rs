@@ -657,25 +657,32 @@ fn object_validates(world: &mut MetadataWorld) {
 fn no_version_published(world: &mut MetadataWorld) {
     let dir = world.object_dir.clone().expect("object dir");
     assert_eq!(versions_of(&dir), world.versions_before);
-    if let Some(Ok(version)) = &world.commit_outcome {
-        assert_eq!(version, &None, "an unchanged record publishes nothing");
+    match world.commit_outcome.as_ref().expect("edit made") {
+        Ok(version) => assert_eq!(version, &None, "an unchanged record publishes nothing"),
+        Err(err) => assert!(is_missing_version_inventory(err), "{err:?}"),
     }
 }
 
 #[then("the edit should be refused for the missing version inventory")]
 fn refused_for_missing_inventory(world: &mut MetadataWorld) {
     let outcome = world.commit_outcome.as_ref().expect("edit made");
-    let Err(StoreError::Backend(source)) = outcome else {
+    let Err(err) = outcome else {
         panic!("expected a refusal, got {outcome:?}");
     };
-    let change = source.downcast_ref::<ChangeError>().expect("change error");
-    assert!(
-        matches!(
-            change,
-            ChangeError::Commit(CommitError::MissingVersionInventory { .. })
-        ),
-        "{change:?}"
-    );
+    assert!(is_missing_version_inventory(err), "{err:?}");
+}
+
+/// Whether `err` is the change model's W010 refusal (OCFL-S-020).
+fn is_missing_version_inventory(err: &StoreError) -> bool {
+    let StoreError::Backend(source) = err else {
+        return false;
+    };
+    matches!(
+        source.downcast_ref::<ChangeError>(),
+        Some(ChangeError::Commit(
+            CommitError::MissingVersionInventory { .. }
+        ))
+    )
 }
 
 #[then("the missing version inventory should not be repaired")]

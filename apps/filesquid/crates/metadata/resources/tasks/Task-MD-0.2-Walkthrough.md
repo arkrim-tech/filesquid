@@ -410,3 +410,12 @@ running 0 tests
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
 ```
+
+## PR #76 review fixes (Cubic round 1)
+
+- P1: each `LocalObject` handle gets its own writer name (process id plus a process-wide sequence number), so two handles in one process never share a staging area and one handle's reset cannot discard or publish the other's change set (`two_local_objects_in_one_process_stage_apart`).
+- P2: the test rig maps an object identifier to `objects/<sha256>`, so distinct identifiers never share a root.
+- P2: the "no version should be published" step accepts only `Ok(None)` or the W010 `MissingVersionInventory` refusal.
+- P2: an XMP packet must open with `<x:xmpmeta` followed by whitespace, `>` or `/` (`a_name_that_only_starts_like_xmpmeta_is_not_a_packet`).
+- P2: XMP values decode `&quot;`, `&apos;`, decimal and hex character references, and CDATA sections (`xmp_values_decode_every_entity_reference_and_cdata`).
+- P2: an element without its close ends the XMP scan, so a malformed packet costs one pass (`an_unclosed_element_ends_the_scan_without_an_error`).

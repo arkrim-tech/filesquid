@@ -413,3 +413,31 @@ mod local_object {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
+
+/// Two handles on one directory in one process never share a staging area,
+/// so one handle's reset cannot discard or publish the other's change set.
+#[test]
+fn two_local_objects_in_one_process_stage_apart() {
+    use filesquid_metadata::store::ocfl::LocalObject;
+    let dir = std::env::temp_dir().join(format!("md-0.2-two-handles-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let first = LocalObject::open(&dir, Some("urn:x:1")).unwrap();
+    first.save(&titled("Harbour")).unwrap();
+    let second = LocalObject::open(&dir, None).unwrap();
+    let (base, _) = first.load_head().unwrap();
+    assert_eq!(
+        second.save_over(base.as_ref(), &titled("Dawn")).unwrap(),
+        Some(v("v2"))
+    );
+    let result = first.save_over(base.as_ref(), &titled("Dusk"));
+    assert!(
+        matches!(result, Err(StoreError::Conflict { .. })),
+        "{:?}",
+        result.err()
+    );
+    assert_eq!(
+        first.load().unwrap().get("dcterms:title").unwrap().value,
+        "Dawn"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}

@@ -14,7 +14,7 @@ use filesquid_ocfl::storage::{
     complete_immediately, read_verified, MemoryBackend, StorageBackend, StorageKey, MAX_CHUNK_BYTES,
 };
 use filesquid_ocfl::write::{rfc3339_utc, LeaseConfig, LeaseStore, SystemClock};
-use filesquid_ocfl::VersionNum;
+use filesquid_ocfl::{DigestAlgorithm, VersionNum};
 
 /// The object most tests describe.
 pub const OBJECT_ID: &str = "urn:example:photo";
@@ -33,9 +33,13 @@ pub fn ready<F: std::future::Future>(future: F) -> F::Output {
     complete_immediately(future).expect("backend futures complete at once")
 }
 
-/// The object root of `object_id`: `objects/<id with ':' as '_'>`.
+/// The object root of `object_id`: `objects/<sha256 of the identifier>`,
+/// so distinct identifiers never share a root.
 pub fn object_root(object_id: &str) -> String {
-    format!("objects/{}", object_id.replace(':', "_"))
+    format!(
+        "objects/{}",
+        DigestAlgorithm::Sha256.digest_hex(object_id.as_bytes())
+    )
 }
 
 /// A version number from its name.

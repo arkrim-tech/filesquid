@@ -413,6 +413,7 @@ pub use native::{LocalObject, MAX_READ_BYTES};
 #[cfg(all(feature = "ocfl-fs", not(target_arch = "wasm32")))]
 mod native {
     use std::path::Path;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     use filesquid_ocfl::read::Object;
     use filesquid_ocfl::storage::{complete_immediately, FsBackend, StorageBackend, StorageKey};
@@ -454,6 +455,9 @@ mod native {
         work: FsBackend,
         /// This directory's staging prefix on `work`: `changes/<dir_key>`.
         staging_prefix: String,
+        /// This handle's writer name, unique in the process, so two handles
+        /// never share a staging area.
+        holder: String,
         /// The object identifier.
         object_id: String,
     }
@@ -487,6 +491,7 @@ mod native {
                 leases,
                 work,
                 staging_prefix: format!("changes/{dir_key}"),
+                holder: next_holder(),
                 object_id,
             })
         }
@@ -592,11 +597,19 @@ mod native {
                 reservations: &self.leases,
                 staging: &self.work,
                 staging_prefix: self.staging_prefix.clone(),
-                holder: format!("fsquid-metadata-{}", std::process::id()),
+                holder: self.holder.clone(),
                 clock: SystemClock,
                 object_root: directory_root,
             }
         }
+    }
+
+    /// A writer name unique to this handle: the process id and a
+    /// process-wide sequence number.
+    fn next_holder() -> String {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        format!("fsquid-metadata-{}-{n}", std::process::id())
     }
 
     /// The lease store of one object directory: `work_dir/leases/<dir_key>`,

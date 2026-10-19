@@ -62,15 +62,18 @@ fn pull_tags(text: &str, prefix: &str, pairs: &mut Vec<(String, String)>) {
         let Some(gt) = rest.find('>') else {
             break;
         };
-        let term = rest[..gt].trim().trim_end_matches('/');
-        if term.contains(' ') || term.is_empty() {
-            rest = &rest[gt + 1..];
+        let raw = rest[..gt].trim();
+        let term = raw.trim_end_matches('/');
+        let skip = raw.ends_with('/') || term.contains(' ') || term.is_empty();
+        rest = &rest[gt + 1..];
+        if skip {
             continue;
         }
-        rest = &rest[gt + 1..];
         let close = format!("</{prefix}{term}>");
+        // An element without its close ends the scan, so a malformed packet
+        // costs one pass rather than one rescan per unmatched opening.
         let Some(end) = rest.find(&close) else {
-            continue;
+            break;
         };
         let value = element_text(&rest[..end]);
         let term = crate::map_dc_to_dcterms(term).unwrap_or(term);
@@ -104,9 +107,75 @@ fn xml_escape(value: &str) -> String {
         .replace('>', "&gt;")
 }
 
+/// Decode XML character data: `<![CDATA[…]]>` sections are kept verbatim,
+/// and the predefined entities (`&lt;`, `&gt;`, `&amp;`, `&quot;`, `&apos;`)
+/// and decimal or hex character references are decoded. An unknown or
+/// malformed reference is kept as written.
 fn xml_unescape(value: &str) -> String {
-    value
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&amp;", "&")
+    let mut out = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(at) = rest.find(['&', '<']) {
+        out.push_str(&rest[..at]);
+        rest = &rest[at..];
+        rest = match rest.strip_prefix("<![CDATA[") {
+            Some(cdata) => push_cdata(cdata, &mut out),
+            None if rest.starts_with('&') => push_reference(rest, &mut out),
+            None => {
+                out.push('<');
+                &rest[1..]
+            }
+        };
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Append a CDATA section's text (`cdata` starts after `<![CDATA[`) and
+/// return what follows its `]]>`; an unterminated section is kept whole.
+fn push_cdata<'a>(cdata: &'a str, out: &mut String) -> &'a str {
+    match cdata.split_once("]]>") {
+        Some((text, after)) => {
+            out.push_str(text);
+            after
+        }
+        None => {
+            out.push_str(cdata);
+            ""
+        }
+    }
+}
+
+/// Append the character a reference at the start of `text` (`&…;`) stands
+/// for and return what follows it; an unknown one is appended as written.
+fn push_reference<'a>(text: &'a str, out: &mut String) -> &'a str {
+    let decoded = text
+        .find(';')
+        .filter(|end| *end <= 10)
+        .and_then(|end| decode_reference(&text[1..end]).map(|c| (c, end)));
+    match decoded {
+        Some((c, end)) => {
+            out.push(c);
+            &text[end + 1..]
+        }
+        None => {
+            out.push('&');
+            &text[1..]
+        }
+    }
+}
+
+/// The character the reference name `name` (between `&` and `;`) stands for.
+fn decode_reference(name: &str) -> Option<char> {
+    let code = match name {
+        "lt" => return Some('<'),
+        "gt" => return Some('>'),
+        "amp" => return Some('&'),
+        "quot" => return Some('"'),
+        "apos" => return Some('\''),
+        _ => match name.strip_prefix("#x").or_else(|| name.strip_prefix("#X")) {
+            Some(hex) => u32::from_str_radix(hex, 16).ok()?,
+            None => name.strip_prefix('#')?.parse().ok()?,
+        },
+    };
+    char::from_u32(code)
 }
