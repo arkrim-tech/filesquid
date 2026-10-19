@@ -143,11 +143,17 @@ async fn assert_new_versions(w: &MonitorWorld, count: u32) {
 }
 
 #[then(expr = "the activity journal should record one {string} entry with opaque identifiers only")]
-fn journaled_opaque(w: &mut MonitorWorld, operation: String) {
+async fn journaled_opaque(w: &mut MonitorWorld, operation: String) {
     let entries = w.files.rig().journaled(&operation);
     assert_eq!(entries.len(), 1);
     let entry = &entries[0];
     assert_eq!(entry.outcome, Outcome::Succeeded);
+    let head = w.files.rig().head().await;
+    let expected = [LIBRARY.to_string(), OBJECT.to_string(), head];
+    assert_eq!(
+        entry.target_ids, expected,
+        "library, object and new version"
+    );
     assert!(entry
         .target_ids
         .iter()
@@ -275,6 +281,8 @@ fn first_16_mib(w: &mut MonitorWorld) {
     let answer = w.files.last();
     assert_eq!(answer.status, StatusCode::PARTIAL_CONTENT);
     assert_eq!(answer.body.len(), MAX_ANSWER_BYTES);
+    let first = &pattern(20 * 1024 * 1024)[..MAX_ANSWER_BYTES];
+    assert!(answer.body == first, "the body is the file's first 16 MiB");
     let total = 20 * 1024 * 1024;
     let range = format!("bytes 0-{}/{total}", MAX_ANSWER_BYTES - 1);
     assert_eq!(answer.header("content-range"), range);
@@ -282,7 +290,9 @@ fn first_16_mib(w: &mut MonitorWorld) {
 
 #[then(expr = "the write should be refused as {string}")]
 fn write_refused(w: &mut MonitorWorld, code: String) {
-    assert_eq!(w.files.last().json()["code"], code.as_str());
+    let answer = w.files.last();
+    assert_eq!(answer.status, status_of(&code));
+    assert_eq!(answer.json()["code"], code.as_str());
 }
 
 #[then(expr = "the activity journal should record one refused {string} entry")]
@@ -324,8 +334,18 @@ fn both_refused(w: &mut MonitorWorld, code: String) {
     let answers = &w.files.answers;
     assert_eq!(answers.len(), 2);
     for answer in answers {
+        assert_eq!(answer.status, status_of(&code));
         assert_eq!(answer.json()["code"], code.as_str());
         assert_eq!(answer.json()["reason"], "missing_credentials");
+    }
+}
+
+/// The HTTP status the API answers with error `code`.
+fn status_of(code: &str) -> StatusCode {
+    match code {
+        "conflict" => StatusCode::CONFLICT,
+        "unauthorized" => StatusCode::UNAUTHORIZED,
+        other => panic!("no status listed for {other}"),
     }
 }
 

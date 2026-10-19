@@ -81,7 +81,9 @@ impl FileError {
 
     /// The typed answer for `operation`. An `internal` failure logs its detail to stdout
     /// (never to the journal) through [`ApiError::internal`]; an `unavailable` one logs it
-    /// at WARN under a target outside the journal's.
+    /// at INFO under a target outside the journal's, so it reaches stdout only: the routes
+    /// journal the refusal itself once, at level `error`, and a WARN here would journal it a
+    /// second time.
     pub fn into_api_error(self, operation: &str) -> ApiError {
         match (self.code, self.detail) {
             (ErrorCode::Internal, Some(detail)) => ApiError::internal(operation, &detail),
@@ -171,6 +173,9 @@ impl From<CommitError> for FileError {
             }
             CommitError::Reservation(ReservationError::Held { .. }) => {
                 Self::unavailable("another writer holds the object's next version")
+            }
+            CommitError::Reservation(ReservationError::Lost { .. }) => {
+                Self::unavailable("the reservation expired or passed to another writer")
             }
             CommitError::Storage(storage) => storage.into(),
             CommitError::Read(read) => read.into(),

@@ -42,12 +42,21 @@ const run = ownsRun
   ? mkdtempSync(path.join(tmpdir(), "filesquid-desktop-e2e-"))
   : process.env.FILESQUID_DESKTOP_E2E_RUN;
 const binary = path.join(run, binaryName);
-if (ownsRun) {
-  copyFileSync(built, binary);
-  process.env.FILESQUID_DESKTOP_E2E_RUN = run;
-  // The content-handle tests' media library (API-F1.3): built once by the launcher, opened by
-  // the test-instrumented app from FILESQUID_E2E_LIBRARY, which the workers inherit.
-  process.env.FILESQUID_E2E_LIBRARY ??= buildMediaLibrary(run);
+try {
+  if (ownsRun) {
+    copyFileSync(built, binary);
+    process.env.FILESQUID_DESKTOP_E2E_RUN = run;
+  }
+  // The content-handle tests' media library (API-F1.3): built once by the launcher whenever
+  // FILESQUID_E2E_LIBRARY is unset (caller-supplied run directories included), and opened by
+  // the test-instrumented app from that variable, which the workers inherit.
+  process.env.FILESQUID_E2E_LIBRARY ||= buildMediaLibrary(run);
+} catch (error) {
+  // onComplete never runs when setup fails, so the owned run directory is removed here.
+  if (ownsRun) {
+    rmSync(run, { recursive: true, force: true });
+  }
+  throw error;
 }
 const port = Number(process.env.TAURI_WEBDRIVER_PORT ?? "4445");
 

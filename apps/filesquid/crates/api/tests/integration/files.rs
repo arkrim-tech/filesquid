@@ -467,7 +467,35 @@ async fn a_move_renames_a_file_or_a_whole_folder_in_one_version() {
         .await
         .json();
     assert_eq!(listing["entries"].as_array().expect("entries").len(), 2);
+    for (moved, status) in [
+        ("b.txt", 200),
+        ("pictures/x.jpg", 200),
+        ("a.txt", 404),
+        ("photos/x.jpg", 404),
+        ("photos/y.jpg", 404),
+    ] {
+        let uri = format!("/api/v1/files/details?{}", query(&format!("path={moved}")));
+        assert_eq!(rig.get(&uri).await.status.as_u16(), status, "{moved}");
+    }
     assert_eq!(rig.journaled("files.move").len(), 2);
+}
+
+#[tokio::test]
+async fn the_read_routes_refuse_an_invalid_path_before_any_lookup() {
+    let rig = FilesRig::with_files(&[("a.txt", b"a")]).await;
+    let reads_before = rig.root.reads();
+    for route in ["content", "details", "history"] {
+        for path in ["../a.txt", "/a.txt", "a.txt/", "a//b.txt", "./a.txt"] {
+            let uri = format!(
+                "/api/v1/files/{route}?{}",
+                query(&format!("path={}", files_fixture::encode(path)))
+            );
+            assert_error(&rig.get(&uri).await, 400, "invalid_request");
+        }
+    }
+    let listing = format!("/api/v1/files/listing?{}", query("prefix=..%2Fx"));
+    assert_error(&rig.get(&listing).await, 400, "invalid_request");
+    assert_eq!(rig.root.reads(), reads_before, "nothing was read");
 }
 
 #[tokio::test]

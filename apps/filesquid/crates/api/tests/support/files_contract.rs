@@ -150,10 +150,12 @@ pub fn sample(
     }
 }
 
-/// A content URL minted for `token` when `state` serves files, else `template`.
+/// A content URL minted for `token` when `state` serves files, else `template` with a
+/// well-formed handle no store holds, so the request reaches the content denial.
 fn content_url(state: &ApiState, token: &str, template: &str) -> String {
     if state.files().is_none() {
-        return template.to_string();
+        let unknown = "A".repeat(43);
+        return template.replace("{handle}", &unknown);
     }
     let target = ContentTarget {
         library_id: LIBRARY.to_string(),

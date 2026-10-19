@@ -480,13 +480,23 @@ async fn content_route_answers_pass_through_the_scheme_unchanged() {
     let mut request = get_with(&format!("filesquid://localhost{url}"), None, None);
     let range = http::HeaderValue::from_static("bytes=2-5");
     request.headers_mut().insert(http::header::RANGE, range);
-    let answer = handle(state, request).await;
+    let answer = handle(state.clone(), request).await;
     assert_eq!(answer.status(), http::StatusCode::PARTIAL_CONTENT);
     assert_eq!(answer.headers()["content-range"], "bytes 2-5/10");
+    assert_eq!(answer.headers()["accept-ranges"], "bytes");
+    assert_eq!(answer.headers()["content-type"], "video/webm");
     assert_eq!(answer.body(), b"2345");
     for (name, value) in PRIVACY_HEADERS {
         assert_eq!(answer.headers()[name], value, "{name}");
     }
+    let mut head = get_with(&format!("filesquid://localhost{url}"), None, None);
+    *head.method_mut() = http::Method::HEAD;
+    let head = handle(state, head).await;
+    assert_eq!(head.status(), http::StatusCode::OK);
+    assert_eq!(head.headers()["accept-ranges"], "bytes");
+    assert_eq!(head.headers()["content-type"], "video/webm");
+    assert_eq!(head.headers()["content-length"], "10");
+    assert!(head.body().is_empty(), "a HEAD answer has no body");
 }
 
 /// A file service over an in-memory OCFL root whose object holds `clip.webm`, and a content

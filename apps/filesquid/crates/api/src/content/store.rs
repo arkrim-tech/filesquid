@@ -57,9 +57,12 @@ struct Entry {
 }
 
 impl Entry {
-    /// True once the idle timeout or the absolute lifetime has passed at `now`.
+    /// True once the idle timeout or the absolute lifetime has passed at `now`, and also
+    /// when the clock has moved back before the handle's last use: a handle fails closed
+    /// rather than living longer than its bounds.
     fn expired(&self, now: i64) -> bool {
-        now.saturating_sub(self.last_ms) >= IDLE_TIMEOUT_MS
+        now < self.last_ms
+            || now.saturating_sub(self.last_ms) >= IDLE_TIMEOUT_MS
             || now.saturating_sub(self.minted_ms) >= ABSOLUTE_LIFETIME_MS
     }
 }
@@ -244,6 +247,14 @@ mod tests {
         now.fetch_add(IDLE_TIMEOUT_MS, Ordering::SeqCst);
         assert_eq!(store.accept(&minted.handle, |_| true), None);
         assert_eq!(store.live(), 0, "an expired handle is removed");
+    }
+
+    #[test]
+    fn a_clock_that_moves_back_ends_the_handle() {
+        let (store, now) = store();
+        let minted = store.mint([1; 32], target()).expect("mint");
+        now.fetch_sub(1, Ordering::SeqCst);
+        assert_eq!(store.accept(&minted.handle, |_| true), None);
     }
 
     #[test]

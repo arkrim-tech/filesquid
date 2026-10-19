@@ -237,6 +237,11 @@ impl<B, R, S> FileService<B, R, S> {
         true
     }
 
+    /// Whether `library_id` is open.
+    pub fn is_open(&self, library_id: &LibraryId) -> bool {
+        lock(&self.libraries).contains_key(library_id.as_str())
+    }
+
     /// Stop serving `library_id`. Returns false when it was not open.
     pub fn close_library(&self, library_id: &LibraryId) -> bool {
         lock(&self.libraries).remove(library_id.as_str()).is_some()
@@ -260,11 +265,14 @@ impl<B: StorageBackend, R, S> FileService<B, R, S> {
     /// One page of the folder `prefix` of a version.
     pub async fn listing(&self, query: ListingQuery) -> Result<FolderPageView, FileError> {
         let limit = page_size(query.limit)?;
+        let prefix = query.prefix.as_deref().unwrap_or("");
+        if !prefix.is_empty() {
+            check_logical_path(prefix)?;
+        }
         let library = self.library(&query.library_id)?;
         let root = library.locate(&query.object_id).await?;
         let object = Object::open(library.files.backend.as_ref(), &root).await?;
         let version = resolve(&object, query.version.as_deref())?;
-        let prefix = query.prefix.as_deref().unwrap_or("");
         let cursor = query.cursor.as_deref();
         let page = view::list_folder(&object, &version, prefix, cursor, limit).await?;
         let mut view = FolderPageView::of(&query.library_id, page);
@@ -274,6 +282,7 @@ impl<B: StorageBackend, R, S> FileService<B, R, S> {
 
     /// Storage facts about one file of a version.
     pub async fn details(&self, query: FileQuery) -> Result<FileDetailsView, FileError> {
+        check_logical_path(&query.path)?;
         let library = self.library(&query.library_id)?;
         let root = library.locate(&query.object_id).await?;
         let object = Object::open(library.files.backend.as_ref(), &root).await?;
@@ -292,6 +301,7 @@ impl<B: StorageBackend, R, S> FileService<B, R, S> {
 
     /// The versions that changed one file.
     pub async fn history(&self, query: HistoryQuery) -> Result<HistoryView, FileError> {
+        check_logical_path(&query.path)?;
         let library = self.library(&query.library_id)?;
         let root = library.locate(&query.object_id).await?;
         let object = Object::open(library.files.backend.as_ref(), &root).await?;
@@ -323,6 +333,7 @@ impl<B: StorageBackend, R, S> FileService<B, R, S> {
     /// and media type, and for a `GET` the planned range, read in at most
     /// [`MAX_RANGE_BYTES`] pieces.
     pub async fn content(&self, request: ContentRequest) -> Result<ContentAnswer, FileError> {
+        check_logical_path(&request.path)?;
         let library = self.library(&request.library_id)?;
         let root = library.locate(&request.object_id).await?;
         let object = Object::open(library.files.backend.as_ref(), &root).await?;
@@ -369,6 +380,7 @@ impl<B: StorageBackend, R, S> FileService<B, R, S> {
     pub async fn check_target(&self, target: &ContentTarget) -> Result<(), FileError> {
         let version = VersionNum::parse(&target.version)
             .map_err(|_| FileError::invalid("A content handle names one version, such as v1."))?;
+        check_logical_path(&target.path)?;
         let library = self.library(&target.library_id)?;
         let root = library.locate(&target.object_id).await?;
         let object = Object::open(library.files.backend.as_ref(), &root).await?;
@@ -383,9 +395,7 @@ impl<B: StorageBackend, R, S> FileService<B, R, S> {
     /// only once a file is added beneath it (`pending` true). Writes nothing: OCFL stores no
     /// empty folder. A file at the path or at one of its parents is a `conflict`.
     pub async fn create_folder(&self, request: FolderRequest) -> Result<FolderView, FileError> {
-        if request.path.is_empty() {
-            return Err(FileError::invalid("A folder needs a logical path."));
-        }
+        check_logical_path(&request.path)?;
         let library = self.library(&request.library_id)?;
         let root = library.locate(&request.object_id).await?;
         let object = Object::open(library.files.backend.as_ref(), &root).await?;
@@ -571,6 +581,21 @@ fn page_size(limit: Option<usize>) -> Result<usize, FileError> {
         _ => Err(FileError::invalid(format!(
             "A page holds 1 to {MAX_PAGE_ENTRIES} entries."
         ))),
+    }
+}
+
+/// Refuse a logical path that breaks the OCFL rules: empty, beginning or ending with `/`
+/// (E053), or with an empty, `.` or `..` element (E052). Pure.
+fn check_logical_path(path: &str) -> Result<(), FileError> {
+    let edges = path.is_empty() || path.starts_with('/') || path.ends_with('/');
+    let bad_element = path
+        .split('/')
+        .any(|element| element.is_empty() || element == "." || element == "..");
+    match edges || bad_element {
+        true => Err(FileError::invalid(
+            "The request names an invalid logical path or prefix, page size or range.",
+        )),
+        false => Ok(()),
     }
 }
 

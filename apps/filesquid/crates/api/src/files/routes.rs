@@ -21,13 +21,13 @@ use crate::error::ErrorCode;
 use crate::journal::{JournalEntry, Level, Outcome};
 use crate::routes::Route;
 use crate::ApiState;
-use axum::body::{Body, Bytes};
+use axum::body::{Body, Bytes, HttpBody};
 use axum::extract::rejection::{BytesRejection, JsonRejection, QueryRejection};
 use axum::extract::{DefaultBodyLimit, Query, State};
 use axum::http::header::{
     ACCEPT_RANGES, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, RANGE,
 };
-use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Extension, Json};
@@ -290,7 +290,7 @@ pub(crate) async fn answer_content(
 ) -> Response {
     let answer = match outcome {
         Ok(answer) => answer,
-        Err(err) => return refuse(state, READ_OPERATION, actor, err).await,
+        Err(err) => return without_body(refuse(state, READ_OPERATION, actor, err).await, kind),
     };
     let total = answer.total;
     let (status, range, len) = match answer.plan {
@@ -309,6 +309,10 @@ pub(crate) async fn answer_content(
     let mut response = (status, body).into_response();
     let headers = response.headers_mut();
     headers.insert(ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+    headers.insert(
+        HeaderName::from_static("x-content-type-options"),
+        HeaderValue::from_static("nosniff"),
+    );
     headers.insert(CONTENT_TYPE, HeaderValue::from_static(answer.media_type));
     headers.insert(CONTENT_LENGTH, HeaderValue::from(len));
     if let Ok(value) = HeaderValue::from_str(&disposition) {
@@ -318,6 +322,22 @@ pub(crate) async fn answer_content(
         headers.insert(CONTENT_RANGE, range);
     }
     response
+}
+
+/// `response` without its body for a `HEAD` request, keeping the length its body had, so a
+/// `HEAD` refusal has the status and headers of the `GET` one and no body.
+fn without_body(response: Response, kind: ContentAnswerKind) -> Response {
+    if !kind.head_only {
+        return response;
+    }
+    let length = response.body().size_hint().exact();
+    let (mut parts, _) = response.into_parts();
+    if let Some(length) = length {
+        parts
+            .headers
+            .insert(CONTENT_LENGTH, HeaderValue::from(length));
+    }
+    Response::from_parts(parts, Body::empty())
 }
 
 /// The `416` answer for a file of `total` bytes, journaled as a refusal.

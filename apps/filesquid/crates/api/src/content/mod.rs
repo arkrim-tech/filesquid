@@ -23,8 +23,10 @@
 //!   mint evicts that credential's least recently used handle.
 //! - **Denial.** Every unusable request under `/api/v1/content/` gets one identical answer
 //!   ([`denial`]): `forbidden`, reason `invalid_credentials`, never 401 or 404, with the same
-//!   headers and body, before any file is read.
-//! - **Headers.** Every content-route answer carries [`PRIVACY_HEADERS`].
+//!   status, headers and `ApiError` fields; every `GET` denial has the same body and a `HEAD`
+//!   denial an empty one. No file is read before a handle is accepted.
+//! - **Headers.** Every answer of the content route, and the mint answer that carries a
+//!   handle, carries [`PRIVACY_HEADERS`].
 
 mod encoding;
 mod route;

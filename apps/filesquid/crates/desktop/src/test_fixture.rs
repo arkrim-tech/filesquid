@@ -30,7 +30,8 @@ pub const E2E_LIBRARY_ID: &str = "5e2e0000-0000-4000-8000-00000000e2e0";
 ///
 /// # Errors
 ///
-/// A message when the root or its leases and staging cannot be prepared.
+/// A message when the variable is set but blank (it never falls back to the working
+/// directory), or when the root or its leases and staging cannot be prepared.
 pub fn open_e2e_library(
     files: &filesquid_native::HostFiles,
     data_dir: &std::path::Path,
@@ -38,6 +39,9 @@ pub fn open_e2e_library(
     let Some(root) = std::env::var_os(E2E_LIBRARY_VARIABLE) else {
         return Ok(());
     };
+    if root.to_string_lossy().trim().is_empty() {
+        return Err(format!("{E2E_LIBRARY_VARIABLE} is set but blank"));
+    }
     let library = filesquid_core::LibraryId::new(E2E_LIBRARY_ID).map_err(|e| e.to_string())?;
     filesquid_native::open_fs_library(files, &library, std::path::Path::new(&root), data_dir)
         .map(|_| ())

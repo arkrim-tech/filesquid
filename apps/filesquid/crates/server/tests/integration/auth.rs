@@ -96,8 +96,45 @@ async fn the_server_answers_the_content_route_with_its_one_denial() {
             assert_eq!(status, 403, "{path}");
             assert_eq!(json["code"], "forbidden", "{path}");
             assert_eq!(json["reason"], "invalid_credentials", "{path}");
+            let (status, headers, body) = head(server(&config), path, token).await;
+            assert_eq!(status, 403, "HEAD {path}");
+            assert!(body.is_empty(), "HEAD {path} has no body");
+            for (name, value) in PRIVACY_HEADERS {
+                assert_eq!(
+                    headers.get(name).map(|v| v.as_bytes()),
+                    Some(value.as_bytes())
+                );
+            }
         }
     }
+}
+
+/// The privacy headers every content-route answer carries (API-S-018).
+const PRIVACY_HEADERS: [(&str, &str); 4] = [
+    ("referrer-policy", "no-referrer"),
+    ("cache-control", "private, no-store"),
+    ("x-content-type-options", "nosniff"),
+    ("content-security-policy", "default-src 'none'; sandbox"),
+];
+
+/// `HEAD path` with an optional bearer token: status, headers and body bytes.
+async fn head(
+    router: axum::Router,
+    path: &str,
+    token: Option<&str>,
+) -> (u16, axum::http::HeaderMap, Vec<u8>) {
+    let mut request = Request::head(path);
+    if let Some(token) = token {
+        request = request.header(header::AUTHORIZATION, format!("Bearer {token}"));
+    }
+    let response = router
+        .oneshot(request.body(Body::empty()).expect("request"))
+        .await
+        .expect("answer");
+    let status = response.status().as_u16();
+    let headers = response.headers().clone();
+    let body = response.into_body().collect().await.expect("body");
+    (status, headers, body.to_bytes().to_vec())
 }
 
 #[tokio::test]

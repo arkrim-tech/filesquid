@@ -115,7 +115,9 @@ async fn an_opened_library_is_served_and_keeps_its_state_outside_the_root() {
     assert!(!open_fs_library(&files, &library(), &root, &data).expect("again"));
     let page = files.listing(listing()).await.expect("listing");
     assert_eq!(page.entries.len(), 1);
-    let library_dir = data.join("files").join(LIBRARY);
+    let library_dir = data
+        .join("files")
+        .join(filesquid_native::files::library_dir_name(&library()));
     assert!(library_dir.join("leases").is_dir());
     assert!(library_dir.join("staging").is_dir());
     assert!(!root.join("leases").exists() && !root.join("staging").exists());
@@ -142,5 +144,6 @@ async fn a_write_through_the_host_service_publishes_one_version() {
         .await
         .expect("upload");
     assert_eq!(commit.version, "v2");
-    assert!(root.join("objects/a/v2/content/b.txt").is_file());
+    let stored = root.join("objects/a/v2/content/b.txt");
+    assert_eq!(std::fs::read(stored).expect("read back"), b"bee");
 }

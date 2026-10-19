@@ -6,9 +6,11 @@
 //!
 //! Every table entry names the [`Action`] it performs, and [`router`] wraps every entry in
 //! [`auth::require`], so a route cannot be served without being authorised first
-//! (API-S-004). The one route outside the guard is the public liveness probe
-//! `GET /api/v1/health/live` ([`Action::Public`], API-S-015); building the router panics if
-//! any other path declares that action. [`route_actions`] lists the actions for the
+//! (API-S-004). Two routes are outside the Bearer guard: the public liveness probe
+//! `GET /api/v1/health/live` ([`Action::Public`], API-S-015), and the content route
+//! `/api/v1/content/{handle}` ([`Action::ReadContent`], API-S-018), whose handler accepts the
+//! content handle in its path, and checks its minting credential's permission, before
+//! anything else. Building the router panics if any other path declares either action. [`route_actions`] lists the actions for the
 //! contract's `x-filesquid-action`.
 
 use axum::extract::{OriginalUri, State};

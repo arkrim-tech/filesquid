@@ -18,8 +18,10 @@
 //!
 //! [`files`] serves the file operations of the libraries a host opens (listing, details,
 //! history, ranged reads, upload, move, remove and restore) through the `filesquid-ocfl` view
-//! API, and [`content`] lets media elements read one file version through a short-lived
-//! content handle instead of a token.
+//! API, and [`content`] lets media elements read one file version through a content handle
+//! instead of a token: it ends 300 seconds after its last use (so a long playback keeps it
+//! alive only while it keeps reading), 3,600 seconds after its mint at the latest, and when
+//! its minting credential ends.
 //!
 //! [`replica`] holds what a client that works from a local copy needs: a permission-aware
 //! cache identity, visible coverage and recovery states, and the ledger of pending changes
@@ -29,8 +31,11 @@
 //! [`host::HostType`], a server's operator name and its hosted-service enrolment port), and
 //! `GET /api/v1/host` answers that [`host::HostDescriptor`] to every authenticated caller.
 //!
-//! Every routed operation except the public liveness probe (`GET /api/v1/health/live`) is
-//! authenticated and authorised by the [`auth`] layer before its handler runs. The 404 and 405
+//! Every routed operation except the public liveness probe (`GET /api/v1/health/live`) and
+//! the content route (`GET` and `HEAD /api/v1/content/{handle}`) is authenticated and
+//! authorised by the [`auth`] layer before its handler runs. The content route's only
+//! credential is the content handle in its path, which its handler accepts, together with
+//! the minting credential's permission, before it reads anything. The 404 and 405
 //! fallbacks are authentication-only: they answer only a caller with an accepted credential
 //! and apply no policy, because no operation runs. All of it is deny-by-default: a host
 //! installs its [`auth::Authoriser`] with [`ApiState::install_authoriser`] (the desktop

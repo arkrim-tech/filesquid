@@ -518,9 +518,15 @@ async fn every_unusable_handle_gets_one_identical_denial_and_no_file_is_read() {
         before,
         "no file is read before a handle is accepted"
     );
+    let revoked_before = revoked_rig.root.reads();
     let other = fetch(&revoked_rig, Method::GET, &revoked, None).await;
     assert_eq!(other.headers, reference.headers, "revoked");
     assert_eq!(other.body, reference.body, "revoked");
+    assert_eq!(
+        revoked_rig.root.reads(),
+        revoked_before,
+        "no file is read for a revoked handle"
+    );
     let denied = rig.journaled("api.auth.denied");
     assert_eq!(denied.len(), 2 * cases.len() + 1);
     assert!(denied

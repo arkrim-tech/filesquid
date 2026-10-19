@@ -42,7 +42,7 @@ pub use catalog::{
     PendingIntent, SqliteCatalog, CATALOG_DIR, CATALOG_FILE_EXTENSION, CATALOG_SCHEMA_VERSION,
     MAX_LIBRARIES,
 };
-pub use files::{install_file_service, open_fs_library, HostFiles, HostLeases};
+pub use files::{install_file_service, library_dir_name, open_fs_library, HostFiles, HostLeases};
 pub use host_checks::{probe_name, DataDirChecks, MAX_PROBE_ATTEMPTS};
 pub use host_monitor::{HostMonitor, ALREADY_INSTALLED, HOST_HEARTBEAT_TIMEOUT_MS, JOURNAL_FILE};
 pub use journal_sqlite::SqliteJournal;

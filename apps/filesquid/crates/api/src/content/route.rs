@@ -215,12 +215,15 @@ async fn issued(state: &ApiState, actor: &str, target: &ContentTarget, minted: M
         .target(format!("expires:{expires_at}"));
     journal_entry(state, entry).await;
     let url = format!("{API_PREFIX}/content/{}", minted.handle);
-    Json(MintView {
+    let mut response = Json(MintView {
         handle: minted.handle,
         url,
         expires_at,
     })
-    .into_response()
+    .into_response();
+    // The answer carries the handle: keep it out of caches and referrers like the content.
+    add_privacy_headers(response.headers_mut());
+    response
 }
 
 /// `ms` as RFC 3339 UTC to the second (`2026-10-18T01:00:00Z`). Pure.

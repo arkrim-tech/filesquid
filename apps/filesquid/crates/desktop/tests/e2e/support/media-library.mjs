@@ -18,6 +18,7 @@ import {
   openSync,
   readSync,
   renameSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -140,13 +141,32 @@ function writeInventory(dir, inventory) {
 
 /**
  * Build the media library under `dir` and answer its storage root. The root is written
- * under a temporary name and renamed into place last, so a half-built root is never used.
+ * under a temporary name and renamed into place last, so a half-built root is never used;
+ * when any step fails the temporary root is removed before the error is rethrown, so failed
+ * runs leave no partial media behind.
  *
  * @param dir An empty directory of the test run.
  * @returns The storage root's path.
  */
 export function buildMediaLibrary(dir) {
   const building = path.join(dir, "media-root.building");
+  try {
+    writeMediaRoot(building);
+  } catch (error) {
+    rmSync(building, { recursive: true, force: true });
+    throw error;
+  }
+  const root = path.join(dir, "media-root");
+  renameSync(building, root);
+  return root;
+}
+
+/**
+ * Write the whole OCFL storage root (media, declarations and inventories) at `building`.
+ *
+ * @param building The temporary root directory; created here.
+ */
+function writeMediaRoot(building) {
   const object = path.join(building, "objects", "media");
   const content = path.join(object, "v1", "content");
   mkdirSync(content, { recursive: true });
@@ -175,7 +195,4 @@ export function buildMediaLibrary(dir) {
   writeFileSync(path.join(object, "0=ocfl_object_1.1"), "ocfl_object_1.1\n");
   writeInventory(object, inventory);
   writeInventory(path.join(object, "v1"), inventory);
-  const root = path.join(dir, "media-root");
-  renameSync(building, root);
-  return root;
 }

@@ -21,6 +21,17 @@ import {
   VIDEO_SECONDS,
 } from "../support/media-library.mjs";
 
+/**
+ * The privacy headers of a content-route answer (API-S-018) that page script can read. The
+ * app page's origin differs from the scheme's, so CORS shows it only safelisted response
+ * headers; `Referrer-Policy`, `X-Content-Type-Options` and `Content-Security-Policy` are
+ * asserted on the scheme answer itself in `tests/integration/api_protocol.rs`.
+ */
+const VISIBLE_PRIVACY_HEADERS = {
+  "cache-control": "private, no-store",
+  "content-type": "application/json",
+};
+
 /** Wall-clock seconds the video keeps playing: past the 300 s idle window. */
 const PLAY_SECONDS = 320;
 
@@ -85,6 +96,9 @@ describe("content handles for media elements in a packaged window", () => {
         return {
           length,
           type: head.headers.get("Content-Type"),
+          headRanges: head.headers.get("Accept-Ranges"),
+          headBytes: (await head.arrayBuffer()).byteLength,
+          tailRanges: tail.headers.get("Accept-Ranges"),
           tail: tail.status,
           range: tail.headers.get("Content-Range"),
           bytes: (await tail.arrayBuffer()).byteLength,
@@ -97,6 +111,9 @@ describe("content handles for media elements in a packaged window", () => {
     );
     expect(result.length).toBeGreaterThanOrEqual(MIN_VIDEO_BYTES);
     expect(result.type).toBe("video/webm");
+    expect(result.headRanges).toBe("bytes");
+    expect(result.headBytes).toBe(0);
+    expect(result.tailRanges).toBe("bytes");
     expect(result.tail).toBe(206);
     expect(result.range).toBe(`bytes ${result.length - 100}-${result.length - 1}/${result.length}`);
     expect(result.bytes).toBe(100);
@@ -105,16 +122,39 @@ describe("content handles for media elements in a packaged window", () => {
   });
 
   it("refuses an unknown handle with the one identical denial", async () => {
-    const result = await browser.execute(async (base) => {
-      const response = await fetch(`${base}/api/v1/content/${"A".repeat(43)}`);
-      return {
-        status: response.status,
-        body: await response.json(),
-        cache: response.headers.get("Cache-Control"),
-      };
-    }, apiBase());
+    const result = await browser.execute(
+      async (base, names) => {
+        const url = `${base}/api/v1/content/${"A".repeat(43)}`;
+        const headers = (response) =>
+          Object.fromEntries(names.map((name) => [name, response.headers.get(name)]));
+        const get = await fetch(url);
+        const head = await fetch(url, { method: "HEAD" });
+        const other = await fetch(`${base}/api/v1/content/not+a+handle`);
+        return {
+          status: get.status,
+          body: await get.text(),
+          headers: headers(get),
+          headStatus: head.status,
+          headHeaders: headers(head),
+          headBytes: (await head.arrayBuffer()).byteLength,
+          otherStatus: other.status,
+          otherBody: await other.text(),
+        };
+      },
+      apiBase(),
+      Object.keys(VISIBLE_PRIVACY_HEADERS),
+    );
     expect(result.status).toBe(403);
-    expect(result.body.reason).toBe("invalid_credentials");
+    const error = JSON.parse(result.body);
+    expect(error.code).toBe("forbidden");
+    expect(error.reason).toBe("invalid_credentials");
+    expect(error.retryable).toBe(false);
+    expect(result.headers).toEqual(VISIBLE_PRIVACY_HEADERS);
+    expect(result.headStatus).toBe(403);
+    expect(result.headHeaders).toEqual(VISIBLE_PRIVACY_HEADERS);
+    expect(result.headBytes).toBe(0);
+    expect(result.otherStatus).toBe(403);
+    expect(result.otherBody).toBe(result.body);
   });
 
   it("loads an <img> through a content handle", async () => {

@@ -51,10 +51,10 @@ impl RangeRequest {
         let Some(spec) = header.and_then(|h| h.trim().strip_prefix("bytes=")) else {
             return Self::Whole;
         };
-        let Some((first, last)) = spec.trim().split_once('-') else {
+        let Some((first, last)) = spec.split_once('-') else {
             return Self::Whole;
         };
-        match (first.trim(), last.trim()) {
+        match (first, last) {
             ("", suffix) => suffix.parse().map_or(Self::Whole, Self::Suffix),
             (first, "") => first
                 .parse()
@@ -128,6 +128,8 @@ mod tests {
             "bytes=5-1",
             "bytes=",
             "0-1",
+            "bytes=0 - 1",
+            "bytes= 0-1",
         ] {
             assert_eq!(parse(ignored), RangeRequest::Whole, "{ignored}");
         }

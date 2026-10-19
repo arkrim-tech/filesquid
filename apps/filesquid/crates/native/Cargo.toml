@@ -26,6 +26,8 @@ filesquid-core = { path = "../core" }
 # (API-F1.3).
 filesquid-ocfl = { path = "../ocfl" }
 fs4 = "1"
+# The digest that names each library's folder in the data directory.
+sha2 = "0.11"
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde_json = "1"
 tracing = "0.1"
