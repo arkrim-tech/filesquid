@@ -60,8 +60,8 @@ pub struct HistoryPage {
     pub items: Vec<HistoryEntry>,
     /// The cursor of the next page; `None` on the last page.
     pub next_cursor: Option<String>,
-    /// True when the history index stopped at its record or object cap, so this page may
-    /// miss activities.
+    /// True when the history index stopped at its record or object cap, or skipped an
+    /// object it could not open, so this page may miss activities.
     pub truncated: bool,
 }
 

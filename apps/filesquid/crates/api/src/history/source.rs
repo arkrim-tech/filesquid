@@ -61,9 +61,9 @@ impl std::error::Error for HistoryError {}
 pub struct HistorySnapshot {
     /// The indexed records.
     pub index: HistoryIndex,
-    /// True when the source holds records the index left out because it reached
-    /// [`MAX_HISTORY_RECORDS`] or [`MAX_HISTORY_OBJECTS`]: answers built from it may be
-    /// partial.
+    /// True when the source holds records the index left out, because it reached
+    /// [`MAX_HISTORY_RECORDS`] or [`MAX_HISTORY_OBJECTS`] or an object could not be opened:
+    /// answers built from it may be partial.
     pub truncated: bool,
 }
 

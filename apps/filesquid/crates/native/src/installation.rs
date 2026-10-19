@@ -113,12 +113,29 @@ pub fn load_or_create(data_dir: &Path) -> Result<Installation, InstallationError
         source,
         InstallationSource::Created | InstallationSource::RestoredFile
     ) {
-        write_file(&file_path, &id)?;
+        write_file(&file_path, &id).inspect_err(|_| forget_created(&store, &id, source))?;
     }
     if source != InstallationSource::Stored {
         tracing::info!(source = ?source, "installation ID restored or created");
     }
     Ok(Installation { id, source })
+}
+
+/// Remove the store copy this launch just created when its file copy could not be written,
+/// so the next launch creates (and journals) the installation again instead of reporting a
+/// restore. Only the row naming `id` is removed, so a copy another launch wrote stays. A
+/// failure is logged (stdout). Database I/O.
+fn forget_created(store: &Connection, id: &InstallationId, source: InstallationSource) {
+    if source != InstallationSource::Created {
+        return;
+    }
+    let removed = store.execute(
+        "DELETE FROM host_installation WHERE id = 1 AND uuid = ?1",
+        params![id.as_str()],
+    );
+    if let Err(err) = removed {
+        tracing::warn!(error = %err, "could not undo the store copy of an unwritten installation");
+    }
 }
 
 /// Decide the installation ID against the store copy, and write the store copy when it is
@@ -196,6 +213,14 @@ fn parse_file(text: &str) -> Result<InstallationId, InstallationError> {
     InstallationId::parse(uuid).map_err(|_| malformed())
 }
 
+/// A staging-file extension unique to this process and call, so concurrent launches never
+/// share (and rename or remove) one another's staging file. Pure apart from a counter.
+fn staging_extension() -> String {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("json.{}-{n}.tmp", std::process::id())
+}
+
 /// Write the file copy owner-only, through a temporary file renamed into
 /// place (file I/O).
 fn write_file(path: &Path, id: &InstallationId) -> Result<(), InstallationError> {
@@ -203,7 +228,7 @@ fn write_file(path: &Path, id: &InstallationId) -> Result<(), InstallationError>
         copy: "file",
         kind: err.kind(),
     };
-    let staging = path.with_extension("json.tmp");
+    let staging = path.with_extension(staging_extension());
     if let Err(err) = std::fs::remove_file(&staging) {
         if err.kind() != std::io::ErrorKind::NotFound {
             return Err(io(err));

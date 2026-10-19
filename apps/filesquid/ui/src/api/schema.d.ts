@@ -486,7 +486,7 @@ export interface components {
             items: components["schemas"]["HistoryEntry"][];
             /** @description Pass as `cursor` for the next page; null on the last page. */
             next_cursor: string | null;
-            /** @description True when the history index stopped at its record or object cap (100 000 each), so this page may miss activities. */
+            /** @description True when the history index stopped at its record or object cap (100 000 each) or skipped an object it could not open, so this page may miss activities. */
             truncated: boolean;
         };
     };
@@ -935,7 +935,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description A JSON-LD array of records, at most 64 MiB. When records were left out (the history index reached its cap or the body its size bound), X-History-Truncated is set. */
+            /** @description A JSON-LD array of records, at most 64 MiB. When records were left out (the history index reached its cap or skipped an unreadable object, or the body reached its size bound), X-History-Truncated is set. */
             200: {
                 headers: {
                     /** @description Present (value `true`) only when the export left records out. */

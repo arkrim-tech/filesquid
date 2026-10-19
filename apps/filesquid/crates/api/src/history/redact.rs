@@ -11,8 +11,9 @@
 //! - replaces each entity's `fsq:path` with an opaque `redacted-<n>` and its `@id` with the
 //!   same token in place of the percent-encoded path, numbering paths consistently across
 //!   every record one redactor handles, so derivation chains stay linked; an `fsq:path` it
-//!   cannot number (a node without a string `@id`, or a path that is not a string) is
-//!   dropped, so the redactor fails closed;
+//!   cannot number (a node without a string `@id`, or a path that is not a string)
+//!   refuses the whole record ([`RedactError::UnredactablePath`]), so the redactor fails
+//!   closed;
 //! - rewrites every reference to a replaced identifier.
 //!
 //! Object IDs, version names, operation IDs, kinds, times, digests and journal entry IDs
@@ -75,7 +76,8 @@ impl Redactor {
     ///
     /// # Errors
     ///
-    /// [`RedactError`] when the bytes are not a JSON object or nest too deeply.
+    /// [`RedactError`] when the bytes are not a JSON object, nest too deeply, or name a
+    /// logical path that cannot be replaced by a token.
     pub fn redact(&mut self, record: &[u8]) -> Result<Value, RedactError> {
         let mut document: Value =
             serde_json::from_slice(record).map_err(|_| RedactError::NotJson)?;
@@ -142,7 +144,8 @@ impl Redactor {
 ///
 /// # Errors
 ///
-/// [`RedactError`] when the bytes are not a JSON object or nest too deeply.
+/// [`RedactError`] when the bytes are not a JSON object, nest too deeply, or name a
+/// logical path that cannot be replaced by a token.
 pub fn redact_record(record: &[u8]) -> Result<String, RedactError> {
     let mut redactor = Redactor::new();
     let value = redactor.redact(record)?;
@@ -162,7 +165,7 @@ fn entity_id_without_path(id: &str, token: &str) -> String {
 }
 
 /// Apply `renames` to every string under `value`, drop `fsq:message` and replace each
-/// `fsq:path` with its token, or drop it when it has none.
+/// `fsq:path` with its token, refusing the record when a path has none.
 fn rewrite(
     value: &mut Value,
     renames: &BTreeMap<String, String>,
