@@ -158,6 +158,14 @@ test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 - The API writes the storage-root declaration itself, so `local_library` stays private; a delta that changes nothing writes no version (index writes then commit without one); a prefixed operation message that cannot be read is refused instead of dropping its receipt; decode errors carry a fixed reason; reservation failures that cannot clear map to `Failed`; `<id>.json` must fit 255 bytes; `CreateLibrary` touches the library entity once; the W010 refusal is also tested in the API on the in-memory backend.
 - The no-op receipt gap, the original-name contract and the transform's byte-only scope are documented in DE-S-010, API-S-025 and ADR 010.
 
+## Pre-commit hook
+
+`FULL=1 bash scripts/pre-commit.sh` on the merge of `origin/main` after the Cubic round 1 fixes (`48c7494`):
+
+```text
+✅ All Pre-Commit Hooks Passed! Test scope: full (344s)
+```
+
 ## Owner decisions and follow-ups
 
 - **Layout:** ADR 010 left the local layout "to be specified when the first library writer is built". This task specifies it in API-S-025 and records an amendment note in ADR 010 for the owner to confirm in this pull request.
