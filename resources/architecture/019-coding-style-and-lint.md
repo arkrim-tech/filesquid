@@ -12,6 +12,8 @@ Accepted
 
 Accepted: 2026-09-22T07:00:00Z.
 
+Amended 2026-10-19 (owner decision of 2026-10-18): "stable Rust" means the exact stable release pinned in `apps/filesquid/rust-toolchain.toml` (currently 1.99.1), so a new Clippy release cannot fail `-D warnings` on existing branches; new lints are fixed in the pull request that bumps the pin ([ADR 013](./013-cargo-svelte-workspaces.md) Versions amendment). The lint commands are unchanged.
+
 Paths updated 2026-10-15; see [ADR 031](./031-vanilla-typescript-ui-and-white-label-theming.md).
 
 ## Context / Requirement Reference

@@ -23,7 +23,7 @@ The FileSquid default UI MUST use the internal names and MUST NOT inherit the Im
 
 ## Current verified stack (scaffold)
 
-- **FileSquid Cargo workspace** at `apps/filesquid/` (product-local; the repository root has no `Cargo.toml`). Rust stable 1.98.1 (`rust-toolchain.toml` channel `stable`), edition 2021, MIT license. Crates under `apps/filesquid/crates/`:
+- **FileSquid Cargo workspace** at `apps/filesquid/` (product-local; the repository root has no `Cargo.toml`). Rust 1.99.1, an exact stable release pinned in `rust-toolchain.toml` (`channel = "1.99.1"`; bumped only in its own `build/` pull request, [ADR 013](./architecture/013-cargo-svelte-workspaces.md)), edition 2021, MIT license. Crates under `apps/filesquid/crates/`:
   - `filesquid-core` (`crates/core`): shared vocabulary and contracts (opaque IDs, repository, library, collection, virtual collection, virtual exhibit, file, jobs, crypto envelopes).
   - `filesquid-ocfl` (`crates/ocfl`): the OCFL module.
   - `filesquid-metadata` (`crates/metadata`): the metadata module.
