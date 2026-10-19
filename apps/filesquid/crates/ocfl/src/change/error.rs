@@ -9,7 +9,9 @@ use crate::write::{CommitError, CommitReceipt};
 /// Why a change-model operation did not complete.
 ///
 /// A commit, revert or reinstate that fails publishes nothing: the object's
-/// head is unchanged and the staging area keeps what was staged.
+/// head is unchanged and the staging area keeps what was staged. The one
+/// exception is [`ChangeError::StagingNotCleared`], returned after a
+/// successful publication with its receipt when the staging area was kept.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ChangeError {
     /// The object's head moved past the change set's base and an

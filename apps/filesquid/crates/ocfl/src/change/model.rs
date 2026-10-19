@@ -7,7 +7,8 @@ use super::area::{list_all, StagingArea};
 use super::delta::{compute_delta, diff_versions, manifest_digests, state_digests};
 use super::delta::{PathChange, WorkingState};
 use super::error::ChangeError;
-use super::index::{check_logical_path, check_no_path_conflict, Staged, StagingIndex};
+use super::index::{check_logical_path, path_conflict, Staged, StagingIndex};
+use crate::digest::DigestAlgorithm;
 use crate::guard::reject_git_in_root;
 use crate::inventory::{Inventory, User, VersionNum};
 use crate::read::copy_guard::refuse_copy_into_ocfl_root;
@@ -131,12 +132,13 @@ where
     pub async fn stage_bytes(&self, path: &str, bytes: &[u8]) -> Result<(), ChangeError> {
         valid_path(path)?;
         let (inventory, mut index) = self.load().await?;
-        let digest = self
-            .staging
+        let base = base_state(inventory.as_ref(), &index)?;
+        let digest = DigestAlgorithm::ENGINE.digest_hex(bytes);
+        index.set(&base, path, Staged::File(digest));
+        check_working(&index, &base)?;
+        self.staging
             .put_bytes(bytes, &known(inventory.as_ref()))
             .await?;
-        let base = base_state(inventory.as_ref(), &index)?;
-        index.set(&base, path, Staged::File(digest));
         self.save(&index, &base).await
     }
 
@@ -200,12 +202,18 @@ where
             "" => String::new(),
             trimmed => format!("{trimmed}/"),
         };
+        let keys = list_all(source, &dir).await?;
+        let paths: Vec<&str> = keys.iter().map(|k| &k.as_str()[dir.len()..]).collect();
+        for path in &paths {
+            valid_path(path)?;
+        }
+        if let Some(path) = path_conflict(paths.iter().copied()) {
+            return Err(conflict_error(path));
+        }
         let mut working = WorkingState::new();
-        for key in list_all(source, &dir).await? {
-            let path = key.as_str()[dir.len()..].to_string();
-            valid_path(&path)?;
-            let digest = self.staging.put_file(source, &key, &known).await?;
-            working.insert(path, digest);
+        for (key, path) in keys.iter().zip(paths) {
+            let digest = self.staging.put_file(source, key, &known).await?;
+            working.insert(path.to_string(), digest);
         }
         let base = base_state(inventory.as_ref(), &index)?;
         index.paths.clear();
@@ -357,10 +365,7 @@ where
     /// [`ChangeError::InvalidPath`], or as
     /// [`StagingArea::write_index`].
     async fn save(&self, index: &StagingIndex, base: &WorkingState) -> Result<(), ChangeError> {
-        let working = index.working(base);
-        if let Err(reason) = check_no_path_conflict(&working) {
-            return Err(invalid_path("", &reason));
-        }
+        check_working(index, base)?;
         self.staging.write_index(index).await
     }
 
@@ -416,6 +421,24 @@ pub(super) fn base_state(
         Some(version) => state_digests(inventory, version),
         None => Ok(WorkingState::new()),
     }
+}
+
+/// Refuse an index whose working state over `base` has a logical path that
+/// is the directory of another (E095), naming that path.
+fn check_working(index: &StagingIndex, base: &WorkingState) -> Result<(), ChangeError> {
+    let working = index.working(base);
+    match path_conflict(working.keys().map(String::as_str)) {
+        Some(path) => Err(conflict_error(path)),
+        None => Ok(()),
+    }
+}
+
+/// The E095 error for `path`.
+fn conflict_error(path: &str) -> ChangeError {
+    invalid_path(
+        path,
+        "a logical path of the working state is the directory of another (E095)",
+    )
 }
 
 /// Refuse a logical path that breaks the OCFL 1.1 path rules.

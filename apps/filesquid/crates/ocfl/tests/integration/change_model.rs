@@ -531,10 +531,11 @@ fn a_path_that_conflicts_with_a_directory_is_refused_when_staged() {
     commit_v1(&rig);
     let m = model(&rig, "writer-a");
     let err = ready(m.stage_bytes("a.txt/inner", b"x")).unwrap_err();
-    assert!(matches!(err, ChangeError::InvalidPath { .. }), "{err:?}");
-    assert!(!staged_keys(&rig, "changes/writer-a")
-        .iter()
-        .any(|k| k.ends_with("index.json")));
+    assert!(
+        matches!(&err, ChangeError::InvalidPath { path, .. } if path == "a.txt/inner"),
+        "{err:?}"
+    );
+    assert_eq!(staged_keys(&rig, "changes/writer-a"), Vec::<String>::new());
 }
 
 #[test]

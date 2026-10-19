@@ -22,7 +22,7 @@ Sources: [OCFL-S-010, OCFL-S-014, OCFL-S-015, OCFL-S-016, OCFL-S-018, OCFL-S-020
   - `compute_delta(inventory, base, working) -> Result<Vec<PathChange>, ChangeError>` (pure; an absent inventory means an empty base, and a `base` the inventory lacks is `ReadError::VersionNotFound`). `PathChange::{Added, Changed, Renamed, Deleted, Reinstated}`; `Added` and `Changed` carry `new_bytes` (the digest is not in the `manifest`). A deleted path and a new path with the same digest are a rename (several pair in path order); a new path whose content the `manifest` holds but the base state does not is reinstated; a new path that copies content still in the base is added with `new_bytes: false`. Digests compare without case. Changes are ordered by path (the new path of a rename).
   - `StagingArea::new(&backend, prefix)`: the staging area on any caller backend, under a caller prefix (format below).
   - `ChangeModel::new(&storage, &reservations, holder, root, object_id, staging)`: `stage_bytes`, `stage_remove`, `stage_rename`, `stage_tree` (every file under a prefix of any backend, for example a directory through `FsBackend`, becomes the working state), `reset`, `status` (`Status { object_id, base, head, changes }`), `diff(from, to)`, `log` (newest first), `checkout(version, &dest, prefix)`, `commit(meta)`, `revert(version, meta)`, `reinstate(version, paths, meta)`. `VersionMeta { created, message, user }`.
-  - `ChangeError::{Conflict, NothingToCommit, PathNotFound, InvalidPath, StagingCorrupt, StagingMismatch, WrongObject, SourceChanged, TooManyRebases, Commit, Read, Storage}`; `MAX_REBASES = 16`.
+  - `ChangeError::{Conflict, NothingToCommit, PathNotFound, InvalidPath, StagingCorrupt, StagingMismatch, WrongObject, SourceChanged, TooManyRebases, StagingNotCleared, Commit, Read, Storage}`; `MAX_REBASES = 16`.
 - **Built on the IO-0.6 writer, no second write path.** Every commit, revert and reinstate builds a `VersionDraft` (manifest digests are kept, other content is read from staging blobs) and calls `ObjectWriter::commit` with the change set's base as `expected_head`, so the fenced `vN` reservation, write order and head compare-and-swap of OCFL-S-018 apply unchanged. The writer itself was not changed; three internal modules became `pub(crate)` (`write::base`, `read::copy_guard`, `inventory::{json, paths}`) so the change model reuses the base reader, the OCFL-root guard, the strict JSON reader and the logical-path rules.
 - **Rebase or conflict.** Before each attempt the model reads the committed head. If it is not the base, every version after the base is compared with the base on each staged path; any difference is `ChangeError::Conflict { base, head, paths }` and nothing is published (the staging area is kept); otherwise the base moves to the head. `CommitError::HeadMoved` from the writer (the head moved between the model's read and the reservation) repeats the check. At most `MAX_REBASES` attempts, then `TooManyRebases`.
 - **W010 stays refused.** A head without its version inventory surfaces as `ChangeError::Commit(CommitError::MissingVersionInventory)` with nothing written; the change model never calls the repair (owner decision binding this task; OCFL-S-020).
@@ -118,7 +118,7 @@ error: could not compile `filesquid-ocfl` (test "integration_change_model") due 
 `cargo test -p filesquid-ocfl --locked --test integration_change_model -- --nocapture --test-threads=1`:
 
 ```text
-    Finished `test` profile [unoptimized] target(s) in 0.20s
+    Finished `test` profile [unoptimized] target(s) in 0.16s
      Running tests/integration/change_model.rs ($CARGO_TARGET_DIR/debug/deps/integration_change_model-97a7db5939f6743a)
 
 running 27 tests
@@ -156,7 +156,7 @@ ocfl-py change-model object: VALID
 [W007b] OCFL Object v3 inventory v1 version block SHOULD include a user key (see https://ocfl.io/1.1/spec/#W007)
 [W007b] OCFL Object v3 inventory v2 version block SHOULD include a user key (see https://ocfl.io/1.1/spec/#W007)
 [W007b] OCFL Object v3 inventory v3 version block SHOULD include a user key (see https://ocfl.io/1.1/spec/#W007)
-OCFL v1.1 Object at $CARGO_TARGET_DIR/tmp/ocfl-change-9348-5/root/obj is VALID
+OCFL v1.1 Object at $CARGO_TARGET_DIR/tmp/ocfl-change-29774-5/root/obj is VALID
 ok
 test compute_delta_classifies_a_working_state_against_a_base ... ok
 test compute_delta_without_an_inventory_has_an_empty_base ... ok
@@ -167,7 +167,7 @@ test revert_commits_a_new_version_without_touching_earlier_ones ... ok
 test staging_and_checkout_inside_an_ocfl_root_are_refused ... ok
 test staging_is_never_inside_the_object_and_reads_need_none_of_it ... ok
 
-test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.98s
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.87s
 
 ```
 
@@ -270,45 +270,45 @@ test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 34 filtered out; fin
 
 ```text
      Running unittests src/lib.rs ($CARGO_TARGET_DIR/debug/deps/filesquid_ocfl-336d9c2a83f05f02)
-test result: ok. 43 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.59s
+test result: ok. 43 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.64s
      Running tests/features.rs ($CARGO_TARGET_DIR/debug/deps/features-9009fa7eceb51bdd)
    ✔  Then Arrow, Parquet, DuckDB, and Iceberg should be absent from default features
 [Summary]
 13 features
-136 scenarios (133 passed, 3 skipped)
-622 steps (619 passed, 3 skipped)
+137 scenarios (134 passed, 3 skipped)
+629 steps (626 passed, 3 skipped)
      Running tests/integration/change_model.rs ($CARGO_TARGET_DIR/debug/deps/integration_change_model-97a7db5939f6743a)
-test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.51s
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.54s
      Running tests/integration/content_fixtures.rs ($CARGO_TARGET_DIR/debug/deps/integration_content_fixtures-2450cd9c4beef973)
-test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.12s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.95s
      Running tests/integration/enumerate_state.rs ($CARGO_TARGET_DIR/debug/deps/integration_enumerate_state-c992207f0a36f4c4)
-test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.19s
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.15s
      Running tests/integration/fixture_conformance.rs ($CARGO_TARGET_DIR/debug/deps/integration_fixture_conformance-6188b5d43aaacb5e)
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
      Running tests/integration/fixture_inventories.rs ($CARGO_TARGET_DIR/debug/deps/integration_fixture_inventories-49912e26c8122bb4)
 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
      Running tests/integration/fixture_reads.rs ($CARGO_TARGET_DIR/debug/deps/integration_fixture_reads-f992725a1bd4ec37)
-test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.28s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.13s
      Running tests/integration/fs_conformance.rs ($CARGO_TARGET_DIR/debug/deps/integration_fs_conformance-4c054563d204acfb)
-test result: ok. 48 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.11s
+test result: ok. 48 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.07s
      Running tests/integration/hierarchy_guard.rs ($CARGO_TARGET_DIR/debug/deps/integration_hierarchy_guard-3efdbaf82d970047)
-test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
      Running tests/integration/logical_file.rs ($CARGO_TARGET_DIR/debug/deps/integration_logical_file-c870615487e03f53)
-test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.02s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.99s
      Running tests/integration/memory_conformance.rs ($CARGO_TARGET_DIR/debug/deps/integration_memory_conformance-bbed81d294b9c269)
-test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.03s
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.93s
      Running tests/integration/opaque_bytes.rs ($CARGO_TARGET_DIR/debug/deps/integration_opaque_bytes-1ba5398c372ee9d8)
-test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.28s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.82s
      Running tests/integration/read_objects.rs ($CARGO_TARGET_DIR/debug/deps/integration_read_objects-777c46e5ca575e3e)
-test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
      Running tests/integration/validate_objects.rs ($CARGO_TARGET_DIR/debug/deps/integration_validate_objects-f628c102e60642ab)
-test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.50s
+test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.42s
      Running tests/integration/version_inventory_repair.rs ($CARGO_TARGET_DIR/debug/deps/integration_version_inventory_repair-ec3ea182e8864a75)
 test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
      Running tests/integration/write_order.rs ($CARGO_TARGET_DIR/debug/deps/integration_write_order-22dd8487357674b8)
-test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.28s
      Running tests/unit/digest.rs ($CARGO_TARGET_DIR/debug/deps/unit_digest-84296ab96d185c1f)
-test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
      Running tests/unit/fixity.rs ($CARGO_TARGET_DIR/debug/deps/unit_fixity-595c41ef01df1b6c)
 test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests/unit/git_guard.rs ($CARGO_TARGET_DIR/debug/deps/unit_git_guard-dfd4d18dbb6d3248)
@@ -353,6 +353,11 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 - `checkout` checks every destination before copying any bytes (`checkout_writes_nothing_when_any_destination_is_inside_an_ocfl_root`).
 - Listing walks bound the total key count and require each continuation to equal the page's last key and move forward; the staging index is size-checked before it is written.
 - New BDD scenario "Reinstate restores chosen paths in a new version"; the test helper `staged_keys` follows listing continuations; SRS OCFL-S-015 and the README state that only a successful commit, revert or reinstate publishes a version.
+
+## Cubic round 2 fixes
+
+- `stage_bytes` and `stage_tree` check the resulting working state for E095 before writing any blob, so a refused request leaves the staging prefix as it was (`a_path_that_conflicts_with_a_directory_is_refused_when_staged` now asserts the prefix is empty and the error names `a.txt/inner`).
+- `ChangeError` rustdoc names `StagingNotCleared` as the one post-publication error; this Walkthrough lists it and its transcripts are refreshed.
 
 ## Coverage
 

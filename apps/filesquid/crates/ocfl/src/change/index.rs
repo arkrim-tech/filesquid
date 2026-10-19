@@ -200,16 +200,11 @@ fn parse_snapshot(value: Option<&Value>) -> Result<bool, String> {
     }
 }
 
-/// Refuse a working state in which one logical path is the directory of
-/// another (`a` and `a/b`), which OCFL forbids (E095).
-pub(crate) fn check_no_path_conflict(working: &WorkingState) -> Result<(), String> {
-    match first_conflict(working.keys().map(String::as_str)) {
-        Some(path) => Err(format!(
-            "{:?}: conflicts with another logical path of the working state (E095)",
-            truncate(path)
-        )),
-        None => Ok(()),
-    }
+/// The first logical path of `paths` that is the directory of another, or
+/// repeats one (`a` and `a/b`), which OCFL forbids (E095); `None` when
+/// there is none.
+pub(crate) fn path_conflict<'p>(paths: impl IntoIterator<Item = &'p str>) -> Option<&'p str> {
+    first_conflict(paths)
 }
 
 /// `paths`: logical path → staged entry.
