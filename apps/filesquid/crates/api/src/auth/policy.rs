@@ -42,6 +42,8 @@ pub enum Action {
     SubscribeEvents,
     /// Read the monitor: health report, processes, journal and metrics (admin routes, `/metrics`).
     ReadMonitor,
+    /// Start OCFL validation runs (`POST /api/v1/admin/ocfl/validation-runs`, API-S-022).
+    RunValidation,
     /// Read the host descriptor (`GET /api/v1/host`). Granted to every authenticated caller,
     /// whatever the policy says ([`Action::granted_to_every_credential`], API-S-020).
     ReadHost,
@@ -55,11 +57,12 @@ pub enum Action {
 
 impl Action {
     /// Every action, in declaration order.
-    pub const ALL: [Action; 6] = [
+    pub const ALL: [Action; 7] = [
         Action::ReadHealth,
         Action::ReadContract,
         Action::SubscribeEvents,
         Action::ReadMonitor,
+        Action::RunValidation,
         Action::ReadHost,
         Action::Public,
     ];
@@ -71,6 +74,7 @@ impl Action {
             Action::ReadContract => "contract.read",
             Action::SubscribeEvents => "events.subscribe",
             Action::ReadMonitor => "monitor.read",
+            Action::RunValidation => "ocfl.validation.run",
             Action::ReadHost => "host.read",
             Action::Public => "public",
         }

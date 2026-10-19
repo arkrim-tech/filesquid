@@ -1,0 +1,25 @@
+# Task API-F2.7 ToDos
+
+- [ ] Failing tests first (compile failure recorded)
+- [ ] C1 every object of every open library
+- [ ] C2 schedule 7 days default, cap 100,000 default, both changeable
+- [ ] C3 takeover seam validates the object
+- [ ] C4 on-request route, from cursor or from start
+- [ ] C5 process registry with progress and heartbeat
+- [ ] C6 one run per library, refusal journaled
+- [ ] C7 cancel and cap stop, not-checked count
+- [ ] C8 cursor order, wrap, deleted ahead skipped, created behind next pass, restart keeps cursor
+- [ ] C9 deleted object closes findings, closure journaled
+- [ ] C10 latest findings per object stored
+- [ ] C11 error finding journaled redacted
+- [ ] C12 health degraded with codes and object count
+- [ ] C13 finding open until revalidation clears it
+- [ ] C14 warnings listed, health unchanged
+- [ ] C15 findings route: owner/admin only, last run, next run
+- [ ] C16 location hidden from the administrator
+- [ ] C17 health.change pushed on findings change
+- [ ] C18 redaction tests
+- [ ] C19 refusals journaled; isolation guard green
+- [ ] C20 openapi.json and schema.d.ts
+- [ ] native SqliteFindings and host wiring
+- [ ] BDD, fmt, clippy, tests, rustdoc, docs, walkthrough, boxes

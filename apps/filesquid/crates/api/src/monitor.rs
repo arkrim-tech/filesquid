@@ -12,7 +12,8 @@ use crate::journal_writer::{JournalSender, JournalWriter, WriterConfig};
 use crate::metrics::Metrics;
 use crate::registry::{system_clock, Clock, ProcessRegistry, ProcessState};
 use crate::{ApiEvent, EventBus};
-use std::sync::{Arc, Mutex};
+use crate::ocfl_validation::{ErrorSummary, FindingsStore};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// The host checks the health rules need that require storage I/O (SRS-F-061 Health: data
 /// directory writable, free space against thresholds). Hosts inject an implementation, as
@@ -90,6 +91,7 @@ struct Inner {
     config: MonitorConfig,
     events: EventBus,
     last_status: Mutex<Option<HealthStatus>>,
+    findings: OnceLock<Arc<dyn FindingsStore>>,
 }
 
 /// Cloneable handle to a host's monitor.
@@ -130,6 +132,7 @@ impl Monitor {
                 config,
                 events,
                 last_status: Mutex::new(None),
+                findings: OnceLock::new(),
             }),
         }
     }
@@ -196,6 +199,28 @@ impl Monitor {
         report
     }
 
+    /// Use `store` as the source of open OCFL validation findings for the health rules
+    /// (API-S-022). Returns false, keeping the first, if one was already installed.
+    pub fn install_findings(&self, store: Arc<dyn FindingsStore>) -> bool {
+        self.inner.findings.set(store).is_ok()
+    }
+
+    /// Evaluate health and publish it on `health.change` even when the status did not change,
+    /// because the open findings did (API-S-022). Performs I/O through
+    /// [`health_report`](Self::health_report).
+    pub fn publish_health(&self) -> HealthReport {
+        let report = self.health_report();
+        if let Ok(mut last) = self.inner.last_status.lock() {
+            *last = Some(report.status);
+        }
+        if let Ok(data) = serde_json::to_value(&report) {
+            self.inner
+                .events
+                .publish(ApiEvent::new(topic::HEALTH_CHANGE, data));
+        }
+        report
+    }
+
     /// Apply the configured retention policy to the journal store (I/O).
     pub fn apply_retention(&self) -> Result<u64, JournalError> {
         self.inner
@@ -223,6 +248,7 @@ impl Monitor {
             from_ms: Some(now - ERROR_WINDOW_MS),
             ..Default::default()
         };
+        let ocfl = self.ocfl_errors();
         HealthInputs {
             stalled,
             store_ok: self.inner.store.ping().is_ok(),
@@ -230,6 +256,21 @@ impl Monitor {
             free_bytes: self.inner.checks.free_bytes(),
             queue_fill: self.journal().queue_fill(),
             errors_last_5m: self.inner.store.count(&errors).unwrap_or(0),
+            ocfl_error_codes: ocfl.codes,
+            ocfl_error_objects: ocfl.objects,
         }
+    }
+
+    /// The open OCFL error findings in short; none without a findings store. A failing store
+    /// already shows as `store_unreachable` on the desktop; here it counts as no findings and
+    /// is logged to stdout.
+    fn ocfl_errors(&self) -> ErrorSummary {
+        let Some(store) = self.inner.findings.get() else {
+            return ErrorSummary::default();
+        };
+        store.error_summary().unwrap_or_else(|err| {
+            tracing::warn!(target: "filesquid::monitor", error = %err, "findings store failed");
+            ErrorSummary::default()
+        })
     }
 }

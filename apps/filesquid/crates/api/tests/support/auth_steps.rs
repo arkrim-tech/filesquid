@@ -39,6 +39,13 @@ fn start_monitor(w: &mut MonitorWorld, state: &ApiState) {
         state.events.clone(),
     );
     state.install_monitor(monitor.clone());
+    let validation: filesquid_api::ocfl_validation::ValidationService<
+        filesquid_ocfl::storage::MemoryBackend,
+    > = filesquid_api::ocfl_validation::ValidationService::new(
+        Arc::new(filesquid_api::ocfl_validation::MemoryFindingsStore::new()),
+        monitor.clone(),
+    );
+    state.install_validation(Arc::new(validation));
     w.store = Some(store);
     w.monitor = Some(monitor);
 }
@@ -99,9 +106,13 @@ async fn record(w: &mut MonitorWorld, service: Router, request: Request<Body>) {
     w.answers.push((status, body.to_bytes().to_vec()));
 }
 
-/// `GET path` through the API router with an optional bearer token.
+/// Call `path` through the API router with an optional bearer token: `POST` for the one
+/// command route (an empty body), `GET` for every other route.
 async fn call(w: &mut MonitorWorld, path: &str, token: Option<String>) {
-    let mut request = Request::get(path);
+    let mut request = match path {
+        "/api/v1/admin/ocfl/validation-runs" => Request::post(path),
+        _ => Request::get(path),
+    };
     if let Some(token) = token {
         request = request.header("authorization", format!("Bearer {token}"));
     }

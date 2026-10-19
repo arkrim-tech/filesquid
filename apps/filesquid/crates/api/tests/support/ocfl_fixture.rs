@@ -71,6 +71,11 @@ pub fn library() -> LibraryId {
 pub struct ManualClock(Arc<AtomicU64>);
 
 impl ManualClock {
+    /// A clock at `millis`.
+    pub fn at(millis: u64) -> Self {
+        Self(Arc::new(AtomicU64::new(millis)))
+    }
+
     /// Move the clock forward by `millis`.
     pub fn advance(&self, millis: u64) {
         self.0.fetch_add(millis, Ordering::SeqCst);
@@ -92,7 +97,11 @@ pub struct CountingBackend {
     broken_hierarchy: AtomicBool,
     extra_on_write: Mutex<Option<String>>,
     replace_after_read: Mutex<Option<(String, Vec<u8>)>>,
+    hook_after_read: Mutex<Option<(String, ReadHook)>>,
 }
+
+/// Code run once right after a chosen key is read.
+pub type ReadHook = Box<dyn FnOnce() + Send>;
 
 impl CountingBackend {
     /// An empty backend.
@@ -156,6 +165,25 @@ impl CountingBackend {
         }
     }
 
+    /// Run `hook` once, right after the next ranged read of `raw`.
+    pub fn on_read(&self, raw: &str, hook: ReadHook) {
+        *self.hook_after_read.lock().expect("lock") = Some((raw.to_string(), hook));
+    }
+
+    /// Run the armed hook of `read`, once.
+    fn run_read_hook(&self, read: &StorageKey) {
+        let armed = {
+            let mut slot = self.hook_after_read.lock().expect("lock");
+            match slot.as_ref() {
+                Some((raw, _)) if raw == read.as_str() => slot.take(),
+                _ => None,
+            }
+        };
+        if let Some((_, hook)) = armed {
+            hook();
+        }
+    }
+
     /// Run the armed replacement of `read`, once.
     async fn after_read(&self, read: &StorageKey) {
         let armed = {
@@ -198,6 +226,7 @@ impl StorageBackend for CountingBackend {
     async fn get_range(&self, key: &StorageKey, range: ByteRange) -> Result<Vec<u8>, StorageError> {
         let bytes = self.inner.get_range(key, range).await?;
         self.after_read(key).await;
+        self.run_read_hook(key);
         Ok(bytes)
     }
 

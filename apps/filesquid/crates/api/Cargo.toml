@@ -24,6 +24,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry"] }
 
 [dev-dependencies]
+# The engine with its filesystem backend, for tests on a real directory only.
+filesquid-ocfl = { path = "../ocfl" }
 cucumber = { version = "0.23", features = ["macros", "output-junit"] }
 http-body-util = "0.1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
@@ -100,6 +102,10 @@ path = "tests/unit/local_library.rs"
 [[test]]
 name = "unit_version_inventory_repair"
 path = "tests/unit/version_inventory_repair.rs"
+
+[[test]]
+name = "unit_ocfl_validation"
+path = "tests/unit/ocfl_validation.rs"
 
 [[test]]
 name = "features"

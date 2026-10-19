@@ -65,7 +65,22 @@ fn journaled_owner_state() -> (ApiState, LaunchToken, Monitor, Arc<MemoryJournal
         filesquid_api::host::HostIdentity::desktop(),
         Arc::new(filesquid_api::host::NotEnrolled),
     );
+    let validation: filesquid_api::ocfl_validation::ValidationService<
+        filesquid_ocfl::storage::MemoryBackend,
+    > = filesquid_api::ocfl_validation::ValidationService::new(
+        Arc::new(filesquid_api::ocfl_validation::MemoryFindingsStore::new()),
+        monitor.clone(),
+    );
+    state.install_validation(Arc::new(validation));
     (state, token, monitor, store)
+}
+
+/// The method each routed path answers: POST for the one command route, GET otherwise.
+fn method_of(path: &str) -> Method {
+    match path {
+        "/api/v1/admin/ocfl/validation-runs" => Method::POST,
+        _ => Method::GET,
+    }
 }
 
 /// Every routed path that requires a credential: all but the deliberately public ones.
@@ -132,7 +147,8 @@ async fn every_route_denies_a_wrong_token() {
 async fn every_route_answers_the_per_launch_token_holder() {
     let (state, token, monitor, _) = journaled_owner_state();
     for path in routed_paths() {
-        let (status, json) = call(&state, Method::GET, &path, Some(token.secret())).await;
+        let method = method_of(&path);
+        let (status, json) = call(&state, method, &path, Some(token.secret())).await;
         assert_eq!(status, 200, "{path}: {json}");
     }
     monitor.shutdown();
@@ -256,6 +272,7 @@ fn every_routed_path_declares_its_action() {
             "/api/v1/health/live" => Action::Public,
             "/api/v1/openapi.json" => Action::ReadContract,
             "/api/v1/host" => Action::ReadHost,
+            "/api/v1/admin/ocfl/validation-runs" => Action::RunValidation,
             admin if admin.starts_with("/api/v1/admin/") => Action::ReadMonitor,
             other => panic!("{other} has no expected action in this test"),
         };
@@ -273,6 +290,7 @@ fn action_names_are_unique_dotted_identifiers() {
             "contract.read",
             "events.subscribe",
             "monitor.read",
+            "ocfl.validation.run",
             "host.read",
             "public"
         ]
