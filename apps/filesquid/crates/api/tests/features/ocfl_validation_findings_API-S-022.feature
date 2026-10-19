@@ -5,14 +5,15 @@
 Feature: OCFL validation findings in health and the Monitor
   Every host runs the OCFL validator over every object of every open library: on a schedule,
   on request, and after a commit that took over a reservation. Error findings keep health
-  degraded until a later validation no longer reports them; warnings are listed only. The
+  degraded until a later validation no longer reports them; warnings are listed and do not
+  change health. Every finding, error or warning, is journaled once when it opens. The
   journal and health carry opaque object IDs, versions and codes, never a path or content.
 
   Scenario: A stray file under vN/ degrades health until it is removed
     Given an open library with a valid object and an object with a stray file under its head version
     When the owner requests a validation run
     Then health should be "degraded" with reason "ocfl_validation_errors" naming "E023" in 1 object
-    And one "ocfl.validation.finding" entry should be journaled without paths
+    And one "ocfl.validation.finding" entry for "E023" should be journaled without paths
     When the stray file is removed and the library is validated again
     Then health should be "ok"
 
@@ -20,6 +21,7 @@ Feature: OCFL validation findings in health and the Monitor
     Given an open library with an object whose head has no version inventory
     When the owner requests a validation run
     Then the findings should list "W010" as a warning
+    And one "ocfl.validation.finding" entry for "W010" should be journaled without paths
     And health should be "ok"
 
   Scenario: A takeover commit validates that object

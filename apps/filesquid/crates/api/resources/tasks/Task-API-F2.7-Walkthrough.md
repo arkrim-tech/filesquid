@@ -13,7 +13,7 @@ Parents: [F-061 Activity journal and live health monitoring](../../../../../../r
 | Acceptance criterion | Gate | State |
 |---|---|---|
 | (1) E023 degrades health with reason `ocfl_validation_errors` naming E023, journals one finding, appears in the route, and health is `ok` again once fixed and revalidated | `an_e023_object_degrades_health_until_it_is_fixed_and_revalidated`, `an_e023_object_on_a_real_directory_is_found` (FsBackend), `the_owner_sees_locations_and_the_administrator_does_not`, scenario 1 | Met |
-| (2) W010 is listed as a warning and health stays `ok` | `a_w010_object_is_listed_as_a_warning_and_leaves_health_ok`, scenario 2 | Met |
+| (2) W010 is listed as a warning, journaled once, and health stays `ok` | `a_w010_object_is_listed_as_a_warning_and_leaves_health_ok`, `a_run_over_many_objects_journals_one_entry_per_finding_with_no_loss`, scenario 2 | Met |
 | (3) A takeover commit triggers validation of that object | `a_takeover_commit_triggers_validation_of_that_object`, scenario 3 (at the seam; see the Conflict Artifact) | Met at the API seam; end to end blocked on the engine |
 | (4) Only the owner or an administrator may call; locations hidden from a caller who may not read the object | `anyone_else_is_refused_and_the_refusal_is_journaled`, `locations_are_shown_only_to_a_caller_who_may_read_the_object`, scenario 4, contract and auth tests | Met |
 | (5) Redaction: no logical path, content path, title or content in journal rows or health reasons | `journal_rows_and_health_reasons_carry_no_path_title_or_content`, scenario steps | Met |
@@ -207,7 +207,7 @@ Round 1 on `b967a96`: 31 findings (P1 3, P2 14, P3 14). Fixed in the next commit
   - `SqliteFindings` opens without following a link.
 - **Stores.** `FindingChange::between` is shared by both stores; the memory store normalizes like SQLite; the store contract doc is corrected; `start_validation` checks before opening anything.
 - **Docs and tests.**
-  - The ADR 033 amendment says why OCFL warnings are listed, not journaled.
+  - The ADR 033 amendment, API-S-022 and the plan row say that every finding, warnings included, is journaled one by one (owner decision, 2026-10-19).
   - The API-S-006 parenthetical names the SQLite findings store, and the F-037 traceability row is fixed.
   - The Conflict Artifact quotes the ADRs.
   - The server doc says what it opens.

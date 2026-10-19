@@ -9,7 +9,7 @@ mod fixture;
 mod vfix;
 
 use filesquid_api::health::HealthStatus;
-use filesquid_api::journal::Outcome;
+use filesquid_api::journal::{JournalEntry, Level, Outcome};
 use filesquid_api::ocfl_validation::{
     FindingsStore, MemoryFindingsStore, OcflValidation, RunOutcome, RunRequest, RunTrigger,
     Severity, ValidationConfig, ValidationService, CONFIGURE_OPERATION, DEFAULT_INTERVAL_MS,
@@ -71,9 +71,11 @@ fn an_e023_object_degrades_health_until_it_is_fixed_and_revalidated() {
     let reason = ocfl_reason(&rig).expect("reason");
     assert_eq!(reason.codes, ["E023"]);
     assert_eq!(reason.objects, Some(1));
-    let journaled = rig.journaled(FINDING_OPERATION);
-    assert_eq!(journaled.len(), 1, "one finding journaled");
+    let journaled = journaled_errors(&rig);
+    assert_eq!(journaled.len(), 1, "one error finding journaled");
     assert_eq!(journaled[0].error_code.as_deref(), Some("E023"));
+    assert_eq!(journaled[0].level, Level::Warn);
+    assert_every_open_finding_journaled_once(&rig);
     assert_eq!(
         journaled[0].target_ids,
         [library().as_str(), "urn:uuid:b", "v1"]
@@ -85,11 +87,8 @@ fn an_e023_object_degrades_health_until_it_is_fixed_and_revalidated() {
     let closed = rig.journaled(FINDING_CLOSED_OPERATION);
     assert_eq!(closed.len(), 1, "only the E023 closed; the warnings stay");
     assert_eq!(closed[0].error_code.as_deref(), Some("E023"));
-    assert_eq!(
-        rig.journaled(FINDING_OPERATION).len(),
-        1,
-        "not journaled twice"
-    );
+    assert_eq!(journaled_errors(&rig).len(), 1, "not journaled twice");
+    assert_every_open_finding_journaled_once(&rig);
 }
 
 #[test]
@@ -104,11 +103,8 @@ fn a_finding_stays_open_until_a_later_validation_no_longer_reports_it() {
         1,
         "still open after a second run that reports it"
     );
-    assert_eq!(
-        rig.journaled(FINDING_OPERATION).len(),
-        1,
-        "journaled when opened"
-    );
+    assert_eq!(journaled_errors(&rig).len(), 1, "journaled when opened");
+    assert_every_open_finding_journaled_once(&rig);
 }
 
 #[test]
@@ -121,10 +117,64 @@ fn a_w010_object_is_listed_as_a_warning_and_leaves_health_ok() {
     let w010: Vec<_> = view.findings.iter().filter(|f| f.code == "W010").collect();
     assert_eq!(w010.len(), 1);
     assert_eq!(w010[0].severity, Severity::Warning);
-    assert!(
-        rig.journaled(FINDING_OPERATION).is_empty(),
-        "warnings are not journaled"
-    );
+    let journaled: Vec<_> = rig
+        .journaled(FINDING_OPERATION)
+        .into_iter()
+        .filter(|e| e.error_code.as_deref() == Some("W010"))
+        .collect();
+    assert_eq!(journaled.len(), 1, "a warning is journaled like an error");
+    assert_eq!(journaled[0].level, Level::Info);
+    assert_eq!(journaled[0].target_ids[..2], [library().as_str(), "urn:uuid:w"]);
+    assert_every_open_finding_journaled_once(&rig);
+}
+
+#[test]
+fn a_run_over_many_objects_journals_one_entry_per_finding_with_no_loss() {
+    let rig = ValidationRig::with_queue(2);
+    for n in 0..40 {
+        rig.object(&format!("obj-{n:02}"), &format!("urn:uuid:many-{n:02}"));
+    }
+    rig.w010_object("obj-w", "urn:uuid:w");
+    let record = rig.run(RunTrigger::Requested, false).expect("run");
+    assert_eq!(record.checked, 41);
+    let open = rig.store.open_findings(10_000).expect("findings");
+    let warnings = open.iter().filter(|f| f.severity == Severity::Warning).count();
+    assert!(warnings >= 41, "every object has a warning: {warnings}");
+    assert_every_open_finding_journaled_once(&rig);
+}
+
+/// The journaled error findings (`E###`).
+fn journaled_errors(rig: &ValidationRig) -> Vec<JournalEntry> {
+    rig.journaled(FINDING_OPERATION)
+        .into_iter()
+        .filter(|e| e.error_code.as_deref().is_some_and(|c| c.starts_with('E')))
+        .collect()
+}
+
+/// Every open finding, error or warning, has exactly one `ocfl.validation.finding` entry
+/// with its object and code, and no entry names a finding that is not open or closed.
+fn assert_every_open_finding_journaled_once(rig: &ValidationRig) {
+    let mut open: Vec<(String, String)> = rig
+        .store
+        .open_findings(10_000)
+        .expect("findings")
+        .into_iter()
+        .map(|f| (f.object_id, f.code))
+        .collect();
+    let mut opened: Vec<(String, String)> = rig
+        .journaled(FINDING_OPERATION)
+        .into_iter()
+        .map(|e| (e.target_ids[1].clone(), e.error_code.unwrap_or_default()))
+        .collect();
+    let mut closed: Vec<(String, String)> = rig
+        .journaled(FINDING_CLOSED_OPERATION)
+        .into_iter()
+        .map(|e| (e.target_ids[1].clone(), e.error_code.unwrap_or_default()))
+        .collect();
+    open.append(&mut closed);
+    open.sort();
+    opened.sort();
+    assert_eq!(opened, open, "one entry per finding, none lost");
 }
 
 #[test]

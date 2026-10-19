@@ -27,7 +27,8 @@
 /// `tracing` target of this module's stdout-only diagnostics.
 const LOG_TARGET: &str = "filesquid::ocfl_validation";
 
-/// Journal operation of each newly opened error finding.
+/// Journal operation of each newly opened finding, error or warning (owner decision 2026-10-19:
+/// no finding is exempted from the journal).
 pub const FINDING_OPERATION: &str = "ocfl.validation.finding";
 
 /// Journal operation of each closed finding (fixed, or its object deleted).

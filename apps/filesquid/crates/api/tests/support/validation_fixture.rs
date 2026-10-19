@@ -74,12 +74,32 @@ impl ValidationRig {
 
     /// A rig over `store` and `root`: a restarted host keeps both.
     pub fn with_store(store: Arc<MemoryFindingsStore>, root: Arc<CountingBackend>) -> Self {
+        Self::build(store, root, None)
+    }
+
+    /// An empty library whose journal queue holds only `capacity` entries, so a run that
+    /// journals more than that must wait for the writer (backpressure, never loss).
+    pub fn with_queue(capacity: usize) -> Self {
+        let store = Arc::new(MemoryFindingsStore::new());
+        Self::build(store, Arc::new(CountingBackend::new()), Some(capacity))
+    }
+
+    /// A rig over `store` and `root`, with the default journal queue unless `capacity` is
+    /// given.
+    fn build(
+        store: Arc<MemoryFindingsStore>,
+        root: Arc<CountingBackend>,
+        capacity: Option<usize>,
+    ) -> Self {
         let state = ApiState::new();
         let journal = Arc::new(MemoryJournal::new("desktop"));
         let now = Arc::new(AtomicI64::new(NOW_MS));
         let clock_now = now.clone();
         let mut config = MonitorConfig::new("desktop");
         config.clock = Arc::new(move || clock_now.load(Ordering::SeqCst));
+        if let Some(capacity) = capacity {
+            config.writer.capacity = capacity;
+        }
         let monitor = Monitor::start(
             journal.clone(),
             Arc::new(StaticHostChecks::healthy()),

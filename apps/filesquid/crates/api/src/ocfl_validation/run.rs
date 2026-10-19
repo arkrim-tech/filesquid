@@ -316,16 +316,19 @@ fn finding(
     }
 }
 
-/// Journal every newly opened error finding and every closed finding (opaque object ID,
-/// version and code only).
+/// Journal every newly opened finding, errors and warnings alike, and every closed finding
+/// (opaque object ID, version and code only). No finding is skipped, sampled or summarised
+/// for volume: the bounded journal queue makes a large run wait instead (owner decision,
+/// 2026-10-19). An error is journaled at level `warn`, a warning at level `info`; neither
+/// changes health here.
 fn journal_change(ctx: &RunContext<'_>, change: &FindingChange) {
-    let opened = change
-        .opened
-        .iter()
-        .filter(|f| f.severity == Severity::Error);
-    for found in opened {
+    for found in &change.opened {
+        let level = match found.severity {
+            Severity::Error => Level::Warn,
+            Severity::Warning => Level::Info,
+        };
         ctx.journal
-            .send(finding_entry(ctx, FINDING_OPERATION, found).level(Level::Warn));
+            .send(finding_entry(ctx, FINDING_OPERATION, found).level(level));
     }
     for closed in &change.closed {
         ctx.journal
