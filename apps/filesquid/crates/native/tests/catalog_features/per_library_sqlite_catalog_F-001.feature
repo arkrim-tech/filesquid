@@ -45,9 +45,11 @@ Feature: Per-library SQLite catalog
     And the owner created the library "Family archive" with the collection "Summer"
     And the file "f-1" was indexed in the collection "Summer" at listing order 3
     When the file "f-1" is indexed in the collection "Summer" at listing order 3 again
-    Then the host journal should record "library.file.index" 1 time
+    Then the host journal should hold no entry since the first index
+    And the library's OCFL snapshot should be at version "v3"
     When the file "f-1" is indexed in the collection "Summer" at listing order 4 again
     Then the host journal should record "library.file.index" 2 times
+    And the library's OCFL snapshot should be at version "v4"
 
   # Edge case
   Scenario: Journal entries survive an unreachable host journal

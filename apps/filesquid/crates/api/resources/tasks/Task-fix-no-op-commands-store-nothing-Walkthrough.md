@@ -234,11 +234,12 @@ Cubic raised 1 finding on `602460a` (P3): the merge summary above now says the P
 | I1 An index refresh that changes nothing (the same files or folders again, or none) publishes no OCFL version | `an_index_refresh_that_changes_nothing_journals_nothing` (head stays `v4`), `a_recorded_index_refresh_that_changes_nothing_journals_nothing` (head stays `v3`) | Met |
 | I2 It stores no journal entry and leaves no outbox entry, with or without PROV-O history | both tests above (no new entry, `outbox_len` 0), scenario "An index refresh that changes nothing journals nothing" | Met |
 | I3 A refresh that changes something still publishes a version and journals `ocfl.commit` and its own entry linked to that version, as before | both tests above (`@v5`/`@v6`, and `@v4` in the recording catalog), the same scenario's second half | Met |
-| I4 A refused or failed refresh is not treated as a no-op: it still returns its error to the caller and stores nothing | unchanged code path: every `?` before `tx.commit` returns the error and rolls the transaction back | Met |
+| I4 A failed refresh is not treated as a no-op: it returns its error and is journaled once as `failed` with its error code, targeting only the library (redacted). A failure before the version is published rolls the catalog transaction back; one after it leaves the catalog behind its head, which reconcile brings forward at the next open (DE-S-010) | `a_failed_index_refresh_is_journaled_as_failed` (Cubic round 4) | Met |
 
 What changed:
 
 - [`native/src/catalog/mod.rs`](../../../native/src/catalog/mod.rs): `write_journaled` stores no journal entry when `CanonicalRoot::commit` answers `None` (the snapshot is unchanged); it still commits the transaction, so a catalog row that differed from an already-equal snapshot is brought into line. Module and `index_files` docs state the rule.
+- Cubic round 4: `write_journaled` now wraps `write_indexed` and, when the refresh fails, pushes a `failed` entry (operation, actor, time, library target and error code only) into the outbox in a transaction of its own, then forwards it; if even that push fails it logs a stdout warning and still returns the refresh's error.
 - [`native/src/catalog/history.rs`](../../../native/src/catalog/history.rs): `CommitPlan::unpublished` is now only the fallback of a published commit whose version cannot be referenced; its doc says so.
 - Tests: two unit tests in [`tests/unit/canonical_commit.rs`](../../../native/tests/unit/canonical_commit.rs) and the DE-S-009 catalog scenario "An index refresh that changes nothing journals nothing" with its steps.
 - Docs: `.agents/rules/logging-enforce.md` §2 exception, [ADR 033](../../../../../../resources/architecture/033-activity-journal-and-live-health-monitoring.md) Decision 2's exception and the [ADR 010](../../../../../../resources/architecture/010-ocfl-1-1-dual-profile.md) amendment now read: a command or catalog index refresh that succeeds without a change produces no receipt, no OCFL version and no journal entry; a refused or failed one is still journaled as `failed`. Desktop SRS rows DE-S-009 and DE-S-010 say the same for `index_files` and `index_folders`.
@@ -293,6 +294,45 @@ test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 test folders_are_indexed_and_read_back ... ok
 test removing_a_catalog_file_loses_only_the_rebuildable_index ... ok
 test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.72s
+```
+
+## Cubic review round 4
+
+Cubic raised 4 findings on `1ba3484` (P2 4):
+
+- The index scenario only counted `library.file.index` entries. It now asserts that the host journal holds no entry at all after the first index, and that the snapshot stays at `v3` and then moves to `v4`.
+- The index steps ignored the collection named in the step. They now check that the named collection is the library's only collection.
+- The I4 row claimed a failed refresh is journaled as `failed`, but `write_journaled` journaled nothing on an error path. A failed refresh is now journaled as `failed` (see I4 and What changed). Test first: `a_failed_index_refresh_is_journaled_as_failed` failed against `1ba3484`:
+
+  ```text
+  test a_failed_index_refresh_is_journaled_as_failed ... FAILED
+  thread 'a_failed_index_refresh_is_journaled_as_failed' (10372) panicked at crates/native/tests/unit/canonical_commit.rs:625:5:
+  assertion `left == right` failed
+    left: []
+   right: [("library.file.index", Failed, Some("internal")), ("library.folder.index", Failed, Some("internal"))]
+  test result: FAILED. 16 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+  ```
+
+- The I4 row said a failed refresh stores nothing, but SQLite rollback cannot undo an OCFL version that was already published. I4 now describes that state: the catalog stays behind its head until reconcile brings it forward at the next open.
+
+After the fix, `cargo test -p filesquid-native --features desktop --test unit_canonical_commit --test unit_catalog --test catalog_features --locked`:
+
+```text
+     Running tests/catalog_features.rs
+  Scenario: An index refresh that changes nothing journals nothing
+   ✔  And the file "f-1" was indexed in the collection "Summer" at listing order 3
+   ✔  When the file "f-1" is indexed in the collection "Summer" at listing order 3 again
+   ✔  Then the host journal should hold no entry since the first index
+   ✔  When the file "f-1" is indexed in the collection "Summer" at listing order 4 again
+12 scenarios (12 passed)
+70 steps (70 passed)
+     Running tests/unit/canonical_commit.rs
+test a_failed_index_refresh_is_journaled_as_failed ... ok
+test a_recorded_index_refresh_that_changes_nothing_journals_nothing ... ok
+test an_index_refresh_that_changes_nothing_journals_nothing ... ok
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+     Running tests/unit/catalog.rs
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.09s
 ```
 
 ## Gate

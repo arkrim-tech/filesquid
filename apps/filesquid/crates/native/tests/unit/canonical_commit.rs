@@ -599,6 +599,51 @@ fn an_index_refresh_that_changes_nothing_journals_nothing() {
     assert_eq!(linked, [true; 4], "{changed:?}");
 }
 
+/// A refresh that fails (a file or folder of another library) is not a no-op: it publishes
+/// no version and is journaled once as `failed` with its error code, and nothing else.
+#[test]
+fn a_failed_index_refresh_is_journaled_as_failed() {
+    let fx = Fixture::new("index-failed");
+    let (lib, home) = library_with_home(&fx);
+    let other = LibraryId::new("0b0f8a52-3f0e-4c4b-9a59-5b3c0e7d1a01").unwrap();
+    let stray = File::new(FileId::new("f-x").unwrap(), other.clone(), home);
+    let before = all_entries(fx.journal.as_ref()).len();
+    let files = JournalEntry::new("library.file.index", Outcome::Succeeded);
+    assert!(fx.catalog.index_files(&lib, &[(stray, 1)], files).is_err());
+    let folders = JournalEntry::new("library.folder.index", Outcome::Succeeded);
+    assert!(fx
+        .catalog
+        .index_folders(&lib, &[years(&other, "Years")], folders)
+        .is_err());
+    assert_eq!(head(&fx, &lib), "v2");
+    assert_eq!(fx.catalog.outbox_len(&lib).expect("outbox"), 0);
+    let journaled = journaled_since(fx.journal.as_ref(), before);
+    let seen: Vec<(&str, Outcome, Option<&str>)> = journaled
+        .iter()
+        .map(|e| (e.operation.as_str(), e.outcome, e.error_code.as_deref()))
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            ("library.file.index", Outcome::Failed, Some("internal")),
+            ("library.folder.index", Outcome::Failed, Some("internal"))
+        ]
+    );
+    let text = format!("{journaled:?}");
+    assert!(
+        journaled.iter().all(|e| e.target_ids == [lib.as_str()]),
+        "{text}"
+    );
+    for private in [
+        "Years",
+        "f-x",
+        other.as_str(),
+        fx.root.to_string_lossy().as_ref(),
+    ] {
+        assert!(!text.contains(private), "redacted: {text}");
+    }
+}
+
 /// The same rule in a catalog that records PROV-O history (DE-0.10): an index refresh that
 /// changes nothing writes no version, so no PROV-O record, and journals nothing; one that
 /// changes something journals exactly the entries its version carries.

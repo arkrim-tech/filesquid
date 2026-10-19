@@ -35,6 +35,8 @@ struct CatalogWorld {
     retry: Option<CommandResult>,
     failed: bool,
     backup: Option<PathBuf>,
+    /// How many entries the host journal held right after the first index.
+    journaled: Option<usize>,
 }
 
 impl std::fmt::Debug for CatalogWorld {
@@ -258,10 +260,24 @@ fn journal_records(w: &mut CatalogWorld, operation: String) {
     );
 }
 
-/// Index the file `file` of the "Family archive" library in the scenario's collection at
-/// listing order `order`, journaled as `library.file.index`.
-fn index_file(w: &CatalogWorld, file: &str, order: i64) {
+/// Index the file `file` of the "Family archive" library in its collection titled `title`
+/// at listing order `order`, journaled as `library.file.index`. The scenario's only
+/// collection is "Summer" (created by the background step), so any other title fails.
+fn index_file(w: &CatalogWorld, file: &str, title: &str, order: i64) {
     let id = w.library("Family archive");
+    let titles: Vec<String> = w
+        .fx()
+        .catalog
+        .collections(&id, None, 10)
+        .expect("collections")
+        .into_iter()
+        .map(|c| c.item.title().to_string())
+        .collect();
+    assert_eq!(
+        titles,
+        [title],
+        "the scenario indexes into its only collection"
+    );
     let home = w.collection.clone().expect("collection");
     let file = filesquid_core::File::new(FileId::new(file).expect("file"), id.clone(), home);
     let entry = JournalEntry::new("library.file.index", Outcome::Succeeded);
@@ -272,15 +288,26 @@ fn index_file(w: &CatalogWorld, file: &str, order: i64) {
 }
 
 #[given(expr = "the file {string} was indexed in the collection {string} at listing order {int}")]
-fn file_indexed(w: &mut CatalogWorld, file: String, _title: String, order: i64) {
-    index_file(w, &file, order);
+fn file_indexed(w: &mut CatalogWorld, file: String, title: String, order: i64) {
+    index_file(w, &file, &title, order);
+    w.journaled = Some(all_entries(w.fx().journal.as_ref()).len());
 }
 
 #[when(
     expr = "the file {string} is indexed in the collection {string} at listing order {int} again"
 )]
-fn file_indexed_again(w: &mut CatalogWorld, file: String, _title: String, order: i64) {
-    index_file(w, &file, order);
+fn file_indexed_again(w: &mut CatalogWorld, file: String, title: String, order: i64) {
+    index_file(w, &file, &title, order);
+}
+
+#[then(expr = "the host journal should hold no entry since the first index")]
+fn journal_unchanged_since_index(w: &mut CatalogWorld) {
+    let entries = all_entries(w.fx().journal.as_ref());
+    let since: Vec<_> = entries
+        .iter()
+        .skip(w.journaled.expect("first index"))
+        .collect();
+    assert!(since.is_empty(), "{since:?}");
 }
 
 #[then(regex = r#"^the host journal should record "([^"]+)" (\d+) times?$"#)]
