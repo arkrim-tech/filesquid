@@ -52,6 +52,8 @@ test-webdriver = ["dep:tauri-plugin-wdio-webdriver"]
 tauri = { version = "2.11.5", features = ["test"] }
 cucumber = { version = "0.23", features = ["macros", "output-junit"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+# The `log` facade Tauri logs through, to prove its records reach the stdout JSON stream.
+log = "0.4"
 
 [[test]]
 name = "integration_api_protocol"
@@ -76,6 +78,10 @@ path = "tests/integration/host_events.rs"
 [[test]]
 name = "integration_library_catalog"
 path = "tests/integration/library_catalog.rs"
+
+[[test]]
+name = "integration_stdout_logging"
+path = "tests/integration/stdout_logging.rs"
 
 [[test]]
 name = "integration_range_fixture"

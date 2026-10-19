@@ -41,10 +41,12 @@ pub mod event_channel;
 pub mod ipc_gate;
 pub mod ipc_observer;
 pub mod panic_journal;
+pub mod stdout_log;
 #[cfg(feature = "test-webdriver")]
 pub mod test_fixture;
 
 pub use event_channel::EVENT_NAME;
+pub use stdout_log::LOGGING_OPERATION;
 
 use event_channel::{Forwarding, TauriSink, FORWARDER_HEARTBEAT};
 use filesquid_api::auth::{record_token_issue, Authoriser, LaunchToken, Principal};
@@ -105,7 +107,8 @@ impl HostJournal {
     }
 }
 
-/// The host's `tracing` stack: JSON lines to `stdout` filtered by `filter`, the journal
+/// The host's `tracing` stack: JSON lines to `stdout` filtered by `filter`, each with an RFC
+/// 3339 UTC millisecond `timestamp`, `level`, `target` and fields ([`stdout_log`]), the journal
 /// layer, and the Tauri IPC observer ([`ipc_observer`]). The stdout and journal layers
 /// skip Tauri's IPC trace and webview errors, which only the observer handles, so neither a
 /// request body nor the invoke key Tauri records there reaches either. Pure: builds the
@@ -123,6 +126,7 @@ where
     let kept = filter_fn(ipc_observer::outside_observed);
     let stdout = tracing_subscriber::fmt::layer()
         .json()
+        .with_timer(stdout_log::UtcMillis)
         .with_writer(stdout)
         .with_filter(filter.and(kept.clone()));
     tracing_subscriber::registry()
@@ -131,7 +135,7 @@ where
         .with(observer.with_filter(filter_fn(ipc_observer::observed)))
 }
 
-/// A sink that writes one line through `stdout`. Performs I/O when called; a write error is
+/// A sink that writes one line through `stdout` and flushes it. Performs I/O when called; a write error is
 /// reported on stderr, since the stdout stream itself failed.
 fn line_sink<W>(stdout: W) -> ipc_observer::StdoutSink
 where
@@ -139,24 +143,50 @@ where
 {
     Arc::new(move |line: &str| {
         let mut writer = stdout.make_writer();
-        if let Err(err) = writeln!(writer, "{line}") {
+        if let Err(err) = writeln!(writer, "{line}").and_then(|()| writer.flush()) {
             eprintln!("stdout line not written: {err}");
         }
     })
 }
 
-/// Install the host's `tracing` stack ([`host_subscriber`]) with stdout filtered by `RUST_LOG`
-/// (default `info`). It also routes `log` records (Tauri's own) into `tracing`.
-fn init_tracing(journal: &HostJournal) {
+/// Install the host's `tracing` stack ([`host_subscriber`]) as the process's global
+/// subscriber, which also routes `log` records (Tauri's own) into it, so they reach the same
+/// stdout JSON stream. Installs global state.
+///
+/// # Errors
+/// A global subscriber or `log` logger is already installed; nothing is changed.
+pub fn install_tracing<W>(
+    journal: JournalLayer,
+    observer: TauriIpcObserver,
+    stdout: W,
+    filter: EnvFilter,
+) -> Result<(), String>
+where
+    W: for<'w> MakeWriter<'w> + Clone + Send + Sync + 'static,
+{
+    host_subscriber(journal, observer, stdout, filter)
+        .try_init()
+        .map_err(|err| format!("tracing not installed: {err}"))
+}
+
+/// Install the host's `tracing` stack with stdout filtered by `RUST_LOG` (default `info`),
+/// writing through [`stdout_log::stdout`] (flushed per record). A failure is reported, never
+/// swallowed: [`stdout_log::report_logging_failure`] now, and a journal entry once the
+/// journal opens ([`start_monitor`]). Without the stack, `tracing` events (IPC refusals read
+/// from Tauri's trace, warnings and errors) are lost for this launch; the host keeps
+/// running. Answers whether the stack was installed.
+fn init_tracing(journal: &HostJournal) -> bool {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    host_subscriber(
+    let installed = install_tracing(
         journal.layer.clone(),
         journal.observer.clone(),
-        std::io::stdout,
+        stdout_log::stdout(),
         filter,
-    )
-    .try_init()
-    .ok();
+    );
+    if let Err(err) = &installed {
+        stdout_log::report_logging_failure(&mut std::io::stdout(), err);
+    }
+    installed.is_ok()
 }
 
 /// Name of the plugin that gives app pages the per-launch token and keeps every webview on
@@ -211,7 +241,7 @@ fn with_test_driver(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri
 /// and the monitor. Fails when the per-launch token cannot be generated.
 pub fn builder() -> Result<tauri::Builder<tauri::Wry>, String> {
     let journal = HostJournal::new();
-    init_tracing(&journal);
+    let logging = init_tracing(&journal);
     panic_journal::install_panic_hook(journal.panic_flush.clone());
     let state = ApiState::new();
     let token = install_launch_token(&state)?;
@@ -238,7 +268,7 @@ pub fn builder() -> Result<tauri::Builder<tauri::Wry>, String> {
             },
         )
         .setup(move |app| {
-            start_monitor(app.handle(), &journal)?;
+            start_monitor(app.handle(), &journal, logging)?;
             forward_events(app.handle());
             open_main_window(app.handle())
         });
@@ -314,18 +344,25 @@ fn catalog_error_code(err: &filesquid_api::library::CatalogError) -> &'static st
 }
 
 /// Open the journal in the app data directory, attach every journal sink, install the
-/// monitor, open the library catalogs, register the event forwarder's process and start the
+/// monitor, journal a logging stack that could not be installed (`logging` false), open the
+/// library catalogs, register the event forwarder's process and start the
 /// ticker. When the catalogs cannot be opened the failure is journaled and the monitor
 /// stopped (flushing the journal) before the launch fails. Performs filesystem and database
 /// I/O.
 fn start_monitor(
     app: &tauri::AppHandle,
     journal: &HostJournal,
+    logging: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let data_dir = app.path().app_data_dir()?;
     let state = app.state::<ApiState>();
     let host = Arc::new(open_host_monitor(&state, &data_dir, Some(&journal.layer))?);
     journal.attach(host.monitor().journal());
+    if !logging {
+        host.monitor()
+            .journal()
+            .send(stdout_log::logging_failure_entry());
+    }
     let catalog = open_library_catalog(&data_dir, &host).inspect_err(|_| host.stop())?;
     app.manage(DesktopCatalog(Arc::new(catalog)));
     let forwarder = Arc::new(event_channel::register_forwarder(host.monitor().registry()));
