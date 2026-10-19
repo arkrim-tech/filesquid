@@ -18,7 +18,9 @@ use super::index::{Staged, StagingIndex};
 use super::model::{base_state, known, ChangeModel, VersionMeta};
 use crate::inventory::{Inventory, VersionNum};
 use crate::storage::StorageBackend;
-use crate::write::{CommitError, CommitReceipt, VersionDraft, VersionReservations};
+use crate::write::{
+    CommitError, CommitReceipt, VersionBoundFiles, VersionDraft, VersionReservations,
+};
 
 /// Most times one change set is rebased before the commit gives up.
 pub const MAX_REBASES: usize = 16;
@@ -49,8 +51,25 @@ where
     /// [`ChangeError::StagingNotCleared`] is the one error after
     /// publication: it carries the receipt.
     pub async fn commit(&self, meta: VersionMeta) -> Result<CommitReceipt, ChangeError> {
+        self.commit_with(meta, None).await
+    }
+
+    /// [`commit`](Self::commit), adding the files `bound` returns for the
+    /// reserved version (OCFL-S-024). `bound` is called after each `vN`
+    /// reservation, so again with the new version name after a rebase;
+    /// when it fails nothing is published and the staging area is kept.
+    ///
+    /// # Errors
+    ///
+    /// As [`commit`](Self::commit), and [`ChangeError::Commit`] with
+    /// [`CommitError::BoundFiles`].
+    pub async fn commit_with(
+        &self,
+        meta: VersionMeta,
+        bound: Option<&dyn VersionBoundFiles>,
+    ) -> Result<CommitReceipt, ChangeError> {
         let (_, index) = self.load().await?;
-        let receipt = self.publish(index.clone(), &meta).await?;
+        let receipt = self.publish(index.clone(), &meta, bound).await?;
         match self.clear_committed(&index).await {
             Ok(()) => Ok(receipt),
             Err(reason) => {
@@ -61,6 +80,31 @@ where
                 })
             }
         }
+    }
+
+    /// Publish a version whose only change is the files `bound` returns for
+    /// it (OCFL-S-024): the head's state with those files added, such as a
+    /// record of something that changed no other logical file. Staged
+    /// changes are neither used nor cleared; they stay for a later commit. A
+    /// moved head is rebased onto as usual, and `bound` is called again with
+    /// the new version name.
+    ///
+    /// # Errors
+    ///
+    /// [`ChangeError::Commit`] with [`CommitError::BoundFiles`] when `bound`
+    /// fails or returns no file (a version with no change is never
+    /// published), and as [`commit`](Self::commit).
+    pub async fn commit_bound_only(
+        &self,
+        meta: VersionMeta,
+        bound: &dyn VersionBoundFiles,
+    ) -> Result<CommitReceipt, ChangeError> {
+        let inventory = self.committed().await?;
+        let head = inventory.map(|inventory| inventory.head);
+        let mut index = StagingIndex::new(&self.object_id, head);
+        let guarded = NonEmpty(bound);
+        self.publish_draft(&mut index, &meta, Some(&guarded), true)
+            .await
     }
 
     /// Clear the staging area if its index is still `committed`, so changes
@@ -91,6 +135,21 @@ where
         version: &VersionNum,
         meta: VersionMeta,
     ) -> Result<CommitReceipt, ChangeError> {
+        self.revert_with(version, meta, None).await
+    }
+
+    /// [`revert`](Self::revert), adding the files `bound` returns for the
+    /// reserved version (OCFL-S-024).
+    ///
+    /// # Errors
+    ///
+    /// As [`revert`](Self::revert) and [`commit_with`](Self::commit_with).
+    pub async fn revert_with(
+        &self,
+        version: &VersionNum,
+        meta: VersionMeta,
+        bound: Option<&dyn VersionBoundFiles>,
+    ) -> Result<CommitReceipt, ChangeError> {
         let (inventory, head, head_state) = self.head_state().await?;
         let target = state_digests(Some(&inventory), version)?;
         let mut index = StagingIndex::new(&self.object_id, Some(head));
@@ -101,7 +160,7 @@ where
         for (path, digest) in target {
             index.set(&head_state, &path, Staged::File(digest));
         }
-        self.publish(index, &meta).await
+        self.publish(index, &meta, bound).await
     }
 
     /// Publish a new version that restores each of `paths` to its content
@@ -119,6 +178,23 @@ where
         paths: &[&str],
         meta: VersionMeta,
     ) -> Result<CommitReceipt, ChangeError> {
+        self.reinstate_with(version, paths, meta, None).await
+    }
+
+    /// [`reinstate`](Self::reinstate), adding the files `bound` returns for
+    /// the reserved version (OCFL-S-024).
+    ///
+    /// # Errors
+    ///
+    /// As [`reinstate`](Self::reinstate) and
+    /// [`commit_with`](Self::commit_with).
+    pub async fn reinstate_with(
+        &self,
+        version: &VersionNum,
+        paths: &[&str],
+        meta: VersionMeta,
+        bound: Option<&dyn VersionBoundFiles>,
+    ) -> Result<CommitReceipt, ChangeError> {
         let (inventory, head, head_state) = self.head_state().await?;
         let source = state_digests(Some(&inventory), version)?;
         let mut index = StagingIndex::new(&self.object_id, Some(head));
@@ -129,7 +205,7 @@ where
             })?;
             index.set(&head_state, path, Staged::File(digest.clone()));
         }
-        self.publish(index, &meta).await
+        self.publish(index, &meta, bound).await
     }
 
     /// The committed inventory, its head and the head's logical state.
@@ -149,19 +225,36 @@ where
     }
 
     /// Publish `index` as one version, rebasing it while the head moves.
+    /// `bound` is handed to every attempt, so a rebased commit binds its
+    /// files to the new version name.
     async fn publish(
         &self,
         mut index: StagingIndex,
         meta: &VersionMeta,
+        bound: Option<&dyn VersionBoundFiles>,
+    ) -> Result<CommitReceipt, ChangeError> {
+        self.publish_draft(&mut index, meta, bound, false).await
+    }
+
+    /// The rebase-and-commit loop of [`publish`](Self::publish).
+    /// `bound_only` lets a draft that leaves the state unchanged through,
+    /// for [`commit_bound_only`](Self::commit_bound_only), whose bound
+    /// files are then its only change.
+    async fn publish_draft(
+        &self,
+        index: &mut StagingIndex,
+        meta: &VersionMeta,
+        bound: Option<&dyn VersionBoundFiles>,
+        bound_only: bool,
     ) -> Result<CommitReceipt, ChangeError> {
         for _ in 0..MAX_REBASES {
             let inventory = self.committed().await?;
-            rebase(&mut index, inventory.as_ref())?;
-            let draft = self.draft(&index, inventory.as_ref(), meta)?;
+            rebase(index, inventory.as_ref())?;
+            let draft = self.draft(index, inventory.as_ref(), meta, bound_only)?;
             let staging = self.staging.backend();
             let result = self
                 .writer
-                .commit(&self.root, index.base.as_ref(), staging, &draft)
+                .commit_bound(&self.root, index.base.as_ref(), staging, &draft, bound)
                 .await;
             match result {
                 Err(CommitError::HeadMoved { .. }) => continue,
@@ -183,10 +276,11 @@ where
         index: &StagingIndex,
         inventory: Option<&Inventory>,
         meta: &VersionMeta,
+        bound_only: bool,
     ) -> Result<VersionDraft, ChangeError> {
         let base = base_state(inventory, index)?;
         let working = index.working(&base);
-        if working == base {
+        if working == base && !bound_only {
             return Err(ChangeError::NothingToCommit);
         }
         let known = known(inventory);
@@ -205,6 +299,23 @@ where
             draft.set_user(user.clone());
         }
         Ok(draft)
+    }
+}
+
+/// A [`VersionBoundFiles`] that refuses an empty file set, so a bound-only
+/// commit always changes the state.
+struct NonEmpty<'b>(&'b dyn VersionBoundFiles);
+
+impl VersionBoundFiles for NonEmpty<'_> {
+    fn files(
+        &self,
+        context: &crate::write::BoundContext<'_>,
+    ) -> Result<std::collections::BTreeMap<String, Vec<u8>>, String> {
+        let files = self.0.files(context)?;
+        if files.is_empty() {
+            return Err("a bound-only commit needs at least one file".to_string());
+        }
+        Ok(files)
     }
 }
 

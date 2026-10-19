@@ -86,7 +86,18 @@ struct MetadataWorld {
     earlier_versions: BTreeMap<PathBuf, Vec<u8>>,
     /// Outcome of the last edit through the `ocfl` store.
     commit_outcome: Option<Result<Option<VersionNum>, StoreError>>,
+    /// Versions, message, user and paths of the last commit made with options.
+    options_outcome: Option<CommittedWithOptions>,
 }
+
+/// What a commit with options published: the object's versions, and the new
+/// version's message, user and logical paths.
+type CommittedWithOptions = (
+    Vec<String>,
+    Option<String>,
+    Option<filesquid_ocfl::inventory::User>,
+    Vec<String>,
+);
 
 impl Drop for MetadataWorld {
     /// Remove every scratch directory and sidecar a scenario created.
@@ -601,6 +612,67 @@ fn extract_xmp_packet(world: &mut MetadataWorld, title: String) {
 #[then(expr = "the extracted dcterms:title should be {word}")]
 fn extracted_title_is(world: &mut MetadataWorld, title: String) {
     assert_eq!(world.extracted_title.as_deref(), Some(title.as_str()));
+}
+
+#[when(
+    "I commit a metadata edit with a version user, an operation message and a version-bound record"
+)]
+fn commit_with_options(world: &mut MetadataWorld) {
+    let rig = rig::Rig::memory();
+    rig.seed(rig::OBJECT_ID, &[("photo.jpg", b"pixels")]);
+    let record = |context: &filesquid_ocfl::write::BoundContext<'_>| {
+        let name = format!("provenance/{}.jsonld", context.version);
+        Ok(std::collections::BTreeMap::from([(name, b"{}".to_vec())]))
+    };
+    let options = filesquid_metadata::store::ocfl::CommitOptions {
+        user: Some(installation_user()),
+        message: Some(OPERATION_MESSAGE.to_string()),
+        bound: Some(&record),
+    };
+    let file = FileRef::new(rig::OBJECT_ID, "photo.jpg").expect("file ref");
+    let mut edit = Record::default();
+    edit.set(MetadataNamespace::Dcterms, "title", "Dawn")
+        .expect("title");
+    let receipt = ready(rig.store().commit_record_with(&file, &edit, &options))
+        .expect("commit")
+        .expect("a version");
+    let object = ready(Object::open(
+        &rig.storage,
+        &rig::object_root(rig::OBJECT_ID),
+    ))
+    .expect("open");
+    let block = &object.inventory().versions[&receipt.version];
+    world.options_outcome = Some((
+        rig.versions(rig::OBJECT_ID),
+        block.message.clone(),
+        block.user.clone(),
+        block.state.values().flatten().cloned().collect(),
+    ));
+}
+
+#[then("the edit should publish one version carrying that user, that message and the record")]
+fn options_were_committed(world: &mut MetadataWorld) {
+    let (versions, message, user, paths) = world.options_outcome.take().expect("committed");
+    assert_eq!(versions, ["v1", "v2"]);
+    assert_eq!(message.as_deref(), Some(OPERATION_MESSAGE));
+    assert_eq!(user, Some(installation_user()));
+    assert!(
+        paths.contains(&"provenance/v2.jsonld".to_string()),
+        "{paths:?}"
+    );
+    assert!(paths.contains(&METADATA_MD.to_string()));
+}
+
+/// The version message FileSquid passes for a metadata edit.
+const OPERATION_MESSAGE: &str =
+    r#"filesquid.operation.v1 {"operation_id":"op-1","kind":"metadata.edit"}"#;
+
+/// The OCFL version user FileSquid sets: the installation agent.
+fn installation_user() -> filesquid_ocfl::inventory::User {
+    filesquid_ocfl::inventory::User {
+        name: "FileSquid installation".into(),
+        address: Some("urn:uuid:6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b".into()),
+    }
 }
 
 #[given("an OCFL object whose head has no version inventory")]

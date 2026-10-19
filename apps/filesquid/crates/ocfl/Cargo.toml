@@ -148,6 +148,11 @@ path = "tests/integration/change_model.rs"
 required-features = ["fs"]
 
 [[test]]
+name = "integration_bound_files"
+path = "tests/integration/bound_files.rs"
+required-features = ["fs"]
+
+[[test]]
 name = "integration_independent_recovery"
 path = "tests/integration/independent_recovery.rs"
 required-features = ["fs"]

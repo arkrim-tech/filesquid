@@ -10,6 +10,7 @@
 //! stores do storage I/O and live with the hosts ([API-S-006](../../resources/srs.md)): the
 //! SQLite store is `filesquid_native::SqliteJournal`.
 
+pub mod commit;
 mod memory;
 
 pub use memory::MemoryJournal;
@@ -141,6 +142,15 @@ pub struct JournalEntry {
     /// Machine-readable error code for failures and warnings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_code: Option<String>,
+    /// The operation the entry belongs to: shared by every entry and every
+    /// OCFL version one operation produced, so journal rows join PROV-O
+    /// records and OCFL versions without timestamps (ADR 040 Decision 6).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation_id: Option<String>,
+    /// The OCFL object version the entry is about, `<object-id>@vN`
+    /// (`urn:uuid:<uuid>@vN` for FileSquid objects).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub object_ref: Option<String>,
 }
 
 impl JournalEntry {
@@ -163,7 +173,21 @@ impl JournalEntry {
             target_ids: Vec::new(),
             duration_ms: None,
             error_code: None,
+            operation_id: None,
+            object_ref: None,
         }
+    }
+
+    /// Set the operation ID the entry belongs to.
+    pub fn operation_id(mut self, id: impl Into<String>) -> Self {
+        self.operation_id = Some(id.into());
+        self
+    }
+
+    /// Set the OCFL object version the entry is about (`<object-id>@vN`).
+    pub fn object_ref(mut self, object_ref: impl Into<String>) -> Self {
+        self.object_ref = Some(object_ref.into());
+        self
     }
 
     /// Set the actor (opaque user reference or `system`).
@@ -226,8 +250,30 @@ impl JournalEntry {
         self.process_id.iter_mut().for_each(scrub);
         self.error_code.iter_mut().for_each(scrub);
         self.target_ids.iter_mut().for_each(scrub);
+        self.operation_id.iter_mut().for_each(scrub);
+        if let Some(object_ref) = &mut self.object_ref {
+            if !is_object_ref(object_ref) {
+                *object_ref = REDACTED.to_string();
+            }
+        }
         self
     }
+}
+
+/// Most ids one [`JournalStore::allocate_ids`] call hands out.
+pub const MAX_ALLOCATED_IDS: usize = 1024;
+
+/// Refuse an allocation above [`MAX_ALLOCATED_IDS`].
+///
+/// # Errors
+/// [`JournalError`] naming the bound.
+pub fn check_allocation(count: usize) -> Result<i64, JournalError> {
+    if count > MAX_ALLOCATED_IDS {
+        return Err(JournalError(format!(
+            "at most {MAX_ALLOCATED_IDS} journal ids per allocation"
+        )));
+    }
+    Ok(count as i64)
 }
 
 /// Stored in place of a field value that is not an opaque token.
@@ -245,6 +291,16 @@ pub fn is_opaque(value: &str) -> bool {
         && value
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-' | b':'))
+}
+
+/// True when `value` is an object reference `<object-id>@vN`: an opaque
+/// object ID ([`is_opaque`]) and an OCFL version name, joined by the one
+/// `@` that [`is_opaque`] itself never allows.
+pub fn is_object_ref(value: &str) -> bool {
+    match filesquid_core::VersionRef::parse_object_ref(value) {
+        Ok(reference) => value.len() <= MAX_OPAQUE_LEN && is_opaque(reference.object_id()),
+        Err(_) => false,
+    }
 }
 
 /// Current time in Unix milliseconds (UTC).
@@ -402,8 +458,34 @@ impl std::error::Error for JournalError {}
 pub trait JournalStore: Send + Sync {
     /// Host name recorded on entries that do not carry one.
     fn host(&self) -> &str;
-    /// Append entries atomically; returns their assigned ids in order.
+    /// Append entries atomically; returns their ids in order. An entry that carries an
+    /// `id` (one [`allocate_ids`](Self::allocate_ids) handed out) is stored under that id,
+    /// and stored once: appending an id the store already holds stores nothing and returns
+    /// the id, so replaying a commit's entries never duplicates them.
     fn append(&self, entries: &[JournalEntry]) -> Result<Vec<i64>, JournalError>;
+    /// [`append`](Self::append), also answering for each entry whether this call stored it
+    /// (`false` for a preset id the store already held), so a caller announces a replayed
+    /// entry once. The default reports every entry as newly stored.
+    ///
+    /// # Errors
+    /// As [`append`](Self::append).
+    fn append_new(&self, entries: &[JournalEntry]) -> Result<Vec<(i64, bool)>, JournalError> {
+        let ids = self.append(entries)?;
+        Ok(ids.into_iter().map(|id| (id, true)).collect())
+    }
+    /// Hand out `count` ids (at most [`MAX_ALLOCATED_IDS`]), in increasing order, that no
+    /// stored entry has and [`append`](Self::append) never assigns, so a caller can name a
+    /// commit's entries before writing them (API-S-028; ADR 040 Decision 6). The default
+    /// refuses: a store that cannot reserve ids says so.
+    ///
+    /// # Errors
+    /// [`JournalError`] when the store cannot reserve ids or `count` is too large.
+    fn allocate_ids(&self, count: usize) -> Result<Vec<i64>, JournalError> {
+        let _ = count;
+        Err(JournalError(
+            "this journal store cannot allocate ids".into(),
+        ))
+    }
     /// One page of entries matching `query`, in ascending id order.
     fn query(&self, query: &JournalQuery) -> Result<JournalPage, JournalError>;
     /// Number of entries matching `query` (cursor and limit ignored).

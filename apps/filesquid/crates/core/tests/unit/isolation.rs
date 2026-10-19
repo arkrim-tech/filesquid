@@ -62,6 +62,8 @@ const FORBIDDEN: &[&str] = &[
     "imagesquid_ocfl",
     "filesquid-metadata",
     "filesquid_metadata",
+    "filesquid-prov",
+    "filesquid_prov",
 ];
 
 #[test]

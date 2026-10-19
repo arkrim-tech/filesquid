@@ -492,7 +492,16 @@ fn every_commit_journal_entry_reaches_the_host_journal_redacted() {
     fx.create_collection(&lib, "Summer holiday in Lisbon");
     let entries = all_entries(fx.journal.as_ref());
     let ops: Vec<&str> = entries.iter().map(|e| e.operation.as_str()).collect();
-    assert_eq!(ops, ["library.create", "library.collection.create"]);
+    assert_eq!(
+        ops,
+        [
+            "ocfl.commit",
+            "library.create",
+            "ocfl.commit",
+            "library.collection.create"
+        ],
+        "each published commit journals ocfl.commit and its own entry (DE-0.10)"
+    );
     let text = serde_json::to_string(&entries).expect("json");
     assert!(!text.contains("Summer"), "{text}");
     assert!(!text.contains("Family"), "{text}");
@@ -506,7 +515,11 @@ fn entries_the_host_journal_refused_are_forwarded_at_the_next_open() {
     let flaky = FlakyJournal::down();
     let fx = Fixture::over(root, flaky.clone());
     let lib = fx.create_library("Family archive");
-    assert_eq!(fx.catalog.outbox_len(&lib).expect("outbox"), 1);
+    assert_eq!(
+        fx.catalog.outbox_len(&lib).expect("outbox"),
+        2,
+        "ocfl.commit and library.create wait"
+    );
     let root = fx.release();
     flaky.down.store(false, Ordering::SeqCst);
     let again = Fixture::over(root, flaky.clone());
