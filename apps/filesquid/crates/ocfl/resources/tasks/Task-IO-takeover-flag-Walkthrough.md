@@ -399,5 +399,5 @@ None.
 ## Notes for callers
 
 - Hosts call API-F2.7's `OcflValidation::validate_after_commit(library, object_id, receipt.took_over)` after each commit once both changes are on `main` (API-F1.3 file routes, DE-1.1).
-- A `VersionReservations` implementation over another store (for example a PostgreSQL generation) SHOULD mark its takeovers with `Reservation::with_takeover`.
+- A `VersionReservations` implementation over another store (for example a PostgreSQL generation) MUST mark its takeovers with `Reservation::with_takeover` (OCFL-S-023).
 - When a change-model commit rebases, only the last attempt's receipt is returned; an attempt refused for a moved head publishes nothing, and the writer that moved the head got its own receipt.
