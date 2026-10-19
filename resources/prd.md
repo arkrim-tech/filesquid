@@ -1396,7 +1396,7 @@ Each F identifier is stable and can be referenced independently of release numbe
 
 ### Acceptance Criteria
 
-- Every committed operation MUST produce W3C PROV-O records, one `prov:Activity` per committed operation, which is one OCFL version, for library snapshots, files, metadata edits and repairs alike. Covered changes: import (with upload and copy), rename, move, hide, unhide, delete, restore, purge, metadata edit (with version labels), export, scrub, revert (with reinstate), repair, and catalog organisation (collections, virtual collections and memberships) ([FileSquid U-89](./product-vision.md#prov-module), [FE-082](./product-vision.md#prov-o-history)).
+- Every committed operation MUST produce W3C PROV-O records, one `prov:Activity` per committed operation, which is one OCFL version, for library snapshots, files, metadata edits and repairs alike. Covered changes: import (with upload and copy), rename, move, hide, unhide, delete, restore, purge, metadata edit (with version labels), export, scrub, publication, revert (with reinstate), repair, and catalog organisation (collections, virtual collections and memberships) ([FileSquid U-89](./product-vision.md#prov-module), [FE-082](./product-vision.md#prov-o-history)).
 - A command that changes nothing (a no-op save) MUST commit no version and produce no record. Failed and refused attempts MUST be recorded in the activity journal only and MUST NOT appear in PROV-O, which describes what happened to files.
 - Records MUST use a versioned JSON-LD profile of the W3C PROV-O vocabulary (namespace `http://www.w3.org/ns/prov#`) with an embedded context, so no network fetch is needed to read them. A later profile version MUST NOT stop earlier records from being read.
 - Each committed version MUST have exactly one `prov:Activity`, carrying its operation kind, its operation ID (shared by every object version one operation commits), the OCFL object and version it committed, the IDs of its journal entries and `prov:startedAtTime` / `prov:endedAtTime` in RFC 3339 UTC, the end time equal to the version's inventory `created` time.
@@ -1687,7 +1687,7 @@ Exercise `dcterms:` statement creation, inspection, edit, removal, Schema.org ov
 
 ## Vision allocation
 
-Every requirement row in the [FileSquid vision](./product-vision.md) (U-01–U-89 and every FE-, C- and T- row) is allocated here to at least one PRD item. The ImageSquid vision is allocated in the ImageSquid PRD. FE-, C- and T- numbers are stable across both visions; U-numbers are per vision. T-055 is the next unused T-ID, not a requirement. [check_prd_allocation.py](../scripts/docs/check_prd_allocation.py) verifies this table against the FileSquid vision, and the ImageSquid PRD's table against the ImageSquid vision.
+Every requirement row in the [FileSquid vision](./product-vision.md) (U-01–U-89 and every FE-, C- and T- row) is allocated here to at least one PRD item. The ImageSquid vision is allocated in the ImageSquid PRD. FE-, C- and T- numbers are stable across both visions; U-numbers are per vision. T-059 is the next unused T-ID, not a requirement. [check_prd_allocation.py](../scripts/docs/check_prd_allocation.py) verifies this table against the FileSquid vision, and the ImageSquid PRD's table against the ImageSquid vision.
 
 ### FileSquid vision
 

@@ -13,7 +13,7 @@
     - [API-F1.11](../apps/filesquid/crates/api/resources/plan.md#phase-f2-host-descriptor-and-navigation-listing-for-the-default-ui-global-task-fs-21) Navigation listing route
     - [UI-F2.1b](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Host privacy indicator and live navigation data
 - [Task 0.5](./implementation-plan.md#task-0.5) Desktop catalog, jobs, and OCFL coordinator: 4 of 8 module rows ticked
-    - [DE-0.3](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Intent → OCFL commit → receipt reconcile ([PR #77](https://github.com/arkrim-tech/filesquid/pull/77))
+    - [DE-0.3](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Intent → OCFL commit → receipt reconcile
     - [DE-0.4](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Durable jobs and checkpoint-on-quit
     - [DE-0.5](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Bounded media workers (libvips stills)
     - [DE-0.8](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Native-processing library boundary (`filesquid-native`)
@@ -39,9 +39,9 @@
 - [API-F2.2](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) View operation, preferences, storage use, copy, move and ZIP download (part of [Task FS-2.5](./implementation-plan.md#task-fs-2.5))
 - [API-F2.5](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) Version listing, labels, restore and history size (part of [Task FS-2.5](./implementation-plan.md#task-fs-2.5))
 
-Generated 2026-10-19T05:02:27Z (RFC 3339, UTC) from the ticked boxes, the module plans and the open pull requests at that time.
-<!-- generated-at: 2026-10-19T05:02:27Z -->
-<!-- in-progress-prs: API-F1.3=#82,API-F2.7=#74,DE-0.3=#77 -->
+Generated 2026-10-19T05:21:37Z (RFC 3339, UTC) from the ticked boxes, the module plans and the open pull requests at that time.
+<!-- generated-at: 2026-10-19T05:21:37Z -->
+<!-- in-progress-prs: API-F1.3=#82,API-F2.7=#74 -->
 <!-- mvp-progress:end -->
 
 This is a short, ordered view of [implementation-plan.md](./implementation-plan.md). Each numbered item is a global task in the order the dev team expects to finish it, and the nested items are the module tasks it dispatches, taken from each module's `resources/plan.md`. Task codes link to the full task description. A box is ticked when the matching box is ticked in the source plan.
@@ -50,7 +50,7 @@ Order follows the **Dependencies** fields and the [release sequence](./implement
 
 ## MVP
 
-FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by gate Task FS-3.9 (10 of 28 done). PROV-O history (Task FS-2.8) and the durable journal with the Journal tab and file panel tabs (Task FS-2.9) are in the MVP and does not depend on the `c2pa` module ([ADR 040](./architecture/040-prov-o-history.md)). C2PA is not in the MVP ([ADR 037](./architecture/037-c2pa-in-release-2.md)).
+FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by gate Task FS-3.9 (13 of 28 done). PROV-O history (Task FS-2.8) and the durable journal with the Journal tab and file panel tabs (Task FS-2.9) are in the MVP and do not depend on the `c2pa` module ([ADR 040](./architecture/040-prov-o-history.md)). C2PA is not in the MVP ([ADR 037](./architecture/037-c2pa-in-release-2.md)).
 
 1. [x] [Task FS-0.0](./implementation-plan.md#task-fs-0.0) FileSquid product switch
     - [x] [API-F0.1](../apps/filesquid/crates/api/resources/plan.md#phase-f0-crate-health-route-and-transport-spike-global-task-fs-00) Health router, contract seed and transport spike S1

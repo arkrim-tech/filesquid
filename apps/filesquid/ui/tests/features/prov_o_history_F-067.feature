@@ -42,8 +42,10 @@ Feature: File panel tabs: File facts, Descriptive, PROV-O and Audit log
     Then only the rows whose property or value matches should remain
 
   Scenario: Every tab is keyboard accessible
-    When I move through the tabs with the arrow keys
-    Then focus and selection should follow the accessibility contracts
+    Given focus is on the "File facts" tab
+    When I press the right arrow key twice
+    Then the "PROV-O" tab should have focus and be selected
+    And its panel should be shown and the other tab panels hidden
 
   # Edge cases
   Scenario: Reconstructed activities are marked

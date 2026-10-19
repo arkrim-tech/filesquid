@@ -1,8 +1,8 @@
 # Task docs/prov-o-history-requirements: Walkthrough
 
-Requirements, architecture and plan for the owner-approved task "PROV-O history", the C2PA scoping clean-up, and the owner decisions of 2026-10-19 on stored names, display names, the per-file metadata record, the durable activity journal, the Journal tab and the file panel tabs. Documentation only; no code changed.
+Requirements, architecture and plan for the owner-approved task "PROV-O history", the C2PA scoping clean-up, and the owner decisions of 2026-10-19 on stored names, display names, the per-file metadata record, the durable activity journal, the Journal tab and the file panel tabs. No product code changed. One gate script changed: `scripts/docs/check_plan_traceability.py` now recognises `PROV-S` rows (two regular expressions extended, so it checks more, never less); the pull request's change scope is `full`, so the full hook ran.
 
-TDD-ENFORCE: Not applicable - documentation-only change (requirements, ADRs, plans and BDD scenarios without step definitions).
+TDD-ENFORCE: Not applicable - requirements, ADRs, plans and BDD scenarios without step definitions; the one-line checker extension is exercised by the documentation gate on this branch, which now checks the seven `PROV-S` rows.
 
 ## Summary of changes
 
@@ -47,4 +47,69 @@ C2PA timing cross-check: ADR 035, ADR 037, C-025 and C-056 agree that C2PA (read
 
 ## Validation
 
-Hook runs are recorded in the pull request (summary line `Test scope: full`).
+Raw output (step lines) of `FULL=1 bash scripts/pre-commit.sh` on commit `bb83c39`; the run on each later head commit is quoted in the pull request with its `Test scope: full` summary line.
+
+```text
+✅ Branch Validation passed.
+Starting Port Isolation Validation...
+✅ ./apps/filesquid/ui uniquely bound to 5173
+✅ ./apps/filesquid/ui uniquely bound to 4173
+✅ ./apps/imagesquid uniquely bound to 5174
+✅ ./apps/imagesquid uniquely bound to 4174
+✅ filesquid-server uniquely bound to 8083
+Starting Document Sync Validation...
+Starting PRD/SRS Traceability Validation...
+✅ Traceability Validation passed: 96 PRD requirements, 84 resolved SRS references.
+Starting Portable Documentation Validation...
+Starting Workspace Boundary Validation...
+✅ Workspace Boundary validation passed.
+Starting logging rule validation...
+✅ Logging rule validation passed (no relevant staged files).
+Starting Format Validation...
+✅ ./apps/filesquid is properly formatted.
+✅ ./apps/filesquid/ui is properly formatted.
+✅ ./apps/imagesquid is properly formatted.
+✅ Format validation passed.
+Starting Documentation Validation...
+✅ ADR structure (ISO 42010) passed.
+✅ PRD allocation passed.
+✅ Plan traceability passed.
+✅ Relative links and anchors passed.
+✅ FileSquid and ImageSquid document boundary passed.
+✅ MVP queue and merge driver tests passed.
+✅ MVP progress bar passed.
+✅ Task cleanup passed.
+✅ Documentation validation passed.
+Starting Change Scope Validation...
+✅ Change scope validation passed (166 assertions).
+Starting Lint and Test Validation...
+✅ Clippy passed (1s).
+✅ Workspace tests passed (55s).
+✅ Module crate alone: filesquid-core passed (2s).
+✅ Module crate alone: filesquid-ocfl passed (28s).
+✅ Module crate alone: filesquid-metadata passed (10s).
+✅ Module crate alone: filesquid-c2pa passed (79s).
+✅ Module crate alone: filesquid-api passed (11s).
+✅ Module crate alone: filesquid-native passed (30s).
+✅ Clippy (filesquid-metadata, all features) passed (0s).
+✅ Tests (filesquid-metadata, all features) passed (9s).
+✅ wasm32 build (filesquid-metadata, default features off) passed (10s).
+✅ wasm32 build (filesquid-metadata, ocfl feature) passed (0s).
+✅ Rustdoc passed (5s).
+✅ Clippy (desktop, test-instrumented) passed (5s).
+✅ Desktop tests (test-instrumented) passed (20s).
+✅ ESLint passed (5s).
+✅ TypeScript passed (5s).
+ Test Files  33 passed (33)
+      Tests  600 passed (600)
+✅ Vitest passed (17s).
+✅ ESLint passed (1s).
+✅ TypeScript passed (4s).
+ Test Files  4 passed (4)
+      Tests  37 passed (37)
+✅ Vitest passed (3s).
+✅ Lint and test validation passed (test scope: full).
+✅ All Pre-Commit Hooks Passed! Test scope: full (333s)
+exit=0
+✅ All Pre-Commit Hooks Passed! Test scope: full (333s)
+```

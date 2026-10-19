@@ -23,11 +23,15 @@ Feature: Durable, complete and browsable activity journal
     Then the library's journal object should gain one JSON Lines segment with those entries
     And the seal should be a registered, journaled process
 
-  Scenario: Events are sealed on app close and library close
-    Given entries that are not yet sealed
+  Scenario: Library events are sealed on library close
+    Given library entries that are not yet sealed
     When I close the library
     Then they should be sealed into the library's journal object
-    And host events should be sealed into the installation's journal object when the app closes
+
+  Scenario: Host events are sealed on app close
+    Given host entries that are not yet sealed
+    When I close the app
+    Then they should be sealed into the installation's journal object
 
   Scenario: Database deleted, rebuild restores the journal
     Given committed operations and other entries sealed at the last hourly seal
@@ -44,7 +48,11 @@ Feature: Durable, complete and browsable activity journal
     When the next seal runs after the storage root is writable again
     Then every entry that was not sealed should be in the new segment
 
-  Scenario: Browser console warnings reach the journal without their text
+  Scenario: A browser console warning reaches the journal
+    When the UI reports a console warning
+    Then the journal should hold one "ui.console.warn" entry with the component, error code and opaque IDs
+
+  Scenario: Browser console errors reach the journal without their text
     When the UI reports a console error with a message that contains a file name
     Then the journal should hold one "ui.console.error" entry with the component, error code and opaque IDs
     And the entry should not contain the message text
@@ -52,7 +60,7 @@ Feature: Durable, complete and browsable activity journal
   Scenario: Client events are bounded
     When the UI sends 21 events in one request
     Then the request should be refused with an error code
-    And a caller over the rate bound should be told when to retry
+    And a caller over the rate bound should receive status 429 with a Retry-After header
 
   # User interactions
   Scenario: The owner browses and filters the Journal tab
@@ -66,10 +74,15 @@ Feature: Durable, complete and browsable activity journal
     And the journal should record a "journal.export" entry
 
   # Error case
-  Scenario: A non-owner cannot open the Journal tab or export
+  Scenario: A non-owner cannot export the journal
     Given a caller without the owner credential
     When it requests the journal export
     Then the request should be refused and journaled as a refusal
+
+  Scenario: A non-owner cannot open the Journal tab
+    Given a caller without the owner credential
+    When it opens the Journal tab
+    Then the tab should show a permission state and no entries
 
   # Source
   # - resources/srs.md SRS-F-061

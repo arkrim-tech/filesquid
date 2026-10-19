@@ -13,7 +13,8 @@ Feature: PROV-O history of every version and change
     And the installation UUID of this FileSquid installation is known
 
   # Happy path
-  Scenario Outline: Every covered operation commits exactly one PROV-O record in its own version
+  # Exports, scrubbed outputs and publications are recorded in the library's history object (scenario below).
+  Scenario Outline: Each file-changing operation commits exactly one PROV-O record in its own version
     Given a file in the library
     When I <operation> it
     Then exactly one new OCFL version should be committed
@@ -24,6 +25,12 @@ Feature: PROV-O history of every version and change
     Examples:
       | operation          | kind           |
       | import             | import         |
+      | upload             | upload         |
+      | copy               | copy           |
+      | unhide             | unhide         |
+      | reinstate          | reinstate      |
+      | label              | label          |
+      | add to a collection | catalog.organisation |
       | rename             | rename         |
       | move               | move           |
       | hide               | hide           |
@@ -73,10 +80,16 @@ Feature: PROV-O history of every version and change
     Then the journal should record the refusal
     And no PROV-O record should be written
 
-  Scenario: An export is recorded in the library's history object
-    When I export a folder as a ZIP download
-    Then the library's history object should gain one provenance-only version with an export activity
+  Scenario Outline: Exports, scrubbed outputs and publications are recorded in the library's history object
+    When I <action>
+    Then the library's history object should gain one provenance-only version with a "<kind>" activity
     And no file object should gain a version
+
+    Examples:
+      | action                                   | kind    |
+      | export a folder as a ZIP download        | export  |
+      | export a file with metadata scrubbing    | scrub   |
+      | publish a public file to my AT Protocol account | publish |
 
   Scenario: A repair is followed by a provenance-only version
     Given an object whose head has no version inventory
@@ -91,7 +104,8 @@ Feature: PROV-O history of every version and change
   Scenario: Versions committed before the history existed are reconstructed once
     Given an object with three versions and no PROV-O records
     When the reconstruction job runs, is interrupted and resumes
-    Then each of the three versions should have exactly one record marked "reconstructed"
+    Then exactly one provenance-only version should be committed to the object
+    And each of the three versions should have exactly one record marked "reconstructed"
     And each record should state its own recording time
     And no agent should appear that the inventory did not record
     And running the job again should commit nothing

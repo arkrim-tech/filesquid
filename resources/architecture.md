@@ -127,15 +127,18 @@ flowchart TB
         Core[filesquid-core]
         OCFL[filesquid-ocfl]
         Meta[filesquid-metadata]
+        Prov[filesquid-prov]
         C2PA[filesquid-c2pa]
         Later["Later: media, import and migration, clipping,<br/>AI connections, curation jobs, sync"]
     end
     API --> Core
     API --> OCFL
     API --> Meta
+    API --> Prov
     API --> C2PA
     API --> Later
     Meta -. optional ocfl store .-> OCFL
+    Prov -. optional ocfl feature .-> OCFL
     subgraph Storage
         Root[("OCFL storage root<br/>local filesystem or S3-compatible")]
         SQLite[("SQLite: desktop indexes and jobs")]
@@ -222,7 +225,8 @@ flowchart TB
 | Catalog | Domain commands, operational indexes of libraries/assets/metadata/relationships, pending changes and availability | Transactional commands/query pages; coordinates canonical file commits before durable completion and can rebuild committed state without the operational database |
 | Import/Migration | Source inventory, adapter capabilities, staged extraction, matching, reconstruction and reports | `inventory`, `readResource`, `readCollections`, `refreshAuthorization`, `reconcileSource`; free self-service batch tooling retains completed work, reads source only and never issues source delete |
 | Source Capture/Evidence | User-invoked capture scope, complete observed request/response exchanges, context extraction and completeness | `startCapture`, `appendExchange`, `sealCapture`, `readEvidence`; dedicated encrypted evidence handles, never telemetry payloads or credential replay |
-| Provenance/C2PA (`filesquid-c2pa`) | Resource-bound import/history records, retained-transformation PROV-O graphs, immutable signed credentials and collection scan reports, implemented by the from-scratch `filesquid-c2pa` module ([ADR 026](./architecture/026-filesquid-provenance-engine.md)) | `beginImportRecord`, `appendAction`, `validateCredential`, `prepareClaims`, `scanCollection`, `exportScanReport`; free bounded resumable scans, explicit coverage/trust state and disclosure-safe reports |
+| PROV-O history (`filesquid-prov`) | One PROV-O activity per committed OCFL version, written in the same commit, linked to the journal; independent of C2PA and in every build from the MVP on ([ADR 040](./architecture/040-prov-o-history.md)) | Records at `provenance/<version>.jsonld`; history routes; reconstruction job |
+| Provenance/C2PA (`filesquid-c2pa`) | Resource-bound C2PA import/history records, immutable signed credentials and collection scan reports, implemented by the from-scratch `filesquid-c2pa` module ([ADR 026](./architecture/026-filesquid-provenance-engine.md)), from the ImageSquid release; its optional projection maps C2PA actions into the PROV-O profile | `beginImportRecord`, `appendAction`, `validateCredential`, `prepareClaims`, `scanCollection`, `exportScanReport`; free bounded resumable scans, explicit coverage/trust state and disclosure-safe reports |
 | Preservation | Canonical local OCFL files, per-user hosted roots, asset versions, collection snapshots and independent recovery | `prepareVersion`, `commitVersion`, `verifyPackage`, `restoreSnapshot`; durable completion follows canonical commit; readable local and encrypted hosted profiles preserve required metadata/evidence/envelopes |
 | Publication | In-app approved derivatives/claims, third-party C2PA signing, linked watermarking and resolution verification | `preparePublication`, `submitPublication`, `verifyPublishedOutput`; desktop/browser review, progress, permitted recovery and output retrieval; both credential and watermark outcomes required when selected |
 | AI Connections | User-owned endpoint/authentication, task/model bindings, capability evidence, bounded requests, and standing/per-job disclosure | `listModels`, `probeTask`, `runTask`; direct user payment, explicit destination changes and no funded fallback; results are proposals to domain commands; configuration shows standing copy plus inspectable **How AI Connections work**; a new remote job previews destination, extra hop, file count, image size, metadata policy and payer |
@@ -474,7 +478,7 @@ sequenceDiagram
     C->>D: PUT filesquid://localhost/api/v1/... (per-launch token)
     D->>A: Route request in process
     A->>A: Authorise, start durable job
-    A->>M: Stage, commit version with metadata record and PROV-O record, extract metadata (C2PA record only with the c2pa module)
+    A->>M: Extract metadata, then stage the original, its metadata record and the PROV-O record and commit one version (C2PA record only with the c2pa module)
     M->>R: Write vN content, version inventory, root inventory last
     R-->>M: Commit receipt
     A->>Q: Update indexes from receipt
@@ -585,7 +589,7 @@ Operational events use RFC 3339 UTC. Capture time is a separate structured field
 
 Photo adapters map supported EXIF, IPTC and XMP/native fields. Video adapters map supported QuickTime/MP4 container, track and timed metadata plus available XMP/sidecars; video does not universally carry EXIF. A common semantic field such as location can have multiple native encodings, so detection, safe writing and complete removal each require explicit format/namespace capabilities. Raw native values and unsupported structures remain preserved even where a normalized field or portable sidecar cannot express them. [QuickTime metadata structure](https://developer.apple.com/documentation/quicktime-file-format/metadata_atoms_and_types).
 
-Every imported file also carries an append-only the `import` section of `<file-uuid>.metadata.md` in its OCFL object, committed in the same OCFL version as the imported content, or for an explicit referenced import in the OCFL version that records the reference (the record then says the bytes were referenced, not copied); import completion requires both. It holds the source-system and host facts captured at import (original name and path, filesystem timestamps, ownership, permissions, extended attributes, volume and host), with unavailable facts listed and a reason given. It is evidence, not description: it is never edited, it is not a C2PA record, and its identity fields are scrubbed from exports and shares by default ([ADR 038](./architecture/038-import-file-record.md)).
+Every imported file also carries the append-only `import` section of `<file-uuid>.metadata.md` in its OCFL object, committed in the same OCFL version as the imported content, or for an explicit referenced import in the OCFL version that records the reference (the record then says the bytes were referenced, not copied); import completion requires both. It holds the source-system and host facts captured at import (original name and path, filesystem timestamps, ownership, permissions, extended attributes, volume and host), with unavailable facts listed and a reason given. It is evidence, not description: it is never edited, it is not a C2PA record, and its identity fields are scrubbed from exports and shares by default ([ADR 038](./architecture/038-import-file-record.md)).
 
 Descriptive statements are canonical versioned sidecar data, linked by stable file/resource identity rather than filenames. Each statement is `{namespace, term, value}` with namespace `exif`, `dcterms` or `schema`. The `/terms/` register is closed; unknown `dcterms:` local names are rejected; collection-domain `accrual*` terms are not authored on a file. Extracted IPTC/XMP title, creator, caption, keywords and copyright map onto the matching `dcterms:` properties for the owner-facing record. Renaming a label cannot silently change field identity or overwrite an extracted native field. Single/batch operations use expected revisions and resumable item outcomes. Export/reimport and metadata-only OCFL reconstruction retain statements and source-versus-owner assertions. Institutional standards mappings name their supported profile and expose unmapped/lossy values; arbitrary custom JSON is not automatically standards-conformant metadata ([ADR 022](./architecture/022-dublin-core-descriptive-metadata.md)).
 

@@ -12,7 +12,7 @@ Accepted
 
 Accepted: 2026-10-18. Amends [ADR 035](./035-macos-first-desktop-mvp.md) (the MVP scope it cites from [C-056](../product-vision.md#release-sequence)) and the release-1 module set of [ADR 029](./029-filesquid-unified-product-and-distributions.md) ([C-025](../product-vision.md#release-sequence)). Does not change [ADR 026](./026-filesquid-provenance-engine.md): the `filesquid-c2pa` engine, its design and its isolation rules stay as decided; only its delivery moves.
 
-Amended 2026-10-19 by [ADR 040](./040-prov-o-history.md) (Decision 6): the `filesquid-core` PROV-O types of CO-0.8 are no longer C2PA leftovers; CO-0.11 extends them for the MVP's PROV-O history, which does not depend on the `c2pa` module. Also amended 2026-10-19 by the owner decision recorded in [ADR 038](./038-import-file-record.md): the import record of Decision 5 is the `import` section of each file's `<file-uuid>.metadata.md`.
+Amended 2026-10-19 by [ADR 040](./040-prov-o-history.md) (this record's Decision 6; ADR 040 Decision 10): the `filesquid-core` PROV-O types of CO-0.8 are no longer C2PA leftovers; CO-0.11 extends them for the MVP's PROV-O history, which does not depend on the `c2pa` module. Also amended 2026-10-19 by the owner decision recorded in [ADR 038](./038-import-file-record.md): the import record of Decision 5 is the `import` section of each file's `<file-uuid>.metadata.md`.
 
 ## Context / Requirement Reference
 
