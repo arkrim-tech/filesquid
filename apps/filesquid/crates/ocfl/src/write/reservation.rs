@@ -24,6 +24,7 @@ pub struct Reservation {
     version: VersionNum,
     holder: String,
     token: u64,
+    took_over: bool,
 }
 
 impl Reservation {
@@ -41,7 +42,18 @@ impl Reservation {
             version,
             holder: holder.into(),
             token,
+            took_over: false,
         }
+    }
+
+    /// The same reservation, marked as a takeover: it replaced a
+    /// reservation of the object that was still held (not released) when it
+    /// expired or passed to this holder. For [`VersionReservations`]
+    /// implementations, so callers learn that a writer crashed or stalled
+    /// and may have left a stray file under `vN/` (OCFL-S-018 "Known gap").
+    pub fn with_takeover(mut self) -> Self {
+        self.took_over = true;
+        self
     }
 
     /// The object identifier.
@@ -63,6 +75,12 @@ impl Reservation {
     pub fn token(&self) -> u64 {
         self.token
     }
+
+    /// Whether this reservation took over one that was still held, not
+    /// released, when it expired or passed to this holder.
+    pub fn took_over(&self) -> bool {
+        self.took_over
+    }
 }
 
 /// Reserves versions of objects for one writer at a time.
@@ -72,7 +90,10 @@ impl Reservation {
 /// records are engine working data, never needed to read or recover an
 /// object.
 pub trait VersionReservations: MaybeSend + MaybeSync {
-    /// Reserve `version` of `object_id` for `holder`.
+    /// Reserve `version` of `object_id` for `holder`. The returned
+    /// reservation reports [`Reservation::took_over`] when it replaced a
+    /// reservation that was still held, not released, when it expired or was
+    /// reassigned.
     ///
     /// # Errors
     ///
