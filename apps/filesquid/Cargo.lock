@@ -1328,6 +1328,7 @@ dependencies = [
  "cucumber",
  "filesquid-core",
  "filesquid-ocfl",
+ "filesquid-prov",
  "getrandom 0.4.3",
  "http-body-util",
  "serde",
@@ -1451,6 +1452,18 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "filesquid-prov"
+version = "0.1.0"
+dependencies = [
+ "cucumber",
+ "filesquid-ocfl",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]

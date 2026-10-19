@@ -57,6 +57,9 @@ pub enum Action {
     /// credential's [`Action::ReadFiles`] permission again at every request (API-S-018). It
     /// is never public.
     ReadContent,
+    /// Read the PROV-O history: activities, records and their export (`/history`,
+    /// `/files/{id}/history`, `/files/{id}/versions/{version}/prov`; API-S-029).
+    ReadHistory,
     /// Deliberately public, unauthenticated: only the liveness probe
     /// (`GET /api/v1/health/live`), which says that the process is up and nothing else. The
     /// router leaves the route-table entry with this action unguarded; the guard itself
@@ -67,7 +70,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, in declaration order.
-    pub const ALL: [Action; 9] = [
+    pub const ALL: [Action; 10] = [
         Action::ReadHealth,
         Action::ReadContract,
         Action::SubscribeEvents,
@@ -76,6 +79,7 @@ impl Action {
         Action::ReadFiles,
         Action::WriteFiles,
         Action::ReadContent,
+        Action::ReadHistory,
         Action::Public,
     ];
 
@@ -90,6 +94,7 @@ impl Action {
             Action::ReadFiles => "files.read",
             Action::WriteFiles => "files.write",
             Action::ReadContent => "content.read",
+            Action::ReadHistory => "history.read",
             Action::Public => "public",
         }
     }

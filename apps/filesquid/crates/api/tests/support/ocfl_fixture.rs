@@ -436,6 +436,11 @@ impl Rig {
         }
     }
 
+    /// A sender into the bounded journal queue the service writes through.
+    pub fn sender(&self) -> filesquid_api::journal_writer::JournalSender {
+        self.writer.sender()
+    }
+
     /// Every journal entry written through the bounded queue, oldest first.
     pub fn journal(&self) -> Vec<JournalEntry> {
         self.writer.sender().flush();

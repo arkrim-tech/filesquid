@@ -16,9 +16,11 @@ Superseded in part 2026-10-15 by [ADR 029](./029-filesquid-unified-product-and-d
 
 Amended 2026-10-17 by [ADR 036](./036-single-fsquid-cli.md): every FileSquid CLI is the one `fsquid` binary built by `filesquid-cli`; this module's commands run there and the crate ships no binary of its own.
 
+Amended 2026-10-19 by [ADR 040](./040-prov-o-history.md): the PROV-O history engine is the new `filesquid-prov` module, not this engine; `filesquid-c2pa` keeps an optional, default-off projection of C2PA actions into the `filesquid-prov/1` profile (C2PA-S-011), linked by operation ID.
+
 ## Context / Requirement Reference
 
-FileSquid creates import-time C2PA records, discloses actions, validates credentials, runs free collection scans, and later submits approved outputs for third-party signing ([F-043](../prd.md#f-043-import-time-c2pa-records-and-action-disclosure), [ADR 015](./015-prov-o-jsonld-and-c2pa-sdk.md)). The inspector mockups show a C2PA Track, cryptographic credentials, Merkle audit and a PROV-O graph on every file.
+FileSquid creates import-time C2PA records, discloses actions, validates credentials, runs free collection scans, and later submits approved outputs for third-party signing ([F-043](../prd.md#f-043-c2pa-records-and-action-disclosure), [ADR 015](./015-prov-o-jsonld-and-c2pa-sdk.md)). The inspector mockups show a C2PA Track, cryptographic credentials, Merkle audit and a PROV-O graph on every file.
 
 ADRs 006, 011 and 015 chose the official Rust `c2pa` crate inside desktop native processing. [ADR 025](./025-client-side-filesquid-engines.md) moved preservation and metadata engines to every client, which left C2PA as the one file-level engine still tied to the desktop. [ADR 024](./024-filesquid-metadata-engine.md) keeps C2PA out of `filesquid-metadata`. `imagesquid_core` already carries C2PA and PROV-O record types (`C2paImportRecord`, `ProvOSidecar`; task CO-0.8) but no C2PA logic.
 
@@ -87,5 +89,5 @@ Easier: one C2PA engine for desktop, browser and third-party developers; the ins
 
 - Supersedes the `c2pa` crate choice in: [ADR 006](./006-libvips-native-stills-not-imagemagick.md), [ADR 011](./011-native-media-adapters-and-ffmpeg-license.md), [ADR 015](./015-prov-o-jsonld-and-c2pa-sdk.md) (PROV-O JSON-LD and "no graph database" remain).
 - Related: [ADR 001](./001-shared-rust-core-with-tauri-and-axum-hosts.md), [ADR 008](./008-browser-wasm-scope.md), [ADR 009](./009-cryptography-webcrypto-compatible-suite.md), [ADR 023](./023-filesquid-ocfl-engine-and-parquet.md), [ADR 024](./024-filesquid-metadata-engine.md), [ADR 025](./025-client-side-filesquid-engines.md).
-- Requirements: [PRD F-054](../prd.md#f-054-c2pa-module), [PRD F-043](../prd.md#f-043-import-time-c2pa-records-and-action-disclosure), [FE-072](../product-vision.md#independent-library), [U-67](../product-vision.md#c2pa-module), [C-054](../product-vision.md#module-rules).
+- Requirements: [PRD F-054](../prd.md#f-054-c2pa-module), [PRD F-043](../prd.md#f-043-c2pa-records-and-action-disclosure), [FE-072](../product-vision.md#independent-library), [U-67](../product-vision.md#c2pa-module), [C-054](../product-vision.md#module-rules).
 - [C2PA specification](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html) (2.4 is the version ADR 015 cites; the engine pins its version at first implementation), [official c2pa crate (oracle)](https://crates.io/crates/c2pa).

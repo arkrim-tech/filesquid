@@ -21,13 +21,23 @@ use crate::storage::{
 /// Most chunks one staged file is read in.
 const MAX_HASH_CHUNKS: u64 = MAX_OBJECT_BYTES / MAX_CHUNK_BYTES + 2;
 
-/// One bitstream to upload: from `staged` to the content path.
+/// Where the bytes of one upload come from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum UploadSource {
+    /// Bytes at this key of the caller's staging backend.
+    Staged(StorageKey),
+    /// Bytes a version-bound file function returned, held in memory (at
+    /// most [`MAX_PUT_BYTES`](crate::storage::MAX_PUT_BYTES)).
+    Inline(Vec<u8>),
+}
+
+/// One bitstream to upload: from its source to the content path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Upload {
     /// Content path relative to the object root, under `vN/`.
     pub content_path: String,
-    /// The staging key that holds the bytes.
-    pub staged: StorageKey,
+    /// Where the bytes come from.
+    pub source: UploadSource,
     /// The bytes' sha256 digest, as the manifest records it.
     pub digest: String,
 }
@@ -206,7 +216,7 @@ fn build_state(
 }
 
 /// The manifest's own spelling of `digest`, compared without case.
-fn manifest_key<'m>(manifest: &'m DigestMap, digest: &str) -> Option<&'m String> {
+pub(crate) fn manifest_key<'m>(manifest: &'m DigestMap, digest: &str) -> Option<&'m String> {
     manifest.keys().find(|key| key.eq_ignore_ascii_case(digest))
 }
 
@@ -240,7 +250,7 @@ fn extend_manifest(
             .insert(digest.clone(), vec![content_path.clone()]);
         uploads.push(Upload {
             content_path,
-            staged: staged.clone(),
+            source: UploadSource::Staged(staged.clone()),
             digest: digest.clone(),
         });
     }

@@ -50,6 +50,10 @@ name = "unit_files"
 path = "tests/unit/files.rs"
 
 [[test]]
+name = "unit_installation"
+path = "tests/unit/installation.rs"
+
+[[test]]
 name = "unit_host"
 path = "tests/unit/host.rs"
 

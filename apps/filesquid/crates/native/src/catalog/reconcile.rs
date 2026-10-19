@@ -43,8 +43,10 @@ pub(crate) fn set_snapshot_version(
 }
 
 /// Bring the catalog in `conn` to `snapshot` (see the module documentation) and answer
-/// whether anything changed: only a catalog behind the head is rebuilt and has its receipts
-/// restored and published intents cleared. Database I/O.
+/// whether anything changed: only a catalog behind the head is rebuilt, has its receipts
+/// restored and published intents cleared, and has `replay` (the journal entries the commits
+/// it missed wrote into their versions, with their pre-allocated IDs, so the host journal
+/// stores each once) pushed to its outbox. Database I/O.
 ///
 /// # Errors
 /// [`CatalogError::Failed`] when the snapshot names another library or holds an entity of
@@ -53,6 +55,7 @@ pub(crate) fn reconcile(
     conn: &mut Connection,
     library_id: &LibraryId,
     snapshot: &LibrarySnapshot,
+    replay: &[JournalEntry],
 ) -> Result<bool, CatalogError> {
     let version = snapshot.version.to_string();
     let behind = snapshot_version(conn)?.as_deref() != Some(version.as_str());
@@ -68,6 +71,9 @@ pub(crate) fn reconcile(
     rebuild(&tx, library_id, snapshot)?;
     restore_receipts(&tx, &snapshot.operations)?;
     clear_published(&tx, &snapshot.operations)?;
+    for replayed in replay {
+        outbox::push(&tx, replayed)?;
+    }
     let entry = JournalEntry::new(RECONCILE_OPERATION, Outcome::Succeeded)
         .target(library_id.as_str())
         .target(version);

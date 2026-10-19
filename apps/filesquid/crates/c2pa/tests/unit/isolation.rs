@@ -58,6 +58,7 @@ fn rules_reject_every_named_crate() {
         "filesquid-ocfl",
         "filesquid-core",
         "filesquid-metadata",
+        "filesquid-prov",
         "filesquid-api",
         "imagesquid-ui",
         "arkrim-theme",

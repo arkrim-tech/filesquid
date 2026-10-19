@@ -43,6 +43,7 @@ fn route_table() -> Vec<Route> {
     table.extend(crate::files::routes());
     table.push(crate::content::mint_route());
     table.push(crate::content::content_routes());
+    table.extend(crate::history::routes::routes());
     table
 }
 

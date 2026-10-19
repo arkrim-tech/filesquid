@@ -22,7 +22,9 @@ CREATE TABLE IF NOT EXISTS activity_journal (
     level TEXT NOT NULL,
     target_ids TEXT NOT NULL,
     duration_ms INTEGER,
-    error_code TEXT
+    error_code TEXT,
+    operation_id TEXT,
+    object_ref TEXT
 );
 CREATE INDEX IF NOT EXISTS activity_journal_time ON activity_journal(time_ms);
 CREATE INDEX IF NOT EXISTS activity_journal_operation ON activity_journal(operation);
@@ -35,12 +37,25 @@ WHEN (SELECT open FROM activity_journal_gate WHERE id = 1) = 0
 BEGIN SELECT RAISE(ABORT, 'activity_journal is append-only; use retention'); END;
 ";
 
-const INSERT: &str = "INSERT INTO activity_journal
-    (time_ms, host, process_id, actor, operation, outcome, level, target_ids, duration_ms, error_code)
-    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)";
+/// Columns added after the first release of the schema, as `(name, type)`.
+/// [`migrate`] adds each one a journal created earlier lacks (DE-0.10:
+/// the PROV-O linkage of ADR 040 Decision 6).
+const ADDED_COLUMNS: [(&str, &str); 2] = [("operation_id", "TEXT"), ("object_ref", "TEXT")];
 
-const COLUMNS: &str =
-    "id, time_ms, host, process_id, actor, operation, outcome, level, target_ids, duration_ms, error_code";
+/// Indexes on the added columns, created after the migration.
+const LINK_INDEXES: &str = "
+CREATE INDEX IF NOT EXISTS activity_journal_operation_id ON activity_journal(operation_id);
+CREATE INDEX IF NOT EXISTS activity_journal_object_ref ON activity_journal(object_ref);
+";
+
+const INSERT: &str = "INSERT INTO activity_journal
+    (time_ms, host, process_id, actor, operation, outcome, level, target_ids, duration_ms,
+     error_code, operation_id, object_ref, id)
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+    ON CONFLICT(id) DO NOTHING";
+
+const COLUMNS: &str = "id, time_ms, host, process_id, actor, operation, outcome, level, \
+     target_ids, duration_ms, error_code, operation_id, object_ref";
 
 /// Journal store backed by an SQLite file. Created with its schema on first open.
 pub struct SqliteJournal {
@@ -66,6 +81,7 @@ impl SqliteJournal {
         conn.busy_timeout(std::time::Duration::from_secs(5))
             .map_err(sql_err)?;
         conn.execute_batch(SCHEMA).map_err(sql_err)?;
+        migrate(&conn)?;
         Ok(Self {
             host: host.into(),
             conn: Mutex::new(conn),
@@ -79,7 +95,7 @@ impl SqliteJournal {
         host: &str,
         entry: &JournalEntry,
     ) -> Result<i64, JournalError> {
-        insert(tx, host, entry)
+        insert(tx, host, entry).map(|(id, _)| id)
     }
 
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, JournalError> {
@@ -96,8 +112,41 @@ fn restrict_to_owner(path: &Path) -> Result<(), JournalError> {
         .map_err(|err| JournalError(format!("{}: {err}", path.display())))
 }
 
+/// Add every column of [`ADDED_COLUMNS`] that the journal lacks, then the
+/// indexes on them. Idempotent: a current journal is left as it is. Adding
+/// a nullable column changes no stored row, so the append-only triggers
+/// still hold; old rows read the new columns as absent.
+fn migrate(conn: &Connection) -> Result<(), JournalError> {
+    let present = journal_columns(conn)?;
+    for (name, kind) in ADDED_COLUMNS {
+        if !present.iter().any(|column| column == name) {
+            let sql = format!("ALTER TABLE activity_journal ADD COLUMN {name} {kind}");
+            conn.execute_batch(&sql).map_err(sql_err)?;
+            tracing::info!(column = name, "migrated the activity journal forward");
+        }
+    }
+    conn.execute_batch(LINK_INDEXES).map_err(sql_err)
+}
+
+/// The column names of the journal table.
+fn journal_columns(conn: &Connection) -> Result<Vec<String>, JournalError> {
+    let mut stmt = conn
+        .prepare("SELECT name FROM pragma_table_info('activity_journal')")
+        .map_err(sql_err)?;
+    let names = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(sql_err)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(sql_err)?;
+    Ok(names)
+}
+
 /// Insert one entry and return its id.
-fn insert(conn: &Connection, default_host: &str, e: &JournalEntry) -> Result<i64, JournalError> {
+fn insert(
+    conn: &Connection,
+    default_host: &str,
+    e: &JournalEntry,
+) -> Result<(i64, bool), JournalError> {
     let e = &e.clone().redacted();
     let host = if e.host.is_empty() {
         default_host
@@ -106,23 +155,63 @@ fn insert(conn: &Connection, default_host: &str, e: &JournalEntry) -> Result<i64
     };
     let targets =
         serde_json::to_string(&e.target_ids).map_err(|err| JournalError(err.to_string()))?;
-    conn.execute(
-        INSERT,
-        rusqlite::params![
-            e.time_ms,
-            host,
-            e.process_id,
-            e.actor,
-            e.operation,
-            e.outcome.as_str(),
-            e.level.as_str(),
-            targets,
-            e.duration_ms.map(|d| d as i64),
-            e.error_code
-        ],
+    let changed = conn
+        .execute(
+            INSERT,
+            rusqlite::params![
+                e.time_ms,
+                host,
+                e.process_id,
+                e.actor,
+                e.operation,
+                e.outcome.as_str(),
+                e.level.as_str(),
+                targets,
+                e.duration_ms.map(|d| d as i64),
+                e.error_code,
+                e.operation_id,
+                e.object_ref,
+                e.id
+            ],
+        )
+        .map_err(sql_err)?;
+    let id = e.id.unwrap_or_else(|| conn.last_insert_rowid());
+    Ok((id, changed > 0))
+}
+
+/// Reserve `count` ids above every stored and every earlier reserved id by advancing the
+/// table's AUTOINCREMENT counter in one transaction, so later automatic ids skip them.
+/// Database I/O.
+fn reserve_ids(conn: &mut Connection, count: i64) -> Result<Vec<i64>, JournalError> {
+    let tx = conn.transaction().map_err(sql_err)?;
+    let stored: i64 = tx
+        .query_row(
+            "SELECT COALESCE(MAX(id), 0) FROM activity_journal",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(sql_err)?;
+    let sequence: i64 = tx
+        .query_row(
+            "SELECT COALESCE(MAX(seq), 0) FROM sqlite_sequence WHERE name = 'activity_journal'",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(sql_err)?;
+    let first = stored.max(sequence) + 1;
+    let last = first + count - 1;
+    tx.execute(
+        "DELETE FROM sqlite_sequence WHERE name = 'activity_journal'",
+        [],
     )
     .map_err(sql_err)?;
-    Ok(conn.last_insert_rowid())
+    tx.execute(
+        "INSERT INTO sqlite_sequence (name, seq) VALUES ('activity_journal', ?1)",
+        rusqlite::params![last],
+    )
+    .map_err(sql_err)?;
+    tx.commit().map_err(sql_err)?;
+    Ok((first..=last).collect())
 }
 
 /// WHERE clause and parameters for the filters of `q` (cursor and limit excluded).
@@ -180,6 +269,8 @@ fn row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<JournalEntry> {
         target_ids: serde_json::from_str(&targets).unwrap_or_default(),
         duration_ms: duration.map(|d| d.max(0) as u64),
         error_code: row.get(10)?,
+        operation_id: row.get(11)?,
+        object_ref: row.get(12)?,
     })
 }
 
@@ -188,7 +279,21 @@ impl JournalStore for SqliteJournal {
         &self.host
     }
 
+    fn allocate_ids(&self, count: usize) -> Result<Vec<i64>, JournalError> {
+        let count = filesquid_api::journal::check_allocation(count)?;
+        if count == 0 {
+            return Ok(Vec::new());
+        }
+        let mut conn = self.lock()?;
+        reserve_ids(&mut conn, count)
+    }
+
     fn append(&self, entries: &[JournalEntry]) -> Result<Vec<i64>, JournalError> {
+        let stored = self.append_new(entries)?;
+        Ok(stored.into_iter().map(|(id, _)| id).collect())
+    }
+
+    fn append_new(&self, entries: &[JournalEntry]) -> Result<Vec<(i64, bool)>, JournalError> {
         let mut conn = self.lock()?;
         let tx = conn.transaction().map_err(sql_err)?;
         let ids = entries

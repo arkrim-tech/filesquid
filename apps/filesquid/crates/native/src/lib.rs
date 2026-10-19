@@ -34,6 +34,7 @@ pub mod catalog;
 pub mod files;
 pub mod host_checks;
 pub mod host_monitor;
+pub mod installation;
 pub mod journal_sqlite;
 mod owner_only;
 

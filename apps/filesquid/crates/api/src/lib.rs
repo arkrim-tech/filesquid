@@ -50,6 +50,7 @@ pub mod error;
 pub mod events;
 pub mod files;
 pub mod health;
+pub mod history;
 pub mod host;
 pub mod journal;
 pub mod journal_writer;
@@ -70,7 +71,7 @@ pub use routes::{route_actions, routed_paths, router, Liveness};
 use std::sync::{Arc, OnceLock};
 
 /// Version of the FileSquid API contract. Bumped when the contract changes.
-pub const API_VERSION: &str = "0.7.0";
+pub const API_VERSION: &str = "0.8.0";
 
 /// URL prefix shared by every API route.
 pub const API_PREFIX: &str = "/api/v1";
@@ -98,6 +99,9 @@ pub struct ApiState {
     files: Arc<OnceLock<Arc<dyn files::FileOperations>>>,
     /// The live content handles, in memory only: they end with this state (API-S-018).
     content_handles: Arc<content::ContentHandles>,
+    /// The host's history source, installed once at startup (the history routes answer 503
+    /// until then).
+    history: Arc<OnceLock<Arc<dyn history::HistorySource>>>,
 }
 
 impl std::fmt::Debug for ApiState {
@@ -108,6 +112,7 @@ impl std::fmt::Debug for ApiState {
             .field("host", &self.host.get())
             .field("files_installed", &self.files.get().is_some())
             .field("content_handles", &self.content_handles)
+            .field("history_installed", &self.history.get().is_some())
             .finish()
     }
 }
@@ -129,6 +134,7 @@ impl ApiState {
             host: Arc::new(OnceLock::new()),
             files: Arc::new(OnceLock::new()),
             content_handles: Arc::new(content::ContentHandles::new(clock)),
+            history: Arc::new(OnceLock::new()),
         }
     }
 
@@ -191,6 +197,17 @@ impl ApiState {
     /// Install the host's monitor. Returns false if one was already installed.
     pub fn install_monitor(&self, monitor: monitor::Monitor) -> bool {
         self.monitor.set(monitor).is_ok()
+    }
+
+    /// Install the host's history source (API-S-029). Returns false, keeping the first, if
+    /// one was already installed.
+    pub fn install_history(&self, source: Arc<dyn history::HistorySource>) -> bool {
+        self.history.set(source).is_ok()
+    }
+
+    /// The installed history source, if any.
+    pub fn history(&self) -> Option<Arc<dyn history::HistorySource>> {
+        self.history.get().cloned()
     }
 
     /// The installed monitor, if any.

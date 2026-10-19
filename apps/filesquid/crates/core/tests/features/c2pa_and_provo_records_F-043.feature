@@ -1,4 +1,4 @@
-# SRS-F-043: Import-time C2PA records and action disclosure
+# SRS-F-043: C2PA records and action disclosure
 # ADR 015: PROV-O in versioned JSON-LD plus official c2pa crate
 Feature: C2PA and PROV-O record types
   As a host crate
@@ -52,6 +52,6 @@ Feature: C2PA and PROV-O record types
     And the sidecar profile should be JSON-LD
 
   # Source
-  # - resources/srs.md SRS-F-043: Import-time C2PA records and action disclosure
-  # - resources/prd.md F-043: Import-time C2PA records and action disclosure
+  # - resources/srs.md SRS-F-043: C2PA records and action disclosure
+  # - resources/prd.md F-043: C2PA records and action disclosure
   # - resources/architecture/015-prov-o-jsonld-and-c2pa-sdk.md

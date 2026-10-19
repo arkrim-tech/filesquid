@@ -20,13 +20,14 @@ use http_body_util::BodyExt;
 use std::sync::Arc;
 use tower::ServiceExt;
 
-/// Every routed path that requires a Bearer credential: all but the public liveness probe
-/// and the content route, whose only credential is a content handle (API-S-018).
+/// Every routed path that requires a Bearer credential (all but the public liveness probe
+/// and the content route, whose only credential is a content handle, API-S-018), with its
+/// path parameters naming the sample history's file and version.
 fn protected_paths() -> Vec<String> {
     route_actions()
         .into_iter()
         .filter(|(_, action)| !matches!(action, Action::Public | Action::ReadContent))
-        .map(|(path, _)| path)
+        .map(|(path, _)| crate::history_fixture::concrete(&path))
         .collect()
 }
 
@@ -55,6 +56,7 @@ fn desktop_api(w: &mut MonitorWorld) {
     let state = ApiState::new();
     state.install_authoriser(Authoriser::desktop_owner(&token));
     state.describe_host(HostIdentity::desktop(), Arc::new(NotEnrolled));
+    crate::history_fixture::install_sample_history(&state);
     start_monitor(w, &state);
     w.secret = Some(token.secret().to_string());
     w.state = Some(state);

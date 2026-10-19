@@ -19,6 +19,21 @@ Feature: Export and portable backup
     When I inspect the library
     Then originals and committed OCFL snapshots should remain
 
+  Scenario: Owner downloads use the original file name
+    Given an imported file shown as "Résumé final.pdf"
+    When I download it
+    Then the download should be named "Résumé final.pdf"
+    And the response should carry a UTF-8 filename* parameter and a safe ASCII filename fallback
+
+  Scenario: Two files with the same name in one export stay distinct
+    Given two files shown as "photo.jpg" in different folders
+    When I export both into one folder
+    Then the exported names should be "photo.jpg" and "photo (1).jpg"
+
+  Scenario: The FileId naming scheme remains an option
+    When I export files and choose FileId names
+    Then each file should be named by its FileId plus its extension
+
   # Source
   # - srs.md SRS-F-010
   # - prd.md F-010

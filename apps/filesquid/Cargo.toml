@@ -9,6 +9,7 @@ members = [
     "crates/ocfl",
     "crates/metadata",
     "crates/c2pa",
+    "crates/prov",
     "crates/cli",
     "crates/server",
     "crates/desktop",
