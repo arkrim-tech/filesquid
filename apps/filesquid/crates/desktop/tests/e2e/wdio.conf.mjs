@@ -12,6 +12,9 @@
  *   `apps/filesquid/target`. A relative `FILESQUID_DESKTOP_BIN` is resolved against the
  *   current directory.
  * - `TAURI_WEBDRIVER_PORT`: the embedded WebDriver port (default 4445, on 127.0.0.1).
+ * - `FILESQUID_E2E_LIBRARY`: the media library the test-instrumented app opens for the
+ *   content-handle tests. When unset, the launcher builds one in the run directory with
+ *   `ffmpeg` (`support/media-library.mjs`); set it to reuse a library built earlier.
  *
  * The chosen binary is copied into a fresh temporary directory before the run, so a concurrent
  * Cargo build that replaces the shared output cannot change the binary under test.
@@ -20,6 +23,7 @@ import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildMediaLibrary } from "./support/media-library.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const workspace = path.resolve(here, "../../../..");
@@ -41,6 +45,9 @@ const binary = path.join(run, binaryName);
 if (ownsRun) {
   copyFileSync(built, binary);
   process.env.FILESQUID_DESKTOP_E2E_RUN = run;
+  // The content-handle tests' media library (API-F1.3): built once by the launcher, opened by
+  // the test-instrumented app from FILESQUID_E2E_LIBRARY, which the workers inherit.
+  process.env.FILESQUID_E2E_LIBRARY ??= buildMediaLibrary(run);
 }
 const port = Number(process.env.TAURI_WEBDRIVER_PORT ?? "4445");
 
