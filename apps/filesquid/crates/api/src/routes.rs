@@ -11,9 +11,9 @@
 //! any other path declares that action. [`route_actions`] lists the actions for the
 //! contract's `x-filesquid-action`.
 
-use axum::extract::State;
+use axum::extract::{OriginalUri, State};
 use axum::http::header::CONTENT_TYPE;
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, Method};
 use axum::middleware::from_fn_with_state;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, MethodRouter};
@@ -21,6 +21,7 @@ use axum::{Json, Router};
 use filesquid_core::{health, HealthStatus};
 
 use crate::auth::{self, Action, Guard};
+use crate::content;
 use crate::error::{ApiError, ErrorCode};
 use crate::{ApiState, API_PREFIX, CONTRACT};
 
@@ -37,6 +38,9 @@ fn route_table() -> Vec<Route> {
         ("/host", get(host_handler), Action::ReadHost),
     ];
     table.extend(crate::admin::routes());
+    table.extend(crate::files::routes());
+    table.push(crate::content::mint_route());
+    table.push(crate::content::content_routes());
     table
 }
 
@@ -59,6 +63,15 @@ fn guarded(
         assert!(
             path == LIVENESS_PATH,
             "only the liveness probe may be public, not {path}"
+        );
+        return handlers;
+    }
+    if action == Action::ReadContent {
+        // The handle in the path is this route's only credential: its handlers accept the
+        // handle before anything else (API-S-018), and no Bearer credential is asked for.
+        assert!(
+            path == crate::content::CONTENT_PATH_TEMPLATE,
+            "only the content route is guarded by a content handle, not {path}"
         );
         return handlers;
     }
@@ -89,8 +102,18 @@ pub fn router(state: ApiState) -> Router {
     Router::new().nest(API_PREFIX, api)
 }
 
-/// Fallback for an unknown path under [`API_PREFIX`]: `not_found` for a known caller.
-async fn not_found(State(state): State<ApiState>, headers: HeaderMap) -> Response {
+/// Fallback for an unknown path under [`API_PREFIX`]: `not_found` for a known caller. A path
+/// under the content route gets the content-handle denial instead, whoever calls
+/// (API-S-018).
+async fn not_found(
+    State(state): State<ApiState>,
+    method: Method,
+    uri: OriginalUri,
+    headers: HeaderMap,
+) -> Response {
+    if content::is_content_path(uri.path()) {
+        return content::refuse_content(&state, method == Method::HEAD).await;
+    }
     if let Err(denial) = auth::check_caller(&state, &headers).await {
         return denial.into_response();
     }
@@ -98,8 +121,16 @@ async fn not_found(State(state): State<ApiState>, headers: HeaderMap) -> Respons
 }
 
 /// Fallback for a known path called with a method it does not accept: `method_not_allowed`
-/// for a known caller.
-async fn method_not_allowed(State(state): State<ApiState>, headers: HeaderMap) -> Response {
+/// for a known caller, or the content-handle denial under the content route.
+async fn method_not_allowed(
+    State(state): State<ApiState>,
+    method: Method,
+    uri: OriginalUri,
+    headers: HeaderMap,
+) -> Response {
+    if content::is_content_path(uri.path()) {
+        return content::refuse_content(&state, method == Method::HEAD).await;
+    }
     if let Err(denial) = auth::check_caller(&state, &headers).await {
         return denial.into_response();
     }

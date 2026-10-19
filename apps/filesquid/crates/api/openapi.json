@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "FileSquid API",
-    "version": "0.6.0",
-    "description": "The single FileSquid API served by every FileSquid host. See resources/architecture/030-filesquid-api-and-transports.md. Conventions: a command (mutation) sends a CommandEnvelope as the `envelope` member of its JSON request body (operation_id is the idempotency key, expected_revision the revision last read) and answers with a CommandOutcome; a query (list) takes the PageSize (`limit`, 1-1000) and Cursor (`cursor`) parameters; every failed request answers with an ApiError body (code, message, retryable). Router-wide fallbacks: any /api/v1/ path not in this contract answers 404 not_found, and a documented path called with a method it does not document answers 405 method_not_allowed; both carry the ApiError body. They are not listed per operation because no operation sends them. Authorisation is deny-by-default: every operation, including health, the contract and the event channel, requires the bearerAuth credential and is authorised before anything else runs, so a call without it answers 401 unauthorized and a call whose credential is not accepted or does not grant the operation answers 403 forbidden, before any 404 or 405; both carry the ApiError body with a DenialReason in `reason`. Each operation names the authorisation action it performs in x-filesquid-action. The one deliberate exception is GET /api/v1/health/live (x-filesquid-action public, security []), a liveness probe that answers only {\"status\":\"up\"} without a credential. Paths marked x-filesquid-host-route are served by the hosts, not by the filesquid-api router."
+    "version": "0.7.0",
+    "description": "The single FileSquid API served by every FileSquid host. See resources/architecture/030-filesquid-api-and-transports.md. Conventions: a command (mutation) sends a CommandEnvelope as the `envelope` member of its JSON request body (operation_id is the idempotency key, expected_revision the revision last read) and answers with a CommandOutcome; a query (list) takes the PageSize (`limit`, 1-1000) and Cursor (`cursor`) parameters; every failed request answers with an ApiError body (code, message, retryable). Router-wide fallbacks: any /api/v1/ path not in this contract answers 404 not_found, and a documented path called with a method it does not document answers 405 method_not_allowed; both carry the ApiError body. They are not listed per operation because no operation sends them. Authorisation is deny-by-default: every operation, including health, the contract and the event channel, requires the bearerAuth credential and is authorised before anything else runs, so a call without it answers 401 unauthorized and a call whose credential is not accepted or does not grant the operation answers 403 forbidden, before any 404 or 405; both carry the ApiError body with a DenialReason in `reason`. Each operation names the authorisation action it performs in x-filesquid-action. The one deliberate exception is GET /api/v1/health/live (x-filesquid-action public, security []), a liveness probe that answers only {\"status\":\"up\"} without a credential. The content route GET and HEAD /api/v1/content/{handle} (x-filesquid-action content.read, x-filesquid-credential content-handle, security []) is not public: its only credential is the content handle in its path, minted by POST /api/v1/content-handles for one file version (API-S-018); a Bearer token is not accepted there, and every unusable request under /api/v1/content/ (unknown, malformed, missing, expired, evicted or revoked handle, an extra path segment or another method) answers one identical 403 forbidden with reason invalid_credentials, never 401, 404 or 405. Paths marked x-filesquid-host-route are served by the hosts, not by the filesquid-api router."
   },
   "security": [
     {
@@ -483,6 +483,960 @@
           }
         }
       }
+    },
+    "/api/v1/files/listing": {
+      "get": {
+        "operationId": "listFolder",
+        "summary": "List one folder of an object version",
+        "description": "The folders and files directly below a logical-path prefix, folders first, with an opaque cursor; limit 1-1000, default 200. Answers storage facts only; a successful read is not journaled, a refusal is journaled once (API-S-017).",
+        "x-filesquid-action": "files.read",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/LibraryId"
+          },
+          {
+            "$ref": "#/components/parameters/ObjectId"
+          },
+          {
+            "$ref": "#/components/parameters/Version"
+          },
+          {
+            "name": "prefix",
+            "in": "query",
+            "required": false,
+            "description": "The folder, a logical-path prefix without a trailing /; the root when absent.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of the folder.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FolderPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/files/details": {
+      "get": {
+        "operationId": "getFileDetails",
+        "summary": "Storage facts about one file",
+        "description": "Object identifier, logical path, digest, size, fixity values, the version that last set the content and the media type; never the OCFL content path. Answers storage facts only; a successful read is not journaled, a refusal is journaled once (API-S-017).",
+        "x-filesquid-action": "files.read",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/LibraryId"
+          },
+          {
+            "$ref": "#/components/parameters/ObjectId"
+          },
+          {
+            "$ref": "#/components/parameters/Version"
+          },
+          {
+            "$ref": "#/components/parameters/LogicalPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The file's storage facts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileDetails"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/files/history": {
+      "get": {
+        "operationId": "getFileHistory",
+        "summary": "The versions that changed one file",
+        "description": "Oldest first; versions that left the file as it was are not listed. Answers storage facts only; a successful read is not journaled, a refusal is journaled once (API-S-017).",
+        "x-filesquid-action": "files.read",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/LibraryId"
+          },
+          {
+            "$ref": "#/components/parameters/ObjectId"
+          },
+          {
+            "$ref": "#/components/parameters/LogicalPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The file's history.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileHistory"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/files/versions": {
+      "get": {
+        "operationId": "listObjectVersions",
+        "summary": "Every version of an object",
+        "description": "Oldest first, with the head. Answers storage facts only; a successful read is not journaled, a refusal is journaled once (API-S-017).",
+        "x-filesquid-action": "files.read",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/LibraryId"
+          },
+          {
+            "$ref": "#/components/parameters/ObjectId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The object's versions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObjectVersions"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/files/content": {
+      "get": {
+        "operationId": "readFileContent",
+        "summary": "Ranged read of one file version",
+        "description": "One Range per request; each answer carries at most 16 MiB (the desktop scheme's buffer cap, DE-S-005). Media elements, which cannot send Authorization, read through a content handle instead (POST /api/v1/content-handles). Answers storage facts only; a successful read is not journaled, a refusal is journaled once (API-S-017).",
+        "x-filesquid-action": "files.read",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/LibraryId"
+          },
+          {
+            "$ref": "#/components/parameters/ObjectId"
+          },
+          {
+            "$ref": "#/components/parameters/Version"
+          },
+          {
+            "$ref": "#/components/parameters/LogicalPath"
+          },
+          {
+            "$ref": "#/components/parameters/Range"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The whole file, when the request names no usable range and the file has at most 16 MiB.",
+            "headers": {
+              "Accept-Ranges": {
+                "description": "bytes",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Type": {
+                "description": "The file's media type.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Length": {
+                "description": "The bytes this answer carries.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "One range, at most 16 MiB: the requested range, or the first 16 MiB of a larger file or range.",
+            "headers": {
+              "Accept-Ranges": {
+                "description": "bytes",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Type": {
+                "description": "The file's media type.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Length": {
+                "description": "The bytes this answer carries.",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Content-Range": {
+                "description": "bytes <first>-<last>/<length>",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "416": {
+            "$ref": "#/components/responses/RangeNotSatisfiable"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
+          }
+        }
+      },
+      "head": {
+        "operationId": "describeFileContent",
+        "summary": "Describe one file version without its bytes",
+        "description": "The headers of the ranged read with no body; no content is read.",
+        "x-filesquid-action": "files.read",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/LibraryId"
+          },
+          {
+            "$ref": "#/components/parameters/ObjectId"
+          },
+          {
+            "$ref": "#/components/parameters/Version"
+          },
+          {
+            "$ref": "#/components/parameters/LogicalPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The file's length (Content-Length), Accept-Ranges and media type, with no body; no content is read.",
+            "headers": {
+              "Accept-Ranges": {
+                "description": "bytes",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Type": {
+                "description": "The file's media type.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Length": {
+                "description": "The bytes this answer carries.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/files/upload": {
+      "put": {
+        "operationId": "uploadFile",
+        "summary": "Add or replace one file",
+        "description": "The body is the file's bytes, at most 64 MiB. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once.",
+        "x-filesquid-action": "files.write",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/LibraryId"
+          },
+          {
+            "$ref": "#/components/parameters/ObjectId"
+          },
+          {
+            "$ref": "#/components/parameters/LogicalPath"
+          },
+          {
+            "name": "message",
+            "in": "query",
+            "required": false,
+            "description": "The version message, 1 to 1,024 bytes and not blank.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The version published.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileCommit"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/files/folders": {
+      "post": {
+        "operationId": "createFolder",
+        "summary": "Create a folder (pending until a file is added)",
+        "description": "Writes nothing: OCFL stores no empty folder, so a new folder stays pending in the client and is persisted only when a file is added beneath its prefix. A file at the path or at a parent of it is a conflict.",
+        "x-filesquid-action": "files.write",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateFolderRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Whether the folder exists or stays pending.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FolderAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/files/moves": {
+      "post": {
+        "operationId": "moveFiles",
+        "summary": "Move or rename one file or folder",
+        "description": "A folder moves every file below it; no bytes are written. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once.",
+        "x-filesquid-action": "files.write",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The version published.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileCommit"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/files/removals": {
+      "post": {
+        "operationId": "removeFiles",
+        "summary": "Remove one file or folder",
+        "description": "The bytes stay in the object for history and restore. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once.",
+        "x-filesquid-action": "files.write",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemoveRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The version published.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileCommit"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/files/restorations": {
+      "post": {
+        "operationId": "restoreFiles",
+        "summary": "Restore files or folders from an earlier version",
+        "description": "The new version points at the content the earlier version holds. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once.",
+        "x-filesquid-action": "files.write",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The version published.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileCommit"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/content-handles": {
+      "post": {
+        "operationId": "mintContentHandle",
+        "summary": "Mint a content handle for one file version",
+        "description": "For media elements (img, video, audio, source), which cannot send Authorization (API-S-018, ADR 030 Decision 5). Authorised exactly like the ranged read of that file version (action files.read; a refusal is the refusal that read gets); a content handle cannot mint another. The handle is 256 bits from the operating system's CSPRNG; the API keeps only its SHA-256 digest, in memory. At most 1,024 live handles per credential: another mint evicts the least recently used one. Journaled as api.content_handle.issued (actor, library, object, version and expiry; never the handle).",
+        "x-filesquid-action": "files.read",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContentHandleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The handle, its URL and its absolute expiry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentHandle"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/content/{handle}": {
+      "get": {
+        "operationId": "readContentByHandle",
+        "summary": "Read one file version through a content handle",
+        "description": "Serves only the file version the handle names, with the ranged read's single-range handling and 16 MiB cap. The handle is accepted at the start of each request: 300 s after its mint or last accepted request, or 3,600 s after its mint, or once its minting credential ends or may no longer read files, it is refused; an answer that has started is never cut off. Every answer, denials included, carries Referrer-Policy: no-referrer, Cache-Control: private, no-store, X-Content-Type-Options: nosniff and Content-Security-Policy: default-src 'none'; sandbox.",
+        "x-filesquid-action": "content.read",
+        "parameters": [
+          {
+            "name": "handle",
+            "in": "path",
+            "required": true,
+            "description": "The content handle: this route's only credential. Never logged, journaled or echoed; hosts that record request paths record /api/v1/content/{handle}.",
+            "schema": {
+              "type": "string",
+              "minLength": 43,
+              "maxLength": 43
+            }
+          }
+        ],
+        "security": [],
+        "x-filesquid-credential": "content-handle",
+        "responses": {
+          "200": {
+            "description": "The whole file, when the request names no usable range and the file has at most 16 MiB.",
+            "headers": {
+              "Accept-Ranges": {
+                "description": "bytes",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Type": {
+                "description": "The file's media type.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Length": {
+                "description": "The bytes this answer carries.",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Referrer-Policy": {
+                "description": "no-referrer",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "description": "private, no-store",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "nosniff",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Security-Policy": {
+                "description": "default-src 'none'; sandbox",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "One range, at most 16 MiB: the requested range, or the first 16 MiB of a larger file or range.",
+            "headers": {
+              "Accept-Ranges": {
+                "description": "bytes",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Type": {
+                "description": "The file's media type.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Length": {
+                "description": "The bytes this answer carries.",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Content-Range": {
+                "description": "bytes <first>-<last>/<length>",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Referrer-Policy": {
+                "description": "no-referrer",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "description": "private, no-store",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "nosniff",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Security-Policy": {
+                "description": "default-src 'none'; sandbox",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/ContentDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "416": {
+            "$ref": "#/components/responses/RangeNotSatisfiable"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
+          }
+        }
+      },
+      "head": {
+        "operationId": "describeContentByHandle",
+        "summary": "Describe one file version through a content handle",
+        "description": "Serves only the file version the handle names, with the ranged read's single-range handling and 16 MiB cap. The handle is accepted at the start of each request: 300 s after its mint or last accepted request, or 3,600 s after its mint, or once its minting credential ends or may no longer read files, it is refused; an answer that has started is never cut off. Every answer, denials included, carries Referrer-Policy: no-referrer, Cache-Control: private, no-store, X-Content-Type-Options: nosniff and Content-Security-Policy: default-src 'none'; sandbox.",
+        "x-filesquid-action": "content.read",
+        "parameters": [
+          {
+            "name": "handle",
+            "in": "path",
+            "required": true,
+            "description": "The content handle: this route's only credential. Never logged, journaled or echoed; hosts that record request paths record /api/v1/content/{handle}.",
+            "schema": {
+              "type": "string",
+              "minLength": 43,
+              "maxLength": 43
+            }
+          }
+        ],
+        "security": [],
+        "x-filesquid-credential": "content-handle",
+        "responses": {
+          "200": {
+            "description": "The file's length (Content-Length), Accept-Ranges and media type, with no body; no content is read.",
+            "headers": {
+              "Accept-Ranges": {
+                "description": "bytes",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Type": {
+                "description": "The file's media type.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Length": {
+                "description": "The bytes this answer carries.",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Referrer-Policy": {
+                "description": "no-referrer",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "description": "private, no-store",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "nosniff",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Security-Policy": {
+                "description": "default-src 'none'; sandbox",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/ContentDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -817,7 +1771,7 @@
       },
       "ErrorCode": {
         "type": "string",
-        "description": "Stable error code. HTTP status: invalid_request 400, unauthorized 401, forbidden 403, not_found 404, method_not_allowed 405, conflict 409, internal 500, unavailable 503. Only unavailable is retryable. The router-wide fallbacks use 404 not_found (path not in the contract) and 405 method_not_allowed (method not documented for the path).",
+        "description": "Stable error code. HTTP status: invalid_request 400, unauthorized 401, forbidden 403, not_found 404, method_not_allowed 405, conflict 409, range_not_satisfiable 416, internal 500, unavailable 503. Only unavailable is retryable. The router-wide fallbacks use 404 not_found (path not in the contract) and 405 method_not_allowed (method not documented for the path). A 416 range_not_satisfiable answer also carries Content-Range: bytes */<length>.",
         "enum": [
           "invalid_request",
           "unauthorized",
@@ -825,6 +1779,7 @@
           "not_found",
           "method_not_allowed",
           "conflict",
+          "range_not_satisfiable",
           "internal",
           "unavailable"
         ]
@@ -1052,6 +2007,616 @@
           }
         },
         "additionalProperties": false
+      },
+      "VersionUser": {
+        "type": "object",
+        "description": "Who made a version, as the OCFL inventory records it.",
+        "required": [
+          "name",
+          "address"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "A readable name."
+          },
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A URI for the user, when recorded."
+          }
+        },
+        "additionalProperties": false
+      },
+      "VersionRecord": {
+        "type": "object",
+        "description": "One version of an OCFL object.",
+        "required": [
+          "version",
+          "created",
+          "message",
+          "user"
+        ],
+        "properties": {
+          "version": {
+            "type": "string",
+            "description": "The version: v1, v2, ..."
+          },
+          "created": {
+            "type": "string",
+            "description": "When it was created, RFC 3339 as recorded."
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it was made, when recorded."
+          },
+          "user": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VersionUser"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who made it, when recorded."
+          }
+        },
+        "additionalProperties": false
+      },
+      "FolderEntry": {
+        "description": "One entry of a folder listing: a folder or a file, told apart by kind.",
+        "anyOf": [
+          {
+            "type": "object",
+            "description": "A folder implied by the logical paths below it (OCFL stores no empty folder).",
+            "required": [
+              "kind",
+              "name",
+              "path"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "folder"
+              },
+              "name": {
+                "type": "string",
+                "description": "Its last path segment."
+              },
+              "path": {
+                "type": "string",
+                "description": "Its logical path."
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "A file.",
+            "required": [
+              "kind",
+              "name",
+              "path",
+              "digest",
+              "size",
+              "modified_version",
+              "modified",
+              "type_hint"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "file"
+              },
+              "name": {
+                "type": "string",
+                "description": "Its last path segment."
+              },
+              "path": {
+                "type": "string",
+                "description": "Its logical path."
+              },
+              "digest": {
+                "type": "string",
+                "description": "Its content digest (the inventory's digest algorithm)."
+              },
+              "size": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Its size in bytes."
+              },
+              "modified_version": {
+                "type": "string",
+                "description": "The version that last set its content."
+              },
+              "modified": {
+                "type": "string",
+                "description": "When that version was created, RFC 3339."
+              },
+              "type_hint": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The lowercase extension: a display hint only, never a format identification."
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "FolderPage": {
+        "type": "object",
+        "description": "One page of a folder listing: folders first, then files, at most the requested limit (1-1000, default 200).",
+        "required": [
+          "library_id",
+          "object_id",
+          "version",
+          "prefix",
+          "entries",
+          "next_cursor"
+        ],
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library."
+          },
+          "object_id": {
+            "type": "string",
+            "description": "The OCFL object identifier."
+          },
+          "version": {
+            "type": "string",
+            "description": "The version listed."
+          },
+          "prefix": {
+            "type": "string",
+            "description": "The folder listed, a logical-path prefix without a trailing /; empty for the root."
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FolderEntry"
+            },
+            "description": "The entries of this page."
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The opaque cursor of the next page, or null on the last page."
+          }
+        },
+        "additionalProperties": false
+      },
+      "FileDetails": {
+        "type": "object",
+        "description": "Storage facts about one file of one version. The OCFL content path, storage keys and filesystem paths are never answered (API-S-005).",
+        "required": [
+          "library_id",
+          "object_id",
+          "version",
+          "path",
+          "name",
+          "digest",
+          "digest_algorithm",
+          "size",
+          "fixity",
+          "last_change",
+          "type_hint",
+          "media_type"
+        ],
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library."
+          },
+          "object_id": {
+            "type": "string",
+            "description": "The OCFL object identifier."
+          },
+          "version": {
+            "type": "string",
+            "description": "The version read."
+          },
+          "path": {
+            "type": "string",
+            "description": "The file's logical path."
+          },
+          "name": {
+            "type": "string",
+            "description": "Its last path segment."
+          },
+          "digest": {
+            "type": "string",
+            "description": "Its content digest."
+          },
+          "digest_algorithm": {
+            "type": "string",
+            "description": "The digest algorithm: sha512 or sha256."
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Its size in bytes."
+          },
+          "fixity": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "description": "Fixity values the inventory records for its content, by algorithm."
+          },
+          "last_change": {
+            "$ref": "#/components/schemas/VersionRecord"
+          },
+          "type_hint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The lowercase extension: a display hint only."
+          },
+          "media_type": {
+            "type": "string",
+            "description": "The media type content answers carry, from the extension until the file record of MD-0.8 stores the type given at import; never sniffed."
+          }
+        },
+        "additionalProperties": false
+      },
+      "FileChange": {
+        "type": "string",
+        "description": "How a version changed one file.",
+        "enum": [
+          "added",
+          "changed",
+          "deleted"
+        ]
+      },
+      "FileHistoryEntry": {
+        "type": "object",
+        "description": "One version that changed a file.",
+        "required": [
+          "version",
+          "change",
+          "digest"
+        ],
+        "properties": {
+          "version": {
+            "$ref": "#/components/schemas/VersionRecord"
+          },
+          "change": {
+            "$ref": "#/components/schemas/FileChange"
+          },
+          "digest": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The file's digest after the change, or null when it was removed."
+          }
+        },
+        "additionalProperties": false
+      },
+      "FileHistory": {
+        "type": "object",
+        "description": "The versions that changed one file, oldest first.",
+        "required": [
+          "library_id",
+          "object_id",
+          "path",
+          "entries"
+        ],
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library."
+          },
+          "object_id": {
+            "type": "string",
+            "description": "The OCFL object identifier."
+          },
+          "path": {
+            "type": "string",
+            "description": "The file's logical path."
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileHistoryEntry"
+            },
+            "description": "The versions that changed it."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ObjectVersions": {
+        "type": "object",
+        "description": "Every version of an OCFL object, oldest first.",
+        "required": [
+          "library_id",
+          "object_id",
+          "head",
+          "versions"
+        ],
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library."
+          },
+          "object_id": {
+            "type": "string",
+            "description": "The OCFL object identifier."
+          },
+          "head": {
+            "type": "string",
+            "description": "The head version."
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VersionRecord"
+            },
+            "description": "Every version."
+          }
+        },
+        "additionalProperties": false
+      },
+      "FileCommit": {
+        "type": "object",
+        "description": "The one OCFL version a write published (API-S-008).",
+        "required": [
+          "library_id",
+          "object_id",
+          "version",
+          "created"
+        ],
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library."
+          },
+          "object_id": {
+            "type": "string",
+            "description": "The OCFL object identifier."
+          },
+          "version": {
+            "type": "string",
+            "description": "The new head version."
+          },
+          "created": {
+            "type": "string",
+            "description": "When it was created, RFC 3339 UTC."
+          }
+        },
+        "additionalProperties": false
+      },
+      "FolderAnswer": {
+        "type": "object",
+        "description": "The answer to creating a folder. Nothing is written: OCFL stores no empty folder.",
+        "required": [
+          "library_id",
+          "object_id",
+          "path",
+          "pending"
+        ],
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library."
+          },
+          "object_id": {
+            "type": "string",
+            "description": "The OCFL object identifier."
+          },
+          "path": {
+            "type": "string",
+            "description": "The folder's logical path."
+          },
+          "pending": {
+            "type": "boolean",
+            "description": "True when no file lies below the folder yet, so it exists only in the client until a file is added beneath it; false when it already exists."
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateFolderRequest": {
+        "type": "object",
+        "description": "Body of POST /api/v1/files/folders.",
+        "required": [
+          "library_id",
+          "object_id",
+          "path"
+        ],
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library."
+          },
+          "object_id": {
+            "type": "string",
+            "description": "The OCFL object identifier."
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The folder's logical path."
+          }
+        },
+        "additionalProperties": false
+      },
+      "MoveRequest": {
+        "type": "object",
+        "description": "Body of POST /api/v1/files/moves: move or rename one file or folder (every file below it) in one new version.",
+        "required": [
+          "library_id",
+          "object_id",
+          "from",
+          "to"
+        ],
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library."
+          },
+          "object_id": {
+            "type": "string",
+            "description": "The OCFL object identifier."
+          },
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The file or folder to move."
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Its new logical path."
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "The version message, 1 to 1,024 bytes and not blank."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RemoveRequest": {
+        "type": "object",
+        "description": "Body of POST /api/v1/files/removals: remove one file or folder in one new version; its bytes stay in the object for history and restore.",
+        "required": [
+          "library_id",
+          "object_id",
+          "path"
+        ],
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library."
+          },
+          "object_id": {
+            "type": "string",
+            "description": "The OCFL object identifier."
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The file or folder to remove."
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "The version message, 1 to 1,024 bytes and not blank."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RestoreRequest": {
+        "type": "object",
+        "description": "Body of POST /api/v1/files/restorations: restore files or folders to their content in an earlier version, in one new version.",
+        "required": [
+          "library_id",
+          "object_id",
+          "version",
+          "paths"
+        ],
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library."
+          },
+          "object_id": {
+            "type": "string",
+            "description": "The OCFL object identifier."
+          },
+          "version": {
+            "type": "string",
+            "description": "The earlier version: v1, v2, ..."
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "The files or folders to restore, 1 to 1,000."
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "The version message, 1 to 1,024 bytes and not blank."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ContentHandleRequest": {
+        "type": "object",
+        "description": "Body of POST /api/v1/content-handles: exactly one file object, OCFL version and logical path.",
+        "required": [
+          "library_id",
+          "object_id",
+          "version",
+          "path"
+        ],
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library."
+          },
+          "object_id": {
+            "type": "string",
+            "description": "The OCFL object identifier."
+          },
+          "version": {
+            "type": "string",
+            "description": "The one version the handle reads: v1, v2, ... (head is not accepted)."
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The file's logical path in that version."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ContentHandle": {
+        "type": "object",
+        "description": "A content handle for media elements (API-S-018): the handle is answered here and nowhere else, and never logged or journaled.",
+        "required": [
+          "handle",
+          "url",
+          "expires_at"
+        ],
+        "properties": {
+          "handle": {
+            "type": "string",
+            "minLength": 43,
+            "maxLength": 43,
+            "description": "The handle: 256 random bits as 43 base64url characters without padding."
+          },
+          "url": {
+            "type": "string",
+            "description": "Its relative URL, /api/v1/content/<handle>, for a media element's src."
+          },
+          "expires_at": {
+            "type": "string",
+            "description": "Its absolute expiry, RFC 3339 UTC: 3,600 s after the mint. It also ends after 300 s without a request, and when the credential that minted it ends."
+          }
+        },
+        "additionalProperties": false
       }
     },
     "parameters": {
@@ -1071,6 +2636,52 @@
         "in": "query",
         "required": false,
         "description": "Opaque cursor from the previous page.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "LibraryId": {
+        "name": "library_id",
+        "in": "query",
+        "required": true,
+        "description": "The library.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "ObjectId": {
+        "name": "object_id",
+        "in": "query",
+        "required": true,
+        "description": "The OCFL object identifier.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "Version": {
+        "name": "version",
+        "in": "query",
+        "required": false,
+        "description": "The version: head (the default) or one such as v1.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "LogicalPath": {
+        "name": "path",
+        "in": "query",
+        "required": true,
+        "description": "The file's logical path.",
+        "schema": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "Range": {
+        "name": "Range",
+        "in": "header",
+        "required": false,
+        "description": "One byte range: bytes=a-b, bytes=a- or bytes=-n. A malformed header, another unit or several ranges are ignored.",
         "schema": {
           "type": "string"
         }
@@ -1129,6 +2740,90 @@
       },
       "HostNotDescribed": {
         "description": "The host has not described itself yet (unavailable; retryable).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "The library, object, version, folder or file does not exist (not_found). One answer for all of them.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "Conflict": {
+        "description": "The write would change nothing, another change is staged, the object changed at the same paths meanwhile, a file has that path, or the head is incomplete (conflict); nothing was published.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "RangeNotSatisfiable": {
+        "description": "The range starts at or past the end of the file (range_not_satisfiable). Carries Content-Range: bytes */<length>.",
+        "headers": {
+          "Content-Range": {
+            "description": "bytes */<length>",
+            "schema": {
+              "type": "string"
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "FilesUnavailable": {
+        "description": "The library's storage is not reachable, or the host has not installed its file service yet (unavailable; retryable).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "ContentDenied": {
+        "description": "The one identical denial of the content route (forbidden, reason invalid_credentials, not retryable) for any unusable handle: unknown, malformed, missing, expired, evicted, revoked, or one whose minting credential no longer may read files. Same status, headers and body every time; a HEAD denial has no body. No file is read first.",
+        "headers": {
+          "Referrer-Policy": {
+            "description": "no-referrer",
+            "schema": {
+              "type": "string"
+            }
+          },
+          "Cache-Control": {
+            "description": "private, no-store",
+            "schema": {
+              "type": "string"
+            }
+          },
+          "X-Content-Type-Options": {
+            "description": "nosniff",
+            "schema": {
+              "type": "string"
+            }
+          },
+          "Content-Security-Policy": {
+            "description": "default-src 'none'; sandbox",
+            "schema": {
+              "type": "string"
+            }
+          }
+        },
         "content": {
           "application/json": {
             "schema": {

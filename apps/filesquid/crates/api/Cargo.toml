@@ -28,6 +28,8 @@ cucumber = { version = "0.23", features = ["macros", "output-junit"] }
 http-body-util = "0.1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tower = { version = "0.5", features = ["util"] }
+# The filesystem backend, for integration tests against a real OCFL root (API-F1.3).
+filesquid-ocfl = { path = "../ocfl", features = ["fs"] }
 
 [[test]]
 name = "unit_health"
@@ -100,6 +102,14 @@ path = "tests/unit/local_library.rs"
 [[test]]
 name = "unit_version_inventory_repair"
 path = "tests/unit/version_inventory_repair.rs"
+
+[[test]]
+name = "integration_files"
+path = "tests/integration/files.rs"
+
+[[test]]
+name = "integration_content_handles"
+path = "tests/integration/content_handles.rs"
 
 [[test]]
 name = "features"

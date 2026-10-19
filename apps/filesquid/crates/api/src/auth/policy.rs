@@ -45,6 +45,18 @@ pub enum Action {
     /// Read the host descriptor (`GET /api/v1/host`). Granted to every authenticated caller,
     /// whatever the policy says ([`Action::granted_to_every_credential`], API-S-020).
     ReadHost,
+    /// Read files: folder listings, details, history, versions and ranged content reads
+    /// (`/api/v1/files/...`), and mint a content handle for a file version, which is
+    /// authorised exactly like that version's ranged read (API-S-018).
+    ReadFiles,
+    /// Change files: upload, create folder, move, remove and restore (`/api/v1/files/...`).
+    WriteFiles,
+    /// Read one file version through a content handle (`/api/v1/content/{handle}`). The
+    /// handle in the path is the route's only credential: the router guards this route with
+    /// the content-handle check instead of a Bearer credential, and checks the minting
+    /// credential's [`Action::ReadFiles`] permission again at every request (API-S-018). It
+    /// is never public.
+    ReadContent,
     /// Deliberately public, unauthenticated: only the liveness probe
     /// (`GET /api/v1/health/live`), which says that the process is up and nothing else. The
     /// router leaves the route-table entry with this action unguarded; the guard itself
@@ -55,12 +67,15 @@ pub enum Action {
 
 impl Action {
     /// Every action, in declaration order.
-    pub const ALL: [Action; 6] = [
+    pub const ALL: [Action; 9] = [
         Action::ReadHealth,
         Action::ReadContract,
         Action::SubscribeEvents,
         Action::ReadMonitor,
         Action::ReadHost,
+        Action::ReadFiles,
+        Action::WriteFiles,
+        Action::ReadContent,
         Action::Public,
     ];
 
@@ -72,6 +87,9 @@ impl Action {
             Action::SubscribeEvents => "events.subscribe",
             Action::ReadMonitor => "monitor.read",
             Action::ReadHost => "host.read",
+            Action::ReadFiles => "files.read",
+            Action::WriteFiles => "files.write",
+            Action::ReadContent => "content.read",
             Action::Public => "public",
         }
     }
@@ -98,6 +116,14 @@ pub enum Resource {
 pub trait Authenticator: Send + Sync + 'static {
     /// The principal `token` identifies, or `None` when this host does not accept it.
     fn authenticate(&self, token: &str) -> Option<Principal>;
+
+    /// The principal the token with SHA-256 `digest` identifies, or `None` when this host no
+    /// longer accepts it. Content handles keep only their minting credential's digest and
+    /// call this at every request start, so a handle ends with its credential (API-S-018).
+    /// The default accepts nothing, so an authenticator that cannot answer ends every handle.
+    fn authenticate_digest(&self, _digest: &[u8; 32]) -> Option<Principal> {
+        None
+    }
 }
 
 /// Decides whether a principal may perform an action on a resource. Anything not explicitly
@@ -129,8 +155,12 @@ impl TokenAuthenticator {
 
 impl Authenticator for TokenAuthenticator {
     fn authenticate(&self, token: &str) -> Option<Principal> {
+        self.authenticate_digest(&digest(token))
+    }
+
+    fn authenticate_digest(&self, presented: &[u8; 32]) -> Option<Principal> {
         let expected = self.digest?;
-        constant_time_eq(&digest(token), &expected).then(|| self.principal.clone())
+        constant_time_eq(presented, &expected).then(|| self.principal.clone())
     }
 }
 

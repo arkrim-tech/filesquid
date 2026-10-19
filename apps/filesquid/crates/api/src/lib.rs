@@ -16,6 +16,11 @@
 //! commands and queries (collections, virtual collections, membership, the hide and delete
 //! policy, paged listing) that every host runs over the catalog it injects.
 //!
+//! [`files`] serves the file operations of the libraries a host opens (listing, details,
+//! history, ranged reads, upload, move, remove and restore) through the `filesquid-ocfl` view
+//! API, and [`content`] lets media elements read one file version through a short-lived
+//! content handle instead of a token.
+//!
 //! [`replica`] holds what a client that works from a local copy needs: a permission-aware
 //! cache identity, visible coverage and recovery states, and the ledger of pending changes
 //! that become canonical only when their fenced head publication succeeds.
@@ -34,8 +39,10 @@
 
 pub mod admin;
 pub mod auth;
+pub mod content;
 pub mod error;
 pub mod events;
+pub mod files;
 pub mod health;
 pub mod host;
 pub mod journal;
@@ -57,7 +64,7 @@ pub use routes::{route_actions, routed_paths, router, Liveness};
 use std::sync::{Arc, OnceLock};
 
 /// Version of the FileSquid API contract. Bumped when the contract changes.
-pub const API_VERSION: &str = "0.6.0";
+pub const API_VERSION: &str = "0.7.0";
 
 /// URL prefix shared by every API route.
 pub const API_PREFIX: &str = "/api/v1";
@@ -80,6 +87,11 @@ pub struct ApiState {
     /// The host's description of itself, installed once at startup (`GET /api/v1/host`
     /// answers 503 until then).
     host: Arc<OnceLock<host::HostInfo>>,
+    /// The host's file service, installed once at startup (file routes answer 503 until
+    /// then).
+    files: Arc<OnceLock<Arc<dyn files::FileOperations>>>,
+    /// The live content handles, in memory only: they end with this state (API-S-018).
+    content_handles: Arc<content::ContentHandles>,
 }
 
 impl std::fmt::Debug for ApiState {
@@ -88,6 +100,8 @@ impl std::fmt::Debug for ApiState {
             .field("monitor_installed", &self.monitor.get().is_some())
             .field("authoriser_installed", &self.authoriser.get().is_some())
             .field("host", &self.host.get())
+            .field("files_installed", &self.files.get().is_some())
+            .field("content_handles", &self.content_handles)
             .finish()
     }
 }
@@ -96,12 +110,44 @@ impl ApiState {
     /// Create state with a fresh event bus, no monitor and no authoriser (every guarded call is refused; the public liveness
     /// probe still answers).
     pub fn new() -> Self {
+        Self::with_clock(Arc::new(journal::now_ms))
+    }
+
+    /// Like [`ApiState::new`], with content handles timed by `clock` (Unix milliseconds,
+    /// UTC) instead of the system clock, so tests can move time.
+    pub fn with_clock(clock: content::store::HandleClock) -> Self {
         Self {
             events: EventBus::new(),
             monitor: Arc::new(OnceLock::new()),
             authoriser: Arc::new(OnceLock::new()),
             host: Arc::new(OnceLock::new()),
+            files: Arc::new(OnceLock::new()),
+            content_handles: Arc::new(content::ContentHandles::new(clock)),
         }
+    }
+
+    /// Install the host's file service. Returns false, keeping the first, if one was already
+    /// installed.
+    pub fn install_files(&self, files: Arc<dyn files::FileOperations>) -> bool {
+        self.files.set(files).is_ok()
+    }
+
+    /// The installed file service, if any.
+    pub fn files(&self) -> Option<Arc<dyn files::FileOperations>> {
+        self.files.get().cloned()
+    }
+
+    /// The live content handles.
+    pub fn content_handles(&self) -> &content::ContentHandles {
+        &self.content_handles
+    }
+
+    /// End every content handle minted with the Bearer `token` (logout, session end or
+    /// rotation on `filesquid-server`). Answers how many ended. The token is used only to
+    /// compute its digest and is not kept.
+    pub fn end_credential(&self, token: &str) -> usize {
+        self.content_handles
+            .end_credential(&auth::token_digest(token))
     }
 
     /// Describe the host this API runs on (API-S-020): its `identity` (type and, for a server,

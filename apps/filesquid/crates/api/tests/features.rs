@@ -3,8 +3,9 @@
 //! and event channel of F-056: API-S-002, API-S-003, API-S-004, API-S-009; and the
 //! application-layer isolation of API-S-006; the library domain commands and queries of
 //! API-S-019; the local library operations and the version-inventory repair of CL-1.1 and
-//! API-S-023; the replica, cache identity and pending changes of API-S-024; and the host descriptor of API-S-020, except its `@server-start` scenarios, which
-//! the `filesquid-server` harness runs).
+//! API-S-023; the replica, cache identity and pending changes of API-S-024; the host descriptor of API-S-020, except its `@server-start` scenarios, which
+//! the `filesquid-server` harness runs; and the file operation routes and content handles
+//! of API-S-008 and API-S-018).
 //!
 //! Scenarios that need domain operations not built yet (import, rename, metadata writes, C2PA
 //! scans, sync) or the optional OTLP export (Task FS-3.6) have no step definitions and are
@@ -12,6 +13,7 @@
 
 use axum::body::Body;
 use axum::http::{header, Request};
+use cucumber::writer::Stats as _;
 use cucumber::{given, then, when, writer, World, WriterExt as _};
 use filesquid_api::auth::Authoriser;
 use filesquid_api::events::EventSubscription;
@@ -61,6 +63,15 @@ mod ocfl_fixture;
 #[path = "support/local_library_steps.rs"]
 mod local_library_steps;
 
+#[path = "support/files_fixture.rs"]
+mod files_fixture;
+
+#[path = "support/content_steps.rs"]
+mod content_steps;
+
+#[path = "support/file_steps.rs"]
+mod file_steps;
+
 /// Administrator token accepted by [`admin_state`].
 const ADMIN_TOKEN: &str = "admin";
 
@@ -102,6 +113,8 @@ struct MonitorWorld {
     library: library_steps::LibraryWorld,
     replica: replica_steps::ReplicaWorld,
     local: local_library_steps::LocalWorld,
+    content: content_steps::ContentWorld,
+    files: file_steps::FileWorld,
 }
 
 impl std::fmt::Debug for MonitorWorld {
@@ -633,16 +646,21 @@ async fn main() {
     let _ = std::fs::remove_dir_all(&results);
     std::fs::create_dir_all(&results).expect("allure-results");
     let junit = std::fs::File::create(results.join("cucumber-junit.xml")).expect("junit file");
-    MonitorWorld::cucumber()
+    let run = MonitorWorld::cucumber()
         .with_writer(
             writer::Basic::stdout()
                 .summarized()
                 .tee::<MonitorWorld, _>(writer::JUnit::for_tee(junit, 0))
                 .normalized(),
         )
-        .filter_run_and_exit(
+        .filter_run(
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/features"),
             |_, _, scenario| !scenario.tags.iter().any(|tag| tag == SERVER_START_TAG),
         )
         .await;
+    // The shared 100 MB video root of the content-handle scenarios goes before the exit.
+    files_fixture::remove_video_root();
+    if run.execution_has_failed() {
+        std::process::exit(1);
+    }
 }

@@ -20,11 +20,12 @@ use http_body_util::BodyExt;
 use std::sync::Arc;
 use tower::ServiceExt;
 
-/// Every routed path that requires a credential (all but the public liveness probe).
+/// Every routed path that requires a Bearer credential: all but the public liveness probe
+/// and the content route, whose only credential is a content handle (API-S-018).
 fn protected_paths() -> Vec<String> {
     route_actions()
         .into_iter()
-        .filter(|(_, action)| *action != Action::Public)
+        .filter(|(_, action)| !matches!(action, Action::Public | Action::ReadContent))
         .map(|(path, _)| path)
         .collect()
 }
@@ -190,12 +191,19 @@ fn probe_told_up(w: &mut MonitorWorld) {
     crate::shutdown_monitor(w);
 }
 
+/// Every call got past the authorisation layer to its handler: no 401 or 403 denial. The
+/// file routes, called without a library or object, answer their handler's own
+/// `invalid_request` or `unavailable`; every other route answers 200.
 #[then(expr = "every call should be answered")]
 fn all_answered(w: &mut MonitorWorld) {
     assert!(!w.answers.is_empty());
     for (status, body) in &w.answers {
-        assert_eq!(*status, 200, "{}", String::from_utf8_lossy(body));
+        let text = String::from_utf8_lossy(body);
+        assert!(![401, 403].contains(status), "{status}: {text}");
+        let json: serde_json::Value = serde_json::from_slice(body).unwrap_or_default();
+        assert!(json.get("reason").is_none(), "a denial: {text}");
     }
+    assert!(w.answers.iter().any(|(status, _)| *status == 200));
     crate::shutdown_monitor(w);
 }
 

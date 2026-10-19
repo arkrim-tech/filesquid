@@ -44,9 +44,11 @@ pub use layer::{
     authorise_call, check_caller, denial_entry, record_token_issue, require, token_issued_entry,
     Guard, ANONYMOUS_ACTOR, DENIED_OPERATION, NO_ROUTE_TARGET, TOKEN_ISSUED_OPERATION,
 };
+pub(crate) use layer::{deny, journal_entry};
 pub use policy::{
     Action, Authenticator, DenyAll, HostPolicy, Policy, Principal, Resource, TokenAuthenticator,
 };
+pub(crate) use token::digest as token_digest;
 pub use token::{generate_token, LaunchToken, TOKEN_BYTES};
 
 use std::sync::Arc;
@@ -104,6 +106,15 @@ impl Authoriser {
         };
         self.authenticator
             .authenticate(token)
+            .ok_or(DenialReason::InvalidCredentials)
+    }
+
+    /// Who presented the token whose SHA-256 digest is `digest`, if this host still accepts
+    /// it; `invalid_credentials` otherwise. Content handles call it at every request start
+    /// (API-S-018). Pure; no I/O.
+    pub fn authenticate_digest(&self, digest: &[u8; 32]) -> Result<Principal, DenialReason> {
+        self.authenticator
+            .authenticate_digest(digest)
             .ok_or(DenialReason::InvalidCredentials)
     }
 

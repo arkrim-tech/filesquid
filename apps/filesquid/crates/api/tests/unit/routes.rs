@@ -80,7 +80,7 @@ async fn denials_answer_the_same_through_every_host_uri_form() {
     let state = authorised_state();
     let mut cases: Vec<(Method, String)> = route_actions()
         .into_iter()
-        .filter(|(_, action)| *action != Action::Public)
+        .filter(|(_, action)| !matches!(action, Action::Public | Action::ReadContent))
         .map(|(path, _)| (Method::GET, path))
         .collect();
     cases.push((Method::GET, "/api/v1/no-such-route".to_string()));
@@ -114,4 +114,24 @@ async fn the_health_route_answers_through_the_desktop_scheme() {
     assert_eq!(content_type, "application/json");
     let json: serde_json::Value = serde_json::from_slice(&body).expect("json");
     assert_eq!(json["status"], "ok");
+}
+
+#[tokio::test]
+async fn the_content_denial_answers_the_same_through_every_host_uri_form() {
+    let state = authorised_state();
+    for path in [
+        "/api/v1/content/{handle}",
+        "/api/v1/content/",
+        "/api/v1/content/a/b",
+    ] {
+        let reference = answer_as(&state, Method::GET, path, None).await;
+        assert_eq!(reference.0, 403, "{path}");
+        let json: serde_json::Value = serde_json::from_slice(&reference.2).expect("ApiError");
+        assert_eq!(json["reason"], "invalid_credentials", "{path}");
+        for origin in &ORIGINS[1..] {
+            let uri = format!("{origin}{path}");
+            let got = answer_as(&state, Method::GET, &uri, None).await;
+            assert_eq!(got, reference, "{uri} differs from {path}");
+        }
+    }
 }

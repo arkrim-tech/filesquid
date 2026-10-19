@@ -68,11 +68,29 @@ fn journaled_owner_state() -> (ApiState, LaunchToken, Monitor, Arc<MemoryJournal
     (state, token, monitor, store)
 }
 
-/// Every routed path that requires a credential: all but the deliberately public ones.
+/// Every routed path that requires a Bearer credential: all but the deliberately public
+/// liveness probe and the content route, whose only credential is the content handle in its
+/// path and whose own denial `integration_content_handles` tests (API-S-018).
 fn protected_paths() -> Vec<String> {
     route_actions()
         .into_iter()
-        .filter(|(_, action)| *action != Action::Public)
+        .filter(|(_, action)| !matches!(action, Action::Public | Action::ReadContent))
+        .map(|(path, _)| path)
+        .collect()
+}
+
+/// The routes that answer a plain `GET` with no parameters: every routed path but the file
+/// and content routes, which need a library, an object or a body and are tested through
+/// the router in `integration_files` and `integration_content_handles`.
+fn plain_get_paths() -> Vec<String> {
+    route_actions()
+        .into_iter()
+        .filter(|(_, action)| {
+            !matches!(
+                action,
+                Action::ReadFiles | Action::WriteFiles | Action::ReadContent
+            )
+        })
         .map(|(path, _)| path)
         .collect()
 }
@@ -131,7 +149,7 @@ async fn every_route_denies_a_wrong_token() {
 #[tokio::test]
 async fn every_route_answers_the_per_launch_token_holder() {
     let (state, token, monitor, _) = journaled_owner_state();
-    for path in routed_paths() {
+    for path in plain_get_paths() {
         let (status, json) = call(&state, Method::GET, &path, Some(token.secret())).await;
         assert_eq!(status, 200, "{path}: {json}");
     }
@@ -213,7 +231,8 @@ fn only_the_liveness_route_is_public() {
         .map(|(path, _)| path)
         .collect();
     assert_eq!(public, vec![LIVE.to_string()]);
-    assert_eq!(protected_paths().len() + 1, routed_paths().len());
+    // The liveness probe is public; the content route takes a content handle instead.
+    assert_eq!(protected_paths().len() + 2, routed_paths().len());
 }
 
 #[tokio::test]
@@ -257,6 +276,18 @@ fn every_routed_path_declares_its_action() {
             "/api/v1/openapi.json" => Action::ReadContract,
             "/api/v1/host" => Action::ReadHost,
             admin if admin.starts_with("/api/v1/admin/") => Action::ReadMonitor,
+            "/api/v1/files/listing"
+            | "/api/v1/files/details"
+            | "/api/v1/files/history"
+            | "/api/v1/files/versions"
+            | "/api/v1/files/content"
+            | "/api/v1/content-handles" => Action::ReadFiles,
+            "/api/v1/files/upload"
+            | "/api/v1/files/folders"
+            | "/api/v1/files/moves"
+            | "/api/v1/files/removals"
+            | "/api/v1/files/restorations" => Action::WriteFiles,
+            "/api/v1/content/{handle}" => Action::ReadContent,
             other => panic!("{other} has no expected action in this test"),
         };
         assert_eq!(*action, expected, "{path}");
@@ -274,6 +305,9 @@ fn action_names_are_unique_dotted_identifiers() {
             "events.subscribe",
             "monitor.read",
             "host.read",
+            "files.read",
+            "files.write",
+            "content.read",
             "public"
         ]
     );
