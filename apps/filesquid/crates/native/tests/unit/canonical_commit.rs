@@ -453,3 +453,55 @@ fn a_commit_without_journal_ids_publishes_and_warns_without_identifying_data() {
     assert!(!text.contains(catalog_fixture::INSTALLATION), "{text}");
     assert!(!text.contains(fx.root.to_string_lossy().as_ref()), "{text}");
 }
+
+/// The entries in `journal` linked to operation `op`.
+fn linked_to(journal: &dyn filesquid_api::journal::JournalStore, op: &str) -> Vec<JournalEntry> {
+    all_entries(journal)
+        .into_iter()
+        .filter(|e| e.operation_id.as_deref() == Some(op))
+        .collect()
+}
+
+/// Owner decision 2026-10-19 with DE-0.10 (ADR 040 Decision 1): in a catalog that records
+/// PROV-O history, a command that changes nothing commits no version and therefore no PROV-O
+/// record, and stores no receipt and no journal entry (no `ocfl.commit` either); the next
+/// command that does change something still commits a version with its `ocfl.commit` and own
+/// entry, linked to that version.
+#[test]
+fn a_recorded_no_op_commits_no_version_and_journals_nothing() {
+    let journal: Arc<dyn filesquid_api::journal::JournalStore> =
+        Arc::new(MemoryJournal::new("desktop"));
+    let fx = Fixture::recording(
+        temp_root("recorded-no-op"),
+        journal.clone(),
+        Arc::new(NoCrash),
+    );
+    let lib = fx.create_library("Family archive");
+    let created = fx.run("1", summer(&lib));
+    let collection = CollectionId::new(created.created_id.expect("id")).expect("collection");
+    let before = all_entries(journal.as_ref()).len();
+    let rename = |title: &str| LibraryCommand::RenameCollection {
+        library_id: lib.clone(),
+        collection_id: collection.clone(),
+        title: title.into(),
+    };
+    let same = OperationId::new("op-same-title").unwrap();
+    let result = fx
+        .run_as(same.clone(), "2", rename("Summer"))
+        .expect("no-op");
+    assert_eq!(result.revision.as_deref(), Some("2"));
+    assert_eq!(snapshot(&fx.root, &lib).unwrap().version.to_string(), "v2");
+    assert_eq!(fx.catalog.receipt(&same).expect("read"), None);
+    assert_eq!(all_entries(journal.as_ref()).len(), before);
+    assert!(linked_to(journal.as_ref(), "op-same-title").is_empty());
+    let changed = OperationId::new("op-new-title").unwrap();
+    fx.run_as(changed, "2", rename("Summer 2026"))
+        .expect("rename");
+    assert_eq!(snapshot(&fx.root, &lib).unwrap().version.to_string(), "v3");
+    let linked = linked_to(journal.as_ref(), "op-new-title");
+    let operations: Vec<&str> = linked.iter().map(|e| e.operation.as_str()).collect();
+    assert_eq!(operations, ["ocfl.commit", "library.collection.rename"]);
+    assert!(linked
+        .iter()
+        .all(|e| e.object_ref.as_deref().is_some_and(|r| r.ends_with("@v3"))));
+}

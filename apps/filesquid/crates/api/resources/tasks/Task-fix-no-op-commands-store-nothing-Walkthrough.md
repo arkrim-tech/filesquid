@@ -183,6 +183,44 @@ Cubic raised 6 findings on `06222d6` (P1 1, P2 2, P3 3):
 
 Cubic raised 1 finding on `7b01ca0` (P2): the ADR 010 amendment now scopes the no-op exception to a command that succeeds without a change, and says refused or failed commands are still journaled; DE-S-010 says the same. TDD-ENFORCE: not applicable, documentation only.
 
+## Merge with the PROV-O history (#84, #86)
+
+`origin/main` gained ADR 040 (PROV-O history; its Decision 1 excludes a command that changes nothing: no version and no record), ADR 033 Decision 7, F-067 and the PROV-O implementation (`filesquid-prov`, journal `operation_id`/`object_ref`, `ocfl.commit` entries, provenance written in the same commit, `SqliteCatalog::with_provenance`). The merge commit resolves two conflicts and nothing else:
+
+- `crates/native/src/catalog/write.rs`, `commit_in_transaction`: a commit with no change still returns early through `finish_unchanged` (only its intent is removed); every other commit publishes through the merged `publish`, which now answers the journal entries to store (the commit's own entry and `ocfl.commit`, with the PROV-O record in the version when the host records history), and `finish` stores those entries with the receipt.
+- `crates/desktop/resources/srs.md`: DE-S-008 takes main's wording ("import record"), DE-S-009 and DE-S-010 keep this branch's no-op sentences, and main's new DE-S-011 to DE-S-013 are kept.
+
+Both ADR 033 amendments (the no-op exception in Decision 2 and main's Decision 7) and the `logging-enforce.md` exception sentence merged without conflict and stand together.
+
+Regression test added on top of the merge, `a_recorded_no_op_commits_no_version_and_journals_nothing` in `crates/native/tests/unit/canonical_commit.rs`: in a catalog built with `with_provenance`, a no-op rename commits no version (the head stays `v2`), stores no receipt and adds no journal entry (no `ocfl.commit`); the next real rename commits `v3` with `ocfl.commit` and `library.collection.rename` linked to `@v3`. It failed against main's `commit_in_transaction`, which stored the no-op's entry and receipt:
+
+```text
+test a_recorded_no_op_commits_no_version_and_journals_nothing ... FAILED
+thread 'a_recorded_no_op_commits_no_version_and_journals_nothing' (15417) panicked at crates/native/tests/unit/canonical_commit.rs:494:5:
+assertion `left == right` failed
+  left: Some(CommitReceipt { library_id: LibraryId("4b950672-3a16-4621-8c65-ef31e7ac85df"), revision: "2", created_id: None, deletion: None })
+ right: None
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.15s
+```
+
+With the merge resolution, `cargo test -p filesquid-native --features desktop --test unit_canonical_commit --test unit_catalog --test catalog_features --locked`:
+
+```text
+     Running tests/catalog_features.rs
+11 scenarios (11 passed)
+61 steps (61 passed)
+     Running tests/unit/canonical_commit.rs
+test a_recorded_no_op_commits_no_version_and_journals_nothing ... ok
+test an_unrecorded_catalog_still_links_its_commits ... ok
+test a_crash_after_the_snapshot_replays_the_commits_journal_entries_once ... ok
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+     Running tests/unit/catalog.rs
+test a_commit_without_change_keeps_the_revision_and_stores_nothing ... ok
+test a_command_that_changes_nothing_stores_no_receipt_or_journal_entry ... ok
+test every_commit_journal_entry_reaches_the_host_journal_redacted ... ok
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.43s
+```
+
 ## Gate
 
 `FULL=1 bash scripts/pre-commit.sh` from the repository root (branch change scope `rust:filesquid-api,filesquid-desktop,filesquid-native`; the full run covers it):
