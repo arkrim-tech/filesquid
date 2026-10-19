@@ -8,10 +8,12 @@
 //! 2026-10-19). A failure before the commit rolls the transaction back.
 
 use super::canonical::CanonicalRoot;
+use super::history::{plan_commit, History};
 use super::intent::PendingIntent;
 use super::rows::{sort_name, sql};
 use super::{failed, intent, outbox, project, reconcile, CommitProbe};
-use filesquid_api::canonical::{OperationRecord, SnapshotDelta, SnapshotKey};
+use filesquid_api::canonical::{operation_kind, OperationRecord, SnapshotDelta, SnapshotKey};
+use filesquid_api::journal::JournalEntry;
 use filesquid_api::library::{
     CatalogChange, CatalogCommit, CatalogError, CommitReceipt, FileState, LibraryRecord,
 };
@@ -85,12 +87,16 @@ impl Stopped {
     }
 }
 
-/// The canonical side of a commit: the library's OCFL root and the crash probe.
+/// The canonical side of a commit: the library's OCFL root, the crash probe and who records
+/// the commit's history.
 pub(crate) struct Canonical<'a> {
     /// The library's canonical storage.
     pub root: &'a CanonicalRoot,
     /// Where tests stop a commit as a crash would.
     pub probe: &'a dyn CommitProbe,
+    /// The installation that records commits and the journal that allocates their IDs;
+    /// `None` when the host configured no provenance.
+    pub history: Option<History<'a>>,
 }
 
 /// Apply `commit` in the order of ADR 005: record its intent, apply its changes in an open
@@ -158,8 +164,8 @@ fn commit_in_transaction(
         finish_unchanged(tx, commit).map_err(Stopped::discard)?;
         return Ok(receipt);
     }
-    publish(&tx, commit, &receipt, purged, canonical)?;
-    finish(tx, commit, &receipt).map_err(Stopped::keep)?;
+    let entries = publish(&tx, commit, &receipt, purged, canonical)?;
+    finish(tx, commit, &receipt, &entries).map_err(Stopped::keep)?;
     Ok(receipt)
 }
 
@@ -196,15 +202,17 @@ fn apply_changes(
     Ok((receipt, purged))
 }
 
-/// Publish the snapshot version of what `commit` touched, between the probe's two stops,
-/// and record its version in `tx`. Database and filesystem I/O.
+/// Publish the snapshot version of what `commit` touched (with its PROV-O record and journal
+/// entries when the host records history), between the probe's two stops, record its version
+/// in `tx`, and answer the journal entries to store. Database, filesystem and journal-store
+/// I/O.
 fn publish(
     tx: &Transaction<'_>,
     commit: &CatalogCommit,
     receipt: &CommitReceipt,
     purged: Vec<SnapshotKey>,
     canonical: &Canonical<'_>,
-) -> Result<(), Stopped> {
+) -> Result<Vec<JournalEntry>, Stopped> {
     let delta = snapshot_delta(tx, &commit.library_id, &commit.changes, purged)
         .map_err(Stopped::discard)?;
     project::check_entity_count(tx).map_err(Stopped::discard)?;
@@ -212,17 +220,24 @@ fn publish(
     canonical.probe.before_snapshot(op).map_err(Stopped::keep)?;
     let record = OperationRecord {
         operation_id: op.to_string(),
+        kind: Some(
+            operation_kind(&commit.journal.operation)
+                .as_str()
+                .to_string(),
+        ),
         revision: receipt.revision.clone(),
         created_id: receipt.created_id.clone(),
         deletion: receipt.deletion,
     };
+    let plan = plan_commit(canonical.history.as_ref(), &record, &commit.journal);
     let published = canonical
         .root
-        .commit(&delta, &record, commit.journal.time_ms)
+        .commit(&delta, plan.meta(), plan.bound())
         .map_err(Stopped::discard)?
         .ok_or_else(|| Stopped::discard(failed("the changes left the snapshot as it was")))?;
     canonical.probe.after_snapshot(op).map_err(Stopped::keep)?;
-    reconcile::set_snapshot_version(tx, &published.version.to_string()).map_err(Stopped::keep)
+    reconcile::set_snapshot_version(tx, &published.version.to_string()).map_err(Stopped::keep)?;
+    Ok(plan.published(&published))
 }
 
 /// The snapshot delta of `changes` (every entity when the library has no snapshot yet).
@@ -256,16 +271,19 @@ pub(crate) fn delta_of_keys(
     Ok(delta)
 }
 
-/// Store the receipt, remove the intent, push the journal entry and commit `tx`.
+/// Store the receipt, remove the intent, push the journal `entries` and commit `tx`.
 /// Database I/O.
 fn finish(
     tx: Transaction<'_>,
     commit: &CatalogCommit,
     receipt: &CommitReceipt,
+    entries: &[JournalEntry],
 ) -> Result<(), CatalogError> {
     store_receipt(&tx, commit.operation_id.as_str(), receipt)?;
     intent::clear(&tx, commit.operation_id.as_str())?;
-    outbox::push(&tx, &commit.journal)?;
+    for entry in entries {
+        outbox::push(&tx, entry)?;
+    }
     tx.commit().map_err(sql)
 }
 

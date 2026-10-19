@@ -93,11 +93,12 @@ write_metadata_fixture() {
   {
     printf '{"workspace_root":"%s/apps/filesquid","packages":[' "$FIXTURE"
     metadata_package filesquid-core core; printf ','
-    metadata_package filesquid-api api filesquid-core; printf ','
+    metadata_package filesquid-api api filesquid-core filesquid-prov; printf ','
     metadata_package filesquid-native native filesquid-api; printf ','
     metadata_package filesquid-ocfl ocfl; printf ','
     metadata_package filesquid-metadata metadata filesquid-ocfl; printf ','
     metadata_package filesquid-c2pa c2pa; printf ','
+    metadata_package filesquid-prov prov; printf ','
     metadata_package filesquid-cli cli filesquid-metadata; printf ','
     metadata_package filesquid-server server filesquid-api filesquid-native; printf ','
     metadata_package filesquid-desktop desktop filesquid-api filesquid-core filesquid-metadata filesquid-native filesquid-ocfl
@@ -109,7 +110,7 @@ write_metadata_fixture() {
 make_fixture_repo() {
   local crate
   mkdir -p "$FIXTURE" && git init -q "$FIXTURE" || return 1
-  for crate in core api native ocfl metadata c2pa cli server desktop; do
+  for crate in core api native ocfl metadata c2pa prov cli server desktop; do
     put "apps/filesquid/crates/$crate/src/lib.rs" "// $crate"
   done
   put apps/filesquid/Cargo.toml "[workspace]"
@@ -146,12 +147,15 @@ CORE_SCOPE="rust:filesquid-api,filesquid-core,filesquid-desktop,filesquid-native
 OCFL_SCOPE="rust:filesquid-cli,filesquid-desktop,filesquid-metadata,filesquid-ocfl"
 UI_SCOPE="npm:apps/filesquid/ui,apps/imagesquid"
 API_SCOPE="rust:filesquid-api,filesquid-desktop,filesquid-native,filesquid-server"
+PROV_SCOPE="rust:filesquid-api,filesquid-desktop,filesquid-native,filesquid-prov,filesquid-server"
 
 test_file_lists() {
   expect_list docs README.md resources/prd.md .agents/rules/rule.md docs/guide.md
   expect_list docs apps/filesquid/resources/notes.md apps/README.md
   expect_list "$API_SCOPE" apps/filesquid/crates/api/resources/srs.md apps/filesquid/resources/notes.md
   expect_list "rust:filesquid-c2pa" apps/filesquid/crates/c2pa/README.md
+  expect_list "$PROV_SCOPE" apps/filesquid/crates/prov/tests/features/prov_o_model_F-067.feature
+  expect_list "$PROV_SCOPE" apps/filesquid/crates/prov/src/lib.rs
   expect_list "$UI_SCOPE" apps/filesquid/ui/resources/tasks/Task-x-Walkthrough.md
   expect_list "npm:apps/imagesquid" apps/imagesquid/resources/prd.md
   expect_list "$OCFL_SCOPE" apps/filesquid/crates/ocfl/tests/fixtures/README.md

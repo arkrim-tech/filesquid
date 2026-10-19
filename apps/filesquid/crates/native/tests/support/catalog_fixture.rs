@@ -121,6 +121,9 @@ impl Drop for Fixture {
     }
 }
 
+/// The installation UUID of recording fixtures.
+pub const INSTALLATION: &str = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+
 impl Fixture {
     /// A fixture over a fresh directory named after `name`, journaling to memory.
     pub fn new(name: &str) -> Self {
@@ -141,6 +144,27 @@ impl Fixture {
         probe: Arc<dyn CommitProbe>,
     ) -> Self {
         let catalog = SqliteCatalog::open_with_probe(&root, journal.clone(), probe).expect("open");
+        Self::around(root, journal, catalog)
+    }
+
+    /// A fixture over `root` whose catalog records the PROV-O history of its commits as
+    /// installation [`INSTALLATION`], stopping commits where `probe` says.
+    pub fn recording(
+        root: PathBuf,
+        journal: Arc<dyn JournalStore>,
+        probe: Arc<dyn CommitProbe>,
+    ) -> Self {
+        let context = filesquid_api::history::ProvenanceContext {
+            installation: filesquid_core::InstallationId::parse(INSTALLATION).expect("uuid"),
+            host: filesquid_api::history::HostFacts {
+                product: "filesquid".into(),
+                distribution: "filesquid".into(),
+                version: "0.1.0".into(),
+            },
+        };
+        let catalog = SqliteCatalog::open_with_probe(&root, journal.clone(), probe)
+            .expect("open")
+            .with_provenance(context);
         Self::around(root, journal, catalog)
     }
 

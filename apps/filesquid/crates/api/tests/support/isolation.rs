@@ -87,6 +87,7 @@ pub const ALLOWED_MODULES: &[&str] = &[
     "filesquid-ocfl",
     "filesquid-metadata",
     "filesquid-c2pa",
+    "filesquid-prov",
 ];
 
 /// The feature sets the graph guard checks, as a label and the `cargo tree` arguments.

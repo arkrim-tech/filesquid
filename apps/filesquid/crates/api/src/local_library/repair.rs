@@ -90,6 +90,15 @@ pub struct ObjectRepair {
     pub error_code: Option<String>,
     /// Whether the same request may succeed later (a held reservation, a storage outage).
     pub retryable: bool,
+    /// The provenance-only version that records a repaired object (API-S-028), when it
+    /// was committed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance_version: Option<String>,
+    /// Why a repaired object's provenance record was not written, when it was not:
+    /// `provenance_not_configured`, `journal_ids_unavailable` or `provenance_commit_failed`.
+    /// The repair itself stands; the reason is also journaled as `prov.record`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance_error_code: Option<String>,
 }
 
 /// The answer to a repair command, one entry per requested object in request order.
@@ -97,6 +106,9 @@ pub struct ObjectRepair {
 pub struct RepairAnswer {
     /// The library.
     pub library_id: LibraryId,
+    /// The repair run: the operation ID its consent and outcome entries share (ADR 040
+    /// Decision 6). An opaque UUID v4.
+    pub run_id: String,
     /// Per-object outcomes.
     pub objects: Vec<ObjectRepair>,
 }

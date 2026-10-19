@@ -348,3 +348,108 @@ fn a_snapshot_of_another_library_is_never_loaded() {
     let again = Fixture::over(root, Arc::new(MemoryJournal::new("desktop")));
     assert!(again.catalog.library(&lib).expect("read").is_none());
 }
+
+/// DE-0.10: a commit's journal entries ride its snapshot version, so a crash after the
+/// version was published (the catalog transaction, and its outbox, lost) replays them at the
+/// next open with their pre-allocated IDs: each reaches the host journal exactly once,
+/// linked to the operation and the object version.
+#[test]
+fn a_crash_after_the_snapshot_replays_the_commits_journal_entries_once() {
+    let journal: Arc<dyn filesquid_api::journal::JournalStore> =
+        Arc::new(MemoryJournal::new("desktop"));
+    let probe = Arc::new(CrashAt {
+        operation: "op-summer",
+        before_snapshot: false,
+    });
+    let fx = Fixture::recording(temp_root("replay-history"), journal.clone(), probe);
+    let lib = fx.create_library("Family archive");
+    let op = OperationId::new("op-summer").unwrap();
+    assert!(fx.run_as(op, "1", summer(&lib)).is_err());
+    let lost: Vec<JournalEntry> = all_entries(journal.as_ref())
+        .into_iter()
+        .filter(|e| e.operation_id.as_deref() == Some("op-summer"))
+        .collect();
+    assert!(lost.is_empty(), "the crash lost the outbox: {lost:?}");
+    let fx = Fixture::recording(fx.release(), journal.clone(), Arc::new(NoCrash));
+    let replayed: Vec<JournalEntry> = all_entries(journal.as_ref())
+        .into_iter()
+        .filter(|e| e.operation_id.as_deref() == Some("op-summer"))
+        .collect();
+    let operations: Vec<&str> = replayed.iter().map(|e| e.operation.as_str()).collect();
+    assert_eq!(operations, ["ocfl.commit", "library.collection.create"]);
+    for entry in &replayed {
+        assert!(entry.id.is_some());
+        assert!(
+            entry
+                .object_ref
+                .as_deref()
+                .is_some_and(|r| r.ends_with("@v2")),
+            "{entry:?}"
+        );
+    }
+    drop(fx);
+}
+
+/// DE-0.10: without a provenance context every published commit still journals its
+/// `ocfl.commit` entry and its own entry, linked by operation ID and object version.
+#[test]
+fn an_unrecorded_catalog_still_links_its_commits() {
+    let fx = Fixture::new("unrecorded");
+    let lib = fx.create_library("Family archive");
+    let op = OperationId::new("op-summer").unwrap();
+    fx.run_as(op, "1", summer(&lib)).expect("collection");
+    let linked: Vec<JournalEntry> = all_entries(fx.journal.as_ref())
+        .into_iter()
+        .filter(|e| e.operation_id.as_deref() == Some("op-summer"))
+        .collect();
+    let operations: Vec<&str> = linked.iter().map(|e| e.operation.as_str()).collect();
+    assert_eq!(operations, ["ocfl.commit", "library.collection.create"]);
+    assert!(linked
+        .iter()
+        .all(|e| e.object_ref.as_deref().is_some_and(|r| r.ends_with("@v2"))));
+    let snap = snapshot(&fx.root, &lib).expect("snapshot");
+    assert_eq!(
+        snap.collections.len(),
+        1,
+        "no history file is read as an entity"
+    );
+}
+
+/// A probe that never stops a commit.
+struct NoCrash;
+
+impl CommitProbe for NoCrash {
+    fn before_snapshot(&self, _: &str) -> Result<(), CatalogError> {
+        Ok(())
+    }
+
+    fn after_snapshot(&self, _: &str) -> Result<(), CatalogError> {
+        Ok(())
+    }
+}
+
+/// DE-0.10: when the host journal cannot allocate the commit's journal IDs, the version is
+/// still published (naming its operation and the installation) and the commit journals a
+/// `prov.record` warning that carries only its error code: no path, title or installation.
+#[test]
+fn a_commit_without_journal_ids_publishes_and_warns_without_identifying_data() {
+    let flaky = catalog_fixture::FlakyJournal::down();
+    flaky.down.store(false, std::sync::atomic::Ordering::SeqCst);
+    let journal: Arc<dyn filesquid_api::journal::JournalStore> = flaky.clone();
+    let fx = Fixture::recording(temp_root("no-ids"), journal, Arc::new(NoCrash));
+    let lib = fx.create_library("Family archive");
+    assert_eq!(snapshot(&fx.root, &lib).unwrap().version.to_string(), "v1");
+    let warnings: Vec<JournalEntry> = all_entries(&flaky.inner)
+        .into_iter()
+        .filter(|e| e.operation == "prov.record")
+        .collect();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert_eq!(
+        warnings[0].error_code.as_deref(),
+        Some("journal_ids_unavailable")
+    );
+    let text = serde_json::to_string(&warnings).expect("json");
+    assert!(!text.contains("Family"), "{text}");
+    assert!(!text.contains(catalog_fixture::INSTALLATION), "{text}");
+    assert!(!text.contains(fx.root.to_string_lossy().as_ref()), "{text}");
+}

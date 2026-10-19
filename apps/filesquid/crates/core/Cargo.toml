@@ -62,6 +62,10 @@ name = "unit_provenance"
 path = "tests/unit/provenance.rs"
 
 [[test]]
+name = "unit_history"
+path = "tests/unit/history.rs"
+
+[[test]]
 name = "unit_capability"
 path = "tests/unit/capability.rs"
 

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "FileSquid API",
-    "version": "0.6.0",
+    "version": "0.8.0",
     "description": "The single FileSquid API served by every FileSquid host. See resources/architecture/030-filesquid-api-and-transports.md. Conventions: a command (mutation) sends a CommandEnvelope as the `envelope` member of its JSON request body (operation_id is the idempotency key, expected_revision the revision last read) and answers with a CommandOutcome; a query (list) takes the PageSize (`limit`, 1-1000) and Cursor (`cursor`) parameters; every failed request answers with an ApiError body (code, message, retryable). Router-wide fallbacks: any /api/v1/ path not in this contract answers 404 not_found, and a documented path called with a method it does not document answers 405 method_not_allowed; both carry the ApiError body. They are not listed per operation because no operation sends them. Authorisation is deny-by-default: every operation, including health, the contract and the event channel, requires the bearerAuth credential and is authorised before anything else runs, so a call without it answers 401 unauthorized and a call whose credential is not accepted or does not grant the operation answers 403 forbidden, before any 404 or 405; both carry the ApiError body with a DenialReason in `reason`. Each operation names the authorisation action it performs in x-filesquid-action. The one deliberate exception is GET /api/v1/health/live (x-filesquid-action public, security []), a liveness probe that answers only {\"status\":\"up\"} without a credential. Paths marked x-filesquid-host-route are served by the hosts, not by the filesquid-api router."
   },
   "security": [
@@ -483,6 +483,277 @@
           }
         }
       }
+    },
+    "/api/v1/history": {
+      "get": {
+        "operationId": "listHistory",
+        "summary": "List PROV-O activities of the library history",
+        "description": "Every activity, or those of one object, operation or agent, or of a time range: at most one filter dimension (object, operation, agent, or from/to). Pages of 1-1000 entries (default 100) linked by an opaque cursor. Answered from an index rebuilt from the OCFL records (API-S-029).",
+        "x-filesquid-action": "history.read",
+        "parameters": [
+          {
+            "name": "object",
+            "in": "query",
+            "required": false,
+            "description": "Activities that committed a version of this OCFL object ID (urn:uuid:<id>).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "operation",
+            "in": "query",
+            "required": false,
+            "description": "Activities of this operation ID (one per object version it committed).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "agent",
+            "in": "query",
+            "required": false,
+            "description": "Activities associated with this agent ID (urn:uuid:<installation> or a software agent).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "description": "Earliest commit time, RFC 3339 UTC (inclusive).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "description": "Latest commit time, RFC 3339 UTC (exclusive).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of history entries, ordered by commit time and then activity.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/HistoryUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/files/{id}/history": {
+      "get": {
+        "operationId": "listFileHistory",
+        "summary": "List the PROV-O activities of one file",
+        "description": "The activities that committed a version of the OCFL object urn:uuid:<id>, oldest first, in pages of 1-1000 entries (default 100).",
+        "x-filesquid-action": "history.read",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The file ID: the UUID of the OCFL object `urn:uuid:<id>`.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of history entries, ordered by commit time and then activity.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/HistoryUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/files/{id}/history/export": {
+      "get": {
+        "operationId": "exportFileHistory",
+        "summary": "Export a file's PROV-O history as JSON-LD",
+        "description": "Every record of the OCFL object urn:uuid:<id> as one JSON-LD array (profile filesquid-prov/1), as an attachment. With redact=true, agent identities, version messages and logical paths are removed for sharing (PRD F-046).",
+        "x-filesquid-action": "history.read",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The file ID: the UUID of the OCFL object `urn:uuid:<id>`.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "redact",
+            "in": "query",
+            "required": false,
+            "description": "Remove agent identities, version messages and logical paths (default false).",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A JSON-LD array of records, at most 64 MiB. When records were left out (the history index reached its cap or skipped an unreadable object, or the body reached its size bound), X-History-Truncated is set.",
+            "content": {
+              "application/ld+json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "headers": {
+              "X-History-Truncated": {
+                "description": "Present (value `true`) only when the export left records out.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/HistoryUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/files/{id}/versions/{version}/prov": {
+      "get": {
+        "operationId": "getVersionProvenance",
+        "summary": "Read the PROV-O record of one version",
+        "description": "The JSON-LD record (profile filesquid-prov/1) of version {version} of the OCFL object urn:uuid:<id>.",
+        "x-filesquid-action": "history.read",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The file ID: the UUID of the OCFL object `urn:uuid:<id>`.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "description": "The OCFL version name, for example v3.",
+            "schema": {
+              "type": "string",
+              "minLength": 2
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The JSON-LD record.",
+            "content": {
+              "application/ld+json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/HistoryUnavailable"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -596,6 +867,14 @@
           },
           "error_code": {
             "type": "string"
+          },
+          "operation_id": {
+            "type": "string",
+            "description": "Opaque operation ID shared by every entry and OCFL version of one operation (ADR 040)."
+          },
+          "object_ref": {
+            "type": "string",
+            "description": "OCFL object version the entry is about: `<object-id>@vN`."
           }
         }
       },
@@ -1052,6 +1331,163 @@
           }
         },
         "additionalProperties": false
+      },
+      "OperationKind": {
+        "type": "string",
+        "description": "The kind of a committed operation: one activity of the PROV-O history.",
+        "enum": [
+          "import",
+          "upload",
+          "copy",
+          "rename",
+          "move",
+          "hide",
+          "unhide",
+          "delete",
+          "restore",
+          "purge",
+          "metadata.edit",
+          "label",
+          "revert",
+          "reinstate",
+          "snapshot",
+          "catalog",
+          "repair",
+          "export",
+          "scrub",
+          "backfill",
+          "unknown"
+        ]
+      },
+      "VersionRef": {
+        "type": "object",
+        "description": "One OCFL object version.",
+        "required": [
+          "object_id",
+          "version"
+        ],
+        "properties": {
+          "object_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "version": {
+            "type": "string",
+            "minLength": 2
+          }
+        },
+        "additionalProperties": false
+      },
+      "JournalLink": {
+        "type": "object",
+        "description": "The journal entries of one committed operation.",
+        "required": [
+          "operation_id",
+          "journal_entry_ids"
+        ],
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "journal_entry_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "HistoryEntry": {
+        "type": "object",
+        "description": "One activity of the history as the API and UI show it (API-S-029). Agents are opaque identifiers, never a person identity.",
+        "required": [
+          "kind",
+          "operation_id",
+          "version",
+          "agents",
+          "started_at",
+          "ended_at",
+          "journal",
+          "label",
+          "reconstructed"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/OperationKind"
+          },
+          "operation_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "version": {
+            "$ref": "#/components/schemas/VersionRef"
+          },
+          "agents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the operation started; null for a reconstructed record."
+          },
+          "ended_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the version was committed (the inventory created time)."
+          },
+          "journal": {
+            "$ref": "#/components/schemas/JournalLink"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The version label, when set."
+          },
+          "reconstructed": {
+            "type": "boolean",
+            "description": "Whether the record was reconstructed from the inventory afterwards."
+          }
+        },
+        "additionalProperties": false
+      },
+      "HistoryPage": {
+        "type": "object",
+        "required": [
+          "items",
+          "next_cursor",
+          "truncated"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HistoryEntry"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; null on the last page."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "True when the history index stopped at its record or object cap (100 000 each) or skipped an object it could not open, so this page may miss activities."
+          }
+        },
+        "additionalProperties": false
       }
     },
     "parameters": {
@@ -1129,6 +1565,26 @@
       },
       "HostNotDescribed": {
         "description": "The host has not described itself yet (unavailable; retryable).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Nothing is recorded there (not_found).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "HistoryUnavailable": {
+        "description": "The host has not installed its history source yet, or its storage cannot be read now (unavailable; retryable).",
         "content": {
           "application/json": {
             "schema": {
