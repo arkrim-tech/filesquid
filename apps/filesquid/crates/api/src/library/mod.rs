@@ -15,14 +15,17 @@
 //! - A command names its library; anything it references must belong to that library, or
 //!   the command is `not_found`. A stale expected revision is `conflict` and changes
 //!   nothing; a new library is created at [`NEW_LIBRARY_REVISION`].
-//! - A repeated operation ID answers its first outcome without a second change.
+//! - A repeated operation ID of a command that changed something answers its first outcome
+//!   without a second change; a command that changes nothing stores no receipt, so its retry
+//!   is planned again.
 //! - Deleting a collection or virtual collection keeps its files; removing a file from a
 //!   virtual collection keeps its collection and other memberships.
 //! - A deleted file is recoverable until its purge-after time, [`RECOVERABLE_DAYS`] days by
 //!   default; an earlier permanent deletion needs a [`PurgeConfirmation`] of the exact scope. Ordinary listings never show hidden or
 //!   deleted files.
-//! - Every commit carries one redacted journal entry for the host to store in the same
-//!   transaction, including a command that changed nothing; refused commands are journaled
+//! - Every commit that changes something carries one redacted journal entry for the host to
+//!   store in the same transaction; a command that changes nothing stores no journal entry,
+//!   receipt or OCFL version (owner decision, 2026-10-19); refused commands are journaled
 //!   once as `failed` through the bounded journal queue that every [`LibraryService`] holds.
 
 /// `tracing` target of this module's stdout-only diagnostics. They are logged at INFO under a

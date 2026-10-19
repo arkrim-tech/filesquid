@@ -32,7 +32,7 @@ Parents (unchanged): [F-001 Independent local library and ownership](../../../..
 - Docs: module SRS row API-S-019; desktop SRS row DE-S-009; [ADR 033](../../../../../../resources/architecture/033-activity-journal-and-live-health-monitoring.md) "What is journaled"; `.agents/rules/logging-enforce.md` §2; the CL-0.2 and DE-0.2 walkthroughs, where they stated the old behaviour.
 - No new dependency, environment variable, service or command, so the root README is unchanged.
 
-Open PR #77 (DE-0.3, `feat/de-0.3-intent-ocfl-commit-receipt`) words DE-S-010 for the old behaviour ("a no-op's receipt and journal entry stay in the catalog"). It had not merged when this branch was finished, so DE-S-010 must follow this rule after #77 merges.
+PR #77 (DE-0.3) merged into `main` during review with DE-S-010 worded for the old behaviour ("a no-op's receipt and journal entry stay in the catalog"). After merging `origin/main`, the SQLite catalog's new DE-0.3 commit sequence (`commit_in_transaction`) finishes an empty commit with `finish_unchanged`, which only clears its intent and publishes no snapshot version; DE-S-010, the ADR 010 amendment, the DE-0.3 walkthrough's owner-decision notes and the `reconcile.rs` module doc now state the new rule. The `library` module doc in `filesquid-api` was corrected in the same commit.
 
 ## Tests
 
