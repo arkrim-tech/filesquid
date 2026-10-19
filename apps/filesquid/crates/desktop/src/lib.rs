@@ -41,6 +41,7 @@ pub mod event_channel;
 pub mod ipc_gate;
 pub mod ipc_observer;
 pub mod panic_journal;
+pub mod stdout_log;
 #[cfg(feature = "test-webdriver")]
 pub mod test_fixture;
 
@@ -105,7 +106,8 @@ impl HostJournal {
     }
 }
 
-/// The host's `tracing` stack: JSON lines to `stdout` filtered by `filter`, the journal
+/// The host's `tracing` stack: JSON lines to `stdout` filtered by `filter`, each with an RFC
+/// 3339 UTC millisecond `timestamp`, `level`, `target` and fields ([`stdout_log`]), the journal
 /// layer, and the Tauri IPC observer ([`ipc_observer`]). The stdout and journal layers
 /// skip Tauri's IPC trace and webview errors, which only the observer handles, so neither a
 /// request body nor the invoke key Tauri records there reaches either. Pure: builds the
@@ -123,6 +125,7 @@ where
     let kept = filter_fn(ipc_observer::outside_observed);
     let stdout = tracing_subscriber::fmt::layer()
         .json()
+        .with_timer(stdout_log::UtcMillis)
         .with_writer(stdout)
         .with_filter(filter.and(kept.clone()));
     tracing_subscriber::registry()
@@ -145,18 +148,45 @@ where
     })
 }
 
-/// Install the host's `tracing` stack ([`host_subscriber`]) with stdout filtered by `RUST_LOG`
-/// (default `info`). It also routes `log` records (Tauri's own) into `tracing`.
+/// Install the host's `tracing` stack ([`host_subscriber`]) as the process's global
+/// subscriber, which also routes `log` records (Tauri's own) into it, so they reach the same
+/// stdout JSON stream. Installs global state.
+///
+/// # Errors
+/// A global subscriber or `log` logger is already installed; nothing is changed.
+pub fn install_tracing<W>(
+    journal: JournalLayer,
+    observer: TauriIpcObserver,
+    stdout: W,
+    filter: EnvFilter,
+) -> Result<(), String>
+where
+    W: for<'w> MakeWriter<'w> + Clone + Send + Sync + 'static,
+{
+    host_subscriber(journal, observer, stdout, filter)
+        .try_init()
+        .map_err(|err| format!("tracing not installed: {err}"))
+}
+
+/// Journal operation of a host logging stack that could not be installed.
+pub const LOGGING_OPERATION: &str = "desktop.logging";
+
+/// Install the host's `tracing` stack with stdout filtered by `RUST_LOG` (default `info`).
+/// A failure is reported, never swallowed: a redacted `journal_unavailable` line on stdout
+/// (no journal exists yet) and its detail on stderr; the host keeps running.
 fn init_tracing(journal: &HostJournal) {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    host_subscriber(
+    let installed = install_tracing(
         journal.layer.clone(),
         journal.observer.clone(),
         std::io::stdout,
         filter,
-    )
-    .try_init()
-    .ok();
+    );
+    if let Err(err) = installed {
+        eprintln!("FileSquid desktop logging: {err}");
+        let line = panic_journal::unjournaled_line(LOGGING_OPERATION, "logging_unavailable");
+        panic_journal::write_line(&mut std::io::stdout(), &line);
+    }
 }
 
 /// Name of the plugin that gives app pages the per-launch token and keeps every webview on

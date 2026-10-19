@@ -1391,6 +1391,7 @@ dependencies = [
  "filesquid-ocfl",
  "http",
  "http-body-util",
+ "log",
  "serde",
  "serde_json",
  "tauri",

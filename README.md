@@ -320,7 +320,7 @@ The merge driver tests (`scripts/docs/test_merge_mvp_progress.py`) build throwaw
 
 ## View logs
 
-Every FileSquid process writes JSON events to **stdout** and never writes log files ([ADR 014](./resources/architecture/014-stdout-observability.md)). `filesquid-server` and `filesquid-desktop` print JSON lines with UTC timestamps to the terminal that started them; set `RUST_LOG` (for example `RUST_LOG=debug`) to change the level.
+Every FileSquid process writes JSON events to **stdout** and never writes log files ([ADR 014](./resources/architecture/014-stdout-observability.md)). `filesquid-server` and `filesquid-desktop` print JSON lines with UTC timestamps to the terminal that started them; set `RUST_LOG` (for example `RUST_LOG=debug`) to change the level. On the desktop each line is one JSON object with an RFC 3339 UTC `timestamp` in milliseconds (the journal's own format, for example `2026-10-19T00:00:00.123Z`), its `level`, `target` and fields; Tauri's own `log` records join the same stream, and the desktop links no Tauri log plugin and runs no telemetry server. Its tests: `cd apps/filesquid && cargo test -p filesquid-desktop --locked --test integration_stdout_logging`.
 
 FileSquid's own tooling records **100% of activity** in its activity journal and shows **live health** of the system and its processes in the **Monitor** dashboard, on desktop and server alike ([ADR 033](./resources/architecture/033-activity-journal-and-live-health-monitoring.md)). Everything runs locally; no external service is needed.
 
