@@ -66,7 +66,10 @@ impl Drop for ValidationRig {
 impl ValidationRig {
     /// An empty storage root opened as the library, with the service installed.
     pub fn new() -> Self {
-        Self::with_store(Arc::new(MemoryFindingsStore::new()), Arc::new(CountingBackend::new()))
+        Self::with_store(
+            Arc::new(MemoryFindingsStore::new()),
+            Arc::new(CountingBackend::new()),
+        )
     }
 
     /// A rig over `store` and `root`: a restarted host keeps both.
@@ -85,14 +88,19 @@ impl ValidationRig {
         );
         state.install_monitor(monitor.clone());
         let service_now = now.clone();
-        let service = ValidationService::new(store.clone(), monitor.clone())
-            .with_clock(Arc::new(move || service_now.load(Ordering::SeqCst)));
+        let service = ValidationService::with_clock(
+            store.clone(),
+            monitor.clone(),
+            Arc::new(move || service_now.load(Ordering::SeqCst)),
+        );
         if ready(root.list("", None, 1)).expect("list").keys.is_empty() {
-            let declaration = filesquid_ocfl::Declaration::storage_root(
-                filesquid_ocfl::SpecVersion::V1_1,
-            );
-            ready(root.put(&key(&declaration.file_name()), declaration.contents().as_bytes()))
-                .expect("declare");
+            let declaration =
+                filesquid_ocfl::Declaration::storage_root(filesquid_ocfl::SpecVersion::V1_1);
+            ready(root.put(
+                &key(&declaration.file_name()),
+                declaration.contents().as_bytes(),
+            ))
+            .expect("declare");
         }
         service.open_library(library(), root.clone());
         state.install_validation(Arc::new(service.clone()));
@@ -119,7 +127,13 @@ impl ValidationRig {
     }
 
     /// Commit `files` as the next version of `object_id` at `root` (on top of `expected`).
-    pub fn commit(&self, root: &str, object_id: &str, expected: Option<&str>, files: &[(&str, &[u8])]) {
+    pub fn commit(
+        &self,
+        root: &str,
+        object_id: &str,
+        expected: Option<&str>,
+        files: &[(&str, &[u8])],
+    ) {
         let mut draft = VersionDraft::new(object_id, "2026-10-18T00:00:00Z");
         for (path, bytes) in files {
             let staged = key(&format!("stage/{root}/{path}"));
@@ -140,7 +154,10 @@ impl ValidationRig {
     /// An object whose head `v1/` holds a stray file its inventory does not list (E023).
     pub fn e023_object(&self, root: &str, object_id: &str) {
         self.object(root, object_id);
-        self.put(&format!("{root}/v1/content/stray.tmp"), b"left by a fenced-out writer");
+        self.put(
+            &format!("{root}/v1/content/stray.tmp"),
+            b"left by a fenced-out writer",
+        );
     }
 
     /// An object whose head has no version inventory or sidecar (W010).

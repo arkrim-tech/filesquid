@@ -139,3 +139,22 @@ fn host_monitor_opens_the_store_and_journals_start_and_stop() {
     assert!(ops.contains(&"host.stopped"), "{ops:?}");
     std::fs::remove_dir_all(dir.parent().unwrap()).unwrap();
 }
+
+/// API-S-022: the host starts OCFL validation once, over the findings store in its data
+/// directory, installs it for the routes and keeps it ticking; a second start is refused.
+#[test]
+fn host_monitor_starts_ocfl_validation_once() {
+    let dir = temp_dir("validation");
+    let state = ApiState::new();
+    let host = HostMonitor::open(&dir, "host-a", &state, None).expect("open");
+    let service = host
+        .start_validation::<filesquid_ocfl::storage::MemoryBackend>(&dir, &state)
+        .expect("start");
+    assert!(state.validation().is_some(), "installed for the routes");
+    assert!(service.findings(true).expect("view").findings.is_empty());
+    host.tick();
+    let again = host.start_validation::<filesquid_ocfl::storage::MemoryBackend>(&dir, &state);
+    assert!(again.is_err(), "started once");
+    host.stop();
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -54,7 +54,10 @@ fn installed(state: &ApiState) -> Result<std::sync::Arc<dyn super::OcflValidatio
 }
 
 /// `GET /admin/ocfl/findings`.
-async fn findings(State(state): State<ApiState>, Extension(principal): Extension<Principal>) -> Response {
+async fn findings(
+    State(state): State<ApiState>,
+    Extension(principal): Extension<Principal>,
+) -> Response {
     let validation = match installed(&state) {
         Ok(v) => v,
         Err(error) => return error.into_response(),
@@ -64,7 +67,9 @@ async fn findings(State(state): State<ApiState>, Extension(principal): Extension
     match answer {
         Ok(Ok(view)) => Json(view).into_response(),
         Ok(Err(err)) => ApiError::from(err).into_response(),
-        Err(join) => ApiError::internal("api.admin.ocfl.findings", &join.to_string()).into_response(),
+        Err(join) => {
+            ApiError::internal("api.admin.ocfl.findings", &join.to_string()).into_response()
+        }
     }
 }
 

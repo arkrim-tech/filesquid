@@ -8,7 +8,9 @@
 use super::error::ValidationError;
 use super::service::{RunLock, ValidationService};
 use super::store::RunTrigger;
-use super::view::{FindingView, FindingsView, LibraryRuns, RunAccepted, RunRefusal, RunRequest, RunView};
+use super::view::{
+    FindingView, FindingsView, LibraryRuns, RunAccepted, RunRefusal, RunRequest, RunView,
+};
 use super::{LOG_TARGET, MAX_FINDINGS_VIEW, RUN_OPERATION};
 use crate::journal::format_rfc3339_ms;
 use filesquid_core::LibraryId;
@@ -61,7 +63,9 @@ impl<B: StorageBackend + 'static> ValidationService<B> {
         let mut libraries = Vec::new();
         for (library_id, running, opened_ms) in self.libraries() {
             let last_run = self.inner.store.last_run(&library_id)?.map(RunView::from);
-            let next_run = self.next_run_ms(&library_id, opened_ms).map(format_rfc3339_ms);
+            let next_run = self
+                .next_run_ms(&library_id, opened_ms)
+                .map(format_rfc3339_ms);
             libraries.push(LibraryRuns {
                 library_id,
                 running,
@@ -100,7 +104,10 @@ impl<B: StorageBackend + 'static> ValidationService<B> {
     /// # Errors
     ///
     /// `unavailable` when neither exists; `task` is dropped.
-    fn spawn(&self, task: impl Future<Output = ()> + Send + 'static) -> Result<(), ValidationError> {
+    fn spawn(
+        &self,
+        task: impl Future<Output = ()> + Send + 'static,
+    ) -> Result<(), ValidationError> {
         let runtime = self
             .inner
             .runtime
@@ -143,7 +150,12 @@ impl<B: StorageBackend + 'static> OcflValidation for ValidationService<B> {
         }
         let mut accepted = RunAccepted::default();
         for (library_id, _, _) in self.libraries() {
-            match self.start_one(&library_id, RunTrigger::Requested, request.from_start, actor) {
+            match self.start_one(
+                &library_id,
+                RunTrigger::Requested,
+                request.from_start,
+                actor,
+            ) {
                 Ok(()) => accepted.started.push(library_id),
                 Err(err) => accepted.refused.push(RunRefusal {
                     library_id,

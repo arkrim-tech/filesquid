@@ -58,4 +58,6 @@ pub use store::{
     ErrorSummary, Finding, FindingChange, FindingsStore, RunOutcome, RunRecord, RunTrigger,
     Severity, StoreError,
 };
-pub use view::{FindingView, FindingsView, LibraryRuns, RunAccepted, RunRefusal, RunRequest, RunView};
+pub use view::{
+    FindingView, FindingsView, LibraryRuns, RunAccepted, RunRefusal, RunRequest, RunView,
+};

@@ -51,10 +51,12 @@ use filesquid_api::auth::{record_token_issue, Authoriser, LaunchToken, Principal
 use filesquid_api::host::{HostIdentity, NotEnrolled};
 use filesquid_api::journal::{JournalEntry, Outcome};
 use filesquid_api::journal_writer::JournalSender;
+use filesquid_api::ocfl_validation::ValidationService;
 use filesquid_api::registry::ProcessHandle;
 use filesquid_api::trace_layer::JournalLayer;
 use filesquid_api::ApiState;
 use filesquid_native::{HostMonitor, SqliteCatalog, CATALOG_DIR};
+use filesquid_ocfl::storage::FsBackend;
 use ipc_observer::TauriIpcObserver;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -275,6 +277,12 @@ pub fn open_host_monitor(
     Ok(host)
 }
 
+/// The host's OCFL validation (API-S-022), held in Tauri's managed state. Opening a library
+/// (DE-1.1) opens its storage root here with
+/// [`ValidationService::open_library`](filesquid_api::ocfl_validation::ValidationService::open_library);
+/// the monitor ticker starts the scheduled runs.
+pub struct DesktopValidation(pub ValidationService<FsBackend>);
+
 /// Journal operation of opening the library catalogs at launch.
 pub const CATALOG_OPEN_OPERATION: &str = "library.catalog.open";
 
@@ -328,6 +336,10 @@ fn start_monitor(
     journal.attach(host.monitor().journal());
     let catalog = open_library_catalog(&data_dir, &host).inspect_err(|_| host.stop())?;
     app.manage(DesktopCatalog(Arc::new(catalog)));
+    let validation = host
+        .start_validation::<FsBackend>(&data_dir, &state)
+        .inspect_err(|_| host.stop())?;
+    app.manage(DesktopValidation(validation));
     let forwarder = Arc::new(event_channel::register_forwarder(host.monitor().registry()));
     let stop = Arc::new(AtomicBool::new(false));
     spawn_ticker(host.clone(), stop.clone());

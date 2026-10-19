@@ -17,9 +17,8 @@ use filesquid_api::host::{
 use filesquid_api::journal::{JournalEntry, JournalPage, Level, MemoryJournal, Outcome};
 use filesquid_api::monitor::{Monitor, MonitorConfig};
 use filesquid_api::ocfl_validation::{
-    Finding, FindingView, FindingsView, LibraryRuns, MemoryFindingsStore, RunAccepted,
-    RunOutcome, RunRecord, RunRefusal, RunRequest, RunTrigger, RunView, Severity,
-    ValidationService,
+    Finding, FindingView, FindingsView, LibraryRuns, MemoryFindingsStore, RunAccepted, RunOutcome,
+    RunRecord, RunRefusal, RunRequest, RunTrigger, RunView, Severity, ValidationService,
 };
 use filesquid_api::operation::{
     CommandEnvelope, CommandOutcome, CommandOutcomeKind, ExpectedRevision, OperationId,
@@ -709,14 +708,25 @@ fn validation_samples() -> Vec<(&'static str, Vec<Value>)> {
         refused: vec![refusal.clone()],
     };
     vec![
-        ("FindingSeverity", [Severity::Error, Severity::Warning].map(to_value).to_vec()),
+        (
+            "FindingSeverity",
+            [Severity::Error, Severity::Warning].map(to_value).to_vec(),
+        ),
         ("FindingView", findings.map(to_value).to_vec()),
-        ("RunTrigger", [RunTrigger::Scheduled, RunTrigger::Requested].map(to_value).to_vec()),
+        (
+            "RunTrigger",
+            [RunTrigger::Scheduled, RunTrigger::Requested]
+                .map(to_value)
+                .to_vec(),
+        ),
         ("RunOutcome", all_run_outcomes().map(to_value).to_vec()),
         ("RunView", vec![to_value(run)]),
         ("LibraryRuns", vec![to_value(ran)]),
         ("FindingsView", vec![to_value(view)]),
-        ("RunRequest", vec![to_value(request), to_value(RunRequest::default())]),
+        (
+            "RunRequest",
+            vec![to_value(request), to_value(RunRequest::default())],
+        ),
         ("RunRefusal", vec![to_value(refusal)]),
         ("RunAccepted", vec![to_value(accepted)]),
     ]

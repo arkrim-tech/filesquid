@@ -61,13 +61,18 @@ fn read_error(err: &ReadError) -> ValidationError {
     }
 }
 
-/// Every object of the storage root of `backend`, sorted by identifier (then root).
+/// Every object of the storage root of `backend`, sorted by identifier (then root). An
+/// object that cannot be opened is indexed by its stand-in identifier and validated like the
+/// others, so its findings say why.
 ///
 /// # Errors
 ///
-/// `unavailable` or `internal` when the storage root cannot be opened.
+/// `unavailable` or `internal` when the storage root cannot be opened, and `unavailable`
+/// when the storage fails while an object is opened.
 pub(super) async fn index<B: StorageBackend>(backend: &B) -> Result<Vec<Indexed>, ValidationError> {
-    let storage = StorageRoot::open(backend).await.map_err(|e| read_error(&e))?;
+    let storage = StorageRoot::open(backend)
+        .await
+        .map_err(|e| read_error(&e))?;
     let mut objects = Vec::with_capacity(storage.objects().len());
     for root in storage.objects() {
         let indexed = match Object::open(backend, root).await {
@@ -76,6 +81,11 @@ pub(super) async fn index<B: StorageBackend>(backend: &B) -> Result<Vec<Indexed>
                 root: root.clone(),
                 version: Some(object.head().to_string()),
             },
+            Err(ReadError::Storage(
+                err @ (StorageError::Io { .. } | StorageError::Backend { .. }),
+            )) => {
+                return Err(read_error(&ReadError::Storage(err)));
+            }
             Err(_) => Indexed {
                 id: unreadable_id(root),
                 root: root.clone(),
@@ -165,7 +175,9 @@ fn close_deleted(ctx: &RunContext<'_>, objects: &[Indexed]) -> Result<bool, Vali
         if present.contains(object_id.as_str()) {
             continue;
         }
-        let change = ctx.store.replace_findings(ctx.library_id, &object_id, Vec::new())?;
+        let change = ctx
+            .store
+            .replace_findings(ctx.library_id, &object_id, Vec::new())?;
         journal_change(ctx, &change);
         changed |= !change.is_empty();
     }
@@ -194,7 +206,9 @@ pub(super) async fn check_object<B: StorageBackend>(
         Err(err) => unvalidated(ctx, object, &err)?,
     };
     let findings = distinct(findings);
-    let change = ctx.store.replace_findings(ctx.library_id, &object.id, findings)?;
+    let change = ctx
+        .store
+        .replace_findings(ctx.library_id, &object.id, findings)?;
     journal_change(ctx, &change);
     Ok(change)
 }
@@ -224,7 +238,13 @@ fn unvalidated(
     }
     tracing::info!(target: LOG_TARGET, error = %err, "object could not be validated");
     let code = err.code().unwrap_or("unvalidated");
-    Ok(vec![finding(ctx, object, code, Severity::Error, &object.root)])
+    Ok(vec![finding(
+        ctx,
+        object,
+        code,
+        Severity::Error,
+        &object.root,
+    )])
 }
 
 /// One finding of `object`.
@@ -248,12 +268,17 @@ fn finding(
 /// Journal every newly opened error finding and every closed finding (opaque object ID,
 /// version and code only).
 fn journal_change(ctx: &RunContext<'_>, change: &FindingChange) {
-    let opened = change.opened.iter().filter(|f| f.severity == Severity::Error);
+    let opened = change
+        .opened
+        .iter()
+        .filter(|f| f.severity == Severity::Error);
     for found in opened {
-        ctx.journal.send(finding_entry(ctx, FINDING_OPERATION, found).level(Level::Warn));
+        ctx.journal
+            .send(finding_entry(ctx, FINDING_OPERATION, found).level(Level::Warn));
     }
     for closed in &change.closed {
-        ctx.journal.send(finding_entry(ctx, FINDING_CLOSED_OPERATION, closed));
+        ctx.journal
+            .send(finding_entry(ctx, FINDING_CLOSED_OPERATION, closed));
     }
 }
 

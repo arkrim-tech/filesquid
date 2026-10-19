@@ -117,9 +117,16 @@ impl<B> Drop for RunLock<B> {
 
 impl<B: StorageBackend + 'static> ValidationService<B> {
     /// A service over `store`, reporting through `monitor`, with the default schedule and
-    /// cap and the system clock. Installs `store` as the monitor's findings source, so health
-    /// reads the open findings. Background runs use the Tokio runtime current at creation.
+    /// cap and the system clock (see [`with_clock`](Self::with_clock)).
     pub fn new(store: Arc<dyn FindingsStore>, monitor: Monitor) -> Self {
+        Self::with_clock(store, monitor, Arc::new(now_ms))
+    }
+
+    /// A service over `store`, reporting through `monitor`, timed by `clock` (Unix
+    /// milliseconds, UTC). Installs `store` as the monitor's findings source, so health reads
+    /// the open findings. Background runs use the Tokio runtime current at creation, or the
+    /// one current when a run starts.
+    pub fn with_clock(store: Arc<dyn FindingsStore>, monitor: Monitor, clock: Clock) -> Self {
         monitor.install_findings(store.clone());
         Self {
             inner: Arc::new(Inner {
@@ -127,20 +134,9 @@ impl<B: StorageBackend + 'static> ValidationService<B> {
                 store,
                 monitor,
                 config: Mutex::new(ValidationConfig::default()),
-                clock: Arc::new(now_ms),
+                clock,
                 runtime: tokio::runtime::Handle::try_current().ok(),
             }),
-        }
-    }
-
-    /// Use `clock` (Unix milliseconds, UTC) for run times and the schedule. Call before the
-    /// service is shared.
-    pub fn with_clock(self, clock: Clock) -> Self {
-        let inner = Arc::try_unwrap(self.inner).unwrap_or_else(|_| {
-            panic!("with_clock must be called before the service is shared")
-        });
-        Self {
-            inner: Arc::new(Inner { clock, ..inner }),
         }
     }
 
@@ -314,7 +310,12 @@ impl<B: StorageBackend + 'static> ValidationService<B> {
         passed: &Result<PassResult, ValidationError>,
     ) -> RunRecord {
         let (outcome, checked, not_checked, error_code) = match passed {
-            Ok(p) => (p.outcome, p.checked, p.total.saturating_sub(p.checked), None),
+            Ok(p) => (
+                p.outcome,
+                p.checked,
+                p.total.saturating_sub(p.checked),
+                None,
+            ),
             Err(err) => (RunOutcome::Failed, 0, 0, Some(err.error_code().to_string())),
         };
         RunRecord {
@@ -398,7 +399,10 @@ impl<B: StorageBackend + 'static> ValidationService<B> {
             cancel: &cancel,
             process: None,
         };
-        if !check_object(&ctx, backend.as_ref(), object).await?.is_empty() {
+        if !check_object(&ctx, backend.as_ref(), object)
+            .await?
+            .is_empty()
+        {
             self.inner.monitor.publish_health();
         }
         Ok(())
@@ -462,7 +466,10 @@ impl<B: StorageBackend + 'static> ValidationService<B> {
     /// Send `entry`, stamped with the service clock, through the monitor's bounded journal
     /// queue.
     pub(super) fn journal(&self, entry: JournalEntry) {
-        self.inner.monitor.journal().send(entry.at_ms((self.inner.clock)()));
+        self.inner
+            .monitor
+            .journal()
+            .send(entry.at_ms((self.inner.clock)()));
     }
 }
 

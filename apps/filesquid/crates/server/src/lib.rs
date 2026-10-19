@@ -293,11 +293,30 @@ pub fn start_server_writing_to(
     install_admin_authoriser(config, state)?;
     let host = start_host_monitor(config, state, layer)?;
     auth::record_token_issue(host.monitor(), &Principal::Administrator);
+    if let Err(message) = start_validation(config, state, &host) {
+        host.stop();
+        return Err(message);
+    }
     if let Err(message) = describe_server_host(config, state, &host, stdout) {
         host.stop();
         return Err(message);
     }
     Ok(host)
+}
+
+/// Start OCFL validation (API-S-022) over the findings store in the data directory. The
+/// server opens no OCFL library yet, so only on-request runs of libraries opened later and
+/// the findings route (to the administrator, without locations) apply. Performs database I/O.
+///
+/// # Errors
+/// The findings store could not be opened.
+pub fn start_validation(
+    config: &ServerConfig,
+    state: &ApiState,
+    host: &HostMonitor,
+) -> Result<(), String> {
+    host.start_validation::<filesquid_ocfl::storage::FsBackend>(&config.data_dir, state)
+        .map(|_| ())
 }
 
 /// Start the activity journal, process registry and admin routes for this server (FileSquid

@@ -85,7 +85,11 @@ fn an_e023_object_degrades_health_until_it_is_fixed_and_revalidated() {
     let closed = rig.journaled(FINDING_CLOSED_OPERATION);
     assert_eq!(closed.len(), 1, "only the E023 closed; the warnings stay");
     assert_eq!(closed[0].error_code.as_deref(), Some("E023"));
-    assert_eq!(rig.journaled(FINDING_OPERATION).len(), 1, "not journaled twice");
+    assert_eq!(
+        rig.journaled(FINDING_OPERATION).len(),
+        1,
+        "not journaled twice"
+    );
 }
 
 #[test]
@@ -95,8 +99,16 @@ fn a_finding_stays_open_until_a_later_validation_no_longer_reports_it() {
     rig.run(RunTrigger::Requested, false).expect("first");
     rig.run(RunTrigger::Requested, true).expect("second");
     let open = open_errors(rig.store.as_ref());
-    assert_eq!(open.len(), 1, "still open after a second run that reports it");
-    assert_eq!(rig.journaled(FINDING_OPERATION).len(), 1, "journaled when opened");
+    assert_eq!(
+        open.len(),
+        1,
+        "still open after a second run that reports it"
+    );
+    assert_eq!(
+        rig.journaled(FINDING_OPERATION).len(),
+        1,
+        "journaled when opened"
+    );
 }
 
 #[test]
@@ -109,18 +121,30 @@ fn a_w010_object_is_listed_as_a_warning_and_leaves_health_ok() {
     let w010: Vec<_> = view.findings.iter().filter(|f| f.code == "W010").collect();
     assert_eq!(w010.len(), 1);
     assert_eq!(w010[0].severity, Severity::Warning);
-    assert!(rig.journaled(FINDING_OPERATION).is_empty(), "warnings are not journaled");
+    assert!(
+        rig.journaled(FINDING_OPERATION).is_empty(),
+        "warnings are not journaled"
+    );
 }
 
 #[test]
 fn a_takeover_commit_triggers_validation_of_that_object() {
     let rig = ValidationRig::new();
     rig.e023_object("obj-b", "urn:uuid:b");
-    vfix::ready_async(rig.service.validate_after_commit(&library(), "urn:uuid:b", false))
-        .expect("plain commit");
-    assert!(rig.store.open_findings(100).expect("findings").is_empty(), "no takeover, no check");
-    vfix::ready_async(rig.service.validate_after_commit(&library(), "urn:uuid:b", true))
-        .expect("takeover commit");
+    vfix::ready_async(
+        rig.service
+            .validate_after_commit(&library(), "urn:uuid:b", false),
+    )
+    .expect("plain commit");
+    assert!(
+        rig.store.open_findings(100).expect("findings").is_empty(),
+        "no takeover, no check"
+    );
+    vfix::ready_async(
+        rig.service
+            .validate_after_commit(&library(), "urn:uuid:b", true),
+    )
+    .expect("takeover commit");
     let open = open_errors(rig.store.as_ref());
     assert_eq!(open.len(), 1);
     assert_eq!(open[0].code, "E023");
@@ -133,8 +157,15 @@ fn locations_are_shown_only_to_a_caller_who_may_read_the_object() {
     rig.e023_object("obj-b", "urn:uuid:b");
     rig.run(RunTrigger::Requested, false).expect("run");
     let reader = rig.service.findings(true).expect("owner view");
-    let e023 = reader.findings.iter().find(|f| f.code == "E023").expect("E023");
-    assert!(e023.location.as_deref().is_some_and(|l| l.contains("stray")));
+    let e023 = reader
+        .findings
+        .iter()
+        .find(|f| f.code == "E023")
+        .expect("E023");
+    assert!(e023
+        .location
+        .as_deref()
+        .is_some_and(|l| l.contains("stray")));
     let other = rig.service.findings(false).expect("administrator view");
     assert!(other.findings.iter().all(|f| f.location.is_none()));
     assert!(other.findings.iter().any(|f| f.code == "E023"));
@@ -149,7 +180,10 @@ fn journal_rows_and_health_reasons_carry_no_path_title_or_content() {
     rig.run(RunTrigger::Requested, false).expect("close");
     for entry in rig.journal() {
         let ids = entry.target_ids.join(" ").replace("urn:uuid:", "");
-        assert_redacted(&format!("{} {} {:?}", entry.operation, ids, entry.error_code));
+        assert_redacted(&format!(
+            "{} {} {:?}",
+            entry.operation, ids, entry.error_code
+        ));
     }
     rig.e023_object("obj-c", "urn:uuid:c");
     rig.run(RunTrigger::Requested, true).expect("reopen");
@@ -168,7 +202,10 @@ fn a_run_stops_at_its_cap_and_reports_what_it_did_not_check() {
     assert_eq!(record.outcome, RunOutcome::Capped);
     assert_eq!((record.checked, record.not_checked), (2, 1));
     let runs = rig.journaled(RUN_OPERATION);
-    assert_eq!(runs.last().expect("run journaled").outcome, Outcome::Succeeded);
+    assert_eq!(
+        runs.last().expect("run journaled").outcome,
+        Outcome::Succeeded
+    );
 }
 
 #[test]
@@ -200,8 +237,15 @@ fn a_run_never_starts_twice_at_once_for_one_library() {
         }),
     );
     rig.run(RunTrigger::Requested, false).expect("first run");
-    let refused = second.lock().expect("lock").take().expect("second run tried");
-    assert_eq!(refused.expect_err("refused").error_code(), "already_running");
+    let refused = second
+        .lock()
+        .expect("lock")
+        .take()
+        .expect("second run tried");
+    assert_eq!(
+        refused.expect_err("refused").error_code(),
+        "already_running"
+    );
     let refusals: Vec<_> = rig
         .journaled(RUN_OPERATION)
         .into_iter()
@@ -245,14 +289,21 @@ fn the_findings_view_reports_the_last_run_and_the_next_scheduled_run() {
     assert_eq!((last.checked, last.not_checked), (1, 0));
     assert_eq!(last.outcome, RunOutcome::Completed);
     assert!(last.started.ends_with('Z') && last.ended.ends_with('Z'));
-    assert_ne!(lib.next_run.as_deref(), Some(first_next.as_str()), "the next run moved");
+    assert_ne!(
+        lib.next_run.as_deref(),
+        Some(first_next.as_str()),
+        "the next run moved"
+    );
 }
 
 #[test]
 fn the_scheduler_starts_a_run_when_one_is_due() {
     let rig = ValidationRig::new();
     rig.object("obj-a", "urn:uuid:a");
-    assert!(rig.service.due_libraries().is_empty(), "not due right after opening");
+    assert!(
+        rig.service.due_libraries().is_empty(),
+        "not due right after opening"
+    );
     rig.advance(WEEK_MS);
     assert_eq!(rig.service.due_libraries(), [library()]);
 }
@@ -265,16 +316,26 @@ fn capped_runs_resume_from_the_cursor_in_object_id_order_and_wrap() {
     }
     rig.cap(3);
     rig.run(RunTrigger::Scheduled, false).expect("run 1");
-    assert_eq!(rig.store.cursor(&library()).expect("cursor").as_deref(), Some("urn:x:3"));
+    assert_eq!(
+        rig.store.cursor(&library()).expect("cursor").as_deref(),
+        Some("urn:x:3")
+    );
     let restarted = ValidationRig::with_store(rig.store.clone(), rig.root.clone());
     restarted.cap(3);
     restarted.remove("obj-4/0=ocfl_object_1.1");
     restarted.delete_object("obj-4");
     restarted.object("obj-0", "urn:x:0");
     let record = restarted.run(RunTrigger::Scheduled, false).expect("run 2");
-    assert_eq!(record.checked, 3, "the deleted object ahead is skipped, the pass wraps");
     assert_eq!(
-        restarted.store.cursor(&library()).expect("cursor").as_deref(),
+        record.checked, 3,
+        "the deleted object ahead is skipped, the pass wraps"
+    );
+    assert_eq!(
+        restarted
+            .store
+            .cursor(&library())
+            .expect("cursor")
+            .as_deref(),
         Some("urn:x:2"),
         "run 2 found nothing after urn:x:3, wrapped and checked urn:x:0 to urn:x:2"
     );
@@ -289,9 +350,16 @@ fn an_on_request_run_continues_from_the_cursor_unless_asked_to_start_over() {
     rig.cap(2);
     rig.run(RunTrigger::Requested, false).expect("run 1");
     rig.run(RunTrigger::Requested, false).expect("run 2");
-    assert_eq!(rig.store.cursor(&library()).expect("cursor").as_deref(), Some("urn:x:4"));
-    rig.run(RunTrigger::Requested, true).expect("from the start");
-    assert_eq!(rig.store.cursor(&library()).expect("cursor").as_deref(), Some("urn:x:2"));
+    assert_eq!(
+        rig.store.cursor(&library()).expect("cursor").as_deref(),
+        Some("urn:x:4")
+    );
+    rig.run(RunTrigger::Requested, true)
+        .expect("from the start");
+    assert_eq!(
+        rig.store.cursor(&library()).expect("cursor").as_deref(),
+        Some("urn:x:2")
+    );
 }
 
 #[test]
@@ -308,8 +376,14 @@ fn deleting_an_object_with_an_open_e023_closes_its_finding() {
         .filter(|e| e.error_code.as_deref() == Some("E023"))
         .collect();
     assert_eq!(closed.len(), 1);
-    assert_eq!(closed[0].target_ids, [library().as_str(), "urn:uuid:b", "v1"]);
-    assert!(rig.store.open_findings(100).expect("findings").is_empty(), "warnings close too");
+    assert_eq!(
+        closed[0].target_ids,
+        [library().as_str(), "urn:uuid:b", "v1"]
+    );
+    assert!(
+        rig.store.open_findings(100).expect("findings").is_empty(),
+        "warnings close too"
+    );
     assert_eq!(rig.monitor.health_report().status, HealthStatus::Ok);
 }
 
@@ -342,12 +416,24 @@ fn the_configuration_is_bounded_and_journaled() {
         interval_ms: 0,
         object_cap: 1,
     };
-    assert_eq!(rig.service.configure("owner", zero).unwrap_err().error_code(), "invalid_config");
+    assert_eq!(
+        rig.service
+            .configure("owner", zero)
+            .unwrap_err()
+            .error_code(),
+        "invalid_config"
+    );
     let none = ValidationConfig {
         interval_ms: WEEK_MS,
         object_cap: 0,
     };
-    assert_eq!(rig.service.configure("owner", none).unwrap_err().error_code(), "invalid_config");
+    assert_eq!(
+        rig.service
+            .configure("owner", none)
+            .unwrap_err()
+            .error_code(),
+        "invalid_config"
+    );
     rig.cap(5);
     assert_eq!(rig.service.config().object_cap, 5);
 }
@@ -360,7 +446,10 @@ fn start_runs_refuses_an_unknown_library_and_a_busy_one() {
         library_id: Some(filesquid_core::LibraryId::new("other").expect("id")),
         from_start: false,
     };
-    let err = rig.service.start_runs(unknown, "owner").expect_err("unknown");
+    let err = rig
+        .service
+        .start_runs(unknown, "owner")
+        .expect_err("unknown");
     assert_eq!(err.error_code(), "not_found");
     let refused = Arc::new(Mutex::new(None));
     let (service, slot) = (rig.service.clone(), refused.clone());
@@ -390,11 +479,7 @@ fn an_e023_object_on_a_real_directory_is_found() {
     let store: Arc<dyn FindingsStore> = Arc::new(MemoryFindingsStore::new());
     let service = ValidationService::new(store.clone(), rig.monitor.clone());
     let fs = Arc::new(backend);
-    fixture::ready(fs.put(
-        &fixture::key("0=ocfl_1.1"),
-        b"ocfl_1.1\n",
-    ))
-    .expect("declare");
+    fixture::ready(fs.put(&fixture::key("0=ocfl_1.1"), b"ocfl_1.1\n")).expect("declare");
     let leases = filesquid_ocfl::write::LeaseStore::new(
         filesquid_ocfl::storage::MemoryBackend::new(),
         "leases",
@@ -411,14 +496,12 @@ fn an_e023_object_on_a_real_directory_is_found() {
     fixture::ready(writer.commit("obj-fs", None, &staging, &draft)).expect("commit");
     fixture::ready(fs.put(&fixture::key("obj-fs/v1/content/stray.tmp"), b"x")).expect("stray");
     service.open_library(library(), fs);
-    vfix::ready_async(service.run(&library(), RunTrigger::Requested, false, "owner"))
-        .expect("run");
+    vfix::ready_async(service.run(&library(), RunTrigger::Requested, false, "owner")).expect("run");
     let open = open_errors(store.as_ref());
     assert_eq!(open.len(), 1);
     assert_eq!(open[0].code, "E023");
     let _ = std::fs::remove_dir_all(&dir);
 }
-
 
 // ---- The routes, through the router ----
 
@@ -445,8 +528,16 @@ async fn call_route(
         .await
         .expect("answer");
     let status = response.status().as_u16();
-    let bytes = response.into_body().collect().await.expect("body").to_bytes();
-    (status, serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null))
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null),
+    )
 }
 
 /// Path of the findings route.
@@ -468,22 +559,32 @@ async fn the_owner_sees_locations_and_the_administrator_does_not() {
     owner.install_authoriser(filesquid_api::auth::Authoriser::desktop_owner(&token));
     let (status, body) = call_route(&owner, "GET", FINDINGS, Some(token.secret()), "").await;
     assert_eq!(status, 200, "{body}");
-    assert!(body.to_string().contains("stray.tmp"), "the owner sees where");
+    assert!(
+        body.to_string().contains("stray.tmp"),
+        "the owner sees where"
+    );
     let admin_rig = ValidationRig::with_store(rig.store.clone(), rig.root.clone());
     admin_rig
         .state
-        .install_authoriser(filesquid_api::auth::Authoriser::server_administrator("admin"));
+        .install_authoriser(filesquid_api::auth::Authoriser::server_administrator(
+            "admin",
+        ));
     let (status, body) = call_route(&admin_rig.state, "GET", FINDINGS, Some("admin"), "").await;
     assert_eq!(status, 200, "{body}");
     assert!(body.to_string().contains("E023"));
-    assert!(!body.to_string().contains("stray"), "no location for the administrator");
+    assert!(
+        !body.to_string().contains("stray"),
+        "no location for the administrator"
+    );
 }
 
 #[tokio::test]
 async fn anyone_else_is_refused_and_the_refusal_is_journaled() {
     let rig = ValidationRig::new();
     rig.state
-        .install_authoriser(filesquid_api::auth::Authoriser::server_administrator("admin"));
+        .install_authoriser(filesquid_api::auth::Authoriser::server_administrator(
+            "admin",
+        ));
     let (status, _) = call_route(&rig.state, "GET", FINDINGS, None, "").await;
     assert_eq!(status, 401);
     let (status, _) = call_route(&rig.state, "POST", RUNS, Some("guess"), "").await;
@@ -501,11 +602,16 @@ async fn a_run_request_starts_runs_and_a_malformed_one_is_refused() {
     let rig = ValidationRig::new();
     rig.e023_object("obj-b", "urn:uuid:b");
     rig.state
-        .install_authoriser(filesquid_api::auth::Authoriser::server_administrator("admin"));
+        .install_authoriser(filesquid_api::auth::Authoriser::server_administrator(
+            "admin",
+        ));
     let (status, body) = call_route(&rig.state, "POST", RUNS, Some("admin"), "{\"from\":1}").await;
     assert_eq!(status, 400, "{body}");
     let refused = rig.journaled(RUN_OPERATION);
-    assert_eq!(refused.last().expect("journaled").error_code.as_deref(), Some("invalid_request"));
+    assert_eq!(
+        refused.last().expect("journaled").error_code.as_deref(),
+        Some("invalid_request")
+    );
     let (status, body) = call_route(&rig.state, "POST", RUNS, Some("admin"), "").await;
     assert_eq!(status, 200, "{body}");
     assert_eq!(body["started"], serde_json::json!([library().as_str()]));
@@ -515,6 +621,102 @@ async fn a_run_request_starts_runs_and_a_malformed_one_is_refused() {
         }
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
-    assert!(rig.store.last_run(&library()).expect("store").is_some(), "the run finished");
+    assert!(
+        rig.store.last_run(&library()).expect("store").is_some(),
+        "the run finished"
+    );
     assert_eq!(rig.monitor.health_report().status, HealthStatus::Degraded);
+}
+
+/// A findings store that fails every call, as an unreachable operational store does.
+struct FailingStore;
+
+impl FindingsStore for FailingStore {
+    fn replace_findings(
+        &self,
+        _: &filesquid_core::LibraryId,
+        _: &str,
+        _: Vec<filesquid_api::ocfl_validation::Finding>,
+    ) -> Result<
+        filesquid_api::ocfl_validation::FindingChange,
+        filesquid_api::ocfl_validation::StoreError,
+    > {
+        Err(filesquid_api::ocfl_validation::StoreError("down".into()))
+    }
+    fn objects_with_findings(
+        &self,
+        _: &filesquid_core::LibraryId,
+    ) -> Result<Vec<String>, filesquid_api::ocfl_validation::StoreError> {
+        Err(filesquid_api::ocfl_validation::StoreError("down".into()))
+    }
+    fn open_findings(
+        &self,
+        _: usize,
+    ) -> Result<
+        Vec<filesquid_api::ocfl_validation::Finding>,
+        filesquid_api::ocfl_validation::StoreError,
+    > {
+        Err(filesquid_api::ocfl_validation::StoreError("down".into()))
+    }
+    fn error_summary(
+        &self,
+    ) -> Result<
+        filesquid_api::ocfl_validation::ErrorSummary,
+        filesquid_api::ocfl_validation::StoreError,
+    > {
+        Err(filesquid_api::ocfl_validation::StoreError("down".into()))
+    }
+    fn cursor(
+        &self,
+        _: &filesquid_core::LibraryId,
+    ) -> Result<Option<String>, filesquid_api::ocfl_validation::StoreError> {
+        Err(filesquid_api::ocfl_validation::StoreError("down".into()))
+    }
+    fn set_cursor(
+        &self,
+        _: &filesquid_core::LibraryId,
+        _: Option<&str>,
+    ) -> Result<(), filesquid_api::ocfl_validation::StoreError> {
+        Err(filesquid_api::ocfl_validation::StoreError("down".into()))
+    }
+    fn record_run(
+        &self,
+        _: &filesquid_api::ocfl_validation::RunRecord,
+    ) -> Result<(), filesquid_api::ocfl_validation::StoreError> {
+        Err(filesquid_api::ocfl_validation::StoreError("down".into()))
+    }
+    fn last_run(
+        &self,
+        _: &filesquid_core::LibraryId,
+    ) -> Result<
+        Option<filesquid_api::ocfl_validation::RunRecord>,
+        filesquid_api::ocfl_validation::StoreError,
+    > {
+        Err(filesquid_api::ocfl_validation::StoreError("down".into()))
+    }
+}
+
+#[test]
+fn a_failing_findings_store_fails_health_and_the_run() {
+    let rig = ValidationRig::new();
+    rig.object("obj-a", "urn:uuid:a");
+    let monitor = filesquid_api::monitor::Monitor::start(
+        Arc::new(filesquid_api::journal::MemoryJournal::new("desktop")),
+        Arc::new(filesquid_api::monitor::StaticHostChecks::healthy()),
+        filesquid_api::monitor::MonitorConfig::new("desktop"),
+        filesquid_api::EventBus::new(),
+    );
+    let service: ValidationService<fixture::CountingBackend> =
+        ValidationService::new(Arc::new(FailingStore), monitor.clone());
+    service.open_library(library(), rig.root.clone());
+    let health = monitor.health_report();
+    assert!(
+        health.reasons.iter().any(|r| r.code == "store_unreachable"),
+        "{health:?}"
+    );
+    let record = vfix::ready_async(service.run(&library(), RunTrigger::Requested, false, "owner"))
+        .expect("answered");
+    assert_eq!(record.outcome, RunOutcome::Failed);
+    assert_eq!(record.error_code.as_deref(), Some("unavailable"));
+    monitor.shutdown();
 }

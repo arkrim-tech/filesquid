@@ -10,9 +10,9 @@ use crate::journal::{
 };
 use crate::journal_writer::{JournalSender, JournalWriter, WriterConfig};
 use crate::metrics::Metrics;
+use crate::ocfl_validation::{ErrorSummary, FindingsStore};
 use crate::registry::{system_clock, Clock, ProcessRegistry, ProcessState};
 use crate::{ApiEvent, EventBus};
-use crate::ocfl_validation::{ErrorSummary, FindingsStore};
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// The host checks the health rules need that require storage I/O (SRS-F-061 Health: data
@@ -249,9 +249,11 @@ impl Monitor {
             ..Default::default()
         };
         let ocfl = self.ocfl_errors();
+        let findings_ok = ocfl.is_some();
+        let ocfl = ocfl.unwrap_or_default();
         HealthInputs {
             stalled,
-            store_ok: self.inner.store.ping().is_ok(),
+            store_ok: self.inner.store.ping().is_ok() && findings_ok,
             data_dir_writable: self.inner.checks.data_dir_writable(),
             free_bytes: self.inner.checks.free_bytes(),
             queue_fill: self.journal().queue_fill(),
@@ -261,16 +263,17 @@ impl Monitor {
         }
     }
 
-    /// The open OCFL error findings in short; none without a findings store. A failing store
-    /// already shows as `store_unreachable` on the desktop; here it counts as no findings and
-    /// is logged to stdout.
-    fn ocfl_errors(&self) -> ErrorSummary {
+    /// The open OCFL error findings in short (none without a findings store), or `None` when
+    /// the findings store, which lives in the operational store, did not answer.
+    fn ocfl_errors(&self) -> Option<ErrorSummary> {
         let Some(store) = self.inner.findings.get() else {
-            return ErrorSummary::default();
+            return Some(ErrorSummary::default());
         };
-        store.error_summary().unwrap_or_else(|err| {
-            tracing::warn!(target: "filesquid::monitor", error = %err, "findings store failed");
-            ErrorSummary::default()
-        })
+        store
+            .error_summary()
+            .inspect_err(|err| {
+                tracing::warn!(target: "filesquid::monitor", error = %err, "findings store failed");
+            })
+            .ok()
     }
 }

@@ -1,7 +1,9 @@
 //! [`MemoryFindingsStore`]: the in-memory reference findings store, for tests and for hosts
 //! without an operational database. It keeps nothing across restarts.
 
-use super::store::{ErrorSummary, Finding, FindingChange, FindingsStore, RunRecord, Severity, StoreError};
+use super::store::{
+    ErrorSummary, Finding, FindingChange, FindingsStore, RunRecord, Severity, StoreError,
+};
 use filesquid_core::LibraryId;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;
@@ -23,7 +25,8 @@ pub struct MemoryFindingsStore {
 
 impl std::fmt::Debug for MemoryFindingsStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MemoryFindingsStore").finish_non_exhaustive()
+        f.debug_struct("MemoryFindingsStore")
+            .finish_non_exhaustive()
     }
 }
 
@@ -91,8 +94,12 @@ impl FindingsStore for MemoryFindingsStore {
         self.with(|state| {
             let mut all: Vec<Finding> = state.findings.values().flatten().cloned().collect();
             all.sort_by(|a, b| {
-                (a.library_id.as_str(), &a.object_id, &a.code, &a.location)
-                    .cmp(&(b.library_id.as_str(), &b.object_id, &b.code, &b.location))
+                (a.library_id.as_str(), &a.object_id, &a.code, &a.location).cmp(&(
+                    b.library_id.as_str(),
+                    &b.object_id,
+                    &b.code,
+                    &b.location,
+                ))
             });
             all.truncate(limit);
             all
@@ -101,10 +108,15 @@ impl FindingsStore for MemoryFindingsStore {
 
     fn error_summary(&self) -> Result<ErrorSummary, StoreError> {
         self.with(|state| {
-            let errors = state.findings.values().flatten().filter(|f| f.severity == Severity::Error);
+            let errors = state
+                .findings
+                .values()
+                .flatten()
+                .filter(|f| f.severity == Severity::Error);
             let codes: BTreeSet<String> = errors.clone().map(|f| f.code.clone()).collect();
-            let objects: BTreeSet<(&str, &String)> =
-                errors.map(|f| (f.library_id.as_str(), &f.object_id)).collect();
+            let objects: BTreeSet<(&str, &String)> = errors
+                .map(|f| (f.library_id.as_str(), &f.object_id))
+                .collect();
             ErrorSummary {
                 codes: codes.into_iter().collect(),
                 objects: objects.len(),
@@ -119,7 +131,9 @@ impl FindingsStore for MemoryFindingsStore {
     fn set_cursor(&self, library_id: &LibraryId, cursor: Option<&str>) -> Result<(), StoreError> {
         self.with(|state| match cursor {
             Some(id) => {
-                state.cursors.insert(library_id.as_str().to_string(), id.to_string());
+                state
+                    .cursors
+                    .insert(library_id.as_str().to_string(), id.to_string());
             }
             None => {
                 state.cursors.remove(library_id.as_str());
@@ -129,7 +143,9 @@ impl FindingsStore for MemoryFindingsStore {
 
     fn record_run(&self, run: &RunRecord) -> Result<(), StoreError> {
         self.with(|state| {
-            state.runs.insert(run.library_id.as_str().to_string(), run.clone());
+            state
+                .runs
+                .insert(run.library_id.as_str().to_string(), run.clone());
         })
     }
 

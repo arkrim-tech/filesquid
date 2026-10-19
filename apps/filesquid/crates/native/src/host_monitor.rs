@@ -3,14 +3,16 @@
 //! Both FileSquid hosts use [`HostMonitor::open`], so their startup, ticking and shutdown
 //! behave the same.
 
-use crate::{DataDirChecks, SqliteJournal};
+use crate::{DataDirChecks, SqliteFindings, SqliteJournal};
 use filesquid_api::journal::{JournalEntry, JournalStore, Outcome};
 use filesquid_api::monitor::{HostChecks, Monitor, MonitorConfig};
+use filesquid_api::ocfl_validation::{OcflValidation, ValidationService};
 use filesquid_api::registry::{ProcessHandle, ProcessSpec};
 use filesquid_api::trace_layer::JournalLayer;
 use filesquid_api::ApiState;
+use filesquid_ocfl::storage::StorageBackend;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// Heartbeat timeout for the long-lived `host` process.
 pub const HOST_HEARTBEAT_TIMEOUT_MS: i64 = 30_000;
@@ -28,6 +30,8 @@ pub struct HostMonitor {
     /// Held by [`tick`](Self::tick) and [`stop`](Self::stop); `true` once stopped. An
     /// in-flight tick finishes before stop shuts the journal writer, and no tick runs after.
     stopped: Mutex<bool>,
+    /// The OCFL validation [`tick`](Self::tick) drives, once started.
+    validation: OnceLock<Arc<dyn OcflValidation>>,
 }
 
 impl HostMonitor {
@@ -93,7 +97,31 @@ impl HostMonitor {
             monitor,
             host: host_process,
             stopped: Mutex::new(false),
+            validation: OnceLock::new(),
         })
+    }
+
+    /// Start OCFL validation (API-S-022) over the findings store in
+    /// `<data_dir>/filesquid.sqlite`: install it in `state` for the validation routes and
+    /// let [`tick`](Self::tick) start the scheduled runs. The host opens each library with
+    /// [`ValidationService::open_library`] on the service answered. Performs database I/O.
+    ///
+    /// # Errors
+    /// The findings store could not be opened, or validation was already started for this
+    /// host or installed in `state`.
+    pub fn start_validation<B: StorageBackend + 'static>(
+        &self,
+        data_dir: &Path,
+        state: &ApiState,
+    ) -> Result<ValidationService<B>, String> {
+        let store =
+            SqliteFindings::open(&data_dir.join(JOURNAL_FILE)).map_err(|e| e.to_string())?;
+        let service = ValidationService::new(Arc::new(store), self.monitor.clone());
+        let handle: Arc<dyn OcflValidation> = Arc::new(service.clone());
+        if self.validation.set(handle.clone()).is_err() || !state.install_validation(handle) {
+            return Err("OCFL validation is already started".to_string());
+        }
+        Ok(service)
     }
 
     /// The monitor.
@@ -101,7 +129,8 @@ impl HostMonitor {
         &self.monitor
     }
 
-    /// Periodic work (call about once a second): host heartbeat, stalled checks, health.
+    /// Periodic work (call about once a second): host heartbeat, stalled checks, health, and
+    /// the OCFL validation runs that are due.
     /// Does nothing after [`stop`](Self::stop).
     pub fn tick(&self) {
         let stopped = self.stopped.lock().unwrap_or_else(|p| p.into_inner());
@@ -110,6 +139,9 @@ impl HostMonitor {
         }
         self.host.heartbeat();
         self.monitor.tick();
+        if let Some(validation) = self.validation.get() {
+            validation.tick();
+        }
     }
 
     /// Wait for an in-flight tick, then journal `host.stopped`, finish the host process and

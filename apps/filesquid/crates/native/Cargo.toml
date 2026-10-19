@@ -22,6 +22,8 @@ desktop = []
 filesquid-api = { path = "../api" }
 # Domain types of the library catalog (files, collections, virtual collections, folders).
 filesquid-core = { path = "../core" }
+# The storage-backend trait the OCFL validation service is generic over (API-S-022).
+filesquid-ocfl = { path = "../ocfl", default-features = false }
 fs4 = "1"
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde_json = "1"
@@ -38,6 +40,10 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 [[test]]
 name = "unit_journal"
 path = "tests/unit/journal.rs"
+
+[[test]]
+name = "unit_findings"
+path = "tests/unit/findings.rs"
 
 [[test]]
 name = "unit_host"

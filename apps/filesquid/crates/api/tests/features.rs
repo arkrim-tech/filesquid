@@ -3,7 +3,7 @@
 //! and event channel of F-056: API-S-002, API-S-003, API-S-004, API-S-009; and the
 //! application-layer isolation of API-S-006; the library domain commands and queries of
 //! API-S-019; the local library operations and the version-inventory repair of CL-1.1 and
-//! API-S-023; the replica, cache identity and pending changes of API-S-024; and the host descriptor of API-S-020, except its `@server-start` scenarios, which
+//! API-S-023; the OCFL validation findings of API-S-022; the replica, cache identity and pending changes of API-S-024; and the host descriptor of API-S-020, except its `@server-start` scenarios, which
 //! the `filesquid-server` harness runs).
 //!
 //! Scenarios that need domain operations not built yet (import, rename, metadata writes, C2PA
@@ -61,6 +61,15 @@ mod ocfl_fixture;
 #[path = "support/local_library_steps.rs"]
 mod local_library_steps;
 
+/// The validation fixture names the OCFL fixture `crate::fixture`.
+use ocfl_fixture as fixture;
+
+#[path = "support/validation_fixture.rs"]
+mod validation_fixture;
+
+#[path = "support/validation_steps.rs"]
+mod validation_steps;
+
 /// Administrator token accepted by [`admin_state`].
 const ADMIN_TOKEN: &str = "admin";
 
@@ -102,6 +111,7 @@ struct MonitorWorld {
     library: library_steps::LibraryWorld,
     replica: replica_steps::ReplicaWorld,
     local: local_library_steps::LocalWorld,
+    validation: validation_steps::ValidationWorld,
 }
 
 impl std::fmt::Debug for MonitorWorld {
