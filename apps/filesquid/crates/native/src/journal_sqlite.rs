@@ -50,8 +50,9 @@ CREATE INDEX IF NOT EXISTS activity_journal_object_ref ON activity_journal(objec
 
 const INSERT: &str = "INSERT INTO activity_journal
     (time_ms, host, process_id, actor, operation, outcome, level, target_ids, duration_ms,
-     error_code, operation_id, object_ref)
-    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)";
+     error_code, operation_id, object_ref, id)
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+    ON CONFLICT(id) DO NOTHING";
 
 const COLUMNS: &str = "id, time_ms, host, process_id, actor, operation, outcome, level, \
      target_ids, duration_ms, error_code, operation_id, object_ref";
@@ -164,11 +165,47 @@ fn insert(conn: &Connection, default_host: &str, e: &JournalEntry) -> Result<i64
             e.duration_ms.map(|d| d as i64),
             e.error_code,
             e.operation_id,
-            e.object_ref
+            e.object_ref,
+            e.id
         ],
     )
     .map_err(sql_err)?;
-    Ok(conn.last_insert_rowid())
+    Ok(e.id.unwrap_or_else(|| conn.last_insert_rowid()))
+}
+
+/// Reserve `count` ids above every stored and every earlier reserved id by advancing the
+/// table's AUTOINCREMENT counter in one transaction, so later automatic ids skip them.
+/// Database I/O.
+fn reserve_ids(conn: &mut Connection, count: i64) -> Result<Vec<i64>, JournalError> {
+    let tx = conn.transaction().map_err(sql_err)?;
+    let stored: i64 = tx
+        .query_row(
+            "SELECT COALESCE(MAX(id), 0) FROM activity_journal",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(sql_err)?;
+    let sequence: i64 = tx
+        .query_row(
+            "SELECT COALESCE(MAX(seq), 0) FROM sqlite_sequence WHERE name = 'activity_journal'",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(sql_err)?;
+    let first = stored.max(sequence) + 1;
+    let last = first + count - 1;
+    tx.execute(
+        "DELETE FROM sqlite_sequence WHERE name = 'activity_journal'",
+        [],
+    )
+    .map_err(sql_err)?;
+    tx.execute(
+        "INSERT INTO sqlite_sequence (name, seq) VALUES ('activity_journal', ?1)",
+        rusqlite::params![last],
+    )
+    .map_err(sql_err)?;
+    tx.commit().map_err(sql_err)?;
+    Ok((first..=last).collect())
 }
 
 /// WHERE clause and parameters for the filters of `q` (cursor and limit excluded).
@@ -234,6 +271,15 @@ fn row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<JournalEntry> {
 impl JournalStore for SqliteJournal {
     fn host(&self) -> &str {
         &self.host
+    }
+
+    fn allocate_ids(&self, count: usize) -> Result<Vec<i64>, JournalError> {
+        let count = filesquid_api::journal::check_allocation(count)?;
+        if count == 0 {
+            return Ok(Vec::new());
+        }
+        let mut conn = self.lock()?;
+        reserve_ids(&mut conn, count)
     }
 
     fn append(&self, entries: &[JournalEntry]) -> Result<Vec<i64>, JournalError> {

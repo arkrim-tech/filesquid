@@ -28,6 +28,23 @@ impl MemoryJournal {
     }
 }
 
+/// Store `entry` in id order and return its id: a preset id is kept (and an entry already
+/// stored under it is not stored again); otherwise the next id is assigned.
+fn store_one(state: &mut (Vec<JournalEntry>, i64), mut entry: JournalEntry) -> i64 {
+    let Some(id) = entry.id else {
+        state.1 += 1;
+        entry.id = Some(state.1);
+        state.0.push(entry);
+        return state.1;
+    };
+    match state.0.binary_search_by_key(&Some(id), |e| e.id) {
+        Ok(_) => {}
+        Err(at) => state.0.insert(at, entry),
+    }
+    state.1 = state.1.max(id);
+    id
+}
+
 impl JournalStore for MemoryJournal {
     fn host(&self) -> &str {
         &self.host
@@ -37,16 +54,21 @@ impl JournalStore for MemoryJournal {
         let mut guard = self.lock()?;
         let mut ids = Vec::with_capacity(entries.len());
         for entry in entries {
-            guard.1 += 1;
             let mut stored = entry.clone().redacted();
-            stored.id = Some(guard.1);
             if stored.host.is_empty() {
                 stored.host = self.host.clone();
             }
-            ids.push(guard.1);
-            guard.0.push(stored);
+            ids.push(store_one(&mut guard, stored));
         }
         Ok(ids)
+    }
+
+    fn allocate_ids(&self, count: usize) -> Result<Vec<i64>, JournalError> {
+        let count = super::check_allocation(count)?;
+        let mut guard = self.lock()?;
+        let first = guard.1 + 1;
+        guard.1 += count;
+        Ok((first..=guard.1).collect())
     }
 
     fn query(&self, query: &JournalQuery) -> Result<JournalPage, JournalError> {

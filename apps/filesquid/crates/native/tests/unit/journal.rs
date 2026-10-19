@@ -398,3 +398,41 @@ fn an_older_journal_gains_the_linkage_columns_on_open() {
     drop(store);
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
+
+/// Journal entry IDs of a commit are assigned before it (API-S-028; ADR 040
+/// Decision 6): both stores hand out a block of IDs no other entry takes,
+/// store entries under those IDs, and store a replayed entry only once.
+#[test]
+fn both_stores_assign_ids_before_the_entries_are_written() {
+    let (stores, dir) = stores("allocate");
+    for store in &stores {
+        store
+            .append(&[JournalEntry::new("host.started", Outcome::Info)])
+            .expect("append");
+        let reserved = store.allocate_ids(2).expect("allocate");
+        assert_eq!(reserved.len(), 2);
+        assert!(reserved[0] < reserved[1]);
+        let later = store
+            .append(&[JournalEntry::new("process.progress", Outcome::Info)])
+            .expect("append");
+        assert!(later[0] > reserved[1], "allocated IDs are never reused");
+        let mut commit = JournalEntry::new("ocfl.commit", Outcome::Succeeded).operation_id("op-1");
+        commit.id = Some(reserved[0]);
+        assert_eq!(store.append(&[commit.clone()]).unwrap(), [reserved[0]]);
+        assert_eq!(
+            store.append(&[commit]).unwrap(),
+            [reserved[0]],
+            "a replay keeps its ID"
+        );
+        let entries = store.query(&JournalQuery::default()).unwrap().entries;
+        let commits: Vec<_> = entries
+            .iter()
+            .filter(|e| e.operation == "ocfl.commit")
+            .collect();
+        assert_eq!(commits.len(), 1, "stored once");
+        assert_eq!(commits[0].id, Some(reserved[0]));
+        assert!(store.allocate_ids(0).unwrap().is_empty());
+    }
+    drop(stores);
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}

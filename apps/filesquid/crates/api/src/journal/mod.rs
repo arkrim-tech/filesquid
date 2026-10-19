@@ -260,6 +260,22 @@ impl JournalEntry {
     }
 }
 
+/// Most ids one [`JournalStore::allocate_ids`] call hands out.
+pub const MAX_ALLOCATED_IDS: usize = 1024;
+
+/// Refuse an allocation above [`MAX_ALLOCATED_IDS`].
+///
+/// # Errors
+/// [`JournalError`] naming the bound.
+pub fn check_allocation(count: usize) -> Result<i64, JournalError> {
+    if count > MAX_ALLOCATED_IDS {
+        return Err(JournalError(format!(
+            "at most {MAX_ALLOCATED_IDS} journal ids per allocation"
+        )));
+    }
+    Ok(count as i64)
+}
+
 /// Stored in place of a field value that is not an opaque token.
 pub const REDACTED: &str = "redacted";
 
@@ -442,8 +458,24 @@ impl std::error::Error for JournalError {}
 pub trait JournalStore: Send + Sync {
     /// Host name recorded on entries that do not carry one.
     fn host(&self) -> &str;
-    /// Append entries atomically; returns their assigned ids in order.
+    /// Append entries atomically; returns their ids in order. An entry that carries an
+    /// `id` (one [`allocate_ids`](Self::allocate_ids) handed out) is stored under that id,
+    /// and stored once: appending an id the store already holds stores nothing and returns
+    /// the id, so replaying a commit's entries never duplicates them.
     fn append(&self, entries: &[JournalEntry]) -> Result<Vec<i64>, JournalError>;
+    /// Hand out `count` ids (at most [`MAX_ALLOCATED_IDS`]), in increasing order, that no
+    /// stored entry has and [`append`](Self::append) never assigns, so a caller can name a
+    /// commit's entries before writing them (API-S-028; ADR 040 Decision 6). The default
+    /// refuses: a store that cannot reserve ids says so.
+    ///
+    /// # Errors
+    /// [`JournalError`] when the store cannot reserve ids or `count` is too large.
+    fn allocate_ids(&self, count: usize) -> Result<Vec<i64>, JournalError> {
+        let _ = count;
+        Err(JournalError(
+            "this journal store cannot allocate ids".into(),
+        ))
+    }
     /// One page of entries matching `query`, in ascending id order.
     fn query(&self, query: &JournalQuery) -> Result<JournalPage, JournalError>;
     /// Number of entries matching `query` (cursor and limit ignored).

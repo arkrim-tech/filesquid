@@ -295,6 +295,10 @@ impl JournalStore for AnnouncingJournal {
         Ok(ids)
     }
 
+    fn allocate_ids(&self, count: usize) -> Result<Vec<i64>, JournalError> {
+        self.inner.allocate_ids(count)
+    }
+
     fn query(&self, query: &JournalQuery) -> Result<JournalPage, JournalError> {
         self.inner.query(query)
     }
