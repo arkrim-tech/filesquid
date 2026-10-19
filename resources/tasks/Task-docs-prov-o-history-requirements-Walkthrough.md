@@ -24,6 +24,15 @@ TDD-ENFORCE: Not applicable - requirements, ADRs, plans and BDD scenarios withou
 5. The activity journal is recoverable from disk: per-commit entries in the same OCFL commit, hourly (and on close) sealed JSON Lines segments in journal OCFL objects, rebuild from files restores the journal; at most one hour of entries that changed nothing may be lost. Coverage gaps (client events, engine warnings, library intents, CLI, metrics snapshots) are closed.
 6. A Journal tab and a JSON Lines or CSV export; the file panel offers four tabs with one look and behaviour: File facts, Descriptive, PROV-O and Audit log (mockups referenced by file name in the separate mockups pull request).
 
+### Owner answers to the open questions (2026-10-19, follow-up branch `docs/prov-o-owner-answers`)
+
+After this branch was merged, the owner answered its four open questions. A follow-up branch applies them to the merged requirements; it changes `AGENTS.md` and `.agents/rules/`, so the owner merges it.
+
+7. **Single-file downloads.** A single-file download does not create a PROV-O record; it is recorded in the activity journal only (`file.download`, opaque file ID and version). Exports, scrubbed exports, ZIP downloads and share or publication outputs produce new output and remain PROV-O activities in the per-library history object. Applied in [ADR 040](../architecture/040-prov-o-history.md) Decisions 1 and 5, [PRD F-010 and F-067](../prd.md#f-067-prov-o-history-of-every-version-and-change), [SRS-F-010 and SRS-F-067](../srs.md#srs-f-067-prov-o-history-of-every-version-and-change), API-S-028 ([API SRS](../../apps/filesquid/crates/api/resources/srs.md)), the API-F2.9 plan row ([API plan](../../apps/filesquid/crates/api/resources/plan.md)) and a new scenario in [`prov_o_history_F-067.feature`](../../apps/filesquid/crates/api/tests/features/prov_o_history_F-067.feature).
+8. **Server accounts.** On `filesquid-server` (planned, Task FS-3.10) each account gets a UUID v4 and is its own `prov:Agent` (`urn:uuid:<account-uuid>`, no user name, e-mail address or display name), linked to the installation agent by `prov:actedOnBehalfOf`. Desktop records are unchanged: the installation UUID is the owner agent and there is no `prov:Person`. Recorded in ADR 040 Decision 4 as the planned approach, finalised in Task FS-3.10; PRD F-067 and SRS-F-067 state it; the [API-F1.9 plan row](../../apps/filesquid/crates/api/resources/plan.md) carries the dependency note (on API-F2.9) and [Task FS-3.10](../implementation-plan.md#task-fs-3.10) names it; a new API scenario covers it.
+9. **`filesquid-prov`'s optional `ocfl` feature** is an allowed optional cross-module dependency under the same rule as the metadata module's `ocfl` store (never a default dependency; no dependency on `filesquid-native` or `filesquid-c2pa`): [AGENTS.md](../../AGENTS.md) section 15 and [src-isolation.md](../../.agents/rules/src-isolation.md) (Rust Exception Handling), with the matching statements in [architecture.md](../architecture.md), [ADR 029](../architecture/029-filesquid-unified-product-and-distributions.md) and ADR 040 Consequences.
+10. **Client events.** The browser keeps a bounded in-page queue and retries with backoff, so the route's limits (20 events per request, 16 KiB, 60 requests a minute) only delay events and never merge them; every delivered event is its own journal entry. Only events still queued when the page closes are counted, in a single `ui.console.overflow` entry with the count, recorded explicitly as the one unavoidable gap under the no-exemptions rule of [logging-enforce.md](../../.agents/rules/logging-enforce.md) (which now names it). Applied in [ADR 033](../architecture/033-activity-journal-and-live-health-monitoring.md) Decision 7 and its mapping table, PRD F-061, SRS-F-061, API-S-030, the new UI-S-023 ([UI SRS](../../apps/filesquid/ui/resources/srs.md)), the API-F2.10, UI-F2.16 and FS-2.9 plan rows, and two scenarios in [`durable_journal_and_journal_tab_F-061.feature`](../../apps/filesquid/crates/api/tests/features/durable_journal_and_journal_tab_F-061.feature). The earlier wording that reported every undeliverable event as one count is removed.
+
 ## Sync Execution Report
 
 | Layer | Documents updated |
@@ -40,10 +49,7 @@ C2PA timing cross-check: ADR 035, ADR 037, C-025 and C-056 agree that C2PA (read
 
 ## Open questions for the owner
 
-- Whether a single-file download, not only an export or a ZIP download, records a PROV-O export activity (each would add a version to the library's history object).
-- How individual `filesquid-server` users are attributed in PROV-O once accounts exist (Task FS-3.10), given that the owner agent is the installation UUID.
-- `AGENTS.md` section 15 and `.agents/rules/src-isolation.md` name only the metadata module's optional `ocfl` store as an optional cross-module dependency; the `prov` module's optional `ocfl` feature is not listed there yet (owner-maintained files, not changed here).
-- Client events: the route is bounded (20 events, 16 KiB, 60 requests a minute); events a client cannot deliver are reported as one `ui.console.overflow` count. Confirm that this count is acceptable under the no-summarising rule of `logging-enforce.md`.
+None. The four questions this branch left open were answered by the owner on 2026-10-19 (decisions 7 to 10 above).
 
 ## Validation
 

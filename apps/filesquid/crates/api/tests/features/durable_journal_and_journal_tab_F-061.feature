@@ -1,7 +1,7 @@
 # F-061: Activity journal and live health monitoring
 # SRS-F-061: Activity journal and live health monitoring
 # API-S-030: Client events; API-S-031: Journal query and export; API-S-032: Durable journal
-# DE-S-013: Journal sealing and rebuild; UI-S-021: Journal tab
+# DE-S-013: Journal sealing and rebuild; UI-S-021: Journal tab; UI-S-023: Client event delivery
 # Scenarios only; step definitions arrive with Task FS-2.9 (unbound steps are skipped by the harness).
 Feature: Durable, complete and browsable activity journal
   As a library owner
@@ -61,6 +61,19 @@ Feature: Durable, complete and browsable activity journal
     When the UI sends 21 events in one request
     Then the request should be refused with an error code
     And a caller over the rate bound should receive status 429 with a Retry-After header
+
+  Scenario: Rate limits delay client events but never merge them
+    Given the UI has 150 console warnings queued
+    When the route answers 429 with a Retry-After header
+    Then the UI should retry after the Retry-After delay with backoff
+    And the journal should eventually hold 150 "ui.console.warn" entries, one per event
+    And no "ui.console.overflow" entry should be written
+
+  Scenario: Only events still queued when the page closes are counted
+    Given the UI has 3 console errors queued that the route has not yet accepted
+    When the page closes
+    Then the journal should hold one "ui.console.overflow" entry with the count 3
+    And every event delivered before the page closed should have its own journal entry
 
   # User interactions
   Scenario: The owner browses and filters the Journal tab

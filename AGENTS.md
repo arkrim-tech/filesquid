@@ -127,7 +127,7 @@
 
 **Purpose:** Ensure that the application is modular and can be easily extended in the future by dividing functionality into modules. Each module should be self-contained and have a clear interface.
 
-- **One workspace of independent module crates:** `core`, `ocfl`, `metadata`, `c2pa`, `api` and the hosts live in one Cargo workspace. A module crate MUST NOT take a default dependency on another module; the only exception is the metadata module's optional `ocfl` store ([ADR 027](./resources/architecture/027-filesquid-metadata-pluggable-stores.md), [ADR 029](./resources/architecture/029-filesquid-unified-product-and-distributions.md)).
+- **One workspace of independent module crates:** `core`, `ocfl`, `metadata`, `prov`, `c2pa`, `api` and the hosts live in one Cargo workspace. A module crate MUST NOT take a default dependency on another module; the only exceptions are two optional ones, the metadata module's `ocfl` store and the prov module's `ocfl` feature, and neither may add `filesquid-native` or `filesquid-c2pa` ([ADR 027](./resources/architecture/027-filesquid-metadata-pluggable-stores.md), [ADR 029](./resources/architecture/029-filesquid-unified-product-and-distributions.md), [ADR 040](./resources/architecture/040-prov-o-history.md)).
 - **Stand-alone modules:** each module builds, tests and publishes on its own and is usable by programs that never run FileSquid.
 - **Distributions are UI layers only:** ImageSquid and Arkrim are views, tokens, labels and brand with no backend code. A capability a distribution needs is added to FileSquid as a module.
 - **Composable panels:** UI panels plug into named sidebar slots and never depend on each other ([ADR 028](./resources/architecture/028-filesquid-ui-packages-and-panel-composition.md)).
