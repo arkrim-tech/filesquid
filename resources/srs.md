@@ -80,6 +80,7 @@ The system MUST implement [PRD F-001](./prd.md#f-001-independent-local-library-a
 **Tests**
 - [`independent_local_library_and_ownership_F-001.feature`](../apps/filesquid/ui/tests/features/independent_local_library_and_ownership_F-001.feature)
 - [`library_domain_commands_and_queries_API-S-019.feature`](../apps/filesquid/crates/api/tests/features/library_domain_commands_and_queries_API-S-019.feature)
+- [`local_library_and_version_inventory_repair_API-S-023.feature`](../apps/filesquid/crates/api/tests/features/local_library_and_version_inventory_repair_API-S-023.feature)
 
 ### SRS-F-002: Safe file, folder and device import
 
@@ -674,6 +675,7 @@ The system MUST implement [PRD F-042](./prd.md#f-042-ocfl-preservation-and-porta
 
 **Tests**
 - [`ocfl_preservation_and_portable_recovery_F-042.feature`](../apps/filesquid/ui/tests/features/ocfl_preservation_and_portable_recovery_F-042.feature)
+- [`local_library_and_version_inventory_repair_API-S-023.feature`](../apps/filesquid/crates/api/tests/features/local_library_and_version_inventory_repair_API-S-023.feature)
 
 ### SRS-F-043: Import-time C2PA records and action disclosure
 
@@ -1483,7 +1485,7 @@ The FileSquid default UI has no screenshot yet; [SRS-F-055](#srs-f-055-default-u
 | PRD ID | SRS ID | Tests |
 |---|---|---|
 | Design-token contract | SRS-UI-007 | `../apps/filesquid/ui/tests/features/theme_tokens_SRS-UI-007.feature` |
-| F-001 | SRS-F-001 | `../apps/filesquid/ui/tests/features/independent_local_library_and_ownership_F-001.feature` |
+| F-001 | SRS-F-001 | `../apps/filesquid/ui/tests/features/independent_local_library_and_ownership_F-001.feature`, `../apps/filesquid/crates/api/tests/features/local_library_and_version_inventory_repair_API-S-023.feature` |
 | F-002 | SRS-F-002 | `../apps/filesquid/ui/tests/features/safe_file_folder_and_device_import_F-002.feature` |
 | F-003 | SRS-F-003 | Backend scenarios in the implementing FileSquid module (view scenarios live with the distribution) |
 | F-004 | SRS-F-004 | `../apps/filesquid/ui/tests/features/albums_folders_and_navigation_F-004.feature`, `../apps/filesquid/crates/core/tests/features/collections_and_virtual_collections_F-004.feature`, `../apps/filesquid/crates/api/tests/features/navigation_listing_API-S-021.feature`, `../apps/filesquid/ui/tests/features/navigation_preferences_UI-S-017.feature` |
@@ -1524,7 +1526,7 @@ The FileSquid default UI has no screenshot yet; [SRS-F-055](#srs-f-055-default-u
 | F-039 | SRS-F-039 | `../apps/filesquid/ui/tests/features/consent_notifications_and_activity_privacy_F-039.feature` |
 | F-040 | SRS-F-040 | `../apps/filesquid/crates/server/tests/features/compatibility_and_parity_register_F-040.feature`, `../apps/filesquid/crates/core/tests/features/capability_register_F-040.feature` |
 | F-041 | SRS-F-041 | `../apps/filesquid/ui/tests/features/sourceaware_web_clipping_and_http_evidence_F-041.feature` |
-| F-042 | SRS-F-042 | `../apps/filesquid/ui/tests/features/ocfl_preservation_and_portable_recovery_F-042.feature` |
+| F-042 | SRS-F-042 | `../apps/filesquid/ui/tests/features/ocfl_preservation_and_portable_recovery_F-042.feature`, `../apps/filesquid/crates/api/tests/features/local_library_and_version_inventory_repair_API-S-023.feature` |
 | F-043 | SRS-F-043 | `../apps/filesquid/ui/tests/features/importtime_c2pa_records_and_action_disclosure_F-043.feature`, `../apps/filesquid/crates/core/tests/features/c2pa_and_provo_records_F-043.feature` |
 | F-044 | SRS-F-044 | `../apps/filesquid/ui/tests/features/paid_c2pa_publishing_and_watermarking_F-044.feature` |
 | F-045 | SRS-F-045 | `../apps/filesquid/ui/tests/features/byo_ai_connections_and_pertask_model_choice_F-045.feature` |
