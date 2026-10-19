@@ -32,6 +32,7 @@
 //! status, diff, commit, ...) is built on it.
 
 pub(crate) mod base;
+mod bound;
 mod clock;
 mod commit;
 mod draft;
@@ -46,6 +47,7 @@ mod repair;
 mod reservation;
 
 #[cfg(not(target_arch = "wasm32"))]
+pub use bound::{BoundContext, VersionBoundFiles, MAX_BOUND_FILES};
 pub use clock::SystemClock;
 pub use clock::{rfc3339_utc, Clock};
 pub use commit::{CommitReceipt, ObjectWriter};

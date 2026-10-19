@@ -18,7 +18,9 @@ use super::index::{Staged, StagingIndex};
 use super::model::{base_state, known, ChangeModel, VersionMeta};
 use crate::inventory::{Inventory, VersionNum};
 use crate::storage::StorageBackend;
-use crate::write::{CommitError, CommitReceipt, VersionDraft, VersionReservations};
+use crate::write::{
+    CommitError, CommitReceipt, VersionBoundFiles, VersionDraft, VersionReservations,
+};
 
 /// Most times one change set is rebased before the commit gives up.
 pub const MAX_REBASES: usize = 16;
@@ -49,8 +51,25 @@ where
     /// [`ChangeError::StagingNotCleared`] is the one error after
     /// publication: it carries the receipt.
     pub async fn commit(&self, meta: VersionMeta) -> Result<CommitReceipt, ChangeError> {
+        self.commit_with(meta, None).await
+    }
+
+    /// [`commit`](Self::commit), adding the files `bound` returns for the
+    /// reserved version (OCFL-S-024). `bound` is called after each `vN`
+    /// reservation, so again with the new version name after a rebase;
+    /// when it fails nothing is published and the staging area is kept.
+    ///
+    /// # Errors
+    ///
+    /// As [`commit`](Self::commit), and [`ChangeError::Commit`] with
+    /// [`CommitError::BoundFiles`].
+    pub async fn commit_with(
+        &self,
+        meta: VersionMeta,
+        bound: Option<&dyn VersionBoundFiles>,
+    ) -> Result<CommitReceipt, ChangeError> {
         let (_, index) = self.load().await?;
-        let receipt = self.publish(index.clone(), &meta).await?;
+        let receipt = self.publish(index.clone(), &meta, bound).await?;
         match self.clear_committed(&index).await {
             Ok(()) => Ok(receipt),
             Err(reason) => {
@@ -91,6 +110,21 @@ where
         version: &VersionNum,
         meta: VersionMeta,
     ) -> Result<CommitReceipt, ChangeError> {
+        self.revert_with(version, meta, None).await
+    }
+
+    /// [`revert`](Self::revert), adding the files `bound` returns for the
+    /// reserved version (OCFL-S-024).
+    ///
+    /// # Errors
+    ///
+    /// As [`revert`](Self::revert) and [`commit_with`](Self::commit_with).
+    pub async fn revert_with(
+        &self,
+        version: &VersionNum,
+        meta: VersionMeta,
+        bound: Option<&dyn VersionBoundFiles>,
+    ) -> Result<CommitReceipt, ChangeError> {
         let (inventory, head, head_state) = self.head_state().await?;
         let target = state_digests(Some(&inventory), version)?;
         let mut index = StagingIndex::new(&self.object_id, Some(head));
@@ -101,7 +135,7 @@ where
         for (path, digest) in target {
             index.set(&head_state, &path, Staged::File(digest));
         }
-        self.publish(index, &meta).await
+        self.publish(index, &meta, bound).await
     }
 
     /// Publish a new version that restores each of `paths` to its content
@@ -119,6 +153,23 @@ where
         paths: &[&str],
         meta: VersionMeta,
     ) -> Result<CommitReceipt, ChangeError> {
+        self.reinstate_with(version, paths, meta, None).await
+    }
+
+    /// [`reinstate`](Self::reinstate), adding the files `bound` returns for
+    /// the reserved version (OCFL-S-024).
+    ///
+    /// # Errors
+    ///
+    /// As [`reinstate`](Self::reinstate) and
+    /// [`commit_with`](Self::commit_with).
+    pub async fn reinstate_with(
+        &self,
+        version: &VersionNum,
+        paths: &[&str],
+        meta: VersionMeta,
+        bound: Option<&dyn VersionBoundFiles>,
+    ) -> Result<CommitReceipt, ChangeError> {
         let (inventory, head, head_state) = self.head_state().await?;
         let source = state_digests(Some(&inventory), version)?;
         let mut index = StagingIndex::new(&self.object_id, Some(head));
@@ -129,7 +180,7 @@ where
             })?;
             index.set(&head_state, path, Staged::File(digest.clone()));
         }
-        self.publish(index, &meta).await
+        self.publish(index, &meta, bound).await
     }
 
     /// The committed inventory, its head and the head's logical state.
@@ -149,10 +200,13 @@ where
     }
 
     /// Publish `index` as one version, rebasing it while the head moves.
+    /// `bound` is handed to every attempt, so a rebased commit binds its
+    /// files to the new version name.
     async fn publish(
         &self,
         mut index: StagingIndex,
         meta: &VersionMeta,
+        bound: Option<&dyn VersionBoundFiles>,
     ) -> Result<CommitReceipt, ChangeError> {
         for _ in 0..MAX_REBASES {
             let inventory = self.committed().await?;
@@ -161,7 +215,7 @@ where
             let staging = self.staging.backend();
             let result = self
                 .writer
-                .commit(&self.root, index.base.as_ref(), staging, &draft)
+                .commit_bound(&self.root, index.base.as_ref(), staging, &draft, bound)
                 .await;
             match result {
                 Err(CommitError::HeadMoved { .. }) => continue,

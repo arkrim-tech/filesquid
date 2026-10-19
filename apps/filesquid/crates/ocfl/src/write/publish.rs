@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use super::error::CommitError;
 use super::fence::Fence;
 use super::listing::list_version_keys;
-use super::plan::{Upload, VersionPlan};
+use super::plan::{Upload, UploadSource, VersionPlan};
 use super::reconcile::{foreign, relative};
 use super::reservation::VersionReservations;
 use crate::digest::DigestAlgorithm;
@@ -114,7 +114,11 @@ where
     R: VersionReservations,
 {
     let key = key_in(root, &upload.content_path)?;
-    let mut source = staged_reader(staging, upload)?;
+    let staged = match &upload.source {
+        UploadSource::Staged(staged) => staged,
+        UploadSource::Inline(bytes) => return put_inline(storage, &key, bytes, fence).await,
+    };
+    let mut source = staged_reader(staging, staged, upload)?;
     fence.check().await?;
     let mut writer = MultipartWriter::start(storage, key.clone()).await?;
     let sent = send_parts(&mut source, &mut writer, upload, fence).await;
@@ -133,25 +137,46 @@ where
     published.map(|meta| meta.etag)
 }
 
+/// Write the in-memory bytes of a version-bound file (OCFL-S-024) at `key`
+/// after a fence check, refusing a path another writer already holds. The
+/// digest was computed from these same bytes when the plan was bound.
+///
+/// # Errors
+///
+/// [`CommitError::ForeignWrite`] when the path is taken, a fence failure or
+/// a backend error.
+async fn put_inline<B, R>(
+    storage: &B,
+    key: &StorageKey,
+    bytes: &[u8],
+    fence: &Fence<'_, R>,
+) -> Result<ETag, CommitError>
+where
+    B: StorageBackend,
+    R: VersionReservations,
+{
+    fence.check().await?;
+    let meta = storage
+        .put_if(key, bytes, &Precondition::IfAbsent)
+        .await
+        .map_err(|err| foreign(err, key))?;
+    Ok(meta.etag)
+}
+
 /// A reader of the staged bytes that checks them against the plan's digest.
 fn staged_reader<'s, S: StorageBackend>(
     staging: &'s S,
+    staged: &StorageKey,
     upload: &Upload,
 ) -> Result<LogicalFileReader<'s, S>, CommitError> {
     let file = LogicalFile {
         path: upload.content_path.clone(),
         digest: upload.digest.clone(),
-        content_path: upload.staged.as_str().to_string(),
+        content_path: staged.as_str().to_string(),
     };
     let algorithm = DigestAlgorithm::ENGINE;
-    LogicalFileReader::new(
-        staging,
-        upload.staged.clone(),
-        &file,
-        algorithm,
-        MAX_CHUNK_BYTES,
-    )
-    .map_err(CommitError::from)
+    LogicalFileReader::new(staging, staged.clone(), &file, algorithm, MAX_CHUNK_BYTES)
+        .map_err(CommitError::from)
 }
 
 /// Read every chunk of `source` into parts of at most [`MAX_PART_BYTES`],
@@ -198,9 +223,11 @@ where
 /// reader) changed after assembly.
 fn staging_error(err: ReadError, upload: &Upload) -> CommitError {
     if err.code() == Some("E092") {
-        return CommitError::StagingChanged {
-            key: upload.staged.as_str().to_string(),
+        let key = match &upload.source {
+            UploadSource::Staged(staged) => staged.as_str().to_string(),
+            UploadSource::Inline(_) => upload.content_path.clone(),
         };
+        return CommitError::StagingChanged { key };
     }
     err.into()
 }
