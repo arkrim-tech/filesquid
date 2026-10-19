@@ -2,7 +2,7 @@
 //! hosts without a database. Everything is lost when the process ends. One mutex guards the
 //! whole state. A commit runs every check that can fail first, then applies its changes,
 //! its journal entry and its receipt in place with infallible map writes, so they land
-//! together or not at all. Nothing is copied, so a commit no longer costs a copy of the
+//! together or not at all. A commit with no change stores nothing. Nothing is copied, so a commit no longer costs a copy of the
 //! catalog. A purge or virtual-collection removal still scans every stored membership.
 
 use super::catalog::{
@@ -86,8 +86,8 @@ impl MemoryCatalog {
         Ok(())
     }
 
-    /// Every journal entry stored with a commit, oldest first, including commits that changed
-    /// nothing. Reads through a poisoned lock, because a commit checks everything that can
+    /// Every journal entry stored with a commit, oldest first. A commit that changed nothing
+    /// stores none. Reads through a poisoned lock, because a commit checks everything that can
     /// fail before its first write and never leaves the state half applied.
     pub fn journal_entries(&self) -> Vec<JournalEntry> {
         self.read().journal.clone()
@@ -99,8 +99,8 @@ impl MemoryCatalog {
         self.read().commits
     }
 
-    /// Number of operations recorded with a receipt, including those that changed nothing
-    /// (read like [`Self::journal_entries`]).
+    /// Number of operations recorded with a receipt; an operation that changed nothing has
+    /// none (read like [`Self::journal_entries`]).
     pub fn operation_count(&self) -> u64 {
         u64::try_from(self.read().receipts.len()).unwrap_or(u64::MAX)
     }
@@ -126,6 +126,17 @@ fn page<T>(mut items: Vec<Keyed<T>>, after: Option<&PageKey>, limit: usize) -> V
     items.sort_by(|a, b| a.key.cmp(&b.key));
     items.truncate(limit);
     items
+}
+
+/// The answer to a checked commit with no change, at the library's `revision`: nothing is
+/// stored, neither its journal entry nor a receipt (owner decision, 2026-10-19). Pure.
+fn unstored_receipt(commit: CatalogCommit, revision: u64) -> CommitReceipt {
+    CommitReceipt {
+        library_id: commit.library_id,
+        revision: revision.to_string(),
+        created_id: commit.created_id,
+        deletion: commit.deletion,
+    }
 }
 
 /// The key of an item listed by (order, ID).
@@ -263,15 +274,15 @@ impl State {
         }
     }
 
-    /// Apply a checked `commit` in place: its changes, the library's `revision`, its journal
-    /// entry and its receipt. Every step is an infallible map write, so the commit lands whole.
+    /// Apply a checked `commit` that has at least one change in place: its changes, the
+    /// library's `revision`, its journal entry and its receipt. Every step is an infallible
+    /// map write, so the commit lands whole.
     fn apply_checked(&mut self, commit: CatalogCommit, revision: u64) -> CommitReceipt {
-        let changed = !commit.changes.is_empty();
         commit.changes.into_iter().for_each(|c| self.apply(c));
         if let Some(library) = self.libraries.get_mut(commit.library_id.as_str()) {
             library.revision = revision;
         }
-        self.commits += u64::from(changed);
+        self.commits += 1;
         let receipt = CommitReceipt {
             library_id: commit.library_id,
             revision: revision.to_string(),
@@ -429,13 +440,17 @@ impl LibraryCatalog for MemoryCatalog {
         Ok(page(items, after, limit))
     }
 
-    /// Answer a stored receipt first, then check the commit and apply it in place.
+    /// Answer a stored receipt first, then check the commit. A commit with no change stores
+    /// nothing and answers the current revision; any other commit is applied in place.
     fn commit(&self, commit: CatalogCommit) -> Result<CommitReceipt, CatalogError> {
         let mut state = self.lock()?;
         if let Some(done) = state.receipts.get(commit.operation_id.as_str()) {
             return Ok(done.clone());
         }
         let revision = state.next_revision(&commit)?;
+        if commit.changes.is_empty() {
+            return Ok(unstored_receipt(commit, revision));
+        }
         Ok(state.apply_checked(commit, revision))
     }
 }

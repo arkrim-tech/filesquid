@@ -58,6 +58,21 @@ Feature: Library domain commands and queries
     Then both answers should name the same collection
     And the library should list 2 collections
 
+  Scenario: A command that changes nothing stores nothing
+    Given a library with a collection "Trips" holding 1 file
+    When the owner renames the collection "Trips" to "Trips" as operation "op-same-title"
+    Then the command should answer committed at the current revision
+    And the catalog should hold no receipt for operation "op-same-title"
+    And nothing should have been committed
+    And no journal entry should have been stored
+
+  Scenario: A retried command that changed nothing is planned again
+    Given a library with a collection "Trips" holding 1 file
+    And the owner has renamed the collection "Trips" to "Trips" as operation "op-same-title"
+    When the owner renames the collection "Trips" to "Holidays"
+    And the owner retries operation "op-same-title"
+    Then the command should be refused as "conflict"
+
   Scenario: Paging visits every file once in a stable order
     Given a library with a collection "Trips" holding 7 files
     When the owner lists the library 3 files per page

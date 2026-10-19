@@ -9,6 +9,8 @@
 //!
 //! - [`SqliteJournal`]: the activity journal in the host's SQLite operational store
 //!   (WAL mode, append-only, owner-only file mode on Unix);
+//! - [`SqliteFindings`]: the OCFL validation findings, cursors and last runs in the same
+//!   operational store (API-S-022);
 //! - [`DataDirChecks`]: the data-directory checks (write probe, free space);
 //! - [`HostMonitor`]: opens both in a data directory and runs the host's monitor.
 //!
@@ -29,6 +31,7 @@
 
 #[cfg(feature = "desktop")]
 pub mod catalog;
+pub mod findings_sqlite;
 pub mod host_checks;
 pub mod host_monitor;
 pub mod installation;
@@ -41,6 +44,10 @@ pub use catalog::{
     CATALOG_FILE_EXTENSION, CATALOG_SCHEMA_VERSION, MAX_LIBRARIES, OCFL_ROOT_SUFFIX,
     RECONCILE_OPERATION, WORK_DIR_SUFFIX,
 };
+pub use findings_sqlite::SqliteFindings;
 pub use host_checks::{probe_name, DataDirChecks, MAX_PROBE_ATTEMPTS};
-pub use host_monitor::{HostMonitor, ALREADY_INSTALLED, HOST_HEARTBEAT_TIMEOUT_MS, JOURNAL_FILE};
+pub use host_monitor::{
+    HostMonitor, ALREADY_INSTALLED, HOST_HEARTBEAT_TIMEOUT_MS, JOURNAL_FILE,
+    VALIDATION_ALREADY_STARTED, VALIDATION_STOP_WAIT,
+};
 pub use journal_sqlite::SqliteJournal;

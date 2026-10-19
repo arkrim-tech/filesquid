@@ -3,7 +3,9 @@
 //! transaction check the create or revision rule and apply every change; publish the
 //! snapshot version of what changed through the library's OCFL root; then store the new
 //! revision and snapshot version, the receipt, the intent's removal and the journal entry
-//! (into the outbox) and commit. A failure before the commit rolls the transaction back.
+//! (into the outbox) and commit. A commit with no change publishes nothing and only removes
+//! its intent: it stores no receipt, no journal entry and no new revision (owner decision,
+//! 2026-10-19). A failure before the commit rolls the transaction back.
 
 use super::canonical::CanonicalRoot;
 use super::history::{plan_commit, History};
@@ -158,16 +160,21 @@ fn commit_in_transaction(
 ) -> Result<CommitReceipt, Stopped> {
     let tx = conn.transaction().map_err(|e| Stopped::discard(sql(e)))?;
     let (receipt, purged) = apply_changes(&tx, commit, creates).map_err(Stopped::discard)?;
-    let published = !commit.changes.is_empty();
-    let entries = match published {
-        true => publish(&tx, commit, &receipt, purged, canonical)?,
-        false => vec![commit.journal.clone()],
-    };
-    finish(tx, commit, &receipt, &entries).map_err(|err| match published {
-        true => Stopped::keep(err),
-        false => Stopped::discard(err),
-    })?;
+    if commit.changes.is_empty() {
+        finish_unchanged(tx, commit).map_err(Stopped::discard)?;
+        return Ok(receipt);
+    }
+    let entries = publish(&tx, commit, &receipt, purged, canonical)?;
+    finish(tx, commit, &receipt, &entries).map_err(Stopped::keep)?;
     Ok(receipt)
+}
+
+/// Finish a checked commit with no change: remove its intent (no work remains) and commit
+/// `tx`, storing neither a receipt, a journal entry, a snapshot version nor a new revision
+/// (owner decision, 2026-10-19). Database I/O.
+fn finish_unchanged(tx: Transaction<'_>, commit: &CatalogCommit) -> Result<(), CatalogError> {
+    intent::clear(&tx, commit.operation_id.as_str())?;
+    tx.commit().map_err(sql)
 }
 
 /// Check the create or revision rule, apply every change and the new revision inside `tx`,

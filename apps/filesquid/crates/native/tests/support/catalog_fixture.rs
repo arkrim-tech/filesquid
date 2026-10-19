@@ -168,15 +168,16 @@ impl Fixture {
         Self::around(root, journal, catalog)
     }
 
-    /// A fixture around an opened `catalog` (starts the failure journal writer).
+    /// A fixture around an opened `catalog` (starts the failure journal writer, which the
+    /// service and the catalog's pre-open refusals both journal through).
     fn around(root: PathBuf, journal: Arc<dyn JournalStore>, catalog: SqliteCatalog) -> Self {
-        let catalog = Arc::new(catalog);
         let writer = JournalWriter::start(
             journal.clone(),
             WriterConfig::default(),
             EventBus::new(),
             Arc::new(Metrics::default()),
         );
+        let catalog = Arc::new(catalog.with_failure_journal(writer.sender()));
         let service = LibraryService::new(catalog.clone(), writer.sender());
         Self {
             root,

@@ -20,6 +20,11 @@ use filesquid_api::host::{
 };
 use filesquid_api::journal::{JournalEntry, JournalPage, Level, MemoryJournal, Outcome};
 use filesquid_api::monitor::{Monitor, MonitorConfig};
+use filesquid_api::ocfl_validation::{
+    Finding, FindingView, FindingsView, LibraryRuns, MemoryFindingsStore, RunAccepted, RunOutcome,
+    RunRecord, RunRefusal, RunRequest, RunTrigger, RunView, Severity, ValidationConfig,
+    ValidationService,
+};
 use filesquid_api::operation::{
     CommandEnvelope, CommandOutcome, CommandOutcomeKind, ExpectedRevision, OperationId,
     OperationScope, PageSize, PortError, QueryEnvelope, MAX_PAGE_SIZE, PROTOCOL_SCHEMA_VERSION,
@@ -63,7 +68,7 @@ fn contract_is_openapi_3_1_with_the_crate_api_version() {
     let doc = contract();
     assert_eq!(doc["openapi"], "3.1.0");
     assert_eq!(doc["info"]["version"], API_VERSION);
-    assert_eq!(API_VERSION, "0.8.0");
+    assert_eq!(API_VERSION, "0.9.0");
 }
 
 #[test]
@@ -234,6 +239,9 @@ fn owner_state() -> (ApiState, Monitor) {
     );
     state.install_monitor(monitor.clone());
     state.describe_host(HostIdentity::desktop(), Arc::new(NotEnrolled));
+    let validation: ValidationService<filesquid_ocfl::storage::MemoryBackend> =
+        ValidationService::new(Arc::new(MemoryFindingsStore::new()), monitor.clone());
+    state.install_validation(Arc::new(validation));
     install_sample_history(&state);
     (state, monitor)
 }
@@ -245,7 +253,7 @@ async fn call(state: &ApiState, method: &Method, path: &str) -> (StatusCode, Vec
         .method(method.clone())
         .uri(path)
         .header("authorization", format!("Bearer {TOKEN}"))
-        .body(Body::empty())
+        .body(sample_body(method, path))
         .expect("request");
     let response = router(state.clone())
         .oneshot(request)
@@ -259,6 +267,15 @@ async fn call(state: &ApiState, method: &Method, path: &str) -> (StatusCode, Vec
         .expect("body")
         .to_bytes();
     (status, body.to_vec())
+}
+
+/// The body a documented operation needs to answer 200: the default settings for the settings
+/// route, nothing otherwise.
+fn sample_body(method: &Method, path: &str) -> Body {
+    if *method == Method::PUT && path == "/api/v1/admin/ocfl/validation-settings" {
+        return Body::from(serde_json::to_vec(&ValidationConfig::default()).expect("json"));
+    }
+    Body::empty()
 }
 
 /// Assert `status` is one the operation documents and, when the documented response has a
@@ -594,6 +611,7 @@ fn samples() -> Vec<(&'static str, Vec<Value>)> {
         ("HealthReport", vec![to_value(sample_report())]),
     ];
     all.extend(host_samples());
+    all.extend(validation_samples());
     all.extend(history_samples());
     all.extend(operation_samples());
     all
@@ -645,6 +663,105 @@ fn host_samples() -> Vec<(&'static str, Vec<Value>)> {
         ("HostedService", services.map(to_value).to_vec()),
         ("HostDescriptor", descriptors),
     ]
+}
+
+/// Serialized samples of the OCFL validation schemas (API-S-022): every severity, trigger and
+/// outcome, a finding with and without its location, a library before and after its first
+/// run, and run requests and answers.
+fn validation_samples() -> Vec<(&'static str, Vec<Value>)> {
+    let library = filesquid_core::LibraryId::new("lib-1").expect("id");
+    let finding = Finding {
+        library_id: library.clone(),
+        object_id: "urn:uuid:b".into(),
+        version: Some("v1".into()),
+        code: "E023".into(),
+        severity: Severity::Error,
+        location: "obj-b/v1/content/stray.tmp".into(),
+    };
+    let unread = Finding {
+        version: None,
+        ..finding.clone()
+    };
+    let findings = [
+        FindingView::of(finding.clone(), true),
+        FindingView::of(unread, false),
+    ];
+    let run = RunView::from(RunRecord {
+        library_id: library.clone(),
+        trigger: RunTrigger::Scheduled,
+        started_ms: 0,
+        ended_ms: 1,
+        outcome: RunOutcome::Failed,
+        checked: 0,
+        not_checked: 0,
+        error_code: Some("unavailable".into()),
+    });
+    let fresh = LibraryRuns {
+        library_id: library.clone(),
+        running: false,
+        last_run: None,
+        next_run: None,
+    };
+    let ran = LibraryRuns {
+        last_run: Some(run.clone()),
+        next_run: Some("2026-10-25T00:00:00.000Z".into()),
+        running: true,
+        ..fresh.clone()
+    };
+    let view = FindingsView {
+        findings: findings.to_vec(),
+        truncated: false,
+        settings: ValidationConfig::default(),
+        libraries: vec![fresh, ran.clone()],
+    };
+    let request = RunRequest {
+        library_id: Some(library.clone()),
+        from_start: true,
+    };
+    let refusal = RunRefusal {
+        library_id: library.clone(),
+        error_code: "already_running".into(),
+    };
+    let accepted = RunAccepted {
+        started: vec![library],
+        refused: vec![refusal.clone()],
+    };
+    vec![
+        (
+            "FindingSeverity",
+            [Severity::Error, Severity::Warning].map(to_value).to_vec(),
+        ),
+        ("FindingView", findings.map(to_value).to_vec()),
+        (
+            "RunTrigger",
+            [RunTrigger::Scheduled, RunTrigger::Requested]
+                .map(to_value)
+                .to_vec(),
+        ),
+        ("RunOutcome", all_run_outcomes().map(to_value).to_vec()),
+        ("RunView", vec![to_value(run)]),
+        ("LibraryRuns", vec![to_value(ran)]),
+        ("FindingsView", vec![to_value(view)]),
+        (
+            "RunRequest",
+            vec![to_value(request), to_value(RunRequest::default())],
+        ),
+        ("RunRefusal", vec![to_value(refusal)]),
+        ("RunAccepted", vec![to_value(accepted)]),
+        (
+            "ValidationSettings",
+            vec![to_value(ValidationConfig::default())],
+        ),
+    ]
+}
+
+fn all_run_outcomes() -> [RunOutcome; 4] {
+    use RunOutcome::*;
+    let all = [Completed, Capped, Cancelled, Failed];
+    all.iter().for_each(|o| match o {
+        Completed | Capped | Cancelled | Failed => (),
+    });
+    all
 }
 
 /// Serialized samples of the history schemas (API-S-029): a recorded and a reconstructed
@@ -779,9 +896,11 @@ fn sample_process() -> ProcessView {
 
 fn sample_reason() -> HealthReason {
     HealthReason {
-        code: "disk_low".into(),
+        code: "ocfl_validation_errors".into(),
         severity: HealthStatus::Degraded,
-        detail: "Less than 5 GiB free.".into(),
+        detail: "OCFL validation errors (E023) in 1 object(s)".into(),
+        codes: vec!["E023".into()],
+        objects: Some(1),
     }
 }
 
@@ -793,6 +912,8 @@ fn sample_inputs() -> HealthInputs {
         free_bytes: Some(1 << 40),
         queue_fill: 0.25,
         errors_last_5m: 0,
+        ocfl_error_codes: vec!["E023".into()],
+        ocfl_error_objects: 1,
     }
 }
 

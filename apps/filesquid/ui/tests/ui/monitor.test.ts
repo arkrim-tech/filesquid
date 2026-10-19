@@ -22,6 +22,8 @@ const health = {
     free_bytes: 10 * GIB,
     queue_fill: 0.1,
     errors_last_5m: 0,
+    ocfl_error_codes: [],
+    ocfl_error_objects: 0,
   },
 };
 const importProcess = {

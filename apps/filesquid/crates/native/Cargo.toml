@@ -17,15 +17,16 @@ default = []
 # snapshot commits and reconcile (DE-0.3), and later the durable job and media workers
 # (DE-0.8). Only `filesquid-desktop` enables it; a `filesquid-server` test fails if the
 # server does.
-desktop = ["dep:filesquid-ocfl"]
+desktop = ["filesquid-ocfl/fs"]
 
 [dependencies]
 filesquid-api = { path = "../api" }
 # Domain types of the library catalog (files, collections, virtual collections, folders).
 filesquid-core = { path = "../core" }
-# The OCFL engine and its filesystem backend, behind `desktop`: the desktop commits each
-# library's canonical snapshot through its change model (DE-0.3).
-filesquid-ocfl = { path = "../ocfl", optional = true }
+# The OCFL engine: its storage-backend trait for the OCFL validation service (API-S-022),
+# and, with `desktop`, its filesystem backend and change model for the desktop's canonical
+# snapshot commits (DE-0.3).
+filesquid-ocfl = { path = "../ocfl", default-features = false }
 fs4 = "1"
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde_json = "1"
@@ -42,6 +43,10 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 [[test]]
 name = "unit_journal"
 path = "tests/unit/journal.rs"
+
+[[test]]
+name = "unit_findings"
+path = "tests/unit/findings.rs"
 
 [[test]]
 name = "unit_installation"

@@ -10,9 +10,10 @@ use crate::journal::{
 };
 use crate::journal_writer::{AnnouncingJournal, JournalSender, JournalWriter, WriterConfig};
 use crate::metrics::Metrics;
+use crate::ocfl_validation::{ErrorSummary, FindingsStore};
 use crate::registry::{system_clock, Clock, ProcessRegistry, ProcessState};
 use crate::{ApiEvent, EventBus};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// The host checks the health rules need that require storage I/O (SRS-F-061 Health: data
 /// directory writable, free space against thresholds). Hosts inject an implementation, as
@@ -90,6 +91,10 @@ struct Inner {
     config: MonitorConfig,
     events: EventBus,
     last_status: Mutex<Option<HealthStatus>>,
+    /// Held while health is evaluated and its status recorded, so a report never records
+    /// over a newer one.
+    health: Mutex<()>,
+    findings: OnceLock<Arc<dyn FindingsStore>>,
 }
 
 /// Cloneable handle to a host's monitor.
@@ -130,6 +135,8 @@ impl Monitor {
                 config,
                 events,
                 last_status: Mutex::new(None),
+                health: Mutex::new(()),
+                findings: OnceLock::new(),
             }),
         }
     }
@@ -183,14 +190,24 @@ impl Monitor {
     /// health change. Performs I/O through [`health_report`](Self::health_report).
     pub fn tick(&self) -> HealthReport {
         self.inner.registry.check_stalled();
+        let _serial = self.inner.health.lock().unwrap_or_else(|p| p.into_inner());
         let report = self.health_report();
+        self.record_status(&report, false);
+        report
+    }
+
+    /// Journal a status transition as `health.changed` and publish the report on
+    /// `health.change`: on a transition, and always when `publish_always` (the open findings
+    /// changed, API-S-022).
+    fn record_status(&self, report: &HealthReport, publish_always: bool) {
         let previous = self
             .inner
             .last_status
             .lock()
             .map(|mut s| s.replace(report.status))
             .unwrap_or(None);
-        if previous != Some(report.status) {
+        let changed = previous != Some(report.status);
+        if changed {
             let level = match report.status {
                 HealthStatus::Ok => Level::Info,
                 HealthStatus::Degraded => Level::Warn,
@@ -199,12 +216,30 @@ impl Monitor {
             let mut entry = JournalEntry::new("health.changed", Outcome::Info).level(level);
             entry.error_code = report.reasons.first().map(|r| r.code.clone());
             self.journal().send(entry);
-            if let Ok(data) = serde_json::to_value(&report) {
+        }
+        if changed || publish_always {
+            if let Ok(data) = serde_json::to_value(report) {
                 self.inner
                     .events
                     .publish(ApiEvent::new(topic::HEALTH_CHANGE, data));
             }
         }
+    }
+
+    /// Use `store` as the source of open OCFL validation findings for the health rules
+    /// (API-S-022). Returns false, keeping the first, if one was already installed.
+    pub fn install_findings(&self, store: Arc<dyn FindingsStore>) -> bool {
+        self.inner.findings.set(store).is_ok()
+    }
+
+    /// Evaluate health and publish it on `health.change` even when the status did not change,
+    /// because the open findings did (API-S-022); a status transition is journaled as
+    /// `health.changed` as [`tick`](Self::tick) does. Performs I/O through
+    /// [`health_report`](Self::health_report).
+    pub fn publish_health(&self) -> HealthReport {
+        let _serial = self.inner.health.lock().unwrap_or_else(|p| p.into_inner());
+        let report = self.health_report();
+        self.record_status(&report, true);
         report
     }
 
@@ -235,13 +270,32 @@ impl Monitor {
             from_ms: Some(now - ERROR_WINDOW_MS),
             ..Default::default()
         };
+        let ocfl = self.ocfl_errors();
+        let findings_ok = ocfl.is_some();
+        let ocfl = ocfl.unwrap_or_default();
         HealthInputs {
             stalled,
-            store_ok: self.inner.store.ping().is_ok(),
+            store_ok: self.inner.store.ping().is_ok() && findings_ok,
             data_dir_writable: self.inner.checks.data_dir_writable(),
             free_bytes: self.inner.checks.free_bytes(),
             queue_fill: self.journal().queue_fill(),
             errors_last_5m: self.inner.store.count(&errors).unwrap_or(0),
+            ocfl_error_codes: ocfl.codes,
+            ocfl_error_objects: ocfl.objects,
         }
+    }
+
+    /// The open OCFL error findings in short (none without a findings store), or `None` when
+    /// the findings store, which lives in the operational store, did not answer.
+    fn ocfl_errors(&self) -> Option<ErrorSummary> {
+        let Some(store) = self.inner.findings.get() else {
+            return Some(ErrorSummary::default());
+        };
+        store
+            .error_summary()
+            .inspect_err(|err| {
+                tracing::warn!(target: "filesquid::monitor", error = %err, "findings store failed");
+            })
+            .ok()
     }
 }

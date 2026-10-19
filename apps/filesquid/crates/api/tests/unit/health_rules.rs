@@ -10,6 +10,8 @@ fn healthy() -> HealthInputs {
         free_bytes: Some(100 * GIB),
         queue_fill: 0.0,
         errors_last_5m: 0,
+        ocfl_error_codes: Vec::new(),
+        ocfl_error_objects: 0,
     }
 }
 
@@ -139,4 +141,21 @@ fn worst_condition_wins_and_all_reasons_are_listed() {
     });
     assert_eq!(s, HealthStatus::Failing);
     assert_eq!(reasons, ["process_stalled", "store_unreachable"]);
+}
+
+/// API-S-022: open OCFL error findings make health at least `degraded`, with the codes and
+/// the number of affected objects; none leave it `ok`.
+#[test]
+fn open_ocfl_error_findings_degrade_health_with_codes_and_object_count() {
+    let report = evaluate(&HealthInputs {
+        ocfl_error_codes: vec!["E023".into(), "E092".into()],
+        ocfl_error_objects: 2,
+        ..healthy()
+    });
+    assert_eq!(report.status, HealthStatus::Degraded);
+    let reason = &report.reasons[0];
+    assert_eq!(reason.code, "ocfl_validation_errors");
+    assert_eq!(reason.codes, ["E023", "E092"]);
+    assert_eq!(reason.objects, Some(2));
+    assert_eq!(evaluate(&healthy()).status, HealthStatus::Ok);
 }

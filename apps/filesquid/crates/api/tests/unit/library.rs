@@ -744,8 +744,10 @@ fn renaming_to_the_same_title_commits_nothing() {
     assert_eq!(fx.catalog.commit_count(), commits);
 }
 
-#[test]
-fn a_no_op_is_journaled_and_replays_under_its_operation_id() {
+/// A library with one file that is already a member of the hand-picked virtual collection
+/// "Best", and a request adding it again (a present member) as operation `op-noop` at the
+/// current revision.
+fn present_member_noop() -> (Fixture, VirtualCollectionId, FileId, CommandRequest) {
     let fx = Fixture::with_library();
     let file = fx.add_file("f-1");
     let vc = fx.create_virtual_collection("Best", None);
@@ -755,18 +757,182 @@ fn a_no_op_is_journaled_and_replays_under_its_operation_id() {
         file_ids: vec![file.clone()],
     };
     fx.run(add.clone());
+    let request = CommandRequest {
+        envelope: CommandEnvelope::new(
+            OperationId::new("op-noop").expect("op"),
+            ExpectedRevision::new(fx.revision()).expect("revision"),
+            OperationScope::new("library").expect("scope"),
+        ),
+        command: add,
+    };
+    (fx, vc, file, request)
+}
+
+#[test]
+fn a_no_op_stores_no_receipt_journal_entry_or_version() {
+    let (fx, _vc, _file, noop) = present_member_noop();
     let journal = fx.catalog.journal_entries().len();
-    let noop = fx.request(&fx.revision(), add);
+    let receipts = fx.catalog.operation_count();
+    let commits = fx.catalog.commit_count();
+    let revision = fx.revision();
+    let result = fx.service.execute("user:ana", noop).expect("no-op");
+    assert_eq!(result.outcome.kind(), CommandOutcomeKind::Committed);
+    assert_eq!(result.revision.as_deref(), Some(revision.as_str()));
+    assert_eq!(fx.revision(), revision);
+    let op = OperationId::new("op-noop").expect("op");
+    assert_eq!(fx.catalog.receipt(&op).expect("read"), None);
+    assert_eq!(fx.catalog.operation_count(), receipts);
+    assert_eq!(fx.catalog.journal_entries().len(), journal);
+    assert_eq!(fx.catalog.commit_count(), commits);
+    assert!(fx.failure_journal().is_empty());
+}
+
+#[test]
+fn a_retried_no_op_is_planned_again_against_current_state() {
+    let (fx, vc, file, noop) = present_member_noop();
     let first = fx.service.execute("user:ana", noop.clone()).expect("no-op");
-    assert_eq!(fx.catalog.journal_entries().len(), journal + 1);
+    let unchanged = fx.service.execute("user:ana", noop.clone()).expect("again");
+    assert_eq!(unchanged, first);
     fx.run(LibraryCommand::RemoveFromVirtualCollection {
         library_id: fx.library(),
         virtual_collection_id: vc.clone(),
         file_ids: vec![file.clone()],
     });
-    let again = fx.service.execute("user:ana", noop).expect("replay");
-    assert_eq!(again, first);
+    let err = fx
+        .service
+        .execute("user:ana", noop)
+        .expect_err("re-planned against the new revision");
+    assert!(matches!(err, LibraryError::Conflict), "{err:?}");
     assert!(!fx.catalog.is_virtual_member(&vc, &file).expect("read"));
+}
+
+/// A catalog over a [`MemoryCatalog`] whose library reads answer the revision before the
+/// latest commit, as if the planner read the revision just before a concurrent commit
+/// landed. Every other call, the commit included, reaches the inner catalog.
+struct LaggingRevision(Arc<filesquid_api::library::MemoryCatalog>);
+
+impl LibraryCatalog for LaggingRevision {
+    fn receipt(&self, op: &OperationId) -> Result<Option<CommitReceipt>, CatalogError> {
+        self.0.receipt(op)
+    }
+    fn library(&self, id: &LibraryId) -> Result<Option<LibraryState>, CatalogError> {
+        Ok(self.0.library(id)?.map(|state| {
+            let lagged = state.revision.parse::<u64>().expect("revision") - 1;
+            LibraryState {
+                revision: lagged.to_string(),
+                ..state
+            }
+        }))
+    }
+    fn libraries(
+        &self,
+        id: &RepositoryId,
+        after: Option<&PageKey>,
+        limit: usize,
+    ) -> Result<Vec<Keyed<LibraryRecord>>, CatalogError> {
+        self.0.libraries(id, after, limit)
+    }
+    fn collection(&self, id: &CollectionId) -> Result<Option<Collection>, CatalogError> {
+        self.0.collection(id)
+    }
+    fn collections(
+        &self,
+        id: &LibraryId,
+        after: Option<&PageKey>,
+        limit: usize,
+    ) -> Result<Vec<Keyed<Collection>>, CatalogError> {
+        self.0.collections(id, after, limit)
+    }
+    fn virtual_collection(
+        &self,
+        id: &VirtualCollectionId,
+    ) -> Result<Option<VirtualCollection>, CatalogError> {
+        self.0.virtual_collection(id)
+    }
+    fn virtual_collections(
+        &self,
+        id: &LibraryId,
+        after: Option<&PageKey>,
+        limit: usize,
+    ) -> Result<Vec<Keyed<VirtualCollection>>, CatalogError> {
+        self.0.virtual_collections(id, after, limit)
+    }
+    fn is_virtual_member(
+        &self,
+        vc: &VirtualCollectionId,
+        file: &FileId,
+    ) -> Result<bool, CatalogError> {
+        self.0.is_virtual_member(vc, file)
+    }
+    fn last_member_order(&self, vc: &VirtualCollectionId) -> Result<Option<i64>, CatalogError> {
+        self.0.last_member_order(vc)
+    }
+    fn folder(&self, id: &FolderId) -> Result<Option<Folder>, CatalogError> {
+        self.0.folder(id)
+    }
+    fn file(&self, id: &FileId) -> Result<Option<FileEntry>, CatalogError> {
+        self.0.file(id)
+    }
+    fn files(
+        &self,
+        listing: &FileListing,
+        after: Option<&PageKey>,
+        limit: usize,
+    ) -> Result<Vec<Keyed<FileEntry>>, CatalogError> {
+        self.0.files(listing, after, limit)
+    }
+    fn commit(&self, commit: CatalogCommit) -> Result<CommitReceipt, CatalogError> {
+        self.0.commit(commit)
+    }
+}
+
+#[test]
+fn a_no_op_planned_on_a_revision_that_moved_on_is_a_conflict() {
+    let fx = Fixture::with_library();
+    let collection = fx.create_collection("Trips");
+    let rename = LibraryCommand::RenameCollection {
+        library_id: fx.library(),
+        collection_id: collection,
+        title: "Holidays".into(),
+    };
+    let seen = fx.revision();
+    fx.run(rename.clone());
+    let store = Arc::new(MemoryJournal::new("desktop"));
+    let writer = start_writer(&store);
+    let lagging = LibraryService::new(
+        Arc::new(LaggingRevision(fx.catalog.clone())),
+        writer.sender(),
+    );
+    let err = lagging
+        .execute("user:ana", fx.request(&seen, rename))
+        .expect_err("the revision moved on before the commit");
+    writer.shutdown();
+    assert!(matches!(err, LibraryError::Conflict), "{err:?}");
+    assert_eq!(
+        fx.catalog.operation_count(),
+        fx.catalog.journal_entries().len() as u64
+    );
+}
+
+#[test]
+fn an_empty_raw_commit_stores_nothing_in_the_memory_catalog() {
+    let fx = Fixture::with_library();
+    let revision = fx.revision();
+    let journal = fx.catalog.journal_entries().len();
+    let receipts = fx.catalog.operation_count();
+    let receipt = fx
+        .catalog
+        .commit(raw_commit("op-empty", &fx.library(), &revision, Vec::new()))
+        .expect("empty commit");
+    assert_eq!(receipt.revision, revision);
+    let op = OperationId::new("op-empty").expect("op");
+    assert_eq!(fx.catalog.receipt(&op).expect("read"), None);
+    assert_eq!(fx.catalog.operation_count(), receipts);
+    assert_eq!(fx.catalog.journal_entries().len(), journal);
+    let stale = fx
+        .catalog
+        .commit(raw_commit("op-stale", &fx.library(), "0", Vec::new()));
+    assert_eq!(stale, Err(CatalogError::Conflict));
 }
 
 #[test]

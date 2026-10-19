@@ -1,6 +1,6 @@
 //! Health rules (SRS-F-061): derive `ok` / `degraded` / `failing` with reasons from the
-//! process registry and host checks. [`evaluate`] is pure; gathering inputs is done by
-//! [`crate::monitor::Monitor`].
+//! process registry, host checks and open OCFL validation findings (API-S-022).
+//! [`evaluate`] is pure; gathering inputs is done by [`crate::monitor::Monitor`].
 
 use serde::Serialize;
 
@@ -47,6 +47,13 @@ pub struct HealthReason {
     pub severity: HealthStatus,
     /// Short human-readable detail (no private data).
     pub detail: String,
+    /// Machine-readable codes behind the reason, when it has any (for
+    /// `ocfl_validation_errors`, the OCFL error codes of the open findings, sorted).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub codes: Vec<String>,
+    /// How many objects the reason concerns, when it is about objects.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub objects: Option<usize>,
 }
 
 /// Facts the rules evaluate.
@@ -64,6 +71,10 @@ pub struct HealthInputs {
     pub queue_fill: f64,
     /// Errors journaled in the last [`ERROR_WINDOW_MS`].
     pub errors_last_5m: u64,
+    /// Distinct OCFL error codes of the open validation findings, sorted (API-S-022).
+    pub ocfl_error_codes: Vec<String>,
+    /// Objects with at least one open OCFL error finding.
+    pub ocfl_error_objects: usize,
 }
 
 /// Health status, reasons and the inputs they came from.
@@ -85,6 +96,8 @@ pub fn evaluate(inputs: &HealthInputs) -> HealthReport {
             code: code.into(),
             severity,
             detail,
+            codes: Vec::new(),
+            objects: None,
         })
     };
     if inputs.stalled > 0 {
@@ -141,6 +154,9 @@ pub fn evaluate(inputs: &HealthInputs) -> HealthReport {
             "data directory is not writable".into(),
         );
     }
+    if inputs.ocfl_error_objects > 0 {
+        reasons.push(ocfl_reason(inputs));
+    }
     let status = reasons
         .iter()
         .map(|r| r.severity)
@@ -150,5 +166,22 @@ pub fn evaluate(inputs: &HealthInputs) -> HealthReport {
         status,
         reasons,
         checks: inputs.clone(),
+    }
+}
+
+/// The `ocfl_validation_errors` reason: at least `degraded` while any OCFL error finding is
+/// open, with the codes and the number of affected objects (API-S-022). It names codes and a
+/// count only, never an object, path or file.
+fn ocfl_reason(inputs: &HealthInputs) -> HealthReason {
+    HealthReason {
+        code: "ocfl_validation_errors".into(),
+        severity: HealthStatus::Degraded,
+        detail: format!(
+            "OCFL validation errors ({}) in {} object(s)",
+            inputs.ocfl_error_codes.join(", "),
+            inputs.ocfl_error_objects
+        ),
+        codes: inputs.ocfl_error_codes.clone(),
+        objects: Some(inputs.ocfl_error_objects),
     }
 }

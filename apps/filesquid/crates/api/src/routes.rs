@@ -37,6 +37,7 @@ fn route_table() -> Vec<Route> {
         ("/host", get(host_handler), Action::ReadHost),
     ];
     table.extend(crate::admin::routes());
+    table.extend(crate::ocfl_validation::routes());
     table.extend(crate::history::routes::routes());
     table
 }
