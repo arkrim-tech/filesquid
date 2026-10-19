@@ -101,6 +101,10 @@ test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 - README `## View logs` separates the `tracing`/`log` record shape from the journal-entry shape of refusal and `journal_unavailable` lines.
 - The framing test requires a trailing newline and no empty line.
 
+## Review fixes (Cubic round 2)
+
+- The API journal writer's fallback (entries the journal store rejected, marked `journal_write_failed`, after one `journal write failed` error line) writes and flushes each line through one helper instead of `println!`; README `## View logs` documents that shape.
+
 ## Mocked Environment Variables
 
 None.

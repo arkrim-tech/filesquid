@@ -225,9 +225,9 @@ fn write_batch(
         }
         Err(err) => {
             metrics.journal_write_failed(n);
-            println!(
-                "{}",
-                serde_json::json!({ "level": "ERROR", "message": "journal write failed", "error": err.to_string() })
+            print_flushed(
+                &serde_json::json!({ "level": "ERROR", "message": "journal write failed", "error": err.to_string() })
+                    .to_string(),
             );
             stdout_fallback(batch);
         }
@@ -242,7 +242,17 @@ fn stdout_fallback(entries: &[JournalEntry]) {
     for entry in entries {
         if let Ok(mut value) = serde_json::to_value(entry) {
             value["journal_write_failed"] = serde_json::Value::Bool(true);
-            println!("{value}");
+            print_flushed(&value.to_string());
         }
+    }
+}
+
+/// Write `line` to stdout and flush it, so a fallback record is not held in a buffer when
+/// stdout is a pipe. A failure is reported on stderr, since stdout itself failed. I/O.
+fn print_flushed(line: &str) {
+    use std::io::Write;
+    let mut stdout = std::io::stdout().lock();
+    if let Err(err) = writeln!(stdout, "{line}").and_then(|()| stdout.flush()) {
+        eprintln!("journal fallback line not written: {err}");
     }
 }
