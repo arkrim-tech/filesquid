@@ -88,13 +88,13 @@ Cargo commands run from `apps/filesquid/` with `-p filesquid-ocfl` (`cargo test 
 
 ## Phase F1–F2: View API and file browser (global Tasks FS-1.2; 1.9 superseded)
 
-- [ ] **Task IO-1.2: UI view API**
+- [x] **Task IO-1.2: UI view API**
   - **Status:** Dispatched by global Task FS-1.2: `filesquid-api` routes this view API to every UI ([ADR 030](../../../../../resources/architecture/030-filesquid-api-and-transports.md)).
   - **Description:** Serializable view API over the engine: folder listing by logical-path prefix at a pinned version with cursor paging, file details, per-file version history, object versions, size via the backend, fixity check, ranged reads for preview and download, and version-producing writes (add, rename or move, remove, restore) made through the IO-0.10 change model. OCFL cannot persist an empty folder: a created folder stays UI-pending and is persisted only when a file is added beneath its prefix. Storage facts only: no embedded or descriptive metadata ([C-055](../../../../../resources/product-vision.md#module-rules)). Builds for native and `wasm32`.
   - **Estimated Time:** 12 hours
   - **Dependencies:** Task IO-0.10
   - **Related Requirements:** [F-055](../../../../../resources/prd.md#f-055-default-ui-and-panel-composition), [C-055](../../../../../resources/product-vision.md#module-rules), [ADR 028](../../../../../resources/architecture/028-filesquid-ui-packages-and-panel-composition.md)
-  - **Related Tests:** [`reusable_ocfl_engine_F-051.feature`](../tests/features/reusable_ocfl_engine_F-051.feature)
+  - **Related Tests:** [`reusable_ocfl_engine_F-051.feature`](../tests/features/reusable_ocfl_engine_F-051.feature), [`view_api_OCFL-S-012.feature`](../tests/features/view_api_OCFL-S-012.feature), [`tests/integration/view_api.rs`](../tests/integration/view_api.rs), [`tests/support/view_steps.rs`](../tests/support/view_steps.rs); Walkthrough: [Task-IO-1.2-Walkthrough.md](./tasks/Task-IO-1.2-Walkthrough.md)
   - **Agent Prompt:** `@AGENTS.md Begin by creating a new feature branch for Task IO-1.2. Then begin development, running Cargo from apps/filesquid/ with -p filesquid-ocfl (module directory apps/filesquid/crates/ocfl/). Write UI tests against built production artifacts with strict DOM assertions. Additionally, invoke the @feature-writer skill to translate SRS requirements into executable BDD feature tests. Upon completion, YOU MUST generate apps/filesquid/crates/ocfl/resources/tasks/Task-IO-1.2-Walkthrough.md directly in the project repository with clear SRS mapping (including BOTH the ID and full human-readable title text) in the secondary section, and strictly delete the internal tracking Plan/ToDos documents before checking off the Markdown box locally in apps/filesquid/crates/ocfl/resources/plan.md, and the matching boxes in the repository-root resources/implementation-plan-checklist.md. Then commit your changes and push the branch to origin.`
 
 - [ ] **Task IO-1.3: Drive-style browser UI package and reference app**

@@ -34,6 +34,7 @@ mod model;
 
 pub use area::StagingArea;
 pub use commit::MAX_REBASES;
+pub(crate) use delta::state_digests;
 pub use delta::{compute_delta, PathChange, WorkingState};
 pub use error::ChangeError;
 pub use model::{ChangeModel, Status, VersionMeta};

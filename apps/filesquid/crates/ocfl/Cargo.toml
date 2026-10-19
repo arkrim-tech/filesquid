@@ -153,6 +153,11 @@ path = "tests/integration/independent_recovery.rs"
 required-features = ["fs"]
 
 [[test]]
+name = "integration_view_api"
+path = "tests/integration/view_api.rs"
+required-features = ["fs"]
+
+[[test]]
 name = "features"
 path = "tests/features.rs"
 harness = false
