@@ -1,6 +1,6 @@
 # Task DE-0.10 Walkthrough: Installation UUID, native journal columns, outbox events and coordinator commit linkage
 
-Branch: `feat/prov-o-history` (global Task FS-2.8; [ADR 040](../../../../../../resources/architecture/040-prov-o-history.md) Decisions 4 and 6; [ADR 021](../../../../../../resources/architecture/021-uuid-v4-identifiers.md)).
+Branch: `feat/prov-o-history` (global Task FS-2.8; ADR 040 Decisions 4 and 6; [ADR 021](../../../../../../resources/architecture/021-uuid-v4-identifiers.md)).
 
 ## DE-S-012: Installation UUID
 

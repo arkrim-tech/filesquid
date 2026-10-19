@@ -1,6 +1,6 @@
 # Task PV-0.2 Walkthrough: `ocfl` feature: records in OCFL objects and reconstruction
 
-Branch: `feat/prov-o-history` (global Task FS-2.8; [ADR 040](../../../../../../resources/architecture/040-prov-o-history.md) Decisions 3 and 7).
+Branch: `feat/prov-o-history` (global Task FS-2.8; ADR 040 Decisions 3 and 7).
 
 ## PROV-S-006: `ocfl` feature
 

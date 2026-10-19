@@ -1,6 +1,6 @@
 # Task MD-0.9 Walkthrough: Commit options on the `ocfl` store
 
-Branch: `feat/prov-o-history` (global Task FS-2.8; [ADR 040](../../../../../../resources/architecture/040-prov-o-history.md) Decision 6).
+Branch: `feat/prov-o-history` (global Task FS-2.8; ADR 040 Decision 6).
 
 ## MD-S-014: Commit options
 

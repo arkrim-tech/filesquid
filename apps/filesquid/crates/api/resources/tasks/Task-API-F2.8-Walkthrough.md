@@ -1,6 +1,6 @@
 # Task API-F2.8 Walkthrough: Journal and commit linkage for PROV-O history
 
-Branch: `feat/prov-o-history` (global Task FS-2.8; [ADR 040](../../../../../../resources/architecture/040-prov-o-history.md) Decision 6).
+Branch: `feat/prov-o-history` (global Task FS-2.8; ADR 040 Decision 6).
 
 ## API-S-028: PROV-O record per commit and journal linkage
 

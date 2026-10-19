@@ -1,6 +1,6 @@
 # Task IO-1.5 Walkthrough: Version-bound logical files in the change model
 
-Branch: `feat/prov-o-history` (global Task FS-2.8, PROV-O history; [ADR 040](../../../../../../resources/architecture/040-prov-o-history.md) Decision 3).
+Branch: `feat/prov-o-history` (global Task FS-2.8, PROV-O history; ADR 040 Decision 3).
 
 ## OCFL-S-024: Version-bound logical files
 

@@ -1,6 +1,6 @@
 # Task CO-0.11 Walkthrough: PROV-O history contract types
 
-Branch: `feat/prov-o-history` (global Task FS-2.8; [ADR 040](../../../../../../resources/architecture/040-prov-o-history.md) Decision 10).
+Branch: `feat/prov-o-history` (global Task FS-2.8; ADR 040 Decision 10).
 
 ## CORE-S-010: PROV-O history contract
 

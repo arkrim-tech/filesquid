@@ -72,7 +72,7 @@ cargo check -p filesquid-prov --lib --target wasm32-unknown-unknown --locked
 
 ## The `ocfl` feature
 
-`filesquid-prov` with `--features ocfl` (off by default; adds `filesquid-ocfl` with its default features off, so it still builds for `wasm32-unknown-unknown`) keeps records in OCFL objects (PROV-S-006, [ADR 040](../../../../resources/architecture/040-prov-o-history.md) Decisions 3 and 7):
+`filesquid-prov` with `--features ocfl` (off by default; adds `filesquid-ocfl` with its default features off, so it still builds for `wasm32-unknown-unknown`) keeps records in OCFL objects (PROV-S-006, ADR 040 Decisions 3 and 7):
 
 - `ocfl::RecordHook` is the change model's version-bound file function: handed to `ChangeModel::commit_with`, it writes `provenance/<version>.jsonld` in the same commit, named after the reserved version and its inventory `created` time, and is called again after a rebase.
 - `ocfl::read_record`, `list_records` and `missing_records` read records back through the engine.
