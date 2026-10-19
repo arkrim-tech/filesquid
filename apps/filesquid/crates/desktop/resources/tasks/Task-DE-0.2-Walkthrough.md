@@ -132,9 +132,9 @@ test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 - The BDD feature folder is tracked (`.gitignore` exception for `tests/catalog_features/`), and test fixtures remove their temporary directories.
 - The subscriber-slot claim uses a bounded compare-and-swap, so a refusal never comes from a transient over-count.
 
-## Owner decision needed
+## Owner decision (resolved 2026-10-18)
 
-- [ADR 005](../../../../../../resources/architecture/005-sqlite-local-postgres-hosted.md) names SQLx as the access library for both databases. `filesquid-native` already used `rusqlite` for the SQLite journal store (CL-0.1), and this task follows that precedent rather than adding a second SQLite driver. The ADR text was not changed; the owner should confirm `rusqlite` for the local stores (and amend ADR 005) or ask for SQLx.
+- This task followed the `rusqlite` precedent of `filesquid-native` (CL-0.1) for the per-library catalogs rather than adding a second SQLite driver. The owner confirmed it on 2026-10-18: [ADR 005](../../../../../../resources/architecture/005-sqlite-local-postgres-hosted.md) now selects `rusqlite` with the bundled SQLite for local SQLite stores and keeps SQLx for the planned PostgreSQL store.
 
 ## Mocked Environment Variables
 

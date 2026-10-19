@@ -156,8 +156,13 @@ impl<B: StorageBackend, C: Clock> LeaseStore<B, C> {
         self.write_record(&key, &record, &precondition)
             .await
             .map_err(|err| lost_race(err, object_id, "another writer"))?;
-        log_take(current.as_ref().map(|(r, _)| r), &record);
-        Ok(Reservation::new(object_id, version.clone(), holder, token))
+        let previous = current.as_ref().map(|(r, _)| r);
+        log_take(previous, &record);
+        let reservation = Reservation::new(object_id, version.clone(), holder, token);
+        Ok(match previous {
+            Some(old) if !old.released => reservation.with_takeover(),
+            _ => reservation,
+        })
     }
 
     /// Check that `reservation` still holds the lease with more than the

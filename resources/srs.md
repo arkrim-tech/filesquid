@@ -23,7 +23,7 @@ The FileSquid default UI MUST use the internal names and MUST NOT inherit the Im
 
 ## Current verified stack (scaffold)
 
-- **FileSquid Cargo workspace** at `apps/filesquid/` (product-local; the repository root has no `Cargo.toml`). Rust stable 1.98.1 (`rust-toolchain.toml` channel `stable`), edition 2021, MIT license. Crates under `apps/filesquid/crates/`:
+- **FileSquid Cargo workspace** at `apps/filesquid/` (product-local; the repository root has no `Cargo.toml`). Rust 1.99.1, an exact stable release pinned in `rust-toolchain.toml` (`channel = "1.99.1"`; bumped only in its own `build/` pull request, [ADR 013](./architecture/013-cargo-svelte-workspaces.md)), edition 2021, MIT license. Crates under `apps/filesquid/crates/`:
   - `filesquid-core` (`crates/core`): shared vocabulary and contracts (opaque IDs, repository, library, collection, virtual collection, virtual exhibit, file, jobs, crypto envelopes).
   - `filesquid-ocfl` (`crates/ocfl`): the OCFL module.
   - `filesquid-metadata` (`crates/metadata`): the metadata module.
@@ -69,6 +69,7 @@ Functional requirements apply to FileSquid. Each block names its delivery: the *
 ### SRS-F-001: Independent local library and ownership
 
 The system MUST implement [PRD F-001](./prd.md#f-001-independent-local-library-and-ownership) with the acceptance criteria stated there. UI copy MUST come from the active distribution's label table: the FileSquid default UI MUST use the internal names, and the ImageSquid distribution MUST use repo, library, album, gallery and exhibit. The item type in data and APIs MUST be **file**.
+- The API MUST expose versioned routes to create a library on an owner-chosen OCFL storage root, open it, copy a completed snapshot and rebuild the catalog from files, with opaque identifiers and no filesystem paths in answers, and with every refused call journaled ([API-S-025](../apps/filesquid/crates/api/resources/srs.md)).
 
 **Delivered by:** FileSquid platform. Every distribution presents it through its own views and label table.
 
@@ -665,6 +666,7 @@ The system MUST implement [PRD F-041](./prd.md#f-041-source-aware-web-clipping-a
 ### SRS-F-042: OCFL preservation and portable recovery
 
 The system MUST implement [PRD F-042](./prd.md#f-042-ocfl-preservation-and-portable-recovery) with the acceptance criteria stated there. UI copy MUST come from the active distribution's label table: the FileSquid default UI MUST use the internal names, and the ImageSquid distribution MUST use repo, library, album, gallery and exhibit. The item type in data and APIs MUST be **file**.
+- The API MUST expose the version-inventory repair-candidate query and the owner-consented repair command as versioned routes, refusing every caller but the library's owner and refusing an object with nothing to repair ([API-S-025](../apps/filesquid/crates/api/resources/srs.md), [API-S-023](../apps/filesquid/crates/api/resources/srs.md)).
 
 **Delivered by:** FileSquid platform. Every distribution presents it through its own views and label table.
 
