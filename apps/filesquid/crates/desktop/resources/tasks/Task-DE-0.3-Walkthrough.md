@@ -9,7 +9,7 @@ Every library change on the desktop is now canonical OCFL before it is acknowled
 | Requirement | Title | Covered by |
 |---|---|---|
 | DE-S-010 | Intent, OCFL snapshot commit and receipt reconcile on the desktop | [`tests/unit/canonical_commit.rs`](../../../native/tests/unit/canonical_commit.rs), [`intent_ocfl_commit_reconcile_NFR-001.feature`](../../../native/tests/catalog_features/intent_ocfl_commit_reconcile_NFR-001.feature) |
-| API-S-025 | The FileSquid OCFL application profile (snapshot and file-object layout, entity encoding, operation messages, commits through the change model) | [`api/tests/unit/canonical.rs`](../../../api/tests/unit/canonical.rs) |
+| API-S-026 | The FileSquid OCFL application profile (snapshot and file-object layout, entity encoding, operation messages, commits through the change model) | [`api/tests/unit/canonical.rs`](../../../api/tests/unit/canonical.rs) |
 | API-S-008 | Every content or organisation change commits an OCFL version through the change model; no second write path | both suites: every write goes through `ChangeModel` |
 | NFR-001 | Preservation and transactional integrity | `a_crash_before_the_snapshot_leaves_the_work_pending_and_a_retry_completes_once`, `a_crash_after_the_snapshot_loses_no_acknowledged_state`, `an_unpublished_version_left_by_a_crash_is_ignored_and_replaced` |
 | F-042 | OCFL preservation and portable recovery | `a_deleted_catalog_is_rebuilt_from_the_snapshot_with_its_receipts`, `removing_a_catalog_file_loses_only_the_rebuildable_index` |
@@ -156,7 +156,7 @@ test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 - Library directories that are symbolic links, or resolve outside the catalog directory, are refused before any backend opens them (`a_library_directory_that_is_a_symbolic_link_is_refused`).
 - Reconcile refuses a snapshot of another library, or one holding another library's collections (`a_snapshot_of_another_library_is_never_loaded`), and journals restored receipts too.
 - The API writes the storage-root declaration itself, so `local_library` stays private; a delta that changes nothing writes no version (index writes then commit without one); a prefixed operation message that cannot be read is refused instead of dropping its receipt; decode errors carry a fixed reason; reservation failures that cannot clear map to `Failed`; `<id>.json` must fit 255 bytes; `CreateLibrary` touches the library entity once; the W010 refusal is also tested in the API on the in-memory backend.
-- The no-op receipt gap, the original-name contract and the transform's byte-only scope are documented in DE-S-010, API-S-025 and ADR 010.
+- The no-op receipt gap, the original-name contract and the transform's byte-only scope are documented in DE-S-010, API-S-026 and ADR 010.
 
 ## Pre-commit hook
 
@@ -168,7 +168,7 @@ test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 ## Owner decisions and follow-ups
 
-- **Layout:** ADR 010 left the local layout "to be specified when the first library writer is built". This task specifies it in API-S-025 and records an amendment note in ADR 010 for the owner to confirm in this pull request.
+- **Layout:** ADR 010 left the local layout "to be specified when the first library writer is built". This task specifies it in API-S-026 and records an amendment note in ADR 010 for the owner to confirm in this pull request.
 - **Encrypted profile:** no ADR 009 cipher exists yet, so only the owner-readable identity transform is implemented; the encrypted profile uses the same `ProfileTransform` seam when the cipher lands.
 - **Crash injection:** crashes are simulated by a probe that stops the commit at the exact point a crash would, then the catalog files on disk are reopened as a restarted process would; no process is killed.
 

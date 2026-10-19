@@ -285,7 +285,7 @@ cargo test -p filesquid-native --features desktop --locked --test unit_catalog -
 cargo test -p filesquid-desktop --locked --test integration_library_catalog
 ```
 
-Every library change is also canonical OCFL (Task DE-0.3, DE-S-010, API-S-025): the desktop records the command's intent, publishes the entities it touched as one version of the library's collection snapshot in `libraries/<library-id>.ocfl/` (staging and leases in `libraries/<library-id>.work/`), and only then updates the catalog from the receipt. At launch each catalog is reconciled with its snapshot head, so a crash after publication loses nothing, and a deleted catalog file is rebuilt from the OCFL files. The application profile's tests run on the in-memory backend; the crash-injection tests stop a commit just before or just after publication and reopen the files on disk:
+Every library change is also canonical OCFL (Task DE-0.3, DE-S-010, API-S-026): the desktop records the command's intent, publishes the entities it touched as one version of the library's collection snapshot in `libraries/<library-id>.ocfl/` (staging and leases in `libraries/<library-id>.work/`), and only then updates the catalog from the receipt. At launch each catalog is reconciled with its snapshot head, so a crash after publication loses nothing, and a deleted catalog file is rebuilt from the OCFL files. The application profile's tests run on the in-memory backend; the crash-injection tests stop a commit just before or just after publication and reopen the files on disk:
 
 ```sh
 cd apps/filesquid

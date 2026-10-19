@@ -1,5 +1,5 @@
 //! The FileSquid OCFL application profile: how a library's organisation and files become
-//! canonical OCFL objects, and how they are read back (Task DE-0.3; API-S-008, API-S-025;
+//! canonical OCFL objects, and how they are read back (Task DE-0.3; API-S-008, API-S-026;
 //! [ADR 005](../../../../../../resources/architecture/005-sqlite-local-postgres-hosted.md),
 //! [ADR 010](../../../../../../resources/architecture/010-ocfl-1-1-dual-profile.md),
 //! [ADR 023](../../../../../../resources/architecture/023-filesquid-ocfl-engine-and-parquet.md)).
