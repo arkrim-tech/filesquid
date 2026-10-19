@@ -29,7 +29,7 @@ Feature: Independent recovery of a completed snapshot
     And the source should be byte-identical to before
 
   # Error cases: altered bytes and inventories in the copy
-  Scenario: A changed signed original is detected
+  Scenario: A changed preserved original is detected
     Given a stored byte of "IMG_0001.jpg" in the copy is changed
     When the engine opens, validates and enumerates the copy
     Then validation should report "E092"

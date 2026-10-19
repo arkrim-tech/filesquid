@@ -26,16 +26,24 @@ Sources: [OCFL-S-022, OCFL-S-019, OCFL-S-020](../srs.md), [PRD F-001](../../../.
 | (a) copy holds only OCFL files, no database, staging or Git | `the_copy_holds_only_ocfl_files_no_database_staging_or_git` |
 | (b) independent reader rebuilds files, folders, sidecar pairs | `an_independent_reader_rebuilds_files_folders_and_sidecar_pairs_from_the_copy`; BDD "An independent reader rebuilds files, folders and sidecar pairs" |
 | (c) inspection changes neither copy nor source | `inspecting_the_copy_changes_neither_the_copy_nor_the_source`; BDD "Inspecting the copy changes nothing" |
-| (d) changed original: E092 and verified read stops | `a_changed_original_is_reported_as_a_digest_error_and_never_served`; BDD "A changed signed original is detected" |
+| (d) changed original: E092 and verified read stops | `a_changed_original_is_reported_as_a_digest_error_and_never_served`; BDD "A changed preserved original is detected" |
 | (d) changed root inventory, sidecar untouched: E060, open refused | `a_changed_root_inventory_with_its_sidecar_untouched_is_refused_on_open`; BDD |
 | (d) forged inventory with recomputed sidecar: E092 | `a_changed_inventory_with_a_recomputed_sidecar_is_still_detected`; BDD |
 | (d) changed earlier-version inventory: E060 | `a_changed_earlier_version_inventory_is_detected`; BDD |
 | W010 copy stays refused for commits, never repaired | `a_copy_without_a_head_version_inventory_stays_refused_and_is_not_repaired`; BDD "A copy without a head version inventory stays refused" |
-| Community validator accepts the copy, rejects a tampered copy | `a_community_validator_accepts_the_copy_and_rejects_a_tampered_one` (ran with `ocfl-validate.py`) |
+| Community validator accepts the copy, rejects a tampered copy | `a_community_validator_accepts_the_copy_and_rejects_a_tampered_one` (passes with no assertions when no validator is on `PATH`; here `ocfl-validate.py` was installed, and a run with `FILESQUID_OCFL_REQUIRE_COMMUNITY_VALIDATOR=1`, which fails when none is found, passed: see below) |
 
 ## Mocked Environment Variables
 
 None.
+
+## Community validator proof
+
+```text
+$ FILESQUID_OCFL_REQUIRE_COMMUNITY_VALIDATOR=1 cargo test -p filesquid-ocfl --test integration_independent_recovery --locked a_community
+test a_community_validator_accepts_the_copy_and_rejects_a_tampered_one ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+```
 
 ## Pre-commit on the head commit
 
@@ -150,7 +158,7 @@ Feature: Independent recovery of a completed snapshot
    ✔  When the engine opens, validates and enumerates the copy
    ✔  Then the copy should be byte-identical to before
    ✔  And the source should be byte-identical to before
-  Scenario: A changed signed original is detected
+  Scenario: A changed preserved original is detected
    ✔> Given a completed snapshot written by the engine
    ✔> And I copy the storage root with ordinary filesystem tools
    ✔  Given a stored byte of "IMG_0001.jpg" in the copy is changed
