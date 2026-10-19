@@ -1327,6 +1327,7 @@ dependencies = [
  "axum",
  "cucumber",
  "filesquid-core",
+ "filesquid-ocfl",
  "getrandom 0.4.3",
  "http-body-util",
  "serde",

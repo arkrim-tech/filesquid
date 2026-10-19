@@ -2,7 +2,8 @@
 //! versioned contract, typed errors, deny-by-default authorisation, transport-agnostic routes
 //! and event channel of F-056: API-S-002, API-S-003, API-S-004, API-S-009; and the
 //! application-layer isolation of API-S-006; the library domain commands and queries of
-//! API-S-019; the replica, cache identity and pending changes of API-S-024; and the host descriptor of API-S-020, except its `@server-start` scenarios, which
+//! API-S-019; the local library operations and the version-inventory repair of CL-1.1 and
+//! API-S-023; the replica, cache identity and pending changes of API-S-024; and the host descriptor of API-S-020, except its `@server-start` scenarios, which
 //! the `filesquid-server` harness runs).
 //!
 //! Scenarios that need domain operations not built yet (import, rename, metadata writes, C2PA
@@ -54,6 +55,12 @@ mod library_steps;
 #[path = "support/replica_steps.rs"]
 mod replica_steps;
 
+#[path = "support/ocfl_fixture.rs"]
+mod ocfl_fixture;
+
+#[path = "support/local_library_steps.rs"]
+mod local_library_steps;
+
 /// Administrator token accepted by [`admin_state`].
 const ADMIN_TOKEN: &str = "admin";
 
@@ -94,6 +101,7 @@ struct MonitorWorld {
     host: host_steps::HostWorld,
     library: library_steps::LibraryWorld,
     replica: replica_steps::ReplicaWorld,
+    local: local_library_steps::LocalWorld,
 }
 
 impl std::fmt::Debug for MonitorWorld {
