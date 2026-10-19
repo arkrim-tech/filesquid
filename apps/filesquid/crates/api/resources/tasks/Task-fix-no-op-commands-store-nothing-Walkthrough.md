@@ -187,7 +187,7 @@ Cubic raised 1 finding on `7b01ca0` (P2): the ADR 010 amendment now scopes the n
 
 `origin/main` gained ADR 040 (PROV-O history; its Decision 1 excludes a command that changes nothing: no version and no record), ADR 033 Decision 7, F-067 and the PROV-O implementation (`filesquid-prov`, journal `operation_id`/`object_ref`, `ocfl.commit` entries, provenance written in the same commit, `SqliteCatalog::with_provenance`). The merge commit resolves two conflicts and nothing else:
 
-- `crates/native/src/catalog/write.rs`, `commit_in_transaction`: a commit with no change still returns early through `finish_unchanged` (only its intent is removed); every other commit publishes through the merged `publish`, which now answers the journal entries to store (the commit's own entry and `ocfl.commit`, with the PROV-O record in the version when the host records history), and `finish` stores those entries with the receipt.
+- `crates/native/src/catalog/write.rs`, `commit_in_transaction`: a commit with no change still returns early through `finish_unchanged` (only its intent is removed); every other commit publishes through the merged `publish`, which now answers the journal entries to store (the commit's own entry and `ocfl.commit`, with the PROV-O record in the version when provenance is configured and the host journal allocates the entries' IDs; when it cannot, the version is still published and a `prov.record` warning is journaled), and `finish` stores those entries with the receipt.
 - `crates/desktop/resources/srs.md`: DE-S-008 takes main's wording ("import record"), DE-S-009 and DE-S-010 keep this branch's no-op sentences, and main's new DE-S-011 to DE-S-013 are kept.
 
 Both ADR 033 amendments (the no-op exception in Decision 2 and main's Decision 7) and the `logging-enforce.md` exception sentence merged without conflict and stand together.
@@ -220,6 +220,10 @@ test a_command_that_changes_nothing_stores_no_receipt_or_journal_entry ... ok
 test every_commit_journal_entry_reaches_the_host_journal_redacted ... ok
 test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.43s
 ```
+
+## Cubic review round 3
+
+Cubic raised 1 finding on `602460a` (P3): the merge summary above now says the PROV-O record rides the version only when the host journal allocates the entries' IDs, as `a_commit_without_journal_ids_publishes_and_warns_without_identifying_data` shows. TDD-ENFORCE: not applicable, documentation only.
 
 ## Gate
 
