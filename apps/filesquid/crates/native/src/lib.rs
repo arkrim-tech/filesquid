@@ -10,7 +10,9 @@
 //! - [`SqliteJournal`]: the activity journal in the host's SQLite operational store
 //!   (WAL mode, append-only, owner-only file mode on Unix);
 //! - [`DataDirChecks`]: the data-directory checks (write probe, free space);
-//! - [`HostMonitor`]: opens both in a data directory and runs the host's monitor.
+//! - [`HostMonitor`]: opens both in a data directory and runs the host's monitor;
+//! - [`HostFiles`]: the file service over local OCFL roots, with each library's leases and
+//!   staging area in the data directory ([`install_file_service`], [`open_fs_library`]).
 //!
 //! # Features
 //!
@@ -29,6 +31,7 @@
 
 #[cfg(feature = "desktop")]
 pub mod catalog;
+pub mod files;
 pub mod host_checks;
 pub mod host_monitor;
 pub mod journal_sqlite;
@@ -39,6 +42,7 @@ pub use catalog::{
     PendingIntent, SqliteCatalog, CATALOG_DIR, CATALOG_FILE_EXTENSION, CATALOG_SCHEMA_VERSION,
     MAX_LIBRARIES,
 };
+pub use files::{install_file_service, open_fs_library, HostFiles, HostLeases};
 pub use host_checks::{probe_name, DataDirChecks, MAX_PROBE_ATTEMPTS};
 pub use host_monitor::{HostMonitor, ALREADY_INSTALLED, HOST_HEARTBEAT_TIMEOUT_MS, JOURNAL_FILE};
 pub use journal_sqlite::SqliteJournal;

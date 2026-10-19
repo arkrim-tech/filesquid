@@ -58,12 +58,13 @@ async fn get(router: axum::Router, path: &str, token: Option<&str>) -> (u16, ser
     (status, json)
 }
 
-/// Every path the server answers that MUST be guarded: the API router's routes except the
-/// public liveness probe, the event channel and `/metrics`.
+/// Every path the server answers that MUST be guarded by a Bearer credential: the API
+/// router's routes except the public liveness probe and the content route (whose only
+/// credential is a content handle, API-S-018), plus the event channel and `/metrics`.
 fn guarded_paths() -> Vec<String> {
     let mut paths: Vec<String> = route_actions()
         .into_iter()
-        .filter(|(_, action)| *action != Action::Public)
+        .filter(|(_, action)| !matches!(action, Action::Public | Action::ReadContent))
         .map(|(path, _)| path)
         .collect();
     paths.push("/api/v1/events".into());
@@ -79,6 +80,23 @@ async fn every_server_route_refuses_a_call_without_the_token() {
         assert_eq!(status, 401, "{path}");
         assert_eq!(json["code"], "unauthorized", "{path}");
         assert_eq!(json["reason"], "missing_credentials", "{path}");
+    }
+}
+
+#[tokio::test]
+async fn the_server_answers_the_content_route_with_its_one_denial() {
+    let config = config("content");
+    for path in [
+        "/api/v1/content/AAAA",
+        "/api/v1/content/",
+        "/api/v1/content/a/b",
+    ] {
+        for token in [None, Some(TOKEN)] {
+            let (status, json) = get(server(&config), path, token).await;
+            assert_eq!(status, 403, "{path}");
+            assert_eq!(json["code"], "forbidden", "{path}");
+            assert_eq!(json["reason"], "invalid_credentials", "{path}");
+        }
     }
 }
 

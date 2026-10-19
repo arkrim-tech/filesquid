@@ -273,7 +273,8 @@ pub fn install_admin_authoriser(config: &ServerConfig, state: &ApiState) -> Resu
 /// Start the server's authorisation and monitor in order: install the administrator
 /// authoriser, open the monitor, journal `api.auth.token_issued` for the administrator
 /// credential this run accepts, whether it was generated now or loaded (API-S-017), then
-/// describe the host ([`describe_server_host`]). Performs filesystem and database I/O.
+/// describe the host ([`describe_server_host`]) and install the file service
+/// ([`install_server_files`]). Performs filesystem and database I/O.
 pub fn start_server(
     config: &ServerConfig,
     state: &ApiState,
@@ -293,11 +294,23 @@ pub fn start_server_writing_to(
     install_admin_authoriser(config, state)?;
     let host = start_host_monitor(config, state, layer)?;
     auth::record_token_issue(host.monitor(), &Principal::Administrator);
-    if let Err(message) = describe_server_host(config, state, &host, stdout) {
+    let described = describe_server_host(config, state, &host, stdout);
+    if let Err(message) = described.and_then(|()| install_server_files(state)) {
         host.stop();
         return Err(message);
     }
     Ok(host)
+}
+
+/// Install the file service of the API's file and content routes (Task API-F1.3). The server
+/// opens no library yet: its library tasks open each one with
+/// [`filesquid_native::open_fs_library`], and until then every file route answers
+/// `not_found`.
+///
+/// # Errors
+/// A file service is already installed.
+pub fn install_server_files(state: &ApiState) -> Result<(), String> {
+    filesquid_native::install_file_service(state).map(|_| ())
 }
 
 /// Start the activity journal, process registry and admin routes for this server (FileSquid
