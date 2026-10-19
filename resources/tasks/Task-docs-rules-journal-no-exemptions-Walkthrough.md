@@ -20,7 +20,7 @@ The owner asked for two minimal edits to `.agents/rules/` (the owner gave the de
 
 ## Hook
 
-Raw output of `bash scripts/pre-commit.sh` (scope `docs`, started 2026-10-19T03:45:44Z), exit 0, run on the fix commit after the Cubic round 1 changes. Summary line: `✅ All Pre-Commit Hooks Passed! Test scope: docs (19s)`.
+Raw output of `bash scripts/pre-commit.sh` (scope `docs`, completed by 2026-10-19T03:47:04Z), exit 0, run after the Cubic round 1 fixes and a merge of `origin/main` (commit `0b08310`). The file counts it prints (for example the Markdown files checked for links) describe the tree at that run and grow as `main` gains documents. Summary line: `✅ All Pre-Commit Hooks Passed! Test scope: docs (19s)`.
 
 ```text
 changed_scope: docs (only documentation or always-run checker scripts outside the crates and npm packages changed)
@@ -40,11 +40,9 @@ Starting Port Isolation Validation...
 
 🚀 VALIDATION PASSED: All modules maintain strict port isolation.
 Starting Document Sync Validation...
-✅ Document Sync Validation passed.
 Starting PRD/SRS Traceability Validation...
 ✅ Traceability Validation passed: 95 PRD requirements, 83 resolved SRS references.
 Starting Portable Documentation Validation...
-✅ Portable Documentation validation passed.
 Starting Workspace Boundary Validation...
 ✅ Workspace Boundary validation passed.
 Starting logging rule validation...
@@ -62,19 +60,19 @@ TAP version 13
 # Subtest: stack ADRs exist with ISO 42010 sections and accepted vocabulary
 ok 1 - stack ADRs exist with ISO 42010 sections and accepted vocabulary
   ---
-  duration_ms: 10.15806
+  duration_ms: 11.107571
   type: 'test'
   ...
 # Subtest: ADR markdown hrefs reject absolute destinations
 ok 2 - ADR markdown hrefs reject absolute destinations
   ---
-  duration_ms: 0.262954
+  duration_ms: 0.293344
   type: 'test'
   ...
 # Subtest: FileSquid ADRs 029-032 are indexed with the FileSquid header and expected status
 ok 3 - FileSquid ADRs 029-032 are indexed with the FileSquid header and expected status
   ---
-  duration_ms: 1.861352
+  duration_ms: 1.708442
   type: 'test'
   ...
 1..3
@@ -85,7 +83,7 @@ ok 3 - FileSquid ADRs 029-032 are indexed with the FileSquid header and expected
 # cancelled 0
 # skipped 0
 # todo 0
-# duration_ms 103.165916
+# duration_ms 108.872351
 ✅ ADR structure (ISO 42010) passed.
 🔍 PRD allocation...
 FileSquid: 260 vision IDs, 260 allocated, 130 allocation rows
@@ -96,7 +94,7 @@ OK: every vision ID is allocated
 OK: every requirement is accounted for in a plan task
 ✅ Plan traceability passed.
 🔍 Relative links and anchors...
-checked 219 Markdown files: 0 broken link(s)
+checked 220 Markdown files: 0 broken link(s)
 ✅ Relative links and anchors passed.
 🔍 FileSquid and ImageSquid document boundary...
 checked 165 documents: 0 link(s) cross the FileSquid/ImageSquid boundary
@@ -104,7 +102,7 @@ checked 165 documents: 0 link(s) cross the FileSquid/ImageSquid boundary
 🔍 MVP queue and merge driver tests...
 ...............................................
 ----------------------------------------------------------------------
-Ran 47 tests in 5.818s
+Ran 47 tests in 5.878s
 
 OK
 ✅ MVP queue and merge driver tests passed.
