@@ -179,6 +179,10 @@ Cubic raised 6 findings on `06222d6` (P1 1, P2 2, P3 3):
 - P2 (twice): the exception in `logging-enforce.md` and ADR 033 is scoped to a command that succeeds without a change; refused and failed commands are still journaled.
 - P3: the `CatalogCommit::changes` doc is unambiguous; the DE-0.2 walkthrough's SRS-F-061 row names the exception. The DE-0.2 raw test output is the evidence of that task's run and is left as recorded; the note above it names the replacement test, whose output is in this walkthrough.
 
+## Cubic review round 2
+
+Cubic raised 1 finding on `7b01ca0` (P2): the ADR 010 amendment now scopes the no-op exception to a command that succeeds without a change, and says refused or failed commands are still journaled; DE-S-010 says the same. TDD-ENFORCE: not applicable, documentation only.
+
 ## Gate
 
 `FULL=1 bash scripts/pre-commit.sh` from the repository root (branch change scope `rust:filesquid-api,filesquid-desktop,filesquid-native`; the full run covers it):
