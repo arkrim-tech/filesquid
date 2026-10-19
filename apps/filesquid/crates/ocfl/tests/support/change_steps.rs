@@ -9,7 +9,7 @@ use cucumber::{given, then, when};
 use filesquid_ocfl::change::{ChangeError, ChangeModel, StagingArea};
 use filesquid_ocfl::read::ReadError;
 use filesquid_ocfl::storage::{MemoryBackend, StorageBackend};
-use filesquid_ocfl::write::{CommitError, CommitReceipt};
+use filesquid_ocfl::write::{BoundContext, CommitError, CommitReceipt};
 
 use crate::change::{commit_files, labels, meta, model, state_of, status};
 use crate::rig::{key, ready, sha256, v, Rig, OBJECT_ID, ROOT};
@@ -280,4 +280,57 @@ fn staging_refused(world: &mut OcflWorld) {
         "{err:?}"
     );
     assert!(rig(world).snapshot("obj/staging").is_empty());
+}
+
+/// A version-bound function that returns `record/<version>.txt` holding
+/// the version name and its created time (OCFL-S-024).
+fn version_record(context: &BoundContext<'_>) -> Result<BTreeMap<String, Vec<u8>>, String> {
+    let body = format!("{} {}", context.version, context.created);
+    let path = format!("record/{}.txt", context.version);
+    Ok(BTreeMap::from([(path, body.into_bytes())]))
+}
+
+#[when(expr = "writer {string} commits the staged changes with a version-bound record")]
+fn commit_with_record(world: &mut OcflWorld, holder: String) {
+    let rig = rig(world);
+    let record = version_record;
+    let result = ready(model(rig, &holder).commit_with(meta(rig, "bound"), Some(&record)));
+    world.change.result = Some(result);
+}
+
+#[when(expr = "writer {string} commits only a version-bound record")]
+fn commit_record_only(world: &mut OcflWorld, holder: String) {
+    let rig = rig(world);
+    let record = version_record;
+    let result = ready(model(rig, &holder).commit_bound_only(meta(rig, "record only"), &record));
+    world.change.result = Some(result);
+}
+
+#[when(expr = "writer {string} commits the staged changes with a failing record function")]
+fn commit_with_failing_record(world: &mut OcflWorld, holder: String) {
+    let rig = rig(world);
+    let failing = |_: &BoundContext<'_>| Err("no record".to_string());
+    let result = ready(model(rig, &holder).commit_with(meta(rig, "fails"), Some(&failing)));
+    world.change.result = Some(result);
+}
+
+#[then(expr = "{string} should hold the record {string} naming {string} and its created time")]
+fn holds_version_record(world: &mut OcflWorld, version: String, path: String, named: String) {
+    let rig = rig(world);
+    let created = receipt(world).created.clone();
+    let body = format!("{named} {created}");
+    assert_eq!(state_of(rig, &version)[&path], sha256(body.as_bytes()));
+    rig.assert_valid();
+}
+
+#[then("the commit should be refused for its version-bound files")]
+fn refused_for_bound_files(world: &mut OcflWorld) {
+    assert!(
+        matches!(
+            error(world),
+            ChangeError::Commit(CommitError::BoundFiles { .. })
+        ),
+        "{:?}",
+        error(world)
+    );
 }
