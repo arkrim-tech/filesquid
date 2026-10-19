@@ -541,17 +541,23 @@ fn open_one(root: &Path, id: LibraryId) -> Result<Option<OpenLibrary>, CatalogEr
     }))
 }
 
-/// Reconcile the catalog in `conn` with the snapshot head of `canonical`, if it has one.
-/// Filesystem and database I/O.
+/// Reconcile the catalog in `conn` with the snapshot head of `canonical`, if it has one,
+/// replaying the journal entries of the versions the catalog missed. Filesystem and database
+/// I/O.
 fn reconcile_library(
     conn: &mut Connection,
     canonical: &canonical::CanonicalRoot,
     id: &LibraryId,
 ) -> Result<(), CatalogError> {
-    match canonical.read()? {
-        Some(snapshot) => reconcile::reconcile(conn, id, &snapshot).map(drop),
-        None => forget_missing_snapshot(conn, id),
-    }
+    let Some(snapshot) = canonical.read()? else {
+        return forget_missing_snapshot(conn, id);
+    };
+    let seen = reconcile::snapshot_version(conn)?;
+    let replay = match seen.as_deref() == Some(snapshot.version.to_string().as_str()) {
+        true => Vec::new(),
+        false => canonical.read_journal(seen.as_deref())?,
+    };
+    reconcile::reconcile(conn, id, &snapshot, &replay).map(drop)
 }
 
 /// Forget the snapshot version of a catalog whose OCFL root holds no snapshot, and log it as a

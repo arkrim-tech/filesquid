@@ -271,7 +271,11 @@ fn the_catalog_receipt_message_is_read() {
                 \"purge_after\":\"2026-11-18T00:00:00Z\"}}";
     let message = OperationMessage::parse(text).unwrap().unwrap();
     assert_eq!(message.operation_id().as_str(), "op-9");
-    assert_eq!(message.kind(), OperationKind::Unknown, "written before kinds");
+    assert_eq!(
+        message.kind(),
+        OperationKind::Unknown,
+        "written before kinds"
+    );
     assert_eq!(message.revision(), Some(4));
     assert_eq!(message.created_id(), Some("c-1"));
     let kinded = text.replacen("\"revision\"", "\"kind\":\"delete\",\"revision\"", 1);
@@ -287,6 +291,13 @@ fn the_revision_is_written_as_a_decimal_string_and_read_back() {
     let text = message.format();
     assert!(text.contains("\"revision\":\"12\""), "{text}");
     assert_eq!(OperationMessage::parse(&text), Ok(Some(message)));
-    let numeric = "filesquid.operation.v1 {\"operation_id\":\"op\",\"kind\":\"import\",\"revision\":12}";
-    assert_eq!(OperationMessage::parse(numeric).unwrap().unwrap().revision(), Some(12));
+    let numeric =
+        "filesquid.operation.v1 {\"operation_id\":\"op\",\"kind\":\"import\",\"revision\":12}";
+    assert_eq!(
+        OperationMessage::parse(numeric)
+            .unwrap()
+            .unwrap()
+            .revision(),
+        Some(12)
+    );
 }

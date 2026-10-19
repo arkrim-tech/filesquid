@@ -204,7 +204,11 @@ fn publish(
     canonical.probe.before_snapshot(op).map_err(Stopped::keep)?;
     let record = OperationRecord {
         operation_id: op.to_string(),
-        kind: Some(operation_kind(&commit.journal.operation).as_str().to_string()),
+        kind: Some(
+            operation_kind(&commit.journal.operation)
+                .as_str()
+                .to_string(),
+        ),
         revision: receipt.revision.clone(),
         created_id: receipt.created_id.clone(),
         deletion: receipt.deletion,

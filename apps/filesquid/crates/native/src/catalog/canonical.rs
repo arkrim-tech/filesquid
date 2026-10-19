@@ -8,9 +8,11 @@
 
 use super::{failed, schema};
 use filesquid_api::canonical::{
-    commit_snapshot, create_storage_root, operation_message, read_snapshot, snapshot_object_id,
-    CanonicalError, LibrarySnapshot, OperationRecord, OwnerReadable, SnapshotDelta, SNAPSHOT_ROOT,
+    commit_snapshot, create_storage_root, operation_message, read_commit_journal, read_snapshot,
+    snapshot_object_id, CanonicalError, LibrarySnapshot, OperationRecord, OwnerReadable,
+    SnapshotDelta, SNAPSHOT_ROOT,
 };
+use filesquid_api::journal::JournalEntry;
 use filesquid_api::library::CatalogError;
 use filesquid_core::LibraryId;
 use filesquid_ocfl::change::{ChangeModel, StagingArea, VersionMeta};
@@ -143,12 +145,50 @@ impl CanonicalRoot {
         drive(commit_snapshot(&model, &OwnerReadable, delta, meta))?.map_err(CatalogError::from)
     }
 
+    /// The journal entries the snapshot versions after `after` (every version when `None` or
+    /// not a version name) wrote beside their PROV-O records, oldest first, keeping their
+    /// pre-allocated IDs: what a catalog that missed those commits replays. A line that is not
+    /// a journal entry is skipped and logged as a warning. Filesystem I/O.
+    ///
+    /// # Errors
+    /// As [`read_commit_journal`], mapped to the catalog port.
+    pub(crate) fn read_journal(
+        &self,
+        after: Option<&str>,
+    ) -> Result<Vec<JournalEntry>, CatalogError> {
+        let after = after.and_then(|name| filesquid_ocfl::VersionNum::parse(name).ok());
+        let lines = drive(read_commit_journal(
+            &self.ocfl,
+            &OwnerReadable,
+            after.as_ref(),
+        ))?
+        .map_err(CatalogError::from)?;
+        Ok(lines.iter().filter_map(|line| journal_line(line)).collect())
+    }
+
     /// The snapshot at the head, or `None` when nothing was published yet. Filesystem I/O.
     ///
     /// # Errors
     /// As [`read_snapshot`], mapped to the catalog port.
     pub(crate) fn read(&self) -> Result<Option<LibrarySnapshot>, CatalogError> {
         drive(read_snapshot(&self.ocfl, &OwnerReadable))?.map_err(CatalogError::from)
+    }
+}
+
+/// The journal entry one line holds, or `None` (logged as a warning) when it holds none.
+/// Pure apart from the log line.
+fn journal_line(line: &str) -> Option<JournalEntry> {
+    match serde_json::from_str::<JournalEntry>(line) {
+        Ok(entry) => Some(entry.redacted()),
+        Err(_) => {
+            tracing::warn!(
+                target: super::LOG_TARGET,
+                operation = super::reconcile::RECONCILE_OPERATION,
+                error_code = "journal_line_unreadable",
+                "a commit's journal line is not a journal entry; it is not replayed"
+            );
+            None
+        }
     }
 }
 
