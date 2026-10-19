@@ -4,7 +4,7 @@ Documentation-only task on branch `docs/record-owner-decisions`. TDD-ENFORCE: No
 
 ## Owner decisions (2026-10-18)
 
-1. The metadata `ocfl` store versions per edit: each metadata edit commits a new OCFL version through `filesquid-ocfl` (the IO-0.10 change model and write path) instead of rewriting `metadata.md` whole. Earlier versions are never modified.
+1. The metadata `ocfl` store versions per edit: each metadata edit commits a new OCFL version through `filesquid-ocfl` (the IO-0.10 change model and write path) rather than overwriting `metadata.md` in an earlier version. Earlier versions are never modified.
 2. The metadata `sidecar` store writes one `<filename>.metadata.md` beside each plain file, not one `metadata.md` per folder.
 3. Until a host serves per-user preferences (API-S-011, delivered by API-F2.2 and UI-F2.8), several users of one `filesquid-server` who share a browser profile share its device-kept navigation pins. This is accepted.
 
@@ -12,7 +12,7 @@ Documentation-only task on branch `docs/record-owner-decisions`. TDD-ENFORCE: No
 
 - [Metadata module plan](../../apps/filesquid/crates/metadata/resources/plan.md), Task MD-0.2 Description: the `ocfl` store MUST version per edit through the IO-0.10 change model and MUST NOT modify earlier versions. "MUST NOT reimplement inventories or `vN` publication" is kept. The row has no acceptance sentence, so none was added.
 - [Metadata SRS](../../apps/filesquid/crates/metadata/resources/srs.md) MD-S-008: names the sidecar file `<filename>.metadata.md` (one per plain file) and states that with the `ocfl` store each edit MUST be a new OCFL version and MUST NOT rewrite an earlier one, matching ADR 027 Decision 2.
-- [ADR 027](../architecture/027-filesquid-metadata-pluggable-stores.md) Decision 2: the `sidecar` bullet now reads one `<filename>.metadata.md` beside each plain file, matching the [metadata crate README](../../apps/filesquid/crates/metadata/README.md). A dated amendment note (2026-10-18, owner decision) is added under Related Decisions / Notes.
+- [ADR 027](../architecture/027-filesquid-metadata-pluggable-stores.md) Decision 2: the `sidecar` bullet now reads one `<filename>.metadata.md` beside each plain file, matching the [metadata crate README](../../apps/filesquid/crates/metadata/README.md). A dated amendment (2026-10-18, owner decision) is recorded in Status, beside the earlier ADR 029 amendment, with a pointer under Related Decisions / Notes (Cubic round 1).
 - [Product vision](../product-vision.md): the metadata module's store list and U-57 now name the sidecar file `<filename>.metadata.md`. The `ocfl` store's in-object `metadata.md` is unchanged.
 - [UI SRS](../../apps/filesquid/ui/resources/srs.md) UI-S-017: one sentence accepting that a browser profile shared by several `filesquid-server` users shares the device-kept navigation pins until per-user preferences exist.
 - [UI README](../../apps/filesquid/ui/README.md) "Navigation choices": the same note, so the package docs stay consistent. The UI plan rows UI-F2.1a, UI-F2.1b and UI-F2.8 already describe device storage and its move to the API, so they are unchanged.

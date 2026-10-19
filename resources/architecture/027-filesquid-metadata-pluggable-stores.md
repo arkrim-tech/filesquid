@@ -14,6 +14,8 @@ Accepted: 2026-10-15T06:00:00Z. Owner confirmed filesquid-metadata is a separate
 
 Amended 2026-10-15 by [ADR 029](./029-filesquid-unified-product-and-distributions.md): `filesquid-metadata` is a module of FileSquid; its optional `ocfl` store is the one permitted cross-module dependency, and FileSquid uses it as canonical.
 
+Amended 2026-10-18 (owner decision): the `sidecar` store writes one `<filename>.metadata.md` beside each plain file, not one `metadata.md` per folder, as the [metadata crate README](../../apps/filesquid/crates/metadata/README.md) describes. The `ocfl` store versions per edit: each metadata edit commits a new OCFL version through `filesquid-ocfl` and never modifies an earlier version (Decision 2; MD-0.2 in the [module plan](../../apps/filesquid/crates/metadata/resources/plan.md)).
+
 ## Context / Requirement Reference
 
 [ADR 024](./024-filesquid-metadata-engine.md) made `filesquid-ocfl` the required storage engine for `filesquid-metadata`. That raised the question of whether a metadata engine that cannot work without OCFL should be a separate product at all, or a feature of `filesquid-ocfl`.
@@ -60,4 +62,4 @@ Easier: stand-alone adoption without OCFL; clearer product boundaries; the core 
 - Requirements: [PRD F-052](../prd.md#f-052-metadata-module), [U-63](../product-vision.md#metadata-module), [C-048](../product-vision.md#module-rules).
 - Product vision: [filesquid-metadata](../product-vision.md#modules).
 - Implementation: MD-0.4 in the [module plan](../../apps/filesquid/crates/metadata/resources/plan.md).
-- Amended 2026-10-18 (owner decision): the `sidecar` store writes one `<filename>.metadata.md` beside each plain file, not one `metadata.md` per folder, as the [metadata crate README](../../apps/filesquid/crates/metadata/README.md) describes. The `ocfl` store versions per edit: each metadata edit commits a new OCFL version through `filesquid-ocfl` and never modifies an earlier version (Decision 2; MD-0.2 in the [module plan](../../apps/filesquid/crates/metadata/resources/plan.md)).
+- Amended 2026-10-18 (owner decision): sidecar file naming and per-edit OCFL versioning in Decision 2; see Status.
