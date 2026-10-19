@@ -169,7 +169,7 @@ test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 ## Owner decisions and follow-ups
 
 - **Layout:** ADR 010 left the local layout "to be specified when the first library writer is built". This task specifies it in API-S-026 and records an amendment note in ADR 010 for the owner to confirm in this pull request.
-- **Encrypted profile:** no ADR 009 cipher exists yet, so only the owner-readable identity transform is implemented; the encrypted profile uses the same `ProfileTransform` seam when the cipher lands.
+- **Encrypted profile:** no ADR 009 cipher exists yet, so only the owner-readable identity transform is implemented; the encrypted profile uses the same `ProfileTransform` seam when the cipher lands. The owner accepted on 2026-10-19 that the encrypted profile's path mapping is deferred until the ADR 009 cipher lands.
 - **Crash injection:** crashes are simulated by a probe that stops the commit at the exact point a crash would, then the catalog files on disk are reopened as a restarted process would; no process is killed.
 
 ## Mocked Environment Variables
