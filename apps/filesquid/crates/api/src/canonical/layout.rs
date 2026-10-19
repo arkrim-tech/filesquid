@@ -7,7 +7,9 @@
 //!   `virtual-collections/<id>.json` (with its ordered members), `folders/<id>.json` and
 //!   `files/<id>.json` (home collection, listing order, hide and delete state).
 //! - One **file** object per FileSquid file at `files/<file-id>`, object identifier
-//!   `urn:uuid:<file-id>`, its original under `original/<name>`.
+//!   `urn:uuid:<file-id>`, its original under `original/<sanitized-name>` beside the companion
+//!   `original/<sanitized-name>.metadata.md` that records the owner's original file name
+//!   ([`super::original`]).
 //!
 //! Every function here is pure.
 
@@ -114,7 +116,7 @@ pub fn file_object_root(file_id: &FileId) -> Result<String, CanonicalError> {
     Ok(format!("files/{}", segment(file_id.as_str())?))
 }
 
-/// The logical path of a file object's original named `name`.
+/// The logical path of a file object's original stored as `name`.
 ///
 /// # Errors
 /// [`CanonicalError::InvalidIdentifier`] when `name` cannot be one path segment.

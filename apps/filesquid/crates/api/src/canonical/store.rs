@@ -3,10 +3,14 @@
 //! API does no filesystem I/O itself; every function here performs storage I/O through it.
 
 use super::entity::{decode, encode, LibraryHead, SnapshotEntity, SnapshotFile, VirtualEntry};
-use super::layout::{original_path, SnapshotKey, SNAPSHOT_ROOT};
+use super::layout::{file_object_root, original_path, SnapshotKey, SNAPSHOT_ROOT};
 use super::message::{parse_operation_message, OperationRecord};
+use super::original::{
+    companion_path, decode_companion, encode_companion, stored_name, stored_name_of_companion,
+    FileOriginal,
+};
 use super::{CanonicalError, ProfileTransform};
-use filesquid_core::{Collection, Folder};
+use filesquid_core::{Collection, FileId, Folder};
 use filesquid_ocfl::change::{ChangeError, ChangeModel, VersionMeta};
 use filesquid_ocfl::digest::DigestAlgorithm;
 use filesquid_ocfl::read::{LogicalFile, Object, ReadError};
@@ -158,19 +162,20 @@ fn published(result: Result<CommitReceipt, ChangeError>) -> Result<CommitReceipt
     }
 }
 
-/// Commit the bytes of a file's original named `name` as a version of the file object
-/// `model` writes (one OCFL object per file, ADR 023), with `meta`. `name` must already be
-/// one logical path segment (`[A-Za-z0-9._-]`, see [`super::layout::segment`]): the caller
-/// (the import of DE-1.2) chooses that name, for example from the file identifier and a
-/// normalised extension, and records the owner's original file name in the file record.
+/// Commit the bytes of the original of `file_id`, which the owner named `original_name`, as
+/// a version of the file object `model` writes (one OCFL object per file, ADR 023), with
+/// `meta`. The bytes are stored as `original/<sanitized-name>` (see
+/// [`super::original::stored_name`]) and, in the same version, the companion
+/// `original/<sanitized-name>.metadata.md` records `original_name` exactly.
 ///
 /// # Errors
-/// As [`commit_snapshot`], and [`CanonicalError::InvalidIdentifier`] for a `name` that is
-/// not one path segment.
+/// As [`commit_snapshot`], and [`CanonicalError::InvalidIdentifier`] for an original name
+/// that is empty, longer than 1,024 bytes or holds `/` or NUL.
 pub async fn commit_file_original<B, R, S>(
     model: &ChangeModel<'_, B, R, S>,
     transform: &dyn ProfileTransform,
-    name: &str,
+    file_id: &FileId,
+    original_name: &str,
     bytes: &[u8],
     meta: VersionMeta,
 ) -> Result<CommitReceipt, CanonicalError>
@@ -179,11 +184,74 @@ where
     R: VersionReservations,
     S: StorageBackend,
 {
-    let path = original_path(name)?;
+    let stored = stored_name(file_id, original_name)?;
+    let path = original_path(&stored)?;
+    let companion = companion_path(&stored)?;
+    let record = encode_companion(original_name)?;
     model.reset().await?;
     let sealed = transform.seal(&path, bytes.to_vec())?;
     model.stage_bytes(&path, &sealed).await?;
+    let sealed = transform.seal(&companion, record)?;
+    model.stage_bytes(&companion, &sealed).await?;
     published(model.commit(meta).await)
+}
+
+/// The original of `file_id` at the head of its file object in the storage root `backend`,
+/// with the owner's original name read from its companion, or `None` when the object does not
+/// exist yet. This is the name to display and to export under; the stored name is a storage
+/// detail.
+///
+/// # Errors
+/// [`CanonicalError::Decode`] for a companion that cannot be read back, or a head that does
+/// not hold exactly one companion and the original it names; a read failure otherwise.
+pub async fn read_file_original<B: StorageBackend>(
+    backend: &B,
+    transform: &dyn ProfileTransform,
+    file_id: &FileId,
+) -> Result<Option<FileOriginal>, CanonicalError> {
+    let root = file_object_root(file_id)?;
+    if !has_object(backend, &root).await? {
+        return Ok(None);
+    }
+    let object = Object::open(backend, &root).await?;
+    let state = object.state(object.head())?;
+    let (companion, stored) = only_companion(state.files())?;
+    let path = original_path(stored)?;
+    if !state.paths().any(|p| p == path) {
+        return Err(not_one_original(&root));
+    }
+    let bytes = read_entity(&object, backend, companion).await?;
+    let plain = transform.open(&companion.path, bytes)?;
+    let original_name = decode_companion(&companion.path, &plain)?;
+    Ok(Some(FileOriginal {
+        path,
+        original_name,
+    }))
+}
+
+/// The one companion among `files` and the stored name it describes.
+///
+/// # Errors
+/// [`CanonicalError::Decode`] when there is no companion or more than one.
+fn only_companion<'f>(
+    files: impl Iterator<Item = &'f LogicalFile>,
+) -> Result<(&'f LogicalFile, &'f str), CanonicalError> {
+    let companions: Vec<(&LogicalFile, &str)> = files
+        .filter_map(|file| stored_name_of_companion(&file.path).map(|name| (file, name)))
+        .take(2)
+        .collect();
+    match companions.as_slice() {
+        [one] => Ok(*one),
+        _ => Err(not_one_original("file object")),
+    }
+}
+
+/// The refusal of a file object whose head is not one original with its companion.
+fn not_one_original(path: &str) -> CanonicalError {
+    CanonicalError::Decode {
+        path: path.to_string(),
+        reason: "not one original with its companion".into(),
+    }
 }
 
 /// The collection snapshot of the storage root in `backend` at its head, or `None` when the
@@ -230,8 +298,13 @@ fn operations<B: StorageBackend>(
 
 /// Whether the storage root holds a snapshot object: its object declaration exists.
 async fn has_snapshot<B: StorageBackend>(backend: &B) -> Result<bool, CanonicalError> {
+    has_object(backend, SNAPSHOT_ROOT).await
+}
+
+/// Whether the storage root holds an object at `root`: its object declaration exists.
+async fn has_object<B: StorageBackend>(backend: &B, root: &str) -> Result<bool, CanonicalError> {
     let declaration = Declaration::object(SpecVersion::V1_1).file_name();
-    let key = StorageKey::new(&format!("{SNAPSHOT_ROOT}/{declaration}"))
+    let key = StorageKey::new(&format!("{root}/{declaration}"))
         .map_err(|e| CanonicalError::from(ReadError::Storage(e)))?;
     backend
         .exists(&key)
@@ -261,7 +334,7 @@ async fn read_entities<B: StorageBackend>(
     Ok(entities)
 }
 
-/// The stored bytes of one entity file, refused before reading when larger than
+/// The stored bytes of one entity or companion file, refused before reading when larger than
 /// [`MAX_ENTITY_BYTES`] and verified against its digest.
 async fn read_entity<B: StorageBackend>(
     object: &Object<'_, B>,

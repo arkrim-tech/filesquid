@@ -4,9 +4,10 @@
 
 use filesquid_api::canonical::{
     commit_file_original, commit_snapshot, create_storage_root, file_object_id, file_object_root,
-    operation_message, parse_operation_message, read_snapshot, snapshot_object_id, touched,
-    CanonicalError, LibraryHead, OperationRecord, OwnerReadable, SnapshotDelta, SnapshotEntity,
-    SnapshotFile, SnapshotKey, VirtualEntry, SNAPSHOT_ROOT,
+    operation_message, parse_operation_message, read_file_original, read_snapshot,
+    snapshot_object_id, touched, CanonicalError, FileOriginal, LibraryHead, OperationRecord,
+    OwnerReadable, SnapshotDelta, SnapshotEntity, SnapshotFile, SnapshotKey, VirtualEntry,
+    SNAPSHOT_ROOT,
 };
 use filesquid_api::library::{CatalogChange, CatalogError, FileState, LibraryRecord};
 use filesquid_core::{
@@ -20,6 +21,7 @@ use filesquid_ocfl::write::{LeaseConfig, LeaseStore, SystemClock};
 
 const LIB: &str = "0b0f8a52-3f0e-4c4b-9a59-5b3c0e7d1a01";
 const CREATED: &str = "2026-10-19T00:00:00.000Z";
+const FILE: &str = "7d1c2b9e-4f3a-4e61-8a0b-2c9d5e6f7a80";
 
 /// Drive a backend future that never waits.
 fn ready<F: std::future::Future>(future: F) -> F::Output {
@@ -346,35 +348,110 @@ fn an_entity_that_does_not_match_its_path_is_refused_on_read() {
     assert!(filesquid_api::canonical::entity::decode("folders/x.json", other_schema).is_err());
 }
 
-#[test]
-fn a_file_original_is_its_own_object() {
-    let rig = Rig::new();
-    let file = FileId::new("f-1").unwrap();
-    let root = file_object_root(&file).unwrap();
-    let model = rig.model(&root, &file_object_id(&file));
-    let receipt = ready(commit_file_original(
+/// Commit `bytes` as the original of `file`, named `original_name` by the owner.
+fn commit_original(
+    rig: &Rig,
+    file: &FileId,
+    original_name: &str,
+    op: &str,
+) -> Result<filesquid_ocfl::write::CommitReceipt, CanonicalError> {
+    let root = file_object_root(file).unwrap();
+    let model = rig.model(&root, &file_object_id(file));
+    ready(commit_file_original(
         &model,
         &OwnerReadable,
-        "IMG_0001.JPG",
+        file,
+        original_name,
         b"jpeg bytes",
-        meta(&record("op-9", "1")),
+        meta(&record(op, "1")),
     ))
-    .unwrap();
-    assert_eq!(receipt.object_id, "urn:uuid:f-1");
-    let object = ready(Object::open(&rig.root, &root)).unwrap();
+}
+
+/// The logical paths at the head of `file`'s object.
+fn head_paths(rig: &Rig, file: &FileId) -> Vec<String> {
+    let object = ready(Object::open(&rig.root, &file_object_root(file).unwrap())).unwrap();
     let state = object.state(object.head()).unwrap();
+    state.paths().map(str::to_string).collect()
+}
+
+#[test]
+fn a_file_original_is_its_own_object_with_its_companion() {
+    let rig = Rig::new();
+    let file = FileId::new(FILE).unwrap();
+    let receipt = commit_original(&rig, &file, "IMG_0001.JPG", "op-9").unwrap();
+    assert_eq!(receipt.object_id, format!("urn:uuid:{FILE}"));
+    let stored = format!("original/IMG_0001_{FILE}.jpg");
     assert_eq!(
-        state.paths().collect::<Vec<_>>(),
-        vec!["original/IMG_0001.JPG"]
+        head_paths(&rig, &file),
+        vec![stored.clone(), format!("{stored}.metadata.md")]
     );
-    let refused = ready(commit_file_original(
-        &model,
-        &OwnerReadable,
-        "a/b",
-        b"x",
-        meta(&record("op-10", "1")),
-    ));
-    assert!(matches!(refused, Err(CanonicalError::InvalidIdentifier(_))));
+    assert_eq!(
+        ready(read_file_original(&rig.root, &OwnerReadable, &file)).unwrap(),
+        Some(FileOriginal {
+            path: stored,
+            original_name: "IMG_0001.JPG".into(),
+        })
+    );
+}
+
+#[test]
+fn a_name_that_needs_sanitizing_round_trips_through_its_companion() {
+    let rig = Rig::new();
+    let file = FileId::new(FILE).unwrap();
+    let original = "Café au lait — 写真 (1).JPEG";
+    commit_original(&rig, &file, original, "op-9").unwrap();
+    let stored = format!("original/Caf__au_lait_______1__{FILE}.jpeg");
+    assert!(head_paths(&rig, &file).contains(&stored));
+    let read = ready(read_file_original(&rig.root, &OwnerReadable, &file))
+        .unwrap()
+        .expect("original");
+    assert_eq!(read.path, stored);
+    assert_eq!(read.original_name, original);
+}
+
+#[test]
+fn the_companion_is_readable_front_matter() {
+    let bytes = filesquid_api::canonical::original::encode_companion("a \"b\".txt").unwrap();
+    assert_eq!(
+        String::from_utf8(bytes.clone()).unwrap(),
+        "---\nschema: filesquid.original.v1\noriginal_name: \"a \\\"b\\\".txt\"\n---\n"
+    );
+    let path = "original/x.metadata.md";
+    let decoded = filesquid_api::canonical::original::decode_companion(path, &bytes).unwrap();
+    assert_eq!(decoded, "a \"b\".txt");
+    let other = b"---\nschema: other\noriginal_name: \"a\"\n---\n";
+    let refused = filesquid_api::canonical::original::decode_companion(path, other);
+    assert!(matches!(refused, Err(CanonicalError::Decode { .. })));
+}
+
+#[test]
+fn a_name_without_a_safe_stem_or_extension_is_the_file_identifier() {
+    let file = FileId::new(FILE).unwrap();
+    let name = |n| filesquid_api::canonical::original::stored_name(&file, n).unwrap();
+    assert_eq!(name("写真"), FILE);
+    assert_eq!(name("写真.PNG"), format!("{FILE}.png"));
+    assert_eq!(name(".bashrc"), format!("bashrc_{FILE}"));
+    assert_eq!(name("..."), FILE);
+    assert_eq!(name("notes.tar.gz"), format!("notes.tar_{FILE}.gz"));
+    assert_eq!(name("report.v2 draft"), format!("report.v2_draft_{FILE}"));
+}
+
+#[test]
+fn an_original_name_that_is_not_a_file_name_is_refused() {
+    let rig = Rig::new();
+    let file = FileId::new(FILE).unwrap();
+    let long = "a".repeat(1025);
+    for bad in ["", "a/b", "a\0b", long.as_str()] {
+        let refused = commit_original(&rig, &file, bad, "op-10");
+        assert!(
+            matches!(refused, Err(CanonicalError::InvalidIdentifier(_))),
+            "{bad:?}"
+        );
+    }
+    assert_eq!(
+        ready(read_file_original(&rig.root, &OwnerReadable, &file)).unwrap(),
+        None
+    );
 }
 
 #[test]
