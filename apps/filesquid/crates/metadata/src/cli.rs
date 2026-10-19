@@ -2,45 +2,57 @@
 //!
 //! The `filesquid-cli` crate builds the only CLI binary, `fsquid`, and routes
 //! metadata commands here through [`run`]. This module ships no binary of its own.
+//! Every command reads and writes `metadata.md` in an OCFL object directory
+//! through [`LocalObject`]: each edit is a new OCFL version committed through
+//! the `filesquid-ocfl` change model (MD-S-008).
 
+use std::error::Error;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
-use filesquid_ocfl::read_logical_file;
-
 use crate::csv::{apply_csv, to_csv};
-use crate::extract::extract_from_reader;
+use crate::extract::{extract_from_bytes, extract_from_reader, Extracted};
 use crate::file_ref::FileRef;
-use crate::json::{apply_json, sha256_hex, to_json, JsonTarget};
+use crate::json::{apply_json, to_json, JsonTarget};
 use crate::record::{parse_curie, Record};
 use crate::reject_file_dcterms_term;
-use crate::store::ocfl::{load, save};
+use crate::store::ocfl::LocalObject;
+use crate::store::StoreError;
 use crate::xmp::{from_xmp, to_xmp};
+use filesquid_ocfl::VersionNum;
 
 /// Usage text for the metadata commands of `fsquid`.
 pub const USAGE: &str = "\
 fsquid metadata — metadata CRUD (via filesquid-ocfl)
 
 Usage:
-  fsquid <command> [args] [--object <dir>]
-  fsquid metadata <command> [args] [--object <dir>]
+  fsquid <command> [args] [--object <dir>] [--id <object-id>]
+  fsquid metadata <command> [args] [--object <dir>] [--id <object-id>]
 
 Commands:
-  extract <file>          Extract EXIF/ID3 from a media file into metadata.md
+  extract <file>          Extract EXIF/ID3/XMP from a media file into metadata.md
+  extract --file <logical-path>
+                          Extract from a logical file of the object
   get [prefix:term]       Print populated statements (or one CURIE)
-  set <prefix:term> <val> Set a statement and write metadata.md
+  set <prefix:term> <val> Set a statement and commit metadata.md
   export csv|xmp|json <path>  Write CSV, XMP or JSON sidecar interchange
   import csv|xmp|json <path>  Read CSV, XMP or JSON sidecar into metadata.md
   validate <prefix:term>  Check a dcterms: term against the /terms/ register
                           (always run as `fsquid metadata validate`)
   help                    Show this help
 
-JSON sidecars also take --id <object-id> --file <logical-path>: the OCFL
-object identifier and the logical file whose SHA-256 digest binds the
-sidecar. Import rejects a sidecar whose identifier or digest differs.
+--object is an OCFL object directory (default `.`). --id names the object:
+required to create one in a directory without an object, and checked
+against an existing object's identifier.
 
-Canonical store: <object>/metadata.md (YAML front matter + Markdown body).
+JSON sidecars also take --file <logical-path>: the logical file of the
+object's head whose SHA-256 digest binds the sidecar with the object
+identifier. Import rejects a sidecar whose identifier or digest differs.
+
+Canonical store: metadata.md (YAML front matter + Markdown body), a logical
+file of the OCFL object. Each edit commits a new OCFL version; earlier
+versions are never modified.
 ";
 
 /// Metadata command names, as routed by `fsquid`.
@@ -49,10 +61,14 @@ pub const COMMANDS: &[&str] = &[
 ];
 
 /// Flags that take a value for every command.
-const OBJECT_FLAGS: &[&str] = &["--object"];
+const OBJECT_FLAGS: &[&str] = &["--object", "--id"];
 
-/// Flags that take a value for `export` and `import`, which bind JSON sidecars.
+/// Flags that take a value for `extract`, `export` and `import`, which also
+/// name a logical file of the object.
 const INTERCHANGE_FLAGS: &[&str] = &["--object", "--id", "--file"];
+
+/// Most links of an error's source chain the CLI prints.
+const MAX_ERROR_SOURCES: usize = 8;
 
 /// Run the CLI. Returns a process exit code.
 pub fn run(args: &[String]) -> Result<i32, String> {
@@ -95,11 +111,70 @@ fn flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
         .filter(|value| !INTERCHANGE_FLAGS.contains(value))
 }
 
+/// Return the value of `flag`, refusing a flag given without one.
+fn checked_flag<'a>(args: &'a [String], flag: &str) -> Result<Option<&'a str>, String> {
+    if !args.iter().any(|arg| arg == flag) {
+        return Ok(None);
+    }
+    flag_value(args, flag)
+        .map(Some)
+        .ok_or_else(|| format!("{flag} requires a value"))
+}
+
 /// Return the object directory from `--object`, defaulting to `.`.
-fn object_dir(args: &[String]) -> PathBuf {
-    flag_value(args, "--object")
+fn object_dir(args: &[String]) -> Result<PathBuf, String> {
+    Ok(checked_flag(args, "--object")?
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
+        .unwrap_or_else(|| PathBuf::from(".")))
+}
+
+/// Open the OCFL object `--object` names, with the identifier `--id` names
+/// (file I/O).
+fn open_object(args: &[String]) -> Result<LocalObject, String> {
+    let dir = object_dir(args)?;
+    let id = checked_flag(args, "--id")?;
+    LocalObject::open(&dir, id).map_err(|err| match err {
+        StoreError::MissingObjectId => format!(
+            "{} holds no OCFL object yet; pass --id <object-id> to create it",
+            dir.display()
+        ),
+        other => error_text(&other),
+    })
+}
+
+/// An error and its sources, joined by `: `.
+fn error_text(err: &(dyn Error + 'static)) -> String {
+    let mut text = err.to_string();
+    let mut source = err.source();
+    for _ in 0..MAX_ERROR_SOURCES {
+        let Some(next) = source else {
+            break;
+        };
+        text.push_str(": ");
+        text.push_str(&next.to_string());
+        source = next.source();
+    }
+    text
+}
+
+/// Commit `record`, edited from version `base`, to `object` and report the
+/// version (or no change). An edit from a head another writer has since
+/// moved past is refused rather than overwriting the newer record.
+fn commit(
+    object: &LocalObject,
+    base: Option<&VersionNum>,
+    record: &Record,
+) -> Result<String, String> {
+    let version = object.save_over(base, record).map_err(|e| error_text(&e))?;
+    Ok(match version {
+        Some(version) => format!("committed {version}"),
+        None => "unchanged; no version committed".to_string(),
+    })
+}
+
+/// Load the head of `object` and its record.
+fn load(object: &LocalObject) -> Result<(Option<VersionNum>, Record), String> {
+    object.load_head().map_err(|e| error_text(&e))
 }
 
 /// Return the arguments that are neither one of `flags` nor their values.
@@ -151,7 +226,7 @@ fn validate_args(rest: &[String]) -> Result<i32, String> {
 /// The CLI is the native path helper: it opens the file and hands the reader
 /// to [`extract_from_reader`], which never sees a path. The [`FileRef`] is the
 /// file's name, since a plain file has no object.
-fn extract_file(path: &Path, record: &mut Record) -> Result<(), String> {
+fn extract_file(path: &Path, record: &mut Record) -> Result<Extracted, String> {
     let name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -162,31 +237,50 @@ fn extract_file(path: &Path, record: &mut Record) -> Result<(), String> {
         .or_else(|_| FileRef::new("", "file"))
         .map_err(|e| e.to_string())?;
     let file = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let found = extract_from_reader(&mut BufReader::new(file), &file_ref, record)
-        .map_err(|e| e.to_string())?;
-    if found.rejected > 0 {
-        eprintln!("{} statements were refused by the register", found.rejected);
-    }
-    Ok(())
+    extract_from_reader(&mut BufReader::new(file), &file_ref, record).map_err(|e| e.to_string())
+}
+
+/// Extract the embedded tags of the logical file `logical_path` of version
+/// `base` (the version `record` was loaded from), read through
+/// `filesquid-ocfl`, into `record`.
+fn extract_logical(
+    object: &LocalObject,
+    base: Option<&VersionNum>,
+    logical_path: &str,
+    record: &mut Record,
+) -> Result<Extracted, String> {
+    let bytes = object
+        .read_file(logical_path, base)
+        .map_err(|e| format!("{logical_path}: {}", error_text(&e)))?;
+    let file_ref = FileRef::new(object.object_id(), logical_path).map_err(|e| e.to_string())?;
+    extract_from_bytes(&bytes, &file_ref, record).map_err(|e| e.to_string())
 }
 
 fn cmd_extract(rest: &[String]) -> Result<i32, String> {
-    let pos = positional(rest, OBJECT_FLAGS);
-    let Some(file) = pos.first() else {
-        return Err("extract requires a media file path".into());
+    let pos = positional(rest, INTERCHANGE_FLAGS);
+    let logical = checked_flag(rest, "--file")?;
+    if pos.is_empty() == logical.is_none() {
+        return Err(
+            "extract requires one media file path or --file <logical-path>, not both".into(),
+        );
+    }
+    let object = open_object(rest)?;
+    let (base, mut record) = load(&object)?;
+    let found = match logical {
+        Some(path) => extract_logical(&object, base.as_ref(), path, &mut record)?,
+        None => extract_file(Path::new(pos[0]), &mut record)?,
     };
-    let object = object_dir(rest);
-    let mut record = load(&object).map_err(|e| e.to_string())?;
-    extract_file(Path::new(file), &mut record)?;
-    save(&object, &record).map_err(|e| e.to_string())?;
-    println!("extracted into {}/metadata.md", object.display());
+    if found.rejected > 0 {
+        eprintln!("{} statements were refused by the register", found.rejected);
+    }
+    let outcome = commit(&object, base.as_ref(), &record)?;
+    println!("extracted into metadata.md: {outcome}");
     Ok(0)
 }
 
 fn cmd_get(rest: &[String]) -> Result<i32, String> {
     let pos = positional(rest, OBJECT_FLAGS);
-    let object = object_dir(rest);
-    let record = load(&object).map_err(|e| e.to_string())?;
+    let (_, record) = load(&open_object(rest)?)?;
     if let Some(curie) = pos.first() {
         match record.get(curie) {
             Some(s) => {
@@ -212,54 +306,38 @@ fn cmd_set(rest: &[String]) -> Result<i32, String> {
         return Err("set requires prefix:term and a value".into());
     };
     let value = pos.get(1).copied().unwrap_or("");
-    let object = object_dir(rest);
     let (ns, term) = parse_curie(curie).map_err(|e| e.to_string())?;
-    let mut record = load(&object).map_err(|e| e.to_string())?;
+    let object = open_object(rest)?;
+    let (base, mut record) = load(&object)?;
     record.set(ns, term, value).map_err(|e| e.to_string())?;
-    save(&object, &record).map_err(|e| e.to_string())?;
-    println!("set {curie}");
+    println!("set {curie}: {}", commit(&object, base.as_ref(), &record)?);
     Ok(0)
 }
 
 /// The OCFL object identifier and logical-file digest a JSON sidecar binds.
 struct JsonBinding {
-    /// OCFL object identifier from `--id`.
+    /// The object's identifier.
     object_id: String,
     /// Hex SHA-256 of the logical file named by `--file`.
     digest: String,
 }
 
-/// Check that `logical_path` resolves inside `object` (file I/O).
-///
-/// `filesquid-ocfl` rejects lexical escapes such as `..`, but a symlink inside
-/// the object could still point elsewhere, so both paths are resolved first.
-fn check_resolves_inside_object(object: &Path, logical_path: &str) -> Result<(), String> {
-    let root = object.canonicalize().map_err(|e| e.to_string())?;
-    let target = object
-        .join(logical_path)
-        .canonicalize()
-        .map_err(|e| e.to_string())?;
-    if !target.starts_with(&root) {
-        return Err(format!("{logical_path} resolves outside the object"));
-    }
-    Ok(())
-}
-
-/// Read `--id` and hash the `--file` logical file of `object` (file I/O).
-///
-/// The file is read through `filesquid-ocfl`, which applies the Git guard and
-/// rejects lexical path escapes; symlink escapes are rejected beforehand.
-fn read_json_binding(rest: &[String], object: &Path) -> Result<JsonBinding, String> {
-    let (Some(object_id), Some(logical_path)) =
-        (flag_value(rest, "--id"), flag_value(rest, "--file"))
-    else {
-        return Err("json requires --id <object-id> and --file <logical-path>".into());
+/// Hash the logical file `--file` of version `base` (the version whose
+/// record is exported or imported) through `filesquid-ocfl`.
+fn read_json_binding(
+    rest: &[String],
+    object: &LocalObject,
+    base: Option<&VersionNum>,
+) -> Result<JsonBinding, String> {
+    let Some(logical_path) = checked_flag(rest, "--file")? else {
+        return Err("json requires --file <logical-path>".into());
     };
-    check_resolves_inside_object(object, logical_path)?;
-    let bytes = read_logical_file(object, logical_path).map_err(|e| e.to_string())?;
+    let digest = object
+        .file_sha256(logical_path, base)
+        .map_err(|e| format!("{logical_path}: {}", error_text(&e)))?;
     Ok(JsonBinding {
-        object_id: object_id.to_string(),
-        digest: sha256_hex(&bytes),
+        object_id: object.object_id().to_string(),
+        digest,
     })
 }
 
@@ -267,14 +345,15 @@ fn read_json_binding(rest: &[String], object: &Path) -> Result<JsonBinding, Stri
 fn render_export(
     fmt: &str,
     rest: &[String],
-    object: &Path,
+    object: &LocalObject,
+    base: Option<&VersionNum>,
     record: &Record,
 ) -> Result<String, String> {
     match fmt {
-        "csv" => Ok(to_csv(&object.display().to_string(), record)),
+        "csv" => Ok(to_csv(object.object_id(), record)),
         "xmp" => Ok(to_xmp(record)),
         "json" => {
-            let binding = read_json_binding(rest, object)?;
+            let binding = read_json_binding(rest, object, base)?;
             Ok(to_json(&binding.object_id, &binding.digest, record))
         }
         _ => Err("export format must be csv, xmp or json".into()),
@@ -288,9 +367,9 @@ fn cmd_export(rest: &[String]) -> Result<i32, String> {
     if path.is_empty() {
         return Err("export requires csv|xmp|json and a path".into());
     }
-    let object = object_dir(rest);
-    let record = load(&object).map_err(|e| e.to_string())?;
-    let body = render_export(fmt, rest, &object, &record)?;
+    let object = open_object(rest)?;
+    let (base, record) = load(&object)?;
+    let body = render_export(fmt, rest, &object, base.as_ref(), &record)?;
     std::fs::write(path, body).map_err(|e| e.to_string())?;
     println!("exported {fmt} to {path}");
     Ok(0)
@@ -311,14 +390,15 @@ fn apply_import(
     fmt: &str,
     text: &str,
     rest: &[String],
-    object: &Path,
+    object: &LocalObject,
+    base: Option<&VersionNum>,
     record: &mut Record,
 ) -> Result<(), String> {
     match fmt {
         "csv" => apply_csv(text, record).map_err(|e| format!("{e:?}")),
         "xmp" => apply_xmp(text, record),
         "json" => {
-            let binding = read_json_binding(rest, object)?;
+            let binding = read_json_binding(rest, object, base)?;
             let target = JsonTarget {
                 object_id: &binding.object_id,
                 digest: &binding.digest,
@@ -336,11 +416,11 @@ fn cmd_import(rest: &[String]) -> Result<i32, String> {
     if path.is_empty() {
         return Err("import requires csv|xmp|json and a path".into());
     }
-    let object = object_dir(rest);
     let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-    let mut record = load(&object).map_err(|e| e.to_string())?;
-    apply_import(fmt, &text, rest, &object, &mut record)?;
-    save(&object, &record).map_err(|e| e.to_string())?;
-    println!("imported {fmt} from {path}");
+    let object = open_object(rest)?;
+    let (base, mut record) = load(&object)?;
+    apply_import(fmt, &text, rest, &object, base.as_ref(), &mut record)?;
+    let outcome = commit(&object, base.as_ref(), &record)?;
+    println!("imported {fmt} from {path}: {outcome}");
     Ok(0)
 }

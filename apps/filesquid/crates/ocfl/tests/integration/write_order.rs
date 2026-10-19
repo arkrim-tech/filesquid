@@ -306,6 +306,7 @@ fn recover_v2<B: StorageBackend>(rig: &Rig<B>) {
         .commit("writer-b", Some("v1"), &draft)
         .expect("recovered");
     assert_eq!(receipt.version, v("v2"));
+    assert!(receipt.took_over, "the retry took over the crashed lease");
     let object = rig.open().expect("open");
     let versions: Vec<String> = object
         .history()
@@ -666,4 +667,27 @@ fn git_in_object_root_refuses(rig: &Rig<impl StorageBackend>) {
 #[test]
 fn a_git_directory_in_the_object_root_refuses_the_commit() {
     on_both!(git_in_object_root_refuses);
+}
+
+// ---- Takeover indicator (OCFL-S-018; consumed by API-F2.7) ---------------
+
+fn takeover_is_reported_only_after_a_lapsed_lease(rig: &Rig<impl StorageBackend>) {
+    let first = rig.commit_v1();
+    assert!(!first.took_over, "a first reservation takes nothing over");
+    let second = rig
+        .commit("writer-a", Some("v1"), &two_new_files(rig, "v2"))
+        .expect("v2");
+    assert!(!second.took_over, "a released lease is not taken over");
+    let held = ready(rig.leases.reserve(OBJECT_ID, &v("v3"), "stalled")).expect("hold v3");
+    assert!(!held.took_over());
+    rig.expire_leases();
+    let third = rig
+        .commit("writer-b", Some("v2"), &two_new_files(rig, "v3"))
+        .expect("v3");
+    assert!(third.took_over, "the stalled writer's lease was taken over");
+}
+
+#[test]
+fn a_commit_reports_whether_it_took_over_a_lapsed_reservation() {
+    on_both!(takeover_is_reported_only_after_a_lapsed_lease);
 }

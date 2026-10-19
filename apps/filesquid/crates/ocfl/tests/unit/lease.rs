@@ -240,3 +240,30 @@ fn rfc3339_utc_formats_unix_milliseconds() {
     assert_eq!(rfc3339_utc(951_782_400_000), "2000-02-29T00:00:00Z");
     assert_eq!(rfc3339_utc(1_791_590_399_999), "2026-10-09T23:59:59Z");
 }
+
+#[test]
+fn a_reservation_reports_whether_it_took_over_an_unreleased_lease() {
+    let (store, clock) = store();
+    let first = reserve(&store, "urn:example:a", "v1", "writer-a").expect("reserve");
+    assert!(!first.took_over(), "nothing to take over");
+    ready(store.release(&first)).expect("release");
+    let second = reserve(&store, "urn:example:a", "v2", "writer-b").expect("reserve");
+    assert!(
+        !second.took_over(),
+        "a released lease is free, not taken over"
+    );
+    clock.advance(CONFIG.ttl_ms);
+    let third = reserve(&store, "urn:example:a", "v2", "writer-c").expect("takeover");
+    assert!(
+        third.took_over(),
+        "an unreleased, expired lease was taken over"
+    );
+}
+
+#[test]
+fn a_new_reservation_is_not_a_takeover_unless_marked() {
+    let plain = Reservation::new("urn:example:a", v("v1"), "writer-a", 1);
+    assert!(!plain.took_over());
+    let marked = Reservation::new("urn:example:a", v("v1"), "writer-a", 2).with_takeover();
+    assert!(marked.took_over());
+}

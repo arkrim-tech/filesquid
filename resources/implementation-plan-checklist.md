@@ -1,9 +1,9 @@
 # Implementation Plan Checklist: FileSquid
 
 <!-- mvp-progress:start -->
-![MVP progress: 52% complete](./assets/mvp-progress.svg)
+![MVP progress: 54% complete](./assets/mvp-progress.svg)
 
-**MVP progress: 52%**, about 433 of 826 estimated hours. 13 of 26 tasks are done and 6 more are under way. Each segment of the bar is one task below, as wide as its estimated hours in the implementation plan; an open task fills by the share of its module rows that are ticked. Below the bar, In progress lists the open tasks being worked on (global tasks with some but not all module rows ticked, and tasks with an open pull request) and Up next lists the next five new module tasks whose listed dependencies are done or in progress. Regenerate with `python3 scripts/docs/update_mvp_progress.py` after ticking boxes or opening a pull request; the check run by `scripts/verify_docs.sh` does not call GitHub and uses the pull requests recorded in the block. In a clone that registers the `mvp-progress` git merge driver (see the README), merging two pull requests that both redraw it merges their ticks and redraws it when it can, and otherwise leaves a conflict.
+**MVP progress: 54%**, about 447 of 826 estimated hours. 13 of 26 tasks are done and 7 more are under way. Each segment of the bar is one task below, as wide as its estimated hours in the implementation plan; an open task fills by the share of its module rows that are ticked. Below the bar, In progress lists the open tasks being worked on (global tasks with some but not all module rows ticked, and tasks with an open pull request) and Up next lists the next five new module tasks whose listed dependencies are done or in progress. Regenerate with `python3 scripts/docs/update_mvp_progress.py` after ticking boxes or opening a pull request; the check run by `scripts/verify_docs.sh` does not call GitHub and uses the pull requests recorded in the block. In a clone that registers the `mvp-progress` git merge driver (see the README), merging two pull requests that both redraw it merges their ticks and redraws it when it can, and otherwise leaves a conflict.
 
 **In progress**
 
@@ -16,7 +16,10 @@
     - [DE-0.4](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Durable jobs and checkpoint-on-quit
     - [DE-0.5](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Bounded media workers (libvips stills)
     - [DE-0.8](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Native-processing library boundary (`filesquid-native`)
-- [MD-0.2](../apps/filesquid/crates/metadata/resources/plan.md#phase-f1-persist-through-ocfl-and-namespace-registry-global-task-fs-13) Commit statements through filesquid-ocfl (part of [Task FS-1.3](./implementation-plan.md#task-fs-1.3); [PR #76](https://github.com/arkrim-tech/filesquid/pull/76))
+- [Task FS-1.3](./implementation-plan.md#task-fs-1.3) Metadata properties and the import file record through the API: 1 of 4 module rows ticked
+    - [MD-0.7](../apps/filesquid/crates/metadata/resources/plan.md#phase-f1-persist-through-ocfl-and-namespace-registry-global-task-fs-13) Namespace registry and extension statements
+    - [MD-0.8](../apps/filesquid/crates/metadata/resources/plan.md#phase-f1-persist-through-ocfl-and-namespace-registry-global-task-fs-13) Import file record
+    - [API-F1.4](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-api-f19-in-fs-310-and-api-f15-in-fs-c1) Metadata property routes
 - [Task FS-1.4](./implementation-plan.md#task-fs-1.4) Jobs, events and the authorisation layer: 1 of 2 module rows ticked
     - [API-F1.6](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-api-f19-in-fs-310-and-api-f15-in-fs-c1) Job and event routes
 - [Task 1.1](./implementation-plan.md#task-1.1) Independent local library create, open, copy, and recover: 3 of 8 module rows ticked
@@ -28,15 +31,15 @@
 
 **Up next** (the next 5 new module tasks, once their listed dependencies are done or in progress)
 
-- [MD-0.7](../apps/filesquid/crates/metadata/resources/plan.md#phase-f1-persist-through-ocfl-and-namespace-registry-global-task-fs-13) Namespace registry and extension statements (part of [Task FS-1.3](./implementation-plan.md#task-fs-1.3))
-- [MD-0.8](../apps/filesquid/crates/metadata/resources/plan.md#phase-f1-persist-through-ocfl-and-namespace-registry-global-task-fs-13) Import file record (part of [Task FS-1.3](./implementation-plan.md#task-fs-1.3))
 - [UI-F2.2](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) `<fs-file-browser>` (part of [Task FS-2.2](./implementation-plan.md#task-fs-2.2))
+- [DE-1.2](../apps/filesquid/crates/desktop/resources/plan.md#phases-f2-i1-and-f5-library-import-gallery-organize-and-setup-global-tasks-1116) File and folder import (part of [Task 1.2](./implementation-plan.md#task-1.2))
 - [UI-1.2](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Import UI with job progress (part of [Task 1.2](./implementation-plan.md#task-1.2))
 - [API-F2.2](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) View operation, preferences, storage use, copy, move and ZIP download (part of [Task FS-2.5](./implementation-plan.md#task-fs-2.5))
+- [API-F2.5](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) Version listing, labels, restore and history size (part of [Task FS-2.5](./implementation-plan.md#task-fs-2.5))
 
-Generated 2026-10-19T03:41:05Z (RFC 3339, UTC) from the ticked boxes, the module plans and the open pull requests at that time.
-<!-- generated-at: 2026-10-19T03:41:05Z -->
-<!-- in-progress-prs: API-F2.7=#74,MD-0.2=#76 -->
+Generated 2026-10-19T03:43:59Z (RFC 3339, UTC) from the ticked boxes, the module plans and the open pull requests at that time.
+<!-- generated-at: 2026-10-19T03:43:59Z -->
+<!-- in-progress-prs: API-F2.7=#74 -->
 <!-- mvp-progress:end -->
 
 This is a short, ordered view of [implementation-plan.md](./implementation-plan.md). Each numbered item is a global task in the order the dev team expects to finish it, and the nested items are the module tasks it dispatches, taken from each module's `resources/plan.md`. Task codes link to the full task description. A box is ticked when the matching box is ticked in the source plan.
@@ -119,7 +122,7 @@ FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by ga
     - [ ] [DE-0.8](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Native-processing library boundary (`filesquid-native`)
     - [x] [DE-0.9](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Journal every refusal in the desktop shell
 17. [ ] [Task FS-1.3](./implementation-plan.md#task-fs-1.3) Metadata properties and the import file record through the API
-    - [ ] [MD-0.2](../apps/filesquid/crates/metadata/resources/plan.md#phase-f1-persist-through-ocfl-and-namespace-registry-global-task-fs-13) Commit statements through filesquid-ocfl
+    - [x] [MD-0.2](../apps/filesquid/crates/metadata/resources/plan.md#phase-f1-persist-through-ocfl-and-namespace-registry-global-task-fs-13) Commit statements through filesquid-ocfl
     - [ ] [MD-0.7](../apps/filesquid/crates/metadata/resources/plan.md#phase-f1-persist-through-ocfl-and-namespace-registry-global-task-fs-13) Namespace registry and extension statements
     - [ ] [MD-0.8](../apps/filesquid/crates/metadata/resources/plan.md#phase-f1-persist-through-ocfl-and-namespace-registry-global-task-fs-13) Import file record
     - [ ] [API-F1.4](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-api-f19-in-fs-310-and-api-f15-in-fs-c1) Metadata property routes

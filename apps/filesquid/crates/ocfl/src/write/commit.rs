@@ -48,6 +48,13 @@ pub struct CommitReceipt {
     /// Content paths this commit wrote, in order. Content another writer
     /// left with the same bytes is reused and not listed.
     pub written: Vec<String>,
+    /// Whether the commit's `vN` reservation took over one that was still
+    /// held, not released, when it expired or passed to this writer
+    /// ([`Reservation::took_over`]). The previous holder crashed or stalled
+    /// and may have left a stray file under a version directory
+    /// (OCFL-S-018 "Known gap"), so the host SHOULD validate the object now
+    /// (API-S-022).
+    pub took_over: bool,
 }
 
 /// Writes versions of objects into one storage root, reserving each
@@ -138,7 +145,7 @@ impl<'a, B: StorageBackend, R: VersionReservations> ObjectWriter<'a, B, R> {
             &fence,
         )
         .await?;
-        Ok(receipt(job.plan, written))
+        Ok(receipt(job.plan, written, job.reservation.took_over()))
     }
 
     /// Release the reservation unless it was lost, and log the outcome.
@@ -191,7 +198,7 @@ fn check_head(base: &Base, expected: Option<&VersionNum>) -> Result<(), CommitEr
 }
 
 /// The receipt for a published plan.
-fn receipt(plan: &VersionPlan, written: Vec<String>) -> CommitReceipt {
+fn receipt(plan: &VersionPlan, written: Vec<String>, took_over: bool) -> CommitReceipt {
     let created = plan
         .inventory
         .head_version()
@@ -203,6 +210,7 @@ fn receipt(plan: &VersionPlan, written: Vec<String>) -> CommitReceipt {
         created,
         inventory_digest: DigestAlgorithm::ENGINE.digest_hex(&plan.bytes),
         written,
+        took_over,
     }
 }
 
