@@ -41,6 +41,7 @@ pub mod host;
 pub mod journal;
 pub mod journal_writer;
 pub mod library;
+pub mod local_library;
 pub mod metrics;
 pub mod monitor;
 pub mod operation;
