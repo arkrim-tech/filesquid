@@ -10,6 +10,7 @@
 //! stores do storage I/O and live with the hosts ([API-S-006](../../resources/srs.md)): the
 //! SQLite store is `filesquid_native::SqliteJournal`.
 
+pub mod commit;
 mod memory;
 
 pub use memory::MemoryJournal;
@@ -141,6 +142,15 @@ pub struct JournalEntry {
     /// Machine-readable error code for failures and warnings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_code: Option<String>,
+    /// The operation the entry belongs to: shared by every entry and every
+    /// OCFL version one operation produced, so journal rows join PROV-O
+    /// records and OCFL versions without timestamps (ADR 040 Decision 6).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation_id: Option<String>,
+    /// The OCFL object version the entry is about, `<object-id>@vN`
+    /// (`urn:uuid:<uuid>@vN` for FileSquid objects).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub object_ref: Option<String>,
 }
 
 impl JournalEntry {
@@ -163,7 +173,21 @@ impl JournalEntry {
             target_ids: Vec::new(),
             duration_ms: None,
             error_code: None,
+            operation_id: None,
+            object_ref: None,
         }
+    }
+
+    /// Set the operation ID the entry belongs to.
+    pub fn operation_id(mut self, id: impl Into<String>) -> Self {
+        self.operation_id = Some(id.into());
+        self
+    }
+
+    /// Set the OCFL object version the entry is about (`<object-id>@vN`).
+    pub fn object_ref(mut self, object_ref: impl Into<String>) -> Self {
+        self.object_ref = Some(object_ref.into());
+        self
     }
 
     /// Set the actor (opaque user reference or `system`).
@@ -226,6 +250,12 @@ impl JournalEntry {
         self.process_id.iter_mut().for_each(scrub);
         self.error_code.iter_mut().for_each(scrub);
         self.target_ids.iter_mut().for_each(scrub);
+        self.operation_id.iter_mut().for_each(scrub);
+        if let Some(object_ref) = &mut self.object_ref {
+            if !is_object_ref(object_ref) {
+                *object_ref = REDACTED.to_string();
+            }
+        }
         self
     }
 }
@@ -245,6 +275,16 @@ pub fn is_opaque(value: &str) -> bool {
         && value
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-' | b':'))
+}
+
+/// True when `value` is an object reference `<object-id>@vN`: an opaque
+/// object ID ([`is_opaque`]) and an OCFL version name, joined by the one
+/// `@` that [`is_opaque`] itself never allows.
+pub fn is_object_ref(value: &str) -> bool {
+    match filesquid_core::VersionRef::parse_object_ref(value) {
+        Ok(reference) => value.len() <= MAX_OPAQUE_LEN && is_opaque(reference.object_id()),
+        Err(_) => false,
+    }
 }
 
 /// Current time in Unix milliseconds (UTC).

@@ -325,3 +325,76 @@ fn the_sqlite_journal_and_its_wal_are_owner_only() {
     drop(store);
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
+
+/// The operation ID and object reference of PROV-O linkage (DE-0.10,
+/// API-S-028; ADR 040 Decision 6) are kept by both stores.
+#[test]
+fn both_stores_keep_the_operation_id_and_object_reference() {
+    let (stores, dir) = stores("linkage");
+    let object_ref = "urn:uuid:6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b@v3";
+    for store in &stores {
+        let entry = JournalEntry::new("ocfl.commit", Outcome::Succeeded)
+            .operation_id("op-1")
+            .object_ref(object_ref);
+        store.append(&[entry]).expect("append");
+        let stored = &store.query(&JournalQuery::default()).unwrap().entries[0];
+        assert_eq!(stored.operation_id.as_deref(), Some("op-1"));
+        assert_eq!(stored.object_ref.as_deref(), Some(object_ref));
+        let leaky = JournalEntry::new("ocfl.commit", Outcome::Succeeded)
+            .operation_id("Grandma's birthday")
+            .object_ref("/Users/ana/a.jpg@v1");
+        store.append(&[leaky]).expect("append");
+        let page = store.query(&JournalQuery::default()).unwrap();
+        let stored = page
+            .entries
+            .iter()
+            .find(|e| e.operation_id.as_deref() != Some("op-1"))
+            .expect("leaky entry");
+        assert_eq!(stored.operation_id.as_deref(), Some(REDACTED));
+        assert_eq!(stored.object_ref.as_deref(), Some(REDACTED));
+    }
+    drop(stores);
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+/// A journal created before the linkage columns existed is migrated
+/// forward on open: old rows read without them, new rows keep them.
+#[test]
+fn an_older_journal_gains_the_linkage_columns_on_open() {
+    let dir = temp_dir("migrate");
+    let path = dir.join("filesquid.sqlite");
+    {
+        let conn = rusqlite::Connection::open(&path).expect("old database");
+        conn.execute_batch(
+            "CREATE TABLE activity_journal (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, time_ms INTEGER NOT NULL,
+                host TEXT NOT NULL, process_id TEXT, actor TEXT NOT NULL,
+                operation TEXT NOT NULL, outcome TEXT NOT NULL, level TEXT NOT NULL,
+                target_ids TEXT NOT NULL, duration_ms INTEGER, error_code TEXT);
+             INSERT INTO activity_journal (time_ms, host, actor, operation, outcome, level, target_ids)
+             VALUES (1000, 'host-a', 'system', 'host.started', 'info', 'info', '[]');",
+        )
+        .expect("old schema");
+    }
+    for _ in 0..2 {
+        let store = SqliteJournal::open(&path, "host-a").expect("migrated open");
+        let entries = store.query(&JournalQuery::default()).unwrap().entries;
+        let old = entries
+            .iter()
+            .find(|e| e.operation == "host.started")
+            .unwrap();
+        assert_eq!(old.operation_id, None);
+        assert_eq!(old.object_ref, None);
+    }
+    let store = SqliteJournal::open(&path, "host-a").expect("open");
+    store
+        .append(&[JournalEntry::new("ocfl.commit", Outcome::Succeeded).operation_id("op-9")])
+        .expect("append");
+    let page = store.query(&JournalQuery::default()).unwrap();
+    assert!(page
+        .entries
+        .iter()
+        .any(|e| e.operation_id.as_deref() == Some("op-9")));
+    drop(store);
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}

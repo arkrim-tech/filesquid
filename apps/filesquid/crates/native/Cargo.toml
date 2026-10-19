@@ -40,6 +40,10 @@ name = "unit_journal"
 path = "tests/unit/journal.rs"
 
 [[test]]
+name = "unit_installation"
+path = "tests/unit/installation.rs"
+
+[[test]]
 name = "unit_host"
 path = "tests/unit/host.rs"
 

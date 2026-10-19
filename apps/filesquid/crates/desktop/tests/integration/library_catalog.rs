@@ -92,3 +92,59 @@ fn a_catalog_directory_that_cannot_be_opened_is_journaled_without_its_path() {
     assert_eq!(failures[0].error_code.as_deref(), Some("unavailable"));
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
+
+/// DE-0.10: catalog outbox entries reach the host journal through its
+/// announcing store, so each raises a `journal.entry` event like every
+/// other entry (ADR 040 Decision 6).
+#[test]
+fn catalog_commits_raise_journal_entry_events() {
+    let dir = data_dir("events");
+    let state = ApiState::new();
+    let mut rx = state.events.subscribe();
+    let host = open_host_monitor(&state, &dir, None).expect("monitor");
+    let catalog = Arc::new(open_library_catalog(&dir, &host).expect("catalog"));
+    let service = LibraryService::new(catalog.clone(), host.monitor().journal());
+    service.execute("owner", create_library()).expect("create");
+    let mut operations = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        if event.topic == "journal.entry" {
+            operations.push(event.data["operation"].as_str().unwrap_or("").to_string());
+        }
+    }
+    assert!(
+        operations.iter().any(|op| op == "library.create"),
+        "{operations:?}"
+    );
+    drop(service);
+    drop(catalog);
+    host.stop();
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+/// DE-0.10: the installation UUID is created once, journaled as
+/// `host.installation.created` once, and read back unchanged at the next
+/// launch (DE-S-012).
+#[test]
+fn the_installation_uuid_is_created_once_and_journaled() {
+    use filesquid_desktop_lib::load_installation;
+    use filesquid_native::installation::INSTALLATION_CREATED;
+    let dir = data_dir("installation");
+    let state = ApiState::new();
+    let host = open_host_monitor(&state, &dir, None).expect("monitor");
+    let first = load_installation(&dir, &host).expect("first launch");
+    let again = load_installation(&dir, &host).expect("next launch");
+    assert_eq!(first, again);
+    host.stop();
+    let entries = host_journal(&dir);
+    let created: Vec<&JournalEntry> = entries
+        .iter()
+        .filter(|e| e.operation == INSTALLATION_CREATED)
+        .collect();
+    assert_eq!(created.len(), 1, "{entries:?}");
+    let text = serde_json::to_string(&entries).expect("json");
+    assert!(
+        !text.contains(first.as_str()),
+        "the UUID is not journaled: {text}"
+    );
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}

@@ -140,3 +140,35 @@ fn live_journal_events_carry_the_redacted_entry() {
     assert_eq!(event.data["target_ids"], serde_json::json!(["redacted"]));
     writer.shutdown();
 }
+
+/// Entries a host appends straight to the store (the catalog outbox,
+/// DE-0.10) are announced like the writer's own: one `journal.entry` event
+/// each, the redacted entry with its id, and the journal counters.
+#[test]
+fn an_announcing_store_publishes_and_counts_what_the_store_accepted() {
+    use filesquid_api::journal_writer::AnnouncingJournal;
+    let store = Arc::new(MemoryJournal::new("host-a"));
+    let events = EventBus::new();
+    let mut rx = events.subscribe();
+    let metrics = Arc::new(Metrics::default());
+    let announcing = AnnouncingJournal::new(store.clone(), events, metrics.clone());
+    let ids = announcing
+        .append(&[
+            JournalEntry::new("library.file.hide", Outcome::Succeeded).target("Holiday photo.jpg"),
+            JournalEntry::new("library.file.hide", Outcome::Failed),
+        ])
+        .expect("append");
+    assert_eq!(ids.len(), 2);
+    let first = rx.try_recv().expect("first event");
+    assert_eq!(first.topic, "journal.entry");
+    assert_eq!(first.data["id"], ids[0]);
+    assert_eq!(first.data["host"], "host-a");
+    assert_eq!(first.data["target_ids"], serde_json::json!(["redacted"]));
+    rx.try_recv().expect("second event");
+    assert!(rx.try_recv().is_err(), "one event per entry");
+    let snapshot = metrics.snapshot();
+    assert_eq!(snapshot["filesquid_journal_entries_total"], 2);
+    assert_eq!(snapshot["filesquid_errors_total"], 1);
+    assert_eq!(announcing.host(), "host-a");
+    assert_eq!(store.count(&JournalQuery::default()).unwrap(), 2);
+}

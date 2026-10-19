@@ -58,7 +58,7 @@ fn contract_is_openapi_3_1_with_the_crate_api_version() {
     let doc = contract();
     assert_eq!(doc["openapi"], "3.1.0");
     assert_eq!(doc["info"]["version"], API_VERSION);
-    assert_eq!(API_VERSION, "0.6.0");
+    assert_eq!(API_VERSION, "0.7.0");
 }
 
 #[test]
@@ -701,7 +701,9 @@ fn full_entry() -> JournalEntry {
         .process("proc-1")
         .level(Level::Error)
         .error_code("store_unavailable")
-        .duration_ms(12);
+        .duration_ms(12)
+        .operation_id("op-1")
+        .object_ref("urn:uuid:6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b@v3");
     entry.id = Some(7);
     entry.host = "host-a".into();
     entry

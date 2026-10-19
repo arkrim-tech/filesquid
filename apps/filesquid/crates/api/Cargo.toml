@@ -58,6 +58,10 @@ name = "unit_writer"
 path = "tests/unit/writer.rs"
 
 [[test]]
+name = "unit_journal_linkage"
+path = "tests/unit/journal_linkage.rs"
+
+[[test]]
 name = "unit_registry"
 path = "tests/unit/registry.rs"
 

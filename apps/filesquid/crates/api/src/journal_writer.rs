@@ -7,7 +7,9 @@
 //! failure is counted.
 
 use crate::events::topic;
-use crate::journal::{JournalEntry, JournalStore, Level};
+use crate::journal::{
+    JournalEntry, JournalError, JournalPage, JournalQuery, JournalStore, Level, RetentionPolicy,
+};
 use crate::metrics::Metrics;
 use crate::{ApiEvent, EventBus};
 use std::io::Write;
@@ -211,23 +213,7 @@ fn write_batch(
         result = store.append(batch);
     }
     match result {
-        Ok(ids) => {
-            metrics.journal_entry_written(n);
-            for (entry, id) in batch.iter_mut().zip(ids) {
-                entry.id = Some(id);
-                if entry.host.is_empty() {
-                    entry.host = store.host().to_string();
-                }
-                match entry.level {
-                    Level::Warn => metrics.warning(),
-                    Level::Error => metrics.error(),
-                    Level::Info => {}
-                }
-                if let Ok(data) = serde_json::to_value(&*entry) {
-                    events.publish(ApiEvent::new(topic::JOURNAL_ENTRY, data));
-                }
-            }
-        }
+        Ok(ids) => announce(batch, &ids, store.host(), events, metrics),
         Err(err) => {
             metrics.journal_write_failed(n);
             report_rejected(&mut std::io::stdout().lock(), &err.to_string(), batch);
@@ -236,6 +222,94 @@ fn write_batch(
     let left = depth.fetch_sub(n, Ordering::SeqCst).saturating_sub(n);
     metrics.set_queue_depth(left);
     batch.clear();
+}
+
+/// Announce entries a store accepted under `ids`: count them, count their
+/// warnings and errors, and publish each, with its id and host, as a
+/// `journal.entry` event. The writer and [`AnnouncingJournal`] share it, so
+/// every entry that reaches the store is announced the same way.
+fn announce(
+    entries: &mut [JournalEntry],
+    ids: &[i64],
+    host: &str,
+    events: &EventBus,
+    metrics: &Metrics,
+) {
+    metrics.journal_entry_written(entries.len() as u64);
+    for (entry, id) in entries.iter_mut().zip(ids) {
+        entry.id = Some(*id);
+        if entry.host.is_empty() {
+            entry.host = host.to_string();
+        }
+        match entry.level {
+            Level::Warn => metrics.warning(),
+            Level::Error => metrics.error(),
+            Level::Info => {}
+        }
+        if let Ok(data) = serde_json::to_value(&*entry) {
+            events.publish(ApiEvent::new(topic::JOURNAL_ENTRY, data));
+        }
+    }
+}
+
+/// A [`JournalStore`] that announces what it stores: entries appended to
+/// it directly, outside the writer's queue (such as the catalog outbox a
+/// host forwards after its own transaction, DE-0.10), raise the same
+/// `journal.entry` events and journal counters as the writer's entries.
+/// Every other call goes to the inner store unchanged.
+pub struct AnnouncingJournal {
+    inner: Arc<dyn JournalStore>,
+    events: EventBus,
+    metrics: Arc<Metrics>,
+}
+
+impl AnnouncingJournal {
+    /// Announce appends to `inner` on `events` and in `metrics`.
+    pub fn new(inner: Arc<dyn JournalStore>, events: EventBus, metrics: Arc<Metrics>) -> Self {
+        Self {
+            inner,
+            events,
+            metrics,
+        }
+    }
+}
+
+impl JournalStore for AnnouncingJournal {
+    fn host(&self) -> &str {
+        self.inner.host()
+    }
+
+    /// Append through the inner store, then announce the accepted entries,
+    /// redacted as the store holds them. A refused append announces nothing.
+    fn append(&self, entries: &[JournalEntry]) -> Result<Vec<i64>, JournalError> {
+        let ids = self.inner.append(entries)?;
+        let mut accepted: Vec<JournalEntry> =
+            entries.iter().map(|e| e.clone().redacted()).collect();
+        announce(
+            &mut accepted,
+            &ids,
+            self.inner.host(),
+            &self.events,
+            &self.metrics,
+        );
+        Ok(ids)
+    }
+
+    fn query(&self, query: &JournalQuery) -> Result<JournalPage, JournalError> {
+        self.inner.query(query)
+    }
+
+    fn count(&self, query: &JournalQuery) -> Result<u64, JournalError> {
+        self.inner.count(query)
+    }
+
+    fn apply_retention(&self, policy: RetentionPolicy, now_ms: i64) -> Result<u64, JournalError> {
+        self.inner.apply_retention(policy, now_ms)
+    }
+
+    fn ping(&self) -> Result<(), JournalError> {
+        self.inner.ping()
+    }
 }
 
 /// Report a write the journal store rejected on `out` (stdout): one `journal write failed`
