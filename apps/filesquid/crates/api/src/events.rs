@@ -204,6 +204,9 @@ impl std::io::Write for ByteCounter {
     }
 }
 
+/// Compare-and-swap attempts one [`SubscriberSlot::claim`] makes before it refuses.
+const MAX_CLAIM_ATTEMPTS: usize = 1_024;
+
 /// One counted place under [`MAX_SUBSCRIBERS`]; released when dropped.
 #[derive(Debug)]
 struct SubscriberSlot {
@@ -212,13 +215,22 @@ struct SubscriberSlot {
 
 impl SubscriberSlot {
     /// Take a slot if fewer than [`MAX_SUBSCRIBERS`] are taken. Check and increment are one
-    /// atomic step, so concurrent callers never exceed the cap.
+    /// compare-and-swap, so concurrent callers never exceed the cap and the count only ever
+    /// holds granted slots. The swap is retried only when another caller changed the count,
+    /// at most [`MAX_CLAIM_ATTEMPTS`] times (AGENTS.md §22); past that the claim is refused.
+    /// (`fetch_update` did the same and is deprecated since Rust 1.99.)
     fn claim(open: &Arc<AtomicUsize>) -> Option<Self> {
-        open.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
-            (n < MAX_SUBSCRIBERS).then_some(n + 1)
-        })
-        .ok()?;
-        Some(Self { open: open.clone() })
+        let mut seen = open.load(Ordering::SeqCst);
+        for _ in 0..MAX_CLAIM_ATTEMPTS {
+            if seen >= MAX_SUBSCRIBERS {
+                return None;
+            }
+            match open.compare_exchange(seen, seen + 1, Ordering::SeqCst, Ordering::SeqCst) {
+                Ok(_) => return Some(Self { open: open.clone() }),
+                Err(now) => seen = now,
+            }
+        }
+        None
     }
 }
 

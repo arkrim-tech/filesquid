@@ -49,11 +49,12 @@ pub use event_channel::EVENT_NAME;
 use event_channel::{Forwarding, TauriSink, FORWARDER_HEARTBEAT};
 use filesquid_api::auth::{record_token_issue, Authoriser, LaunchToken, Principal};
 use filesquid_api::host::{HostIdentity, NotEnrolled};
+use filesquid_api::journal::{JournalEntry, Outcome};
 use filesquid_api::journal_writer::JournalSender;
 use filesquid_api::registry::ProcessHandle;
 use filesquid_api::trace_layer::JournalLayer;
 use filesquid_api::ApiState;
-use filesquid_native::HostMonitor;
+use filesquid_native::{HostMonitor, SqliteCatalog, CATALOG_DIR};
 use ipc_observer::TauriIpcObserver;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -274,9 +275,49 @@ pub fn open_host_monitor(
     Ok(host)
 }
 
+/// Journal operation of opening the library catalogs at launch.
+pub const CATALOG_OPEN_OPERATION: &str = "library.catalog.open";
+
+/// The library catalogs the host opened at launch: one SQLite file per library under
+/// `<data dir>/libraries/` ([`CATALOG_DIR`], Task DE-0.2). Held in Tauri's managed state for
+/// the API's library routes; the webview never receives a path or SQL (DE-S-006).
+pub struct DesktopCatalog(pub Arc<SqliteCatalog>);
+
+/// Open the per-library SQLite catalogs in `<data_dir>/libraries/`, forwarding their journal
+/// entries to `host`'s journal store. A failure is journaled as
+/// [`CATALOG_OPEN_OPERATION`] `failed` with its error code only (no path). Performs
+/// filesystem and database I/O.
+///
+/// # Errors
+/// The catalog directory or a catalog file could not be opened.
+pub fn open_library_catalog(
+    data_dir: &std::path::Path,
+    host: &HostMonitor,
+) -> Result<SqliteCatalog, String> {
+    SqliteCatalog::open(&data_dir.join(CATALOG_DIR), host.monitor().store()).map_err(|err| {
+        let code = catalog_error_code(&err);
+        host.monitor()
+            .journal()
+            .send(JournalEntry::new(CATALOG_OPEN_OPERATION, Outcome::Failed).error_code(code));
+        format!("library catalogs could not be opened ({code})")
+    })
+}
+
+/// The journal error code of a catalog failure. Pure.
+fn catalog_error_code(err: &filesquid_api::library::CatalogError) -> &'static str {
+    use filesquid_api::library::CatalogError;
+    match err {
+        CatalogError::Conflict => "conflict",
+        CatalogError::Unavailable(_) => "unavailable",
+        CatalogError::Failed(_) => "internal",
+    }
+}
+
 /// Open the journal in the app data directory, attach every journal sink, install the
-/// monitor, register the event forwarder's process and start the ticker. Performs filesystem
-/// and database I/O.
+/// monitor, open the library catalogs, register the event forwarder's process and start the
+/// ticker. When the catalogs cannot be opened the failure is journaled and the monitor
+/// stopped (flushing the journal) before the launch fails. Performs filesystem and database
+/// I/O.
 fn start_monitor(
     app: &tauri::AppHandle,
     journal: &HostJournal,
@@ -285,6 +326,8 @@ fn start_monitor(
     let state = app.state::<ApiState>();
     let host = Arc::new(open_host_monitor(&state, &data_dir, Some(&journal.layer))?);
     journal.attach(host.monitor().journal());
+    let catalog = open_library_catalog(&data_dir, &host).inspect_err(|_| host.stop())?;
+    app.manage(DesktopCatalog(Arc::new(catalog)));
     let forwarder = Arc::new(event_channel::register_forwarder(host.monitor().registry()));
     let stop = Arc::new(AtomicBool::new(false));
     spawn_ticker(host.clone(), stop.clone());
