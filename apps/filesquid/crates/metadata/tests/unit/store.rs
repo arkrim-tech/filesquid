@@ -451,3 +451,138 @@ fn two_local_objects_in_one_process_stage_apart() {
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Commit options (MD-0.9; MD-S-014): the caller's OCFL version `user`,
+/// message and version-bound files go into the same commit, and the
+/// receipt comes back for the journal.
+mod commit_options {
+    use std::collections::BTreeMap;
+
+    use filesquid_metadata::store::ocfl::{CommitOptions, EDIT_MESSAGE};
+    use filesquid_ocfl::inventory::User;
+    use filesquid_ocfl::read::Object;
+    use filesquid_ocfl::write::BoundContext;
+
+    use super::*;
+
+    /// The installation user FileSquid sets on every commit.
+    fn installation() -> User {
+        User {
+            name: "FileSquid installation".into(),
+            address: Some("urn:uuid:6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b".into()),
+        }
+    }
+
+    /// The version block of `version` of the photo object.
+    fn block(
+        rig: &Rig<filesquid_ocfl::storage::MemoryBackend>,
+        version: &str,
+    ) -> (Option<String>, Option<User>, Vec<String>) {
+        let object = ready(Object::open(&rig.storage, &object_root(OBJECT_ID))).unwrap();
+        let block = &object.inventory().versions[&v(version)];
+        let paths = block.state.values().flatten().cloned().collect();
+        (block.message.clone(), block.user.clone(), paths)
+    }
+
+    #[test]
+    fn user_message_and_bound_files_are_committed_in_the_same_version() {
+        let rig = Rig::memory();
+        rig.seed(OBJECT_ID, &[("photo.jpg", b"pixels")]);
+        let record_file = |context: &BoundContext<'_>| {
+            let name = format!("provenance/{}.jsonld", context.version);
+            Ok(BTreeMap::from([(
+                name,
+                context.created.as_bytes().to_vec(),
+            )]))
+        };
+        let message = r#"filesquid.operation.v1 {"operation_id":"op-1","kind":"metadata.edit"}"#;
+        let options = CommitOptions {
+            user: Some(installation()),
+            message: Some(message.to_string()),
+            bound: Some(&record_file),
+        };
+        let receipt = ready(
+            rig.store()
+                .commit_record_with(&photo(), &titled("Harbour"), &options),
+        )
+        .expect("commit")
+        .expect("a version");
+        assert_eq!(receipt.version, v("v2"));
+        assert_eq!(receipt.object_id, OBJECT_ID);
+        let (stored_message, user, paths) = block(&rig, "v2");
+        assert_eq!(stored_message.as_deref(), Some(message));
+        assert_eq!(user, Some(installation()));
+        assert!(
+            paths.contains(&"provenance/v2.jsonld".to_string()),
+            "{paths:?}"
+        );
+        assert!(paths.contains(&METADATA_MD.to_string()));
+        assert_eq!(
+            rig.versions(OBJECT_ID),
+            ["v1", "v2"],
+            "one version, not two"
+        );
+    }
+
+    #[test]
+    fn without_options_the_store_keeps_its_stand_alone_defaults() {
+        let rig = Rig::memory();
+        rig.seed(OBJECT_ID, &[("photo.jpg", b"pixels")]);
+        let receipt = ready(rig.store().commit_record_with(
+            &photo(),
+            &titled("Harbour"),
+            &CommitOptions::default(),
+        ))
+        .unwrap()
+        .unwrap();
+        let (message, user, _) = block(&rig, &receipt.version.to_string());
+        assert_eq!(message.as_deref(), Some(EDIT_MESSAGE));
+        assert_eq!(user, None);
+    }
+
+    #[test]
+    fn a_no_op_save_commits_nothing_and_binds_no_files() {
+        let rig = Rig::memory();
+        rig.seed(OBJECT_ID, &[("photo.jpg", b"pixels")]);
+        ready(rig.store().commit_record(&photo(), &titled("Harbour"))).unwrap();
+        let called = std::sync::atomic::AtomicBool::new(false);
+        let bound = |_: &BoundContext<'_>| {
+            called.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(BTreeMap::new())
+        };
+        let options = CommitOptions {
+            bound: Some(&bound),
+            ..CommitOptions::default()
+        };
+        let receipt = ready(
+            rig.store()
+                .commit_record_with(&photo(), &titled("Harbour"), &options),
+        )
+        .unwrap();
+        assert_eq!(receipt, None);
+        assert!(!called.load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(rig.versions(OBJECT_ID), ["v1", "v2"]);
+    }
+
+    #[test]
+    fn a_failing_bound_file_function_publishes_nothing() {
+        let rig = Rig::memory();
+        rig.seed(OBJECT_ID, &[("photo.jpg", b"pixels")]);
+        let failing = |_: &BoundContext<'_>| Err("no record".to_string());
+        let options = CommitOptions {
+            bound: Some(&failing),
+            ..CommitOptions::default()
+        };
+        let result = ready(
+            rig.store()
+                .commit_record_with(&photo(), &titled("Harbour"), &options),
+        );
+        assert!(matches!(result, Err(StoreError::Backend(_))), "{result:?}");
+        assert_eq!(rig.versions(OBJECT_ID), ["v1"]);
+        let page = ready(rig.staging.list("metadata-changes/", None, 100)).unwrap();
+        assert!(
+            page.keys.is_empty(),
+            "the failed change set is not left staged"
+        );
+    }
+}

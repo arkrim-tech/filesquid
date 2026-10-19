@@ -22,9 +22,12 @@
 use std::io::{Error as IoError, ErrorKind};
 
 use filesquid_ocfl::change::{ChangeError, ChangeModel, StagingArea, VersionMeta};
+use filesquid_ocfl::inventory::User;
 use filesquid_ocfl::read::Object;
 use filesquid_ocfl::storage::{StorageBackend, StorageKey, MAX_CHUNK_BYTES, MAX_OBJECT_BYTES};
-use filesquid_ocfl::write::{rfc3339_utc, Clock, VersionReservations};
+use filesquid_ocfl::write::{
+    rfc3339_utc, Clock, CommitReceipt, VersionBoundFiles, VersionReservations,
+};
 use filesquid_ocfl::{DigestAlgorithm, VersionNum};
 use sha2::{Digest, Sha256};
 
@@ -39,6 +42,22 @@ pub const MAX_RECORD_BYTES: u64 = 64 * 1024 * 1024;
 
 /// The `message` of every version a metadata edit publishes.
 pub const EDIT_MESSAGE: &str = "Edit metadata.md";
+
+/// The caller's options for one `ocfl`-store commit (MD-S-014). The default
+/// is the stand-alone behaviour: the message [`EDIT_MESSAGE`], no `user`
+/// and no version-bound files.
+#[derive(Default)]
+pub struct CommitOptions<'o> {
+    /// The OCFL version `user` (FileSquid: name `FileSquid installation`,
+    /// address `urn:uuid:<installation-uuid>`).
+    pub user: Option<User>,
+    /// The version message instead of [`EDIT_MESSAGE`] (FileSquid: its
+    /// `filesquid.operation.v1` message).
+    pub message: Option<String>,
+    /// Version-bound files committed in the same version (OCFL-S-024), such
+    /// as the version's PROV-O record.
+    pub bound: Option<&'o dyn VersionBoundFiles>,
+}
 
 /// Stores records as `metadata.md` in OCFL objects, one new version per edit.
 ///
@@ -123,6 +142,30 @@ where
         file: &FileRef,
         record: &Record,
     ) -> Result<Option<VersionNum>, StoreError> {
+        let options = CommitOptions::default();
+        let receipt = self.commit_record_with(file, record, &options).await?;
+        Ok(receipt.map(|receipt| receipt.version))
+    }
+
+    /// [`commit_record`](Self::commit_record) with the caller's commit
+    /// options (MD-S-014): the OCFL version `user`, the version message
+    /// (FileSquid passes its `filesquid.operation.v1` message) and
+    /// version-bound files committed in the same version (OCFL-S-024).
+    /// Returns the commit receipt, so the caller can journal the commit;
+    /// `None` when the record is unchanged, in which case nothing is
+    /// committed and `options.bound` is not called.
+    ///
+    /// # Errors
+    ///
+    /// As [`commit_record`](Self::commit_record), and
+    /// [`StoreError::Backend`] with the [`ChangeError`] when the bound-file
+    /// function fails. A failed commit leaves no change set staged.
+    pub async fn commit_record_with(
+        &self,
+        file: &FileRef,
+        record: &Record,
+        options: &CommitOptions<'_>,
+    ) -> Result<Option<CommitReceipt>, StoreError> {
         let bytes = to_markdown(record).into_bytes();
         if bytes.len() as u64 > MAX_RECORD_BYTES {
             return Err(too_large(METADATA_MD, MAX_RECORD_BYTES));
@@ -137,7 +180,8 @@ where
             model.reset().await.map_err(change_error)?;
             return Err(err);
         }
-        publish(&model, self.edit_meta()?).await
+        let meta = self.edit_meta(options)?;
+        publish(&model, meta, options.bound).await
     }
 
     /// The record of the pinned version of `file`, or of the head. An object
@@ -245,11 +289,16 @@ where
     }
 
     /// The version metadata of an edit made now.
-    fn edit_meta(&self) -> Result<VersionMeta, StoreError> {
+    fn edit_meta(&self, options: &CommitOptions<'_>) -> Result<VersionMeta, StoreError> {
         let millis = self.clock.now_millis().ok_or_else(|| {
             StoreError::Backend(Box::new(IoError::other("the clock has no current time")))
         })?;
-        Ok(VersionMeta::new(rfc3339_utc(millis)).with_message(EDIT_MESSAGE))
+        let message = options.message.as_deref().unwrap_or(EDIT_MESSAGE);
+        let meta = VersionMeta::new(rfc3339_utc(millis)).with_message(message);
+        Ok(match &options.user {
+            Some(user) => meta.with_user(user.clone()),
+            None => meta,
+        })
     }
 }
 
@@ -301,38 +350,44 @@ where
     })
 }
 
-/// Publish the staged change set as one version. An unchanged record
-/// publishes nothing and clears the staging area; a published version whose
-/// staging area could not be cleared is still the edit, and is logged.
+/// Publish the staged change set as one version, binding `bound`'s files to
+/// it. An unchanged record publishes nothing and clears the staging area; a
+/// published version whose staging area could not be cleared is still the
+/// edit, and is logged; any other failure clears the change set it staged.
 async fn publish<B, R, S>(
     model: &ChangeModel<'_, B, R, S>,
     meta: VersionMeta,
-) -> Result<Option<VersionNum>, StoreError>
+    bound: Option<&dyn VersionBoundFiles>,
+) -> Result<Option<CommitReceipt>, StoreError>
 where
     B: StorageBackend,
     R: VersionReservations,
     S: StorageBackend,
 {
-    match model.commit(meta).await {
+    let err = match model.commit_with(meta, bound).await {
         Ok(receipt) => {
             tracing::info!(object = %receipt.object_id, version = %receipt.version, "committed metadata.md");
-            Ok(Some(receipt.version))
+            return Ok(Some(receipt));
         }
         Err(ChangeError::NothingToCommit) => {
             model.reset().await.map_err(change_error)?;
-            Ok(None)
+            return Ok(None);
         }
         Err(ChangeError::StagingNotCleared { receipt, reason }) => {
             tracing::warn!(object = %receipt.object_id, version = %receipt.version, %reason, "committed metadata.md; staging area kept");
-            Ok(Some(receipt.version))
+            return Ok(Some(*receipt));
         }
-        Err(err @ (ChangeError::Conflict { .. } | ChangeError::TooManyRebases { .. })) => {
-            Err(StoreError::Conflict {
-                reason: err.to_string(),
-            })
-        }
-        Err(err) => Err(change_error(err)),
+        Err(err) => err,
+    };
+    if let Err(reset) = model.reset().await {
+        tracing::warn!(error = %reset, "could not clear a failed metadata change set");
     }
+    Err(match err {
+        ChangeError::Conflict { .. } | ChangeError::TooManyRebases { .. } => StoreError::Conflict {
+            reason: err.to_string(),
+        },
+        other => change_error(other),
+    })
 }
 
 /// The version `file` pins, or the object's head.
