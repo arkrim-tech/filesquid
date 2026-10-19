@@ -124,7 +124,10 @@ fn a_w010_object_is_listed_as_a_warning_and_leaves_health_ok() {
         .collect();
     assert_eq!(journaled.len(), 1, "a warning is journaled like an error");
     assert_eq!(journaled[0].level, Level::Info);
-    assert_eq!(journaled[0].target_ids[..2], [library().as_str(), "urn:uuid:w"]);
+    assert_eq!(
+        journaled[0].target_ids[..2],
+        [library().as_str(), "urn:uuid:w"]
+    );
     assert_every_open_finding_journaled_once(&rig);
 }
 
@@ -138,7 +141,10 @@ fn a_run_over_many_objects_journals_one_entry_per_finding_with_no_loss() {
     let record = rig.run(RunTrigger::Requested, false).expect("run");
     assert_eq!(record.checked, 41);
     let open = rig.store.open_findings(10_000).expect("findings");
-    let warnings = open.iter().filter(|f| f.severity == Severity::Warning).count();
+    let warnings = open
+        .iter()
+        .filter(|f| f.severity == Severity::Warning)
+        .count();
     assert!(warnings >= 41, "every object has a warning: {warnings}");
     assert_every_open_finding_journaled_once(&rig);
 }

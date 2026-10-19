@@ -39,3 +39,7 @@ Artifacts to update for option A: `crates/ocfl/src/write/{commit,reservation,lea
 ## 5. Impact assessment
 
 Without a resolution, a stray `vN/` file left behind by a taken-over writer (E023) is found only by the next scheduled run (default every 7 days) or an on-request run, not right after the takeover commit. Health still turns `degraded` once that run happens, so the gap is a delay, not a silent loss. API-F2.7 criteria (1), (2) and (4) to (9) do not depend on this. Criterion (3) is met at the API seam but cannot fire end to end until the engine reports takeovers.
+
+## Resolution (2026-10-19)
+
+Option A landed on `main` with PR #78 (`feat/io-commit-receipt-takeover-flag`): the engine's `CommitReceipt` now carries `took_over`, true when the commit published over a reservation that had expired or been lost. A host passes `receipt.took_over` to `OcflValidation::on_commit` after each commit; the API side needs no change. The hosts commit nothing yet, so the call is wired when they do (DE-1.1 on the desktop, and the file routes of API-F1.3 once both are on `main`).
