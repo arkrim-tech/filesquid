@@ -6,15 +6,17 @@
 //! refused by the change model and never repaired here (OCFL-S-020).
 //!
 //! A view write commits only its own change: it is refused while the
-//! staging area holds other changes, and a write that fails leaves the
-//! staging area empty again. OCFL stores no empty folder, so creating a
+//! staging area holds other changes. A write that fails after it has
+//! staged clears the staging area only if the index is still the one it
+//! staged, so changes staged by someone else are never deleted. OCFL stores no empty folder, so creating a
 //! folder is not a write: the UI keeps it pending until a file is added
 //! beneath its prefix.
 
 use std::future::Future;
 
+use super::check_path;
 use super::error::ViewError;
-use super::{check_path, check_prefix};
+use crate::change::index::StagingIndex;
 use crate::change::{state_digests, ChangeError, ChangeModel, VersionMeta, WorkingState};
 use crate::inventory::VersionNum;
 use crate::storage::StorageBackend;
@@ -65,10 +67,11 @@ where
     R: VersionReservations,
     S: StorageBackend,
 {
-    let from = check_prefix(from)?;
-    let to = check_prefix(to)?;
+    check_path(from)?;
+    check_path(to)?;
     require_clean(model).await?;
-    let moves = targets(&head_state(model).await?, &from)?;
+    let (head, state) = head_state(model).await?;
+    let moves = targets(&state, from, &head)?;
     staged_commit(model, meta, async {
         for path in &moves {
             let rest = &path[from.len()..];
@@ -95,9 +98,10 @@ where
     R: VersionReservations,
     S: StorageBackend,
 {
-    let path = check_prefix(path)?;
+    check_path(path)?;
     require_clean(model).await?;
-    let removals = targets(&head_state(model).await?, &path)?;
+    let (head, state) = head_state(model).await?;
+    let removals = targets(&state, path, &head)?;
     staged_commit(model, meta, async {
         for file in &removals {
             model.stage_remove(file).await?;
@@ -131,41 +135,55 @@ where
     let source = state_digests(inventory.as_ref(), version)?;
     let mut files = Vec::new();
     for path in paths {
-        files.extend(targets(&source, &check_prefix(path)?)?);
+        check_path(path)?;
+        files.extend(targets(&source, path, &version.to_string())?);
     }
     let refs: Vec<&str> = files.iter().map(String::as_str).collect();
     Ok(model.reinstate(version, &refs, meta).await?)
 }
 
-/// Refuse a staging area that holds changes; clear one that holds none, so
-/// the write starts from the current head.
+/// Refuse a staging area that holds changes. An index that holds none is
+/// cleared if it is still unchanged, so the write's base is the current
+/// head and an older base cannot cause a false conflict.
 async fn require_clean<B, R, S>(model: &ChangeModel<'_, B, R, S>) -> Result<(), ViewError>
 where
     B: StorageBackend,
     R: VersionReservations,
     S: StorageBackend,
 {
+    let snapshot = model.staged_index().await?;
     if !model.status().await?.changes.is_empty() {
         return Err(ViewError::StagingNotEmpty);
     }
-    Ok(model.reset().await?)
+    let Some(snapshot) = snapshot else {
+        return Ok(());
+    };
+    model.clear_committed(&snapshot).await.map_err(|reason| {
+        tracing::warn!(%reason, "the staging area changed before a view write");
+        ViewError::StagingNotEmpty
+    })
 }
 
-/// The head's logical state (empty for an object with no version).
-async fn head_state<B, R, S>(model: &ChangeModel<'_, B, R, S>) -> Result<WorkingState, ViewError>
+/// The head's name and logical state (`"none"` and empty for an object
+/// with no version).
+async fn head_state<B, R, S>(
+    model: &ChangeModel<'_, B, R, S>,
+) -> Result<(String, WorkingState), ViewError>
 where
     B: StorageBackend,
     R: VersionReservations,
     S: StorageBackend,
 {
     let Some(inventory) = model.committed().await? else {
-        return Ok(WorkingState::new());
+        return Ok(("none".to_string(), WorkingState::new()));
     };
-    Ok(state_digests(Some(&inventory), &inventory.head)?)
+    let state = state_digests(Some(&inventory), &inventory.head)?;
+    Ok((inventory.head.to_string(), state))
 }
 
-/// The file `path` itself, or every file below the folder `path`.
-fn targets(state: &WorkingState, path: &str) -> Result<Vec<String>, ViewError> {
+/// The file `path` itself, or every file below the folder `path`, in
+/// `state`, the logical state of `version`.
+fn targets(state: &WorkingState, path: &str, version: &str) -> Result<Vec<String>, ViewError> {
     if state.contains_key(path) {
         return Ok(vec![path.to_string()]);
     }
@@ -178,14 +196,17 @@ fn targets(state: &WorkingState, path: &str) -> Result<Vec<String>, ViewError> {
     if files.is_empty() {
         return Err(ViewError::PathNotFound {
             path: path.to_string(),
+            version: version.to_string(),
         });
     }
     Ok(files)
 }
 
-/// Run `stage`, then commit; on any failure before publication, reset the
-/// staging area so it is empty again. A publication whose staging area was
-/// kept is still a success: the area is reset and the receipt returned.
+/// Run `stage`, then commit. A publication is a success even when the
+/// change model kept a staging area that changed meanwhile
+/// ([`ChangeError::StagingNotCleared`]): that area holds someone else's
+/// changes and is left alone. On a failure before publication the staging
+/// area is cleared only if its index is still the one this write staged.
 async fn staged_commit<B, R, S>(
     model: &ChangeModel<'_, B, R, S>,
     meta: VersionMeta,
@@ -196,17 +217,33 @@ where
     R: VersionReservations,
     S: StorageBackend,
 {
-    let outcome = match stage.await {
+    let staged = stage.await;
+    let snapshot = model.staged_index().await?;
+    let outcome = match staged {
         Ok(()) => model.commit(meta).await.map_err(ViewError::from),
         Err(err) => Err(err),
     };
-    let receipt = match outcome {
-        Ok(receipt) => return Ok(receipt),
+    match outcome {
+        Ok(receipt) => Ok(receipt),
         Err(ViewError::Change(ChangeError::StagingNotCleared { receipt, .. })) => Ok(*receipt),
-        Err(err) => Err(err),
-    };
-    if let Err(reset) = model.reset().await {
-        tracing::warn!(error = %reset, "could not clear the staging area after a view write");
+        Err(err) => {
+            clear_own(model, snapshot.as_ref()).await;
+            Err(err)
+        }
     }
-    receipt
+}
+
+/// Clear the staging area if its index is still `snapshot`; log why not.
+async fn clear_own<B, R, S>(model: &ChangeModel<'_, B, R, S>, snapshot: Option<&StagingIndex>)
+where
+    B: StorageBackend,
+    R: VersionReservations,
+    S: StorageBackend,
+{
+    let Some(snapshot) = snapshot else {
+        return;
+    };
+    if let Err(reason) = model.clear_committed(snapshot).await {
+        tracing::warn!(%reason, "kept the staging area after a failed view write");
+    }
 }

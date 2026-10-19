@@ -4,7 +4,7 @@
 use serde_json::{json, Value};
 
 use super::error::ViewError;
-use super::MAX_RANGE_BYTES;
+use super::{check_path, MAX_RANGE_BYTES};
 use crate::fixity::{FixityAlgorithm, FixityHasher};
 use crate::inventory::VersionNum;
 use crate::read::{Object, ReadError};
@@ -29,11 +29,12 @@ pub async fn read_range<B: StorageBackend>(
     start: u64,
     len: u64,
 ) -> Result<Vec<u8>, ViewError> {
-    if len == 0 || len > MAX_RANGE_BYTES {
+    if len == 0 || len > MAX_RANGE_BYTES || start.checked_add(len).is_none() {
         return Err(ViewError::request(format!(
-            "a range is 1 to {MAX_RANGE_BYTES} bytes"
+            "a range is 1 to {MAX_RANGE_BYTES} bytes and ends within 2^64"
         )));
     }
+    check_path(path)?;
     let state = object.state(version)?;
     let file = state.get(path).ok_or_else(|| ReadError::PathNotFound {
         version: version.to_string(),
@@ -107,6 +108,7 @@ pub async fn check_fixity<B: StorageBackend>(
     version: &VersionNum,
     path: &str,
 ) -> Result<FixityReport, ViewError> {
+    check_path(path)?;
     let state = object.state(version)?;
     let file = state.get(path).ok_or_else(|| ReadError::PathNotFound {
         version: version.to_string(),
@@ -129,8 +131,9 @@ pub async fn check_fixity<B: StorageBackend>(
     })
 }
 
-/// The manifest digest, then each computable fixity value for
-/// `content_path`.
+/// The manifest digest, then every computable fixity value the inventory
+/// lists for `content_path` (all of them, so conflicting values are each
+/// checked).
 fn expected_values<B: StorageBackend>(
     object: &Object<'_, B>,
     digest: &str,
@@ -147,12 +150,10 @@ fn expected_values<B: StorageBackend>(
         let Some(algorithm) = FixityAlgorithm::from_name(name) else {
             continue;
         };
-        let found = map
+        let values = map
             .iter()
-            .find(|(_, paths)| paths.iter().any(|p| p == content_path));
-        if let Some((value, _)) = found {
-            expected.push((algorithm, value.clone()));
-        }
+            .filter(|(_, paths)| paths.iter().any(|p| p == content_path));
+        expected.extend(values.map(|(value, _)| (algorithm, value.clone())));
     }
     expected
 }

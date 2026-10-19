@@ -33,11 +33,15 @@ pub enum ViewError {
         /// The pinned version.
         version: String,
     },
-    /// No logical path of the head is, or lies below, the given path.
-    #[error("{path:?} is not a file or folder of the head")]
+    /// No logical path of the version read is, or lies below, the given
+    /// path.
+    #[error("{path:?} is not a file or folder of {version}")]
     PathNotFound {
         /// The path.
         path: String,
+        /// The version read: the head for a move or remove, the earlier
+        /// version for a restore.
+        version: String,
     },
     /// The change model's staging area holds other changes; a view write
     /// commits only its own change.

@@ -9,6 +9,7 @@ use serde_json::{json, Value};
 use super::error::ViewError;
 use super::facts::{last_change, type_hint, version_info};
 use super::{check_prefix, MAX_PAGE_ENTRIES};
+use crate::digest::DigestAlgorithm;
 use crate::inventory::VersionNum;
 use crate::read::{LogicalFile, Object};
 use crate::storage::StorageBackend;
@@ -99,8 +100,9 @@ fn entry_json(entry: &Entry) -> Value {
     }
 }
 
-/// A listing key: folders sort before files, each by name. Its text form
-/// (`d:<name>` or `f:<name>`) is the opaque cursor.
+/// A listing key: folders sort before files, each by name. The cursor is
+/// opaque: a tag of the listing it belongs to (object, version and prefix)
+/// and the slot's text form (`d:<name>` or `f:<name>`).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Slot {
     /// A folder name.
@@ -117,17 +119,21 @@ impl Slot {
         }
     }
 
-    /// The cursor naming this slot.
-    fn cursor(&self) -> String {
+    /// The cursor naming this slot in the listing tagged `context`.
+    fn cursor(&self, context: &str) -> String {
         match self {
-            Self::Folder(name) => format!("d:{name}"),
-            Self::File(name) => format!("f:{name}"),
+            Self::Folder(name) => format!("{context}:d:{name}"),
+            Self::File(name) => format!("{context}:f:{name}"),
         }
     }
 
-    /// The slot a cursor names.
-    fn parse(cursor: &str) -> Result<Self, ViewError> {
-        match cursor.split_once(':') {
+    /// The slot a cursor of the listing tagged `context` names.
+    fn parse(cursor: &str, context: &str) -> Result<Self, ViewError> {
+        let slot = cursor
+            .strip_prefix(context)
+            .and_then(|rest| rest.strip_prefix(':'))
+            .and_then(|rest| rest.split_once(':'));
+        match slot {
             Some(("d", name)) if !name.is_empty() => Ok(Self::Folder(name.to_string())),
             Some(("f", name)) if !name.is_empty() => Ok(Self::File(name.to_string())),
             _ => Err(ViewError::InvalidCursor {
@@ -135,6 +141,16 @@ impl Slot {
             }),
         }
     }
+}
+
+/// The tag of one listing: the first 16 hex digits of the sha256 of its
+/// object identifier, version and prefix, so a cursor from another listing
+/// is refused rather than skipping entries.
+fn listing_context(object_id: &str, version: &VersionNum, prefix: &str) -> String {
+    let text = format!("{object_id}\n{version}\n{prefix}");
+    let mut digest = DigestAlgorithm::Sha256.digest_hex(text.as_bytes());
+    digest.truncate(16);
+    digest
 }
 
 /// List the folder `prefix` (`""` for the root) of `version`: the implied
@@ -160,10 +176,11 @@ pub async fn list_folder<B: StorageBackend>(
         )));
     }
     let prefix = check_prefix(prefix)?;
-    let after = cursor.map(Slot::parse).transpose()?;
+    let context = listing_context(object.id(), version, &prefix);
+    let after = cursor.map(|c| Slot::parse(c, &context)).transpose()?;
     let state = object.state(version)?;
     let slots = children(state.files(), &prefix);
-    if slots.is_empty() {
+    if slots.is_empty() && !prefix.is_empty() {
         return Err(ViewError::FolderNotFound {
             prefix,
             version: version.to_string(),
@@ -174,7 +191,7 @@ pub async fn list_folder<B: StorageBackend>(
         .filter(|(slot, _)| after.as_ref().is_none_or(|a| slot > a))
         .take(limit + 1)
         .collect();
-    let next = (page.len() > limit).then(|| page[limit - 1].0.cursor());
+    let next = (page.len() > limit).then(|| page[limit - 1].0.cursor(&context));
     page.truncate(limit);
     let mut entries = Vec::with_capacity(page.len());
     for (slot, file) in page {

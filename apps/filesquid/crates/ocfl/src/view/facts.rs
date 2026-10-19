@@ -3,8 +3,7 @@
 
 use serde_json::{json, Value};
 
-use crate::change::state_digests;
-use crate::inventory::{Inventory, User, VersionNum};
+use crate::inventory::{Inventory, User, Version, VersionNum};
 use crate::read::VersionInfo;
 
 /// The extension of `name`, lowercase, as a display hint only (C-055): no
@@ -30,6 +29,16 @@ pub(crate) fn version_info(inventory: &Inventory, version: &VersionNum) -> Optio
     })
 }
 
+/// The digest `path` has in `block`'s state, as the inventory writes it.
+/// Only that path is looked up; no state is rebuilt.
+pub(crate) fn digest_at<'i>(block: &'i Version, path: &str) -> Option<&'i String> {
+    block
+        .state
+        .iter()
+        .find(|(_, paths)| paths.iter().any(|p| p == path))
+        .map(|(digest, _)| digest)
+}
+
 /// The earliest version, up to `version`, from which `path` has held
 /// `digest` without a break: the version that last set its content.
 pub(crate) fn last_change(
@@ -38,13 +47,9 @@ pub(crate) fn last_change(
     path: &str,
     digest: &str,
 ) -> VersionNum {
-    let digest = digest.to_ascii_lowercase();
     let mut since = version.clone();
-    for (earlier, _) in inventory.versions.range(..version).rev() {
-        // Every version the inventory lists resolves; one that does not
-        // cannot have held the path.
-        let holds = state_digests(Some(inventory), earlier)
-            .is_ok_and(|state| state.get(path) == Some(&digest));
+    for (earlier, block) in inventory.versions.range(..version).rev() {
+        let holds = digest_at(block, path).is_some_and(|d| d.eq_ignore_ascii_case(digest));
         if !holds {
             break;
         }

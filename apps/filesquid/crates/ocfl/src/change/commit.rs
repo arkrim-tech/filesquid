@@ -63,12 +63,13 @@ where
         }
     }
 
-    /// Clear the staging area if its index is still `committed`.
+    /// Clear the staging area if its index is still `committed`, so changes
+    /// staged by someone else in the meantime are never deleted.
     ///
     /// # Errors
     ///
     /// Why the area was kept: its index changed, or clearing failed.
-    async fn clear_committed(&self, committed: &StagingIndex) -> Result<(), String> {
+    pub(crate) async fn clear_committed(&self, committed: &StagingIndex) -> Result<(), String> {
         let current = self.staging.read_index().await.map_err(|e| e.to_string())?;
         if current.as_ref() != Some(committed) {
             return Err("the staging index changed during the commit".to_string());

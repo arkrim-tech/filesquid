@@ -381,6 +381,15 @@ where
     ///
     /// As [`committed`](Self::committed), [`ChangeError::StagingCorrupt`]
     /// or [`ChangeError::StagingMismatch`].
+    /// The staging index as stored, or `None` when nothing is staged.
+    ///
+    /// # Errors
+    ///
+    /// [`ChangeError::StagingCorrupt`], or a backend error.
+    pub(crate) async fn staged_index(&self) -> Result<Option<StagingIndex>, ChangeError> {
+        self.staging.read_index().await
+    }
+
     pub(super) async fn load(&self) -> Result<(Option<Inventory>, StagingIndex), ChangeError> {
         let inventory = self.committed().await?;
         let index = match self.staging.read_index().await? {

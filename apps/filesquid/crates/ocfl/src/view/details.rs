@@ -5,10 +5,10 @@ use std::collections::BTreeMap;
 
 use serde_json::{json, Value};
 
+use super::check_path;
 use super::error::ViewError;
-use super::facts::{file_name, last_change, type_hint, version_info, version_json};
-use crate::change::state_digests;
-use crate::inventory::VersionNum;
+use super::facts::{digest_at, file_name, last_change, type_hint, version_info, version_json};
+use crate::inventory::{Version, VersionNum};
 use crate::read::{Object, ReadError, VersionInfo};
 use crate::storage::StorageBackend;
 
@@ -31,8 +31,9 @@ pub struct FileDetails {
     pub size: u64,
     /// The content path relative to the object root, from the manifest.
     pub content_path: String,
-    /// Fixity values the inventory records for this content, by algorithm.
-    pub fixity: BTreeMap<String, String>,
+    /// Every fixity value the inventory records for this content, by
+    /// algorithm.
+    pub fixity: BTreeMap<String, Vec<String>>,
     /// The version that last set the file's content, with its `created`,
     /// `user` and `message`.
     pub last_change: VersionInfo,
@@ -71,6 +72,7 @@ pub async fn file_details<B: StorageBackend>(
     version: &VersionNum,
     path: &str,
 ) -> Result<FileDetails, ViewError> {
+    check_path(path)?;
     let state = object.state(version)?;
     let file = state.get(path).ok_or_else(|| ReadError::PathNotFound {
         version: version.to_string(),
@@ -102,21 +104,20 @@ pub async fn file_details<B: StorageBackend>(
     })
 }
 
-/// The fixity values the inventory lists for `content_path`.
+/// Every fixity value the inventory lists for `content_path`.
 fn fixity_values<B: StorageBackend>(
     object: &Object<'_, B>,
     content_path: &str,
-) -> BTreeMap<String, String> {
+) -> BTreeMap<String, Vec<String>> {
     let mut values = BTreeMap::new();
-    let Some(blocks) = &object.inventory().fixity else {
-        return values;
-    };
-    for (algorithm, map) in blocks {
-        let found = map
+    for (algorithm, map) in object.inventory().fixity.iter().flatten() {
+        let found: Vec<String> = map
             .iter()
-            .find(|(_, paths)| paths.iter().any(|p| p == content_path));
-        if let Some((digest, _)) = found {
-            values.insert(algorithm.clone(), digest.clone());
+            .filter(|(_, paths)| paths.iter().any(|p| p == content_path))
+            .map(|(digest, _)| digest.clone())
+            .collect();
+        if !found.is_empty() {
+            values.insert(algorithm.clone(), found);
         }
     }
     values
@@ -156,35 +157,53 @@ pub struct FileHistoryEntry {
 }
 
 /// Every version that added, changed or deleted the logical file `path`,
-/// oldest first. Versions that left it as it was are not listed. Pure.
+/// oldest first. Versions that left it as it was are not listed; digests
+/// are as the inventory writes them, compared without case. Pure.
+///
+/// # Errors
+///
+/// [`ViewError::InvalidRequest`] for a path that breaks the OCFL
+/// logical-path rules.
 pub fn file_history<B: StorageBackend>(
     object: &Object<'_, B>,
     path: &str,
-) -> Vec<FileHistoryEntry> {
+) -> Result<Vec<FileHistoryEntry>, ViewError> {
+    check_path(path)?;
     let inventory = object.inventory();
     let mut history = Vec::new();
-    let mut before: Option<String> = None;
-    for version in inventory.versions.keys() {
-        // Every version the inventory lists resolves.
-        let after = state_digests(Some(inventory), version)
-            .ok()
-            .and_then(|state| state.get(path).cloned());
-        let change = match (&before, &after) {
-            (None, Some(_)) => Some(FileChange::Added),
-            (Some(_), None) => Some(FileChange::Deleted),
-            (Some(old), Some(new)) if old != new => Some(FileChange::Changed),
-            _ => None,
-        };
-        if let (Some(change), Some(info)) = (change, version_info(inventory, version)) {
+    let mut before: Option<&String> = None;
+    for (version, block) in &inventory.versions {
+        let after = digest_at(block, path);
+        if let Some(change) = file_change(before, after) {
             history.push(FileHistoryEntry {
-                version: info,
+                version: block_info(version, block),
                 change,
-                digest: after.clone(),
+                digest: after.cloned(),
             });
         }
         before = after;
     }
-    history
+    Ok(history)
+}
+
+/// What a version did to a path that held `before` and now holds `after`.
+fn file_change(before: Option<&String>, after: Option<&String>) -> Option<FileChange> {
+    match (before, after) {
+        (None, Some(_)) => Some(FileChange::Added),
+        (Some(_), None) => Some(FileChange::Deleted),
+        (Some(old), Some(new)) if !old.eq_ignore_ascii_case(new) => Some(FileChange::Changed),
+        _ => None,
+    }
+}
+
+/// The record of one version block.
+fn block_info(version: &VersionNum, block: &Version) -> VersionInfo {
+    VersionInfo {
+        version: version.clone(),
+        created: block.created.clone(),
+        message: block.message.clone(),
+        user: block.user.clone(),
+    }
 }
 
 /// A file history as a JSON array.

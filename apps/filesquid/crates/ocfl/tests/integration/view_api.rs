@@ -203,7 +203,7 @@ fn a_file_history_lists_the_versions_that_changed_it() {
     ))
     .expect("v4");
     let object = rig.open().expect("open");
-    let history = view::file_history(&object, "docs/a.txt");
+    let history = view::file_history(&object, "docs/a.txt").expect("history");
     let kinds: Vec<(String, FileChange)> = history
         .iter()
         .map(|entry| (entry.version.version.to_string(), entry.change))
@@ -406,7 +406,7 @@ fn view_results_serialize_to_json() {
     assert_eq!(json["entries"][1]["kind"], "file");
     assert_eq!(json["entries"][1]["size"], 9);
     assert!(json["next"].is_string());
-    let history = view::file_history(&object, "docs/a.txt");
+    let history = view::file_history(&object, "docs/a.txt").expect("history");
     assert_eq!(view::history_json(&history)[1]["change"], "changed");
     let report = ready(view::check_fixity(&object, &v("v2"), "readme.md")).expect("fixity");
     assert_eq!(report.to_json()["ok"], true);
@@ -423,4 +423,91 @@ fn objects_written_through_the_view_api_pass_the_community_validator() {
         assert!(verdict.valid, "{}: {}", validator.name(), verdict.output);
         println!("{} view-api object: VALID", validator.name());
     }
+}
+
+#[test]
+fn a_cursor_from_another_listing_is_refused() {
+    let rig = Rig::new(MemoryBackend::new());
+    two_versions(&rig);
+    let object = rig.open().expect("open");
+    let root = ready(view::list_folder(&object, &v("v2"), "", None, 1)).expect("root");
+    let cursor = root.next.expect("cursor");
+    let err = ready(view::list_folder(
+        &object,
+        &v("v2"),
+        "docs",
+        Some(&cursor),
+        1,
+    ))
+    .unwrap_err();
+    assert!(matches!(err, ViewError::InvalidCursor { .. }), "{err:?}");
+    let err = ready(view::list_folder(&object, &v("v1"), "", Some(&cursor), 1)).unwrap_err();
+    assert!(matches!(err, ViewError::InvalidCursor { .. }), "{err:?}");
+}
+
+#[test]
+fn the_root_of_an_empty_version_is_an_empty_page() {
+    let rig = Rig::new(MemoryBackend::new());
+    two_versions(&rig);
+    let m = model(&rig, "writer-a");
+    for path in [
+        "readme.md",
+        "docs/a.txt",
+        "docs/b.txt",
+        "docs/deep/c.txt",
+        "photo.JPG",
+    ] {
+        ready(m.stage_remove(path)).expect("remove");
+    }
+    ready(m.commit(meta(&rig, "empty"))).expect("v3");
+    let object = rig.open().expect("open");
+    let page = ready(view::list_folder(&object, &v("v3"), "", None, 10)).expect("root");
+    assert!(page.entries.is_empty());
+    assert_eq!(page.next, None);
+}
+
+#[test]
+fn reads_and_writes_refuse_invalid_paths_and_ranges() {
+    let rig = Rig::new(MemoryBackend::new());
+    two_versions(&rig);
+    let object = rig.open().expect("open");
+    let err = ready(view::file_details(&object, &v("v2"), "/readme.md")).unwrap_err();
+    assert!(matches!(err, ViewError::InvalidRequest { .. }), "{err:?}");
+    assert!(matches!(
+        view::file_history(&object, "docs/../a.txt"),
+        Err(ViewError::InvalidRequest { .. })
+    ));
+    let err = ready(view::read_range(
+        &object,
+        &v("v2"),
+        "readme.md",
+        u64::MAX,
+        2,
+    ))
+    .unwrap_err();
+    assert!(matches!(err, ViewError::InvalidRequest { .. }), "{err:?}");
+    let m = model(&rig, "writer-a");
+    let err = ready(view::move_path(&m, "docs/", "archive", meta(&rig, "mv"))).unwrap_err();
+    assert!(matches!(err, ViewError::InvalidRequest { .. }), "{err:?}");
+    let err = ready(view::restore(&m, &v("v1"), &["gone.txt"], meta(&rig, "r"))).unwrap_err();
+    assert!(
+        matches!(&err, ViewError::PathNotFound { version, .. } if version == "v1"),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn a_leftover_empty_index_does_not_cause_a_false_conflict() {
+    let rig = Rig::new(MemoryBackend::new());
+    two_versions(&rig);
+    let m = model(&rig, "writer-a");
+    ready(m.stage_bytes("x.txt", b"x")).expect("stage");
+    ready(m.stage_remove("x.txt")).expect("unstage");
+    assert!(staged_keys(&rig, "changes/writer-a")
+        .iter()
+        .any(|k| k.ends_with("index.json")));
+    let files: [(&str, &[u8]); 1] = [("docs/a.txt", b"from b")];
+    commit_files(&model(&rig, "writer-b"), &rig, &files, "b").expect("b commits v3");
+    let receipt = ready(view::add_file(&m, "docs/a.txt", b"from a", meta(&rig, "a")));
+    assert_eq!(receipt.expect("no false conflict").version, v("v4"));
 }
