@@ -1,0 +1,52 @@
+[package]
+name = "filesquid-prov"
+version = "0.1.0"
+edition = "2021"
+description = "FileSquid prov module: W3C PROV-O history of OCFL versions in the JSON-LD profile filesquid-prov/1. Model, deterministic serialization, bounded parsing, builder and in-memory history index; no I/O. Installable without the FileSquid app."
+license = "MIT"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+# No features yet. PV-0.2 adds an optional `ocfl` feature (off by default) for
+# `filesquid-ocfl`. No feature may ever add `filesquid-native` or
+# `filesquid-c2pa` (PROV-S-001).
+
+[dependencies]
+serde = "1"
+serde_json = "1"
+thiserror = "2"
+
+[[test]]
+name = "unit_ids"
+path = "tests/unit/ids.rs"
+
+[[test]]
+name = "unit_builder"
+path = "tests/unit/builder.rs"
+
+[[test]]
+name = "unit_profile"
+path = "tests/unit/profile.rs"
+
+[[test]]
+name = "unit_parse"
+path = "tests/unit/parse.rs"
+
+[[test]]
+name = "unit_index"
+path = "tests/unit/index.rs"
+
+[[test]]
+name = "unit_isolation"
+path = "tests/unit/isolation.rs"
+
+[[test]]
+name = "features"
+path = "tests/features.rs"
+harness = false
+
+[dev-dependencies]
+cucumber = { version = "0.23", features = ["macros", "output-junit"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

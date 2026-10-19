@@ -1452,6 +1452,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "filesquid-prov"
+version = "0.1.0"
+dependencies = [
+ "cucumber",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "filesquid-server"
 version = "0.1.0"
 dependencies = [
