@@ -200,7 +200,7 @@ cargo clippy -p filesquid-ocfl --all-targets --locked -- -D warnings
 cargo build -p filesquid-ocfl --locked --no-default-features --target wasm32-unknown-unknown
 ```
 
-The `wasm32` build needs `rustup target add wasm32-unknown-unknown` once. `cargo test` also runs that build (the "Engine builds for the browser" feature scenario), so the local pre-commit gate fails if the crate stops building for the browser.
+The `wasm32` build needs the `wasm32-unknown-unknown` target, which the workspace's pinned `rust-toolchain.toml` installs (run `rustup target add wasm32-unknown-unknown` only when rustup bypasses that file, for example under a `RUSTUP_TOOLCHAIN` override). `cargo test` also runs that build (the "Engine builds for the browser" feature scenario), so the local pre-commit gate fails if the crate stops building for the browser.
 
 ## References
 

@@ -9,11 +9,13 @@ No PRD or SRS requirement. `apps/filesquid/rust-toolchain.toml` named the moving
 | File | Change |
 |---|---|
 | [`apps/filesquid/rust-toolchain.toml`](../../apps/filesquid/rust-toolchain.toml) | `channel = "1.99.1"` instead of `"stable"`. Components `rustfmt` and `clippy` and the `wasm32-unknown-unknown` target are unchanged. |
-| [README](../../README.md#native-prerequisites-platform-agnostic) | Native prerequisites name rustup 1.28 or newer and the pinned 1.99.1, and say the toolchain file installs `rustfmt`, `clippy` and the wasm32 target itself (the old text asked for a manual `rustup target add`). New **Bumping the Rust toolchain** note: change the pin in its own `build/` pull request, fix the new lints there, run `FULL=1 bash scripts/pre-commit.sh`. |
+| [README](../../README.md#native-prerequisites-platform-agnostic) | Native prerequisites name rustup 1.28.1 or newer (1.28.0 does not auto-install a toolchain) and the pinned 1.99.1, and say the toolchain file installs `rustfmt`, `clippy` and the wasm32 target itself (the old text asked for a manual `rustup target add`). The C2PA wasm32 paragraph now gives `rustup target add` only as the fallback when rustup bypasses the toolchain file. New **Bumping the Rust toolchain** note: change the pin in its own `build/` pull request, fix the new lints there, run `FULL=1 bash scripts/pre-commit.sh`. |
 | [ADR 013](../architecture/013-cargo-svelte-workspaces.md) | Dated amendment (status and the **Versions** paragraph): "current stable Rust" is now an exact stable release pinned in `rust-toolchain.toml`. The decision text is not rewritten. |
 | [ADR 019](../architecture/019-coding-style-and-lint.md) | Dated amendment: "stable Rust" means the pinned release; lint commands unchanged. |
 | [ADR 039](../architecture/039-cargo-hakari-workspace-hack.md) | Dated amendment: its Context records the toolchain as measured on 2026-10-18 (channel `stable`); the pin now replaces the channel. Decision unchanged. |
 | [SRS](../srs.md#current-verified-stack-scaffold) | Current verified stack: Rust 1.99.1 pinned (was "Rust stable 1.98.1, channel `stable`"). |
+| [C2PA README](../../apps/filesquid/crates/c2pa/README.md), [OCFL README](../../apps/filesquid/crates/ocfl/README.md) | Same: the pinned toolchain file installs the wasm32 target; `rustup target add` is the fallback when rustup bypasses the file. Documentation only. |
+| [Rust briefing](../references/rust-language-dev-briefing.md) | Everyday commands run `rustup toolchain install` from `apps/filesquid/` (the pinned release) instead of `rustup toolchain install stable`. |
 | [init-rust-js skill](../../.agents/skills/init-rust-js/SKILL-init-rust-js.md) | New workspaces pin an exact stable release, not `channel = "stable"`. |
 
 Searched and left unchanged:
