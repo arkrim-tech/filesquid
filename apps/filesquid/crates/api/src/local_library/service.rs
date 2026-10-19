@@ -1,0 +1,379 @@
+//! [`LocalLibraryService`]: runs the local library operations for every host and journals
+//! them (ADR 033, `logging-enforce.md`).
+//!
+//! Create, copy and rebuild are domain operations: their outcome, succeeded or failed, is
+//! journaled once through the host's bounded journal queue (producers wait; nothing is
+//! dropped). Open and the candidate query are reads: only their failures are journaled. The
+//! version-inventory repair journals through the injected [`RepairLedger`]: the owner's
+//! consent before anything is written, then each object's outcome together with its receipt
+//! in one transaction. A refused repair command, and any outcome the ledger cannot take, goes
+//! through the bounded queue instead, so no refusal or outcome is left unjournaled.
+
+use super::candidates::candidates;
+use super::error::LocalLibraryError;
+use super::ledger::{RepairLedger, RepairRecord};
+use super::rebuild::{rebuild, RebuildReport};
+use super::repair::{
+    locate, recorded, repair_object, ObjectRefusal, ObjectRepair, RepairAnswer, RepairCandidates,
+    RepairRequest, RepairResult, REPAIR_OPERATION,
+};
+use super::root::{create_root, open_root, RootSummary};
+use super::snapshot::{copy_snapshot, CopyReport};
+use super::LOG_TARGET;
+use crate::auth::Principal;
+use crate::journal::{now_ms, JournalEntry, Level, Outcome};
+use crate::journal_writer::JournalSender;
+use crate::library::mint_uuid_v4;
+use crate::registry::Clock;
+use filesquid_core::LibraryId;
+use filesquid_ocfl::storage::StorageBackend;
+use filesquid_ocfl::write::VersionReservations;
+use filesquid_ocfl::RepairReceipt;
+use std::sync::Arc;
+
+/// Journal operation of creating a library's storage root.
+const CREATE_OPERATION: &str = "library.root.create";
+/// Journal operation of opening a storage root (failures only).
+const OPEN_OPERATION: &str = "library.root.open";
+/// Journal operation of copying a completed snapshot.
+const COPY_OPERATION: &str = "library.snapshot.copy";
+/// Journal operation of rebuilding from files.
+const REBUILD_OPERATION: &str = "library.rebuild";
+/// Journal operation of the repair candidate query (failures only).
+const CANDIDATES_OPERATION: &str = "library.repair_candidates";
+
+/// Runs the local library operations of [`crate::local_library`] for every host.
+#[derive(Clone)]
+pub struct LocalLibraryService {
+    journal: JournalSender,
+    ledger: Arc<dyn RepairLedger>,
+    clock: Clock,
+}
+
+impl std::fmt::Debug for LocalLibraryService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LocalLibraryService")
+            .finish_non_exhaustive()
+    }
+}
+
+impl LocalLibraryService {
+    /// A service that journals through `journal`, the host's bounded journal queue, and
+    /// records repairs in `ledger`.
+    pub fn new(journal: JournalSender, ledger: Arc<dyn RepairLedger>) -> Self {
+        Self {
+            journal,
+            ledger,
+            clock: Arc::new(now_ms),
+        }
+    }
+
+    /// Use `clock` (Unix milliseconds, UTC) for journal times.
+    pub fn with_clock(mut self, clock: Clock) -> Self {
+        self.clock = clock;
+        self
+    }
+
+    /// Make `root`, an empty folder the owner chose, the OCFL 1.1 storage root of
+    /// `library_id`, for `actor`. Needs no account or connection.
+    ///
+    /// # Errors
+    ///
+    /// `root_not_empty` (nothing written), the open errors, or `unavailable`.
+    pub async fn create_root<B: StorageBackend>(
+        &self,
+        actor: &str,
+        library_id: &LibraryId,
+        root: &B,
+    ) -> Result<RootSummary, LocalLibraryError> {
+        let result = create_root(root).await;
+        self.journal_outcome(actor, CREATE_OPERATION, library_id, &result);
+        result
+    }
+
+    /// Open the storage root of `library_id` for `actor`. Writes and repairs nothing; only a
+    /// failure is journaled.
+    ///
+    /// # Errors
+    ///
+    /// `not_a_storage_root`, `git_in_root` or `unavailable`.
+    pub async fn open_root<B: StorageBackend>(
+        &self,
+        actor: &str,
+        library_id: &LibraryId,
+        root: &B,
+    ) -> Result<RootSummary, LocalLibraryError> {
+        let result = open_root(root).await;
+        self.journal_failure(actor, OPEN_OPERATION, library_id, &result);
+        result
+    }
+
+    /// Copy the completed snapshot of `source` into the empty `dest` for `actor`, and
+    /// validate the copy. The source is only read.
+    ///
+    /// # Errors
+    ///
+    /// `destination_not_empty`, `snapshot_incomplete` (retryable), `snapshot_unreadable`,
+    /// the open errors of the source, or `unavailable`.
+    pub async fn copy_snapshot<S: StorageBackend, D: StorageBackend>(
+        &self,
+        actor: &str,
+        library_id: &LibraryId,
+        source: &S,
+        dest: &D,
+    ) -> Result<CopyReport, LocalLibraryError> {
+        let result = copy_snapshot(source, dest).await;
+        self.journal_outcome(actor, COPY_OPERATION, library_id, &result);
+        result
+    }
+
+    /// Rebuild what `root` holds from its OCFL files alone, for `actor`. Findings are
+    /// reported, never repaired; nothing is written.
+    ///
+    /// # Errors
+    ///
+    /// The open errors of the storage root, or `unavailable`.
+    pub async fn rebuild<B: StorageBackend>(
+        &self,
+        actor: &str,
+        library_id: &LibraryId,
+        root: &B,
+    ) -> Result<RebuildReport, LocalLibraryError> {
+        let result = rebuild(root).await;
+        self.journal_outcome(actor, REBUILD_OPERATION, library_id, &result);
+        result
+    }
+
+    /// The objects of `root` whose committed head lacks its version inventory: what the
+    /// UI-1.1 dialog may offer to repair, for `actor`. Writes and repairs nothing; only a
+    /// failure is journaled.
+    ///
+    /// # Errors
+    ///
+    /// The open errors of the storage root, or `unavailable`.
+    pub async fn repair_candidates<B: StorageBackend>(
+        &self,
+        actor: &str,
+        library_id: &LibraryId,
+        root: &B,
+    ) -> Result<RepairCandidates, LocalLibraryError> {
+        let result = candidates(root).await;
+        self.journal_failure(actor, CANDIDATES_OPERATION, library_id, &result);
+        result
+    }
+
+    /// Repair the version inventory of the objects `request` names in `root`, for `caller`,
+    /// after the owner's consent (API-S-023). Each object gets its own outcome; a refused
+    /// object does not stop the others.
+    ///
+    /// # Errors
+    ///
+    /// `forbidden` for anyone but the desktop owner; `invalid_objects`, `consent_required`
+    /// or `consent_mismatch`; the open errors of the storage root; `unavailable` when the
+    /// consent cannot be recorded. Nothing is written on any of them, and each is journaled.
+    pub async fn repair_version_inventory<B: StorageBackend, R: VersionReservations>(
+        &self,
+        caller: &Principal,
+        request: RepairRequest,
+        root: &B,
+        reservations: &R,
+    ) -> Result<RepairAnswer, LocalLibraryError> {
+        let library_id = request.library_id.clone();
+        let result = self.run_repair(caller, request, root, reservations).await;
+        self.journal_failure(caller.actor(), REPAIR_OPERATION, &library_id, &result);
+        result
+    }
+
+    /// Authorise, check, locate, record the consent, then repair each object in order.
+    async fn run_repair<B: StorageBackend, R: VersionReservations>(
+        &self,
+        caller: &Principal,
+        request: RepairRequest,
+        root: &B,
+        reservations: &R,
+    ) -> Result<RepairAnswer, LocalLibraryError> {
+        authorise_repair(caller)?;
+        request.validate()?;
+        let located = locate(root, &request.object_ids).await?;
+        let actor = caller.actor();
+        let holder = format!("filesquid-repair-{}", holder_id()?);
+        self.record_consent(actor, &request)?;
+        let mut objects = Vec::with_capacity(request.object_ids.len());
+        for object_id in &request.object_ids {
+            let outcome = match located.get(object_id) {
+                Some(found) => repair_object(root, reservations, &holder, object_id, found).await,
+                None => Err(ObjectRefusal::fixed("object_not_found")),
+            };
+            let target = Target {
+                actor,
+                library_id: &request.library_id,
+                object_id,
+            };
+            objects.push(self.record_outcome(&target, outcome));
+        }
+        Ok(RepairAnswer {
+            library_id: request.library_id,
+            objects,
+        })
+    }
+
+    /// Durably record the consent entry before any repair.
+    fn record_consent(
+        &self,
+        actor: &str,
+        request: &RepairRequest,
+    ) -> Result<(), LocalLibraryError> {
+        let entry = request
+            .object_ids
+            .iter()
+            .fold(
+                JournalEntry::new(REPAIR_OPERATION, Outcome::Started)
+                    .actor(actor)
+                    .target(request.library_id.as_str()),
+                |entry, id| entry.target(id.as_str()),
+            )
+            .at_ms((self.clock)())
+            .redacted();
+        self.ledger.record_consent(entry).map_err(|err| {
+            tracing::info!(target: LOG_TARGET, error = %err, "repair consent not recorded");
+            LocalLibraryError::Unavailable
+        })
+    }
+
+    /// Record one object's outcome entry with its receipt in the ledger, falling back to the
+    /// bounded journal queue when the ledger cannot take it, and answer the outcome.
+    fn record_outcome(
+        &self,
+        target: &Target<'_>,
+        outcome: Result<RepairReceipt, ObjectRefusal>,
+    ) -> ObjectRepair {
+        let version = match &outcome {
+            Ok(receipt) => Some(receipt.version.to_string()),
+            Err(refusal) => refusal.version.clone(),
+        };
+        let entry = outcome_entry(target, version.as_deref(), &outcome).at_ms((self.clock)());
+        let record = RepairRecord {
+            journal: entry.clone().redacted(),
+            receipt: outcome.as_ref().ok().map(recorded),
+        };
+        if let Err(err) = self.ledger.record_outcome(record) {
+            tracing::warn!(target: LOG_TARGET, error = %err, "repair outcome sent to the journal queue");
+            self.journal.send(entry);
+        }
+        object_answer(target.object_id, version, outcome)
+    }
+
+    /// Journal `result` of a domain operation, succeeded or failed.
+    fn journal_outcome<T>(
+        &self,
+        actor: &str,
+        operation: &'static str,
+        library_id: &LibraryId,
+        result: &Result<T, LocalLibraryError>,
+    ) {
+        let entry = match result {
+            Ok(_) => JournalEntry::new(operation, Outcome::Succeeded),
+            Err(err) => failure_entry(operation, err),
+        };
+        self.journal.send(
+            entry
+                .actor(actor)
+                .target(library_id.as_str())
+                .at_ms((self.clock)()),
+        );
+    }
+
+    /// Journal `result` only when it failed.
+    fn journal_failure<T>(
+        &self,
+        actor: &str,
+        operation: &'static str,
+        library_id: &LibraryId,
+        result: &Result<T, LocalLibraryError>,
+    ) {
+        if result.is_err() {
+            self.journal_outcome(actor, operation, library_id, result);
+        }
+    }
+}
+
+/// Who and what one outcome entry is about.
+struct Target<'a> {
+    actor: &'a str,
+    library_id: &'a LibraryId,
+    object_id: &'a str,
+}
+
+/// Only the desktop owner may repair. A server library owner becomes a [`Principal`] with
+/// server accounts (API-F1.9); adding it makes this match fail to compile until its
+/// permission is decided. The server administrator does not own libraries and is refused.
+fn authorise_repair(caller: &Principal) -> Result<(), LocalLibraryError> {
+    match caller {
+        Principal::Owner => Ok(()),
+        Principal::Administrator => Err(LocalLibraryError::Forbidden),
+    }
+}
+
+/// A fresh opaque reservation-holder identifier for one repair command.
+fn holder_id() -> Result<String, LocalLibraryError> {
+    mint_uuid_v4().map_err(|_| LocalLibraryError::Unavailable)
+}
+
+/// The failed entry of `operation`, at warn level for a refusal and error level for a
+/// fault.
+fn failure_entry(operation: &'static str, err: &LocalLibraryError) -> JournalEntry {
+    let level = match err {
+        LocalLibraryError::Unavailable | LocalLibraryError::Internal => Level::Error,
+        _ => Level::Warn,
+    };
+    tracing::info!(target: LOG_TARGET, operation, error_code = err.error_code(), "refused");
+    JournalEntry::new(operation, Outcome::Failed)
+        .error_code(err.error_code())
+        .level(level)
+}
+
+/// The outcome entry of one object: library, object and version as targets, and the
+/// refusal code when refused.
+fn outcome_entry(
+    target: &Target<'_>,
+    version: Option<&str>,
+    outcome: &Result<RepairReceipt, ObjectRefusal>,
+) -> JournalEntry {
+    let entry = match outcome {
+        Ok(_) => JournalEntry::new(REPAIR_OPERATION, Outcome::Succeeded),
+        Err(refusal) => JournalEntry::new(REPAIR_OPERATION, Outcome::Failed)
+            .error_code(refusal.code)
+            .level(Level::Warn),
+    };
+    let entry = entry
+        .actor(target.actor)
+        .target(target.library_id.as_str())
+        .target(target.object_id);
+    match version {
+        Some(version) => entry.target(version),
+        None => entry,
+    }
+}
+
+/// The answer for one object.
+fn object_answer(
+    object_id: &str,
+    version: Option<String>,
+    outcome: Result<RepairReceipt, ObjectRefusal>,
+) -> ObjectRepair {
+    let (result, error_code, retryable) = match outcome {
+        Ok(_) => (RepairResult::Repaired, None, false),
+        Err(refusal) => (
+            RepairResult::Refused,
+            Some(refusal.code.to_string()),
+            refusal.retryable,
+        ),
+    };
+    ObjectRepair {
+        object_id: object_id.to_string(),
+        version,
+        result,
+        error_code,
+        retryable,
+    }
+}

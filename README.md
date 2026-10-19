@@ -256,6 +256,13 @@ cd apps/filesquid
 cargo test -p filesquid-api --locked --test unit_library --test unit_library_queries --test features
 ```
 
+The local library operations (CL-1.1: create and open a library on an owner-chosen OCFL storage root, copy a completed snapshot, rebuild from files) and the owner-consented version-inventory repair with its candidate query (API-S-023) run against an in-memory OCFL storage root, so they need no folder or database:
+
+```sh
+cd apps/filesquid
+cargo test -p filesquid-api --locked --test unit_local_library --test unit_version_inventory_repair --test features
+```
+
 The replica (API-S-024: the permission-aware cache identity, visible coverage with `not_cached` and `evicted` recovery states, and the ledger of pending changes that become canonical only after a fenced head publication) is pure computation over an injected cache, so it needs no database or browser:
 
 ```sh
