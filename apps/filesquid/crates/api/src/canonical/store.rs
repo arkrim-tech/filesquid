@@ -165,11 +165,12 @@ fn published(result: Result<CommitReceipt, ChangeError>) -> Result<CommitReceipt
 /// name and the media type), as a version of the file object `model` writes (one OCFL object
 /// per file, ADR 023), with `meta`. The bytes are stored as `original/<file-uuid>.<ext>` and,
 /// in the same version, the metadata record `original/<file-uuid>.metadata.md` holds
-/// `record`.
+/// `record`. Committing the same original and record again writes no version and answers
+/// `None`, as [`commit_snapshot`] does for an unchanged state.
 ///
 /// # Errors
-/// As [`commit_snapshot`], and [`CanonicalError::InvalidIdentifier`] for a file identifier or
-/// extension that cannot name a path segment.
+/// As [`commit_snapshot`], and [`CanonicalError::InvalidIdentifier`] for a file identifier
+/// that cannot name a path segment.
 pub async fn commit_file_original<B, R, S>(
     model: &ChangeModel<'_, B, R, S>,
     transform: &dyn ProfileTransform,
@@ -177,13 +178,13 @@ pub async fn commit_file_original<B, R, S>(
     record: &OriginalRecord,
     bytes: &[u8],
     meta: VersionMeta,
-) -> Result<CommitReceipt, CanonicalError>
+) -> Result<Option<CommitReceipt>, CanonicalError>
 where
     B: StorageBackend,
     R: VersionReservations,
     S: StorageBackend,
 {
-    let path = original_path(&stored_name(file_id, record.extension.as_deref())?)?;
+    let path = original_path(&stored_name(file_id, record.extension())?)?;
     let companion = companion_path(file_id)?;
     let text = encode_companion(record)?;
     model.reset().await?;
@@ -191,13 +192,16 @@ where
     model.stage_bytes(&path, &sealed).await?;
     let sealed = transform.seal(&companion, text)?;
     model.stage_bytes(&companion, &sealed).await?;
-    published(model.commit(meta).await)
+    match model.commit(meta).await {
+        Err(ChangeError::NothingToCommit) => Ok(None),
+        result => published(result).map(Some),
+    }
 }
 
 /// The original of `file_id` at the head of its file object in the storage root `backend`,
 /// with its metadata record, or `None` when the object does not exist yet. The record's
-/// original name is the name to display and to export under; the stored name is a storage
-/// detail.
+/// original name is the name to display and to name an owner download under; the stored
+/// name is a storage detail.
 ///
 /// # Errors
 /// [`CanonicalError::Decode`] for a metadata record that cannot be read back, or a head
@@ -220,7 +224,7 @@ pub async fn read_file_original<B: StorageBackend>(
         .ok_or_else(|| not_one_original(&root))?;
     let bytes = read_entity(&object, backend, file).await?;
     let record = decode_companion(&companion, &transform.open(&companion, bytes)?)?;
-    let path = original_path(&stored_name(file_id, record.extension.as_deref())?)?;
+    let path = original_path(&stored_name(file_id, record.extension())?)?;
     if !state.paths().any(|p| p == path) {
         return Err(not_one_original(&root));
     }

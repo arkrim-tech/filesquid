@@ -171,38 +171,46 @@ test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 The original is stored as `original/<file-uuid>.<ext>` and the metadata record `original/<file-uuid>.metadata.md` holds the owner's original name, the extension and the media type; `read_file_original` reads it back. A test was written first for a name with spaces, an accent, an em dash and CJK characters; it failed to compile (`commit_file_original` took no file identifier) until the metadata record was added. The stored name was first a sanitized stem plus the identifier; the owner then ruled that no part of the original name may appear in the path, so it is the identifier and extension only. The record was then renamed from `<file-uuid>.<ext>.metadata.md` to `<file-uuid>.metadata.md` and gained `extension` and `media_type`. `cargo test -p filesquid-api --locked --test unit_canonical`, from `apps/filesquid/`:
 
 ```text
-    Finished `test` profile [unoptimized] target(s) in 0.24s
+    Finished `test` profile [unoptimized] target(s) in 5.29s
      Running tests/unit/canonical.rs (/home/user/.cargo-target-shared/debug/deps/unit_canonical-3d451467f1cf537e)
 running 20 tests
-test a_file_original_is_its_own_object_with_its_metadata_record ... ok
 test a_head_without_its_version_inventory_is_refused_and_nothing_is_written ... ok
 test a_committed_snapshot_reads_back_entity_for_entity ... ok
+test a_file_original_is_its_own_object_with_its_metadata_record ... ok
 test a_storage_root_is_created_only_in_an_empty_folder ... ok
 test a_metadata_record_without_its_original_is_refused_on_read ... ok
-test an_entity_that_does_not_match_its_path_is_refused_on_read ... ok
-test an_entity_whose_identifier_cannot_name_a_path_is_a_decode_error ... ok
-test an_original_name_or_media_type_that_is_not_valid_is_refused ... ok
 test a_stale_draft_left_in_staging_is_never_published ... ok
+test an_entity_whose_identifier_cannot_name_a_path_is_a_decode_error ... ok
+test an_entity_that_does_not_match_its_path_is_refused_on_read ... ok
+test an_original_name_or_media_type_that_is_not_valid_is_refused ... ok
 test an_unreadable_operation_message_is_refused_on_read ... ok
 test canonical_failures_keep_their_meaning_at_the_catalog_port ... ok
 test each_change_touches_the_library_and_its_own_entity ... ok
-test an_owner_name_round_trips_through_its_metadata_record ... ok
 test every_entity_has_one_logical_path_and_back ... ok
 test identifiers_that_cannot_name_a_path_segment_are_refused ... ok
 test the_metadata_record_is_readable_front_matter ... ok
 test the_operation_message_carries_its_receipt ... ok
 test the_stored_name_is_the_file_identifier_and_its_extension_only ... ok
+test an_owner_name_round_trips_through_its_metadata_record ... ok
 test a_later_version_changes_only_the_entities_it_touches ... ok
 test an_entity_file_larger_than_the_bound_is_refused_before_it_is_read ... ok
 test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
 ```
+
+## Cubic round on 05b5afd
+
+- The metadata record's fields are private and built only by `OriginalRecord::new`, so a record that could not be read back is never committed (P1).
+- `stored_name` refuses an extension that is not 1 to 16 ASCII letters or digits, so an original can never take the record's path (P2).
+- Committing the same original and record again writes no version and answers `None`, as snapshot commits do (P2).
+- Download and export names follow PRD F-046: owner downloads and owner archival/original exports use the original name; sharing, publication and privacy-on exports keep the FileId-plus-extension default (P2).
+- A media type's restricted names must start with a letter or digit (P3).
 
 ## Owner decisions and follow-ups
 
 - **Layout:** ADR 010 left the local layout "to be specified when the first library writer is built". This task specifies it in API-S-026 and records an amendment note in ADR 010 for the owner to confirm in this pull request.
 - **Encrypted profile:** no ADR 009 cipher exists yet, so only the owner-readable identity transform is implemented; the encrypted profile uses the same `ProfileTransform` seam when the cipher lands. The owner accepted on 2026-10-19 that the encrypted profile's path mapping is deferred until the ADR 009 cipher lands.
 - **No-op commands:** the owner decided on 2026-10-19 that a command that changes nothing writes no OCFL version. Its receipt and journal entry stay in the catalog as API-S-019 requires, so replay stays idempotent. Losing that receipt after the catalog is lost is accepted, not a gap.
-- **Original file names:** the owner decided on 2026-10-19 to store the original under its universally unique file identifier and original extension (`<file-uuid>.<ext>`, no other part of the owner's name in the path), with the metadata record `<file-uuid>.metadata.md` beside it holding the original file name, extension and media type. The stored name is a storage detail: people always see the original name and every owner download or export uses it; sharing and publication keep the identifier-and-extension name by default. `read_file_original` answers it for the display-name and download routes of API-F1.3.
+- **Original file names:** the owner decided on 2026-10-19 to store the original under its universally unique file identifier and original extension (`<file-uuid>.<ext>`, no other part of the owner's name in the path), with the metadata record `<file-uuid>.metadata.md` beside it holding the original file name, extension and media type. The stored name is a storage detail: people always see the original name and an owner download or owner archival/original export names the file by it; sharing, publication and privacy-on exports follow the F-046 outgoing filename policy (FileId plus extension by default). `read_file_original` answers it for the display-name and download routes of API-F1.3.
 - **Crash injection:** crashes are simulated by a probe that stops the commit at the exact point a crash would, then the catalog files on disk are reopened as a restarted process would; no process is killed.
 
 ## Mocked Environment Variables

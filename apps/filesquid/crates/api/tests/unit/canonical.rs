@@ -5,9 +5,9 @@
 use filesquid_api::canonical::{
     commit_file_original, commit_snapshot, create_storage_root, file_object_id, file_object_root,
     operation_message, parse_operation_message, read_file_original, read_snapshot,
-    snapshot_object_id, touched, CanonicalError, FileOriginal, LibraryHead, OperationRecord,
-    OriginalRecord, OwnerReadable, SnapshotDelta, SnapshotEntity, SnapshotFile, SnapshotKey,
-    VirtualEntry, SNAPSHOT_ROOT,
+    snapshot_object_id, touched, CanonicalError, LibraryHead, OperationRecord, OriginalRecord,
+    OwnerReadable, SnapshotDelta, SnapshotEntity, SnapshotFile, SnapshotKey, VirtualEntry,
+    SNAPSHOT_ROOT,
 };
 use filesquid_api::library::{CatalogChange, CatalogError, FileState, LibraryRecord};
 use filesquid_core::{
@@ -355,7 +355,7 @@ fn commit_original(
     original_name: &str,
     media_type: &str,
     op: &str,
-) -> Result<filesquid_ocfl::write::CommitReceipt, CanonicalError> {
+) -> Result<Option<filesquid_ocfl::write::CommitReceipt>, CanonicalError> {
     let described = OriginalRecord::new(original_name, media_type)?;
     let root = file_object_root(file).unwrap();
     let model = rig.model(&root, &file_object_id(file));
@@ -380,7 +380,9 @@ fn head_paths(rig: &Rig, file: &FileId) -> Vec<String> {
 fn a_file_original_is_its_own_object_with_its_metadata_record() {
     let rig = Rig::new();
     let file = FileId::new(FILE).unwrap();
-    let receipt = commit_original(&rig, &file, "IMG_0001.JPG", "image/jpeg", "op-9").unwrap();
+    let receipt = commit_original(&rig, &file, "IMG_0001.JPG", "image/jpeg", "op-9")
+        .unwrap()
+        .expect("a new version");
     assert_eq!(receipt.object_id, format!("urn:uuid:{FILE}"));
     assert_eq!(
         head_paths(&rig, &file),
@@ -389,16 +391,17 @@ fn a_file_original_is_its_own_object_with_its_metadata_record() {
             format!("original/{FILE}.metadata.md")
         ]
     );
-    assert_eq!(
-        ready(read_file_original(&rig.root, &OwnerReadable, &file)).unwrap(),
-        Some(FileOriginal {
-            path: format!("original/{FILE}.JPG"),
-            record: OriginalRecord {
-                original_name: "IMG_0001.JPG".into(),
-                extension: Some("JPG".into()),
-                media_type: "image/jpeg".into(),
-            },
-        })
+    let read = ready(read_file_original(&rig.root, &OwnerReadable, &file))
+        .unwrap()
+        .expect("original");
+    assert_eq!(read.path, format!("original/{FILE}.JPG"));
+    assert_eq!(read.record.original_name(), "IMG_0001.JPG");
+    assert_eq!(read.record.extension(), Some("JPG"));
+    assert_eq!(read.record.media_type(), "image/jpeg");
+    let again = commit_original(&rig, &file, "IMG_0001.JPG", "image/jpeg", "op-10").unwrap();
+    assert!(
+        again.is_none(),
+        "the same original and record write no version"
     );
 }
 
@@ -412,7 +415,7 @@ fn an_owner_name_round_trips_through_its_metadata_record() {
         .unwrap()
         .expect("original");
     assert_eq!(read.path, format!("original/{FILE}.JPEG"));
-    assert_eq!(read.record.original_name, original);
+    assert_eq!(read.record.original_name(), original);
     assert!(head_paths(&rig, &file).iter().all(|p| !p.contains("Caf")));
 }
 
@@ -442,13 +445,20 @@ fn the_stored_name_is_the_file_identifier_and_its_extension_only() {
     let file = FileId::new(FILE).unwrap();
     let name = |n: &str| {
         let record = OriginalRecord::new(n, "application/octet-stream").unwrap();
-        filesquid_api::canonical::original::stored_name(&file, record.extension.as_deref()).unwrap()
+        filesquid_api::canonical::original::stored_name(&file, record.extension()).unwrap()
     };
     assert_eq!(name("写真.PNG"), format!("{FILE}.PNG"));
     assert_eq!(name("notes.tar.gz"), format!("{FILE}.gz"));
     assert_eq!(name("Holiday 2023.jpg"), format!("{FILE}.jpg"));
     for no_extension in ["写真", ".bashrc", "...", "report.v2 draft", "photo.jp g"] {
         assert_eq!(name(no_extension), FILE, "{no_extension:?}");
+    }
+    let stored = |ext| filesquid_api::canonical::original::stored_name(&file, Some(ext));
+    for bad in ["metadata.md", "", "j pg", "abcdefghijklmnopq"] {
+        assert!(
+            matches!(stored(bad), Err(CanonicalError::InvalidIdentifier(_))),
+            "{bad:?}"
+        );
     }
 }
 
@@ -470,6 +480,8 @@ fn an_original_name_or_media_type_that_is_not_valid_is_refused() {
         "image/",
         "/jpeg",
         "image/jp eg",
+        "+image/jpeg",
+        "image/.jpeg",
         "image/jpeg; q=1",
     ] {
         let refused = commit_original(&rig, &file, "a.jpg", bad, "op-11");

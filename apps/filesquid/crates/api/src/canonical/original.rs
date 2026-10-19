@@ -5,8 +5,10 @@
 //! owner's file name appears in the path, so sharing and publication stay private by default.
 //! That name is a storage detail only. Beside it, `original/<file-uuid>.metadata.md` is the
 //! file's metadata record: it holds the owner's original file name exactly as given, the
-//! extension and the media type, so every display name and every owner download or export
-//! uses the original name, and a library copied with ordinary tools still shows it.
+//! extension and the media type, so every display name, owner download and owner
+//! archival/original export uses the original name (sharing, publication and privacy-on
+//! exports follow the F-046 outgoing filename policy), and a library copied with ordinary
+//! tools still shows it.
 //!
 //! The record is Markdown with YAML front matter:
 //!
@@ -44,14 +46,15 @@ pub const MAX_MEDIA_TYPE_BYTES: usize = 255;
 const MAX_EXTENSION_BYTES: usize = 16;
 
 /// What a file's metadata record describes: the owner's name, its extension and the format.
+/// Built only by [`OriginalRecord::new`], so every record that is committed can be read back.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OriginalRecord {
-    /// The owner's file name exactly as given; the name to show and to export under.
-    pub original_name: String,
+    /// The owner's file name exactly as given.
+    original_name: String,
     /// The extension the stored name keeps, or `None` when the original name has none.
-    pub extension: Option<String>,
-    /// The file's format as a media type, such as `image/jpeg`.
-    pub media_type: String,
+    extension: Option<String>,
+    /// The file's format as a media type.
+    media_type: String,
 }
 
 impl OriginalRecord {
@@ -70,6 +73,21 @@ impl OriginalRecord {
             media_type: media_type.to_string(),
         })
     }
+
+    /// The owner's file name exactly as given; the name to show people.
+    pub fn original_name(&self) -> &str {
+        &self.original_name
+    }
+
+    /// The extension the stored name keeps, or `None` when the original name has none.
+    pub fn extension(&self) -> Option<&str> {
+        self.extension.as_deref()
+    }
+
+    /// The file's format as a media type, such as `image/jpeg`.
+    pub fn media_type(&self) -> &str {
+        &self.media_type
+    }
 }
 
 /// A file object's original as stored: its logical path and its metadata record.
@@ -83,11 +101,16 @@ pub struct FileOriginal {
 
 /// The universally unique name the original of `file_id` is stored under: the file
 /// identifier, then `.` and `extension` when there is one. Nothing of the owner's name but the
-/// extension is kept.
+/// extension is kept, and an extension never holds a dot, so the name cannot be the metadata
+/// record's.
 ///
 /// # Errors
-/// [`CanonicalError::InvalidIdentifier`] when the name cannot be one path segment.
+/// [`CanonicalError::InvalidIdentifier`] for an extension that is not 1 to 16 ASCII letters or
+/// digits, or a name that cannot be one path segment.
 pub fn stored_name(file_id: &FileId, extension: Option<&str>) -> Result<String, CanonicalError> {
+    if !extension.is_none_or(is_extension) {
+        return Err(CanonicalError::InvalidIdentifier("not an extension".into()));
+    }
     let name = match extension {
         Some(extension) => format!("{}.{extension}", file_id.as_str()),
         None => file_id.as_str().to_string(),
@@ -177,24 +200,27 @@ fn check_media_type(media_type: &str) -> Result<(), CanonicalError> {
         .ok_or_else(|| CanonicalError::InvalidIdentifier("not a media type".into()))
 }
 
-/// Whether `part` is an RFC 6838 restricted name: 1 to 127 of its allowed characters.
+/// Whether `part` is an RFC 6838 restricted name: 1 to 127 of its allowed characters, the
+/// first a letter or digit.
 fn media_name(part: &str) -> bool {
     let allowed = |c: char| {
         c.is_ascii_alphanumeric()
             || matches!(c, '!' | '#' | '$' | '&' | '^' | '_' | '.' | '+' | '-')
     };
-    (1..=127).contains(&part.len()) && part.chars().all(allowed)
+    (1..=127).contains(&part.len())
+        && part.starts_with(|c: char| c.is_ascii_alphanumeric())
+        && part.chars().all(allowed)
 }
 
 /// The extension of `name`, when it has one of 1 to 16 ASCII letters or digits after a dot
 /// that does not start the name.
 fn extension(name: &str) -> Option<&str> {
     name.rsplit_once('.')
-        .filter(|(stem, ext)| {
-            !stem.is_empty()
-                && !ext.is_empty()
-                && ext.len() <= MAX_EXTENSION_BYTES
-                && ext.chars().all(|c| c.is_ascii_alphanumeric())
-        })
+        .filter(|(stem, ext)| !stem.is_empty() && is_extension(ext))
         .map(|(_, ext)| ext)
+}
+
+/// Whether `ext` is 1 to 16 ASCII letters or digits.
+fn is_extension(ext: &str) -> bool {
+    (1..=MAX_EXTENSION_BYTES).contains(&ext.len()) && ext.chars().all(|c| c.is_ascii_alphanumeric())
 }
