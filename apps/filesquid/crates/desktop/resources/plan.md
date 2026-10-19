@@ -104,7 +104,7 @@ Logs: stdout JSON ([DE-S-003](./srs.md)). Default: checkpoint-on-quit. `bundle.a
 ## Phases F2, I1 and F5: Library, import, gallery, organize and setup (global Tasks 1.1–1.6)
 
 - [ ] **Task DE-1.1: Create, open, copy, rebuild library**
-  - **Description:** Desktop handling of the API-F1.12 routes for create/open library on an owner-chosen OCFL root, copy completed snapshot, rebuild catalog from files, refuse in-place inventory edits from inspect/copy. Call `filesquid-api` operations. Prove the packaged window path with WebdriverIO/Tauri-service.
+  - **Description:** Desktop handling of the API-F1.12 routes for create/open library on an owner-chosen OCFL root, copy completed snapshot, rebuild catalog from files, refuse in-place inventory edits from inspect/copy. Call `filesquid-api` operations. For the API-F1.12 repair route, wire into the router the host side that [API-S-025](../../api/resources/srs.md) leaves to the host: inject the owner-chosen storage root as a `StorageBackend` and the persistent repair ledger, and pass the desktop owner (the holder of the per-launch token) as the only principal allowed to repair. Prove the packaged window path with WebdriverIO/Tauri-service.
   - **Estimated Time:** 10 hours
   - **Dependencies:** Task DE-0.3, global Task CL-1.1, Task API-F1.12
   - **Related Requirements:** [F-001](../../../../../resources/prd.md#f-001-independent-local-library-and-ownership), [SRS-F-001](../../../../../resources/srs.md#srs-f-001-independent-local-library-and-ownership), [API-S-025](../../api/resources/srs.md), [ADR 017](../../../../../resources/architecture/017-test-runners-and-reporting.md)
