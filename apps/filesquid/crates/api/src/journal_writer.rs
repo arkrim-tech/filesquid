@@ -10,6 +10,7 @@ use crate::events::topic;
 use crate::journal::{JournalEntry, JournalStore, Level};
 use crate::metrics::Metrics;
 use crate::{ApiEvent, EventBus};
+use std::io::Write;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TryRecvError};
 use std::sync::{Arc, Mutex};
@@ -59,7 +60,11 @@ impl JournalSender {
         if let Err(err) = self.tx.send(Msg::Entry(Box::new(entry))) {
             self.depth.fetch_sub(1, Ordering::SeqCst);
             if let Msg::Entry(entry) = err.0 {
-                stdout_fallback(&[*entry]);
+                report_rejected(
+                    &mut std::io::stdout().lock(),
+                    "journal writer stopped",
+                    &[*entry],
+                );
             }
         }
     }
@@ -225,11 +230,7 @@ fn write_batch(
         }
         Err(err) => {
             metrics.journal_write_failed(n);
-            print_flushed(
-                &serde_json::json!({ "level": "ERROR", "message": "journal write failed", "error": err.to_string() })
-                    .to_string(),
-            );
-            stdout_fallback(batch);
+            report_rejected(&mut std::io::stdout().lock(), &err.to_string(), batch);
         }
     }
     let left = depth.fetch_sub(n, Ordering::SeqCst).saturating_sub(n);
@@ -237,22 +238,65 @@ fn write_batch(
     batch.clear();
 }
 
-/// Print entries that could not be stored to stdout so they are not lost.
-fn stdout_fallback(entries: &[JournalEntry]) {
-    for entry in entries {
-        if let Ok(mut value) = serde_json::to_value(entry) {
-            value["journal_write_failed"] = serde_json::Value::Bool(true);
-            print_flushed(&value.to_string());
-        }
+/// Report a write the journal store rejected on `out` (stdout): one `journal write failed`
+/// error line, then each entry marked `"journal_write_failed": true`, so none is lost. A
+/// failure to write is reported on stderr, since stdout itself failed. I/O.
+fn report_rejected(out: &mut dyn Write, error: &str, entries: &[JournalEntry]) {
+    if let Err(err) = write_rejected(out, error, entries) {
+        eprintln!("journal fallback line not written: {err}");
     }
 }
 
-/// Write `line` to stdout and flush it, so a fallback record is not held in a buffer when
-/// stdout is a pipe. A failure is reported on stderr, since stdout itself failed. I/O.
-fn print_flushed(line: &str) {
-    use std::io::Write;
-    let mut stdout = std::io::stdout().lock();
-    if let Err(err) = writeln!(stdout, "{line}").and_then(|()| stdout.flush()) {
-        eprintln!("journal fallback line not written: {err}");
+/// Write the lines of [`report_rejected`], one JSON object per line, each flushed so it is
+/// not held in a buffer when stdout is a pipe. An entry that cannot be serialized is
+/// reported on stderr and skipped. I/O.
+fn write_rejected(
+    out: &mut dyn Write,
+    error: &str,
+    entries: &[JournalEntry],
+) -> std::io::Result<()> {
+    let head =
+        serde_json::json!({ "level": "ERROR", "message": "journal write failed", "error": error });
+    writeln!(out, "{head}")?;
+    out.flush()?;
+    for entry in entries {
+        match serde_json::to_value(entry) {
+            Ok(mut value) => {
+                value["journal_write_failed"] = serde_json::Value::Bool(true);
+                writeln!(out, "{value}")?;
+                out.flush()?;
+            }
+            Err(err) => eprintln!("journal entry not printable: {err}"),
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::journal::Outcome;
+
+    #[test]
+    fn a_rejected_write_is_one_json_line_per_record_on_stdout() {
+        let entries = [
+            JournalEntry::new("library.create", Outcome::Succeeded),
+            JournalEntry::new("host.started", Outcome::Succeeded),
+        ];
+        let mut out = Vec::new();
+        report_rejected(&mut out, "store down", &entries);
+        let text = String::from_utf8(out).expect("UTF-8");
+        assert!(text.ends_with('\n'), "{text}");
+        let lines: Vec<serde_json::Value> = text
+            .split_terminator('\n')
+            .map(|line| serde_json::from_str(line).expect("one JSON object per line"))
+            .collect();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0]["message"], "journal write failed");
+        assert_eq!(lines[0]["error"], "store down");
+        for (line, entry) in lines[1..].iter().zip(&entries) {
+            assert_eq!(line["journal_write_failed"], true);
+            assert_eq!(line["operation"], entry.operation.as_str());
+        }
     }
 }

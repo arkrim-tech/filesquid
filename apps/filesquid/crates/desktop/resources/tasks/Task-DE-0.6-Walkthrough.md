@@ -104,6 +104,7 @@ test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 ## Review fixes (Cubic round 2)
 
 - The API journal writer's fallback (entries the journal store rejected, marked `journal_write_failed`, after one `journal write failed` error line) writes and flushes each line through one helper instead of `println!`; README `## View logs` documents that shape.
+- Round 3: that helper writes to an injected writer, so the unit test `journal_writer::tests::a_rejected_write_is_one_json_line_per_record_on_stdout` proves the error line and each `journal_write_failed` entry are newline-terminated JSON lines; an entry queued after the writer stopped takes the same path.
 
 ## Mocked Environment Variables
 
