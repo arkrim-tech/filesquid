@@ -343,7 +343,7 @@ where
     /// uncommitted first version included), [`ChangeError::Commit`] with
     /// [`CommitError::Guard`] for a refused root, or a read or backend
     /// error.
-    pub(super) async fn committed(&self) -> Result<Option<Inventory>, ChangeError> {
+    pub(crate) async fn committed(&self) -> Result<Option<Inventory>, ChangeError> {
         let root = root_dir(&self.root)?;
         let base = read_base(self.storage, &root).await?;
         if base.root_tag.is_some() {

@@ -49,6 +49,8 @@ mod rig;
 mod source_scan;
 #[path = "support/validate_steps.rs"]
 mod validate_steps;
+#[path = "support/view_steps.rs"]
+mod view_steps;
 #[path = "support/write_steps.rs"]
 mod write_steps;
 use filesquid_ocfl::storage::{
@@ -102,6 +104,7 @@ struct OcflWorld {
     opaque: opaque_steps::OpaqueState,
     enumerate: enumerate_steps::EnumerateState,
     change: change_steps::ChangeState,
+    view: view_steps::ViewState,
 }
 
 /// Run `$body` with `$b` bound to the scenario's concrete backend.

@@ -77,6 +77,13 @@
 //!   conflict without publishing. Callers (the view API, `fsquid`) use it
 //!   as the only write path.
 //!
+//! UI view API (OCFL-S-012), on every backend and target:
+//!
+//! - [`view`]: folder listing by logical-path prefix with cursor paging,
+//!   file details, per-file history, object versions, ranged reads and the
+//!   fixity check, all storage facts with JSON forms; and add, move,
+//!   remove and restore, each one version through the change model.
+//!
 //! Opaque bytes (OCFL-S-021;
 //! [ADR 010](../../../resources/architecture/010-ocfl-1-1-dual-profile.md)):
 //! the engine stores the content bytes its caller supplies and reads them
@@ -106,6 +113,7 @@ pub mod namaste;
 pub mod read;
 pub mod storage;
 pub mod validate;
+pub mod view;
 pub mod write;
 
 pub use change::{ChangeError, ChangeModel, PathChange, StagingArea, VersionMeta};
