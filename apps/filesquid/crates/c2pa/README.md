@@ -96,7 +96,7 @@ cargo test -p filesquid-c2pa --locked
 cargo build -p filesquid-c2pa --lib --target wasm32-unknown-unknown --no-default-features --locked
 ```
 
-`cargo test` runs the unit tests (including fuzz tests over truncated and corrupted manifest stores), the dependency-isolation and source-scan tests, the `wasm32-unknown-unknown` build check (default features on and off, built into `filesquid-c2pa-wasm32-check/` under the Cargo target directory), the conformance parse test, the oracle run, the parsing performance test and the Cucumber features. The cucumber JUnit report is written to `tests/allure-results/cucumber-junit.xml`. The `wasm32` check **fails** when the target is missing; install it once with:
+`cargo test` runs the unit tests (including fuzz tests over truncated and corrupted manifest stores), the dependency-isolation and source-scan tests, the `wasm32-unknown-unknown` build check (default features on and off, built into `filesquid-c2pa-wasm32-check/` under the Cargo target directory), the conformance parse test, the oracle run, the parsing performance test and the Cucumber features. The cucumber JUnit report is written to `tests/allure-results/cucumber-junit.xml`. The `wasm32` check **fails** when the target is missing. The workspace's pinned `rust-toolchain.toml` installs it; only when rustup bypasses that file (for example a `RUSTUP_TOOLCHAIN` override) install it by hand:
 
 ```bash
 rustup target add wasm32-unknown-unknown

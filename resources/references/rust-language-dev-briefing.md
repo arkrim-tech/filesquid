@@ -139,8 +139,10 @@ That split is a **privacy and capability architecture**, not a style preference.
 Everyday commands:
 
 ```sh
-rustup toolchain install stable
 cd apps/filesquid          # the Cargo workspace root
+rustup toolchain install   # the exact release pinned in rust-toolchain.toml
+rustup component add rustfmt clippy   # some rustup versions skip file-declared components
+rustup target add wasm32-unknown-unknown
 cargo test -p filesquid-ocfl
 cargo clippy --all-targets
 cargo fmt
