@@ -1426,6 +1426,7 @@ dependencies = [
  "cucumber",
  "filesquid-api",
  "filesquid-core",
+ "filesquid-ocfl",
  "fs4",
  "libc",
  "rusqlite",

@@ -122,7 +122,7 @@ fn catalog_files(root: &std::path::Path) -> Vec<String> {
 fn the_catalog_directory_name_is_stable() {
     assert_eq!(CATALOG_DIR, "libraries");
     assert_eq!(CATALOG_FILE_EXTENSION, "sqlite");
-    assert_eq!(CATALOG_SCHEMA_VERSION, 1);
+    assert_eq!(CATALOG_SCHEMA_VERSION, 2);
 }
 
 #[test]
@@ -577,13 +577,26 @@ fn a_consistent_backup_holds_the_committed_library_and_is_journaled() {
 fn removing_a_catalog_file_loses_only_the_rebuildable_index() {
     let fx = Fixture::new("rebuild");
     let lib = fx.create_library("Family archive");
+    fx.create_collection(&lib, "Summer");
     let file = fx.file_of(&lib);
     let root = fx.release();
     std::fs::remove_file(&file).expect("remove");
     let _ = std::fs::remove_file(file.with_extension("sqlite-wal"));
     let _ = std::fs::remove_file(file.with_extension("sqlite-shm"));
     let again = Fixture::over(root, Arc::new(MemoryJournal::new("desktop")));
-    assert!(again.catalog.library(&lib).expect("read").is_none());
+    assert_eq!(
+        again.revision(&lib),
+        "2",
+        "rebuilt from the library's OCFL snapshot"
+    );
+    assert_eq!(
+        again
+            .catalog
+            .collections(&lib, None, 10)
+            .expect("list")
+            .len(),
+        1
+    );
 }
 
 #[test]
@@ -820,7 +833,12 @@ fn a_renamed_catalog_file_is_not_served_under_another_library() {
     std::fs::rename(&from, catalog_file(&root, &other)).expect("rename");
     let again = Fixture::over(root, Arc::new(MemoryJournal::new("desktop")));
     assert!(again.catalog.library(&other).expect("read").is_none());
-    assert!(again.catalog.library(&lib).expect("read").is_none());
+    let rebuilt = again.catalog.library(&lib).expect("read").expect("rebuilt");
+    assert_eq!(
+        rebuilt.record.library.id(),
+        &lib,
+        "served from its own snapshot only"
+    );
 }
 
 #[test]
@@ -870,4 +888,34 @@ fn an_intent_recorded_after_its_commit_is_not_stored() {
         .pending_intents(&lib, 10)
         .expect("list")
         .is_empty());
+}
+
+#[test]
+fn a_version_1_catalog_is_migrated_and_brought_to_its_snapshot() {
+    let fx = Fixture::new("migrate-v1");
+    let lib = fx.create_library("Family archive");
+    fx.create_collection(&lib, "Summer");
+    let file = fx.file_of(&lib);
+    let root = fx.release();
+    let conn = rusqlite::Connection::open(&file).expect("open");
+    conn.execute_batch(
+        "ALTER TABLE library DROP COLUMN snapshot_version; PRAGMA user_version = 1;",
+    )
+    .expect("downgrade");
+    drop(conn);
+    let again = Fixture::over(root, Arc::new(MemoryJournal::new("desktop")));
+    let conn = rusqlite::Connection::open(&file).expect("open");
+    let version: i64 = conn
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .expect("version");
+    assert_eq!(version, CATALOG_SCHEMA_VERSION);
+    assert_eq!(again.revision(&lib), "2");
+    assert_eq!(
+        again
+            .catalog
+            .collections(&lib, None, 10)
+            .expect("list")
+            .len(),
+        1
+    );
 }

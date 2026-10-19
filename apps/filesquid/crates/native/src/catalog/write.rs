@@ -1,14 +1,19 @@
-//! Applying a [`CatalogCommit`] to one library's file in one SQLite transaction, in the order
-//! `LibraryCatalog::commit` states: the create or revision rule, every change, the new
-//! revision, the receipt, the pending intent's removal and the journal entry (into the
-//! outbox). A failure at any step rolls the whole transaction back.
+//! Applying a [`CatalogCommit`] to one library in the order of ADR 005 and
+//! `LibraryCatalog::commit` (Tasks DE-0.2, DE-0.3): record the intent; in one SQLite
+//! transaction check the create or revision rule and apply every change; publish the
+//! snapshot version of what changed through the library's OCFL root; then store the new
+//! revision and snapshot version, the receipt, the intent's removal and the journal entry
+//! (into the outbox) and commit. A failure before the commit rolls the transaction back.
 
+use super::canonical::CanonicalRoot;
+use super::intent::PendingIntent;
 use super::rows::{sort_name, sql};
-use super::{failed, intent, outbox};
+use super::{failed, intent, outbox, project, reconcile, CommitProbe};
+use filesquid_api::canonical::{OperationRecord, SnapshotDelta, SnapshotKey};
 use filesquid_api::library::{
     CatalogChange, CatalogCommit, CatalogError, CommitReceipt, FileState, LibraryRecord,
 };
-use filesquid_core::{Collection, File, Folder, LibraryId, VirtualCollection};
+use filesquid_core::{Collection, File, Folder, LibraryId, VirtualCollection, VirtualMembership};
 use rusqlite::{params, Connection, Transaction};
 
 /// Whether `commit` creates its library. A create that is not the first change, is repeated,
@@ -49,22 +54,124 @@ fn next_revision(
     }
 }
 
-/// Apply `commit` to `conn` in one transaction and answer its receipt. Database I/O.
+/// Where a commit stopped when it failed, which decides what happens to its intent.
+#[derive(Debug)]
+pub(crate) struct Stopped {
+    /// The failure.
+    pub error: CatalogError,
+    /// Whether the intent stays: the version may be published (or a probe stopped the
+    /// commit as a crash would), so reconcile must see it. A failure known to publish
+    /// nothing discards it.
+    pub keep_intent: bool,
+}
+
+impl Stopped {
+    /// A failure before anything could be published.
+    pub(crate) fn discard(error: CatalogError) -> Self {
+        Self {
+            error,
+            keep_intent: false,
+        }
+    }
+
+    /// A failure after which the version may be published.
+    fn keep(error: CatalogError) -> Self {
+        Self {
+            error,
+            keep_intent: true,
+        }
+    }
+}
+
+/// The canonical side of a commit: the library's OCFL root and the crash probe.
+pub(crate) struct Canonical<'a> {
+    /// The library's canonical storage.
+    pub root: &'a CanonicalRoot,
+    /// Where tests stop a commit as a crash would.
+    pub probe: &'a dyn CommitProbe,
+}
+
+/// Apply `commit` in the order of ADR 005: record its intent, apply its changes in an open
+/// transaction, publish the snapshot version of what they touched (when they changed
+/// anything), then store the new revision, snapshot version, receipt, journal entry and the
+/// intent's removal and commit. Database and filesystem I/O.
 ///
 /// # Errors
-/// [`CatalogError::Conflict`] for a failed create or revision rule; [`CatalogError::Failed`]
-/// for a change the schema refuses (for example a membership of a missing file). Nothing is
-/// written in either case.
+/// [`CatalogError::Conflict`] for a failed create or revision rule or a moved head;
+/// [`CatalogError::Failed`] for a change the schema or the engine refuses (a W010 head
+/// included); [`CatalogError::Unavailable`] for storage trouble. The catalog is unchanged in
+/// each case; the intent stays only when the version may have been published.
 pub(crate) fn apply_commit(
     conn: &mut Connection,
     commit: &CatalogCommit,
     creates: bool,
-) -> Result<CommitReceipt, CatalogError> {
-    let tx = conn.transaction().map_err(sql)?;
-    let current = current_revision(&tx)?;
+    canonical: &Canonical<'_>,
+) -> Result<CommitReceipt, Stopped> {
+    record_intent(conn, commit).map_err(Stopped::discard)?;
+    let result = commit_in_transaction(conn, commit, creates, canonical);
+    if let Err(stopped) = &result {
+        if !stopped.keep_intent {
+            discard_intent(conn, commit.operation_id.as_str());
+        }
+    }
+    result
+}
+
+/// Record `commit`'s intent in a transaction of its own, so it is durable before any OCFL
+/// byte is written. Database I/O.
+fn record_intent(conn: &Connection, commit: &CatalogCommit) -> Result<(), CatalogError> {
+    let intent = PendingIntent {
+        library_id: commit.library_id.clone(),
+        operation_id: commit.operation_id.clone(),
+        operation: commit.journal.operation.clone(),
+        expected_revision: commit.expected_revision.clone(),
+        recorded_at_ms: commit.journal.time_ms,
+    };
+    intent::record(conn, &intent)
+}
+
+/// Remove the intent of a commit that published nothing; a failure is logged to stdout and
+/// leaves an intent that reconcile reports as pending. Database I/O.
+fn discard_intent(conn: &Connection, operation_id: &str) {
+    if let Err(err) = intent::discard(conn, operation_id) {
+        tracing::warn!(
+            target: super::LOG_TARGET,
+            operation = "library.catalog.intent",
+            error = ?err,
+            "the intent of a failed commit was kept"
+        );
+    }
+}
+
+/// The transaction of [`apply_commit`]. Database and filesystem I/O.
+fn commit_in_transaction(
+    conn: &mut Connection,
+    commit: &CatalogCommit,
+    creates: bool,
+    canonical: &Canonical<'_>,
+) -> Result<CommitReceipt, Stopped> {
+    let tx = conn.transaction().map_err(|e| Stopped::discard(sql(e)))?;
+    let (receipt, purged) = apply_changes(&tx, commit, creates).map_err(Stopped::discard)?;
+    if !commit.changes.is_empty() {
+        publish(&tx, commit, &receipt, purged, canonical)?;
+    }
+    finish(tx, commit, &receipt).map_err(Stopped::keep)?;
+    Ok(receipt)
+}
+
+/// Check the create or revision rule, apply every change and the new revision inside `tx`,
+/// and answer the receipt with the virtual collections purged files were removed from (read
+/// before the purge). Database I/O.
+fn apply_changes(
+    tx: &Transaction<'_>,
+    commit: &CatalogCommit,
+    creates: bool,
+) -> Result<(CommitReceipt, Vec<SnapshotKey>), CatalogError> {
+    let current = current_revision(tx)?;
     let revision = next_revision(creates, current, commit)?;
+    let purged = project::purged_memberships(tx, &commit.changes)?;
     for change in &commit.changes {
-        apply_change(&tx, &commit.library_id, change, commit.journal.time_ms)?;
+        apply_change(tx, &commit.library_id, change, commit.journal.time_ms)?;
     }
     tx.execute("UPDATE library SET revision = ?1", params![revision])
         .map_err(sql)?;
@@ -74,11 +181,77 @@ pub(crate) fn apply_commit(
         created_id: commit.created_id.clone(),
         deletion: commit.deletion,
     };
-    store_receipt(&tx, commit.operation_id.as_str(), &receipt)?;
+    Ok((receipt, purged))
+}
+
+/// Publish the snapshot version of what `commit` touched, between the probe's two stops,
+/// and record its version in `tx`. Database and filesystem I/O.
+fn publish(
+    tx: &Transaction<'_>,
+    commit: &CatalogCommit,
+    receipt: &CommitReceipt,
+    purged: Vec<SnapshotKey>,
+    canonical: &Canonical<'_>,
+) -> Result<(), Stopped> {
+    let delta = snapshot_delta(tx, &commit.library_id, &commit.changes, purged)
+        .map_err(Stopped::discard)?;
+    let op = commit.operation_id.as_str();
+    canonical.probe.before_snapshot(op).map_err(Stopped::keep)?;
+    let record = OperationRecord {
+        operation_id: op.to_string(),
+        revision: receipt.revision.clone(),
+        created_id: receipt.created_id.clone(),
+        deletion: receipt.deletion,
+    };
+    let published = canonical
+        .root
+        .commit(&delta, &record, commit.journal.time_ms)
+        .map_err(Stopped::discard)?;
+    canonical.probe.after_snapshot(op).map_err(Stopped::keep)?;
+    reconcile::set_snapshot_version(tx, &published.version.to_string()).map_err(Stopped::keep)
+}
+
+/// The snapshot delta of `changes` (every entity when the library has no snapshot yet).
+/// Database I/O.
+pub(crate) fn snapshot_delta(
+    tx: &Transaction<'_>,
+    library_id: &LibraryId,
+    changes: &[CatalogChange],
+    purged: Vec<SnapshotKey>,
+) -> Result<SnapshotDelta, CatalogError> {
+    match reconcile::snapshot_version(tx)? {
+        Some(_) => project::changed_delta(tx, library_id, changes, purged),
+        None => project::full_delta(tx, library_id),
+    }
+}
+
+/// The snapshot delta of exactly `keys` (every entity when the library has no snapshot
+/// yet). Database I/O.
+pub(crate) fn delta_of_keys(
+    tx: &Transaction<'_>,
+    library_id: &LibraryId,
+    keys: Vec<SnapshotKey>,
+) -> Result<SnapshotDelta, CatalogError> {
+    let has_snapshot = reconcile::snapshot_version(tx)?.is_some();
+    let delta = if has_snapshot {
+        project::delta_of(tx, library_id, keys)?
+    } else {
+        project::full_delta(tx, library_id)?
+    };
+    Ok(delta)
+}
+
+/// Store the receipt, remove the intent, push the journal entry and commit `tx`.
+/// Database I/O.
+fn finish(
+    tx: Transaction<'_>,
+    commit: &CatalogCommit,
+    receipt: &CommitReceipt,
+) -> Result<(), CatalogError> {
+    store_receipt(&tx, commit.operation_id.as_str(), receipt)?;
     intent::clear(&tx, commit.operation_id.as_str())?;
     outbox::push(&tx, &commit.journal)?;
-    tx.commit().map_err(sql)?;
-    Ok(receipt)
+    tx.commit().map_err(sql)
 }
 
 /// The stored revision counter, or `None` when the file holds no library. Database I/O.
@@ -143,18 +316,7 @@ fn apply_change(
             "DELETE FROM virtual_collections WHERE id = ?1",
             id.as_str(),
         ),
-        CatalogChange::AddVirtualMember(m) => tx
-            .execute(
-                "INSERT INTO virtual_members (virtual_collection_id, file_id, order_key)
-                 VALUES (?1, ?2, ?3)",
-                params![
-                    m.virtual_collection_id().as_str(),
-                    m.file_id().as_str(),
-                    m.order_key()
-                ],
-            )
-            .map(drop)
-            .map_err(sql),
+        CatalogChange::AddVirtualMember(m) => add_member(tx, m),
         CatalogChange::RemoveVirtualMember {
             virtual_collection_id,
             file_id,
@@ -172,6 +334,21 @@ fn apply_change(
     }
 }
 
+/// Store one virtual-collection membership. Database I/O.
+pub(crate) fn add_member(tx: &Transaction<'_>, m: &VirtualMembership) -> Result<(), CatalogError> {
+    tx.execute(
+        "INSERT INTO virtual_members (virtual_collection_id, file_id, order_key)
+         VALUES (?1, ?2, ?3)",
+        params![
+            m.virtual_collection_id().as_str(),
+            m.file_id().as_str(),
+            m.order_key()
+        ],
+    )
+    .map(drop)
+    .map_err(sql)
+}
+
 /// Run a one-parameter statement. Database I/O.
 fn exec(tx: &Transaction<'_>, statement: &str, id: &str) -> Result<(), CatalogError> {
     tx.execute(statement, params![id]).map(drop).map_err(sql)
@@ -179,7 +356,7 @@ fn exec(tx: &Transaction<'_>, statement: &str, id: &str) -> Result<(), CatalogEr
 
 /// Store the library row at revision 0 (the commit then sets its first revision).
 /// Database I/O.
-fn insert_library(
+pub(crate) fn insert_library(
     tx: &Transaction<'_>,
     record: &LibraryRecord,
     created_order: i64,
@@ -199,7 +376,7 @@ fn insert_library(
 }
 
 /// Store a collection, replacing the one with the same identifier. Database I/O.
-fn put_collection(tx: &Transaction<'_>, c: &Collection) -> Result<(), CatalogError> {
+pub(crate) fn put_collection(tx: &Transaction<'_>, c: &Collection) -> Result<(), CatalogError> {
     tx.execute(
         "INSERT INTO collections (id, folder_id, title, sort, cover_file_id, order_key)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)
@@ -221,7 +398,7 @@ fn put_collection(tx: &Transaction<'_>, c: &Collection) -> Result<(), CatalogErr
 
 /// Store a virtual collection, replacing the one with the same identifier and keeping its
 /// memberships (an upsert, never a delete that would cascade). Database I/O.
-fn put_virtual(tx: &Transaction<'_>, v: &VirtualCollection) -> Result<(), CatalogError> {
+pub(crate) fn put_virtual(tx: &Transaction<'_>, v: &VirtualCollection) -> Result<(), CatalogError> {
     tx.execute(
         "INSERT INTO virtual_collections (id, title, expression, cover_file_id, order_key)
          VALUES (?1, ?2, ?3, ?4, ?5)
@@ -241,7 +418,7 @@ fn put_virtual(tx: &Transaction<'_>, v: &VirtualCollection) -> Result<(), Catalo
 }
 
 /// Replace a file's hide and delete state. Database I/O.
-fn set_file_state(
+pub(crate) fn set_file_state(
     tx: &Transaction<'_>,
     file_id: &str,
     state: &FileState,

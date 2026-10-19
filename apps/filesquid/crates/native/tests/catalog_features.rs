@@ -1,5 +1,6 @@
 //! Cucumber harness for the per-library SQLite catalog Gherkin under
-//! `tests/catalog_features/` (Task DE-0.2: F-001, F-009, DE-S-009). Needs the `desktop`
+//! `tests/catalog_features/` (Task DE-0.2: F-001, F-009, DE-S-009; Task DE-0.3: NFR-001,
+//! F-042, DE-S-010). Needs the `desktop`
 //! feature. Writes JUnit to `tests/allure-results/catalog-cucumber-junit.xml`.
 
 #[path = "support/catalog_fixture.rs"]
@@ -7,12 +8,15 @@ mod catalog_fixture;
 
 use catalog_fixture::{all_entries, catalog_file, temp_root, Fixture, FlakyJournal};
 use cucumber::{given, then, when, writer, World, WriterExt as _};
+use filesquid_api::canonical::{read_snapshot, OwnerReadable};
 use filesquid_api::journal::{JournalEntry, JournalStore, MemoryJournal, Outcome};
 use filesquid_api::library::{
-    CatalogChange, CatalogCommit, CommandResult, LibraryCatalog, LibraryCommand,
+    CatalogChange, CatalogCommit, CatalogError, CommandResult, LibraryCatalog, LibraryCommand,
 };
 use filesquid_api::operation::{ExpectedRevision, OperationId};
 use filesquid_core::{CollectionId, FileId, LibraryId, VirtualCollectionId, VirtualMembership};
+use filesquid_native::{library_ocfl_root, CommitProbe};
+use filesquid_ocfl::storage::{complete_immediately, FsBackend};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -254,6 +258,144 @@ fn backup_opens(w: &mut CatalogWorld, revision: u32) {
         copy.revision(&w.library("Family archive")),
         revision.to_string()
     );
+}
+
+/// Stops the commit of one operation before or after its snapshot, as a crash would.
+struct CrashAt {
+    operation: String,
+    before_snapshot: bool,
+}
+
+impl CommitProbe for CrashAt {
+    fn before_snapshot(&self, operation_id: &str) -> Result<(), CatalogError> {
+        self.stop(operation_id, true)
+    }
+
+    fn after_snapshot(&self, operation_id: &str) -> Result<(), CatalogError> {
+        self.stop(operation_id, false)
+    }
+}
+
+impl CrashAt {
+    fn stop(&self, operation_id: &str, before: bool) -> Result<(), CatalogError> {
+        if operation_id == self.operation && before == self.before_snapshot {
+            return Err(CatalogError::Unavailable("simulated crash".into()));
+        }
+        Ok(())
+    }
+}
+
+/// Open an empty catalog directory whose commit of `operation` crashes at one stop.
+fn crashing_directory(w: &mut CatalogWorld, operation: String, before_snapshot: bool) {
+    let root = temp_root(&unique("bdd-crash"));
+    let probe = Arc::new(CrashAt {
+        operation,
+        before_snapshot,
+    });
+    w.fixture = Some(Fixture::crashing(
+        root.clone(),
+        Arc::new(MemoryJournal::new("desktop")),
+        probe,
+    ));
+    w.root = Some(root);
+}
+
+#[given(expr = "an empty catalog directory whose commits crash before the snapshot of {string}")]
+fn crash_before(w: &mut CatalogWorld, operation: String) {
+    crashing_directory(w, operation, true);
+}
+
+#[given(expr = "an empty catalog directory whose commits crash after the snapshot of {string}")]
+fn crash_after(w: &mut CatalogWorld, operation: String) {
+    crashing_directory(w, operation, false);
+}
+
+#[given(expr = "the owner created the library {string}")]
+fn created_library(w: &mut CatalogWorld, name: String) {
+    create_one(w, name);
+}
+
+#[when(expr = "the owner creates the library {string} with the collection {string}")]
+fn creates_with_collection(w: &mut CatalogWorld, library: String, title: String) {
+    created_with_collection(w, library, title);
+}
+
+#[when(expr = "the owner adds the collection {string} under operation {string}")]
+fn add_collection(w: &mut CatalogWorld, title: String, operation: String) {
+    let id = w.library("Family archive");
+    let command = LibraryCommand::CreateCollection {
+        library_id: id,
+        title,
+        folder_id: None,
+        sort: Default::default(),
+    };
+    let op = OperationId::new(operation).expect("op");
+    w.failed = w.fx().run_as(op, "1", command).is_err();
+}
+
+#[when(expr = "the host restarts")]
+fn host_restarts(w: &mut CatalogWorld) {
+    w.reopen(Arc::new(MemoryJournal::new("desktop")));
+}
+
+#[when(expr = "the catalog file is deleted and the host restarts")]
+fn catalog_deleted(w: &mut CatalogWorld) {
+    let file = w.fx().file_of(&w.library("Family archive"));
+    w.close();
+    for suffix in ["", "-wal", "-shm"] {
+        let mut name = file.clone().into_os_string();
+        name.push(suffix);
+        let _ = std::fs::remove_file(PathBuf::from(name));
+    }
+    let root = w.root.clone().expect("root");
+    w.fixture = Some(Fixture::over(root, Arc::new(MemoryJournal::new("desktop"))));
+}
+
+#[then(expr = "the library's OCFL snapshot should be at version {string}")]
+fn snapshot_version(w: &mut CatalogWorld, version: String) {
+    let lib = w.library("Family archive");
+    let ocfl = library_ocfl_root(w.root.as_ref().expect("root"), &lib).expect("root");
+    let backend = FsBackend::with_default_staging(ocfl).expect("backend");
+    let snapshot = complete_immediately(read_snapshot(&backend, &OwnerReadable))
+        .expect("drive")
+        .expect("read")
+        .expect("snapshot");
+    assert_eq!(snapshot.version.to_string(), version);
+}
+
+#[then(expr = "no intent should be pending")]
+fn none_pending(w: &mut CatalogWorld) {
+    let lib = w.library("Family archive");
+    assert!(w
+        .fx()
+        .catalog
+        .pending_intents(&lib, 10)
+        .expect("intents")
+        .is_empty());
+}
+
+#[then(expr = "the intent of {string} should be pending")]
+fn pending(w: &mut CatalogWorld, operation: String) {
+    let lib = w.library("Family archive");
+    let intents = w.fx().catalog.pending_intents(&lib, 10).expect("intents");
+    assert!(
+        intents.iter().any(|i| i.operation_id.as_str() == operation),
+        "{intents:?}"
+    );
+}
+
+#[then(expr = "the collection {string} should be listed")]
+fn listed(w: &mut CatalogWorld, title: String) {
+    let lib = w.library("Family archive");
+    let titles: Vec<String> = w
+        .fx()
+        .catalog
+        .collections(&lib, None, 100)
+        .expect("collections")
+        .into_iter()
+        .map(|k| k.item.title().to_string())
+        .collect();
+    assert_eq!(titles, [title]);
 }
 
 #[tokio::main]
