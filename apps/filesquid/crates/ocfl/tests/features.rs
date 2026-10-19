@@ -33,6 +33,10 @@ mod opaque_steps;
 mod payload_steps;
 #[path = "support/read_steps.rs"]
 mod read_steps;
+#[path = "support/recovery.rs"]
+mod recovery;
+#[path = "support/recovery_steps.rs"]
+mod recovery_steps;
 #[path = "support/repair_steps.rs"]
 mod repair_steps;
 #[path = "support/write_rig.rs"]
@@ -88,6 +92,7 @@ struct OcflWorld {
     read: read_steps::ReadState,
     validate: validate_steps::ValidateState,
     write: write_steps::WriteState,
+    recovery: recovery_steps::RecoveryState,
     repair: repair_steps::RepairState,
     payload: payload_steps::PayloadState,
     opaque: opaque_steps::OpaqueState,
