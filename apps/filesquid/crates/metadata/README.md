@@ -46,17 +46,21 @@ cargo run -p filesquid-cli -- metadata --help
 
 The default test run skips the tests that need the `ocfl`, `ocfl-fs` or `cli` features; `--all-features` runs them, and the BDD feature (`--test features`) needs `cli`. The pre-commit hook runs the all-features tests and both `wasm32` checks whenever `filesquid-metadata` is in the change scope. This crate ships no binary. Its commands run in the one FileSquid CLI, `fsquid`, built by [`filesquid-cli`](../cli/README.md) ([ADR 036](../../../../resources/architecture/036-single-fsquid-cli.md)): `fsquid get`, or `fsquid metadata get`; `validate` always needs the module name (`fsquid metadata validate dcterms:title`).
 
-## JSON sidecar
+## Commands and OCFL objects
 
-Every command works on an OCFL object directory (`--object`, default `.`) and commits each edit as a new OCFL version. `--id` names the object: it is required to create an object in a directory that holds none, and an existing object's identifier must match it.
+`extract`, `get`, `set`, `export` and `import` work on an OCFL object directory (`--object`, default `.`); `help` and `validate` need no object. `get` and `export` only read the head. `set`, `extract` and `import` are edits: each commits one new OCFL version when the record changes (an unchanged record commits nothing) and prints the version. `--id` names the object: it is required to create an object in a directory that holds none, and an existing object's identifier must match it. `--file` names a logical file the object already holds (committed, for example, by an import through `filesquid-ocfl`); `extract` takes either a media file path or `--file`, not both.
 
 ```bash
 cd apps/filesquid
+# A directory without an object: the first edit creates it as v1.
 cargo run -p filesquid-cli -- set dcterms:title Harbour --id urn:example:harbour --object <object-dir>
+# An object that already holds the logical file photo.jpg:
 cargo run -p filesquid-cli -- extract --file photo.jpg --object <object-dir>
 ```
 
-A JSON sidecar is one UTF-8 JSON document per OCFL object. It binds `{namespace, term, value}` statements to the OCFL object identifier (`objectId`) and the SHA-256 digest (`digestAlgorithm: "sha256"`, `digest`) of the described logical file. `--file` names the logical file of the object's head, read through `filesquid-ocfl`:
+## JSON sidecar
+
+A JSON sidecar is one UTF-8 JSON document per OCFL object. It binds `{namespace, term, value}` statements to the OCFL object identifier (`objectId`) and the SHA-256 digest (`digestAlgorithm: "sha256"`, `digest`) of the described logical file. `--file` names a logical file the object already holds (here `photo.jpg`); its digest is read through `filesquid-ocfl` from the same version as the exported or edited record:
 
 ```bash
 cd apps/filesquid

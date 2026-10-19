@@ -176,3 +176,25 @@ fn an_unclosed_element_ends_the_scan_without_an_error() {
     assert!(found.xmp);
     assert!(record.get("dcterms:title").is_none());
 }
+
+#[test]
+fn whitespace_before_attributes_does_not_end_the_scan() {
+    let bytes = "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">\
+<dc:title\txml:lang=\"en\">skipped</dc:title>\
+<dc:creator\n>George</dc:creator><dcterms:subject>coast</dcterms:subject></x:xmpmeta>";
+    let mut record = Record::default();
+    extract_from_bytes(bytes.as_bytes(), &file_ref("a.jpg"), &mut record).unwrap();
+    assert_eq!(record.get("dcterms:subject").unwrap().value, "coast");
+}
+
+#[test]
+fn an_unterminated_cdata_section_is_kept_as_written() {
+    let bytes = "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">\
+<dc:title><![CDATA[Harbour</dc:title></x:xmpmeta>";
+    let mut record = Record::default();
+    extract_from_bytes(bytes.as_bytes(), &file_ref("a.jpg"), &mut record).unwrap();
+    assert_eq!(
+        record.get("dcterms:title").unwrap().value,
+        "<![CDATA[Harbour"
+    );
+}

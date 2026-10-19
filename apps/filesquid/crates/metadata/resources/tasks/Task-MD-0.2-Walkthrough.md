@@ -22,7 +22,7 @@ Also MD-S-001 (default public API is extract plus namespaced metadata CRUD), MD-
 | Requirement | Tests |
 |---|---|
 | MD-S-008 per-edit OCFL versions | `unit_store`: `each_edit_commits_exactly_one_new_version`, `an_edit_never_modifies_an_earlier_version`, `metadata_md_is_a_logical_file_inside_a_version`, `an_unchanged_record_publishes_nothing`, `the_first_edit_of_a_new_object_creates_v1`, `a_pinned_version_that_is_not_the_head_is_a_conflict`, `local_object::an_edit_from_a_head_another_writer_moved_is_a_conflict`, `per_edit_versions_on_a_filesystem_backend`, `local_object::each_save_is_a_new_version_of_a_valid_object`; `unit_cli`: `set_and_get_round_trip_with_one_version_per_edit`, `import_csv_and_xmp_commit_new_versions`; F-052 scenarios "Each metadata edit is a new OCFL version", "An unchanged record publishes no version", "Canonical store is metadata.md" |
-| OCFL-S-020 W010 head stays refused, no repair | `unit_store`: `a_head_without_its_version_inventory_stays_refused`; F-052 scenario "A head without its version inventory stays refused" |
+| OCFL-S-018 and OCFL-S-020: a W010 head stays refused as a base and is not repaired | `unit_store`: `a_head_without_its_version_inventory_stays_refused`; F-052 scenario "A head without its version inventory stays refused" |
 | MD-S-003 no OCFL reimplementation; objects validate | `metadata_md_is_a_logical_file_inside_a_version` and the filesystem tests run the engine validator; F-052 "the object should pass the OCFL validator"; "Persistence is pluggable and filesquid-ocfl is optional" |
 | MD-S-006 CSV and XMP through OCFL | `unit_cli`: `export_csv_contains_header`, `import_csv_and_xmp_commit_new_versions`, `csv_export_still_ignores_json_flags` |
 | MD-S-007 EXIF, ID3, XMP extraction | `unit_extract`: `an_embedded_xmp_packet_maps_onto_dcterms`, `bytes_without_an_xmp_packet_report_none`, `an_unterminated_xmp_packet_is_not_an_error`; `unit_cli`: `extract_reads_a_logical_file_through_filesquid_ocfl`; F-052 "Extraction reads bytes from filesquid-ocfl", "Extraction maps an embedded XMP packet onto dcterms" |
@@ -31,7 +31,7 @@ Also MD-S-001 (default public API is extract plus namespaced metadata CRUD), MD-
 
 ## Coverage
 
-[ADR 017](../../../../../../resources/architecture/017-test-runners-and-reporting.md) defines no Rust line-coverage tool, so no coverage percentage is reported. Every public item added in `src/store/ocfl.rs`, `src/extract.rs` and `src/xmp.rs`, and every CLI command path, is exercised by the tests above.
+[ADR 017](../../../../../../resources/architecture/017-test-runners-and-reporting.md) defines no Rust line-coverage tool, so no coverage percentage is reported. The public items added in `src/store/ocfl.rs`, `src/extract.rs` and `src/xmp.rs` and the CLI's `extract`, `get`, `set`, `export` (CSV, XMP, JSON) and `import` (CSV, XMP, JSON) paths are exercised by the tests above; this is a list of covered scenarios, not a measured percentage.
 
 ## TDD: failing run before implementation
 
@@ -419,3 +419,11 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 - P2: an XMP packet must open with `<x:xmpmeta` followed by whitespace, `>` or `/` (`a_name_that_only_starts_like_xmpmeta_is_not_a_packet`).
 - P2: XMP values decode `&quot;`, `&apos;`, decimal and hex character references, and CDATA sections (`xmp_values_decode_every_entity_reference_and_cdata`).
 - P2: an element without its close ends the XMP scan, so a malformed packet costs one pass (`an_unclosed_element_ends_the_scan_without_an_error`).
+
+## PR #76 review fixes (Cubic rounds 1 and 2, remaining threads)
+
+- P2: `export json` and `import json` hash the `--file` logical file at the same version the record was loaded from (`LocalObject::file_sha256` and `read_file` take a version), so a concurrent edit cannot pair old statements with a new digest; `extract --file` reads that version too.
+- P2: `extract` refuses a media path and `--file` together (`extract_refuses_a_path_and_a_logical_file_together`).
+- P2 (not changed): a pinned edit may rebase onto a later head. OCFL-S-016 requires the change model to rebase when no intervening version changed a staged path, and to report a conflict otherwise; `metadata.md` is the only staged path, so any intervening change to it is a conflict and no record is overwritten. The behaviour is documented on `check_pinned`.
+- P2: an unterminated CDATA section keeps its `<![CDATA[` opener (`an_unterminated_cdata_section_is_kept_as_written`); any whitespace after an element name marks attributes (`whitespace_before_attributes_does_not_end_the_scan`).
+- P3: ADR 027 cites OCFL-S-018 for the refused base and OCFL-S-020 for no repair; `MetadataStore::save` says an unchanged record publishes nothing; the README separates read and edit commands and states that `--file` names a logical file the object already holds; the XMP feature step declares `rdf` and `dc`; the W010 fixtures delete only `v1/inventory.json`; `export_xmp_writes_the_head_record` covers the CLI XMP export; the coverage line above lists covered scenarios.

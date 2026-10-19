@@ -237,6 +237,46 @@ fn import_csv_and_xmp_commit_new_versions() {
 }
 
 #[test]
+fn export_xmp_writes_the_head_record() {
+    let (dir, object) = photo_object("xmp-export", "urn:x:1", b"pixels");
+    set_in(&object, "dcterms:title", "Harbour");
+    let out = dir.join("out.xmp");
+    let code = run(&args(&[
+        "export",
+        "xmp",
+        &out.to_string_lossy(),
+        "--object",
+        &object.to_string_lossy(),
+    ]))
+    .expect("export xmp");
+    assert_eq!(code, 0);
+    let text = std::fs::read_to_string(&out).unwrap();
+    assert!(
+        text.contains("<dcterms:title>Harbour</dcterms:title>"),
+        "{text}"
+    );
+    assert_eq!(versions(&object), ["v1", "v2"], "an export commits nothing");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn extract_refuses_a_path_and_a_logical_file_together() {
+    let (dir, object) = photo_object("extract-both", "urn:x:1", b"pixels");
+    let err = run(&args(&[
+        "extract",
+        &dir.join("cat.tif").to_string_lossy(),
+        "--file",
+        "photo.jpg",
+        "--object",
+        &object.to_string_lossy(),
+    ]))
+    .expect_err("both inputs");
+    assert!(err.contains("not both"), "{err}");
+    assert_eq!(versions(&object), ["v1"]);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn help_lists_json_interchange() {
     assert!(USAGE.contains("export csv|xmp|json"));
     assert!(USAGE.contains("import csv|xmp|json"));

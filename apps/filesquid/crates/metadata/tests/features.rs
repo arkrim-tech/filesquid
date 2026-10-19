@@ -583,7 +583,9 @@ fn extract_from_ocfl(world: &mut MetadataWorld) {
 #[when(expr = "I extract metadata from bytes holding an XMP packet with dc:title {word}")]
 fn extract_xmp_packet(world: &mut MetadataWorld, title: String) {
     let packet = format!(
-        "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF><rdf:Description>\
+        "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">\
+         <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\
+         <rdf:Description xmlns:dc=\"http://purl.org/dc/elements/1.1/\">\
          <dc:title><rdf:Alt><rdf:li xml:lang=\"x-default\">{title}</rdf:li></rdf:Alt></dc:title>\
          </rdf:Description></rdf:RDF></x:xmpmeta>"
     );
@@ -604,9 +606,7 @@ fn extracted_title_is(world: &mut MetadataWorld, title: String) {
 #[given("an OCFL object whose head has no version inventory")]
 fn object_without_head_inventory(world: &mut MetadataWorld) {
     let dir = object_with_file(JSON_FILE_BYTES);
-    for name in ["inventory.json", "inventory.json.sha256"] {
-        fs::remove_file(dir.join("v1").join(name)).expect("remove version inventory");
-    }
+    fs::remove_file(dir.join("v1/inventory.json")).expect("remove version inventory");
     world.object_dir = Some(dir);
 }
 

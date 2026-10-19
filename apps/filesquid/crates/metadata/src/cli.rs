@@ -240,15 +240,17 @@ fn extract_file(path: &Path, record: &mut Record) -> Result<Extracted, String> {
     extract_from_reader(&mut BufReader::new(file), &file_ref, record).map_err(|e| e.to_string())
 }
 
-/// Extract the embedded tags of the object's logical file `logical_path`,
-/// read through `filesquid-ocfl`, into `record`.
+/// Extract the embedded tags of the logical file `logical_path` of version
+/// `base` (the version `record` was loaded from), read through
+/// `filesquid-ocfl`, into `record`.
 fn extract_logical(
     object: &LocalObject,
+    base: Option<&VersionNum>,
     logical_path: &str,
     record: &mut Record,
 ) -> Result<Extracted, String> {
     let bytes = object
-        .read_file(logical_path)
+        .read_file(logical_path, base)
         .map_err(|e| format!("{logical_path}: {}", error_text(&e)))?;
     let file_ref = FileRef::new(object.object_id(), logical_path).map_err(|e| e.to_string())?;
     extract_from_bytes(&bytes, &file_ref, record).map_err(|e| e.to_string())
@@ -257,13 +259,15 @@ fn extract_logical(
 fn cmd_extract(rest: &[String]) -> Result<i32, String> {
     let pos = positional(rest, INTERCHANGE_FLAGS);
     let logical = checked_flag(rest, "--file")?;
-    if pos.is_empty() && logical.is_none() {
-        return Err("extract requires a media file path or --file <logical-path>".into());
+    if pos.is_empty() == logical.is_none() {
+        return Err(
+            "extract requires one media file path or --file <logical-path>, not both".into(),
+        );
     }
     let object = open_object(rest)?;
     let (base, mut record) = load(&object)?;
     let found = match logical {
-        Some(path) => extract_logical(&object, path, &mut record)?,
+        Some(path) => extract_logical(&object, base.as_ref(), path, &mut record)?,
         None => extract_file(Path::new(pos[0]), &mut record)?,
     };
     if found.rejected > 0 {
@@ -318,13 +322,18 @@ struct JsonBinding {
     digest: String,
 }
 
-/// Hash the head's logical file `--file` through `filesquid-ocfl`.
-fn read_json_binding(rest: &[String], object: &LocalObject) -> Result<JsonBinding, String> {
+/// Hash the logical file `--file` of version `base` (the version whose
+/// record is exported or imported) through `filesquid-ocfl`.
+fn read_json_binding(
+    rest: &[String],
+    object: &LocalObject,
+    base: Option<&VersionNum>,
+) -> Result<JsonBinding, String> {
     let Some(logical_path) = checked_flag(rest, "--file")? else {
         return Err("json requires --file <logical-path>".into());
     };
     let digest = object
-        .file_sha256(logical_path)
+        .file_sha256(logical_path, base)
         .map_err(|e| format!("{logical_path}: {}", error_text(&e)))?;
     Ok(JsonBinding {
         object_id: object.object_id().to_string(),
@@ -337,13 +346,14 @@ fn render_export(
     fmt: &str,
     rest: &[String],
     object: &LocalObject,
+    base: Option<&VersionNum>,
     record: &Record,
 ) -> Result<String, String> {
     match fmt {
         "csv" => Ok(to_csv(object.object_id(), record)),
         "xmp" => Ok(to_xmp(record)),
         "json" => {
-            let binding = read_json_binding(rest, object)?;
+            let binding = read_json_binding(rest, object, base)?;
             Ok(to_json(&binding.object_id, &binding.digest, record))
         }
         _ => Err("export format must be csv, xmp or json".into()),
@@ -358,8 +368,8 @@ fn cmd_export(rest: &[String]) -> Result<i32, String> {
         return Err("export requires csv|xmp|json and a path".into());
     }
     let object = open_object(rest)?;
-    let (_, record) = load(&object)?;
-    let body = render_export(fmt, rest, &object, &record)?;
+    let (base, record) = load(&object)?;
+    let body = render_export(fmt, rest, &object, base.as_ref(), &record)?;
     std::fs::write(path, body).map_err(|e| e.to_string())?;
     println!("exported {fmt} to {path}");
     Ok(0)
@@ -381,13 +391,14 @@ fn apply_import(
     text: &str,
     rest: &[String],
     object: &LocalObject,
+    base: Option<&VersionNum>,
     record: &mut Record,
 ) -> Result<(), String> {
     match fmt {
         "csv" => apply_csv(text, record).map_err(|e| format!("{e:?}")),
         "xmp" => apply_xmp(text, record),
         "json" => {
-            let binding = read_json_binding(rest, object)?;
+            let binding = read_json_binding(rest, object, base)?;
             let target = JsonTarget {
                 object_id: &binding.object_id,
                 digest: &binding.digest,
@@ -408,7 +419,7 @@ fn cmd_import(rest: &[String]) -> Result<i32, String> {
     let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
     let object = open_object(rest)?;
     let (base, mut record) = load(&object)?;
-    apply_import(fmt, &text, rest, &object, &mut record)?;
+    apply_import(fmt, &text, rest, &object, base.as_ref(), &mut record)?;
     let outcome = commit(&object, base.as_ref(), &record)?;
     println!("imported {fmt} from {path}: {outcome}");
     Ok(0)

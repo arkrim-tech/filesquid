@@ -147,7 +147,6 @@ fn a_head_without_its_version_inventory_stays_refused() {
     let rig = Rig::memory();
     rig.seed(OBJECT_ID, &[("photo.jpg", b"pixels")]);
     rig.delete(OBJECT_ID, "v1/inventory.json");
-    rig.delete(OBJECT_ID, "v1/inventory.json.sha256");
     let result = ready(rig.store().save(&photo(), &titled("Harbour")));
     let Err(StoreError::Backend(source)) = result else {
         panic!("expected a refusal, got {result:?}");
@@ -407,9 +406,16 @@ mod local_object {
         let dir = scratch("digest");
         let object = LocalObject::open(&dir.join("obj"), Some("urn:x:1")).unwrap();
         object.save(&titled("Harbour")).unwrap();
-        assert!(object.file_sha256("photo.jpg").is_err());
-        let digest = object.file_sha256(METADATA_MD).unwrap();
-        assert_eq!(digest.len(), 64);
+        assert!(object.file_sha256("photo.jpg", None).is_err());
+        let first = object.file_sha256(METADATA_MD, None).unwrap();
+        assert_eq!(first.len(), 64);
+        object.save(&titled("Dawn")).unwrap();
+        assert_eq!(
+            object.file_sha256(METADATA_MD, Some(&v("v1"))).unwrap(),
+            first
+        );
+        assert_ne!(object.file_sha256(METADATA_MD, None).unwrap(), first);
+        assert!(object.read_file(METADATA_MD, Some(&v("v1"))).is_ok());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

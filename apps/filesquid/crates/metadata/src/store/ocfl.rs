@@ -9,7 +9,8 @@
 //! rewrites an earlier version (MD-S-008; owner decision 2026-10-18,
 //! [ADR 027](../../../../../../resources/architecture/027-filesquid-metadata-pluggable-stores.md)
 //! Decision 2). A head without its version inventory (W010) stays refused
-//! with `MissingVersionInventory` and is never repaired here (OCFL-S-020).
+//! with `MissingVersionInventory`: it cannot be a commit base (OCFL-S-018)
+//! and is never repaired here (OCFL-S-020).
 //!
 //! Reads go through [`Object`]: the record of a pinned version, or of the
 //! head, streamed in bounded chunks and checked against its digest. The
@@ -269,10 +270,11 @@ where
 }
 
 /// Refuse an edit whose pinned version is not the base the change set was
-/// staged against. The change model then publishes only onto that base, or
-/// onto a later head after a rebase that no intervening change to
-/// `metadata.md` blocks, so an edit made from an older version never
-/// overwrites a newer record.
+/// staged against. The change model then publishes onto that base, or, as
+/// OCFL-S-016 requires, rebases onto a later head only when no intervening
+/// version changed `metadata.md` (any such change is a conflict). So an edit
+/// made from an older version never overwrites a newer record, while edits
+/// to other logical files in between do not block it.
 async fn check_pinned<B, R, S>(
     model: &ChangeModel<'_, B, R, S>,
     file: &FileRef,
@@ -551,24 +553,34 @@ mod native {
             complete_immediately(self.store().commit_record(&file, record)).map_err(boxed)?
         }
 
-        /// The bytes of the head's logical file `logical_path`, at most
-        /// [`MAX_READ_BYTES`].
+        /// The bytes of the logical file `logical_path` of `version` (the
+        /// head when `None`), at most [`MAX_READ_BYTES`].
         ///
         /// # Errors
         ///
         /// As [`OcflStore::read_file`].
-        pub fn read_file(&self, logical_path: &str) -> Result<Vec<u8>, StoreError> {
-            let file = self.file(logical_path)?;
+        pub fn read_file(
+            &self,
+            logical_path: &str,
+            version: Option<&VersionNum>,
+        ) -> Result<Vec<u8>, StoreError> {
+            let file = self.pinned(logical_path, version)?;
             complete_immediately(self.store().read_file(&file, MAX_READ_BYTES)).map_err(boxed)?
         }
 
-        /// The hex SHA-256 of the head's logical file `logical_path`.
+        /// The hex SHA-256 of the logical file `logical_path` of `version`
+        /// (the head when `None`), so a JSON sidecar binds the record and the
+        /// file of one version.
         ///
         /// # Errors
         ///
         /// As [`OcflStore::file_sha256`].
-        pub fn file_sha256(&self, logical_path: &str) -> Result<String, StoreError> {
-            let file = self.file(logical_path)?;
+        pub fn file_sha256(
+            &self,
+            logical_path: &str,
+            version: Option<&VersionNum>,
+        ) -> Result<String, StoreError> {
+            let file = self.pinned(logical_path, version)?;
             complete_immediately(self.store().file_sha256(&file)).map_err(boxed)?
         }
 

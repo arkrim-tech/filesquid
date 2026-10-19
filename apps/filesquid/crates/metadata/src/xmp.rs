@@ -64,7 +64,7 @@ fn pull_tags(text: &str, prefix: &str, pairs: &mut Vec<(String, String)>) {
         };
         let raw = rest[..gt].trim();
         let term = raw.trim_end_matches('/');
-        let skip = raw.ends_with('/') || term.contains(' ') || term.is_empty();
+        let skip = raw.ends_with('/') || term.contains(char::is_whitespace) || term.is_empty();
         rest = &rest[gt + 1..];
         if skip {
             continue;
@@ -131,7 +131,8 @@ fn xml_unescape(value: &str) -> String {
 }
 
 /// Append a CDATA section's text (`cdata` starts after `<![CDATA[`) and
-/// return what follows its `]]>`; an unterminated section is kept whole.
+/// return what follows its `]]>`; an unterminated section is kept as
+/// written, opener included.
 fn push_cdata<'a>(cdata: &'a str, out: &mut String) -> &'a str {
     match cdata.split_once("]]>") {
         Some((text, after)) => {
@@ -139,6 +140,7 @@ fn push_cdata<'a>(cdata: &'a str, out: &mut String) -> &'a str {
             after
         }
         None => {
+            out.push_str("<![CDATA[");
             out.push_str(cdata);
             ""
         }

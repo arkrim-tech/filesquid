@@ -74,8 +74,9 @@ pub trait MetadataStore {
     /// [`StoreError`] when the reference is invalid or the backend fails.
     async fn load(&self, file: &FileRef) -> Result<Record, StoreError>;
 
-    /// Replace the record of `file` with `record`. With the `ocfl` store this
-    /// commits a new OCFL version and never rewrites an earlier one.
+    /// Replace the record of `file` with `record`. With the `ocfl` store a
+    /// changed record commits a new OCFL version (an unchanged one publishes
+    /// nothing), and an earlier version is never rewritten.
     ///
     /// # Errors
     ///
