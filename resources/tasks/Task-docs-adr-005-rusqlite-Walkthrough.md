@@ -30,8 +30,18 @@ A search for `SQLx`/`sqlx` across `resources/`, the crate `resources/` folders, 
 
 ## Hook
 
-The change scope is `rust:filesquid-desktop` (the DE-0.2 walkthrough lives in the desktop crate), so the head commit runs the full suite. `FULL=1 bash scripts/pre-commit.sh` (2026-10-19 UTC), exit 0, summary line:
+The DE-0.2 walkthrough is inside the desktop crate, so `scripts/changed_scope.sh` classifies this change as `rust:filesquid-desktop`, a scoped run (the desktop crate and its dependents). Because the scope includes `rust:`, the rules require the full suite on the head commit, which the explicit `FULL=1` override forces. Raw output of `FULL=1 bash scripts/pre-commit.sh` started at 2026-10-19T01:02:28Z, exit 0 (first and last lines):
 
 ```text
-✅ All Pre-Commit Hooks Passed! Test scope: full
+changed_scope: full (FULL=1 is set)
+========================================
+Running Pre-Commit Hooks... (test scope: full)
+...
+✅ Vitest passed (3s).
+ℹ️  Playwright e2e skipped for apps/imagesquid (set FILESQUID_E2E=1 to run).
+ℹ️  Desktop packaged-window e2e skipped (set FILESQUID_DESKTOP_E2E=1 to run).
+✅ Lint and test validation passed (test scope: full).
+========================================
+✅ All Pre-Commit Hooks Passed! Test scope: full (176s)
+========================================
 ```
