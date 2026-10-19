@@ -47,9 +47,10 @@ pub const EDIT_MESSAGE: &str = "Edit metadata.md";
 /// to the object root in [`storage`](Self::storage) (the host's storage
 /// layout), and its logical path does not change where the record lives. A
 /// pinned version is read by [`load`](MetadataStore::load); on
-/// [`save`](MetadataStore::save) it MUST still be the head, so an edit made
-/// from an older version is a [`StoreError::Conflict`] rather than a lost
-/// update.
+/// [`save`](MetadataStore::save) it MUST be the base the change set is
+/// staged against, else [`StoreError::Conflict`]. If the head then moves,
+/// the edit is rebased onto it (OCFL-S-016), and only a concurrent change to
+/// the same `metadata.md` is a conflict; nothing is overwritten.
 ///
 /// The fields are the host's wiring, as `filesquid-ocfl` asks for it: the
 /// reservations MUST be shared by every writer of the storage root, and
