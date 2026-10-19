@@ -36,8 +36,9 @@ mod owner_only;
 
 #[cfg(feature = "desktop")]
 pub use catalog::{
-    PendingIntent, SqliteCatalog, CATALOG_DIR, CATALOG_FILE_EXTENSION, CATALOG_SCHEMA_VERSION,
-    MAX_LIBRARIES,
+    library_ocfl_root, CommitProbe, NoProbe, PendingIntent, SqliteCatalog, CATALOG_DIR,
+    CATALOG_FILE_EXTENSION, CATALOG_SCHEMA_VERSION, MAX_LIBRARIES, OCFL_ROOT_SUFFIX,
+    RECONCILE_OPERATION, WORK_DIR_SUFFIX,
 };
 pub use host_checks::{probe_name, DataDirChecks, MAX_PROBE_ATTEMPTS};
 pub use host_monitor::{HostMonitor, ALREADY_INSTALLED, HOST_HEARTBEAT_TIMEOUT_MS, JOURNAL_FILE};
