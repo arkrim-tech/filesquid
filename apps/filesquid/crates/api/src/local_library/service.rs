@@ -196,8 +196,9 @@ impl LocalLibraryService {
         request.validate()?;
         let located = locate(root, &request.object_ids).await?;
         let actor = caller.actor();
-        let holder = format!("filesquid-repair-{}", holder_id()?);
-        self.record_consent(actor, &request)?;
+        let run_id = holder_id()?;
+        let holder = format!("filesquid-repair-{run_id}");
+        self.record_consent(actor, &request, &run_id)?;
         let mut objects = Vec::with_capacity(request.object_ids.len());
         for object_id in &request.object_ids {
             let outcome = match located.get(object_id) {
@@ -208,20 +209,23 @@ impl LocalLibraryService {
                 actor,
                 library_id: &request.library_id,
                 object_id,
+                run_id: &run_id,
             };
             objects.push(self.record_outcome(&target, outcome));
         }
         Ok(RepairAnswer {
             library_id: request.library_id,
+            run_id,
             objects,
         })
     }
 
-    /// Durably record the consent entry before any repair.
+    /// Durably record the consent entry before any repair, under the run's ID.
     fn record_consent(
         &self,
         actor: &str,
         request: &RepairRequest,
+        run_id: &str,
     ) -> Result<(), LocalLibraryError> {
         let entry = request
             .object_ids
@@ -229,6 +233,7 @@ impl LocalLibraryService {
             .fold(
                 JournalEntry::new(REPAIR_OPERATION, Outcome::Started)
                     .actor(actor)
+                    .operation_id(run_id)
                     .target(request.library_id.as_str()),
                 |entry, id| entry.target(id.as_str()),
             )
@@ -302,6 +307,9 @@ struct Target<'a> {
     actor: &'a str,
     library_id: &'a LibraryId,
     object_id: &'a str,
+    /// The repair run: consent, outcomes and the follow-up provenance
+    /// commit share it as their operation ID (ADR 040 Decision 6).
+    run_id: &'a str,
 }
 
 /// Only the desktop owner may repair. A server library owner becomes a [`Principal`] with
@@ -332,8 +340,9 @@ fn failure_entry(operation: &'static str, err: &LocalLibraryError) -> JournalEnt
         .level(level)
 }
 
-/// The outcome entry of one object: library, object and version as targets, and the
-/// refusal code when refused.
+/// The outcome entry of one object: the run ID as its operation ID, library, object and
+/// version as targets, the object reference `<object-id>@vN` when the version is known, and
+/// the refusal code when refused.
 fn outcome_entry(
     target: &Target<'_>,
     version: Option<&str>,
@@ -347,10 +356,13 @@ fn outcome_entry(
     };
     let entry = entry
         .actor(target.actor)
+        .operation_id(target.run_id)
         .target(target.library_id.as_str())
         .target(target.object_id);
     match version {
-        Some(version) => entry.target(version),
+        Some(version) => entry
+            .object_ref(format!("{}@{version}", target.object_id))
+            .target(version),
         None => entry,
     }
 }

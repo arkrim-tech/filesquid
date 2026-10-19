@@ -429,3 +429,32 @@ fn open_copy_and_rebuild_never_reach_the_repair() {
     assert!(rig.ledger.consents().is_empty() && rig.ledger.outcomes().is_empty());
     assert!(rig.journaled(REPAIR_OPERATION).is_empty());
 }
+
+/// API-F2.8 (ADR 040 Decision 6): the consent, every outcome and the
+/// answer share one repair run ID as their operation ID, and an outcome
+/// names the object version it repaired.
+#[test]
+fn consent_and_outcomes_share_one_repair_run_id() {
+    let rig = Rig::with_root();
+    rig.w010_object("obj-a", "urn:uuid:a");
+    rig.object("obj-b", "urn:uuid:b");
+    let answer =
+        repair_as_owner(&rig, rig.consented(&["urn:uuid:a", "urn:uuid:b"])).expect("answered");
+    assert!(
+        filesquid_api::journal::is_opaque(&answer.run_id),
+        "{}",
+        answer.run_id
+    );
+    let consents = rig.ledger.consents();
+    assert_eq!(
+        consents[0].operation_id.as_deref(),
+        Some(answer.run_id.as_str())
+    );
+    let rows = outcome_rows(&rig);
+    for row in &rows {
+        assert_eq!(row.operation_id.as_deref(), Some(answer.run_id.as_str()));
+    }
+    assert_eq!(rows[0].object_ref.as_deref(), Some("urn:uuid:a@v2"));
+    let again = repair_as_owner(&rig, rig.consented(&["urn:uuid:b"])).expect("answered again");
+    assert_ne!(again.run_id, answer.run_id, "each consent is its own run");
+}

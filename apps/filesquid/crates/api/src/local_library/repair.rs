@@ -97,6 +97,9 @@ pub struct ObjectRepair {
 pub struct RepairAnswer {
     /// The library.
     pub library_id: LibraryId,
+    /// The repair run: the operation ID its consent and outcome entries share (ADR 040
+    /// Decision 6). An opaque UUID v4.
+    pub run_id: String,
     /// Per-object outcomes.
     pub objects: Vec<ObjectRepair>,
 }
