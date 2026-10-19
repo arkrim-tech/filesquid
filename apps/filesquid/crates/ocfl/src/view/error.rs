@@ -10,9 +10,9 @@ use crate::storage::StorageError;
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ViewError {
     /// A request parameter is outside its bound (a page size of 0 or above
-    /// [`MAX_PAGE_ENTRIES`](super::MAX_PAGE_ENTRIES), an empty range or one
-    /// above [`MAX_RANGE_BYTES`](super::MAX_RANGE_BYTES)) or is not a valid
-    /// logical path or prefix.
+    /// [`MAX_PAGE_ENTRIES`](super::MAX_PAGE_ENTRIES), an empty range, one
+    /// above [`MAX_RANGE_BYTES`](super::MAX_RANGE_BYTES) or one whose end
+    /// overflows `u64`) or is not a valid logical path or prefix.
     #[error("invalid request: {reason}")]
     InvalidRequest {
         /// What is wrong with the request.

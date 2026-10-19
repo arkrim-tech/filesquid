@@ -24,6 +24,9 @@ mod fault;
 #[path = "../support/write_rig.rs"]
 mod rig;
 
+use builder::{build, write_inventory, ObjectSpec};
+use filesquid_ocfl::read::Object;
+
 use change::{commit_files, meta, model, staged_keys, state_of};
 use rig::{key, ready, sha256, v, Rig, ROOT};
 
@@ -510,4 +513,32 @@ fn a_leftover_empty_index_does_not_cause_a_false_conflict() {
     commit_files(&model(&rig, "writer-b"), &rig, &files, "b").expect("b commits v3");
     let receipt = ready(view::add_file(&m, "docs/a.txt", b"from a", meta(&rig, "a")));
     assert_eq!(receipt.expect("no false conflict").version, v("v4"));
+}
+
+#[test]
+fn fixity_values_and_digest_spelling_come_from_the_inventory() {
+    let storage = MemoryBackend::new();
+    let mut spec = ObjectSpec::new("urn:built", vec![vec![("a.txt", b"alpha")]]);
+    spec.uppercase = true;
+    let mut inventory = build(&storage, "o", &spec);
+    let md5 = filesquid_ocfl::fixity::FixityAlgorithm::Md5.digest_hex(b"alpha");
+    let block = [(md5.clone(), vec!["v1/content/a.txt".to_string()])]
+        .into_iter()
+        .collect();
+    inventory.fixity = Some([("md5".to_string(), block)].into_iter().collect());
+    write_inventory(&storage, "o", "v1", &inventory);
+    write_inventory(&storage, "o", "", &inventory);
+    let object = ready(Object::open(&storage, "o")).expect("open");
+    let details = ready(view::file_details(&object, &v("v1"), "a.txt")).expect("details");
+    assert_eq!(details.to_json()["fixity"]["md5"], serde_json::json!([md5]));
+    let report = ready(view::check_fixity(&object, &v("v1"), "a.txt")).expect("fixity");
+    let algorithms: Vec<&str> = report.checks.iter().map(|c| c.algorithm.as_str()).collect();
+    assert_eq!(algorithms, ["sha256", "md5"]);
+    assert!(report.ok, "{report:?}");
+    let history = view::file_history(&object, "a.txt").expect("history");
+    assert_eq!(
+        history[0].digest.as_deref(),
+        Some(sha256(b"alpha").to_uppercase().as_str())
+    );
+    assert_eq!(details.digest, sha256(b"alpha").to_uppercase());
 }

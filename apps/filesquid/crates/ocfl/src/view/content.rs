@@ -20,8 +20,10 @@ const MAX_CHECK_CHUNKS: u64 = MAX_OBJECT_BYTES / MAX_CHUNK_BYTES + 2;
 ///
 /// # Errors
 ///
-/// [`ViewError::InvalidRequest`] for a length outside the bound;
-/// [`ViewError::Read`] for an unknown version or path; or a backend error.
+/// [`ViewError::InvalidRequest`] for a length outside the bound, a range
+/// whose end overflows `u64`, or an invalid logical path;
+/// [`ViewError::Read`] for an unknown version or a path the version does
+/// not hold; or a backend error.
 pub async fn read_range<B: StorageBackend>(
     object: &Object<'_, B>,
     version: &VersionNum,
@@ -102,7 +104,9 @@ impl FixityReport {
 ///
 /// # Errors
 ///
-/// [`ViewError::Read`] for an unknown version or path, or a backend error.
+/// [`ViewError::InvalidRequest`] for an invalid logical path;
+/// [`ViewError::Read`] for an unknown version or a path the version does
+/// not hold; or a backend error.
 pub async fn check_fixity<B: StorageBackend>(
     object: &Object<'_, B>,
     version: &VersionNum,

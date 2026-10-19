@@ -161,7 +161,8 @@ fn listing_context(object_id: &str, version: &VersionNum, prefix: &str) -> Strin
 ///
 /// [`ViewError::InvalidRequest`] for a `limit` outside 1 to
 /// [`MAX_PAGE_ENTRIES`] or an invalid prefix; [`ViewError::InvalidCursor`];
-/// [`ViewError::FolderNotFound`] when no file lies below `prefix`;
+/// [`ViewError::FolderNotFound`] when no file lies below a non-root
+/// `prefix` (the root of an empty version is an empty page);
 /// [`ViewError::Read`] for an unknown version; or a backend error.
 pub async fn list_folder<B: StorageBackend>(
     object: &Object<'_, B>,

@@ -206,7 +206,9 @@ fn targets(state: &WorkingState, path: &str, version: &str) -> Result<Vec<String
 /// change model kept a staging area that changed meanwhile
 /// ([`ChangeError::StagingNotCleared`]): that area holds someone else's
 /// changes and is left alone. On a failure before publication the staging
-/// area is cleared only if its index is still the one this write staged.
+/// area is cleared only if its index is still the one this write staged,
+/// or, when the write left no index (it failed before writing one), so
+/// that a blob it stored is not left behind.
 async fn staged_commit<B, R, S>(
     model: &ChangeModel<'_, B, R, S>,
     meta: VersionMeta,
@@ -218,7 +220,7 @@ where
     S: StorageBackend,
 {
     let staged = stage.await;
-    let snapshot = model.staged_index().await?;
+    let snapshot = model.staged_index().await;
     let outcome = match staged {
         Ok(()) => model.commit(meta).await.map_err(ViewError::from),
         Err(err) => Err(err),
@@ -227,23 +229,29 @@ where
         Ok(receipt) => Ok(receipt),
         Err(ViewError::Change(ChangeError::StagingNotCleared { receipt, .. })) => Ok(*receipt),
         Err(err) => {
-            clear_own(model, snapshot.as_ref()).await;
+            clear_own(model, snapshot).await;
             Err(err)
         }
     }
 }
 
-/// Clear the staging area if its index is still `snapshot`; log why not.
-async fn clear_own<B, R, S>(model: &ChangeModel<'_, B, R, S>, snapshot: Option<&StagingIndex>)
-where
+/// Clear what a failed write staged: the area when its index is still
+/// `snapshot`, or the area when the write left no index (only a blob it
+/// stored before failing can be there). Log why an area was kept.
+async fn clear_own<B, R, S>(
+    model: &ChangeModel<'_, B, R, S>,
+    snapshot: Result<Option<StagingIndex>, ChangeError>,
+) where
     B: StorageBackend,
     R: VersionReservations,
     S: StorageBackend,
 {
-    let Some(snapshot) = snapshot else {
-        return;
+    let cleared = match snapshot {
+        Ok(Some(index)) => model.clear_committed(&index).await,
+        Ok(None) => model.reset().await.map_err(|err| err.to_string()),
+        Err(err) => Err(format!("the staging index could not be read: {err}")),
     };
-    if let Err(reason) = model.clear_committed(snapshot).await {
+    if let Err(reason) = cleared {
         tracing::warn!(%reason, "kept the staging area after a failed view write");
     }
 }
