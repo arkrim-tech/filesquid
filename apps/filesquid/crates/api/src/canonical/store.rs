@@ -164,9 +164,9 @@ fn published(result: Result<CommitReceipt, ChangeError>) -> Result<CommitReceipt
 
 /// Commit the bytes of the original of `file_id`, which the owner named `original_name`, as
 /// a version of the file object `model` writes (one OCFL object per file, ADR 023), with
-/// `meta`. The bytes are stored as `original/<sanitized-name>` (see
+/// `meta`. The bytes are stored as `original/<file-uuid>.<ext>` (see
 /// [`super::original::stored_name`]) and, in the same version, the companion
-/// `original/<sanitized-name>.metadata.md` records `original_name` exactly.
+/// `original/<file-uuid>.<ext>.metadata.md` records `original_name` exactly.
 ///
 /// # Errors
 /// As [`commit_snapshot`], and [`CanonicalError::InvalidIdentifier`] for an original name

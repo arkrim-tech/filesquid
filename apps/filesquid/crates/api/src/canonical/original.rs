@@ -1,11 +1,12 @@
 //! A file object's original and its companion (owner decision, 2026-10-19; API-S-026).
 //!
-//! The original is stored under a sanitized, universally unique name,
-//! `original/<sanitized-name>`: the owner's file name reduced to path-safe ASCII, followed by
-//! the file identifier (a UUID v4) and the lower-cased extension. That name is a storage
-//! detail only. Beside it, `original/<sanitized-name>.metadata.md` records the owner's
-//! original file name exactly as given, so every display name and every export or download
-//! uses the original name, and a library copied with ordinary tools still shows it.
+//! The original is stored under a universally unique name, `original/<file-uuid>.<ext>`: the
+//! file identifier (a UUID v4, ADR 021) and the original extension. No part of the owner's
+//! file name appears in the path, so sharing and publication stay private by default. That
+//! name is a storage detail only. Beside it, `original/<file-uuid>.<ext>.metadata.md` records
+//! the owner's original file name exactly as given, so every display name and every owner
+//! download or export uses the original name, and a library copied with ordinary tools still
+//! shows it.
 //!
 //! The companion is Markdown with YAML front matter:
 //!
@@ -32,41 +33,31 @@ pub const COMPANION_SCHEMA: &str = "filesquid.original.v1";
 /// Longest original file name accepted, in bytes.
 pub const MAX_ORIGINAL_NAME_BYTES: usize = 1024;
 
-/// Longest sanitized stem kept in a stored name, in bytes.
-const MAX_STEM_BYTES: usize = 96;
-
 /// Longest extension kept in a stored name, in bytes.
 const MAX_EXTENSION_BYTES: usize = 16;
 
 /// A file object's original as stored: its logical path and the owner's original name.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileOriginal {
-    /// Logical path of the original, `original/<sanitized-name>` (a storage detail).
+    /// Logical path of the original, `original/<file-uuid>.<ext>` (a storage detail).
     pub path: String,
     /// The owner's file name exactly as given; the name to show and to export under.
     pub original_name: String,
 }
 
-/// The sanitized, universally unique name the original of `file_id` named `original_name`
-/// is stored under: the name's stem with every character outside `[A-Za-z0-9._-]` replaced
-/// by `_` and leading dots removed (at most 96 bytes, and left out when it keeps no ASCII
-/// letter or digit), then `_` and the file identifier, then the extension lower-cased when it
-/// is 1 to 16 ASCII letters or digits.
+/// The universally unique name the original of `file_id` named `original_name` is stored
+/// under: the file identifier, then `.` and the original extension when it is 1 to 16 ASCII
+/// letters or digits after a dot that does not start the name. Nothing else of the owner's
+/// name is kept.
 ///
 /// # Errors
 /// [`CanonicalError::InvalidIdentifier`] for an original name that is empty, longer than
 /// [`MAX_ORIGINAL_NAME_BYTES`] or holds `/` or NUL, or a name that cannot be one path segment.
 pub fn stored_name(file_id: &FileId, original_name: &str) -> Result<String, CanonicalError> {
     check_original_name(original_name)?;
-    let (stem, extension) = split_extension(original_name);
-    let stem = sanitize_stem(stem);
-    let unique = match stem.chars().all(|c| !c.is_ascii_alphanumeric()) {
-        true => file_id.as_str().to_string(),
-        false => format!("{stem}_{}", file_id.as_str()),
-    };
-    let name = match extension {
-        Some(extension) => format!("{unique}.{extension}"),
-        None => unique,
+    let name = match extension(original_name) {
+        Some(extension) => format!("{}.{extension}", file_id.as_str()),
+        None => file_id.as_str().to_string(),
     };
     segment(&name)?;
     companion_name(&name)?;
@@ -141,32 +132,15 @@ fn check_original_name(name: &str) -> Result<(), CanonicalError> {
         .ok_or_else(|| CanonicalError::InvalidIdentifier("not a file name".into()))
 }
 
-/// The stem and the lower-cased extension of `name`, when it has one of 1 to 16 ASCII
-/// letters or digits after a dot that does not start the name.
-fn split_extension(name: &str) -> (&str, Option<String>) {
-    let extension = name.rsplit_once('.').filter(|(stem, ext)| {
-        !stem.is_empty()
-            && !ext.is_empty()
-            && ext.len() <= MAX_EXTENSION_BYTES
-            && ext.chars().all(|c| c.is_ascii_alphanumeric())
-    });
-    match extension {
-        Some((stem, ext)) => (stem, Some(ext.to_ascii_lowercase())),
-        None => (name, None),
-    }
-}
-
-/// `stem` with every character outside `[A-Za-z0-9._-]` replaced by `_`, leading dots
-/// removed and cut to [`MAX_STEM_BYTES`] (all ASCII, so any cut is a character boundary).
-fn sanitize_stem(stem: &str) -> String {
-    let safe = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-');
-    let mapped: String = stem
-        .chars()
-        .map(|c| if safe(c) { c } else { '_' })
-        .collect();
-    mapped
-        .trim_start_matches('.')
-        .chars()
-        .take(MAX_STEM_BYTES)
-        .collect()
+/// The extension of `name`, when it has one of 1 to 16 ASCII letters or digits after a dot
+/// that does not start the name.
+fn extension(name: &str) -> Option<&str> {
+    name.rsplit_once('.')
+        .filter(|(stem, ext)| {
+            !stem.is_empty()
+                && !ext.is_empty()
+                && ext.len() <= MAX_EXTENSION_BYTES
+                && ext.chars().all(|c| c.is_ascii_alphanumeric())
+        })
+        .map(|(_, ext)| ext)
 }

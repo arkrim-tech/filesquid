@@ -380,7 +380,7 @@ fn a_file_original_is_its_own_object_with_its_companion() {
     let file = FileId::new(FILE).unwrap();
     let receipt = commit_original(&rig, &file, "IMG_0001.JPG", "op-9").unwrap();
     assert_eq!(receipt.object_id, format!("urn:uuid:{FILE}"));
-    let stored = format!("original/IMG_0001_{FILE}.jpg");
+    let stored = format!("original/{FILE}.JPG");
     assert_eq!(
         head_paths(&rig, &file),
         vec![stored.clone(), format!("{stored}.metadata.md")]
@@ -395,12 +395,12 @@ fn a_file_original_is_its_own_object_with_its_companion() {
 }
 
 #[test]
-fn a_name_that_needs_sanitizing_round_trips_through_its_companion() {
+fn an_owner_name_round_trips_through_its_companion() {
     let rig = Rig::new();
     let file = FileId::new(FILE).unwrap();
     let original = "Café au lait — 写真 (1).JPEG";
     commit_original(&rig, &file, original, "op-9").unwrap();
-    let stored = format!("original/Caf__au_lait_______1__{FILE}.jpeg");
+    let stored = format!("original/{FILE}.JPEG");
     assert!(head_paths(&rig, &file).contains(&stored));
     let read = ready(read_file_original(&rig.root, &OwnerReadable, &file))
         .unwrap()
@@ -425,15 +425,15 @@ fn the_companion_is_readable_front_matter() {
 }
 
 #[test]
-fn a_name_without_a_safe_stem_or_extension_is_the_file_identifier() {
+fn the_stored_name_is_the_file_identifier_and_its_extension_only() {
     let file = FileId::new(FILE).unwrap();
     let name = |n| filesquid_api::canonical::original::stored_name(&file, n).unwrap();
-    assert_eq!(name("写真"), FILE);
-    assert_eq!(name("写真.PNG"), format!("{FILE}.png"));
-    assert_eq!(name(".bashrc"), format!("bashrc_{FILE}"));
-    assert_eq!(name("..."), FILE);
-    assert_eq!(name("notes.tar.gz"), format!("notes.tar_{FILE}.gz"));
-    assert_eq!(name("report.v2 draft"), format!("report.v2_draft_{FILE}"));
+    assert_eq!(name("写真.PNG"), format!("{FILE}.PNG"));
+    assert_eq!(name("notes.tar.gz"), format!("{FILE}.gz"));
+    assert_eq!(name("Holiday 2023.jpg"), format!("{FILE}.jpg"));
+    for no_extension in ["写真", ".bashrc", "...", "report.v2 draft", "photo.jp g"] {
+        assert_eq!(name(no_extension), FILE, "{no_extension:?}");
+    }
 }
 
 #[test]
