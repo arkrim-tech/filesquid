@@ -69,17 +69,27 @@ Feature: Durable, complete and browsable activity journal
     And the journal should eventually hold 150 "ui.console.warn" entries, one per event
     And no "ui.console.overflow" entry should be written
 
-  Scenario: Only events still queued when the page closes are counted
-    Given the UI has 2 console errors already delivered and 3 console errors queued that the route has not yet accepted
+  Scenario: A full client queue spills to IndexedDB and loses nothing
+    Given the host has been unreachable and the UI's in-memory queue holds 10,000 console warnings
+    When 5 more console warnings occur
+    Then the 5 warnings should be stored in the page's IndexedDB store
+    And when the host is reachable again the journal should eventually hold 10,005 "ui.console.warn" entries, one per event
+    And no "ui.console.overflow" entry should be written
+
+  Scenario: Events queued at page close are persisted and delivered on the next open
+    Given the UI has 2 console errors already delivered and 3 console errors the route has not yet accepted
+    When the page closes
+    Then the 3 undelivered events should be persisted to IndexedDB
+    And when FileSquid opens again the journal should hold 3 more "ui.console.error" entries, delivered oldest first before any new event
+    And no event should be journaled twice
+    And no "ui.console.overflow" entry should be written
+
+  Scenario: Without IndexedDB the events the UI could not keep are counted at page close
+    Given IndexedDB is unavailable in the page
+    And the UI has 2 console errors already delivered and 3 console errors the route has not yet accepted
     When the page closes
     Then the journal should hold one "ui.console.overflow" entry with the count 3
     And the 2 delivered events should each have their own "ui.console.error" entry
-    And the overflow count should not include them
-
-  Scenario: A full client queue keeps its events and counts the rest at page close
-    Given the host has been unreachable and the UI's queue holds 10,000 console warnings
-    When 5 more console warnings occur and the page then closes
-    Then the journal should hold one "ui.console.overflow" entry with 10,000 queued and 5 over-capacity events
 
   # User interactions
   Scenario: The owner browses and filters the Logs view
