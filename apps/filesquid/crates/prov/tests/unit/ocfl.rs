@@ -348,4 +348,9 @@ fn a_record_a_revert_removed_from_the_head_is_not_reconstructed() {
         [v("v1"), v("v3")],
         "v2 keeps its own record"
     );
+    assert_eq!(
+        list_records(&object),
+        [v("v2")],
+        "history still lists the record of v2"
+    );
 }

@@ -186,9 +186,20 @@ pub async fn read_record<B: StorageBackend>(
     Err(RecordError::TooLarge)
 }
 
-/// The versions whose record the object's head holds, in version order.
+/// The versions that have a record [`read_record`] can read, in version
+/// order: its record is in the head or in the version's own state (a record
+/// a later revert removed from the head still describes its version).
 pub fn list_records<B: StorageBackend>(object: &Object<'_, B>) -> Vec<VersionNum> {
-    recorded_versions(object.inventory()).into_iter().collect()
+    let inventory = object.inventory();
+    let in_head = recorded_versions(inventory);
+    inventory
+        .versions
+        .iter()
+        .filter(|(version, block)| {
+            in_head.contains(*version) || holds_own_record(version, &block.state)
+        })
+        .map(|(version, _)| version.clone())
+        .collect()
 }
 
 /// The versions of the object that have no record, in version order: what a
