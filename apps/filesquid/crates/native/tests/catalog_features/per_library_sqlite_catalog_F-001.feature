@@ -40,6 +40,16 @@ Feature: Per-library SQLite catalog
     And the library "Family archive" should be at revision 2
 
   # Edge case
+  Scenario: An index refresh that changes nothing journals nothing
+    Given an empty catalog directory
+    And the owner created the library "Family archive" with the collection "Summer"
+    And the file "f-1" was indexed in the collection "Summer" at listing order 3
+    When the file "f-1" is indexed in the collection "Summer" at listing order 3 again
+    Then the host journal should record "library.file.index" 1 time
+    When the file "f-1" is indexed in the collection "Summer" at listing order 4 again
+    Then the host journal should record "library.file.index" 2 times
+
+  # Edge case
   Scenario: Journal entries survive an unreachable host journal
     Given an empty catalog directory whose host journal is unreachable
     When the owner creates the library "Family archive"

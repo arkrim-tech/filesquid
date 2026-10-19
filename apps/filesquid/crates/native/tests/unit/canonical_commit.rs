@@ -14,7 +14,7 @@ use filesquid_api::library::{
     CatalogError, FileListing, FileScope, LibraryCatalog, LibraryCommand, VisibilityFilter,
 };
 use filesquid_api::operation::OperationId;
-use filesquid_core::{CollectionId, File, FileId, LibraryId};
+use filesquid_core::{CollectionId, File, FileId, Folder, FolderId, LibraryId};
 use filesquid_native::{library_ocfl_root, CommitProbe};
 use filesquid_ocfl::storage::{complete_immediately, FsBackend};
 use std::path::{Path, PathBuf};
@@ -504,4 +504,132 @@ fn a_recorded_no_op_commits_no_version_and_journals_nothing() {
     assert!(linked
         .iter()
         .all(|e| e.object_ref.as_deref().is_some_and(|r| r.ends_with("@v3"))));
+}
+
+/// The snapshot version name of `library` (`v1`, `v2`, ...).
+fn head(fx: &Fixture, library: &LibraryId) -> String {
+    snapshot(&fx.root, library)
+        .expect("snapshot")
+        .version
+        .to_string()
+}
+
+/// Index `files` (each with its listing order) in `library`, journaled as
+/// `library.file.index`.
+fn index_files(fx: &Fixture, library: &LibraryId, files: &[(File, i64)]) {
+    let entry = JournalEntry::new("library.file.index", Outcome::Succeeded);
+    fx.catalog
+        .index_files(library, files, entry)
+        .expect("index files");
+}
+
+/// Index `folders` in `library`, journaled as `library.folder.index`.
+fn index_folders(fx: &Fixture, library: &LibraryId, folders: &[Folder]) {
+    let entry = JournalEntry::new("library.folder.index", Outcome::Succeeded);
+    fx.catalog
+        .index_folders(library, folders, entry)
+        .expect("index folders");
+}
+
+/// The entries `journal` stored after its first `before` entries.
+fn journaled_since(
+    journal: &dyn filesquid_api::journal::JournalStore,
+    before: usize,
+) -> Vec<JournalEntry> {
+    all_entries(journal).into_iter().skip(before).collect()
+}
+
+/// A library created in `fx` with its collection "Summer" (at v2), answered with that
+/// collection.
+fn library_with_home(fx: &Fixture) -> (LibraryId, CollectionId) {
+    let lib = fx.create_library("Family archive");
+    let created = fx.run("1", summer(&lib));
+    let home = CollectionId::new(created.created_id.expect("id")).expect("collection");
+    (lib, home)
+}
+
+/// The root folder `years` of `library`, named `name`.
+fn years(library: &LibraryId, name: &str) -> Folder {
+    Folder::new(FolderId::new("years").unwrap(), library.clone(), name).unwrap()
+}
+
+/// Owner decision 2026-10-19: a catalog index refresh that changes nothing is treated like a
+/// no-op command. Re-indexing the same files or folders, or indexing none, commits no
+/// version and journals nothing (no outbox entry either); a refresh that does change
+/// something still commits a version and journals its `ocfl.commit` and own entry, linked to
+/// that version, exactly as before.
+#[test]
+fn an_index_refresh_that_changes_nothing_journals_nothing() {
+    let fx = Fixture::new("index-no-op");
+    let (lib, home) = library_with_home(&fx);
+    let file = |order| {
+        let file = File::new(FileId::new("f-1").unwrap(), lib.clone(), home.clone());
+        (file, order)
+    };
+    index_files(&fx, &lib, &[file(3)]);
+    index_folders(&fx, &lib, &[years(&lib, "Years")]);
+    assert_eq!(head(&fx, &lib), "v4");
+    let before = all_entries(fx.journal.as_ref()).len();
+    index_files(&fx, &lib, &[file(3)]);
+    index_files(&fx, &lib, &[]);
+    index_folders(&fx, &lib, &[years(&lib, "Years")]);
+    index_folders(&fx, &lib, &[]);
+    assert_eq!(head(&fx, &lib), "v4");
+    assert!(journaled_since(fx.journal.as_ref(), before).is_empty());
+    assert_eq!(fx.catalog.outbox_len(&lib).expect("outbox"), 0);
+    index_files(&fx, &lib, &[file(4)]);
+    index_folders(&fx, &lib, &[years(&lib, "Decades")]);
+    assert_eq!(head(&fx, &lib), "v6");
+    let changed = journaled_since(fx.journal.as_ref(), before);
+    let operations: Vec<&str> = changed.iter().map(|e| e.operation.as_str()).collect();
+    assert_eq!(
+        operations,
+        [
+            "ocfl.commit",
+            "library.file.index",
+            "ocfl.commit",
+            "library.folder.index"
+        ]
+    );
+    let linked: Vec<bool> = changed
+        .iter()
+        .zip(["@v5", "@v5", "@v6", "@v6"])
+        .map(|(e, v)| e.object_ref.as_deref().is_some_and(|r| r.ends_with(v)))
+        .collect();
+    assert_eq!(linked, [true; 4], "{changed:?}");
+}
+
+/// The same rule in a catalog that records PROV-O history (DE-0.10): an index refresh that
+/// changes nothing writes no version, so no PROV-O record, and journals nothing; one that
+/// changes something journals exactly the entries its version carries.
+#[test]
+fn a_recorded_index_refresh_that_changes_nothing_journals_nothing() {
+    let journal: Arc<dyn filesquid_api::journal::JournalStore> =
+        Arc::new(MemoryJournal::new("desktop"));
+    let fx = Fixture::recording(
+        temp_root("recorded-index-no-op"),
+        journal.clone(),
+        Arc::new(NoCrash),
+    );
+    let (lib, home) = library_with_home(&fx);
+    let file = |order| {
+        let file = File::new(FileId::new("f-1").unwrap(), lib.clone(), home.clone());
+        (file, order)
+    };
+    index_files(&fx, &lib, &[file(3)]);
+    assert_eq!(head(&fx, &lib), "v3");
+    let before = all_entries(journal.as_ref()).len();
+    index_files(&fx, &lib, &[file(3)]);
+    index_folders(&fx, &lib, &[]);
+    assert_eq!(head(&fx, &lib), "v3");
+    assert!(journaled_since(journal.as_ref(), before).is_empty());
+    assert_eq!(fx.catalog.outbox_len(&lib).expect("outbox"), 0);
+    index_files(&fx, &lib, &[file(4)]);
+    assert_eq!(head(&fx, &lib), "v4");
+    let changed = journaled_since(journal.as_ref(), before);
+    let operations: Vec<&str> = changed.iter().map(|e| e.operation.as_str()).collect();
+    assert_eq!(operations, ["ocfl.commit", "library.file.index"]);
+    assert!(changed
+        .iter()
+        .all(|e| e.object_ref.as_deref().is_some_and(|r| r.ends_with("@v4"))));
 }

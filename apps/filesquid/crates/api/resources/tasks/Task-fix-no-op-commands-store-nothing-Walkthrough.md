@@ -225,6 +225,76 @@ test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 
 Cubic raised 1 finding on `602460a` (P3): the merge summary above now says the PROV-O record rides the version only when the host journal allocates the entries' IDs, as `a_commit_without_journal_ids_publishes_and_warns_without_identifying_data` shows. TDD-ENFORCE: not applicable, documentation only.
 
+## DE-S-010: Intent, OCFL snapshot commit and receipt reconcile on the desktop (index refreshes)
+
+**Owner decision (2026-10-19):** a catalog index refresh that changes nothing is treated like a no-op command: it writes no journal entry, no receipt and no version. Before this change `SqliteCatalog::index_files` and `index_folders` already published no version when the entities were unchanged, but still pushed the refresh's own journal entry (unlinked to any version) into the outbox.
+
+| Constraint | Gate | State |
+|---|---|---|
+| I1 An index refresh that changes nothing (the same files or folders again, or none) publishes no OCFL version | `an_index_refresh_that_changes_nothing_journals_nothing` (head stays `v4`), `a_recorded_index_refresh_that_changes_nothing_journals_nothing` (head stays `v3`) | Met |
+| I2 It stores no journal entry and leaves no outbox entry, with or without PROV-O history | both tests above (no new entry, `outbox_len` 0), scenario "An index refresh that changes nothing journals nothing" | Met |
+| I3 A refresh that changes something still publishes a version and journals `ocfl.commit` and its own entry linked to that version, as before | both tests above (`@v5`/`@v6`, and `@v4` in the recording catalog), the same scenario's second half | Met |
+| I4 A refused or failed refresh is not treated as a no-op: it still returns its error to the caller and stores nothing | unchanged code path: every `?` before `tx.commit` returns the error and rolls the transaction back | Met |
+
+What changed:
+
+- [`native/src/catalog/mod.rs`](../../../native/src/catalog/mod.rs): `write_journaled` stores no journal entry when `CanonicalRoot::commit` answers `None` (the snapshot is unchanged); it still commits the transaction, so a catalog row that differed from an already-equal snapshot is brought into line. Module and `index_files` docs state the rule.
+- [`native/src/catalog/history.rs`](../../../native/src/catalog/history.rs): `CommitPlan::unpublished` is now only the fallback of a published commit whose version cannot be referenced; its doc says so.
+- Tests: two unit tests in [`tests/unit/canonical_commit.rs`](../../../native/tests/unit/canonical_commit.rs) and the DE-S-009 catalog scenario "An index refresh that changes nothing journals nothing" with its steps.
+- Docs: `.agents/rules/logging-enforce.md` §2 exception, [ADR 033](../../../../../../resources/architecture/033-activity-journal-and-live-health-monitoring.md) Decision 2's exception and the [ADR 010](../../../../../../resources/architecture/010-ocfl-1-1-dual-profile.md) amendment now read: a command or catalog index refresh that succeeds without a change produces no receipt, no OCFL version and no journal entry; a refused or failed one is still journaled as `failed`. Desktop SRS rows DE-S-009 and DE-S-010 say the same for `index_files` and `index_folders`.
+- In a catalog that records PROV-O history the journal IDs are allocated before the engine knows whether the refresh changes anything, so a no-op refresh leaves those reserved IDs unused. `allocate_ids` promises unique increasing IDs, not a gapless sequence, so nothing reads the gap.
+
+TDD: the tests were written first. Against the previous code, `cargo test -p filesquid-native --features desktop --test unit_canonical_commit --locked index_refresh` failed:
+
+```text
+running 2 tests
+test an_index_refresh_that_changes_nothing_journals_nothing ... FAILED
+test a_recorded_index_refresh_that_changes_nothing_journals_nothing ... FAILED
+thread 'an_index_refresh_that_changes_nothing_journals_nothing' (8731) panicked at crates/native/tests/unit/canonical_commit.rs:578:5:
+assertion failed: journaled_since(fx.journal.as_ref(), before).is_empty()
+thread 'a_recorded_index_refresh_that_changes_nothing_journals_nothing' (8730) panicked at crates/native/tests/unit/canonical_commit.rs:625:5:
+assertion failed: journaled_since(journal.as_ref(), before).is_empty()
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.31s
+```
+
+and the new scenario failed in `cargo test -p filesquid-native --features desktop --test catalog_features --locked` (the second `library.file.index` entry has `object_ref: None`, from the unchanged refresh):
+
+```text
+  Scenario: An index refresh that changes nothing journals nothing
+   ✔  Given an empty catalog directory
+   ✔  And the owner created the library "Family archive" with the collection "Summer"
+   ✔  And the file "f-1" was indexed in the collection "Summer" at listing order 3
+   ✔  When the file "f-1" is indexed in the collection "Summer" at listing order 3 again
+   ✘  Then the host journal should record "library.file.index" 1 time
+      Step panicked. Captured output: assertion `left == right` failed: [... JournalEntry { id: Some(7), ..., actor: "system", operation: "library.file.index", outcome: Succeeded, ..., object_ref: None }]
+        left: 2
+       right: 1
+12 scenarios (11 passed, 1 failed)
+66 steps (65 passed, 1 failed)
+```
+
+After the change, `cargo test -p filesquid-native --features desktop --test unit_canonical_commit --test unit_catalog --test catalog_features --locked`:
+
+```text
+     Running tests/catalog_features.rs
+  Scenario: An index refresh that changes nothing journals nothing
+   ✔  And the file "f-1" was indexed in the collection "Summer" at listing order 3
+   ✔  When the file "f-1" is indexed in the collection "Summer" at listing order 3 again
+   ✔  Then the host journal should record "library.file.index" 1 time
+   ✔  When the file "f-1" is indexed in the collection "Summer" at listing order 4 again
+   ✔  Then the host journal should record "library.file.index" 2 times
+12 scenarios (12 passed)
+68 steps (68 passed)
+     Running tests/unit/canonical_commit.rs
+test a_recorded_index_refresh_that_changes_nothing_journals_nothing ... ok
+test an_index_refresh_that_changes_nothing_journals_nothing ... ok
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+     Running tests/unit/catalog.rs
+test folders_are_indexed_and_read_back ... ok
+test removing_a_catalog_file_loses_only_the_rebuildable_index ... ok
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.72s
+```
+
 ## Gate
 
 `FULL=1 bash scripts/pre-commit.sh` from the repository root (branch change scope `rust:filesquid-api,filesquid-desktop,filesquid-native`; the full run covers it):

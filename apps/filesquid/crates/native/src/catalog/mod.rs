@@ -11,8 +11,11 @@
 //! library), then the create or revision rule, every change, the new revision, the receipt,
 //! the removal of the operation's pending intent and its journal entry (into the file's
 //! journal outbox). A commit with no change stores nothing but the removal of its pending
-//! intent: no receipt, no journal entry and no new revision. The outbox is then forwarded to the host's activity journal store; what
-//! the store refuses is forwarded later, so nothing is dropped.
+//! intent: no receipt, no journal entry and no new revision; an index refresh
+//! ([`SqliteCatalog::index_files`], [`SqliteCatalog::index_folders`]) that changes nothing
+//! likewise publishes no version and stores no journal entry. The outbox is then forwarded
+//! to the host's activity journal store; what the store refuses is forwarded later, so
+//! nothing is dropped.
 //!
 //! The catalog is an index, never the only copy of accepted data: committed state is
 //! canonical in the library's OCFL objects, and the catalog is rebuilt from them (DE-0.3,
@@ -194,7 +197,9 @@ impl SqliteCatalog {
     /// Store `files` (each with its listing order) in `library_id`'s catalog, as an import
     /// does, publishing their entities as one snapshot version and storing `journal` in the
     /// same transaction. Files already stored keep their hide and delete state. The revision
-    /// (the command token) is not advanced. Database and filesystem I/O.
+    /// (the command token) is not advanced. A refresh that changes nothing (the same files
+    /// again, or none) publishes no version and stores no journal entry, like a command that
+    /// changes nothing (owner decision 2026-10-19). Database and filesystem I/O.
     ///
     /// # Errors
     /// [`CatalogError::Failed`] for an unknown library, a file of another library or a
@@ -306,9 +311,10 @@ impl SqliteCatalog {
     }
 
     /// Run `write`, publish the snapshot version of the entities `keys` (every entity when
-    /// the library has no snapshot yet; no version when they are unchanged), and store its
-    /// version and `journal` in one transaction; then forward the outbox. Database and
-    /// filesystem I/O.
+    /// the library has no snapshot yet), and store its version and `journal` in one
+    /// transaction; then forward the outbox. A refresh that leaves the entities unchanged
+    /// publishes no version and stores no journal entry (owner decision 2026-10-19, DE-S-010).
+    /// Database and filesystem I/O.
     fn write_journaled(
         &self,
         library_id: &LibraryId,
@@ -328,7 +334,7 @@ impl SqliteCatalog {
             .commit(&delta, plan.meta(), plan.bound())?;
         let entries = match &published {
             Some(published) => plan.published(published),
-            None => plan.unpublished(),
+            None => Vec::new(),
         };
         if let Some(published) = published {
             reconcile::set_snapshot_version(&tx, &published.version.to_string())?;

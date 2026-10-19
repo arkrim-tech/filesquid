@@ -258,6 +258,38 @@ fn journal_records(w: &mut CatalogWorld, operation: String) {
     );
 }
 
+/// Index the file `file` of the "Family archive" library in the scenario's collection at
+/// listing order `order`, journaled as `library.file.index`.
+fn index_file(w: &CatalogWorld, file: &str, order: i64) {
+    let id = w.library("Family archive");
+    let home = w.collection.clone().expect("collection");
+    let file = filesquid_core::File::new(FileId::new(file).expect("file"), id.clone(), home);
+    let entry = JournalEntry::new("library.file.index", Outcome::Succeeded);
+    w.fx()
+        .catalog
+        .index_files(&id, &[(file, order)], entry)
+        .expect("index");
+}
+
+#[given(expr = "the file {string} was indexed in the collection {string} at listing order {int}")]
+fn file_indexed(w: &mut CatalogWorld, file: String, _title: String, order: i64) {
+    index_file(w, &file, order);
+}
+
+#[when(
+    expr = "the file {string} is indexed in the collection {string} at listing order {int} again"
+)]
+fn file_indexed_again(w: &mut CatalogWorld, file: String, _title: String, order: i64) {
+    index_file(w, &file, order);
+}
+
+#[then(regex = r#"^the host journal should record "([^"]+)" (\d+) times?$"#)]
+fn journal_records_times(w: &mut CatalogWorld, operation: String, times: usize) {
+    let entries = all_entries(w.fx().journal.as_ref());
+    let found = entries.iter().filter(|e| e.operation == operation).count();
+    assert_eq!(found, times, "{entries:?}");
+}
+
 #[then(expr = "the catalog should hold no receipt for the rename")]
 fn no_rename_receipt(w: &mut CatalogWorld) {
     let op = OperationId::new("op-rename").expect("op");
