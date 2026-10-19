@@ -20,7 +20,7 @@ Amended: 2026-10-19 by [ADR 040](./040-prov-o-history.md): the `prov` module joi
 
 Until now this repository delivered ImageSquid, a photo and video manager. Three engines (`filesquid-ocfl`, `filesquid-metadata`, `filesquid-provenance`) were separate products that ImageSquid called, each meant to move to its own repository ([ADR 023](./023-filesquid-ocfl-engine-and-parquet.md), [ADR 024](./024-filesquid-metadata-engine.md), [ADR 026](./026-filesquid-provenance-engine.md)). A generic FileSquid product was planned for after ImageSquid 1.0.
 
-The owner reversed that order. FileSquid is now the product this repository delivers ([FileSquid vision](../product-vision.md)). It is one Rust backend with one API and three modules: `ocfl`, `metadata` and `c2pa`. ImageSquid and Arkrim become distributions: UI layers on top of FileSquid ([FE-076](../product-vision.md#platform-api-and-hosts), [FE-077](../product-vision.md#platform-api-and-hosts), [U-24](../product-vision.md#one-api-hosts-and-distributions), [U-25](../product-vision.md#one-api-hosts-and-distributions)).
+The owner reversed that order. FileSquid is now the product this repository delivers ([FileSquid vision](../product-vision.md)). It is one Rust backend with one API and three modules: `ocfl`, `metadata` and `c2pa` (a fourth, `prov`, joined with the 2026-10-19 amendment above). ImageSquid and Arkrim become distributions: UI layers on top of FileSquid ([FE-076](../product-vision.md#platform-api-and-hosts), [FE-077](../product-vision.md#platform-api-and-hosts), [U-24](../product-vision.md#one-api-hosts-and-distributions), [U-25](../product-vision.md#one-api-hosts-and-distributions)).
 
 Requirements that drive this decision:
 
@@ -44,6 +44,7 @@ Requirements that drive this decision:
 | `filesquid-ocfl` | `crates/ocfl/` | Module: storage facts, OCFL 1.1 ([ADR 016](./016-rust-ocfl-library.md), [ADR 023](./023-filesquid-ocfl-engine-and-parquet.md)) | Exists |
 | `filesquid-metadata` | `crates/metadata/` | Module: every other file fact ([ADR 024](./024-filesquid-metadata-engine.md), [ADR 027](./027-filesquid-metadata-pluggable-stores.md)) | Exists |
 | `filesquid-c2pa` | `crates/c2pa/` | Module: Content Credentials ([ADR 026](./026-filesquid-provenance-engine.md)) | Planned; docs and feature file only |
+| `filesquid-prov` | `crates/prov/` | Module: W3C PROV-O history ([ADR 040](./040-prov-o-history.md)) | Planned (amendment 2026-10-19) |
 | `filesquid-api` | `crates/api/` | The single API: routes, contract, auth, job and event bus ([ADR 030](./030-filesquid-api-and-transports.md)) | Being added |
 | `filesquid-server` | `crates/server/` | Host: Axum ([ADR 032](./032-hosting-and-privacy-model.md)) | Exists (was `imagesquid_backend`) |
 | `filesquid-desktop` | `crates/desktop/` | Host: Tauri 2 ([ADR 002](./002-tauri2-desktop-shell.md)) | Exists (was `imagesquid_desktop`) |
