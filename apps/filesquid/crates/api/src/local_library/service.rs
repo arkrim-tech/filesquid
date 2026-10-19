@@ -418,8 +418,9 @@ fn failure_entry(operation: &'static str, err: &LocalLibraryError) -> JournalEnt
 }
 
 /// The outcome entry of one object: the run ID as its operation ID, library, object and
-/// version as targets, the object reference `<object-id>@vN` when the version is known, and
-/// the refusal code when refused.
+/// version as targets, the object reference `<object-id>@vN` when the object was repaired
+/// (a refused entry stays journal-only, linked to no version), and the refusal code when
+/// refused.
 fn outcome_entry(
     target: &Target<'_>,
     version: Option<&str>,
@@ -436,11 +437,13 @@ fn outcome_entry(
         .operation_id(target.run_id)
         .target(target.library_id.as_str())
         .target(target.object_id);
-    match version {
-        Some(version) => entry
-            .object_ref(format!("{}@{version}", target.object_id))
-            .target(version),
-        None => entry,
+    let Some(version) = version else {
+        return entry;
+    };
+    let entry = entry.target(version);
+    match outcome {
+        Ok(_) => entry.object_ref(format!("{}@{version}", target.object_id)),
+        Err(_) => entry,
     }
 }
 

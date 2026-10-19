@@ -455,6 +455,12 @@ fn consent_and_outcomes_share_one_repair_run_id() {
         assert_eq!(row.operation_id.as_deref(), Some(answer.run_id.as_str()));
     }
     assert_eq!(rows[0].object_ref.as_deref(), Some("urn:uuid:a@v2"));
+    assert_eq!(rows[1].outcome, Outcome::Failed);
+    assert_eq!(
+        rows[1].object_ref, None,
+        "a refused object stays journal-only (review round 1)"
+    );
+    assert!(rows[1].target_ids.iter().any(|t| t == "v2"));
     let again = repair_as_owner(&rig, rig.consented(&["urn:uuid:b"])).expect("answered again");
     assert_ne!(again.run_id, answer.run_id, "each consent is its own run");
 }
