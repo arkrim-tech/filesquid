@@ -32,6 +32,7 @@
 //! status, diff, commit, ...) is built on it.
 
 pub(crate) mod base;
+mod bound;
 mod clock;
 mod commit;
 mod draft;
@@ -45,6 +46,7 @@ mod reconcile;
 mod repair;
 mod reservation;
 
+pub use bound::{BoundContext, VersionBoundFiles, MAX_BOUND_BYTES, MAX_BOUND_FILES};
 #[cfg(not(target_arch = "wasm32"))]
 pub use clock::SystemClock;
 pub use clock::{rfc3339_utc, Clock};

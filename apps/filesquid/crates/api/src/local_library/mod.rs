@@ -35,6 +35,7 @@ const LOG_TARGET: &str = "filesquid::local_library";
 mod candidates;
 mod error;
 mod ledger;
+mod provenance;
 mod rebuild;
 mod repair;
 mod root;
@@ -44,6 +45,9 @@ mod transfer;
 
 pub use error::LocalLibraryError;
 pub use ledger::{LedgerError, MemoryRepairLedger, RecordedRepair, RepairLedger, RepairRecord};
+pub use provenance::{
+    JOURNAL_IDS_UNAVAILABLE, PROVENANCE_COMMIT_FAILED, PROVENANCE_NOT_CONFIGURED,
+};
 pub use rebuild::{RebuildReport, RebuiltObject, UnreadableObject};
 pub use repair::{
     ObjectRepair, RepairAnswer, RepairCandidate, RepairCandidates, RepairConsent, RepairRequest,

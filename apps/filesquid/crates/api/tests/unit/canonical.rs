@@ -127,6 +127,7 @@ fn meta(record: &OperationRecord) -> VersionMeta {
 fn record(op: &str, revision: &str) -> OperationRecord {
     OperationRecord {
         operation_id: op.into(),
+        kind: None,
         revision: revision.into(),
         created_id: None,
         deletion: None,
@@ -612,5 +613,154 @@ fn an_entity_whose_identifier_cannot_name_a_path_is_a_decode_error() {
     assert!(
         matches!(&refused, Err(CanonicalError::Decode { path, .. }) if path == "folders/a.json"),
         "{refused:?}"
+    );
+}
+
+#[test]
+fn a_recorded_kind_is_written_and_read_back_by_both_readers() {
+    let kinded = OperationRecord {
+        kind: Some("delete".into()),
+        ..record("op-k", "3")
+    };
+    let text = operation_message(&kinded);
+    assert_eq!(parse_operation_message(&text), Ok(Some(kinded)));
+    let core = filesquid_core::OperationMessage::parse(&text)
+        .expect("core reads the catalog message")
+        .expect("a FileSquid message");
+    assert_eq!(core.kind(), filesquid_core::OperationKind::Delete);
+    assert_eq!(core.revision(), Some(3));
+}
+
+#[test]
+fn catalog_operations_map_to_history_kinds() {
+    use filesquid_api::canonical::operation_kind;
+    use filesquid_core::OperationKind;
+    let cases = [
+        ("library.file.hide", OperationKind::Hide),
+        ("library.file.unhide", OperationKind::Unhide),
+        ("library.file.delete", OperationKind::Delete),
+        ("library.file.restore", OperationKind::Restore),
+        ("library.file.purge", OperationKind::Purge),
+        ("library.snapshot.copy", OperationKind::Copy),
+        ("library.create", OperationKind::CatalogOrganisation),
+        (
+            "library.virtual_collection.add",
+            OperationKind::CatalogOrganisation,
+        ),
+        ("monitor.report", OperationKind::Unknown),
+    ];
+    for (operation, kind) in cases {
+        assert_eq!(operation_kind(operation), kind, "{operation}");
+    }
+}
+
+/// A version-bound function writing a record and one journal line naming the version.
+fn history_files(
+    context: &filesquid_ocfl::write::BoundContext<'_>,
+) -> Result<std::collections::BTreeMap<String, Vec<u8>>, String> {
+    let version = context.version.to_string();
+    let line = format!("{{\"op\":\"{version}\"}}\n");
+    Ok(std::collections::BTreeMap::from([
+        (format!("provenance/{version}.jsonld"), b"{}".to_vec()),
+        (
+            format!("provenance/{version}.journal.jsonl"),
+            line.into_bytes(),
+        ),
+    ]))
+}
+
+#[test]
+fn history_files_ride_the_snapshot_version_and_are_not_entities() {
+    use filesquid_api::canonical::{commit_snapshot_with, read_commit_journal};
+    let rig = Rig::new();
+    let model = rig.model(SNAPSHOT_ROOT, &snapshot_object_id(&library_id()));
+    let mut first = SnapshotDelta::default();
+    first.put(&head(1)).unwrap();
+    let bound = &history_files as &dyn filesquid_ocfl::write::VersionBoundFiles;
+    let meta1 = meta(&record("op-1", "1"));
+    ready(commit_snapshot_with(
+        &model,
+        &OwnerReadable,
+        &first,
+        meta1,
+        Some(bound),
+    ))
+    .unwrap()
+    .expect("v1");
+    let mut second = SnapshotDelta::default();
+    second.put(&head(2)).unwrap();
+    let meta2 = meta(&record("op-2", "2"));
+    ready(commit_snapshot_with(
+        &model,
+        &OwnerReadable,
+        &second,
+        meta2,
+        Some(bound),
+    ))
+    .unwrap()
+    .expect("v2");
+    let same = ready(commit_snapshot_with(
+        &model,
+        &OwnerReadable,
+        &second,
+        meta(&record("op-3", "2")),
+        Some(bound),
+    ))
+    .unwrap();
+    assert_eq!(same, None, "no change writes no version and no history");
+    let snapshot = ready(read_snapshot(&rig.root, &OwnerReadable))
+        .unwrap()
+        .expect("snapshot");
+    assert_eq!(snapshot.library.revision, 2, "history files are skipped");
+    let all = ready(read_commit_journal(&rig.root, &OwnerReadable, None)).unwrap();
+    assert_eq!(all, ["{\"op\":\"v1\"}", "{\"op\":\"v2\"}"]);
+    let v1 = filesquid_ocfl::VersionNum::parse("v1").unwrap();
+    let missed = ready(read_commit_journal(&rig.root, &OwnerReadable, Some(&v1))).unwrap();
+    assert_eq!(missed, ["{\"op\":\"v2\"}"]);
+}
+
+#[test]
+fn a_root_without_a_snapshot_has_no_commit_journal() {
+    use filesquid_api::canonical::read_commit_journal;
+    let rig = Rig::new();
+    let lines = ready(read_commit_journal(&rig.root, &OwnerReadable, None)).unwrap();
+    assert!(lines.is_empty());
+}
+
+#[test]
+fn a_provenance_only_message_names_no_receipt() {
+    let text = "filesquid.operation.v1 {\"operation_id\":\"run-1\",\"kind\":\"backfill\"}";
+    assert_eq!(parse_operation_message(text), Ok(None));
+    assert!(parse_operation_message("filesquid.operation.v1 {\"kind\":\"backfill\"}").is_err());
+}
+
+#[test]
+fn a_commit_journal_a_replay_could_not_read_is_refused_before_publishing() {
+    use filesquid_api::canonical::{commit_snapshot_with, MAX_JOURNAL_LINES};
+    let rig = Rig::new();
+    let model = rig.model(SNAPSHOT_ROOT, &snapshot_object_id(&library_id()));
+    let mut delta = SnapshotDelta::default();
+    delta.put(&head(1)).unwrap();
+    let lines = "{}\n".repeat(MAX_JOURNAL_LINES + 1);
+    let oversized = move |context: &filesquid_ocfl::write::BoundContext<'_>| {
+        let path = format!("provenance/{}.journal.jsonl", context.version);
+        Ok(std::collections::BTreeMap::from([(
+            path,
+            lines.clone().into_bytes(),
+        )]))
+    };
+    let bound = &oversized as &dyn filesquid_ocfl::write::VersionBoundFiles;
+    let meta1 = meta(&record("op-1", "1"));
+    let result = ready(commit_snapshot_with(
+        &model,
+        &OwnerReadable,
+        &delta,
+        meta1,
+        Some(bound),
+    ));
+    assert!(result.is_err(), "{result:?}");
+    assert_eq!(
+        ready(read_snapshot(&rig.root, &OwnerReadable)).unwrap(),
+        None
     );
 }

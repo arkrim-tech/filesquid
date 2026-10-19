@@ -125,6 +125,13 @@ pub enum CommitError {
         /// The key that does not match.
         key: String,
     },
+    /// The caller's version-bound file function failed or returned files
+    /// the version cannot hold (OCFL-S-024). Nothing was published.
+    #[error("version-bound files refused: {reason}")]
+    BoundFiles {
+        /// Why: the function's own error, or the bound that was broken.
+        reason: String,
+    },
     /// The Git guard refused the object root (OCFL-S-001).
     #[error(transparent)]
     Guard(OcflError),
