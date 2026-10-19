@@ -164,6 +164,17 @@ fn a_linked_file_system_or_sql_plugin_is_refused_however_it_is_declared() {
 }
 
 #[test]
+fn the_tauri_log_plugin_is_refused_so_no_log_file_target_can_exist() {
+    let keys = ["DEP_TAURI_PLUGIN_LOG_PERMISSION_FILES_PATH"];
+    for test_build in [false, true] {
+        assert_eq!(
+            check_linked_plugins(keys, test_build),
+            vec![Violation::LinkedPlugin("tauri-plugin-log".to_string())]
+        );
+    }
+}
+
+#[test]
 fn the_test_driver_plugin_is_linked_only_in_test_builds() {
     let keys = ["DEP_TAURI_PLUGIN_WDIO_WEBDRIVER_PERMISSION_FILES_PATH"];
     assert_eq!(check_linked_plugins(keys, true), Vec::new());

@@ -33,9 +33,10 @@ pub fn unjournaled_line(operation: &str, error_code: &str) -> String {
     .to_string()
 }
 
-/// Write `line` to `stdout`; a failure is reported on stderr, since stdout itself failed.
+/// Write `line` to `stdout` and flush it; a failure is reported on stderr, since stdout
+/// itself failed.
 pub fn write_line(stdout: &mut dyn Write, line: &str) {
-    if let Err(err) = writeln!(stdout, "{line}") {
+    if let Err(err) = writeln!(stdout, "{line}").and_then(|()| stdout.flush()) {
         eprintln!("unjournaled record not written: {err}");
     }
 }
