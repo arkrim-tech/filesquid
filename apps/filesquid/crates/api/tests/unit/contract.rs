@@ -648,7 +648,8 @@ fn host_samples() -> Vec<(&'static str, Vec<Value>)> {
 }
 
 /// Serialized samples of the history schemas (API-S-029): a recorded and a reconstructed
-/// entry, every operation kind, and a page with and without a next cursor.
+/// entry, every operation kind, and a page with and without a next cursor, complete and
+/// truncated.
 fn history_samples() -> Vec<(&'static str, Vec<Value>)> {
     let recorded = filesquid_api::history::entry_of(sample_record().activity()).expect("entry");
     let mut reconstructed = recorded.clone();
@@ -660,10 +661,12 @@ fn history_samples() -> Vec<(&'static str, Vec<Value>)> {
         HistoryPage {
             items: vec![recorded.clone(), labelled.clone()],
             next_cursor: Some("2026-10-19T10:00:01Z urn:filesquid:activity:op-1".into()),
+            truncated: false,
         },
         HistoryPage {
             items: Vec::new(),
             next_cursor: None,
+            truncated: true,
         },
     ];
     vec![

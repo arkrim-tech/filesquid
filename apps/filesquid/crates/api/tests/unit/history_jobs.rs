@@ -24,7 +24,7 @@ use filesquid_ocfl::VersionNum;
 use filesquid_prov::ocfl::{missing_records, read_record};
 use filesquid_prov::{Derivation, HostFacts, Record};
 use fixture::{ready, v, Rig, NOW_MS};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 const INSTALLATION: &str = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
@@ -344,6 +344,56 @@ fn a_failing_object_is_journaled_and_the_run_goes_on() {
     assert_eq!(failed.len(), 1);
     assert_eq!(failed[0].target_ids, ["urn:uuid:a"]);
     assert_eq!(failed[0].error_code.as_deref(), Some("commit_failed"));
+}
+
+/// Review round 1: an object whose commit fails does not count as reaching the cap, even
+/// when it misses more records than the budget allows.
+#[test]
+fn a_failed_object_past_the_budget_does_not_reach_the_cap() {
+    let rig = Rig::with_root();
+    rig.w010_object("obj-a", "urn:uuid:a");
+    let (job, _) = backfill(&rig);
+    let job = job.with_max_versions(1);
+    let report = ready(job.run(&rig.root, &rig.leases, &AtomicBool::new(false))).expect("run");
+    assert_eq!(report.failures.len(), 1);
+    assert!(!report.reached_cap, "{report:?}");
+}
+
+/// The job over `rig`'s journal, with a registry whose clock counts its reads (one per
+/// registration, heartbeat, progress report or end).
+fn counted_backfill(rig: &Rig, reads: Arc<AtomicUsize>) -> Backfill {
+    let registry = ProcessRegistry::new(
+        rig.sender(),
+        EventBus::new(),
+        Arc::new(Metrics::default()),
+        Arc::new(move || {
+            reads.fetch_add(1, Ordering::SeqCst);
+            NOW_MS
+        }),
+    );
+    Backfill::new(context(), rig.journal.clone(), rig.sender(), registry)
+        .with_clock(Arc::new(|| NOW_MS + 600_000))
+}
+
+/// Review round 1: a run that stages and commits an object reports liveness between the
+/// two, beyond the per-object progress a run that has nothing to do reports.
+#[test]
+fn a_backfill_heartbeats_between_staging_and_commit() {
+    let rig = Rig::with_root();
+    rig.object("obj-a", "urn:uuid:a");
+    let reads = Arc::new(AtomicUsize::new(0));
+    let job = counted_backfill(&rig, reads.clone());
+    let report = ready(job.run(&rig.root, &rig.leases, &AtomicBool::new(false))).expect("run");
+    assert_eq!(report.objects.len(), 1);
+    let working = reads.swap(0, Ordering::SeqCst);
+    let again = ready(job.run(&rig.root, &rig.leases, &AtomicBool::new(false))).expect("rerun");
+    assert!(again.objects.is_empty());
+    let idle = reads.load(Ordering::SeqCst);
+    assert_eq!(
+        working,
+        idle + 1,
+        "one heartbeat between staging and commit"
+    );
 }
 
 #[test]

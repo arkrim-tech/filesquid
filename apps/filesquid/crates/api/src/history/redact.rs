@@ -10,7 +10,9 @@
 //! - drops `fsq:message` from the activity;
 //! - replaces each entity's `fsq:path` with an opaque `redacted-<n>` and its `@id` with the
 //!   same token in place of the percent-encoded path, numbering paths consistently across
-//!   every record one redactor handles, so derivation chains stay linked;
+//!   every record one redactor handles, so derivation chains stay linked; an `fsq:path` it
+//!   cannot number (a node without a string `@id`, or a path that is not a string) is
+//!   dropped, so the redactor fails closed;
 //! - rewrites every reference to a replaced identifier.
 //!
 //! Object IDs, version names, operation IDs, kinds, times, digests and journal entry IDs
@@ -154,7 +156,7 @@ fn entity_id_without_path(id: &str, token: &str) -> String {
 }
 
 /// Apply `renames` to every string under `value`, drop `fsq:message` and replace each
-/// `fsq:path` with its token.
+/// `fsq:path` with its token, or drop it when it has none.
 fn rewrite(
     value: &mut Value,
     renames: &BTreeMap<String, String>,
@@ -185,14 +187,15 @@ fn rewrite_node(
     depth: usize,
 ) -> Result<(), RedactError> {
     node.remove("fsq:message");
+    let path = node.remove("fsq:path");
     let token = node
         .get("@id")
         .and_then(Value::as_str)
         .and_then(|id| renames.get(id))
         .and_then(|id| id.rsplit_once(':'))
         .map(|(_, token)| token.to_string());
-    if let (Some(path), Some(token)) = (node.get_mut("fsq:path"), token) {
-        *path = Value::String(token);
+    if let (Some(_), Some(token)) = (path, token) {
+        node.insert("fsq:path".to_string(), Value::String(token));
     }
     node.values_mut()
         .try_for_each(|child| rewrite(child, renames, depth + 1))
@@ -223,6 +226,14 @@ mod tests {
             entity_id_without_path("odd", "redacted-1"),
             "urn:filesquid:entity:redacted:redacted-1"
         );
+    }
+
+    #[test]
+    fn a_path_without_a_numbered_identifier_is_dropped() {
+        let record = br#"{"@graph":[{"fsq:path":"Holiday/Anna.jpg"},{"@id":7,"fsq:path":"x/Anna.txt"},{"@id":"urn:e","fsq:path":{"v":"Anna"}}]}"#;
+        let text = redact_record(record).unwrap();
+        assert!(!text.contains("Anna"), "{text}");
+        assert!(!text.contains("fsq:path"), "{text}");
     }
 
     #[test]

@@ -1,9 +1,9 @@
 //! Where the history routes read records from (API-S-029; ADR 040 Decision 7).
 //!
 //! The host injects a [`HistorySource`] into [`crate::ApiState`]. The routes ask it for a
-//! [`HistoryIndex`] of every record and for the stored JSON-LD of one version's record. The
-//! index is a cache that is always rebuilt from the records, never a second source of
-//! truth.
+//! [`HistorySnapshot`] (a [`HistoryIndex`] of every record, flagged when a cap cut it short)
+//! and for the stored JSON-LD of one version's record. The index is a cache that is always
+//! rebuilt from the records, never a second source of truth.
 //!
 //! - [`MemoryHistory`] holds records in memory: for tests and for hosts that already hold
 //!   parsed records.
@@ -13,15 +13,15 @@
 //!   futures never wait (the filesystem and in-memory backends); the routes call it off the
 //!   async executor.
 
-use std::sync::Mutex;
+use std::sync::{Mutex, PoisonError};
 
 use filesquid_core::{
     HistoryEntry, JournalLink, OperationId, OperationKind, OperationMessage, Rfc3339Utc, VersionRef,
 };
-use filesquid_ocfl::read::{Object, StorageRoot};
+use filesquid_ocfl::read::{Object, ReadError, StorageRoot};
 use filesquid_ocfl::storage::{complete_immediately, StorageBackend};
 use filesquid_ocfl::VersionNum;
-use filesquid_prov::ocfl::{list_records, read_record};
+use filesquid_prov::ocfl::{list_records, read_record, RecordError};
 use filesquid_prov::{
     to_json_ld, Activity, Derivation, HistoryIndex, HistoryQuery, IndexError, PageRequest, Record,
     MAX_PAGE_SIZE,
@@ -56,15 +56,36 @@ impl std::fmt::Display for HistoryError {
 
 impl std::error::Error for HistoryError {}
 
+/// An index of the records a source holds, and whether a cap cut it short.
+#[derive(Debug)]
+pub struct HistorySnapshot {
+    /// The indexed records.
+    pub index: HistoryIndex,
+    /// True when the source holds records the index left out because it reached
+    /// [`MAX_HISTORY_RECORDS`] or [`MAX_HISTORY_OBJECTS`]: answers built from it may be
+    /// partial.
+    pub truncated: bool,
+}
+
+impl HistorySnapshot {
+    /// A snapshot of `index` that holds every record of its source.
+    pub fn complete(index: HistoryIndex) -> Self {
+        Self {
+            index,
+            truncated: false,
+        }
+    }
+}
+
 /// The records the history routes read, injected by the host.
 pub trait HistorySource: Send + Sync + 'static {
     /// An index of every record the source holds (at most [`MAX_HISTORY_RECORDS`]), rebuilt
-    /// from the records.
+    /// from the records, flagged when a cap cut it short.
     ///
     /// # Errors
     ///
     /// [`HistoryError`] when the records cannot be read.
-    fn index(&self) -> Result<HistoryIndex, HistoryError>;
+    fn index(&self) -> Result<HistorySnapshot, HistoryError>;
 
     /// The JSON-LD of the record of `version` of the object `object_id`, or `None` when that
     /// version has no record.
@@ -154,6 +175,7 @@ impl MemoryHistory {
     }
 
     /// Add `record`, refusing one that conflicts with a held record of the same activity.
+    /// A record identical to a held one is accepted and not held twice.
     ///
     /// # Errors
     ///
@@ -164,6 +186,9 @@ impl MemoryHistory {
             .records
             .lock()
             .map_err(|_| IndexError::ConflictingRecord)?;
+        if records.contains(&record) {
+            return Ok(());
+        }
         if records.len() >= MAX_HISTORY_RECORDS {
             return Err(IndexError::ConflictingRecord);
         }
@@ -179,6 +204,19 @@ impl MemoryHistory {
         Ok(())
     }
 
+    /// How many records the history holds.
+    pub fn len(&self) -> usize {
+        self.records
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len()
+    }
+
+    /// Whether the history holds no record.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// A copy of the held records.
     fn snapshot(&self) -> Result<Vec<Record>, HistoryError> {
         let records = self.records.lock().map_err(|_| HistoryError::Unavailable)?;
@@ -187,17 +225,19 @@ impl MemoryHistory {
 }
 
 impl HistorySource for MemoryHistory {
-    fn index(&self) -> Result<HistoryIndex, HistoryError> {
+    /// Every held record; [`MemoryHistory::insert`] refuses records past the cap, so the
+    /// snapshot is never truncated.
+    fn index(&self) -> Result<HistorySnapshot, HistoryError> {
         let mut index = HistoryIndex::new();
         for record in self.snapshot()? {
             index.insert(record).map_err(|_| HistoryError::Corrupt)?;
         }
-        Ok(index)
+        Ok(HistorySnapshot::complete(index))
     }
 
     fn record(&self, object_id: &str, version: &str) -> Result<Option<Vec<u8>>, HistoryError> {
-        let index = self.index()?;
-        let found = find_record(&index, object_id, version);
+        let snapshot = self.index()?;
+        let found = find_record(&snapshot.index, object_id, version);
         Ok(found.map(|record| to_json_ld(record).into_bytes()))
     }
 }
@@ -206,35 +246,54 @@ impl HistorySource for MemoryHistory {
 #[derive(Debug)]
 pub struct OcflHistory<B> {
     backend: B,
+    max_records: usize,
 }
 
 impl<B: StorageBackend + Send + Sync + 'static> OcflHistory<B> {
     /// The history of the storage root on `backend`, whose futures must never wait.
     pub fn new(backend: B) -> Self {
-        Self { backend }
+        Self {
+            backend,
+            max_records: MAX_HISTORY_RECORDS,
+        }
     }
 
-    /// Read every record of the storage root into an index (storage I/O).
-    async fn read_index(&self) -> Result<HistoryIndex, HistoryError> {
+    /// Index at most `max` records (1 to [`MAX_HISTORY_RECORDS`]); past it the snapshot is
+    /// flagged truncated.
+    #[must_use]
+    pub fn with_max_records(mut self, max: usize) -> Self {
+        self.max_records = max.clamp(1, MAX_HISTORY_RECORDS);
+        self
+    }
+
+    /// Read every record of the storage root into an index (storage I/O), flagged truncated
+    /// when the record or object cap left records out.
+    async fn read_index(&self) -> Result<HistorySnapshot, HistoryError> {
         let storage = StorageRoot::open(&self.backend)
             .await
             .map_err(unavailable)?;
-        let mut index = HistoryIndex::new();
-        let mut budget = MAX_HISTORY_RECORDS;
-        for root in storage.objects().iter().take(MAX_HISTORY_OBJECTS) {
+        let roots = storage.objects();
+        let mut snapshot = HistorySnapshot::complete(HistoryIndex::new());
+        let mut budget = self.max_records;
+        for root in roots.iter().take(MAX_HISTORY_OBJECTS) {
             let Some(object) = open_object(&storage, root).await else {
                 continue;
             };
-            budget = read_object_records(&object, &mut index, budget).await;
-            if budget == 0 {
-                tracing::warn!(target: LOG_TARGET, "history index stopped at its record cap");
+            budget = read_object_records(&object, &mut snapshot, budget).await;
+            if snapshot.truncated {
                 break;
             }
         }
-        Ok(index)
+        snapshot.truncated |= roots.len() > MAX_HISTORY_OBJECTS;
+        if snapshot.truncated {
+            tracing::warn!(target: LOG_TARGET, "history index stopped at its cap");
+        }
+        Ok(snapshot)
     }
 
-    /// Read the stored record of `version` of `object_id` (storage I/O).
+    /// Read the stored record of `version` of `object_id` (storage I/O). When no object
+    /// matched but some could not be opened (or lie past [`MAX_HISTORY_OBJECTS`]), the
+    /// target may be among them, so the answer is [`HistoryError::Unavailable`], not `None`.
     async fn read_one(
         &self,
         object_id: &str,
@@ -246,25 +305,32 @@ impl<B: StorageBackend + Send + Sync + 'static> OcflHistory<B> {
         let storage = StorageRoot::open(&self.backend)
             .await
             .map_err(unavailable)?;
-        for root in storage.objects().iter().take(MAX_HISTORY_OBJECTS) {
+        let roots = storage.objects();
+        let mut skipped = roots.len() > MAX_HISTORY_OBJECTS;
+        for root in roots.iter().take(MAX_HISTORY_OBJECTS) {
             let Some(object) = open_object(&storage, root).await else {
+                skipped = true;
                 continue;
             };
             if object.id() != object_id || !object.inventory().versions.contains_key(&version) {
                 continue;
             }
-            let record = read_record(&object, &version).await.map_err(|err| {
-                tracing::warn!(target: LOG_TARGET, error = %err, "history record unreadable");
-                HistoryError::Corrupt
-            })?;
-            return Ok(record.map(|record| to_json_ld(&record).into_bytes()));
+            let record = read_record(&object, &version)
+                .await
+                .map_err(record_failure)?;
+            return subject_checked(record, object_id, &version);
         }
-        Ok(None)
+        match skipped {
+            true => Err(unavailable(
+                "an object that may hold the record is unreadable",
+            )),
+            false => Ok(None),
+        }
     }
 }
 
 impl<B: StorageBackend + Send + Sync + 'static> HistorySource for OcflHistory<B> {
-    fn index(&self) -> Result<HistoryIndex, HistoryError> {
+    fn index(&self) -> Result<HistorySnapshot, HistoryError> {
         complete_immediately(self.read_index()).map_err(unavailable)?
     }
 
@@ -287,14 +353,16 @@ async fn open_object<'a, B: StorageBackend>(
     }
 }
 
-/// Add the records of `object` to `index`, at most `budget` of them; return what is left of
-/// the budget. Unreadable or conflicting records are logged and skipped.
+/// Add the records of `object` to `snapshot`, at most `budget` of them; return what is left
+/// of the budget and flag the snapshot truncated when records were left out. Unreadable,
+/// misplaced or conflicting records are logged and skipped.
 async fn read_object_records<B: StorageBackend>(
     object: &Object<'_, B>,
-    index: &mut HistoryIndex,
+    snapshot: &mut HistorySnapshot,
     budget: usize,
 ) -> usize {
     let versions = list_records(object);
+    snapshot.truncated |= versions.len() > budget;
     let mut left = budget;
     for version in versions.iter().take(budget) {
         left -= 1;
@@ -306,15 +374,71 @@ async fn read_object_records<B: StorageBackend>(
                 continue;
             }
         };
-        if let Err(err) = index.insert(record) {
+        if !is_record_of(&record, object.id(), version) {
+            tracing::warn!(target: LOG_TARGET, "history skipped a record of another version");
+            continue;
+        }
+        if let Err(err) = snapshot.index.insert(record) {
             tracing::warn!(target: LOG_TARGET, error = %err, "history skipped a conflicting record");
         }
     }
     left
 }
 
+/// Whether `record` is the record of `version` of `object_id`, the subject its stored path
+/// names.
+fn is_record_of(record: &Record, object_id: &str, version: &VersionNum) -> bool {
+    let subject = record.activity().object_version();
+    subject.object_id() == object_id && subject.version() == version.to_string()
+}
+
+/// The JSON-LD of `record` when it is the record of `version` of `object_id`.
+///
+/// # Errors
+///
+/// [`HistoryError::Corrupt`] when the stored record describes another object or version.
+fn subject_checked(
+    record: Option<Record>,
+    object_id: &str,
+    version: &VersionNum,
+) -> Result<Option<Vec<u8>>, HistoryError> {
+    let Some(record) = record else {
+        return Ok(None);
+    };
+    if !is_record_of(&record, object_id, version) {
+        tracing::warn!(target: LOG_TARGET, "a history record is stored under another version");
+        return Err(HistoryError::Corrupt);
+    }
+    Ok(Some(to_json_ld(&record).into_bytes()))
+}
+
+/// A failed record read as a [`HistoryError`], logged on stdout: a storage failure is
+/// [`HistoryError::Unavailable`] (a retry may succeed); a record that breaks the OCFL format
+/// or the profile is [`HistoryError::Corrupt`].
+fn record_failure(err: RecordError) -> HistoryError {
+    if matches!(err, RecordError::Read(ReadError::Storage(_))) {
+        return unavailable(err);
+    }
+    tracing::warn!(target: LOG_TARGET, error = %err, "history record unreadable");
+    HistoryError::Corrupt
+}
+
 /// Any storage failure as [`HistoryError::Unavailable`], logged on stdout.
 fn unavailable<E: std::fmt::Display>(err: E) -> HistoryError {
     tracing::warn!(target: LOG_TARGET, error = %err, "history storage unavailable");
     HistoryError::Unavailable
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use filesquid_ocfl::storage::StorageError;
+
+    #[test]
+    fn a_storage_failure_is_unavailable_and_a_bad_record_is_corrupt() {
+        let storage = StorageError::NotFound { key: "k".into() };
+        let read = RecordError::Read(ReadError::Storage(storage));
+        assert_eq!(record_failure(read), HistoryError::Unavailable);
+        assert_eq!(record_failure(RecordError::TooLarge), HistoryError::Corrupt);
+    }
 }

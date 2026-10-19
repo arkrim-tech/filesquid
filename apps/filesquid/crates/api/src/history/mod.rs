@@ -1,5 +1,5 @@
 //! PROV-O history of OCFL versions (API-S-028, API-S-029, API-S-032; PRD F-067, F-046;
-//! [ADR 040](../../../../../resources/architecture/040-prov-o-history.md) Decisions 3 to 9).
+//! ADR 040 Decisions 3 to 9).
 //!
 //! Every commit the API makes or drives writes, in the same OCFL version, the PROV-O record
 //! of that version (`provenance/<version>.jsonld`, built by `filesquid-prov`) and the
@@ -14,8 +14,9 @@
 //!   caller appends once the commit is published.
 //! - [`backfill`]: the bounded, resumable job that reconstructs records for versions
 //!   committed before the history existed.
-//! - [`HistorySource`], [`MemoryHistory`] and [`OcflHistory`]: what the history routes read,
-//!   injected by the host; any index is rebuilt from the OCFL records.
+//! - [`HistorySource`], [`HistorySnapshot`], [`MemoryHistory`] and [`OcflHistory`]: what
+//!   the history routes read, injected by the host; any index is rebuilt from the OCFL
+//!   records and flagged when a cap cut it short.
 //! - [`redact_record`] and [`Redactor`]: a record with agent identities, version messages
 //!   and logical paths removed, for shared or published outputs (PRD F-046).
 //!
@@ -35,10 +36,10 @@ pub use recorder::{
     INSTALLATION_USER_NAME, JOURNAL_SUFFIX,
 };
 pub use redact::{redact_record, RedactError, Redactor, REDACTED_INSTALLATION};
-pub use routes::{HistoryPage, JSON_LD};
+pub use routes::{HistoryPage, JSON_LD, MAX_EXPORT_BYTES, TRUNCATED_HEADER};
 pub use source::{
-    entry_of, HistoryError, HistorySource, MemoryHistory, OcflHistory, MAX_HISTORY_OBJECTS,
-    MAX_HISTORY_RECORDS,
+    entry_of, HistoryError, HistorySnapshot, HistorySource, MemoryHistory, OcflHistory,
+    MAX_HISTORY_OBJECTS, MAX_HISTORY_RECORDS,
 };
 
 /// Journal operation of a provenance record that could not be written, or was not written

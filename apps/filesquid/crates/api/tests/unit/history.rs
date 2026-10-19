@@ -10,8 +10,9 @@ use axum::http::{header, Request};
 use filesquid_api::auth::Authoriser;
 use filesquid_api::history::{
     commit_meta, entry_of, journal_path, redact_record, version_user, CommitOperation,
-    CommitRecorder, HistoryError, HistorySource, MemoryHistory, OcflHistory, ProvenanceContext,
-    Redactor, INSTALLATION_USER_NAME, JSON_LD, PROV_RECORD_OPERATION, REDACTED_INSTALLATION,
+    CommitRecorder, HistoryError, HistorySnapshot, HistorySource, MemoryHistory, OcflHistory,
+    ProvenanceContext, Redactor, INSTALLATION_USER_NAME, JSON_LD, PROV_RECORD_OPERATION,
+    REDACTED_INSTALLATION, TRUNCATED_HEADER,
 };
 use filesquid_api::journal::{JournalEntry, Level, Outcome, REDACTED};
 use filesquid_api::{router, ApiState};
@@ -24,7 +25,7 @@ use filesquid_ocfl::storage::{
 use filesquid_ocfl::write::{rfc3339_utc, CommitReceipt, LeaseConfig, LeaseStore, SystemClock};
 use filesquid_ocfl::{Declaration, SpecVersion, VersionNum};
 use filesquid_prov::ocfl::{read_record, record_path};
-use filesquid_prov::{build_record, parse_record, HostFacts, Record, VersionFacts};
+use filesquid_prov::{build_record, parse_record, to_json_ld, HostFacts, Record, VersionFacts};
 use history_fixture::{sample_record, SAMPLE_FILE, SAMPLE_INSTALLATION};
 use http_body_util::BodyExt;
 use serde_json::Value;
@@ -479,8 +480,9 @@ fn a_memory_history_indexes_its_records_and_refuses_conflicts() {
     assert!(history
         .insert(record_of(OBJECT_ID, "v1", "op-1", 2))
         .is_err());
-    let index = history.index().unwrap();
-    assert_eq!(index.len(), 1);
+    let snapshot = history.index().unwrap();
+    assert_eq!(snapshot.index.len(), 1);
+    assert!(!snapshot.truncated);
     let bytes = history.record(OBJECT_ID, "v1").unwrap().expect("record");
     assert_eq!(
         parse_record(&bytes).unwrap(),
@@ -502,12 +504,91 @@ fn an_ocfl_history_is_rebuilt_from_the_records_in_the_storage_root() {
     drop(model);
     let Rig { storage, .. } = rig;
     let history = OcflHistory::new(storage);
-    let index = history.index().expect("index");
-    assert_eq!(index.len(), 1, "v1 has no record yet");
+    let snapshot = history.index().expect("index");
+    assert_eq!(snapshot.index.len(), 1, "v1 has no record yet");
+    assert!(!snapshot.truncated);
     let bytes = history.record(OBJECT_ID, "v2").unwrap().expect("v2 record");
     assert_eq!(parse_record(&bytes).unwrap().activity().operation(), "op-7");
     assert_eq!(history.record(OBJECT_ID, "v1").unwrap(), None);
     assert_eq!(history.record("urn:uuid:other", "v2").unwrap(), None);
+}
+
+/// Review round 1: re-inserting an identical record holds it once, so repeats never use up
+/// the record cap.
+#[test]
+fn an_identical_record_inserted_again_is_held_once() {
+    let history = MemoryHistory::new();
+    assert!(history.is_empty());
+    for _ in 0..3 {
+        history
+            .insert(record_of(OBJECT_ID, "v1", "op-1", 1))
+            .expect("the same record");
+    }
+    assert_eq!(history.len(), 1);
+}
+
+/// Put an OCFL 1.1 object declaration, and nothing else, at `root`: an object that cannot
+/// be opened.
+fn unreadable_object(storage: &MemoryBackend, root: &str) {
+    let declaration = Declaration::object(SpecVersion::V1_1);
+    let key = StorageKey::new(&format!("{root}/{}", declaration.file_name())).expect("key");
+    ready(storage.put(&key, declaration.contents().as_bytes())).expect("declare");
+}
+
+/// Review round 1: a record stored under another version's path is corrupt for the version
+/// route and left out of the index.
+#[test]
+fn a_record_stored_under_another_version_is_corrupt() {
+    let rig = Rig::new();
+    rig.storage_root();
+    let misplaced = to_json_ld(&record_of(OBJECT_ID, "v2", "op-x", 1));
+    rig.commit_plain(&[(&record_path("v1"), misplaced.as_bytes())], 1);
+    let Rig { storage, .. } = rig;
+    let history = OcflHistory::new(storage);
+    assert_eq!(history.record(OBJECT_ID, "v1"), Err(HistoryError::Corrupt));
+    assert_eq!(history.index().expect("index").index.len(), 0);
+}
+
+/// Review round 1: when no object matched but one could not be opened, the record may be
+/// in it, so the lookup is unavailable rather than not found.
+#[test]
+fn a_lookup_that_skipped_an_unreadable_object_is_unavailable() {
+    let rig = Rig::new();
+    rig.storage_root();
+    let model = rig.model("writer");
+    ready(model.stage_bytes("b.txt", b"bravo")).unwrap();
+    let op = operation("op-7", OperationKind::Import);
+    let recorder = CommitRecorder::new(context(), op.clone(), 2);
+    ready(model.commit_with(commit_meta(&context(), &op, created(2)), Some(&recorder))).unwrap();
+    drop(model);
+    unreadable_object(&rig.storage, "objects/z");
+    let Rig { storage, .. } = rig;
+    let history = OcflHistory::new(storage);
+    assert!(history.record(OBJECT_ID, "v1").unwrap().is_some());
+    assert_eq!(
+        history.record("urn:uuid:other", "v1"),
+        Err(HistoryError::Unavailable)
+    );
+}
+
+/// Review round 1: an index cut short by its record cap is flagged truncated.
+#[test]
+fn an_ocfl_history_past_its_record_cap_is_flagged_truncated() {
+    let rig = Rig::new();
+    rig.storage_root();
+    for n in 1..=2_u64 {
+        let model = rig.model("writer");
+        ready(model.stage_bytes(&format!("f{n}.txt"), b"data")).unwrap();
+        let op = operation(&format!("op-{n}"), OperationKind::Import);
+        let recorder = CommitRecorder::new(context(), op.clone(), 10 + i64::from(n == 2));
+        ready(model.commit_with(commit_meta(&context(), &op, created(n)), Some(&recorder)))
+            .unwrap();
+    }
+    let Rig { storage, .. } = rig;
+    let capped = OcflHistory::new(storage).with_max_records(1);
+    let snapshot = capped.index().expect("index");
+    assert_eq!(snapshot.index.len(), 1);
+    assert!(snapshot.truncated);
 }
 
 #[test]
@@ -580,6 +661,7 @@ async fn the_history_lists_everything_or_one_filter_in_cursor_pages() {
     let (status, _, body) = get(&state, "/api/v1/history").await;
     assert_eq!(status, 200);
     assert_eq!(json(&body)["items"].as_array().unwrap().len(), 3);
+    assert_eq!(json(&body)["truncated"], false);
     let (_, _, body) = get(&state, "/api/v1/history?operation=op-b").await;
     let items = json(&body)["items"].as_array().unwrap().clone();
     assert_eq!(items.len(), 2);
@@ -670,12 +752,62 @@ async fn the_export_is_a_json_ld_array_and_can_be_redacted() {
     assert_eq!(kind, JSON_LD);
     let records = json(&body);
     assert_eq!(records.as_array().unwrap().len(), 1);
+    let path_only = format!("/api/v1/files/{SAMPLE_FILE}/history/export");
+    let request = Request::builder()
+        .uri(path_only)
+        .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+        .body(Body::empty())
+        .unwrap();
+    let response = router(state.clone()).oneshot(request).await.unwrap();
+    assert!(response.headers().get(TRUNCATED_HEADER).is_none());
     assert!(String::from_utf8_lossy(&body).contains(SAMPLE_INSTALLATION));
     let (status, _, body) = get(&state, &format!("{path}?redact=true")).await;
     assert_eq!(status, 200);
     let text = String::from_utf8_lossy(&body);
     assert!(!text.contains(SAMPLE_INSTALLATION), "{text}");
     assert!(!text.contains("photo.jpg"), "{text}");
+}
+
+/// A memory history whose index reports that a cap cut it short.
+struct CappedHistory(MemoryHistory);
+
+impl HistorySource for CappedHistory {
+    fn index(&self) -> Result<HistorySnapshot, HistoryError> {
+        let mut snapshot = self.0.index()?;
+        snapshot.truncated = true;
+        Ok(snapshot)
+    }
+
+    fn record(&self, object_id: &str, version: &str) -> Result<Option<Vec<u8>>, HistoryError> {
+        self.0.record(object_id, version)
+    }
+}
+
+/// Review round 1: a truncated history is never answered as complete.
+#[tokio::test]
+async fn a_truncated_history_is_flagged_on_pages_and_the_export() {
+    let state = ApiState::new();
+    state.install_authoriser(Authoriser::server_administrator(TOKEN));
+    let history = MemoryHistory::new();
+    history.insert(sample_record()).unwrap();
+    state.install_history(Arc::new(CappedHistory(history)));
+    let (status, _, body) = get(&state, "/api/v1/history").await;
+    assert_eq!(status, 200);
+    assert_eq!(json(&body)["truncated"], true);
+    let request = Request::builder()
+        .uri(format!("/api/v1/files/{SAMPLE_FILE}/history/export"))
+        .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+        .body(Body::empty())
+        .unwrap();
+    let response = router(state.clone()).oneshot(request).await.unwrap();
+    assert_eq!(response.status().as_u16(), 200);
+    assert_eq!(
+        response
+            .headers()
+            .get(TRUNCATED_HEADER)
+            .map(|v| v.as_bytes()),
+        Some(&b"true"[..])
+    );
 }
 
 #[tokio::test]

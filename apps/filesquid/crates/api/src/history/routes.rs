@@ -7,8 +7,12 @@
 //!   or of a time range, in pages of 1 to 1000 with an opaque cursor.
 //! - `GET /files/{id}/history`: the activities of the object `urn:uuid:<id>`.
 //! - `GET /files/{id}/history/export`: every record of that object as one JSON-LD array,
-//!   optionally redacted for sharing (`redact=true`).
+//!   optionally redacted for sharing (`redact=true`), written record by record into one
+//!   body of at most [`MAX_EXPORT_BYTES`]; a partial export carries [`TRUNCATED_HEADER`].
 //! - `GET /files/{id}/versions/{version}/prov`: the JSON-LD record of one version.
+//!
+//! A history cut short by its record or object cap is never answered as complete: pages
+//! carry `truncated: true` and the export carries [`TRUNCATED_HEADER`].
 //!
 //! Every failure answers with a typed [`ApiError`] (API-S-009).
 
@@ -16,18 +20,16 @@ use std::sync::Arc;
 
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
-use axum::http::header;
+use axum::http::{header, HeaderName, HeaderValue};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Json;
 use filesquid_core::{HistoryEntry, VersionRef};
-use filesquid_prov::{
-    to_json_ld, Cursor, HistoryIndex, HistoryQuery, PageRequest, Timestamp, MAX_PAGE_SIZE,
-};
+use filesquid_prov::{to_json_ld, Cursor, HistoryQuery, PageRequest, Timestamp, MAX_PAGE_SIZE};
 use serde::{Deserialize, Serialize};
 
 use super::redact::Redactor;
-use super::source::{entry_of, HistoryError, HistorySource, MAX_HISTORY_RECORDS};
+use super::source::{entry_of, HistoryError, HistorySnapshot, HistorySource, MAX_HISTORY_RECORDS};
 use crate::admin::blocking;
 use crate::auth::Action;
 use crate::error::{ApiError, ErrorCode};
@@ -37,6 +39,13 @@ use crate::ApiState;
 
 /// The media type of PROV-O records and exports.
 pub const JSON_LD: &str = "application/ld+json";
+
+/// Response header of an export that left records out (value `true`): the history index
+/// reached its cap or the body reached [`MAX_EXPORT_BYTES`].
+pub const TRUNCATED_HEADER: &str = "x-history-truncated";
+
+/// Largest export body in bytes; records past it are left out and the export is flagged.
+pub const MAX_EXPORT_BYTES: usize = 64 * 1024 * 1024;
 
 /// Earliest end time of an open-ended time range.
 const EARLIEST: &str = "1970-01-01T00:00:00Z";
@@ -51,6 +60,9 @@ pub struct HistoryPage {
     pub items: Vec<HistoryEntry>,
     /// The cursor of the next page; `None` on the last page.
     pub next_cursor: Option<String>,
+    /// True when the history index stopped at its record or object cap, so this page may
+    /// miss activities.
+    pub truncated: bool,
 }
 
 /// History routes, relative to the API prefix.
@@ -179,8 +191,8 @@ fn page_of(
     query: &HistoryQuery,
     request: &PageRequest,
 ) -> Result<HistoryPage, HistoryError> {
-    let index = source.index()?;
-    let page = index.query(query, request);
+    let snapshot = source.index()?;
+    let page = snapshot.index.query(query, request);
     let items = page
         .items()
         .iter()
@@ -189,6 +201,7 @@ fn page_of(
     Ok(HistoryPage {
         items,
         next_cursor: page.next().map(Cursor::to_token),
+        truncated: snapshot.truncated,
     })
 }
 
@@ -290,7 +303,7 @@ async fn export(
         Err(error) => return error.into_response(),
     };
     let redact = params.redact.unwrap_or(false);
-    let read = move || export_of(source.as_ref(), &object, redact);
+    let read = move || export_of(source.as_ref(), &object, redact, MAX_EXPORT_BYTES);
     match blocking("api.history.export", read).await {
         Ok(Ok(body)) => export_response(body),
         Ok(Err(err)) => history_failure("api.history.export", err).into_response(),
@@ -298,52 +311,109 @@ async fn export(
     }
 }
 
-/// Every record of `object` as one JSON-LD array, redacted when asked (storage I/O). At most
-/// [`MAX_HISTORY_RECORDS`] records, walked page by page.
+/// A JSON-LD array written record by record, refusing records past a byte budget.
+#[derive(Debug)]
+struct ExportBody {
+    /// The array so far, without its closing bracket.
+    text: String,
+    /// Records written.
+    count: usize,
+    /// Largest body, closing bracket included.
+    max_bytes: usize,
+    /// True when records were left out.
+    truncated: bool,
+}
+
+impl ExportBody {
+    /// An empty array of at most `max_bytes`, already flagged when the index was cut short.
+    fn new(max_bytes: usize, truncated: bool) -> Self {
+        Self {
+            text: String::from("["),
+            count: 0,
+            max_bytes,
+            truncated,
+        }
+    }
+
+    /// Append the JSON text of one record, or flag the body truncated and return `false`
+    /// when it would not fit within the budget.
+    fn push(&mut self, record: &str) -> bool {
+        let separator = usize::from(self.count > 0);
+        if self.text.len() + separator + record.len() + 1 > self.max_bytes {
+            self.truncated = true;
+            return false;
+        }
+        if separator == 1 {
+            self.text.push(',');
+        }
+        self.text.push_str(record);
+        self.count += 1;
+        true
+    }
+
+    /// The closed array and whether records were left out.
+    fn finish(mut self) -> (String, bool) {
+        self.text.push(']');
+        (self.text, self.truncated)
+    }
+}
+
+/// Every record of `object` as one JSON-LD array of at most `max_bytes`, redacted when
+/// asked (storage I/O), and whether records were left out. At most [`MAX_HISTORY_RECORDS`]
+/// records, walked page by page and written straight into the body, so no second copy of
+/// the history is held.
 fn export_of(
     source: &dyn HistorySource,
     object: &str,
     redact: bool,
-) -> Result<String, HistoryError> {
-    let index = source.index()?;
+    max_bytes: usize,
+) -> Result<(String, bool), HistoryError> {
+    let snapshot = source.index()?;
     let query = HistoryQuery::Object(object.to_string());
     let mut redactor = Redactor::new();
-    let mut records = Vec::new();
+    let mut body = ExportBody::new(max_bytes, snapshot.truncated);
     let mut after = None;
     for _ in 0..=MAX_HISTORY_RECORDS / MAX_PAGE_SIZE {
         let request = PageRequest::new(MAX_PAGE_SIZE, after).map_err(|_| HistoryError::Corrupt)?;
-        let page = index.query(&query, &request);
+        let page = snapshot.index.query(&query, &request);
         for activity in page.items() {
-            records.push(export_value(&index, activity.id(), redact, &mut redactor)?);
+            let text = export_text(&snapshot, activity.id(), redact, &mut redactor)?;
+            if !body.push(&text) {
+                return Ok(body.finish());
+            }
         }
         let Some(next) = page.next() else {
             break;
         };
         after = Some(next.clone());
     }
-    serde_json::to_string(&records).map_err(|_| HistoryError::Corrupt)
+    Ok(body.finish())
 }
 
-/// The record of `activity_id` as JSON, redacted when asked.
-fn export_value(
-    index: &HistoryIndex,
+/// The record of `activity_id` as JSON text, redacted when asked.
+fn export_text(
+    snapshot: &HistorySnapshot,
     activity_id: &str,
     redact: bool,
     redactor: &mut Redactor,
-) -> Result<serde_json::Value, HistoryError> {
-    let record = index.record(activity_id).ok_or(HistoryError::Corrupt)?;
+) -> Result<String, HistoryError> {
+    let record = snapshot
+        .index
+        .record(activity_id)
+        .ok_or(HistoryError::Corrupt)?;
     let text = to_json_ld(record);
-    if redact {
-        return redactor
-            .redact(text.as_bytes())
-            .map_err(|_| HistoryError::Corrupt);
+    if !redact {
+        return Ok(text);
     }
-    serde_json::from_str(&text).map_err(|_| HistoryError::Corrupt)
+    let value = redactor
+        .redact(text.as_bytes())
+        .map_err(|_| HistoryError::Corrupt)?;
+    Ok(value.to_string())
 }
 
-/// A JSON-LD attachment.
-fn export_response(body: String) -> Response {
-    (
+/// A JSON-LD attachment, carrying [`TRUNCATED_HEADER`] when records were left out.
+fn export_response((body, truncated): (String, bool)) -> Response {
+    let mut response = (
         [
             (header::CONTENT_TYPE, JSON_LD),
             (
@@ -353,5 +423,60 @@ fn export_response(body: String) -> Response {
         ],
         body,
     )
-        .into_response()
+        .into_response();
+    if truncated {
+        response.headers_mut().insert(
+            HeaderName::from_static(TRUNCATED_HEADER),
+            HeaderValue::from_static("true"),
+        );
+    }
+    response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::history::MemoryHistory;
+    use filesquid_prov::{build_record, VersionFacts};
+
+    const OBJECT: &str = "urn:uuid:6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b";
+
+    /// A history of `count` versions of [`OBJECT`].
+    fn history_of(count: u64) -> MemoryHistory {
+        let history = MemoryHistory::new();
+        for n in 1..=count {
+            let facts = VersionFacts {
+                object_id: OBJECT.into(),
+                version: format!("v{n}"),
+                base_version: (n > 1).then(|| format!("v{}", n - 1)),
+                created: format!("2026-10-19T10:00:0{n}Z"),
+                started: format!("2026-10-19T10:00:0{n}Z"),
+                operation_id: format!("op-{n}"),
+                kind: "import".into(),
+                new_state: [(format!("f{n}.txt"), "c".repeat(64))].into(),
+                journal_entries: vec![n.to_string()],
+                ..VersionFacts::default()
+            };
+            history.insert(build_record(&facts).unwrap()).unwrap();
+        }
+        history
+    }
+
+    #[test]
+    fn an_export_past_its_byte_budget_stops_at_a_whole_record_and_is_flagged() {
+        let history = history_of(3);
+        let (full, truncated) = export_of(&history, OBJECT, false, MAX_EXPORT_BYTES).unwrap();
+        assert!(!truncated);
+        let all: Vec<serde_json::Value> = serde_json::from_str(&full).unwrap();
+        assert_eq!(all.len(), 3);
+        let (part, truncated) = export_of(&history, OBJECT, false, full.len() - 1).unwrap();
+        assert!(truncated);
+        let some: Vec<serde_json::Value> = serde_json::from_str(&part).unwrap();
+        assert_eq!(
+            some.len(),
+            2,
+            "a whole record is left out, the array stays valid"
+        );
+        assert!(part.len() < full.len());
+    }
 }

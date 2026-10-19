@@ -656,11 +656,22 @@
         ],
         "responses": {
           "200": {
-            "description": "A JSON-LD array of records.",
+            "description": "A JSON-LD array of records, at most 64 MiB. When records were left out (the history index reached its cap or the body its size bound), X-History-Truncated is set.",
             "content": {
               "application/ld+json": {
                 "schema": {
                   "type": "string"
+                }
+              }
+            },
+            "headers": {
+              "X-History-Truncated": {
+                "description": "Present (value `true`) only when the export left records out.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
                 }
               }
             }
@@ -1454,7 +1465,8 @@
         "type": "object",
         "required": [
           "items",
-          "next_cursor"
+          "next_cursor",
+          "truncated"
         ],
         "properties": {
           "items": {
@@ -1469,6 +1481,10 @@
               "null"
             ],
             "description": "Pass as `cursor` for the next page; null on the last page."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "True when the history index stopped at its record or object cap (100 000 each), so this page may miss activities."
           }
         },
         "additionalProperties": false

@@ -11,8 +11,9 @@
 //! - is **resumable and idempotent**: what is recorded is read back from OCFL, so a version
 //!   that has a record is skipped and a second run commits nothing;
 //! - is **cancellable** between objects through a flag the caller holds;
-//! - registers in the [`ProcessRegistry`] with progress per object, and journals its start,
-//!   end, every failure (`prov.backfill`) and every commit (`ocfl.commit`).
+//! - registers in the [`ProcessRegistry`] with progress per object and a heartbeat between
+//!   staging an object's records and committing them, and journals its start, end, every
+//!   failure (`prov.backfill`) and every commit (`ocfl.commit`).
 //!
 //! A failure on one object is journaled and reported, and the run goes on with the next.
 
@@ -122,6 +123,7 @@ struct Run<'r> {
     run_id: String,
     holder: String,
     cancel: &'r AtomicBool,
+    handle: &'r ProcessHandle,
     budget: usize,
     report: BackfillReport,
 }
@@ -192,10 +194,10 @@ impl Backfill {
             report: BackfillReport::empty(&run_id, handle.id()),
             run_id,
             cancel,
+            handle: &handle,
             budget: self.max_versions,
         };
-        self.walk(root, reservations, &storage, &mut run, &handle)
-            .await;
+        self.walk(root, reservations, &storage, &mut run).await;
         self.finish(&run, &handle);
         Ok(run.report)
     }
@@ -207,7 +209,6 @@ impl Backfill {
         reservations: &R,
         storage: &StorageRoot<'_, B>,
         run: &mut Run<'_>,
-        handle: &ProcessHandle,
     ) {
         let roots = storage.objects();
         let total = roots.len() as u64;
@@ -230,12 +231,13 @@ impl Backfill {
                     self.fail(run, None, "object_unreadable");
                 }
             }
-            handle.progress(done as u64 + 1, total);
+            run.handle.progress(done as u64 + 1, total);
         }
     }
 
     /// Reconstruct and commit the missing records of one object, within the run's budget;
-    /// report the object, or journal and report why it failed.
+    /// report the object, or journal and report why it failed. The run reaches its cap only
+    /// when a commit used up the budget with records of this object still missing.
     async fn object<B: StorageBackend, R: VersionReservations, O: StorageBackend>(
         &self,
         root: &B,
@@ -248,19 +250,19 @@ impl Backfill {
         if missing == 0 {
             return;
         }
-        run.report.reached_cap |= missing > run.budget;
         let target = (root, reservations, object_root);
         match self.commit_object(target, object, run).await {
             Ok(done) => {
                 run.budget = run.budget.saturating_sub(done.reconstructed.len());
+                run.report.reached_cap |= missing > done.reconstructed.len();
                 run.report.objects.push(done);
             }
             Err(code) => self.fail(run, Some(object.id().to_string()), code),
         }
     }
 
-    /// Stage the reconstructed records of `object` (at most the run's budget) and commit
-    /// them with the run's own record; journal the commit (storage I/O).
+    /// Stage the reconstructed records of `object` (at most the run's budget), heartbeat,
+    /// and commit them with the run's own record; journal the commit (storage I/O).
     ///
     /// # Errors
     ///
@@ -294,6 +296,7 @@ impl Backfill {
                 tracing::warn!(target: LOG_TARGET, error = %err, "backfill could not stage");
                 "stage_failed"
             })?;
+        run.handle.heartbeat();
         let recorder = CommitRecorder::new(self.context.clone(), operation.clone(), ids[0]);
         let meta = commit_meta(&self.context, &operation, now);
         let receipt = model
