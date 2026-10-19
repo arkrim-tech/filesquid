@@ -23,6 +23,26 @@ Feature: Reusable filesquid-metadata engine
     Then metadata.md YAML front matter should contain dcterms title Harbour
     And catalogs should be rebuildable from that file
 
+  # MD-S-008: per-edit OCFL versioning (owner decision 2026-10-18, ADR 027)
+  Scenario: Each metadata edit is a new OCFL version
+    Given an OCFL object with a logical file and dcterms:title Harbour
+    When I set dcterms:title Dawn through the ocfl store
+    Then the object should have a new version whose metadata.md holds dcterms title Dawn
+    And the earlier versions should be unchanged
+    And the object should pass the OCFL validator
+
+  Scenario: An unchanged record publishes no version
+    Given an OCFL object with a logical file and dcterms:title Harbour
+    When I set dcterms:title Harbour through the ocfl store
+    Then no version should be published
+
+  Scenario: A head without its version inventory stays refused
+    Given an OCFL object whose head has no version inventory
+    When I set dcterms:title Dawn through the ocfl store
+    Then the edit should be refused for the missing version inventory
+    And no version should be published
+    And the missing version inventory should not be repaired
+
   Scenario: Persistence is pluggable and filesquid-ocfl is optional
     When I inspect filesquid-metadata library dependencies
     Then filesquid-ocfl should be an optional dependency outside the default features
@@ -94,6 +114,11 @@ Feature: Reusable filesquid-metadata engine
     When I extract metadata from a logical file in an OCFL object
     Then the extractor should read bytes supplied by filesquid-ocfl, not a filesystem path
 
+  # MD-S-007: XMP packets map onto dcterms
+  Scenario: Extraction maps an embedded XMP packet onto dcterms
+    When I extract metadata from bytes holding an XMP packet with dc:title Harbour
+    Then the extracted dcterms:title should be Harbour
+
   Scenario: Extraction takes a reader and a file reference, independent of any store
     When I inspect the filesquid-metadata extraction API
     Then extraction should take bytes or a reader plus a FileRef and no path
@@ -116,7 +141,8 @@ Feature: Reusable filesquid-metadata engine
   # Source
   # - resources/prd.md F-052
   # - resources/srs.md SRS-F-052
-  # - apps/filesquid/crates/metadata/resources/srs.md MD-S-010 JSON sidecar import/export
+  # - apps/filesquid/crates/metadata/resources/srs.md MD-S-007 extraction, MD-S-008 canonical metadata.md, MD-S-010 JSON sidecar import/export
+  # - resources/architecture/027-filesquid-metadata-pluggable-stores.md (per-edit OCFL versioning)
   # - resources/architecture/022-dublin-core-descriptive-metadata.md (Sidecar JSON)
   # - resources/architecture/024-filesquid-metadata-engine.md
   # - resources/architecture/025-client-side-filesquid-engines.md

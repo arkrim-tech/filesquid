@@ -6,8 +6,10 @@
 //!
 //! - [`sidecar`]: `<file>.metadata.md` beside a plain file; the default feature,
 //!   native only.
-//! - [`ocfl`]: `metadata.md` through `filesquid-ocfl`; the optional `ocfl`
-//!   feature, which FileSquid configures as canonical.
+//! - [`ocfl`]: `metadata.md` as a logical file of an OCFL object, each edit
+//!   committed as a new OCFL version through the `filesquid-ocfl` change
+//!   model; the optional `ocfl` feature, which FileSquid configures as
+//!   canonical.
 //!
 //! A caller (for example the browser host) may also implement the trait itself.
 
@@ -35,6 +37,25 @@ pub enum StoreError {
     /// The target holds a `.git` directory; Git MUST NOT be the metadata store.
     #[error("refusing to use a Git working tree as the metadata store")]
     Git,
+    /// The edit was made against a version that is no longer the head, or
+    /// another writer changed the record first; nothing was published.
+    #[error("metadata edit conflict: {reason}")]
+    Conflict {
+        /// What moved.
+        reason: String,
+    },
+    /// The store holds another object than the caller named.
+    #[error("the object identifier is {found:?}, not {expected:?}")]
+    WrongObject {
+        /// The identifier the caller named.
+        expected: String,
+        /// The identifier the store holds.
+        found: String,
+    },
+    /// The target holds no object yet and the caller named no identifier to
+    /// create it with.
+    #[error("no OCFL object here yet; an object identifier is needed to create one")]
+    MissingObjectId,
     /// The backend failed; the source says why.
     #[error("metadata store backend failed")]
     Backend(#[source] Box<dyn Error + Send + Sync>),
@@ -53,7 +74,9 @@ pub trait MetadataStore {
     /// [`StoreError`] when the reference is invalid or the backend fails.
     async fn load(&self, file: &FileRef) -> Result<Record, StoreError>;
 
-    /// Replace the record of `file` with `record`.
+    /// Replace the record of `file` with `record`. With the `ocfl` store a
+    /// changed record commits a new OCFL version (an unchanged one publishes
+    /// nothing), and an earlier version is never rewritten.
     ///
     /// # Errors
     ///
