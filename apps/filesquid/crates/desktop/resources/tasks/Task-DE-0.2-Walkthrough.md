@@ -12,7 +12,7 @@ Each library now has its own SQLite catalog file, the desktop's native storage b
 | SRS-F-001 | Independent local library and ownership | one file per library, state survives a restart, the catalog is a rebuildable index (`removing_a_catalog_file_loses_only_the_rebuildable_index`), consistent backup |
 | PRD F-009 | Multiple libraries and filesystem administration | `each_library_has_its_own_catalog_file_named_by_its_id`, `libraries_list_by_repository_in_creation_order`, `a_receipt_in_one_library_answers_a_commit_naming_another` |
 | DE-S-006 | The webview receives opaque handles and API responses, never raw filesystem paths or SQL | `an_unusable_root_fails_without_naming_its_path`, `the_schema_is_versioned_and_a_newer_catalog_is_refused`, `a_catalog_directory_that_cannot_be_opened_is_journaled_without_its_path` |
-| SRS-F-061 (logging-enforce.md §2) | Activity journal: every domain operation journaled in the same transaction, nothing dropped, redacted | `every_commit_journal_entry_reaches_the_host_journal_redacted`, `entries_the_host_journal_refused_are_forwarded_at_the_next_open`, `the_host_keeps_one_catalog_file_per_library_and_journals_its_commits` |
+| SRS-F-061 (logging-enforce.md §2) | Activity journal: every domain operation journaled in the same transaction, nothing dropped, redacted (since 2026-10-19, except a command that succeeds without a change, which stores no journal entry; API-S-019) | `every_commit_journal_entry_reaches_the_host_journal_redacted`, `entries_the_host_journal_refused_are_forwarded_at_the_next_open`, `the_host_keeps_one_catalog_file_per_library_and_journals_its_commits` |
 
 ## What changed
 

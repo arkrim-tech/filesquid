@@ -7,10 +7,10 @@
 //! operation ID first, then check the create or revision rule, apply every [`CatalogChange`],
 //! commit the change as one OCFL version through the `filesquid-ocfl` change model
 //! (API-S-008), store the commit's journal entry and receipt in the same transaction, and
-//! answer the library's new revision. [`super::LibraryService`] never hands the catalog a
-//! command that changes nothing (owner decision, 2026-10-19); a commit with no change that
-//! reaches a catalog anyway stores nothing (no receipt, no journal entry, no OCFL version)
-//! and answers the current revision. Listing
+//! answer the library's new revision. A commit with no change (a command that changed
+//! nothing) is checked against the revision rule like any other, then stores nothing: no
+//! receipt, no journal entry and no OCFL version (owner decision, 2026-10-19); it answers
+//! the current revision. Listing
 //! methods page by [`PageKey`] in ascending (order, ID) order. No method takes or answers a
 //! filesystem path or SQL.
 
@@ -148,7 +148,8 @@ pub struct CatalogCommit {
     /// [`CatalogError::Conflict`]. For every other commit the library MUST exist at exactly
     /// this revision, or the commit is [`CatalogError::Conflict`].
     pub expected_revision: ExpectedRevision,
-    /// The changes, in order. The service sends none empty; an empty commit stores nothing.
+    /// The changes, in order; empty when the command changed nothing, in which case the
+    /// commit is still checked against the revision rule but stores nothing.
     pub changes: Vec<CatalogChange>,
     /// The journal entry stored in the same transaction (opaque IDs only).
     pub journal: JournalEntry,

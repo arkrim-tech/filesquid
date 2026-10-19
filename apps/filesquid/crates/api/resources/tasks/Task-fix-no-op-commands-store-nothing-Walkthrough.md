@@ -17,12 +17,13 @@ Parents (unchanged): [F-001 Independent local library and ownership](../../../..
 | N3 A no-op stores no journal entry (neither a `succeeded` entry with the catalog nor a `failed` entry through the queue) | `a_no_op_stores_no_receipt_journal_entry_or_version`, `a_command_that_changes_nothing_stores_no_receipt_or_journal_entry`, both no-op scenarios | Met |
 | N4 A no-op writes no OCFL version (no commit that changed something) | `a_no_op_stores_no_receipt_journal_entry_or_version` (`commit_count` unchanged), scenario "nothing should have been committed" | Met |
 | N5 A retried no-op is planned again against current state: same answer while it still changes nothing; `conflict` once the library has moved on | `a_retried_no_op_is_planned_again_against_current_state`, scenario "A retried command that changed nothing is planned again" | Met |
-| N6 A commit with no change that reaches a catalog anyway stores nothing (memory and SQLite), still checks the revision, and the SQLite catalog removes its pending intent | `an_empty_raw_commit_stores_nothing_in_the_memory_catalog`, `a_commit_without_change_keeps_the_revision_and_stores_nothing` | Met |
+| N5a A no-op whose revision moved on between planning and commit is `conflict`, not `committed` | `a_no_op_planned_on_a_revision_that_moved_on_is_a_conflict` | Met |
+| N6 A commit with no change stores nothing (memory and SQLite), still checks the revision, and the SQLite catalog removes its pending intent | `an_empty_raw_commit_stores_nothing_in_the_memory_catalog`, `a_commit_without_change_keeps_the_revision_and_stores_nothing` | Met |
 | N7 Every other command keeps its receipt and journal behaviour | `a_repeated_operation_id_returns_the_first_outcome`, `a_replayed_delete_answers_its_first_deletion`, `every_commit_carries_one_redacted_journal_entry`, `refused_commands_are_journaled_as_failed`, `a_receipt_in_one_library_answers_a_commit_naming_another`, `an_intent_recorded_after_its_commit_is_not_stored`, retry and journal scenarios | Met |
 
 ## What changed
 
-- [`service.rs`](../../src/library/service.rs): `LibraryService` answers a planned command with no change through the pure `unchanged` helper (`committed` at the revision the planner just checked) and never hands it to the catalog.
+- [`service.rs`](../../src/library/service.rs): `LibraryService` still hands a planned command with no change to the catalog as an empty commit, so the catalog rechecks the expected revision atomically (Cubic round 1); the catalog stores nothing for it.
 - [`catalog.rs`](../../src/library/catalog.rs): the `LibraryCatalog::commit` contract says a commit with no change stores nothing and answers the current revision (a host may remove its pending intent).
 - [`memory.rs`](../../src/library/memory.rs): `MemoryCatalog` stores nothing for an empty commit; `journal_entries` and `operation_count` docs updated.
 - [`command.rs`](../../src/library/command.rs): `CommandResult::outcome` doc.
@@ -161,6 +162,22 @@ test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 Full gate on the head commit: `FULL=1 bash scripts/pre-commit.sh` passed with the summary line in the [Gate](#gate) section below.
 
 Coverage: no coverage tool is configured for the Rust workspace yet. Performance: no hot path changed (a no-op now does less work).
+
+## Cubic review round 1
+
+Cubic raised 6 findings on `06222d6` (P1 1, P2 2, P3 3):
+
+- P1: the service answered a no-op without the catalog, so a revision that moved on after planning (a concurrent rename to the same title) answered `committed` instead of `conflict`. The service now hands the empty plan to `LibraryCatalog::commit`, whose empty-commit path rechecks the revision atomically and stores nothing. Test first, `a_no_op_planned_on_a_revision_that_moved_on_is_a_conflict` (a catalog wrapper whose library reads lag one revision behind) failed against `06222d6`:
+
+  ```text
+  test a_no_op_planned_on_a_revision_that_moved_on_is_a_conflict ... FAILED
+  the revision moved on before the commit: CommandResult { outcome: CommandOutcome { operation_id: OperationId("op-4"), kind: Committed, error: None }, library_id: Some(LibraryId("67076a06-9ce3-4f57-bbee-9d802f3d763b")), revision: Some("2"), created_id: None, deletion: None }
+  test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 32 filtered out; finished in 0.09s
+  ```
+
+  After the fix, `cargo test -p filesquid-api --test unit_library --test features --locked` gave `test result: ok. 33 passed` and `213 scenarios (107 passed, 106 skipped)`, and the native catalog targets `7 scenarios (7 passed)` and `test result: ok. 30 passed`. API-S-019 now says a no-op meets the revision rule at commit time.
+- P2 (twice): the exception in `logging-enforce.md` and ADR 033 is scoped to a command that succeeds without a change; refused and failed commands are still journaled.
+- P3: the `CatalogCommit::changes` doc is unambiguous; the DE-0.2 walkthrough's SRS-F-061 row names the exception. The DE-0.2 raw test output is the evidence of that task's run and is left as recorded; the note above it names the replacement test, whose output is in this walkthrough.
 
 ## Gate
 

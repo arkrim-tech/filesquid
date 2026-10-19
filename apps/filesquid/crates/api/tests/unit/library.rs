@@ -806,6 +806,114 @@ fn a_retried_no_op_is_planned_again_against_current_state() {
     assert!(!fx.catalog.is_virtual_member(&vc, &file).expect("read"));
 }
 
+/// A catalog over a [`MemoryCatalog`] whose library reads answer the revision before the
+/// latest commit, as if the planner read the revision just before a concurrent commit
+/// landed. Every other call, the commit included, reaches the inner catalog.
+struct LaggingRevision(Arc<filesquid_api::library::MemoryCatalog>);
+
+impl LibraryCatalog for LaggingRevision {
+    fn receipt(&self, op: &OperationId) -> Result<Option<CommitReceipt>, CatalogError> {
+        self.0.receipt(op)
+    }
+    fn library(&self, id: &LibraryId) -> Result<Option<LibraryState>, CatalogError> {
+        Ok(self.0.library(id)?.map(|state| {
+            let lagged = state.revision.parse::<u64>().expect("revision") - 1;
+            LibraryState {
+                revision: lagged.to_string(),
+                ..state
+            }
+        }))
+    }
+    fn libraries(
+        &self,
+        id: &RepositoryId,
+        after: Option<&PageKey>,
+        limit: usize,
+    ) -> Result<Vec<Keyed<LibraryRecord>>, CatalogError> {
+        self.0.libraries(id, after, limit)
+    }
+    fn collection(&self, id: &CollectionId) -> Result<Option<Collection>, CatalogError> {
+        self.0.collection(id)
+    }
+    fn collections(
+        &self,
+        id: &LibraryId,
+        after: Option<&PageKey>,
+        limit: usize,
+    ) -> Result<Vec<Keyed<Collection>>, CatalogError> {
+        self.0.collections(id, after, limit)
+    }
+    fn virtual_collection(
+        &self,
+        id: &VirtualCollectionId,
+    ) -> Result<Option<VirtualCollection>, CatalogError> {
+        self.0.virtual_collection(id)
+    }
+    fn virtual_collections(
+        &self,
+        id: &LibraryId,
+        after: Option<&PageKey>,
+        limit: usize,
+    ) -> Result<Vec<Keyed<VirtualCollection>>, CatalogError> {
+        self.0.virtual_collections(id, after, limit)
+    }
+    fn is_virtual_member(
+        &self,
+        vc: &VirtualCollectionId,
+        file: &FileId,
+    ) -> Result<bool, CatalogError> {
+        self.0.is_virtual_member(vc, file)
+    }
+    fn last_member_order(&self, vc: &VirtualCollectionId) -> Result<Option<i64>, CatalogError> {
+        self.0.last_member_order(vc)
+    }
+    fn folder(&self, id: &FolderId) -> Result<Option<Folder>, CatalogError> {
+        self.0.folder(id)
+    }
+    fn file(&self, id: &FileId) -> Result<Option<FileEntry>, CatalogError> {
+        self.0.file(id)
+    }
+    fn files(
+        &self,
+        listing: &FileListing,
+        after: Option<&PageKey>,
+        limit: usize,
+    ) -> Result<Vec<Keyed<FileEntry>>, CatalogError> {
+        self.0.files(listing, after, limit)
+    }
+    fn commit(&self, commit: CatalogCommit) -> Result<CommitReceipt, CatalogError> {
+        self.0.commit(commit)
+    }
+}
+
+#[test]
+fn a_no_op_planned_on_a_revision_that_moved_on_is_a_conflict() {
+    let fx = Fixture::with_library();
+    let collection = fx.create_collection("Trips");
+    let rename = LibraryCommand::RenameCollection {
+        library_id: fx.library(),
+        collection_id: collection,
+        title: "Holidays".into(),
+    };
+    let seen = fx.revision();
+    fx.run(rename.clone());
+    let store = Arc::new(MemoryJournal::new("desktop"));
+    let writer = start_writer(&store);
+    let lagging = LibraryService::new(
+        Arc::new(LaggingRevision(fx.catalog.clone())),
+        writer.sender(),
+    );
+    let err = lagging
+        .execute("user:ana", fx.request(&seen, rename))
+        .expect_err("the revision moved on before the commit");
+    writer.shutdown();
+    assert!(matches!(err, LibraryError::Conflict), "{err:?}");
+    assert_eq!(
+        fx.catalog.operation_count(),
+        fx.catalog.journal_entries().len() as u64
+    );
+}
+
 #[test]
 fn an_empty_raw_commit_stores_nothing_in_the_memory_catalog() {
     let fx = Fixture::with_library();

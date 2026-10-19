@@ -3,10 +3,11 @@
 //! A command is checked (schema version, names, file batch), replayed when its operation ID
 //! was already committed, planned against committed state, and handed to the catalog as one
 //! [`CatalogCommit`] together with its journal entry, so the host stores both in the same
-//! transaction. A command that changes nothing answers `committed` at the current revision
-//! and is never handed to the catalog: it stores no receipt, no journal entry and no OCFL
-//! version (owner decision, 2026-10-19), so a retry of its operation ID is planned again
-//! against the state it then meets. A refused command is journaled once as
+//! transaction. A command that changes nothing is handed to the catalog with no change, so
+//! the catalog rechecks its expected revision atomically (a revision that moved on after
+//! planning is `conflict`); it answers `committed` at the current revision and stores no
+//! receipt, no journal entry and no OCFL version (owner decision, 2026-10-19), so a retry of
+//! its operation ID is planned again against the state it then meets. A refused command is journaled once as
 //! `failed` through the bounded journal queue every service is built with, and logged to
 //! stdout. Queries page through the catalog with an opaque cursor.
 
@@ -103,13 +104,12 @@ impl LibraryService {
             policy: self.policy,
         };
         let planned = planner.plan(&request.envelope, &request.command)?;
-        if planned.changes.is_empty() {
-            return Ok(unchanged(&request, planned));
-        }
         self.commit_planned(actor, request, planned)
     }
 
-    /// Commit `planned` (at least one change) with its journal entry and answer the receipt.
+    /// Commit `planned` with its journal entry and answer the receipt. A plan with no change
+    /// still goes through the catalog, which rechecks the expected revision atomically and
+    /// stores nothing for it, neither the journal entry nor a receipt.
     fn commit_planned(
         &self,
         actor: &str,
@@ -300,22 +300,6 @@ fn committed(operation_id: &OperationId, receipt: CommitReceipt) -> CommandResul
         revision: Some(receipt.revision),
         created_id: receipt.created_id,
         deletion: receipt.deletion,
-    }
-}
-
-/// The answer to a command that changes nothing: `committed` at the revision the planner
-/// just checked (the caller's expected revision), with nothing stored. There is no receipt,
-/// so a retry of the operation ID is planned again against the state it then meets. Pure.
-fn unchanged(request: &CommandRequest, planned: Planned) -> CommandResult {
-    CommandResult {
-        outcome: CommandOutcome::new(
-            request.envelope.operation_id().clone(),
-            CommandOutcomeKind::Committed,
-        ),
-        library_id: planned.library_id,
-        revision: Some(request.envelope.expected_revision().as_str().to_string()),
-        created_id: planned.created_id,
-        deletion: planned.deletion,
     }
 }
 
