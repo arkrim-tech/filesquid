@@ -86,7 +86,7 @@ impl PathChange {
 
 /// The change set from version `base` of `inventory` to `working`, by
 /// digest (OCFL-S-014). `None` for `inventory` or `base` means an empty
-/// base (a new object). Digests are compared without case; content counts
+/// base (a new object): `base` is not read without an inventory. Digests are compared without case; content counts
 /// as known (not new bytes) when the object's `manifest` holds it.
 ///
 /// Changes are ordered by [`PathChange::path`]. A deleted path and a new
@@ -102,16 +102,17 @@ pub fn compute_delta(
     base: Option<&VersionNum>,
     working: &WorkingState,
 ) -> Result<Vec<PathChange>, ChangeError> {
-    let before = match base {
-        Some(version) => state_digests(inventory, version)?,
-        None => WorkingState::new(),
+    let before = match (inventory, base) {
+        (Some(inventory), Some(version)) => state_digests(Some(inventory), version)?,
+        _ => WorkingState::new(),
     };
     let known = inventory.map(manifest_digests).unwrap_or_default();
     Ok(classify(&before, &lowercase(working), &known))
 }
 
 /// The changes from version `from` to version `to`. Content counts as
-/// known when a version before `to` held it.
+/// known when a version before `to` held it, or, for a reverse diff (`to`
+/// before `from`), when any version up to `from` held it, `to` included.
 ///
 /// # Errors
 ///
@@ -123,9 +124,12 @@ pub(crate) fn diff_versions(
 ) -> Result<Vec<PathChange>, ChangeError> {
     let before = state_digests(Some(inventory), from)?;
     let after = state_digests(Some(inventory), to)?;
-    let known = inventory
-        .versions
-        .range(..to)
+    let held = if to < from {
+        inventory.versions.range(..=from)
+    } else {
+        inventory.versions.range(..to)
+    };
+    let known = held
         .flat_map(|(_, block)| block.state.keys())
         .map(|digest| digest.to_ascii_lowercase())
         .collect();

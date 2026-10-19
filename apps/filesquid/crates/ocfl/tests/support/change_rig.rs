@@ -57,10 +57,20 @@ pub fn state_of<B: StorageBackend>(rig: &Rig<B>, version: &str) -> BTreeMap<Stri
         .collect()
 }
 
-/// Every key the rig's staging backend holds under `prefix`.
+/// Every key the rig's staging backend holds under `prefix`, following
+/// listing continuations (at most 100 pages).
 pub fn staged_keys(rig: &Rig<impl StorageBackend>, prefix: &str) -> Vec<String> {
-    let page = ready(rig.staging.list(prefix, None, 1_000)).expect("list staging");
-    page.keys.iter().map(|k| k.as_str().to_string()).collect()
+    let mut keys = Vec::new();
+    let mut after = None;
+    for _ in 0..100 {
+        let page = ready(rig.staging.list(prefix, after.as_ref(), 1_000)).expect("list staging");
+        keys.extend(page.keys.iter().map(|k| k.as_str().to_string()));
+        match page.next {
+            Some(next) => after = Some(next),
+            None => return keys,
+        }
+    }
+    panic!("more than 100 pages of staging keys under {prefix}");
 }
 
 /// The paths of `changes`, each with a short kind label, in order.

@@ -7,13 +7,15 @@ use super::area::{list_all, StagingArea};
 use super::delta::{compute_delta, diff_versions, manifest_digests, state_digests};
 use super::delta::{PathChange, WorkingState};
 use super::error::ChangeError;
-use super::index::{check_logical_path, Staged, StagingIndex};
+use super::index::{check_logical_path, check_no_path_conflict, Staged, StagingIndex};
+use crate::guard::reject_git_in_root;
 use crate::inventory::{Inventory, User, VersionNum};
+use crate::read::copy_guard::refuse_copy_into_ocfl_root;
 use crate::read::small::root_dir;
 use crate::read::{version_history, Object, ReadError, VersionInfo};
 use crate::storage::{StorageBackend, StorageKey};
 use crate::write::base::read_base;
-use crate::write::{ObjectWriter, VersionReservations};
+use crate::write::{CommitError, ObjectWriter, VersionReservations};
 
 /// The version metadata a commit, revert or reinstate records.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -135,7 +137,7 @@ where
             .await?;
         let base = base_state(inventory.as_ref(), &index)?;
         index.set(&base, path, Staged::File(digest));
-        self.staging.write_index(&index).await
+        self.save(&index, &base).await
     }
 
     /// Stage the removal of the logical file `path`.
@@ -151,7 +153,7 @@ where
             return Err(not_staged(path));
         }
         index.set(&base, path, Staged::Removed);
-        self.staging.write_index(&index).await
+        self.save(&index, &base).await
     }
 
     /// Stage the rename of the logical file `from` to `to`. No bytes are
@@ -173,7 +175,7 @@ where
         }
         index.set(&base, from, Staged::Removed);
         index.set(&base, to, Staged::File(digest));
-        self.staging.write_index(&index).await
+        self.save(&index, &base).await
     }
 
     /// Stage a whole working state: every file under `prefix` of `source`
@@ -194,7 +196,10 @@ where
     ) -> Result<(), ChangeError> {
         let (inventory, mut index) = self.load().await?;
         let known = known(inventory.as_ref());
-        let dir = format!("{}/", prefix.trim_end_matches('/'));
+        let dir = match prefix.trim_end_matches('/') {
+            "" => String::new(),
+            trimmed => format!("{trimmed}/"),
+        };
         let mut working = WorkingState::new();
         for key in list_all(source, &dir).await? {
             let path = key.as_str()[dir.len()..].to_string();
@@ -204,13 +209,14 @@ where
         }
         let base = base_state(inventory.as_ref(), &index)?;
         index.paths.clear();
+        index.snapshot = true;
         for path in base.keys().filter(|p| !working.contains_key(*p)) {
             index.set(&base, path, Staged::Removed);
         }
         for (path, digest) in working {
             index.set(&base, &path, Staged::File(digest));
         }
-        self.staging.write_index(&index).await
+        self.save(&index, &base).await
     }
 
     /// Discard everything staged.
@@ -300,32 +306,62 @@ where
         self.check_id(object.id())?;
         let state = object.state(version)?;
         let prefix = prefix.trim_end_matches('/');
-        let mut written = Vec::with_capacity(state.len());
+        let mut keys = Vec::with_capacity(state.len());
         for file in state.files() {
             let key = StorageKey::new(&format!("{prefix}/{}", file.path))?;
-            object
-                .copy_file(version, &file.path, dest, &key, None)
-                .await?;
-            written.push(key);
+            refuse_copy_into_ocfl_root(dest, &key).await?;
+            keys.push(key);
         }
-        Ok(written)
+        for (file, key) in state.files().zip(&keys) {
+            object
+                .copy_file(version, &file.path, dest, key, None)
+                .await?;
+        }
+        Ok(keys)
     }
 
     /// The committed inventory of the object, or `None` when no version is
-    /// committed.
+    /// committed. When the object root holds an inventory, the Git and
+    /// hierarchy guards (OCFL-S-001) run on it first.
     ///
     /// # Errors
     ///
-    /// [`ChangeError::WrongObject`] when the root holds another object, or
-    /// a read or backend error.
+    /// [`ChangeError::WrongObject`] when the root holds another object (an
+    /// uncommitted first version included), [`ChangeError::Commit`] with
+    /// [`CommitError::Guard`] for a refused root, or a read or backend
+    /// error.
     pub(super) async fn committed(&self) -> Result<Option<Inventory>, ChangeError> {
         let root = root_dir(&self.root)?;
         let base = read_base(self.storage, &root).await?;
+        if base.root_tag.is_some() {
+            reject_git_in_root(self.storage, &root)
+                .await
+                .map_err(CommitError::from)?;
+            self.storage.check_hierarchy(&root).await?;
+        }
+        if let Some(pending) = &base.pending_id {
+            self.check_id(pending)?;
+        }
         let inventory = base.committed.map(|committed| committed.inventory);
         if let Some(inventory) = &inventory {
             self.check_id(&inventory.id)?;
         }
         Ok(inventory)
+    }
+
+    /// Write `index` after checking that its working state over `base` has
+    /// no two logical paths where one is the directory of the other (E095).
+    ///
+    /// # Errors
+    ///
+    /// [`ChangeError::InvalidPath`], or as
+    /// [`StagingArea::write_index`].
+    async fn save(&self, index: &StagingIndex, base: &WorkingState) -> Result<(), ChangeError> {
+        let working = index.working(base);
+        if let Err(reason) = check_no_path_conflict(&working) {
+            return Err(invalid_path("", &reason));
+        }
+        self.staging.write_index(index).await
     }
 
     /// The committed inventory and the staging index, which records the

@@ -8,6 +8,7 @@
 //!   "version": 1,
 //!   "objectId": "urn:example:obj",
 //!   "base": "v2",
+//!   "snapshot": false,
 //!   "paths": {
 //!     "a.txt": { "sha256": "<64 lowercase hex digits>" },
 //!     "old.txt": { "removed": true }
@@ -16,7 +17,10 @@
 //! ```
 //!
 //! `base` is the object head the changes were staged against, or `null`
-//! for an object with no version yet. `paths` lists only staged logical
+//! for an object with no version yet. `snapshot` (optional, default
+//! `false`) is `true` when the change set states the whole working state
+//! (a staged tree or a revert): a rebase then also refuses paths that a
+//! newer version added or changed outside `paths`. `paths` lists only staged logical
 //! paths: each one either holds the content with that sha256 digest or is
 //! removed. Paths not listed keep their content from `base`. The bytes of
 //! a digest the object's `manifest` lacks are in the staging area at
@@ -30,7 +34,7 @@ use serde_json::{json, Map, Value};
 
 use super::delta::WorkingState;
 use crate::inventory::json::read_json;
-use crate::inventory::paths::{path_fault, PathFault};
+use crate::inventory::paths::{first_conflict, path_fault, PathFault};
 use crate::inventory::VersionNum;
 
 /// The index's `type` value.
@@ -58,6 +62,9 @@ pub(crate) struct StagingIndex {
     pub object_id: String,
     /// The head they were staged against.
     pub base: Option<VersionNum>,
+    /// Whether the change set states the whole working state, not only
+    /// the paths it lists.
+    pub snapshot: bool,
     /// Every staged logical path.
     pub paths: BTreeMap<String, Staged>,
 }
@@ -68,6 +75,7 @@ impl StagingIndex {
         Self {
             object_id: object_id.to_string(),
             base,
+            snapshot: false,
             paths: BTreeMap::new(),
         }
     }
@@ -110,6 +118,7 @@ impl StagingIndex {
             "version": INDEX_VERSION,
             "objectId": self.object_id,
             "base": self.base.as_ref().map(ToString::to_string),
+            "snapshot": self.snapshot,
             "paths": paths,
         });
         // A `Value` always formats; `{:#}` is serde_json's pretty printer.
@@ -126,7 +135,10 @@ impl StagingIndex {
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
         let value = read_json(bytes).map_err(|err| err.to_string())?;
         let root = value.as_object().ok_or("not a JSON object")?;
-        only_keys(root, &["type", "version", "objectId", "base", "paths"])?;
+        only_keys(
+            root,
+            &["type", "version", "objectId", "base", "snapshot", "paths"],
+        )?;
         check_header(root)?;
         let object_id = root
             .get("objectId")
@@ -135,6 +147,7 @@ impl StagingIndex {
         Ok(Self {
             object_id: object_id.to_string(),
             base: parse_base(root.get("base"))?,
+            snapshot: parse_snapshot(root.get("snapshot"))?,
             paths: parse_paths(root.get("paths"))?,
         })
     }
@@ -175,6 +188,27 @@ fn parse_base(value: Option<&Value>) -> Result<Option<VersionNum>, String> {
             .map(Some)
             .map_err(|_| "base is not a version name".to_string()),
         _ => Err("base must be null or a version name".to_string()),
+    }
+}
+
+/// `snapshot`: absent (false) or a boolean.
+fn parse_snapshot(value: Option<&Value>) -> Result<bool, String> {
+    match value {
+        None => Ok(false),
+        Some(Value::Bool(flag)) => Ok(*flag),
+        Some(_) => Err("snapshot must be a boolean".to_string()),
+    }
+}
+
+/// Refuse a working state in which one logical path is the directory of
+/// another (`a` and `a/b`), which OCFL forbids (E095).
+pub(crate) fn check_no_path_conflict(working: &WorkingState) -> Result<(), String> {
+    match first_conflict(working.keys().map(String::as_str)) {
+        Some(path) => Err(format!(
+            "{:?}: conflicts with another logical path of the working state (E095)",
+            truncate(path)
+        )),
+        None => Ok(()),
     }
 }
 

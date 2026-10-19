@@ -39,6 +39,14 @@ Feature: Forward-delta change model
     And no file of "v1" or "v2" should have changed
     And the commit should have written nothing
 
+  Scenario: Reinstate restores chosen paths in a new version
+    Given writer "writer-a" committed "v2" deleting "c.txt"
+    When writer "writer-a" reinstates "c.txt" from "v1"
+    Then the object head should be "v3" through the change model
+    And "c.txt" at "v3" should point at "v1/content/c.txt"
+    And no file of "v1" or "v2" should have changed
+    And the commit should have written nothing
+
   # Edge cases: concurrent writers
   Scenario: A moved head is rebased onto when no staged path changed
     Given writer "writer-a" staged new bytes for "a.txt"

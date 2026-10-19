@@ -459,3 +459,162 @@ fn a_damaged_or_foreign_staging_index_is_refused() {
         "{err:?}"
     );
 }
+
+#[test]
+fn a_staged_tree_conflicts_with_a_path_a_newer_version_added() {
+    let rig = Rig::new(MemoryBackend::new());
+    commit_v1(&rig);
+    let work = MemoryBackend::new();
+    ready(work.put(&key("tree/a.txt"), b"alpha")).expect("working file");
+    let a = model(&rig, "writer-a");
+    ready(a.stage_tree(&work, "tree")).expect("stage tree");
+    let files: [(&str, &[u8]); 1] = [("new.txt", b"from b")];
+    commit_files(&model(&rig, "writer-b"), &rig, &files, "b adds").expect("b commits v2");
+    let err = ready(a.commit(meta(&rig, "tree"))).unwrap_err();
+    let ChangeError::Conflict { paths, .. } = &err else {
+        panic!("expected a conflict, got {err:?}");
+    };
+    assert_eq!(paths, &["new.txt"]);
+    assert_eq!(rig.open().expect("open").head(), &v("v2"));
+}
+
+#[test]
+fn a_staging_area_inside_an_object_cannot_be_reset() {
+    let rig = Rig::new(MemoryBackend::new());
+    commit_v1(&rig);
+    let inside = StagingArea::new(&rig.storage, "obj").expect("prefix");
+    let m = ChangeModel::new(&rig.storage, &*rig.leases, "w", ROOT, OBJECT_ID, inside);
+    let before = rig.snapshot("obj");
+    let err = ready(m.reset()).unwrap_err();
+    assert!(
+        matches!(err, ChangeError::Read(ReadError::CopyIntoOcflRoot { .. })),
+        "{err:?}"
+    );
+    assert_eq!(rig.snapshot("obj"), before);
+}
+
+#[test]
+fn changes_staged_during_a_commit_are_kept() {
+    let rig = Rig::new(MemoryBackend::new());
+    commit_v1(&rig);
+    let m = model(&rig, "writer-a");
+    ready(m.stage_bytes("d.txt", b"delta")).expect("stage");
+    let staging = rig.staging.clone();
+    rig.storage.after_write(
+        "obj/inventory.json.sha256",
+        Box::new(move || {
+            let index = key("changes/writer-a/index.json");
+            let bytes = ready(filesquid_ocfl::storage::read_verified(
+                &*staging, &index, 1024,
+            ))
+            .expect("read index");
+            let text = String::from_utf8(bytes).expect("utf-8");
+            let changed = text.replace("\"snapshot\": false", "\"snapshot\": true");
+            assert_ne!(changed, text, "the index changed");
+            ready(staging.put(&index, changed.as_bytes())).expect("restage");
+        }),
+    );
+    let err = ready(m.commit(meta(&rig, "v2"))).unwrap_err();
+    let ChangeError::StagingNotCleared { receipt, .. } = &err else {
+        panic!("expected StagingNotCleared, got {err:?}");
+    };
+    assert_eq!(receipt.version, v("v2"));
+    assert_eq!(rig.open().expect("open").head(), &v("v2"));
+    let kept = staged_keys(&rig, "changes/writer-a");
+    assert!(kept.iter().any(|k| k.ends_with("index.json")), "{kept:?}");
+    assert!(kept.iter().any(|k| k.contains("/blobs/")), "{kept:?}");
+}
+
+#[test]
+fn a_path_that_conflicts_with_a_directory_is_refused_when_staged() {
+    let rig = Rig::new(MemoryBackend::new());
+    commit_v1(&rig);
+    let m = model(&rig, "writer-a");
+    let err = ready(m.stage_bytes("a.txt/inner", b"x")).unwrap_err();
+    assert!(matches!(err, ChangeError::InvalidPath { .. }), "{err:?}");
+    assert!(!staged_keys(&rig, "changes/writer-a")
+        .iter()
+        .any(|k| k.ends_with("index.json")));
+}
+
+#[test]
+fn a_reverse_diff_reports_restored_content_as_reinstated() {
+    let rig = Rig::new(MemoryBackend::new());
+    commit_v1(&rig);
+    let m = model(&rig, "writer-a");
+    ready(m.stage_remove("c.txt")).expect("delete");
+    ready(m.commit(meta(&rig, "v2"))).expect("v2");
+    let diff = ready(m.diff(&v("v2"), &v("v1"))).expect("diff");
+    assert_eq!(labels(&diff), ["reinstated c.txt"]);
+}
+
+#[test]
+fn a_tree_at_the_root_of_a_backend_is_staged() {
+    let rig = Rig::new(MemoryBackend::new());
+    commit_v1(&rig);
+    let work = MemoryBackend::new();
+    ready(work.put(&key("a.txt"), b"alpha")).expect("working file");
+    let m = model(&rig, "writer-a");
+    ready(m.stage_tree(&work, "")).expect("stage the root");
+    assert_eq!(
+        labels(&status(&m).changes),
+        ["deleted b.txt", "deleted c.txt"]
+    );
+}
+
+#[test]
+fn compute_delta_without_an_inventory_has_an_empty_base() {
+    let working = [("a.txt".to_string(), sha256(b"alpha"))]
+        .into_iter()
+        .collect();
+    let delta = compute_delta(None, Some(&v("v1")), &working).expect("delta");
+    assert_eq!(labels(&delta), ["added a.txt"]);
+}
+
+#[test]
+fn an_uncommitted_first_version_of_another_object_is_refused() {
+    let rig = Rig::new(MemoryBackend::new());
+    let mut draft = filesquid_ocfl::write::VersionDraft::new("urn:other", rig.now());
+    ready(rig.staging.put(&key("stage/x"), b"x")).expect("stage");
+    draft.stage("x.txt", key("stage/x"));
+    rig.storage.crash_at("obj/inventory.json.sha256");
+    let writer = rig.writer("other");
+    let crashed = filesquid_ocfl::storage::complete_immediately(writer.commit(
+        ROOT,
+        None,
+        &*rig.staging,
+        &draft,
+    ));
+    assert!(crashed.is_err(), "the first commit crashed");
+    let err = ready(model(&rig, "writer-a").status()).unwrap_err();
+    assert!(matches!(err, ChangeError::WrongObject { .. }), "{err:?}");
+}
+
+#[test]
+fn an_object_root_holding_git_metadata_is_refused() {
+    let rig = Rig::new(MemoryBackend::new());
+    commit_v1(&rig);
+    ready(rig.storage.put(&key("obj/.git/HEAD"), b"ref")).expect("plant .git");
+    let err = ready(model(&rig, "writer-a").status()).unwrap_err();
+    assert!(
+        matches!(err, ChangeError::Commit(CommitError::Guard(_))),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn checkout_writes_nothing_when_any_destination_is_inside_an_ocfl_root() {
+    let rig = Rig::new(MemoryBackend::new());
+    commit_v1(&rig);
+    let m = model(&rig, "writer-a");
+    let files: [(&str, &[u8]); 1] = [("z/z.txt", b"zulu")];
+    commit_files(&m, &rig, &files, "v2").expect("v2");
+    let out = MemoryBackend::new();
+    ready(out.put(&key("out/z/0=ocfl_object_1.1"), b"ocfl_object_1.1\n")).expect("declaration");
+    let err = ready(m.checkout(&v("v2"), &out, "out")).unwrap_err();
+    assert!(
+        matches!(err, ChangeError::Read(ReadError::CopyIntoOcflRoot { .. })),
+        "{err:?}"
+    );
+    assert!(!ready(out.exists(&key("out/a.txt"))).expect("exists"));
+}

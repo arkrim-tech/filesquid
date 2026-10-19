@@ -31,7 +31,9 @@ where
 {
     /// Publish everything staged as exactly one new version, then clear
     /// the staging area. Only bytes whose digest the object's `manifest`
-    /// lacks are written (OCFL-S-014).
+    /// lacks are written (OCFL-S-014). The area is cleared only when its
+    /// index is still the one committed, so changes staged during the
+    /// commit are never deleted.
     ///
     /// # Errors
     ///
@@ -42,15 +44,36 @@ where
     /// refusal of the write path, such as
     /// [`CommitError::MissingVersionInventory`] for a head without its
     /// version inventory (W010), which is never repaired here
-    /// (OCFL-S-020); or a read or backend error. On every error nothing is
-    /// published and the staging area is kept.
+    /// (OCFL-S-020); or a read or backend error. On each of these nothing
+    /// is published and the staging area is kept.
+    /// [`ChangeError::StagingNotCleared`] is the one error after
+    /// publication: it carries the receipt.
     pub async fn commit(&self, meta: VersionMeta) -> Result<CommitReceipt, ChangeError> {
         let (_, index) = self.load().await?;
-        let receipt = self.publish(index, &meta).await?;
-        if let Err(err) = self.staging.clear().await {
-            tracing::warn!(error = %err, "published, but could not clear the staging area");
+        let receipt = self.publish(index.clone(), &meta).await?;
+        match self.clear_committed(&index).await {
+            Ok(()) => Ok(receipt),
+            Err(reason) => {
+                tracing::warn!(%reason, "published, but kept the staging area");
+                Err(ChangeError::StagingNotCleared {
+                    receipt: Box::new(receipt),
+                    reason,
+                })
+            }
         }
-        Ok(receipt)
+    }
+
+    /// Clear the staging area if its index is still `committed`.
+    ///
+    /// # Errors
+    ///
+    /// Why the area was kept: its index changed, or clearing failed.
+    async fn clear_committed(&self, committed: &StagingIndex) -> Result<(), String> {
+        let current = self.staging.read_index().await.map_err(|e| e.to_string())?;
+        if current.as_ref() != Some(committed) {
+            return Err("the staging index changed during the commit".to_string());
+        }
+        self.staging.clear().await.map_err(|e| e.to_string())
     }
 
     /// Publish a new version whose logical state is that of the earlier
@@ -70,6 +93,7 @@ where
         let (inventory, head, head_state) = self.head_state().await?;
         let target = state_digests(Some(&inventory), version)?;
         let mut index = StagingIndex::new(&self.object_id, Some(head));
+        index.snapshot = true;
         for path in head_state.keys().filter(|p| !target.contains_key(*p)) {
             index.set(&head_state, path, Staged::Removed);
         }
@@ -215,9 +239,11 @@ fn rebase(index: &mut StagingIndex, inventory: Option<&Inventory>) -> Result<(),
     Ok(())
 }
 
-/// The staged paths whose content any version after the index's base
-/// differs on from the base. Every staged path counts when the object has
-/// no committed version any more.
+/// The paths whose content any version after the index's base differs on
+/// from the base: the staged paths, or every path of the base and those
+/// versions for a snapshot change set (which states the whole working
+/// state, so a path a newer version added also conflicts). Every staged
+/// path counts when the object has no committed version any more.
 ///
 /// # Errors
 ///
@@ -243,6 +269,9 @@ fn changed_since_base(
         let state = state_digests(Some(inventory), version)?;
         let differs = |path: &&String| state.get(*path) != base.get(*path);
         changed.extend(index.paths.keys().filter(differs).cloned());
+        if index.snapshot {
+            changed.extend(state.keys().chain(base.keys()).filter(differs).cloned());
+        }
     }
     Ok(changed)
 }

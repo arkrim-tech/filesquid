@@ -135,6 +135,16 @@ fn revert(world: &mut OcflWorld, holder: String, version: String) {
     world.change.result = Some(result);
 }
 
+#[when(expr = "writer {string} reinstates {string} from {string}")]
+fn reinstate(world: &mut OcflWorld, holder: String, path: String, version: String) {
+    let before = rig(world).snapshot(ROOT);
+    let rig = rig(world);
+    let m = model(rig, &holder);
+    let result = ready(m.reinstate(&v(&version), &[path.as_str()], meta(rig, "reinstate")));
+    world.change.before = before;
+    world.change.result = Some(result);
+}
+
 #[when("a writer stages a file in a staging area inside the object root")]
 fn stage_inside(world: &mut OcflWorld) {
     let rig = rig(world);

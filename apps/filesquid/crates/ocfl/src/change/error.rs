@@ -4,7 +4,7 @@ use thiserror::Error;
 
 use crate::read::ReadError;
 use crate::storage::StorageError;
-use crate::write::CommitError;
+use crate::write::{CommitError, CommitReceipt};
 
 /// Why a change-model operation did not complete.
 ///
@@ -81,6 +81,19 @@ pub enum ChangeError {
     TooManyRebases {
         /// The rebase limit.
         limit: usize,
+    },
+    /// The version was published, but the staging area was not cleared:
+    /// its index changed during the commit (nothing is deleted then), or
+    /// clearing it failed. The receipt is the published version's; the
+    /// caller SHOULD inspect the staging area and [`reset`] it.
+    ///
+    /// [`reset`]: super::ChangeModel::reset
+    #[error("published {}, but the staging area was not cleared: {reason}", receipt.version)]
+    StagingNotCleared {
+        /// The published version's receipt.
+        receipt: Box<CommitReceipt>,
+        /// Why the staging area was kept.
+        reason: String,
     },
     /// The write path refused or failed the commit (for example a head
     /// without its version inventory, W010, which the change model never

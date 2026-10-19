@@ -111,8 +111,16 @@ impl<'s, S: StorageBackend> StagingArea<'s, S> {
     /// error.
     pub(crate) async fn write_index(&self, index: &StagingIndex) -> Result<(), ChangeError> {
         let key = self.index_key()?;
+        let bytes = index.to_json();
+        if bytes.len() > MAX_INDEX_BYTES {
+            return Err(StorageError::LimitExceeded {
+                what: "staging index bytes",
+                limit: MAX_INDEX_BYTES as u64,
+            }
+            .into());
+        }
         self.guard(&key).await?;
-        write_whole(self.backend, &key, &index.to_json()).await?;
+        write_whole(self.backend, &key, &bytes).await?;
         Ok(())
     }
 
@@ -174,13 +182,17 @@ impl<'s, S: StorageBackend> StagingArea<'s, S> {
         Ok(digest)
     }
 
-    /// Delete everything staged: the blobs, then the index.
+    /// Delete everything staged: the blobs, then the index. The area is
+    /// checked first, so a prefix inside an OCFL root deletes nothing.
     ///
     /// # Errors
     ///
-    /// A backend error, or [`StorageError::LimitExceeded`] when the area
-    /// holds more keys than one bounded walk reads.
+    /// [`ChangeError::Read`] for an area inside an OCFL root, a backend
+    /// error, or [`StorageError::LimitExceeded`] when the area holds more
+    /// keys than one bounded walk reads.
     pub(crate) async fn clear(&self) -> Result<(), ChangeError> {
+        self.guard(&self.index_key()?).await?;
+        self.guard(&self.blob_key("guard")?).await?;
         let blobs = format!("{}/{BLOBS_DIR}/", self.prefix);
         for key in list_all(self.backend, &blobs).await? {
             self.backend.delete(&key).await?;
@@ -208,8 +220,10 @@ fn corrupt(key: &StorageKey, reason: String) -> ChangeError {
 ///
 /// # Errors
 ///
-/// A backend error, or [`StorageError::LimitExceeded`] past
-/// [`MAX_LIST_PAGES`] pages.
+/// A backend error; [`StorageError::LimitExceeded`] past
+/// [`MAX_WALK_ENTRIES`] keys or [`MAX_LIST_PAGES`] pages; or
+/// [`StorageError::Backend`] for a continuation that is not the page's last
+/// key or does not move forward.
 pub(crate) async fn list_all<B: StorageBackend>(
     backend: &B,
     prefix: &str,
@@ -218,25 +232,71 @@ pub(crate) async fn list_all<B: StorageBackend>(
     let mut after: Option<StorageKey> = None;
     for _ in 0..MAX_LIST_PAGES {
         let page = backend.list(prefix, after.as_ref(), MAX_LIST_PAGE).await?;
-        keys.extend(page.keys);
-        match page.next {
-            Some(next) => after = Some(next),
-            None => return Ok(keys),
+        if keys.len() + page.keys.len() > MAX_WALK_ENTRIES {
+            return Err(too_many_keys());
         }
+        let Some(next) = page.next else {
+            keys.extend(page.keys);
+            return Ok(keys);
+        };
+        check_continuation(&next, page.keys.last(), after.as_ref())?;
+        keys.extend(page.keys);
+        after = Some(next);
     }
-    Err(StorageError::LimitExceeded {
-        what: "keys listed under one prefix",
-        limit: MAX_WALK_ENTRIES as u64,
+    Err(too_many_keys())
+}
+
+/// Require a continuation equal to the page's last key and past the
+/// previous cursor, so a listing always moves forward.
+fn check_continuation(
+    next: &StorageKey,
+    last: Option<&StorageKey>,
+    previous: Option<&StorageKey>,
+) -> Result<(), StorageError> {
+    let aligned = last == Some(next);
+    let forward = previous.is_none_or(|prev| next.as_str() > prev.as_str());
+    if aligned && forward {
+        return Ok(());
+    }
+    Err(StorageError::Backend {
+        reason: format!("the listing continuation {next} does not move forward"),
     })
 }
 
-/// The sha256 digest of the file at `key`, read in bounded chunks.
+/// The error for a prefix holding more keys than one walk reads.
+fn too_many_keys() -> StorageError {
+    StorageError::LimitExceeded {
+        what: "keys listed under one prefix",
+        limit: MAX_WALK_ENTRIES as u64,
+    }
+}
+
+/// The sha256 digest of the file at `key`, read in bounded chunks. The
+/// file's entity tag and size are read before and after; a file that
+/// changed in between is refused, so the digest names one whole version.
 ///
 /// # Errors
 ///
-/// A backend error, or [`StorageError::LimitExceeded`] for a file above the
-/// largest object a backend stores.
+/// [`ChangeError::SourceChanged`], a backend error, or
+/// [`StorageError::LimitExceeded`] for a file above the largest object a
+/// backend stores.
 async fn hash_file<D: StorageBackend>(source: &D, key: &StorageKey) -> Result<String, ChangeError> {
+    let before = source.head(key).await?;
+    let digest = hash_chunks(source, key).await?;
+    let after = source.head(key).await?;
+    if before.etag != after.etag || before.size != after.size {
+        return Err(ChangeError::SourceChanged {
+            key: key.to_string(),
+        });
+    }
+    Ok(digest)
+}
+
+/// Hash every chunk of the file at `key`.
+async fn hash_chunks<D: StorageBackend>(
+    source: &D,
+    key: &StorageKey,
+) -> Result<String, StorageError> {
     let mut reader = ChunkReader::new(source, key.clone(), MAX_CHUNK_BYTES)?;
     let mut hasher = DigestAlgorithm::ENGINE.hasher();
     for _ in 0..MAX_FILE_CHUNKS {
@@ -245,7 +305,7 @@ async fn hash_file<D: StorageBackend>(source: &D, key: &StorageKey) -> Result<St
             None => return Ok(hasher.finalize_hex()),
         }
     }
-    Err(too_large().into())
+    Err(too_large())
 }
 
 /// Copy the file at `key` of `source` to `dest` at `dest_key` through a

@@ -19,7 +19,7 @@ Sources: [OCFL-S-010, OCFL-S-014, OCFL-S-015, OCFL-S-016, OCFL-S-018, OCFL-S-020
 ## What changed
 
 - **New public module `change`** (`src/change/`, re-exported from the crate root as `ChangeModel`, `ChangeError`, `PathChange`, `StagingArea`, `VersionMeta`):
-  - `compute_delta(inventory, base, working) -> Vec<PathChange>` (pure). `PathChange::{Added, Changed, Renamed, Deleted, Reinstated}`; `Added` and `Changed` carry `new_bytes` (the digest is not in the `manifest`). A deleted path and a new path with the same digest are a rename (several pair in path order); a new path whose content the `manifest` holds but the base state does not is reinstated; a new path that copies content still in the base is added with `new_bytes: false`. Digests compare without case. Changes are ordered by path (the new path of a rename).
+  - `compute_delta(inventory, base, working) -> Result<Vec<PathChange>, ChangeError>` (pure; an absent inventory means an empty base, and a `base` the inventory lacks is `ReadError::VersionNotFound`). `PathChange::{Added, Changed, Renamed, Deleted, Reinstated}`; `Added` and `Changed` carry `new_bytes` (the digest is not in the `manifest`). A deleted path and a new path with the same digest are a rename (several pair in path order); a new path whose content the `manifest` holds but the base state does not is reinstated; a new path that copies content still in the base is added with `new_bytes: false`. Digests compare without case. Changes are ordered by path (the new path of a rename).
   - `StagingArea::new(&backend, prefix)`: the staging area on any caller backend, under a caller prefix (format below).
   - `ChangeModel::new(&storage, &reservations, holder, root, object_id, staging)`: `stage_bytes`, `stage_remove`, `stage_rename`, `stage_tree` (every file under a prefix of any backend, for example a directory through `FsBackend`, becomes the working state), `reset`, `status` (`Status { object_id, base, head, changes }`), `diff(from, to)`, `log` (newest first), `checkout(version, &dest, prefix)`, `commit(meta)`, `revert(version, meta)`, `reinstate(version, paths, meta)`. `VersionMeta { created, message, user }`.
   - `ChangeError::{Conflict, NothingToCommit, PathNotFound, InvalidPath, StagingCorrupt, StagingMismatch, WrongObject, SourceChanged, TooManyRebases, Commit, Read, Storage}`; `MAX_REBASES = 16`.
@@ -46,6 +46,7 @@ The staging area is engine-private working data under a caller prefix `P` on a c
   "version": 1,
   "objectId": "urn:example:obj",
   "base": "v2",
+  "snapshot": false,
   "paths": {
     "a.txt": { "sha256": "<64 lowercase hex digits>" },
     "old.txt": { "removed": true }
@@ -57,7 +58,9 @@ The staging area is engine-private working data under a caller prefix `P` on a c
 - `paths` lists staged logical paths only: each holds the content with that sha256 digest, or is removed. Every other path keeps its content from `base`. Staging the content a path already has in `base` (or removing a path `base` lacks) unstages it.
 - Reading is strict and bounded: at most 64 MiB, the engine's strict JSON reader (no repeated keys, nesting at most 8), no unknown keys, exact `type` and `version`, every path passing E052 and E053, every digest 64 lowercase hex digits. Anything else is `ChangeError::StagingCorrupt`; an index for another object is `StagingMismatch`.
 - Before the first write of each key the area refuses a key below a directory holding an OCFL object or storage-root declaration (`ReadError::CopyIntoOcflRoot`, the OCFL-S-019 copy guard). `checkout` uses the same guard.
-- A successful `commit` deletes the blobs and the index. `reset` does the same without committing. Revert and reinstate do not use the staging area.
+- `snapshot` (optional, default `false`) is `true` when the change set states the whole working state (`stage_tree`, and the in-memory change set of a revert): a rebase then refuses any path a newer version added or changed, not only the listed ones.
+- After publishing, `commit` deletes the blobs and the index only if the index still equals the one it committed; if it changed during the commit (nothing is deleted then) or clearing fails, it returns `ChangeError::StagingNotCleared` with the receipt. `reset` deletes them without committing. Both run the OCFL-root guard first, so a prefix inside an object deletes nothing. Revert and reinstate do not use the staging area.
+- Staging a change that would make one logical path the directory of another (`a` and `a/b`, E095) is refused before the index is written; an index above 64 MiB is refused before it is written.
 - One area serves one object and one writer; it takes no lock of its own.
 
 ## TDD
@@ -115,19 +118,28 @@ error: could not compile `filesquid-ocfl` (test "integration_change_model") due 
 `cargo test -p filesquid-ocfl --locked --test integration_change_model -- --nocapture --test-threads=1`:
 
 ```text
-    Finished `test` profile [unoptimized] target(s) in 0.17s
+    Finished `test` profile [unoptimized] target(s) in 0.20s
      Running tests/integration/change_model.rs ($CARGO_TARGET_DIR/debug/deps/integration_change_model-97a7db5939f6743a)
 
-running 17 tests
+running 27 tests
 test a_commit_writes_only_bytes_the_manifest_lacks ... ok
 test a_damaged_or_foreign_staging_index_is_refused ... ok
 test a_head_without_its_version_inventory_stays_refused_and_unrepaired ... ok
 test a_moved_head_is_rebased_onto ... ok
 test a_moved_head_that_touched_a_staged_path_reports_a_conflict ... ok
+test a_path_that_conflicts_with_a_directory_is_refused_when_staged ... ok
 test a_reinstated_path_copies_no_bytes ... ok
+test a_reverse_diff_reports_restored_content_as_reinstated ... ok
+test a_staged_tree_conflicts_with_a_path_a_newer_version_added ... ok
+test a_staging_area_inside_an_object_cannot_be_reset ... ok
+test a_tree_at_the_root_of_a_backend_is_staged ... ok
 test a_working_directory_is_staged_as_one_change_set ... ok
 test an_empty_change_set_publishes_nothing ... ok
+test an_object_root_holding_git_metadata_is_refused ... ok
+test an_uncommitted_first_version_of_another_object_is_refused ... ok
+test changes_staged_during_a_commit_are_kept ... ok
 test checkout_writes_a_version_to_a_caller_location ... ok
+test checkout_writes_nothing_when_any_destination_is_inside_an_ocfl_root ... ok
 test committed_objects_pass_the_engine_and_community_validators ... filesquid-ocfl change-model object: VALID (4 versions)
 ocfl-py change-model object: VALID
 [W004] OCFL Object root inventory SHOULD use sha512 but uses sha256 as the DigestAlgorithm (see https://ocfl.io/1.1/spec/#W004)
@@ -144,9 +156,10 @@ ocfl-py change-model object: VALID
 [W007b] OCFL Object v3 inventory v1 version block SHOULD include a user key (see https://ocfl.io/1.1/spec/#W007)
 [W007b] OCFL Object v3 inventory v2 version block SHOULD include a user key (see https://ocfl.io/1.1/spec/#W007)
 [W007b] OCFL Object v3 inventory v3 version block SHOULD include a user key (see https://ocfl.io/1.1/spec/#W007)
-OCFL v1.1 Object at $CARGO_TARGET_DIR/tmp/ocfl-change-5548-5/root/obj is VALID
+OCFL v1.1 Object at $CARGO_TARGET_DIR/tmp/ocfl-change-9348-5/root/obj is VALID
 ok
 test compute_delta_classifies_a_working_state_against_a_base ... ok
+test compute_delta_without_an_inventory_has_an_empty_base ... ok
 test log_and_diff_read_the_inventory ... ok
 test reinstate_commits_a_new_version_with_the_chosen_paths ... ok
 test reinstate_refuses_a_path_the_version_does_not_hold ... ok
@@ -154,14 +167,14 @@ test revert_commits_a_new_version_without_touching_earlier_ones ... ok
 test staging_and_checkout_inside_an_ocfl_root_are_refused ... ok
 test staging_is_never_inside_the_object_and_reads_need_none_of_it ... ok
 
-test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.76s
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.98s
 
 ```
 
 `cargo test -p filesquid-ocfl --locked --test features -- --input "change_model_*.feature"`:
 
 ```text
-    Finished `test` profile [unoptimized] target(s) in 0.16s
+    Finished `test` profile [unoptimized] target(s) in 0.17s
      Running tests/features.rs ($CARGO_TARGET_DIR/debug/deps/features-9009fa7eceb51bdd)
 Feature: Forward-delta change model
   Scenario: A staged change set is classified and stores only new bytes
@@ -186,6 +199,14 @@ Feature: Forward-delta change model
    ✔  When writer "writer-a" reverts to "v1"
    ✔  Then the object head should be "v3" through the change model
    ✔  And the state of "v3" should equal the state of "v1"
+   ✔  And no file of "v1" or "v2" should have changed
+   ✔  And the commit should have written nothing
+  Scenario: Reinstate restores chosen paths in a new version
+   ✔> Given an object committed at "v1" with "a.txt", "b.txt" and "c.txt" through the change model
+   ✔  Given writer "writer-a" committed "v2" deleting "c.txt"
+   ✔  When writer "writer-a" reinstates "c.txt" from "v1"
+   ✔  Then the object head should be "v3" through the change model
+   ✔  And "c.txt" at "v3" should point at "v1/content/c.txt"
    ✔  And no file of "v1" or "v2" should have changed
    ✔  And the commit should have written nothing
   Scenario: A moved head is rebased onto when no staged path changed
@@ -220,24 +241,24 @@ Feature: Forward-delta change model
    ✔  Then staging should be refused as inside an OCFL root
 [Summary]
 1 feature
-8 scenarios (8 passed)
-46 steps (46 passed)
+9 scenarios (9 passed)
+53 steps (53 passed)
 ```
 
 `cargo test -p filesquid-ocfl --locked --lib change`:
 
 ```text
-    Finished `test` profile [unoptimized] target(s) in 0.16s
+    Finished `test` profile [unoptimized] target(s) in 0.18s
      Running unittests src/lib.rs ($CARGO_TARGET_DIR/debug/deps/filesquid_ocfl-336d9c2a83f05f02)
 
 running 9 tests
-test change::delta::tests::an_unchanged_state_has_no_changes ... ok
-test change::delta::tests::several_paths_of_one_digest_pair_in_path_order ... ok
 test change::delta::tests::digests_compare_without_case ... ok
-test change::delta::tests::a_change_back_to_older_content_writes_no_bytes ... ok
+test change::delta::tests::several_paths_of_one_digest_pair_in_path_order ... ok
+test change::delta::tests::an_unchanged_state_has_no_changes ... ok
 test change::index::tests::a_new_object_index_has_a_null_base ... ok
-test change::index::tests::staging_what_the_base_holds_unstages_the_path ... ok
+test change::delta::tests::a_change_back_to_older_content_writes_no_bytes ... ok
 test change::index::tests::an_index_round_trips ... ok
+test change::index::tests::staging_what_the_base_holds_unstages_the_path ... ok
 test change::index::tests::unknown_keys_and_bad_digests_are_refused ... ok
 test storage::whole::tests::a_change_and_change_back_during_a_read_is_not_mixed ... ok
 
@@ -319,9 +340,23 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
     Finished `dev` profile [unoptimized] target(s) in 5.75s
 ```
 
+## Cubic round 1 fixes
+
+- Snapshot change sets (`stage_tree`, revert) also conflict on paths a newer version added or changed (`a_staged_tree_conflicts_with_a_path_a_newer_version_added`).
+- `reset` and the post-commit clear run the OCFL-root guard before deleting (`a_staging_area_inside_an_object_cannot_be_reset`).
+- `commit` clears staging only if the index is unchanged and surfaces a kept area as `StagingNotCleared` with the receipt (`changes_staged_during_a_commit_are_kept`).
+- Parent/child logical paths (E095) are refused at staging (`a_path_that_conflicts_with_a_directory_is_refused_when_staged`).
+- Reverse diffs count the target version's content as known (`a_reverse_diff_reports_restored_content_as_reinstated`).
+- `stage_tree("")` stages a backend's root (`a_tree_at_the_root_of_a_backend_is_staged`); working files are hashed between two `head` reads and refused as `SourceChanged` when they changed.
+- `compute_delta(None, Some(_), _)` uses an empty base (`compute_delta_without_an_inventory_has_an_empty_base`).
+- Reads of the object run the Git and hierarchy guards (`an_object_root_holding_git_metadata_is_refused`) and refuse an uncommitted first version of another object (`an_uncommitted_first_version_of_another_object_is_refused`).
+- `checkout` checks every destination before copying any bytes (`checkout_writes_nothing_when_any_destination_is_inside_an_ocfl_root`).
+- Listing walks bound the total key count and require each continuation to equal the page's last key and move forward; the staging index is size-checked before it is written.
+- New BDD scenario "Reinstate restores chosen paths in a new version"; the test helper `staged_keys` follows listing continuations; SRS OCFL-S-015 and the README state that only a successful commit, revert or reinstate publishes a version.
+
 ## Coverage
 
-[ADR 017](../../../../../../resources/architecture/017-test-runners-and-reporting.md) defines no Rust line-coverage tool, so no percentage is reported. Every constraint above has at least one test. Not reached by a test: `ChangeError::TooManyRebases` and the `HeadMoved` retry (they need a writer to publish between the model's head read and the reservation, which the synchronous test backends cannot interleave; the rebase check they repeat is the one the rebase and conflict tests cover), `SourceChanged` (a working file that changes between hashing and copying), and `WrongObject`.
+[ADR 017](../../../../../../resources/architecture/017-test-runners-and-reporting.md) defines no Rust line-coverage tool, so no percentage is reported. Every constraint above has at least one test. Not reached by a test: `ChangeError::TooManyRebases` and the `HeadMoved` retry (they need a writer to publish between the model's head read and the reservation, which the synchronous test backends cannot interleave; the rebase check they repeat is the one the rebase and conflict tests cover); `SourceChanged` (a working file that changes during staging); a listing continuation that does not move forward (no backend in the crate produces one); and an index above 64 MiB.
 
 ## Sync Execution Report
 
@@ -343,5 +378,5 @@ None. The community validator check used `ocfl-validate.py` from `ocfl-py`, foun
 - The writer-fencing gap is unchanged ([OCFL-S-018](../srs.md) "Known gap"); the change model adds no storage-side fencing. IO-5.1 carries the storage-side check for the S3-compatible backend.
 - `status` reports the change set against its recorded base; when `head` differs, the commit rebases or reports a conflict.
 - A staging area is single-writer: two change models MUST NOT share one prefix.
-- If clearing the staging area fails after a successful commit, the commit still returns its receipt and a warning is logged; the stale index then names an older base, and its next commit reports a conflict on the paths it staged (the committed version changed them), which `reset` clears.
+- If the staging area cannot be cleared after a publication, `commit` returns `ChangeError::StagingNotCleared` with the receipt; the kept index names an older base, so a later commit of it reports a conflict on its own paths until the caller runs `reset`.
 - Public types `filesquid-api` (platform engineer) will wire: `ChangeModel`, `StagingArea`, `VersionMeta`, `Status`, `PathChange`, `ChangeError`, `compute_delta`.
