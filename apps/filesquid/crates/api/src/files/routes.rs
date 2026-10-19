@@ -246,13 +246,32 @@ async fn write_answer(
         .target(commit.library_id.as_str())
         .target(commit.object_id.as_str())
         .target(commit.version.as_str());
-    let entry =
-        match filesquid_core::VersionRef::new(commit.object_id.as_str(), commit.version.as_str()) {
-            Ok(reference) => entry.object_ref(reference.object_ref()),
-            Err(_) => entry,
-        };
+    let entry = match object_ref(&commit) {
+        Some(object_ref) => entry.object_ref(object_ref),
+        None => entry,
+    };
     journal_entry(state, entry).await;
     Json(commit).into_response()
+}
+
+/// The `<object-id>@vN` reference of the version a write published, as the journal keeps it.
+/// An object ID that no version reference can name (one containing `@` or whitespace, or one
+/// the journal would not keep opaque) cannot be linked by PROV-O either; the write still
+/// succeeds and is journaled with its opaque targets, and the missing link is logged at WARN
+/// so it is never silent.
+fn object_ref(commit: &super::CommitView) -> Option<String> {
+    let reference =
+        filesquid_core::VersionRef::new(commit.object_id.as_str(), commit.version.as_str())
+            .ok()
+            .map(|reference| reference.object_ref())
+            .filter(|object_ref| crate::journal::is_object_ref(object_ref));
+    if reference.is_none() {
+        tracing::warn!(
+            target: "filesquid::files",
+            "a published version was journaled without an object reference"
+        );
+    }
+    reference
 }
 
 /// Journal a refused operation once, with its code, and answer the typed error.
