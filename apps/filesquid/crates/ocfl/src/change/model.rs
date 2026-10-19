@@ -149,6 +149,7 @@ where
     /// [`ChangeError::PathNotFound`] when the working state has no `path`,
     /// or as [`stage_bytes`](Self::stage_bytes).
     pub async fn stage_remove(&self, path: &str) -> Result<(), ChangeError> {
+        valid_path(path)?;
         let (inventory, mut index) = self.load().await?;
         let base = base_state(inventory.as_ref(), &index)?;
         if !index.working(&base).contains_key(path) {
@@ -164,9 +165,10 @@ where
     /// # Errors
     ///
     /// [`ChangeError::PathNotFound`] when the working state has no `from`,
-    /// [`ChangeError::InvalidPath`] for an invalid `to` or one the working
-    /// state already has, or as [`stage_bytes`](Self::stage_bytes).
+    /// [`ChangeError::InvalidPath`] for an invalid `from` or `to`, or a `to`
+    /// the working state already has, or as [`stage_bytes`](Self::stage_bytes).
     pub async fn stage_rename(&self, from: &str, to: &str) -> Result<(), ChangeError> {
+        valid_path(from)?;
         valid_path(to)?;
         let (inventory, mut index) = self.load().await?;
         let base = base_state(inventory.as_ref(), &index)?;
@@ -316,7 +318,10 @@ where
         let prefix = prefix.trim_end_matches('/');
         let mut keys = Vec::with_capacity(state.len());
         for file in state.files() {
-            let key = StorageKey::new(&format!("{prefix}/{}", file.path))?;
+            let key = match prefix {
+                "" => StorageKey::new(&file.path)?,
+                prefix => StorageKey::new(&format!("{prefix}/{}", file.path))?,
+            };
             refuse_copy_into_ocfl_root(dest, &key).await?;
             keys.push(key);
         }

@@ -118,12 +118,13 @@ error: could not compile `filesquid-ocfl` (test "integration_change_model") due 
 `cargo test -p filesquid-ocfl --locked --test integration_change_model -- --nocapture --test-threads=1`:
 
 ```text
-    Finished `test` profile [unoptimized] target(s) in 0.16s
+    Finished `test` profile [unoptimized] target(s) in 0.18s
      Running tests/integration/change_model.rs ($CARGO_TARGET_DIR/debug/deps/integration_change_model-97a7db5939f6743a)
 
-running 27 tests
+running 30 tests
 test a_commit_writes_only_bytes_the_manifest_lacks ... ok
 test a_damaged_or_foreign_staging_index_is_refused ... ok
+test a_damaged_staged_blob_is_staged_again ... ok
 test a_head_without_its_version_inventory_stays_refused_and_unrepaired ... ok
 test a_moved_head_is_rebased_onto ... ok
 test a_moved_head_that_touched_a_staged_path_reports_a_conflict ... ok
@@ -138,6 +139,7 @@ test an_empty_change_set_publishes_nothing ... ok
 test an_object_root_holding_git_metadata_is_refused ... ok
 test an_uncommitted_first_version_of_another_object_is_refused ... ok
 test changes_staged_during_a_commit_are_kept ... ok
+test checkout_to_the_root_of_a_backend_uses_the_logical_paths ... ok
 test checkout_writes_a_version_to_a_caller_location ... ok
 test checkout_writes_nothing_when_any_destination_is_inside_an_ocfl_root ... ok
 test committed_objects_pass_the_engine_and_community_validators ... filesquid-ocfl change-model object: VALID (4 versions)
@@ -156,25 +158,26 @@ ocfl-py change-model object: VALID
 [W007b] OCFL Object v3 inventory v1 version block SHOULD include a user key (see https://ocfl.io/1.1/spec/#W007)
 [W007b] OCFL Object v3 inventory v2 version block SHOULD include a user key (see https://ocfl.io/1.1/spec/#W007)
 [W007b] OCFL Object v3 inventory v3 version block SHOULD include a user key (see https://ocfl.io/1.1/spec/#W007)
-OCFL v1.1 Object at $CARGO_TARGET_DIR/tmp/ocfl-change-29774-5/root/obj is VALID
+OCFL v1.1 Object at $CARGO_TARGET_DIR/tmp/ocfl-change-19269-5/root/obj is VALID
 ok
 test compute_delta_classifies_a_working_state_against_a_base ... ok
 test compute_delta_without_an_inventory_has_an_empty_base ... ok
 test log_and_diff_read_the_inventory ... ok
 test reinstate_commits_a_new_version_with_the_chosen_paths ... ok
 test reinstate_refuses_a_path_the_version_does_not_hold ... ok
+test removing_or_renaming_an_invalid_path_is_refused_as_invalid ... ok
 test revert_commits_a_new_version_without_touching_earlier_ones ... ok
 test staging_and_checkout_inside_an_ocfl_root_are_refused ... ok
 test staging_is_never_inside_the_object_and_reads_need_none_of_it ... ok
 
-test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.87s
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.00s
 
 ```
 
 `cargo test -p filesquid-ocfl --locked --test features -- --input "change_model_*.feature"`:
 
 ```text
-    Finished `test` profile [unoptimized] target(s) in 0.17s
+    Finished `test` profile [unoptimized] target(s) in 0.16s
      Running tests/features.rs ($CARGO_TARGET_DIR/debug/deps/features-9009fa7eceb51bdd)
 Feature: Forward-delta change model
   Scenario: A staged change set is classified and stores only new bytes
@@ -270,7 +273,7 @@ test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 34 filtered out; fin
 
 ```text
      Running unittests src/lib.rs ($CARGO_TARGET_DIR/debug/deps/filesquid_ocfl-336d9c2a83f05f02)
-test result: ok. 43 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.64s
+test result: ok. 43 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.65s
      Running tests/features.rs ($CARGO_TARGET_DIR/debug/deps/features-9009fa7eceb51bdd)
    ✔  Then Arrow, Parquet, DuckDB, and Iceberg should be absent from default features
 [Summary]
@@ -278,49 +281,49 @@ test result: ok. 43 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 137 scenarios (134 passed, 3 skipped)
 629 steps (626 passed, 3 skipped)
      Running tests/integration/change_model.rs ($CARGO_TARGET_DIR/debug/deps/integration_change_model-97a7db5939f6743a)
-test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.54s
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.60s
      Running tests/integration/content_fixtures.rs ($CARGO_TARGET_DIR/debug/deps/integration_content_fixtures-2450cd9c4beef973)
-test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.95s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.37s
      Running tests/integration/enumerate_state.rs ($CARGO_TARGET_DIR/debug/deps/integration_enumerate_state-c992207f0a36f4c4)
-test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.15s
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.34s
      Running tests/integration/fixture_conformance.rs ($CARGO_TARGET_DIR/debug/deps/integration_fixture_conformance-6188b5d43aaacb5e)
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
      Running tests/integration/fixture_inventories.rs ($CARGO_TARGET_DIR/debug/deps/integration_fixture_inventories-49912e26c8122bb4)
 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
      Running tests/integration/fixture_reads.rs ($CARGO_TARGET_DIR/debug/deps/integration_fixture_reads-f992725a1bd4ec37)
-test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.13s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.21s
      Running tests/integration/fs_conformance.rs ($CARGO_TARGET_DIR/debug/deps/integration_fs_conformance-4c054563d204acfb)
-test result: ok. 48 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.07s
+test result: ok. 48 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.19s
      Running tests/integration/hierarchy_guard.rs ($CARGO_TARGET_DIR/debug/deps/integration_hierarchy_guard-3efdbaf82d970047)
-test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
      Running tests/integration/logical_file.rs ($CARGO_TARGET_DIR/debug/deps/integration_logical_file-c870615487e03f53)
-test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.99s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.08s
      Running tests/integration/memory_conformance.rs ($CARGO_TARGET_DIR/debug/deps/integration_memory_conformance-bbed81d294b9c269)
-test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.93s
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.90s
      Running tests/integration/opaque_bytes.rs ($CARGO_TARGET_DIR/debug/deps/integration_opaque_bytes-1ba5398c372ee9d8)
-test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.82s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.10s
      Running tests/integration/read_objects.rs ($CARGO_TARGET_DIR/debug/deps/integration_read_objects-777c46e5ca575e3e)
-test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
      Running tests/integration/validate_objects.rs ($CARGO_TARGET_DIR/debug/deps/integration_validate_objects-f628c102e60642ab)
-test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.42s
+test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s
      Running tests/integration/version_inventory_repair.rs ($CARGO_TARGET_DIR/debug/deps/integration_version_inventory_repair-ec3ea182e8864a75)
-test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
      Running tests/integration/write_order.rs ($CARGO_TARGET_DIR/debug/deps/integration_write_order-22dd8487357674b8)
-test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.28s
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
      Running tests/unit/digest.rs ($CARGO_TARGET_DIR/debug/deps/unit_digest-84296ab96d185c1f)
 test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
      Running tests/unit/fixity.rs ($CARGO_TARGET_DIR/debug/deps/unit_fixity-595c41ef01df1b6c)
 test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests/unit/git_guard.rs ($CARGO_TARGET_DIR/debug/deps/unit_git_guard-dfd4d18dbb6d3248)
-test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
      Running tests/unit/inventory.rs ($CARGO_TARGET_DIR/debug/deps/unit_inventory-73e97bdd05e073f7)
-test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
      Running tests/unit/lease.rs ($CARGO_TARGET_DIR/debug/deps/unit_lease-196772f0f0361667)
 test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests/unit/namaste_sidecar.rs ($CARGO_TARGET_DIR/debug/deps/unit_namaste_sidecar-f7f54c2c35c2fac9)
 test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests/unit/read_state.rs ($CARGO_TARGET_DIR/debug/deps/unit_read_state-5af78938f9ad7799)
-test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
      Running tests/unit/source_scan.rs ($CARGO_TARGET_DIR/debug/deps/unit_source_scan-b499895a04c6e23e)
 test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests/unit/storage_key.rs ($CARGO_TARGET_DIR/debug/deps/unit_storage_key-f318c2486ba91397)
@@ -358,6 +361,14 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 - `stage_bytes` and `stage_tree` check the resulting working state for E095 before writing any blob, so a refused request leaves the staging prefix as it was (`a_path_that_conflicts_with_a_directory_is_refused_when_staged` now asserts the prefix is empty and the error names `a.txt/inner`).
 - `ChangeError` rustdoc names `StagingNotCleared` as the one post-publication error; this Walkthrough lists it and its transcripts are refreshed.
+
+## Cubic round 3 fixes
+
+- A blob already stored under a digest is reused only when its bytes still hash to that digest; otherwise it is staged again (`a_damaged_staged_blob_is_staged_again`).
+- `checkout(…, "")` writes to the destination root under the logical paths (`checkout_to_the_root_of_a_backend_uses_the_logical_paths`).
+- `stage_remove` and both ends of `stage_rename` are validated as OCFL logical paths (`removing_or_renaming_an_invalid_path_is_refused_as_invalid`).
+- A storage failure in the reservation store maps to `ChangeError::Storage`, like other writer storage failures.
+- BDD steps: the history check compares the full key sets of the protected versions, and the reinstatement step stages each path's own original bytes.
 
 ## Coverage
 

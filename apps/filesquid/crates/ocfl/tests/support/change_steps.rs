@@ -33,6 +33,16 @@ impl fmt::Debug for ChangeState {
     }
 }
 
+/// The bytes the Background commits at `path` in `v1`.
+fn original_bytes(path: &str) -> &'static [u8] {
+    match path {
+        "a.txt" => b"alpha",
+        "b.txt" => b"bravo",
+        "c.txt" => b"charlie",
+        other => panic!("{other} is not a file of the Background's v1"),
+    }
+}
+
 /// The scenario's rig.
 fn rig(world: &OcflWorld) -> &Rig<MemoryBackend> {
     world.change.rig.as_ref().expect("Given an object")
@@ -59,7 +69,11 @@ fn error(world: &OcflWorld) -> &ChangeError {
 )]
 fn object_at_v1(world: &mut OcflWorld, version: String, a: String, b: String, c: String) {
     let rig = Rig::new(MemoryBackend::new());
-    let files: [(&str, &[u8]); 3] = [(&a, b"alpha"), (&b, b"bravo"), (&c, b"charlie")];
+    let files: [(&str, &[u8]); 3] = [
+        (&a, original_bytes(&a)),
+        (&b, original_bytes(&b)),
+        (&c, original_bytes(&c)),
+    ];
     let m = model(&rig, "writer-a");
     let receipt = commit_files(&m, &rig, &files, "v1").expect("commit v1");
     assert_eq!(receipt.version, v(&version));
@@ -114,7 +128,8 @@ fn stage_mixed(world: &mut OcflWorld, holder: String, a: String, b: String, to: 
 #[when(expr = "writer {string} stages the original bytes of {string}")]
 fn stage_original(world: &mut OcflWorld, holder: String, path: String) {
     let rig = rig(world);
-    ready(model(rig, &holder).stage_bytes(&path, b"charlie")).expect("stage");
+    let bytes = original_bytes(&path);
+    ready(model(rig, &holder).stage_bytes(&path, bytes)).expect("stage");
 }
 
 #[when(expr = "writer {string} commits the staged changes")]
@@ -199,15 +214,19 @@ fn states_equal(world: &mut OcflWorld, a: String, b: String) {
 
 #[then(expr = "no file of {string} or {string} should have changed")]
 fn history_kept(world: &mut OcflWorld, a: String, b: String) {
-    let after = rig(world).snapshot(ROOT);
-    for (k, tag) in &world.change.before {
-        let earlier = [&a, &b]
+    let in_history = |snapshot: &BTreeMap<String, String>| -> BTreeMap<String, String> {
+        snapshot
             .iter()
-            .any(|ver| k.starts_with(&format!("{ROOT}/{ver}/")));
-        if earlier {
-            assert_eq!(after.get(k), Some(tag), "{k} changed");
-        }
-    }
+            .filter(|(k, _)| {
+                [&a, &b]
+                    .iter()
+                    .any(|ver| k.starts_with(&format!("{ROOT}/{ver}/")))
+            })
+            .map(|(k, tag)| (k.clone(), tag.clone()))
+            .collect()
+    };
+    let after = in_history(&rig(world).snapshot(ROOT));
+    assert_eq!(after, in_history(&world.change.before));
 }
 
 #[then(expr = "{string} should hold the changes of both writers")]

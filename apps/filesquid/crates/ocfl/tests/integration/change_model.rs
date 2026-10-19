@@ -619,3 +619,43 @@ fn checkout_writes_nothing_when_any_destination_is_inside_an_ocfl_root() {
     );
     assert!(!ready(out.exists(&key("out/a.txt"))).expect("exists"));
 }
+
+#[test]
+fn checkout_to_the_root_of_a_backend_uses_the_logical_paths() {
+    let rig = Rig::new(MemoryBackend::new());
+    commit_v1(&rig);
+    let out = MemoryBackend::new();
+    let written = ready(model(&rig, "w").checkout(&v("v1"), &out, "")).expect("checkout");
+    let keys: Vec<_> = written.iter().map(|k| k.as_str().to_string()).collect();
+    assert_eq!(keys, ["a.txt", "b.txt", "c.txt"]);
+}
+
+#[test]
+fn a_damaged_staged_blob_is_staged_again() {
+    let rig = Rig::new(MemoryBackend::new());
+    commit_v1(&rig);
+    let m = model(&rig, "writer-a");
+    let blob = key(&format!("changes/writer-a/blobs/{}", sha256(b"delta")));
+    ready(rig.staging.put(&blob, b"not delta")).expect("damage the blob");
+    ready(m.stage_bytes("d.txt", b"delta")).expect("stage");
+    let stored = ready(filesquid_ocfl::storage::read_verified(
+        &*rig.staging,
+        &blob,
+        1024,
+    ));
+    assert_eq!(stored.expect("blob"), b"delta");
+    ready(m.commit(meta(&rig, "v2"))).expect("commit");
+    assert_eq!(state_of(&rig, "v2")["d.txt"], sha256(b"delta"));
+    rig.assert_valid();
+}
+
+#[test]
+fn removing_or_renaming_an_invalid_path_is_refused_as_invalid() {
+    let rig = Rig::new(MemoryBackend::new());
+    commit_v1(&rig);
+    let m = model(&rig, "writer-a");
+    let err = ready(m.stage_remove("/a.txt")).unwrap_err();
+    assert!(matches!(err, ChangeError::InvalidPath { .. }), "{err:?}");
+    let err = ready(m.stage_rename("../a.txt", "z.txt")).unwrap_err();
+    assert!(matches!(err, ChangeError::InvalidPath { .. }), "{err:?}");
+}

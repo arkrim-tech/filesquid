@@ -4,7 +4,7 @@ use thiserror::Error;
 
 use crate::read::ReadError;
 use crate::storage::StorageError;
-use crate::write::{CommitError, CommitReceipt};
+use crate::write::{CommitError, CommitReceipt, ReservationError};
 
 /// Why a change-model operation did not complete.
 ///
@@ -122,10 +122,14 @@ impl From<ReadError> for ChangeError {
 }
 
 impl From<CommitError> for ChangeError {
-    /// Keep a storage failure met by the writer as [`ChangeError::Storage`].
+    /// Keep a storage failure met by the writer, or by its reservation
+    /// store, as [`ChangeError::Storage`].
     fn from(err: CommitError) -> Self {
         match err {
-            CommitError::Storage(storage) => Self::Storage(storage),
+            CommitError::Storage(storage)
+            | CommitError::Reservation(ReservationError::Storage(storage)) => {
+                Self::Storage(storage)
+            }
             other => Self::Commit(other),
         }
     }

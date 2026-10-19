@@ -125,7 +125,9 @@ impl<'s, S: StorageBackend> StagingArea<'s, S> {
     }
 
     /// Stage `bytes` unless `known` (the object's manifest) or the area
-    /// already holds them, and return their sha256 digest.
+    /// already holds them, and return their sha256 digest. A blob already
+    /// stored under the digest is reused only when its bytes still hash to
+    /// it; otherwise it is replaced.
     ///
     /// # Errors
     ///
@@ -142,7 +144,7 @@ impl<'s, S: StorageBackend> StagingArea<'s, S> {
         }
         let key = self.blob_key(&digest)?;
         self.guard(&key).await?;
-        if !self.backend.exists(&key).await? {
+        if !self.holds_blob(&key, &digest).await? {
             write_whole(self.backend, &key, bytes).await?;
         }
         Ok(digest)
@@ -169,7 +171,7 @@ impl<'s, S: StorageBackend> StagingArea<'s, S> {
         }
         let blob = self.blob_key(&digest)?;
         self.guard(&blob).await?;
-        if self.backend.exists(&blob).await? {
+        if self.holds_blob(&blob, &digest).await? {
             return Ok(digest);
         }
         let copied = copy_file(source, key, self.backend, &blob).await?;
@@ -199,6 +201,25 @@ impl<'s, S: StorageBackend> StagingArea<'s, S> {
         }
         self.backend.delete(&self.index_key()?).await?;
         Ok(())
+    }
+
+    /// Whether the blob at `key` exists and its bytes hash to `digest`. A
+    /// blob whose bytes do not (damaged, or replaced by another process)
+    /// is logged and reported as absent, so the caller writes it again.
+    ///
+    /// # Errors
+    ///
+    /// A backend error other than a missing blob.
+    async fn holds_blob(&self, key: &StorageKey, digest: &str) -> Result<bool, ChangeError> {
+        if !self.backend.exists(key).await? {
+            return Ok(false);
+        }
+        let stored = hash_chunks(self.backend, key).await?;
+        if stored == digest {
+            return Ok(true);
+        }
+        tracing::warn!(blob = %key, "a staged blob does not match its digest; staging it again");
+        Ok(false)
     }
 
     /// Refuse a key below an OCFL object root or storage root.
