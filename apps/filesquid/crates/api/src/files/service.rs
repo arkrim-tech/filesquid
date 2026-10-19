@@ -190,7 +190,8 @@ impl<B, R, S> FileService<B, R, S> {
     }
 
     /// The name users see for `file`: the owner's original name from the installed
-    /// [`DisplayNames`], made safe, or else the stored name.
+    /// [`DisplayNames`], or else the stored name, either made safe with [`safe_name`]; `file`
+    /// when neither leaves anything.
     pub async fn display_name(&self, file: StoredFile<'_>) -> String {
         let original = match self.names.get() {
             Some(names) => names.original_name(file).await,
@@ -199,7 +200,8 @@ impl<B, R, S> FileService<B, R, S> {
         original
             .as_deref()
             .and_then(safe_name)
-            .unwrap_or_else(|| stored_name(file.path).to_string())
+            .or_else(|| safe_name(stored_name(file.path)))
+            .unwrap_or_else(|| "file".to_string())
     }
 
     /// Fill in the display name of every file entry of `page`.
@@ -266,8 +268,9 @@ impl<B: StorageBackend, R, S> FileService<B, R, S> {
     pub async fn listing(&self, query: ListingQuery) -> Result<FolderPageView, FileError> {
         let limit = page_size(query.limit)?;
         let prefix = query.prefix.as_deref().unwrap_or("");
-        if !prefix.is_empty() {
-            check_logical_path(prefix)?;
+        let folder = prefix.strip_suffix('/').unwrap_or(prefix);
+        if !folder.is_empty() {
+            check_logical_path(folder)?;
         }
         let library = self.library(&query.library_id)?;
         let root = library.locate(&query.object_id).await?;
@@ -353,9 +356,11 @@ impl<B: StorageBackend, R, S> FileService<B, R, S> {
                 path: &request.path,
             })
             .await;
-        let plan = match request.head_only {
-            true => RangePlan::Whole { len: total },
-            false => request.range.plan(total, MAX_ANSWER_BYTES as u64),
+        // A HEAD with a Range describes the GET for that range; one without describes the
+        // whole file, so a client learns its length.
+        let plan = match (request.head_only, request.range) {
+            (true, RangeRequest::Whole) => RangePlan::Whole { len: total },
+            (_, range) => range.plan(total, MAX_ANSWER_BYTES as u64),
         };
         let bytes = match (request.head_only, plan) {
             (false, RangePlan::Whole { len }) => {
@@ -483,6 +488,10 @@ where
     ) -> Result<CommitView, FileError> {
         let meta = self.meta(actor, request.message.as_deref())?;
         let version = restore_version(&request)?;
+        request
+            .paths
+            .iter()
+            .try_for_each(|path| check_logical_path(path))?;
         let library = self.library(&request.library_id)?;
         let _writing = library.writes.lock().await;
         let root = library.locate(&request.object_id).await?;
@@ -628,6 +637,11 @@ async fn read<B: StorageBackend>(
             ));
         }
         bytes.extend_from_slice(&chunk);
+    }
+    if bytes.len() as u64 != len {
+        return Err(FileError::internal(
+            "a stored file ended before its recorded size",
+        ));
     }
     Ok(bytes)
 }

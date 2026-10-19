@@ -340,6 +340,24 @@ fn both_refused(w: &mut MonitorWorld, code: String) {
     }
 }
 
+#[then("the activity journal should record both denials as missing credentials without the file's path")]
+fn denials_journaled(w: &mut MonitorWorld) {
+    let denied = w.files.rig().journaled("api.auth.denied");
+    assert_eq!(denied.len(), 2, "one entry per refused call");
+    let mut actions: Vec<&str> = denied
+        .iter()
+        .map(|e| {
+            assert_eq!(e.outcome, Outcome::Failed);
+            assert_eq!(e.error_code.as_deref(), Some("missing_credentials"));
+            e.target_ids.first().map_or("", String::as_str)
+        })
+        .collect();
+    actions.sort_unstable();
+    assert_eq!(actions, ["files.read", "files.write"]);
+    let text = serde_json::to_string(&denied).expect("json");
+    assert!(!text.contains("notes"), "{text}");
+}
+
 /// The HTTP status the API answers with error `code`.
 fn status_of(code: &str) -> StatusCode {
     match code {

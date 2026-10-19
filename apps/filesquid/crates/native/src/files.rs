@@ -52,8 +52,8 @@ pub fn install_file_service(state: &ApiState) -> Result<HostFiles, String> {
 /// # Errors
 ///
 /// A message naming what could not be prepared (a directory, a symbolic link where a
-/// directory belongs, or a backend whose staging would lie inside the root); it never names
-/// a path.
+/// directory belongs, the storage root itself being a symbolic link, or a backend whose
+/// staging would lie inside the root); it never names a path.
 pub fn open_fs_library(
     files: &HostFiles,
     library_id: &LibraryId,
@@ -67,7 +67,9 @@ pub fn open_fs_library(
     let dir = files_dir.join(library_dir_name(library_id));
     real_dir(&files_dir, "the files folder")?;
     real_dir(&dir, "the library's folder")?;
-    let backend = backend(root, &dir.join("root-parts"), "the storage root")?;
+    let root = storage_root(root)?;
+    real_dir(&dir.join("root-parts"), "the storage root's parts folder")?;
+    let backend = backend(&root, &dir.join("root-parts"), "the storage root")?;
     let lease_root = backend_at(&dir, "leases", "the lease store")?;
     let leases = LeaseStore::new(lease_root, "leases", SystemClock, LeaseConfig::default())
         .map_err(|err| format!("the lease store could not be prepared: {err}"))?;
@@ -98,6 +100,18 @@ fn real_dir(dir: &Path, what: &str) -> Result<(), String> {
         Ok(_) => Err(format!("{what} is not a plain directory")),
         Err(_) => std::fs::create_dir_all(dir).map_err(|_| format!("{what} could not be created")),
     }
+}
+
+/// The storage root at `root` by its canonical path, with every symbolic link on the way
+/// resolved once here, so the backend never follows a link that changes later. Refused when
+/// it is a symbolic link itself or not a directory.
+fn storage_root(root: &Path) -> Result<std::path::PathBuf, String> {
+    let meta =
+        std::fs::symlink_metadata(root).map_err(|_| "the storage root could not be opened")?;
+    if !meta.file_type().is_dir() {
+        return Err("the storage root is not a plain directory".to_string());
+    }
+    std::fs::canonicalize(root).map_err(|_| "the storage root could not be opened".to_string())
 }
 
 /// A filesystem backend at `<dir>/<name>`, with its multipart parts beside it.

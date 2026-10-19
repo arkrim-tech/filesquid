@@ -25,7 +25,7 @@ use axum::body::{Body, Bytes, HttpBody};
 use axum::extract::rejection::{BytesRejection, JsonRejection, QueryRejection};
 use axum::extract::{DefaultBodyLimit, Query, State};
 use axum::http::header::{
-    ACCEPT_RANGES, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, RANGE,
+    ACCEPT_RANGES, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE,
 };
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -132,7 +132,7 @@ async fn read_content(
         if file.download == Some(true) {
             disposition = Disposition::Attachment;
         }
-        let range = RangeRequest::parse(headers.get(RANGE).and_then(|v| v.to_str().ok()));
+        let range = RangeRequest::from_headers(&headers);
         let content = ContentRequest {
             library_id: file.library_id,
             object_id: file.object_id,
@@ -299,7 +299,9 @@ pub(crate) async fn answer_content(
             let range = format!("bytes {start}-{}/{total}", start + len - 1);
             (StatusCode::PARTIAL_CONTENT, Some(range), len)
         }
-        RangePlan::Unsatisfiable => return unsatisfiable(state, actor, total).await,
+        RangePlan::Unsatisfiable => {
+            return without_body(unsatisfiable(state, actor, total).await, kind)
+        }
     };
     let body = match kind.head_only {
         true => Body::empty(),

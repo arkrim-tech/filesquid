@@ -78,7 +78,7 @@ pub struct ObjectQuery {
     pub object_id: String,
 }
 
-/// Query of `PUT /api/v1/files/content` (the body is the file's bytes).
+/// Query of `PUT /api/v1/files/upload` (the body is the file's bytes).
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UploadQuery {

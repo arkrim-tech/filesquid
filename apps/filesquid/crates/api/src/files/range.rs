@@ -44,11 +44,33 @@ pub enum RangePlan {
     Unsatisfiable,
 }
 
+/// The range set after a case-insensitive `bytes=` unit, or `None` for any other unit.
+fn strip_unit(header: &str) -> Option<&str> {
+    let unit = header.get(..6)?;
+    unit.eq_ignore_ascii_case("bytes=").then(|| &header[6..])
+}
+
 impl RangeRequest {
-    /// Parse one `Range` header value. Anything but a single `bytes` range is
-    /// [`RangeRequest::Whole`].
+    /// The range asked for by every `Range` field of `headers`, joined as one list, so
+    /// repeated fields are several ranges and so [`RangeRequest::Whole`]. A field that is not
+    /// visible ASCII is ignored the same way.
+    pub fn from_headers(headers: &axum::http::HeaderMap) -> Self {
+        let values: Option<Vec<&str>> = headers
+            .get_all(axum::http::header::RANGE)
+            .iter()
+            .map(|v| v.to_str().ok())
+            .collect();
+        match values {
+            Some(values) if !values.is_empty() => Self::parse(Some(&values.join(", "))),
+            _ => Self::Whole,
+        }
+    }
+
+    /// Parse the `Range` header value (several `Range` fields joined with `, `). Anything but
+    /// a single `bytes` range is [`RangeRequest::Whole`]; the unit is case-insensitive
+    /// (RFC 9110 section 14.1).
     pub fn parse(header: Option<&str>) -> Self {
-        let Some(spec) = header.and_then(|h| h.trim().strip_prefix("bytes=")) else {
+        let Some(spec) = header.and_then(|h| strip_unit(h.trim())) else {
             return Self::Whole;
         };
         let Some((first, last)) = spec.split_once('-') else {
@@ -121,7 +143,22 @@ mod tests {
             }
         );
         assert_eq!(parse("bytes=-5"), RangeRequest::Suffix(5));
+        assert_eq!(
+            parse("BYTES=-5"),
+            RangeRequest::Suffix(5),
+            "the unit is case-insensitive"
+        );
+        assert_eq!(
+            parse("Bytes=0-9"),
+            RangeRequest::From {
+                first: 0,
+                last: Some(9)
+            }
+        );
         for ignored in [
+            "bytes=0-1, bytes=4-5",
+            "bytes=0-1, 4-5",
+            "bytes",
             "bytes=0-1,4-5",
             "items=0-1",
             "bytes=x-1",
@@ -134,6 +171,21 @@ mod tests {
             assert_eq!(parse(ignored), RangeRequest::Whole, "{ignored}");
         }
         assert_eq!(RangeRequest::parse(None), RangeRequest::Whole);
+    }
+
+    #[test]
+    fn repeated_range_fields_are_several_ranges() {
+        use axum::http::{header::RANGE, HeaderMap, HeaderValue};
+        let mut headers = HeaderMap::new();
+        assert_eq!(RangeRequest::from_headers(&headers), RangeRequest::Whole);
+        headers.append(RANGE, HeaderValue::from_static("bytes=0-1"));
+        let one = RangeRequest::From {
+            first: 0,
+            last: Some(1),
+        };
+        assert_eq!(RangeRequest::from_headers(&headers), one);
+        headers.append(RANGE, HeaderValue::from_static("bytes=4-5"));
+        assert_eq!(RangeRequest::from_headers(&headers), RangeRequest::Whole);
     }
 
     #[test]

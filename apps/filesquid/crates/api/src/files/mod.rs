@@ -1,8 +1,9 @@
 //! File operation routes (Task API-F1.3; API-S-004, API-S-005, API-S-008, API-S-018,
 //! OCFL-S-012): browse and edit the OCFL objects of an open library like a drive.
 //!
-//! Every route takes the library and the OCFL object by identifier and the file or folder by
-//! its logical path, and answers storage facts only, never a filesystem path, storage key or
+//! Every route takes the library and the OCFL object by identifier; the file and folder
+//! routes also take a file or folder by its logical path, while the object-versions route is
+//! object-level and takes none. Every answer carries storage facts only, never a filesystem path, storage key or
 //! OCFL content path (API-S-005):
 //!
 //! - **Reads** (action `files.read`): a folder listing by logical-path prefix with an opaque

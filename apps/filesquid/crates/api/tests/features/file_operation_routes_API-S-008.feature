@@ -68,4 +68,5 @@ Feature: File operation routes
     When a client without a token reads "notes.txt"
     And a client without a token removes "notes.txt"
     Then both calls should be refused as "unauthorized"
+    And the activity journal should record both denials as missing credentials without the file's path
     And no version should be published

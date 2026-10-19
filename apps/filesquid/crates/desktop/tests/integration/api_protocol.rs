@@ -472,10 +472,24 @@ async fn content_route_answers_pass_through_the_scheme_unchanged() {
     .await;
     assert_eq!(denied.status(), http::StatusCode::FORBIDDEN);
     let json: serde_json::Value = serde_json::from_slice(denied.body()).expect("json");
+    assert_eq!(json["code"], "forbidden");
     assert_eq!(json["reason"], "invalid_credentials");
+    assert_eq!(json["retryable"], false);
+    let expected = filesquid_api::error::ApiError::denied(
+        filesquid_api::error::DenialReason::InvalidCredentials,
+    );
+    assert_eq!(json["message"], expected.message());
     for (name, value) in PRIVACY_HEADERS {
         assert_eq!(denied.headers()[name], value, "{name}");
     }
+    let mut denied_head = get_with(unknown, Some("tauri://localhost"), None);
+    *denied_head.method_mut() = http::Method::HEAD;
+    let denied_head = handle(state.clone(), denied_head).await;
+    assert_eq!(denied_head.status(), http::StatusCode::FORBIDDEN);
+    for (name, value) in PRIVACY_HEADERS {
+        assert_eq!(denied_head.headers()[name], value, "HEAD {name}");
+    }
+    assert!(denied_head.body().is_empty(), "a HEAD denial has no body");
     let url = content::minted_url(&state, token.secret()).await;
     let mut request = get_with(&format!("filesquid://localhost{url}"), None, None);
     let range = http::HeaderValue::from_static("bytes=2-5");
@@ -489,6 +503,12 @@ async fn content_route_answers_pass_through_the_scheme_unchanged() {
     for (name, value) in PRIVACY_HEADERS {
         assert_eq!(answer.headers()[name], value, "{name}");
     }
+    let mut past = get_with(&format!("filesquid://localhost{url}"), None, None);
+    let beyond = http::HeaderValue::from_static("bytes=10-10");
+    past.headers_mut().insert(http::header::RANGE, beyond);
+    let past = handle(state.clone(), past).await;
+    assert_eq!(past.status(), http::StatusCode::RANGE_NOT_SATISFIABLE);
+    assert_eq!(past.headers()["content-range"], "bytes */10");
     let mut head = get_with(&format!("filesquid://localhost{url}"), None, None);
     *head.method_mut() = http::Method::HEAD;
     let head = handle(state, head).await;
@@ -496,6 +516,9 @@ async fn content_route_answers_pass_through_the_scheme_unchanged() {
     assert_eq!(head.headers()["accept-ranges"], "bytes");
     assert_eq!(head.headers()["content-type"], "video/webm");
     assert_eq!(head.headers()["content-length"], "10");
+    for (name, value) in PRIVACY_HEADERS {
+        assert_eq!(head.headers()[name], value, "HEAD {name}");
+    }
     assert!(head.body().is_empty(), "a HEAD answer has no body");
 }
 

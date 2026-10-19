@@ -146,4 +146,39 @@ async fn a_write_through_the_host_service_publishes_one_version() {
     assert_eq!(commit.version, "v2");
     let stored = root.join("objects/a/v2/content/b.txt");
     assert_eq!(std::fs::read(stored).expect("read back"), b"bee");
+    let backend = FsBackend::new(&root, temp.0.join("check-parts")).expect("backend");
+    let object = filesquid_ocfl::read::Object::open(&backend, "objects/a")
+        .await
+        .expect("object");
+    assert_eq!(object.head().to_string(), "v2", "exactly one new version");
+    let versions: Vec<String> = object
+        .inventory()
+        .versions
+        .keys()
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(versions, ["v1", "v2"]);
+    assert!(!root.join("objects/a/v3").exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_storage_root_that_is_a_symbolic_link_is_refused() {
+    let temp = TempDir::new("link");
+    let (root, data, scratch) = (
+        temp.0.join("root"),
+        temp.0.join("data"),
+        temp.0.join("scratch"),
+    );
+    ocfl_root(&root, &scratch).await;
+    let link = temp.0.join("root-link");
+    std::os::unix::fs::symlink(&root, &link).expect("link");
+    let files = HostFiles::new();
+    let refused = open_fs_library(&files, &library(), &link, &data).expect_err("refused");
+    assert!(refused.contains("not a plain directory"), "{refused}");
+    assert!(
+        !refused.contains(link.to_string_lossy().as_ref()),
+        "names no path"
+    );
+    assert!(open_fs_library(&files, &library(), &root, &data).expect("the real root"));
 }

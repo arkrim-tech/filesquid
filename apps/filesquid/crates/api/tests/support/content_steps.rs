@@ -176,6 +176,10 @@ fn mint_answer(w: &mut MonitorWorld) {
             .expect("RFC 3339");
     assert_eq!(parsed.offset(), time::UtcOffset::UTC);
     assert!(expires.ends_with('Z'));
+    let answer = w.content.answer();
+    for (name, value) in PRIVACY_HEADERS {
+        assert_eq!(answer.header(name), value, "the mint answer carries {name}");
+    }
 }
 
 #[then(expr = "the handle should be 43 base64url characters without padding")]

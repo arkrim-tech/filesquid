@@ -25,7 +25,7 @@ use crate::{ApiState, API_PREFIX};
 use axum::body::Body;
 use axum::extract::rejection::{JsonRejection, PathRejection};
 use axum::extract::{Path, State};
-use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE, RANGE};
+use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -108,7 +108,7 @@ async fn read(
     let Some(target) = target else {
         return refuse_content(&state, head_only).await;
     };
-    let range = RangeRequest::parse(headers.get(RANGE).and_then(|v| v.to_str().ok()));
+    let range = RangeRequest::from_headers(&headers);
     let request = ContentRequest::of_target(target, range, head_only);
     let outcome = match state.files() {
         Some(files) => files.content(request).await,

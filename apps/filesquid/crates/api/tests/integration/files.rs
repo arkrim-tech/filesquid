@@ -273,8 +273,31 @@ async fn a_malformed_or_multi_range_header_is_ignored() {
             .call(Method::GET, &uri, &[("range", range)], Vec::new())
             .await;
         assert_eq!(answer.status, StatusCode::OK, "{range}");
-        assert_eq!(answer.body.len(), 100, "{range}");
+        assert_eq!(answer.body, pattern(100), "{range}: the whole file");
     }
+    let repeated = rig
+        .call(
+            Method::GET,
+            &uri,
+            &[("range", "bytes=0-1"), ("range", "bytes=5-6")],
+            Vec::new(),
+        )
+        .await;
+    assert_eq!(
+        repeated.status,
+        StatusCode::OK,
+        "two Range fields are two ranges"
+    );
+    assert_eq!(repeated.body, pattern(100));
+    let upper = rig
+        .call(Method::GET, &uri, &[("range", "Bytes=2-5")], Vec::new())
+        .await;
+    assert_eq!(
+        upper.status,
+        StatusCode::PARTIAL_CONTENT,
+        "the unit is case-insensitive"
+    );
+    assert_eq!(upper.header("content-range"), "bytes 2-5/100");
 }
 
 #[tokio::test]
@@ -292,6 +315,9 @@ async fn answers_are_capped_at_16_mib() {
     let open = rig
         .call(Method::GET, &uri, &[("range", "bytes=100-")], Vec::new())
         .await;
+    assert_eq!(open.status, StatusCode::PARTIAL_CONTENT);
+    let open_range = format!("bytes 100-{}/{len}", 100 + MAX_ANSWER_BYTES - 1);
+    assert_eq!(open.header("content-range"), open_range);
     assert_eq!(open.body.len(), MAX_ANSWER_BYTES);
     assert_eq!(open.body, bytes[100..100 + MAX_ANSWER_BYTES]);
 }
@@ -307,6 +333,27 @@ async fn head_describes_the_file_without_reading_its_content() {
     assert_eq!(answer.header("content-length"), "5000");
     assert_eq!(answer.header("content-type"), "video/mp4");
     assert_eq!(answer.header("accept-ranges"), "bytes");
+    assert_eq!(rig.root.content_reads(), before, "HEAD reads no content");
+}
+
+#[tokio::test]
+async fn head_with_a_range_describes_the_get_for_that_range() {
+    let rig = FilesRig::with_files(&[("clip.mp4", &pattern(5000))]).await;
+    let uri = format!("/api/v1/files/content?{}", query("path=clip.mp4"));
+    let before = rig.root.content_reads();
+    let part = rig
+        .call(Method::HEAD, &uri, &[("range", "bytes=10-19")], Vec::new())
+        .await;
+    assert_eq!(part.status, StatusCode::PARTIAL_CONTENT);
+    assert_eq!(part.header("content-range"), "bytes 10-19/5000");
+    assert_eq!(part.header("content-length"), "10");
+    assert!(part.body.is_empty());
+    let past = rig
+        .call(Method::HEAD, &uri, &[("range", "bytes=5000-")], Vec::new())
+        .await;
+    assert_eq!(past.status, StatusCode::RANGE_NOT_SATISFIABLE);
+    assert_eq!(past.header("content-range"), "bytes */5000");
+    assert!(past.body.is_empty(), "a HEAD 416 has no body");
     assert_eq!(rig.root.content_reads(), before, "HEAD reads no content");
 }
 
@@ -435,6 +482,22 @@ async fn a_file_added_beneath_a_pending_folder_persists_it() {
         .get(&format!("/api/v1/files/listing?{}", query("prefix=albums")))
         .await;
     assert_eq!(listing.status, StatusCode::OK);
+    let json = listing.json();
+    let paths: Vec<&str> = json["entries"]
+        .as_array()
+        .expect("entries")
+        .iter()
+        .filter_map(|e| e["path"].as_str())
+        .collect();
+    assert_eq!(paths, ["albums/b.txt"]);
+    let read = format!("/api/v1/files/content?{}", query("path=albums%2Fb.txt"));
+    assert_eq!(rig.get(&read).await.body, b"b");
+    let slash = format!("/api/v1/files/listing?{}", query("prefix=albums%2F"));
+    assert_eq!(
+        rig.get(&slash).await.status,
+        StatusCode::OK,
+        "a trailing slash names the folder"
+    );
 }
 
 #[tokio::test]
@@ -495,7 +558,15 @@ async fn the_read_routes_refuse_an_invalid_path_before_any_lookup() {
     }
     let listing = format!("/api/v1/files/listing?{}", query("prefix=..%2Fx"));
     assert_error(&rig.get(&listing).await, 400, "invalid_request");
+    let restore = rig
+        .post(
+            "/api/v1/files/restorations",
+            body(json!({ "version": "v1", "paths": ["a.txt", "../b.txt"] })),
+        )
+        .await;
+    assert_error(&restore, 400, "invalid_request");
     assert_eq!(rig.root.reads(), reads_before, "nothing was read");
+    assert_eq!(rig.head().await, "v1");
 }
 
 #[tokio::test]

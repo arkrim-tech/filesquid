@@ -7,7 +7,9 @@
 //! that holds those records injects them as [`DisplayNames`]; without one, a file's display
 //! name is its stored name. Every listing and details answer carries the display name, and
 //! every content answer names the file by it in `Content-Disposition` (RFC 6266), with an
-//! ASCII `filename` fallback and the exact name as RFC 5987 `filename*` UTF-8. Pure, except
+//! ASCII `filename` fallback and the display name as RFC 5987 `filename*` UTF-8. The
+//! display name is the original (or stored) name after [`safe_name`], the one safe
+//! transformation API-S-005 defines. Pure, except
 //! for the injected lookup.
 
 use std::future::Future;
@@ -58,7 +60,8 @@ pub fn safe_name(name: &str) -> Option<String> {
     (!kept.is_empty()).then(|| kept.to_string())
 }
 
-/// The last segment of a logical path: the stored name.
+/// The last segment of a logical path: the stored name, as stored; pass it through
+/// [`safe_name`] before showing or sending it.
 pub fn stored_name(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
@@ -73,7 +76,7 @@ pub enum Disposition {
 }
 
 /// The `Content-Disposition` value naming the file `name` (RFC 6266): an ASCII `filename`
-/// fallback in which every other character, `"`, `\` and `%` become `_`, and the exact name
+/// fallback in which every other character, `"`, `\` and `%` become `_`, and the display name
 /// as `filename*=UTF-8''<percent-encoded>` (RFC 5987). `name` is passed through
 /// [`safe_name`] first.
 pub fn content_disposition(kind: Disposition, name: &str) -> String {

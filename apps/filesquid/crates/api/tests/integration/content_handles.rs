@@ -81,6 +81,10 @@ fn assert_denied(answer: &Answer, at: &str) {
     assert_eq!(json["code"], "forbidden", "{at}: {json}");
     assert_eq!(json["reason"], "invalid_credentials", "{at}: {json}");
     assert_eq!(json["retryable"], false, "{at}: {json}");
+    let expected = filesquid_api::error::ApiError::denied(
+        filesquid_api::error::DenialReason::InvalidCredentials,
+    );
+    assert_eq!(json["message"], expected.message(), "{at}: {json}");
     assert_privacy_headers(answer, at);
 }
 

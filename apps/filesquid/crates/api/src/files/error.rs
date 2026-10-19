@@ -151,9 +151,9 @@ impl From<ChangeError> for FileError {
             ChangeError::InvalidPath { .. } => Self::invalid(
                 "That logical path is not valid in OCFL, or another file already has it.",
             ),
-            ChangeError::TooManyRebases { .. } => {
-                Self::unavailable("the head kept moving while committing")
-            }
+            ChangeError::TooManyRebases { .. } => Self::conflict(
+                "The object kept changing while this was saved; reread it and try again.",
+            ),
             ChangeError::Commit(commit) => commit.into(),
             ChangeError::Read(read) => read.into(),
             ChangeError::Storage(storage) => storage.into(),
@@ -165,7 +165,8 @@ impl From<ChangeError> for FileError {
 impl From<CommitError> for FileError {
     fn from(err: CommitError) -> Self {
         match err {
-            CommitError::MissingVersionInventory { .. } => Self::conflict(
+            CommitError::MissingVersionInventory { .. }
+            | CommitError::VersionInventoryMismatch { .. } => Self::conflict(
                 "This object's latest version is incomplete; repair it before changing files.",
             ),
             CommitError::HeadMoved { .. } => {
@@ -176,6 +177,9 @@ impl From<CommitError> for FileError {
             }
             CommitError::Reservation(ReservationError::Lost { .. }) => {
                 Self::unavailable("the reservation expired or passed to another writer")
+            }
+            CommitError::Reservation(ReservationError::ClockUnavailable) => {
+                Self::unavailable("the reservation clock cannot tell the time")
             }
             CommitError::Storage(storage) => storage.into(),
             CommitError::Read(read) => read.into(),

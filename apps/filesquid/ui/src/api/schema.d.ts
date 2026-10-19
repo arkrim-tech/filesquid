@@ -281,7 +281,7 @@ export interface paths {
         options?: never;
         /**
          * Describe one file version without its bytes
-         * @description The headers of the ranged read with no body; no content is read.
+         * @description The headers of the ranged read with no body; no content is read. With a `Range` header it answers the status and headers the GET for that range answers (`206` with `Content-Range`, or `416` with `bytes *\/<length>`); without one it describes the whole file, so the client learns its length.
          */
         head: operations["describeFileContent"];
         patch?: never;
@@ -1397,7 +1397,7 @@ export interface operations {
                     "Content-Type"?: string;
                     /** @description The bytes this answer carries. */
                     "Content-Length"?: number;
-                    /** @description inline or attachment, naming the file by its display name: an ASCII filename fallback and the exact name as RFC 5987 filename* UTF-8 (RFC 6266). */
+                    /** @description inline or attachment, naming the file by its display name: an ASCII filename fallback and the display name as RFC 5987 filename* UTF-8 (RFC 6266). */
                     "Content-Disposition"?: string;
                     [name: string]: unknown;
                 };
@@ -1416,7 +1416,7 @@ export interface operations {
                     "Content-Length"?: number;
                     /** @description bytes <first>-<last>/<length> */
                     "Content-Range"?: string;
-                    /** @description inline or attachment, naming the file by its display name: an ASCII filename fallback and the exact name as RFC 5987 filename* UTF-8 (RFC 6266). */
+                    /** @description inline or attachment, naming the file by its display name: an ASCII filename fallback and the display name as RFC 5987 filename* UTF-8 (RFC 6266). */
                     "Content-Disposition"?: string;
                     [name: string]: unknown;
                 };
@@ -1462,7 +1462,24 @@ export interface operations {
                     "Content-Type"?: string;
                     /** @description The bytes this answer carries. */
                     "Content-Length"?: number;
-                    /** @description inline or attachment, naming the file by its display name: an ASCII filename fallback and the exact name as RFC 5987 filename* UTF-8 (RFC 6266). */
+                    /** @description inline or attachment, naming the file by its display name: an ASCII filename fallback and the display name as RFC 5987 filename* UTF-8 (RFC 6266). */
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description One range, at most 16 MiB: the requested range, or the first 16 MiB of a larger file or range. */
+            206: {
+                headers: {
+                    /** @description bytes */
+                    "Accept-Ranges"?: string;
+                    /** @description The file's media type. */
+                    "Content-Type"?: string;
+                    /** @description The bytes this answer carries. */
+                    "Content-Length"?: number;
+                    /** @description bytes <first>-<last>/<length> */
+                    "Content-Range"?: string;
+                    /** @description inline or attachment, naming the file by its display name: an ASCII filename fallback and the display name as RFC 5987 filename* UTF-8 (RFC 6266). */
                     "Content-Disposition"?: string;
                     [name: string]: unknown;
                 };
@@ -1472,6 +1489,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            416: components["responses"]["RangeNotSatisfiable"];
             500: components["responses"]["Internal"];
             503: components["responses"]["FilesUnavailable"];
         };
@@ -1699,7 +1717,7 @@ export interface operations {
                     "X-Content-Type-Options"?: string;
                     /** @description default-src 'none'; sandbox */
                     "Content-Security-Policy"?: string;
-                    /** @description inline or attachment, naming the file by its display name: an ASCII filename fallback and the exact name as RFC 5987 filename* UTF-8 (RFC 6266). */
+                    /** @description inline or attachment, naming the file by its display name: an ASCII filename fallback and the display name as RFC 5987 filename* UTF-8 (RFC 6266). */
                     "Content-Disposition"?: string;
                     [name: string]: unknown;
                 };
@@ -1726,7 +1744,7 @@ export interface operations {
                     "X-Content-Type-Options"?: string;
                     /** @description default-src 'none'; sandbox */
                     "Content-Security-Policy"?: string;
-                    /** @description inline or attachment, naming the file by its display name: an ASCII filename fallback and the exact name as RFC 5987 filename* UTF-8 (RFC 6266). */
+                    /** @description inline or attachment, naming the file by its display name: an ASCII filename fallback and the display name as RFC 5987 filename* UTF-8 (RFC 6266). */
                     "Content-Disposition"?: string;
                     [name: string]: unknown;
                 };
@@ -1770,7 +1788,32 @@ export interface operations {
                     "X-Content-Type-Options"?: string;
                     /** @description default-src 'none'; sandbox */
                     "Content-Security-Policy"?: string;
-                    /** @description inline or attachment, naming the file by its display name: an ASCII filename fallback and the exact name as RFC 5987 filename* UTF-8 (RFC 6266). */
+                    /** @description inline or attachment, naming the file by its display name: an ASCII filename fallback and the display name as RFC 5987 filename* UTF-8 (RFC 6266). */
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description One range, at most 16 MiB: the requested range, or the first 16 MiB of a larger file or range. */
+            206: {
+                headers: {
+                    /** @description bytes */
+                    "Accept-Ranges"?: string;
+                    /** @description The file's media type. */
+                    "Content-Type"?: string;
+                    /** @description The bytes this answer carries. */
+                    "Content-Length"?: number;
+                    /** @description bytes <first>-<last>/<length> */
+                    "Content-Range"?: string;
+                    /** @description no-referrer */
+                    "Referrer-Policy"?: string;
+                    /** @description private, no-store */
+                    "Cache-Control"?: string;
+                    /** @description nosniff */
+                    "X-Content-Type-Options"?: string;
+                    /** @description default-src 'none'; sandbox */
+                    "Content-Security-Policy"?: string;
+                    /** @description inline or attachment, naming the file by its display name: an ASCII filename fallback and the display name as RFC 5987 filename* UTF-8 (RFC 6266). */
                     "Content-Disposition"?: string;
                     [name: string]: unknown;
                 };
@@ -1778,6 +1821,7 @@ export interface operations {
             };
             403: components["responses"]["ContentDenied"];
             404: components["responses"]["NotFound"];
+            416: components["responses"]["RangeNotSatisfiable"];
             500: components["responses"]["Internal"];
             503: components["responses"]["FilesUnavailable"];
         };

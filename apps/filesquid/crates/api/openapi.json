@@ -750,7 +750,7 @@
                 }
               },
               "Content-Disposition": {
-                "description": "inline or attachment, naming the file by its display name: an ASCII filename fallback and the exact name as RFC 5987 filename* UTF-8 (RFC 6266).",
+                "description": "inline or attachment, naming the file by its display name: an ASCII filename fallback and the display name as RFC 5987 filename* UTF-8 (RFC 6266).",
                 "schema": {
                   "type": "string"
                 }
@@ -793,7 +793,7 @@
                 }
               },
               "Content-Disposition": {
-                "description": "inline or attachment, naming the file by its display name: an ASCII filename fallback and the exact name as RFC 5987 filename* UTF-8 (RFC 6266).",
+                "description": "inline or attachment, naming the file by its display name: an ASCII filename fallback and the display name as RFC 5987 filename* UTF-8 (RFC 6266).",
                 "schema": {
                   "type": "string"
                 }
@@ -834,7 +834,7 @@
       "head": {
         "operationId": "describeFileContent",
         "summary": "Describe one file version without its bytes",
-        "description": "The headers of the ranged read with no body; no content is read.",
+        "description": "The headers of the ranged read with no body; no content is read. With a `Range` header it answers the status and headers the GET for that range answers (`206` with `Content-Range`, or `416` with `bytes */<length>`); without one it describes the whole file, so the client learns its length.",
         "x-filesquid-action": "files.read",
         "parameters": [
           {
@@ -882,7 +882,42 @@
                 }
               },
               "Content-Disposition": {
-                "description": "inline or attachment, naming the file by its display name: an ASCII filename fallback and the exact name as RFC 5987 filename* UTF-8 (RFC 6266).",
+                "description": "inline or attachment, naming the file by its display name: an ASCII filename fallback and the display name as RFC 5987 filename* UTF-8 (RFC 6266).",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "One range, at most 16 MiB: the requested range, or the first 16 MiB of a larger file or range.",
+            "headers": {
+              "Accept-Ranges": {
+                "description": "bytes",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Type": {
+                "description": "The file's media type.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Length": {
+                "description": "The bytes this answer carries.",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Content-Range": {
+                "description": "bytes <first>-<last>/<length>",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Disposition": {
+                "description": "inline or attachment, naming the file by its display name: an ASCII filename fallback and the display name as RFC 5987 filename* UTF-8 (RFC 6266).",
                 "schema": {
                   "type": "string"
                 }
@@ -900,6 +935,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "416": {
+            "$ref": "#/components/responses/RangeNotSatisfiable"
           },
           "500": {
             "$ref": "#/components/responses/Internal"
@@ -1304,7 +1342,7 @@
                 }
               },
               "Content-Disposition": {
-                "description": "inline or attachment, naming the file by its display name: an ASCII filename fallback and the exact name as RFC 5987 filename* UTF-8 (RFC 6266).",
+                "description": "inline or attachment, naming the file by its display name: an ASCII filename fallback and the display name as RFC 5987 filename* UTF-8 (RFC 6266).",
                 "schema": {
                   "type": "string"
                 }
@@ -1371,7 +1409,7 @@
                 }
               },
               "Content-Disposition": {
-                "description": "inline or attachment, naming the file by its display name: an ASCII filename fallback and the exact name as RFC 5987 filename* UTF-8 (RFC 6266).",
+                "description": "inline or attachment, naming the file by its display name: an ASCII filename fallback and the display name as RFC 5987 filename* UTF-8 (RFC 6266).",
                 "schema": {
                   "type": "string"
                 }
@@ -1470,7 +1508,66 @@
                 }
               },
               "Content-Disposition": {
-                "description": "inline or attachment, naming the file by its display name: an ASCII filename fallback and the exact name as RFC 5987 filename* UTF-8 (RFC 6266).",
+                "description": "inline or attachment, naming the file by its display name: an ASCII filename fallback and the display name as RFC 5987 filename* UTF-8 (RFC 6266).",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "One range, at most 16 MiB: the requested range, or the first 16 MiB of a larger file or range.",
+            "headers": {
+              "Accept-Ranges": {
+                "description": "bytes",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Type": {
+                "description": "The file's media type.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Length": {
+                "description": "The bytes this answer carries.",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Content-Range": {
+                "description": "bytes <first>-<last>/<length>",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Referrer-Policy": {
+                "description": "no-referrer",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "description": "private, no-store",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "nosniff",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Security-Policy": {
+                "description": "default-src 'none'; sandbox",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Disposition": {
+                "description": "inline or attachment, naming the file by its display name: an ASCII filename fallback and the display name as RFC 5987 filename* UTF-8 (RFC 6266).",
                 "schema": {
                   "type": "string"
                 }
@@ -1482,6 +1579,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "416": {
+            "$ref": "#/components/responses/RangeNotSatisfiable"
           },
           "500": {
             "$ref": "#/components/responses/Internal"
