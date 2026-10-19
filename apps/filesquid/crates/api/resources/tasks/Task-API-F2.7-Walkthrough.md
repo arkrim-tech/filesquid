@@ -2,7 +2,7 @@
 
 Module task [API-F2.7](../plan.md) of global [Task 1.1](../../../../../../resources/implementation-plan.md#task-1.1). Branch `feat/api-f2.7-ocfl-validation-findings`, from `main` at `24693fd` (PR #65, CL-1.1). Dependencies API-F2.1, API-F1.7, CL-1.1, IO-0.5 and IO-0.6 were complete.
 
-**Status: done, with one open owner decision.** The engine does not report reservation takeovers, which the plan row assumed IO-0.6 does. The takeover trigger is built and tested at its seam (`ValidationService::validate_after_commit`, `OcflValidation::on_commit`), but no host can detect a takeover until `filesquid-ocfl` reports one ([Conflict Artifact](./Task-API-F2.7-Conflict.md)).
+**Status: done.** The takeover trigger is built and tested at its seam (`ValidationService::validate_after_commit`, `OcflValidation::on_commit`). The engine reports takeovers since PR #78 (`CommitReceipt::took_over`), which resolves the Conflict Artifact; the hosts pass it on when they first commit.
 
 ## API-S-022: OCFL validation findings MUST reach health and the Monitor
 
@@ -14,7 +14,7 @@ Parents: [F-061 Activity journal and live health monitoring](../../../../../../r
 |---|---|---|
 | (1) E023 degrades health with reason `ocfl_validation_errors` naming E023, journals one finding, appears in the route, and health is `ok` again once fixed and revalidated | `an_e023_object_degrades_health_until_it_is_fixed_and_revalidated`, `an_e023_object_on_a_real_directory_is_found` (FsBackend), `the_owner_sees_locations_and_the_administrator_does_not`, scenario 1 | Met |
 | (2) W010 is listed as a warning, journaled once, and health stays `ok` | `a_w010_object_is_listed_as_a_warning_and_leaves_health_ok`, `a_run_over_many_objects_journals_one_entry_per_finding_with_no_loss`, scenario 2 | Met |
-| (3) A takeover commit triggers validation of that object | `a_takeover_commit_triggers_validation_of_that_object`, scenario 3 (at the seam; see the Conflict Artifact) | Met at the API seam; end to end blocked on the engine |
+| (3) A takeover commit triggers validation of that object | `a_takeover_commit_triggers_validation_of_that_object`, scenario 3 (at the seam; see the Conflict Artifact) | Met; the engine reports takeovers since PR #78, and hosts wire `on_commit` when they first commit |
 | (4) Only the owner or an administrator may call; locations hidden from a caller who may not read the object | `anyone_else_is_refused_and_the_refusal_is_journaled`, `locations_are_shown_only_to_a_caller_who_may_read_the_object`, scenario 4, contract and auth tests | Met |
 | (5) Redaction: no logical path, content path, title or content in journal rows or health reasons | `journal_rows_and_health_reasons_carry_no_path_title_or_content`, scenario steps | Met |
 | (6) A run stops at its cap and reports the unchecked objects; never twice at once per library | `a_run_stops_at_its_cap_and_reports_what_it_did_not_check`, `a_run_never_starts_twice_at_once_for_one_library`, `start_runs_refuses_an_unknown_library_and_a_busy_one`, `a_cancelled_run_stops_and_reports_the_rest` | Met |
@@ -60,7 +60,7 @@ Other constraints: defaults of 7 days and 100,000 objects, both bounded and jour
 
 ## For the desktop host (DE-1.1) and the UI (UI-F2.14)
 
-- DE-1.1: after opening a library's storage root as `FsBackend`, call `DesktopValidation.0.open_library(library_id, Arc::new(backend))`, and `close_library` when it closes. After each commit, call `on_commit(library, object_root, object_id, took_over)` once the engine reports takeovers.
+- DE-1.1: after opening a library's storage root as `FsBackend`, call `DesktopValidation.0.open_library(library_id, Arc::new(backend))`, and `close_library` when it closes. After each commit, call `on_commit(library, object_root, object_id, receipt.took_over)` with the engine's commit receipt.
 - UI-F2.14: `GET /api/v1/admin/ocfl/findings` (types in `schema.d.ts`: `FindingsView`), `POST /api/v1/admin/ocfl/validation-runs` (`RunRequest`, `RunAccepted`), and the health reason `ocfl_validation_errors` with `codes` and `objects`. Changes arrive on `health.change`.
 - The schedule and cap: `PUT /api/v1/admin/ocfl/validation-settings` (`ValidationSettings`), reported in `FindingsView.settings`.
 

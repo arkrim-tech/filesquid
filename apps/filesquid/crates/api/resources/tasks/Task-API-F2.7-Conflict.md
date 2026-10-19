@@ -1,8 +1,8 @@
-# Conflict Artifact: Task API-F2.7, the engine does not report reservation takeovers
+# Conflict Artifact (resolved): Task API-F2.7, the engine did not report reservation takeovers
 
 Raised 2026-10-19 by Task [API-F2.7](../plan.md) (global [Task 1.1](../../../../../../resources/implementation-plan.md#task-1.1)) under [sync-logic.md](../../../../../../.agents/rules/sync-logic.md).
 
-**Status: open, owner decision needed.** API-F2.7 is built so that the takeover trigger works as soon as the engine reports a takeover: hosts pass a takeover flag to `OcflValidation::validate_after_commit`, and acceptance criterion (3) is tested at that seam. The flag has no source in `filesquid-ocfl` today, so no host can detect a takeover commit until the resolution below lands.
+**Status: resolved 2026-10-19 by option A (PR #78).** The engine's `CommitReceipt` now carries `took_over`, so a host can pass it to `OcflValidation::on_commit` after each commit; acceptance criterion (3) is met at the API, and the hosts wire it when they first commit (see Resolution). The sections below keep the original analysis.
 
 ## 1. Conflict description
 
