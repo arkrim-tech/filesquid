@@ -100,9 +100,16 @@ async fn start_runs(
         Ok(request) => request,
         Err(err) => return refuse(&state, RUN_OPERATION, &principal, err),
     };
-    match validation.start_runs(request, principal.actor()) {
-        Ok(accepted) => Json(accepted).into_response(),
-        Err(err) => ApiError::from(err).into_response(),
+    // Starting runs reads each library's last run from the findings store (SQLite on the
+    // hosts), so it runs on a blocking thread, like the findings view.
+    let actor = principal.actor().to_string();
+    let answer = tokio::task::spawn_blocking(move || validation.start_runs(request, &actor)).await;
+    match answer {
+        Ok(Ok(accepted)) => Json(accepted).into_response(),
+        Ok(Err(err)) => ApiError::from(err).into_response(),
+        Err(join) => {
+            ApiError::internal("api.admin.ocfl.validation_runs", &join.to_string()).into_response()
+        }
     }
 }
 

@@ -16,7 +16,7 @@ use filesquid_core::LibraryId;
 use filesquid_ocfl::storage::StorageBackend;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Default time between scheduled runs of a library: 7 days.
@@ -77,8 +77,10 @@ pub(super) struct Inner<B> {
     config: Mutex<ValidationConfig>,
     pub(super) clock: Clock,
     pub(super) runtime: Option<tokio::runtime::Handle>,
-    /// Set by [`ValidationService::shut_down`]; no run starts after it.
+    /// Set by [`ValidationService::shut_down`]; no run or takeover check starts after it.
     pub(super) stopped: AtomicBool,
+    /// Takeover checks going now, which [`ValidationService::shut_down`] waits for.
+    checks: AtomicUsize,
 }
 
 /// Runs the `filesquid-ocfl` validator over the libraries a host has open.
@@ -126,10 +128,33 @@ impl<B> Drop for RunLock<B> {
     }
 }
 
-/// What a takeover check needs of an open library.
+/// What a takeover check needs of an open library. While it lives, the check counts as
+/// going, so [`ValidationService::shut_down`] waits for it.
 pub(super) struct ObjectAccess<B> {
     pub(super) backend: Arc<B>,
     pub(super) objects: Arc<tokio::sync::Mutex<()>>,
+    _going: CheckGoing<B>,
+}
+
+/// Counts one takeover check as going until dropped, on every path.
+struct CheckGoing<B> {
+    inner: Arc<Inner<B>>,
+}
+
+impl<B> CheckGoing<B> {
+    /// Count a check as going in `inner`.
+    fn start(inner: &Arc<Inner<B>>) -> Self {
+        inner.checks.fetch_add(1, Ordering::SeqCst);
+        Self {
+            inner: inner.clone(),
+        }
+    }
+}
+
+impl<B> Drop for CheckGoing<B> {
+    fn drop(&mut self) {
+        self.inner.checks.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 impl<B: StorageBackend + 'static> ValidationService<B> {
@@ -157,38 +182,48 @@ impl<B: StorageBackend + 'static> ValidationService<B> {
                 clock,
                 runtime: tokio::runtime::Handle::try_current().ok(),
                 stopped: AtomicBool::new(false),
+                checks: AtomicUsize::new(0),
             }),
         }
     }
 
     /// Open `library_id` for validation over `backend`. Its first scheduled run is one
-    /// interval after now, unless it has a stored last run.
+    /// interval after now, unless it has a stored last run. Opening a library that is already
+    /// open only replaces its backend: a run going on it keeps its run lock and object lock.
     pub fn open_library(&self, library_id: LibraryId, backend: Arc<B>) {
         let opened_ms = (self.inner.clock)();
-        if let Ok(mut libraries) = self.inner.libraries.lock() {
-            libraries.insert(
-                library_id.as_str().to_string(),
-                OpenLibrary {
-                    library_id,
-                    backend,
-                    opened_ms,
-                    running: None,
-                    objects: Arc::new(tokio::sync::Mutex::new(())),
-                    next_due_ms: None,
-                },
-            );
+        let Ok(mut libraries) = self.inner.libraries.lock() else {
+            return;
+        };
+        if let Some(open) = libraries.get_mut(library_id.as_str()) {
+            open.backend = backend;
+            return;
         }
+        let library = OpenLibrary {
+            library_id: library_id.clone(),
+            backend,
+            opened_ms,
+            running: None,
+            objects: Arc::new(tokio::sync::Mutex::new(())),
+            next_due_ms: None,
+        };
+        libraries.insert(library_id.as_str().to_string(), library);
     }
 
-    /// Stop validating `library_id`; a run going now is cancelled. Answers whether it was
-    /// open.
+    /// Stop validating `library_id`; a run going now is cancelled. The library is removed
+    /// and its run cancelled under one lock, so no run can start in between. Answers whether
+    /// it was open.
     pub fn close_library(&self, library_id: &LibraryId) -> bool {
-        self.cancel(library_id);
-        self.inner
-            .libraries
-            .lock()
-            .map(|mut libraries| libraries.remove(library_id.as_str()).is_some())
-            .unwrap_or(false)
+        let Ok(mut libraries) = self.inner.libraries.lock() else {
+            return false;
+        };
+        let Some(removed) = libraries.remove(library_id.as_str()) else {
+            return false;
+        };
+        if let Some(flag) = &removed.running {
+            flag.store(true, Ordering::SeqCst);
+        }
+        true
     }
 
     /// The schedule and cap now in force.
@@ -279,11 +314,22 @@ impl<B: StorageBackend + 'static> ValidationService<B> {
         })
     }
 
-    /// The backend and object lock of the open library `library_id`.
+    /// The backend and object lock of the open library `library_id`, counted as a going
+    /// check until dropped.
+    ///
+    /// # Errors
+    ///
+    /// `unavailable` once the service is shut down; `not_found` when the library is not open.
     pub(super) fn access(
         &self,
         library_id: &LibraryId,
     ) -> Result<ObjectAccess<B>, ValidationError> {
+        // Counted before the stop flag is read, so shut_down either sees this check or this
+        // check sees the flag.
+        let going = CheckGoing::start(&self.inner);
+        if self.inner.stopped.load(Ordering::SeqCst) {
+            return Err(ValidationError::Unavailable);
+        }
         let libraries = self
             .inner
             .libraries
@@ -295,6 +341,7 @@ impl<B: StorageBackend + 'static> ValidationService<B> {
         Ok(ObjectAccess {
             backend: library.backend.clone(),
             objects: library.objects.clone(),
+            _going: going,
         })
     }
 
@@ -354,9 +401,9 @@ impl<B: StorageBackend + 'static> ValidationService<B> {
             .collect()
     }
 
-    /// Stop starting runs, cancel every run going now, and wait up to `wait` for them to
-    /// end (checked every 20 milliseconds), so none writes after the host stops. Answers
-    /// whether every run ended in time.
+    /// Stop starting runs and takeover checks, cancel every run going now, and wait up to
+    /// `wait` for the runs and the takeover checks to end (checked every 20 milliseconds), so
+    /// none writes after the host stops. Answers whether every one ended in time.
     pub fn shut_down(&self, wait: std::time::Duration) -> bool {
         self.inner.stopped.store(true, Ordering::SeqCst);
         let step = std::time::Duration::from_millis(20);
@@ -368,7 +415,8 @@ impl<B: StorageBackend + 'static> ValidationService<B> {
                 .filter(|(_, running, _)| *running)
                 .map(|(id, _, _)| id)
                 .collect();
-            if ids.is_empty() {
+            let checks = self.inner.checks.load(Ordering::SeqCst);
+            if ids.is_empty() && checks == 0 {
                 return true;
             }
             ids.iter().for_each(|id| {
@@ -376,7 +424,7 @@ impl<B: StorageBackend + 'static> ValidationService<B> {
             });
             std::thread::sleep(step);
         }
-        tracing::warn!(target: LOG_TARGET, "OCFL validation runs still going at shutdown");
+        tracing::warn!(target: LOG_TARGET, "OCFL validation runs or checks still going at shutdown");
         false
     }
 
@@ -457,6 +505,67 @@ mod tests {
         );
         drop(new);
         assert!(service.lock(&id).is_ok(), "free once its own run ends");
+        monitor.shutdown();
+    }
+
+    /// A service over a memory store, its monitor, and one open library.
+    fn open_service() -> (ValidationService<MemoryBackend>, Monitor, LibraryId) {
+        let monitor = Monitor::start(
+            Arc::new(MemoryJournal::new("test")),
+            Arc::new(StaticHostChecks::healthy()),
+            MonitorConfig::new("test"),
+            crate::EventBus::new(),
+        );
+        let service: ValidationService<MemoryBackend> =
+            ValidationService::new(Arc::new(MemoryFindingsStore::new()), monitor.clone());
+        let id = LibraryId::new("lib-1").expect("id");
+        service.open_library(id.clone(), Arc::new(MemoryBackend::new()));
+        (service, monitor, id)
+    }
+
+    /// Opening a library that is already open keeps the run lock and the object lock of the
+    /// run going on it.
+    #[test]
+    fn reopening_an_open_library_keeps_its_locks() {
+        let (service, monitor, id) = open_service();
+        let run = service.lock(&id).expect("run");
+        let objects = run.objects.clone();
+        service.open_library(id.clone(), Arc::new(MemoryBackend::new()));
+        assert_eq!(
+            service.lock(&id).err(),
+            Some(ValidationError::AlreadyRunning)
+        );
+        let access = service.access(&id).expect("access");
+        assert!(Arc::ptr_eq(&access.objects, &objects), "one object lock");
+        drop((run, access));
+        monitor.shutdown();
+    }
+
+    /// Closing a library cancels the run going on it, and no run can start on it after.
+    #[test]
+    fn closing_a_library_cancels_its_run() {
+        let (service, monitor, id) = open_service();
+        let run = service.lock(&id).expect("run");
+        assert!(service.close_library(&id));
+        assert!(run.cancel.load(Ordering::SeqCst), "the run is told to stop");
+        assert_eq!(service.lock(&id).err(), Some(ValidationError::NotFound));
+        assert!(!service.close_library(&id));
+        monitor.shutdown();
+    }
+
+    /// After shutdown no takeover check starts, and shutdown waits for one going.
+    #[test]
+    fn shutdown_waits_for_takeover_checks_and_refuses_new_ones() {
+        let (service, monitor, id) = open_service();
+        let going = service.access(&id).expect("access");
+        let wait = std::time::Duration::from_millis(40);
+        assert!(!service.shut_down(wait), "a check is going");
+        assert_eq!(
+            service.access(&id).err(),
+            Some(ValidationError::Unavailable)
+        );
+        drop(going);
+        assert!(service.shut_down(wait), "nothing left");
         monitor.shutdown();
     }
 }

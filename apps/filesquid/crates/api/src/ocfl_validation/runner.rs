@@ -77,8 +77,7 @@ impl<B: StorageBackend + 'static> ValidationService<B> {
         };
         drop(lock);
         let record = self.record(&library_id, trigger, started_ms, &passed);
-        self.finish(&process, actor, &record, passed.changed);
-        record
+        self.finish(&process, actor, record, passed.changed)
     }
 
     /// The record of a pass.
@@ -102,10 +101,20 @@ impl<B: StorageBackend + 'static> ValidationService<B> {
     }
 
     /// Store and journal the record, move the schedule, end the process, and publish health
-    /// when findings changed.
-    fn finish(&self, process: &ProcessHandle, actor: &str, record: &RunRecord, changed: bool) {
-        if let Err(err) = self.inner.store.record_run(record) {
+    /// when findings changed. A record the store cannot keep turns the run into a failed one
+    /// with the store's error code, so a run whose last-run record is lost is never reported
+    /// as a success. Answers the record as journaled.
+    fn finish(
+        &self,
+        process: &ProcessHandle,
+        actor: &str,
+        mut record: RunRecord,
+        changed: bool,
+    ) -> RunRecord {
+        if let Err(err) = self.inner.store.record_run(&record) {
             tracing::warn!(target: LOG_TARGET, error = %err, "validation run not recorded");
+            record.outcome = RunOutcome::Failed;
+            record.error_code = Some(ValidationError::from(err).error_code().to_string());
         }
         let due = record.started_ms.saturating_add(self.config().interval_ms);
         self.remember_next_due(&record.library_id, due);
@@ -135,6 +144,7 @@ impl<B: StorageBackend + 'static> ValidationService<B> {
         if changed {
             self.inner.monitor.publish_health();
         }
+        record
     }
 
     /// Validate the object `object_id` at `object_root` of `library_id` after a commit on

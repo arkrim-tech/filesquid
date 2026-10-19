@@ -112,15 +112,77 @@ fn contract(store: &dyn FindingsStore) {
     assert_eq!(store.last_run(&library()).expect("last"), Some(record));
 }
 
+/// The contract that keeps libraries apart: findings, objects, cursor and last run of one
+/// library never show in, or change, another's.
+fn isolation(store: &dyn FindingsStore) {
+    let other = LibraryId::new("lib-2").expect("id");
+    let mine = found("urn:b", "E023", Severity::Error, "obj-b/v1/content/x");
+    let theirs = Finding {
+        library_id: other.clone(),
+        ..found("urn:b", "E092", Severity::Error, "obj-b/x")
+    };
+    store
+        .replace_findings(&library(), "urn:b", vec![mine.clone()])
+        .expect("mine");
+    let opened = store
+        .replace_findings(&other, "urn:b", vec![theirs.clone()])
+        .expect("theirs");
+    assert_eq!(
+        opened.opened,
+        std::slice::from_ref(&theirs),
+        "the same object ID in another library"
+    );
+    assert!(
+        opened.closed.is_empty(),
+        "nothing of the first library closes"
+    );
+    assert_eq!(
+        store.objects_with_findings(&library()).expect("mine"),
+        ["urn:b"]
+    );
+    assert_eq!(
+        store.objects_with_findings(&other).expect("theirs"),
+        ["urn:b"]
+    );
+    assert_eq!(store.error_summary().expect("summary").objects, 2);
+    store.set_cursor(&library(), Some("urn:b")).expect("cursor");
+    assert_eq!(store.cursor(&other).expect("theirs"), None);
+    let record = RunRecord {
+        library_id: library(),
+        trigger: RunTrigger::Requested,
+        started_ms: 1,
+        ended_ms: 2,
+        outcome: RunOutcome::Completed,
+        checked: 1,
+        not_checked: 0,
+        error_code: None,
+    };
+    store.record_run(&record).expect("record");
+    assert_eq!(store.last_run(&other).expect("theirs"), None);
+    let closed = store
+        .replace_findings(&other, "urn:b", Vec::new())
+        .expect("close theirs");
+    assert_eq!(closed.closed, [theirs]);
+    assert_eq!(
+        store.objects_with_findings(&other).expect("theirs"),
+        Vec::<String>::new()
+    );
+    let open = store.open_findings(10).expect("open");
+    assert_eq!(open, [mine], "only the first library's finding is left");
+    assert_eq!(store.last_run(&library()).expect("mine"), Some(record));
+}
+
 #[test]
 fn the_memory_store_keeps_the_contract() {
     contract(&MemoryFindingsStore::new());
+    isolation(&MemoryFindingsStore::new());
 }
 
 #[test]
 fn the_sqlite_store_keeps_the_contract() {
     let dir = temp_dir("contract");
     contract(&SqliteFindings::open(&dir.join("filesquid.sqlite")).expect("open"));
+    isolation(&SqliteFindings::open(&dir.join("isolation.sqlite")).expect("open"));
     let _ = std::fs::remove_dir_all(&dir);
 }
 

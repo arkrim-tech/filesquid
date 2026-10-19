@@ -40,6 +40,10 @@ pub const RUN_OPERATION: &str = "ocfl.validation.run";
 /// Journal operation of a schedule or cap change.
 pub const CONFIGURE_OPERATION: &str = "ocfl.validation.configure";
 
+/// Journal operation of a host's failure to start validation (its findings store could not
+/// be opened, or validation was already started).
+pub const START_OPERATION: &str = "ocfl.validation.start";
+
 /// Most findings one findings view answers.
 pub const MAX_FINDINGS_VIEW: usize = filesquid_core::MAX_PAGE_SIZE as usize;
 

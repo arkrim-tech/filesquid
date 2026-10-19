@@ -6,7 +6,9 @@
 use crate::{DataDirChecks, SqliteFindings, SqliteJournal};
 use filesquid_api::journal::{JournalEntry, JournalStore, Outcome};
 use filesquid_api::monitor::{HostChecks, Monitor, MonitorConfig};
-use filesquid_api::ocfl_validation::{OcflValidation, ValidationService};
+use filesquid_api::ocfl_validation::{
+    OcflValidation, ValidationError, ValidationService, START_OPERATION,
+};
 use filesquid_api::registry::{ProcessHandle, ProcessSpec};
 use filesquid_api::trace_layer::JournalLayer;
 use filesquid_api::ApiState;
@@ -113,22 +115,41 @@ impl HostMonitor {
     /// [`ValidationService::open_library`] on the service answered. Performs database I/O.
     ///
     /// # Errors
-    /// The findings store could not be opened, or validation was already started for this
-    /// host or installed in `state`.
+    /// The findings store could not be opened (journaled as `ocfl.validation.start` with
+    /// `unavailable` or `internal`), or validation was already started for this host or
+    /// installed in `state` (journaled with `conflict`).
     pub fn start_validation<B: StorageBackend + 'static>(
         &self,
         data_dir: &Path,
         state: &ApiState,
     ) -> Result<ValidationService<B>, String> {
+        self.install_validation(data_dir, state)
+            .map_err(|(code, message)| {
+                let entry = JournalEntry::new(START_OPERATION, Outcome::Failed).error_code(code);
+                self.monitor.journal().send(entry);
+                message
+            })
+    }
+
+    /// The body of [`start_validation`](Self::start_validation): the error carries its
+    /// journal error code.
+    fn install_validation<B: StorageBackend + 'static>(
+        &self,
+        data_dir: &Path,
+        state: &ApiState,
+    ) -> Result<ValidationService<B>, (&'static str, String)> {
+        let already = || ("conflict", VALIDATION_ALREADY_STARTED.to_string());
         if self.validation.get().is_some() || state.validation().is_some() {
-            return Err(VALIDATION_ALREADY_STARTED.to_string());
+            return Err(already());
         }
-        let store =
-            SqliteFindings::open(&data_dir.join(JOURNAL_FILE)).map_err(|e| e.to_string())?;
+        let store = SqliteFindings::open(&data_dir.join(JOURNAL_FILE)).map_err(|err| {
+            let message = err.to_string();
+            (ValidationError::from(err).error_code(), message)
+        })?;
         let service = ValidationService::new(Arc::new(store), self.monitor.clone());
         let handle: Arc<dyn OcflValidation> = Arc::new(service.clone());
         if self.validation.set(handle.clone()).is_err() || !state.install_validation(handle) {
-            return Err(VALIDATION_ALREADY_STARTED.to_string());
+            return Err(already());
         }
         Ok(service)
     }

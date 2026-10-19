@@ -15,7 +15,8 @@ Feature: OCFL validation findings in health and the Monitor
     Then health should be "degraded" with reason "ocfl_validation_errors" naming "E023" in 1 object
     And one "ocfl.validation.finding" entry for "E023" should be journaled without paths
     When the stray file is removed and the library is validated again
-    Then health should be "ok"
+    Then one "ocfl.validation.finding_closed" entry for "E023" should be journaled without paths
+    And health should be "ok"
 
   Scenario: An object without a version inventory is a warning only
     Given an open library with an object whose head has no version inventory
@@ -24,9 +25,11 @@ Feature: OCFL validation findings in health and the Monitor
     And one "ocfl.validation.finding" entry for "W010" should be journaled without paths
     And health should be "ok"
 
-  Scenario: A takeover commit validates that object
+  # The takeover check is invoked here as the commit path will call it; wiring it to the
+  # engine's commit receipt is pending, so no commit is made in this scenario.
+  Scenario: The takeover check validates the object a takeover commit wrote
     Given an open library with a valid object and an object with a stray file under its head version
-    When a commit on the object with the stray file takes over an expired reservation
+    When the takeover check runs for the object with the stray file after a commit that took over an expired reservation
     Then health should be "degraded" with reason "ocfl_validation_errors" naming "E023" in 1 object
 
   Scenario: The administrator sees findings without locations

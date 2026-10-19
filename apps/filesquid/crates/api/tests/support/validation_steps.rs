@@ -78,7 +78,9 @@ fn remove_stray(w: &mut MonitorWorld) {
     rig.run(RunTrigger::Requested, true).expect("run");
 }
 
-#[when("a commit on the object with the stray file takes over an expired reservation")]
+#[when(
+    "the takeover check runs for the object with the stray file after a commit that took over an expired reservation"
+)]
 fn takeover(w: &mut MonitorWorld) {
     let rig = w.validation.rig();
     let library = rig.library();

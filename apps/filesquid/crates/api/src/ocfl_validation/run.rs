@@ -1,12 +1,14 @@
 //! One validation pass over a library (API-S-022), generic over the host's storage backend.
 //!
 //! A run opens the storage root, indexes its objects by identifier (an object whose
-//! inventory cannot be read is indexed as `root:<digest of its root>`), closes the findings
+//! inventory cannot be read, and every root after the first that declares an identifier
+//! already indexed, is indexed as `root:<digest of its root>`), closes the findings
 //! of objects that no longer exist, and then validates objects in identifier order. It
 //! starts after the stored cursor, moves the cursor past each object it checks, and wraps to
 //! the start of the order when it reaches the end. It stops at its object cap, when it is
 //! cancelled, on a store or storage outage, or once every object has been checked in this
-//! run. Each object's findings replace its previous ones in the store, under the library's
+//! run. An object whose root has gone since it was indexed has its findings closed instead
+//! of validated. Each object's findings replace its previous ones in the store, under the library's
 //! object lock, so a run and a takeover check never interleave on one object. Every newly
 //! opened error finding is journaled as `ocfl.validation.finding`, and every closed finding
 //! as `ocfl.validation.finding_closed`, with the opaque object ID, version and code only.
@@ -108,9 +110,10 @@ pub(super) fn read_error(err: &ReadError) -> ValidationError {
     }
 }
 
-/// Every object of the storage root of `backend`, sorted by identifier (then root). An
-/// object that cannot be opened is indexed by its stand-in identifier and validated like the
-/// others, so its findings say why.
+/// Every object of the storage root of `backend`, sorted by identifier (then root), each
+/// under a distinct key. An object that cannot be opened is indexed by its stand-in
+/// identifier and validated like the others, so its findings say why; so is every root after
+/// the first that declares the same identifier, so two roots never share findings.
 ///
 /// # Errors
 ///
@@ -130,7 +133,34 @@ pub(super) async fn index<B: StorageBackend>(backend: &B) -> Result<Vec<Indexed>
         objects.push(indexed);
     }
     objects.sort_by(|a, b| (&a.id, &a.root).cmp(&(&b.id, &b.root)));
-    Ok(objects)
+    Ok(distinct(objects))
+}
+
+/// `objects` (sorted by identifier, then root) with every repeated identifier after the
+/// first replaced by its root's stand-in, sorted again. Pure.
+fn distinct(mut objects: Vec<Indexed>) -> Vec<Indexed> {
+    let mut seen = BTreeSet::new();
+    for object in &mut objects {
+        if !seen.insert(object.id.clone()) {
+            tracing::info!(target: LOG_TARGET, "two object roots declare one identifier");
+            object.id = unreadable_id(&object.root);
+        }
+    }
+    objects.sort_by(|a, b| (&a.id, &a.root).cmp(&(&b.id, &b.root)));
+    objects
+}
+
+/// Whether anything is still stored under the object root `root`.
+///
+/// # Errors
+///
+/// `unavailable` when the storage fails.
+async fn root_present<B: StorageBackend>(backend: &B, root: &str) -> Result<bool, ValidationError> {
+    let page = backend
+        .list(&format!("{root}/"), None, 1)
+        .await
+        .map_err(|e| read_error(&ReadError::Storage(e)))?;
+    Ok(!page.keys.is_empty())
 }
 
 /// The opaque stand-in identifier of an object whose inventory cannot be read: `root:` and
@@ -243,8 +273,9 @@ fn close_deleted(ctx: &RunContext<'_>, objects: &[Indexed]) -> Result<bool, Vali
 }
 
 /// Validate one object under the library's object lock, store its findings and journal what
-/// opened and closed. The lock is taken without waiting when it is free, so an uncontended
-/// check never yields to the executor for it.
+/// opened and closed. An object whose root has gone since it was indexed is not validated:
+/// its findings close, as for a deleted object. The lock is taken without waiting when it is
+/// free, so an uncontended check never yields to the executor for it.
 ///
 /// # Errors
 ///
@@ -258,6 +289,13 @@ pub(super) async fn check_object<B: StorageBackend>(
         Ok(guard) => guard,
         Err(_) => ctx.objects.lock().await,
     };
+    if !root_present(backend, &object.root).await? {
+        let change = ctx
+            .store
+            .replace_findings(ctx.library_id, &object.id, Vec::new())?;
+        journal_change(ctx, &change);
+        return Ok(change);
+    }
     let findings = match validate_object(backend, &object.root).await {
         Ok(report) => {
             let errors = report.errors().iter().map(|f| (f, Severity::Error));
@@ -350,5 +388,39 @@ fn finding_entry(ctx: &RunContext<'_>, operation: &str, found: &Finding) -> Jour
     match ctx.process {
         Some(process) => entry.process(process.id()),
         None => entry,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn indexed(id: &str, root: &str) -> Indexed {
+        Indexed {
+            id: id.to_string(),
+            root: root.to_string(),
+            version: Some("v1".to_string()),
+        }
+    }
+
+    /// Every root after the first that declares an identifier is keyed by its stand-in.
+    #[test]
+    fn repeated_identifiers_get_distinct_keys() {
+        let objects = vec![
+            indexed("urn:a", "obj-1"),
+            indexed("urn:b", "obj-2"),
+            indexed("urn:b", "obj-3"),
+        ];
+        let keys: Vec<(String, String)> = distinct(objects)
+            .into_iter()
+            .map(|o| (o.id, o.root))
+            .collect();
+        let stand_in = unreadable_id("obj-3");
+        assert!(keys.contains(&("urn:a".into(), "obj-1".into())));
+        assert!(keys.contains(&("urn:b".into(), "obj-2".into())));
+        assert!(keys.contains(&(stand_in, "obj-3".into())));
+        let mut sorted = keys.clone();
+        sorted.sort();
+        assert_eq!(keys, sorted, "sorted by key again");
     }
 }

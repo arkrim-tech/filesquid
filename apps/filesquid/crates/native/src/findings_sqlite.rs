@@ -14,8 +14,9 @@ use rusqlite::{params, Connection, OpenFlags, OptionalExtension, Row};
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
-/// Schema: findings keyed by object, code and location; one cursor and one last run per
-/// library.
+/// Schema: findings keyed by object, code and location, with a covering index by severity
+/// so the health summary the monitor reads on every tick touches only the error rows; one
+/// cursor and one last run per library.
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS ocfl_findings (
     library_id TEXT NOT NULL,
@@ -26,6 +27,8 @@ CREATE TABLE IF NOT EXISTS ocfl_findings (
     location TEXT NOT NULL,
     PRIMARY KEY (library_id, object_id, code, location)
 );
+CREATE INDEX IF NOT EXISTS ocfl_findings_by_severity
+    ON ocfl_findings (severity, code, library_id, object_id);
 CREATE TABLE IF NOT EXISTS ocfl_validation_cursors (
     library_id TEXT PRIMARY KEY,
     cursor TEXT NOT NULL
@@ -217,7 +220,11 @@ impl FindingsStore for SqliteFindings {
     ) -> Result<FindingChange, StoreError> {
         let findings = Finding::normalize(library_id, object_id, findings);
         let mut conn = self.lock()?;
-        let tx = conn.transaction().map_err(sql_err)?;
+        // Immediate: take the write lock before the read, so a journal commit in between
+        // makes this wait on the busy timeout instead of failing with SQLITE_BUSY.
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(sql_err)?;
         let previous = object_findings(&tx, library_id, object_id).map_err(sql_err)?;
         write_findings(&tx, library_id, object_id, &findings).map_err(sql_err)?;
         tx.commit().map_err(sql_err)?;

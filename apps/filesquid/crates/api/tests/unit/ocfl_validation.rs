@@ -836,10 +836,12 @@ fn a_failing_findings_store_fails_health_and_the_run() {
     monitor.shutdown();
 }
 
-/// A memory store whose cursor moves fail after `ok` successful moves.
+/// A memory store whose cursor moves fail after `ok` successful moves, and whose run records
+/// fail when `records_fail` is set.
 struct FlakyCursor {
     inner: MemoryFindingsStore,
     ok: std::sync::atomic::AtomicUsize,
+    records_fail: bool,
 }
 
 impl FindingsStore for FlakyCursor {
@@ -901,6 +903,11 @@ impl FindingsStore for FlakyCursor {
         &self,
         r: &filesquid_api::ocfl_validation::RunRecord,
     ) -> Result<(), filesquid_api::ocfl_validation::StoreError> {
+        if self.records_fail {
+            return Err(filesquid_api::ocfl_validation::StoreError::unavailable(
+                "busy",
+            ));
+        }
         self.inner.record_run(r)
     }
     fn last_run(
@@ -923,6 +930,7 @@ fn a_run_stopped_by_an_outage_reports_what_it_checked_and_publishes_health() {
     let store = Arc::new(FlakyCursor {
         inner: MemoryFindingsStore::new(),
         ok: std::sync::atomic::AtomicUsize::new(1),
+        records_fail: false,
     });
     let monitor = filesquid_api::monitor::Monitor::start(
         Arc::new(filesquid_api::journal::MemoryJournal::new("desktop")),
@@ -1101,4 +1109,108 @@ fn a_takeover_check_on_a_damaged_object_opens_an_error_finding() {
         open[0].object_id
     );
     assert_eq!(rig.monitor.health_report().status, HealthStatus::Degraded);
+}
+
+#[test]
+fn a_run_whose_record_cannot_be_stored_is_reported_as_failed() {
+    let rig = ValidationRig::new();
+    rig.object("obj-a", "urn:uuid:a");
+    let store = Arc::new(FlakyCursor {
+        inner: MemoryFindingsStore::new(),
+        ok: std::sync::atomic::AtomicUsize::new(usize::MAX),
+        records_fail: true,
+    });
+    let service: ValidationService<fixture::CountingBackend> =
+        ValidationService::new(store, rig.monitor.clone());
+    let other = filesquid_core::LibraryId::new("lib-records").expect("id");
+    service.open_library(other.clone(), rig.root.clone());
+    let record = vfix::ready_async(service.run(&other, RunTrigger::Requested, false, "owner"))
+        .expect("answered");
+    assert_eq!(
+        record.outcome,
+        RunOutcome::Failed,
+        "never reported as a success"
+    );
+    assert_eq!(record.checked, 1);
+    assert_eq!(record.error_code.as_deref(), Some("unavailable"));
+    let runs = rig.journaled(RUN_OPERATION);
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].outcome, Outcome::Failed);
+    assert_eq!(runs[0].error_code.as_deref(), Some("unavailable"));
+}
+
+#[test]
+fn two_roots_that_declare_one_identifier_keep_separate_findings() {
+    let rig = ValidationRig::new();
+    rig.e023_object("obj-b", "urn:uuid:b");
+    rig.object("obj-c", "urn:uuid:b");
+    for _ in 0..2 {
+        let record = rig.run(RunTrigger::Requested, true).expect("run");
+        assert_eq!((record.checked, record.not_checked), (2, 0));
+    }
+    let open = open_errors(rig.store.as_ref());
+    assert_eq!(open.len(), 1, "{open:?}");
+    assert_eq!(journaled_e023(&rig, FINDING_OPERATION), 1, "opened once");
+    assert!(
+        rig.journaled(FINDING_CLOSED_OPERATION).is_empty(),
+        "the two roots never overwrite each other's findings"
+    );
+    let warnings_first = rig.journaled(FINDING_OPERATION).len();
+    rig.run(RunTrigger::Requested, true).expect("third run");
+    assert_eq!(
+        rig.journaled(FINDING_OPERATION).len(),
+        warnings_first,
+        "a later run opens nothing again"
+    );
+}
+
+#[test]
+fn an_object_deleted_after_the_run_indexed_it_has_its_findings_closed() {
+    let rig = ValidationRig::new();
+    rig.object("obj-a", "urn:uuid:a");
+    rig.e023_object("obj-b", "urn:uuid:b");
+    rig.run(RunTrigger::Requested, true).expect("first run");
+    assert_eq!(open_errors(rig.store.as_ref()).len(), 1);
+    let root = rig.root.clone();
+    rig.root.on_read(
+        "obj-a/v1/content/a.txt",
+        Box::new(move || {
+            let page = fixture::ready(root.list("obj-b/", None, 1_000)).expect("list");
+            for k in page.keys {
+                fixture::ready(root.delete(&k)).expect("delete");
+            }
+        }),
+    );
+    let record = rig.run(RunTrigger::Requested, true).expect("second run");
+    assert_eq!(record.outcome, RunOutcome::Completed);
+    assert!(
+        open_errors(rig.store.as_ref()).is_empty(),
+        "no missing-declaration finding"
+    );
+    let opened_before = rig.journaled(FINDING_OPERATION).len();
+    assert_eq!(
+        journaled_e023(&rig, FINDING_OPERATION),
+        1,
+        "nothing new opened"
+    );
+    assert_eq!(
+        journaled_e023(&rig, FINDING_CLOSED_OPERATION),
+        1,
+        "E023 closed"
+    );
+    rig.run(RunTrigger::Requested, true).expect("third run");
+    assert_eq!(
+        rig.journaled(FINDING_OPERATION).len(),
+        opened_before,
+        "the gone object opens no finding"
+    );
+    assert_eq!(rig.monitor.health_report().status, HealthStatus::Ok);
+}
+
+/// How many `operation` entries of `rig`'s journal carry `E023`.
+fn journaled_e023(rig: &ValidationRig, operation: &str) -> usize {
+    rig.journaled(operation)
+        .iter()
+        .filter(|e| e.error_code.as_deref() == Some("E023"))
+        .count()
 }
