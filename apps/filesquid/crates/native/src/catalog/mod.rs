@@ -312,9 +312,10 @@ impl SqliteCatalog {
 
     /// Write an index refresh of `library_id` with [`Self::write_indexed`], then forward the
     /// outbox. A refresh that fails is journaled as `failed` with its error code (in the
-    /// library's outbox, in a transaction of its own) and its error returned; a refresh that
-    /// changes nothing stores no journal entry (owner decision 2026-10-19, DE-S-010).
-    /// Database, filesystem and journal-store I/O.
+    /// library's outbox, in a transaction of its own, or straight to the host journal when
+    /// the library is not open) and its error returned; a refresh that changes nothing stores
+    /// no journal entry (owner decision 2026-10-19, DE-S-010). Database, filesystem and
+    /// journal-store I/O.
     fn write_journaled(
         &self,
         library_id: &LibraryId,
@@ -322,14 +323,36 @@ impl SqliteCatalog {
         keys: Vec<SnapshotKey>,
         write: impl FnOnce(&Transaction<'_>) -> Result<(), CatalogError>,
     ) -> Result<(), CatalogError> {
-        let mut libraries = self.lock()?;
-        let library = open_library_mut(&mut libraries, library_id)?;
+        let refused = |err| self.journal_refused_refresh(library_id, &journal, err);
+        let mut libraries = self.lock().map_err(refused)?;
+        let library = open_library_mut(&mut libraries, library_id).map_err(refused)?;
         let result = self.write_indexed(library, library_id, &journal, keys, write);
         if let Err(err) = &result {
             journal_failed_refresh(&mut library.conn, library_id, &journal, err);
         }
         self.forward_logged(&library.conn);
         result
+    }
+
+    /// Append the `failed` entry of an index refresh of `library_id` that was refused before
+    /// its library was open (no outbox to hold it) straight to the host journal, and answer
+    /// `err`; a journal that refuses it is logged to stdout. Journal-store I/O.
+    fn journal_refused_refresh(
+        &self,
+        library_id: &LibraryId,
+        journal: &JournalEntry,
+        err: CatalogError,
+    ) -> CatalogError {
+        let entry = failed_refresh(library_id, journal, &err);
+        if let Err(store) = self.journal.append(&[entry]) {
+            tracing::warn!(
+                target: LOG_TARGET,
+                operation = %journal.operation,
+                error = ?store,
+                "the refusal of an index refresh could not be journaled"
+            );
+        }
+        err
     }
 
     /// Run `write`, publish the snapshot version of the entities `keys` (every entity when

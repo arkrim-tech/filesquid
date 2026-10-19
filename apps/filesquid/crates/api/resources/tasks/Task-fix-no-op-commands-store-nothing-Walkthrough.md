@@ -234,7 +234,7 @@ Cubic raised 1 finding on `602460a` (P3): the merge summary above now says the P
 | I1 An index refresh that changes nothing (the same files or folders again, or none) publishes no OCFL version | `an_index_refresh_that_changes_nothing_journals_nothing` (head stays `v4`), `a_recorded_index_refresh_that_changes_nothing_journals_nothing` (head stays `v3`) | Met |
 | I2 It stores no journal entry and leaves no outbox entry, with or without PROV-O history | both tests above (no new entry, `outbox_len` 0), scenario "An index refresh that changes nothing journals nothing" | Met |
 | I3 A refresh that changes something still publishes a version and journals `ocfl.commit` and its own entry linked to that version, as before | both tests above (`@v5`/`@v6`, and `@v4` in the recording catalog), the same scenario's second half | Met |
-| I4 A failed refresh is not treated as a no-op: it returns its error and is journaled once as `failed` with its error code, targeting only the library (redacted). A failure before the version is published rolls the catalog transaction back; one after it leaves the catalog behind its head, which reconcile brings forward at the next open (DE-S-010) | `a_failed_index_refresh_is_journaled_as_failed` (Cubic round 4) | Met |
+| I4 A failed refresh is not treated as a no-op: it returns its error and is journaled once as `failed` with its error code, targeting only the library (redacted). A failure before the version is published rolls the catalog transaction back; one after it leaves the catalog behind its head, which reconcile brings forward at the next open (DE-S-010) | `a_failed_index_refresh_is_journaled_as_failed` (Cubic round 4), `a_refresh_of_an_unknown_library_is_journaled_as_failed` (Cubic round 5: no outbox, so straight to the host journal) | Met |
 
 What changed:
 
@@ -333,6 +333,38 @@ test an_index_refresh_that_changes_nothing_journals_nothing ... ok
 test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
      Running tests/unit/catalog.rs
 test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.09s
+```
+
+## Cubic review round 5
+
+Cubic raised 2 findings on `1453cf0` (P2 2):
+
+- DE-S-010's commit sequence (a failure leaves the catalog unchanged; the journal entry is stored only after publication) seemed to contradict the new failure journaling. DE-S-010 now scopes that sequence to the refresh's own transaction. It says the `failed` entry is written after that transaction rolls back, in a transaction of its own, and is the only thing a failed refresh adds to the catalog. TDD-ENFORCE: not applicable, documentation only.
+- A refresh of a library the catalog does not hold returned before the failure journaling ran. `write_journaled` now journals a refusal that comes before any library is open (unknown library, poisoned lock) as `failed` straight to the host journal, targeting the named library. Test first: `a_refresh_of_an_unknown_library_is_journaled_as_failed` failed against `1453cf0`:
+
+  ```text
+  test a_refresh_of_an_unknown_library_is_journaled_as_failed ... FAILED
+  thread 'a_refresh_of_an_unknown_library_is_journaled_as_failed' (26684) panicked at crates/native/tests/unit/canonical_commit.rs:668:5:
+  assertion `left == right` failed
+    left: []
+   right: [("library.folder.index", Failed, Some("internal"), ["0b0f8a52-3f0e-4c4b-9a59-5b3c0e7d1a02"])]
+  test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.06s
+  ```
+
+After the fix, `cargo test -p filesquid-native --features desktop --test unit_canonical_commit --test unit_catalog --test catalog_features --locked`:
+
+```text
+     Running tests/catalog_features.rs
+12 scenarios (12 passed)
+70 steps (70 passed)
+     Running tests/unit/canonical_commit.rs
+test a_failed_index_refresh_is_journaled_as_failed ... ok
+test a_refresh_of_an_unknown_library_is_journaled_as_failed ... ok
+test a_recorded_index_refresh_that_changes_nothing_journals_nothing ... ok
+test an_index_refresh_that_changes_nothing_journals_nothing ... ok
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+     Running tests/unit/catalog.rs
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.65s
 ```
 
 ## Gate

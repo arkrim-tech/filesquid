@@ -644,6 +644,47 @@ fn a_failed_index_refresh_is_journaled_as_failed() {
     }
 }
 
+/// A refresh of a library the catalog does not hold has no outbox to journal into: it is
+/// refused and journaled as `failed` straight to the host journal, targeting that library.
+#[test]
+fn a_refresh_of_an_unknown_library_is_journaled_as_failed() {
+    let fx = Fixture::new("index-unknown");
+    let unknown = LibraryId::new("0b0f8a52-3f0e-4c4b-9a59-5b3c0e7d1a02").unwrap();
+    let before = all_entries(fx.journal.as_ref()).len();
+    let entry = JournalEntry::new("library.folder.index", Outcome::Succeeded);
+    let refused = fx
+        .catalog
+        .index_folders(&unknown, &[years(&unknown, "Years")], entry);
+    assert!(
+        matches!(refused, Err(CatalogError::Failed(_))),
+        "{refused:?}"
+    );
+    let journaled = journaled_since(fx.journal.as_ref(), before);
+    let seen: Vec<(&str, Outcome, Option<&str>, &[String])> = journaled
+        .iter()
+        .map(|e| {
+            let targets = e.target_ids.as_slice();
+            (
+                e.operation.as_str(),
+                e.outcome,
+                e.error_code.as_deref(),
+                targets,
+            )
+        })
+        .collect();
+    let target = [unknown.as_str().to_string()];
+    assert_eq!(
+        seen,
+        [(
+            "library.folder.index",
+            Outcome::Failed,
+            Some("internal"),
+            &target[..]
+        )]
+    );
+    assert!(!format!("{journaled:?}").contains("Years"), "{journaled:?}");
+}
+
 /// The same rule in a catalog that records PROV-O history (DE-0.10): an index refresh that
 /// changes nothing writes no version, so no PROV-O record, and journals nothing; one that
 /// changes something journals exactly the entries its version carries.
