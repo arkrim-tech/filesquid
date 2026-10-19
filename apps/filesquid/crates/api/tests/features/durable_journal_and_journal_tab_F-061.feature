@@ -70,10 +70,16 @@ Feature: Durable, complete and browsable activity journal
     And no "ui.console.overflow" entry should be written
 
   Scenario: Only events still queued when the page closes are counted
-    Given the UI has 3 console errors queued that the route has not yet accepted
+    Given the UI has 2 console errors already delivered and 3 console errors queued that the route has not yet accepted
     When the page closes
     Then the journal should hold one "ui.console.overflow" entry with the count 3
-    And every event delivered before the page closed should have its own journal entry
+    And the 2 delivered events should each have their own "ui.console.error" entry
+    And the overflow count should not include them
+
+  Scenario: A full client queue keeps its events and counts the rest at page close
+    Given the host has been unreachable and the UI's queue holds 10,000 console warnings
+    When 5 more console warnings occur and the page then closes
+    Then the journal should hold one "ui.console.overflow" entry with 10,000 queued and 5 over-capacity events
 
   # User interactions
   Scenario: The owner browses and filters the Logs view
@@ -95,11 +101,11 @@ Feature: Durable, complete and browsable activity journal
   Scenario: A non-owner cannot open the Logs view
     Given a caller without the owner credential
     When it opens the Logs view
-    Then the tab should show a permission state and no entries
+    Then the Logs view should show a permission state and no entries
 
   # Source
   # - resources/srs.md SRS-F-061
   # - resources/prd.md F-061, F-001, F-042
   # - apps/filesquid/crates/api/resources/srs.md API-S-030, API-S-031, API-S-032
   # - apps/filesquid/crates/desktop/resources/srs.md DE-S-013
-  # - apps/filesquid/ui/resources/srs.md UI-S-021
+  # - apps/filesquid/ui/resources/srs.md UI-S-021, UI-S-023

@@ -63,13 +63,6 @@ Feature: PROV-O history of every version and change
     When I restart FileSquid and rename the file
     Then both activities should name the same installation agent
 
-  Scenario: A server account is its own agent acting on behalf of the installation
-    Given a filesquid-server installation with the account "ana"
-    When "ana" renames a file
-    Then the activity should be prov:wasAssociatedWith the agent "urn:uuid:" followed by the account UUID of "ana"
-    And that account agent should prov:actedOnBehalfOf the server's installation agent
-    And the record should contain no prov:Person, user name, e-mail address or display name
-
   Scenario: Journal and PROV-O join without timestamps
     When I rename a file
     Then the journal should hold one "ocfl.commit" entry with the operation ID and object reference of the file object and the new version

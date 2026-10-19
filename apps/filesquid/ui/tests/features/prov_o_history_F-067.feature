@@ -38,6 +38,18 @@ Feature: File panel tabs: File info, Description and Provenance
     Then the Logs view should open filtered to the file
     And each entry of a committed operation should link back to its Provenance activity
 
+  Scenario: Failed and refused entries in Logs are journal-only
+    Given a refused rename of the file
+    When I open the Logs view filtered to the file
+    Then the refused entry should be labelled journal-only
+    And it should have no link to a Provenance activity
+
+  Scenario: An operation that commits several objects links to one activity per object version
+    Given the import of the file committed the file object and the library snapshot
+    When I open the import's entry in the Logs view
+    Then it should link to two Provenance activities, one per committed object version
+    And both activities should carry the same operation ID
+
   Scenario: The Logs view is reached from the sidebar below Settings
     When I look at the sidebar
     Then the "Logs" item should be placed directly below "Settings"
