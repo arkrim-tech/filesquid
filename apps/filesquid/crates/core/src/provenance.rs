@@ -5,13 +5,18 @@
 use serde::de::{self, Deserializer};
 use serde::{Deserialize, Serialize};
 
-use crate::{DomainError, FileResourceId, Sha256Digest};
+use crate::{DomainError, FileResourceId, JournalLink, OperationId, Sha256Digest, VersionRef};
 
-/// Pinned PROV-O JSON-LD context.
-pub const PROV_O_CONTEXT: &str = "https://www.w3.org/ns/prov#";
+/// The PROV namespace IRI the profile's `prov:` prefix maps to, as the
+/// [PROV-O ontology](https://www.w3.org/ns/prov-o) declares it.
+pub const PROV_O_CONTEXT: &str = "http://www.w3.org/ns/prov#";
 
-/// Version of FileSquid's PROV-O JSON-LD sidecar profile.
+/// Version of FileSquid's PROV-O JSON-LD profile: version 1 is
+/// [`PROV_O_PROFILE`].
 pub const PROV_O_PROFILE_VERSION: u32 = 1;
+
+/// The name of FileSquid's PROV-O JSON-LD profile ([ADR 040](../../../../../resources/architecture/040-prov-o-history.md) Decision 4).
+pub const PROV_O_PROFILE: &str = "filesquid-prov/1";
 
 /// Digest algorithm used for import records and PROV-O linkage.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -275,7 +280,11 @@ impl C2paAction {
     }
 }
 
-/// Versioned PROV-O JSON-LD sidecar profile.
+/// Versioned PROV-O JSON-LD sidecar profile: the FileSquid-facing summary
+/// of one activity. It keeps the T-037 gate (an ephemeral cache is not
+/// permanent history) and links the activity to the object version it
+/// committed, its operation and its journal entries. The full PROV-O graph
+/// is the `filesquid-prov` module's.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProvOSidecar {
     time: Rfc3339Utc,
@@ -284,6 +293,12 @@ pub struct ProvOSidecar {
     activity: String,
     ephemeral: bool,
     retained: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    version: Option<VersionRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    operation: Option<OperationId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    journal: Option<JournalLink>,
 }
 
 impl ProvOSidecar {
@@ -296,6 +311,9 @@ impl ProvOSidecar {
             activity: "prov:Activity".to_string(),
             ephemeral: false,
             retained: true,
+            version: None,
+            operation: None,
+            journal: None,
         }
     }
 
@@ -308,6 +326,9 @@ impl ProvOSidecar {
             activity: "prov:Activity".to_string(),
             ephemeral: true,
             retained: false,
+            version: None,
+            operation: None,
+            journal: None,
         }
     }
 
@@ -339,5 +360,36 @@ impl ProvOSidecar {
     /// Return whether this activity is permanent PROV-O history.
     pub fn is_permanent_history(&self) -> bool {
         !self.ephemeral || self.retained
+    }
+
+    /// The same sidecar naming the object version the activity committed.
+    #[must_use]
+    pub fn with_version(mut self, version: VersionRef) -> Self {
+        self.version = Some(version);
+        self
+    }
+
+    /// The same sidecar linking the activity's journal entries; the link's
+    /// operation becomes the sidecar's operation.
+    #[must_use]
+    pub fn with_journal(mut self, journal: JournalLink) -> Self {
+        self.operation = Some(journal.operation_id().clone());
+        self.journal = Some(journal);
+        self
+    }
+
+    /// The object version the activity committed, when linked.
+    pub fn version(&self) -> Option<&VersionRef> {
+        self.version.as_ref()
+    }
+
+    /// The operation the activity belongs to, when linked.
+    pub fn operation(&self) -> Option<&OperationId> {
+        self.operation.as_ref()
+    }
+
+    /// The journal entries of the activity's commit, when linked.
+    pub fn journal(&self) -> Option<&JournalLink> {
+        self.journal.as_ref()
     }
 }

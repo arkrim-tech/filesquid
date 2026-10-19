@@ -11,19 +11,25 @@ use filesquid_core::{
     CollectionId, CollectionMembership, CollectionSort, CommandEnvelope, CommandOutcome,
     CommandOutcomeKind, ContentEnvelope, ExpectedRevision, File as DomainFile, FileId,
     FileResource, FileResourceId, FileVersion, FileVersionId, Folder, FolderId, HkdfInfoSet,
-    ItemType, JobCheckpoint, JobLease, KeyId, KeyPurpose, Library, LibraryId, OperationId,
-    OperationScope, PageSize, PortError, ProvOSidecar, QueryEnvelope, RecipeOperation, Repository,
-    RepositoryId, Rfc3339Utc, Sha256Digest, UiProgress, VirtualCollection, VirtualCollectionId,
-    VirtualExhibit, VirtualExhibitId, VirtualMembership, WrapAssociatedData, WrapWireLayout,
+    InstallationId, ItemType, JobCheckpoint, JobLease, KeyId, KeyPurpose, Library, LibraryId,
+    OperationId, OperationKind, OperationMessage, OperationMessageError, OperationScope, PageSize,
+    PortError, ProvOSidecar, QueryEnvelope, RecipeOperation, Repository, RepositoryId, Rfc3339Utc,
+    Sha256Digest, UiProgress, VirtualCollection, VirtualCollectionId, VirtualExhibit,
+    VirtualExhibitId, VirtualMembership, WrapAssociatedData, WrapWireLayout,
     DEFAULT_ACTIVE_TRANSFERS, DEFAULT_CPU_HEAVY_WORKERS, DEFAULT_STAGING_CAP_GIB,
     HEALTH_SCHEMA_VERSION, HKDF_INFO_CONTENT, HKDF_INFO_DEVICE, HKDF_INFO_EVIDENCE, HKDF_INFO_WRAP,
-    MAX_ATTEMPTS_PER_RESOURCE, MIGRATION_PROCESS_MEMORY_GIB, PROTOCOL_SCHEMA_VERSION,
-    RESTART_RESUMABLE_WITHIN_SECS, RETRY_BACKOFF_CAP_SECS, WRAP_WIRE_VERSION,
+    MAX_ATTEMPTS_PER_RESOURCE, MIGRATION_PROCESS_MEMORY_GIB, OPERATION_MESSAGE_PREFIX,
+    PROTOCOL_SCHEMA_VERSION, PROV_O_CONTEXT, PROV_O_PROFILE, RESTART_RESUMABLE_WITHIN_SECS,
+    RETRY_BACKOFF_CAP_SECS, WRAP_WIRE_VERSION,
 };
 
 /// World state for portable-contract scenarios.
 #[derive(Debug, Default, World)]
 struct CoreWorld {
+    /// Text of the last operation message or installation URN a step made.
+    message_text: String,
+    /// How the last operation message parsed.
+    message_parse: Option<ParsedMessage>,
     raw_id: String,
     library_id: Option<LibraryId>,
     file_id: Option<FileId>,
@@ -1445,6 +1451,81 @@ fn write_junit_report(path: &PathBuf, passed: usize, failed: usize, skipped: usi
 "#
     );
     fs::write(path, xml).expect("write junit");
+}
+
+/// Outcome of an operation-message parse (CORE-S-010).
+type ParsedMessage = Result<Option<OperationMessage>, OperationMessageError>;
+
+/// Remember `text` and how it parsed on the world.
+fn remember_message(world: &mut CoreWorld, text: String) {
+    world.message_parse = Some(OperationMessage::parse(&text));
+    world.message_text = text;
+}
+
+/// The last parse remembered on the world.
+fn last_parse(world: &CoreWorld) -> &ParsedMessage {
+    world.message_parse.as_ref().expect("a message was parsed")
+}
+
+#[when(
+    expr = "I format the operation message for operation {string} of kind {string} with label {string}"
+)]
+fn format_operation_message(world: &mut CoreWorld, op: String, kind: String, label: String) {
+    let kind = OperationKind::parse(&kind).expect("kind");
+    let message = OperationMessage::new(OperationId::new(op).expect("op"), kind).with_label(label);
+    remember_message(world, message.format());
+}
+
+#[then(expr = "the message should start with {string}")]
+fn message_starts_with(world: &mut CoreWorld, prefix: String) {
+    assert!(world.message_text.starts_with(&prefix));
+    assert_eq!(prefix, OPERATION_MESSAGE_PREFIX);
+}
+
+#[then(expr = "parsing it should give operation {string}, kind {string} and label {string}")]
+fn parsed_message_is(world: &mut CoreWorld, op: String, kind: String, label: String) {
+    let message = last_parse(world)
+        .clone()
+        .expect("readable")
+        .expect("FileSquid message");
+    assert_eq!(message.operation_id().as_str(), op);
+    assert_eq!(message.kind().as_str(), kind);
+    assert_eq!(message.label(), Some(label.as_str()));
+}
+
+#[when(expr = "I parse the version message {string}")]
+fn parse_version_message(world: &mut CoreWorld, text: String) {
+    remember_message(world, text.replace("\\\"", "\""));
+}
+
+#[then("it should not be a FileSquid operation message")]
+fn not_a_filesquid_message(world: &mut CoreWorld) {
+    assert_eq!(last_parse(world), &Ok(None));
+}
+
+#[then("the message should be refused as unreadable")]
+fn message_refused(world: &mut CoreWorld) {
+    assert!(matches!(
+        last_parse(world),
+        Err(OperationMessageError::Unreadable { .. })
+    ));
+}
+
+#[when(expr = "I parse the installation ID {string}")]
+fn parse_installation_id(world: &mut CoreWorld, text: String) {
+    let id = InstallationId::parse(&text).expect("installation id");
+    world.message_text = id.urn();
+}
+
+#[then(expr = "its agent identifier should be {string}")]
+fn installation_urn_is(world: &mut CoreWorld, urn: String) {
+    assert_eq!(world.message_text, urn);
+}
+
+#[then(expr = "the PROV-O context should be {string} and the profile {string}")]
+fn prov_context_is(_world: &mut CoreWorld, context: String, profile: String) {
+    assert_eq!(PROV_O_CONTEXT, context);
+    assert_eq!(PROV_O_PROFILE, profile);
 }
 
 #[tokio::main]
