@@ -1,7 +1,7 @@
 # F-061: Activity journal and live health monitoring
 # SRS-F-061: Activity journal and live health monitoring
 # API-S-030: Client events; API-S-031: Journal query and export; API-S-032: Durable journal
-# DE-S-013: Journal sealing and rebuild; UI-S-021: Journal tab; UI-S-023: Client event delivery
+# DE-S-013: Journal sealing and rebuild; UI-S-021: Logs view; UI-S-023: Client event delivery
 # Scenarios only; step definitions arrive with Task FS-2.9 (unbound steps are skipped by the harness).
 Feature: Durable, complete and browsable activity journal
   As a library owner
@@ -76,8 +76,8 @@ Feature: Durable, complete and browsable activity journal
     And every event delivered before the page closed should have its own journal entry
 
   # User interactions
-  Scenario: The owner browses and filters the Journal tab
-    When I open the Journal tab and filter by operation "metadata.edit" and the last day
+  Scenario: The owner browses and filters the Logs view
+    When I open the Logs view and filter by operation "metadata.edit" and the last day
     Then I should see matching entries newest first with paging
     And opening an entry should show its detail and a link to its PROV-O activity
 
@@ -92,9 +92,9 @@ Feature: Durable, complete and browsable activity journal
     When it requests the journal export
     Then the request should be refused and journaled as a refusal
 
-  Scenario: A non-owner cannot open the Journal tab
+  Scenario: A non-owner cannot open the Logs view
     Given a caller without the owner credential
-    When it opens the Journal tab
+    When it opens the Logs view
     Then the tab should show a permission state and no entries
 
   # Source

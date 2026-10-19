@@ -84,6 +84,13 @@ Feature: Host privacy indicator
     Then the UI should read the host descriptor again
     And the indicator should show the descriptor it read
 
+  Scenario: The header shows a compact badge and the full statement in its popover and in Settings
+    Given the host descriptor says host type "desktop" and the hosted service is not enrolled
+    When the shell loads
+    Then the header should show the host indicator as an icon and a short host label without the full statement
+    And opening the indicator's popover should show the desktop statement from the label table
+    And the Privacy section of the Settings page should show the same statement
+
   # User interactions
   Scenario: The indicator is reachable by keyboard and screen reader
     Given the host descriptor says host type "desktop" and the hosted service is not enrolled
