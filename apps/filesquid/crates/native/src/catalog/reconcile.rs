@@ -8,9 +8,10 @@
 //! published are cleared. An intent with no published version stays pending. The work is one
 //! SQLite transaction, journaled as `library.reconcile`.
 //!
-//! Owner decision (2026-10-19): a command that changed nothing publishes no version, so its
-//! receipt lives only in the catalog. After the catalog is lost, a retry of that operation ID is planned again;
-//! with the revision it carries it is answered `conflict` or the same no-op, never a change.
+//! Owner decision (2026-10-19): a command that changed nothing publishes no version and
+//! stores no receipt and no journal entry, so there is nothing of it to restore. A retry of
+//! that operation ID is planned again; with the revision it carries it is answered
+//! `conflict` or the same no-op, never a change.
 
 use super::rows::sql;
 use super::{outbox, write};

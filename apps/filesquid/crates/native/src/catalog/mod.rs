@@ -10,8 +10,12 @@
 //! that file: the stored receipt of its operation ID is answered first (looked up in every
 //! library), then the create or revision rule, every change, the new revision, the receipt,
 //! the removal of the operation's pending intent and its journal entry (into the file's
-//! journal outbox). The outbox is then forwarded to the host's activity journal store; what
-//! the store refuses is forwarded later, so nothing is dropped.
+//! journal outbox). A commit with no change stores nothing but the removal of its pending
+//! intent: no receipt, no journal entry and no new revision; an index refresh
+//! ([`SqliteCatalog::index_files`], [`SqliteCatalog::index_folders`]) that changes nothing
+//! likewise publishes no version and stores no journal entry. The outbox is then forwarded
+//! to the host's activity journal store; what the store refuses is forwarded later, so
+//! nothing is dropped.
 //!
 //! The catalog is an index, never the only copy of accepted data: committed state is
 //! canonical in the library's OCFL objects, and the catalog is rebuilt from them (DE-0.3,
@@ -37,7 +41,8 @@ pub use reconcile::RECONCILE_OPERATION;
 
 use filesquid_api::canonical::{operation_kind, OperationRecord, SnapshotKey};
 use filesquid_api::history::ProvenanceContext;
-use filesquid_api::journal::{JournalEntry, JournalStore, Outcome};
+use filesquid_api::journal::{JournalEntry, JournalStore, Level, Outcome};
+use filesquid_api::journal_writer::JournalSender;
 use filesquid_api::library::mint_uuid_v4;
 use filesquid_api::library::{
     CatalogCommit, CatalogError, CommitReceipt, FileEntry, FileListing, Keyed, LibraryCatalog,
@@ -130,6 +135,7 @@ pub struct SqliteCatalog {
     journal: Arc<dyn JournalStore>,
     probe: Arc<dyn CommitProbe>,
     provenance: Option<ProvenanceContext>,
+    failures: Option<JournalSender>,
     libraries: Mutex<BTreeMap<String, OpenLibrary>>,
 }
 
@@ -173,6 +179,7 @@ impl SqliteCatalog {
             journal,
             probe,
             provenance: None,
+            failures: None,
             libraries: Mutex::new(libraries),
         };
         catalog.forward_all()?;
@@ -190,10 +197,23 @@ impl SqliteCatalog {
         self
     }
 
+    /// The same catalog journaling the refusals that come before any library is open (an
+    /// unknown library, a poisoned lock), which have no outbox to hold them, through
+    /// `failures`: the host's bounded journal queue, whose producers wait and whose entries
+    /// are never dropped. Without it, such a refusal is appended straight to the journal
+    /// store, and one the store refuses is reported on stdout only.
+    #[must_use]
+    pub fn with_failure_journal(mut self, failures: JournalSender) -> Self {
+        self.failures = Some(failures);
+        self
+    }
+
     /// Store `files` (each with its listing order) in `library_id`'s catalog, as an import
     /// does, publishing their entities as one snapshot version and storing `journal` in the
     /// same transaction. Files already stored keep their hide and delete state. The revision
-    /// (the command token) is not advanced. Database and filesystem I/O.
+    /// (the command token) is not advanced. A refresh that changes nothing (the same files
+    /// again, or none) publishes no version and stores no journal entry, like a command that
+    /// changes nothing (owner decision 2026-10-19). Database and filesystem I/O.
     ///
     /// # Errors
     /// [`CatalogError::Failed`] for an unknown library, a file of another library or a
@@ -304,10 +324,12 @@ impl SqliteCatalog {
         result
     }
 
-    /// Run `write`, publish the snapshot version of the entities `keys` (every entity when
-    /// the library has no snapshot yet; no version when they are unchanged), and store its
-    /// version and `journal` in one transaction; then forward the outbox. Database and
-    /// filesystem I/O.
+    /// Write an index refresh of `library_id` with [`Self::write_indexed`], then forward the
+    /// outbox. A refresh that fails is journaled as `failed` with its error code (in the
+    /// library's outbox, in a transaction of its own, or through the host's failure journal
+    /// when the library is not open) and its error returned; a refresh that changes nothing stores
+    /// no journal entry (owner decision 2026-10-19, DE-S-010). Database, filesystem and
+    /// journal-store I/O.
     fn write_journaled(
         &self,
         library_id: &LibraryId,
@@ -315,19 +337,69 @@ impl SqliteCatalog {
         keys: Vec<SnapshotKey>,
         write: impl FnOnce(&Transaction<'_>) -> Result<(), CatalogError>,
     ) -> Result<(), CatalogError> {
-        let mut libraries = self.lock()?;
-        let library = open_library_mut(&mut libraries, library_id)?;
+        let refused = |err| self.journal_refused_refresh(library_id, &journal, err);
+        let mut libraries = self.lock().map_err(refused)?;
+        let library = open_library_mut(&mut libraries, library_id).map_err(refused)?;
+        let result = self.write_indexed(library, library_id, &journal, keys, write);
+        if let Err(err) = &result {
+            journal_failed_refresh(&mut library.conn, library_id, &journal, err);
+        }
+        self.forward_logged(&library.conn);
+        result
+    }
+
+    /// Journal the `failed` entry of an index refresh of `library_id` that was refused before
+    /// its library was open (no outbox to hold it), and answer `err`: through the host's
+    /// bounded failure queue ([`Self::with_failure_journal`]; it blocks while the queue is
+    /// full and never drops), or, without one, straight to the journal store, logging to
+    /// stdout an entry the store refuses. Journal-queue or journal-store I/O.
+    fn journal_refused_refresh(
+        &self,
+        library_id: &LibraryId,
+        journal: &JournalEntry,
+        err: CatalogError,
+    ) -> CatalogError {
+        let entry = failed_refresh(library_id, journal, &err);
+        if let Some(failures) = &self.failures {
+            failures.send(entry);
+            return err;
+        }
+        if let Err(store) = self.journal.append(&[entry]) {
+            tracing::warn!(
+                target: LOG_TARGET,
+                operation = %journal.operation,
+                error = ?store,
+                "the refusal of an index refresh could not be journaled"
+            );
+        }
+        err
+    }
+
+    /// Run `write`, publish the snapshot version of the entities `keys` (every entity when
+    /// the library has no snapshot yet), and store its version and `journal` in one
+    /// transaction. A refresh that leaves the entities unchanged publishes no version and
+    /// stores no journal entry. A failure after the version is published leaves the catalog
+    /// behind its head, which reconcile brings forward at the next open. Database and
+    /// filesystem I/O.
+    fn write_indexed(
+        &self,
+        library: &mut OpenLibrary,
+        library_id: &LibraryId,
+        journal: &JournalEntry,
+        keys: Vec<SnapshotKey>,
+        write: impl FnOnce(&Transaction<'_>) -> Result<(), CatalogError>,
+    ) -> Result<(), CatalogError> {
         let tx = library.conn.transaction().map_err(sql)?;
         write(&tx)?;
         let delta = write::delta_of_keys(&tx, library_id, keys)?;
         let record = index_record(&tx, &journal.operation)?;
-        let plan = history::plan_commit(self.history().as_ref(), &record, &journal);
+        let plan = history::plan_commit(self.history().as_ref(), &record, journal);
         let published = library
             .canonical
             .commit(&delta, plan.meta(), plan.bound())?;
         let entries = match &published {
             Some(published) => plan.published(published),
-            None => plan.unpublished(),
+            None => Vec::new(),
         };
         if let Some(published) = published {
             reconcile::set_snapshot_version(&tx, &published.version.to_string())?;
@@ -335,9 +407,7 @@ impl SqliteCatalog {
         for entry in &entries {
             outbox::push(&tx, entry)?;
         }
-        tx.commit().map_err(sql)?;
-        self.forward_logged(&library.conn);
-        Ok(())
+        tx.commit().map_err(sql)
     }
 
     /// Forward every library's outbox (at open). Database and journal-store I/O.
@@ -503,6 +573,44 @@ fn index_record(tx: &Transaction<'_>, operation: &str) -> Result<OperationRecord
         created_id: None,
         deletion: None,
     })
+}
+
+/// The `failed` journal entry of the index refresh `journal` of `library_id` that stopped
+/// with `err`: same operation, actor and time, targeting the library, with the error's code.
+/// Pure.
+fn failed_refresh(
+    library_id: &LibraryId,
+    journal: &JournalEntry,
+    err: &CatalogError,
+) -> JournalEntry {
+    let level = match err {
+        CatalogError::Conflict => Level::Warn,
+        CatalogError::Unavailable(_) | CatalogError::Failed(_) => Level::Error,
+    };
+    JournalEntry::new(journal.operation.clone(), Outcome::Failed)
+        .actor(journal.actor.clone())
+        .at_ms(journal.time_ms)
+        .level(level)
+        .error_code(error_code(err))
+        .target(library_id.as_str())
+}
+
+/// Push the `failed` entry of the index refresh `journal` of `library_id` into `conn`'s outbox; when even
+/// that fails, log it to stdout (the refresh's own error is still returned). Database I/O.
+fn journal_failed_refresh(
+    conn: &mut Connection,
+    library_id: &LibraryId,
+    journal: &JournalEntry,
+    err: &CatalogError,
+) {
+    if let Err(store) = journal_alone(conn, &failed_refresh(library_id, journal, err)) {
+        tracing::warn!(
+            target: LOG_TARGET,
+            operation = %journal.operation,
+            error_code = error_code(&store),
+            "the failure of an index refresh could not be journaled"
+        );
+    }
 }
 
 /// Push `entry` into `conn`'s outbox in a transaction of its own. Database I/O.

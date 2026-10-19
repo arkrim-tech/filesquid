@@ -133,8 +133,8 @@ impl CommitPlan {
         entries
     }
 
-    /// The journal entries of a commit that published no version: the operation's entry
-    /// with its operation ID. Pure.
+    /// The operation's entry with its operation ID, unlinked to a version: what a published
+    /// commit journals when its version cannot be referenced. Pure.
     pub(crate) fn unpublished(&self) -> Vec<JournalEntry> {
         let entry = self.entry.clone();
         vec![match &self.operation_id {

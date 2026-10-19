@@ -6,10 +6,12 @@ use crate::library_fixture::{Fixture, DAY_MS};
 use crate::MonitorWorld;
 use cucumber::{given, then, when};
 use filesquid_api::library::{
-    is_uuid_v4, CommandResult, FileScope, LibraryCommand, LibraryError, LibraryQuery,
-    PurgeConfirmation, QueryAnswer, QueryRequest, VisibilityFilter,
+    is_uuid_v4, CommandRequest, CommandResult, FileScope, LibraryCatalog, LibraryCommand,
+    LibraryError, LibraryQuery, PurgeConfirmation, QueryAnswer, QueryRequest, VisibilityFilter,
 };
-use filesquid_api::operation::{CommandEnvelope, ExpectedRevision, OperationId, OperationScope};
+use filesquid_api::operation::{
+    CommandEnvelope, CommandOutcomeKind, ExpectedRevision, OperationId, OperationScope,
+};
 use filesquid_core::{CollectionId, FileId, VirtualCollectionId};
 use std::collections::BTreeMap;
 
@@ -24,6 +26,11 @@ pub struct LibraryWorld {
     results: Vec<Result<CommandResult, LibraryError>>,
     commits_before: u64,
     listed: Vec<FileId>,
+    /// Journal entries and revision before the last command sent under a named operation.
+    journal_before: usize,
+    revision_before: String,
+    /// Requests sent under a named operation ID, for retries.
+    sent: BTreeMap<String, CommandRequest>,
 }
 
 impl std::fmt::Debug for LibraryWorld {
@@ -415,4 +422,74 @@ fn journal_redacted(w: &mut MonitorWorld, first: String, second: String) {
     let text = serde_json::to_string(&w.library.fx().catalog.journal_entries()).expect("json");
     assert!(!text.contains(&first), "{text}");
     assert!(!text.contains(&second), "{text}");
+}
+
+/// Send a rename of the collection `title` to `new_title` as operation `op` at the current
+/// revision, remembering the request and the journal and revision before it.
+fn rename_as_operation(w: &mut LibraryWorld, title: &str, new_title: String, op: String) {
+    w.commits_before = w.fx().catalog.commit_count();
+    w.journal_before = w.fx().catalog.journal_entries().len();
+    w.revision_before = w.fx().revision();
+    let request = CommandRequest {
+        envelope: CommandEnvelope::new(
+            OperationId::new(op.clone()).expect("op"),
+            ExpectedRevision::new(w.revision_before.clone()).expect("revision"),
+            OperationScope::new("library").expect("scope"),
+        ),
+        command: LibraryCommand::RenameCollection {
+            library_id: w.fx().library(),
+            collection_id: w.collection(title),
+            title: new_title,
+        },
+    };
+    let result = w.fx().service.execute("user:ana", request.clone());
+    w.results.push(result);
+    w.sent.insert(op, request);
+}
+
+#[when(expr = "the owner renames the collection {string} to {string} as operation {string}")]
+fn rename_to_as(w: &mut MonitorWorld, title: String, new_title: String, op: String) {
+    rename_as_operation(&mut w.library, &title, new_title, op);
+}
+
+#[given(expr = "the owner has renamed the collection {string} to {string} as operation {string}")]
+fn renamed_to_as(w: &mut MonitorWorld, title: String, new_title: String, op: String) {
+    rename_as_operation(&mut w.library, &title, new_title, op);
+}
+
+#[when(expr = "the owner retries operation {string}")]
+fn retry_operation(w: &mut MonitorWorld, op: String) {
+    let w = &mut w.library;
+    let request = w
+        .sent
+        .get(&op)
+        .cloned()
+        .expect("a request sent under this operation");
+    let result = w.fx().service.execute("user:ana", request);
+    w.results.push(result);
+}
+
+#[then(expr = "the command should answer committed at the current revision")]
+fn committed_at_current(w: &mut MonitorWorld) {
+    let last = w.library.results.last().expect("a command ran");
+    let result = last.as_ref().expect("committed");
+    assert_eq!(result.outcome.kind(), CommandOutcomeKind::Committed);
+    assert_eq!(
+        result.revision.as_deref(),
+        Some(w.library.revision_before.as_str())
+    );
+    assert_eq!(w.library.fx().revision(), w.library.revision_before);
+}
+
+#[then(expr = "the catalog should hold no receipt for operation {string}")]
+fn no_receipt(w: &mut MonitorWorld, op: String) {
+    let op = OperationId::new(op).expect("op");
+    assert_eq!(w.library.fx().catalog.receipt(&op).expect("read"), None);
+}
+
+#[then(expr = "no journal entry should have been stored")]
+fn no_journal_entry(w: &mut MonitorWorld) {
+    let fx = w.library.fx();
+    assert_eq!(fx.catalog.journal_entries().len(), w.library.journal_before);
+    assert!(fx.failure_journal().is_empty());
 }

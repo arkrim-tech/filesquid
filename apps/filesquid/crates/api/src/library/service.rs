@@ -3,9 +3,11 @@
 //! A command is checked (schema version, names, file batch), replayed when its operation ID
 //! was already committed, planned against committed state, and handed to the catalog as one
 //! [`CatalogCommit`] together with its journal entry, so the host stores both in the same
-//! transaction. A command that changes nothing is committed too, with no change: the catalog
-//! keeps the revision and writes no OCFL version, but stores the journal entry and the
-//! receipt, so a retry answers the same outcome. A refused command is journaled once as
+//! transaction. A command that changes nothing is handed to the catalog with no change, so
+//! the catalog rechecks its expected revision atomically (a revision that moved on after
+//! planning is `conflict`); it answers `committed` at the current revision and stores no
+//! receipt, no journal entry and no OCFL version (owner decision, 2026-10-19), so a retry of
+//! its operation ID is planned again against the state it then meets. A refused command is journaled once as
 //! `failed` through the bounded journal queue every service is built with, and logged to
 //! stdout. Queries page through the catalog with an opaque cursor.
 
@@ -105,8 +107,9 @@ impl LibraryService {
         self.commit_planned(actor, request, planned)
     }
 
-    /// Commit `planned` (possibly with no change) with its journal entry and answer the
-    /// receipt.
+    /// Commit `planned` with its journal entry and answer the receipt. A plan with no change
+    /// still goes through the catalog, which rechecks the expected revision atomically and
+    /// stores nothing for it, neither the journal entry nor a receipt.
     fn commit_planned(
         &self,
         actor: &str,

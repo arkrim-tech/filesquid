@@ -35,6 +35,8 @@ struct CatalogWorld {
     retry: Option<CommandResult>,
     failed: bool,
     backup: Option<PathBuf>,
+    /// How many entries the host journal held right after the first index.
+    journaled: Option<usize>,
 }
 
 impl std::fmt::Debug for CatalogWorld {
@@ -144,6 +146,19 @@ fn retry_after_restart(w: &mut CatalogWorld) {
     w.retry = Some(w.fx().run_as(op, "1", summer(&id)).expect("retry"));
 }
 
+#[when(expr = "the owner renames the collection {string} to {string}")]
+fn rename_collection(w: &mut CatalogWorld, _title: String, new_title: String) {
+    let id = w.library("Family archive");
+    let op = OperationId::new("op-rename").expect("op");
+    let revision = w.fx().revision(&id);
+    let command = LibraryCommand::RenameCollection {
+        library_id: id,
+        collection_id: w.collection.clone().expect("collection"),
+        title: new_title,
+    };
+    w.fx().run_as(op, &revision, command).expect("rename");
+}
+
 #[when(expr = "the host journal is reachable again when the catalog reopens")]
 fn journal_back(w: &mut CatalogWorld) {
     let flaky = w.flaky.clone().expect("flaky journal");
@@ -241,6 +256,78 @@ fn journal_records(w: &mut CatalogWorld, operation: String) {
     let entries = all_entries(w.fx().journal.as_ref());
     assert!(
         entries.iter().any(|e| e.operation == operation),
+        "{entries:?}"
+    );
+}
+
+/// Index the file `file` of the "Family archive" library in its collection titled `title`
+/// at listing order `order`, journaled as `library.file.index`. The scenario's only
+/// collection is "Summer" (created by the background step), so any other title fails.
+fn index_file(w: &CatalogWorld, file: &str, title: &str, order: i64) {
+    let id = w.library("Family archive");
+    let titles: Vec<String> = w
+        .fx()
+        .catalog
+        .collections(&id, None, 10)
+        .expect("collections")
+        .into_iter()
+        .map(|c| c.item.title().to_string())
+        .collect();
+    assert_eq!(
+        titles,
+        [title],
+        "the scenario indexes into its only collection"
+    );
+    let home = w.collection.clone().expect("collection");
+    let file = filesquid_core::File::new(FileId::new(file).expect("file"), id.clone(), home);
+    let entry = JournalEntry::new("library.file.index", Outcome::Succeeded);
+    w.fx()
+        .catalog
+        .index_files(&id, &[(file, order)], entry)
+        .expect("index");
+}
+
+#[given(expr = "the file {string} was indexed in the collection {string} at listing order {int}")]
+fn file_indexed(w: &mut CatalogWorld, file: String, title: String, order: i64) {
+    index_file(w, &file, &title, order);
+    w.journaled = Some(all_entries(w.fx().journal.as_ref()).len());
+}
+
+#[when(
+    expr = "the file {string} is indexed in the collection {string} at listing order {int} again"
+)]
+fn file_indexed_again(w: &mut CatalogWorld, file: String, title: String, order: i64) {
+    index_file(w, &file, &title, order);
+}
+
+#[then(expr = "the host journal should hold no entry since the first index")]
+fn journal_unchanged_since_index(w: &mut CatalogWorld) {
+    let entries = all_entries(w.fx().journal.as_ref());
+    let since: Vec<_> = entries
+        .iter()
+        .skip(w.journaled.expect("first index"))
+        .collect();
+    assert!(since.is_empty(), "{since:?}");
+}
+
+#[then(regex = r#"^the host journal should record "([^"]+)" (\d+) times?$"#)]
+fn journal_records_times(w: &mut CatalogWorld, operation: String, times: usize) {
+    let entries = all_entries(w.fx().journal.as_ref());
+    let found = entries.iter().filter(|e| e.operation == operation).count();
+    assert_eq!(found, times, "{entries:?}");
+}
+
+#[then(expr = "the catalog should hold no receipt for the rename")]
+fn no_rename_receipt(w: &mut CatalogWorld) {
+    let op = OperationId::new("op-rename").expect("op");
+    assert_eq!(w.fx().catalog.receipt(&op).expect("read"), None);
+}
+
+#[then(expr = "the host journal should not record {string}")]
+fn journal_lacks(w: &mut CatalogWorld, operation: String) {
+    let entries = all_entries(w.fx().journal.as_ref());
+    assert!(
+        entries.iter().all(|e| e.operation != operation),
         "{entries:?}"
     );
 }

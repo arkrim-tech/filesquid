@@ -9,13 +9,16 @@ mod catalog_fixture;
 
 use catalog_fixture::{all_entries, catalog_file, temp_root, Fixture};
 use filesquid_api::canonical::{read_snapshot, OwnerReadable, SNAPSHOT_ROOT};
-use filesquid_api::journal::{JournalEntry, MemoryJournal, Outcome};
+use filesquid_api::journal::{JournalEntry, JournalStore, MemoryJournal, Outcome};
+use filesquid_api::journal_writer::{JournalWriter, WriterConfig};
 use filesquid_api::library::{
     CatalogError, FileListing, FileScope, LibraryCatalog, LibraryCommand, VisibilityFilter,
 };
+use filesquid_api::metrics::Metrics;
 use filesquid_api::operation::OperationId;
-use filesquid_core::{CollectionId, File, FileId, LibraryId};
-use filesquid_native::{library_ocfl_root, CommitProbe};
+use filesquid_api::EventBus;
+use filesquid_core::{CollectionId, File, FileId, Folder, FolderId, LibraryId};
+use filesquid_native::{library_ocfl_root, CommitProbe, SqliteCatalog};
 use filesquid_ocfl::storage::{complete_immediately, FsBackend};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -452,4 +455,283 @@ fn a_commit_without_journal_ids_publishes_and_warns_without_identifying_data() {
     assert!(!text.contains("Family"), "{text}");
     assert!(!text.contains(catalog_fixture::INSTALLATION), "{text}");
     assert!(!text.contains(fx.root.to_string_lossy().as_ref()), "{text}");
+}
+
+/// The entries in `journal` linked to operation `op`.
+fn linked_to(journal: &dyn filesquid_api::journal::JournalStore, op: &str) -> Vec<JournalEntry> {
+    all_entries(journal)
+        .into_iter()
+        .filter(|e| e.operation_id.as_deref() == Some(op))
+        .collect()
+}
+
+/// Owner decision 2026-10-19 with DE-0.10 (ADR 040 Decision 1): in a catalog that records
+/// PROV-O history, a command that changes nothing commits no version and therefore no PROV-O
+/// record, and stores no receipt and no journal entry (no `ocfl.commit` either); the next
+/// command that does change something still commits a version with its `ocfl.commit` and own
+/// entry, linked to that version.
+#[test]
+fn a_recorded_no_op_commits_no_version_and_journals_nothing() {
+    let journal: Arc<dyn filesquid_api::journal::JournalStore> =
+        Arc::new(MemoryJournal::new("desktop"));
+    let fx = Fixture::recording(
+        temp_root("recorded-no-op"),
+        journal.clone(),
+        Arc::new(NoCrash),
+    );
+    let lib = fx.create_library("Family archive");
+    let created = fx.run("1", summer(&lib));
+    let collection = CollectionId::new(created.created_id.expect("id")).expect("collection");
+    let before = all_entries(journal.as_ref()).len();
+    let rename = |title: &str| LibraryCommand::RenameCollection {
+        library_id: lib.clone(),
+        collection_id: collection.clone(),
+        title: title.into(),
+    };
+    let same = OperationId::new("op-same-title").unwrap();
+    let result = fx
+        .run_as(same.clone(), "2", rename("Summer"))
+        .expect("no-op");
+    assert_eq!(result.revision.as_deref(), Some("2"));
+    assert_eq!(snapshot(&fx.root, &lib).unwrap().version.to_string(), "v2");
+    assert_eq!(fx.catalog.receipt(&same).expect("read"), None);
+    assert_eq!(all_entries(journal.as_ref()).len(), before);
+    assert!(linked_to(journal.as_ref(), "op-same-title").is_empty());
+    let changed = OperationId::new("op-new-title").unwrap();
+    fx.run_as(changed, "2", rename("Summer 2026"))
+        .expect("rename");
+    assert_eq!(snapshot(&fx.root, &lib).unwrap().version.to_string(), "v3");
+    let linked = linked_to(journal.as_ref(), "op-new-title");
+    let operations: Vec<&str> = linked.iter().map(|e| e.operation.as_str()).collect();
+    assert_eq!(operations, ["ocfl.commit", "library.collection.rename"]);
+    assert!(linked
+        .iter()
+        .all(|e| e.object_ref.as_deref().is_some_and(|r| r.ends_with("@v3"))));
+}
+
+/// The snapshot version name of `library` (`v1`, `v2`, ...).
+fn head(fx: &Fixture, library: &LibraryId) -> String {
+    snapshot(&fx.root, library)
+        .expect("snapshot")
+        .version
+        .to_string()
+}
+
+/// Index `files` (each with its listing order) in `library`, journaled as
+/// `library.file.index`.
+fn index_files(fx: &Fixture, library: &LibraryId, files: &[(File, i64)]) {
+    let entry = JournalEntry::new("library.file.index", Outcome::Succeeded);
+    fx.catalog
+        .index_files(library, files, entry)
+        .expect("index files");
+}
+
+/// Index `folders` in `library`, journaled as `library.folder.index`.
+fn index_folders(fx: &Fixture, library: &LibraryId, folders: &[Folder]) {
+    let entry = JournalEntry::new("library.folder.index", Outcome::Succeeded);
+    fx.catalog
+        .index_folders(library, folders, entry)
+        .expect("index folders");
+}
+
+/// The entries `journal` stored after its first `before` entries.
+fn journaled_since(
+    journal: &dyn filesquid_api::journal::JournalStore,
+    before: usize,
+) -> Vec<JournalEntry> {
+    all_entries(journal).into_iter().skip(before).collect()
+}
+
+/// A library created in `fx` with its collection "Summer" (at v2), answered with that
+/// collection.
+fn library_with_home(fx: &Fixture) -> (LibraryId, CollectionId) {
+    let lib = fx.create_library("Family archive");
+    let created = fx.run("1", summer(&lib));
+    let home = CollectionId::new(created.created_id.expect("id")).expect("collection");
+    (lib, home)
+}
+
+/// The root folder `years` of `library`, named `name`.
+fn years(library: &LibraryId, name: &str) -> Folder {
+    Folder::new(FolderId::new("years").unwrap(), library.clone(), name).unwrap()
+}
+
+/// Owner decision 2026-10-19: a catalog index refresh that changes nothing is treated like a
+/// no-op command. Re-indexing the same files or folders, or indexing none, commits no
+/// version and journals nothing (no outbox entry either); a refresh that does change
+/// something still commits a version and journals its `ocfl.commit` and own entry, linked to
+/// that version, exactly as before.
+#[test]
+fn an_index_refresh_that_changes_nothing_journals_nothing() {
+    let fx = Fixture::new("index-no-op");
+    let (lib, home) = library_with_home(&fx);
+    let file = |order| {
+        let file = File::new(FileId::new("f-1").unwrap(), lib.clone(), home.clone());
+        (file, order)
+    };
+    index_files(&fx, &lib, &[file(3)]);
+    index_folders(&fx, &lib, &[years(&lib, "Years")]);
+    assert_eq!(head(&fx, &lib), "v4");
+    let before = all_entries(fx.journal.as_ref()).len();
+    index_files(&fx, &lib, &[file(3)]);
+    index_files(&fx, &lib, &[]);
+    index_folders(&fx, &lib, &[years(&lib, "Years")]);
+    index_folders(&fx, &lib, &[]);
+    assert_eq!(head(&fx, &lib), "v4");
+    assert!(journaled_since(fx.journal.as_ref(), before).is_empty());
+    assert_eq!(fx.catalog.outbox_len(&lib).expect("outbox"), 0);
+    index_files(&fx, &lib, &[file(4)]);
+    index_folders(&fx, &lib, &[years(&lib, "Decades")]);
+    assert_eq!(head(&fx, &lib), "v6");
+    let changed = journaled_since(fx.journal.as_ref(), before);
+    let operations: Vec<&str> = changed.iter().map(|e| e.operation.as_str()).collect();
+    assert_eq!(
+        operations,
+        [
+            "ocfl.commit",
+            "library.file.index",
+            "ocfl.commit",
+            "library.folder.index"
+        ]
+    );
+    let linked: Vec<bool> = changed
+        .iter()
+        .zip(["@v5", "@v5", "@v6", "@v6"])
+        .map(|(e, v)| e.object_ref.as_deref().is_some_and(|r| r.ends_with(v)))
+        .collect();
+    assert_eq!(linked, [true; 4], "{changed:?}");
+}
+
+/// A refresh that fails (a file or folder of another library) is not a no-op: it publishes
+/// no version and is journaled once as `failed` with its error code, and nothing else.
+#[test]
+fn a_failed_index_refresh_is_journaled_as_failed() {
+    let fx = Fixture::new("index-failed");
+    let (lib, home) = library_with_home(&fx);
+    let other = LibraryId::new("0b0f8a52-3f0e-4c4b-9a59-5b3c0e7d1a01").unwrap();
+    let stray = File::new(FileId::new("f-x").unwrap(), other.clone(), home);
+    let before = all_entries(fx.journal.as_ref()).len();
+    let files = JournalEntry::new("library.file.index", Outcome::Succeeded);
+    assert!(fx.catalog.index_files(&lib, &[(stray, 1)], files).is_err());
+    let folders = JournalEntry::new("library.folder.index", Outcome::Succeeded);
+    assert!(fx
+        .catalog
+        .index_folders(&lib, &[years(&other, "Years")], folders)
+        .is_err());
+    assert_eq!(head(&fx, &lib), "v2");
+    assert_eq!(fx.catalog.outbox_len(&lib).expect("outbox"), 0);
+    let journaled = journaled_since(fx.journal.as_ref(), before);
+    let seen: Vec<(&str, Outcome, Option<&str>)> = journaled
+        .iter()
+        .map(|e| (e.operation.as_str(), e.outcome, e.error_code.as_deref()))
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            ("library.file.index", Outcome::Failed, Some("internal")),
+            ("library.folder.index", Outcome::Failed, Some("internal"))
+        ]
+    );
+    let text = format!("{journaled:?}");
+    assert!(
+        journaled.iter().all(|e| e.target_ids == [lib.as_str()]),
+        "{text}"
+    );
+    for private in [
+        "Years",
+        "f-x",
+        other.as_str(),
+        fx.root.to_string_lossy().as_ref(),
+    ] {
+        assert!(!text.contains(private), "redacted: {text}");
+    }
+}
+
+/// A refresh of a library the catalog does not hold has no outbox to journal into: it is
+/// refused, and its `failed` entry, targeting that library, goes through the host's bounded
+/// failure journal queue (never dropped, producers wait), not straight to the store.
+#[test]
+fn a_refresh_of_an_unknown_library_is_journaled_as_failed() {
+    let root = temp_root("index-unknown");
+    let journal: Arc<dyn JournalStore> = Arc::new(MemoryJournal::new("desktop"));
+    let failures: Arc<dyn JournalStore> = Arc::new(MemoryJournal::new("desktop"));
+    let writer = JournalWriter::start(
+        failures.clone(),
+        WriterConfig::default(),
+        EventBus::new(),
+        Arc::new(Metrics::default()),
+    );
+    let catalog = SqliteCatalog::open(&root, journal.clone())
+        .expect("open")
+        .with_failure_journal(writer.sender());
+    let unknown = LibraryId::new("0b0f8a52-3f0e-4c4b-9a59-5b3c0e7d1a02").unwrap();
+    let entry = JournalEntry::new("library.folder.index", Outcome::Succeeded);
+    let refused = catalog.index_folders(&unknown, &[years(&unknown, "Years")], entry);
+    assert!(
+        matches!(refused, Err(CatalogError::Failed(_))),
+        "{refused:?}"
+    );
+    writer.sender().flush();
+    assert!(all_entries(journal.as_ref()).is_empty());
+    let journaled = all_entries(failures.as_ref());
+    let seen: Vec<(&str, Outcome, Option<&str>, &[String])> = journaled
+        .iter()
+        .map(|e| {
+            let targets = e.target_ids.as_slice();
+            (
+                e.operation.as_str(),
+                e.outcome,
+                e.error_code.as_deref(),
+                targets,
+            )
+        })
+        .collect();
+    let target = [unknown.as_str().to_string()];
+    assert_eq!(
+        seen,
+        [(
+            "library.folder.index",
+            Outcome::Failed,
+            Some("internal"),
+            &target[..]
+        )]
+    );
+    assert!(!format!("{journaled:?}").contains("Years"), "{journaled:?}");
+    writer.shutdown();
+    std::fs::remove_dir_all(root).expect("cleanup");
+}
+
+/// The same rule in a catalog that records PROV-O history (DE-0.10): an index refresh that
+/// changes nothing writes no version, so no PROV-O record, and journals nothing; one that
+/// changes something journals exactly the entries its version carries.
+#[test]
+fn a_recorded_index_refresh_that_changes_nothing_journals_nothing() {
+    let journal: Arc<dyn filesquid_api::journal::JournalStore> =
+        Arc::new(MemoryJournal::new("desktop"));
+    let fx = Fixture::recording(
+        temp_root("recorded-index-no-op"),
+        journal.clone(),
+        Arc::new(NoCrash),
+    );
+    let (lib, home) = library_with_home(&fx);
+    let file = |order| {
+        let file = File::new(FileId::new("f-1").unwrap(), lib.clone(), home.clone());
+        (file, order)
+    };
+    index_files(&fx, &lib, &[file(3)]);
+    assert_eq!(head(&fx, &lib), "v3");
+    let before = all_entries(journal.as_ref()).len();
+    index_files(&fx, &lib, &[file(3)]);
+    index_folders(&fx, &lib, &[]);
+    assert_eq!(head(&fx, &lib), "v3");
+    assert!(journaled_since(journal.as_ref(), before).is_empty());
+    assert_eq!(fx.catalog.outbox_len(&lib).expect("outbox"), 0);
+    index_files(&fx, &lib, &[file(4)]);
+    assert_eq!(head(&fx, &lib), "v4");
+    let changed = journaled_since(journal.as_ref(), before);
+    let operations: Vec<&str> = changed.iter().map(|e| e.operation.as_str()).collect();
+    assert_eq!(operations, ["ocfl.commit", "library.file.index"]);
+    assert!(changed
+        .iter()
+        .all(|e| e.object_ref.as_deref().is_some_and(|r| r.ends_with("@v4"))));
 }
