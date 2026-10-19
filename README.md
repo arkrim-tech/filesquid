@@ -266,6 +266,14 @@ cd apps/filesquid
 cargo test -p filesquid-api --locked --test unit_local_library --test unit_version_inventory_repair --test features
 ```
 
+The OCFL validation findings (API-S-022: scheduled, on-request and takeover validation runs, the findings store and cursor, the `ocfl_validation_errors` health reason and the findings and validation-run routes) run against in-memory OCFL roots and one real directory; the native SQLite findings store has its own tests:
+
+```sh
+cd apps/filesquid
+cargo test -p filesquid-api --locked --test unit_ocfl_validation --test features
+cargo test -p filesquid-native --locked --test unit_findings
+```
+
 The replica (API-S-024: the permission-aware cache identity, visible coverage with `not_cached` and `evicted` recovery states, and the ledger of pending changes that become canonical only after a fenced head publication) is pure computation over an injected cache, so it needs no database or browser:
 
 ```sh

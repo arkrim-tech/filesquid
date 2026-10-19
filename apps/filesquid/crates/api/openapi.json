@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "FileSquid API",
-    "version": "0.8.0",
+    "version": "0.9.0",
     "description": "The single FileSquid API served by every FileSquid host. See resources/architecture/030-filesquid-api-and-transports.md. Conventions: a command (mutation) sends a CommandEnvelope as the `envelope` member of its JSON request body (operation_id is the idempotency key, expected_revision the revision last read) and answers with a CommandOutcome; a query (list) takes the PageSize (`limit`, 1-1000) and Cursor (`cursor`) parameters; every failed request answers with an ApiError body (code, message, retryable). Router-wide fallbacks: any /api/v1/ path not in this contract answers 404 not_found, and a documented path called with a method it does not document answers 405 method_not_allowed; both carry the ApiError body. They are not listed per operation because no operation sends them. Authorisation is deny-by-default: every operation, including health, the contract and the event channel, requires the bearerAuth credential and is authorised before anything else runs, so a call without it answers 401 unauthorized and a call whose credential is not accepted or does not grant the operation answers 403 forbidden, before any 404 or 405; both carry the ApiError body with a DenialReason in `reason`. Each operation names the authorisation action it performs in x-filesquid-action. The one deliberate exception is GET /api/v1/health/live (x-filesquid-action public, security []), a liveness probe that answers only {\"status\":\"up\"} without a credential. Paths marked x-filesquid-host-route are served by the hosts, not by the filesquid-api router."
   },
   "security": [
@@ -754,6 +754,148 @@
           }
         }
       }
+    },
+    "/api/v1/admin/ocfl/findings": {
+      "get": {
+        "operationId": "getOcflFindings",
+        "summary": "Open OCFL validation findings and validation runs",
+        "description": "API-S-022. The open findings of every open library (at most 1,000, ordered by library, object, code and location; `truncated` when more are open) the schedule and cap in force and, per open library, whether a run is going, the last run and the next scheduled run. A finding's `location` is null for a caller who may not read the object: the server administrator, until per-object permissions arrive.",
+        "x-filesquid-action": "monitor.read",
+        "responses": {
+          "200": {
+            "description": "Findings and runs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FindingsView"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/ocfl/validation-runs": {
+      "post": {
+        "operationId": "startOcflValidationRuns",
+        "summary": "Start OCFL validation runs",
+        "description": "API-S-022. Starts a validation run of the named library, or of every open library when the body is empty or names none. A run continues from the library's stored cursor unless `from_start` is true. Runs go in the background and report in the process registry (`ocfl.validation`) and on the event channel. Starting a job changes no library content or organisation, so the body is a RunRequest, not a CommandEnvelope. Every refusal is journaled as `ocfl.validation.run`.",
+        "x-filesquid-action": "ocfl.validation.run",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The libraries whose run started, and those refused.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunAccepted"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "The named library is not open on this host (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A run of the named library is already going (`already_running`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/ocfl/validation-settings": {
+      "put": {
+        "operationId": "putOcflValidationSettings",
+        "summary": "Change the OCFL validation schedule and cap",
+        "description": "API-S-022. The desktop owner or a server administrator changes the time between scheduled runs and the object cap of a run. The next scheduled run of each open library moves with the new interval. Answers the settings now in force. Changing settings changes no library content or organisation, so the body is the settings, not a CommandEnvelope. Every change and refusal is journaled as `ocfl.validation.configure`.",
+        "x-filesquid-action": "ocfl.validation.configure",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ValidationSettings"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The settings now in force.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationSettings"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -990,6 +1132,17 @@
           },
           "detail": {
             "type": "string"
+          },
+          "codes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Machine-readable codes behind the reason, when it has any: for ocfl_validation_errors, the OCFL error codes of the open findings, sorted. Absent otherwise."
+          },
+          "objects": {
+            "type": "integer",
+            "description": "How many objects the reason concerns (ocfl_validation_errors). Absent otherwise."
           }
         }
       },
@@ -1001,7 +1154,9 @@
           "data_dir_writable",
           "free_bytes",
           "queue_fill",
-          "errors_last_5m"
+          "errors_last_5m",
+          "ocfl_error_codes",
+          "ocfl_error_objects"
         ],
         "properties": {
           "stalled": {
@@ -1023,6 +1178,15 @@
             "type": "number"
           },
           "errors_last_5m": {
+            "type": "integer"
+          },
+          "ocfl_error_codes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ocfl_error_objects": {
             "type": "integer"
           }
         }
@@ -1488,6 +1652,243 @@
           }
         },
         "additionalProperties": false
+      },
+      "FindingSeverity": {
+        "type": "string",
+        "enum": [
+          "error",
+          "warning"
+        ]
+      },
+      "FindingView": {
+        "type": "object",
+        "required": [
+          "library_id",
+          "object_id",
+          "version",
+          "code",
+          "severity",
+          "location"
+        ],
+        "properties": {
+          "library_id": {
+            "type": "string"
+          },
+          "object_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "code": {
+            "type": "string"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/FindingSeverity"
+          },
+          "location": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Storage key (and JSON pointer) of the fault; null for a caller who may not read the object."
+          }
+        }
+      },
+      "RunTrigger": {
+        "type": "string",
+        "enum": [
+          "scheduled",
+          "requested"
+        ]
+      },
+      "RunOutcome": {
+        "type": "string",
+        "enum": [
+          "completed",
+          "capped",
+          "cancelled",
+          "failed"
+        ]
+      },
+      "RunView": {
+        "type": "object",
+        "required": [
+          "trigger",
+          "started",
+          "ended",
+          "outcome",
+          "checked",
+          "not_checked",
+          "error_code"
+        ],
+        "properties": {
+          "trigger": {
+            "$ref": "#/components/schemas/RunTrigger"
+          },
+          "started": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ended": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/RunOutcome"
+          },
+          "checked": {
+            "type": "integer"
+          },
+          "not_checked": {
+            "type": "integer"
+          },
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "LibraryRuns": {
+        "type": "object",
+        "required": [
+          "library_id",
+          "running",
+          "last_run",
+          "next_run"
+        ],
+        "properties": {
+          "library_id": {
+            "type": "string"
+          },
+          "running": {
+            "type": "boolean"
+          },
+          "last_run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "next_run": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "FindingsView": {
+        "type": "object",
+        "required": [
+          "findings",
+          "truncated",
+          "settings",
+          "libraries"
+        ],
+        "properties": {
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FindingView"
+            }
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/ValidationSettings"
+          },
+          "libraries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LibraryRuns"
+            }
+          }
+        }
+      },
+      "RunRequest": {
+        "type": "object",
+        "properties": {
+          "library_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The one library to run; every open library when absent or null."
+          },
+          "from_start": {
+            "type": "boolean",
+            "description": "Start at the beginning of the object order instead of the stored cursor (default false)."
+          }
+        }
+      },
+      "RunRefusal": {
+        "type": "object",
+        "required": [
+          "library_id",
+          "error_code"
+        ],
+        "properties": {
+          "library_id": {
+            "type": "string"
+          },
+          "error_code": {
+            "type": "string"
+          }
+        }
+      },
+      "RunAccepted": {
+        "type": "object",
+        "required": [
+          "started",
+          "refused"
+        ],
+        "properties": {
+          "started": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "refused": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunRefusal"
+            }
+          }
+        }
+      },
+      "ValidationSettings": {
+        "type": "object",
+        "required": [
+          "interval_ms",
+          "object_cap"
+        ],
+        "properties": {
+          "interval_ms": {
+            "type": "integer",
+            "minimum": 3600000,
+            "maximum": 31622400000,
+            "description": "Time between scheduled runs of a library, in milliseconds (one hour to 366 days; default 7 days)."
+          },
+          "object_cap": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10000000,
+            "description": "Most objects one run checks (default 100,000)."
+          }
+        }
       }
     },
     "parameters": {

@@ -59,6 +59,8 @@ const health = {
     free_bytes: 1024 ** 3,
     queue_fill: 0,
     errors_last_5m: 0,
+    ocfl_error_codes: [],
+    ocfl_error_objects: 0,
   },
 };
 

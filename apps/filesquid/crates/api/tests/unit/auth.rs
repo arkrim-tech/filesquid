@@ -31,12 +31,23 @@ const PRESENTED: &str = "ben-member-token";
 
 /// One request through the router with an optional bearer token: status and JSON body.
 async fn call(state: &ApiState, method: Method, path: &str, token: Option<&str>) -> (u16, Value) {
+    call_with_body(state, method, path, token, "").await
+}
+
+/// [`call`] with a JSON `body`.
+async fn call_with_body(
+    state: &ApiState,
+    method: Method,
+    path: &str,
+    token: Option<&str>,
+    body: &str,
+) -> (u16, Value) {
     let mut request = Request::builder().method(method).uri(path);
     if let Some(token) = token {
         request = request.header(header::AUTHORIZATION, format!("Bearer {token}"));
     }
     let response = router(state.clone())
-        .oneshot(request.body(Body::empty()).expect("request"))
+        .oneshot(request.body(Body::from(body.to_string())).expect("request"))
         .await
         .expect("router answers");
     let status = response.status().as_u16();
@@ -68,8 +79,25 @@ fn journaled_owner_state() -> (ApiState, LaunchToken, Monitor, Arc<MemoryJournal
         filesquid_api::host::HostIdentity::desktop(),
         Arc::new(filesquid_api::host::NotEnrolled),
     );
+    let validation: filesquid_api::ocfl_validation::ValidationService<
+        filesquid_ocfl::storage::MemoryBackend,
+    > = filesquid_api::ocfl_validation::ValidationService::new(
+        Arc::new(filesquid_api::ocfl_validation::MemoryFindingsStore::new()),
+        monitor.clone(),
+    );
+    state.install_validation(Arc::new(validation));
     history_fixture::install_sample_history(&state);
     (state, token, monitor, store)
+}
+
+/// The method each routed path answers: POST and PUT for the validation command routes, GET
+/// otherwise.
+fn method_of(path: &str) -> Method {
+    match path {
+        "/api/v1/admin/ocfl/validation-runs" => Method::POST,
+        "/api/v1/admin/ocfl/validation-settings" => Method::PUT,
+        _ => Method::GET,
+    }
 }
 
 /// Every routed path that requires a credential: all but the deliberately public ones.
@@ -137,7 +165,13 @@ async fn every_route_answers_the_per_launch_token_holder() {
     let (state, token, monitor, _) = journaled_owner_state();
     for path in routed_paths() {
         let path = history_fixture::concrete(&path);
-        let (status, json) = call(&state, Method::GET, &path, Some(token.secret())).await;
+        let method = method_of(&path);
+        let (status, json) = if method == Method::PUT {
+            let body = r#"{"interval_ms":604800000,"object_cap":100000}"#;
+            call_with_body(&state, method, &path, Some(token.secret()), body).await
+        } else {
+            call(&state, method, &path, Some(token.secret())).await
+        };
         assert_eq!(status, 200, "{path}: {json}");
     }
     monitor.shutdown();
@@ -261,6 +295,8 @@ fn every_routed_path_declares_its_action() {
             "/api/v1/health/live" => Action::Public,
             "/api/v1/openapi.json" => Action::ReadContract,
             "/api/v1/host" => Action::ReadHost,
+            "/api/v1/admin/ocfl/validation-runs" => Action::RunValidation,
+            "/api/v1/admin/ocfl/validation-settings" => Action::ConfigureValidation,
             admin if admin.starts_with("/api/v1/admin/") => Action::ReadMonitor,
             "/api/v1/history" => Action::ReadHistory,
             file if file.starts_with("/api/v1/files/") => Action::ReadHistory,
@@ -280,6 +316,8 @@ fn action_names_are_unique_dotted_identifiers() {
             "contract.read",
             "events.subscribe",
             "monitor.read",
+            "ocfl.validation.run",
+            "ocfl.validation.configure",
             "host.read",
             "history.read",
             "public"

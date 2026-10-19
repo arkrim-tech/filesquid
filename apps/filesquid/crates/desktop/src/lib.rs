@@ -54,6 +54,7 @@ use filesquid_api::history::{HostFacts, ProvenanceContext};
 use filesquid_api::host::{HostIdentity, NotEnrolled};
 use filesquid_api::journal::{JournalEntry, Outcome};
 use filesquid_api::journal_writer::JournalSender;
+use filesquid_api::ocfl_validation::ValidationService;
 use filesquid_api::registry::ProcessHandle;
 use filesquid_api::trace_layer::JournalLayer;
 use filesquid_api::ApiState;
@@ -62,6 +63,7 @@ use filesquid_native::installation::{
     self, InstallationError, InstallationSource, INSTALLATION_CREATED,
 };
 use filesquid_native::{HostMonitor, SqliteCatalog, CATALOG_DIR};
+use filesquid_ocfl::storage::FsBackend;
 use ipc_observer::TauriIpcObserver;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -310,6 +312,12 @@ pub fn open_host_monitor(
     Ok(host)
 }
 
+/// The host's OCFL validation (API-S-022), held in Tauri's managed state. Opening a library
+/// (DE-1.1) opens its storage root here with
+/// [`ValidationService::open_library`](filesquid_api::ocfl_validation::ValidationService::open_library);
+/// the monitor ticker starts the scheduled runs.
+pub struct DesktopValidation(pub ValidationService<FsBackend>);
+
 /// Journal operation of an installation UUID copy restored from the other copy.
 pub const INSTALLATION_RESTORED: &str = "host.installation.restored";
 
@@ -456,6 +464,10 @@ fn start_monitor(
         open_library_catalog(&data_dir, &host, &installation).inspect_err(|_| host.stop())?;
     app.manage(DesktopInstallation(installation));
     app.manage(DesktopCatalog(Arc::new(catalog)));
+    let validation = host
+        .start_validation::<FsBackend>(&data_dir, &state)
+        .inspect_err(|_| host.stop())?;
+    app.manage(DesktopValidation(validation));
     let forwarder = Arc::new(event_channel::register_forwarder(host.monitor().registry()));
     let stop = Arc::new(AtomicBool::new(false));
     spawn_ticker(host.clone(), stop.clone());
