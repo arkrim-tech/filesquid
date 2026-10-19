@@ -376,8 +376,9 @@ fn journal_change(ctx: &RunContext<'_>, change: &FindingChange) {
 }
 
 /// The `<object-id>@vN` reference of the object version `found` is about, when it names a
-/// real object at a known version: `None` for an object without a readable version and for a
-/// root's stand-in identifier, which is not an OCFL object ID. Pure.
+/// real object at a known version: `None` for an object without a readable version, for a
+/// root's stand-in identifier, which is not an OCFL object ID, and for a reference the journal
+/// would not keep as opaque (it would store `redacted` instead). Pure.
 fn object_ref(found: &Finding) -> Option<String> {
     let version = found.version.as_deref()?;
     if found.object_id.starts_with("root:") {
@@ -386,6 +387,7 @@ fn object_ref(found: &Finding) -> Option<String> {
     filesquid_core::VersionRef::new(found.object_id.as_str(), version)
         .ok()
         .map(|reference| reference.object_ref())
+        .filter(|object_ref| crate::journal::is_object_ref(object_ref))
 }
 
 /// The journal entry of `found` under `operation`.

@@ -29,7 +29,7 @@ Other constraints: defaults of 7 days and 100,000 objects, both bounded and jour
 - **Settings.** The schedule and the cap are changed by the desktop owner or a server administrator through `PUT /api/v1/admin/ocfl/validation-settings`, journaled as `ocfl.validation.configure`.
 - **SRS-F-061: Activity journal and live health monitoring.** Validation findings are a health input. Every run, refusal, finding and closure is journaled with opaque IDs and codes. The run is a registered process with a heartbeat.
 - **SRS-F-042: OCFL preservation and portable recovery.** External edits to an object (the E023 stray file, a tampered file) are detected and reported, not adopted.
-- **API-S-002: versioned contract.** `openapi.json` 0.7.0 adds the three routes (findings, validation runs, validation settings), the actions `ocfl.validation.run` and `ocfl.validation.configure`, and the schemas; `ui/src/api/schema.d.ts` is regenerated and the UI contract test passes.
+- **API-S-002: versioned contract.** `openapi.json` 0.9.0 (0.7.0 when this task was first reviewed, before `main` moved to 0.8.0) adds the three routes (findings, validation runs, validation settings), the actions `ocfl.validation.run` and `ocfl.validation.configure`, and the schemas; `ui/src/api/schema.d.ts` is regenerated and the UI contract test passes.
 - **API-S-006: application-layer isolation.** The findings store is injected through `FindingsStore`, like `JournalStore`. The SQLite store is `filesquid_native::SqliteFindings`.
 
 ## What changed
@@ -47,7 +47,7 @@ Other constraints: defaults of 7 days and 100,000 objects, both bounded and jour
   - `monitor.rs`: `install_findings` and `publish_health`. A failing findings store counts as an unreachable operational store.
   - `auth`: `Action::RunValidation` (`ocfl.validation.run`).
   - `ApiState::install_validation`.
-  - Contract version 0.7.0.
+  - Contract version 0.9.0.
 - `crates/native`: `SqliteFindings` (three tables in `filesquid.sqlite`), `HostMonitor::start_validation`, and `HostMonitor::tick`, which starts the scheduled runs.
 - Hosts: the desktop starts validation and keeps `DesktopValidation` for DE-1.1 to open libraries. The server starts it too; it has no OCFL library yet.
 - Tests:

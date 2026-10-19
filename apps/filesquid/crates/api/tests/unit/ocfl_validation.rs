@@ -1219,19 +1219,20 @@ fn journaled_e023(rig: &ValidationRig, operation: &str) -> usize {
 fn finding_entries_carry_the_object_version_reference() {
     let rig = ValidationRig::new();
     rig.e023_object("obj-b", "urn:uuid:b");
-    rig.object("obj-c", "urn:uuid:b");
+    rig.e023_object("obj-c", "urn:uuid:b");
     rig.run(RunTrigger::Requested, true).expect("run");
     let opened = rig.journaled(FINDING_OPERATION);
-    let e023 = opened
+    let e023: Vec<_> = opened
         .iter()
-        .find(|e| e.error_code.as_deref() == Some("E023"))
-        .expect("E023 journaled");
-    assert_eq!(e023.object_ref.as_deref(), Some("urn:uuid:b@v1"));
-    assert!(
-        opened
-            .iter()
-            .filter(|e| e.target_ids.iter().any(|id| id.starts_with("root:")))
-            .all(|e| e.object_ref.is_none()),
+        .filter(|e| e.error_code.as_deref() == Some("E023"))
+        .collect();
+    let (by_root, by_id): (Vec<&JournalEntry>, Vec<&JournalEntry>) = e023
+        .iter()
+        .partition(|e| e.target_ids.iter().any(|id| id.starts_with("root:")));
+    assert_eq!((by_id.len(), by_root.len()), (1, 1), "{e023:?}");
+    assert_eq!(by_id[0].object_ref.as_deref(), Some("urn:uuid:b@v1"));
+    assert_eq!(
+        by_root[0].object_ref, None,
         "a root's stand-in identifier is no object reference"
     );
     rig.remove("obj-b/v1/content/stray.tmp");
@@ -1239,7 +1240,7 @@ fn finding_entries_carry_the_object_version_reference() {
     let closed = rig.journaled(FINDING_CLOSED_OPERATION);
     let closure = closed
         .iter()
-        .find(|e| e.error_code.as_deref() == Some("E023"))
+        .find(|e| e.error_code.as_deref() == Some("E023") && e.object_ref.is_some())
         .expect("E023 closed");
     assert_eq!(closure.object_ref.as_deref(), Some("urn:uuid:b@v1"));
 }
