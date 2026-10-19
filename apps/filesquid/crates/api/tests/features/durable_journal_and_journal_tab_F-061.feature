@@ -84,6 +84,19 @@ Feature: Durable, complete and browsable activity journal
     And no event should be journaled twice
     And no "ui.console.overflow" entry should be written
 
+  Scenario: A refused IndexedDB write after the queue is full is counted at page close
+    Given the host has been unreachable and the UI's in-memory queue holds 10,000 console warnings
+    And the page's IndexedDB store refuses further writes because its 50 MiB budget is reached
+    When 4 more console warnings occur and the page then closes
+    Then the journal should eventually hold one "ui.console.overflow" entry with the count of events the UI could not keep
+    And every event that was kept should have its own "ui.console.warn" entry
+
+  Scenario: Persisted events are never delivered under another account's credential
+    Given "ana" left 3 undelivered console errors persisted on this device for the server host
+    When "ben" signs in on the same device and FileSquid opens
+    Then none of Ana's 3 events should be sent with Ben's credential
+    And they should be delivered, each as its own entry, when "ana" signs in again
+
   Scenario: Without IndexedDB the events the UI could not keep are counted at page close
     Given IndexedDB is unavailable in the page
     And the UI has 2 console errors already delivered and 3 console errors the route has not yet accepted
