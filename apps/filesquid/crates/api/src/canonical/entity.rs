@@ -98,8 +98,8 @@ pub fn encode(entity: &SnapshotEntity) -> Result<Vec<u8>, CanonicalError> {
 /// The entity stored at logical `path`.
 ///
 /// # Errors
-/// [`CanonicalError::Decode`] for bytes that are not an entity of [`ENTITY_SCHEMA`], or an
-/// entity whose key does not match its path.
+/// [`CanonicalError::Decode`] for bytes that are not an entity of [`ENTITY_SCHEMA`], an
+/// entity whose identifier cannot name a path, or one whose key does not match its path.
 pub fn decode(path: &str, bytes: &[u8]) -> Result<SnapshotEntity, CanonicalError> {
     let refuse = |reason: String| CanonicalError::Decode {
         path: path.to_string(),
@@ -111,7 +111,11 @@ pub fn decode(path: &str, bytes: &[u8]) -> Result<SnapshotEntity, CanonicalError
     if stored.schema != ENTITY_SCHEMA {
         return Err(refuse(format!("unknown schema {}", stored.schema)));
     }
-    let expected = stored.entity.key().path()?;
+    let expected = stored
+        .entity
+        .key()
+        .path()
+        .map_err(|_| refuse("entity identifier is not a path segment".into()))?;
     if expected != path {
         return Err(refuse("entity does not match its path".into()));
     }

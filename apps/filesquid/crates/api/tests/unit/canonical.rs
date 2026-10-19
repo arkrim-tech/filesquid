@@ -470,3 +470,14 @@ fn an_entity_file_larger_than_the_bound_is_refused_before_it_is_read() {
         "{refused:?}"
     );
 }
+
+#[test]
+fn an_entity_whose_identifier_cannot_name_a_path_is_a_decode_error() {
+    let bad =
+        br#"{"schema":1,"entity":{"kind":"folder","id":"a/b","library_id":"l","name":"Years"}}"#;
+    let refused = filesquid_api::canonical::entity::decode("folders/a.json", bad);
+    assert!(
+        matches!(&refused, Err(CanonicalError::Decode { path, .. }) if path == "folders/a.json"),
+        "{refused:?}"
+    );
+}

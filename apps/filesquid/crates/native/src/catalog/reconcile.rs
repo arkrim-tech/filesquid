@@ -43,7 +43,8 @@ pub(crate) fn set_snapshot_version(
 }
 
 /// Bring the catalog in `conn` to `snapshot` (see the module documentation) and answer
-/// whether anything changed. Database I/O.
+/// whether anything changed: only a catalog behind the head is rebuilt and has its receipts
+/// restored and published intents cleared. Database I/O.
 ///
 /// # Errors
 /// [`CatalogError::Failed`] when the snapshot names another library or holds an entity of
@@ -58,21 +59,21 @@ pub(crate) fn reconcile(
     if snapshot.library.record.library.id() != library_id {
         return Err(super::failed("the snapshot names another library"));
     }
+    // A catalog that reflects the head stored every receipt and cleared every intent in the
+    // transaction that recorded that head, so only a catalog behind it is touched.
+    if !behind {
+        return Ok(false);
+    }
     let tx = conn.transaction().map_err(sql)?;
-    if behind {
-        rebuild(&tx, library_id, snapshot)?;
-    }
-    let restored = restore_receipts(&tx, &snapshot.operations)?;
-    let cleared = clear_published(&tx, &snapshot.operations)?;
-    let changed = behind || restored > 0 || cleared > 0;
-    if changed {
-        let entry = JournalEntry::new(RECONCILE_OPERATION, Outcome::Succeeded)
-            .target(library_id.as_str())
-            .target(version);
-        outbox::push(&tx, &entry)?;
-    }
+    rebuild(&tx, library_id, snapshot)?;
+    restore_receipts(&tx, &snapshot.operations)?;
+    clear_published(&tx, &snapshot.operations)?;
+    let entry = JournalEntry::new(RECONCILE_OPERATION, Outcome::Succeeded)
+        .target(library_id.as_str())
+        .target(version);
+    outbox::push(&tx, &entry)?;
     tx.commit().map_err(sql)?;
-    Ok(changed)
+    Ok(true)
 }
 
 /// Replace every organisation row with the snapshot's. Database I/O.
@@ -131,12 +132,12 @@ fn rebuild_collections(
     Ok(())
 }
 
-/// Store the receipt of every published operation the catalog does not hold yet; answer
-/// how many were stored. Database I/O.
+/// Store the receipt of every published operation the catalog does not hold yet.
+/// Database I/O.
 fn restore_receipts(
     tx: &Transaction<'_>,
     operations: &[OperationRecord],
-) -> Result<usize, CatalogError> {
+) -> Result<(), CatalogError> {
     let mut stmt = tx
         .prepare(
             "INSERT OR IGNORE INTO receipts
@@ -144,19 +145,17 @@ fn restore_receipts(
              VALUES (?1, ?2, ?3, ?4, ?5)",
         )
         .map_err(sql)?;
-    let mut restored = 0;
     for op in operations {
-        restored += stmt
-            .execute(params![
-                op.operation_id,
-                op.revision,
-                op.created_id,
-                op.deletion.map(|d| d.deleted_at_ms),
-                op.deletion.map(|d| d.purge_after_ms),
-            ])
-            .map_err(sql)?;
+        stmt.execute(params![
+            op.operation_id,
+            op.revision,
+            op.created_id,
+            op.deletion.map(|d| d.deleted_at_ms),
+            op.deletion.map(|d| d.purge_after_ms),
+        ])
+        .map_err(sql)?;
     }
-    Ok(restored)
+    Ok(())
 }
 
 /// Forget the snapshot version the catalog claims to reflect: its library's OCFL root holds
@@ -172,17 +171,16 @@ pub(crate) fn forget_snapshot(conn: &Connection) -> Result<bool, CatalogError> {
     Ok(changed > 0)
 }
 
-/// Remove the intents of published operations; answer how many. Database I/O.
+/// Remove the intents of published operations. Database I/O.
 fn clear_published(
     tx: &Transaction<'_>,
     operations: &[OperationRecord],
-) -> Result<usize, CatalogError> {
+) -> Result<(), CatalogError> {
     let mut stmt = tx
         .prepare("DELETE FROM pending_intents WHERE operation_id = ?1")
         .map_err(sql)?;
-    let mut cleared = 0;
     for op in operations {
-        cleared += stmt.execute(params![op.operation_id]).map_err(sql)?;
+        stmt.execute(params![op.operation_id]).map_err(sql)?;
     }
-    Ok(cleared)
+    Ok(())
 }
