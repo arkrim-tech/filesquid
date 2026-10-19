@@ -6,8 +6,8 @@ use filesquid_api::canonical::{
     commit_file_original, commit_snapshot, create_storage_root, file_object_id, file_object_root,
     operation_message, parse_operation_message, read_file_original, read_snapshot,
     snapshot_object_id, touched, CanonicalError, FileOriginal, LibraryHead, OperationRecord,
-    OwnerReadable, SnapshotDelta, SnapshotEntity, SnapshotFile, SnapshotKey, VirtualEntry,
-    SNAPSHOT_ROOT,
+    OriginalRecord, OwnerReadable, SnapshotDelta, SnapshotEntity, SnapshotFile, SnapshotKey,
+    VirtualEntry, SNAPSHOT_ROOT,
 };
 use filesquid_api::library::{CatalogChange, CatalogError, FileState, LibraryRecord};
 use filesquid_core::{
@@ -353,15 +353,17 @@ fn commit_original(
     rig: &Rig,
     file: &FileId,
     original_name: &str,
+    media_type: &str,
     op: &str,
 ) -> Result<filesquid_ocfl::write::CommitReceipt, CanonicalError> {
+    let described = OriginalRecord::new(original_name, media_type)?;
     let root = file_object_root(file).unwrap();
     let model = rig.model(&root, &file_object_id(file));
     ready(commit_file_original(
         &model,
         &OwnerReadable,
         file,
-        original_name,
+        &described,
         b"jpeg bytes",
         meta(&record(op, "1")),
     ))
@@ -375,59 +377,73 @@ fn head_paths(rig: &Rig, file: &FileId) -> Vec<String> {
 }
 
 #[test]
-fn a_file_original_is_its_own_object_with_its_companion() {
+fn a_file_original_is_its_own_object_with_its_metadata_record() {
     let rig = Rig::new();
     let file = FileId::new(FILE).unwrap();
-    let receipt = commit_original(&rig, &file, "IMG_0001.JPG", "op-9").unwrap();
+    let receipt = commit_original(&rig, &file, "IMG_0001.JPG", "image/jpeg", "op-9").unwrap();
     assert_eq!(receipt.object_id, format!("urn:uuid:{FILE}"));
-    let stored = format!("original/{FILE}.JPG");
     assert_eq!(
         head_paths(&rig, &file),
-        vec![stored.clone(), format!("{stored}.metadata.md")]
+        vec![
+            format!("original/{FILE}.JPG"),
+            format!("original/{FILE}.metadata.md")
+        ]
     );
     assert_eq!(
         ready(read_file_original(&rig.root, &OwnerReadable, &file)).unwrap(),
         Some(FileOriginal {
-            path: stored,
-            original_name: "IMG_0001.JPG".into(),
+            path: format!("original/{FILE}.JPG"),
+            record: OriginalRecord {
+                original_name: "IMG_0001.JPG".into(),
+                extension: Some("JPG".into()),
+                media_type: "image/jpeg".into(),
+            },
         })
     );
 }
 
 #[test]
-fn an_owner_name_round_trips_through_its_companion() {
+fn an_owner_name_round_trips_through_its_metadata_record() {
     let rig = Rig::new();
     let file = FileId::new(FILE).unwrap();
     let original = "Café au lait — 写真 (1).JPEG";
-    commit_original(&rig, &file, original, "op-9").unwrap();
-    let stored = format!("original/{FILE}.JPEG");
-    assert!(head_paths(&rig, &file).contains(&stored));
+    commit_original(&rig, &file, original, "image/jpeg", "op-9").unwrap();
     let read = ready(read_file_original(&rig.root, &OwnerReadable, &file))
         .unwrap()
         .expect("original");
-    assert_eq!(read.path, stored);
-    assert_eq!(read.original_name, original);
+    assert_eq!(read.path, format!("original/{FILE}.JPEG"));
+    assert_eq!(read.record.original_name, original);
+    assert!(head_paths(&rig, &file).iter().all(|p| !p.contains("Caf")));
 }
 
 #[test]
-fn the_companion_is_readable_front_matter() {
-    let bytes = filesquid_api::canonical::original::encode_companion("a \"b\".txt").unwrap();
+fn the_metadata_record_is_readable_front_matter() {
+    let record = OriginalRecord::new("a \"b\"", "text/plain").unwrap();
+    let bytes = filesquid_api::canonical::original::encode_companion(&record).unwrap();
     assert_eq!(
         String::from_utf8(bytes.clone()).unwrap(),
-        "---\nschema: filesquid.original.v1\noriginal_name: \"a \\\"b\\\".txt\"\n---\n"
+        "---\nschema: filesquid.original.v1\noriginal_name: \"a \\\"b\\\"\"\nextension: null\nmedia_type: \"text/plain\"\n---\n"
     );
     let path = "original/x.metadata.md";
-    let decoded = filesquid_api::canonical::original::decode_companion(path, &bytes).unwrap();
-    assert_eq!(decoded, "a \"b\".txt");
-    let other = b"---\nschema: other\noriginal_name: \"a\"\n---\n";
-    let refused = filesquid_api::canonical::original::decode_companion(path, other);
-    assert!(matches!(refused, Err(CanonicalError::Decode { .. })));
+    let decode = |b: &[u8]| filesquid_api::canonical::original::decode_companion(path, b);
+    assert_eq!(decode(&bytes).unwrap(), record);
+    let refused = [
+        &b"---\nschema: other\noriginal_name: \"a\"\nextension: null\nmedia_type: \"text/plain\"\n---\n"[..],
+        b"---\nschema: filesquid.original.v1\noriginal_name: \"a.txt\"\nextension: null\nmedia_type: \"text/plain\"\n---\n",
+        b"---\nschema: filesquid.original.v1\noriginal_name: \"a\"\nextension: null\nmedia_type: \"text\"\n---\n",
+    ];
+    for bytes in refused {
+        assert!(matches!(decode(bytes), Err(CanonicalError::Decode { .. })));
+    }
 }
 
 #[test]
 fn the_stored_name_is_the_file_identifier_and_its_extension_only() {
     let file = FileId::new(FILE).unwrap();
-    let name = |n| filesquid_api::canonical::original::stored_name(&file, n).unwrap();
+    let name = |n: &str| {
+        let record = OriginalRecord::new(n, "application/octet-stream").unwrap();
+        filesquid_api::canonical::original::stored_name(&file, record.extension.as_deref()).unwrap()
+    };
     assert_eq!(name("写真.PNG"), format!("{FILE}.PNG"));
     assert_eq!(name("notes.tar.gz"), format!("{FILE}.gz"));
     assert_eq!(name("Holiday 2023.jpg"), format!("{FILE}.jpg"));
@@ -437,12 +453,26 @@ fn the_stored_name_is_the_file_identifier_and_its_extension_only() {
 }
 
 #[test]
-fn an_original_name_that_is_not_a_file_name_is_refused() {
+fn an_original_name_or_media_type_that_is_not_valid_is_refused() {
     let rig = Rig::new();
     let file = FileId::new(FILE).unwrap();
     let long = "a".repeat(1025);
     for bad in ["", "a/b", "a\0b", long.as_str()] {
-        let refused = commit_original(&rig, &file, bad, "op-10");
+        let refused = commit_original(&rig, &file, bad, "image/jpeg", "op-10");
+        assert!(
+            matches!(refused, Err(CanonicalError::InvalidIdentifier(_))),
+            "{bad:?}"
+        );
+    }
+    for bad in [
+        "",
+        "image",
+        "image/",
+        "/jpeg",
+        "image/jp eg",
+        "image/jpeg; q=1",
+    ] {
+        let refused = commit_original(&rig, &file, "a.jpg", bad, "op-11");
         assert!(
             matches!(refused, Err(CanonicalError::InvalidIdentifier(_))),
             "{bad:?}"
@@ -452,6 +482,20 @@ fn an_original_name_that_is_not_a_file_name_is_refused() {
         ready(read_file_original(&rig.root, &OwnerReadable, &file)).unwrap(),
         None
     );
+}
+
+#[test]
+fn a_metadata_record_without_its_original_is_refused_on_read() {
+    let rig = Rig::new();
+    let file = FileId::new(FILE).unwrap();
+    let described = OriginalRecord::new("a.jpg", "image/jpeg").unwrap();
+    let text = filesquid_api::canonical::original::encode_companion(&described).unwrap();
+    let model = rig.model(&file_object_root(&file).unwrap(), &file_object_id(&file));
+    let path = format!("original/{FILE}.metadata.md");
+    ready(model.stage_bytes(&path, &text)).unwrap();
+    ready(model.commit(meta(&record("op-12", "1")))).unwrap();
+    let refused = ready(read_file_original(&rig.root, &OwnerReadable, &file));
+    assert!(matches!(refused, Err(CanonicalError::Decode { .. })));
 }
 
 #[test]

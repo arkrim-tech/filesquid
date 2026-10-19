@@ -6,8 +6,7 @@ use super::entity::{decode, encode, LibraryHead, SnapshotEntity, SnapshotFile, V
 use super::layout::{file_object_root, original_path, SnapshotKey, SNAPSHOT_ROOT};
 use super::message::{parse_operation_message, OperationRecord};
 use super::original::{
-    companion_path, decode_companion, encode_companion, stored_name, stored_name_of_companion,
-    FileOriginal,
+    companion_path, decode_companion, encode_companion, stored_name, FileOriginal, OriginalRecord,
 };
 use super::{CanonicalError, ProfileTransform};
 use filesquid_core::{Collection, FileId, Folder};
@@ -162,20 +161,20 @@ fn published(result: Result<CommitReceipt, ChangeError>) -> Result<CommitReceipt
     }
 }
 
-/// Commit the bytes of the original of `file_id`, which the owner named `original_name`, as
-/// a version of the file object `model` writes (one OCFL object per file, ADR 023), with
-/// `meta`. The bytes are stored as `original/<file-uuid>.<ext>` (see
-/// [`super::original::stored_name`]) and, in the same version, the companion
-/// `original/<file-uuid>.<ext>.metadata.md` records `original_name` exactly.
+/// Commit the bytes of the original of `file_id`, described by `record` (the owner's file
+/// name and the media type), as a version of the file object `model` writes (one OCFL object
+/// per file, ADR 023), with `meta`. The bytes are stored as `original/<file-uuid>.<ext>` and,
+/// in the same version, the metadata record `original/<file-uuid>.metadata.md` holds
+/// `record`.
 ///
 /// # Errors
-/// As [`commit_snapshot`], and [`CanonicalError::InvalidIdentifier`] for an original name
-/// that is empty, longer than 1,024 bytes or holds `/` or NUL.
+/// As [`commit_snapshot`], and [`CanonicalError::InvalidIdentifier`] for a file identifier or
+/// extension that cannot name a path segment.
 pub async fn commit_file_original<B, R, S>(
     model: &ChangeModel<'_, B, R, S>,
     transform: &dyn ProfileTransform,
     file_id: &FileId,
-    original_name: &str,
+    record: &OriginalRecord,
     bytes: &[u8],
     meta: VersionMeta,
 ) -> Result<CommitReceipt, CanonicalError>
@@ -184,26 +183,25 @@ where
     R: VersionReservations,
     S: StorageBackend,
 {
-    let stored = stored_name(file_id, original_name)?;
-    let path = original_path(&stored)?;
-    let companion = companion_path(&stored)?;
-    let record = encode_companion(original_name)?;
+    let path = original_path(&stored_name(file_id, record.extension.as_deref())?)?;
+    let companion = companion_path(file_id)?;
+    let text = encode_companion(record)?;
     model.reset().await?;
     let sealed = transform.seal(&path, bytes.to_vec())?;
     model.stage_bytes(&path, &sealed).await?;
-    let sealed = transform.seal(&companion, record)?;
+    let sealed = transform.seal(&companion, text)?;
     model.stage_bytes(&companion, &sealed).await?;
     published(model.commit(meta).await)
 }
 
 /// The original of `file_id` at the head of its file object in the storage root `backend`,
-/// with the owner's original name read from its companion, or `None` when the object does not
-/// exist yet. This is the name to display and to export under; the stored name is a storage
+/// with its metadata record, or `None` when the object does not exist yet. The record's
+/// original name is the name to display and to export under; the stored name is a storage
 /// detail.
 ///
 /// # Errors
-/// [`CanonicalError::Decode`] for a companion that cannot be read back, or a head that does
-/// not hold exactly one companion and the original it names; a read failure otherwise.
+/// [`CanonicalError::Decode`] for a metadata record that cannot be read back, or a head
+/// without the record or the original it names; a read failure otherwise.
 pub async fn read_file_original<B: StorageBackend>(
     backend: &B,
     transform: &dyn ProfileTransform,
@@ -215,42 +213,25 @@ pub async fn read_file_original<B: StorageBackend>(
     }
     let object = Object::open(backend, &root).await?;
     let state = object.state(object.head())?;
-    let (companion, stored) = only_companion(state.files())?;
-    let path = original_path(stored)?;
+    let companion = companion_path(file_id)?;
+    let file = state
+        .files()
+        .find(|file| file.path == companion)
+        .ok_or_else(|| not_one_original(&root))?;
+    let bytes = read_entity(&object, backend, file).await?;
+    let record = decode_companion(&companion, &transform.open(&companion, bytes)?)?;
+    let path = original_path(&stored_name(file_id, record.extension.as_deref())?)?;
     if !state.paths().any(|p| p == path) {
         return Err(not_one_original(&root));
     }
-    let bytes = read_entity(&object, backend, companion).await?;
-    let plain = transform.open(&companion.path, bytes)?;
-    let original_name = decode_companion(&companion.path, &plain)?;
-    Ok(Some(FileOriginal {
-        path,
-        original_name,
-    }))
+    Ok(Some(FileOriginal { path, record }))
 }
 
-/// The one companion among `files` and the stored name it describes.
-///
-/// # Errors
-/// [`CanonicalError::Decode`] when there is no companion or more than one.
-fn only_companion<'f>(
-    files: impl Iterator<Item = &'f LogicalFile>,
-) -> Result<(&'f LogicalFile, &'f str), CanonicalError> {
-    let companions: Vec<(&LogicalFile, &str)> = files
-        .filter_map(|file| stored_name_of_companion(&file.path).map(|name| (file, name)))
-        .take(2)
-        .collect();
-    match companions.as_slice() {
-        [one] => Ok(*one),
-        _ => Err(not_one_original("file object")),
-    }
-}
-
-/// The refusal of a file object whose head is not one original with its companion.
+/// The refusal of a file object whose head lacks its metadata record or the original it names.
 fn not_one_original(path: &str) -> CanonicalError {
     CanonicalError::Decode {
         path: path.to_string(),
-        reason: "not one original with its companion".into(),
+        reason: "no original with its metadata record".into(),
     }
 }
 

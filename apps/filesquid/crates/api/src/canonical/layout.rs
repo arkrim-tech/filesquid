@@ -7,8 +7,8 @@
 //!   `virtual-collections/<id>.json` (with its ordered members), `folders/<id>.json` and
 //!   `files/<id>.json` (home collection, listing order, hide and delete state).
 //! - One **file** object per FileSquid file at `files/<file-id>`, object identifier
-//!   `urn:uuid:<file-id>`, its original under `original/<file-uuid>.<ext>` beside the companion
-//!   `original/<file-uuid>.<ext>.metadata.md` that records the owner's original file name
+//!   `urn:uuid:<file-id>`, its original under `original/<file-uuid>.<ext>` beside its metadata
+//!   record `original/<file-uuid>.metadata.md` that holds the owner's original file name
 //!   ([`super::original`]).
 //!
 //! Every function here is pure.
