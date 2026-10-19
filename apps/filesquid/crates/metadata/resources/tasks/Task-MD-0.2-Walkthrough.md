@@ -427,3 +427,7 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 - P2 (not changed): a pinned edit may rebase onto a later head. OCFL-S-016 requires the change model to rebase when no intervening version changed a staged path, and to report a conflict otherwise; `metadata.md` is the only staged path, so any intervening change to it is a conflict and no record is overwritten. The behaviour is documented on `check_pinned`.
 - P2: an unterminated CDATA section keeps its `<![CDATA[` opener (`an_unterminated_cdata_section_is_kept_as_written`); any whitespace after an element name marks attributes (`whitespace_before_attributes_does_not_end_the_scan`).
 - P3: ADR 027 cites OCFL-S-018 for the refused base and OCFL-S-020 for no repair; `MetadataStore::save` says an unchanged record publishes nothing; the README separates read and edit commands and states that `--file` names a logical file the object already holds; the XMP feature step declares `rdf` and `dc`; the W010 fixtures delete only `v1/inventory.json`; `export_xmp_writes_the_head_record` covers the CLI XMP export; the coverage line above lists covered scenarios.
+
+## PR #76 review fixes (Cubic round 3)
+
+- P2: the pinned `read_file` test compares the `v1` bytes with the head bytes, so an implementation that ignores the version fails.

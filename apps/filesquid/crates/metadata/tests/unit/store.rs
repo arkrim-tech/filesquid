@@ -415,7 +415,11 @@ mod local_object {
             first
         );
         assert_ne!(object.file_sha256(METADATA_MD, None).unwrap(), first);
-        assert!(object.read_file(METADATA_MD, Some(&v("v1"))).is_ok());
+        let pinned = object.read_file(METADATA_MD, Some(&v("v1"))).unwrap();
+        let head = object.read_file(METADATA_MD, None).unwrap();
+        assert_ne!(pinned, head, "the pinned read is not the head");
+        assert!(String::from_utf8(pinned).unwrap().contains("Harbour"));
+        assert!(String::from_utf8(head).unwrap().contains("Dawn"));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
