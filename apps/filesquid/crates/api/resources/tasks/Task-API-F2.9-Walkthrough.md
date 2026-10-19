@@ -10,7 +10,7 @@ Parents: PRD F-067 PROV-O history of every version and change, SRS-F-067, PRD F-
 
 ## API-S-029: History routes and backfill
 
-> `GET /api/v1/files/{id}/history` and `GET /api/v1/history` (filters: object version, operation, agent, from, to; cursor paging) MUST answer `HistoryEntry` items, and `GET /api/v1/files/{id}/versions/{version}/prov` the raw JSON-LD record, all under route action `history.read`; any history index MUST rebuild from the OCFL records. A backfill job MUST register in the process registry, checkpoint per object, stop at its cap or on cancel, skip versions that have a record, and commit one provenance-only version per object.
+> `GET /api/v1/files/{id}/history` and `GET /api/v1/history` (filters: object version, operation, agent, from, to; cursor paging) MUST answer `HistoryEntry` items, and `GET /api/v1/files/{id}/versions/{version}/prov` the raw JSON-LD record, all under route action `history.read`; any history index MUST rebuild from the OCFL records. A backfill job MUST register in the process registry, stop at its cap or on cancel, resume by rescanning the storage root and skipping versions that have a record, and commit one provenance-only version per object. The OCFL records are the checkpoint: no separate progress file is kept, an object whose versions all have records is skipped, and a run that stopped part way continues with the versions still missing one.
 
 Parents: PRD F-067, SRS-F-067, PRD F-065 File version history and retention, ADR 040.
 
@@ -345,6 +345,68 @@ RUN  v4.1.12 <repo>/apps/filesquid/ui
 JUNIT report written to <repo>/apps/filesquid/ui/tests/allure-results/vitest-junit.xml
 ```
 
+## Review round 1
+
+Fixes for the first Cubic review of the history and repair code:
+
+- **Export memory bound.** `GET /files/{id}/history/export` writes each record straight into one body instead of building every record as JSON and then serialising a second copy. The body is capped at `MAX_EXPORT_BYTES` (64 MiB) and stops at a whole record, so the array stays valid. A partial export carries `X-History-Truncated: true`.
+- **Truncated history is flagged.** `HistorySource::index` returns a `HistorySnapshot { index, truncated }`. `OcflHistory` sets `truncated` when its record or object cap leaves records out (`with_max_records` sets a lower cap). `HistoryPage` gains a required `truncated` field, and the export sets the header. `openapi.json` and `ui/src/api/schema.d.ts` are updated.
+- **Version record subject check.** The version route checks that the stored record describes the requested object and version. A record stored under another version's path is `Corrupt` (500), and the index skips it.
+- **Unreadable objects are not a 404.** When no object matched and one could not be opened (or lies past the object cap), the version route answers `Unavailable` (503) instead of `not_found`.
+- **Storage failures are retryable.** A storage failure while reading a record maps to `Unavailable` (503). Only format, profile, build and size failures stay `Corrupt`.
+- **Identical records are held once.** `MemoryHistory::insert` accepts an identical record again without storing a second copy (new `len` and `is_empty`).
+- **Redaction fails closed.** An `fsq:path` the redactor cannot number (no string `@id`, or a path that is not a string) is dropped.
+- **Backfill cap and heartbeat.** `reached_cap` is set only after a successful commit uses up the budget with records of that object still missing. A failed object no longer reports the cap. The run sends a heartbeat between staging an object's records and committing them.
+- **Refused repairs stay journal-only.** A refused repair outcome no longer carries `object_ref`. It still names the version as a target.
+- **Documentation.** The module doc names ADR 040 in plain text (the ADR is on an unmerged branch). API-S-029 above describes the rescan-and-skip resumption. The gaps below separate the wired catalog provenance from the integrations that are still unwired.
+
+```text
+$ cargo test -p filesquid-api --locked --test unit_history --test unit_history_jobs
+     Running tests/unit/history.rs (<target>/debug/deps/unit_history-7c960a311257f101)
+running 26 tests
+test a_history_entry_carries_the_label_and_marks_reconstruction ... ok
+test a_memory_history_indexes_its_records_and_refuses_conflicts ... ok
+test a_lookup_that_skipped_an_unreadable_object_is_unavailable ... ok
+test a_receipt_for_another_version_still_journals_the_commit ... ok
+test a_commit_writes_its_record_and_journal_entries_in_the_same_version ... ok
+test a_rebased_commit_regenerates_both_files_for_the_new_version ... ok
+test a_redacted_record_names_no_installation_message_or_path ... ok
+test a_record_that_cannot_be_built_stops_the_commit ... ok
+test a_takeover_adds_a_warning_after_the_commit_entry ... ok
+test a_record_stored_under_another_version_is_corrupt ... ok
+test an_identical_record_inserted_again_is_held_once ... ok
+test a_file_history_lists_its_object_only ... ok
+test a_truncated_history_is_flagged_on_pages_and_the_export ... ok
+test an_ocfl_history_without_a_storage_root_is_unavailable ... ok
+test a_version_record_is_raw_json_ld_or_not_found ... ok
+test commit_meta_sets_the_user_and_the_operation_message ... ok
+test every_new_journal_event_keeps_its_opaque_fields_and_loses_paths ... ok
+test history_routes_answer_unavailable_before_the_host_installs_a_source ... ok
+test bad_history_parameters_answer_invalid_request ... ok
+test redaction_keeps_derivations_linked_and_paths_numbered_across_records ... ok
+test an_ocfl_history_is_rebuilt_from_the_records_in_the_storage_root ... ok
+test an_ocfl_history_past_its_record_cap_is_flagged_truncated ... ok
+test the_version_user_names_the_installation_and_never_a_person ... ok
+test the_export_is_a_json_ld_array_and_can_be_redacted ... ok
+test the_history_lists_everything_or_one_filter_in_cursor_pages ... ok
+test the_operations_own_entries_ride_the_version_with_their_ids ... ok
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+     Running tests/unit/history_jobs.rs (<target>/debug/deps/unit_history_jobs-9865c4a0ab4bf994)
+running 11 tests
+test a_backfill_without_a_storage_root_fails_its_process ... ok
+test a_cancelled_backfill_commits_nothing_and_ends_its_process_cancelled ... ok
+test a_failed_object_past_the_budget_does_not_reach_the_cap ... ok
+test a_backfill_stops_at_its_cap_and_the_next_run_continues ... ok
+test a_record_that_cannot_be_written_is_journaled_as_failed_and_the_repair_stands ... ok
+test a_refused_object_gets_no_provenance_follow_up ... ok
+test a_backfill_heartbeats_between_staging_and_commit ... ok
+test a_failing_object_is_journaled_and_the_run_goes_on ... ok
+test without_a_provenance_context_the_missing_record_is_journaled_and_answered ... ok
+test a_repair_commits_a_provenance_record_under_the_run_id ... ok
+test a_backfill_reconstructs_every_missing_record_and_a_rerun_commits_nothing ... ok
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+```
+
 ## How to run
 
 ```bash
@@ -358,9 +420,11 @@ The BDD run writes JUnit to `crates/api/tests/allure-results/cucumber-junit.xml`
 
 ## Gaps
 
-- **Import and the file routes are not built yet.** Import and upload (API-F1.3) and the file operations (API-F1.4) are what will make most commits. Until they exist, the only commits that use `CommitRecorder` are the repair follow-up and the backfill. The metadata store's commits can use `commit_meta` and the recorder, but this task does not wire them.
-- **No host installs a history yet.** No host calls `install_history`, `with_provenance` or `Backfill` yet. The desktop coordinator (DE-0.3) will inject the library storage root, the installation UUID (DE-S-012) and the journal store. Until then the history routes answer `503 unavailable`.
+- **Wired: desktop catalog provenance.** The desktop catalog's snapshot commits already record their PROV-O history: the desktop host builds `SqliteCatalog::with_provenance` (Task DE-0.10), which uses `CommitRecorder` for every snapshot version it publishes.
+- **Not wired: import and the file routes.** Import and upload (API-F1.3) and the file operations (API-F1.4) are not built yet, so their commits do not use `CommitRecorder` yet.
+- **Not wired: the history source, the repair follow-up and the backfill.** No host calls `install_history`, `LocalLibraryService::with_provenance` (the repair-service provenance follow-up) or `Backfill` yet. The desktop coordinator (DE-0.3) will inject the library storage root, the installation UUID (DE-S-012) and the journal store. Until then the history routes answer `503 unavailable`.
 - **No backfill route.** The admin route `POST /api/v1/admin/history/backfill` named in API-S-029 is not built; it waits on the same host injection. The job is complete and tested as a library function.
+- **Backfill heartbeat granularity.** The run sends a heartbeat after each object and between staging and committing it. Staging the records of one object is a single `filesquid-prov` call (`stage_reconstructed`), so there is no heartbeat for each staged record. The per-run cap (`DEFAULT_MAX_VERSIONS`, 1000) keeps that call short.
 - **The index is rebuilt on every request.** `OcflHistory` reads every record of the storage root each time (bounded). A cached index that is invalidated by commit events is left for later.
 - **Read permission is per host, not per file.** The routes authorise `history.read` on the host. Per-file read permission arrives with server accounts (API-F1.9).
 - **Object IDs survive redaction.** They are opaque UUIDs. Removing them would break joins inside a shared export.
