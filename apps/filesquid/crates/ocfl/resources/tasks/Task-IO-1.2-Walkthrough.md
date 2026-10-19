@@ -15,17 +15,17 @@ Sources: [OCFL-S-012, OCFL-S-015, OCFL-S-016, OCFL-S-018, OCFL-S-020](../srs.md)
 ## What changed
 
 - **New public module `view`** (`src/view/`):
-  - `list_folder(&object, &version, prefix, cursor, limit) -> Result<FolderPage, ViewError>`: implied folders, then files, directly below a logical-path prefix (`""` for the root), in name order; at most `MAX_PAGE_ENTRIES` (1,000) per page; opaque cursor (`d:<name>` / `f:<name>`, treat as opaque). `Entry::{Folder(FolderEntry { name, path }), File(FileEntry { name, path, digest, size, modified_version, modified, type_hint })}`. Sizes come from the backend (`head`) for the page's files only. `modified_version` is the version that last set the file's content (the earliest version from which the path has held its digest without a break) and `modified` that version's `created`.
-  - `file_details(&object, &version, path) -> FileDetails { object_id, version, path, name, digest, digest_algorithm, size, content_path, fixity, last_change: VersionInfo, type_hint }`.
-  - `file_history(&object, path) -> Vec<FileHistoryEntry { version: VersionInfo, change: FileChange::{Added, Changed, Deleted}, digest }>` (only versions that changed the path); `object_versions(&object) -> Vec<VersionInfo>`.
+  - `list_folder(&object, &version, prefix, cursor, limit) -> Result<FolderPage, ViewError>`: implied folders, then files, directly below a logical-path prefix (`""` for the root), in name order; at most `MAX_PAGE_ENTRIES` (1,000) per page; opaque cursor bound to its listing (a 16-hex-digit tag of object, version and prefix, then the slot); another listing refuses it. `Entry::{Folder(FolderEntry { name, path }), File(FileEntry { name, path, digest, size, modified_version, modified, type_hint })}`. Sizes come from the backend (`head`) for the page's files only. `modified_version` is the version that last set the file's content (the earliest version from which the path has held its digest without a break) and `modified` that version's `created`.
+  - `file_details(&object, &version, path) -> FileDetails { object_id, version, path, name, digest, digest_algorithm, size, content_path, fixity (every value per algorithm), last_change: VersionInfo, type_hint }`.
+  - `file_history(&object, path) -> Result<Vec<FileHistoryEntry { version: VersionInfo, change: FileChange::{Added, Changed, Deleted}, digest }>, ViewError>` (only versions that changed the path; digests as the inventory writes them); `object_versions(&object) -> Vec<VersionInfo>`.
   - `read_range(&object, &version, path, start, len) -> Vec<u8>` with `len` 1 to `MAX_RANGE_BYTES` (8 MiB).
   - `check_fixity(&object, &version, path) -> FixityReport { path, version, checks: Vec<FixityCheck { algorithm, expected, actual, ok }>, ok }`: one streamed read, the manifest digest first, then each fixity value for an algorithm the engine computes; a mismatch is reported, not an error.
   - Writes: `add_file(&model, path, bytes, meta)`, `move_path(&model, from, to, meta)`, `remove_path(&model, path, meta)` (a file, or a folder with every file below it) and `restore(&model, &version, paths, meta)` (through `ChangeModel::reinstate`). Each returns the `CommitReceipt` of exactly one version.
   - JSON forms: `FolderPage::to_json`, `FileDetails::to_json`, `FixityReport::to_json`, `version_json`, `versions_json`, `history_json` (camelCase keys). The crate keeps serde without `derive`, as the inventory writer does.
   - `ViewError::{InvalidRequest, InvalidCursor, FolderNotFound, PathNotFound, StagingNotEmpty, Read, Change, Storage}`.
-- **One write path.** Writes stage in the given `ChangeModel`'s staging area and call `ChangeModel::commit` (or `reinstate`). A write is refused while the staging area holds other changes (`StagingNotEmpty`), clears an index with no changes first, and resets the staging area after any failure, so a refused write leaves it empty. `StagingNotCleared` after a publication is treated as success (the area is reset and the receipt returned).
+- **One write path.** Writes stage in the given `ChangeModel`'s staging area and call `ChangeModel::commit` (or `reinstate`). A write is refused while the staging area holds other changes (`StagingNotEmpty`, leaving them untouched). An index with no changes is cleared first only if still unchanged, so an older base cannot cause a false conflict. After a failure the area is cleared only if its index is still the one the write staged (`ChangeModel::clear_committed`, now `pub(crate)`), and `StagingNotCleared` after a publication is a success that leaves the kept area alone: a view write never deletes changes staged by someone else.
 - **Empty folders** are never written: a prefix with no file below it is `FolderNotFound`, and adding a file beneath a new prefix creates the folder in the listing.
-- **IO-0.10 public API unchanged.** Only crate-internal visibility changed: `ChangeModel::committed` is `pub(crate)`, `change::state_digests` is re-exported `pub(crate)`, and `Object::backend()` is a new `pub(crate)` accessor. No new dependency; `wasm32-unknown-unknown` with default features off builds.
+- **IO-0.10 public API unchanged.** Only crate-internal visibility changed: `ChangeModel::committed` and `ChangeModel::clear_committed` are `pub(crate)`, `ChangeModel::staged_index` is a new `pub(crate)` reader, `change::state_digests` is re-exported `pub(crate)`, and `Object::backend()` is a new `pub(crate)` accessor. No new dependency; `wasm32-unknown-unknown` with default features off builds.
 - **Engine decisions** (recorded in OCFL-S-012): page at most 1,000 entries, range at most 8 MiB, a view write never commits changes staged by anyone else, a created folder is not persisted until a file is added beneath it.
 
 ## TDD
@@ -69,13 +69,15 @@ TDD-ENFORCE (UI tests): the Agent Prompt asks for UI tests against built product
 `cargo test -p filesquid-ocfl --locked --test integration_view_api -- --nocapture --test-threads=1`:
 
 ```text
-    Finished `test` profile [unoptimized] target(s) in 0.21s
+    Finished `test` profile [unoptimized] target(s) in 0.17s
      Running tests/integration/view_api.rs ($CARGO_TARGET_DIR/debug/deps/integration_view_api-2f58d1662313bbd6)
 
-running 13 tests
+running 17 tests
+test a_cursor_from_another_listing_is_refused ... ok
 test a_file_history_lists_the_versions_that_changed_it ... ok
 test a_fixity_check_reports_every_digest_it_verifies ... ok
 test a_folder_lists_implied_folders_and_files_at_a_pinned_version ... ok
+test a_leftover_empty_index_does_not_cause_a_false_conflict ... ok
 test a_write_is_refused_while_other_changes_are_staged ... ok
 test a_write_refused_by_the_change_model_leaves_staging_clean ... ok
 test add_move_and_remove_commit_one_version_each_through_the_change_model ... ok
@@ -86,9 +88,11 @@ test listing_pages_with_an_opaque_cursor ... ok
 test objects_written_through_the_view_api_pass_the_community_validator ... ocfl-py view-api object: VALID
 ok
 test ranged_reads_return_the_requested_bytes_within_the_bound ... ok
+test reads_and_writes_refuse_invalid_paths_and_ranges ... ok
+test the_root_of_an_empty_version_is_an_empty_page ... ok
 test view_results_serialize_to_json ... ok
 
-test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.77s
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.97s
 
 ```
 
@@ -139,7 +143,7 @@ Feature: UI view API
 
 ```text
      Running unittests src/lib.rs ($CARGO_TARGET_DIR/debug/deps/filesquid_ocfl-336d9c2a83f05f02)
-test result: ok. 43 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.15s
+test result: ok. 43 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.16s
      Running tests/features.rs ($CARGO_TARGET_DIR/debug/deps/features-9009fa7eceb51bdd)
    ✔  Then Arrow, Parquet, DuckDB, and Iceberg should be absent from default features
 [Summary]
@@ -147,51 +151,51 @@ test result: ok. 43 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 151 scenarios (148 passed, 3 skipped)
 701 steps (698 passed, 3 skipped)
      Running tests/integration/change_model.rs ($CARGO_TARGET_DIR/debug/deps/integration_change_model-97a7db5939f6743a)
-test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.49s
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.52s
      Running tests/integration/content_fixtures.rs ($CARGO_TARGET_DIR/debug/deps/integration_content_fixtures-2450cd9c4beef973)
-test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.85s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.11s
      Running tests/integration/enumerate_state.rs ($CARGO_TARGET_DIR/debug/deps/integration_enumerate_state-c992207f0a36f4c4)
-test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.51s
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.62s
      Running tests/integration/fixture_conformance.rs ($CARGO_TARGET_DIR/debug/deps/integration_fixture_conformance-6188b5d43aaacb5e)
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
      Running tests/integration/fixture_inventories.rs ($CARGO_TARGET_DIR/debug/deps/integration_fixture_inventories-49912e26c8122bb4)
 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
      Running tests/integration/fixture_reads.rs ($CARGO_TARGET_DIR/debug/deps/integration_fixture_reads-f992725a1bd4ec37)
-test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.21s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.19s
      Running tests/integration/fs_conformance.rs ($CARGO_TARGET_DIR/debug/deps/integration_fs_conformance-4c054563d204acfb)
-test result: ok. 48 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.93s
+test result: ok. 48 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.82s
      Running tests/integration/hierarchy_guard.rs ($CARGO_TARGET_DIR/debug/deps/integration_hierarchy_guard-3efdbaf82d970047)
-test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
      Running tests/integration/independent_recovery.rs ($CARGO_TARGET_DIR/debug/deps/integration_independent_recovery-cff125f4c379a44f)
-test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.01s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.04s
      Running tests/integration/logical_file.rs ($CARGO_TARGET_DIR/debug/deps/integration_logical_file-c870615487e03f53)
-test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.69s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.58s
      Running tests/integration/memory_conformance.rs ($CARGO_TARGET_DIR/debug/deps/integration_memory_conformance-bbed81d294b9c269)
-test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.80s
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.85s
      Running tests/integration/opaque_bytes.rs ($CARGO_TARGET_DIR/debug/deps/integration_opaque_bytes-1ba5398c372ee9d8)
-test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.39s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.13s
      Running tests/integration/read_objects.rs ($CARGO_TARGET_DIR/debug/deps/integration_read_objects-777c46e5ca575e3e)
-test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
      Running tests/integration/validate_objects.rs ($CARGO_TARGET_DIR/debug/deps/integration_validate_objects-f628c102e60642ab)
-test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.40s
+test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.39s
      Running tests/integration/version_inventory_repair.rs ($CARGO_TARGET_DIR/debug/deps/integration_version_inventory_repair-ec3ea182e8864a75)
-test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
      Running tests/integration/view_api.rs ($CARGO_TARGET_DIR/debug/deps/integration_view_api-2f58d1662313bbd6)
-test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.58s
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.58s
      Running tests/integration/write_order.rs ($CARGO_TARGET_DIR/debug/deps/integration_write_order-22dd8487357674b8)
-test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
      Running tests/unit/digest.rs ($CARGO_TARGET_DIR/debug/deps/unit_digest-84296ab96d185c1f)
 test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
      Running tests/unit/fixity.rs ($CARGO_TARGET_DIR/debug/deps/unit_fixity-595c41ef01df1b6c)
 test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests/unit/git_guard.rs ($CARGO_TARGET_DIR/debug/deps/unit_git_guard-dfd4d18dbb6d3248)
-test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
      Running tests/unit/inventory.rs ($CARGO_TARGET_DIR/debug/deps/unit_inventory-73e97bdd05e073f7)
 test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
      Running tests/unit/lease.rs ($CARGO_TARGET_DIR/debug/deps/unit_lease-196772f0f0361667)
 test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests/unit/namaste_sidecar.rs ($CARGO_TARGET_DIR/debug/deps/unit_namaste_sidecar-f7f54c2c35c2fac9)
-test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
      Running tests/unit/read_state.rs ($CARGO_TARGET_DIR/debug/deps/unit_read_state-5af78938f9ad7799)
 test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
      Running tests/unit/source_scan.rs ($CARGO_TARGET_DIR/debug/deps/unit_source_scan-b499895a04c6e23e)
@@ -213,9 +217,20 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
     Finished `dev` profile [unoptimized] target(s) in 7.23s
 ```
 
+## Cubic round 1 fixes
+
+- View writes never delete changes staged by someone else: no unconditional reset; failures clear only the write's own index; `StagingNotCleared` returns the receipt and leaves the area (`a_leftover_empty_index_does_not_cause_a_false_conflict` covers the conditional clear of an empty index).
+- `ViewError::PathNotFound` names the version read (the earlier version for `restore`).
+- The root of an empty version is an empty page (`the_root_of_an_empty_version_is_an_empty_page`).
+- `last_change` and `file_history` look up one path per version block instead of rebuilding every state; history digests are as written, compared without case.
+- `check_fixity` and `file_details` use every fixity value per algorithm.
+- Reads validate paths (E052, E053); ranges whose end overflows are invalid requests; write arguments reject a trailing `/` (`reads_and_writes_refuse_invalid_paths_and_ranges`).
+- Cursors are bound to their listing (`a_cursor_from_another_listing_is_refused`).
+- SRS OCFL-S-012 states the refusal for an unchanged state; README wording on JSON forms and staging cleanup corrected.
+
 ## Coverage
 
-[ADR 017](../../../../../../resources/architecture/017-test-runners-and-reporting.md) defines no Rust line-coverage tool, so no percentage is reported. Every constraint above has a test. Not reached: the bounded-chunk limit of `check_fixity` (a file above the largest object a backend stores) and the `StagingNotCleared` branch of a view write (it needs the staging index to change during a commit, which `tests/integration/change_model.rs` covers for the change model itself).
+[ADR 017](../../../../../../resources/architecture/017-test-runners-and-reporting.md) defines no Rust line-coverage tool, so no percentage is reported. Every constraint above has a test. Not reached: the bounded-chunk limit of `check_fixity` (a file above the largest object a backend stores) the `StagingNotCleared` branch of a view write (it needs the staging index to change during a commit, which `tests/integration/change_model.rs` covers for the change model itself), and conflicting fixity values for one content path (no engine-written object has them).
 
 ## Sync Execution Report
 
