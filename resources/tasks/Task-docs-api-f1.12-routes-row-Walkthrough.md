@@ -19,6 +19,7 @@ Documentation-only task on branch `docs/api-f1.12-library-repair-routes`. TDD-EN
 ## Cubic review
 
 - Round 1 (3 P2, 1 P3), all fixed: the Summary Timeline's Phase F2 row rises from 342 to 352 hours, so the phase rows add up to the new totals; the DE-1.1 Description now says that the desktop host wires the storage root, the repair ledger and the desktop owner principal into the router for the API-F1.12 repair route; and the API-F1.12 Related Tests no longer say that route scenarios were added to the existing API-S-023 feature (the task writes them in a new API-S-025 feature).
+- Round 2 (1 P3), fixed: the transcript below is now the 162s run after the round 1 fixes, labelled with the commit it covers.
 
 ## Hook
 
@@ -26,7 +27,7 @@ The change touches files inside `apps/filesquid/crates/api/`, `apps/filesquid/cr
 
 The first full run (2026-10-19 UTC) failed two tests in code this change does not touch: `an_oversized_response_is_journaled_without_its_detail` (`filesquid-desktop`) and `failure_logs_carry_no_secrets` (`filesquid-c2pa`). Both were built in a Cargo target shared with other worktrees ([local-verification.md](../../.agents/rules/local-verification.md#shared-cargo-target)). The second full run passed with no change in between (`Test scope: full (159s)`). After the Cubic round 1 fixes, `FULL=1 bash scripts/pre-commit.sh` passed again: `✅ All Pre-Commit Hooks Passed! Test scope: full (162s)`.
 
-Step lines of the passing `FULL=1 bash scripts/pre-commit.sh` run, exit 0:
+Step lines of the `FULL=1 bash scripts/pre-commit.sh` run on the tree committed as 87169d4 (after the Cubic round 1 fixes; the later commits change only this walkthrough), exit 0:
 
 ```text
 changed_scope: full (FULL=1 is set)
@@ -56,29 +57,29 @@ Running Pre-Commit Hooks... (test scope: full)
 ✅ Change scope validation passed (166 assertions).
 ℹ️  Test scope: full
 ✅ Clippy passed (1s).
-✅ Workspace tests passed (52s).
+✅ Workspace tests passed (51s).
 ✅ Module crate alone: filesquid-core passed (1s).
 ✅ Module crate alone: filesquid-ocfl passed (25s).
 ✅ Module crate alone: filesquid-metadata passed (0s).
 ✅ Module crate alone: filesquid-c2pa passed (5s).
 ✅ Module crate alone: filesquid-api passed (6s).
-✅ Module crate alone: filesquid-native passed (0s).
-✅ Clippy (filesquid-metadata, all features) passed (1s).
+✅ Module crate alone: filesquid-native passed (1s).
+✅ Clippy (filesquid-metadata, all features) passed (0s).
 ✅ Tests (filesquid-metadata, all features) passed (3s).
 ✅ wasm32 build (filesquid-metadata, default features off) passed (0s).
-✅ wasm32 build (filesquid-metadata, ocfl feature) passed (0s).
-✅ Rustdoc passed (1s).
-✅ Clippy (desktop, test-instrumented) passed (0s).
-✅ Desktop tests (test-instrumented) passed (19s).
+✅ wasm32 build (filesquid-metadata, ocfl feature) passed (1s).
+✅ Rustdoc passed (3s).
+✅ Clippy (desktop, test-instrumented) passed (1s).
+✅ Desktop tests (test-instrumented) passed (18s).
 ✅ ESLint passed (3s).
-✅ TypeScript passed (3s).
-✅ Vitest passed (14s).
+✅ TypeScript passed (4s).
+✅ Vitest passed (12s).
 ℹ️  Playwright e2e skipped for apps/filesquid/ui (set FILESQUID_E2E=1 to run).
-✅ ESLint passed (1s).
-✅ TypeScript passed (3s).
-✅ Vitest passed (2s).
+✅ ESLint passed (2s).
+✅ TypeScript passed (2s).
+✅ Vitest passed (3s).
 ℹ️  Playwright e2e skipped for apps/imagesquid (set FILESQUID_E2E=1 to run).
 ℹ️  Desktop packaged-window e2e skipped (set FILESQUID_DESKTOP_E2E=1 to run).
 ✅ Lint and test validation passed (test scope: full).
-✅ All Pre-Commit Hooks Passed! Test scope: full (159s)
+✅ All Pre-Commit Hooks Passed! Test scope: full (162s)
 ```
