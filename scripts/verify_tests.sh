@@ -24,7 +24,9 @@
 #          `ocfl`, `ocfl-fs` and `cli` tests are skipped by the default features), and
 #          `cargo check --lib --target wasm32-unknown-unknown` with default features off,
 #          and with the portable `ocfl` feature (MD-S-009)
-#       5c. filesquid-prov: `cargo check --lib --target wasm32-unknown-unknown` (PROV-S-001)
+#       5c. filesquid-prov feature matrix: clippy and tests with --all-features (the `ocfl`
+#          tests are skipped by the default features), and `cargo check --lib --target
+#          wasm32-unknown-unknown` with default features and with `ocfl` (PROV-S-001, PROV-S-006)
 #     In each UI package (apps/filesquid/ui, apps/imagesquid):
 #       6. npm run lint, npm run check, npm test
 #       7. npm run test:e2e, only when FILESQUID_E2E=1
@@ -146,15 +148,20 @@ skip_metadata_features() {
   skip_step "filesquid-metadata all-features tests and wasm32 builds" "$1"
 }
 
-run_prov_wasm() {
-  # The wasm32 build check of filesquid-prov (PROV-S-001), default features.
+run_prov_features() {
+  # filesquid-prov beyond its default features: every feature on (the `ocfl` tests are
+  # skipped by the default build), then the wasm32 build checks with default features and
+  # with `ocfl` (PROV-S-001, PROV-S-006).
+  run_step "Clippy (filesquid-prov, all features)" "$WORKSPACE" cargo_locked clippy -p filesquid-prov --all-targets --all-features --locked -- -D warnings
+  run_step "Tests (filesquid-prov, all features)" "$WORKSPACE" cargo_locked test -p filesquid-prov --all-features --locked
   wasm_target_ready || return
   run_step "wasm32 build (filesquid-prov)" "$WORKSPACE" cargo_locked check -p filesquid-prov --lib --target wasm32-unknown-unknown --locked
+  run_step "wasm32 build (filesquid-prov, ocfl feature)" "$WORKSPACE" cargo_locked check -p filesquid-prov --lib --features ocfl --target wasm32-unknown-unknown --locked
 }
 
-skip_prov_wasm() {
+skip_prov_features() {
   # $1 = reason.
-  skip_step "wasm32 build (filesquid-prov)" "$1"
+  skip_step "filesquid-prov all-features tests and wasm32 builds" "$1"
 }
 
 run_rust_full() {
@@ -166,7 +173,7 @@ run_rust_full() {
     run_step "Module crate alone: $crate" "$WORKSPACE" cargo_locked test -p "$crate" --locked
   done
   run_metadata_features
-  run_prov_wasm
+  run_prov_features
   run_step "Rustdoc" "$WORKSPACE" rustdoc_locked --workspace --no-deps --locked
   run_desktop_instrumented
 }
@@ -204,9 +211,9 @@ run_rust_scoped() {
     skip_metadata_features "filesquid-metadata is not in the change scope"
   fi
   if contains_word "$crates" "filesquid-prov"; then
-    run_prov_wasm
+    run_prov_features
   else
-    skip_prov_wasm "filesquid-prov is not in the change scope"
+    skip_prov_features "filesquid-prov is not in the change scope"
   fi
   # shellcheck disable=SC2086
   run_step "Rustdoc (scoped)" "$WORKSPACE" rustdoc_locked $package_flags --no-deps --locked
@@ -224,7 +231,7 @@ skip_rust() {
   skip_step "Workspace tests" "$1"
   for crate in $MODULE_CRATES; do skip_step "Module crate alone: $crate" "$1"; done
   skip_metadata_features "$1"
-  skip_prov_wasm "$1"
+  skip_prov_features "$1"
   skip_step "Rustdoc" "$1"
   skip_desktop_instrumented "$1"
 }

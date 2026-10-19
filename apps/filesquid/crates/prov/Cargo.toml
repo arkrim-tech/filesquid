@@ -9,14 +9,23 @@ publish = false
 [lib]
 path = "src/lib.rs"
 
-# No features yet. PV-0.2 adds an optional `ocfl` feature (off by default) for
-# `filesquid-ocfl`. No feature may ever add `filesquid-native` or
-# `filesquid-c2pa` (PROV-S-001).
+# `ocfl` (off by default) adds `filesquid-ocfl` without its default
+# features: records in OCFL objects through the change model (PV-0.2). No
+# feature may ever add `filesquid-native` or `filesquid-c2pa` (PROV-S-001).
+[features]
+default = []
+ocfl = ["dep:filesquid-ocfl"]
 
 [dependencies]
+filesquid-ocfl = { path = "../ocfl", optional = true, default-features = false }
 serde = "1"
 serde_json = "1"
 thiserror = "2"
+
+[[test]]
+name = "unit_ocfl"
+path = "tests/unit/ocfl.rs"
+required-features = ["ocfl"]
 
 [[test]]
 name = "unit_ids"

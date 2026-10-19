@@ -54,6 +54,8 @@ mod graph;
 pub mod ids;
 pub mod index;
 pub mod model;
+#[cfg(feature = "ocfl")]
+pub mod ocfl;
 pub mod profile;
 pub mod scalar;
 

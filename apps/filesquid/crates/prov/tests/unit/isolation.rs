@@ -108,12 +108,22 @@ fn the_manifest_keeps_every_isolation_rule() {
 
 #[test]
 fn library_dependencies_are_serde_serde_json_and_thiserror() {
-    let mut names: Vec<String> = table_lines(&cargo_toml(), "[dependencies]")
-        .iter()
-        .map(|line| dependency_name(line))
-        .collect();
-    names.sort();
-    assert_eq!(names, ["serde", "serde_json", "thiserror"]);
+    let lines = table_lines(&cargo_toml(), "[dependencies]");
+    let names = |optional: bool| {
+        let mut names: Vec<String> = lines
+            .iter()
+            .filter(|line| line.contains("optional = true") == optional)
+            .map(|line| dependency_name(line))
+            .collect();
+        names.sort();
+        names
+    };
+    assert_eq!(names(false), ["serde", "serde_json", "thiserror"]);
+    assert_eq!(
+        names(true),
+        ["filesquid-ocfl"],
+        "the ocfl feature's engine is the only optional dependency (PV-0.2)"
+    );
 }
 
 #[test]

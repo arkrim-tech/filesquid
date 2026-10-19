@@ -69,3 +69,19 @@ cargo check -p filesquid-prov --lib --target wasm32-unknown-unknown --locked
 ```
 
 `cargo test` runs the unit tests under `tests/unit/` and the BDD features under `tests/features/` (JUnit in `tests/allure-results/cucumber-junit.xml`). The `@wasm32` scenario builds the crate for `wasm32-unknown-unknown` into `filesquid-prov-wasm32-check/` under the Cargo target directory; set `FILESQUID_SKIP_WASM32=1` to skip it explicitly. The pre-commit hook runs the same `wasm32` check whenever `filesquid-prov` is in the change scope.
+
+## The `ocfl` feature
+
+`filesquid-prov` with `--features ocfl` (off by default; adds `filesquid-ocfl` with its default features off, so it still builds for `wasm32-unknown-unknown`) keeps records in OCFL objects (PROV-S-006, [ADR 040](../../../../resources/architecture/040-prov-o-history.md) Decisions 3 and 7):
+
+- `ocfl::RecordHook` is the change model's version-bound file function: handed to `ChangeModel::commit_with`, it writes `provenance/<version>.jsonld` in the same commit, named after the reserved version and its inventory `created` time, and is called again after a rebase.
+- `ocfl::read_record`, `list_records` and `missing_records` read records back through the engine.
+- `ocfl::reconstruct` derives a record from an inventory alone for a version committed before the history existed (marked `reconstructed`, with its own `recordedAt`, inventing no agent); `stage_reconstructed` stages those records through the change model, at most a given number per run and none for versions that already have one, for the caller to commit in one version with the record of the run itself.
+
+Nothing in the feature writes outside the change model.
+
+```bash
+cd apps/filesquid
+cargo test -p filesquid-prov --all-features --locked
+cargo check -p filesquid-prov --lib --features ocfl --target wasm32-unknown-unknown --locked
+```
