@@ -263,6 +263,8 @@ Round 4 on `fe2ca3f`: 15 new findings (P1 0, P2 11, P3 4). Fixed in the next com
 
 Answered without code: indexing reads each object's inventory every run (the cursor is an object ID, so the order needs the IDs; the bound is the cap on validation, which reads content, and indexing reads one small file per object once per schedule); and a run that fails before indexing reports `not_checked: 0` with outcome `failed` and its error code, which already says nothing was counted.
 
+After round 6, `main` (PRs #84 and #86, PROV-O) was merged in. Conflicts were resolved by keeping both sides: both ADR 033 amendments as separate dated bullets, the validation and history routes, actions and contract schemas, and the native test targets. In the next commit, every `ocfl.validation.finding` and `ocfl.validation.finding_closed` entry carries the `object_ref` (`<object-id>@vN`) of #86's journal entry when the version is known; a root's stand-in identifier carries none (`finding_entries_carry_the_object_version_reference`). The contract moves to 0.9.0 because this task adds routes on top of `main`'s 0.8.0.
+
 ## Mocked Environment Variables
 
 None.

@@ -11,7 +11,8 @@
 //! of validated. Each object's findings replace its previous ones in the store, under the library's
 //! object lock, so a run and a takeover check never interleave on one object. Every newly
 //! opened error finding is journaled as `ocfl.validation.finding`, and every closed finding
-//! as `ocfl.validation.finding_closed`, with the opaque object ID, version and code only.
+//! as `ocfl.validation.finding_closed`, with the opaque object ID, version and code only, and
+//! the `<object-id>@vN` object reference when the version is known.
 //! Diagnostics on stdout name error codes only, never a storage key or location.
 
 use super::error::ValidationError;
@@ -374,6 +375,19 @@ fn journal_change(ctx: &RunContext<'_>, change: &FindingChange) {
     }
 }
 
+/// The `<object-id>@vN` reference of the object version `found` is about, when it names a
+/// real object at a known version: `None` for an object without a readable version and for a
+/// root's stand-in identifier, which is not an OCFL object ID. Pure.
+fn object_ref(found: &Finding) -> Option<String> {
+    let version = found.version.as_deref()?;
+    if found.object_id.starts_with("root:") {
+        return None;
+    }
+    filesquid_core::VersionRef::new(found.object_id.as_str(), version)
+        .ok()
+        .map(|reference| reference.object_ref())
+}
+
 /// The journal entry of `found` under `operation`.
 fn finding_entry(ctx: &RunContext<'_>, operation: &str, found: &Finding) -> JournalEntry {
     let entry = JournalEntry::new(operation, Outcome::Info)
@@ -383,6 +397,10 @@ fn finding_entry(ctx: &RunContext<'_>, operation: &str, found: &Finding) -> Jour
         .error_code(found.code.as_str());
     let entry = match &found.version {
         Some(version) => entry.target(version.as_str()),
+        None => entry,
+    };
+    let entry = match object_ref(found) {
+        Some(object_ref) => entry.object_ref(object_ref),
         None => entry,
     };
     match ctx.process {
