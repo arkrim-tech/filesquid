@@ -229,7 +229,8 @@ async fn read_answer<T: Serialize>(
     }
 }
 
-/// Answer a write: journal the published version with opaque IDs only, or the refusal.
+/// Answer a write: journal the published version with opaque IDs only and its
+/// `<object-id>@vN` object reference (ADR 033 Decision 7), or the refusal.
 async fn write_answer(
     state: &ApiState,
     operation: &str,
@@ -245,6 +246,11 @@ async fn write_answer(
         .target(commit.library_id.as_str())
         .target(commit.object_id.as_str())
         .target(commit.version.as_str());
+    let entry =
+        match filesquid_core::VersionRef::new(commit.object_id.as_str(), commit.version.as_str()) {
+            Ok(reference) => entry.object_ref(reference.object_ref()),
+            Err(_) => entry,
+        };
     journal_entry(state, entry).await;
     Json(commit).into_response()
 }

@@ -64,6 +64,8 @@ Round 2 on `2692d1d`: 25 findings (P1 1, P2 21, P3 3), fixed in the next commit:
 
 Round 3 on `0b03fb2`: 4 findings (P1 1, P2 1, P3 2), fixed in the next commit: the storage root is resolved first and then checked without following links, and on Unix the directory at the given path must be the same device and inode as the resolved one, so a swap for a link between the steps is refused; the ranged `HEAD` test asserts `Accept-Ranges` and the media type; an inventory that does not match its sidecar gets its own neutral `409` message (it is not repairable like a missing inventory); the README gives the playback time as about 320 s.
 
+Round 4 on `21f7669`: 0 findings. Then `main` (PRs #84 and #86, PROV-O) was merged in; conflicts were resolved by keeping both sides (file and history routes and actions, contract schemas with one combined `NotFound` text, test targets, and the plan rows). In the next commit every successful file write's journal entry also carries the `object_ref` (`<object-id>@vN`) of ADR 033 Decision 7, and the contract moves to 0.9.0 because this task adds routes on top of `main`'s 0.8.0.
+
 ## Mocked Environment Variables
 
 None. `FILESQUID_E2E_LIBRARY` is set by the e2e launcher to the media library it builds; no credential is mocked.

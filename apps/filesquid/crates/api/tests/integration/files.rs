@@ -417,6 +417,8 @@ async fn an_upload_commits_exactly_one_version_and_is_journaled() {
     assert_eq!(entries[0].actor, "owner");
     assert!(entries[0].target_ids.contains(&"v2".to_string()));
     assert!(entries[0].target_ids.contains(&LIBRARY.to_string()));
+    let object_ref = format!("{OBJECT}@v2");
+    assert_eq!(entries[0].object_ref.as_deref(), Some(object_ref.as_str()));
 }
 
 #[tokio::test]
