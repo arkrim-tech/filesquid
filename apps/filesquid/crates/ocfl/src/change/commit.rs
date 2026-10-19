@@ -82,6 +82,31 @@ where
         }
     }
 
+    /// Publish a version whose only change is the files `bound` returns for
+    /// it (OCFL-S-024): the head's state with those files added, such as a
+    /// record of something that changed no other logical file. Staged
+    /// changes are neither used nor cleared; they stay for a later commit. A
+    /// moved head is rebased onto as usual, and `bound` is called again with
+    /// the new version name.
+    ///
+    /// # Errors
+    ///
+    /// [`ChangeError::Commit`] with [`CommitError::BoundFiles`] when `bound`
+    /// fails or returns no file (a version with no change is never
+    /// published), and as [`commit`](Self::commit).
+    pub async fn commit_bound_only(
+        &self,
+        meta: VersionMeta,
+        bound: &dyn VersionBoundFiles,
+    ) -> Result<CommitReceipt, ChangeError> {
+        let inventory = self.committed().await?;
+        let head = inventory.map(|inventory| inventory.head);
+        let mut index = StagingIndex::new(&self.object_id, head);
+        let guarded = NonEmpty(bound);
+        self.publish_draft(&mut index, &meta, Some(&guarded), true)
+            .await
+    }
+
     /// Clear the staging area if its index is still `committed`, so changes
     /// staged by someone else in the meantime are never deleted.
     ///
@@ -208,10 +233,24 @@ where
         meta: &VersionMeta,
         bound: Option<&dyn VersionBoundFiles>,
     ) -> Result<CommitReceipt, ChangeError> {
+        self.publish_draft(&mut index, meta, bound, false).await
+    }
+
+    /// The rebase-and-commit loop of [`publish`](Self::publish).
+    /// `bound_only` lets a draft that leaves the state unchanged through,
+    /// for [`commit_bound_only`](Self::commit_bound_only), whose bound
+    /// files are then its only change.
+    async fn publish_draft(
+        &self,
+        index: &mut StagingIndex,
+        meta: &VersionMeta,
+        bound: Option<&dyn VersionBoundFiles>,
+        bound_only: bool,
+    ) -> Result<CommitReceipt, ChangeError> {
         for _ in 0..MAX_REBASES {
             let inventory = self.committed().await?;
-            rebase(&mut index, inventory.as_ref())?;
-            let draft = self.draft(&index, inventory.as_ref(), meta)?;
+            rebase(index, inventory.as_ref())?;
+            let draft = self.draft(index, inventory.as_ref(), meta, bound_only)?;
             let staging = self.staging.backend();
             let result = self
                 .writer
@@ -237,10 +276,11 @@ where
         index: &StagingIndex,
         inventory: Option<&Inventory>,
         meta: &VersionMeta,
+        bound_only: bool,
     ) -> Result<VersionDraft, ChangeError> {
         let base = base_state(inventory, index)?;
         let working = index.working(&base);
-        if working == base {
+        if working == base && !bound_only {
             return Err(ChangeError::NothingToCommit);
         }
         let known = known(inventory);
@@ -259,6 +299,23 @@ where
             draft.set_user(user.clone());
         }
         Ok(draft)
+    }
+}
+
+/// A [`VersionBoundFiles`] that refuses an empty file set, so a bound-only
+/// commit always changes the state.
+struct NonEmpty<'b>(&'b dyn VersionBoundFiles);
+
+impl VersionBoundFiles for NonEmpty<'_> {
+    fn files(
+        &self,
+        context: &crate::write::BoundContext<'_>,
+    ) -> Result<std::collections::BTreeMap<String, Vec<u8>>, String> {
+        let files = self.0.files(context)?;
+        if files.is_empty() {
+            return Err("a bound-only commit needs at least one file".to_string());
+        }
+        Ok(files)
     }
 }
 

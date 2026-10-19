@@ -262,3 +262,46 @@ fn version_user_and_message_pass_through_unchanged() {
     assert_eq!(block.message.as_deref(), Some(message));
     assert_eq!(block.user.as_ref(), Some(&user));
 }
+
+#[test]
+fn a_bound_only_commit_adds_a_version_holding_only_the_bound_files() {
+    let rig = Rig::new(MemoryBackend::new());
+    commit_v1(&rig);
+    let m = model(&rig, "writer-a");
+    let recorder = Recorder::new();
+    let receipt = ready(m.commit_bound_only(meta(&rig, "record only"), &recorder)).expect("commit");
+    assert_eq!(receipt.version, v("v2"));
+    let before = state_of(&rig, "v1");
+    let mut after = state_of(&rig, "v2");
+    assert!(after.remove("record/v2.txt").is_some());
+    assert_eq!(after, before, "nothing but the bound file changed");
+    rig.assert_valid();
+}
+
+#[test]
+fn a_bound_only_commit_with_no_files_publishes_nothing() {
+    let rig = Rig::new(MemoryBackend::new());
+    commit_v1(&rig);
+    let m = model(&rig, "writer-a");
+    let none = |_: &BoundContext<'_>| Ok(BTreeMap::new());
+    let err = ready(m.commit_bound_only(meta(&rig, "nothing"), &none)).expect_err("no-op");
+    assert!(
+        matches!(err, ChangeError::Commit(CommitError::BoundFiles { .. })),
+        "{err:?}"
+    );
+    assert_eq!(rig.open().expect("open").head(), &v("v1"));
+}
+
+#[test]
+fn a_bound_only_commit_leaves_staged_changes_alone() {
+    let rig = Rig::new(MemoryBackend::new());
+    commit_v1(&rig);
+    let m = model(&rig, "writer-a");
+    ready(m.stage_bytes("b.txt", b"bravo")).expect("stage");
+    let recorder = Recorder::new();
+    ready(m.commit_bound_only(meta(&rig, "record only"), &recorder)).expect("commit");
+    assert!(!state_of(&rig, "v2").contains_key("b.txt"));
+    let receipt = ready(m.commit(meta(&rig, "staged"))).expect("staged change still commits");
+    assert_eq!(receipt.version, v("v3"));
+    assert!(state_of(&rig, "v3").contains_key("b.txt"));
+}
