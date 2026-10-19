@@ -566,6 +566,24 @@ impl<S: tracing::Subscriber> Layer<S> for Captured {
     }
 }
 
+/// The process-wide capture of every `tracing` event, installed once as the global default.
+/// A thread-local subscriber would miss events the API emits on other threads (blocking
+/// journal writes) and depends on interest other tests cached, so the redaction test reads
+/// this one instead; a line from a concurrent test cannot carry this test's random handle.
+fn global_logs() -> Captured {
+    static LOGS: std::sync::OnceLock<Captured> = std::sync::OnceLock::new();
+    LOGS.get_or_init(|| {
+        let captured = Captured::default();
+        let subscriber = tracing_subscriber::registry().with(captured.clone());
+        if tracing::subscriber::set_global_default(subscriber).is_err() {
+            panic!("another global subscriber is installed in this test binary");
+        }
+        tracing::callsite::rebuild_interest_cache();
+        captured
+    })
+    .clone()
+}
+
 /// Collects every field of one event.
 struct Text(String);
 
@@ -577,12 +595,8 @@ impl Visit for Text {
 
 #[tokio::test]
 async fn no_log_line_journal_entry_or_debug_output_carries_a_handle() {
-    let captured = Captured::default();
-    let subscriber = tracing_subscriber::registry().with(captured.clone());
-    let _guard = tracing::subscriber::set_default(subscriber);
-    // Other tests run on other threads: drop any interest they cached for a callsite before
-    // this thread's subscriber existed, so every event below reaches the capture.
-    tracing::callsite::rebuild_interest_cache();
+    let captured = global_logs();
+    let before = captured.0.lock().expect("capture").len();
     let rig = video_rig().await;
     let url = minted_url(&rig).await;
     let handle = url.rsplit('/').next().expect("handle").to_string();
@@ -590,7 +604,7 @@ async fn no_log_line_journal_entry_or_debug_output_carries_a_handle() {
     rig.clock.advance(IDLE_TIMEOUT_MS);
     fetch(&rig, Method::GET, &url, None).await;
     fetch(&rig, Method::GET, &format!("{url}/extra"), None).await;
-    let lines = captured.0.lock().expect("capture").join("\n");
+    let lines = captured.0.lock().expect("capture")[before..].join("\n");
     assert!(!lines.is_empty(), "the refusals were logged");
     assert!(!lines.contains(&handle), "a handle reached a log line");
     let journal = serde_json::to_string(&rig.journal()).expect("json");
