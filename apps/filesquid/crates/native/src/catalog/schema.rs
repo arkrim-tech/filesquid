@@ -101,6 +101,14 @@ CREATE TABLE journal_outbox (
 );
 ";
 
+/// Version 2 (Task DE-0.3): the OCFL snapshot version the catalog reflects, so a catalog
+/// behind its library's snapshot head (a crash after publication, or a restored older copy)
+/// is rebuilt from the snapshot at open.
+const SCHEMA_V2: &str = "ALTER TABLE library ADD COLUMN snapshot_version TEXT;";
+
+/// Every migration, by the schema version it produces, applied in order in one transaction.
+const MIGRATIONS: [(i64, &str); 2] = [(1, SCHEMA_V1), (2, SCHEMA_V2)];
+
 /// The catalog file name of `library_id`: `<uuid>.sqlite`, or `None` when the identifier is
 /// not a canonical UUID v4 (ADR 021), so no identifier can name a path outside the catalog
 /// directory. Pure.
@@ -159,7 +167,8 @@ fn open_flags() -> OpenFlags {
         | OpenFlags::SQLITE_OPEN_NOFOLLOW
 }
 
-/// Bring the schema of `conn` to [`CATALOG_SCHEMA_VERSION`] in one transaction. Database I/O.
+/// Bring the schema of `conn` to [`CATALOG_SCHEMA_VERSION`], applying each missing migration
+/// in order, in one transaction. Database I/O.
 fn migrate(mut conn: Connection) -> Result<Connection, CatalogError> {
     let version: i64 = conn
         .query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -175,8 +184,10 @@ fn migrate(mut conn: Connection) -> Result<Connection, CatalogError> {
     let tx = conn
         .transaction()
         .map_err(|e| failed(format!("begin migration: {e}")))?;
-    tx.execute_batch(SCHEMA_V1)
-        .map_err(|e| failed(format!("create schema v1: {e}")))?;
+    for (target, step) in MIGRATIONS.iter().filter(|(target, _)| *target > version) {
+        tx.execute_batch(step)
+            .map_err(|e| failed(format!("migrate to schema v{target}: {e}")))?;
+    }
     tx.pragma_update(None, "user_version", CATALOG_SCHEMA_VERSION)
         .map_err(|e| failed(format!("set schema version: {e}")))?;
     tx.commit()

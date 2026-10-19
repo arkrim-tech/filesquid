@@ -295,6 +295,14 @@ cargo test -p filesquid-native --features desktop --locked --test unit_catalog -
 cargo test -p filesquid-desktop --locked --test integration_library_catalog
 ```
 
+Every library change is also canonical OCFL (Task DE-0.3, DE-S-010, API-S-026): the desktop records the command's intent, publishes the entities it touched as one version of the library's collection snapshot in `libraries/<library-id>.ocfl/` (staging and leases in `libraries/<library-id>.work/`), and only then updates the catalog from the receipt. A file's original is stored in its own object under its identifier and extension (`original/<file-id>.<ext>`); the file `original/<file-id>.metadata.md` beside it records the original file name, extension and media type, so a copied library shows every file's own name. At launch each catalog is reconciled with its snapshot head, so a crash after publication loses nothing, and a deleted catalog file is rebuilt from the OCFL files. The application profile's tests run on the in-memory backend; the crash-injection tests stop a commit just before or just after publication and reopen the files on disk:
+
+```sh
+cd apps/filesquid
+cargo test -p filesquid-api --locked --test unit_canonical
+cargo test -p filesquid-native --features desktop --locked --test unit_canonical_commit
+```
+
 The desktop transport (DE-S-005): the event channel's forwarder (one counted subscription, resync hints, the `event-forwarder` process, navigation kept on the app's origins), ranged reads through the `filesquid://localhost` scheme (`http://filesquid.localhost` on Windows and Android) with its 16 MiB response cap, and typed host errors. The 100 MB range fixture and the BDD features in `crates/desktop/tests/features/` exist only in the test-instrumented build (`--features test-webdriver`, never shipped), so the hook runs the desktop crate a second time with that feature:
 
 ```sh

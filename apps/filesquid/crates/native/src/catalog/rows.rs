@@ -270,6 +270,16 @@ pub(crate) fn file(
     library_id: &LibraryId,
     file_id: &FileId,
 ) -> Result<Option<FileEntry>, CatalogError> {
+    Ok(keyed_file(conn, library_id, file_id)?.map(|k| k.item))
+}
+
+/// One file of `library_id` with its state, keyed by its listing order, if stored.
+/// Database I/O.
+pub(crate) fn keyed_file(
+    conn: &Connection,
+    library_id: &LibraryId,
+    file_id: &FileId,
+) -> Result<Option<Keyed<FileEntry>>, CatalogError> {
     let sql_text = format!(
         "SELECT {} FROM files f WHERE f.id = ?1",
         FILE_COLUMNS.replace("{ORD}", "f.list_order")
@@ -278,8 +288,7 @@ pub(crate) fn file(
         .query_row(&sql_text, params![file_id.as_str()], file_row)
         .optional()
         .map_err(sql)?;
-    row.map(|r| file_entry(library_id, r).map(|k| k.item))
-        .transpose()
+    row.map(|r| file_entry(library_id, r)).transpose()
 }
 
 /// The visibility condition of a listing. Pure.

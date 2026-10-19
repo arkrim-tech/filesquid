@@ -57,6 +57,17 @@ pub(crate) fn clear(tx: &Transaction<'_>, operation_id: &str) -> Result<(), Cata
     .map_err(sql)
 }
 
+/// Remove the intent of `operation_id`, if any, outside a transaction: the commit it
+/// announced failed before anything was published. Database I/O.
+pub(crate) fn discard(conn: &Connection, operation_id: &str) -> Result<(), CatalogError> {
+    conn.execute(
+        "DELETE FROM pending_intents WHERE operation_id = ?1",
+        params![operation_id],
+    )
+    .map(drop)
+    .map_err(sql)
+}
+
 /// The oldest `limit` intents of `library_id`, by recorded time then operation ID.
 /// Database I/O.
 pub(crate) fn list(

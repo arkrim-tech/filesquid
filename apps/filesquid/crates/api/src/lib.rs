@@ -44,6 +44,7 @@
 
 pub mod admin;
 pub mod auth;
+pub mod canonical;
 pub mod content;
 pub mod error;
 pub mod events;

@@ -115,3 +115,7 @@ path = "tests/integration/content_handles.rs"
 name = "features"
 path = "tests/features.rs"
 harness = false
+
+[[test]]
+name = "unit_canonical"
+path = "tests/unit/canonical.rs"

@@ -13,17 +13,18 @@ path = "src/lib.rs"
 # The SQLite journal store, the data-directory checks and HostMonitor are always built; they
 # are all `filesquid-server` may use (ADR 033 amendment 2026-10-18).
 default = []
-# Desktop-only native processing: the per-library SQLite catalog (DE-0.2), and later the
-# OCFL coordinator and the durable job and media workers (DE-0.8). Only `filesquid-desktop`
-# enables it; a `filesquid-server` test fails if the server does.
+# Desktop-only native processing: the per-library SQLite catalog (DE-0.2) and its OCFL
+# snapshot commits and reconcile (DE-0.3), and later the durable job and media workers
+# (DE-0.8). Only `filesquid-desktop` enables it; a `filesquid-server` test fails if the
+# server does.
 desktop = []
 
 [dependencies]
 filesquid-api = { path = "../api" }
 # Domain types of the library catalog (files, collections, virtual collections, folders).
 filesquid-core = { path = "../core" }
-# The OCFL engine's filesystem backend and leases, for the file service the hosts install
-# (API-F1.3).
+# The OCFL engine, its filesystem backend and leases: the file service every host installs
+# (API-F1.3), and the desktop's canonical snapshot commits through its change model (DE-0.3).
 filesquid-ocfl = { path = "../ocfl" }
 fs4 = "1"
 # The digest that names each library's folder in the data directory.
@@ -67,3 +68,8 @@ name = "catalog_features"
 path = "tests/catalog_features.rs"
 required-features = ["desktop"]
 harness = false
+
+[[test]]
+name = "unit_canonical_commit"
+path = "tests/unit/canonical_commit.rs"
+required-features = ["desktop"]
