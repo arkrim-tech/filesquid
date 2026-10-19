@@ -134,7 +134,7 @@ test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 ## Owner decision needed
 
-- [ADR 005](../../../../../../resources/architecture/005-sqlite-local-postgres-hosted.md) names SQLx as the access library for both databases. `filesquid-native` already used `rusqlite` for the SQLite journal store (CL-0.1), and this task follows that precedent rather than adding a second SQLite driver. The ADR text was not changed; the owner should confirm `rusqlite` for the local stores (and amend ADR 005) or ask for SQLx.
+- [ADR 005](../../../../../../resources/architecture/005-sqlite-local-postgres-hosted.md) names SQLx as the access library for both databases. `filesquid-native` already used `rusqlite` for the SQLite journal store (CL-0.1), and this task follows that precedent rather than adding a second SQLite driver. The ADR text was not changed; the owner should confirm `rusqlite` for the local stores (and amend ADR 005) or ask for SQLx. Resolved 2026-10-18: the owner confirmed `rusqlite` for local SQLite stores and ADR 005 was amended (SQLx stays planned for PostgreSQL).
 
 ## Mocked Environment Variables
 
