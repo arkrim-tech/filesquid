@@ -109,3 +109,7 @@ path = "tests/unit/version_inventory_repair.rs"
 name = "features"
 path = "tests/features.rs"
 harness = false
+
+[[test]]
+name = "unit_canonical"
+path = "tests/unit/canonical.rs"
