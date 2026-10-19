@@ -92,22 +92,8 @@ impl SqliteJournal {
 /// Create `path` if missing and set it to mode 0600 (Unix only; elsewhere the data
 /// directory's access control applies). Filesystem I/O.
 fn restrict_to_owner(path: &Path) -> Result<(), JournalError> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-        let io_err = |err: std::io::Error| JournalError(format!("{}: {err}", path.display()));
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .mode(0o600)
-            .open(path)
-            .map_err(io_err)?;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(io_err)?;
-    }
-    #[cfg(not(unix))]
-    let _ = path;
-    Ok(())
+    crate::owner_only::create_owner_only(path)
+        .map_err(|err| JournalError(format!("{}: {err}", path.display())))
 }
 
 /// Insert one entry and return its id.

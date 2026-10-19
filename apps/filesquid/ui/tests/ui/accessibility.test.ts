@@ -23,6 +23,7 @@ import {
 import type { Distribution } from "../../src/distribution";
 import labels from "../../src/theme/labels.en.json";
 import { fakeThemeStore } from "../support/theme-fakes";
+import { hostFakes } from "../support/host-fakes";
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -38,7 +39,10 @@ function mountShell(): FsAppShell {
   const shell = document.createElement("fs-app-shell") as FsAppShell;
   shell.configure({
     distribution,
-    client: { health: async () => ({ status: "ok", product: "filesquid", schema_version: 1 }) },
+    client: {
+      ...hostFakes(),
+      health: async () => ({ status: "ok", product: "filesquid", schema_version: 1 }),
+    },
     theme: fakeThemeStore().store,
   });
   document.body.replaceChildren(shell);
@@ -105,7 +109,10 @@ describe("<fs-app-shell> accessibility (UI-S-016)", () => {
     const shell = document.createElement("fs-app-shell") as FsAppShell;
     shell.configure({
       distribution,
-      client: { health: async () => ({ status: "ok", product: "x", schema_version: 1 }) },
+      client: {
+        ...hostFakes(),
+        health: async () => ({ status: "ok", product: "x", schema_version: 1 }),
+      },
       theme: fakeThemeStore().store,
     });
     return shell;
@@ -180,7 +187,10 @@ describe("<fs-app-shell> accessibility (UI-S-016)", () => {
     shell.shadowRoot?.querySelector<HTMLButtonElement>(".skip")?.focus();
     shell.configure({
       distribution,
-      client: { health: async () => ({ status: "ok", product: "x", schema_version: 1 }) },
+      client: {
+        ...hostFakes(),
+        health: async () => ({ status: "ok", product: "x", schema_version: 1 }),
+      },
       theme: fakeThemeStore().store,
     });
     expect(deepActiveElement(document)).toBe(shell.shadowRoot?.querySelector("main"));
@@ -193,7 +203,10 @@ describe("<fs-app-shell> accessibility (UI-S-016)", () => {
     const shell = document.createElement("fs-app-shell") as FsAppShell;
     shell.configure({
       distribution,
-      client: { health: async () => ({ status: "ok", product: "x", schema_version: 1 }) },
+      client: {
+        ...hostFakes(),
+        health: async () => ({ status: "ok", product: "x", schema_version: 1 }),
+      },
       theme: fakeThemeStore().store,
     });
     document.body.append(shell);

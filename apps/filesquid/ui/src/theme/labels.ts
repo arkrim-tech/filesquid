@@ -78,6 +78,21 @@ export const REQUIRED_LABEL_KEYS = [
   "stateOffline",
   "stateDenied",
   "stateRetry",
+  "hostIndicator",
+  "hostDesktop",
+  "hostDesktopBackup",
+  "hostServer",
+  "hostOperatorUnnamed",
+  "hostServerAtRest",
+  "hostBrowser",
+  "hostServiceTitle",
+  "hostNotEnrolled",
+  "hostBackup",
+  "hostSync",
+  "hostOn",
+  "hostOff",
+  "hostServiceAt",
+  "hostServiceCiphertext",
 ] as const;
 
 /** One required label key. */

@@ -12,6 +12,10 @@
  * Navigation (UI-F2.1a): the `nav` landmark has a `navigation` named slot for the distribution's
  * navigation tree (`<fs-nav-tree slot="navigation">`); until one is slotted it shows the
  * vocabulary of the main destinations as a static list. The Monitor link follows the slot.
+ *
+ * Host privacy (UI-F2.1b, UI-S-004, UI-S-018): the header carries `<fs-host-indicator>`, so the
+ * host and who can read files there are visible on every view; the client must therefore
+ * implement {@link HostClient}.
  */
 import type { Distribution } from "../distribution";
 import { logoSource } from "../distribution";
@@ -23,9 +27,10 @@ import { denialLabel } from "./denial";
 import type { FsThemeControl } from "./fs-theme-control";
 import { A11Y_STYLE, releaseDocumentA11yStyle, retainDocumentA11yStyle } from "./a11y-style";
 import { focusElement, recoverFocus } from "../a11y/focus";
+import type { FsHostIndicator, HostClient } from "./fs-host-indicator";
 
 /** The part of the API client the shell needs (injectable in tests). */
-export interface ShellClient {
+export interface ShellClient extends HostClient {
   /** Read API health. */
   health(): Promise<HealthStatus>;
 }
@@ -34,7 +39,7 @@ export interface ShellClient {
 export interface ShellOptions {
   /** Brand and vocabulary of the active distribution. */
   distribution: Distribution;
-  /** API client (only `health()` is used by the shell itself). */
+  /** API client: `health()` for the status line, `host()` and `subscribe()` for the indicator. */
   client: ShellClient;
   /** Shared theme state, already started. */
   theme: ThemeStore;
@@ -48,6 +53,7 @@ const STYLE = `
   h1 { margin: 0; min-width: 0; overflow-wrap: anywhere; font-family: var(--fs-font-heading); font-size: var(--fs-font-size-title); font-weight: 700; color: var(--fs-on-surface); }
   img { height: 2rem; width: auto; }
   fs-theme-control { margin-inline-start: auto; }
+  fs-host-indicator { flex: 1 1 100%; order: 1; }
   .body { display: flex; min-width: 0; }
   nav { display: flex; flex-direction: column; gap: var(--fs-space-4); flex: 0 0 15rem; box-sizing: border-box; min-width: 0; padding: var(--fs-space-4); background: var(--fs-surface-container); }
   ul { list-style: none; margin: 0; padding: 0; }
@@ -151,6 +157,7 @@ export class FsAppShell extends HTMLElement {
     this.fillText(root, dist);
     this.showLogo();
     this.mountThemeControl(root, labels);
+    this.mountHostIndicator(root, labels);
     const items = [
       labels.libraries,
       labels.collections,
@@ -192,14 +199,23 @@ export class FsAppShell extends HTMLElement {
     root.querySelector("header")?.append(control);
   }
 
+  /** Add the host privacy indicator to the header, bound to the client. */
+  private mountHostIndicator(root: ShadowRoot, labels: LabelTable): void {
+    if (!this.client) return;
+    const indicator = document.createElement("fs-host-indicator") as FsHostIndicator;
+    indicator.configure({ labels, client: this.client });
+    root.querySelector("header")?.append(indicator);
+  }
+
   /**
-   * Read API health again and update the status line, for example after a token was entered.
-   * Network I/O via the client.
+   * Read API health and the host descriptor again and update both, for example after a token
+   * was entered (the event channel is reopened with it). Network I/O via the client.
    *
-   * @returns Resolves once the status line shows the new answer.
+   * @returns Resolves once the status line and the host indicator show the new answers.
    */
   async refreshHealth(): Promise<void> {
-    await this.loadHealth();
+    const indicator = this.shadowRoot?.querySelector<FsHostIndicator>("fs-host-indicator");
+    await Promise.all([this.loadHealth(), indicator?.refresh()]);
   }
 
   /**
