@@ -156,7 +156,7 @@ test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 - Library directories that are symbolic links, or resolve outside the catalog directory, are refused before any backend opens them (`a_library_directory_that_is_a_symbolic_link_is_refused`).
 - Reconcile refuses a snapshot of another library, or one holding another library's collections (`a_snapshot_of_another_library_is_never_loaded`), and journals restored receipts too.
 - The API writes the storage-root declaration itself, so `local_library` stays private; a delta that changes nothing writes no version (index writes then commit without one); a prefixed operation message that cannot be read is refused instead of dropping its receipt; decode errors carry a fixed reason; reservation failures that cannot clear map to `Failed`; `<id>.json` must fit 255 bytes; `CreateLibrary` touches the library entity once; the W010 refusal is also tested in the API on the in-memory backend.
-- The no-op receipt gap, the original-name contract and the transform's byte-only scope are documented in DE-S-010, API-S-026 and ADR 010.
+- The no-op receipt (an owner decision since 2026-10-19), the original-name contract and the transform's byte-only scope are documented in DE-S-010, API-S-026 and ADR 010.
 
 ## Pre-commit hook
 
@@ -170,6 +170,7 @@ test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 - **Layout:** ADR 010 left the local layout "to be specified when the first library writer is built". This task specifies it in API-S-026 and records an amendment note in ADR 010 for the owner to confirm in this pull request.
 - **Encrypted profile:** no ADR 009 cipher exists yet, so only the owner-readable identity transform is implemented; the encrypted profile uses the same `ProfileTransform` seam when the cipher lands. The owner accepted on 2026-10-19 that the encrypted profile's path mapping is deferred until the ADR 009 cipher lands.
+- **No-op commands:** the owner decided on 2026-10-19 that a command that changes nothing writes no OCFL version. Its receipt and journal entry stay in the catalog as API-S-019 requires, so replay stays idempotent. Losing that receipt after the catalog is lost is accepted, not a gap.
 - **Crash injection:** crashes are simulated by a probe that stops the commit at the exact point a crash would, then the catalog files on disk are reopened as a restarted process would; no process is killed.
 
 ## Mocked Environment Variables
