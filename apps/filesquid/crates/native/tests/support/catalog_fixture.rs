@@ -14,7 +14,7 @@ use filesquid_api::metrics::Metrics;
 use filesquid_api::operation::{CommandEnvelope, ExpectedRevision, OperationId, OperationScope};
 use filesquid_api::EventBus;
 use filesquid_core::{CollectionId, LibraryId, RepositoryId, VirtualCollectionId};
-use filesquid_native::SqliteCatalog;
+use filesquid_native::{CommitProbe, SqliteCatalog};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -130,7 +130,23 @@ impl Fixture {
     /// A fixture over the catalog files in `root`, forwarding to `journal` (opens SQLite). The
     /// fixture owns `root` and removes it when dropped.
     pub fn over(root: PathBuf, journal: Arc<dyn JournalStore>) -> Self {
-        let catalog = Arc::new(SqliteCatalog::open(&root, journal.clone()).expect("open"));
+        let catalog = SqliteCatalog::open(&root, journal.clone()).expect("open");
+        Self::around(root, journal, catalog)
+    }
+
+    /// A fixture over `root` whose commits stop where `probe` says, as a crash would.
+    pub fn crashing(
+        root: PathBuf,
+        journal: Arc<dyn JournalStore>,
+        probe: Arc<dyn CommitProbe>,
+    ) -> Self {
+        let catalog = SqliteCatalog::open_with_probe(&root, journal.clone(), probe).expect("open");
+        Self::around(root, journal, catalog)
+    }
+
+    /// A fixture around an opened `catalog` (starts the failure journal writer).
+    fn around(root: PathBuf, journal: Arc<dyn JournalStore>, catalog: SqliteCatalog) -> Self {
+        let catalog = Arc::new(catalog);
         let writer = JournalWriter::start(
             journal.clone(),
             WriterConfig::default(),
@@ -157,10 +173,12 @@ impl Fixture {
         self.root.clone()
     }
 
-    /// A fresh operation ID.
+    /// A fresh operation ID, unique across fixtures over the same directory (a reopened
+    /// catalog keeps every receipt, so a reused ID would replay).
     pub fn op(&self) -> OperationId {
         let n = self.next_op.fetch_add(1, Ordering::SeqCst) + 1;
-        OperationId::new(format!("op-{n}")).expect("op")
+        let unique = filesquid_api::library::mint_uuid_v4().expect("uuid");
+        OperationId::new(format!("op-{n}-{unique}")).expect("op")
     }
 
     /// Run `command` under `operation_id` at `revision`.
