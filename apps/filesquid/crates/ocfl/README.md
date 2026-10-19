@@ -201,6 +201,22 @@ cargo test -p filesquid-ocfl --locked --test integration_change_model
 cargo test -p filesquid-ocfl --locked --test features -- --input "change_model_*.feature"
 ```
 
+## UI view API
+
+The `view` module holds the calls `filesquid-api` routes to every UI to browse and edit an object like a drive ([OCFL-S-012](./resources/srs.md), [ADR 028](../../../../resources/architecture/028-filesquid-ui-packages-and-panel-composition.md), [ADR 030](../../../../resources/architecture/030-filesquid-api-and-transports.md)). It returns storage facts only (C-055): nothing reads embedded or descriptive metadata, and the type hint is the lowercase extension. Listings, details, version records, histories and fixity reports have JSON forms (`to_json`, `versions_json`, `history_json`); `read_range` returns raw bytes and the writes return the change model's `CommitReceipt`.
+
+- Reads take an opened `Object` and a version the caller pins: `list_folder(&object, &version, prefix, cursor, limit)` lists the implied folders, then the files, directly below a logical-path prefix (`""` for the root), at most `MAX_PAGE_ENTRIES` (1,000) per page, with an opaque cursor; each file carries its digest, size (read from the backend), the version that last set its content and that version's `created`. `file_details` adds the content path, the fixity values the inventory records and the last change's `user` and `message`. `file_history` lists the versions that added, changed or deleted a path; `object_versions` lists every version. `read_range` returns at most `MAX_RANGE_BYTES` (8 MiB) for previews and downloads; `check_fixity` reads the stored bytes once and compares them with the manifest digest and each fixity value the engine can compute, reporting a mismatch rather than failing.
+- Writes take a `ChangeModel` and publish exactly one version each, through the [change model](#change-model) only: `add_file`, `move_path` and `remove_path` (a file, or a folder with every file below it) and `restore` (files or folders from an earlier version, through `reinstate`). Write arguments are logical paths without a trailing `/`. A write is refused with `ViewError::StagingNotEmpty` while the staging area holds other changes, and leaves them untouched. A write that fails after it has staged clears the staging area only if its index is still the one the write staged, so changes staged by someone else are never deleted. A W010 head stays refused and is never repaired.
+- OCFL stores no empty folder, so creating a folder is not a write: the UI keeps it pending until a file is added beneath its prefix, and `list_folder` reports `ViewError::FolderNotFound` for a prefix with no file below it (the root of an empty version is an empty page). A cursor belongs to one listing (object, version and prefix); another listing refuses it.
+
+Run its tests and BDD feature:
+
+```bash
+cd apps/filesquid
+cargo test -p filesquid-ocfl --locked --test integration_view_api
+cargo test -p filesquid-ocfl --locked --test features -- --input "view_api_*.feature"
+```
+
 ## Opaque bytes
 
 The engine stores the content bytes its caller supplies and reads them only as bytes ([OCFL-S-021](./resources/srs.md); [ADR 010](../../../../resources/architecture/010-ocfl-1-1-dual-profile.md), [ADR 023](../../../../resources/architecture/023-filesquid-ocfl-engine-and-parquet.md)). Logical paths are UTF-8 strings stored as given, but they must pass the OCFL 1.1 path rules (E052, E053) like any other; a caller that hides names encodes them to meet those rules. Digests are `sha256` of exactly what was stored, so manifest digest verification (E092) works over ciphertext without a key; fixity block values (E093) are checked the same way. The owner-readable local profile has no transform: the caller stages its plaintext as is. Only the encrypted hosted package is a caller transform, planned for `filesquid-api` (which has no sealing code yet): it seals content and names before it stages them and opens what it streams back. Both profiles use the same `ObjectWriter` and `Object` calls; the engine has no profile, key or encryption type and no encryption dependency. Over sealed bytes the inventory stays structurally readable OCFL 1.1, and the engine and community validators accept the object.

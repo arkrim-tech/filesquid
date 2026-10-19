@@ -343,7 +343,7 @@ where
     /// uncommitted first version included), [`ChangeError::Commit`] with
     /// [`CommitError::Guard`] for a refused root, or a read or backend
     /// error.
-    pub(super) async fn committed(&self) -> Result<Option<Inventory>, ChangeError> {
+    pub(crate) async fn committed(&self) -> Result<Option<Inventory>, ChangeError> {
         let root = root_dir(&self.root)?;
         let base = read_base(self.storage, &root).await?;
         if base.root_tag.is_some() {
@@ -381,6 +381,15 @@ where
     ///
     /// As [`committed`](Self::committed), [`ChangeError::StagingCorrupt`]
     /// or [`ChangeError::StagingMismatch`].
+    /// The staging index as stored, or `None` when nothing is staged.
+    ///
+    /// # Errors
+    ///
+    /// [`ChangeError::StagingCorrupt`], or a backend error.
+    pub(crate) async fn staged_index(&self) -> Result<Option<StagingIndex>, ChangeError> {
+        self.staging.read_index().await
+    }
+
     pub(super) async fn load(&self) -> Result<(Option<Inventory>, StagingIndex), ChangeError> {
         let inventory = self.committed().await?;
         let index = match self.staging.read_index().await? {
