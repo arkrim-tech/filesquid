@@ -11,6 +11,9 @@ Draft mockups of every screen a person uses in the **FileSquid MVP**: the early-
 - **Logo.** The mark comes from the coloured [`FileSquid-logo.svg`](../../assets/FileSquid-logo.svg): a green head and red, yellow and blue shapes in both modes, with a black outline and wordmark on light surfaces and a white one on dark surfaces.
 - **Early access.** The sidebar, the welcome screen and About carry the "Early access" label that C-056 and DE-F3.1 require.
 - **Desktop privacy boundary.** Every browsing screen shows "This device · only you can read these files" ([UI-S-004](../../../apps/filesquid/ui/resources/srs.md)). The welcome screen and About state it in full.
+- **Original file names (owner requirement, 2026-10-19).** FileSquid stores each file as `<file-uuid>.<ext>` with its metadata record `<file-uuid>.metadata.md` beside it. Every screen shows the original file name and never the UUID storage name, and owner downloads and exports use the original name. Storage paths that would reveal the storage name (the former "Content location" row) are not shown.
+- **Tabbed file panel (owner requirement, 2026-10-19).** The file side panel has four tabs with the same layout and behaviour: File facts, Descriptive, PROV-O and Audit log ([35](./35-panel-file-facts.svg), [28](./28-panel-metadata.svg), [36](./36-panel-prov-o.svg), [37](./37-panel-audit-log.svg)). Versions opens from the history button in the panel header ([26](./26-panel-versions.svg)).
+- **Journal (owner requirement, 2026-10-19).** The sidebar has a Journal item above Deleted files on every screen with a sidebar. It opens the full activity journal ([38](./38-journal-view.svg)) with its export dialog ([39](./39-journal-export.svg)).
 
 ## Design constants used
 
@@ -20,6 +23,19 @@ Draft mockups of every screen a person uses in the **FileSquid MVP**: the early-
 - Flat fills only: no gradients, glows or shadows. Dark mode uses surface steps for elevation.
 - Georgia serif headings, system sans UI text, monospace for identifiers, digests, paths and namespace prefixes. Sentence case everywhere.
 - Sidebar 240 px, right panel 320 px, 8 px spacing scale, buttons with a 7 px radius, inputs with a 6 px radius, line icons with round caps.
+- Status colours always come with text: `ok` on the active tint, `refused` outlined in the warning colour (`#8A6D00` light, `#E0C25A` dark), `failed` outlined in the error colour. Journal levels use the same colours (`info` secondary text, `warn`, `error`).
+- Keyboard focus is a 2 px brand-green ring (inputs: a 2 px brand-green border), drawn in mockups 36, 37 and 39.
+
+## File panel: one frame for four tabs
+
+Every tab of the file side panel uses the same frame, so the four tabs look and work alike:
+
+1. Header: the file-type badge and the **original file name**, a history button that opens Versions, and close.
+2. Tab strip: File facts, Descriptive, PROV-O, Audit log (13 px; the active tab in the active colour with a 2.5 px brand underline).
+3. A search and filter box for that tab (32 px tall), plus filter chips where the tab needs them (Audit log).
+4. An uppercase section label with the count, then a property/value table: each row has the property on its first line (prefixed properties in monospace) and the value below, with a copy control on every row. Rows the owner can change also show edit and remove on hover (Descriptive).
+5. A footer line naming where the values come from, or the tab's actions (PROV-O: View journal entries and JSON-LD; Audit log: Load older).
+6. One treatment for loading, empty, no-match and error states, shown in [25](./25-panel-states.svg).
 
 ## Library lifecycle
 
@@ -66,25 +82,30 @@ Draft mockups of every screen a person uses in the **FileSquid MVP**: the early-
 
 | File | Surface | States shown | Plan task | PRD |
 |---|---|---|---|---|
-| [22-preview-image.svg](./22-preview-image.svg), [22-preview-image-dark.svg](./22-preview-image-dark.svg) | Image preview with zoom, previous and next, filmstrip and Details panel | Full size loading; light and dark | UI-F2.2, DE-0.5, API-F1.3 | [F-003](../../prd.md#f-003-browsing-selection-and-viewing), [F-055](../../prd.md#f-055-default-ui-and-panel-composition) |
-| [23-preview-video.svg](./23-preview-video.svg) | Video playing from ranged reads | Playing, partly buffered | UI-F2.2, API-F1.3 | [F-003](../../prd.md#f-003-browsing-selection-and-viewing) |
-| [24-preview-unsupported.svg](./24-preview-unsupported.svg) | A format FileSquid cannot display | Download and Show in Finder offered | UI-F2.2 | [F-003](../../prd.md#f-003-browsing-selection-and-viewing) |
+| [22-preview-image.svg](./22-preview-image.svg), [22-preview-image-dark.svg](./22-preview-image-dark.svg) | Image preview with zoom, previous and next, filmstrip and the file panel on File facts | Full size loading; light and dark | UI-F2.2, DE-0.5, API-F1.3 | [F-003](../../prd.md#f-003-browsing-selection-and-viewing), [F-055](../../prd.md#f-055-default-ui-and-panel-composition) |
+| [23-preview-video.svg](./23-preview-video.svg) | Video playing from ranged reads, with the file panel on File facts (duration read from the file) | Playing, partly buffered | UI-F2.2, API-F1.3 | [F-003](../../prd.md#f-003-browsing-selection-and-viewing) |
+| [24-preview-unsupported.svg](./24-preview-unsupported.svg) | A format FileSquid cannot display, with the file panel on File facts | Download and Show in Finder offered; nothing read from the format | UI-F2.2 | [F-003](../../prd.md#f-003-browsing-selection-and-viewing) |
 
-## Panels
+## File panel
 
 | File | Surface | States shown | Plan task | PRD |
 |---|---|---|---|---|
-| [25-panel-details.svg](./25-panel-details.svg) | Details: storage facts from the OCFL module, and each resource of a RAW+JPEG file | Image selected | [UI-F2.3](../../../apps/filesquid/ui/resources/plan.md) | [F-051](../../prd.md#f-051-ocfl-module), [F-055](../../prd.md#f-055-default-ui-and-panel-composition) |
-| [26-panel-versions.svg](./26-panel-versions.svg) | Versions: labels, current version, restore, download, edit label; no delete control | 7 versions, menu open | UI-F2.3, UI-F2.11, API-F2.5 | [F-065](../../prd.md#f-065-file-version-history-and-retention) |
+| [35-panel-file-facts.svg](./35-panel-file-facts.svg) | File facts tab: original file name, extension, format and MIME type, size, SHA-256 digest, import time (local and UTC), source, OCFL object id (`urn:uuid:`) and version, fixity; then the resources of a RAW+JPEG pair | SHA-256 row hovered with copy; read only | [UI-F2.3](../../../apps/filesquid/ui/resources/plan.md), API-F1.4 | [F-051](../../prd.md#f-051-ocfl-module), [F-002](../../prd.md#f-002-safe-file-folder-and-device-import), [F-055](../../prd.md#f-055-default-ui-and-panel-composition) |
+| [28-panel-metadata.svg](./28-panel-metadata.svg) | Descriptive tab: populated Dublin Core (`dcterms:`) and Schema.org (`schema:`) properties with prefixes, owner-entered (You) or extracted (File), edit, remove, copy, Add property | One row hovered | [UI-F2.4](../../../apps/filesquid/ui/resources/plan.md), API-F1.4 | [F-046](../../prd.md#f-046-media-metadata-inspection-correction-and-privacy-exports), [F-052](../../prd.md#f-052-metadata-module) |
+| [29-metadata-add-property.svg](./29-metadata-add-property.svg) | Add property over the Descriptive tab: `/terms/` first, then a Schema.org suggestion, registered namespaces, or a custom namespace key | Searching "righ" | UI-F2.4, MD-0.7, API-F1.4 | [F-046](../../prd.md#f-046-media-metadata-inspection-correction-and-privacy-exports), [F-052](../../prd.md#f-052-metadata-module) |
+| [36-panel-prov-o.svg](./36-panel-prov-o.svg) | PROV-O tab: the file's history newest first; each `prov:Activity` with `prov:startedAtTime` / `prov:endedAtTime` (UTC), `prov:wasAssociatedWith` the owner agent as the installation `urn:uuid:` (no person name) and the FileSquid software agent and version, `prov:used` and generated entities as object@version with logical path and digest, `prov:wasDerivedFrom`, and `prov:wasInvalidatedBy` for a remove; View journal entries; JSON-LD export | Latest activity expanded, filter focused | UI-F2.4 (no MVP task yet; see the notes below) | [F-043](../../prd.md#f-043-import-time-c2pa-records-and-action-disclosure) (PROV-O transformation contract), [F-055](../../prd.md#f-055-default-ui-and-panel-composition) |
+| [37-panel-audit-log.svg](./37-panel-audit-log.svg) | Audit log tab: this file's journal entries newest first, in local time; filters for time range, operation and outcome; outcome as a chip with text (ok, refused, failed), actor, operation id; the opened row shows UTC time, level, object, actor, duration and a link to its PROV-O activity; Load older | One row opened with keyboard focus | UI-F2.7, API-F2.1 | [F-061](../../prd.md#f-061-activity-journal-and-live-health-monitoring) |
+| [25-panel-states.svg](./25-panel-states.svg) | The shared loading, empty, no-match and error treatment of the four tabs | File facts loading, Audit log empty, Descriptive with no match, PROV-O failed with Retry | UI-F2.3, UI-F2.4 | [F-055](../../prd.md#f-055-default-ui-and-panel-composition) |
+| [26-panel-versions.svg](./26-panel-versions.svg) | Versions view, opened from the history button in the panel header: labels, current version, restore, download, edit label; no delete control; Back returns to the open tab | 7 versions, menu open | UI-F2.3, UI-F2.11, API-F2.5 | [F-065](../../prd.md#f-065-file-version-history-and-retention) |
 | [27-version-restore.svg](./27-version-restore.svg) | Restore a version as a new version with an optional label | v5 restored as v8 | UI-F2.11, API-F2.5 | [F-065](../../prd.md#f-065-file-version-history-and-retention) |
-| [28-panel-metadata.svg](./28-panel-metadata.svg) | Metadata: populated `dcterms:` and `exif:` properties with their source | Owner-entered and extracted values | [UI-F2.4](../../../apps/filesquid/ui/resources/plan.md), API-F1.4 | [F-046](../../prd.md#f-046-media-metadata-inspection-correction-and-privacy-exports), [F-052](../../prd.md#f-052-metadata-module) |
-| [29-metadata-add-property.svg](./29-metadata-add-property.svg) | Add property: `/terms/` first, then a Schema.org suggestion, registered namespaces, or a custom namespace key | Searching "righ" | UI-F2.4, MD-0.7, API-F1.4 | [F-046](../../prd.md#f-046-media-metadata-inspection-correction-and-privacy-exports), [F-052](../../prd.md#f-052-metadata-module) |
 
 ## Monitor, settings and states
 
 | File | Surface | States shown | Plan task | PRD |
 |---|---|---|---|---|
 | [31-monitor.svg](./31-monitor.svg), [31-monitor-dark.svg](./31-monitor-dark.svg) | Monitor: health, throughput, processes and jobs, queues, activity journal with search and JSON Lines export | One stalled worker; light and dark | [UI-F2.7](../../../apps/filesquid/ui/resources/plan.md), API-F2.1 | [F-061](../../prd.md#f-061-activity-journal-and-live-health-monitoring) |
+| [38-journal-view.svg](./38-journal-view.svg), [38-journal-view-dark.svg](./38-journal-view-dark.svg) | Journal, opened from the sidebar: full-page table of journal entries newest first with filters for time range, library, operation, outcome and level, search by operation id or object id, Live indicator, entry detail drawer and Export | One entry selected; light and dark | UI-F2.7, API-F2.1 | [F-061](../../prd.md#f-061-activity-journal-and-live-health-monitoring) |
+| [39-journal-export.svg](./39-journal-export.svg) | Export journal: scope (current filter, time range or all entries), format (JSON Lines or CSV), a note that exports keep opaque ids, destination file name, Export and Cancel | Current filter, JSON Lines | UI-F2.7, API-F2.1 | [F-061](../../prd.md#f-061-activity-journal-and-live-health-monitoring) |
 | [32-settings.svg](./32-settings.svg) | Settings: appearance, browsing preferences, About with the early-access label and privacy statement | System theme selected | UI-0.2, UI-F2.8, DE-F3.1 | [F-062](../../prd.md#f-062-drive-style-views-sorting-selection-and-layout-preferences), [F-037](../../prd.md#f-037-setup-updates-and-diagnostics), [SRS-UI-007](../../srs.md#srs-ui-007-light-and-dark-themes) |
 | [33-state-loading.svg](./33-state-loading.svg) | Folder loading placeholders | First page loading | UI-F2.1a, UI-F2.1b | [F-055](../../prd.md#f-055-default-ui-and-panel-composition) |
 | [34-state-storage-unavailable.svg](./34-state-storage-unavailable.svg) | Storage root unavailable (disconnected disk) | Error with one change still pending | UI-F2.1a, UI-F2.1b, UI-0.1 | [F-001](../../prd.md#f-001-independent-local-library-and-ownership), [F-055](../../prd.md#f-055-default-ui-and-panel-composition) |
@@ -97,7 +118,7 @@ C-056 and ADR 035 move these after the MVP, or no MVP task delivers them. v2 dra
 |---|---|
 | Server sign-in, accounts, groups, Personal library, Shares view, Sharing panel, share buttons, shared and link badges | Desktop-only MVP: no `filesquid-server`, accounts or sharing ([ADR 035](../../architecture/035-macos-first-desktop-mvp.md)); UI-F2.6 and UI-F2.12 come after it. |
 | Home view, Activity panel, comments, activity stream | F-064 activity stream and comments move to Task FS-2.7. Home depends on activity, favorites and shares. |
-| Favorites, Tags view, Manage tags, `tag:` and `is:favorite` operators | Favorites and keyword views come with CL-1.4 in phase I1. `dcterms:subject` can still be edited in the Metadata panel. |
+| Favorites, Tags view, Manage tags, `tag:` and `is:favorite` operators | Favorites and keyword views come with CL-1.4 in phase I1. `dcterms:subject` can still be edited in the Descriptive tab of the file panel. |
 | Virtual collections, virtual exhibits | F-006 rules are in phase I1; virtual exhibits (UI-F2.13) follow the MVP. |
 | People chip, `owner:` and the other server-only operators | One owner on the desktop; server operators need sharing records. `sharedwith:` is shown as unsupported in mockup 21. |
 | Content Credentials tab, panel (former mockup 30), import-time C2PA records, signing, embedding and "Scan collection" | No C2PA in the MVP or release 1 ([ADR 037](../../architecture/037-c2pa-in-release-2.md)). C2PA ships with the ImageSquid release (release 2), when the default FileSquid sidebar regains a Credentials tab and the ImageSquid inspector shows its C2PA tab. Import review and library recovery mention the file record instead. |
@@ -111,3 +132,9 @@ C-056 and ADR 035 move these after the MVP, or no MVP task delivers them. v2 dra
 - Product name, labels and colours come from the default label table and tokens. "Import" is the desktop label for the New menu's upload actions.
 - Version chips in the list (`v7`) show the latest OCFL version, as UI-F2.2 lists the version column.
 - The mockups use sample names and data. They are not real records.
+- The 2026-10-19 owner requirements behind mockups 22 to 29 and 35 to 39 are not yet in the PRD, SRS, ADRs or plan. Before v2 becomes the active suite, the documentation needs these changes:
+  - [F-055](../../prd.md#f-055-default-ui-and-panel-composition) and the MVP row of the PRD release table name Details, Versions and Metadata panels; the mockups show four tabs (File facts, Descriptive, PROV-O, Audit log) and Versions as a view opened from the panel header.
+  - [F-052](../../prd.md#f-052-metadata-module), [ADR 027](../../architecture/027-filesquid-metadata-pluggable-stores.md) and [ADR 038](../../architecture/038-import-file-record.md) describe `metadata.md` and `file-record.md` as logical files of the OCFL object; the owner's layout is `<file-uuid>.<ext>` with `<file-uuid>.metadata.md` beside it.
+  - A per-file PROV-O history view and its JSON-LD export have no MVP task; the PROV-O contract sits in [F-043](../../prd.md#f-043-import-time-c2pa-records-and-action-disclosure), which the MVP otherwise leaves out.
+  - [ADR 033](../../architecture/033-activity-journal-and-live-health-monitoring.md) lists journal filters for time range, actor, operation, outcome, level and process and a JSON Lines export. The Journal view also filters by library and by object id, the file panel's Audit log filters by file, and the export dialog offers CSV.
+  - The journal stores opaque ids only (ADR 033). The Journal view and the Audit log show original file names by looking the object id up in the library when they display a row; exports keep the opaque ids.
