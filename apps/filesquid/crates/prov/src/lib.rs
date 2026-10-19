@@ -2,10 +2,14 @@
 //!
 //! The `prov` module of FileSquid: a W3C PROV-O history of OCFL versions and
 //! changes in the versioned JSON-LD profile `filesquid-prov/1`. It is a
-//! stand-alone crate: it depends on no other FileSquid crate, links no host,
-//! database or media library, does no filesystem or network I/O, and builds
-//! for `wasm32-unknown-unknown`, so preservation programmes can use it
-//! without FileSquid.
+//! stand-alone crate: by default it depends on no other FileSquid crate,
+//! links no host, database or media library, does no filesystem or network
+//! I/O, and builds for `wasm32-unknown-unknown`, so preservation programmes
+//! can use it without FileSquid. The opt-in `ocfl` feature adds
+//! `filesquid-ocfl` (its default features off, so it still builds for
+//! `wasm32-unknown-unknown`) and the `ocfl` module, which reads and writes
+//! records in OCFL objects through that engine's storage backends; it never
+//! adds `filesquid-native` or `filesquid-c2pa`.
 //!
 //! ## What it holds
 //!

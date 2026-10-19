@@ -33,7 +33,8 @@ pub(crate) struct Instant(u16, u8, u8, u8, u8, u8, u32);
 /// An RFC 3339 date-time in UTC: `YYYY-MM-DDTHH:MM:SS[.fraction]Z`.
 ///
 /// Upper-case `T` and `Z` are required, the fraction has 1 to 9 digits, and a
-/// leap second (`:60`) is accepted. The original text is kept verbatim, so a
+/// leap second is accepted only as `23:59:60` (UTC inserts leap seconds at
+/// the end of a day). The original text is kept verbatim, so a
 /// record round-trips byte for byte. Ordering is by instant first and by text
 /// only between two spellings of one instant (`.5Z` and `.50Z`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -113,9 +114,19 @@ fn parse_fraction(bytes: &[u8], at: usize) -> Option<u32> {
     }
     let digits_end = bytes.len().checked_sub(1)?;
     let count = digits_end.checked_sub(at + 1)?;
+    // The length is checked before the digits are read, so a long fraction
+    // is refused instead of overflowing the accumulator in `digits`.
     let valid = bytes[at] == b'.' && bytes[digits_end] == b'Z' && (1..=9).contains(&count);
-    let value = digits(bytes, at + 1, count).filter(|_| valid)?;
+    if !valid {
+        return None;
+    }
+    let value = digits(bytes, at + 1, count)?;
     Some(value * 10u32.pow((9 - count) as u32))
+}
+
+/// Whether `HH:MM:SS` is the only time a UTC leap second may take: `23:59:60`.
+fn is_leap_second(hour: u32, minute: u32, second: u32) -> bool {
+    (hour, minute, second) == (23, 59, 60)
 }
 
 /// Parse `YYYY-MM-DDTHH:MM:SS[.f]Z` into an [`Instant`], checking ranges.
@@ -136,7 +147,7 @@ fn parse_instant(bytes: &[u8]) -> Option<Instant> {
     );
     let nanos = parse_fraction(bytes, 19)?;
     let date_ok = (1..=12).contains(&month) && day >= 1 && day <= days_in_month(year, month);
-    let time_ok = hour < 24 && minute < 60 && second <= 60;
+    let time_ok = hour < 24 && minute < 60 && (second < 60 || is_leap_second(hour, minute, second));
     // Every field fits its type: at most four digits for the year and two
     // for the others, so the casts never truncate.
     (date_ok && time_ok).then_some(Instant(

@@ -9,7 +9,7 @@ The `prov` module of FileSquid: a W3C [PROV-O](https://www.w3.org/TR/prov-o/) hi
 | Path | `apps/filesquid/crates/prov/` (member of the `apps/filesquid/` Cargo workspace) |
 | Requirements | PROV-S-001 to PROV-S-005 of the module SRS, PRD F-067, ADR 040 |
 
-The crate is stand-alone. Its dependencies are `serde`, `serde_json` and `thiserror`; it depends on no other FileSquid crate (not even `filesquid-core`), links no Axum, Tauri, SQLite, libvips or FFmpeg, does no filesystem or network I/O, and builds for `wasm32-unknown-unknown`. It has no Cargo features yet. An optional `ocfl` feature, off by default, will add `filesquid-ocfl` to read and write records in OCFL objects (Task PV-0.2). No feature may ever add `filesquid-native` or `filesquid-c2pa`; the isolation tests fail if one does.
+The crate is stand-alone. With its default features (none) its dependencies are `serde`, `serde_json` and `thiserror`; it depends on no other FileSquid crate (not even `filesquid-core`), links no Axum, Tauri, SQLite, libvips or FFmpeg, does no filesystem or network I/O, and builds for `wasm32-unknown-unknown`. The optional `ocfl` feature, off by default, adds `filesquid-ocfl` (default features off) and the `ocfl` module, which reads and writes records in OCFL objects (Task PV-0.2); it still builds for `wasm32-unknown-unknown`. No feature may ever add `filesquid-native` or `filesquid-c2pa`; the isolation tests fail if one does.
 
 ## Model
 

@@ -12,7 +12,7 @@
 //! committed before the history existed, marked `reconstructed`, inventing
 //! no agent. Nothing here writes outside the change model.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use filesquid_ocfl::change::{ChangeError, ChangeModel};
 use filesquid_ocfl::inventory::{DigestMap, Inventory};
@@ -26,6 +26,7 @@ use crate::builder::{build_record, OcflUser, Reconstruction, VersionFacts, RECOR
 use crate::error::{BuildError, ProvError};
 use crate::model::{HostFacts, Record};
 use crate::profile::{parse_record, to_json_ld, MAX_RECORD_BYTES};
+use crate::scalar::{check_identifier, check_kind};
 
 /// File-name suffix of a record.
 pub const RECORD_SUFFIX: &str = ".jsonld";
@@ -161,11 +162,14 @@ pub async fn read_record<B: StorageBackend>(
     version: &VersionNum,
 ) -> Result<Option<Record>, RecordError> {
     let path = record_path(&version.to_string());
+    // The version is checked first, so a record path in the head never
+    // answers for a version the object has not committed.
+    let in_version = object.state(version)?.get(&path).is_some();
     let in_head = object.state(object.head())?.get(&path).is_some();
-    let holder = match in_head {
-        true => object.head().clone(),
-        false if object.state(version)?.get(&path).is_some() => version.clone(),
-        false => return Ok(None),
+    let holder = match (in_head, in_version) {
+        (true, _) => object.head().clone(),
+        (false, true) => version.clone(),
+        (false, false) => return Ok(None),
     };
     let mut reader = object.stream_file(&holder, &path, MAX_CHUNK_BYTES)?;
     let mut bytes = Vec::new();
@@ -184,7 +188,7 @@ pub async fn read_record<B: StorageBackend>(
 
 /// The versions whose record the object's head holds, in version order.
 pub fn list_records<B: StorageBackend>(object: &Object<'_, B>) -> Vec<VersionNum> {
-    recorded_versions(object.inventory())
+    recorded_versions(object.inventory()).into_iter().collect()
 }
 
 /// The versions of the object that have no record in its head, in version
@@ -195,28 +199,25 @@ pub fn missing_records<B: StorageBackend>(object: &Object<'_, B>) -> Vec<Version
     inventory
         .versions
         .keys()
-        .filter(|version| !recorded.contains(version))
+        .filter(|version| !recorded.contains(*version))
         .cloned()
         .collect()
 }
 
-/// The versions named by record paths in the head's state.
-fn recorded_versions(inventory: &Inventory) -> Vec<VersionNum> {
+/// The versions named by record paths in the head's state, as an ordered
+/// set (so a membership test is logarithmic, not linear).
+fn recorded_versions(inventory: &Inventory) -> BTreeSet<VersionNum> {
     let Some(head) = inventory.versions.get(&inventory.head) else {
-        return Vec::new();
+        return BTreeSet::new();
     };
-    let mut versions: Vec<VersionNum> = head
-        .state
+    head.state
         .values()
         .flatten()
         .filter_map(|path| path.strip_prefix(RECORD_PREFIX))
         .filter_map(|name| name.strip_suffix(RECORD_SUFFIX))
         .filter_map(|name| VersionNum::parse(name).ok())
         .filter(|version| inventory.versions.contains_key(version))
-        .collect();
-    versions.sort();
-    versions.dedup();
-    versions
+        .collect()
 }
 
 /// Derive the record of `version` from `inventory` alone: `created` as the
@@ -278,6 +279,8 @@ pub fn reconstruct(
 ///
 /// # Errors
 ///
+/// [`RecordError::Change`] with [`ChangeError::WrongObject`] when `object`
+/// is not the object `model` commits to (nothing is staged);
 /// [`RecordError`] when a record cannot be derived or staged.
 pub async fn stage_reconstructed<B, R, S, O>(
     model: &ChangeModel<'_, B, R, S>,
@@ -291,6 +294,7 @@ where
     S: StorageBackend,
     O: StorageBackend,
 {
+    check_same_object(model, object)?;
     let missing: Vec<VersionNum> = missing_records(object).into_iter().take(max).collect();
     for version in &missing {
         let record = reconstruct(object.inventory(), version, recorded_at)?;
@@ -302,6 +306,28 @@ where
     Ok(missing)
 }
 
+/// Refuse an `object` that is not the object `model` commits to, so records
+/// of one object are never staged into another.
+fn check_same_object<B, R, S, O>(
+    model: &ChangeModel<'_, B, R, S>,
+    object: &Object<'_, O>,
+) -> Result<(), ChangeError>
+where
+    B: StorageBackend,
+    R: VersionReservations,
+    S: StorageBackend,
+    O: StorageBackend,
+{
+    let found = &object.inventory().id;
+    if found == model.object_id() {
+        return Ok(());
+    }
+    Err(ChangeError::WrongObject {
+        expected: model.object_id().to_string(),
+        found: found.clone(),
+    })
+}
+
 /// A digest → paths state as path → digest.
 fn flatten(state: &DigestMap) -> BTreeMap<String, String> {
     state
@@ -310,19 +336,23 @@ fn flatten(state: &DigestMap) -> BTreeMap<String, String> {
         .collect()
 }
 
-/// The operation ID and kind a version message names, or the unrecorded
-/// placeholders when it names none or cannot be read.
+/// The operation ID and kind a version message names. Each falls back on
+/// its own placeholder ([`UNRECORDED_OPERATION`], [`UNKNOWN_KIND`]) when the
+/// message names none, cannot be read, or names one the profile refuses. A
+/// catalog message without `kind` (written before kinds were recorded)
+/// keeps its operation ID; other members (`revision`, `created_id`,
+/// `deletion`, `label`) are ignored.
 fn operation_of(message: Option<&str>) -> (String, String) {
-    let unrecorded = (UNRECORDED_OPERATION.to_string(), UNKNOWN_KIND.to_string());
-    let Some(body) = message.and_then(|text| text.strip_prefix(OPERATION_PREFIX)) else {
-        return unrecorded;
-    };
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
-        return unrecorded;
-    };
+    let value = message
+        .and_then(|text| text.strip_prefix(OPERATION_PREFIX))
+        .and_then(|body| serde_json::from_str::<serde_json::Value>(body).ok())
+        .unwrap_or_default();
     let field = |name: &str| value.get(name).and_then(serde_json::Value::as_str);
-    match (field("operation_id"), field("kind")) {
-        (Some(id), Some(kind)) => (id.to_string(), kind.to_string()),
-        _ => unrecorded,
-    }
+    let operation_id = field("operation_id")
+        .filter(|id| check_identifier(id))
+        .unwrap_or(UNRECORDED_OPERATION);
+    let kind = field("kind")
+        .filter(|kind| check_kind(kind))
+        .unwrap_or(UNKNOWN_KIND);
+    (operation_id.to_string(), kind.to_string())
 }

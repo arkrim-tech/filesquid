@@ -36,6 +36,12 @@ const IO_MARKERS: &[&str] = &[
     "File::create",
 ];
 
+/// `std` modules whose import in a group (`use std::{fs, ...}`) means I/O.
+const IO_MODULES: &[&str] = &["fs", "net", "process", "env"];
+
+/// Most `std::{...}` groups the I/O scan reads in one file (AGENTS.md section 22).
+const MAX_GROUPS: usize = 256;
+
 /// Most source files the I/O scan reads (AGENTS.md section 22).
 const MAX_SOURCE_FILES: usize = 512;
 
@@ -62,31 +68,104 @@ fn table_lines(manifest: &str, table: &str) -> Vec<String> {
     lines
 }
 
-/// Package key of a dependency line (`name = ...`).
+/// A package name in one spelling: lower case, `_` read as `-` (Cargo
+/// treats both alike).
+fn normalize(name: &str) -> String {
+    name.trim()
+        .trim_matches(|c| c == '"' || c == '\'')
+        .to_ascii_lowercase()
+        .replace('_', "-")
+}
+
+/// Package key of a dependency line: the first dotted segment of the key,
+/// unquoted and normalized (`tokio.workspace = true` and `"tokio" = "1"`
+/// both name `tokio`).
 fn dependency_name(line: &str) -> String {
-    line.split([' ', '=']).next().unwrap_or("").to_string()
+    let key = line.split('=').next().unwrap_or("");
+    normalize(key.split('.').next().unwrap_or(""))
+}
+
+/// The package a table header names when the table is one dependency's
+/// own table (`[dependencies.tokio]`, `[target.'cfg(unix)'.dependencies.tokio]`),
+/// `Some("")` for a dependency list (`[dependencies]`,
+/// `[target.'cfg(unix)'.dependencies]`), and `None` for any other table
+/// (`[dev-dependencies]` included: tests may use what the library may not).
+fn dependency_table(header: &str) -> Option<String> {
+    let header = header.split('#').next().unwrap_or("").trim();
+    let inner = header.strip_prefix('[')?.strip_suffix(']')?.trim();
+    let tail = strip_target(inner)?.strip_prefix("dependencies")?;
+    match tail.strip_prefix('.') {
+        Some(name) => Some(normalize(name)),
+        None => tail.is_empty().then(String::new),
+    }
+}
+
+/// A table name without its `target.<spec>.` prefix (the spec quoted, as in
+/// `target.'cfg(unix)'`, or bare, as in `target.wasm32-unknown-unknown`);
+/// other names are returned as they are.
+fn strip_target(inner: &str) -> Option<&str> {
+    let Some(rest) = inner.strip_prefix("target.") else {
+        return Some(inner);
+    };
+    let end = match rest.chars().next()? {
+        quote @ ('\'' | '"') => rest[1..].find(quote)? + 2,
+        _ => rest.find('.')?,
+    };
+    rest[end..].strip_prefix('.')
+}
+
+/// Every library dependency of `manifest`, in every dependency table, as
+/// its normalized package name and whether it is optional.
+fn dependencies(manifest: &str) -> Vec<(String, bool)> {
+    let mut found: Vec<(String, bool)> = Vec::new();
+    let mut table: Option<String> = None;
+    for line in manifest.lines().map(str::trim) {
+        if line.starts_with('[') {
+            table = dependency_table(line);
+            if let Some(name) = table.as_ref().filter(|name| !name.is_empty()) {
+                found.push((name.clone(), false));
+            }
+            continue;
+        }
+        let Some(own) = table.as_ref() else { continue };
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let optional = line.replace(' ', "").contains("optional=true");
+        let name = match own.is_empty() {
+            true => dependency_name(line),
+            false => own.clone(),
+        };
+        match found.iter_mut().find(|(known, _)| *known == name) {
+            Some(entry) => entry.1 |= optional,
+            None => found.push((name, optional)),
+        }
+    }
+    found
+}
+
+/// Whether `list` names the normalized package `name`.
+fn names(list: &[&str], name: &str) -> bool {
+    list.iter().any(|entry| normalize(entry) == name)
 }
 
 /// Every rule the manifest breaks, as readable messages.
 fn manifest_violations(manifest: &str) -> Vec<String> {
     let mut found = Vec::new();
-    let deps = table_lines(manifest, "[dependencies]");
     let features = table_lines(manifest, "[features]");
     let default = features
         .iter()
         .find(|line| line.starts_with("default"))
-        .cloned()
+        .map(|line| normalize(line))
         .unwrap_or_default();
-    for line in &deps {
-        let name = dependency_name(line);
-        let optional = line.contains("optional = true");
+    for (name, optional) in dependencies(manifest) {
         if name.starts_with("filesquid") && !optional {
             found.push(format!("{name} is a default dependency"));
         }
         if name.starts_with("filesquid") && default.contains(&name) {
             found.push(format!("{name} is enabled by the default feature"));
         }
-        if FORBIDDEN.contains(&name.as_str()) || NEVER.contains(&name.as_str()) {
+        if names(FORBIDDEN, &name) || names(NEVER, &name) {
             found.push(format!("{name} is forbidden"));
         }
     }
@@ -108,17 +187,18 @@ fn the_manifest_keeps_every_isolation_rule() {
 
 #[test]
 fn library_dependencies_are_serde_serde_json_and_thiserror() {
-    let lines = table_lines(&cargo_toml(), "[dependencies]");
+    let deps = dependencies(&cargo_toml());
     let names = |optional: bool| {
-        let mut names: Vec<String> = lines
+        let mut names: Vec<String> = deps
             .iter()
-            .filter(|line| line.contains("optional = true") == optional)
-            .map(|line| dependency_name(line))
+            .filter(|(_, is_optional)| *is_optional == optional)
+            .map(|(name, _)| name.clone())
             .collect();
         names.sort();
         names
     };
-    assert_eq!(names(false), ["serde", "serde_json", "thiserror"]);
+    // Names are normalized: `serde_json` reads as `serde-json`.
+    assert_eq!(names(false), ["serde", "serde-json", "thiserror"]);
     assert_eq!(
         names(true),
         ["filesquid-ocfl"],
@@ -167,6 +247,132 @@ fn hosts_sqlite_and_media_crates_would_fail() {
     }
 }
 
+#[test]
+fn dotted_and_quoted_dependency_keys_would_fail() {
+    let manifest = "[dependencies]\ntokio.workspace = true\n\"rusqlite\" = \"0.32\"\naxum . version = \"0.7\"\n";
+    assert_eq!(
+        manifest_violations(manifest),
+        [
+            "tokio is forbidden",
+            "rusqlite is forbidden",
+            "axum is forbidden"
+        ]
+    );
+}
+
+#[test]
+fn dependency_tables_of_every_form_are_checked() {
+    let manifest = "[dependencies.tokio]\nversion = \"1\"\n\n\
+        [target.'cfg(unix)'.dependencies]\nhyper = \"1\"\n\n\
+        [target.'cfg(target_os = \"linux\")'.dependencies.reqwest]\nversion = \"0.12\"\n\n\
+        [target.wasm32-unknown-unknown.dependencies]\nfilesquid-core = { path = \"../core\" }\n\n\
+        [dev-dependencies]\naxum = \"0.7\"\n";
+    assert_eq!(
+        manifest_violations(manifest),
+        [
+            "tokio is forbidden",
+            "hyper is forbidden",
+            "reqwest is forbidden",
+            "filesquid-core is a default dependency"
+        ]
+    );
+}
+
+#[test]
+fn an_optional_dependency_table_is_read_as_optional() {
+    let manifest = "[dependencies.filesquid-ocfl]\npath = \"../ocfl\"\noptional = true\n";
+    assert_eq!(
+        dependencies(manifest),
+        [("filesquid-ocfl".to_string(), true)]
+    );
+    assert!(manifest_violations(manifest).is_empty());
+}
+
+#[test]
+fn underscore_spellings_of_never_and_forbidden_packages_would_fail() {
+    let manifest = "[dependencies]\nfilesquid_native = { path = \"../native\", optional = true }\nffmpeg_next = \"7\"\n";
+    assert_eq!(
+        manifest_violations(manifest),
+        ["filesquid-native is forbidden", "ffmpeg-next is forbidden"]
+    );
+}
+
+/// Every I/O marker that `text` names, including the members of grouped
+/// `std::{...}` imports (`use std::{fs, net};`).
+fn io_violations(text: &str) -> Vec<String> {
+    let mut found: Vec<String> = IO_MARKERS
+        .iter()
+        .filter(|marker| text.contains(**marker))
+        .map(|marker| marker.to_string())
+        .collect();
+    for group in std_groups(text) {
+        for member in top_level_members(group) {
+            let head = member.split("::").next().unwrap_or("").trim();
+            if IO_MODULES.contains(&head) {
+                found.push(format!("std::{{{head}}}"));
+            }
+        }
+    }
+    found
+}
+
+/// The text inside each `std::{ ... }` group of `text`, up to its matching
+/// brace (at most [`MAX_GROUPS`] groups).
+fn std_groups(text: &str) -> Vec<&str> {
+    let mut groups = Vec::new();
+    for (start, _) in text.match_indices("std::{").take(MAX_GROUPS) {
+        let body = &text[start + "std::{".len()..];
+        let mut depth = 1usize;
+        let end = body.char_indices().find_map(|(i, c)| {
+            depth = match c {
+                '{' => depth + 1,
+                '}' => depth - 1,
+                _ => depth,
+            };
+            (depth == 0).then_some(i)
+        });
+        groups.push(&body[..end.unwrap_or(body.len())]);
+    }
+    groups
+}
+
+/// The comma-separated members of a group at brace depth zero.
+fn top_level_members(group: &str) -> Vec<&str> {
+    let mut members = Vec::new();
+    let (mut depth, mut from) = (0usize, 0usize);
+    for (i, c) in group.char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                members.push(&group[from..i]);
+                from = i + 1;
+            }
+            _ => {}
+        }
+    }
+    members.push(&group[from..]);
+    members
+}
+
+#[test]
+fn grouped_std_imports_of_io_modules_would_fail() {
+    for text in [
+        "use std::{fs, net};",
+        "use std::{collections::BTreeMap, process::Command};",
+        "use std::{\n    env,\n    fmt,\n};",
+        "use std::{io::{Read, Write}, net::TcpStream};",
+    ] {
+        assert!(!io_violations(text).is_empty(), "{text}");
+    }
+    for text in [
+        "use std::{collections::BTreeMap, fmt};",
+        "use std::{cmp::Ordering, ops::Bound};",
+    ] {
+        assert!(io_violations(text).is_empty(), "{text}");
+    }
+}
+
 /// Every `.rs` file under `dir`, depth-first, at most [`MAX_SOURCE_FILES`].
 fn source_files(dir: &Path) -> Vec<PathBuf> {
     let mut pending = vec![dir.to_path_buf()];
@@ -195,9 +401,8 @@ fn the_library_does_no_filesystem_network_or_process_io() {
     assert!(!files.is_empty());
     for file in files {
         let text = fs::read_to_string(&file).expect("source");
-        for marker in IO_MARKERS {
-            assert!(!text.contains(marker), "{marker} in {}", file.display());
-        }
+        let found = io_violations(&text);
+        assert!(found.is_empty(), "{found:?} in {}", file.display());
     }
 }
 

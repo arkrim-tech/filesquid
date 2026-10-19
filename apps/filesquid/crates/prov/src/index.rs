@@ -14,8 +14,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
 
 use crate::error::IndexError;
+use crate::ids::check_activity_id;
 use crate::model::{Activity, Record};
-use crate::scalar::{check_identifier, Instant, Timestamp};
+use crate::scalar::{Instant, Timestamp};
 
 /// Largest page a [`PageRequest`] may ask for.
 pub const MAX_PAGE_SIZE: usize = 1000;
@@ -66,7 +67,7 @@ impl Cursor {
     pub fn from_token(token: &str) -> Result<Self, IndexError> {
         let (ended, activity_id) = token.split_once(' ').ok_or(IndexError::InvalidCursor)?;
         let ended = Timestamp::parse(ended).map_err(|_| IndexError::InvalidCursor)?;
-        if !check_identifier(activity_id) {
+        if !check_activity_id(activity_id) {
             return Err(IndexError::InvalidCursor);
         }
         Ok(Self {

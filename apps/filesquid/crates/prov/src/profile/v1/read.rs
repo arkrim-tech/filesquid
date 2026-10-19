@@ -8,6 +8,7 @@ use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
+use crate::builder::RECORD_PREFIX;
 use crate::error::ProvError;
 use crate::graph::assemble;
 use crate::model::{
@@ -355,6 +356,10 @@ fn read_entity(value: &Value) -> Read<Entity> {
     ensure(check_version(version), "fsq:version is malformed")?;
     let path = node.string("fsq:path", "fsq:path is malformed")?;
     ensure(check_path(path), "fsq:path is malformed")?;
+    ensure(
+        !path.starts_with(RECORD_PREFIX),
+        "an entity describes a record path",
+    )?;
     let sha256 = Sha256Digest::parse(node.string("fsq:sha256", "fsq:sha256 is malformed")?)
         .map_err(|_| invalid("fsq:sha256 is not a SHA-256 digest"))?;
     let entity = Entity {

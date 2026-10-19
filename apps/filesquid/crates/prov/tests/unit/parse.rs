@@ -6,7 +6,7 @@
 mod fixtures;
 
 use filesquid_prov::{
-    build_record, parse_record, to_json_ld, ProvError, MAX_DEPTH, MAX_RECORD_BYTES,
+    build_record, entity_id, parse_record, to_json_ld, ProvError, MAX_DEPTH, MAX_RECORD_BYTES,
 };
 use fixtures::*;
 use serde_json::{json, Value};
@@ -185,5 +185,73 @@ fn a_person_agent_is_never_accepted() {
         "@type": "prov:Person",
         "schema:name": SECRET
     }));
+    invalid_node(&doc);
+}
+
+/// Index of the first graph node that `matches` selects.
+fn node_index(doc: &Value, matches: impl Fn(&Value) -> bool) -> usize {
+    let graph = doc["@graph"].as_array().expect("graph");
+    graph.iter().position(matches).expect("node")
+}
+
+/// Index of the host software agent node.
+fn host_index(doc: &Value) -> usize {
+    node_index(doc, |node| node["fsq:agentKind"] == "host")
+}
+
+/// Index of the removed (invalidated) `b.txt` entity node.
+fn removed_index(doc: &Value) -> usize {
+    node_index(doc, |node| {
+        node["fsq:path"] == "b.txt" && node.get("prov:wasInvalidatedBy").is_some()
+    })
+}
+
+#[test]
+fn an_agent_the_activity_is_not_associated_with_breaks_the_profile() {
+    let mut doc = standard_value();
+    let host_id = doc["@graph"][host_index(&doc)]["@id"].clone();
+    doc["@graph"][0]["prov:wasAssociatedWith"]
+        .as_array_mut()
+        .expect("associated")
+        .retain(|reference| reference["@id"] != host_id);
+    invalid_node(&doc);
+}
+
+#[test]
+fn a_host_that_does_not_act_for_the_installation_breaks_the_profile() {
+    let mut doc = standard_value();
+    let host = host_index(&doc);
+    doc["@graph"][host]
+        .as_object_mut()
+        .expect("host")
+        .remove("prov:actedOnBehalfOf");
+    invalid_node(&doc);
+}
+
+#[test]
+fn a_host_acting_for_an_unrecorded_installation_is_read() {
+    let mut facts = standard_facts();
+    facts.installation = None;
+    let record = build_record(&facts).expect("build");
+    let parsed = parse_record(to_json_ld(&record).as_bytes()).expect("parse");
+    assert_eq!(parsed, record);
+}
+
+#[test]
+fn an_invalidated_entity_of_the_committed_version_breaks_the_profile() {
+    let mut doc = standard_value();
+    let removed = removed_index(&doc);
+    doc["@graph"][removed]["fsq:version"] = json!("v3");
+    doc["@graph"][removed]["@id"] = json!(entity_id(OBJECT, "v3", "b.txt"));
+    invalid_node(&doc);
+}
+
+#[test]
+fn an_entity_of_a_record_path_breaks_the_profile() {
+    let mut doc = standard_value();
+    let removed = removed_index(&doc);
+    let path = "provenance/v1.jsonld";
+    doc["@graph"][removed]["fsq:path"] = json!(path);
+    doc["@graph"][removed]["@id"] = json!(entity_id(OBJECT, "v2", path));
     invalid_node(&doc);
 }

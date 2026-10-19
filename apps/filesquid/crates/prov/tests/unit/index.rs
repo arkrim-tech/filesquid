@@ -159,7 +159,16 @@ fn cursors_travel_as_tokens() {
     let token = page.next().expect("more").to_token();
     let cursor = Cursor::from_token(&token).expect("token");
     assert_eq!(&cursor, page.next().unwrap());
-    for bad in ["", "no-separator", "2026-10-19T10:00:00+01:00 urn:x"] {
+    for bad in [
+        "",
+        "no-separator",
+        "2026-10-19T10:00:00+01:00 urn:x",
+        "2026-10-19T10:00:00Z urn:x",
+        "2026-10-19T10:00:00Z urn:filesquid:activity:op-1",
+        "2026-10-19T10:00:00Z urn:filesquid:activity:op-1:obj:v0",
+        "2026-10-19T10:00:00Z urn:filesquid:activity:op%3a1:obj:v1",
+        "2026-10-19T10:00:00Z urn:filesquid:activity:op%41:obj:v1",
+    ] {
         assert_eq!(
             Cursor::from_token(bad).expect_err(bad).code(),
             "PROV_INVALID_CURSOR"
@@ -180,4 +189,42 @@ fn records_are_kept_and_conflicting_duplicates_refused() {
     let changed = record(OBJ_A, 1, "op-1", "2026-10-19T10:00:09Z");
     let err = index.insert(changed).expect_err("conflict");
     assert_eq!(err.code(), "PROV_CONFLICTING_RECORD");
+}
+
+#[test]
+fn a_cursor_after_an_activity_identifier_longer_than_one_part_round_trips() {
+    let long_object = format!("urn:example:{}", "o".repeat(1000));
+    let mut index = HistoryIndex::new();
+    index
+        .insert(record(&long_object, 1, "op-1", "2026-10-19T10:00:00Z"))
+        .expect("first");
+    index
+        .insert(record(&long_object, 2, "op-2", "2026-10-19T10:00:01Z"))
+        .expect("second");
+    let query = HistoryQuery::Object(long_object);
+    let page = index.query(&query, &PageRequest::new(1, None).unwrap());
+    let next = page.next().expect("more");
+    assert!(next.to_token().len() > 1024);
+    let cursor = Cursor::from_token(&next.to_token()).expect("a token the index made");
+    let rest = index.query(&query, &PageRequest::new(1, Some(cursor)).unwrap());
+    assert_eq!(rest.items()[0].operation(), "op-2");
+}
+
+#[test]
+fn a_cursor_after_an_operation_with_a_colon_round_trips() {
+    let mut index = HistoryIndex::new();
+    for (version, operation, ended) in [
+        (1, "op:1", "2026-10-19T10:00:00Z"),
+        (2, "op:2", "2026-10-19T10:00:01Z"),
+    ] {
+        index
+            .insert(record(OBJ_A, version, operation, ended))
+            .expect("insert");
+    }
+    let query = HistoryQuery::Object(OBJ_A.to_string());
+    let page = index.query(&query, &PageRequest::new(1, None).unwrap());
+    let token = page.next().expect("more").to_token();
+    let cursor = Cursor::from_token(&token).expect("token");
+    let rest = index.query(&query, &PageRequest::new(1, Some(cursor)).unwrap());
+    assert_eq!(rest.items()[0].operation(), "op:2");
 }

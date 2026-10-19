@@ -307,6 +307,57 @@ fn inconsistent_moves_and_bases_are_refused() {
     refused(f, "PROV_INVALID_FACT");
 }
 
+/// Facts of `v3` with the base `x.txt`, `y.txt` and the given new state and moves.
+fn moves_facts(new_state: &[(&str, char)], moves: &[(&str, &str)]) -> VersionFacts {
+    VersionFacts {
+        base_state: state(&[("x.txt", '1'), ("y.txt", '2')]),
+        new_state: state(new_state),
+        moves: moves
+            .iter()
+            .map(|(old, new)| (old.to_string(), new.to_string()))
+            .collect(),
+        ..standard_facts()
+    }
+}
+
+#[test]
+fn chained_moves_are_accepted_and_derive_from_each_source() {
+    let facts = moves_facts(
+        &[("y.txt", '1'), ("z.txt", '2')],
+        &[("x.txt", "y.txt"), ("y.txt", "z.txt")],
+    );
+    let record = build_record(&facts).expect("chained moves");
+    let y = record.entity(&eid("v3", "y.txt")).expect("y");
+    assert_eq!(y.derived_from(), [eid("v2", "x.txt")]);
+    let z = record.entity(&eid("v3", "z.txt")).expect("z");
+    assert_eq!(z.derived_from(), [eid("v2", "y.txt")]);
+    assert!(record
+        .entities()
+        .iter()
+        .all(|e| e.invalidated_by().is_none()));
+}
+
+#[test]
+fn swapped_moves_are_accepted() {
+    let facts = moves_facts(
+        &[("x.txt", '2'), ("y.txt", '1')],
+        &[("x.txt", "y.txt"), ("y.txt", "x.txt")],
+    );
+    let record = build_record(&facts).expect("swap");
+    let x = record.entity(&eid("v3", "x.txt")).expect("x");
+    assert_eq!(x.derived_from(), [eid("v2", "y.txt")]);
+    let y = record.entity(&eid("v3", "y.txt")).expect("y");
+    assert_eq!(y.derived_from(), [eid("v2", "x.txt")]);
+}
+
+#[test]
+fn a_move_onto_a_kept_base_path_or_onto_itself_is_refused() {
+    let onto_kept = moves_facts(&[("y.txt", '1')], &[("x.txt", "y.txt")]);
+    refused(onto_kept, "PROV_INVALID_MOVE");
+    let onto_itself = moves_facts(&[("x.txt", '1'), ("y.txt", '2')], &[("x.txt", "x.txt")]);
+    refused(onto_itself, "PROV_INVALID_MOVE");
+}
+
 #[test]
 fn refusal_messages_name_no_stored_value() {
     let mut f = standard_facts();

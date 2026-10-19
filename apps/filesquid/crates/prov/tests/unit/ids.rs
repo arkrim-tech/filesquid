@@ -31,6 +31,15 @@ fn activity_identifier_form() {
 }
 
 #[test]
+fn activity_identifiers_are_injective_when_parts_hold_colons() {
+    let split_one = activity_id("a:b", "c", "v1");
+    let split_two = activity_id("a", "b:c", "v1");
+    assert_ne!(split_one, split_two);
+    assert_eq!(split_one, "urn:filesquid:activity:a%3Ab:c:v1");
+    assert_eq!(split_two, "urn:filesquid:activity:a:b:c:v1");
+}
+
+#[test]
 fn entity_identifier_form_encodes_the_logical_path() {
     assert_eq!(
         entity_id("urn:uuid:abc", "v2", "Fotos/été 1.jpg"),
@@ -82,8 +91,26 @@ fn timestamps_must_be_rfc3339_utc() {
         "2026-10-19T10:00:00.Z",
         "2026-10-19T10:00:00.1234567891Z",
         "2026-10-19",
+        "2026-10-19T10:00:60Z",
+        "2026-10-19T23:58:60Z",
+        "2026-10-19T22:59:60Z",
     ] {
         assert!(Timestamp::parse(bad).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn a_long_all_digit_fraction_is_refused_without_panicking() {
+    for digits in [10, 11, 20, 64] {
+        let text = format!("2026-10-19T10:00:00.{}Z", "9".repeat(digits));
+        assert!(Timestamp::parse(&text).is_err(), "{digits} digits");
+    }
+}
+
+#[test]
+fn a_leap_second_is_accepted_only_at_the_end_of_a_utc_day() {
+    for good in ["2016-12-31T23:59:60Z", "2016-12-31T23:59:60.5Z"] {
+        assert!(Timestamp::parse(good).is_ok(), "{good}");
     }
 }
 

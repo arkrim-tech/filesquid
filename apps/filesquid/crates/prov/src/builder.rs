@@ -210,21 +210,39 @@ fn check_states(facts: &VersionFacts, header: &Header) -> Result<States, BuildEr
     Ok(States { base, new })
 }
 
-/// Check that each move leaves a base-only path for a new-only path, and
-/// that no two moves share a target.
+/// Check that each move leaves a base path for a new path, and that no two
+/// moves share a target. Chained moves (`A -> B`, `B -> C`) and swaps
+/// (`A -> B`, `B -> A`) are allowed: a source may stay in the new state only
+/// as the target of another move, and a target may be in the base state
+/// only as the source of another move.
 fn check_moves(moves: &BTreeMap<String, String>, states: &States) -> Result<(), BuildError> {
     let mut targets: Vec<&String> = moves.values().collect();
     targets.sort();
     let distinct = targets.windows(2).all(|pair| pair[0] != pair[1]);
-    let consistent = moves.iter().all(|(old, new)| {
-        states.base.contains_key(old)
-            && !states.new.contains_key(old)
-            && states.new.contains_key(new)
-            && !states.base.contains_key(new)
-    });
+    let consistent = moves
+        .iter()
+        .all(|(old, new)| move_fits(old, new, moves, &targets, states));
     (distinct && consistent)
         .then_some(())
         .ok_or(BuildError::InvalidMove)
+}
+
+/// Whether the move `old -> new` fits the states, given every move's
+/// sources (`moves`) and its sorted `targets`.
+fn move_fits(
+    old: &String,
+    new: &String,
+    moves: &BTreeMap<String, String>,
+    targets: &[&String],
+    states: &States,
+) -> bool {
+    let old_vacated = !states.new.contains_key(old) || targets.binary_search(&old).is_ok();
+    let new_free = !states.base.contains_key(new) || moves.contains_key(new);
+    old != new
+        && states.base.contains_key(old)
+        && states.new.contains_key(new)
+        && old_vacated
+        && new_free
 }
 
 /// The installation agent and the host agent, recorded or unrecorded.

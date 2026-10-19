@@ -4,7 +4,7 @@
 //! regenerated on rebase, read back, listed, and reconstructed from
 //! inventories for versions that have none.
 
-use filesquid_ocfl::change::{ChangeModel, StagingArea, VersionMeta};
+use filesquid_ocfl::change::{ChangeError, ChangeModel, StagingArea, VersionMeta};
 use filesquid_ocfl::inventory::User;
 use filesquid_ocfl::read::Object;
 use filesquid_ocfl::storage::{complete_immediately, MemoryBackend};
@@ -12,9 +12,9 @@ use filesquid_ocfl::write::{rfc3339_utc, LeaseConfig, LeaseStore, SystemClock};
 use filesquid_ocfl::VersionNum;
 use filesquid_prov::ocfl::{
     list_records, missing_records, read_record, reconstruct, record_path, stage_reconstructed,
-    OperationFacts, RecordHook,
+    OperationFacts, RecordError, RecordHook,
 };
-use filesquid_prov::{AgentKind, Derivation, HostFacts};
+use filesquid_prov::{to_json_ld, AgentKind, Derivation, HostFacts, Record};
 
 const OBJECT_ID: &str = "urn:uuid:6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b";
 const ROOT: &str = "objects/a";
@@ -265,4 +265,69 @@ fn backfill_is_capped_per_run() {
 #[test]
 fn record_paths_follow_the_version_name() {
     assert_eq!(record_path("v3"), "provenance/v3.jsonld");
+}
+
+#[test]
+fn a_record_path_in_the_head_never_answers_for_an_uncommitted_version() {
+    let rig = Rig::new();
+    let first = rig.commit_plain(&[("a.txt", b"alpha")], VersionMeta::new(created(1)));
+    let stray = reconstruct(rig.object().inventory(), &first, &created(9)).unwrap();
+    let bytes = to_json_ld(&stray).into_bytes();
+    let path = record_path("v9");
+    rig.commit_plain(
+        &[(path.as_str(), bytes.as_slice())],
+        VersionMeta::new(created(2)),
+    );
+    let object = rig.object();
+    let err = ready(read_record(&object, &v("v9"))).expect_err("v9 is not committed");
+    assert!(matches!(err, RecordError::Read(_)), "{err}");
+}
+
+/// Reconstruct `v1` of an object whose only version carries `message`.
+fn reconstruct_with_message(message: &str) -> Record {
+    let rig = Rig::new();
+    let meta = VersionMeta::new(created(1)).with_message(message);
+    let version = rig.commit_plain(&[("a.txt", b"alpha")], meta);
+    reconstruct(rig.object().inventory(), &version, &created(9)).expect("reconstruct")
+}
+
+#[test]
+fn malformed_operation_fields_fall_back_to_the_placeholders() {
+    let record = reconstruct_with_message(
+        r#"filesquid.operation.v1 {"operation_id":"has space","kind":"Not a kind!"}"#,
+    );
+    assert_eq!(record.activity().operation(), "unrecorded");
+    assert_eq!(record.activity().kind(), "unknown");
+    let record = reconstruct_with_message(r#"filesquid.operation.v1 {"operation_id":"","kind":7}"#);
+    assert_eq!(record.activity().operation(), "unrecorded");
+    assert_eq!(record.activity().kind(), "unknown");
+}
+
+#[test]
+fn a_catalog_message_without_a_kind_keeps_its_operation_id() {
+    let message = r#"filesquid.operation.v1 {"operation_id":"op-8","revision":"12","created_id":"c-1","deletion":{"deleted_at":"2026-10-19T10:00:00Z"}}"#;
+    let record = reconstruct_with_message(message);
+    assert_eq!(record.activity().operation(), "op-8");
+    assert_eq!(record.activity().kind(), "unknown");
+}
+
+#[test]
+fn backfill_refuses_an_object_its_change_model_does_not_commit_to() {
+    let rig = Rig::new();
+    rig.commit_plain(&[("a.txt", b"alpha")], VersionMeta::new(created(1)));
+    let staging = StagingArea::new(&rig.staging, "changes/other").unwrap();
+    let other = ChangeModel::new(
+        &rig.storage,
+        &rig.leases,
+        "other",
+        "objects/b",
+        "urn:uuid:7a2e3d4c-5b6f-4071-9b8c-0d1e2f3a4b5c",
+        staging,
+    );
+    let err = ready(stage_reconstructed(&other, &rig.object(), &created(9), 10))
+        .expect_err("another object");
+    assert!(
+        matches!(err, RecordError::Change(ChangeError::WrongObject { .. })),
+        "{err}"
+    );
 }
