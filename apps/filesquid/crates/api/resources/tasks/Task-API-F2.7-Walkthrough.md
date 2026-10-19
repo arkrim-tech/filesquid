@@ -254,7 +254,7 @@ Round 4 on `fe2ca3f`: 15 new findings (P1 0, P2 11, P3 4). Fixed in the next com
   - Every root after the first that declares an object ID already indexed is keyed by its root's stand-in, so two roots never share findings (`repeated_identifiers_get_distinct_keys`, `two_roots_that_declare_one_identifier_keep_separate_findings`).
   - An object whose root is gone by the time the run reaches it has its findings closed, not a missing-declaration finding opened (`an_object_deleted_after_the_run_indexed_it_has_its_findings_closed`).
   - A run whose last-run record cannot be stored is reported and journaled as failed with the store's code (`a_run_whose_record_cannot_be_stored_is_reported_as_failed`).
-  - `POST /admin/ocfl/validation-runs` starts runs on a blocking thread, like the findings view.
+  - `POST /api/v1/admin/ocfl/validation-runs` starts runs on a blocking thread, like the findings view.
 - **Stores and hosts.**
   - `SqliteFindings::replace_findings` takes the write lock first (`BEGIN IMMEDIATE`), so a journal commit in between waits on the busy timeout.
   - A covering index by severity keeps the health summary the monitor reads every tick to the error rows.
