@@ -44,6 +44,12 @@ Feature: File panel tabs: File info, Description and Provenance
     Then the refused entry should be labelled journal-only
     And it should have no link to a Provenance activity
 
+  Scenario: A single-file download in Logs is journal-only
+    Given a single-file download of the file
+    When I open the Logs view filtered to the file
+    Then the "file.download" entry should be labelled journal-only
+    And it should have no link to a Provenance activity
+
   Scenario: An operation that commits several objects links to one activity per object version
     Given the import of the file committed the file object and the library snapshot
     When I open the import's entry in the Logs view

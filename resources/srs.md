@@ -979,7 +979,7 @@ The system MUST implement [PRD F-054](./prd.md#f-054-c2pa-module) with the accep
 ### SRS-F-055: Default UI and panel composition
 
 The system MUST implement [PRD F-055](./prd.md#f-055-default-ui-and-panel-composition) with the acceptance criteria stated there.
-- **Display name.** Every surface MUST show the display name served by the API and MUST NOT show a stored name or metadata-record file name ([UI-S-019](../apps/filesquid/ui/resources/srs.md), [API-S-027](../apps/filesquid/crates/api/resources/srs.md)). The Metadata panel MUST be a file panel with three tabs of one look and behaviour: File info, Description and Provenance ([UI-S-022](../apps/filesquid/ui/resources/srs.md), [UI-S-020](../apps/filesquid/ui/resources/srs.md)).
+- **Display name.** Every surface MUST show the display name served by the API and MUST NOT show a stored name or metadata-record file name ([UI-S-019](../apps/filesquid/ui/resources/srs.md), [API-S-027](../apps/filesquid/crates/api/resources/srs.md)). The file panel MUST offer three tabs of one look and behaviour: File info, Description (the Metadata panel) and Provenance ([UI-S-022](../apps/filesquid/ui/resources/srs.md), [UI-S-020](../apps/filesquid/ui/resources/srs.md)).
 
 **File-fact ownership**
 - File facts MUST have one owner. `filesquid-ocfl` MUST own storage facts only (object identifier, logical path and implied folders, versions, version `created`, `user` and `message`, digests and fixity, size, content location). An extension-based file-type label is a display hint only.

@@ -14,7 +14,7 @@ Accepted: 2026-10-15. Supersedes the "stand-alone product" and "own repository" 
 
 Amended: 2026-10-18 by [ADR 037](./037-c2pa-in-release-2.md): the first consumer release ships the `ocfl` and `metadata` modules; the `c2pa` module ships with the ImageSquid release.
 
-Amended: 2026-10-19 by [ADR 040](./040-prov-o-history.md): the `prov` module joins the modules, and its optional `ocfl` feature is the second allowed optional cross-module dependency (Decision 4).
+Amended: 2026-10-19 by [ADR 040](./040-prov-o-history.md): the `prov` module joins the modules and ships in the FileSquid MVP and release 1 with `ocfl` and `metadata` (Decision 7), and its optional `ocfl` feature is the second allowed optional cross-module dependency (Decision 4).
 
 ## Context / Requirement Reference
 
@@ -57,7 +57,7 @@ Requirements that drive this decision:
 
 **7. Release order.**
 
-1. FileSquid: the API and the default Drive-style UI, with the `ocfl` and `metadata` modules, on the desktop and `filesquid-server` hosts (the `c2pa` module moved to the ImageSquid release by [ADR 037](./037-c2pa-in-release-2.md)).
+1. FileSquid: the API and the default Drive-style UI, with the `ocfl`, `metadata` and `prov` modules ([ADR 040](./040-prov-o-history.md)), on the desktop and `filesquid-server` hosts (the `c2pa` module moved to the ImageSquid release by [ADR 037](./037-c2pa-in-release-2.md)).
 2. Encrypted backup and sync at `*.filesquid.tech` ([ADR 032](./032-hosting-and-privacy-model.md)).
 3. ImageSquid, as a FileSquid distribution, with FileSquid's `c2pa` module.
 4. Arkrim and the other later milestones, in an order the owner chooses ([C-052](../product-vision.md#release-sequence)).
@@ -92,7 +92,7 @@ Putting every backend capability in FileSquid means a FileSquid user gets thumbn
 
 Easier: one product to build, test and release; distributions are cheap to add; module crates still stand alone; the capability placement test settles where new work goes.
 
-Harder: FileSquid grows large, because every distribution's backend needs become FileSquid modules. Mitigation: module crates with no default cross-dependencies, a module set per distribution, and FileSquid release 1 limited to the `ocfl` and `metadata` modules ([ADR 037](./037-c2pa-in-release-2.md)). CI MUST build and test each module crate alone, as well as the workspace. Rules, scripts and READMEs that assumed separate app directories (`apps/core`, `apps/backend`, `apps/desktop`, `apps/frontend`, `apps/client`, `apps/filesquid-*`) MUST be updated; those directories no longer exist.
+Harder: FileSquid grows large, because every distribution's backend needs become FileSquid modules. Mitigation: module crates with no default cross-dependencies, a module set per distribution, and FileSquid release 1 limited to the `ocfl`, `metadata` and `prov` modules ([ADR 037](./037-c2pa-in-release-2.md), [ADR 040](./040-prov-o-history.md)). CI MUST build and test each module crate alone, as well as the workspace. Rules, scripts and READMEs that assumed separate app directories (`apps/core`, `apps/backend`, `apps/desktop`, `apps/frontend`, `apps/client`, `apps/filesquid-*`) MUST be updated; those directories no longer exist.
 
 ## Related Decisions / Notes
 
