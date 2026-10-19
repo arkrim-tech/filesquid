@@ -13,16 +13,23 @@ path = "src/lib.rs"
 # The SQLite journal store, the data-directory checks and HostMonitor are always built; they
 # are all `filesquid-server` may use (ADR 033 amendment 2026-10-18).
 default = []
-# Desktop-only native processing (OCFL coordinator, durable job and media workers; DE-0.8).
-# Only `filesquid-desktop` enables it; a `filesquid-server` test fails if the server does.
+# Desktop-only native processing: the per-library SQLite catalog (DE-0.2), and later the
+# OCFL coordinator and the durable job and media workers (DE-0.8). Only `filesquid-desktop`
+# enables it; a `filesquid-server` test fails if the server does.
 desktop = []
 
 [dependencies]
 filesquid-api = { path = "../api" }
+# Domain types of the library catalog (files, collections, virtual collections, folders).
+filesquid-core = { path = "../core" }
 fs4 = "1"
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde_json = "1"
 tracing = "0.1"
+
+[target.'cfg(unix)'.dependencies]
+# `O_NOFOLLOW` for owner-only files, so a symbolic link is never followed.
+libc = "0.2"
 
 [dev-dependencies]
 cucumber = { version = "0.23", features = ["macros", "output-junit"] }
@@ -39,4 +46,15 @@ path = "tests/unit/host.rs"
 [[test]]
 name = "features"
 path = "tests/features.rs"
+harness = false
+
+[[test]]
+name = "unit_catalog"
+path = "tests/unit/catalog.rs"
+required-features = ["desktop"]
+
+[[test]]
+name = "catalog_features"
+path = "tests/catalog_features.rs"
+required-features = ["desktop"]
 harness = false

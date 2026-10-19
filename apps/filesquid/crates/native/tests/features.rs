@@ -126,7 +126,8 @@ fn health_failing(w: &mut NativeWorld, reason: String) {
 #[tokio::main]
 async fn main() {
     let results = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/allure-results");
-    let _ = std::fs::remove_dir_all(&results);
+    // Only this harness's report is replaced (`File::create` truncates it), so the report of
+    // the catalog harness (`catalog_features.rs`) in the same directory survives.
     std::fs::create_dir_all(&results).expect("allure-results");
     let junit = std::fs::File::create(results.join("cucumber-junit.xml")).expect("junit file");
     NativeWorld::cucumber()

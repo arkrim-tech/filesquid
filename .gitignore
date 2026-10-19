@@ -45,6 +45,8 @@ node_modules/
 !**/tests/e2e/
 !**/tests/integration/
 !**/tests/performance/
+# Gherkin of a harness that needs a Cargo feature (filesquid-native `desktop`).
+!**/tests/catalog_features/
 # Pinned third-party test data, such as the OCFL community fixtures (OCFL-S-011).
 !**/tests/fixtures/
 !**/tests/README.md
