@@ -117,7 +117,7 @@ PRD lives at `resources/prd.md` (this repo does not use a root `prd.md`). See [d
 You MUST configure the following. Do not add FastAPI, Phoenix, WordPress, Actix, Rocket, Dioxus, Leptos, or a UI framework (React, Svelte, Vue) unless a later ADR explicitly replaces this stack.
 
 **Rust workspace:**
-- Stable Rust toolchain pinned once in `apps/<product>/rust-toolchain.toml` (`channel = "stable"`, components `rustfmt` and `clippy`). Verify the current stable compiler against the actual dependency graph; do not copy an old MSRV from a plugin README.
+- Stable Rust toolchain pinned once, to an exact release, in `apps/<product>/rust-toolchain.toml` (for example `channel = "1.99.1"`, never the moving `channel = "stable"`, so a new release cannot break every branch overnight; components `rustfmt` and `clippy`). Verify that the pinned stable compiler builds the actual dependency graph; do not copy an old MSRV from a plugin README. Bump the version only in its own `build/` pull request that fixes the new lints.
 - `resolver = "2"`, shared `[workspace.package]` for `edition` and `license`. Commit the single `Cargo.lock`.
 
 **Server host (production):**

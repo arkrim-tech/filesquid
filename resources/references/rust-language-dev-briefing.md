@@ -63,7 +63,7 @@ The hosted service at `*.filesquid.tech` is **not** a photo backend. Axum is a c
 
 **Error handling that matches preservation work.** `Result` forces you to decide what happens when an inventory sidecar digest mismatches. That is the right default for OCFL, not “throw and hope a middleware logs it.”
 
-**Ecosystem fit.** Axum (HTTP), Tokio (async runtime), SQLx (Postgres/SQLite), serde (JSON), the official `c2pa` crate, `ring`/`rustcrypto`, wasm-bindgen — these are the libraries the ADRs already name.
+**Ecosystem fit.** Axum (HTTP), Tokio (async runtime), SQLx (PostgreSQL on the server), `rusqlite` with a bundled SQLite (local SQLite stores; [ADR 005](../architecture/005-sqlite-local-postgres-hosted.md) amendment 2026-10-18), serde (JSON), the official `c2pa` crate, `ring`/`rustcrypto`, wasm-bindgen — these are the libraries the ADRs already name.
 
 ---
 
@@ -139,8 +139,10 @@ That split is a **privacy and capability architecture**, not a style preference.
 Everyday commands:
 
 ```sh
-rustup toolchain install stable
 cd apps/filesquid          # the Cargo workspace root
+rustup toolchain install   # the exact release pinned in rust-toolchain.toml
+rustup component add rustfmt clippy   # some rustup versions skip file-declared components
+rustup target add wasm32-unknown-unknown
 cargo test -p filesquid-ocfl
 cargo clippy --all-targets
 cargo fmt

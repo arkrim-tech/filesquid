@@ -38,6 +38,12 @@ pub struct Object<'a, B: StorageBackend> {
 }
 
 impl<'a, B: StorageBackend> Object<'a, B> {
+    /// The backend the object is read through (crate-internal: the view
+    /// API reads sizes and byte ranges with it).
+    pub(crate) fn backend(&self) -> &'a B {
+        self.backend
+    }
+
     /// Open the object whose root is the directory `root` of `backend`
     /// (empty for the backend's own root, with or without a trailing `/`).
     ///

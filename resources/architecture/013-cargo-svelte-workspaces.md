@@ -12,6 +12,8 @@ Accepted
 
 Accepted: 2026-09-16T22:24:57Z. Revised: 2026-09-25T21:00:00Z. Revised: 2026-10-15T06:14:23Z. Amended by [ADR 028](./028-filesquid-ui-packages-and-panel-composition.md): each filesquid engine directory holds its own npm UI package under `ui/`.
 
+Amended 2026-10-19 (owner decision of 2026-10-18): the Rust toolchain is pinned to an exact stable release in `apps/filesquid/rust-toolchain.toml` (`channel = "1.99.1"`), not the moving `stable` channel, because Rust 1.99.1 deprecated `AtomicUsize::fetch_update` and broke `clippy -D warnings` on every branch overnight. The version is bumped only in its own `build/` pull request that fixes the new lints; see the root [README](../../README.md#native-prerequisites-platform-agnostic). See the **Versions** note in the Decision.
+
 Amended 2026-10-17 by [ADR 035](./035-macos-first-desktop-mvp.md): macOS is the first desktop target and the FileSquid MVP is desktop-only; Linux and Windows desktop follow the MVP.
 
 Amended 2026-10-15 by [ADR 029](./029-filesquid-unified-product-and-distributions.md) and [ADR 031](./031-vanilla-typescript-ui-and-white-label-theming.md): one product-local Cargo workspace at `apps/filesquid/` with crates under `apps/filesquid/crates/`; UIs are Vite and TypeScript without Svelte (`apps/filesquid/ui/`, `apps/imagesquid/`). The per-engine `apps/filesquid-*/ui/` packages were never created and are superseded.
@@ -35,6 +37,8 @@ Implementation lives under `apps/`: all Rust crates share **one Cargo workspace 
 No `mix.exs`, no Phoenix, no Python application backend, no language manifest at the repository root. Node.js exists **only to build and test the UI**, not as a production library backend. UI tests still run with Node; they do not make Node the application runtime.
 
 **Versions:** current stable **Rust** and **TypeScript** at first implementation, pinned in lockfiles (`Cargo.lock`, UI lockfile). This ADR does not freeze patch numbers. Minimum: a stable Rust toolchain that builds Tauri 2.
+
+> **Amendment 2026-10-19 (owner decision of 2026-10-18):** "current stable Rust" is now an exact stable release pinned in `apps/filesquid/rust-toolchain.toml` (`channel = "1.99.1"`, components `rustfmt` and `clippy`, target `wasm32-unknown-unknown`). A nightly toolchain is still never required ([U-37](../product-vision.md#one-api-hosts-and-distributions)). Moving to a newer stable release is its own `build/` pull request that fixes any new lints and passes the full pre-commit scope.
 
 Linux and the independent web are CI build-and-test targets from the start ([FE-017](../product-vision.md#cross-platform-access), [U-34](../product-vision.md#one-api-hosts-and-distributions)). CI coverage does not set the desktop release order: amended by [ADR 035](./035-macos-first-desktop-mvp.md), macOS is the first desktop install target, and the Linux and Windows desktop installers follow the MVP.
 

@@ -1,4 +1,5 @@
-# OCFL-S-018: Write order and unpublished versions. `vN` MUST be reserved before any `vN` byte through an exclusive, fenced lease or reservation; a writer whose lease expired or was reassigned MUST NOT write content or publish the head; content, then version inventory and sidecar, then root inventory and sidecar last; an incomplete `vN` is unpublished.
+# OCFL-S-018: Write order and unpublished versions. The commit receipt reports whether the commit took over an expired, unreleased reservation, so the host can validate the object at once. `vN` MUST be reserved before any `vN` byte through an exclusive, fenced lease or reservation; a writer whose lease expired or was reassigned MUST NOT write content or publish the head; content, then version inventory and sidecar, then root inventory and sidecar last; an incomplete `vN` is unpublished.
+# OCFL-S-023: Takeover reporting (every commit receipt reports whether its reservation took over an unreleased, expired one)
 # F-042: OCFL preservation and portable recovery (writes serialize per object and recover interrupted publication)
 # NFR-001: Preservation and transactional integrity (zero silent loss, zero false-complete versions)
 Feature: Local write order and unpublished versions
@@ -12,7 +13,8 @@ Feature: Local write order and unpublished versions
   # Happy path
   Scenario: A new version is published in write order
     When writer "writer-a" commits "v2" adding "d.txt"
-    Then the reservation should come before every "v2" byte
+    Then the commit receipt should report no reservation takeover
+    And the reservation should come before every "v2" byte
     And the writes should end with the version inventory, the root inventory and the root sidecar
     And the object head should be "v2"
     And the object should validate with zero errors
@@ -30,6 +32,7 @@ Feature: Local write order and unpublished versions
     And pinning "v2" should be refused as an unknown version
     When the crashed writer's lease lapses and writer "writer-b" retries the commit
     Then the object head should be "v2"
+    And the commit receipt should report a reservation takeover
     And the history should list "v1, v2"
     And the object should validate with zero errors
 
