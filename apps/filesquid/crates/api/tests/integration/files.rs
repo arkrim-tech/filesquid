@@ -7,7 +7,7 @@
 mod files_fixture;
 
 use axum::http::{Method, StatusCode};
-use files_fixture::{digest, pattern, query, FilesRig, LIBRARY, OBJECT};
+use files_fixture::{digest, pattern, query, Answer, FilesRig, LIBRARY, OBJECT};
 use filesquid_api::files::{
     DisplayNames, NameFuture, StoredFile, DEFAULT_PAGE, MAX_ANSWER_BYTES, MAX_UPLOAD_BYTES,
 };
@@ -431,6 +431,50 @@ async fn an_upload_that_changes_nothing_is_refused_without_a_version() {
     let refused = rig.journaled("files.upload");
     assert_eq!(refused.len(), 1);
     assert_eq!(refused[0].outcome, Outcome::Failed);
+}
+
+/// Assert `answer` refused a write that would change nothing with `status` and `code`, and
+/// that `operation` was journaled exactly once, as `failed` with that code and never as a
+/// success. A file write never succeeds without a change, so the no-op rule of API-S-019 and
+/// ADR 033 (a command that succeeds without a change stores nothing) never applies to it.
+fn assert_refused_no_op(
+    rig: &FilesRig,
+    answer: &Answer,
+    (status, code): (u16, &str),
+    operation: &str,
+) {
+    assert_error(answer, status, code);
+    let entries = rig.journaled(operation);
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    assert_eq!(entries[0].outcome, Outcome::Failed);
+    assert_eq!(entries[0].error_code.as_deref(), Some(code));
+}
+
+#[tokio::test]
+async fn a_move_to_the_same_path_is_refused_without_a_version() {
+    let rig = FilesRig::with_files(&[("a.txt", b"a")]).await;
+    let answer = rig
+        .post(
+            "/api/v1/files/moves",
+            body(json!({ "from": "a.txt", "to": "a.txt" })),
+        )
+        .await;
+    // The engine refuses a move onto a path that is taken, its own included.
+    assert_refused_no_op(&rig, &answer, (400, "invalid_request"), "files.move");
+    assert_eq!(rig.head().await, "v1");
+}
+
+#[tokio::test]
+async fn a_restore_of_the_current_version_is_refused_without_a_version() {
+    let rig = FilesRig::with_files(&[("a.txt", b"a")]).await;
+    let answer = rig
+        .post(
+            "/api/v1/files/restorations",
+            body(json!({ "version": "v1", "paths": ["a.txt"] })),
+        )
+        .await;
+    assert_refused_no_op(&rig, &answer, (409, "conflict"), "files.restore");
+    assert_eq!(rig.head().await, "v1");
 }
 
 #[tokio::test]
