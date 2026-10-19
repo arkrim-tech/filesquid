@@ -12,6 +12,8 @@ Accepted
 
 Accepted: 2026-09-16T22:24:57Z. Revised: 2026-09-22T04:34:37Z.
 
+Amended 2026-10-19T03:00:00Z by Task DE-0.3 (pending owner review in its pull request): the first library writer specifies the owner-readable local layout this ADR left open. One collection-snapshot object per library (`snapshot/`, `urn:uuid:<library-id>`, one logical file per entity) and one object per file (`files/<file-id>`, original under `original/<name>`), defined in [API-S-025](../../apps/filesquid/crates/api/resources/srs.md). The local profile's transform is the identity; the encrypted profile uses the same seam once the [ADR 009](./009-cryptography-webcrypto-compatible-suite.md) cipher is implemented.
+
 ## Context / Requirement Reference
 
 Canonical local state MUST be owner-readable OCFL 1.1 files and snapshots, not SQLite alone ([FE-001](../product-vision.md#independent-library), [FE-033](../product-vision.md#portable-preservation), [FE-065](../product-vision.md#independent-library), [U-03](../product-vision.md#platform-ownership-and-access), [ADR 005](./005-sqlite-local-postgres-hosted.md)). Hosted roots MUST describe ciphertext. The vision already requires this; it lacked an ADR.
