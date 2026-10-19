@@ -72,6 +72,11 @@ pub struct RepairReceipt {
     /// version inventory (unless an interrupted repair left it) and then
     /// its sidecar.
     pub written: Vec<String>,
+    /// Whether the repair's reservation took over one that was still held,
+    /// not released, when it expired or passed to this writer
+    /// ([`Reservation::took_over`]); the host SHOULD validate the object
+    /// now (API-S-022).
+    pub took_over: bool,
 }
 
 /// The root inventory and its sidecar, as read.
@@ -170,6 +175,7 @@ impl<B: StorageBackend, R: VersionReservations> ObjectWriter<'_, B, R> {
             digest_algorithm: files.inventory.digest_algorithm,
             inventory_digest: files.inventory.digest_algorithm.digest_hex(&files.bytes),
             written,
+            took_over: reservation.took_over(),
         })
     }
 

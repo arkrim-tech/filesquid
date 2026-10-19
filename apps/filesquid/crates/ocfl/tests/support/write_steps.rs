@@ -184,6 +184,18 @@ fn retry(world: &mut OcflWorld, holder: String) {
     world.write.result = Some(receipt);
 }
 
+#[then("the commit receipt should report a reservation takeover")]
+fn reports_takeover(world: &mut OcflWorld) {
+    let result = world.write.result.as_ref().expect("a commit ran");
+    assert!(result.as_ref().expect("committed").took_over, "{result:?}");
+}
+
+#[then("the commit receipt should report no reservation takeover")]
+fn reports_no_takeover(world: &mut OcflWorld) {
+    let result = world.write.result.as_ref().expect("a commit ran");
+    assert!(!result.as_ref().expect("committed").took_over, "{result:?}");
+}
+
 #[then(expr = "the history should list {string}")]
 fn history_lists(world: &mut OcflWorld, versions: String) {
     let object = rig(world).open().expect("open");
