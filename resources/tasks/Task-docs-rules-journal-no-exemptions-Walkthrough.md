@@ -4,7 +4,7 @@ Documentation-only task on branch `docs/rules-journal-no-exemptions`. TDD-ENFORC
 
 ## Owner decisions (2026-10-19)
 
-The owner asked for two minimal edits to `.agents/rules/`.
+The owner asked for two minimal edits to `.agents/rules/` (the owner gave the decision as an RFC 3339 `full-date`, 2026-10-19, with no time of day).
 
 ## Changes
 
@@ -16,10 +16,11 @@ The owner asked for two minimal edits to `.agents/rules/`.
 - [apps/filesquid/crates/metadata/Cargo.toml](../../apps/filesquid/crates/metadata/Cargo.toml): `default = ["sidecar"]`, `ocfl = ["dep:filesquid-ocfl"]`, `ocfl-fs = ["ocfl", "filesquid-ocfl/fs"]`, `cli = ["ocfl-fs"]`, and `filesquid-ocfl = { path = "../ocfl", optional = true, default-features = false }`. The metadata [plan](../../apps/filesquid/crates/metadata/resources/plan.md) also says `filesquid-ocfl` is the optional `ocfl` store since MD-0.4.
 - [AGENTS.md](../../AGENTS.md) §15 already says "the only exception is the metadata module's optional `ocfl` store", which matches the manifest; left unchanged.
 - [AGENTS.md](../../AGENTS.md) §11 and the principle text of [ADR 033](../../resources/architecture/033-activity-journal-and-live-health-monitoring.md) ("What is journaled, always") do not permit sampling or exemptions, so neither contradicts the new bullet. ADR 033 is not edited here (open PR #74 amends it).
+- Known divergence to fix outside this PR: the [API-F2.7](../../apps/filesquid/crates/api/resources/plan.md) description journals only error findings (`ocfl.validation.finding`) and closures, and lists warnings such as W010 without journaling them. Under the new bullet that is a defect, not an exception. API-F2.7 and its ADR 033 amendment are in open PR #74, so the alignment (one journal entry per warning finding and its closure) belongs there, not in this rules-only change.
 
 ## Hook
 
-Raw output of `bash scripts/pre-commit.sh` (scope `docs`, 2026-10-19 UTC), exit 0. Summary line: `✅ All Pre-Commit Hooks Passed! Test scope: docs (19s)`.
+Raw output of `bash scripts/pre-commit.sh` (scope `docs`, started 2026-10-19T03:45:44Z), exit 0, run on the fix commit after the Cubic round 1 changes. Summary line: `✅ All Pre-Commit Hooks Passed! Test scope: docs (19s)`.
 
 ```text
 changed_scope: docs (only documentation or always-run checker scripts outside the crates and npm packages changed)
@@ -61,19 +62,19 @@ TAP version 13
 # Subtest: stack ADRs exist with ISO 42010 sections and accepted vocabulary
 ok 1 - stack ADRs exist with ISO 42010 sections and accepted vocabulary
   ---
-  duration_ms: 10.220186
+  duration_ms: 10.15806
   type: 'test'
   ...
 # Subtest: ADR markdown hrefs reject absolute destinations
 ok 2 - ADR markdown hrefs reject absolute destinations
   ---
-  duration_ms: 0.280705
+  duration_ms: 0.262954
   type: 'test'
   ...
 # Subtest: FileSquid ADRs 029-032 are indexed with the FileSquid header and expected status
 ok 3 - FileSquid ADRs 029-032 are indexed with the FileSquid header and expected status
   ---
-  duration_ms: 1.479059
+  duration_ms: 1.861352
   type: 'test'
   ...
 1..3
@@ -84,7 +85,7 @@ ok 3 - FileSquid ADRs 029-032 are indexed with the FileSquid header and expected
 # cancelled 0
 # skipped 0
 # todo 0
-# duration_ms 105.029681
+# duration_ms 103.165916
 ✅ ADR structure (ISO 42010) passed.
 🔍 PRD allocation...
 FileSquid: 260 vision IDs, 260 allocated, 130 allocation rows
@@ -95,7 +96,7 @@ OK: every vision ID is allocated
 OK: every requirement is accounted for in a plan task
 ✅ Plan traceability passed.
 🔍 Relative links and anchors...
-checked 217 Markdown files: 0 broken link(s)
+checked 219 Markdown files: 0 broken link(s)
 ✅ Relative links and anchors passed.
 🔍 FileSquid and ImageSquid document boundary...
 checked 165 documents: 0 link(s) cross the FileSquid/ImageSquid boundary
@@ -103,7 +104,7 @@ checked 165 documents: 0 link(s) cross the FileSquid/ImageSquid boundary
 🔍 MVP queue and merge driver tests...
 ...............................................
 ----------------------------------------------------------------------
-Ran 47 tests in 5.763s
+Ran 47 tests in 5.818s
 
 OK
 ✅ MVP queue and merge driver tests passed.
