@@ -227,6 +227,12 @@ async fn a_media_element_reads_a_range_through_the_handle() {
     assert_eq!(answer.header("content-type"), "video/mp4");
     assert_eq!(answer.body, pattern(length)[..1_048_576]);
     assert_privacy_headers(&answer, "ranged");
+    let named = "inline; filename=\"holiday.mp4\"; filename*=UTF-8''holiday.mp4";
+    assert_eq!(
+        answer.header("content-disposition"),
+        named,
+        "named by its display name"
+    );
 }
 
 #[tokio::test]
@@ -564,6 +570,9 @@ async fn no_log_line_journal_entry_or_debug_output_carries_a_handle() {
     let captured = Captured::default();
     let subscriber = tracing_subscriber::registry().with(captured.clone());
     let _guard = tracing::subscriber::set_default(subscriber);
+    // Other tests run on other threads: drop any interest they cached for a callsite before
+    // this thread's subscriber existed, so every event below reaches the capture.
+    tracing::callsite::rebuild_interest_cache();
     let rig = video_rig().await;
     let url = minted_url(&rig).await;
     let handle = url.rsplit('/').next().expect("handle").to_string();

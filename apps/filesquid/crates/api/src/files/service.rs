@@ -6,7 +6,9 @@
 //! (API-S-006).
 
 use super::error::FileError;
+use super::names::{safe_name, stored_name, DisplayNames, StoredFile};
 use super::range::{RangePlan, RangeRequest};
+use super::view::EntryView;
 use super::view::{
     CommitView, FileDetailsView, FileQuery, FolderPageView, FolderRequest, FolderView,
     HistoryQuery, HistoryView, ListingQuery, MoveRequest, ObjectQuery, RemoveRequest,
@@ -23,7 +25,7 @@ use filesquid_ocfl::storage::StorageBackend;
 use filesquid_ocfl::view::{self, MAX_PAGE_ENTRIES, MAX_RANGE_BYTES};
 use filesquid_ocfl::write::{rfc3339_utc, CommitReceipt, VersionReservations};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 /// The clock commits are dated by: Unix milliseconds (UTC).
 pub type FileClock = Arc<dyn Fn() -> i64 + Send + Sync>;
@@ -146,6 +148,7 @@ type Libraries<B, R, S> = Mutex<HashMap<String, Arc<Library<B, R, S>>>>;
 pub struct FileService<B, R, S> {
     libraries: Arc<Libraries<B, R, S>>,
     clock: FileClock,
+    names: Arc<OnceLock<Arc<dyn DisplayNames>>>,
 }
 
 impl<B, R, S> Clone for FileService<B, R, S> {
@@ -153,6 +156,7 @@ impl<B, R, S> Clone for FileService<B, R, S> {
         Self {
             libraries: self.libraries.clone(),
             clock: self.clock.clone(),
+            names: self.names.clone(),
         }
     }
 }
@@ -174,6 +178,45 @@ impl<B, R, S> FileService<B, R, S> {
         Self {
             libraries: Arc::new(Mutex::new(HashMap::new())),
             clock,
+            names: Arc::new(OnceLock::new()),
+        }
+    }
+
+    /// Take the owner's original file names from `names` (the host's file records). Returns
+    /// false, keeping the first, when names were already installed. Without them, a file's
+    /// display name is its stored name.
+    pub fn install_display_names(&self, names: Arc<dyn DisplayNames>) -> bool {
+        self.names.set(names).is_ok()
+    }
+
+    /// The name users see for `file`: the owner's original name from the installed
+    /// [`DisplayNames`], made safe, or else the stored name.
+    pub async fn display_name(&self, file: StoredFile<'_>) -> String {
+        let original = match self.names.get() {
+            Some(names) => names.original_name(file).await,
+            None => None,
+        };
+        original
+            .as_deref()
+            .and_then(safe_name)
+            .unwrap_or_else(|| stored_name(file.path).to_string())
+    }
+
+    /// Fill in the display name of every file entry of `page`.
+    async fn name_entries(&self, page: &mut FolderPageView) {
+        for entry in &mut page.entries {
+            if let EntryView::File {
+                path, display_name, ..
+            } = entry
+            {
+                let file = StoredFile {
+                    library_id: &page.library_id,
+                    object_id: &page.object_id,
+                    version: &page.version,
+                    path,
+                };
+                *display_name = self.display_name(file).await;
+            }
         }
     }
 
@@ -224,7 +267,9 @@ impl<B: StorageBackend, R, S> FileService<B, R, S> {
         let prefix = query.prefix.as_deref().unwrap_or("");
         let cursor = query.cursor.as_deref();
         let page = view::list_folder(&object, &version, prefix, cursor, limit).await?;
-        Ok(FolderPageView::of(&query.library_id, page))
+        let mut view = FolderPageView::of(&query.library_id, page);
+        self.name_entries(&mut view).await;
+        Ok(view)
     }
 
     /// Storage facts about one file of a version.
@@ -234,7 +279,15 @@ impl<B: StorageBackend, R, S> FileService<B, R, S> {
         let object = Object::open(library.files.backend.as_ref(), &root).await?;
         let version = resolve(&object, query.version.as_deref())?;
         let details = view::file_details(&object, &version, &query.path).await?;
-        Ok(FileDetailsView::of(&query.library_id, details))
+        let mut view = FileDetailsView::of(&query.library_id, details);
+        let file = StoredFile {
+            library_id: &view.library_id,
+            object_id: &view.object_id,
+            version: &view.version,
+            path: &view.path,
+        };
+        view.display_name = self.display_name(file).await;
+        Ok(view)
     }
 
     /// The versions that changed one file.
@@ -280,6 +333,15 @@ impl<B: StorageBackend, R, S> FileService<B, R, S> {
             .size_of(&object, &version, &request.path, &file.digest)
             .await?;
         let media_type = media::media_type(&request.path);
+        let version_name = version.to_string();
+        let file_name = self
+            .display_name(StoredFile {
+                library_id: &request.library_id,
+                object_id: &request.object_id,
+                version: &version_name,
+                path: &request.path,
+            })
+            .await;
         let plan = match request.head_only {
             true => RangePlan::Whole { len: total },
             false => request.range.plan(total, MAX_ANSWER_BYTES as u64),
@@ -297,6 +359,7 @@ impl<B: StorageBackend, R, S> FileService<B, R, S> {
             plan,
             total,
             media_type,
+            file_name,
             bytes,
         })
     }
@@ -585,6 +648,8 @@ pub struct ContentAnswer {
     pub total: u64,
     /// The media type it carries.
     pub media_type: &'static str,
+    /// The display name the answer names the file by ([`super::names`]).
+    pub file_name: String,
     /// The bytes (empty for `HEAD` and `416`).
     pub bytes: Vec<u8>,
 }

@@ -5,6 +5,7 @@
 # API-S-008: Every content or organisation change commits an OCFL version through the change model; there is no second write path
 # API-S-017: Every authorisation refusal is journaled; successful calls are not journaled one by one
 # OCFL-S-012: The UI view API lists folders by logical-path prefix with paging, reads ranges and makes version-producing writes
+# Owner requirement (2026-10-19): users always see and download a file under its original name, never its sanitized stored name
 #
 # Step definitions: tests/support/file_steps.rs (Task API-F1.3), against a real OCFL root on the
 # local filesystem.
@@ -32,6 +33,13 @@ Feature: File operation routes
     And the owner restores "photos" from version v1
     Then the object should have exactly two new versions
     And "photos/a.jpg" and "pictures/a.jpg" should both be readable
+
+  Scenario: Users see and download a file under its original name
+    Given the owner's original name of "photos/a.jpg" is "Été à Nice 2023.jpg"
+    When the owner lists the folder "photos"
+    And the owner downloads "photos/a.jpg"
+    Then the listing should show "photos/a.jpg" as "Été à Nice 2023.jpg"
+    And the download should be named "Été à Nice 2023.jpg" with an ASCII fallback
 
   # Edge cases
   Scenario: A new empty folder stays pending until a file is added beneath it

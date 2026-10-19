@@ -25,7 +25,24 @@ pub struct ListingQuery {
     pub limit: Option<usize>,
 }
 
-/// Query naming one file of one version: details and ranged reads.
+/// Query of the ranged content read, `GET` and `HEAD /api/v1/files/content`.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContentQuery {
+    /// The library.
+    pub library_id: String,
+    /// The OCFL object.
+    pub object_id: String,
+    /// The version; the head when absent.
+    pub version: Option<String>,
+    /// The file's logical path.
+    pub path: String,
+    /// True to offer the file as a download (`Content-Disposition: attachment`); shown in
+    /// place (`inline`) otherwise. Either way it is named by its display name.
+    pub download: Option<bool>,
+}
+
+/// Query naming one file of one version: details.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FileQuery {
@@ -200,8 +217,11 @@ pub enum EntryView {
     },
     /// A file.
     File {
-        /// Its last path segment.
+        /// Its last path segment: the name it is stored under.
         name: String,
+        /// The name users see: the owner's original file name, or the stored name when no
+        /// record holds one.
+        display_name: String,
         /// Its logical path.
         path: String,
         /// Its content digest.
@@ -257,6 +277,7 @@ fn entry_view(entry: Entry) -> EntryView {
             path: folder.path,
         },
         Entry::File(file) => EntryView::File {
+            display_name: file.name.clone(),
             name: file.name,
             path: file.path,
             digest: file.digest,
@@ -279,8 +300,11 @@ pub struct FileDetailsView {
     pub version: String,
     /// The file's logical path.
     pub path: String,
-    /// Its last path segment.
+    /// Its last path segment: the name it is stored under.
     pub name: String,
+    /// The name users see: the owner's original file name, or the stored name when no
+    /// record holds one.
+    pub display_name: String,
     /// Its content digest.
     pub digest: String,
     /// The digest algorithm (`sha512` or `sha256`).
@@ -306,6 +330,7 @@ impl FileDetailsView {
             object_id: details.object_id,
             version: details.version.to_string(),
             path: details.path,
+            display_name: details.name.clone(),
             name: details.name,
             digest: details.digest,
             digest_algorithm: details.digest_algorithm,

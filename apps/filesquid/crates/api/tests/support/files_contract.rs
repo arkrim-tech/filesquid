@@ -206,6 +206,7 @@ fn entries() -> [EntryView; 2] {
         },
         EntryView::File {
             name: "a.jpg".into(),
+            display_name: "Été à Nice 2023.jpg".into(),
             path: "a.jpg".into(),
             digest: "ab".repeat(32),
             size: 3,
@@ -226,6 +227,7 @@ fn details() -> FileDetailsView {
         version: "v2".into(),
         path: "a.jpg".into(),
         name: "a.jpg".into(),
+        display_name: "Été à Nice 2023.jpg".into(),
         digest: "ab".repeat(32),
         digest_algorithm: "sha256".into(),
         size: 3,

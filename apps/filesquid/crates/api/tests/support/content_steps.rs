@@ -112,7 +112,9 @@ async fn mint_and_keep(w: &mut ContentWorld, path: &str) {
 /// `tracing` event it emits is captured in `w.logs`.
 async fn fetch(w: &ContentWorld, method: Method, url: &str, range: Option<&str>) -> Answer {
     let headers: Vec<(&str, &str)> = range.map(|r| ("range", r)).into_iter().collect();
-    let subscriber = tracing_subscriber::registry().with(w.logs.clone());
+    let subscriber = tracing::Dispatch::new(tracing_subscriber::registry().with(w.logs.clone()));
+    // Scenarios run concurrently: drop any interest cached before this subscriber existed.
+    tracing::callsite::rebuild_interest_cache();
     send(&w.rig().state, method, url, &headers, Vec::new())
         .with_subscriber(subscriber)
         .await

@@ -14,8 +14,10 @@ use crate::auth::{
     deny, journal_entry, presented_credential, Action, Credential, Principal, Resource,
 };
 use crate::error::{ApiError, DenialReason, ErrorCode};
+use crate::files::names::Disposition;
 use crate::files::{
-    answer_content, ContentRequest, FileError, MintRequest, MintView, RangeRequest,
+    answer_content, ContentAnswerKind, ContentRequest, FileError, MintRequest, MintView,
+    RangeRequest,
 };
 use crate::journal::{JournalEntry, Level, Outcome};
 use crate::routes::Route;
@@ -112,7 +114,11 @@ async fn read(
         Some(files) => files.content(request).await,
         None => Err(FileError::unavailable("no file service is installed")),
     };
-    let mut response = answer_content(&state, "content_handle", outcome, head_only).await;
+    let kind = ContentAnswerKind {
+        head_only,
+        disposition: Disposition::Inline,
+    };
+    let mut response = answer_content(&state, "content_handle", outcome, kind).await;
     add_privacy_headers(response.headers_mut());
     response
 }

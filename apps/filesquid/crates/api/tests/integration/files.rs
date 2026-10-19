@@ -8,7 +8,9 @@ mod files_fixture;
 
 use axum::http::{Method, StatusCode};
 use files_fixture::{digest, pattern, query, FilesRig, LIBRARY, OBJECT};
-use filesquid_api::files::{DEFAULT_PAGE, MAX_ANSWER_BYTES, MAX_UPLOAD_BYTES};
+use filesquid_api::files::{
+    DisplayNames, NameFuture, StoredFile, DEFAULT_PAGE, MAX_ANSWER_BYTES, MAX_UPLOAD_BYTES,
+};
 use filesquid_api::journal::Outcome;
 use serde_json::{json, Value};
 
@@ -578,4 +580,126 @@ async fn no_answer_or_journal_entry_carries_a_filesystem_path() {
         !journal.contains("photos/a.jpg"),
         "logical paths stay out of the journal"
     );
+}
+
+// ---- Display names (owner requirement, 2026-10-19) ----
+
+/// File records standing in for the host's: stored path to the owner's original name.
+struct Records(Vec<(&'static str, &'static str)>);
+
+impl DisplayNames for Records {
+    fn original_name<'a>(&'a self, file: StoredFile<'a>) -> NameFuture<'a> {
+        let found = self
+            .0
+            .iter()
+            .find(|(path, _)| *path == file.path)
+            .map(|(_, name)| name.to_string());
+        Box::pin(async move { found })
+    }
+}
+
+/// A rig whose object stores `holiday-2023.jpg`, whose original name is
+/// `Été à Nice 2023.jpg`.
+async fn named_rig() -> FilesRig {
+    let rig =
+        FilesRig::with_files(&[("photos/holiday-2023.jpg", b"jpeg"), ("notes.txt", b"n")]).await;
+    let records = Records(vec![("photos/holiday-2023.jpg", "Été à Nice 2023.jpg")]);
+    assert!(rig
+        .service
+        .install_display_names(std::sync::Arc::new(records)));
+    rig
+}
+
+/// The RFC 6266 header for `Été à Nice 2023.jpg` offered as `kind`.
+fn nice_header(kind: &str) -> String {
+    format!(
+        "{kind}; filename=\"_t_ _ Nice 2023.jpg\"; \
+         filename*=UTF-8''%C3%89t%C3%A9%20%C3%A0%20Nice%202023.jpg"
+    )
+}
+
+#[tokio::test]
+async fn listings_and_details_show_the_original_name_not_the_stored_one() {
+    let rig = named_rig().await;
+    let page = rig
+        .get(&format!("/api/v1/files/listing?{}", query("prefix=photos")))
+        .await
+        .json();
+    let entry = &page["entries"][0];
+    assert_eq!(entry["display_name"], "Été à Nice 2023.jpg");
+    assert_eq!(
+        entry["name"], "holiday-2023.jpg",
+        "the stored name stays available"
+    );
+    let uri = format!(
+        "/api/v1/files/details?{}",
+        query("path=photos%2Fholiday-2023.jpg")
+    );
+    let details = rig.get(&uri).await.json();
+    assert_eq!(details["display_name"], "Été à Nice 2023.jpg");
+    let plain = rig
+        .get(&format!(
+            "/api/v1/files/details?{}",
+            query("path=notes.txt")
+        ))
+        .await
+        .json();
+    assert_eq!(
+        plain["display_name"], "notes.txt",
+        "no record: the stored name"
+    );
+}
+
+#[tokio::test]
+async fn reads_and_downloads_are_named_by_the_original_name() {
+    let rig = named_rig().await;
+    let base = format!(
+        "/api/v1/files/content?{}",
+        query("path=photos%2Fholiday-2023.jpg")
+    );
+    let inline = rig.get(&base).await;
+    assert_eq!(inline.header("content-disposition"), nice_header("inline"));
+    let download = rig.get(&format!("{base}&download=true")).await;
+    assert_eq!(
+        download.header("content-disposition"),
+        nice_header("attachment")
+    );
+    let head = rig
+        .call(
+            Method::HEAD,
+            &format!("{base}&download=true"),
+            &[],
+            Vec::new(),
+        )
+        .await;
+    assert_eq!(
+        head.header("content-disposition"),
+        nice_header("attachment")
+    );
+    let ranged = rig
+        .call(Method::GET, &base, &[("range", "bytes=0-1")], Vec::new())
+        .await;
+    assert_eq!(ranged.status, StatusCode::PARTIAL_CONTENT);
+    assert_eq!(ranged.header("content-disposition"), nice_header("inline"));
+}
+
+#[tokio::test]
+async fn a_hostile_original_name_never_reaches_a_header_as_a_path() {
+    let rig = FilesRig::with_files(&[("a.txt", b"a")]).await;
+    let records = Records(vec![("a.txt", "../../etc/passwd\r\nX-Evil: 1")]);
+    rig.service
+        .install_display_names(std::sync::Arc::new(records));
+    let answer = rig
+        .get(&format!(
+            "/api/v1/files/content?{}",
+            query("path=a.txt&download=true")
+        ))
+        .await;
+    let header = answer.header("content-disposition");
+    assert!(
+        header.starts_with("attachment; filename=\".._.._etc_passwdX-Evil: 1\""),
+        "{header}"
+    );
+    assert!(!header.contains('/') && !header.contains('\r') && !header.contains('\n'));
+    assert!(answer.header("x-evil").is_empty());
 }

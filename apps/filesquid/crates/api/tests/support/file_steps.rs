@@ -6,7 +6,7 @@ use crate::files_fixture::{encode, pattern, query, send, Answer, FilesRig, LIBRA
 use crate::MonitorWorld;
 use axum::http::{Method, StatusCode};
 use cucumber::{given, then, when};
-use filesquid_api::files::MAX_ANSWER_BYTES;
+use filesquid_api::files::{DisplayNames, NameFuture, StoredFile, MAX_ANSWER_BYTES};
 use filesquid_api::journal::Outcome;
 use serde_json::json;
 
@@ -327,4 +327,70 @@ fn both_refused(w: &mut MonitorWorld, code: String) {
         assert_eq!(answer.json()["code"], code.as_str());
         assert_eq!(answer.json()["reason"], "missing_credentials");
     }
+}
+
+/// One file record standing in for the host's: a stored path and its original name.
+struct OneRecord(String, String);
+
+impl DisplayNames for OneRecord {
+    fn original_name<'a>(&'a self, file: StoredFile<'a>) -> NameFuture<'a> {
+        let found = (file.path == self.0).then(|| self.1.clone());
+        Box::pin(async move { found })
+    }
+}
+
+#[given(expr = "the owner's original name of {string} is {string}")]
+fn original_name(w: &mut MonitorWorld, path: String, name: String) {
+    let record = std::sync::Arc::new(OneRecord(path, name));
+    assert!(w.files.rig().service.install_display_names(record));
+}
+
+#[when(expr = "the owner downloads {string}")]
+async fn download(w: &mut MonitorWorld, path: String) {
+    let rest = format!("path={}&download=true", encode(&path));
+    let uri = format!("/api/v1/files/content?{}", query(&rest));
+    let answer = w.files.rig().get(&uri).await;
+    w.files.answers.push(answer);
+}
+
+#[then(expr = "the listing should show {string} as {string}")]
+fn listing_shows(w: &mut MonitorWorld, path: String, name: String) {
+    let listing = w.files.answers[0].json();
+    let entry = listing["entries"]
+        .as_array()
+        .expect("entries")
+        .iter()
+        .find(|e| e["path"] == path.as_str())
+        .cloned()
+        .expect("listed");
+    assert_eq!(entry["display_name"], name.as_str());
+}
+
+#[then(expr = "the download should be named {string} with an ASCII fallback")]
+fn download_named(w: &mut MonitorWorld, name: String) {
+    let header = w.files.last().header("content-disposition").to_string();
+    assert!(header.starts_with("attachment; filename=\""), "{header}");
+    let fallback = header.split('"').nth(1).expect("fallback");
+    assert!(fallback.is_ascii(), "{fallback}");
+    let encoded = header.split("filename*=UTF-8''").nth(1).expect("filename*");
+    let decoded = percent_decode(encoded);
+    assert_eq!(decoded, name);
+}
+
+/// Decode `%XX` escapes of an RFC 5987 value.
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).expect("hex");
+            out.push(u8::from_str_radix(hex, 16).expect("hex digit"));
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).expect("UTF-8")
 }

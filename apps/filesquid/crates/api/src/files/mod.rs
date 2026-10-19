@@ -28,6 +28,7 @@
 mod error;
 mod handle;
 pub mod media;
+pub mod names;
 mod range;
 mod routes;
 mod service;
@@ -35,16 +36,17 @@ mod view;
 
 pub use error::FileError;
 pub use handle::{FileFuture, FileOperations};
+pub use names::{DisplayNames, NameFuture, StoredFile};
 pub use range::{RangePlan, RangeRequest};
-pub(crate) use routes::{answer_content, refuse as refuse_file, routes};
+pub(crate) use routes::{answer_content, refuse as refuse_file, routes, ContentAnswerKind};
 pub use service::{
     staging_prefix, ContentAnswer, ContentRequest, FileClock, FileLibrary, FileService,
 };
 pub use view::{
-    CommitView, EntryView, FileChangeView, FileDetailsView, FileQuery, FolderPageView,
-    FolderRequest, FolderView, HistoryEntryView, HistoryQuery, HistoryView, ListingQuery,
-    MintRequest, MintView, MoveRequest, ObjectQuery, RemoveRequest, RestoreRequest, UploadQuery,
-    UserView, VersionView, VersionsView,
+    CommitView, ContentQuery, EntryView, FileChangeView, FileDetailsView, FileQuery,
+    FolderPageView, FolderRequest, FolderView, HistoryEntryView, HistoryQuery, HistoryView,
+    ListingQuery, MintRequest, MintView, MoveRequest, ObjectQuery, RemoveRequest, RestoreRequest,
+    UploadQuery, UserView, VersionView, VersionsView,
 };
 
 /// `tracing` target of this module's stdout-only diagnostics, outside `filesquid::activity`

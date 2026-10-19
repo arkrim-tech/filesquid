@@ -638,8 +638,10 @@ export interface components {
         } | {
             /** @constant */
             kind: "file";
-            /** @description Its last path segment. */
+            /** @description Its last path segment: the name it is stored under. */
             name: string;
+            /** @description The name users see: the owner's original file name from the host's file record, made safe (no path separator or control character), or the stored name when no record holds one. Users never see the stored name in its place. */
+            display_name: string;
             /** @description Its logical path. */
             path: string;
             /** @description Its content digest (the inventory's digest algorithm). */
@@ -678,8 +680,10 @@ export interface components {
             version: string;
             /** @description The file's logical path. */
             path: string;
-            /** @description Its last path segment. */
+            /** @description Its last path segment: the name it is stored under. */
             name: string;
+            /** @description The name users see: the owner's original file name from the host's file record, made safe (no path separator or control character), or the stored name when no record holds one. Users never see the stored name in its place. */
+            display_name: string;
             /** @description Its content digest. */
             digest: string;
             /** @description The digest algorithm: sha512 or sha256. */
@@ -1372,6 +1376,8 @@ export interface operations {
                 version?: components["parameters"]["Version"];
                 /** @description The file's logical path. */
                 path: components["parameters"]["LogicalPath"];
+                /** @description true to offer the file as a download (Content-Disposition attachment); shown in place (inline) otherwise. */
+                download?: boolean;
             };
             header?: {
                 /** @description One byte range: bytes=a-b, bytes=a- or bytes=-n. A malformed header, another unit or several ranges are ignored. */
@@ -1391,6 +1397,8 @@ export interface operations {
                     "Content-Type"?: string;
                     /** @description The bytes this answer carries. */
                     "Content-Length"?: number;
+                    /** @description inline or attachment, naming the file by its display name: an ASCII filename fallback and the exact name as RFC 5987 filename* UTF-8 (RFC 6266). */
+                    "Content-Disposition"?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -1408,6 +1416,8 @@ export interface operations {
                     "Content-Length"?: number;
                     /** @description bytes <first>-<last>/<length> */
                     "Content-Range"?: string;
+                    /** @description inline or attachment, naming the file by its display name: an ASCII filename fallback and the exact name as RFC 5987 filename* UTF-8 (RFC 6266). */
+                    "Content-Disposition"?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -1434,6 +1444,8 @@ export interface operations {
                 version?: components["parameters"]["Version"];
                 /** @description The file's logical path. */
                 path: components["parameters"]["LogicalPath"];
+                /** @description true to offer the file as a download (Content-Disposition attachment); shown in place (inline) otherwise. */
+                download?: boolean;
             };
             header?: never;
             path?: never;
@@ -1450,6 +1462,8 @@ export interface operations {
                     "Content-Type"?: string;
                     /** @description The bytes this answer carries. */
                     "Content-Length"?: number;
+                    /** @description inline or attachment, naming the file by its display name: an ASCII filename fallback and the exact name as RFC 5987 filename* UTF-8 (RFC 6266). */
+                    "Content-Disposition"?: string;
                     [name: string]: unknown;
                 };
                 content?: never;
@@ -1685,6 +1699,8 @@ export interface operations {
                     "X-Content-Type-Options"?: string;
                     /** @description default-src 'none'; sandbox */
                     "Content-Security-Policy"?: string;
+                    /** @description inline or attachment, naming the file by its display name: an ASCII filename fallback and the exact name as RFC 5987 filename* UTF-8 (RFC 6266). */
+                    "Content-Disposition"?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -1710,6 +1726,8 @@ export interface operations {
                     "X-Content-Type-Options"?: string;
                     /** @description default-src 'none'; sandbox */
                     "Content-Security-Policy"?: string;
+                    /** @description inline or attachment, naming the file by its display name: an ASCII filename fallback and the exact name as RFC 5987 filename* UTF-8 (RFC 6266). */
+                    "Content-Disposition"?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -1752,6 +1770,8 @@ export interface operations {
                     "X-Content-Type-Options"?: string;
                     /** @description default-src 'none'; sandbox */
                     "Content-Security-Policy"?: string;
+                    /** @description inline or attachment, naming the file by its display name: an ASCII filename fallback and the exact name as RFC 5987 filename* UTF-8 (RFC 6266). */
+                    "Content-Disposition"?: string;
                     [name: string]: unknown;
                 };
                 content?: never;

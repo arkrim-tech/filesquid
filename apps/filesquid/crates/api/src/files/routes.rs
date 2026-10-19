@@ -4,11 +4,12 @@
 //! and put the [`Principal`] in the request extensions (API-S-004).
 
 use super::error::FileError;
+use super::names::{content_disposition, Disposition};
 use super::range::{RangePlan, RangeRequest};
 use super::service::{ContentAnswer, ContentRequest};
 use super::view::{
-    FileQuery, FolderRequest, HistoryQuery, ListingQuery, MoveRequest, ObjectQuery, RemoveRequest,
-    RestoreRequest, UploadQuery,
+    ContentQuery, FileQuery, FolderRequest, HistoryQuery, ListingQuery, MoveRequest, ObjectQuery,
+    RemoveRequest, RestoreRequest, UploadQuery,
 };
 use super::{
     DETAILS_OPERATION, FOLDER_OPERATION, HISTORY_OPERATION, LIST_OPERATION, MAX_UPLOAD_BYTES,
@@ -23,7 +24,9 @@ use crate::ApiState;
 use axum::body::{Body, Bytes};
 use axum::extract::rejection::{BytesRejection, JsonRejection, QueryRejection};
 use axum::extract::{DefaultBodyLimit, Query, State};
-use axum::http::header::{ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, RANGE};
+use axum::http::header::{
+    ACCEPT_RANGES, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, RANGE,
+};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
@@ -120,11 +123,15 @@ async fn read_content(
     Extension(principal): Extension<Principal>,
     method: Method,
     headers: HeaderMap,
-    request: Result<Query<FileQuery>, QueryRejection>,
+    request: Result<Query<ContentQuery>, QueryRejection>,
 ) -> Response {
     let head_only = method == Method::HEAD;
+    let mut disposition = Disposition::Inline;
     let outcome = async {
         let file = query(request)?;
+        if file.download == Some(true) {
+            disposition = Disposition::Attachment;
+        }
         let range = RangeRequest::parse(headers.get(RANGE).and_then(|v| v.to_str().ok()));
         let content = ContentRequest {
             library_id: file.library_id,
@@ -137,7 +144,11 @@ async fn read_content(
         files(&state)?.content(content).await
     }
     .await;
-    answer_content(&state, principal.actor(), outcome, head_only).await
+    let answer = ContentAnswerKind {
+        head_only,
+        disposition,
+    };
+    answer_content(&state, principal.actor(), outcome, answer).await
 }
 
 /// `PUT /api/v1/files/upload`: add or replace one file; the body is its bytes.
@@ -257,15 +268,25 @@ pub(crate) async fn refuse(
     err.into_api_error(operation).into_response()
 }
 
+/// How a content answer is given: with or without its body, and inline or as a download.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ContentAnswerKind {
+    /// True for `HEAD`: the headers with an empty body.
+    pub head_only: bool,
+    /// How `Content-Disposition` offers the file.
+    pub disposition: Disposition,
+}
+
 /// Answer one content read: `200` with the whole file, `206` with `Content-Range`, `416`
 /// with `Content-Range: bytes */<length>`, or the typed error; `HEAD` answers the headers
-/// with an empty body. Every success carries `Accept-Ranges: bytes` and the media type. A
-/// refusal, a `416` included, is journaled under [`READ_OPERATION`].
+/// with an empty body. Every success carries `Accept-Ranges: bytes`, the media type and a
+/// `Content-Disposition` that names the file by its display name. A refusal, a `416`
+/// included, is journaled under [`READ_OPERATION`].
 pub(crate) async fn answer_content(
     state: &ApiState,
     actor: &str,
     outcome: Result<ContentAnswer, FileError>,
-    head_only: bool,
+    kind: ContentAnswerKind,
 ) -> Response {
     let answer = match outcome {
         Ok(answer) => answer,
@@ -280,15 +301,19 @@ pub(crate) async fn answer_content(
         }
         RangePlan::Unsatisfiable => return unsatisfiable(state, actor, total).await,
     };
-    let body = match head_only {
+    let body = match kind.head_only {
         true => Body::empty(),
         false => Body::from(answer.bytes),
     };
+    let disposition = content_disposition(kind.disposition, &answer.file_name);
     let mut response = (status, body).into_response();
     let headers = response.headers_mut();
     headers.insert(ACCEPT_RANGES, HeaderValue::from_static("bytes"));
     headers.insert(CONTENT_TYPE, HeaderValue::from_static(answer.media_type));
     headers.insert(CONTENT_LENGTH, HeaderValue::from(len));
+    if let Ok(value) = HeaderValue::from_str(&disposition) {
+        headers.insert(CONTENT_DISPOSITION, value);
+    }
     if let Some(range) = range.and_then(|r| HeaderValue::from_str(&r).ok()) {
         headers.insert(CONTENT_RANGE, range);
     }
