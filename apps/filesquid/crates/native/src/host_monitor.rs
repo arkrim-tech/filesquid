@@ -20,6 +20,12 @@ pub const HOST_HEARTBEAT_TIMEOUT_MS: i64 = 30_000;
 /// File name of the SQLite operational store inside the data directory.
 pub const JOURNAL_FILE: &str = "filesquid.sqlite";
 
+/// Error returned when OCFL validation was already started for this host or state.
+pub const VALIDATION_ALREADY_STARTED: &str = "OCFL validation is already started";
+
+/// Longest wait at stop for OCFL validation runs to end after they are cancelled.
+pub const VALIDATION_STOP_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Error returned when the API state already has a monitor installed.
 pub const ALREADY_INSTALLED: &str = "a monitor is already installed in this API state";
 
@@ -114,12 +120,15 @@ impl HostMonitor {
         data_dir: &Path,
         state: &ApiState,
     ) -> Result<ValidationService<B>, String> {
+        if self.validation.get().is_some() || state.validation().is_some() {
+            return Err(VALIDATION_ALREADY_STARTED.to_string());
+        }
         let store =
             SqliteFindings::open(&data_dir.join(JOURNAL_FILE)).map_err(|e| e.to_string())?;
         let service = ValidationService::new(Arc::new(store), self.monitor.clone());
         let handle: Arc<dyn OcflValidation> = Arc::new(service.clone());
         if self.validation.set(handle.clone()).is_err() || !state.install_validation(handle) {
-            return Err("OCFL validation is already started".to_string());
+            return Err(VALIDATION_ALREADY_STARTED.to_string());
         }
         Ok(service)
     }
@@ -144,7 +153,8 @@ impl HostMonitor {
         }
     }
 
-    /// Wait for an in-flight tick, then journal `host.stopped`, finish the host process and
+    /// Wait for an in-flight tick, cancel the OCFL validation runs and wait for them (at most
+    /// [`VALIDATION_STOP_WAIT`]), then journal `host.stopped`, finish the host process and
     /// flush and stop the journal writer. Later calls do nothing.
     pub fn stop(&self) {
         let mut stopped = self.stopped.lock().unwrap_or_else(|p| p.into_inner());
@@ -152,6 +162,9 @@ impl HostMonitor {
             return;
         }
         *stopped = true;
+        if let Some(validation) = self.validation.get() {
+            validation.shut_down(VALIDATION_STOP_WAIT);
+        }
         self.monitor.journal().send(
             JournalEntry::new("host.stopped", Outcome::Succeeded).target(self.monitor.host()),
         );

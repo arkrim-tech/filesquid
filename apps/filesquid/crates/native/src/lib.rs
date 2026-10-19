@@ -44,5 +44,8 @@ pub use catalog::{
 };
 pub use findings_sqlite::SqliteFindings;
 pub use host_checks::{probe_name, DataDirChecks, MAX_PROBE_ATTEMPTS};
-pub use host_monitor::{HostMonitor, ALREADY_INSTALLED, HOST_HEARTBEAT_TIMEOUT_MS, JOURNAL_FILE};
+pub use host_monitor::{
+    HostMonitor, ALREADY_INSTALLED, HOST_HEARTBEAT_TIMEOUT_MS, JOURNAL_FILE,
+    VALIDATION_ALREADY_STARTED, VALIDATION_STOP_WAIT,
+};
 pub use journal_sqlite::SqliteJournal;

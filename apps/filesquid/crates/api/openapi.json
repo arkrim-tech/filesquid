@@ -488,7 +488,7 @@
       "get": {
         "operationId": "getOcflFindings",
         "summary": "Open OCFL validation findings and validation runs",
-        "description": "API-S-022. The open findings of every open library (at most 1,000, ordered by library, object, code and location; `truncated` when more are open) and, per open library, whether a run is going, the last run and the next scheduled run. A finding's `location` is null for a caller who may not read the object: the server administrator, until per-object permissions arrive.",
+        "description": "API-S-022. The open findings of every open library (at most 1,000, ordered by library, object, code and location; `truncated` when more are open) the schedule and cap in force and, per open library, whether a run is going, the last run and the next scheduled run. A finding's `location` is null for a caller who may not read the object: the server administrator, until per-object permissions arrive.",
         "x-filesquid-action": "monitor.read",
         "responses": {
           "200": {
@@ -571,6 +571,51 @@
                 }
               }
             }
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/ocfl/validation-settings": {
+      "put": {
+        "operationId": "putOcflValidationSettings",
+        "summary": "Change the OCFL validation schedule and cap",
+        "description": "API-S-022. The desktop owner or a server administrator changes the time between scheduled runs and the object cap of a run. The next scheduled run of each open library moves with the new interval. Answers the settings now in force. Changing settings changes no library content or organisation, so the body is the settings, not a CommandEnvelope. Every change and refusal is journaled as `ocfl.validation.configure`.",
+        "x-filesquid-action": "ocfl.validation.configure",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ValidationSettings"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The settings now in force.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationSettings"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
           },
           "500": {
             "$ref": "#/components/responses/Internal"
@@ -1312,6 +1357,7 @@
         "required": [
           "findings",
           "truncated",
+          "settings",
           "libraries"
         ],
         "properties": {
@@ -1323,6 +1369,9 @@
           },
           "truncated": {
             "type": "boolean"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/ValidationSettings"
           },
           "libraries": {
             "type": "array",
@@ -1381,6 +1430,27 @@
             "items": {
               "$ref": "#/components/schemas/RunRefusal"
             }
+          }
+        }
+      },
+      "ValidationSettings": {
+        "type": "object",
+        "required": [
+          "interval_ms",
+          "object_cap"
+        ],
+        "properties": {
+          "interval_ms": {
+            "type": "integer",
+            "minimum": 3600000,
+            "maximum": 31622400000,
+            "description": "Time between scheduled runs of a library, in milliseconds (one hour to 366 days; default 7 days)."
+          },
+          "object_cap": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10000000,
+            "description": "Most objects one run checks (default 100,000)."
           }
         }
       }

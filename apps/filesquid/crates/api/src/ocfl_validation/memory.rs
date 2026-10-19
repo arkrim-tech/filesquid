@@ -41,24 +41,27 @@ impl MemoryFindingsStore {
         let mut state = self
             .state
             .lock()
-            .map_err(|_| StoreError("poisoned".into()))?;
+            .map_err(|_| StoreError::failed("poisoned"))?;
         Ok(f(&mut state))
     }
 }
 
-/// What `next` opens and closes against `previous`.
-fn diff(previous: &[Finding], next: &[Finding]) -> FindingChange {
-    let opened = next
-        .iter()
-        .filter(|f| !previous.iter().any(|p| p.same_as(f)))
-        .cloned()
-        .collect();
-    let closed = previous
-        .iter()
-        .filter(|p| !next.iter().any(|f| f.same_as(p)))
-        .cloned()
-        .collect();
-    FindingChange { opened, closed }
+/// `findings` stored under `library_id` and `object_id`, once per code and location (as the
+/// SQLite store's primary key keeps them).
+fn normalized(library_id: &LibraryId, object_id: &str, findings: Vec<Finding>) -> Vec<Finding> {
+    let mut kept: Vec<Finding> = Vec::with_capacity(findings.len());
+    for found in findings {
+        let found = Finding {
+            library_id: library_id.clone(),
+            object_id: object_id.to_string(),
+            ..found
+        };
+        match kept.iter_mut().find(|k| k.same_as(&found)) {
+            Some(existing) => *existing = found,
+            None => kept.push(found),
+        }
+    }
+    kept
 }
 
 impl FindingsStore for MemoryFindingsStore {
@@ -71,7 +74,8 @@ impl FindingsStore for MemoryFindingsStore {
         self.with(|state| {
             let key = (library_id.as_str().to_string(), object_id.to_string());
             let previous = state.findings.remove(&key).unwrap_or_default();
-            let change = diff(&previous, &findings);
+            let findings = normalized(library_id, object_id, findings);
+            let change = FindingChange::between(&previous, &findings);
             if !findings.is_empty() {
                 state.findings.insert(key, findings);
             }

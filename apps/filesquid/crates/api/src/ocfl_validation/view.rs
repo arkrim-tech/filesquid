@@ -1,5 +1,6 @@
 //! What the findings and validation-run routes answer and accept (API-S-022).
 
+use super::service::ValidationConfig;
 use super::store::{Finding, RunOutcome, RunRecord, RunTrigger, Severity};
 use crate::journal::format_rfc3339_ms;
 use filesquid_core::LibraryId;
@@ -89,6 +90,8 @@ pub struct FindingsView {
     pub findings: Vec<FindingView>,
     /// True when more findings are open than were answered.
     pub truncated: bool,
+    /// The schedule and cap now in force.
+    pub settings: ValidationConfig,
     /// Every open library, by identifier.
     pub libraries: Vec<LibraryRuns>,
 }

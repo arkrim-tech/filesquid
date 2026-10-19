@@ -1,24 +1,22 @@
-//! [`ValidationService`]: the open libraries, the schedule and the one-run-per-library lock,
-//! and the runs themselves (API-S-022).
+//! [`ValidationService`]: the open libraries, the schedule, the run lock and the object lock
+//! of each library (API-S-022).
 //!
 //! The service is generic over the host's storage backend type `B`. The host opens each
 //! library it has open with [`ValidationService::open_library`] and installs the service in
 //! [`crate::ApiState`] as an [`super::OcflValidation`], which the routes and the host's
-//! ticker use. A run registers in the process registry as `ocfl.validation`, with progress
-//! and heartbeat, and its outcome is journaled as `ocfl.validation.run`. Any change in the
-//! open findings publishes the health report on `health.change`.
+//! ticker use. The runs themselves are in [`super::runner`].
 
 use super::error::ValidationError;
-use super::run::{check_object, index, pass, PassResult, RunContext};
-use super::store::{FindingsStore, RunOutcome, RunRecord, RunTrigger};
+use super::store::FindingsStore;
 use super::{CONFIGURE_OPERATION, LOG_TARGET, RUN_OPERATION};
 use crate::journal::{now_ms, JournalEntry, Level, Outcome};
 use crate::monitor::Monitor;
-use crate::registry::{Clock, ProcessSpec};
+use crate::registry::Clock;
 use filesquid_core::LibraryId;
 use filesquid_ocfl::storage::StorageBackend;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Default time between scheduled runs of a library: 7 days.
@@ -36,16 +34,14 @@ const MAX_INTERVAL_MS: i64 = 366 * 24 * 60 * 60 * 1000;
 /// Largest object cap an owner may set.
 const MAX_OBJECT_CAP: u64 = 10_000_000;
 
-/// Longest silence of a running validation before it counts as stalled: one object can take
-/// long to check when its content is large.
-const HEARTBEAT_TIMEOUT_MS: i64 = 30 * 60 * 1000;
-
-/// The schedule and the cap, which the desktop owner or a server administrator may change.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// The schedule and the cap, which the desktop owner or a server administrator may change
+/// (`PUT /api/v1/admin/ocfl/validation-settings`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ValidationConfig {
-    /// Time between scheduled runs of a library, in milliseconds.
+    /// Time between scheduled runs of a library, in milliseconds (one hour to 366 days).
     pub interval_ms: i64,
-    /// Most objects one run checks.
+    /// Most objects one run checks (1 to 10,000,000).
     pub object_cap: u64,
 }
 
@@ -66,6 +62,11 @@ struct OpenLibrary<B> {
     opened_ms: i64,
     /// The cancel flag of the run going now; `None` when no run is going.
     running: Option<Arc<AtomicBool>>,
+    /// Held while one object is validated, by runs and takeover checks alike.
+    objects: Arc<tokio::sync::Mutex<()>>,
+    /// When the next scheduled run is due, once known (read from the store at most once,
+    /// then kept current by the runs and the configuration).
+    next_due_ms: Option<i64>,
 }
 
 /// Shared state of the service.
@@ -76,6 +77,8 @@ pub(super) struct Inner<B> {
     config: Mutex<ValidationConfig>,
     pub(super) clock: Clock,
     pub(super) runtime: Option<tokio::runtime::Handle>,
+    /// Set by [`ValidationService::shut_down`]; no run starts after it.
+    pub(super) stopped: AtomicBool,
 }
 
 /// Runs the `filesquid-ocfl` validator over the libraries a host has open.
@@ -97,22 +100,36 @@ impl<B> std::fmt::Debug for ValidationService<B> {
     }
 }
 
-/// Holds a library's run lock; releases it when dropped, on every path.
+/// Holds a library's run lock; releases it when dropped, on every path. It releases only the
+/// run it took, so a library closed and opened again during the run keeps its new state.
 pub(super) struct RunLock<B> {
     service: ValidationService<B>,
-    library_id: LibraryId,
+    pub(super) library_id: LibraryId,
     pub(super) backend: Arc<B>,
     pub(super) cancel: Arc<AtomicBool>,
+    pub(super) objects: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl<B> Drop for RunLock<B> {
     fn drop(&mut self) {
         if let Ok(mut libraries) = self.service.inner.libraries.lock() {
             if let Some(library) = libraries.get_mut(self.library_id.as_str()) {
-                library.running = None;
+                let ours = library
+                    .running
+                    .as_ref()
+                    .is_some_and(|flag| Arc::ptr_eq(flag, &self.cancel));
+                if ours {
+                    library.running = None;
+                }
             }
         }
     }
+}
+
+/// What a takeover check needs of an open library.
+pub(super) struct ObjectAccess<B> {
+    pub(super) backend: Arc<B>,
+    pub(super) objects: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl<B: StorageBackend + 'static> ValidationService<B> {
@@ -124,10 +141,13 @@ impl<B: StorageBackend + 'static> ValidationService<B> {
 
     /// A service over `store`, reporting through `monitor`, timed by `clock` (Unix
     /// milliseconds, UTC). Installs `store` as the monitor's findings source, so health reads
-    /// the open findings. Background runs use the Tokio runtime current at creation, or the
-    /// one current when a run starts.
+    /// the open findings; when the monitor already has one, it keeps it and this is logged.
+    /// Background runs use the Tokio runtime current at creation, or the one current when a
+    /// run starts.
     pub fn with_clock(store: Arc<dyn FindingsStore>, monitor: Monitor, clock: Clock) -> Self {
-        monitor.install_findings(store.clone());
+        if !monitor.install_findings(store.clone()) {
+            tracing::warn!(target: LOG_TARGET, "the monitor already reads another findings store");
+        }
         Self {
             inner: Arc::new(Inner {
                 libraries: Mutex::new(BTreeMap::new()),
@@ -136,6 +156,7 @@ impl<B: StorageBackend + 'static> ValidationService<B> {
                 config: Mutex::new(ValidationConfig::default()),
                 clock,
                 runtime: tokio::runtime::Handle::try_current().ok(),
+                stopped: AtomicBool::new(false),
             }),
         }
     }
@@ -152,6 +173,8 @@ impl<B: StorageBackend + 'static> ValidationService<B> {
                     backend,
                     opened_ms,
                     running: None,
+                    objects: Arc::new(tokio::sync::Mutex::new(())),
+                    next_due_ms: None,
                 },
             );
         }
@@ -174,27 +197,15 @@ impl<B: StorageBackend + 'static> ValidationService<B> {
     }
 
     /// Change the schedule and cap for `actor` (the desktop owner or a server
-    /// administrator), journaled as `ocfl.validation.configure`.
+    /// administrator), journaled as `ocfl.validation.configure`. The next scheduled run of
+    /// each library moves with the new interval.
     ///
     /// # Errors
     ///
     /// `invalid_config` for an interval outside one hour to 366 days or a cap outside 1 to
     /// 10,000,000; nothing changes.
     pub fn configure(&self, actor: &str, config: ValidationConfig) -> Result<(), ValidationError> {
-        let interval_ok = (MIN_INTERVAL_MS..=MAX_INTERVAL_MS).contains(&config.interval_ms);
-        let cap_ok = (1..=MAX_OBJECT_CAP).contains(&config.object_cap);
-        let result = match (interval_ok, cap_ok) {
-            (true, true) => self
-                .inner
-                .config
-                .lock()
-                .map(|mut c| *c = config)
-                .map_err(|_| ValidationError::Internal),
-            _ => Err(ValidationError::Invalid {
-                code: "invalid_config",
-                message: "Choose a schedule between one hour and a year and a cap between 1 and 10,000,000 objects.",
-            }),
-        };
+        let result = check_config(&config).and_then(|()| self.set_config(config));
         let entry = match &result {
             Ok(()) => JournalEntry::new(CONFIGURE_OPERATION, Outcome::Succeeded),
             Err(err) => failed(CONFIGURE_OPERATION, err),
@@ -203,18 +214,35 @@ impl<B: StorageBackend + 'static> ValidationService<B> {
         result
     }
 
+    /// Store `config` and forget the cached due times, which depend on the interval.
+    fn set_config(&self, config: ValidationConfig) -> Result<(), ValidationError> {
+        let mut current = self
+            .inner
+            .config
+            .lock()
+            .map_err(|_| ValidationError::Internal)?;
+        *current = config;
+        drop(current);
+        let mut libraries = self
+            .inner
+            .libraries
+            .lock()
+            .map_err(|_| ValidationError::Internal)?;
+        libraries.values_mut().for_each(|l| l.next_due_ms = None);
+        Ok(())
+    }
+
     /// Ask the run of `library_id` going now to stop after the object it is checking.
     /// Answers whether a run was going.
     pub fn cancel(&self, library_id: &LibraryId) -> bool {
-        let libraries = match self.inner.libraries.lock() {
-            Ok(libraries) => libraries,
-            Err(_) => return false,
+        let Ok(libraries) = self.inner.libraries.lock() else {
+            return false;
         };
         let running = libraries
             .get(library_id.as_str())
             .and_then(|l| l.running.clone());
         if let Some(flag) = &running {
-            flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            flag.store(true, Ordering::SeqCst);
         }
         running.is_some()
     }
@@ -223,8 +251,12 @@ impl<B: StorageBackend + 'static> ValidationService<B> {
     ///
     /// # Errors
     ///
-    /// `not_found` when the library is not open; `already_running` while a run holds it.
+    /// `unavailable` once the service is shut down; `not_found` when the library is not
+    /// open; `already_running` while a run holds it.
     pub(super) fn lock(&self, library_id: &LibraryId) -> Result<RunLock<B>, ValidationError> {
+        if self.inner.stopped.load(Ordering::SeqCst) {
+            return Err(ValidationError::Unavailable);
+        }
         let mut libraries = self
             .inner
             .libraries
@@ -243,215 +275,109 @@ impl<B: StorageBackend + 'static> ValidationService<B> {
             library_id: library_id.clone(),
             backend: library.backend.clone(),
             cancel,
+            objects: library.objects.clone(),
         })
     }
 
-    /// Validate `library_id` now for `actor`: one pass from the cursor (or from the start),
-    /// up to the configured cap. A failed pass (storage or store outage) is recorded and
-    /// answered as a run with outcome `failed`.
-    ///
-    /// # Errors
-    ///
-    /// `not_found` or `already_running`; both are journaled and nothing is checked.
-    pub async fn run(
+    /// The backend and object lock of the open library `library_id`.
+    pub(super) fn access(
         &self,
         library_id: &LibraryId,
-        trigger: RunTrigger,
-        from_start: bool,
-        actor: &str,
-    ) -> Result<RunRecord, ValidationError> {
-        let lock = self
-            .lock(library_id)
-            .inspect_err(|err| self.refused(actor, library_id, err))?;
-        Ok(self.run_locked(lock, trigger, from_start, actor).await)
-    }
-
-    /// Run one pass under `lock`, register it as a process, record and journal it.
-    pub(super) async fn run_locked(
-        &self,
-        lock: RunLock<B>,
-        trigger: RunTrigger,
-        from_start: bool,
-        actor: &str,
-    ) -> RunRecord {
-        let library_id = lock.library_id.clone();
-        let process = self
-            .inner
-            .monitor
-            .registry()
-            .register(ProcessSpec::new("ocfl.validation", HEARTBEAT_TIMEOUT_MS));
-        let started_ms = (self.inner.clock)();
-        let journal = self.inner.monitor.journal();
-        let ctx = RunContext {
-            store: self.inner.store.as_ref(),
-            journal: &journal,
-            library_id: &library_id,
-            actor,
-            cancel: &lock.cancel,
-            process: Some(&process),
-        };
-        let cap = self.config().object_cap;
-        let passed = match index(lock.backend.as_ref()).await {
-            Ok(objects) => pass(&ctx, lock.backend.as_ref(), &objects, from_start, cap).await,
-            Err(err) => Err(err),
-        };
-        drop(lock);
-        let record = self.record(&library_id, trigger, started_ms, &passed);
-        self.finish(&process, actor, &record, &passed);
-        record
-    }
-
-    /// The record of a pass.
-    fn record(
-        &self,
-        library_id: &LibraryId,
-        trigger: RunTrigger,
-        started_ms: i64,
-        passed: &Result<PassResult, ValidationError>,
-    ) -> RunRecord {
-        let (outcome, checked, not_checked, error_code) = match passed {
-            Ok(p) => (
-                p.outcome,
-                p.checked,
-                p.total.saturating_sub(p.checked),
-                None,
-            ),
-            Err(err) => (RunOutcome::Failed, 0, 0, Some(err.error_code().to_string())),
-        };
-        RunRecord {
-            library_id: library_id.clone(),
-            trigger,
-            started_ms,
-            ended_ms: (self.inner.clock)(),
-            outcome,
-            checked,
-            not_checked,
-            error_code,
-        }
-    }
-
-    /// Store and journal the record, end the process, and publish health when findings
-    /// changed.
-    fn finish(
-        &self,
-        process: &crate::registry::ProcessHandle,
-        actor: &str,
-        record: &RunRecord,
-        passed: &Result<PassResult, ValidationError>,
-    ) {
-        if let Err(err) = self.inner.store.record_run(record) {
-            tracing::warn!(target: LOG_TARGET, error = %err, "validation run not recorded");
-        }
-        let entry = match record.outcome {
-            RunOutcome::Completed | RunOutcome::Capped => {
-                JournalEntry::new(RUN_OPERATION, Outcome::Succeeded)
-            }
-            RunOutcome::Cancelled => JournalEntry::new(RUN_OPERATION, Outcome::Cancelled),
-            RunOutcome::Failed => JournalEntry::new(RUN_OPERATION, Outcome::Failed)
-                .error_code(record.error_code.as_deref().unwrap_or("internal")),
-        };
-        self.journal(
-            entry
-                .actor(actor)
-                .target(record.library_id.as_str())
-                .process(process.id())
-                .duration_ms(u64::try_from(record.ended_ms - record.started_ms).unwrap_or(0)),
-        );
-        match record.outcome {
-            RunOutcome::Failed => process.fail(record.error_code.as_deref().unwrap_or("internal")),
-            RunOutcome::Cancelled => process.cancel(),
-            _ => process.complete(),
-        }
-        if passed.as_ref().is_ok_and(|p| p.changed) {
-            self.inner.monitor.publish_health();
-        }
-    }
-
-    /// Validate `object_id` of `library_id` after a commit on it, when that commit took
-    /// over an expired or lost reservation (API-S-022). Any other commit is not validated
-    /// here. This is not a run: it takes no run lock and does not move the cursor.
-    ///
-    /// # Errors
-    ///
-    /// `not_found` when the library is not open; `unavailable` for a storage or store
-    /// outage.
-    pub async fn validate_after_commit(
-        &self,
-        library_id: &LibraryId,
-        object_id: &str,
-        took_over: bool,
-    ) -> Result<(), ValidationError> {
-        if !took_over {
-            return Ok(());
-        }
-        let backend = self.backend(library_id)?;
-        let objects = index(backend.as_ref()).await?;
-        let Some(object) = objects.iter().find(|o| o.id == object_id) else {
-            return Ok(());
-        };
-        let journal = self.inner.monitor.journal();
-        let cancel = AtomicBool::new(false);
-        let ctx = RunContext {
-            store: self.inner.store.as_ref(),
-            journal: &journal,
-            library_id,
-            actor: "system",
-            cancel: &cancel,
-            process: None,
-        };
-        if !check_object(&ctx, backend.as_ref(), object)
-            .await?
-            .is_empty()
-        {
-            self.inner.monitor.publish_health();
-        }
-        Ok(())
-    }
-
-    /// The backend of the open library `library_id`.
-    fn backend(&self, library_id: &LibraryId) -> Result<Arc<B>, ValidationError> {
+    ) -> Result<ObjectAccess<B>, ValidationError> {
         let libraries = self
             .inner
             .libraries
             .lock()
             .map_err(|_| ValidationError::Internal)?;
-        libraries
+        let library = libraries
             .get(library_id.as_str())
-            .map(|l| l.backend.clone())
-            .ok_or(ValidationError::NotFound)
+            .ok_or(ValidationError::NotFound)?;
+        Ok(ObjectAccess {
+            backend: library.backend.clone(),
+            objects: library.objects.clone(),
+        })
     }
 
-    /// The open libraries, with whether a run is going and when each was opened.
-    pub(super) fn libraries(&self) -> Vec<(LibraryId, bool, i64)> {
-        self.inner
-            .libraries
-            .lock()
-            .map(|libraries| {
-                libraries
-                    .values()
-                    .map(|l| (l.library_id.clone(), l.running.is_some(), l.opened_ms))
-                    .collect()
+    /// The open libraries, with whether a run is going and when the next scheduled run is
+    /// due (`None` when the store cannot say).
+    pub(super) fn libraries(&self) -> Vec<(LibraryId, bool, Option<i64>)> {
+        let snapshot: Vec<(LibraryId, bool, Option<i64>, i64)> = match self.inner.libraries.lock() {
+            Ok(libraries) => libraries
+                .values()
+                .map(|l| {
+                    (
+                        l.library_id.clone(),
+                        l.running.is_some(),
+                        l.next_due_ms,
+                        l.opened_ms,
+                    )
+                })
+                .collect(),
+            Err(_) => return Vec::new(),
+        };
+        snapshot
+            .into_iter()
+            .map(|(id, running, cached, opened)| {
+                let due = cached.or_else(|| self.load_next_due(&id, opened));
+                (id, running, due)
             })
-            .unwrap_or_default()
+            .collect()
     }
 
-    /// When the next scheduled run of a library opened at `opened_ms` is due: one interval
-    /// after its last run started, or after it was opened.
-    pub(super) fn next_run_ms(&self, library_id: &LibraryId, opened_ms: i64) -> Option<i64> {
+    /// Read when the next scheduled run of a library opened at `opened_ms` is due (one
+    /// interval after its last run started, or after it was opened) and cache it.
+    fn load_next_due(&self, library_id: &LibraryId, opened_ms: i64) -> Option<i64> {
         let last = self.inner.store.last_run(library_id).ok()?;
         let base = last.map_or(opened_ms, |run| run.started_ms);
-        Some(base.saturating_add(self.config().interval_ms))
+        let due = base.saturating_add(self.config().interval_ms);
+        self.remember_next_due(library_id, due);
+        Some(due)
     }
 
-    /// The open libraries whose scheduled run is due now and that no run holds.
+    /// Keep `due` as the next scheduled run of `library_id`.
+    pub(super) fn remember_next_due(&self, library_id: &LibraryId, due: i64) {
+        if let Ok(mut libraries) = self.inner.libraries.lock() {
+            if let Some(library) = libraries.get_mut(library_id.as_str()) {
+                library.next_due_ms = Some(due);
+            }
+        }
+    }
+
+    /// The open libraries whose scheduled run is due now and that no run holds. The store is
+    /// read only for a library whose due time is not yet known.
     pub fn due_libraries(&self) -> Vec<LibraryId> {
         let now = (self.inner.clock)();
         self.libraries()
             .into_iter()
-            .filter(|(_, running, _)| !running)
-            .filter(|(id, _, opened)| self.next_run_ms(id, *opened).is_some_and(|due| due <= now))
+            .filter(|(_, running, due)| !running && due.is_some_and(|due| due <= now))
             .map(|(id, _, _)| id)
             .collect()
+    }
+
+    /// Stop starting runs, cancel every run going now, and wait up to `wait` for them to
+    /// end (checked every 20 milliseconds), so none writes after the host stops. Answers
+    /// whether every run ended in time.
+    pub fn shut_down(&self, wait: std::time::Duration) -> bool {
+        self.inner.stopped.store(true, Ordering::SeqCst);
+        let step = std::time::Duration::from_millis(20);
+        let rounds = wait.as_millis() / step.as_millis() + 1;
+        for _ in 0..rounds {
+            let ids: Vec<LibraryId> = self
+                .libraries()
+                .into_iter()
+                .filter(|(_, running, _)| *running)
+                .map(|(id, _, _)| id)
+                .collect();
+            if ids.is_empty() {
+                return true;
+            }
+            ids.iter().for_each(|id| {
+                self.cancel(id);
+            });
+            std::thread::sleep(step);
+        }
+        tracing::warn!(target: LOG_TARGET, "OCFL validation runs still going at shutdown");
+        false
     }
 
     /// Journal a refused run of `library_id` for `actor`.
@@ -473,6 +399,19 @@ impl<B: StorageBackend + 'static> ValidationService<B> {
     }
 }
 
+/// Check `config` against the bounds.
+fn check_config(config: &ValidationConfig) -> Result<(), ValidationError> {
+    let interval_ok = (MIN_INTERVAL_MS..=MAX_INTERVAL_MS).contains(&config.interval_ms);
+    let cap_ok = (1..=MAX_OBJECT_CAP).contains(&config.object_cap);
+    if interval_ok && cap_ok {
+        return Ok(());
+    }
+    Err(ValidationError::Invalid {
+        code: "invalid_config",
+        message: "Choose a schedule between one hour and a year and a cap between 1 and 10,000,000 objects.",
+    })
+}
+
 /// The failed entry of `operation` for `err`: warn for a refusal, error for a fault.
 pub(super) fn failed(operation: &str, err: &ValidationError) -> JournalEntry {
     let level = match err {
@@ -483,4 +422,41 @@ pub(super) fn failed(operation: &str, err: &ValidationError) -> JournalEntry {
     JournalEntry::new(operation, Outcome::Failed)
         .error_code(err.error_code())
         .level(level)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::journal::MemoryJournal;
+    use crate::monitor::{MonitorConfig, StaticHostChecks};
+    use crate::ocfl_validation::MemoryFindingsStore;
+    use filesquid_ocfl::storage::MemoryBackend;
+
+    /// A run lock taken before a library was closed and opened again never frees the run
+    /// lock of the reopened library.
+    #[test]
+    fn an_old_run_lock_never_frees_a_reopened_library() {
+        let monitor = Monitor::start(
+            Arc::new(MemoryJournal::new("test")),
+            Arc::new(StaticHostChecks::healthy()),
+            MonitorConfig::new("test"),
+            crate::EventBus::new(),
+        );
+        let service: ValidationService<MemoryBackend> =
+            ValidationService::new(Arc::new(MemoryFindingsStore::new()), monitor.clone());
+        let id = LibraryId::new("lib-1").expect("id");
+        service.open_library(id.clone(), Arc::new(MemoryBackend::new()));
+        let old = service.lock(&id).expect("first run");
+        assert!(service.close_library(&id));
+        service.open_library(id.clone(), Arc::new(MemoryBackend::new()));
+        let new = service.lock(&id).expect("a run of the reopened library");
+        drop(old);
+        assert_eq!(
+            service.lock(&id).err(),
+            Some(ValidationError::AlreadyRunning)
+        );
+        drop(new);
+        assert!(service.lock(&id).is_ok(), "free once its own run ends");
+        monitor.shutdown();
+    }
 }

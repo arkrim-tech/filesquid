@@ -1,12 +1,13 @@
 //! [`OcflValidation`]: the object-safe handle to a host's [`ValidationService`], installed in
-//! [`crate::ApiState`] for the routes and called by the host's ticker and commit paths.
+//! [`crate::ApiState`] for the routes and called by the host's ticker, commit paths and
+//! shutdown.
 //!
 //! Runs it starts go to the background on the Tokio runtime the service was created on (or
 //! the one current at the call); the caller gets an answer at once and follows progress in
 //! the process registry and on the event channel.
 
 use super::error::ValidationError;
-use super::service::{RunLock, ValidationService};
+use super::service::{RunLock, ValidationConfig, ValidationService};
 use super::store::RunTrigger;
 use super::view::{
     FindingView, FindingsView, LibraryRuns, RunAccepted, RunRefusal, RunRequest, RunView,
@@ -16,6 +17,7 @@ use crate::journal::format_rfc3339_ms;
 use filesquid_core::LibraryId;
 use filesquid_ocfl::storage::StorageBackend;
 use std::future::Future;
+use std::time::Duration;
 
 /// What the routes and the host need from a host's validation service.
 pub trait OcflValidation: Send + Sync {
@@ -25,33 +27,52 @@ pub trait OcflValidation: Send + Sync {
     ///
     /// `not_found` for a library that is not open; `already_running` when the one named
     /// library is running (several libraries list theirs in the answer instead);
-    /// `unavailable` without a runtime to run on. Each refusal is journaled.
+    /// `unavailable` without a runtime to run on or after shutdown. Each refusal is
+    /// journaled.
     fn start_runs(&self, request: RunRequest, actor: &str) -> Result<RunAccepted, ValidationError>;
 
-    /// The open findings (locations only when `show_locations`) and, per open library, the
-    /// last run and the next scheduled run.
+    /// The open findings (locations only when `show_locations`), the settings and, per open
+    /// library, the last run and the next scheduled run.
     ///
     /// # Errors
     ///
-    /// `unavailable` when the findings store fails.
+    /// `unavailable` (or `internal`) when the findings store fails.
     fn findings_view(&self, show_locations: bool) -> Result<FindingsView, ValidationError>;
+
+    /// Change the schedule and cap for `actor`, journaled.
+    ///
+    /// # Errors
+    ///
+    /// `invalid_config` for values out of bounds; nothing changes.
+    fn configure(&self, actor: &str, config: ValidationConfig) -> Result<(), ValidationError>;
 
     /// Start the scheduled runs that are due. The host calls it from its monitor ticker.
     fn tick(&self);
 
-    /// After a commit on `object_id` of `library_id`: validate the object in the background
-    /// when the commit took over an expired or lost reservation (see
-    /// [`ValidationService::validate_after_commit`]).
-    fn on_commit(&self, library_id: &LibraryId, object_id: &str, took_over: bool);
+    /// After a commit on `object_id` at `object_root` of `library_id`: validate the object
+    /// in the background when the commit took over an expired or lost reservation (see
+    /// [`ValidationService::validate_after_commit`]). A check that cannot start or fails is
+    /// journaled.
+    fn on_commit(
+        &self,
+        library_id: &LibraryId,
+        object_root: &str,
+        object_id: &str,
+        took_over: bool,
+    );
+
+    /// Stop starting runs and cancel the running ones, waiting up to `wait` for them to end.
+    /// The host calls it before it stops its journal.
+    fn shut_down(&self, wait: Duration) -> bool;
 }
 
 impl<B: StorageBackend + 'static> ValidationService<B> {
-    /// The open findings and the runs of every open library (see
+    /// The open findings, the settings and the runs of every open library (see
     /// [`OcflValidation::findings_view`]).
     ///
     /// # Errors
     ///
-    /// `unavailable` when the findings store fails.
+    /// `unavailable` (or `internal`) when the findings store fails.
     pub fn findings(&self, show_locations: bool) -> Result<FindingsView, ValidationError> {
         let mut open = self.inner.store.open_findings(MAX_FINDINGS_VIEW + 1)?;
         let truncated = open.len() > MAX_FINDINGS_VIEW;
@@ -61,21 +82,19 @@ impl<B: StorageBackend + 'static> ValidationService<B> {
             .map(|f| FindingView::of(f, show_locations))
             .collect();
         let mut libraries = Vec::new();
-        for (library_id, running, opened_ms) in self.libraries() {
+        for (library_id, running, due) in self.libraries() {
             let last_run = self.inner.store.last_run(&library_id)?.map(RunView::from);
-            let next_run = self
-                .next_run_ms(&library_id, opened_ms)
-                .map(format_rfc3339_ms);
             libraries.push(LibraryRuns {
                 library_id,
                 running,
                 last_run,
-                next_run,
+                next_run: due.map(format_rfc3339_ms),
             });
         }
         Ok(FindingsView {
             findings,
             truncated,
+            settings: self.config(),
             libraries,
         })
     }
@@ -119,7 +138,7 @@ impl<B: StorageBackend + 'static> ValidationService<B> {
                 Ok(())
             }
             None => {
-                tracing::warn!(target: LOG_TARGET, "no runtime for an OCFL validation run");
+                tracing::warn!(target: LOG_TARGET, "no runtime for OCFL validation");
                 Err(ValidationError::Unavailable)
             }
         }
@@ -170,33 +189,49 @@ impl<B: StorageBackend + 'static> OcflValidation for ValidationService<B> {
         self.findings(show_locations)
     }
 
+    fn configure(&self, actor: &str, config: ValidationConfig) -> Result<(), ValidationError> {
+        ValidationService::configure(self, actor, config)
+    }
+
     fn tick(&self) {
         for library_id in self.due_libraries() {
-            if self
-                .start_one(&library_id, RunTrigger::Scheduled, false, "system")
-                .is_err()
-            {
+            let started = self.start_one(&library_id, RunTrigger::Scheduled, false, "system");
+            if started.is_err() {
                 tracing::info!(target: LOG_TARGET, operation = RUN_OPERATION, "scheduled run not started");
             }
         }
     }
 
-    fn on_commit(&self, library_id: &LibraryId, object_id: &str, took_over: bool) {
+    fn on_commit(
+        &self,
+        library_id: &LibraryId,
+        object_root: &str,
+        object_id: &str,
+        took_over: bool,
+    ) {
         if !took_over {
             return;
         }
         let service = self.clone();
-        let (library_id, object_id) = (library_id.clone(), object_id.to_string());
+        let (library, root, object) = (
+            library_id.clone(),
+            object_root.to_string(),
+            object_id.to_string(),
+        );
         let spawned = self.spawn(async move {
             let checked = service
-                .validate_after_commit(&library_id, &object_id, true)
+                .validate_after_commit(&library, &root, &object, true)
                 .await;
             if let Err(err) = checked {
-                service.refused("system", &library_id, &err);
+                service.refused("system", &library, &err);
             }
         });
         if let Err(err) = spawned {
-            tracing::warn!(target: LOG_TARGET, error_code = err.error_code(), "takeover validation not started");
+            self.refused("system", library_id, &err);
         }
+    }
+
+    fn shut_down(&self, wait: Duration) -> bool {
+        ValidationService::shut_down(self, wait)
     }
 }

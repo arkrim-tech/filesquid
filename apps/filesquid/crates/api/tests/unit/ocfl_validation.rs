@@ -12,8 +12,8 @@ use filesquid_api::health::HealthStatus;
 use filesquid_api::journal::Outcome;
 use filesquid_api::ocfl_validation::{
     FindingsStore, MemoryFindingsStore, OcflValidation, RunOutcome, RunRequest, RunTrigger,
-    Severity, ValidationConfig, ValidationService, DEFAULT_INTERVAL_MS, DEFAULT_OBJECT_CAP,
-    FINDING_CLOSED_OPERATION, FINDING_OPERATION, RUN_OPERATION,
+    Severity, ValidationConfig, ValidationService, CONFIGURE_OPERATION, DEFAULT_INTERVAL_MS,
+    DEFAULT_OBJECT_CAP, FINDING_CLOSED_OPERATION, FINDING_OPERATION, RUN_OPERATION,
 };
 use filesquid_ocfl::storage::StorageBackend;
 use fixture::library;
@@ -133,7 +133,7 @@ fn a_takeover_commit_triggers_validation_of_that_object() {
     rig.e023_object("obj-b", "urn:uuid:b");
     vfix::ready_async(
         rig.service
-            .validate_after_commit(&library(), "urn:uuid:b", false),
+            .validate_after_commit(&library(), "obj-b", "urn:uuid:b", false),
     )
     .expect("plain commit");
     assert!(
@@ -142,7 +142,7 @@ fn a_takeover_commit_triggers_validation_of_that_object() {
     );
     vfix::ready_async(
         rig.service
-            .validate_after_commit(&library(), "urn:uuid:b", true),
+            .validate_after_commit(&library(), "obj-b", "urn:uuid:b", true),
     )
     .expect("takeover commit");
     let open = open_errors(rig.store.as_ref());
@@ -297,7 +297,7 @@ fn the_findings_view_reports_the_last_run_and_the_next_scheduled_run() {
 }
 
 #[test]
-fn the_scheduler_starts_a_run_when_one_is_due() {
+fn a_library_is_due_one_interval_after_it_was_opened() {
     let rig = ValidationRig::new();
     rig.object("obj-a", "urn:uuid:a");
     assert!(
@@ -306,6 +306,31 @@ fn the_scheduler_starts_a_run_when_one_is_due() {
     );
     rig.advance(WEEK_MS);
     assert_eq!(rig.service.due_libraries(), [library()]);
+}
+
+#[tokio::test]
+async fn the_scheduler_tick_starts_a_scheduled_run_when_one_is_due() {
+    let rig = ValidationRig::new();
+    rig.object("obj-a", "urn:uuid:a");
+    OcflValidation::tick(&rig.service);
+    assert!(
+        rig.store.last_run(&library()).expect("store").is_none(),
+        "nothing due yet"
+    );
+    rig.advance(WEEK_MS);
+    OcflValidation::tick(&rig.service);
+    for _ in 0..200 {
+        if rig.store.last_run(&library()).expect("store").is_some() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let run = rig.store.last_run(&library()).expect("store").expect("ran");
+    assert_eq!(run.trigger, RunTrigger::Scheduled);
+    assert!(
+        rig.service.due_libraries().is_empty(),
+        "the next run is a week later"
+    );
 }
 
 #[test]
@@ -423,6 +448,11 @@ fn the_configuration_is_bounded_and_journaled() {
             .error_code(),
         "invalid_config"
     );
+    assert_eq!(
+        rig.service.config(),
+        ValidationConfig::default(),
+        "unchanged"
+    );
     let none = ValidationConfig {
         interval_ms: WEEK_MS,
         object_cap: 0,
@@ -434,8 +464,21 @@ fn the_configuration_is_bounded_and_journaled() {
             .error_code(),
         "invalid_config"
     );
+    assert_eq!(
+        rig.service.config(),
+        ValidationConfig::default(),
+        "unchanged"
+    );
     rig.cap(5);
     assert_eq!(rig.service.config().object_cap, 5);
+    let journaled = rig.journaled(CONFIGURE_OPERATION);
+    let outcomes: Vec<Outcome> = journaled.iter().map(|e| e.outcome).collect();
+    assert_eq!(
+        outcomes,
+        [Outcome::Failed, Outcome::Failed, Outcome::Succeeded]
+    );
+    assert_eq!(journaled[0].error_code.as_deref(), Some("invalid_config"));
+    assert_eq!(journaled[2].actor, "owner");
 }
 
 #[test]
@@ -641,13 +684,17 @@ impl FindingsStore for FailingStore {
         filesquid_api::ocfl_validation::FindingChange,
         filesquid_api::ocfl_validation::StoreError,
     > {
-        Err(filesquid_api::ocfl_validation::StoreError("down".into()))
+        Err(filesquid_api::ocfl_validation::StoreError::unavailable(
+            "down",
+        ))
     }
     fn objects_with_findings(
         &self,
         _: &filesquid_core::LibraryId,
     ) -> Result<Vec<String>, filesquid_api::ocfl_validation::StoreError> {
-        Err(filesquid_api::ocfl_validation::StoreError("down".into()))
+        Err(filesquid_api::ocfl_validation::StoreError::unavailable(
+            "down",
+        ))
     }
     fn open_findings(
         &self,
@@ -656,7 +703,9 @@ impl FindingsStore for FailingStore {
         Vec<filesquid_api::ocfl_validation::Finding>,
         filesquid_api::ocfl_validation::StoreError,
     > {
-        Err(filesquid_api::ocfl_validation::StoreError("down".into()))
+        Err(filesquid_api::ocfl_validation::StoreError::unavailable(
+            "down",
+        ))
     }
     fn error_summary(
         &self,
@@ -664,26 +713,34 @@ impl FindingsStore for FailingStore {
         filesquid_api::ocfl_validation::ErrorSummary,
         filesquid_api::ocfl_validation::StoreError,
     > {
-        Err(filesquid_api::ocfl_validation::StoreError("down".into()))
+        Err(filesquid_api::ocfl_validation::StoreError::unavailable(
+            "down",
+        ))
     }
     fn cursor(
         &self,
         _: &filesquid_core::LibraryId,
     ) -> Result<Option<String>, filesquid_api::ocfl_validation::StoreError> {
-        Err(filesquid_api::ocfl_validation::StoreError("down".into()))
+        Err(filesquid_api::ocfl_validation::StoreError::unavailable(
+            "down",
+        ))
     }
     fn set_cursor(
         &self,
         _: &filesquid_core::LibraryId,
         _: Option<&str>,
     ) -> Result<(), filesquid_api::ocfl_validation::StoreError> {
-        Err(filesquid_api::ocfl_validation::StoreError("down".into()))
+        Err(filesquid_api::ocfl_validation::StoreError::unavailable(
+            "down",
+        ))
     }
     fn record_run(
         &self,
         _: &filesquid_api::ocfl_validation::RunRecord,
     ) -> Result<(), filesquid_api::ocfl_validation::StoreError> {
-        Err(filesquid_api::ocfl_validation::StoreError("down".into()))
+        Err(filesquid_api::ocfl_validation::StoreError::unavailable(
+            "down",
+        ))
     }
     fn last_run(
         &self,
@@ -692,7 +749,9 @@ impl FindingsStore for FailingStore {
         Option<filesquid_api::ocfl_validation::RunRecord>,
         filesquid_api::ocfl_validation::StoreError,
     > {
-        Err(filesquid_api::ocfl_validation::StoreError("down".into()))
+        Err(filesquid_api::ocfl_validation::StoreError::unavailable(
+            "down",
+        ))
     }
 }
 
@@ -719,4 +778,224 @@ fn a_failing_findings_store_fails_health_and_the_run() {
     assert_eq!(record.outcome, RunOutcome::Failed);
     assert_eq!(record.error_code.as_deref(), Some("unavailable"));
     monitor.shutdown();
+}
+
+/// A memory store whose cursor moves fail after `ok` successful moves.
+struct FlakyCursor {
+    inner: MemoryFindingsStore,
+    ok: std::sync::atomic::AtomicUsize,
+}
+
+impl FindingsStore for FlakyCursor {
+    fn replace_findings(
+        &self,
+        l: &filesquid_core::LibraryId,
+        o: &str,
+        f: Vec<filesquid_api::ocfl_validation::Finding>,
+    ) -> Result<
+        filesquid_api::ocfl_validation::FindingChange,
+        filesquid_api::ocfl_validation::StoreError,
+    > {
+        self.inner.replace_findings(l, o, f)
+    }
+    fn objects_with_findings(
+        &self,
+        l: &filesquid_core::LibraryId,
+    ) -> Result<Vec<String>, filesquid_api::ocfl_validation::StoreError> {
+        self.inner.objects_with_findings(l)
+    }
+    fn open_findings(
+        &self,
+        n: usize,
+    ) -> Result<
+        Vec<filesquid_api::ocfl_validation::Finding>,
+        filesquid_api::ocfl_validation::StoreError,
+    > {
+        self.inner.open_findings(n)
+    }
+    fn error_summary(
+        &self,
+    ) -> Result<
+        filesquid_api::ocfl_validation::ErrorSummary,
+        filesquid_api::ocfl_validation::StoreError,
+    > {
+        self.inner.error_summary()
+    }
+    fn cursor(
+        &self,
+        l: &filesquid_core::LibraryId,
+    ) -> Result<Option<String>, filesquid_api::ocfl_validation::StoreError> {
+        self.inner.cursor(l)
+    }
+    fn set_cursor(
+        &self,
+        l: &filesquid_core::LibraryId,
+        c: Option<&str>,
+    ) -> Result<(), filesquid_api::ocfl_validation::StoreError> {
+        let left = self.ok.load(std::sync::atomic::Ordering::SeqCst);
+        if left == 0 {
+            return Err(filesquid_api::ocfl_validation::StoreError::unavailable(
+                "busy",
+            ));
+        }
+        self.ok.store(left - 1, std::sync::atomic::Ordering::SeqCst);
+        self.inner.set_cursor(l, c)
+    }
+    fn record_run(
+        &self,
+        r: &filesquid_api::ocfl_validation::RunRecord,
+    ) -> Result<(), filesquid_api::ocfl_validation::StoreError> {
+        self.inner.record_run(r)
+    }
+    fn last_run(
+        &self,
+        l: &filesquid_core::LibraryId,
+    ) -> Result<
+        Option<filesquid_api::ocfl_validation::RunRecord>,
+        filesquid_api::ocfl_validation::StoreError,
+    > {
+        self.inner.last_run(l)
+    }
+}
+
+#[test]
+fn a_run_stopped_by_an_outage_reports_what_it_checked_and_publishes_health() {
+    let rig = ValidationRig::new();
+    rig.e023_object("obj-0", "urn:x:0");
+    rig.object("obj-1", "urn:x:1");
+    rig.object("obj-2", "urn:x:2");
+    let store = Arc::new(FlakyCursor {
+        inner: MemoryFindingsStore::new(),
+        ok: std::sync::atomic::AtomicUsize::new(1),
+    });
+    let monitor = filesquid_api::monitor::Monitor::start(
+        Arc::new(filesquid_api::journal::MemoryJournal::new("desktop")),
+        Arc::new(filesquid_api::monitor::StaticHostChecks::healthy()),
+        filesquid_api::monitor::MonitorConfig::new("desktop"),
+        rig.state.events.clone(),
+    );
+    let service: ValidationService<fixture::CountingBackend> =
+        ValidationService::new(store.clone(), monitor.clone());
+    service.open_library(library(), rig.root.clone());
+    let mut events = rig.events();
+    let record = vfix::ready_async(service.run(&library(), RunTrigger::Requested, false, "owner"))
+        .expect("answered");
+    assert_eq!(record.outcome, RunOutcome::Failed);
+    assert_eq!((record.checked, record.not_checked), (1, 2));
+    assert_eq!(record.error_code.as_deref(), Some("unavailable"));
+    assert_eq!(
+        monitor.health_report().status,
+        HealthStatus::Degraded,
+        "E023 was stored"
+    );
+    let mut topics = Vec::new();
+    for _ in 0..100 {
+        match vfix::ready_async(events.next()) {
+            Some(event) => topics.push(event.topic),
+            None => break,
+        }
+        if topics.iter().any(|t| t == "health.change") {
+            break;
+        }
+    }
+    assert!(topics.iter().any(|t| t == "health.change"), "{topics:?}");
+    monitor.shutdown();
+}
+
+#[test]
+fn shutting_down_cancels_runs_and_refuses_new_ones() {
+    let rig = ValidationRig::new();
+    rig.object("obj-a", "urn:uuid:a");
+    let service = rig.service.clone();
+    rig.root.on_read(
+        "obj-a/v1/content/a.txt",
+        Box::new(move || {
+            assert!(
+                !service.shut_down(std::time::Duration::from_millis(40)),
+                "the run is going"
+            );
+        }),
+    );
+    let record = rig.run(RunTrigger::Requested, false).expect("run");
+    assert_eq!(
+        record.outcome,
+        RunOutcome::Completed,
+        "the object being checked finishes"
+    );
+    let refused = rig.run(RunTrigger::Requested, false).expect_err("stopped");
+    assert_eq!(refused.error_code(), "unavailable");
+    assert!(
+        rig.service.shut_down(std::time::Duration::from_millis(40)),
+        "nothing left"
+    );
+}
+
+#[test]
+fn a_takeover_check_that_cannot_start_is_journaled() {
+    let rig = ValidationRig::new();
+    rig.e023_object("obj-b", "urn:uuid:b");
+    OcflValidation::on_commit(&rig.service, &library(), "obj-b", "urn:uuid:b", true);
+    let refused = rig.journaled(RUN_OPERATION);
+    assert_eq!(
+        refused.len(),
+        1,
+        "no runtime: the skipped check is journaled"
+    );
+    assert_eq!(refused[0].error_code.as_deref(), Some("unavailable"));
+    OcflValidation::on_commit(&rig.service, &library(), "obj-b", "urn:uuid:b", false);
+    assert_eq!(
+        rig.journaled(RUN_OPERATION).len(),
+        1,
+        "no takeover, nothing to do"
+    );
+}
+
+#[test]
+fn a_takeover_check_reads_only_the_named_object() {
+    let rig = ValidationRig::new();
+    rig.e023_object("obj-b", "urn:uuid:b");
+    rig.object("obj-c", "urn:uuid:c");
+    vfix::ready_async(
+        rig.service
+            .validate_after_commit(&library(), "obj-c", "urn:uuid:b", true),
+    )
+    .expect("another object at that root");
+    assert!(
+        rig.store.open_findings(100).expect("findings").is_empty(),
+        "left alone"
+    );
+}
+
+#[tokio::test]
+async fn the_settings_route_changes_the_schedule_and_refuses_bad_values() {
+    let rig = ValidationRig::new();
+    rig.state
+        .install_authoriser(filesquid_api::auth::Authoriser::server_administrator(
+            "admin",
+        ));
+    let path = "/api/v1/admin/ocfl/validation-settings";
+    let body = format!("{{\"interval_ms\":{},\"object_cap\":7}}", 2 * WEEK_MS);
+    let (status, answer) = call_route(&rig.state, "PUT", path, Some("admin"), &body).await;
+    assert_eq!(status, 200, "{answer}");
+    assert_eq!(answer["object_cap"], 7);
+    let (status, view) = call_route(&rig.state, "GET", FINDINGS, Some("admin"), "").await;
+    assert_eq!(status, 200);
+    assert_eq!(view["settings"]["interval_ms"], 2 * WEEK_MS);
+    let (status, _) = call_route(&rig.state, "PUT", path, Some("admin"), "{}").await;
+    assert_eq!(status, 400);
+    let (status, _) = call_route(
+        &rig.state,
+        "PUT",
+        path,
+        Some("admin"),
+        "{\"interval_ms\":1,\"object_cap\":1}",
+    )
+    .await;
+    assert_eq!(status, 400);
+    let refusals: Vec<_> = rig
+        .journaled(CONFIGURE_OPERATION)
+        .into_iter()
+        .filter(|e| e.outcome == Outcome::Failed)
+        .collect();
+    assert_eq!(refusals.len(), 2, "both refusals are journaled");
 }

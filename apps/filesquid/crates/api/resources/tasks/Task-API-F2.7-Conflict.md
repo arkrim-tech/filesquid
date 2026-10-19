@@ -22,7 +22,9 @@ The API-F2.7 plan row says "for an object after any commit on it that took over 
 
 ## 3. ADR reference
 
-[ADR 033](../../../../../../resources/architecture/033-activity-journal-and-live-health-monitoring.md) puts health and the Monitor behind `filesquid-api`, which reads module results through their public APIs. [ADR 016](../../../../../../resources/architecture/016-rust-ocfl-library.md) and [ADR 023](../../../../../../resources/architecture/023-filesquid-ocfl-engine-and-parquet.md) make `filesquid-ocfl` the only owner of the write path and its reservations.
+- [ADR 016](../../../../../../resources/architecture/016-rust-ocfl-library.md), Decision: "Other native crates **depend on** `filesquid-ocfl`; they do not reimplement OCFL." Reading the lease store's records outside the engine would reimplement part of the engine's write path.
+- [ADR 023](../../../../../../resources/architecture/023-filesquid-ocfl-engine-and-parquet.md), Decision: "The public API MUST provide: …" (the storage backend trait, storage-root and object reads, the writer). A caller learns what a commit did only from that public API, and its commit result carries no takeover today.
+- [ADR 033](../../../../../../resources/architecture/033-activity-journal-and-live-health-monitoring.md), Decision 2, "What is journaled, always: every domain operation …, every job and process state change …". The takeover is a write-path event that only the engine sees, so it has to reach `filesquid-api` through the engine's result before it can be journaled or acted on.
 
 ## 4. Recommended resolution
 

@@ -84,7 +84,7 @@ fn takeover(w: &mut MonitorWorld) {
     let library = rig.library();
     ready_async(
         rig.service
-            .validate_after_commit(&library, "urn:uuid:b", true),
+            .validate_after_commit(&library, "obj-b", "urn:uuid:b", true),
     )
     .expect("check");
 }
@@ -119,7 +119,8 @@ fn health_is(w: &mut MonitorWorld, status: String) {
     let expected = match status.as_str() {
         "ok" => HealthStatus::Ok,
         "degraded" => HealthStatus::Degraded,
-        _ => HealthStatus::Failing,
+        "failing" => HealthStatus::Failing,
+        other => panic!("unknown health status {other:?} in the feature"),
     };
     assert_eq!(report.status, expected, "{:?}", report.reasons);
 }

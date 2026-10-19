@@ -5,10 +5,12 @@
 //! of objects that no longer exist, and then validates objects in identifier order. It
 //! starts after the stored cursor, moves the cursor past each object it checks, and wraps to
 //! the start of the order when it reaches the end. It stops at its object cap, when it is
-//! cancelled, or once every object has been checked in this run. Each object's findings
-//! replace its previous ones in the store. Every newly opened error finding is journaled as
-//! `ocfl.validation.finding`, and every closed finding as `ocfl.validation.finding_closed`,
-//! with the opaque object ID, version and code only.
+//! cancelled, on a store or storage outage, or once every object has been checked in this
+//! run. Each object's findings replace its previous ones in the store, under the library's
+//! object lock, so a run and a takeover check never interleave on one object. Every newly
+//! opened error finding is journaled as `ocfl.validation.finding`, and every closed finding
+//! as `ocfl.validation.finding_closed`, with the opaque object ID, version and code only.
+//! Diagnostics on stdout name error codes only, never a storage key or location.
 
 use super::error::ValidationError;
 use super::store::{Finding, FindingChange, FindingsStore, RunOutcome, Severity};
@@ -24,7 +26,7 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// What a run works with.
+/// What a run or a takeover check works with.
 pub(super) struct RunContext<'a> {
     pub(super) store: &'a dyn FindingsStore,
     pub(super) journal: &'a JournalSender,
@@ -32,6 +34,8 @@ pub(super) struct RunContext<'a> {
     pub(super) actor: &'a str,
     pub(super) cancel: &'a AtomicBool,
     pub(super) process: Option<&'a ProcessHandle>,
+    /// Held while one object is validated and its findings stored.
+    pub(super) objects: &'a tokio::sync::Mutex<()>,
 }
 
 /// One object of the library, as indexed.
@@ -41,23 +45,57 @@ pub(super) struct Indexed {
     version: Option<String>,
 }
 
-/// What a pass did.
+impl Indexed {
+    /// The opened object at `root`.
+    pub(super) fn of<B: StorageBackend>(object: &Object<'_, B>, root: &str) -> Self {
+        Self {
+            id: object.id().to_string(),
+            root: root.to_string(),
+            version: Some(object.head().to_string()),
+        }
+    }
+}
+
+/// What a pass did. A pass that stopped on an outage carries its `error`, with the objects
+/// it had already checked.
 pub(super) struct PassResult {
     pub(super) outcome: RunOutcome,
     pub(super) checked: u64,
     pub(super) total: u64,
     pub(super) changed: bool,
+    pub(super) error: Option<ValidationError>,
 }
 
-/// Map a read failure: a storage outage is `unavailable`; any other failure to open the
-/// storage root is `internal`.
-fn read_error(err: &ReadError) -> ValidationError {
-    tracing::info!(target: LOG_TARGET, error = %err, "validation could not read the library");
-    match err {
-        ReadError::Storage(StorageError::Io { .. } | StorageError::Backend { .. }) => {
-            ValidationError::Unavailable
+impl PassResult {
+    /// A pass that failed before it checked anything.
+    pub(super) fn failed(error: ValidationError) -> Self {
+        Self {
+            outcome: RunOutcome::Failed,
+            checked: 0,
+            total: 0,
+            changed: false,
+            error: Some(error),
         }
-        _ => ValidationError::Internal,
+    }
+}
+
+/// Whether `err` is a storage outage rather than a broken object.
+fn is_outage(err: &ReadError) -> bool {
+    matches!(
+        err,
+        ReadError::Storage(StorageError::Io { .. } | StorageError::Backend { .. })
+    )
+}
+
+/// Map a failure to read the library: a storage outage is `unavailable`, anything else
+/// `internal`. Only the error code reaches stdout.
+pub(super) fn read_error(err: &ReadError) -> ValidationError {
+    let code = err.code().unwrap_or("read_failed");
+    tracing::info!(target: LOG_TARGET, error_code = code, "validation could not read the library");
+    if is_outage(err) {
+        ValidationError::Unavailable
+    } else {
+        ValidationError::Internal
     }
 }
 
@@ -76,16 +114,8 @@ pub(super) async fn index<B: StorageBackend>(backend: &B) -> Result<Vec<Indexed>
     let mut objects = Vec::with_capacity(storage.objects().len());
     for root in storage.objects() {
         let indexed = match Object::open(backend, root).await {
-            Ok(object) => Indexed {
-                id: object.id().to_string(),
-                root: root.clone(),
-                version: Some(object.head().to_string()),
-            },
-            Err(ReadError::Storage(
-                err @ (StorageError::Io { .. } | StorageError::Backend { .. }),
-            )) => {
-                return Err(read_error(&ReadError::Storage(err)));
-            }
+            Ok(object) => Indexed::of(&object, root),
+            Err(err) if is_outage(&err) => return Err(read_error(&err)),
             Err(_) => Indexed {
                 id: unreadable_id(root),
                 root: root.clone(),
@@ -117,53 +147,76 @@ fn order(objects: &[Indexed], cursor: Option<&str>, from_start: bool, cap: u64) 
     (start..objects.len()).chain(0..start).take(cap).collect()
 }
 
+/// Progress of a pass so far.
+struct Progress {
+    checked: u64,
+    total: u64,
+    changed: bool,
+}
+
+impl Progress {
+    /// The pass result with `outcome`, and `error` for a pass stopped by an outage.
+    fn into_result(self, outcome: RunOutcome, error: Option<ValidationError>) -> PassResult {
+        PassResult {
+            outcome,
+            checked: self.checked,
+            total: self.total,
+            changed: self.changed,
+            error,
+        }
+    }
+}
+
 /// Run one pass over `objects` of `backend`: close the findings of deleted objects, then
-/// check objects in [`order`] until the cap, a cancel, or the end of the pass.
-///
-/// # Errors
-///
-/// `unavailable` for a store or storage outage (the cursor stays at the last object
-/// checked).
+/// check objects in [`order`] until the cap, a cancel, an outage, or the end of the pass.
+/// The cursor stays at the last object checked.
 pub(super) async fn pass<B: StorageBackend>(
     ctx: &RunContext<'_>,
     backend: &B,
     objects: &[Indexed],
     from_start: bool,
     cap: u64,
-) -> Result<PassResult, ValidationError> {
-    let mut changed = close_deleted(ctx, objects)?;
-    let cursor = ctx.store.cursor(ctx.library_id)?;
-    let visit = order(objects, cursor.as_deref(), from_start, cap);
-    let total = objects.len() as u64;
-    let mut checked = 0u64;
-    for position in &visit {
-        if ctx.cancel.load(Ordering::SeqCst) {
-            return Ok(result(RunOutcome::Cancelled, checked, total, changed));
-        }
-        let object = &objects[*position];
-        changed |= !check_object(ctx, backend, object).await?.is_empty();
-        ctx.store.set_cursor(ctx.library_id, Some(&object.id))?;
-        checked += 1;
-        if let Some(process) = ctx.process {
-            process.progress(checked, visit.len() as u64);
-        }
-    }
-    let outcome = if checked < total {
-        RunOutcome::Capped
-    } else {
-        RunOutcome::Completed
+) -> PassResult {
+    let mut progress = Progress {
+        checked: 0,
+        total: objects.len() as u64,
+        changed: false,
     };
-    Ok(result(outcome, checked, total, changed))
+    let visited = visit(ctx, backend, objects, from_start, cap, &mut progress).await;
+    let outcome = match &visited {
+        Err(_) => RunOutcome::Failed,
+        Ok(true) => RunOutcome::Cancelled,
+        Ok(false) if progress.checked < progress.total => RunOutcome::Capped,
+        Ok(false) => RunOutcome::Completed,
+    };
+    progress.into_result(outcome, visited.err())
 }
 
-/// A pass result.
-fn result(outcome: RunOutcome, checked: u64, total: u64, changed: bool) -> PassResult {
-    PassResult {
-        outcome,
-        checked,
-        total,
-        changed,
+/// The body of [`pass`]: answers whether the pass was cancelled.
+async fn visit<B: StorageBackend>(
+    ctx: &RunContext<'_>,
+    backend: &B,
+    objects: &[Indexed],
+    from_start: bool,
+    cap: u64,
+    progress: &mut Progress,
+) -> Result<bool, ValidationError> {
+    progress.changed |= close_deleted(ctx, objects)?;
+    let cursor = ctx.store.cursor(ctx.library_id)?;
+    let positions = order(objects, cursor.as_deref(), from_start, cap);
+    for position in &positions {
+        if ctx.cancel.load(Ordering::SeqCst) {
+            return Ok(true);
+        }
+        let object = &objects[*position];
+        progress.changed |= !check_object(ctx, backend, object).await?.is_empty();
+        ctx.store.set_cursor(ctx.library_id, Some(&object.id))?;
+        progress.checked += 1;
+        if let Some(process) = ctx.process {
+            process.progress(progress.checked, positions.len() as u64);
+        }
     }
+    Ok(false)
 }
 
 /// Close the findings of every object that has open findings but is no longer in the
@@ -184,16 +237,22 @@ fn close_deleted(ctx: &RunContext<'_>, objects: &[Indexed]) -> Result<bool, Vali
     Ok(changed)
 }
 
-/// Validate one object, store its findings and journal what opened and closed.
+/// Validate one object under the library's object lock, store its findings and journal what
+/// opened and closed. The lock is taken without waiting when it is free, so an uncontended
+/// check never yields to the executor for it.
 ///
 /// # Errors
 ///
-/// `unavailable` for a store or storage outage.
+/// `unavailable` (or `internal`) for a store or storage failure.
 pub(super) async fn check_object<B: StorageBackend>(
     ctx: &RunContext<'_>,
     backend: &B,
     object: &Indexed,
 ) -> Result<FindingChange, ValidationError> {
+    let _one_at_a_time = match ctx.objects.try_lock() {
+        Ok(guard) => guard,
+        Err(_) => ctx.objects.lock().await,
+    };
     let findings = match validate_object(backend, &object.root).await {
         Ok(report) => {
             let errors = report.errors().iter().map(|f| (f, Severity::Error));
@@ -205,24 +264,11 @@ pub(super) async fn check_object<B: StorageBackend>(
         }
         Err(err) => unvalidated(ctx, object, &err)?,
     };
-    let findings = distinct(findings);
     let change = ctx
         .store
         .replace_findings(ctx.library_id, &object.id, findings)?;
     journal_change(ctx, &change);
     Ok(change)
-}
-
-/// `findings` without repeats: the validator can report one fault twice (for example an
-/// unlisted file against the root and the version inventory), which is one finding.
-fn distinct(findings: Vec<Finding>) -> Vec<Finding> {
-    let mut kept: Vec<Finding> = Vec::with_capacity(findings.len());
-    for found in findings {
-        if !kept.iter().any(|k| k.same_as(&found)) {
-            kept.push(found);
-        }
-    }
-    kept
 }
 
 /// The finding for an object the validator could not validate at all (an engine bound, an
@@ -233,11 +279,11 @@ fn unvalidated(
     object: &Indexed,
     err: &ReadError,
 ) -> Result<Vec<Finding>, ValidationError> {
-    if let ReadError::Storage(StorageError::Io { .. } | StorageError::Backend { .. }) = err {
+    if is_outage(err) {
         return Err(read_error(err));
     }
-    tracing::info!(target: LOG_TARGET, error = %err, "object could not be validated");
     let code = err.code().unwrap_or("unvalidated");
+    tracing::info!(target: LOG_TARGET, error_code = code, "object could not be validated");
     Ok(vec![finding(
         ctx,
         object,

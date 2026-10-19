@@ -66,6 +66,23 @@ pub struct FindingChange {
 }
 
 impl FindingChange {
+    /// What `next` opens and closes against `previous`: a finding is the same when
+    /// [`Finding::same_as`] says so. Every store answers replacements with this.
+    pub fn between(previous: &[Finding], next: &[Finding]) -> Self {
+        Self {
+            opened: next
+                .iter()
+                .filter(|f| !previous.iter().any(|p| p.same_as(f)))
+                .cloned()
+                .collect(),
+            closed: previous
+                .iter()
+                .filter(|p| !next.iter().any(|f| f.same_as(p)))
+                .cloned()
+                .collect(),
+        }
+    }
+
     /// True when nothing opened or closed.
     pub fn is_empty(&self) -> bool {
         self.opened.is_empty() && self.closed.is_empty()
@@ -150,23 +167,50 @@ pub struct RunRecord {
 
 /// A failure of the injected store. Details go to stdout only.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct StoreError(pub String);
+pub struct StoreError {
+    /// What failed, for stdout.
+    pub detail: String,
+    /// Whether a retry may succeed (the store was busy or unreachable). A failure a retry
+    /// will not fix (a corrupt row, a poisoned lock) is not transient.
+    pub transient: bool,
+}
+
+impl StoreError {
+    /// A failure a retry may clear.
+    pub fn unavailable(detail: impl Into<String>) -> Self {
+        Self {
+            detail: detail.into(),
+            transient: true,
+        }
+    }
+
+    /// A failure a retry will not clear.
+    pub fn failed(detail: impl Into<String>) -> Self {
+        Self {
+            detail: detail.into(),
+            transient: false,
+        }
+    }
+}
 
 impl std::fmt::Display for StoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "findings store failed: {}", self.0)
+        write!(f, "findings store failed: {}", self.detail)
     }
 }
 
 /// The findings store a host injects.
 pub trait FindingsStore: Send + Sync {
     /// Replace the findings of `object_id` in `library_id` with `findings` (all of one
-    /// validation of that object), in one transaction, and answer what opened and closed.
-    /// An empty `findings` closes every open finding of the object.
+    /// validation of that object), in one transaction, and answer what opened and closed
+    /// ([`FindingChange::between`]). Each finding is stored under `library_id` and
+    /// `object_id` whatever it names itself, once per code and location. An empty
+    /// `findings` closes every open finding of the object; replacing findings with the same
+    /// ones answers an empty change.
     ///
     /// # Errors
     ///
-    /// A [`StoreError`] when nothing was changed.
+    /// A [`StoreError`] when the store failed; nothing is changed then.
     fn replace_findings(
         &self,
         library_id: &LibraryId,

@@ -10,7 +10,7 @@ use filesquid_api::ocfl_validation::{
     Severity, StoreError,
 };
 use filesquid_core::LibraryId;
-use rusqlite::{params, Connection, OptionalExtension, Row};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension, Row};
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
@@ -56,22 +56,36 @@ impl std::fmt::Debug for SqliteFindings {
     }
 }
 
-/// A store failure, with the SQLite detail for stdout.
+/// A store failure, with the SQLite detail for stdout: a busy or locked database is
+/// transient, anything else is not.
 fn sql_err(err: rusqlite::Error) -> StoreError {
-    StoreError(err.to_string())
+    let busy = matches!(
+        err.sqlite_error_code(),
+        Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
+    );
+    if busy {
+        StoreError::unavailable(err.to_string())
+    } else {
+        StoreError::failed(err.to_string())
+    }
 }
 
 impl SqliteFindings {
     /// Open (creating if needed) the operational database at `path` in WAL mode, made
-    /// owner-only on Unix, and ensure the findings schema. Filesystem and database I/O.
+    /// owner-only on Unix and opened without following a symbolic link, and ensure the
+    /// findings schema. Filesystem and database I/O.
     ///
     /// # Errors
     ///
     /// A [`StoreError`] when the file or the schema cannot be opened.
     pub fn open(path: &Path) -> Result<Self, StoreError> {
         crate::owner_only::create_owner_only(path)
-            .map_err(|err| StoreError(format!("{}: {err}", path.display())))?;
-        let conn = Connection::open(path).map_err(sql_err)?;
+            .map_err(|err| StoreError::unavailable(format!("{}: {err}", path.display())))?;
+        let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_CREATE
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | OpenFlags::SQLITE_OPEN_NOFOLLOW;
+        let conn = Connection::open_with_flags(path, flags).map_err(sql_err)?;
         conn.pragma_update(None, "journal_mode", "WAL")
             .map_err(sql_err)?;
         conn.busy_timeout(std::time::Duration::from_secs(5))
@@ -86,7 +100,7 @@ impl SqliteFindings {
     fn lock(&self) -> Result<MutexGuard<'_, Connection>, StoreError> {
         self.conn
             .lock()
-            .map_err(|_| StoreError("findings store lock poisoned".into()))
+            .map_err(|_| StoreError::failed("findings store lock poisoned"))
     }
 }
 
@@ -113,22 +127,6 @@ fn library_id(text: &str) -> rusqlite::Result<LibraryId> {
     LibraryId::new(text).map_err(|err| {
         rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(err))
     })
-}
-
-/// What `next` opens and closes against `previous`.
-fn diff(previous: &[Finding], next: &[Finding]) -> FindingChange {
-    FindingChange {
-        opened: next
-            .iter()
-            .filter(|f| !previous.iter().any(|p| p.same_as(f)))
-            .cloned()
-            .collect(),
-        closed: previous
-            .iter()
-            .filter(|p| !next.iter().any(|f| f.same_as(p)))
-            .cloned()
-            .collect(),
-    }
 }
 
 /// The open findings of one object, inside `tx`.
@@ -222,7 +220,7 @@ impl FindingsStore for SqliteFindings {
         let previous = object_findings(&tx, library_id, object_id).map_err(sql_err)?;
         write_findings(&tx, library_id, object_id, &findings).map_err(sql_err)?;
         tx.commit().map_err(sql_err)?;
-        Ok(diff(&previous, &findings))
+        Ok(FindingChange::between(&previous, &findings))
     }
 
     fn objects_with_findings(&self, library_id: &LibraryId) -> Result<Vec<String>, StoreError> {

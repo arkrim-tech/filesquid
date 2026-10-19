@@ -54,7 +54,9 @@ impl ValidationError {
             Self::NotFound => "That library is not open on this host.",
             Self::AlreadyRunning => "A check of this library is already running.",
             Self::Invalid { message, .. } => message,
-            Self::Unavailable => "The check cannot run right now. Try again shortly.",
+            Self::Unavailable => {
+                "The OCFL checks or their findings are not available right now. Try again shortly."
+            }
             Self::Internal => "FileSquid could not complete the check.",
         }
     }
@@ -75,9 +77,14 @@ impl From<ValidationError> for ApiError {
 }
 
 impl From<StoreError> for ValidationError {
-    /// A store failure is `unavailable`; its detail goes to stdout only.
+    /// A transient store failure is `unavailable`, any other `internal`; the detail goes to
+    /// stdout only.
     fn from(err: StoreError) -> Self {
         tracing::info!(target: LOG_TARGET, error = %err, "findings store failed");
-        Self::Unavailable
+        if err.transient {
+            Self::Unavailable
+        } else {
+            Self::Internal
+        }
     }
 }

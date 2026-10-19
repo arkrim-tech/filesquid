@@ -208,11 +208,6 @@ impl ValidationRig {
         self.service.configure("owner", config).expect("configure");
     }
 
-    /// The object IDs the store holds findings for, as checked in the last runs.
-    pub fn checked_ids(&self, record: &RunRecord) -> u64 {
-        record.checked
-    }
-
     /// Every journal entry, oldest first.
     pub fn journal(&self) -> Vec<JournalEntry> {
         self.monitor.journal().flush();

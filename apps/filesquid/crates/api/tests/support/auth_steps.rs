@@ -106,18 +106,23 @@ async fn record(w: &mut MonitorWorld, service: Router, request: Request<Body>) {
     w.answers.push((status, body.to_bytes().to_vec()));
 }
 
-/// Call `path` through the API router with an optional bearer token: `POST` for the one
-/// command route (an empty body), `GET` for every other route.
+/// Call `path` through the API router with an optional bearer token: `POST` (an empty body)
+/// and `PUT` (the default settings) for the validation command routes, `GET` for every other
+/// route.
 async fn call(w: &mut MonitorWorld, path: &str, token: Option<String>) {
-    let mut request = match path {
-        "/api/v1/admin/ocfl/validation-runs" => Request::post(path),
-        _ => Request::get(path),
+    let (mut request, body) = match path {
+        "/api/v1/admin/ocfl/validation-runs" => (Request::post(path), ""),
+        "/api/v1/admin/ocfl/validation-settings" => (
+            Request::put(path),
+            r#"{"interval_ms":604800000,"object_cap":100000}"#,
+        ),
+        _ => (Request::get(path), ""),
     };
     if let Some(token) = token {
         request = request.header("authorization", format!("Bearer {token}"));
     }
     let service = router(w.state.clone().expect("state"));
-    record(w, service, request.body(Body::empty()).expect("request")).await;
+    record(w, service, request.body(Body::from(body)).expect("request")).await;
 }
 
 /// The event channel as hosts mount it: a host route guarded by [`auth::require`].

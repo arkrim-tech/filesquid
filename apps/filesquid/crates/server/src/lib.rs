@@ -26,9 +26,11 @@ use axum::Router;
 use filesquid_api::auth::{self, Action, Authoriser, Guard, Principal, EVENTS_SUBPROTOCOL};
 use filesquid_api::host::{HostIdentity, NotEnrolled, OperatorName};
 use filesquid_api::journal::{format_rfc3339_ms, now_ms, JournalEntry, Level, Outcome};
+use filesquid_api::ocfl_validation::ValidationService;
 use filesquid_api::trace_layer::JournalLayer;
 use filesquid_api::{ApiError, ApiState, ErrorCode, API_PREFIX};
 use filesquid_native::HostMonitor;
+use filesquid_ocfl::storage::FsBackend;
 use std::io::Write;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -304,9 +306,13 @@ pub fn start_server_writing_to(
     Ok(host)
 }
 
-/// Start OCFL validation (API-S-022) over the findings store in the data directory. The
-/// server opens no OCFL library yet, so only on-request runs of libraries opened later and
-/// the findings route (to the administrator, without locations) apply. Performs database I/O.
+/// Start OCFL validation (API-S-022) over the findings store in the data directory and
+/// answer the service. The server has no OCFL library model yet (its libraries arrive with
+/// SV-F1.2), so it opens no library: the findings route answers the administrator an empty
+/// list with the settings, and the settings route works. A later task keeps the service this
+/// answers and opens each server library with
+/// [`open_library`](filesquid_api::ocfl_validation::ValidationService::open_library).
+/// Performs database I/O.
 ///
 /// # Errors
 /// The findings store could not be opened.
@@ -314,9 +320,8 @@ pub fn start_validation(
     config: &ServerConfig,
     state: &ApiState,
     host: &HostMonitor,
-) -> Result<(), String> {
-    host.start_validation::<filesquid_ocfl::storage::FsBackend>(&config.data_dir, state)
-        .map(|_| ())
+) -> Result<ValidationService<FsBackend>, String> {
+    host.start_validation::<FsBackend>(&config.data_dir, state)
 }
 
 /// Start the activity journal, process registry and admin routes for this server (FileSquid

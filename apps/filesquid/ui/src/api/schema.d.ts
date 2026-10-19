@@ -192,7 +192,7 @@ export interface paths {
         };
         /**
          * Open OCFL validation findings and validation runs
-         * @description API-S-022. The open findings of every open library (at most 1,000, ordered by library, object, code and location; `truncated` when more are open) and, per open library, whether a run is going, the last run and the next scheduled run. A finding's `location` is null for a caller who may not read the object: the server administrator, until per-object permissions arrive.
+         * @description API-S-022. The open findings of every open library (at most 1,000, ordered by library, object, code and location; `truncated` when more are open) the schedule and cap in force and, per open library, whether a run is going, the last run and the next scheduled run. A finding's `location` is null for a caller who may not read the object: the server administrator, until per-object permissions arrive.
          */
         get: operations["getOcflFindings"];
         put?: never;
@@ -217,6 +217,26 @@ export interface paths {
          * @description API-S-022. Starts a validation run of the named library, or of every open library when the body is empty or names none. A run continues from the library's stored cursor unless `from_start` is true. Runs go in the background and report in the process registry (`ocfl.validation`) and on the event channel. Starting a job changes no library content or organisation, so the body is a RunRequest, not a CommandEnvelope. Every refusal is journaled as `ocfl.validation.run`.
          */
         post: operations["startOcflValidationRuns"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/ocfl/validation-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Change the OCFL validation schedule and cap
+         * @description API-S-022. The desktop owner or a server administrator changes the time between scheduled runs and the object cap of a run. The next scheduled run of each open library moves with the new interval. Answers the settings now in force. Changing settings changes no library content or organisation, so the body is the settings, not a CommandEnvelope. Every change and refusal is journaled as `ocfl.validation.configure`.
+         */
+        put: operations["putOcflValidationSettings"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -443,6 +463,7 @@ export interface components {
         FindingsView: {
             findings: components["schemas"]["FindingView"][];
             truncated: boolean;
+            settings: components["schemas"]["ValidationSettings"];
             libraries: components["schemas"]["LibraryRuns"][];
         };
         RunRequest: {
@@ -458,6 +479,12 @@ export interface components {
         RunAccepted: {
             started: string[];
             refused: components["schemas"]["RunRefusal"][];
+        };
+        ValidationSettings: {
+            /** @description Time between scheduled runs of a library, in milliseconds (one hour to 366 days; default 7 days). */
+            interval_ms: number;
+            /** @description Most objects one run checks (default 100,000). */
+            object_cap: number;
         };
     };
     responses: {
@@ -866,6 +893,35 @@ export interface operations {
                     "application/json": components["schemas"]["ApiError"];
                 };
             };
+            500: components["responses"]["Internal"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    putOcflValidationSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ValidationSettings"];
+            };
+        };
+        responses: {
+            /** @description The settings now in force. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationSettings"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             500: components["responses"]["Internal"];
             503: components["responses"]["Unavailable"];
         };

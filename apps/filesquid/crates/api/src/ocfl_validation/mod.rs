@@ -10,6 +10,8 @@
 //!   writer-fencing gap (OCFL-S-018), which the validator reports as E023.
 //! - **On request**, through `POST /api/v1/admin/ocfl/validation-runs`.
 //!
+//! The schedule and the cap are changed through `PUT /api/v1/admin/ocfl/validation-settings`.
+//!
 //! A run registers as a process, runs at most once per library at a time, walks the library
 //! in object-ID order from a persistent cursor, and stops at its cap or when cancelled. The
 //! latest findings per object live in the host's [`FindingsStore`]. While any error finding
@@ -45,6 +47,7 @@ mod handle;
 mod memory;
 mod routes;
 mod run;
+mod runner;
 mod service;
 mod store;
 mod view;

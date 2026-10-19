@@ -175,13 +175,22 @@ impl Monitor {
     pub fn tick(&self) -> HealthReport {
         self.inner.registry.check_stalled();
         let report = self.health_report();
+        self.record_status(&report, false);
+        report
+    }
+
+    /// Journal a status transition as `health.changed` and publish the report on
+    /// `health.change`: on a transition, and always when `publish_always` (the open findings
+    /// changed, API-S-022).
+    fn record_status(&self, report: &HealthReport, publish_always: bool) {
         let previous = self
             .inner
             .last_status
             .lock()
             .map(|mut s| s.replace(report.status))
             .unwrap_or(None);
-        if previous != Some(report.status) {
+        let changed = previous != Some(report.status);
+        if changed {
             let level = match report.status {
                 HealthStatus::Ok => Level::Info,
                 HealthStatus::Degraded => Level::Warn,
@@ -190,13 +199,14 @@ impl Monitor {
             let mut entry = JournalEntry::new("health.changed", Outcome::Info).level(level);
             entry.error_code = report.reasons.first().map(|r| r.code.clone());
             self.journal().send(entry);
-            if let Ok(data) = serde_json::to_value(&report) {
+        }
+        if changed || publish_always {
+            if let Ok(data) = serde_json::to_value(report) {
                 self.inner
                     .events
                     .publish(ApiEvent::new(topic::HEALTH_CHANGE, data));
             }
         }
-        report
     }
 
     /// Use `store` as the source of open OCFL validation findings for the health rules
@@ -206,18 +216,12 @@ impl Monitor {
     }
 
     /// Evaluate health and publish it on `health.change` even when the status did not change,
-    /// because the open findings did (API-S-022). Performs I/O through
+    /// because the open findings did (API-S-022); a status transition is journaled as
+    /// `health.changed` as [`tick`](Self::tick) does. Performs I/O through
     /// [`health_report`](Self::health_report).
     pub fn publish_health(&self) -> HealthReport {
         let report = self.health_report();
-        if let Ok(mut last) = self.inner.last_status.lock() {
-            *last = Some(report.status);
-        }
-        if let Ok(data) = serde_json::to_value(&report) {
-            self.inner
-                .events
-                .publish(ApiEvent::new(topic::HEALTH_CHANGE, data));
-        }
+        self.record_status(&report, true);
         report
     }
 

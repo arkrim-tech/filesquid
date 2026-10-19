@@ -18,7 +18,8 @@ use filesquid_api::journal::{JournalEntry, JournalPage, Level, MemoryJournal, Ou
 use filesquid_api::monitor::{Monitor, MonitorConfig};
 use filesquid_api::ocfl_validation::{
     Finding, FindingView, FindingsView, LibraryRuns, MemoryFindingsStore, RunAccepted, RunOutcome,
-    RunRecord, RunRefusal, RunRequest, RunTrigger, RunView, Severity, ValidationService,
+    RunRecord, RunRefusal, RunRequest, RunTrigger, RunView, Severity, ValidationConfig,
+    ValidationService,
 };
 use filesquid_api::operation::{
     CommandEnvelope, CommandOutcome, CommandOutcomeKind, ExpectedRevision, OperationId,
@@ -246,7 +247,7 @@ async fn call(state: &ApiState, method: &Method, path: &str) -> (StatusCode, Vec
         .method(method.clone())
         .uri(path)
         .header("authorization", format!("Bearer {TOKEN}"))
-        .body(Body::empty())
+        .body(sample_body(method, path))
         .expect("request");
     let response = router(state.clone())
         .oneshot(request)
@@ -260,6 +261,15 @@ async fn call(state: &ApiState, method: &Method, path: &str) -> (StatusCode, Vec
         .expect("body")
         .to_bytes();
     (status, body.to_vec())
+}
+
+/// The body a documented operation needs to answer 200: the default settings for the settings
+/// route, nothing otherwise.
+fn sample_body(method: &Method, path: &str) -> Body {
+    if *method == Method::PUT && path == "/api/v1/admin/ocfl/validation-settings" {
+        return Body::from(serde_json::to_vec(&ValidationConfig::default()).expect("json"));
+    }
+    Body::empty()
 }
 
 /// Assert `status` is one the operation documents and, when the documented response has a
@@ -693,6 +703,7 @@ fn validation_samples() -> Vec<(&'static str, Vec<Value>)> {
     let view = FindingsView {
         findings: findings.to_vec(),
         truncated: false,
+        settings: ValidationConfig::default(),
         libraries: vec![fresh, ran.clone()],
     };
     let request = RunRequest {
@@ -729,6 +740,10 @@ fn validation_samples() -> Vec<(&'static str, Vec<Value>)> {
         ),
         ("RunRefusal", vec![to_value(refusal)]),
         ("RunAccepted", vec![to_value(accepted)]),
+        (
+            "ValidationSettings",
+            vec![to_value(ValidationConfig::default())],
+        ),
     ]
 }
 
