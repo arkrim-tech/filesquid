@@ -26,7 +26,7 @@ The owner also considered giving `filesquid-metadata` its own SQLite file as the
 
 1. **Separate product.** `filesquid-metadata` remains its own FOSS product. It is not merged into `filesquid-ocfl`. OCFL 1.1 does not define descriptive metadata, and the OCFL engine's default build stays free of format parsers ([ADR 023](./023-filesquid-ocfl-engine-and-parquet.md)).
 2. **Pluggable store interface.** The core (statements, register, extraction from bytes, `metadata.md` format, CSV/XMP) depends on no store. A `MetadataStore` interface loads and saves records by an opaque `FileRef` supplied by the caller. Implementations:
-   - `sidecar` (default on native): `metadata.md` beside a plain file. Native only, because browsers have no ordinary filesystem; in WebAssembly the caller selects the `ocfl` store (as FileSquid does) or supplies its own `MetadataStore` implementation.
+   - `sidecar` (default on native): one `<filename>.metadata.md` beside each plain file (one per file, not one `metadata.md` per folder). Native only, because browsers have no ordinary filesystem; in WebAssembly the caller selects the `ocfl` store (as FileSquid does) or supplies its own `MetadataStore` implementation.
    - `ocfl` (optional Cargo feature): `metadata.md` as a logical file in an OCFL object through `filesquid-ocfl`; each edit is a new OCFL version. `FileRef` carries object id, version and logical path.
    - `sqlite` (optional Cargo feature, native only): records as rows in a caller-owned SQLite file, for stand-alone users who choose a database as their store.
 3. **Optional index.** An optional SQLite index MAY sit beside any store for queries. It MUST be rebuildable from the canonical store and MUST NOT be the only copy.
@@ -60,3 +60,4 @@ Easier: stand-alone adoption without OCFL; clearer product boundaries; the core 
 - Requirements: [PRD F-052](../prd.md#f-052-metadata-module), [U-63](../product-vision.md#metadata-module), [C-048](../product-vision.md#module-rules).
 - Product vision: [filesquid-metadata](../product-vision.md#modules).
 - Implementation: MD-0.4 in the [module plan](../../apps/filesquid/crates/metadata/resources/plan.md).
+- Amended 2026-10-18 (owner decision): the `sidecar` store writes one `<filename>.metadata.md` beside each plain file, not one `metadata.md` per folder, as the [metadata crate README](../../apps/filesquid/crates/metadata/README.md) describes. The `ocfl` store versions per edit: each metadata edit commits a new OCFL version through `filesquid-ocfl` and never modifies an earlier version (Decision 2; MD-0.2 in the [module plan](../../apps/filesquid/crates/metadata/resources/plan.md)).
