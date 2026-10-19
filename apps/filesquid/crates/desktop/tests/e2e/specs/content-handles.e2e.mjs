@@ -139,9 +139,9 @@ describe("content handles for media elements in a packaged window", () => {
 
   // WebKitGTK (Linux) cannot play a <video> from the custom scheme: its GStreamer source takes
   // only http(s) and blob URIs, so after one probe range it reports MEDIA_ERR_SRC_NOT_SUPPORTED
-  // (measured 2026-10-19, Task API-F1.3). ADR 030 S1 (a) records it; the owner decides between a
-  // loopback listener for the content route and a MediaSource player (Task-API-F1.3-Conflict.md).
-  // This test pins that measurement, so it fails, and must be revisited, once WebKitGTK plays.
+  // (measured 2026-10-19, Task API-F1.3). ADR 030 S1 (a) records it as a known limitation for
+  // release 1; the MediaSource player of UI-F3.3 is the planned fix (owner decision). This test
+  // pins that measurement, so it fails, and must be revisited, once WebKitGTK plays.
   const webkitgtk = process.platform === "linux";
 
   (webkitgtk ? it : it.skip)(

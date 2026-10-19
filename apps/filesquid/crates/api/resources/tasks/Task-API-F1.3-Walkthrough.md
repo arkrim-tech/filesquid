@@ -2,7 +2,7 @@
 
 Branch: `feat/api-f1.3-file-operation-routes`. Module: `filesquid-api`, with host wiring in `filesquid-native`, `filesquid-server` and `filesquid-desktop`, and the regenerated contract types in `@filesquid/ui`.
 
-**Status:** acceptance gate (1) passes; acceptance gate (2) is open (see [Conflict Artifact](./Task-API-F1.3-Conflict.md)): on WebKitGTK a `<video>` does not play from the `filesquid://` custom scheme, and WKWebView and WebView2 have not run. The plan box stays unchecked.
+**Status:** complete. Acceptance gate (1) passes. Acceptance gate (2) is settled by owner decision (2026-10-19): on WebKitGTK `<img>` and ranged reads through content handles pass, and a `<video>` does not play from the `filesquid://` custom scheme. That is a known limitation for release 1, recorded in ADR 030; the planned fix is the MediaSource player of [UI-F3.3](../../../../ui/resources/plan.md), and the loopback port is rejected. WKWebView is checked by hand in Task FS-3.9 (if it fails the same way, UI-F3.3 moves into the MVP), and WebView2 with Task FS-3.11.
 
 ## What changed
 
@@ -12,7 +12,7 @@ Branch: `feat/api-f1.3-file-operation-routes`. Module: `filesquid-api`, with hos
 - **Contract 0.7.0** (`openapi.json`): the routes, parameters, responses and schemas; `x-filesquid-credential: content-handle` and `security: []` on the content route; regenerated `ui/src/api/schema.d.ts` and the new code in `ui/src/api/client.ts`.
 - **Hosts**: `filesquid-native` gains `HostFiles`, `install_file_service` and `open_fs_library` (leases and staging under `<data dir>/files/<library>/`); both hosts install the service at startup; the desktop's test-instrumented build opens `FILESQUID_E2E_LIBRARY`.
 - **Packaged window**: `tests/e2e/specs/content-handles.e2e.mjs` and `tests/e2e/support/media-library.mjs` (builds a 105 MB VP8 WebM and a PNG with `ffmpeg` into an OCFL root).
-- **Docs**: ADR 030 (amendment and S1 (a) measurement), product SRS-F-056 test list, README test commands, plan Status line.
+- **Docs**: ADR 030 (owner-decision amendment, S1 (a) measurement, the rejected loopback alternative), the UI-F3.3 follow-up row with its checklist entry and the FS-3.11 and FS-3.9 notes, product SRS-F-056 test list, README test commands, the API-F1.4 media-type note, the plan and checklist boxes (API-F1.3 and global FS-1.2) and the MVP progress.
 
 ## SRS mapping
 
@@ -47,7 +47,13 @@ The routes call `list_folder`, `file_details`, `file_history`, `object_versions`
 ## Acceptance gates
 
 1. **Passes.** Unit, integration and BDD tests for every API-S-018 clause through the router, including expiry with an injected clock, a range read that outlives its handle's expiry, eviction at 1,024, invalidation when the credential ends, identical denials for unknown, malformed, expired, evicted, revoked and policy-failed handles, a handle never serving another version, `HEAD` answers and the response headers.
-2. **Open.** ADR 030 S1 item (a) on WebKitGTK: minting, ranged reads through a handle with no token, the denial and an `<img>` pass; a `<video>` fails with `MEDIA_ERR_SRC_NOT_SUPPORTED` after one probe range (`bytes=0-1445`, answered `206`). The same bytes play from a `blob:` URL. WKWebView and WebView2 were not run (no macOS or Windows machine). Recorded in ADR 030; owner decision in the [Conflict Artifact](./Task-API-F1.3-Conflict.md).
+2. **Settled by owner decision (2026-10-19).** ADR 030 S1 item (a) on WebKitGTK: minting, ranged reads through a handle with no token, the denial and an `<img>` pass; a `<video>` fails with `MEDIA_ERR_SRC_NOT_SUPPORTED` after one probe range (`bytes=0-1445`, answered `206`). The same bytes play from a `blob:` URL, and the privacy headers make no difference. Recorded in ADR 030 as a known limitation for release 1, fixed by the MediaSource player of UI-F3.3 (follow-up row in the UI plan and the release-1 checklist); WKWebView is checked in the Task FS-3.9 manual test and WebView2 with Task FS-3.11.
+
+## Follow-ups
+
+- **Media type.** API-S-018 names the file's stored media type; nothing stores one until the file record of API-F1.4 (MD-0.8, ADR 038), so content answers carry the type of the extension (`crates/api/src/files/media.rs`), never sniffed. The API-F1.4 row now says to switch to the record's type.
+- **Engine `head`.** `FsBackend::head` hashes the whole file for its entity tag, and `file_details` reads the size through it. The API caches each content's length by digest (`a_file_length_is_read_once_then_cached`), so the hash runs once per content; a size-only storage call in `filesquid-ocfl` would remove even that (modules engineer).
+- **Takeover validation.** Since PR #78 a commit receipt carries `took_over`; once API-F2.7 is on `main`, the file routes' writes should pass it to the validation service.
 
 ## Mocked Environment Variables
 
