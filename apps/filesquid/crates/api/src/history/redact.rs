@@ -40,6 +40,9 @@ pub enum RedactError {
     NotJson,
     /// The document nests deeper than the walk allows.
     TooDeep,
+    /// A node names a logical path the redactor cannot replace with an opaque token (its
+    /// entity is not one the record lists), so the record is refused rather than leak it.
+    UnredactablePath,
 }
 
 impl std::fmt::Display for RedactError {
@@ -47,6 +50,9 @@ impl std::fmt::Display for RedactError {
         match self {
             Self::NotJson => f.write_str("the record is not a JSON object"),
             Self::TooDeep => f.write_str("the record nests too deeply"),
+            Self::UnredactablePath => {
+                f.write_str("the record names a logical path that cannot be redacted")
+            }
         }
     }
 }
@@ -194,8 +200,12 @@ fn rewrite_node(
         .and_then(|id| renames.get(id))
         .and_then(|id| id.rsplit_once(':'))
         .map(|(_, token)| token.to_string());
-    if let (Some(_), Some(token)) = (path, token) {
-        node.insert("fsq:path".to_string(), Value::String(token));
+    match (path, token) {
+        (Some(_), Some(token)) => {
+            node.insert("fsq:path".to_string(), Value::String(token));
+        }
+        (Some(_), None) => return Err(RedactError::UnredactablePath),
+        (None, _) => {}
     }
     node.values_mut()
         .try_for_each(|child| rewrite(child, renames, depth + 1))
@@ -229,11 +239,14 @@ mod tests {
     }
 
     #[test]
-    fn a_path_without_a_numbered_identifier_is_dropped() {
-        let record = br#"{"@graph":[{"fsq:path":"Holiday/Anna.jpg"},{"@id":7,"fsq:path":"x/Anna.txt"},{"@id":"urn:e","fsq:path":{"v":"Anna"}}]}"#;
-        let text = redact_record(record).unwrap();
-        assert!(!text.contains("Anna"), "{text}");
-        assert!(!text.contains("fsq:path"), "{text}");
+    fn a_path_without_a_numbered_identifier_refuses_the_record() {
+        for record in [
+            &br#"{"@graph":[{"fsq:path":"Holiday/Anna.jpg"}]}"#[..],
+            br#"{"@graph":[{"@id":7,"fsq:path":"x/Anna.txt"}]}"#,
+            br#"{"@graph":[{"@id":"urn:e","fsq:path":{"v":"Anna"}}]}"#,
+        ] {
+            assert_eq!(redact_record(record), Err(RedactError::UnredactablePath));
+        }
     }
 
     #[test]

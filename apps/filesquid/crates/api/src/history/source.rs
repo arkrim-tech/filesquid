@@ -267,7 +267,7 @@ impl<B: StorageBackend + Send + Sync + 'static> OcflHistory<B> {
     }
 
     /// Read every record of the storage root into an index (storage I/O), flagged truncated
-    /// when the record or object cap left records out.
+    /// when the record or object cap left records out, or an object could not be opened.
     async fn read_index(&self) -> Result<HistorySnapshot, HistoryError> {
         let storage = StorageRoot::open(&self.backend)
             .await
@@ -275,8 +275,10 @@ impl<B: StorageBackend + Send + Sync + 'static> OcflHistory<B> {
         let roots = storage.objects();
         let mut snapshot = HistorySnapshot::complete(HistoryIndex::new());
         let mut budget = self.max_records;
+        let mut skipped = false;
         for root in roots.iter().take(MAX_HISTORY_OBJECTS) {
             let Some(object) = open_object(&storage, root).await else {
+                skipped = true;
                 continue;
             };
             budget = read_object_records(&object, &mut snapshot, budget).await;
@@ -284,9 +286,12 @@ impl<B: StorageBackend + Send + Sync + 'static> OcflHistory<B> {
                 break;
             }
         }
-        snapshot.truncated |= roots.len() > MAX_HISTORY_OBJECTS;
+        snapshot.truncated |= skipped || roots.len() > MAX_HISTORY_OBJECTS;
         if snapshot.truncated {
-            tracing::warn!(target: LOG_TARGET, "history index stopped at its cap");
+            tracing::warn!(
+                target: LOG_TARGET,
+                "history index is incomplete: a cap was reached or an object was unreadable"
+            );
         }
         Ok(snapshot)
     }

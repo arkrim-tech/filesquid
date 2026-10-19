@@ -16,8 +16,11 @@ pub(crate) fn create_owner_only(path: &Path) -> io::Result<()> {
 }
 
 /// [`create_owner_only`], answering the open, writable handle so the caller writes through
-/// the very file the checks applied to (never a second open by path). Creates the file on
-/// every platform. Filesystem I/O.
+/// the file that was opened, never a second open by path. Creates the file on every
+/// platform. On Unix the open refuses a symbolic link (`O_NOFOLLOW`); on Windows it opens a
+/// reparse point itself instead of its target and refuses it, so a link swapped in after the
+/// first check is never followed there either. Other targets rely on the first check alone.
+/// Filesystem I/O.
 ///
 /// # Errors
 /// As [`create_owner_only`].
@@ -33,7 +36,22 @@ pub(crate) fn open_owner_only(path: &Path) -> io::Result<std::fs::File> {
         file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
         Ok(file)
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        /// `FILE_FLAG_OPEN_REPARSE_POINT`: open a reparse point, not what it points to.
+        const OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(OPEN_REPARSE_POINT);
+        let file = options.open(path)?;
+        match file.metadata()?.file_type().is_symlink() {
+            true => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "refusing a symbolic link",
+            )),
+            false => Ok(file),
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
     options.open(path)
 }
 

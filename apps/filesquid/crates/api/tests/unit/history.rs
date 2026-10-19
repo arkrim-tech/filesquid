@@ -571,6 +571,11 @@ fn a_lookup_that_skipped_an_unreadable_object_is_unavailable() {
         history.record("urn:uuid:other", "v1"),
         Err(HistoryError::Unavailable)
     );
+    let snapshot = history.index().expect("index");
+    assert!(
+        snapshot.truncated,
+        "an index that skipped an unreadable object says it is incomplete"
+    );
 }
 
 /// Review round 1: an index cut short by its record cap is flagged truncated.

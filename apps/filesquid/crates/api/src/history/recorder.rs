@@ -71,7 +71,7 @@ pub struct CommitOperation {
     /// When the operation started: RFC 3339 UTC, no later than the commit's `created`.
     pub started: String,
     /// The version label (PRD F-065), when set.
-    pub label: Option<String>,
+    label: Option<String>,
     /// Logical moves in the commit: old path to new path.
     pub moves: BTreeMap<String, String>,
     /// The journal actor: `system` or an opaque principal name.
@@ -104,6 +104,12 @@ impl CommitOperation {
         }
         self.label = Some(label);
         Ok(self)
+    }
+
+    /// The version label, when set: never over [`filesquid_core::MAX_LABEL_BYTES`], since
+    /// [`with_label`](Self::with_label) is the only way to set it.
+    pub fn label(&self) -> Option<&str> {
+        self.label.as_deref()
     }
 
     /// The same operation with the logical moves of its commit.

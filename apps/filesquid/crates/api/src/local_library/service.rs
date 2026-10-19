@@ -418,9 +418,9 @@ fn failure_entry(operation: &'static str, err: &LocalLibraryError) -> JournalEnt
 }
 
 /// The outcome entry of one object: the run ID as its operation ID, library, object and
-/// version as targets, the object reference `<object-id>@vN` when the object was repaired
-/// (a refused entry stays journal-only, linked to no version), and the refusal code when
-/// refused.
+/// version as targets, the object reference `<object-id>@vN` only when the object was
+/// repaired (a refused entry has no object reference, so no PROV-O record links it, though
+/// it keeps the version it found as a target), and the refusal code when refused.
 fn outcome_entry(
     target: &Target<'_>,
     version: Option<&str>,

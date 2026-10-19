@@ -184,14 +184,23 @@ impl CanonicalRoot {
     }
 }
 
-/// The journal entry one line holds, redacted. Pure.
+/// The journal entry one line holds, redacted. Pure apart from the warning it logs (stdout)
+/// for an unreadable line, so operators see that code rather than a generic failure.
 ///
 /// # Errors
 /// [`CatalogError::Failed`] (`journal_line_unreadable`) when the line holds none.
 fn journal_line(line: &str) -> Result<JournalEntry, CatalogError> {
     serde_json::from_str::<JournalEntry>(line)
         .map(JournalEntry::redacted)
-        .map_err(|_| failed("journal_line_unreadable: a commit's journal line is unreadable"))
+        .map_err(|_| {
+            tracing::warn!(
+                target: super::LOG_TARGET,
+                operation = super::reconcile::RECONCILE_OPERATION,
+                error_code = "journal_line_unreadable",
+                "a commit's journal line is unreadable; the catalog is not reconciled"
+            );
+            failed("journal_line_unreadable: a commit's journal line is unreadable")
+        })
 }
 
 /// Run a backend future that never waits (the filesystem backend's futures complete at once).

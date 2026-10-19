@@ -159,7 +159,9 @@ where
     ///
     /// As [`commit_record`](Self::commit_record), and
     /// [`StoreError::Backend`] with the [`ChangeError`] when the bound-file
-    /// function fails. A failed commit leaves no change set staged.
+    /// function fails. A failed commit publishes nothing and keeps its
+    /// staged change set (never clearing an edit staged meanwhile); the
+    /// next save restages `metadata.md` over it and publishes it.
     pub async fn commit_record_with(
         &self,
         file: &FileRef,

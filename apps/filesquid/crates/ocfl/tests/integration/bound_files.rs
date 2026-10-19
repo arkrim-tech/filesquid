@@ -318,18 +318,23 @@ fn bound_files_over_the_commit_byte_bound_publish_nothing() {
     use filesquid_ocfl::write::MAX_BOUND_BYTES;
     let rig = Rig::new(MemoryBackend::new());
     commit_v1(&rig);
-    let half = usize::try_from(MAX_BOUND_BYTES / 2 + 1).expect("fits");
+    let third = usize::try_from(MAX_BOUND_BYTES / 3 + 1).expect("fits");
+    assert!(
+        third as u64 <= filesquid_ocfl::storage::MAX_PUT_BYTES,
+        "each file alone fits"
+    );
     let large = move |_: &BoundContext<'_>| {
         Ok(BTreeMap::from([
-            ("big/a.bin".to_string(), vec![0u8; half]),
-            ("big/b.bin".to_string(), vec![1u8; half]),
+            ("big/a.bin".to_string(), vec![0u8; third]),
+            ("big/b.bin".to_string(), vec![1u8; third]),
+            ("big/c.bin".to_string(), vec![2u8; third]),
         ]))
     };
     let m = model(&rig, "writer-a");
     ready(m.stage_bytes("b.txt", b"bravo")).expect("stage");
     let err = ready(m.commit_with(meta(&rig, "v2"), Some(&large))).expect_err("refused");
     assert!(
-        matches!(err, ChangeError::Commit(CommitError::BoundFiles { .. })),
+        matches!(&err, ChangeError::Commit(CommitError::BoundFiles { reason }) if reason.contains("bytes exceed the bound")),
         "{err:?}"
     );
     assert_eq!(rig.open().expect("open").head(), &v("v1"));

@@ -330,9 +330,10 @@ fn the_sidecar_operation_is_the_journal_links_only() {
         "retained": true,
         "operation": "op-elsewhere"
     });
-    let parsed: Result<ProvOSidecar, _> = serde_json::from_value(json);
-    assert!(
-        parsed.map(|s| s.operation().is_none()).unwrap_or(true),
+    let parsed: ProvOSidecar = serde_json::from_value(json).expect("an unknown member is ignored");
+    assert_eq!(
+        parsed.operation(),
+        None,
         "a stray operation member never names the operation"
     );
 }

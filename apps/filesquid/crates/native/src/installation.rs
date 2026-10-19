@@ -106,45 +106,59 @@ impl std::error::Error for InstallationError {}
 /// copy cannot be read or written, or the random source fails.
 pub fn load_or_create(data_dir: &Path) -> Result<Installation, InstallationError> {
     let file_path = data_dir.join(INSTALLATION_FILE);
+    let in_file = read_file(&file_path)?;
     let mut store = open_store(&data_dir.join(JOURNAL_FILE))?;
-    let guard = store
-        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-        .map_err(|err| store_error(&err))?;
-    let installation = settle(&file_path, &guard)?;
-    guard.commit().map_err(|err| store_error(&err))?;
-    Ok(installation)
-}
-
-/// Read both copies and restore or create what is missing, inside the store's immediate
-/// transaction `store`, which serialises concurrent launches over the same data directory:
-/// a second launch waits, then reads the copies the first one wrote. Filesystem and
-/// database I/O.
-fn settle(file_path: &Path, store: &Connection) -> Result<Installation, InstallationError> {
-    let in_file = read_file(file_path)?;
-    let in_store = read_store(store)?;
-    let (id, source) = match (in_file, in_store) {
-        (Some(a), Some(b)) if a == b => (a, InstallationSource::Stored),
-        (Some(_), Some(_)) => return Err(InstallationError::Mismatch),
-        (Some(id), None) => (id, InstallationSource::RestoredStore),
-        (None, Some(id)) => (id, InstallationSource::RestoredFile),
-        (None, None) => (mint()?, InstallationSource::Created),
-    };
+    let (id, source) = settle_store(&mut store, in_file)?;
     if matches!(
         source,
         InstallationSource::Created | InstallationSource::RestoredFile
     ) {
-        write_file(file_path, &id)?;
-    }
-    if matches!(
-        source,
-        InstallationSource::Created | InstallationSource::RestoredStore
-    ) {
-        write_store(store, &id)?;
+        write_file(&file_path, &id)?;
     }
     if source != InstallationSource::Stored {
         tracing::info!(source = ?source, "installation ID restored or created");
     }
     Ok(Installation { id, source })
+}
+
+/// Decide the installation ID against the store copy, and write the store copy when it is
+/// missing, in one short immediate transaction: concurrent launches over the same data
+/// directory are serialised there, so the first to commit names the ID and a later one
+/// reads it. No file I/O happens inside the transaction, so the journal writer sharing the
+/// database is never held up by it. Database I/O.
+fn settle_store(
+    store: &mut Connection,
+    in_file: Option<InstallationId>,
+) -> Result<(InstallationId, InstallationSource), InstallationError> {
+    let tx = store
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|err| store_error(&err))?;
+    let in_store = read_store(&tx)?;
+    let (id, source) = decide(in_file, in_store)?;
+    if matches!(
+        source,
+        InstallationSource::Created | InstallationSource::RestoredStore
+    ) {
+        write_store(&tx, &id)?;
+    }
+    tx.commit().map_err(|err| store_error(&err))?;
+    Ok((id, source))
+}
+
+/// The installation ID and where it came from, given both copies: equal copies are stored,
+/// a missing copy is restored from the other, two missing copies mint a new ID, and copies
+/// that disagree are refused. Pure apart from the random source.
+fn decide(
+    in_file: Option<InstallationId>,
+    in_store: Option<InstallationId>,
+) -> Result<(InstallationId, InstallationSource), InstallationError> {
+    Ok(match (in_file, in_store) {
+        (Some(a), Some(b)) if a == b => (a, InstallationSource::Stored),
+        (Some(_), Some(_)) => return Err(InstallationError::Mismatch),
+        (Some(id), None) => (id, InstallationSource::RestoredStore),
+        (None, Some(id)) => (id, InstallationSource::RestoredFile),
+        (None, None) => (mint()?, InstallationSource::Created),
+    })
 }
 
 /// A new UUID v4 from the operating system's random source.
