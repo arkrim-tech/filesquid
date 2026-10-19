@@ -15,8 +15,8 @@
 mod blocks;
 mod check;
 mod error;
-mod json;
-mod paths;
+pub(crate) mod json;
+pub(crate) mod paths;
 mod read;
 mod sidecar;
 mod timestamp;

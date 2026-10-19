@@ -35,7 +35,7 @@
 //! bytes and refuses with the OCFL 1.1 code of the rule it meets broken.
 
 pub(crate) mod committed;
-mod copy_guard;
+pub(crate) mod copy_guard;
 pub(crate) mod declaration;
 mod enumerate;
 mod error;
