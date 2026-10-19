@@ -87,3 +87,52 @@ fn a_reader_can_be_extracted_twice() {
     extract_from_reader(&mut reader, &file_ref("a.tif"), &mut second).unwrap();
     assert_eq!(first, second);
 }
+
+/// A JPEG-like byte stream with an embedded XMP packet (MD-S-007).
+fn xmp_bytes() -> Vec<u8> {
+    let packet = "<?xpacket begin=\"\u{feff}\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\
+<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\
+<rdf:Description xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:dcterms=\"http://purl.org/dc/terms/\">\
+<dc:title><rdf:Alt><rdf:li xml:lang=\"x-default\">Harbour &amp; dawn</rdf:li></rdf:Alt></dc:title>\
+<dc:subject><rdf:Bag><rdf:li>coast</rdf:li><rdf:li>boats</rdf:li></rdf:Bag></dc:subject>\
+<dcterms:creator>George</dcterms:creator>\
+<dcterms:name>not a term</dcterms:name>\
+</rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end=\"w\"?>";
+    let mut bytes = vec![0xFF, 0xD8, 0xFF, 0xE1, 0x00, 0x10];
+    bytes.extend_from_slice(b"http://ns.adobe.com/xap/1.0/\0");
+    bytes.extend_from_slice(packet.as_bytes());
+    bytes.extend_from_slice(&[0xFF, 0xD9]);
+    bytes
+}
+
+#[test]
+fn an_embedded_xmp_packet_maps_onto_dcterms() {
+    let mut record = Record::default();
+    let found = extract_from_bytes(&xmp_bytes(), &file_ref("a.jpg"), &mut record).unwrap();
+    assert!(found.xmp);
+    assert_eq!(record.get("dcterms:title").unwrap().value, "Harbour & dawn");
+    assert_eq!(record.get("dcterms:subject").unwrap().value, "coast; boats");
+    assert_eq!(record.get("dcterms:creator").unwrap().value, "George");
+    assert!(record.get("dcterms:name").is_none());
+    assert_eq!(
+        found.rejected, 1,
+        "the refused term is counted, not dropped"
+    );
+}
+
+#[test]
+fn bytes_without_an_xmp_packet_report_none() {
+    let mut record = Record::default();
+    let found = extract_from_bytes(TIFF_DESCRIPTION, &file_ref("a.tif"), &mut record).unwrap();
+    assert!(!found.xmp);
+}
+
+#[test]
+fn an_unterminated_xmp_packet_is_not_an_error() {
+    let mut bytes = xmp_bytes();
+    bytes.truncate(bytes.len() / 2);
+    let mut record = Record::default();
+    let found = extract_from_bytes(&bytes, &file_ref("a.jpg"), &mut record).unwrap();
+    assert!(!found.xmp);
+    assert!(record.get("dcterms:title").is_none());
+}

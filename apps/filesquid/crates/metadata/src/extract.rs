@@ -1,11 +1,12 @@
-//! Extract EXIF and ID3 from caller-supplied bytes and map onto statements.
+//! Extract EXIF, ID3 and embedded XMP packets from caller-supplied bytes and
+//! map them onto statements (MD-S-007).
 //!
 //! Extraction never opens a path ([ADR 027](../../../../../resources/architecture/027-filesquid-metadata-pluggable-stores.md),
 //! MD-S-009): the caller reads the bytes (through `filesquid-ocfl`, a browser
 //! file handle or anything else) and hands them over with the [`FileRef`] they
 //! belong to. It is independent of any [`MetadataStore`](crate::store::MetadataStore).
 
-use std::io::{BufRead, Cursor, ErrorKind, Seek};
+use std::io::{BufRead, Cursor, ErrorKind, Read, Seek};
 
 use exif::Reader;
 use id3::TagLike;
@@ -13,6 +14,7 @@ use thiserror::Error;
 
 use crate::file_ref::FileRef;
 use crate::record::Record;
+use crate::xmp::dcterms_pairs;
 use crate::MetadataNamespace;
 
 /// Errors from reading the supplied bytes.
@@ -32,6 +34,8 @@ pub struct Extracted {
     pub exif: bool,
     /// An ID3 tag was found and read.
     pub id3: bool,
+    /// An embedded XMP packet (`<x:xmpmeta>`) was found and read.
+    pub xmp: bool,
     /// Statements the record refused (a failed register check); never silently dropped.
     pub rejected: usize,
 }
@@ -52,7 +56,7 @@ pub fn extract_from_bytes(
 
 /// Read embedded tags from `reader` and merge them into `record`.
 ///
-/// The reader is rewound between the EXIF and ID3 passes. A file with no EXIF
+/// The reader is rewound before each of the EXIF, ID3 and XMP passes. A file with no EXIF
 /// block or no ID3 tag is not an error; the returned [`Extracted`] says which
 /// blocks were found.
 ///
@@ -70,12 +74,15 @@ pub fn extract_from_reader<R: BufRead + Seek>(
         file: file.clone(),
         exif: false,
         id3: false,
+        xmp: false,
         rejected: 0,
     };
     reader.rewind()?;
     read_exif(reader, record, &mut out)?;
     reader.rewind()?;
     read_id3(reader, record, &mut out)?;
+    reader.rewind()?;
+    read_xmp(reader, record, &mut out)?;
     Ok(out)
 }
 
@@ -170,4 +177,54 @@ fn read_id3<R: BufRead + Seek>(
         );
     }
     Ok(())
+}
+
+/// Most bytes the XMP pass scans for a packet: 16 MiB.
+pub const MAX_XMP_SCAN_BYTES: u64 = 16 * 1024 * 1024;
+
+/// Start of an XMP packet's root element.
+const XMP_OPEN: &[u8] = b"<x:xmpmeta";
+
+/// End of an XMP packet's root element.
+const XMP_CLOSE: &[u8] = b"</x:xmpmeta>";
+
+/// Find the first XMP packet in the first [`MAX_XMP_SCAN_BYTES`] of `reader`
+/// and map its `dc:` and `dcterms:` elements onto `dcterms:`. A missing,
+/// unterminated or non-UTF-8 packet is not an error; a term the register
+/// refuses is counted in `out.rejected`.
+fn read_xmp<R: BufRead + Seek>(
+    reader: &mut R,
+    record: &mut Record,
+    out: &mut Extracted,
+) -> Result<(), ExtractError> {
+    let mut bytes = Vec::new();
+    reader
+        .by_ref()
+        .take(MAX_XMP_SCAN_BYTES)
+        .read_to_end(&mut bytes)?;
+    let Some(packet) = find_packet(&bytes) else {
+        return Ok(());
+    };
+    let Ok(text) = std::str::from_utf8(packet) else {
+        return Ok(());
+    };
+    out.xmp = true;
+    for (term, value) in dcterms_pairs(text) {
+        apply(record, out, MetadataNamespace::Dcterms, &term, value);
+    }
+    Ok(())
+}
+
+/// The first `<x:xmpmeta>`…`</x:xmpmeta>` span of `bytes`.
+fn find_packet(bytes: &[u8]) -> Option<&[u8]> {
+    let start = find(bytes, XMP_OPEN)?;
+    let length = find(&bytes[start..], XMP_CLOSE)? + XMP_CLOSE.len();
+    Some(&bytes[start..start + length])
+}
+
+/// The offset of the first `needle` in `haystack`.
+fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }

@@ -3,6 +3,7 @@
 //! Each run clears `tests/allure-results/` and writes
 //! `tests/allure-results/cucumber-junit.xml` with one `<testcase>` per scenario.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -16,16 +17,20 @@ use filesquid_metadata::file_ref::FileRef;
 use filesquid_metadata::json::{apply_json, parse_json, sha256_hex, to_json, JsonTarget};
 use filesquid_metadata::markdown::to_markdown;
 use filesquid_metadata::record::Record;
-use filesquid_metadata::store::ocfl::{load, save};
+use filesquid_metadata::store::ocfl::LocalObject;
 use filesquid_metadata::store::sidecar::SidecarStore;
-use filesquid_metadata::store::MetadataStore;
-use filesquid_metadata::store::METADATA_MD;
+use filesquid_metadata::store::{MetadataStore, StoreError, METADATA_MD};
 use filesquid_metadata::xmp::{from_xmp, to_xmp};
 use filesquid_metadata::{MetadataError, MetadataNamespace};
-use filesquid_ocfl::storage::{
-    complete_immediately, read_verified, MemoryBackend, StorageBackend, StorageKey, MAX_CHUNK_BYTES,
-};
+use filesquid_ocfl::change::{ChangeError, ChangeModel, StagingArea, VersionMeta};
+use filesquid_ocfl::read::Object;
+use filesquid_ocfl::storage::{complete_immediately, FsBackend, MemoryBackend};
+use filesquid_ocfl::validate::validate_object;
+use filesquid_ocfl::write::{rfc3339_utc, CommitError, LeaseConfig, LeaseStore, SystemClock};
+use filesquid_ocfl::VersionNum;
 
+#[path = "support/ocfl_rig.rs"]
+mod rig;
 #[path = "support/wasm.rs"]
 mod wasm;
 
@@ -73,6 +78,14 @@ struct MetadataWorld {
     wasm_build: Option<Result<(), String>>,
     /// Whether the last extraction found an EXIF block and a description.
     extracted_description: bool,
+    /// `dcterms:title` found by the last XMP extraction.
+    extracted_title: Option<String>,
+    /// The object's versions before the last edit through the `ocfl` store.
+    versions_before: Vec<String>,
+    /// Every file of the object's version directories before the last edit.
+    earlier_versions: BTreeMap<PathBuf, Vec<u8>>,
+    /// Outcome of the last edit through the `ocfl` store.
+    commit_outcome: Option<Result<Option<VersionNum>, StoreError>>,
 }
 
 impl Drop for MetadataWorld {
@@ -108,11 +121,88 @@ fn remove_file_if_present(path: &Path) {
     }
 }
 
-/// Create a fresh object directory holding the described logical file.
+/// Most directory entries [`version_files`] walks (AGENTS.md §22).
+const MAX_WALK_ENTRIES: usize = 10_000;
+
+/// Drive a future that completes on its first poll.
+fn ready<F: std::future::Future>(future: F) -> F::Output {
+    complete_immediately(future).expect("future completes at once")
+}
+
+/// Commit `files` as v1 of the OCFL object `JSON_OBJECT_ID` in `dir`
+/// through the `filesquid-ocfl` change model.
+fn seed_object(dir: &Path, files: &[(&str, &[u8])]) {
+    let storage = FsBackend::with_default_staging(dir).expect("object backend");
+    let leases = LeaseStore::new(
+        MemoryBackend::new(),
+        "leases",
+        SystemClock,
+        LeaseConfig::default(),
+    )
+    .expect("leases");
+    let staging_backend = MemoryBackend::new();
+    let staging = StagingArea::new(&staging_backend, "seed").expect("staging");
+    let model = ChangeModel::new(&storage, &leases, "seeder", "", JSON_OBJECT_ID, staging);
+    for (path, bytes) in files {
+        ready(model.stage_bytes(path, bytes)).expect("stage");
+    }
+    ready(model.commit(VersionMeta::new(rfc3339_utc(1_791_590_400_000)))).expect("seed");
+}
+
+/// Create a fresh OCFL object directory holding the described logical file.
 fn object_with_file(bytes: &[u8]) -> PathBuf {
     let dir = fresh_object_dir();
-    fs::write(dir.join(JSON_LOGICAL_FILE), bytes).expect("logical file");
+    seed_object(&dir, &[(JSON_LOGICAL_FILE, bytes)]);
     dir
+}
+
+/// Open the object in `dir`.
+fn local(dir: &Path) -> LocalObject {
+    LocalObject::open(dir, None).expect("open object")
+}
+
+/// The head `metadata.md` text of the object in `dir`.
+fn metadata_text(dir: &Path) -> String {
+    to_markdown(&local(dir).load().expect("load metadata.md"))
+}
+
+/// The versions of the object in `dir`, oldest first.
+fn versions_of(dir: &Path) -> Vec<String> {
+    let storage = FsBackend::with_default_staging(dir).expect("backend");
+    let object = ready(Object::open(&storage, "")).expect("open object");
+    object
+        .history()
+        .into_iter()
+        .map(|info| info.version.to_string())
+        .collect()
+}
+
+/// Every file under the `v*` version directories of `dir`, with its bytes.
+fn version_files(dir: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    let mut out = BTreeMap::new();
+    let mut pending: Vec<PathBuf> = fs::read_dir(dir)
+        .expect("object dir")
+        .map(|entry| entry.expect("entry").path())
+        .filter(|path| path.is_dir())
+        .collect();
+    for _ in 0..MAX_WALK_ENTRIES {
+        let Some(path) = pending.pop() else {
+            return out;
+        };
+        if path.is_dir() {
+            pending.extend(
+                fs::read_dir(&path)
+                    .expect("dir")
+                    .map(|e| e.expect("entry").path()),
+            );
+        } else {
+            out.insert(path.clone(), fs::read(&path).expect("file"));
+        }
+    }
+    panic!(
+        "more than {MAX_WALK_ENTRIES} entries under {}",
+        dir.display()
+    );
 }
 
 /// Run `filesquid-metadata <cmd> json <sidecar> --id --file --object <dir>`.
@@ -143,7 +233,8 @@ fn sidecar_text(world: &MetadataWorld) -> String {
 
 /// Import `text` into `target` and record the outcome on the world.
 fn import_into_target(world: &mut MetadataWorld, target: PathBuf) {
-    world.target_before = fs::read_to_string(target.join(METADATA_MD)).unwrap_or_default();
+    world.target_before = metadata_text(&target);
+    world.versions_before = versions_of(&target);
     let sidecar = world.sidecar_path.clone().expect("sidecar exported");
     world.json_error = run_json_cli("import", &sidecar, &target).err();
     world.target_dir = Some(target);
@@ -156,7 +247,7 @@ fn object_with_title(world: &mut MetadataWorld, title: String) {
     record
         .set(MetadataNamespace::Dcterms, "title", title)
         .expect("set title");
-    save(&dir, &record).expect("save metadata.md");
+    local(&dir).save(&record).expect("commit metadata.md");
     world.object_dir = Some(dir);
 }
 
@@ -205,15 +296,19 @@ fn import_into_changed_file(world: &mut MetadataWorld) {
     record
         .set(MetadataNamespace::Dcterms, "title", "Before")
         .expect("set title");
-    save(&target, &record).expect("save metadata.md");
+    local(&target).save(&record).expect("commit metadata.md");
     import_into_target(world, target);
 }
 
 #[then("the imported metadata.md should hold the same statements")]
 fn imported_statements_match(world: &mut MetadataWorld) {
     assert_eq!(world.json_error, None, "import should succeed");
-    let source = load(world.object_dir.as_ref().expect("source")).expect("source");
-    let target = load(world.target_dir.as_ref().expect("target")).expect("target");
+    let source = local(world.object_dir.as_ref().expect("source"))
+        .load()
+        .expect("source");
+    let target = local(world.target_dir.as_ref().expect("target"))
+        .load()
+        .expect("target");
     assert_eq!(target.statements, source.statements);
 }
 
@@ -226,8 +321,12 @@ fn import_rejected_for_digest(world: &mut MetadataWorld) {
 #[then("that object's metadata.md should be unchanged")]
 fn target_unchanged(world: &mut MetadataWorld) {
     let target = world.target_dir.as_ref().expect("target");
-    let after = fs::read_to_string(target.join(METADATA_MD)).expect("metadata.md");
-    assert_eq!(after, world.target_before);
+    assert_eq!(metadata_text(target), world.target_before);
+    assert_eq!(
+        versions_of(target),
+        world.versions_before,
+        "nothing published"
+    );
 }
 
 #[when(expr = "I import a JSON sidecar holding {word}")]
@@ -273,9 +372,16 @@ fn metadata_md_stays_canonical(world: &mut MetadataWorld) {
                 .into_owned()
         })
         .collect();
-    assert!(names.iter().any(|name| name == METADATA_MD));
-    assert!(!names.iter().any(|name| name.ends_with(".json")));
-    let record = load(dir).expect("load metadata.md");
+    assert!(
+        !names.iter().any(|name| name == METADATA_MD),
+        "only inside a version"
+    );
+    let sidecars = names
+        .iter()
+        .filter(|name| name.ends_with(".json") && *name != "inventory.json");
+    assert_eq!(sidecars.count(), 0, "no JSON sidecar in the object");
+    assert!(dir.join("v2/content").join(METADATA_MD).is_file());
+    let record = local(dir).load().expect("load metadata.md");
     assert_eq!(record.get("dcterms:title").expect("title").value, "Harbour");
 }
 
@@ -309,7 +415,8 @@ fn remove_dir_if_present(dir: &Path) {
     }
 }
 
-/// Create an empty scratch object directory unique to this process and scenario.
+/// A scratch directory path unique to this process and scenario, not yet
+/// created (an OCFL object is created there on its first commit).
 ///
 /// Cucumber runs scenarios concurrently, so a fixed path could race.
 fn fresh_object_dir() -> PathBuf {
@@ -317,7 +424,6 @@ fn fresh_object_dir() -> PathBuf {
     let name = format!("filesquid-metadata-features-{}-{seq}", std::process::id());
     let dir = std::env::temp_dir().join(name);
     remove_dir_if_present(&dir);
-    fs::create_dir_all(&dir).expect("object dir");
     dir
 }
 
@@ -387,14 +493,15 @@ fn set_title_on_object(world: &mut MetadataWorld, title: String) {
     record
         .set(MetadataNamespace::Dcterms, "title", title)
         .expect("set title");
-    save(&dir, &record).expect("save metadata.md");
+    let object = LocalObject::open(&dir, Some(JSON_OBJECT_ID)).expect("new object");
+    object.save(&record).expect("commit metadata.md");
     world.object_dir = Some(dir);
 }
 
 #[then(expr = "metadata.md YAML front matter should contain dcterms title {word}")]
 fn front_matter_has_title(world: &mut MetadataWorld, title: String) {
     let dir = world.object_dir.as_ref().expect("object dir");
-    let text = fs::read_to_string(dir.join(METADATA_MD)).expect("metadata.md");
+    let text = fs::read_to_string(dir.join("v1/content").join(METADATA_MD)).expect("metadata.md");
     let front_matter = text
         .strip_prefix("---\n")
         .and_then(|rest| rest.split("\n---").next())
@@ -410,8 +517,9 @@ fn front_matter_has_title(world: &mut MetadataWorld, title: String) {
 #[then("catalogs should be rebuildable from that file")]
 fn rebuild_from_metadata_md(world: &mut MetadataWorld) {
     let dir = world.object_dir.take().expect("object dir");
-    let rebuilt = load(&dir).expect("load metadata.md");
-    let original = fs::read_to_string(dir.join(METADATA_MD)).expect("metadata.md");
+    let rebuilt = local(&dir).load().expect("load metadata.md");
+    let original =
+        fs::read_to_string(dir.join("v1/content").join(METADATA_MD)).expect("metadata.md");
     assert_eq!(to_markdown(&rebuilt), original);
     remove_dir_if_present(&dir);
 }
@@ -460,21 +568,120 @@ fn build_succeeded(world: &mut MetadataWorld) {
 
 #[when("I extract metadata from a logical file in an OCFL object")]
 fn extract_from_ocfl(world: &mut MetadataWorld) {
-    let backend = MemoryBackend::new();
-    let key = StorageKey::new("objects/a/photo.tif").expect("key");
-    complete_immediately(backend.put(&key, TIFF_DESCRIPTION))
-        .expect("poll")
-        .expect("put");
-    let bytes = complete_immediately(read_verified(&backend, &key, MAX_CHUNK_BYTES))
-        .expect("poll")
-        .expect("read");
-    let file = FileRef::new("objects/a", "photo.tif").expect("file ref");
+    let rig = rig::Rig::memory();
+    rig.seed(rig::OBJECT_ID, &[("photo.tif", TIFF_DESCRIPTION)]);
+    let file = FileRef::new(rig::OBJECT_ID, "photo.tif").expect("file ref");
+    let bytes = ready(rig.store().read_file(&file, 1024 * 1024)).expect("read through OCFL");
     let mut record = Record::default();
     let found = extract_from_bytes(&bytes, &file, &mut record).expect("extract");
     world.extracted_description = found.exif
         && record
             .get("dcterms:description")
             .is_some_and(|s| s.value.contains("Cat"));
+}
+
+#[when(expr = "I extract metadata from bytes holding an XMP packet with dc:title {word}")]
+fn extract_xmp_packet(world: &mut MetadataWorld, title: String) {
+    let packet = format!(
+        "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF><rdf:Description>\
+         <dc:title><rdf:Alt><rdf:li xml:lang=\"x-default\">{title}</rdf:li></rdf:Alt></dc:title>\
+         </rdf:Description></rdf:RDF></x:xmpmeta>"
+    );
+    let mut bytes = vec![0xFF, 0xD8, 0xFF, 0xE1];
+    bytes.extend_from_slice(packet.as_bytes());
+    let file = FileRef::new("", "photo.jpg").expect("file ref");
+    let mut record = Record::default();
+    let found = extract_from_bytes(&bytes, &file, &mut record).expect("extract");
+    assert!(found.xmp, "XMP packet found");
+    world.extracted_title = record.get("dcterms:title").map(|s| s.value.clone());
+}
+
+#[then(expr = "the extracted dcterms:title should be {word}")]
+fn extracted_title_is(world: &mut MetadataWorld, title: String) {
+    assert_eq!(world.extracted_title.as_deref(), Some(title.as_str()));
+}
+
+#[given("an OCFL object whose head has no version inventory")]
+fn object_without_head_inventory(world: &mut MetadataWorld) {
+    let dir = object_with_file(JSON_FILE_BYTES);
+    for name in ["inventory.json", "inventory.json.sha256"] {
+        fs::remove_file(dir.join("v1").join(name)).expect("remove version inventory");
+    }
+    world.object_dir = Some(dir);
+}
+
+#[when(expr = "I set dcterms:title {word} through the ocfl store")]
+fn set_title_through_ocfl_store(world: &mut MetadataWorld, title: String) {
+    let dir = world.object_dir.clone().expect("object dir");
+    world.versions_before = versions_of(&dir);
+    world.earlier_versions = version_files(&dir);
+    let object = local(&dir);
+    let mut record = object.load().expect("load");
+    record
+        .set(MetadataNamespace::Dcterms, "title", title)
+        .expect("set title");
+    world.commit_outcome = Some(object.save(&record));
+}
+
+#[then(expr = "the object should have a new version whose metadata.md holds dcterms title {word}")]
+fn new_version_holds_title(world: &mut MetadataWorld, title: String) {
+    let dir = world.object_dir.clone().expect("object dir");
+    let outcome = world.commit_outcome.take().expect("edit made");
+    let version = outcome.expect("edit committed").expect("a version");
+    let mut expected = world.versions_before.clone();
+    expected.push(version.to_string());
+    assert_eq!(versions_of(&dir), expected, "exactly one new version");
+    let record = local(&dir).load().expect("load");
+    assert_eq!(record.get("dcterms:title").expect("title").value, title);
+}
+
+#[then("the earlier versions should be unchanged")]
+fn earlier_versions_unchanged(world: &mut MetadataWorld) {
+    let dir = world.object_dir.clone().expect("object dir");
+    let after = version_files(&dir);
+    assert!(!world.earlier_versions.is_empty());
+    for (path, bytes) in &world.earlier_versions {
+        assert_eq!(after.get(path), Some(bytes), "{} changed", path.display());
+    }
+}
+
+#[then("the object should pass the OCFL validator")]
+fn object_validates(world: &mut MetadataWorld) {
+    let dir = world.object_dir.clone().expect("object dir");
+    let storage = FsBackend::with_default_staging(&dir).expect("backend");
+    let report = ready(validate_object(&storage, "")).expect("validate");
+    assert!(report.is_valid(), "{:?}", report.errors());
+}
+
+#[then("no version should be published")]
+fn no_version_published(world: &mut MetadataWorld) {
+    let dir = world.object_dir.clone().expect("object dir");
+    assert_eq!(versions_of(&dir), world.versions_before);
+    if let Some(Ok(version)) = &world.commit_outcome {
+        assert_eq!(version, &None, "an unchanged record publishes nothing");
+    }
+}
+
+#[then("the edit should be refused for the missing version inventory")]
+fn refused_for_missing_inventory(world: &mut MetadataWorld) {
+    let outcome = world.commit_outcome.as_ref().expect("edit made");
+    let Err(StoreError::Backend(source)) = outcome else {
+        panic!("expected a refusal, got {outcome:?}");
+    };
+    let change = source.downcast_ref::<ChangeError>().expect("change error");
+    assert!(
+        matches!(
+            change,
+            ChangeError::Commit(CommitError::MissingVersionInventory { .. })
+        ),
+        "{change:?}"
+    );
+}
+
+#[then("the missing version inventory should not be repaired")]
+fn inventory_not_repaired(world: &mut MetadataWorld) {
+    let dir = world.object_dir.clone().expect("object dir");
+    assert!(!dir.join("v1/inventory.json").exists());
 }
 
 #[then("the extractor should read bytes supplied by filesquid-ocfl, not a filesystem path")]
@@ -513,6 +720,7 @@ fn extraction_signature(world: &mut MetadataWorld) {
 #[given("a plain file in a directory")]
 fn plain_file(world: &mut MetadataWorld) {
     let dir = fresh_object_dir();
+    fs::create_dir_all(&dir).expect("plain directory");
     fs::write(dir.join("photo.jpg"), b"pixels").expect("plain file");
     world.object_dir = Some(dir);
 }

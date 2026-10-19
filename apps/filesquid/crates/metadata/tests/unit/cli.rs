@@ -1,8 +1,16 @@
-//! CLI help and validate.
+//! The metadata commands of `fsquid`: help and validate, and every command
+//! that reads or writes `metadata.md` through `filesquid-ocfl`, one new OCFL
+//! version per edit (MD-0.2; MD-S-005, MD-S-006, MD-S-008, MD-S-010).
 
 use std::path::{Path, PathBuf};
 
 use filesquid_metadata::cli::{run, USAGE};
+use filesquid_metadata::markdown::to_markdown;
+use filesquid_metadata::store::ocfl::LocalObject;
+use filesquid_ocfl::change::{ChangeModel, StagingArea, VersionMeta};
+use filesquid_ocfl::read::Object;
+use filesquid_ocfl::storage::{complete_immediately, FsBackend, MemoryBackend};
+use filesquid_ocfl::write::{rfc3339_utc, LeaseConfig, LeaseStore, SystemClock};
 
 #[test]
 fn help_prints_commands() {
@@ -30,77 +38,68 @@ fn unknown_command_errors() {
     assert!(err.contains("unknown command"));
 }
 
-#[test]
-fn set_and_get_round_trip() {
-    let dir = std::env::temp_dir().join("filesquid-metadata-cli-set");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let object = dir.to_string_lossy().into_owned();
-    let code = run(&[
-        "set".into(),
-        "dcterms:title".into(),
-        "Harbour".into(),
-        "--object".into(),
-        object.clone(),
-    ])
-    .expect("set");
-    assert_eq!(code, 0);
-    let code = run(&[
-        "get".into(),
-        "dcterms:title".into(),
-        "--object".into(),
-        object,
-    ])
-    .expect("get");
-    assert_eq!(code, 0);
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn export_csv_contains_header() {
-    let dir = std::env::temp_dir().join("filesquid-metadata-cli-csv");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let object = dir.to_string_lossy().into_owned();
-    run(&[
-        "set".into(),
-        "dcterms:creator".into(),
-        "George".into(),
-        "--object".into(),
-        object.clone(),
-    ])
-    .unwrap();
-    let csv_path = dir.join("out.csv");
-    let code = run(&[
-        "export".into(),
-        "csv".into(),
-        csv_path.to_string_lossy().into_owned(),
-        "--object".into(),
-        object,
-    ])
-    .expect("export");
-    assert_eq!(code, 0);
-    let body = std::fs::read_to_string(&csv_path).unwrap();
-    assert!(body.contains("dcterms:creator"));
-    assert!(body.contains("George"));
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
 /// Convert string slices into owned CLI arguments.
 fn args(list: &[&str]) -> Vec<String> {
     list.iter().map(|arg| (*arg).to_string()).collect()
 }
 
-/// Create an empty scratch object directory holding a `photo.jpg` logical file.
-fn json_object(name: &str, photo: &[u8]) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "filesquid-metadata-cli-json-{name}-{}",
-        std::process::id()
-    ));
+/// A fresh scratch directory named after the test.
+fn scratch(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("md-0.2-cli-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("photo.jpg"), photo).unwrap();
     dir
+}
+
+/// Commit `files` as v1 of a new OCFL object `id` in `dir` through the
+/// `filesquid-ocfl` change model.
+fn seed_object(dir: &Path, id: &str, files: &[(&str, &[u8])]) {
+    let storage = FsBackend::with_default_staging(dir).expect("object backend");
+    let leases = LeaseStore::new(
+        MemoryBackend::new(),
+        "leases",
+        SystemClock,
+        LeaseConfig::default(),
+    )
+    .expect("leases");
+    let staging_backend = MemoryBackend::new();
+    let staging = StagingArea::new(&staging_backend, "seed").expect("staging");
+    let model = ChangeModel::new(&storage, &leases, "seeder", "", id, staging);
+    for (path, bytes) in files {
+        ready(model.stage_bytes(path, bytes)).expect("stage");
+    }
+    let meta = VersionMeta::new(rfc3339_utc(1_791_590_400_000));
+    ready(model.commit(meta)).expect("seed");
+}
+
+/// Drive a future that completes on its first poll.
+fn ready<F: std::future::Future>(future: F) -> F::Output {
+    complete_immediately(future).expect("ready")
+}
+
+/// A scratch OCFL object `id` in its own directory holding `photo.jpg`.
+fn photo_object(name: &str, id: &str, photo: &[u8]) -> (PathBuf, PathBuf) {
+    let dir = scratch(name);
+    let object = dir.join("object");
+    seed_object(&object, id, &[("photo.jpg", photo)]);
+    (dir, object)
+}
+
+/// The canonical `metadata.md` text of the object's head.
+fn metadata_md(object: &Path) -> String {
+    let local = LocalObject::open(object, None).expect("open object");
+    to_markdown(&local.load().expect("load"))
+}
+
+/// The versions of the object, oldest first.
+fn versions(object: &Path) -> Vec<String> {
+    let storage = FsBackend::with_default_staging(object).expect("backend");
+    let object = ready(Object::open(&storage, "")).expect("open");
+    object
+        .history()
+        .into_iter()
+        .map(|info| info.version.to_string())
+        .collect()
 }
 
 /// Run `<cmd> json <path> --id <id> --file photo.jpg --object <dir>`.
@@ -131,12 +130,110 @@ fn set_in(object: &Path, curie: &str, value: &str) {
     assert_eq!(code, 0);
 }
 
-/// Remove the scratch objects and the sidecar a JSON test created.
-fn cleanup(dirs: &[&Path], sidecar: &Path) {
-    for dir in dirs {
-        let _ = std::fs::remove_dir_all(dir);
+#[test]
+fn set_on_a_new_object_needs_an_identifier() {
+    let dir = scratch("set-new");
+    let object = dir.join("object");
+    std::fs::create_dir_all(&object).unwrap();
+    let err = run(&args(&[
+        "set",
+        "dcterms:title",
+        "Harbour",
+        "--object",
+        &object.to_string_lossy(),
+    ]))
+    .expect_err("no --id");
+    assert!(err.contains("--id"), "{err}");
+    let code = run(&args(&[
+        "set",
+        "dcterms:title",
+        "Harbour",
+        "--id",
+        "urn:x:1",
+        "--object",
+        &object.to_string_lossy(),
+    ]))
+    .expect("set with --id");
+    assert_eq!(code, 0);
+    assert_eq!(versions(&object), ["v1"]);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn set_and_get_round_trip_with_one_version_per_edit() {
+    let (dir, object) = photo_object("set-get", "urn:x:1", b"pixels");
+    set_in(&object, "dcterms:title", "Harbour");
+    set_in(&object, "dcterms:creator", "George");
+    assert_eq!(versions(&object), ["v1", "v2", "v3"]);
+    let code = run(&args(&[
+        "get",
+        "dcterms:title",
+        "--object",
+        &object.to_string_lossy(),
+    ]))
+    .expect("get");
+    assert_eq!(code, 0);
+    assert!(
+        !object.join("metadata.md").exists(),
+        "no file outside a version"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn export_csv_contains_header() {
+    let (dir, object) = photo_object("csv", "urn:x:1", b"pixels");
+    set_in(&object, "dcterms:creator", "George");
+    let csv_path = dir.join("out.csv");
+    let code = run(&args(&[
+        "export",
+        "csv",
+        &csv_path.to_string_lossy(),
+        "--object",
+        &object.to_string_lossy(),
+    ]))
+    .expect("export");
+    assert_eq!(code, 0);
+    let body = std::fs::read_to_string(&csv_path).unwrap();
+    assert!(body.contains("dcterms:creator"));
+    assert!(body.contains("George"));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn import_csv_and_xmp_commit_new_versions() {
+    let (dir, object) = photo_object("import", "urn:x:1", b"pixels");
+    let csv = dir.join("in.csv");
+    std::fs::write(&csv, "dcterms:title\nHarbour\n").unwrap();
+    let xmp = dir.join("in.xmp");
+    let mut record = filesquid_metadata::record::Record::default();
+    record
+        .set(
+            filesquid_metadata::MetadataNamespace::Dcterms,
+            "creator",
+            "George",
+        )
+        .unwrap();
+    std::fs::write(&xmp, filesquid_metadata::xmp::to_xmp(&record)).unwrap();
+    let object_arg = object.to_string_lossy().into_owned();
+    for (fmt, path) in [("csv", &csv), ("xmp", &xmp)] {
+        let code = run(&args(&[
+            "import",
+            fmt,
+            &path.to_string_lossy(),
+            "--object",
+            &object_arg,
+        ]))
+        .expect("import");
+        assert_eq!(code, 0);
     }
-    let _ = std::fs::remove_file(sidecar);
+    assert_eq!(versions(&object), ["v1", "v2", "v3"]);
+    let text = metadata_md(&object);
+    assert!(
+        text.contains("Harbour") && text.contains("George"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
@@ -147,52 +244,51 @@ fn help_lists_json_interchange() {
 
 #[test]
 fn json_export_then_import_round_trips_through_metadata_md() {
-    let source = json_object("source", b"pixels");
+    let (source_dir, source) = photo_object("json-src", "urn:x:1", b"pixels");
     set_in(&source, "dcterms:title", "Harbour, \"dawn\"");
     set_in(&source, "schema:album", "Coast");
-    let sidecar = source.with_extension("json");
+    let sidecar = source_dir.join("sidecar.json");
     assert_eq!(run_json("export", &sidecar, "urn:x:1", &source), Ok(0));
-    let target = json_object("target", b"pixels");
+    let (target_dir, target) = photo_object("json-dst", "urn:x:1", b"pixels");
     assert_eq!(run_json("import", &sidecar, "urn:x:1", &target), Ok(0));
-    let a = std::fs::read_to_string(source.join("metadata.md")).unwrap();
-    let b = std::fs::read_to_string(target.join("metadata.md")).unwrap();
-    assert_eq!(a, b);
-    let entries = std::fs::read_dir(&target).unwrap().count();
-    assert_eq!(entries, 2, "only photo.jpg and metadata.md in the object");
-    cleanup(&[&source, &target], &sidecar);
+    assert_eq!(metadata_md(&source), metadata_md(&target));
+    assert_eq!(versions(&target), ["v1", "v2"]);
+    std::fs::remove_dir_all(&source_dir).unwrap();
+    std::fs::remove_dir_all(&target_dir).unwrap();
 }
 
 #[test]
-fn json_import_rejects_digest_mismatch_and_keeps_metadata_md() {
-    let source = json_object("mismatch-src", b"original");
+fn json_import_rejects_digest_mismatch_and_publishes_nothing() {
+    let (source_dir, source) = photo_object("mismatch-src", "urn:x:1", b"original");
     set_in(&source, "dcterms:title", "Harbour");
-    let sidecar = source.with_extension("json");
+    let sidecar = source_dir.join("sidecar.json");
     assert_eq!(run_json("export", &sidecar, "urn:x:1", &source), Ok(0));
-    let target = json_object("mismatch-dst", b"edited");
+    let (target_dir, target) = photo_object("mismatch-dst", "urn:x:1", b"edited");
     set_in(&target, "dcterms:title", "Before");
-    let before = std::fs::read_to_string(target.join("metadata.md")).unwrap();
+    let before = metadata_md(&target);
     let err = run_json("import", &sidecar, "urn:x:1", &target).expect_err("mismatch");
     assert!(err.contains("digest"), "{err}");
-    let after = std::fs::read_to_string(target.join("metadata.md")).unwrap();
-    assert_eq!(before, after);
-    cleanup(&[&source, &target], &sidecar);
+    assert_eq!(metadata_md(&target), before);
+    assert_eq!(versions(&target), ["v1", "v2"]);
+    std::fs::remove_dir_all(&source_dir).unwrap();
+    std::fs::remove_dir_all(&target_dir).unwrap();
 }
 
 #[test]
 fn json_import_rejects_other_object_id() {
-    let object = json_object("other-id", b"pixels");
+    let (dir, object) = photo_object("other-id", "urn:x:1", b"pixels");
     set_in(&object, "dcterms:title", "Harbour");
-    let sidecar = object.with_extension("json");
+    let sidecar = dir.join("sidecar.json");
     assert_eq!(run_json("export", &sidecar, "urn:x:1", &object), Ok(0));
     let err = run_json("import", &sidecar, "urn:x:2", &object).expect_err("id");
     assert!(err.contains("object identifier"), "{err}");
-    cleanup(&[&object], &sidecar);
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
-fn json_requires_id_and_file() {
-    let object = json_object("flags", b"pixels");
-    let out = object.join("out.json");
+fn json_requires_file() {
+    let (dir, object) = photo_object("flags", "urn:x:1", b"pixels");
+    let out = dir.join("out.json");
     let err = run(&args(&[
         "export",
         "json",
@@ -201,15 +297,35 @@ fn json_requires_id_and_file() {
         &object.to_string_lossy(),
     ]))
     .expect_err("flags required");
-    assert!(err.contains("--id") && err.contains("--file"), "{err}");
-    cleanup(&[&object], &out);
+    assert!(err.contains("--file"), "{err}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn json_rejects_a_file_the_object_does_not_hold() {
+    let (dir, object) = photo_object("absent-file", "urn:x:1", b"pixels");
+    std::fs::write(object.join("loose.jpg"), b"not committed").unwrap();
+    let out = dir.join("out.json");
+    let err = run(&args(&[
+        "export",
+        "json",
+        &out.to_string_lossy(),
+        "--file",
+        "loose.jpg",
+        "--object",
+        &object.to_string_lossy(),
+    ]))
+    .expect_err("not a logical file");
+    assert!(err.contains("loose.jpg"), "{err}");
+    assert!(!out.exists(), "no sidecar is written");
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
 fn csv_export_still_ignores_json_flags() {
-    let object = json_object("csv-flags", b"pixels");
+    let (dir, object) = photo_object("csv-flags", "urn:x:1", b"pixels");
     set_in(&object, "dcterms:title", "Harbour");
-    let out = object.with_extension("csv");
+    let out = dir.join("out.csv");
     let code = run(&args(&[
         "export",
         "csv",
@@ -224,13 +340,13 @@ fn csv_export_still_ignores_json_flags() {
     .expect("csv");
     assert_eq!(code, 0);
     assert!(std::fs::read_to_string(&out).unwrap().contains("Harbour"));
-    cleanup(&[&object], &out);
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
 fn json_rejects_a_flag_as_the_id_value() {
-    let object = json_object("flag-as-value", b"pixels");
-    let out = object.join("out.json");
+    let (dir, object) = photo_object("flag-as-value", "urn:x:1", b"pixels");
+    let out = dir.join("out.json");
     let err = run(&args(&[
         "export",
         "json",
@@ -244,41 +360,15 @@ fn json_rejects_a_flag_as_the_id_value() {
     .expect_err("--id has no value");
     assert!(err.contains("--id"), "{err}");
     assert!(!out.exists(), "no sidecar is written");
-    cleanup(&[&object], &out);
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
 fn set_keeps_json_flag_names_as_literal_values() {
-    let object = json_object("literal-flag", b"pixels");
+    let (dir, object) = photo_object("literal-flag", "urn:x:1", b"pixels");
     set_in(&object, "dcterms:title", "--file");
-    let body = std::fs::read_to_string(object.join("metadata.md")).unwrap();
-    assert!(body.contains("--file"), "{body}");
-    cleanup(&[&object], &object.join("unused.json"));
-}
-
-#[cfg(unix)]
-#[test]
-fn json_rejects_a_symlink_that_leaves_the_object() {
-    let object = json_object("symlink-escape", b"pixels");
-    let outside = object.with_extension("outside.bin");
-    std::fs::write(&outside, b"secret").unwrap();
-    std::os::unix::fs::symlink(&outside, object.join("link.jpg")).unwrap();
-    let out = object.join("out.json");
-    let err = run(&args(&[
-        "export",
-        "json",
-        &out.to_string_lossy(),
-        "--id",
-        "urn:x:1",
-        "--file",
-        "link.jpg",
-        "--object",
-        &object.to_string_lossy(),
-    ]))
-    .expect_err("symlink escape");
-    assert!(err.contains("outside the object"), "{err}");
-    std::fs::remove_file(&outside).ok();
-    cleanup(&[&object], &out);
+    assert!(metadata_md(&object).contains("--file"));
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// Big-endian TIFF with one ASCII `ImageDescription` ("Cat").
@@ -288,44 +378,53 @@ const TIFF_DESCRIPTION: &[u8] = &[
 ];
 
 #[test]
-fn extract_reads_the_file_through_a_reader_into_metadata_md() {
-    let dir = std::env::temp_dir().join(format!(
-        "filesquid-metadata-cli-extract-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+fn extract_reads_a_plain_file_through_a_reader_into_metadata_md() {
+    let (dir, object) = photo_object("extract", "urn:x:1", b"pixels");
     let photo = dir.join("cat.tif");
     std::fs::write(&photo, TIFF_DESCRIPTION).unwrap();
-    let object = dir.join("object");
-    std::fs::create_dir_all(&object).unwrap();
-    let args = [
-        "extract".to_string(),
-        photo.to_string_lossy().into_owned(),
-        "--object".to_string(),
-        object.to_string_lossy().into_owned(),
-    ];
+    let args = args(&[
+        "extract",
+        &photo.to_string_lossy(),
+        "--object",
+        &object.to_string_lossy(),
+    ]);
     assert_eq!(run(&args).expect("extract"), 0);
-    let text = std::fs::read_to_string(object.join("metadata.md")).unwrap();
-    assert!(text.contains("ImageDescription"), "{text}");
+    assert!(metadata_md(&object).contains("ImageDescription"));
+    assert_eq!(versions(&object), ["v1", "v2"]);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn extract_reads_a_logical_file_through_filesquid_ocfl() {
+    let (dir, object) = photo_object("extract-logical", "urn:x:1", TIFF_DESCRIPTION);
+    let args = args(&[
+        "extract",
+        "--file",
+        "photo.jpg",
+        "--object",
+        &object.to_string_lossy(),
+    ]);
+    assert_eq!(run(&args).expect("extract"), 0);
+    let text = metadata_md(&object);
+    assert!(
+        text.contains("ImageDescription") && text.contains("Cat"),
+        "{text}"
+    );
+    assert_eq!(versions(&object), ["v1", "v2"]);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
 fn extract_reports_a_missing_file() {
-    let dir = std::env::temp_dir().join(format!(
-        "filesquid-metadata-cli-missing-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let args = [
-        "extract".to_string(),
-        dir.join("absent.jpg").to_string_lossy().into_owned(),
-        "--object".to_string(),
-        dir.to_string_lossy().into_owned(),
-    ];
+    let (dir, object) = photo_object("missing", "urn:x:1", b"pixels");
+    let args = args(&[
+        "extract",
+        &dir.join("absent.jpg").to_string_lossy(),
+        "--object",
+        &object.to_string_lossy(),
+    ]);
     let err = run(&args).expect_err("missing file is reported");
     assert!(err.contains("absent.jpg"), "{err}");
+    assert_eq!(versions(&object), ["v1"]);
     std::fs::remove_dir_all(&dir).unwrap();
 }

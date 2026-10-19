@@ -92,9 +92,13 @@ pub enum JsonError {
 
 /// Return the lowercase hex SHA-256 digest of `bytes`.
 pub fn sha256_hex(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
+    lower_hex(&Sha256::digest(bytes))
+}
+
+/// Lowercase hex of `digest`.
+pub(crate) fn lower_hex(digest: &[u8]) -> String {
     let mut out = String::with_capacity(digest.len() * 2);
-    for byte in digest.iter() {
+    for byte in digest {
         // Writing to a String cannot fail.
         let _ = write!(out, "{byte:02x}");
     }

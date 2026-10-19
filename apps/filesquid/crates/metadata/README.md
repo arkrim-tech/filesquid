@@ -11,11 +11,11 @@ The metadata module of FileSquid. It extracts metadata from file bytes, creates,
 Records persist through a pluggable `store::MetadataStore` that loads and saves a `Record` by an opaque `file_ref::FileRef` (object identifier, optional version, logical path; [ADR 027](../../../../resources/architecture/027-filesquid-metadata-pluggable-stores.md)). Two stores ship:
 
 - `store::sidecar::SidecarStore` (the default `sidecar` feature, native only) keeps `<file>.metadata.md` beside a plain file under a root directory and refuses a Git working tree.
-- `store::ocfl::OcflStore` (the optional `ocfl` feature) keeps `metadata.md` (YAML front matter + Markdown body) as a logical file in an OCFL object through [`filesquid-ocfl`](../ocfl/README.md), FileSquid's canonical store. It runs over any `StorageBackend` the host supplies; `store::ocfl::load_from`, `save_to` and `metadata_key` are the backend-level functions, and with `ocfl-fs` the path-based `store::ocfl::load` and `save` run the same code over a local filesystem backend after the Git guard.
+- `store::ocfl::OcflStore` (the optional `ocfl` feature) keeps `metadata.md` (YAML front matter + Markdown body) as a logical file in an OCFL object through [`filesquid-ocfl`](../ocfl/README.md), FileSquid's canonical store. Each edit is committed as exactly one new OCFL version through the `filesquid-ocfl` change model (`ChangeModel::stage_bytes`, then `commit`: the fenced `vN` reservation and head compare-and-swap); an unchanged record publishes nothing, earlier versions are never modified, and this crate builds no inventory and publishes no `vN` itself. A `FileRef` that pins a version reads that version; saving from a pinned version that is no longer the head is a `StoreError::Conflict`. A head without its version inventory (W010) stays refused (`MissingVersionInventory`) and is never repaired here. The host wires the store to its storage root, its shared version reservations, a staging backend outside the root, a clock and its object-root layout. With `ocfl-fs`, `store::ocfl::LocalObject` is the same store over one object directory on the local disk (leases and staging in `filesquid-metadata` under the system temporary directory), as the CLI uses it.
 
 A caller, such as the browser host, can also implement `MetadataStore` itself. A native `sqlite` store is planned. Catalogs rebuild from the canonical store.
 
-Extraction takes bytes or a reader plus a `FileRef`, never a path: `extract::extract_from_bytes` and `extract::extract_from_reader` read EXIF and ID3 from what the caller supplies (for example a logical file read through `filesquid-ocfl`) and are independent of any store. The returned `Extracted` says which blocks were found and how many statements the register refused.
+Extraction takes bytes or a reader plus a `FileRef`, never a path: `extract::extract_from_bytes` and `extract::extract_from_reader` read EXIF, ID3 and an embedded XMP packet (its `dc:` and `dcterms:` elements, mapped onto `dcterms:`) from what the caller supplies (for example a logical file read through `filesquid-ocfl`) and are independent of any store. The returned `Extracted` says which blocks were found and how many statements the register refused.
 
 ## Cargo features and WebAssembly
 
@@ -48,15 +48,23 @@ The default test run skips the tests that need the `ocfl`, `ocfl-fs` or `cli` fe
 
 ## JSON sidecar
 
-A JSON sidecar is one UTF-8 JSON document per OCFL object. It binds `{namespace, term, value}` statements to the OCFL object identifier (`objectId`) and the SHA-256 digest (`digestAlgorithm: "sha256"`, `digest`) of the described logical file. `--id` names the object and `--file` the logical file inside `--object`:
+Every command works on an OCFL object directory (`--object`, default `.`) and commits each edit as a new OCFL version. `--id` names the object: it is required to create an object in a directory that holds none, and an existing object's identifier must match it.
 
 ```bash
 cd apps/filesquid
-cargo run -p filesquid-cli -- export json harbour.json --id urn:example:harbour --file photo.jpg --object <object-dir>
-cargo run -p filesquid-cli -- import json harbour.json --id urn:example:harbour --file photo.jpg --object <object-dir>
+cargo run -p filesquid-cli -- set dcterms:title Harbour --id urn:example:harbour --object <object-dir>
+cargo run -p filesquid-cli -- extract --file photo.jpg --object <object-dir>
 ```
 
-Import applies the `/terms/` register, rejects any namespace other than `dcterms`, `dc` (mapped to `dcterms`), `exif` and `schema`, and rejects a sidecar whose object identifier or digest does not match. A rejected import leaves `metadata.md` unchanged. The sidecar is interchange only; `metadata.md` stays canonical.
+A JSON sidecar is one UTF-8 JSON document per OCFL object. It binds `{namespace, term, value}` statements to the OCFL object identifier (`objectId`) and the SHA-256 digest (`digestAlgorithm: "sha256"`, `digest`) of the described logical file. `--file` names the logical file of the object's head, read through `filesquid-ocfl`:
+
+```bash
+cd apps/filesquid
+cargo run -p filesquid-cli -- export json harbour.json --file photo.jpg --object <object-dir>
+cargo run -p filesquid-cli -- import json harbour.json --file photo.jpg --object <object-dir>
+```
+
+Import applies the `/terms/` register, rejects any namespace other than `dcterms`, `dc` (mapped to `dcterms`), `exif` and `schema`, and rejects a sidecar whose object identifier or digest does not match. A rejected import publishes no version. The sidecar is interchange only; `metadata.md` stays canonical.
 
 ## References
 

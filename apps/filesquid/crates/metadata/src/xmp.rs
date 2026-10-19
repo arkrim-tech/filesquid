@@ -1,4 +1,6 @@
-//! Minimal XMP sidecar interchange for dcterms statements.
+//! Minimal XMP interchange for dcterms statements: sidecar read/write
+//! (MD-S-006) and the reader [`extract`](crate::extract) applies to an
+//! embedded XMP packet (MD-S-007).
 
 use crate::record::Record;
 use crate::MetadataNamespace;
@@ -28,15 +30,31 @@ pub fn to_xmp(record: &Record) -> String {
     out
 }
 
-/// Read `dcterms:` and `dc:` elements from a sidecar produced by [`to_xmp`].
+/// Read `dcterms:` and `dc:` elements from a sidecar produced by [`to_xmp`]
+/// or another XMP packet. Terms the `/terms/` register refuses are left out;
+/// [`dcterms_pairs`] lists them all.
 pub fn from_xmp(text: &str) -> Record {
     let mut record = Record::default();
-    pull_tags(text, "dcterms:", MetadataNamespace::Dcterms, &mut record);
-    pull_tags(text, "dc:", MetadataNamespace::Dcterms, &mut record);
+    for (term, value) in dcterms_pairs(text) {
+        // A refused term is not part of the sidecar's record.
+        let _ = record.set(MetadataNamespace::Dcterms, &term, value);
+    }
     record
 }
 
-fn pull_tags(text: &str, prefix: &str, ns: MetadataNamespace, record: &mut Record) {
+/// Every `dcterms:` and `dc:` element of an XMP packet as `(term, value)`,
+/// with `dc:` names mapped onto `dcterms:` and unchecked against the
+/// register, so a caller can count the terms it refuses. An `rdf:Alt`,
+/// `rdf:Bag` or `rdf:Seq` value is its `rdf:li` items joined by `"; "`.
+pub fn dcterms_pairs(text: &str) -> Vec<(String, String)> {
+    let mut pairs = Vec::new();
+    pull_tags(text, "dcterms:", &mut pairs);
+    pull_tags(text, "dc:", &mut pairs);
+    pairs
+}
+
+/// Collect the `<prefix term>value</prefix term>` elements of `text`.
+fn pull_tags(text: &str, prefix: &str, pairs: &mut Vec<(String, String)>) {
     let open = format!("<{prefix}");
     let mut rest = text;
     while let Some(start) = rest.find(&open) {
@@ -54,11 +72,29 @@ fn pull_tags(text: &str, prefix: &str, ns: MetadataNamespace, record: &mut Recor
         let Some(end) = rest.find(&close) else {
             continue;
         };
-        let value = xml_unescape(&rest[..end]);
+        let value = element_text(&rest[..end]);
         let term = crate::map_dc_to_dcterms(term).unwrap_or(term);
-        let _ = record.set(ns, term, value);
+        pairs.push((term.to_string(), value));
         rest = &rest[end + close.len()..];
     }
+}
+
+/// The text of an element body: its `rdf:li` items joined by `"; "` when it
+/// holds an RDF container, else the body itself, unescaped.
+fn element_text(body: &str) -> String {
+    let items: Vec<String> = body
+        .split("<rdf:li")
+        .skip(1)
+        .filter_map(|item| {
+            let (_, after) = item.split_once('>')?;
+            let (text, _) = after.split_once("</rdf:li>")?;
+            Some(xml_unescape(text.trim()))
+        })
+        .collect();
+    if items.is_empty() {
+        return xml_unescape(body);
+    }
+    items.join("; ")
 }
 
 fn xml_escape(value: &str) -> String {
