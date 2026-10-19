@@ -281,6 +281,16 @@ cd apps/filesquid
 cargo test -p filesquid-api --locked --test unit_replica --test features
 ```
 
+The file operation routes (API-F1.3: folder listing with cursor paging, file details, version history, object versions, ranged reads capped at 16 MiB per answer, upload, pending folders, move, remove and restore, each write publishing exactly one OCFL version through the `filesquid-ocfl` change model; files are shown and downloaded under the owner's original name through `Content-Disposition`, tested with a non-ASCII name with spaces) and the content handles media elements read through (API-S-018: minting, sliding 300 s and absolute 3,600 s expiry with an injected clock, eviction at 1,024 per credential, invalidation when the credential or the permission ends, one identical denial for every unusable handle, the privacy headers and redaction) are tested through the router against a real OCFL storage root in the system temporary directory, which each test removes. The BDD features build one 100 MB video root, shared by their scenarios and removed after the run; the hosts' wiring of the file service is tested in `filesquid-native` (`unit_files`) and through the desktop scheme (`integration_api_protocol`); the server's `integration_auth` tests that the content route answers its one denial, `GET` and `HEAD`, on `filesquid-server`:
+
+```sh
+cd apps/filesquid
+cargo test -p filesquid-api --locked --test integration_files --test integration_content_handles --test features
+cargo test -p filesquid-native --locked --test unit_files
+cargo test -p filesquid-server --locked --test integration_auth
+cargo test -p filesquid-desktop --locked --test integration_api_protocol
+```
+
 The host-side I/O the API must not do lives in the native-processing library `filesquid-native` (`crates/native`): the SQLite journal store, the data-directory checks (write probe, free space) and `HostMonitor`, which both hosts link ([ADR 033](./resources/architecture/033-activity-journal-and-live-health-monitoring.md) amendment 2026-10-18). Its unit tests and BDD features run alone:
 
 ```sh
@@ -320,7 +330,7 @@ cd apps/filesquid
 cargo test -p filesquid-desktop --locked --test integration_capabilities
 ```
 
-Packaged-window tests (ADR 017): WebdriverIO with `@wdio/tauri-service` drives the test-instrumented desktop binary through its embedded WebDriver server (on `127.0.0.1`, port `TAURI_WEBDRIVER_PORT`, default 4445): the per-launch token, a 100 MB `Range` read through the scheme, an event subscription, a refused navigation to a foreign site, and the IPC commands Tauri allows (event listen and unlisten) and a selection it refuses (core event emit, path, window, webview and app commands; the fs, sql, shell, dialog and http plugins; an unlisted app command). Build the binary, then run the suite from `apps/filesquid/crates/desktop/tests/e2e`. On Linux the webview is WebKitGTK and a headless machine needs Xvfb (`xvfb-run`, from your distribution's `xvfb` package); on macOS and Windows run `npm run test:e2e` without it:
+Packaged-window tests (ADR 017): WebdriverIO with `@wdio/tauri-service` drives the test-instrumented desktop binary through its embedded WebDriver server (on `127.0.0.1`, port `TAURI_WEBDRIVER_PORT`, default 4445): the per-launch token, a 100 MB `Range` read through the scheme, an event subscription, a refused navigation to a foreign site, the IPC commands Tauri allows (event listen and unlisten) and a selection it refuses (core event emit, path, window, webview and app commands; the fs, sql, shell, dialog and http plugins; an unlisted app command), and content handles for media elements (ADR 030 S1 item (a), API-F1.3): minting, capped range reads of a VP8 video of more than 100 MB through content URLs without a token (`filesquid://localhost/api/v1/content/<handle>` on macOS and Linux, `http://filesquid.localhost/api/v1/content/<handle>` on Windows), the denial of an unknown handle, an `<img>` loaded through a handle, and on macOS and Windows a `<video>` that seeks and keeps playing past the handle's 300 s idle window (about 320 s of playback). WebKitGTK does not play a `<video>` from the custom scheme, so on Linux the suite instead checks that measured limitation, a known limitation for release 1 that the MediaSource player of UI-F3.3 removes ([ADR 030](./resources/architecture/030-filesquid-api-and-transports.md) S1 item (a)). Before the run the launcher builds that media library as an OCFL root in the run's temporary directory, encoding the video and the image with `ffmpeg`, which must be on `PATH` with its `libvpx` encoder (install it from your platform's package manager or from ffmpeg.org); the test-instrumented app opens it from `FILESQUID_E2E_LIBRARY`, which the launcher sets. Build the binary, then run the suite from `apps/filesquid/crates/desktop/tests/e2e`. On Linux the webview is WebKitGTK and a headless machine needs Xvfb (`xvfb-run`, from your distribution's `xvfb` package); on macOS and Windows run `npm run test:e2e` without it:
 
 ```sh
 cd apps/filesquid

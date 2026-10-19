@@ -16,6 +16,37 @@ use filesquid_api::{ApiError, ApiState, ErrorCode};
 use http::header::{ACCEPT_RANGES, CONTENT_RANGE, CONTENT_TYPE, RANGE};
 use http::{HeaderValue, Request, Response, StatusCode};
 
+/// Environment variable naming the OCFL storage root that the packaged-window tests open as
+/// [`E2E_LIBRARY_ID`]: a media library their harness writes before the run, read through the
+/// API's file and content routes (API-F1.3, ADR 030 S1 item (a)).
+pub const E2E_LIBRARY_VARIABLE: &str = "FILESQUID_E2E_LIBRARY";
+
+/// The library ID the packaged-window tests' media library is opened as.
+pub const E2E_LIBRARY_ID: &str = "5e2e0000-0000-4000-8000-00000000e2e0";
+
+/// Open the storage root named by [`E2E_LIBRARY_VARIABLE`] as [`E2E_LIBRARY_ID`] through
+/// `files`, with its leases and staging area under `data_dir`. Does nothing when the variable
+/// is unset. Creates directories.
+///
+/// # Errors
+///
+/// A message when the variable is set but blank (it never falls back to the working
+/// directory), or when the root or its leases and staging cannot be prepared.
+pub fn open_e2e_library(
+    files: &filesquid_native::HostFiles,
+    data_dir: &std::path::Path,
+) -> Result<(), String> {
+    let Some(root) = std::env::var_os(E2E_LIBRARY_VARIABLE) else {
+        return Ok(());
+    };
+    if root.to_string_lossy().trim().is_empty() {
+        return Err(format!("{E2E_LIBRARY_VARIABLE} is set but blank"));
+    }
+    let library = filesquid_core::LibraryId::new(E2E_LIBRARY_ID).map_err(|e| e.to_string())?;
+    filesquid_native::open_fs_library(files, &library, std::path::Path::new(&root), data_dir)
+        .map(|_| ())
+}
+
 /// Scheme path of the fixture (outside `/api/v1/`, so it never shadows an API route).
 pub const FIXTURE_PATH: &str = "/__filesquid_test__/range-fixture";
 

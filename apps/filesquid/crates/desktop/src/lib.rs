@@ -253,10 +253,12 @@ pub fn builder() -> Result<tauri::Builder<tauri::Wry>, String> {
     let state = ApiState::new();
     let token = install_launch_token(&state)?;
     describe_desktop_host(&state)?;
+    let files = filesquid_native::install_file_service(&state)?;
     let scheme_state = state.clone();
     let builder = with_test_driver(tauri::Builder::default())
         .plugin(app_pages_plugin(&token))
         .manage(state)
+        .manage(DesktopFiles(files))
         .register_asynchronous_uri_scheme_protocol(
             api_protocol::SCHEME,
             move |_ctx, request, responder| {
@@ -378,6 +380,26 @@ fn installation_error_code(err: &InstallationError) -> &'static str {
 /// Journal operation of opening the library catalogs at launch.
 pub const CATALOG_OPEN_OPERATION: &str = "library.catalog.open";
 
+/// The file service of the API's file and content routes (Task API-F1.3), over the OCFL
+/// storage roots of the libraries this launch opens. DE-1.1 opens each library with
+/// [`filesquid_native::open_fs_library`]; until then every file route answers `not_found`.
+pub struct DesktopFiles(pub filesquid_native::HostFiles);
+
+/// Open the packaged-window tests' media library (test-instrumented builds only): the OCFL
+/// storage root named by [`test_fixture::E2E_LIBRARY_VARIABLE`], when it is set. A root that
+/// cannot be opened is logged; the app starts without it.
+#[cfg(feature = "test-webdriver")]
+fn open_test_library(app: &tauri::AppHandle, data_dir: &std::path::Path) {
+    let files = &app.state::<DesktopFiles>().0;
+    if let Err(message) = test_fixture::open_e2e_library(files, data_dir) {
+        tracing::error!(%message, "the packaged-window media library was not opened");
+    }
+}
+
+/// Shipping builds open no library at launch; DE-1.1 opens the owner's libraries.
+#[cfg(not(feature = "test-webdriver"))]
+fn open_test_library(_app: &tauri::AppHandle, _data_dir: &std::path::Path) {}
+
 /// The library catalogs the host opened at launch: one SQLite file per library under
 /// `<data dir>/libraries/` ([`CATALOG_DIR`], Task DE-0.2). Held in Tauri's managed state for
 /// the API's library routes; the webview never receives a path or SQL (DE-S-006).
@@ -468,6 +490,7 @@ fn start_monitor(
         .start_validation::<FsBackend>(&data_dir, &state)
         .inspect_err(|_| host.stop())?;
     app.manage(DesktopValidation(validation));
+    open_test_library(app, &data_dir);
     let forwarder = Arc::new(event_channel::register_forwarder(host.monitor().registry()));
     let stop = Arc::new(AtomicBool::new(false));
     spawn_ticker(host.clone(), stop.clone());

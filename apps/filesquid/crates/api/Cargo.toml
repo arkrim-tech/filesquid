@@ -26,7 +26,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry"] }
 
 [dev-dependencies]
-# The engine with its filesystem backend, for tests on a real directory only.
+# The engine with its filesystem backend, for tests on a real directory only (the OCFL
+# validation tests and the API-F1.3 file integration tests).
 filesquid-ocfl = { path = "../ocfl" }
 cucumber = { version = "0.23", features = ["macros", "output-junit"] }
 http-body-util = "0.1"
@@ -108,6 +109,14 @@ path = "tests/unit/local_library.rs"
 [[test]]
 name = "unit_version_inventory_repair"
 path = "tests/unit/version_inventory_repair.rs"
+
+[[test]]
+name = "integration_files"
+path = "tests/integration/files.rs"
+
+[[test]]
+name = "integration_content_handles"
+path = "tests/integration/content_handles.rs"
 
 [[test]]
 name = "unit_ocfl_validation"

@@ -80,7 +80,7 @@ async fn denials_answer_the_same_through_every_host_uri_form() {
     let state = authorised_state();
     let mut cases: Vec<(Method, String)> = route_actions()
         .into_iter()
-        .filter(|(_, action)| *action != Action::Public)
+        .filter(|(_, action)| !matches!(action, Action::Public | Action::ReadContent))
         .map(|(path, _)| (Method::GET, path))
         .collect();
     cases.push((Method::GET, "/api/v1/no-such-route".to_string()));
@@ -114,4 +114,66 @@ async fn the_health_route_answers_through_the_desktop_scheme() {
     assert_eq!(content_type, "application/json");
     let json: serde_json::Value = serde_json::from_slice(&body).expect("json");
     assert_eq!(json["status"], "ok");
+}
+
+/// The headers a content denial MUST carry (API-S-018).
+const DENIAL_HEADERS: [&str; 5] = [
+    "content-type",
+    "cache-control",
+    "referrer-policy",
+    "x-content-type-options",
+    "content-security-policy",
+];
+
+/// One unauthenticated request through a fresh router; returns status, the
+/// [`DENIAL_HEADERS`] it carries and the body.
+async fn denial_answer(
+    state: &ApiState,
+    method: Method,
+    uri: &str,
+) -> (u16, Vec<(String, String)>, Vec<u8>) {
+    let request = Request::builder().method(method).uri(uri);
+    let request = request.body(Body::empty()).expect("request");
+    let response = router(state.clone())
+        .oneshot(request)
+        .await
+        .expect("router answers");
+    let status = response.status().as_u16();
+    let headers = DENIAL_HEADERS
+        .iter()
+        .map(|name| {
+            let value = response.headers().get(*name);
+            let value = value.and_then(|v| v.to_str().ok()).unwrap_or_default();
+            (name.to_string(), value.to_string())
+        })
+        .collect();
+    let body = response.into_body().collect().await.expect("body");
+    (status, headers, body.to_bytes().to_vec())
+}
+
+#[tokio::test]
+async fn the_content_denial_answers_the_same_through_every_host_uri_form() {
+    let state = authorised_state();
+    for path in [
+        "/api/v1/content/{handle}",
+        "/api/v1/content/",
+        "/api/v1/content/a/b",
+    ] {
+        let reference = denial_answer(&state, Method::GET, path).await;
+        assert_eq!(reference.0, 403, "{path}");
+        assert!(reference.1.iter().all(|(_, v)| !v.is_empty()), "{path}");
+        let json: serde_json::Value = serde_json::from_slice(&reference.2).expect("ApiError");
+        assert_eq!(json["code"], "forbidden", "{path}");
+        assert_eq!(json["reason"], "invalid_credentials", "{path}");
+        let head = denial_answer(&state, Method::HEAD, path).await;
+        assert_eq!((head.0, &head.1), (403, &reference.1), "HEAD {path}");
+        assert!(head.2.is_empty(), "HEAD {path} has no body");
+        for origin in &ORIGINS[1..] {
+            let uri = format!("{origin}{path}");
+            let got = denial_answer(&state, Method::GET, &uri).await;
+            assert_eq!(got, reference, "{uri} differs from {path}");
+            let got_head = denial_answer(&state, Method::HEAD, &uri).await;
+            assert_eq!(got_head, head, "HEAD {uri} differs from {path}");
+        }
+    }
 }
