@@ -1,14 +1,17 @@
 /**
  * The default FileSquid distribution: applies the saved theme, then mounts the shell with
  * FileSquid's official brand and the internal vocabulary, talking to whichever host serves
- * this page. `#/monitor` shows the Monitor dashboard. On the desktop host the client uses the
+ * this page. `#/monitor` shows the Monitor dashboard; `#/files/<library>/<object>` shows the
+ * file browser until the navigation tree supplies the library and object. On the desktop host the client uses the
  * per-launch token; on the server host the Monitor asks for the administrator token, which is
  * kept in memory only.
  */
 import "../theme/tokens.css";
 import labels from "../theme/labels.en.json";
 import {
+  ClientFileSource,
   applyLocale,
+  bindFilesRoute,
   bindMonitorRoute,
   createHostClient,
   createThemeStore,
@@ -38,3 +41,4 @@ const client = createHostClient(window, () => tokens.get());
 const desktop = detectHost(window).isTauri;
 shell?.configure({ distribution: filesquid, client, theme });
 if (shell) bindMonitorRoute(shell, { labels, client, tokens: desktop ? undefined : tokens });
+if (shell) bindFilesRoute(shell, { labels, source: new ClientFileSource(client) });
