@@ -17,7 +17,7 @@ default = []
 # snapshot commits and reconcile (DE-0.3), the durable job workers (DE-0.4, DE-0.8), and
 # later the media workers (DE-0.5). Only `filesquid-desktop` enables it; a `filesquid-server` test fails if the
 # server does.
-desktop = ["dep:libloading"]
+desktop = ["dep:libloading", "dep:filesquid-metadata", "dep:unicode-normalization"]
 
 [dependencies]
 filesquid-api = { path = "../api" }
@@ -36,6 +36,10 @@ tracing = "0.1"
 # Loads libvips at run time inside the media worker process only (Task DE-0.5, ADR 006), so
 # no build needs libvips headers and a machine without libvips gets a clear refusal.
 libloading = { version = "0.7", optional = true }
+# The import record of each imported file (Task DE-1.2, MD-0.8, ADR 038).
+filesquid-metadata = { path = "../metadata", optional = true }
+# The Unicode normalisation form of an imported file's original name (SRS-F-002, MD-S-013).
+unicode-normalization = { version = "0.1.26", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 # `O_NOFOLLOW` for owner-only files, so a symbolic link is never followed.
@@ -98,4 +102,9 @@ required-features = ["desktop"]
 [[test]]
 name = "unit_library_host"
 path = "tests/unit/library_host.rs"
+required-features = ["desktop"]
+
+[[test]]
+name = "unit_import_facts"
+path = "tests/unit/import_facts.rs"
 required-features = ["desktop"]
