@@ -61,6 +61,15 @@ path = "tests/unit/store.rs"
 required-features = ["ocfl-fs"]
 
 [[test]]
+name = "unit_import_record"
+path = "tests/unit/import_record.rs"
+
+[[test]]
+name = "unit_file_record_store"
+path = "tests/unit/file_record_store.rs"
+required-features = ["ocfl"]
+
+[[test]]
 name = "unit_file_ref"
 path = "tests/unit/file_ref.rs"
 
