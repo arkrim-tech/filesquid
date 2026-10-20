@@ -19,6 +19,7 @@ use thiserror::Error;
 
 use crate::file_record::RecordError;
 use crate::file_ref::FileRef;
+use crate::namespace::RegistryError;
 use crate::record::Record;
 
 #[cfg(feature = "ocfl")]
@@ -62,6 +63,10 @@ pub enum StoreError {
     /// was published.
     #[error("file record refused: {0}")]
     Record(#[from] RecordError),
+    /// The namespace registry record is invalid, or the save would drop a
+    /// registration or change its IRI (MD-S-012); nothing was published.
+    #[error("namespace registry refused: {0}")]
+    Registry(#[from] RegistryError),
     /// The backend failed; the source says why.
     #[error("metadata store backend failed")]
     Backend(#[source] Box<dyn Error + Send + Sync>),

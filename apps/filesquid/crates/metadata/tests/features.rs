@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cucumber::{given, then, when, writer, StatsWriter as _, World, WriterExt as _};
 use filesquid_metadata::cli::USAGE;
+use filesquid_metadata::csv::apply_csv_with;
 use filesquid_metadata::csv::{apply_csv, to_csv};
 use filesquid_metadata::extract::{extract_from_bytes, extract_from_reader};
 use filesquid_metadata::fact::{Fact, Reason};
@@ -19,14 +20,20 @@ use filesquid_metadata::file_ref::FileRef;
 use filesquid_metadata::import::attributes::{AttrValue, AttributeCollector, Attributes};
 use filesquid_metadata::import::scrub::IdentityClass;
 use filesquid_metadata::import::{ImportEntry, ImportError, NameForm};
+use filesquid_metadata::json::apply_json_with;
 use filesquid_metadata::json::{apply_json, parse_json, sha256_hex, to_json, JsonTarget};
-use filesquid_metadata::markdown::to_markdown;
+use filesquid_metadata::markdown::{from_markdown, to_markdown};
+use filesquid_metadata::namespace::{
+    NamespaceRegistry, Registrant, Registration, RegistryError, NAMESPACES_MD,
+};
 use filesquid_metadata::raw::Raw;
+use filesquid_metadata::record::parse_curie_with;
 use filesquid_metadata::record::Record;
 use filesquid_metadata::store::ocfl::LocalObject;
 use filesquid_metadata::store::sidecar::SidecarStore;
 use filesquid_metadata::store::{MetadataStore, StoreError, METADATA_MD};
 use filesquid_metadata::xmp::{from_xmp, to_xmp};
+use filesquid_metadata::xmp::{from_xmp_with, to_xmp_with};
 use filesquid_metadata::{MetadataError, MetadataNamespace};
 use filesquid_ocfl::change::{ChangeError, ChangeModel, StagingArea, VersionMeta};
 use filesquid_ocfl::read::Object;
@@ -112,6 +119,16 @@ struct MetadataWorld {
     attributes: Option<Attributes>,
     /// JSON a scenario produced (a projection or a scrubbed entry).
     produced_json: String,
+    /// The namespace registry of the MD-S-012 scenarios.
+    registry: NamespaceRegistry,
+    /// Why the last registration was refused.
+    registry_refusal: Option<RegistryError>,
+    /// The record extension statements are authored on.
+    ns_record: Record,
+    /// The OCFL object that holds a committed registry.
+    registry_scene: Option<ImportScene>,
+    /// Exit code of the last CLI `validate`.
+    cli_code: Option<i32>,
 }
 
 /// The in-memory OCFL object of an import record scenario.
@@ -1606,6 +1623,210 @@ fn inspect_import_modules(world: &mut MetadataWorld) {
 #[then("they should use no filesystem, path or environment access")]
 fn no_filesystem_access(world: &mut MetadataWorld) {
     assert_eq!(world.inspected, "", "the import record reads no filesystem");
+}
+
+/// The RiC-O IRI the registry scenarios use.
+const RICO_IRI: &str = "https://www.ica.org/standards/RiC/ontology#";
+
+/// The object that keeps the registry in the persistence scenario.
+const REGISTRY_OBJECT: &str = "urn:example:repository";
+
+/// The `rico` extension with a term list, registered by a distribution.
+fn rico_registration() -> Registration {
+    let terms = ["title", "hasCreator", "date"].map(str::to_string).to_vec();
+    Registration::extension(
+        "rico",
+        RICO_IRI,
+        Some(terms),
+        Registrant::Distribution("arkrim".to_string()),
+    )
+}
+
+/// The registry record of [`REGISTRY_OBJECT`].
+fn registry_file() -> FileRef {
+    FileRef::new(REGISTRY_OBJECT, NAMESPACES_MD)
+        .unwrap()
+        .with_record_path(NAMESPACES_MD)
+        .unwrap()
+}
+
+#[given("the namespace rico is registered with a term list")]
+fn rico_registered(world: &mut MetadataWorld) {
+    world.registry.register(rico_registration()).expect("rico");
+}
+
+#[given("the owner declares the custom namespace mine")]
+fn mine_declared(world: &mut MetadataWorld) {
+    let mine = Registration::custom("mine", "urn:uuid:0b5c4d1e-8a6f-4b21-9a0e-1f2d3c4b5a69");
+    world.registry.register(mine).expect("mine");
+}
+
+#[when(expr = "I author {word} {string} on a file")]
+fn author_extension(world: &mut MetadataWorld, curie: String, value: String) {
+    let registry = world.registry.clone();
+    world.write_result = Some(
+        parse_curie_with(&curie, &registry).and_then(|(namespace, term)| {
+            world
+                .ns_record
+                .set_registered(&registry, namespace, term, value.as_str())
+        }),
+    );
+}
+
+#[then(expr = "metadata.md should hold {word} {word} {string} in its own map")]
+fn holds_extension_map(world: &mut MetadataWorld, prefix: String, term: String, value: String) {
+    assert_eq!(world.write_result, Some(Ok(())));
+    let dir = fresh_object_dir();
+    let object = LocalObject::open(&dir, Some("urn:x:extension")).expect("open");
+    object.save(&world.ns_record).expect("commit metadata.md");
+    let committed = object
+        .read_file(METADATA_MD, None)
+        .expect("read metadata.md");
+    let text = String::from_utf8(committed).expect("UTF-8");
+    world.object_dir = Some(dir);
+    assert!(
+        text.contains(&format!("{prefix}:\n  {term}: {value}\n")),
+        "{text}"
+    );
+    assert_eq!(object.load().expect("reload"), world.ns_record);
+    world.inspected = text;
+}
+
+#[then("no dcterms statement should be written")]
+fn no_dcterms_statement(world: &mut MetadataWorld) {
+    let text = &world.inspected;
+    assert!(!text.is_empty(), "the committed metadata.md was read");
+    assert!(!text.contains("dcterms:"), "{text}");
+}
+
+#[when(expr = "I register the namespace {word}")]
+fn register_prefix(world: &mut MetadataWorld, prefix: String) {
+    let registration = Registration::extension(
+        &prefix,
+        "https://example.org/other#",
+        None,
+        Registrant::Owner,
+    );
+    world.registry_refusal = world.registry.register(registration).err();
+}
+
+#[when("I register rico again with another IRI")]
+fn register_rico_again(world: &mut MetadataWorld) {
+    let other =
+        Registration::extension("rico", "https://example.org/rico#", None, Registrant::Owner);
+    world.registry_refusal = world.registry.register(other).err();
+}
+
+#[then(expr = "the registration should be refused naming {word}")]
+fn registration_refused(world: &mut MetadataWorld, prefix: String) {
+    let refusal = world.registry_refusal.as_ref().expect("refused");
+    assert!(refusal.to_string().contains(&prefix), "{refusal}");
+    let registered = world.registry.get(&prefix);
+    assert!(registered.is_none_or(|r| r.iri() == RICO_IRI));
+}
+
+#[then("rico should keep its first IRI")]
+fn rico_keeps_iri(world: &mut MetadataWorld) {
+    assert_eq!(world.registry.get("rico").unwrap().iri(), RICO_IRI);
+}
+
+#[then(expr = "the write should be rejected naming {word}")]
+fn write_rejected_naming(world: &mut MetadataWorld, name: String) {
+    let outcome = world.write_result.as_ref().expect("a write");
+    let err = outcome.as_ref().expect_err("rejected");
+    assert!(err.to_string().contains(&name), "{err}");
+    assert!(world.ns_record.statements.is_empty());
+}
+
+#[then("the statement should round-trip unchanged through metadata.md, CSV, JSON and XMP")]
+fn extension_round_trips(world: &mut MetadataWorld) {
+    let record = &world.ns_record;
+    let registry = &world.registry;
+    assert_eq!(&from_markdown(&to_markdown(record)), record);
+    let mut csv = Record::default();
+    apply_csv_with(&to_csv("urn:x:1", record), registry, &mut csv).unwrap();
+    assert_eq!(&csv, record);
+    let digest = sha256_hex(b"bytes");
+    let target = JsonTarget {
+        object_id: "urn:x:1",
+        digest: &digest,
+    };
+    let mut json = Record::default();
+    apply_json_with(
+        &to_json("urn:x:1", &digest, record),
+        &target,
+        registry,
+        &mut json,
+    )
+    .unwrap();
+    assert_eq!(&json, record);
+    let xmp = from_xmp_with(&to_xmp_with(record, registry).unwrap(), registry);
+    assert_eq!(&xmp, record);
+}
+
+#[when("I commit the registry to an OCFL object")]
+fn commit_registry(world: &mut MetadataWorld) {
+    let scene = rig::Rig::memory();
+    let options = filesquid_metadata::store::ocfl::CommitOptions::default();
+    let store = scene.store();
+    let committed = complete_immediately(store.commit_registry_with(
+        &registry_file(),
+        &world.registry,
+        &options,
+    ))
+    .expect("ready");
+    assert!(matches!(committed, Ok(Some(_))), "{committed:?}");
+    world.registry_scene = Some(ImportScene(scene));
+}
+
+#[then("a store opened afresh over that object should recover the registration")]
+fn registry_recovered(world: &mut MetadataWorld) {
+    let scene = &world.registry_scene.as_ref().expect("committed").0;
+    let fresh = scene.store();
+    let read = complete_immediately(fresh.read_registry(&registry_file())).expect("ready");
+    assert_eq!(read.expect("read"), world.registry);
+}
+
+#[then("the registry object should pass the OCFL validator")]
+fn registry_object_valid(world: &mut MetadataWorld) {
+    let scene = &world.registry_scene.as_ref().expect("committed").0;
+    let root = rig::object_root(REGISTRY_OBJECT);
+    let report = complete_immediately(validate_object(&scene.storage, &root))
+        .expect("ready")
+        .expect("validate");
+    assert!(report.is_valid(), "{:?}", report.errors());
+}
+
+#[given("an OCFL object whose registry holds rico")]
+fn object_with_rico_registry(world: &mut MetadataWorld) {
+    let dir = fresh_object_dir();
+    let object = LocalObject::open(&dir, Some("urn:x:registry")).expect("open");
+    let mut registry = NamespaceRegistry::default();
+    registry.register(rico_registration()).expect("rico");
+    object.save_registry(&registry).expect("save registry");
+    world.object_dir = Some(dir);
+}
+
+#[when(expr = "I validate {word} with the CLI")]
+fn validate_with_cli(world: &mut MetadataWorld, curie: String) {
+    let dir = world.object_dir.as_ref().expect("object dir");
+    let args = [
+        "validate".to_string(),
+        curie,
+        "--object".to_string(),
+        dir.to_string_lossy().into_owned(),
+    ];
+    world.cli_code = Some(filesquid_metadata::cli::run(&args).expect("validate runs"));
+}
+
+#[then("validate should fail")]
+fn validate_failed(world: &mut MetadataWorld) {
+    assert_eq!(world.cli_code, Some(1));
+}
+
+#[then("validate should succeed")]
+fn validate_succeeded(world: &mut MetadataWorld) {
+    assert_eq!(world.cli_code, Some(0));
 }
 
 #[tokio::main]

@@ -24,6 +24,7 @@ pub mod file_ref;
 pub mod import;
 pub mod json;
 pub mod markdown;
+pub mod namespace;
 pub mod raw;
 pub mod record;
 pub mod store;
@@ -32,7 +33,7 @@ pub mod xmp;
 use thiserror::Error;
 
 /// Namespaces FileSquid and independent callers display on every pair.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MetadataNamespace {
     /// Technical camera/file observations.
     Exif,
@@ -40,9 +41,25 @@ pub enum MetadataNamespace {
     Dcterms,
     /// Schema.org overflow after confirmation.
     SchemaOrg,
+    /// A namespace of the [`namespace::NamespaceRegistry`], by its prefix
+    /// (MD-S-012). It is never mapped onto `dcterms:`.
+    Extension(String),
 }
 
-/// Errors from the `/terms/` register.
+impl MetadataNamespace {
+    /// The prefix shown on every pair and used in `metadata.md`, CSV, JSON
+    /// and the CLI (`dcterms`, `exif`, `schema` or the extension prefix).
+    pub fn prefix(&self) -> &str {
+        match self {
+            MetadataNamespace::Exif => "exif",
+            MetadataNamespace::Dcterms => "dcterms",
+            MetadataNamespace::SchemaOrg => "schema",
+            MetadataNamespace::Extension(prefix) => prefix,
+        }
+    }
+}
+
+/// Errors from the `/terms/` register and the namespace registry.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum MetadataError {
     /// Local name is not an ISO 15836-2 `/terms/` property.
@@ -51,6 +68,19 @@ pub enum MetadataError {
     /// Collection-domain accrual property on a file.
     #[error("accrual terms MUST NOT be authored on a file")]
     AccrualOnFile,
+    /// The prefix is not a built-in namespace and is not registered
+    /// (MD-S-012).
+    #[error("namespace prefix {0} is not registered")]
+    UnregisteredNamespace(String),
+    /// The term is not in the registered namespace's term list, or is not a
+    /// valid term name.
+    #[error("{prefix}:{term} is not a term of the registered namespace {prefix}")]
+    UnknownExtensionTerm {
+        /// The registered prefix.
+        prefix: String,
+        /// The refused term.
+        term: String,
+    },
 }
 
 const DCTERMS: &[&str] = &[

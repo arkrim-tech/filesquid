@@ -1,4 +1,5 @@
-//! Metadata commands of the `fsquid` CLI: extract, get, set, export, import, validate.
+//! Metadata commands of the `fsquid` CLI: extract, get, set, export, import,
+//! validate and namespace.
 //!
 //! The `filesquid-cli` crate builds the only CLI binary, `fsquid`, and routes
 //! metadata commands here through [`run`]. This module ships no binary of its own.
@@ -11,15 +12,15 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
-use crate::csv::{apply_csv, to_csv};
+use crate::csv::{apply_csv_with, to_csv};
 use crate::extract::{extract_from_bytes, extract_from_reader, Extracted};
 use crate::file_ref::FileRef;
-use crate::json::{apply_json, to_json, JsonTarget};
-use crate::record::{parse_curie, Record};
-use crate::reject_file_dcterms_term;
+use crate::json::{apply_json_with, to_json, JsonTarget};
+use crate::namespace::{NamespaceRegistry, Registrant, Registration};
+use crate::record::{parse_curie_with, Record};
 use crate::store::ocfl::LocalObject;
 use crate::store::StoreError;
-use crate::xmp::{from_xmp, to_xmp};
+use crate::xmp::{from_xmp_with, to_xmp_with};
 use filesquid_ocfl::VersionNum;
 
 /// Usage text for the metadata commands of `fsquid`.
@@ -38,13 +39,24 @@ Commands:
   set <prefix:term> <val> Set a statement and commit metadata.md
   export csv|xmp|json <path>  Write CSV, XMP or JSON sidecar interchange
   import csv|xmp|json <path>  Read CSV, XMP or JSON sidecar into metadata.md
-  validate <prefix:term>  Check a dcterms: term against the /terms/ register
-                          (always run as `fsquid metadata validate`)
+  validate [prefix:term]  Check a term against the /terms/ register and the
+                          namespace registry, or, without a term, every
+                          statement of metadata.md; names each unregistered
+                          prefix (always run as `fsquid metadata validate`)
+  namespace register <prefix> <iri> [--terms a,b,...] [--custom]
+                          Register an extension namespace (optional term
+                          list) or, with --custom, declare a custom namespace
+                          of free keys
+  namespace list          Print the registered namespaces
   help                    Show this help
 
 --object is an OCFL object directory (default `.`). --id names the object:
 required to create one in a directory without an object, and checked
 against an existing object's identifier.
+
+--registry is the OCFL object directory that keeps the namespace registry
+(namespaces.md); without it, the registry is the one in --object.
+dcterms:, dc:, schema: and exif: are built in and cannot be registered.
 
 JSON sidecars also take --file <logical-path>: the logical file of the
 object's head whose SHA-256 digest binds the sidecar with the object
@@ -57,15 +69,31 @@ versions are never modified.
 
 /// Metadata command names, as routed by `fsquid`.
 pub const COMMANDS: &[&str] = &[
-    "extract", "get", "set", "export", "import", "validate", "help",
+    "extract",
+    "get",
+    "set",
+    "export",
+    "import",
+    "validate",
+    "namespace",
+    "help",
 ];
 
 /// Flags that take a value for every command.
-const OBJECT_FLAGS: &[&str] = &["--object", "--id"];
+const OBJECT_FLAGS: &[&str] = &["--object", "--id", "--registry"];
 
 /// Flags that take a value for `extract`, `export` and `import`, which also
 /// name a logical file of the object.
-const INTERCHANGE_FLAGS: &[&str] = &["--object", "--id", "--file"];
+const INTERCHANGE_FLAGS: &[&str] = &["--object", "--id", "--registry", "--file"];
+
+/// Flags that take a value for `namespace`.
+const NAMESPACE_FLAGS: &[&str] = &["--object", "--id", "--registry", "--terms"];
+
+/// Every flag that takes a value; none is ever taken as another's value.
+const VALUE_FLAGS: &[&str] = &["--object", "--id", "--registry", "--file", "--terms"];
+
+/// The flag that declares a custom namespace.
+const CUSTOM_FLAG: &str = "--custom";
 
 /// Most links of an error's source chain the CLI prints.
 const MAX_ERROR_SOURCES: usize = 8;
@@ -92,6 +120,7 @@ pub fn run(args: &[String]) -> Result<i32, String> {
         "set" => cmd_set(rest),
         "export" => cmd_export(rest),
         "import" => cmd_import(rest),
+        "namespace" => cmd_namespace(rest),
         _ => unreachable!(),
     }
 }
@@ -108,7 +137,7 @@ fn flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
     args.windows(2)
         .find(|w| w[0] == flag)
         .map(|w| w[1].as_str())
-        .filter(|value| !INTERCHANGE_FLAGS.contains(value))
+        .filter(|value| !VALUE_FLAGS.contains(value))
 }
 
 /// Return the value of `flag`, refusing a flag given without one.
@@ -198,20 +227,50 @@ fn positional<'a>(args: &'a [String], flags: &[&str]) -> Vec<&'a str> {
     out
 }
 
+/// The namespace registry the command uses: the one in `--registry`, else
+/// the one `object` keeps (file I/O).
+fn load_registry(args: &[String], object: &LocalObject) -> Result<NamespaceRegistry, String> {
+    match checked_flag(args, "--registry")? {
+        Some(dir) => load_named_registry(dir),
+        None => object.load_registry().map_err(|e| error_text(&e)),
+    }
+}
+
+/// The registry kept by the object in `dir`, which must exist (file I/O).
+fn load_named_registry(dir: &str) -> Result<NamespaceRegistry, String> {
+    let registry = LocalObject::open(Path::new(dir), None)
+        .map_err(|e| format!("--registry {dir}: {}", error_text(&e)))?;
+    registry.load_registry().map_err(|e| error_text(&e))
+}
+
+/// The registry `validate <term>` checks against: `--registry`, else the
+/// one in `--object`, else none, so a built-in term validates without an
+/// object (file I/O).
+fn validate_registry(rest: &[String]) -> Result<NamespaceRegistry, String> {
+    let object = checked_flag(rest, "--object")?;
+    if let Some(dir) = checked_flag(rest, "--registry")? {
+        return load_named_registry(dir);
+    }
+    if object.is_none() {
+        return Ok(NamespaceRegistry::default());
+    }
+    open_object(rest)?
+        .load_registry()
+        .map_err(|e| error_text(&e))
+}
+
 fn validate_args(rest: &[String]) -> Result<i32, String> {
     let pos = positional(rest, OBJECT_FLAGS);
     let Some(curie) = pos.first() else {
-        return Err("validate requires a term such as dcterms:title".into());
+        return validate_record(rest);
     };
-    let Some((prefix, term)) = curie.split_once(':') else {
+    if !curie.contains(':') {
         return Err("validate expects prefix:term".into());
-    };
-    if prefix != "dcterms" {
-        return Err("validate currently checks dcterms: terms".into());
     }
-    match reject_file_dcterms_term(term) {
-        Ok(()) => {
-            println!("{curie} is a valid file dcterms term");
+    let registry = validate_registry(rest)?;
+    match parse_curie_with(curie, &registry) {
+        Ok(_) => {
+            println!("{curie} is a valid term");
             Ok(0)
         }
         Err(e) => {
@@ -219,6 +278,33 @@ fn validate_args(rest: &[String]) -> Result<i32, String> {
             Ok(1)
         }
     }
+}
+
+/// Check every statement of the object's record against the registry and
+/// report each unregistered prefix or refused term; exit code 1 if any.
+fn validate_record(rest: &[String]) -> Result<i32, String> {
+    let object = open_object(rest)?;
+    let registry = load_registry(rest, &object)?;
+    let (_, record) = load(&object)?;
+    let mut refused = 0;
+    for statement in &record.statements {
+        let mut check = Record::default();
+        let outcome = check.set_registered(
+            &registry,
+            statement.namespace.clone(),
+            &statement.term,
+            statement.value.as_str(),
+        );
+        if let Err(e) = outcome {
+            eprintln!("{}: {e}", statement.curie());
+            refused += 1;
+        }
+    }
+    if refused > 0 {
+        return Ok(1);
+    }
+    println!("every statement is in a built-in or registered namespace");
+    Ok(0)
 }
 
 /// Open `path` and extract its embedded tags into `record` (file I/O).
@@ -306,10 +392,13 @@ fn cmd_set(rest: &[String]) -> Result<i32, String> {
         return Err("set requires prefix:term and a value".into());
     };
     let value = pos.get(1).copied().unwrap_or("");
-    let (ns, term) = parse_curie(curie).map_err(|e| e.to_string())?;
     let object = open_object(rest)?;
+    let registry = load_registry(rest, &object)?;
+    let (ns, term) = parse_curie_with(curie, &registry).map_err(|e| e.to_string())?;
     let (base, mut record) = load(&object)?;
-    record.set(ns, term, value).map_err(|e| e.to_string())?;
+    record
+        .set_registered(&registry, ns, term, value)
+        .map_err(|e| e.to_string())?;
     println!("set {curie}: {}", commit(&object, base.as_ref(), &record)?);
     Ok(0)
 }
@@ -351,7 +440,7 @@ fn render_export(
 ) -> Result<String, String> {
     match fmt {
         "csv" => Ok(to_csv(object.object_id(), record)),
-        "xmp" => Ok(to_xmp(record)),
+        "xmp" => to_xmp_with(record, &load_registry(rest, object)?).map_err(|e| e.to_string()),
         "json" => {
             let binding = read_json_binding(rest, object, base)?;
             Ok(to_json(&binding.object_id, &binding.digest, record))
@@ -376,10 +465,10 @@ fn cmd_export(rest: &[String]) -> Result<i32, String> {
 }
 
 /// Merge XMP statements into `record`.
-fn apply_xmp(text: &str, record: &mut Record) -> Result<(), String> {
-    for s in from_xmp(text).statements {
+fn apply_xmp(text: &str, registry: &NamespaceRegistry, record: &mut Record) -> Result<(), String> {
+    for s in from_xmp_with(text, registry).statements {
         record
-            .set(s.namespace, &s.term, s.value)
+            .set_registered(registry, s.namespace, &s.term, s.value)
             .map_err(|e| e.to_string())?;
     }
     Ok(())
@@ -394,16 +483,17 @@ fn apply_import(
     base: Option<&VersionNum>,
     record: &mut Record,
 ) -> Result<(), String> {
+    let registry = load_registry(rest, object)?;
     match fmt {
-        "csv" => apply_csv(text, record).map_err(|e| format!("{e:?}")),
-        "xmp" => apply_xmp(text, record),
+        "csv" => apply_csv_with(text, &registry, record).map_err(|e| format!("{e:?}")),
+        "xmp" => apply_xmp(text, &registry, record),
         "json" => {
             let binding = read_json_binding(rest, object, base)?;
             let target = JsonTarget {
                 object_id: &binding.object_id,
                 digest: &binding.digest,
             };
-            apply_json(text, &target, record).map_err(|e| e.to_string())
+            apply_json_with(text, &target, &registry, record).map_err(|e| e.to_string())
         }
         _ => Err("import format must be csv, xmp or json".into()),
     }
@@ -422,5 +512,88 @@ fn cmd_import(rest: &[String]) -> Result<i32, String> {
     apply_import(fmt, &text, rest, &object, base.as_ref(), &mut record)?;
     let outcome = commit(&object, base.as_ref(), &record)?;
     println!("imported {fmt} from {path}: {outcome}");
+    Ok(0)
+}
+
+/// `namespace register|list`: change or print the namespace registry.
+fn cmd_namespace(rest: &[String]) -> Result<i32, String> {
+    let pos = positional(rest, NAMESPACE_FLAGS);
+    let pos: Vec<&str> = pos.into_iter().filter(|arg| *arg != CUSTOM_FLAG).collect();
+    match (pos.first().copied(), pos.len()) {
+        (Some("register"), 3) => namespace_register(rest, pos[1], pos[2]),
+        (Some("list"), 1) => namespace_list(rest),
+        _ => Err("namespace takes exactly register <prefix> <iri>, or list".into()),
+    }
+}
+
+/// Open the object that keeps the registry: `--registry`, else `--object`
+/// (file I/O).
+fn open_registry_object(rest: &[String]) -> Result<LocalObject, String> {
+    let Some(dir) = checked_flag(rest, "--registry")? else {
+        return open_object(rest);
+    };
+    let id = checked_flag(rest, "--id")?;
+    LocalObject::open(Path::new(dir), id)
+        .map_err(|e| format!("--registry {dir}: {}", error_text(&e)))
+}
+
+/// The registration `namespace register` describes.
+fn registration_from(rest: &[String], prefix: &str, iri: &str) -> Result<Registration, String> {
+    let terms = checked_flag(rest, "--terms")?.map(|list| {
+        list.split(',')
+            .map(|term| term.trim().to_string())
+            .collect()
+    });
+    if !rest.iter().any(|arg| arg == CUSTOM_FLAG) {
+        return Ok(Registration::extension(
+            prefix,
+            iri,
+            terms,
+            Registrant::Owner,
+        ));
+    }
+    if terms.is_some() {
+        return Err(
+            "a custom namespace has free keys; --terms cannot be used with --custom".into(),
+        );
+    }
+    Ok(Registration::custom(prefix, iri))
+}
+
+/// Register one namespace and commit the registry.
+fn namespace_register(rest: &[String], prefix: &str, iri: &str) -> Result<i32, String> {
+    let registration = registration_from(rest, prefix, iri)?;
+    let object = open_registry_object(rest)?;
+    let mut registry = object.load_registry().map_err(|e| error_text(&e))?;
+    registry
+        .register(registration)
+        .map_err(|e| format!("{prefix}: {e}"))?;
+    let version = object
+        .save_registry(&registry)
+        .map_err(|e| error_text(&e))?;
+    match version {
+        Some(version) => println!("registered {prefix}: committed {version}"),
+        None => println!("{prefix} is already registered; no version committed"),
+    }
+    Ok(0)
+}
+
+/// Print each registration: prefix, IRI, kind and term count.
+fn namespace_list(rest: &[String]) -> Result<i32, String> {
+    let object = open_registry_object(rest)?;
+    let registry = object.load_registry().map_err(|e| error_text(&e))?;
+    for registration in registry.registrations() {
+        let terms = registration
+            .terms()
+            .map_or("any terms".to_string(), |terms| {
+                format!("{} terms", terms.len())
+            });
+        println!(
+            "{} {} {:?} {terms}",
+            registration.prefix(),
+            registration.iri(),
+            registration.kind()
+        );
+    }
     Ok(0)
 }
