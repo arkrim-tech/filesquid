@@ -4,28 +4,57 @@
 use super::model::{Job, JobError, JobState, Lease};
 use super::MAX_CHECKPOINT_BYTES;
 
-/// Lease `job` to `holder` until `now_ms + ttl_ms`, raising its fencing number and attempt
-/// count. A finished job, and one whose unexpired lease another worker holds, is refused.
+/// Error code of a job whose source changed since it was submitted.
+pub const SOURCE_CHANGED: &str = "source_changed";
+
+/// Start `job` for `holder` working on `source`, in one step: a finished job, and one under
+/// a live lease (whoever holds it, the same holder included), is refused; a job whose
+/// source differs from `source` is failed (`source_changed`) without ever running;
+/// otherwise the job is leased until `now_ms + ttl_ms`, its fencing number and attempt
+/// count raised.
 ///
 /// # Errors
 /// [`JobError::Conflict`] (`job_finished` or `lease_held`).
-pub fn acquire(mut job: Job, holder: &str, now_ms: i64, ttl_ms: i64) -> Result<Job, JobError> {
+pub fn start(
+    job: Job,
+    (holder, source): (&str, &str),
+    now_ms: i64,
+    ttl_ms: i64,
+) -> Result<Job, JobError> {
     if job.state.is_finished() {
         return Err(JobError::Conflict("job_finished"));
     }
-    if lease_live(&job, now_ms) && job.holder.as_deref() != Some(holder) {
+    if lease_live(&job, now_ms) {
         return Err(JobError::Conflict("lease_held"));
     }
+    match job.source == source {
+        true => Ok(acquire(job, holder, now_ms, ttl_ms)),
+        false => Ok(fail_source(job, now_ms)),
+    }
+}
+
+/// Lease `job` to `holder` until `now_ms + ttl_ms`.
+fn acquire(mut job: Job, holder: &str, now_ms: i64, ttl_ms: i64) -> Job {
     job.state = JobState::Running;
     job.fence += 1;
     job.attempts = job.attempts.saturating_add(1);
     job.holder = Some(holder.to_string());
     job.lease_expires_ms = Some(now_ms.saturating_add(ttl_ms));
     job.updated_ms = now_ms;
-    Ok(job)
+    job
 }
 
-/// The lease a worker holds on `job` after [`acquire`]. Pure.
+/// Fail `job` because its source changed; it never runs and its checkpoint is not reused.
+fn fail_source(mut job: Job, now_ms: i64) -> Job {
+    job.state = JobState::Failed;
+    job.error_code = Some(SOURCE_CHANGED.to_string());
+    job.holder = None;
+    job.lease_expires_ms = None;
+    job.updated_ms = now_ms;
+    job
+}
+
+/// The lease a worker holds on `job` after [`start`]. Pure.
 ///
 /// # Errors
 /// [`JobError::Fenced`] when `job` is not leased.
@@ -66,6 +95,18 @@ pub fn checkpoint(
     Ok(job)
 }
 
+/// Renew `lease` until `now_ms + ttl_ms` without changing the checkpoint: what a worker
+/// does while one long unit of work runs.
+///
+/// # Errors
+/// [`JobError::Fenced`] when the lease is no longer the job's.
+pub fn renew(mut job: Job, lease: &Lease, now_ms: i64, ttl_ms: i64) -> Result<Job, JobError> {
+    check_lease(&job, lease, now_ms)?;
+    job.lease_expires_ms = Some(now_ms.saturating_add(ttl_ms));
+    job.updated_ms = now_ms;
+    Ok(job)
+}
+
 /// Give the lease back at quit: the job is pending again with its checkpoint kept.
 ///
 /// # Errors
@@ -79,10 +120,11 @@ pub fn suspend(mut job: Job, lease: &Lease, now_ms: i64) -> Result<Job, JobError
     Ok(job)
 }
 
-/// Finish the job under `lease` as `state` (completed, failed or cancelled) with
-/// `error_code`.
+/// Finish the job under `lease` as `state`, a finished state (completed, failed or
+/// cancelled), with `error_code`.
 ///
 /// # Errors
+/// [`JobError::Conflict`] (`state_not_final`) for a state that is not finished;
 /// [`JobError::Fenced`] when the lease is no longer the job's.
 pub fn finish(
     mut job: Job,
@@ -90,6 +132,9 @@ pub fn finish(
     (state, error_code): (JobState, Option<&str>),
     now_ms: i64,
 ) -> Result<Job, JobError> {
+    if !state.is_finished() {
+        return Err(JobError::Conflict("state_not_final"));
+    }
     check_lease(&job, lease, now_ms)?;
     job.state = state;
     job.error_code = error_code.map(str::to_string);
@@ -117,9 +162,10 @@ fn lease_live(job: &Job, now_ms: i64) -> bool {
     job.state == JobState::Running && job.lease_expires_ms.is_some_and(|end| end > now_ms)
 }
 
-/// Refuse a write under `lease` unless it is the job's current, unexpired lease.
+/// Refuse a write under `lease` unless it is this job's current, unexpired lease.
 fn check_lease(job: &Job, lease: &Lease, now_ms: i64) -> Result<(), JobError> {
-    let current = job.state == JobState::Running
+    let current = lease.job_id == job.id
+        && job.state == JobState::Running
         && job.fence == lease.fence
         && job.holder.as_deref() == Some(lease.holder.as_str());
     match current && lease_live(job, now_ms) {

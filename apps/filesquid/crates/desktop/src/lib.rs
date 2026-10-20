@@ -54,7 +54,7 @@ use filesquid_api::auth::{record_token_issue, Authoriser, LaunchToken, Principal
 use filesquid_api::history::backfill::{Backfill, BACKFILL_OPERATION};
 use filesquid_api::history::{HostFacts, OcflRootsHistory, ProvenanceContext};
 use filesquid_api::host::{HostIdentity, NotEnrolled};
-use filesquid_api::jobs::{Job, JobError, Jobs};
+use filesquid_api::jobs::{JobError, Jobs};
 use filesquid_api::journal::{JournalEntry, Outcome};
 use filesquid_api::journal_writer::JournalSender;
 use filesquid_api::local_library::{LocalLibraryService, RepairLedger};
@@ -548,13 +548,14 @@ fn start_monitor(
     );
     install_history_source(&state, catalog.clone()).inspect_err(|_| host.stop())?;
     let jobs = durable_jobs::open_jobs(&data_dir, &host).inspect_err(|_| host.stop())?;
-    let backfill = BackfillTask {
-        recovered: durable_jobs::recover_jobs(&jobs),
-        jobs: jobs.clone(),
-        backfill: history_backfill(&host, &installation),
-        catalog: catalog.clone(),
-        source: durable_jobs::backfill_source(&installation),
-    };
+    let backfill = durable_jobs::recover_jobs(&jobs)
+        .ok()
+        .map(|_| BackfillTask {
+            jobs: jobs.clone(),
+            backfill: history_backfill(&host, &installation),
+            catalog: catalog.clone(),
+            source: durable_jobs::backfill_source(&installation),
+        });
     app.manage(DesktopJobs(jobs));
     app.manage(DesktopInstallation(installation));
     app.manage(DesktopCatalog(catalog.clone()));
@@ -566,7 +567,7 @@ fn start_monitor(
     let forwarder = Arc::new(event_channel::register_forwarder(host.monitor().registry()));
     let stop = Arc::new(AtomicBool::new(false));
     spawn_ticker(host.clone(), stop.clone());
-    let backfill = spawn_backfill(backfill, stop.clone());
+    let backfill = backfill.and_then(|task| spawn_backfill(task, stop.clone()));
     app.manage(DesktopMonitor {
         host,
         forwarder,
@@ -583,7 +584,6 @@ const BACKFILL_STOP_WAIT: Duration = Duration::from_secs(10);
 /// The history backfill job one launch runs ([`durable_jobs::run_backfill_job`]).
 struct BackfillTask {
     jobs: Jobs,
-    recovered: Vec<Job>,
     backfill: Backfill,
     catalog: Arc<SqliteCatalog>,
     source: String,
@@ -619,7 +619,6 @@ fn run_backfill_task(
 ) -> Result<durable_jobs::BackfillJobRun, JobError> {
     durable_jobs::run_backfill_job(
         &task.jobs,
-        &task.recovered,
         &task.catalog,
         &task.backfill,
         &task.source,

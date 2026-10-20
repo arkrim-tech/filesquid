@@ -92,14 +92,30 @@ fn unfinished_jobs_are_listed_oldest_first_and_bounded() {
     let mut done = job("d", 1);
     done.state = JobState::Completed;
     store.insert(&done).unwrap();
+    let mut running = job("e", 6);
+    running.state = JobState::Running;
+    running.holder = Some("launch-1".into());
+    running.lease_expires_ms = Some(100);
+    store.insert(&running).unwrap();
+    let mut other = job("f", 2);
+    other.kind = "import".into();
+    store.insert(&other).unwrap();
+    let kinds: Vec<String> = store
+        .unfinished_of("import", 10)
+        .unwrap()
+        .into_iter()
+        .map(|j| j.id)
+        .collect();
+    assert_eq!(kinds, ["f"]);
     let ids: Vec<String> = store
         .unfinished(10)
         .unwrap()
         .into_iter()
         .map(|j| j.id)
         .collect();
-    assert_eq!(ids, ["c", "a", "b"]);
+    assert_eq!(ids, ["f", "c", "e", "a", "b"], "running jobs included");
     assert_eq!(store.unfinished(2).unwrap().len(), 2);
+    assert!(store.unfinished(0).unwrap().is_empty());
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
 
@@ -116,5 +132,62 @@ fn the_job_store_shares_the_owner_only_operational_database() {
             .mode();
         assert_eq!(mode & 0o777, 0o600);
     }
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+/// Cubic round 1: two launches inserting the same job ID at once: exactly one wins.
+#[test]
+fn two_connections_inserting_one_job_id_store_it_once() {
+    let dir = dir("race");
+    let path = dir.join(JOURNAL_FILE);
+    drop(open(&dir));
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let outcomes: Vec<Result<(), JobError>> = (0..2)
+        .map(|n| {
+            let (path, barrier) = (path.clone(), barrier.clone());
+            std::thread::spawn(move || {
+                let store = SqliteJobs::open(&path).expect("store");
+                barrier.wait();
+                store.insert(&job("same", 10 + n))
+            })
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .map(|handle| handle.join().expect("thread"))
+        .collect();
+    assert_eq!(
+        outcomes.iter().filter(|o| o.is_ok()).count(),
+        1,
+        "{outcomes:?}"
+    );
+    assert!(outcomes.contains(&Err(JobError::Conflict("job_exists"))));
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+/// Cubic round 1: a count SQLite cannot hold is refused, never truncated.
+#[test]
+fn a_count_past_the_signed_range_is_refused() {
+    let dir = dir("range");
+    let store = open(&dir);
+    let mut huge = job("j1", 10);
+    huge.fence = u64::MAX;
+    assert!(matches!(store.insert(&huge), Err(JobError::Failed(_))));
+    assert_eq!(store.get("j1").unwrap(), None);
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+/// Cubic round 1: an update may not change the job's ID.
+#[test]
+fn an_update_that_changes_the_id_stores_nothing() {
+    let dir = dir("rename");
+    let store = open(&dir);
+    store.insert(&job("j1", 10)).unwrap();
+    let renamed = store.update("j1", &mut |mut j| {
+        j.id = "j2".into();
+        Ok(j)
+    });
+    assert!(matches!(renamed, Err(JobError::Failed(_))));
+    assert_eq!(store.get("j2").unwrap(), None);
+    assert_eq!(store.get("j1").unwrap(), Some(job("j1", 10)));
     std::fs::remove_dir_all(dir).expect("cleanup");
 }

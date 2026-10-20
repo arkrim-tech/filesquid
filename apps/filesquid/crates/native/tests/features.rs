@@ -262,7 +262,7 @@ fn resumed_with(w: &mut NativeWorld, done: String) {
 fn crashed_job(w: &mut NativeWorld) {
     let rig = w.jobs.as_mut().expect("rig");
     let running = rig.start_new("launch-1", "s");
-    std::mem::forget(running);
+    drop(running);
 }
 
 #[when(expr = "the lease expires and the host recovers its jobs")]
@@ -307,7 +307,7 @@ fn take_over(w: &mut NativeWorld) {
         .launch("launch-2")
         .start(&rig.job_id, "s")
         .expect("taken over");
-    std::mem::forget(replacement);
+    drop(replacement);
 }
 
 #[then(expr = "a checkpoint from the expired worker should be refused as {string}")]

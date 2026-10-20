@@ -1,9 +1,10 @@
 //! [`Jobs`]: the service a host runs durable jobs through, and [`RunningJob`], one leased
 //! run. Every state change and every refusal is journaled through the host's bounded
-//! journal queue with the job ID, the operation ID and an error code only; a running job is
-//! a process in the registry.
+//! journal queue with the job ID, the operation ID (absent only for an unknown job ID) and
+//! an error code only; a running job is a process in the registry.
 
 use super::model::{Job, JobError, JobSpec, JobState, Lease};
+use super::rules::SOURCE_CHANGED;
 use super::store::JobStore;
 use super::{rules, JOB_LEASE_TTL_MS, MAX_RECOVERED_JOBS};
 use super::{
@@ -14,9 +15,9 @@ use crate::journal::{now_ms, JournalEntry, Level, Outcome};
 use crate::journal_writer::JournalSender;
 use crate::library::mint_uuid_v4;
 use crate::registry::{Clock, ProcessHandle, ProcessRegistry, ProcessSpec};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
-/// Heartbeat timeout of a running job's process: a run that neither checkpoints nor
+/// Heartbeat timeout of a running job's process: a run that neither checkpoints, renews nor
 /// finishes for this long is stalled.
 const JOB_HEARTBEAT_TIMEOUT_MS: i64 = 60_000;
 
@@ -77,39 +78,34 @@ impl Jobs {
         self.ttl_ms
     }
 
-    /// Store a new pending job for `spec` and journal `job.created` (store I/O).
+    /// Store a new pending job for `spec` and journal `job.created`; a job the store
+    /// refuses is journaled as `job.refused` (store I/O).
     ///
     /// # Errors
     /// [`JobError::Unavailable`] when no ID can be minted, or a store failure.
     pub fn submit(&self, spec: JobSpec) -> Result<Job, JobError> {
         let id = mint_uuid_v4().map_err(|err| JobError::Unavailable(err.to_string()))?;
-        let now = (self.clock)();
-        let job = Job {
-            id,
-            kind: spec.kind,
-            operation_id: spec.operation_id,
-            source: spec.source,
-            state: JobState::Pending,
-            checkpoint: None,
-            done: 0,
-            total: None,
-            attempts: 0,
-            fence: 0,
-            holder: None,
-            lease_expires_ms: None,
-            created_ms: now,
-            updated_ms: now,
-            error_code: None,
-        };
-        self.store.insert(&job)?;
+        let job = new_job(id, spec, (self.clock)());
+        self.store
+            .insert(&job)
+            .inspect_err(|err| self.journal_refusal(&job.id, Some(&job.operation_id), err))?;
         self.journal_job(&job, JOB_CREATED, Outcome::Succeeded, None);
         Ok(job)
     }
 
+    /// The unfinished jobs of `kind`, at most `limit`, oldest first: how a host finds its own
+    /// job even when more than [`MAX_RECOVERED_JOBS`] others wait (store I/O).
+    ///
+    /// # Errors
+    /// A store failure.
+    pub fn unfinished_of(&self, kind: &str, limit: usize) -> Result<Vec<Job>, JobError> {
+        self.store.unfinished_of(kind, limit)
+    }
+
     /// The bounded launch-time reconciliation: release the expired lease of every run a
-    /// crash left (journaled as `job.recovered`) and answer at most [`MAX_RECOVERED_JOBS`]
-    /// unfinished jobs, oldest first. Reads jobs only, never the media they cover (store
-    /// I/O).
+    /// crash left (journaled as `job.recovered` when this call released it) and answer at
+    /// most [`MAX_RECOVERED_JOBS`] unfinished jobs, oldest first. Reads jobs only, never the
+    /// media they cover (store I/O).
     ///
     /// # Errors
     /// A store failure.
@@ -121,51 +117,48 @@ impl Jobs {
             .collect()
     }
 
-    /// The job `job` with a crashed run's expired lease released and journaled.
+    /// The job `job` with a crashed run's expired lease released, journaled only when this
+    /// update made that change.
     fn release_expired(&self, job: Job, now: i64) -> Result<Job, JobError> {
         if rules::expire(job.clone(), now) == job {
             return Ok(job);
         }
-        let released = self
-            .store
-            .update(&job.id, &mut |current| Ok(rules::expire(current, now)))?;
-        self.journal_job(&released, JOB_RECOVERED, Outcome::Resumed, None);
-        Ok(released)
+        let mut released = false;
+        let stored = self.store.update(&job.id, &mut |current| {
+            let expired = rules::expire(current.clone(), now);
+            released = expired != current;
+            Ok(expired)
+        })?;
+        if released {
+            self.journal_job(&stored, JOB_RECOVERED, Outcome::Resumed, None);
+        }
+        Ok(stored)
     }
 
-    /// Lease job `id`, check that its source is still `source`, register its run and
-    /// journal `job.started` (`resumed` when it has a checkpoint). A changed source fails
-    /// the job (`source_changed`): nothing of its checkpoint is reused (store I/O).
+    /// Start job `id` for `source` in one atomic step: a job whose source changed is failed
+    /// (`source_changed`, nothing of its checkpoint reused); otherwise it is leased, its run
+    /// registered and `job.started` journaled (`resumed` when it has a checkpoint) (store
+    /// I/O).
     ///
     /// # Errors
     /// [`JobError::NotFound`], [`JobError::Conflict`], [`JobError::SourceChanged`] or a
-    /// store failure; each refusal is journaled.
+    /// store failure; each is journaled.
     pub fn start(&self, id: &str, source: &str) -> Result<RunningJob, JobError> {
         let now = (self.clock)();
         let (holder, ttl) = (self.holder.as_str(), self.ttl_ms);
-        let leased = self
-            .store
-            .update(id, &mut |job| rules::acquire(job, holder, now, ttl))
-            .inspect_err(|err| self.journal_refusal(id, None, err))?;
-        let lease = rules::lease_of(&leased)?;
-        if leased.source != source {
-            return Err(self.fail_changed_source(&leased, &lease));
+        let mut operation_id = None;
+        let updated = self.store.update(id, &mut |job| {
+            operation_id = Some(job.operation_id.clone());
+            rules::start(job, (holder, source), now, ttl)
+        });
+        let started =
+            updated.inspect_err(|err| self.journal_refusal(id, operation_id.as_deref(), err))?;
+        if started.state == JobState::Failed {
+            self.journal_job(&started, JOB_FAILED, Outcome::Failed, Some(SOURCE_CHANGED));
+            return Err(JobError::SourceChanged);
         }
-        Ok(self.run(leased, lease))
-    }
-
-    /// Fail a leased job whose source changed and journal it.
-    fn fail_changed_source(&self, job: &Job, lease: &Lease) -> JobError {
-        let now = (self.clock)();
-        let code = JobError::SourceChanged.error_code();
-        let finished = (JobState::Failed, Some(code));
-        match self.store.update(&job.id, &mut |current| {
-            rules::finish(current, lease, finished, now)
-        }) {
-            Ok(failed) => self.journal_job(&failed, JOB_FAILED, Outcome::Failed, Some(code)),
-            Err(err) => self.journal_refusal(&job.id, Some(&job.operation_id), &err),
-        }
-        JobError::SourceChanged
+        let lease = rules::lease_of(&started)?;
+        Ok(self.run(started, lease))
     }
 
     /// Register the leased `job` as a process and journal its start.
@@ -186,7 +179,7 @@ impl Jobs {
         RunningJob {
             jobs: self.clone(),
             job,
-            lease,
+            lease: Mutex::new(lease),
             handle,
         }
     }
@@ -199,16 +192,16 @@ impl Jobs {
             .at_ms((self.clock)())
     }
 
-    /// Journal `operation` for `job` with `error_code`, if any.
+    /// Journal `operation` for `job`, an error-level entry with `error_code` when it failed.
     fn journal_job(&self, job: &Job, operation: &str, outcome: Outcome, code: Option<&str>) {
         let entry = self.entry(job, operation, outcome);
         self.journal.send(match code {
-            Some(code) => entry.error_code(code).level(Level::Warn),
+            Some(code) => entry.error_code(code).level(Level::Error),
             None => entry,
         });
     }
 
-    /// Journal a refused call on job `id` with its error code.
+    /// Journal a refused call on job `id` with its operation ID, when known, and error code.
     fn journal_refusal(&self, id: &str, operation_id: Option<&str>, err: &JobError) {
         let entry = JournalEntry::new(JOB_REFUSED, Outcome::Failed)
             .level(Level::Warn)
@@ -222,14 +215,36 @@ impl Jobs {
     }
 }
 
-/// One leased run of a job. Drop it only through [`complete`](Self::complete),
+/// A new pending job `id` for `spec`, submitted at `now`. Pure.
+fn new_job(id: String, spec: JobSpec, now: i64) -> Job {
+    Job {
+        id,
+        kind: spec.kind,
+        operation_id: spec.operation_id,
+        source: spec.source,
+        state: JobState::Pending,
+        checkpoint: None,
+        done: 0,
+        total: None,
+        attempts: 0,
+        fence: 0,
+        holder: None,
+        lease_expires_ms: None,
+        created_ms: now,
+        updated_ms: now,
+        error_code: None,
+    }
+}
+
+/// One leased run of a job. End it through [`complete`](Self::complete),
 /// [`fail`](Self::fail), [`cancel`](Self::cancel) or [`suspend`](Self::suspend); a run
-/// dropped otherwise (a crash) keeps its lease until it expires and [`Jobs::recover`]
-/// releases it.
+/// dropped otherwise (a crash) keeps its stored lease until it expires and
+/// [`Jobs::recover`] or the next start releases it. [`renew`](Self::renew) takes `&self`, so
+/// another thread can keep the lease alive while one long unit of work runs.
 pub struct RunningJob {
     jobs: Jobs,
     job: Job,
-    lease: Lease,
+    lease: Mutex<Lease>,
     handle: ProcessHandle,
 }
 
@@ -237,7 +252,7 @@ impl std::fmt::Debug for RunningJob {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RunningJob")
             .field("job_id", &self.job.id)
-            .field("fence", &self.lease.fence)
+            .field("fence", &self.fence())
             .finish_non_exhaustive()
     }
 }
@@ -255,12 +270,27 @@ impl RunningJob {
 
     /// The fencing number of this run's lease.
     pub fn fence(&self) -> u64 {
-        self.lease.fence
+        self.lease().fence
     }
 
     /// The registry's process ID of this run.
     pub fn process_id(&self) -> &str {
         self.handle.id()
+    }
+
+    /// The current lease.
+    fn lease(&self) -> Lease {
+        self.lease
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Keep the renewed lease the store answered.
+    fn keep(&self, stored: &Job) -> Result<(), JobError> {
+        let lease = rules::lease_of(stored)?;
+        *self.lease.lock().unwrap_or_else(PoisonError::into_inner) = lease;
+        Ok(())
     }
 
     /// Store `checkpoint` with `done` of `total` units, renew the lease and report the
@@ -276,19 +306,37 @@ impl RunningJob {
         total: Option<u64>,
     ) -> Result<(), JobError> {
         let now = (self.jobs.clock)();
-        let (lease, ttl) = (&self.lease, self.jobs.ttl_ms);
+        let (lease, ttl) = (self.lease(), self.jobs.ttl_ms);
         let stored = self
             .jobs
             .store
             .update(&self.job.id, &mut |job| {
-                rules::checkpoint(job, lease, (checkpoint, done, total), now, ttl)
+                rules::checkpoint(job, &lease, (checkpoint, done, total), now, ttl)
             })
             .inspect_err(|err| self.refused(err))?;
-        self.lease = rules::lease_of(&stored)?;
+        self.keep(&stored)?;
         match total {
             Some(total) => self.handle.progress(done, total),
             None => self.handle.heartbeat(),
         }
+        Ok(())
+    }
+
+    /// Renew the lease without changing the checkpoint, and heartbeat the run's process
+    /// (store I/O). Callable from another thread while one long unit of work runs.
+    ///
+    /// # Errors
+    /// [`JobError::Fenced`] or a store failure; each refusal is journaled.
+    pub fn renew(&self) -> Result<(), JobError> {
+        let now = (self.jobs.clock)();
+        let (lease, ttl) = (self.lease(), self.jobs.ttl_ms);
+        let stored = self
+            .jobs
+            .store
+            .update(&self.job.id, &mut |job| rules::renew(job, &lease, now, ttl))
+            .inspect_err(|err| self.refused(err))?;
+        self.keep(&stored)?;
+        self.handle.heartbeat();
         Ok(())
     }
 
@@ -329,11 +377,11 @@ impl RunningJob {
     /// [`JobError::Fenced`] or a store failure, journaled.
     pub fn suspend(self) -> Result<(), JobError> {
         let now = (self.jobs.clock)();
-        let lease = &self.lease;
+        let lease = self.lease();
         let stored = self
             .jobs
             .store
-            .update(&self.job.id, &mut |job| rules::suspend(job, lease, now))
+            .update(&self.job.id, &mut |job| rules::suspend(job, &lease, now))
             .inspect_err(|err| self.refused(err))?;
         let entry = self.jobs.entry(&stored, JOB_SUSPENDED, Outcome::Info);
         self.jobs.journal.send(entry.process(self.handle.id()));
@@ -341,15 +389,16 @@ impl RunningJob {
         Ok(())
     }
 
-    /// Store the job's end as `state` with `error_code` and journal it.
+    /// Store the job's end as `state` with `error_code` and journal it (an error-level
+    /// entry for a failure).
     fn finish(&self, state: JobState, error_code: Option<&str>) -> Result<(), JobError> {
         let now = (self.jobs.clock)();
-        let lease = &self.lease;
+        let lease = self.lease();
         let stored = self
             .jobs
             .store
             .update(&self.job.id, &mut |job| {
-                rules::finish(job, lease, (state, error_code), now)
+                rules::finish(job, &lease, (state, error_code), now)
             })
             .inspect_err(|err| self.refused(err))?;
         let (operation, outcome) = match state {
@@ -362,7 +411,7 @@ impl RunningJob {
             .entry(&stored, operation, outcome)
             .process(self.handle.id());
         self.jobs.journal.send(match error_code {
-            Some(code) => entry.error_code(code).level(Level::Warn),
+            Some(code) => entry.error_code(code).level(Level::Error),
             None => entry,
         });
         Ok(())

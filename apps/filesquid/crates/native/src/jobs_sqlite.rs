@@ -6,7 +6,7 @@
 //! job's end is stored whole or not at all, and no second writer sees the job in between.
 //! The rules are the API's ([`filesquid_api::jobs::rules`]); this module only stores.
 
-use filesquid_api::jobs::{Job, JobError, JobState, JobStore};
+use filesquid_api::jobs::{same_id, Job, JobError, JobState, JobStore};
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, Row, TransactionBehavior};
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
@@ -96,13 +96,18 @@ impl SqliteJobs {
 }
 
 impl JobStore for SqliteJobs {
+    /// One plain `INSERT`: the primary key makes a second job with the same ID fail
+    /// atomically, even from another connection, and that failure is `job_exists`.
     fn insert(&self, job: &Job) -> Result<(), JobError> {
         let conn = self.lock()?;
-        let exists = read(&conn, &job.id)?.is_some();
-        if exists {
-            return Err(JobError::Conflict("job_exists"));
-        }
-        write(&conn, job)
+        write(&conn, "INSERT", job)?.map_err(|err| {
+            let duplicate =
+                err.sqlite_error_code() == Some(rusqlite::ErrorCode::ConstraintViolation);
+            match duplicate {
+                true => JobError::Conflict("job_exists"),
+                false => sql_err(err),
+            }
+        })
     }
 
     fn get(&self, id: &str) -> Result<Option<Job>, JobError> {
@@ -119,21 +124,32 @@ impl JobStore for SqliteJobs {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sql_err)?;
         let current = read(&tx, id)?.ok_or(JobError::NotFound)?;
-        let changed = change(current)?;
-        write(&tx, &changed)?;
+        let changed = same_id(id, change(current)?)?;
+        write(&tx, "INSERT OR REPLACE", &changed)?.map_err(sql_err)?;
         tx.commit().map_err(sql_err)?;
         Ok(changed)
     }
 
     fn unfinished(&self, limit: usize) -> Result<Vec<Job>, JobError> {
+        self.oldest_open(None, limit)
+    }
+
+    fn unfinished_of(&self, kind: &str, limit: usize) -> Result<Vec<Job>, JobError> {
+        self.oldest_open(Some(kind), limit)
+    }
+}
+
+impl SqliteJobs {
+    /// At most `limit` unfinished jobs (of `kind`, when given), oldest first. Database I/O.
+    fn oldest_open(&self, kind: Option<&str>, limit: usize) -> Result<Vec<Job>, JobError> {
         let conn = self.lock()?;
         let sql = format!(
             "SELECT {COLUMNS} FROM jobs WHERE state IN ('pending', 'running') \
-             ORDER BY created_ms, id LIMIT ?1"
+             AND (?2 IS NULL OR kind = ?2) ORDER BY created_ms, id LIMIT ?1"
         );
         let mut stmt = conn.prepare(&sql).map_err(sql_err)?;
         let limit = i64::try_from(limit).unwrap_or(i64::MAX);
-        let rows = stmt.query_map(params![limit], job).map_err(sql_err)?;
+        let rows = stmt.query_map(params![limit, kind], job).map_err(sql_err)?;
         rows.collect::<Result<Vec<Job>, _>>().map_err(sql_err)
     }
 }
@@ -146,39 +162,52 @@ fn read(conn: &Connection, id: &str) -> Result<Option<Job>, JobError> {
         .map_err(sql_err)
 }
 
-/// Insert or replace `job`. Database I/O.
-fn write(conn: &Connection, job: &Job) -> Result<(), JobError> {
+/// Write `job` with `verb` (`INSERT`, or `INSERT OR REPLACE` inside an update's
+/// transaction), answering SQLite's own result so the caller can tell a duplicate key from
+/// other failures. Database I/O.
+///
+/// # Errors
+/// [`JobError::Failed`] for a count past SQLite's signed range; nothing is written.
+fn write(
+    conn: &Connection,
+    verb: &str,
+    job: &Job,
+) -> Result<Result<(), rusqlite::Error>, JobError> {
+    let total = job.total.map(to_i64).transpose()?;
     let sql = format!(
-        "INSERT OR REPLACE INTO jobs ({COLUMNS}) \
+        "{verb} INTO jobs ({COLUMNS}) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)"
     );
-    conn.execute(
-        &sql,
-        params![
-            job.id,
-            job.kind,
-            job.operation_id,
-            job.source,
-            job.state.as_str(),
-            job.checkpoint,
-            to_i64(job.done),
-            job.total.map(to_i64),
-            job.attempts,
-            to_i64(job.fence),
-            job.holder,
-            job.lease_expires_ms,
-            job.created_ms,
-            job.updated_ms,
-            job.error_code,
-        ],
-    )
-    .map(drop)
-    .map_err(sql_err)
+    Ok(conn
+        .execute(
+            &sql,
+            params![
+                job.id,
+                job.kind,
+                job.operation_id,
+                job.source,
+                job.state.as_str(),
+                job.checkpoint,
+                to_i64(job.done)?,
+                total,
+                job.attempts,
+                to_i64(job.fence)?,
+                job.holder,
+                job.lease_expires_ms,
+                job.created_ms,
+                job.updated_ms,
+                job.error_code,
+            ],
+        )
+        .map(drop))
 }
 
-/// A count as SQLite's signed integer, saturating. Pure.
-fn to_i64(value: u64) -> i64 {
-    i64::try_from(value).unwrap_or(i64::MAX)
+/// A count as SQLite's signed integer, losslessly. Pure.
+///
+/// # Errors
+/// [`JobError::Failed`] for a value past `i64::MAX`.
+fn to_i64(value: u64) -> Result<i64, JobError> {
+    i64::try_from(value).map_err(|_| JobError::Failed("a job count is out of range".into()))
 }
 
 /// A job from a row in [`COLUMNS`] order; an unknown state is a conversion failure.

@@ -3,9 +3,9 @@
 //! over the in-memory reference store.
 
 use filesquid_api::jobs::{
-    JobError, JobSpec, JobState, JobStore, Jobs, MemoryJobStore, JOB_COMPLETED, JOB_CREATED,
-    JOB_FAILED, JOB_RECOVERED, JOB_REFUSED, JOB_STARTED, JOB_SUSPENDED, MAX_CHECKPOINT_BYTES,
-    MAX_RECOVERED_JOBS,
+    rules, Job, JobError, JobSpec, JobState, JobStore, Jobs, Lease, MemoryJobStore, JOB_COMPLETED,
+    JOB_CREATED, JOB_FAILED, JOB_RECOVERED, JOB_REFUSED, JOB_STARTED, JOB_SUSPENDED,
+    MAX_CHECKPOINT_BYTES, MAX_RECOVERED_JOBS,
 };
 use filesquid_api::journal::{JournalEntry, JournalQuery, JournalStore, MemoryJournal, Outcome};
 use filesquid_api::journal_writer::{JournalWriter, WriterConfig};
@@ -121,16 +121,21 @@ fn a_lease_is_exclusive_until_it_expires() {
     let first = rig.jobs("launch-1");
     let job = first.submit(spec("s")).unwrap();
     let running = first.start(&job.id, "s").expect("leased");
+    assert_eq!(
+        first.start(&job.id, "s").err(),
+        Some(JobError::Conflict("lease_held")),
+        "a live lease is exclusive within one launch too"
+    );
     let second = rig.jobs("launch-2");
     assert_eq!(
         second.start(&job.id, "s").err(),
         Some(JobError::Conflict("lease_held"))
     );
-    assert_eq!(
-        rig.journaled(JOB_REFUSED).len(),
-        1,
-        "the refusal is journaled"
-    );
+    let refused = rig.journaled(JOB_REFUSED);
+    assert_eq!(refused.len(), 2, "each refusal is journaled");
+    assert!(refused
+        .iter()
+        .all(|e| e.operation_id.as_deref() == Some(job.operation_id.as_str())));
     rig.advance(TTL_MS + 1);
     let taken = second
         .start(&job.id, "s")
@@ -207,6 +212,12 @@ fn a_resume_whose_source_changed_fails_the_job_and_reuses_nothing() {
     let stored = rig.store.get(&job.id).unwrap().unwrap();
     assert_eq!(stored.state, JobState::Failed);
     assert_eq!(stored.error_code.as_deref(), Some("source_changed"));
+    assert_eq!(stored.fence, 1, "the changed job was never leased again");
+    assert_eq!(
+        rig.journaled(JOB_STARTED).len(),
+        1,
+        "it never started again"
+    );
     let failed = rig.journaled(JOB_FAILED);
     assert_eq!(failed.len(), 1);
     assert_eq!(failed[0].error_code.as_deref(), Some("source_changed"));
@@ -227,7 +238,7 @@ fn recovery_releases_expired_leases_and_lists_every_unfinished_job_oldest_first(
     let done = crashed.submit(spec("s")).unwrap();
     let held = crashed.start(&a.id, "s").unwrap();
     crashed.start(&done.id, "s").unwrap().complete().unwrap();
-    std::mem::forget(held);
+    drop(held);
     rig.advance(TTL_MS + 1);
     let next = rig.jobs("launch-2");
     let unfinished = next.recover().expect("recovered");
@@ -316,4 +327,147 @@ fn job_journal_entries_carry_no_checkpoint_or_source_text() {
     assert!(!text.contains("someone"), "{text}");
     assert!(!text.contains("secret"), "{text}");
     assert!(!text.contains("elsewhere"), "{text}");
+}
+
+/// Cubic round 1: a lease authorises writes for its own job only.
+#[test]
+fn a_lease_of_another_job_is_refused() {
+    let rig = Rig::new();
+    let jobs = rig.jobs("launch-1");
+    let a = jobs.submit(spec("s")).unwrap();
+    let b = jobs.submit(spec("s")).unwrap();
+    let running_a = jobs.start(&a.id, "s").unwrap();
+    drop(jobs.start(&b.id, "s").unwrap());
+    let stored_b = rig.store.get(&b.id).unwrap().unwrap();
+    let borrowed = Lease {
+        job_id: a.id.clone(),
+        holder: "launch-1".into(),
+        fence: running_a.fence(),
+        expires_ms: START_MS + TTL_MS,
+    };
+    assert_eq!(stored_b.fence, borrowed.fence, "same holder and fence");
+    assert_eq!(
+        rules::checkpoint(stored_b, &borrowed, ("{}", 0, None), START_MS, TTL_MS),
+        Err(JobError::Fenced)
+    );
+}
+
+/// Cubic round 1: finishing needs a final state.
+#[test]
+fn finishing_in_a_state_that_is_not_final_is_refused() {
+    let rig = Rig::new();
+    let jobs = rig.jobs("launch-1");
+    let job = jobs.submit(spec("s")).unwrap();
+    let running = jobs.start(&job.id, "s").unwrap();
+    let stored = rig.store.get(&job.id).unwrap().unwrap();
+    let lease = rules::lease_of(&stored).unwrap();
+    assert_eq!(
+        rules::finish(stored, &lease, (JobState::Pending, None), START_MS),
+        Err(JobError::Conflict("state_not_final"))
+    );
+    running.complete().unwrap();
+}
+
+/// Cubic round 1: an update may not change the job's ID.
+#[test]
+fn an_update_that_changes_the_job_id_stores_nothing() {
+    let rig = Rig::new();
+    let job = rig.jobs("launch-1").submit(spec("s")).unwrap();
+    let renamed = rig.store.update(&job.id, &mut |mut j: Job| {
+        j.id = "other".into();
+        Ok(j)
+    });
+    assert!(matches!(renamed, Err(JobError::Failed(_))));
+    assert_eq!(rig.store.get(&job.id).unwrap(), Some(job));
+    assert_eq!(rig.store.get("other").unwrap(), None);
+}
+
+/// Cubic round 1: a renewal keeps a long unit of work's lease alive past its length.
+#[test]
+fn renewing_keeps_the_lease_past_its_length() {
+    let rig = Rig::new();
+    let jobs = rig.jobs("launch-1");
+    let job = jobs.submit(spec("s")).unwrap();
+    let running = jobs.start(&job.id, "s").unwrap();
+    for _ in 0..3 {
+        rig.advance(TTL_MS / 2);
+        running.renew().expect("renewed");
+    }
+    assert_eq!(
+        rig.jobs("launch-2").start(&job.id, "s").err(),
+        Some(JobError::Conflict("lease_held"))
+    );
+    running.complete().expect("still the owner");
+}
+
+/// Cubic round 1: the job of a kind is found even past the recovery bound.
+#[test]
+fn a_job_of_one_kind_is_found_past_the_recovery_bound() {
+    let rig = Rig::new();
+    let jobs = rig.jobs("launch-1");
+    for _ in 0..MAX_RECOVERED_JOBS {
+        jobs.submit(JobSpec {
+            kind: "import".into(),
+            ..spec("s")
+        })
+        .unwrap();
+    }
+    rig.advance(1);
+    let backfill = jobs.submit(spec("s")).unwrap();
+    assert!(jobs.recover().unwrap().iter().all(|j| j.id != backfill.id));
+    let found = jobs.unfinished_of("prov.backfill", 1).unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].id, backfill.id);
+}
+
+/// A store that refuses every insert.
+struct RefusingStore;
+
+impl JobStore for RefusingStore {
+    fn insert(&self, _job: &Job) -> Result<(), JobError> {
+        Err(JobError::Unavailable("down".into()))
+    }
+
+    fn get(&self, _id: &str) -> Result<Option<Job>, JobError> {
+        Ok(None)
+    }
+
+    fn update(
+        &self,
+        _id: &str,
+        _change: &mut dyn FnMut(Job) -> Result<Job, JobError>,
+    ) -> Result<Job, JobError> {
+        Err(JobError::NotFound)
+    }
+
+    fn unfinished(&self, _limit: usize) -> Result<Vec<Job>, JobError> {
+        Ok(Vec::new())
+    }
+
+    fn unfinished_of(&self, _kind: &str, _limit: usize) -> Result<Vec<Job>, JobError> {
+        Ok(Vec::new())
+    }
+}
+
+/// Cubic round 1: a submission the store refuses is journaled.
+#[test]
+fn a_refused_submission_is_journaled_with_its_operation_id() {
+    let rig = Rig::new();
+    let jobs = Jobs::new(
+        Arc::new(RefusingStore),
+        rig.writer.sender(),
+        rig.registry.clone(),
+        "launch-1",
+    );
+    assert_eq!(
+        jobs.submit(spec("s")).err().map(|e| e.error_code()),
+        Some("unavailable")
+    );
+    let refused = rig.journaled(JOB_REFUSED);
+    assert_eq!(refused.len(), 1);
+    assert_eq!(
+        refused[0].operation_id.as_deref(),
+        Some("6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b")
+    );
+    assert_eq!(refused[0].error_code.as_deref(), Some("unavailable"));
 }

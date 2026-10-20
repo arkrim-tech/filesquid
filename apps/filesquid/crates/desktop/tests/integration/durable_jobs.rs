@@ -130,11 +130,10 @@ fn a_backfill_job_completes_and_records_both_libraries_in_its_checkpoint() {
     let dir = data_dir("complete");
     let libs = libraries_without_history(&dir, &["op-a", "op-b"]);
     let launch = Launch::open(&dir);
-    let recovered = recover_jobs(&launch.jobs);
+    recover_jobs(&launch.jobs).expect("recovered");
     let backfill = history_backfill(&launch.host, &installation());
     let run = run_backfill_job(
         &launch.jobs,
-        &recovered,
         &launch.catalog,
         &backfill,
         &backfill_source(&installation()),
@@ -164,7 +163,6 @@ fn quitting_suspends_the_backfill_job_with_its_checkpoint_kept() {
     let backfill = history_backfill(&launch.host, &installation());
     let run = run_backfill_job(
         &launch.jobs,
-        &[],
         &launch.catalog,
         &backfill,
         &backfill_source(&installation()),
@@ -218,7 +216,7 @@ fn the_next_launch_resumes_the_job_without_rescanning_completed_libraries() {
     first.stop();
     let started = Instant::now();
     let next = Launch::open(&dir);
-    let recovered = recover_jobs(&next.jobs);
+    let recovered = recover_jobs(&next.jobs).expect("recovered");
     assert_eq!(recovered.len(), 1);
     assert!(
         started.elapsed() < Duration::from_secs(RESTART_RESUMABLE_WITHIN_SECS),
@@ -227,7 +225,6 @@ fn the_next_launch_resumes_the_job_without_rescanning_completed_libraries() {
     let backfill = history_backfill(&next.host, &installation());
     let run = run_backfill_job(
         &next.jobs,
-        &recovered,
         &next.catalog,
         &backfill,
         &backfill_source(&installation()),
@@ -261,11 +258,10 @@ fn a_job_for_another_installation_is_failed_and_a_new_one_runs() {
             source: backfill_source(&other),
         })
         .expect("submitted");
-    let recovered = recover_jobs(&launch.jobs);
+    recover_jobs(&launch.jobs).expect("recovered");
     let backfill = history_backfill(&launch.host, &installation());
     let run = run_backfill_job(
         &launch.jobs,
-        &recovered,
         &launch.catalog,
         &backfill,
         &backfill_source(&installation()),
@@ -310,14 +306,13 @@ fn a_run_left_by_a_crash_is_waited_out_and_resumed() {
     let held = crashed
         .start(&job.id, &backfill_source(&installation()))
         .expect("leased");
-    std::mem::forget(held);
+    drop(held);
     let jobs = launch.jobs.clone().with_lease_ttl(300);
-    let recovered = recover_jobs(&jobs);
+    recover_jobs(&jobs).expect("recovered");
     let backfill = history_backfill(&launch.host, &installation());
     let started = Instant::now();
     let run = run_backfill_job(
         &jobs,
-        &recovered,
         &launch.catalog,
         &backfill,
         &backfill_source(&installation()),
@@ -349,7 +344,7 @@ fn restart_recovery_reads_only_jobs_and_stays_within_the_budget() {
     launch.stop();
     let started = Instant::now();
     let next = Launch::open(&dir);
-    let recovered = recover_jobs(&next.jobs);
+    let recovered = recover_jobs(&next.jobs).expect("recovered");
     assert_eq!(recovered.len(), 500);
     assert!(
         started.elapsed() < Duration::from_secs(RESTART_RESUMABLE_WITHIN_SECS),

@@ -5,10 +5,11 @@
 //! on the server) with an idempotent operation ID, an opaque source identity, a bounded
 //! checkpoint and an exclusive lease. The rules live here, once, for every host:
 //!
-//! - [`rules`]: the pure transitions of a job: an exclusive lease with a fencing number
-//!   (an expired worker can neither checkpoint nor finish once its lease is gone or taken
-//!   over), a size-capped checkpoint, suspension at quit (the checkpoint is kept and the
-//!   lease given back), finishing, and the release of a crashed run's expired lease.
+//! - [`rules`]: the pure transitions of a job: a start that checks the source and takes an
+//!   exclusive lease with a fencing number in one step (a worker can neither checkpoint,
+//!   renew nor finish once its lease is gone or taken over, and a lease names its job), a
+//!   size-capped checkpoint, suspension at quit (the checkpoint is kept and the lease given
+//!   back), finishing in a final state, and the release of a crashed run's expired lease.
 //! - [`JobStore`]: what a host stores: insert, read, one atomic read-modify-write, and a
 //!   bounded list of unfinished jobs. [`MemoryJobStore`] is the reference store.
 //! - [`Jobs`] and [`RunningJob`]: the service a host runs jobs through. Starting a job
@@ -25,7 +26,7 @@ mod store;
 
 pub use model::{Job, JobError, JobSpec, JobState, Lease};
 pub use service::{Jobs, RunningJob};
-pub use store::{JobStore, MemoryJobStore};
+pub use store::{same_id, JobStore, MemoryJobStore};
 
 /// Default lease length: a worker that neither checkpoints nor finishes within it loses the
 /// job to the next one that starts it.
