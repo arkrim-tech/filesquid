@@ -92,6 +92,7 @@ Descriptive metadata types and OCFL persistence live in the `metadata` module (`
 ## Phase F2: PROV-O history contracts (global Task FS-2.8)
 
 - [ ] **Task CO-0.11: PROV-O history contract types**
+  - **Status:** Open: delivered in PR #86 except that `OperationKind` has no `publish` kind, which the Description lists and API-F2.9 and the F-067 feature need for share and publication outputs; its `reconstruction` kind is spelled `backfill` in the code ([Walkthrough](./tasks/Task-CO-0.11-Walkthrough.md)).
   - **Description:** Extend the CO-0.8 provenance types for the FileSquid-facing PROV-O history ([ADR 040](../../../../../resources/architecture/040-prov-o-history.md) Decision 10): `OperationKind` (import, upload, copy, rename, move, hide, unhide, delete, restore, purge, metadata edit, label, revert, reinstate, snapshot, catalog organisation, repair, export, scrub, publish, reconstruction, unknown); the `filesquid.operation.v1` version message (operation ID, kind, optional revision and label) with a format and a bounded parse that refuses an unreadable prefixed message rather than dropping it; `VersionRef`; `InstallationId` (the owner agent of PROV-O records, rendered `urn:uuid:<uuid>`; the host generates and stores it, DE-0.10); `JournalLink`; `HistoryEntry`. `ProvOSidecar` keeps the T-037 retained/ephemeral gate and gains the version reference, operation and journal link. Correct `PROV_O_CONTEXT` to `http://www.w3.org/ns/prov#`. No PROV-O graph types (those belong to `filesquid-prov`).
   - **Estimated Time:** 4 hours
   - **Dependencies:** Task CO-0.8

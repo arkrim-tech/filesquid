@@ -93,7 +93,8 @@ Cargo commands run from `apps/filesquid/` with `-p filesquid-metadata` (`cargo t
 
 ## Phase F2: Commit options for PROV-O history (global Task FS-2.8)
 
-- [ ] **Task MD-0.9: Commit options on the `ocfl` store**
+- [x] **Task MD-0.9: Commit options on the `ocfl` store**
+  - **Status:** Complete ([Walkthrough](./tasks/Task-MD-0.9-Walkthrough.md)); delivered with the PROV-O history rows of global Task FS-2.8 in PR #86, ticked afterwards. MD-0.8, which the walkthrough recorded as not done, is ticked on main.
   - **Description:** Every `ocfl`-store commit accepts from its caller the OCFL version `user`, the version message (FileSquid passes `filesquid.operation.v1`, replacing the constant `Edit metadata.md`) and version-bound extra logical files (IO-1.5) committed in the same version, and returns the commit receipt so the caller can journal it ([MD-S-014](./srs.md)). Without options the store keeps its stand-alone defaults; a no-op save still commits nothing.
   - **Estimated Time:** 4 hours
   - **Dependencies:** Task MD-0.2, Task MD-0.8, Task IO-1.5
