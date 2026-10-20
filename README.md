@@ -387,8 +387,12 @@ TOKEN=$(cat filesquid-data/admin-token)
 curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8083/api/v1/admin/health
 curl -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:8083/api/v1/admin/journal?order=desc&limit=20"
 curl -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:8083/api/v1/admin/journal/export?operation=host.started" > journal.jsonl
+curl -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:8083/api/v1/admin/journal/export?format=csv&outcome=succeeded" -o journal.csv
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8083/api/v1/admin/journal/entries/1
 curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8083/metrics
 ```
+
+The journal routes filter by `from` and `to` (RFC 3339), `actor`, `operation`, `outcome`, `level`, `process`, `library`, `object` or `file` (a file ID, the same as `object=urn:uuid:<file>`) and `operation_id`; the export takes the same filters and `format=jsonl` (the default) or `format=csv` (RFC 4180 with a header row and CRLF line ends, opaque IDs only), and every export is journaled as `journal.export`. Each entry of a page or of `GET /api/v1/admin/journal/entries/{entry}` carries `provenance`: the PROV-O record and activities of a committed operation, or `"journal_only": true` for failed and refused attempts, single-file downloads and events that commit nothing. `names=true` adds the current display name of the file an entry names, when the host resolves it for the caller; names are never stored or exported. The UI forwards browser console warnings and errors to `POST /api/v1/client-events` (at most 20 events and 16 KiB per request, 60 requests a minute per credential), journaled once per client event ID as `ui.console.warn`, `ui.console.error` or `ui.console.overflow`.
 
 On Windows there is no token file: start the server with `FILESQUID_ADMIN_TOKEN` set as shown under **Server host**, set `$TOKEN` to the same value in PowerShell, and call `curl.exe` with the same arguments.
 

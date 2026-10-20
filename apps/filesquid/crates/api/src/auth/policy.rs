@@ -67,6 +67,9 @@ pub enum Action {
     ReadHistory,
     /// Read the navigation tree (`GET /api/v1/navigation`, API-S-021).
     ReadNavigation,
+    /// Journal the UI's console warnings and errors (`POST /api/v1/client-events`,
+    /// API-S-030).
+    RecordClientEvents,
     /// Deliberately public, unauthenticated: only the liveness probe
     /// (`GET /api/v1/health/live`), which says that the process is up and nothing else. The
     /// router leaves the route-table entry with this action unguarded; the guard itself
@@ -77,7 +80,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, in declaration order.
-    pub const ALL: [Action; 13] = [
+    pub const ALL: [Action; 14] = [
         Action::ReadHealth,
         Action::ReadContract,
         Action::SubscribeEvents,
@@ -90,6 +93,7 @@ impl Action {
         Action::ReadContent,
         Action::ReadHistory,
         Action::ReadNavigation,
+        Action::RecordClientEvents,
         Action::Public,
     ];
 
@@ -108,6 +112,7 @@ impl Action {
             Action::ReadContent => "content.read",
             Action::ReadHistory => "history.read",
             Action::ReadNavigation => "navigation.read",
+            Action::RecordClientEvents => "client_events.write",
             Action::Public => "public",
         }
     }

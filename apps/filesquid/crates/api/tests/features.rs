@@ -7,7 +7,8 @@
 //! pending changes of API-S-024; the PROV-O records, history routes and backfill of API-S-028,
 //! API-S-029 and API-S-032; the host descriptor of API-S-020, except its `@server-start`
 //! scenarios, which the `filesquid-server` harness runs; the file operation routes and
-//! content handles of API-S-008 and API-S-018; and the navigation listing of API-S-021).
+//! content handles of API-S-008 and API-S-018; the navigation listing of API-S-021; and the
+//! client events, journal query and export of API-S-030 and API-S-031).
 //!
 //! Scenarios that need domain operations not built yet (import, rename, metadata writes, C2PA
 //! scans, sync) or the optional OTLP export (Task FS-3.6) have no step definitions and are
@@ -92,6 +93,9 @@ mod history_fixture;
 #[path = "support/navigation_steps.rs"]
 mod navigation_steps;
 
+#[path = "support/journal_steps.rs"]
+mod journal_steps;
+
 /// Administrator token accepted by [`admin_state`].
 const ADMIN_TOKEN: &str = "admin";
 
@@ -139,6 +143,7 @@ struct MonitorWorld {
 
     history: history_steps::HistoryWorld,
     navigation: navigation_steps::NavigationWorld,
+    journal: journal_steps::JournalWorld,
 }
 
 impl std::fmt::Debug for MonitorWorld {

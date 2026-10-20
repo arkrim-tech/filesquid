@@ -564,12 +564,15 @@ fn every_commit_journal_entry_reaches_the_host_journal_redacted() {
     assert_eq!(
         ops,
         [
+            "library.intent.recorded",
             "ocfl.commit",
             "library.create",
+            "library.intent.recorded",
             "ocfl.commit",
             "library.collection.create"
         ],
-        "each published commit journals ocfl.commit and its own entry (DE-0.10)"
+        "each published commit journals its intent (API-S-031), ocfl.commit and its own \
+         entry (DE-0.10)"
     );
     let text = serde_json::to_string(&entries).expect("json");
     assert!(!text.contains("Summer"), "{text}");
@@ -586,8 +589,8 @@ fn entries_the_host_journal_refused_are_forwarded_at_the_next_open() {
     let lib = fx.create_library("Family archive");
     assert_eq!(
         fx.catalog.outbox_len(&lib).expect("outbox"),
-        2,
-        "ocfl.commit and library.create wait"
+        3,
+        "library.intent.recorded, ocfl.commit and library.create wait"
     );
     let root = fx.release();
     flaky.down.store(false, Ordering::SeqCst);
@@ -1018,4 +1021,60 @@ fn a_version_1_catalog_is_migrated_and_brought_to_its_snapshot() {
         Some("v2"),
         "the catalog was brought to its snapshot"
     );
+}
+
+/// Recording an intent is journaled as `library.intent.recorded` (API-S-031): written in the
+/// intent's own transaction through the outbox, so it reaches the host journal with the
+/// next forward, naming the operation ID and the library, never a title.
+#[test]
+fn a_recorded_intent_is_journaled_as_library_intent_recorded() {
+    let fx = Fixture::new("intent-journal");
+    let lib = fx.create_library("Family archive");
+    let intent = PendingIntent {
+        library_id: lib.clone(),
+        operation_id: OperationId::new("op-journaled").expect("op"),
+        operation: "library.collection.create".into(),
+        expected_revision: ExpectedRevision::new("1").expect("rev"),
+        recorded_at_ms: 1_792_281_600_000,
+    };
+    fx.catalog.record_intent(&intent).expect("record");
+    assert_eq!(fx.catalog.outbox_len(&lib).expect("outbox"), 1);
+    let journal = Arc::new(MemoryJournal::new("desktop"));
+    let again = Fixture::over(fx.release(), journal.clone());
+    let recorded: Vec<JournalEntry> = all_entries(journal.as_ref())
+        .into_iter()
+        .filter(|e| e.operation == "library.intent.recorded")
+        .collect();
+    assert_eq!(recorded.len(), 1, "forwarded at the next open");
+    let entry = &recorded[0];
+    assert_eq!(entry.operation_id.as_deref(), Some("op-journaled"));
+    assert!(entry.target_ids.contains(&lib.as_str().to_string()));
+    assert!(entry
+        .target_ids
+        .contains(&"operation:library.collection.create".to_string()));
+    assert_eq!(entry.time_ms, 1_792_281_600_000);
+    assert_eq!(entry, &entry.clone().redacted(), "redacted");
+    assert!(!serde_json::to_string(entry).unwrap().contains("Family"));
+    drop(again);
+}
+
+/// A command's own commit journals its intent ahead of its commit entries.
+#[test]
+fn a_command_journals_its_intent_before_its_commit() {
+    let fx = Fixture::new("intent-command");
+    let lib = fx.create_library("Family archive");
+    fx.create_collection(&lib, "Summer");
+    let ops: Vec<String> = all_entries(fx.journal.as_ref())
+        .into_iter()
+        .map(|e| e.operation)
+        .collect();
+    let intent = ops
+        .iter()
+        .rposition(|op| op == "library.intent.recorded")
+        .expect("intent journaled");
+    let create = ops
+        .iter()
+        .rposition(|op| op == "library.collection.create")
+        .expect("command journaled");
+    assert!(intent < create, "{ops:?}");
 }

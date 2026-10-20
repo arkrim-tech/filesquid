@@ -122,17 +122,23 @@ fn protected_paths() -> Vec<String> {
 
 /// The routes that answer a plain `GET` with no parameters: every routed path but the file
 /// and content routes, which need a library, an object or a body and are tested through
-/// the router in `integration_files` and `integration_content_handles`.
+/// the router in `integration_files` and `integration_content_handles`, the client-events
+/// route, which needs a body, and the journal entry route, which needs a stored entry's ID
+/// (both tested in `unit_client_events` and `unit_journal_query`).
 fn plain_get_paths() -> Vec<String> {
     route_actions()
         .into_iter()
         .filter(|(_, action)| {
             !matches!(
                 action,
-                Action::ReadFiles | Action::WriteFiles | Action::ReadContent
+                Action::ReadFiles
+                    | Action::WriteFiles
+                    | Action::ReadContent
+                    | Action::RecordClientEvents
             )
         })
         .map(|(path, _)| path)
+        .filter(|path| !path.contains("{entry}"))
         .collect()
 }
 
@@ -340,6 +346,7 @@ fn every_routed_path_declares_its_action() {
             "/api/v1/content/{handle}" => Action::ReadContent,
             "/api/v1/history" => Action::ReadHistory,
             "/api/v1/navigation" => Action::ReadNavigation,
+            "/api/v1/client-events" => Action::RecordClientEvents,
             file if file.starts_with("/api/v1/files/") => Action::ReadHistory,
             other => panic!("{other} has no expected action in this test"),
         };
@@ -365,6 +372,7 @@ fn action_names_are_unique_dotted_identifiers() {
             "content.read",
             "history.read",
             "navigation.read",
+            "client_events.write",
             "public"
         ]
     );

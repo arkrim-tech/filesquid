@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "FileSquid API",
-    "version": "0.11.0",
+    "version": "0.13.0",
     "description": "The single FileSquid API served by every FileSquid host. See resources/architecture/030-filesquid-api-and-transports.md. Conventions: a command (mutation) sends a CommandEnvelope as the `envelope` member of its JSON request body (operation_id is the idempotency key, expected_revision the revision last read) and answers with a CommandOutcome; a query (list) takes the PageSize (`limit`, 1-1000) and Cursor (`cursor`) parameters; every failed request answers with an ApiError body (code, message, retryable). Router-wide fallbacks: any /api/v1/ path not in this contract answers 404 not_found, and a documented path called with a method it does not document answers 405 method_not_allowed; both carry the ApiError body. They are not listed per operation because no operation sends them. Authorisation is deny-by-default: every operation, including health, the contract and the event channel, requires the bearerAuth credential and is authorised before anything else runs, so a call without it answers 401 unauthorized and a call whose credential is not accepted or does not grant the operation answers 403 forbidden, before any 404 or 405; both carry the ApiError body with a DenialReason in `reason`. Each operation names the authorisation action it performs in x-filesquid-action. The one deliberate exception is GET /api/v1/health/live (x-filesquid-action public, security []), a liveness probe that answers only {\"status\":\"up\"} without a credential. The content route GET and HEAD /api/v1/content/{handle} (x-filesquid-action content.read, x-filesquid-credential content-handle, security []) is not public: its only credential is the content handle in its path, minted by POST /api/v1/content-handles for one file version (API-S-018); a Bearer token is not accepted there, and every unusable request under /api/v1/content/ (unknown, malformed, missing, expired, evicted or revoked handle, an extra path segment or another method) answers one identical 403 forbidden with reason invalid_credentials, never 401, 404 or 405. Paths marked x-filesquid-host-route are served by the hosts, not by the filesquid-api router."
   },
   "security": [
@@ -282,6 +282,43 @@
             }
           },
           {
+            "name": "library",
+            "in": "query",
+            "required": false,
+            "description": "A library ID among the entry's targets.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "object",
+            "in": "query",
+            "required": false,
+            "description": "An object ID: the object of the entry's object_ref, or one of its targets.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "file",
+            "in": "query",
+            "required": false,
+            "description": "A file ID (UUID): the same as object=urn:uuid:<file>. Not with object.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "operation_id",
+            "in": "query",
+            "required": false,
+            "description": "Exact operation ID.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "after",
             "in": "query",
             "required": false,
@@ -305,6 +342,15 @@
                 "desc"
               ]
             }
+          },
+          {
+            "name": "names",
+            "in": "query",
+            "required": false,
+            "description": "true: add the display name of the file each entry's object ID names, resolved now for the caller (display only).",
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -313,10 +359,70 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JournalPage"
+                  "$ref": "#/components/schemas/JournalViewPage"
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "description": "API-S-031. Entries with their PROV-O link; filters combine. Invalid filter values answer invalid_request."
+      }
+    },
+    "/api/v1/admin/journal/entries/{entry}": {
+      "get": {
+        "operationId": "getAdminJournalEntry",
+        "summary": "Read one journal entry",
+        "description": "API-S-031. One entry by ID, with its PROV-O link.",
+        "x-filesquid-action": "monitor.read",
+        "parameters": [
+          {
+            "name": "entry",
+            "in": "path",
+            "required": true,
+            "description": "The entry ID.",
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "names",
+            "in": "query",
+            "required": false,
+            "description": "true: add the display name of the file each entry's object ID names, resolved now for the caller (display only).",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The entry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JournalEntryView"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
           },
           "400": {
             "$ref": "#/components/responses/InvalidRequest"
@@ -339,7 +445,7 @@
     "/api/v1/admin/journal/export": {
       "get": {
         "operationId": "exportAdminJournal",
-        "summary": "Export matching journal entries as JSON Lines",
+        "summary": "Export matching journal entries as JSON Lines or CSV",
         "x-filesquid-action": "monitor.read",
         "parameters": [
           {
@@ -406,6 +512,43 @@
             }
           },
           {
+            "name": "library",
+            "in": "query",
+            "required": false,
+            "description": "A library ID among the entry's targets.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "object",
+            "in": "query",
+            "required": false,
+            "description": "An object ID: the object of the entry's object_ref, or one of its targets.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "file",
+            "in": "query",
+            "required": false,
+            "description": "A file ID (UUID): the same as object=urn:uuid:<file>. Not with object.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "operation_id",
+            "in": "query",
+            "required": false,
+            "description": "Exact operation ID.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "after",
             "in": "query",
             "required": false,
@@ -413,13 +556,31 @@
             "schema": {
               "type": "integer"
             }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "description": "jsonl (default) or csv (RFC 4180, header row, CRLF line ends).",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "jsonl",
+                "csv"
+              ]
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "One JournalEntry per line. At most 1 000 000 entries per response; when more match, X-Journal-Next-Cursor is set.",
+            "description": "One JournalEntry per line (JSON Lines), or a CSV header row and one row per entry. At most 1 000 000 entries per response; when more match, X-Journal-Next-Cursor is set.",
             "content": {
               "application/x-ndjson": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "text/csv": {
                 "schema": {
                   "type": "string"
                 }
@@ -450,7 +611,8 @@
           "503": {
             "$ref": "#/components/responses/Unavailable"
           }
-        }
+        },
+        "description": "API-S-031. The same filters as the journal search; opaque IDs only, never display names. Every export is journaled as journal.export."
       }
     },
     "/api/v1/admin/metrics": {
@@ -2056,6 +2218,57 @@
           }
         }
       }
+    },
+    "/api/v1/client-events": {
+      "post": {
+        "operationId": "postClientEvents",
+        "summary": "Journal the UI's console warnings and errors",
+        "description": "API-S-030. At most 20 events and 16 KiB per request; each event becomes its own journal entry (ui.console.warn, ui.console.error or ui.console.overflow), journaled once per client event ID, and the batch is acknowledged only after the entries are stored. 60 requests a minute per credential; a request that carries only one overflow event is exempt. An event naming another principal than the credential's is refused (403, journaled).",
+        "x-filesquid-action": "client_events.write",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClientEventsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Every event of the batch is journaled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientEventsAck"
+                }
+              }
+            }
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2178,6 +2391,10 @@
           "object_ref": {
             "type": "string",
             "description": "OCFL object version the entry is about: `<object-id>@vN`."
+          },
+          "client_event_id": {
+            "type": "string",
+            "description": "Client event ID (UUID v4) of an entry recorded from POST /api/v1/client-events; journaled at most once (API-S-030)."
           }
         }
       },
@@ -2421,7 +2638,7 @@
       },
       "ErrorCode": {
         "type": "string",
-        "description": "Stable error code. HTTP status: invalid_request 400, unauthorized 401, forbidden 403, not_found 404, method_not_allowed 405, conflict 409, range_not_satisfiable 416, internal 500, unavailable 503. Only unavailable is retryable. The router-wide fallbacks use 404 not_found (path not in the contract) and 405 method_not_allowed (method not documented for the path). A 416 range_not_satisfiable answer also carries Content-Range: bytes */<length>.",
+        "description": "Stable error code. HTTP status: invalid_request 400, unauthorized 401, forbidden 403, not_found 404, method_not_allowed 405, conflict 409, payload_too_large 413, range_not_satisfiable 416, rate_limited 429, internal 500, unavailable 503. Only unavailable and rate_limited are retryable (rate_limited once Retry-After has passed). The router-wide fallbacks use 404 not_found (path not in the contract) and 405 method_not_allowed (method not documented for the path). A 416 range_not_satisfiable answer also carries Content-Range: bytes */<length>; a 429 rate_limited answer carries Retry-After.",
         "enum": [
           "invalid_request",
           "unauthorized",
@@ -2429,7 +2646,9 @@
           "not_found",
           "method_not_allowed",
           "conflict",
+          "payload_too_large",
           "range_not_satisfiable",
+          "rate_limited",
           "internal",
           "unavailable"
         ]
@@ -3764,6 +3983,270 @@
             "description": "True when more than 64 changed or the changed parents are not known; read the whole visible tree again."
           }
         }
+      },
+      "ProvenanceLink": {
+        "type": "object",
+        "description": "Where the PROV-O activity of an entry's operation is (API-S-031). Entries of committed operations (outcome succeeded, with operation_id and object_ref) link to it; failed and refused entries, entries without both identifiers and file.download entries are journal_only.",
+        "required": [
+          "journal_only"
+        ],
+        "properties": {
+          "journal_only": {
+            "type": "boolean",
+            "description": "True when the entry has no PROV-O activity."
+          },
+          "operation_id": {
+            "type": "string",
+            "description": "The operation ID the activity carries."
+          },
+          "object_ref": {
+            "type": "string",
+            "description": "The object version the activity is about: `<object-id>@vN`."
+          },
+          "record": {
+            "type": "string",
+            "description": "API path of the version's PROV-O record (GET /api/v1/files/{id}/versions/{version}/prov), for a urn:uuid object."
+          },
+          "activities": {
+            "type": "string",
+            "description": "API path of every activity of the operation (GET /api/v1/history?operation=...)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "JournalEntryView": {
+        "type": "object",
+        "required": [
+          "time",
+          "host",
+          "actor",
+          "operation",
+          "outcome",
+          "level",
+          "target_ids",
+          "provenance"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "host": {
+            "type": "string"
+          },
+          "process_id": {
+            "type": "string"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/Outcome"
+          },
+          "level": {
+            "$ref": "#/components/schemas/Level"
+          },
+          "target_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "duration_ms": {
+            "type": "integer"
+          },
+          "error_code": {
+            "type": "string"
+          },
+          "operation_id": {
+            "type": "string",
+            "description": "Opaque operation ID shared by every entry and OCFL version of one operation (ADR 040)."
+          },
+          "object_ref": {
+            "type": "string",
+            "description": "OCFL object version the entry is about: `<object-id>@vN`."
+          },
+          "client_event_id": {
+            "type": "string",
+            "description": "Client event ID (UUID v4) of an entry recorded from POST /api/v1/client-events; journaled at most once (API-S-030)."
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/ProvenanceLink"
+          },
+          "display_name": {
+            "type": "string",
+            "description": "Current display name of the file the entry's object ID names, resolved at read time for the caller."
+          }
+        },
+        "description": "A journal entry as the journal routes answer it: the stored entry, its PROV-O link and, only with names=true and only when the host resolves it for the caller, the current display name of the file its object ID names (display only; never stored or exported)."
+      },
+      "JournalViewPage": {
+        "type": "object",
+        "required": [
+          "entries",
+          "next_cursor"
+        ],
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JournalEntryView"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        }
+      },
+      "ClientConsoleEvent": {
+        "type": "object",
+        "description": "A console warning or error (API-S-030). Only these fields are read; any other field (a message, URL, file name or stack) is ignored and never stored.",
+        "required": [
+          "kind",
+          "id",
+          "level",
+          "component",
+          "error_code"
+        ],
+        "properties": {
+          "kind": {
+            "const": "console"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Client event ID, a UUID v4 the event keeps for life."
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "warn",
+              "error"
+            ]
+          },
+          "component": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "Fixed identifier of the UI component, an opaque token."
+          },
+          "error_code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "Machine-readable error code, an opaque token."
+          },
+          "ids": {
+            "type": "array",
+            "description": "At most 8 opaque IDs of what the event concerns.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "time": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the event was raised (RFC 3339), at most five minutes ahead of the host's clock; the host's time when absent."
+          },
+          "principal": {
+            "type": "string",
+            "description": "The opaque principal that raised the event, as the client stored it; refused (403) when it differs from the credential's."
+          }
+        }
+      },
+      "ClientOverflowEvent": {
+        "type": "object",
+        "description": "The page-close count of events the client could not keep because IndexedDB was unavailable or refused a write (API-S-030, the one recorded gap). No other field is accepted.",
+        "required": [
+          "kind",
+          "id",
+          "component",
+          "count"
+        ],
+        "properties": {
+          "kind": {
+            "const": "overflow"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Client event ID, a UUID v4."
+          },
+          "component": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "principal": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClientEventsRequest": {
+        "type": "object",
+        "description": "1 to 20 events in a body of at most 16 KiB.",
+        "required": [
+          "events"
+        ],
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ClientConsoleEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/ClientOverflowEvent"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "ClientEventsAck": {
+        "type": "object",
+        "required": [
+          "acknowledged",
+          "journaled",
+          "principal"
+        ],
+        "properties": {
+          "acknowledged": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Every client event ID of the batch, in request order without repeats; each is journaled now or was before."
+          },
+          "journaled": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Entries this request added (IDs already journaled add none)."
+          },
+          "principal": {
+            "type": "string",
+            "description": "The credential's opaque principal, which the client stores with the events it keeps."
+          }
+        },
+        "additionalProperties": false
       }
     },
     "parameters": {
@@ -3988,6 +4471,35 @@
             "description": "default-src 'none'; sandbox",
             "schema": {
               "type": "string"
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "PayloadTooLarge": {
+        "description": "The request body is larger than the route accepts (payload_too_large).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "RateLimited": {
+        "description": "Over the route's rate bound (rate_limited). Retry after Retry-After seconds.",
+        "headers": {
+          "Retry-After": {
+            "description": "Whole seconds until a request is admitted again.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
             }
           }
         },

@@ -119,7 +119,9 @@ const ERROR_CODE_VALUES = [
   "not_found",
   "method_not_allowed",
   "conflict",
+  "payload_too_large",
   "range_not_satisfiable",
+  "rate_limited",
   "internal",
   "unavailable",
 ] as const satisfies readonly ErrorCode[];

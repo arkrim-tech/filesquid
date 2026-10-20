@@ -11,6 +11,8 @@
 //! SQLite store is `filesquid_native::SqliteJournal`.
 
 pub mod commit;
+pub mod csv;
+pub mod link;
 mod memory;
 
 pub use memory::MemoryJournal;
@@ -151,6 +153,11 @@ pub struct JournalEntry {
     /// (`urn:uuid:<uuid>@vN` for FileSquid objects).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub object_ref: Option<String>,
+    /// The client event ID (UUID v4) of an entry recorded from `POST /api/v1/client-events`
+    /// (API-S-030). Stores keep it under a unique index: an entry whose client event ID is
+    /// already stored is not stored again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_event_id: Option<String>,
 }
 
 impl JournalEntry {
@@ -175,6 +182,7 @@ impl JournalEntry {
             error_code: None,
             operation_id: None,
             object_ref: None,
+            client_event_id: None,
         }
     }
 
@@ -187,6 +195,12 @@ impl JournalEntry {
     /// Set the OCFL object version the entry is about (`<object-id>@vN`).
     pub fn object_ref(mut self, object_ref: impl Into<String>) -> Self {
         self.object_ref = Some(object_ref.into());
+        self
+    }
+
+    /// Set the client event ID (UUID v4) of an entry recorded from a client event.
+    pub fn client_event(mut self, id: impl Into<String>) -> Self {
+        self.client_event_id = Some(id.into());
         self
     }
 
@@ -251,6 +265,7 @@ impl JournalEntry {
         self.error_code.iter_mut().for_each(scrub);
         self.target_ids.iter_mut().for_each(scrub);
         self.operation_id.iter_mut().for_each(scrub);
+        self.client_event_id.iter_mut().for_each(scrub);
         if let Some(object_ref) = &mut self.object_ref {
             if !is_object_ref(object_ref) {
                 *object_ref = REDACTED.to_string();
@@ -362,6 +377,12 @@ pub struct JournalQuery {
     pub level: Option<Level>,
     /// Exact process identifier.
     pub process_id: Option<String>,
+    /// A library ID among the entry's targets.
+    pub library_id: Option<String>,
+    /// An object ID: the object of the entry's object reference, or one of its targets.
+    pub object_id: Option<String>,
+    /// Exact operation ID.
+    pub operation_id: Option<String>,
     /// Cursor from the previous page: entries after this id in the chosen order
     /// (greater ids when ascending, smaller ids when descending).
     pub after_id: Option<i64>,
@@ -404,7 +425,34 @@ impl JournalQuery {
                 .process_id
                 .as_ref()
                 .is_none_or(|p| entry.process_id.as_ref() == Some(p))
+            && self.matches_links(entry)
     }
+
+    /// True when `entry` passes the library, object and operation ID filters (API-S-031).
+    fn matches_links(&self, entry: &JournalEntry) -> bool {
+        self.library_id
+            .as_ref()
+            .is_none_or(|l| entry.target_ids.contains(l))
+            && self
+                .object_id
+                .as_ref()
+                .is_none_or(|o| names_object(entry, o))
+            && self
+                .operation_id
+                .as_ref()
+                .is_none_or(|o| entry.operation_id.as_ref() == Some(o))
+    }
+}
+
+/// True when `entry` is about `object_id`: its object reference is a version of that
+/// object (`<object_id>@vN`), or the object ID is one of its targets.
+pub fn names_object(entry: &JournalEntry, object_id: &str) -> bool {
+    let by_ref = entry
+        .object_ref
+        .as_deref()
+        .and_then(|r| r.strip_prefix(object_id))
+        .is_some_and(|rest| rest.starts_with('@'));
+    by_ref || entry.target_ids.iter().any(|t| t == object_id)
 }
 
 /// One page of query results.
@@ -461,7 +509,10 @@ pub trait JournalStore: Send + Sync {
     /// Append entries atomically; returns their ids in order. An entry that carries an
     /// `id` (one [`allocate_ids`](Self::allocate_ids) handed out) is stored under that id,
     /// and stored once: appending an id the store already holds stores nothing and returns
-    /// the id, so replaying a commit's entries never duplicates them.
+    /// the id, so replaying a commit's entries never duplicates them. Likewise an entry
+    /// whose [`client_event_id`](JournalEntry::client_event_id) the store already holds
+    /// (from an earlier call or earlier in the same call) is not stored, and the id of the
+    /// entry holding it is returned (API-S-030).
     fn append(&self, entries: &[JournalEntry]) -> Result<Vec<i64>, JournalError>;
     /// [`append`](Self::append), also answering for each entry whether this call stored it
     /// (`false` for a preset id the store already held), so a caller announces a replayed
@@ -485,6 +536,20 @@ pub trait JournalStore: Send + Sync {
         Err(JournalError(
             "this journal store cannot allocate ids".into(),
         ))
+    }
+    /// The stored entry with `id`, if any. The default reads one page of
+    /// [`query`](Self::query) from just before `id`.
+    ///
+    /// # Errors
+    /// As [`query`](Self::query).
+    fn entry(&self, id: i64) -> Result<Option<JournalEntry>, JournalError> {
+        let query = JournalQuery {
+            after_id: Some(id.saturating_sub(1)),
+            limit: 1,
+            ..JournalQuery::default()
+        };
+        let page = self.query(&query)?;
+        Ok(page.entries.into_iter().find(|e| e.id == Some(id)))
     }
     /// One page of entries matching `query`, in ascending id order.
     fn query(&self, query: &JournalQuery) -> Result<JournalPage, JournalError>;

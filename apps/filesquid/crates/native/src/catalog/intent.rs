@@ -6,7 +6,9 @@
 //! transaction, so an intent still stored after a crash names work to reconcile.
 
 use super::failed;
+use super::outbox;
 use super::rows::sql;
+use filesquid_api::journal::{JournalEntry, Outcome};
 use filesquid_api::library::CatalogError;
 use filesquid_api::operation::{ExpectedRevision, OperationId};
 use filesquid_core::LibraryId;
@@ -28,9 +30,33 @@ pub struct PendingIntent {
     pub recorded_at_ms: i64,
 }
 
-/// Store `intent`, replacing an earlier intent of the same operation ID. Database I/O.
+/// Journal operation of a recorded intent (API-S-031).
+pub const INTENT_RECORDED_OPERATION: &str = "library.intent.recorded";
+
+/// The journal entry of recording `intent`: its operation ID, library, operation name and
+/// expected revision, all opaque. Pure.
+pub fn intent_entry(intent: &PendingIntent) -> JournalEntry {
+    JournalEntry::new(INTENT_RECORDED_OPERATION, Outcome::Info)
+        .at_ms(intent.recorded_at_ms)
+        .operation_id(intent.operation_id.as_str())
+        .target(intent.library_id.as_str())
+        .target(format!("operation:{}", intent.operation))
+        .target(format!("revision:{}", intent.expected_revision.as_str()))
+}
+
+/// Store `intent`, replacing an earlier intent of the same operation ID, and its
+/// [`INTENT_RECORDED_OPERATION`] entry in the journal outbox, in one transaction. Database
+/// I/O.
 pub(crate) fn record(conn: &Connection, intent: &PendingIntent) -> Result<(), CatalogError> {
-    conn.execute(
+    let tx = conn.unchecked_transaction().map_err(sql)?;
+    store(&tx, intent)?;
+    outbox::push(&tx, &intent_entry(intent))?;
+    tx.commit().map_err(sql)
+}
+
+/// Store `intent` in `tx`. Database I/O.
+fn store(tx: &Transaction<'_>, intent: &PendingIntent) -> Result<(), CatalogError> {
+    tx.execute(
         "INSERT INTO pending_intents (operation_id, operation, expected_revision, recorded_at_ms)
          VALUES (?1, ?2, ?3, ?4)
          ON CONFLICT(operation_id) DO UPDATE SET operation = excluded.operation,
@@ -45,6 +71,15 @@ pub(crate) fn record(conn: &Connection, intent: &PendingIntent) -> Result<(), Ca
     )
     .map(drop)
     .map_err(sql)
+}
+
+/// Remove the intent of `operation_id` and its not yet forwarded
+/// [`INTENT_RECORDED_OPERATION`] entry inside the transaction of a commit that changed
+/// nothing: no activity took place, so nothing is journaled (owner decision 2026-10-19).
+/// Database I/O.
+pub(crate) fn withdraw(tx: &Transaction<'_>, operation_id: &str) -> Result<(), CatalogError> {
+    clear(tx, operation_id)?;
+    outbox::withdraw(tx, INTENT_RECORDED_OPERATION, operation_id)
 }
 
 /// Remove the intent of `operation_id`, if any, inside a commit's transaction. Database I/O.

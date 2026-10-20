@@ -31,6 +31,22 @@ pub(crate) fn push(tx: &Transaction<'_>, entry: &JournalEntry) -> Result<(), Cat
     Ok(())
 }
 
+/// Remove the waiting entries of `operation` for `operation_id` inside `tx`: the intent
+/// entry of a commit that changed nothing. Database I/O.
+pub(crate) fn withdraw(
+    tx: &Transaction<'_>,
+    operation: &str,
+    operation_id: &str,
+) -> Result<(), CatalogError> {
+    tx.execute(
+        "DELETE FROM journal_outbox WHERE json_extract(entry, '$.operation') = ?1
+         AND json_extract(entry, '$.operation_id') = ?2",
+        params![operation, operation_id],
+    )
+    .map(drop)
+    .map_err(sql)
+}
+
 /// Number of entries waiting in the outbox. Database I/O.
 pub(crate) fn len(conn: &Connection) -> Result<u64, CatalogError> {
     let n: i64 = conn
