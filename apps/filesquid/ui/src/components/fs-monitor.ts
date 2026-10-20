@@ -1,8 +1,9 @@
 /**
  * `<fs-monitor>`: the FileSquid Monitor dashboard (ADR 033, SRS-F-061). Shows overall
- * health with reasons, live processes, storage, throughput and queues, and the activity
- * journal with search, live tail and JSON Lines export. Every value is rendered with
- * `textContent`; journal data never becomes markup.
+ * health with reasons, the OCFL validation findings and runs (`<fs-ocfl-findings>`, UI-F2.14,
+ * refreshed on `health.change` and on `ocfl.validation` process updates), live processes,
+ * storage, throughput and queues, and the activity journal with search, live tail and JSON
+ * Lines export. Every value is rendered with `textContent`; journal data never becomes markup.
  *
  * Accessibility (UI-S-016): each table is named by its section heading and sits in a named,
  * focusable scroll region, so narrow windows scroll the table rather than the page; when a
@@ -14,13 +15,15 @@ import {
   ApiError,
   type ApiEvent,
   type FileSquidClient,
+  type HealthReason,
   type HealthReport,
   type JournalEntry,
   type MetricsSnapshot,
   type ProcessView,
 } from "../api/client";
-import type { LabelKey, LabelTable } from "../theme/labels";
+import { formatLabel, type LabelKey, type LabelTable } from "../theme/labels";
 import { denialLabel, type DenialText } from "./denial";
+import type { FsOcflFindings } from "./fs-ocfl-findings";
 import { A11Y_STYLE } from "./a11y-style";
 import { replaceKeepingFocus } from "../a11y/focus";
 
@@ -32,8 +35,15 @@ export type MonitorClient = Pick<
   | "adminJournal"
   | "adminMetrics"
   | "adminJournalExport"
+  | "adminOcflFindings"
+  | "startOcflValidation"
   | "subscribe"
 >;
+
+/** Kind of the process a validation run registers (API-S-022). */
+const VALIDATION_PROCESS = "ocfl.validation";
+/** Code of the health reason for open OCFL validation errors (API-S-022). */
+const OCFL_REASON = "ocfl_validation_errors";
 
 /** Where the server host's token is kept while the page is open (in memory only). */
 export interface TokenStore {
@@ -53,6 +63,11 @@ export interface MonitorOptions {
   tokens?: TokenStore;
   /** Interval for refreshing health, processes and metrics; 0 disables polling. Default 5000. */
   pollMs?: number;
+  /**
+   * The address of a library's version-inventory repair offer (UI-1.1). The OCFL validation
+   * section links its W010 note there; without it the note has no link.
+   */
+  repairHref?: (libraryId: string) => string;
 }
 
 /** Everything the dashboard shows after a full load. */
@@ -92,6 +107,8 @@ export class FsMonitor extends HTMLElement {
   private processes = new Map<string, ProcessView>();
   private journal: JournalEntry[] = [];
   private operationFilter = "";
+  /** The OCFL validation section, refreshed on `health.change` and validation updates. */
+  private findings?: FsOcflFindings;
   private unsubscribe?: () => void;
   private timer?: ReturnType<typeof setInterval>;
   /** Bumped by every stop; a load that finishes under an older generation is discarded. */
@@ -221,8 +238,10 @@ export class FsMonitor extends HTMLElement {
       const view = event.data as ProcessView;
       this.processes.set(view.id, view);
       this.renderProcesses();
+      if (view.kind === VALIDATION_PROCESS) void this.findings?.refresh();
     } else if (event.topic === "health.change") {
       this.renderHealth(event.data as HealthReport);
+      void this.findings?.refresh();
     } else if (event.topic === "journal.entry") {
       this.addJournalEntry(event.data as JournalEntry);
     }
@@ -247,6 +266,7 @@ export class FsMonitor extends HTMLElement {
    */
   private showError(error: unknown): void {
     this.stop();
+    this.findings = undefined;
     const root = this.shadowRoot;
     const labels = this.options?.labels;
     if (!root || !labels) return;
@@ -297,8 +317,10 @@ export class FsMonitor extends HTMLElement {
     const root = this.shadowRoot;
     const labels = this.options?.labels;
     if (!root || !labels) return;
+    this.findings = this.findingsSection();
     const sections = [
       section("health", labels.monitorHealth, el("p", ""), document.createElement("ul")),
+      section("ocfl", labels.monitorFindings, this.findings),
       section(
         "processes",
         labels.monitorProcesses,
@@ -317,6 +339,23 @@ export class FsMonitor extends HTMLElement {
     root.querySelector('[data-section="health"] p')?.classList.add("status");
   }
 
+  /**
+   * Create the OCFL validation section's element. It reads its findings once it is in the
+   * document. Network I/O happens there, not here.
+   */
+  private findingsSection(): FsOcflFindings {
+    const findings = document.createElement("fs-ocfl-findings") as FsOcflFindings;
+    const options = this.options;
+    if (options) {
+      findings.configure({
+        labels: options.labels,
+        client: options.client,
+        repairHref: options.repairHref,
+      });
+    }
+    return findings;
+  }
+
   /** Render the overall status and its reasons. */
   private renderHealth(health: HealthReport): void {
     const target = this.shadowRoot?.querySelector<HTMLElement>('[data-section="health"]');
@@ -325,7 +364,9 @@ export class FsMonitor extends HTMLElement {
     target.dataset.status = health.status;
     const status = target.querySelector(".status");
     if (status) status.textContent = labels[STATUS_LABEL[health.status]];
-    target.querySelector("ul")?.replaceChildren(...health.reasons.map((r) => el("li", r.detail)));
+    target
+      .querySelector("ul")
+      ?.replaceChildren(...health.reasons.map((r) => reasonItem(r, labels)));
     this.renderStorage(health);
   }
 
@@ -437,6 +478,29 @@ const STATUS_LABEL: Record<HealthReport["status"], LabelKey> = {
   degraded: "statusDegraded",
   failing: "statusFailing",
 };
+
+/**
+ * The words of one health reason: the open OCFL validation errors from the label table, with
+ * their codes and the number of affected objects; any other reason as the API words it. Pure.
+ *
+ * @param reason The reason as the health report carries it.
+ * @param labels The active label table.
+ * @returns The text to show.
+ */
+export function reasonText(reason: HealthReason, labels: LabelTable): string {
+  if (reason.code !== OCFL_REASON || !reason.codes || reason.objects === undefined) {
+    return reason.detail;
+  }
+  const values = { codes: reason.codes.join(", "), objects: String(reason.objects) };
+  return formatLabel(labels.healthOcflErrors, values);
+}
+
+/** Build the list item of one health reason, keyed by its code. */
+function reasonItem(reason: HealthReason, labels: LabelTable): HTMLLIElement {
+  const item = el("li", reasonText(reason, labels));
+  item.dataset.reason = reason.code;
+  return item;
+}
 
 /** Format a byte count as GiB with one decimal, for example "10.0 GiB". */
 export function formatGiB(bytes: number): string {
