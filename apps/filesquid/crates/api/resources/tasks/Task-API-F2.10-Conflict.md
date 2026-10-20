@@ -1,8 +1,8 @@
-# Conflict Artifact (open): Task API-F2.10, where the `fsquid` CLI journals
+# Conflict Artifact (decided): Task API-F2.10, where the `fsquid` CLI journals
 
 Raised 2026-10-20 by Task [API-F2.10](../plan.md) (global [Task FS-2.9](../../../../../../resources/implementation-plan.md#task-fs-2.9)) under [sync-logic.md](../../../../../../.agents/rules/sync-logic.md).
 
-**Status: open; needs an owner decision.** Every other part of API-F2.10 is implemented and tested ([walkthrough](./Task-API-F2.10-Walkthrough.md)). The CLI part is not, because the documents do not say which journal store a host-less `fsquid` run writes to.
+**Status: decided 2026-10-20, see the owner decisions** (PR #102: [ADR 036](../../../../../../resources/architecture/036-single-fsquid-cli.md) Decision 8 and [API-S-031](../srs.md)). The CLI journaling is option A, implemented by [CLI-0.2](../../../cli/resources/plan.md); the engine-warning gaps of section 6 are follow-up tasks, the copy guard's object reference [IO-1.6](../../../ocfl/resources/plan.md) and the file-route operation IDs [API-F2.12](../plan.md); no journal exception is added. The sections below keep the original analysis.
 
 ## 1. Conflict description
 

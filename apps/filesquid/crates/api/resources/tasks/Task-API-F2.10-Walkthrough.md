@@ -21,8 +21,10 @@ Also API-S-017 (journal entry shape and redaction), PRD [F-061](../../../../../.
 
 ## Not delivered in this task, and why
 
-- **`fsquid` CLI journaling** (API-S-031): needs an owner decision on where a host-less CLI run journals and whether `filesquid-cli` may link `filesquid-api` and `filesquid-native` ([Conflict Artifact](./Task-API-F2.10-Conflict.md)). The plan box stays open until it is resolved.
-- **Engine warning context (open, raised to the owner in the [Conflict Artifact](./Task-API-F2.10-Conflict.md#6-also-open-engine-warnings-without-full-context)):** API-S-031 asks for every engine warning with both an operation ID and an object reference. The Git and storage-hierarchy guards return errors, which their callers already journal as failed operations. Two warnings still lack context: the copy guard's warning names only paths, so it gets the operation ID of its activity span and no object (the fix is in `filesquid-ocfl`, a module crate this lane does not edit); and the file routes (`/api/v1/files/...`) carry no operation ID yet (their version message is the caller's), so engine warnings during those commits carry none.
+The owner decided both open items on 2026-10-20 ([Conflict Artifact](./Task-API-F2.10-Conflict.md), PR #102):
+
+- **`fsquid` CLI journaling** (API-S-031): option A, in its own task [CLI-0.2](../../../cli/resources/plan.md) (ADR 036 Decision 8).
+- **Engine warning context:** the Git and storage-hierarchy guards return errors, which their callers already journal as failed operations. The copy guard's object reference is [IO-1.6](../../../ocfl/resources/plan.md) (`filesquid-ocfl`, OCFL-S-025), and the operation IDs of file-route commits are [API-F2.12](../plan.md); until they land, the copy guard's warning gets only the operation ID of its activity span and file-route commits' warnings carry none.
 - **Host wiring of `JournalNames`:** the seam is in the API; the desktop host installs a resolver with the display-name work of API-F1.13 or DE-0.11. Until then `names=true` returns no names.
 
 ## SRS traceability
