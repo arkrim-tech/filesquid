@@ -12,6 +12,7 @@ use filesquid_api::canonical::{
     snapshot_object_id, CanonicalError, LibrarySnapshot, OwnerReadable, SnapshotDelta,
     SNAPSHOT_ROOT,
 };
+use filesquid_api::history::backfill::{Backfill, BackfillError, BackfillReport};
 use filesquid_api::journal::JournalEntry;
 use filesquid_api::library::CatalogError;
 use filesquid_core::LibraryId;
@@ -21,6 +22,7 @@ use filesquid_ocfl::write::{
     CommitReceipt, LeaseConfig, LeaseStore, SystemClock, VersionBoundFiles,
 };
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 
 /// Suffix of a library's OCFL storage root in the catalog directory.
 pub const OCFL_ROOT_SUFFIX: &str = ".ocfl";
@@ -50,6 +52,22 @@ fn sibling(root: &Path, library_id: &LibraryId, suffix: &str) -> Result<PathBuf,
 pub(crate) fn library_of_root(name: &str) -> Option<LibraryId> {
     let stem = name.strip_suffix(OCFL_ROOT_SUFFIX)?;
     schema::library_of(&format!("{stem}.{}", super::CATALOG_FILE_EXTENSION))
+}
+
+/// A reader of the OCFL storage root of `library_id` in the catalog directory `root`, for the
+/// history routes, with its scratch space in the library's working directory (which the
+/// library's open created). Filesystem I/O.
+///
+/// # Errors
+/// [`CatalogError::Failed`] for an identifier that is not a UUID v4;
+/// [`CatalogError::Unavailable`] when the backend cannot be opened.
+pub(crate) fn history_reader(
+    root: &Path,
+    library_id: &LibraryId,
+) -> Result<FsBackend, CatalogError> {
+    let ocfl_dir = library_ocfl_root(root, library_id)?;
+    let work = sibling(root, library_id, WORK_DIR_SUFFIX)?;
+    FsBackend::new(&ocfl_dir, work.join("root-scratch")).map_err(unavailable("OCFL root"))
 }
 
 /// A storage-layer failure as a catalog error. The detail never names a path.
@@ -173,6 +191,21 @@ impl CanonicalRoot {
         ))?
         .map_err(CatalogError::from)?;
         lines.iter().map(|line| journal_line(line)).collect()
+    }
+
+    /// Run `backfill` once over this library's storage root, under the same version
+    /// reservations as the catalog's own commits, until it is done, capped or `cancel` is set
+    /// (Task FS-2.8 host wiring). Filesystem I/O; the backends' futures never wait.
+    ///
+    /// # Errors
+    /// [`BackfillError::Unavailable`] when the run cannot start, or its future waited.
+    pub(crate) fn backfill(
+        &self,
+        backfill: &Backfill,
+        cancel: &AtomicBool,
+    ) -> Result<BackfillReport, BackfillError> {
+        complete_immediately(backfill.run(&self.ocfl, &self.leases, cancel))
+            .map_err(|_| BackfillError::Unavailable)?
     }
 
     /// The snapshot at the head, or `None` when nothing was published yet. Filesystem I/O.
