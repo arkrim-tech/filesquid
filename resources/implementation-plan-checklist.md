@@ -1,9 +1,9 @@
 # Implementation Plan Checklist: FileSquid
 
 <!-- mvp-progress:start -->
-![MVP progress: 49% complete](./assets/mvp-progress.svg)
+![MVP progress: 50% complete](./assets/mvp-progress.svg)
 
-**MVP progress: 49%**, about 473 of 968 estimated hours. 14 of 28 tasks are done and 6 more are under way. Each segment of the bar is one task below, as wide as its estimated hours in the implementation plan; an open task fills by the share of its module rows that are ticked. Below the bar, In progress lists the open tasks being worked on (global tasks with some but not all module rows ticked, and tasks with an open pull request) and Up next lists the next five new module tasks whose listed dependencies are done or in progress. Regenerate with `python3 scripts/docs/update_mvp_progress.py` after ticking boxes or opening a pull request; the check run by `scripts/verify_docs.sh` does not call GitHub and uses the pull requests recorded in the block. In a clone that registers the `mvp-progress` git merge driver (see the README), merging two pull requests that both redraw it merges their ticks and redraws it when it can, and otherwise leaves a conflict.
+**MVP progress: 50%**, about 488 of 968 estimated hours. 14 of 28 tasks are done and 7 more are under way. Each segment of the bar is one task below, as wide as its estimated hours in the implementation plan; an open task fills by the share of its module rows that are ticked. Below the bar, In progress lists the open tasks being worked on (global tasks with some but not all module rows ticked, and tasks with an open pull request) and Up next lists the next five new module tasks whose listed dependencies are done or in progress. Regenerate with `python3 scripts/docs/update_mvp_progress.py` after ticking boxes or opening a pull request; the check run by `scripts/verify_docs.sh` does not call GitHub and uses the pull requests recorded in the block. In a clone that registers the `mvp-progress` git merge driver (see the README), merging two pull requests that both redraw it merges their ticks and redraws it when it can, and otherwise leaves a conflict.
 
 **In progress**
 
@@ -16,7 +16,7 @@
     - [DE-0.8](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Native-processing library boundary (`filesquid-native`)
 - [Task FS-1.3](./implementation-plan.md#task-fs-1.3) Metadata properties and the import record through the API: 1 of 5 module rows ticked
     - [MD-0.7](../apps/filesquid/crates/metadata/resources/plan.md#phase-f1-persist-through-ocfl-and-namespace-registry-global-task-fs-13) Namespace registry and extension statements
-    - [MD-0.8](../apps/filesquid/crates/metadata/resources/plan.md#phase-f1-persist-through-ocfl-and-namespace-registry-global-task-fs-13) Import record
+    - [MD-0.8](../apps/filesquid/crates/metadata/resources/plan.md#phase-f1-persist-through-ocfl-and-namespace-registry-global-task-fs-13) Import record ([PR #90](https://github.com/arkrim-tech/filesquid/pull/90))
     - [API-F1.4](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-api-f19-in-fs-310-and-api-f15-in-fs-c1) Metadata property routes
     - [API-F1.13](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-api-f19-in-fs-310-and-api-f15-in-fs-c1) Display names and download names
 - [Task FS-1.4](./implementation-plan.md#task-fs-1.4) Jobs, events and the authorisation layer: 1 of 2 module rows ticked
@@ -26,18 +26,30 @@
     - [DE-1.1](../apps/filesquid/crates/desktop/resources/plan.md#phases-f2-i1-and-f5-library-import-gallery-organize-and-setup-global-tasks-1116) Create, open, copy, rebuild library
     - [UI-1.1](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Library create/open/recover UI
     - [UI-F2.14](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) OCFL validation findings in the Monitor
+- [Task FS-2.2](./implementation-plan.md#task-fs-2.2) Drive-style browser and sidebar panels: 1 of 3 module rows ticked
+    - [UI-F2.3](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Details and Versions panels
+    - [UI-F2.4](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) `<fs-metadata-panel>`
+- [Task FS-2.8](./implementation-plan.md#task-fs-2.8) PROV-O history ([PR #91](https://github.com/arkrim-tech/filesquid/pull/91)): 0 of 8 module rows ticked
+    - [CO-0.11](../apps/filesquid/crates/core/resources/plan.md#phase-f2-prov-o-history-contracts-global-task-fs-28) PROV-O history contract types
+    - [IO-1.5](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f2-version-bound-files-for-prov-o-history-global-task-fs-28) Version-bound logical files in the change model
+    - [PV-0.1](../apps/filesquid/crates/prov/resources/plan.md#phase-f2-prov-o-history-engine-global-task-fs-28) Crate, PROV-O model and profile `filesquid-prov/1`
+    - [MD-0.9](../apps/filesquid/crates/metadata/resources/plan.md#phase-f2-commit-options-for-prov-o-history-global-task-fs-28) Commit options on the `ocfl` store
+    - [PV-0.2](../apps/filesquid/crates/prov/resources/plan.md#phase-f2-prov-o-history-engine-global-task-fs-28) `ocfl` feature: records in OCFL objects and reconstruction
+    - [API-F2.8](../apps/filesquid/crates/api/resources/plan.md#phase-f2-prov-o-history-global-task-fs-28) Journal and commit linkage for PROV-O history
+    - [DE-0.10](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Installation UUID, native journal columns, outbox events and coordinator commit linkage
+    - [API-F2.9](../apps/filesquid/crates/api/resources/plan.md#phase-f2-prov-o-history-global-task-fs-28) PROV-O records, history routes and backfill
 
 **Up next** (the next 5 new module tasks, once their listed dependencies are done or in progress)
 
-- [UI-F2.2](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) `<fs-file-browser>` (part of [Task FS-2.2](./implementation-plan.md#task-fs-2.2))
 - [DE-1.2](../apps/filesquid/crates/desktop/resources/plan.md#phases-f2-i1-and-f5-library-import-gallery-organize-and-setup-global-tasks-1116) File and folder import (part of [Task 1.2](./implementation-plan.md#task-1.2))
 - [UI-1.2](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Import UI with job progress (part of [Task 1.2](./implementation-plan.md#task-1.2))
 - [API-F2.2](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) View operation, preferences, storage use, copy, move and ZIP download (part of [Task FS-2.5](./implementation-plan.md#task-fs-2.5))
 - [API-F2.5](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) Version listing, labels, restore and history size (part of [Task FS-2.5](./implementation-plan.md#task-fs-2.5))
+- [API-F2.10](../apps/filesquid/crates/api/resources/plan.md#phase-f2-prov-o-history-global-task-fs-28) Client events, journal query filters and journal export (part of [Task FS-2.9](./implementation-plan.md#task-fs-2.9))
 
-Generated 2026-10-19T14:27:01Z (RFC 3339, UTC) from the ticked boxes, the module plans and the open pull requests at that time.
-<!-- generated-at: 2026-10-19T14:27:01Z -->
-<!-- in-progress-prs: none -->
+Generated 2026-10-20T02:48:22Z (RFC 3339, UTC) from the ticked boxes, the module plans and the open pull requests at that time.
+<!-- generated-at: 2026-10-20T02:48:22Z -->
+<!-- in-progress-prs: FS-2.8=#91,MD-0.8=#90 -->
 <!-- mvp-progress:end -->
 
 This is a short, ordered view of [implementation-plan.md](./implementation-plan.md). Each numbered item is a global task in the order the dev team expects to finish it, and the nested items are the module tasks it dispatches, taken from each module's `resources/plan.md`. Task codes link to the full task description. A box is ticked when the matching box is ticked in the source plan.
@@ -140,7 +152,7 @@ FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by ga
     - [x] [API-F2.7](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) OCFL validation findings in health and the Monitor
     - [ ] [UI-F2.14](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) OCFL validation findings in the Monitor
 21. [ ] [Task FS-2.2](./implementation-plan.md#task-fs-2.2) Drive-style browser and sidebar panels
-    - [ ] [UI-F2.2](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) `<fs-file-browser>`
+    - [x] [UI-F2.2](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) `<fs-file-browser>`
     - [ ] [UI-F2.3](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Details and Versions panels
     - [ ] [UI-F2.4](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) `<fs-metadata-panel>`
 22. [ ] [Task 1.2](./implementation-plan.md#task-1.2) Safe file and folder import with durable jobs
