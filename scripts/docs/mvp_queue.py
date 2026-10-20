@@ -319,6 +319,23 @@ def compute_in_progress(rows: list, pr_ids: dict) -> InProgress:
     return InProgress(entries, active)
 
 
+def count_under_way(inprog: InProgress) -> int:
+    """Count the distinct open global tasks the In progress list shows.
+
+    A nested entry and a flat module entry (a PR on a module of an otherwise
+    untouched global) both name their global task; two flat entries under one
+    global count it once. A global whose box is already ticked is done, so a
+    flat entry under it is not counted.
+
+    Args:
+        inprog: The In progress selection from `compute_in_progress`.
+
+    Returns:
+        The number of distinct unticked global tasks among the entries.
+    """
+    return len({entry.global_row.task_id for entry in inprog.entries if not entry.global_row.done})
+
+
 @dataclass
 class Context:
     """What dependency checks look up.

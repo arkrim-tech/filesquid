@@ -435,7 +435,7 @@ def build_queue(checklist: str, rows: list, checking: bool):
     for warning in warnings:
         print(f"warning: {warning}", file=sys.stderr)
     kept = raw_ids if checking else None
-    under_way = sum(entry.nested for entry in inprog.entries)
+    under_way = mvp_queue.count_under_way(inprog)
     return (lambda when: mvp_queue.render_queue(inprog, up_next, pr_ids, when, kept)), stamp, old_stamp, under_way
 
 
