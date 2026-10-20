@@ -468,3 +468,147 @@ fn extract_reports_a_missing_file() {
     assert_eq!(versions(&object), ["v1"]);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Run `namespace register <prefix> <iri> [extra..] --object <dir>`.
+fn register_in(object: &Path, prefix: &str, iri: &str, extra: &[&str]) -> Result<i32, String> {
+    let object = object.to_string_lossy();
+    let mut list = vec!["namespace", "register", prefix, iri];
+    list.extend_from_slice(extra);
+    list.extend_from_slice(&["--object", &object]);
+    run(&args(&list))
+}
+
+/// Run `validate [curie] --object <dir>`.
+fn validate_in(object: &Path, curie: Option<&str>) -> Result<i32, String> {
+    let object = object.to_string_lossy();
+    let mut list = vec!["validate"];
+    list.extend(curie);
+    list.extend_from_slice(&["--object", &object]);
+    run(&args(&list))
+}
+
+/// The OCFL object holding a `rico` registry with the term `title`.
+fn rico_object(name: &str) -> (PathBuf, PathBuf) {
+    let (dir, object) = photo_object(name, "urn:x:1", b"pixels");
+    let code = register_in(
+        &object,
+        "rico",
+        "https://www.ica.org/standards/RiC/ontology#",
+        &["--terms", "title,hasCreator"],
+    )
+    .expect("register");
+    assert_eq!(code, 0);
+    (dir, object)
+}
+
+#[test]
+fn a_registered_extension_statement_is_set_in_its_own_map() {
+    let (dir, object) = rico_object("ns-set");
+    set_in(&object, "rico:title", "Fonds 12");
+    assert!(metadata_md(&object).contains("rico:\n  title: Fonds 12\n"));
+    assert_eq!(versions(&object), ["v1", "v2", "v3"]);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn set_rejects_an_unregistered_prefix_or_an_unlisted_term_by_name() {
+    let (dir, object) = rico_object("ns-refuse");
+    let object_arg = object.to_string_lossy().into_owned();
+    let err = run(&args(&["set", "lido:title", "x", "--object", &object_arg])).expect_err("lido");
+    assert!(err.contains("lido"), "{err}");
+    let err = run(&args(&["set", "rico:colour", "x", "--object", &object_arg])).expect_err("term");
+    assert!(err.contains("colour"), "{err}");
+    assert_eq!(versions(&object), ["v1", "v2"]);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn namespace_register_refuses_a_built_in_prefix_and_another_iri() {
+    let (dir, object) = rico_object("ns-register");
+    let err = register_in(&object, "dcterms", "https://example.org/x#", &[]).expect_err("built-in");
+    assert!(err.contains("dcterms"), "{err}");
+    let err = register_in(&object, "rico", "https://example.org/x#", &[]).expect_err("another IRI");
+    assert!(err.contains("rico"), "{err}");
+    let code = register_in(
+        &object,
+        "mine",
+        "urn:uuid:0b5c4d1e-8a6f-4b21-9a0e-1f2d3c4b5a69",
+        &["--custom"],
+    )
+    .expect("custom");
+    assert_eq!(code, 0);
+    let listed = run(&args(&[
+        "namespace",
+        "list",
+        "--object",
+        &object.to_string_lossy(),
+    ]));
+    assert_eq!(listed, Ok(0));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn validate_reports_unregistered_prefixes() {
+    let (dir, object) = rico_object("ns-validate");
+    assert_eq!(validate_in(&object, Some("rico:title")), Ok(0));
+    assert_eq!(validate_in(&object, Some("rico:colour")), Ok(1));
+    assert_eq!(validate_in(&object, Some("lido:title")), Ok(1));
+    assert_eq!(validate_in(&object, Some("schema:album")), Ok(0));
+    set_in(&object, "rico:title", "Fonds 12");
+    assert_eq!(validate_in(&object, None), Ok(0));
+    let record = "---\nrico:\n  title: Fonds 12\nlido:\n  title: Stray\n---\n";
+    let local = LocalObject::open(&object, None).unwrap();
+    local
+        .save(&filesquid_metadata::markdown::from_markdown(record))
+        .unwrap();
+    assert_eq!(validate_in(&object, None), Ok(1));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn extension_statements_round_trip_through_cli_csv_and_xmp() {
+    let (dir, object) = rico_object("ns-interchange");
+    set_in(&object, "rico:title", "Fonds 12");
+    let object_arg = object.to_string_lossy().into_owned();
+    for fmt in ["csv", "xmp"] {
+        let path = dir.join(format!("out.{fmt}"));
+        let path_arg = path.to_string_lossy().into_owned();
+        let code =
+            run(&args(&["export", fmt, &path_arg, "--object", &object_arg])).expect("export");
+        assert_eq!(code, 0);
+        assert!(
+            std::fs::read_to_string(&path).unwrap().contains("Fonds 12"),
+            "{fmt}"
+        );
+        let (_, other) = rico_object(&format!("ns-interchange-{fmt}"));
+        let other_arg = other.to_string_lossy().into_owned();
+        let code = run(&args(&["import", fmt, &path_arg, "--object", &other_arg])).expect("import");
+        assert_eq!(code, 0);
+        assert!(
+            metadata_md(&other).contains("rico:\n  title: Fonds 12\n"),
+            "{fmt}"
+        );
+        std::fs::remove_dir_all(other.parent().unwrap()).unwrap();
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_separate_registry_object_is_named_with_registry() {
+    let (dir, registry) = rico_object("ns-registry");
+    let (other_dir, object) = photo_object("ns-registry-user", "urn:x:2", b"pixels");
+    let code = run(&args(&[
+        "set",
+        "rico:title",
+        "Fonds 12",
+        "--registry",
+        &registry.to_string_lossy(),
+        "--object",
+        &object.to_string_lossy(),
+    ]))
+    .expect("set with --registry");
+    assert_eq!(code, 0);
+    assert!(metadata_md(&object).contains("rico:"));
+    std::fs::remove_dir_all(&dir).unwrap();
+    std::fs::remove_dir_all(&other_dir).unwrap();
+}

@@ -1,5 +1,6 @@
 //! Canonical `metadata.md`: YAML front matter plus optional Markdown body.
 
+use crate::namespace::is_extension_prefix;
 use crate::record::{Record, Statement};
 use crate::MetadataNamespace;
 
@@ -25,6 +26,10 @@ pub(crate) fn render(record: &Record, head: &str, tail: &str) -> String {
         "schemaorg"
     };
     append_ns(&mut out, schema_key, MetadataNamespace::SchemaOrg, record);
+    for prefix in extension_prefixes(record) {
+        let namespace = MetadataNamespace::Extension(prefix.to_string());
+        append_ns(&mut out, prefix, namespace, record);
+    }
     out.push_str(tail);
     out.push_str("---\n");
     if !record.body.trim().is_empty() {
@@ -35,6 +40,21 @@ pub(crate) fn render(record: &Record, head: &str, tail: &str) -> String {
     out
 }
 
+/// The extension prefixes of `record`'s statements, each once, in the order
+/// they first appear (MD-S-012: one YAML map per extension namespace).
+fn extension_prefixes(record: &Record) -> Vec<&str> {
+    let mut prefixes: Vec<&str> = Vec::new();
+    for statement in &record.statements {
+        if let MetadataNamespace::Extension(prefix) = &statement.namespace {
+            if !prefixes.contains(&prefix.as_str()) {
+                prefixes.push(prefix);
+            }
+        }
+    }
+    prefixes
+}
+
+/// Append the YAML map `key:` of the statements in namespace `ns`, if any.
 fn append_ns(out: &mut String, key: &str, ns: MetadataNamespace, record: &Record) {
     let rows: Vec<&Statement> = record
         .statements
@@ -94,25 +114,54 @@ pub fn from_markdown(text: &str) -> Record {
     let mut ns = None;
     for line in yaml.lines() {
         if let Some(name) = line.strip_suffix(':').filter(|l| !l.starts_with(' ')) {
-            ns = match name.trim() {
-                "dcterms" => Some(MetadataNamespace::Dcterms),
-                "exif" => Some(MetadataNamespace::Exif),
-                "schema" | "schemaorg" => Some(MetadataNamespace::SchemaOrg),
-                _ => None,
-            };
+            ns = map_namespace(name.trim());
             continue;
         }
-        let Some(namespace) = ns else {
+        // A top-level line that opens no map (a file-record header line)
+        // ends the map before it; only indented lines are its statements.
+        if !line.starts_with(' ') {
+            ns = None;
+            continue;
+        }
+        let Some(namespace) = &ns else {
             continue;
         };
         let trimmed = line.trim();
         let Some((term, raw)) = trimmed.split_once(':') else {
             continue;
         };
-        let value = unquote(raw.trim());
-        let _ = record.set(namespace, term.trim(), value);
+        read_statement(&mut record, namespace, term.trim(), unquote(raw.trim()));
     }
     record
+}
+
+/// The namespace of the top-level map `key`: a built-in map, or an extension
+/// map for any key that could be a registered prefix. The record is read
+/// without the registry, so a map is kept as it was written; registration
+/// is checked when a statement is authored.
+fn map_namespace(key: &str) -> Option<MetadataNamespace> {
+    match key {
+        "dcterms" => Some(MetadataNamespace::Dcterms),
+        "exif" => Some(MetadataNamespace::Exif),
+        "schema" | "schemaorg" => Some(MetadataNamespace::SchemaOrg),
+        other if is_extension_prefix(other) => {
+            Some(MetadataNamespace::Extension(other.to_string()))
+        }
+        _ => None,
+    }
+}
+
+/// Add one statement read from a record: built-in statements pass the
+/// `/terms/` register as before (a refused term is not part of the record);
+/// extension statements are kept as written.
+fn read_statement(record: &mut Record, namespace: &MetadataNamespace, term: &str, value: String) {
+    match namespace {
+        MetadataNamespace::Extension(_) => record.insert(namespace.clone(), term, value),
+        _ => {
+            // A refused built-in term is not part of the record.
+            let _ = record.set(namespace.clone(), term, value);
+        }
+    }
 }
 
 /// Strip YAML double quotes and decode the escapes written by [`yaml_quote`].

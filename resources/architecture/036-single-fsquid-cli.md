@@ -12,12 +12,14 @@ Accepted
 
 Accepted: 2026-10-17. Amends [ADR 016](./016-rust-ocfl-library.md), [ADR 023](./023-filesquid-ocfl-engine-and-parquet.md), [ADR 024](./024-filesquid-metadata-engine.md) and [ADR 026](./026-filesquid-provenance-engine.md) where they give each module its own CLI.
 
+Revised: 2026-10-20T05:00:00Z. The metadata module adds `namespace` (`register`, `list`) for its namespace registry (Task MD-0.7, MD-S-012); no other module defines it, so it runs at the top level.
+
 ## Context / Requirement Reference
 
 - Requirements: [C-057](../product-vision.md#module-rules), [FE-069](../product-vision.md#independent-library), [FE-070](../product-vision.md#independent-library), [FE-072](../product-vision.md#independent-library), [U-40](../product-vision.md#ocfl-module), [U-63](../product-vision.md#metadata-module), [U-67](../product-vision.md#c2pa-module), [T-042](../product-vision.md#canonical-ocfl-state-and-evidence), [T-045](../product-vision.md#canonical-ocfl-state-and-evidence); [PRD F-050](../prd.md#f-050-filesquid-platform-and-distributions), [F-051](../prd.md#f-051-ocfl-module), [F-052](../prd.md#f-052-metadata-module), [F-054](../prd.md#f-054-c2pa-module).
 - Earlier ADRs gave each module its own command line: `fsquid` for OCFL ([ADR 016](./016-rust-ocfl-library.md)), a metadata CLI that shipped as the `filesquid-metadata` binary ([ADR 024](./024-filesquid-metadata-engine.md), Task MD-0.3), and a C2PA CLI ([ADR 026](./026-filesquid-provenance-engine.md)).
 - The owner decided on 2026-10-17 that every FileSquid CLI is invoked as `fsquid`, followed by commands and parameters, and that module context is added only where it is necessary.
-- Command names planned across the modules collide only on `validate` (OCFL structural validation and metadata register validation). OCFL: `stage`, `status`, `diff`, `commit`, `log`, `checkout`, `revert`, `reinstate`, `list`, `cat`, `validate`. Metadata: `extract`, `get`, `set`, `export`, `import`, `validate`. C2PA: `read`, `verify`, `sign`, `edit`, `embed`, `report`.
+- Command names planned across the modules collide only on `validate` (OCFL structural validation and metadata register validation). OCFL: `stage`, `status`, `diff`, `commit`, `log`, `checkout`, `revert`, `reinstate`, `list`, `cat`, `validate`. Metadata: `extract`, `get`, `set`, `export`, `import`, `namespace`, `validate`. C2PA: `read`, `verify`, `sign`, `edit`, `embed`, `report`.
 
 ## Decision
 
