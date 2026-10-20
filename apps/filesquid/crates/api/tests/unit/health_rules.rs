@@ -12,6 +12,7 @@ fn healthy() -> HealthInputs {
         errors_last_5m: 0,
         ocfl_error_codes: Vec::new(),
         ocfl_error_objects: 0,
+        journal_unsealed_age_ms: None,
     }
 }
 
@@ -158,4 +159,35 @@ fn open_ocfl_error_findings_degrade_health_with_codes_and_object_count() {
     assert_eq!(reason.codes, ["E023", "E092"]);
     assert_eq!(reason.objects, Some(2));
     assert_eq!(evaluate(&healthy()).status, HealthStatus::Ok);
+}
+
+#[test]
+fn journal_unsealed_degrades_only_beyond_two_sealing_intervals() {
+    let limit = 2 * filesquid_api::journal::seal::SEAL_INTERVAL_MS;
+    let at = |age: Option<i64>| {
+        status(HealthInputs {
+            journal_unsealed_age_ms: age,
+            ..healthy()
+        })
+    };
+    assert_eq!(
+        at(None),
+        (HealthStatus::Ok, vec![]),
+        "nothing left unsealed"
+    );
+    assert_eq!(
+        at(Some(limit - 1)),
+        (HealthStatus::Ok, vec![]),
+        "just under"
+    );
+    assert_eq!(
+        at(Some(limit)),
+        (HealthStatus::Ok, vec![]),
+        "exactly two intervals"
+    );
+    assert_eq!(
+        at(Some(limit + 1)),
+        (HealthStatus::Degraded, vec!["journal_unsealed".into()]),
+        "just above"
+    );
 }

@@ -75,6 +75,9 @@ pub struct HealthInputs {
     pub ocfl_error_codes: Vec<String>,
     /// Objects with at least one open OCFL error finding.
     pub ocfl_error_objects: usize,
+    /// How long the oldest entry a seal left unsealed has waited, in milliseconds; `None`
+    /// when the last seals left none, or the host seals nothing (API-S-032).
+    pub journal_unsealed_age_ms: Option<i64>,
 }
 
 /// Health status, reasons and the inputs they came from.
@@ -157,6 +160,7 @@ pub fn evaluate(inputs: &HealthInputs) -> HealthReport {
     if inputs.ocfl_error_objects > 0 {
         reasons.push(ocfl_reason(inputs));
     }
+    reasons.extend(unsealed_reason(inputs));
     let status = reasons
         .iter()
         .map(|r| r.severity)
@@ -167,6 +171,20 @@ pub fn evaluate(inputs: &HealthInputs) -> HealthReport {
         reasons,
         checks: inputs.clone(),
     }
+}
+
+/// The `journal_unsealed` reason: `degraded` while an entry a seal left unsealed has waited
+/// longer than two sealing intervals (ADR 033 Decision 7), until a seal succeeds.
+fn unsealed_reason(inputs: &HealthInputs) -> Option<HealthReason> {
+    let age = inputs.journal_unsealed_age_ms?;
+    let limit = 2 * crate::journal::seal::SEAL_INTERVAL_MS;
+    (age > limit).then(|| HealthReason {
+        code: "journal_unsealed".into(),
+        severity: HealthStatus::Degraded,
+        detail: format!("journal entries unsealed for {} minutes", age / 60_000),
+        codes: Vec::new(),
+        objects: None,
+    })
 }
 
 /// The `ocfl_validation_errors` reason: at least `degraded` while any OCFL error finding is

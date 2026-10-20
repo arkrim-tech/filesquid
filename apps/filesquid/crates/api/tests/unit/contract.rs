@@ -1220,6 +1220,7 @@ fn sample_inputs() -> HealthInputs {
         errors_last_5m: 0,
         ocfl_error_codes: vec!["E023".into()],
         ocfl_error_objects: 1,
+        journal_unsealed_age_ms: None,
     }
 }
 
