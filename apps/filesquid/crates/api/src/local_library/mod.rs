@@ -28,7 +28,9 @@
 //! `routes`: the host registers each folder the owner chose under an opaque location ID
 //! and injects them through [`LibraryLocations`]; [`LibraryCommands`] binds libraries to
 //! locations and calls [`LocalLibraryService`], and the host installs it as the
-//! [`LibraryOperations`] the routes call.
+//! [`LibraryOperations`] the routes call. The owner picks each folder in the host's own dialog
+//! through `POST /api/v1/libraries/location-choices` ([`choice`]), which answers the opaque
+//! location ID only.
 //!
 //! Open, copy, rebuild and the candidate query never write to the source root, and none of
 //! them repairs (F-001: direct inspection and copy MUST NOT authorize in-place edits of OCFL
@@ -41,6 +43,7 @@
 const LOG_TARGET: &str = "filesquid::local_library";
 
 mod candidates;
+pub mod choice;
 mod commands;
 mod error;
 mod journal_rebuild;

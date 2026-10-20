@@ -25,7 +25,9 @@ use filesquid_desktop_lib::{
     history_backfill, install_history_source, install_launch_token, local_library_service,
     open_host_monitor, open_library_catalog,
 };
-use filesquid_native::{HostMonitor, SqliteCatalog, SqliteJournal, CATALOG_DIR, JOURNAL_FILE};
+use filesquid_native::{
+    HostMonitor, OpenedRoots, SqliteCatalog, SqliteJournal, CATALOG_DIR, JOURNAL_FILE,
+};
 use filesquid_ocfl::storage::FsBackend;
 use filesquid_ocfl::write::{LeaseConfig, LeaseStore, SystemClock};
 use journal::block_on;
@@ -176,7 +178,12 @@ fn the_history_routes_answer_from_a_real_desktop_library() {
     let (library, _) = create_library(&desktop.library_service());
     let (status, _) = desktop.get("/api/v1/history");
     assert_eq!(status, 503, "no history source installed yet");
-    install_history_source(&desktop.state, desktop.catalog.clone()).expect("installed");
+    install_history_source(
+        &desktop.state,
+        desktop.catalog.clone(),
+        Arc::new(OpenedRoots::new()),
+    )
+    .expect("installed");
     let (status, body) = desktop.get("/api/v1/history");
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
     let page = json(&body);
@@ -200,7 +207,12 @@ fn the_history_routes_answer_from_a_real_desktop_library() {
         "no host path"
     );
     assert!(
-        install_history_source(&desktop.state, desktop.catalog.clone()).is_err(),
+        install_history_source(
+            &desktop.state,
+            desktop.catalog.clone(),
+            Arc::new(OpenedRoots::new())
+        )
+        .is_err(),
         "installed once"
     );
     let (dir, _) = desktop.stop();
@@ -261,7 +273,12 @@ fn a_repair_commits_its_provenance_follow_up_under_the_repair_run_id() {
     let one = &answer.objects[0];
     assert_eq!(one.result, RepairResult::Repaired, "{answer:?}");
     assert_eq!(one.provenance_version.as_deref(), Some("v3"), "{answer:?}");
-    install_history_source(&desktop.state, desktop.catalog.clone()).expect("installed");
+    install_history_source(
+        &desktop.state,
+        desktop.catalog.clone(),
+        Arc::new(OpenedRoots::new()),
+    )
+    .expect("installed");
     let (status, body) = desktop.get(&format!("/api/v1/files/{library}/versions/v3/prov"));
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
     let text = String::from_utf8_lossy(&body).to_string();
@@ -304,7 +321,12 @@ fn the_backfill_fills_the_history_of_versions_committed_without_records() {
     let dir = data_dir("backfill");
     let library = library_without_history(&dir);
     let desktop = Desktop::launch_in(dir);
-    install_history_source(&desktop.state, desktop.catalog.clone()).expect("installed");
+    install_history_source(
+        &desktop.state,
+        desktop.catalog.clone(),
+        Arc::new(OpenedRoots::new()),
+    )
+    .expect("installed");
     let (_, body) = desktop.get("/api/v1/history");
     assert_eq!(json(&body)["items"].as_array().expect("items").len(), 0);
     let backfill = history_backfill(&desktop.host, &installation());
@@ -385,7 +407,12 @@ fn a_cancelled_backfill_commits_nothing_and_leaves_the_rest_for_the_next_launch(
         .backfill_history(&backfill, &cancel)
         .expect("libraries listed");
     assert!(runs.is_empty(), "{runs:?}");
-    install_history_source(&desktop.state, desktop.catalog.clone()).expect("installed");
+    install_history_source(
+        &desktop.state,
+        desktop.catalog.clone(),
+        Arc::new(OpenedRoots::new()),
+    )
+    .expect("installed");
     let (_, body) = desktop.get(&format!("/api/v1/files/{library}/history"));
     assert_eq!(json(&body)["items"].as_array().expect("items").len(), 0);
     let next = desktop
@@ -416,7 +443,12 @@ fn one_unreadable_library_leaves_the_others_history_served() {
         .join("root-scratch");
     std::fs::remove_dir_all(&scratch).expect("scratch");
     std::fs::write(&scratch, b"not a directory").expect("block");
-    install_history_source(&desktop.state, desktop.catalog.clone()).expect("installed");
+    install_history_source(
+        &desktop.state,
+        desktop.catalog.clone(),
+        Arc::new(OpenedRoots::new()),
+    )
+    .expect("installed");
     let (status, body) = desktop.get("/api/v1/history");
     assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
     let page = json(&body);

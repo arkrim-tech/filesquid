@@ -79,7 +79,7 @@ fn contract_is_openapi_3_1_with_the_crate_api_version() {
     let doc = contract();
     assert_eq!(doc["openapi"], "3.1.0");
     assert_eq!(doc["info"]["version"], API_VERSION);
-    assert_eq!(API_VERSION, "0.18.0");
+    assert_eq!(API_VERSION, "0.19.0");
 }
 
 #[test]
@@ -289,7 +289,17 @@ async fn owner_state() -> (ApiState, Monitor) {
     state.install_preferences(Arc::new(
         filesquid_api::preferences::MemoryPreferenceStore::new(),
     ));
+    state.install_history_backfill(Arc::new(StartingLauncher));
     (state, monitor)
+}
+
+/// A backfill launcher that always starts.
+struct StartingLauncher;
+
+impl filesquid_api::history::launch::BackfillLauncher for StartingLauncher {
+    fn launch(&self, _actor: &str) -> Result<(), filesquid_api::history::launch::LaunchError> {
+        Ok(())
+    }
 }
 
 /// A navigation service over an empty catalog: the repository level answers 200.
@@ -1077,7 +1087,11 @@ fn history_samples() -> Vec<(&'static str, Vec<Value>)> {
             truncated: true,
         },
     ];
+    let started = filesquid_api::history::launch::BackfillStarted {
+        status: "started".into(),
+    };
     vec![
+        ("BackfillStarted", vec![to_value(started)]),
         (
             "OperationKind",
             filesquid_core::OperationKind::ALL.map(to_value).to_vec(),

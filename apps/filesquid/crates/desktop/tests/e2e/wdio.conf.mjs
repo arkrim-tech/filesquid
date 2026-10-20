@@ -15,6 +15,10 @@
  * - `FILESQUID_E2E_LIBRARY`: the media library the test-instrumented app opens for the
  *   content-handle tests. When unset, the launcher builds one in the run directory with
  *   `ffmpeg` (`support/media-library.mjs`); set it to reuse a library built earlier.
+ * - `FILESQUID_E2E_LOCATIONS`: a folder holding the empty folders `create` and `copy` that the
+ *   test-instrumented app registers as the owner's library folders for the library-route
+ *   tests. When unset, the launcher makes them in the run directory
+ *   (`support/library-folders.mjs`).
  *
  * The chosen binary is copied into a fresh temporary directory before the run, so a concurrent
  * Cargo build that replaces the shared output cannot change the binary under test.
@@ -24,6 +28,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildMediaLibrary } from "./support/media-library.mjs";
+import { buildLocationFolders } from "./support/library-folders.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const workspace = path.resolve(here, "../../../..");
@@ -51,6 +56,9 @@ try {
   // FILESQUID_E2E_LIBRARY is unset (caller-supplied run directories included), and opened by
   // the test-instrumented app from that variable, which the workers inherit.
   process.env.FILESQUID_E2E_LIBRARY ||= buildMediaLibrary(run);
+  // The library-route tests' owner-chosen folders (Task DE-1.1): empty folders `create` and
+  // `copy`, registered by the test-instrumented app under fixed location IDs.
+  process.env.FILESQUID_E2E_LOCATIONS ||= buildLocationFolders(run);
 } catch (error) {
   // onComplete never runs when setup fails, so the owned run directory is removed here.
   if (ownsRun) {
