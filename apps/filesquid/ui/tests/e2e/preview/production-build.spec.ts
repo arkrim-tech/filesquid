@@ -24,6 +24,8 @@ const ELEMENTS = [
   "fs-states",
   "fs-nav-tree",
   "fs-breadcrumb",
+  "fs-file-browser",
+  "fs-file-preview",
   "fs-host-indicator",
   "fs-monitor",
 ];

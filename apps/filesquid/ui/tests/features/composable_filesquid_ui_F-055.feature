@@ -30,6 +30,25 @@ Feature: Composable filesquid user interface
     Then they should use Tauri IPC on the desktop and a WebAssembly worker in the browser
     And none should call the engines over HTTP through Axum
 
+  # Task UI-F2.2: the browser's named slots (ADR 028 Decision 6, UI-S-002)
+  Scenario: A panel mounts in a named sidebar slot and receives only the opened file
+    Given the file browser with two registered panels "details" and "versions"
+    When I open a file
+    Then both panels should be shown in their slots in registration order
+    And each panel should receive the file reference with library, object, version, path and display name
+    And neither panel should hold a reference to the other
+    When I close the file
+    Then both panels should receive no file and the sidebar should be hidden
+
+  Scenario: A registered preview renderer is tried before the built-in ones
+    Given the file browser with a registered renderer for text files
+    When I open a text file
+    Then the registered renderer should show the file instead of the built-in text preview
+
+  Scenario: The file browser mounts alone
+    When I mount the file browser with no panel, no renderer and no distribution
+    Then it should list, open and change files through the API only
+
   # Source
   # - resources/prd.md F-055
   # - resources/srs.md SRS-F-055
