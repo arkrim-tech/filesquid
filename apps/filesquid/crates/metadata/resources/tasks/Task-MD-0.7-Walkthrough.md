@@ -45,9 +45,9 @@ JSON import applies the `/terms/` register and the namespace registry checks; an
 - The API needs one registry per repository: read it with `OcflStore::read_registry` and commit it with `commit_registry_with` at a `FileRef` whose record path names it (the object and path are the API's choice, for example `namespaces.md` in the library's snapshot object), and pass it to `Record::set_registered`, `parse_curie_with`, `apply_csv_with`, `apply_json_with`, `to_xmp_with` and `from_xmp_with`.
 - A custom namespace needs an IRI; the API can mint `urn:uuid:<uuid>` when the owner gives none.
 
-## Choices that depend on open owner questions
+## Choices tied to owner decisions
 
-- The prefix `schemaorg` is reserved because a file record writes its Schema.org statements under `schemaorg:` (open question (a) of MD-0.8). If the owner settles (a) differently, the reserved list changes with it.
+- The prefix `schemaorg` is reserved because a file record writes its Schema.org statements under `schemaorg:`; the owner kept that key on 2026-10-20 (MD-0.8 question (a), MD-S-008 and MD-S-012).
 - No statement disclosure policy exists in the crate yet (F-046 owns retained-field selection, scrubbing and the preview). Extension statements carry their prefix exactly like `exif:`, `dcterms:` and `schema:`, so that policy addresses them the same way.
 
 ## SRS traceability
