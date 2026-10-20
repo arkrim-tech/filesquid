@@ -23,7 +23,7 @@ import type {
   UploadCommit,
   UploadFacts,
 } from "./model";
-import { isMediaType, lastSegment } from "./model";
+import { MAX_UPLOAD_BYTES, isMediaType, lastSegment } from "./model";
 import type { FileSource, SourceOptions } from "./source";
 
 /** One file of the fixture. */
@@ -96,8 +96,10 @@ const MAX_LIMIT = 1000;
 const MAX_CURSORS = 1000;
 /** Longest uploaded name the API accepts, in UTF-8 bytes. */
 const MAX_UPLOAD_NAME_BYTES = 1024;
-/** RFC 3339 UTC, as the API checks a last-modified time (the calendar is not checked here). */
-const RFC3339_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
+/** The shape of an RFC 3339 UTC time: date, clock and an optional fraction of any digits. */
+const RFC3339_UTC = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?Z$/;
+/** A UUID v4 in lowercase or uppercase hex. */
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 /** Time of `v1`; each later version is one minute after the one before. */
 const BASE_TIME = Date.UTC(2026, 9, 16, 9, 0, 0);
 
@@ -163,6 +165,8 @@ export class MemoryFileSource implements FileSource {
   private readonly snapshots: Snapshot[] = [];
   private readonly cursors = new Map<string, { prefix: string; offset: number }>();
   private readonly uploaded = new Map<string, UploadedFile>();
+  /** Uploads committed so far; each one's `created` is a minute after the one before. */
+  private uploadCount = 0;
   /** When set, every call rejects with this value (a network error, a denial, ...). */
   failure: unknown = undefined;
   /** Every handle URL minted, in order, with the file it was minted for. */
@@ -264,13 +268,14 @@ export class MemoryFileSource implements FileSource {
   /**
    * Upload one file as the route does (API-S-026): a new file object at `v1`, or the next
    * version of `facts.file_id`'s object. The object shown is not changed. Refuses what the
-   * route refuses: a bad name, media type or time, or a non-ASCII name without its form
-   * (`invalid_request`); an unknown file (`not_found`); unchanged bytes (`conflict`).
+   * route refuses: a body over 64 MiB, a bad name, media type, time or `file_id`, or a
+   * non-ASCII name without its form (`invalid_request`); an unknown file (`not_found`);
+   * unchanged bytes (`conflict`).
    */
   async upload(library: LibraryRef, facts: UploadFacts, body: Blob): Promise<UploadCommit> {
     this.check();
     const form = uploadForm(facts);
-    if (form === null) throw refusal(400, "invalid_request");
+    if (form === null || body.size > MAX_UPLOAD_BYTES) throw refusal(400, "invalid_request");
     const bytes = await readBlob(body);
     const previous = facts.file_id === undefined ? undefined : this.uploaded.get(facts.file_id);
     if (facts.file_id !== undefined && previous === undefined) throw refusal(404, "not_found");
@@ -287,7 +292,8 @@ export class MemoryFileSource implements FileSource {
       version,
     };
     this.uploaded.set(file_id, { upload, bytes });
-    const created = new Date(BASE_TIME + this.uploaded.size * 60_000).toISOString();
+    this.uploadCount += 1;
+    const created = new Date(BASE_TIME + this.uploadCount * 60_000).toISOString();
     const object_id = `urn:uuid:${file_id}`;
     return { library_id: library.library_id, file_id, object_id, version, created };
   }
@@ -455,10 +461,34 @@ function uploadForm(facts: UploadFacts): NameNormalization | null {
     facts.name.includes("/") ||
     facts.name.includes("\0");
   const badType = facts.media_type !== undefined && !isMediaType(facts.media_type);
-  const badTime = facts.last_modified !== undefined && !RFC3339_UTC.test(facts.last_modified);
+  const badTime = facts.last_modified !== undefined && !isRfc3339Utc(facts.last_modified);
+  const badId = facts.file_id !== undefined && !UUID_V4.test(facts.file_id);
   const ascii = /^\p{ASCII}*$/u.test(facts.name);
   const form = facts.name_normalization ?? (ascii ? "nfc" : null);
-  return badName || badType || badTime ? null : form;
+  return badName || badType || badTime || badId ? null : form;
+}
+
+/**
+ * Whether `text` is an RFC 3339 UTC time the API accepts: a real calendar date, hours below
+ * 24, minutes below 60 and seconds below 60, or 60 only as the leap second `23:59:60`. Pure.
+ */
+function isRfc3339Utc(text: string): boolean {
+  const parts = RFC3339_UTC.exec(text)?.slice(1).map(Number);
+  if (!parts) return false;
+  const [year, month, day, hour, minute, second] = parts as [
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+  ];
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  const realDate =
+    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+  const leap = hour === 23 && minute === 59 && second === 60;
+  return realDate && hour < 24 && minute < 60 && (second < 60 || leap);
 }
 
 /** True when two byte arrays are equal. */

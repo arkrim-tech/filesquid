@@ -73,6 +73,8 @@ describe("uploadFacts", () => {
     ["text", undefined],
     ["text/", undefined],
     ["text/pl ain", undefined],
+    ["+image/jpeg", undefined],
+    ["image/.jpeg", undefined],
     [`a/${"b".repeat(128)}`, undefined],
   ])("reports the media type %j as %j", (type, expected) => {
     expect(reportedMediaType(type)).toBe(expected);

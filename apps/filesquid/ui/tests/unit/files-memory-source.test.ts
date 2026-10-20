@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../../src/api/client";
 import { MemoryFileSource } from "../../src/files/memory-source";
-import type { FileLocation, FileRef } from "../../src/files/model";
+import { MAX_UPLOAD_BYTES, type FileLocation, type FileRef } from "../../src/files/model";
 
 const LOCATION: FileLocation = { library_id: "lib", object_id: "obj", prefix: "" };
 
@@ -164,12 +164,51 @@ describe("MemoryFileSource writes", () => {
     ["a name that is not ASCII without its form", { name: "Café.txt" }],
     ["a media type that is not type/subtype", { name: "a.txt", media_type: "text" }],
     ["a time that is not RFC 3339 UTC", { name: "a.txt", last_modified: "2026-10-20 08:00" }],
+    [
+      "a date that is not in the calendar",
+      { name: "a.txt", last_modified: "2026-02-29T00:00:00Z" },
+    ],
+    ["a clock that is out of range", { name: "a.txt", last_modified: "2026-10-20T25:99:99Z" }],
+    [
+      "a leap second that is not 23:59:60",
+      { name: "a.txt", last_modified: "2026-10-20T08:00:60Z" },
+    ],
+    ["a file_id that is not a UUID v4", { name: "a.txt", file_id: "not-a-uuid" }],
   ])("refuses %s as invalid_request without a version", async (_case, facts) => {
     const s = source();
     await expect(s.upload(LOCATION, facts, new Blob(["x"]))).rejects.toMatchObject({
       code: "invalid_request",
     });
     expect(s.uploads).toEqual([]);
+  });
+
+  it("accepts a leap second and a leap day as the API does", async () => {
+    const s = source();
+    const times = ["2024-02-29T00:00:00Z", "0004-02-29T12:00:00Z", "2016-12-31T23:59:60.5Z"];
+    for (const [i, last_modified] of times.entries()) {
+      await s.upload(LOCATION, { name: `t${i}.txt`, last_modified }, new Blob(["x"]));
+    }
+    expect(s.uploads.map((u) => u.last_modified)).toEqual(times);
+  });
+
+  it("refuses a body over 64 MiB as invalid_request without reading it", async () => {
+    const s = source();
+    const body = new Blob(["x"]);
+    Object.defineProperty(body, "size", { value: MAX_UPLOAD_BYTES + 1 });
+    await expect(s.upload(LOCATION, { name: "big.bin" }, body)).rejects.toMatchObject({
+      code: "invalid_request",
+    });
+    expect(s.uploads).toEqual([]);
+  });
+
+  it("gives every upload a later created time, a new version of a file included", async () => {
+    const s = source();
+    const first = await s.upload(LOCATION, { name: "a.txt" }, new Blob(["one"]));
+    const again = { name: "a.txt", file_id: first.file_id };
+    const second = await s.upload(LOCATION, again, new Blob(["two"]));
+    const third = await s.upload(LOCATION, again, new Blob(["three"]));
+    expect(Date.parse(second.created)).toBeGreaterThan(Date.parse(first.created));
+    expect(Date.parse(third.created)).toBeGreaterThan(Date.parse(second.created));
   });
 
   it("a folder stays pending until a file is added beneath it", async () => {

@@ -88,6 +88,28 @@ Playwright, production build served by `vite preview` (`playwright.preview.confi
 
 The server-backed suite (`playwright.config.ts`) builds and runs `filesquid-server` with Cargo and has no upload test; it was not run for this npm-only fix.
 
+## Cubic round 1
+
+The fixes for round 1's 15 findings: `MemoryFileSource` checks the calendar date and clock of a last-modified time as the API's `is_rfc3339_utc` does (leap day and `23:59:60` accepted), refuses a malformed `file_id` and a body over 64 MiB with `invalid_request`, and advances `created` on every upload. `ClientFileSource` always uses the library it is given. The Playwright fake refuses a missing `library_id` and an unknown `name_normalization`. The UI SRS spells out the name cleaning, the restricted-name rule and the time conversion, and the README, plan and feature state the known limitation. New tests failed first (7), then passed:
+
+```text
+     × always uploads into the library it is given, whatever the facts hold 15ms
+     × refuses a date that is not in the calendar as invalid_request without a version 28ms
+     × refuses a clock that is out of range as invalid_request without a version 7ms
+     × refuses a leap second that is not 23:59:60 as invalid_request without a version 17ms
+     × refuses a file_id that is not a UUID v4 as invalid_request without a version 8ms
+     × refuses a body over 64 MiB as invalid_request without reading it 1ms
+     × gives every upload a later created time, a new version of a file included 2ms
+      Tests  7 failed | 95 passed (102)
+```
+
+```text
+ Test Files  49 passed (49)
+      Tests  1084 passed (1084)
+
+  50 passed (21.0s)
+```
+
 ## Open points for the platform engineer
 
 - An upload now lands in its own object, not in the folder shown, and the API records no home collection or folder for it, so a new upload does not appear in the shown listing or in the navigation tree. The browser reports the committed `v1` and says nothing else; the drop target still reads "Drop to upload into {folder}". Placing an upload (a home collection or folder in the snapshot, or a navigation listing of file objects) needs an API change and an owner decision on the wording.

@@ -269,6 +269,13 @@ describe("ClientFileSource", () => {
     expect(seen[0]?.init.body).toBe(body);
   });
 
+  it("always uploads into the library it is given, whatever the facts hold", async () => {
+    const { client, seen } = clientWith(() => json(200, UPLOAD));
+    const facts = { name: "a.txt", library_id: "other" } as unknown as { name: string };
+    await new ClientFileSource(client).upload(LOCATION, facts, new Blob(["x"]));
+    expect(new URL(String(seen[0]?.url)).searchParams.get("library_id")).toBe("lib-1");
+  });
+
   it("names the file whose content an upload replaces with file_id", async () => {
     const { client, seen } = clientWith(() => json(200, { ...UPLOAD, version: "v2" }));
     const facts = { name: "a.txt", name_normalization: "nfc", file_id: UPLOAD.file_id } as const;

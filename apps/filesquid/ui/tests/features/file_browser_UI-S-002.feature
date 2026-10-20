@@ -59,10 +59,16 @@ Feature: File browser
     And the status should say the upload committed version "v1"
     And the object shown should gain no version
 
-  Scenario: A media type or time the API cannot take is left out of the upload
-    When I upload a file whose media type has parameters, or is not type/subtype, or whose time has no four-digit year
-    Then the media type should be sent without its parameters, or not at all
-    And the last-modified time should not be sent
+  Scenario: A media type with parameters is sent as its type/subtype only
+    When I upload a file whose media type is "text/plain;charset=utf-8"
+    Then one upload call should be sent with the name, its normalisation form and the size
+    And its media type should be "text/plain"
+
+  Scenario: A media type or time the API cannot take is left out, and the file still uploads
+    When I upload a file whose media type is "text" and whose last-modified time is in the year 10000
+    Then one upload call should be sent with the name, its normalisation form and the size
+    And it should send no media type
+    And it should send no last-modified time
 
   Scenario: A new folder stays pending until a file is added
     When I create the folder "Photos"

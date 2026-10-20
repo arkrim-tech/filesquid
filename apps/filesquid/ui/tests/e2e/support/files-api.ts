@@ -72,6 +72,9 @@ export interface FilesApi {
   readonly uploads: Record<string, string>[];
 }
 
+/** The normalisation forms the upload route names. */
+const NAME_FORMS = new Set(["nfc", "nfd", "nfkc", "nfkd", "unnormalised"]);
+
 /** The query keys `PUT /api/v1/files/upload` takes (contract 0.18.0); any other is refused. */
 const UPLOAD_KEYS = new Set([
   "library_id",
@@ -221,8 +224,9 @@ async function routeWrites(page: Page, api: FilesApi): Promise<void> {
 
 /**
  * Answer an upload as the API's query rules do: an unknown key (a `path` or `object_id` of the
- * old upload form among them), a missing `name` or `size`, or a declared size that is not the
- * body's is refused with `invalid_request` before the source is asked.
+ * old upload form among them), a missing `library_id`, `name` or `size`, a normalisation form
+ * the contract does not name, or a declared size that is not the body's is refused with
+ * `invalid_request` before the source is asked.
  */
 async function uploadAsTheApi(
   source: MemoryFileSource,
@@ -230,8 +234,11 @@ async function uploadAsTheApi(
   bytes: Buffer,
 ): Promise<unknown> {
   const unknown = [...q.keys()].some((key) => !UPLOAD_KEYS.has(key));
-  const declared = q.get("size");
-  if (unknown || q.get("name") === null || declared !== String(bytes.byteLength)) {
+  const missing = ["library_id", "name", "size"].some((key) => q.get(key) === null);
+  const form = q.get("name_normalization");
+  const badForm = form !== null && !NAME_FORMS.has(form);
+  const badSize = q.get("size") !== String(bytes.byteLength);
+  if (unknown || missing || badForm || badSize) {
     throw new ApiError(400, "/api/v1/files/upload", { code: "invalid_request" });
   }
   const facts = {

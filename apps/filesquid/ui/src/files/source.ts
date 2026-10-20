@@ -239,7 +239,7 @@ export class ClientFileSource implements FileSource {
     body: Blob,
     options: SourceOptions = {},
   ): Promise<UploadCommit> {
-    const request = { library_id: library.library_id, ...facts };
+    const request = { ...facts, library_id: library.library_id };
     return this.client.uploadFile(request, body, options);
   }
 
