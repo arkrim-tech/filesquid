@@ -7,8 +7,9 @@
 //! `label` operation in its own version. An entry overrides the commit-time label of its
 //! version, and `null` clears it. Labels never influence retention.
 //!
-//! [`APP_DATA_FOLDER`] is reserved for such application data: uploads, moves, removals,
-//! restores and new folders there are refused. Pure; no I/O.
+//! [`APP_DATA_FOLDER`] is reserved for such application data, and [`PROVENANCE_FOLDER`] for
+//! each version's PROV-O records (ADR 040): listings leave both out, and uploads, moves,
+//! removals, restores and new folders there are refused. Pure; no I/O.
 
 use super::error::FileError;
 use filesquid_core::{OperationMessage, MAX_LABEL_BYTES};
@@ -17,6 +18,13 @@ use std::collections::BTreeMap;
 
 /// The logical folder reserved for FileSquid's application data in an object.
 pub const APP_DATA_FOLDER: &str = ".filesquid";
+
+/// The logical folder that holds each version's PROV-O records (ADR 040).
+pub const PROVENANCE_FOLDER: &str = "provenance";
+
+/// The top-level folders FileSquid keeps its own files in: left out of listings and closed
+/// to writes through the file routes.
+pub const RESERVED_FOLDERS: [&str; 2] = [APP_DATA_FOLDER, PROVENANCE_FOLDER];
 
 /// The logical file that holds the labels set after commit.
 pub const LABELS_PATH: &str = ".filesquid/labels.json";
@@ -32,21 +40,33 @@ const SCHEMA: u32 = 1;
 
 /// Whether `path` is the application-data folder or lies inside it.
 pub fn is_reserved(path: &str) -> bool {
-    path == APP_DATA_FOLDER
+    in_folder(path, APP_DATA_FOLDER)
+}
+
+/// Whether `path` is one of the [`RESERVED_FOLDERS`] or lies inside one.
+pub fn in_reserved_folder(path: &str) -> bool {
+    RESERVED_FOLDERS
+        .iter()
+        .any(|folder| in_folder(path, folder))
+}
+
+/// Whether `path` is `folder` or lies inside it.
+fn in_folder(path: &str, folder: &str) -> bool {
+    path == folder
         || path
-            .strip_prefix(APP_DATA_FOLDER)
+            .strip_prefix(folder)
             .is_some_and(|rest| rest.starts_with('/'))
 }
 
-/// Refuse a path in the application-data folder.
+/// Refuse a path in one of the [`RESERVED_FOLDERS`].
 ///
 /// # Errors
 ///
 /// `invalid_request` when `path` is reserved.
 pub fn refuse_reserved(path: &str) -> Result<(), FileError> {
-    match is_reserved(path) {
+    match in_reserved_folder(path) {
         true => Err(FileError::invalid(
-            "The .filesquid folder holds FileSquid's own data; choose another path.",
+            "The .filesquid and provenance folders hold FileSquid's own data; choose another path.",
         )),
         false => Ok(()),
     }
@@ -193,6 +213,12 @@ mod tests {
         assert!(is_reserved(".filesquid/labels.json"));
         assert!(!is_reserved(".filesquidx/a"));
         assert!(!is_reserved("photos/.filesquid"));
+        assert!(!is_reserved("provenance/v1.jsonld"));
+        assert!(in_reserved_folder("provenance"));
+        assert!(in_reserved_folder("provenance/v1.jsonld"));
+        assert!(in_reserved_folder(".filesquid/labels.json"));
+        assert!(!in_reserved_folder("provenances/a"));
+        assert!(!in_reserved_folder("photos/provenance"));
     }
 
     #[test]

@@ -79,7 +79,7 @@ fn contract_is_openapi_3_1_with_the_crate_api_version() {
     let doc = contract();
     assert_eq!(doc["openapi"], "3.1.0");
     assert_eq!(doc["info"]["version"], API_VERSION);
-    assert_eq!(API_VERSION, "0.13.0");
+    assert_eq!(API_VERSION, "0.14.0");
 }
 
 #[test]
@@ -286,6 +286,9 @@ async fn owner_state() -> (ApiState, Monitor) {
     install_sample_history(&state);
     library_contract::install(&state, &monitor).await;
     state.install_navigation(Arc::new(navigation_service()));
+    state.install_preferences(Arc::new(
+        filesquid_api::preferences::MemoryPreferenceStore::new(),
+    ));
     (state, monitor)
 }
 
@@ -697,10 +700,88 @@ fn samples() -> Vec<(&'static str, Vec<Value>)> {
     all.extend(validation_samples());
     all.extend(history_samples());
     all.extend(navigation_samples());
+    all.extend(preference_samples());
     all.extend(operation_samples());
     all.extend(files_contract::samples());
     all.extend(library_contract::samples());
     all
+}
+
+/// Serialized samples of the preference schemas: the defaults, a value with every choice
+/// changed and a pin of every kind, and every enum value.
+fn preference_samples() -> Vec<(&'static str, Vec<Value>)> {
+    use filesquid_api::preferences::{
+        FolderPlacement, Layout, NavigationPreferences, PinKind, PinnedDestination, Preferences,
+        SortDirection, SortKey, StartView,
+    };
+    let pin = |kind| PinnedDestination {
+        node: "n1.YzE6Yw".into(),
+        kind,
+    };
+    let kinds = [
+        PinKind::Repository,
+        PinKind::Library,
+        PinKind::Collection,
+        PinKind::VirtualCollection,
+        PinKind::Folder,
+    ];
+    let navigation = NavigationPreferences {
+        version: 1,
+        pinned: kinds.map(pin).to_vec(),
+        order: vec!["libraries".into()],
+        collapsed: vec!["n1.YzE6Yw".into()],
+    };
+    let changed = Preferences {
+        start_view: StartView::PersonalRoot,
+        sort_key: SortKey::OpenedByMe,
+        sort_direction: SortDirection::Descending,
+        folder_placement: FolderPlacement::Mixed,
+        layout: Layout::Grid,
+        hover_card: false,
+        navigation: navigation.clone(),
+        ..Preferences::default()
+    };
+    let sort_keys = [
+        SortKey::Name,
+        SortKey::Size,
+        SortKey::Modified,
+        SortKey::ModifiedByMe,
+        SortKey::OpenedByMe,
+    ];
+    vec![
+        (
+            "Preferences",
+            vec![to_value(Preferences::default()), to_value(changed)],
+        ),
+        ("NavigationPreferences", vec![to_value(&navigation)]),
+        (
+            "PinnedDestination",
+            navigation.pinned.iter().map(to_value).collect(),
+        ),
+        (
+            "StartView",
+            [StartView::Home, StartView::PersonalRoot]
+                .map(to_value)
+                .to_vec(),
+        ),
+        ("SortKey", sort_keys.map(to_value).to_vec()),
+        (
+            "SortDirection",
+            [SortDirection::Ascending, SortDirection::Descending]
+                .map(to_value)
+                .to_vec(),
+        ),
+        (
+            "FolderPlacement",
+            [FolderPlacement::OnTop, FolderPlacement::Mixed]
+                .map(to_value)
+                .to_vec(),
+        ),
+        (
+            "Layout",
+            [Layout::List, Layout::Grid].map(to_value).to_vec(),
+        ),
+    ]
 }
 
 /// Serialized samples of the navigation schemas: a page of every kind of node and both

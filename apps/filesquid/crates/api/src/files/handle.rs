@@ -2,7 +2,9 @@
 //! [`crate::ApiState`] with [`crate::ApiState::install_files`] for the file routes and the
 //! content route.
 
+use super::download::Download;
 use super::error::FileError;
+use super::nodes::ScopeObject;
 use super::service::{ContentAnswer, ContentRequest, FileService};
 use super::versions::Committed;
 use super::view::{
@@ -12,6 +14,7 @@ use super::view::{
     VersionsView,
 };
 use crate::content::ContentTarget;
+use crate::navigation::FolderScope;
 use axum::body::Bytes;
 use filesquid_ocfl::storage::StorageBackend;
 use filesquid_ocfl::write::VersionReservations;
@@ -38,6 +41,12 @@ pub trait FileOperations: Send + Sync {
 
     /// The bytes and facts of one content answer.
     fn content(&self, request: ContentRequest) -> FileFuture<'_, ContentAnswer>;
+
+    /// The whole-file download of one file version, streamed.
+    fn download(&self, query: FileQuery) -> FileFuture<'_, Download>;
+
+    /// The object that holds the files of `scope`, or `None`. May block.
+    fn scope_object(&self, scope: &FolderScope) -> Option<ScopeObject>;
 
     /// `not_found` unless `target` names a file of an existing version.
     fn check_target(&self, target: ContentTarget) -> FileFuture<'_, ()>;
@@ -92,6 +101,14 @@ where
 
     fn content(&self, request: ContentRequest) -> FileFuture<'_, ContentAnswer> {
         Box::pin(self.content(request))
+    }
+
+    fn download(&self, query: FileQuery) -> FileFuture<'_, Download> {
+        Box::pin(self.download(query))
+    }
+
+    fn scope_object(&self, scope: &FolderScope) -> Option<ScopeObject> {
+        FileService::scope_object(self, scope)
     }
 
     fn check_target(&self, target: ContentTarget) -> FileFuture<'_, ()> {

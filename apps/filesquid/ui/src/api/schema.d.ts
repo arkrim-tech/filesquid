@@ -271,10 +271,30 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List one folder of an object version
-         * @description The folders and files directly below a logical-path prefix, folders first, with an opaque cursor; limit 1-1000, default 200. Answers storage facts only; a successful read is not journaled, a refusal is journaled once (API-S-017).
+         * List one folder of an object version, by path or by navigation node
+         * @description The folders and files directly below a logical-path prefix, folders first, with an opaque cursor; limit 1-1000, default 200. The folder is named either by library_id and object_id with an optional prefix, or by one collection or folder navigation node (API-S-021), never both (400 invalid_request otherwise). A node must be readable to the caller: an unknown, malformed or unreadable node, or one no object holds, answers one identical 404 not_found; a library, virtual collection or repository node answers 400 invalid_request. The reserved folders provenance (PROV-O records) and .filesquid (application data) are left out of the root's page, so a page may hold fewer entries than asked while next_cursor remains; a prefix inside them answers 404. Answers storage facts only; a successful read is not journaled, a refusal is journaled once (API-S-017).
          */
         get: operations["listFolder"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download one whole file version, streamed
+         * @description The whole file of any size as an attachment, streamed from ranged reads of at most 8 MiB so the host never holds the file in memory (NFR-003). A missing file is refused before the answer starts; a storage failure after it started ends the stream early and is journaled once. Through the desktop scheme every answer is capped at 16 MiB (DE-S-005), so the desktop UI saves larger files with ranged reads of GET /api/v1/files/content. A successful read is not journaled, a refusal is journaled once (API-S-017).
+         */
+        get: operations["downloadFile"];
         put?: never;
         post?: never;
         delete?: never;
@@ -764,6 +784,30 @@ export interface paths {
          */
         get: operations["getLibraryHistorySize"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the caller's UI preferences
+         * @description The caller's own saved preferences (API-S-011, SRS-F-062), or the defaults when they saved none. A successful read is not journaled, a refusal is journaled once (API-S-017).
+         */
+        get: operations["getPreferences"];
+        /**
+         * Replace the caller's UI preferences
+         * @description Replace the caller's own preferences with a complete, checked value: every field, schema 1, navigation version 1, at most 100 pinned node handles, 16 section ids of 1 to 64 characters and 1,000 collapsed node handles, each once (UI-S-017). Node entries must be handles the navigation listing wrote; no name, title, logical path, token or content handle is stored. A save is journaled once as preferences.update with the actor only, never the values.
+         */
+        put: operations["putPreferences"];
         post?: never;
         delete?: never;
         options?: never;
@@ -1495,6 +1539,67 @@ export interface components {
             /** @description True when a bound stopped the count, so the totals are lower bounds. */
             truncated: boolean;
         };
+        /** @description One pinned destination: its node handle and kind, never its name (UI-S-017). */
+        PinnedDestination: {
+            /** @description An opaque node handle (API-S-021). */
+            node: string;
+            kind: components["schemas"]["NavigationKind"];
+        };
+        /** @description The navigation tree's pinned destinations, section order and collapsed nodes (UI-S-017). pinned, order and collapsed may be left out on PUT, meaning empty. */
+        NavigationPreferences: {
+            /**
+             * @description The format version.
+             * @constant
+             */
+            version: 1;
+            /** @description At most 100 pinned destinations, each node once. */
+            pinned: components["schemas"]["PinnedDestination"][];
+            /** @description At most 16 section ids in the user's order, each once. */
+            order: string[];
+            /** @description At most 1,000 collapsed node handles, each once. */
+            collapsed: string[];
+        };
+        /** @description One user's UI preferences (API-S-011, SRS-F-062): choices only, never a name, title, logical path, token or content handle. */
+        Preferences: {
+            /**
+             * @description The format version.
+             * @constant
+             */
+            schema: 1;
+            start_view: components["schemas"]["StartView"];
+            sort_key: components["schemas"]["SortKey"];
+            sort_direction: components["schemas"]["SortDirection"];
+            folder_placement: components["schemas"]["FolderPlacement"];
+            layout: components["schemas"]["Layout"];
+            /** @description Whether hovering an item shows its card. Default true. */
+            hover_card: boolean;
+            navigation: components["schemas"]["NavigationPreferences"];
+        };
+        /**
+         * @description Where the UI opens: Home or the root of the user's personal library. Default home.
+         * @enum {string}
+         */
+        StartView: "home" | "personal_root";
+        /**
+         * @description What listings are sorted by. Default name.
+         * @enum {string}
+         */
+        SortKey: "name" | "size" | "modified" | "modified_by_me" | "opened_by_me";
+        /**
+         * @description The sort direction. Default ascending.
+         * @enum {string}
+         */
+        SortDirection: "ascending" | "descending";
+        /**
+         * @description Folders before files, or sorted among them. Default on_top.
+         * @enum {string}
+         */
+        FolderPlacement: "on_top" | "mixed";
+        /**
+         * @description How listings are laid out. Default list.
+         * @enum {string}
+         */
+        Layout: "list" | "grid";
     };
     responses: {
         /** @description Invalid or malformed request (invalid_request). */
@@ -1635,6 +1740,15 @@ export interface components {
         };
         /** @description The library's storage, the repair ledger or the reservation store is not reachable now, a head is still being published (snapshot_incomplete), or the host has not installed its library commands yet (unavailable; retryable). */
         LibraryUnavailable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description The host keeps no preferences yet, or their store cannot be reached (unavailable; retryable). */
+        PreferencesUnavailable: {
             headers: {
                 [name: string]: unknown;
             };
@@ -2077,11 +2191,13 @@ export interface operations {
     };
     listFolder: {
         parameters: {
-            query: {
-                /** @description The library. */
-                library_id: components["parameters"]["LibraryId"];
-                /** @description The OCFL object identifier. */
-                object_id: components["parameters"]["ObjectId"];
+            query?: {
+                /** @description The library; given with object_id, never with node. */
+                library_id?: string;
+                /** @description The OCFL object; given with library_id, never with node. */
+                object_id?: string;
+                /** @description A collection or folder node handle, as the navigation listing gave it (clients never parse it), instead of library_id, object_id and prefix. */
+                node?: string;
                 /** @description The version: head (the default) or one such as v1. */
                 version?: components["parameters"]["Version"];
                 /** @description The folder, a logical-path prefix without a trailing /; the root when absent. */
@@ -2104,6 +2220,47 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FolderPage"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    downloadFile: {
+        parameters: {
+            query: {
+                /** @description The library. */
+                library_id: components["parameters"]["LibraryId"];
+                /** @description The OCFL object identifier. */
+                object_id: components["parameters"]["ObjectId"];
+                /** @description The version: head (the default) or one such as v1. */
+                version?: components["parameters"]["Version"];
+                /** @description The file's logical path. */
+                path: components["parameters"]["LogicalPath"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The whole file. */
+            200: {
+                headers: {
+                    /** @description The file's media type. */
+                    "Content-Type"?: string;
+                    /** @description The file's length in bytes. */
+                    "Content-Length"?: number;
+                    /** @description attachment, naming the file by its display name: an ASCII filename fallback and the display name as RFC 5987 filename* UTF-8 (RFC 6266). */
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
                 };
             };
             400: components["responses"]["InvalidRequest"];
@@ -3082,6 +3239,59 @@ export interface operations {
             404: components["responses"]["NotFound"];
             500: components["responses"]["Internal"];
             503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    getPreferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's preferences. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Preferences"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["PreferencesUnavailable"];
+        };
+    };
+    putPreferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Preferences"];
+            };
+        };
+        responses: {
+            /** @description The preferences as saved. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Preferences"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["PreferencesUnavailable"];
         };
     };
 }

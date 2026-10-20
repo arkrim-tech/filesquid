@@ -31,21 +31,25 @@
 //! ([`FileLibrary`]) into a [`FileService`]; this module does no storage I/O of its own
 //! (API-S-006).
 
+mod download;
 mod error;
 mod handle;
 pub mod labels;
 pub mod media;
 pub mod names;
+mod nodes;
 mod range;
 mod routes;
 mod service;
 mod versions;
 mod view;
 
+pub use download::{Download, DownloadStream};
 pub use error::FileError;
 pub use handle::{FileFuture, FileOperations};
-pub use labels::{APP_DATA_FOLDER, LABELS_PATH, MAX_LABELS};
+pub use labels::{APP_DATA_FOLDER, LABELS_PATH, MAX_LABELS, PROVENANCE_FOLDER, RESERVED_FOLDERS};
 pub use names::{DisplayNames, NameFuture, StoredFile};
+pub use nodes::{ScopeObject, ScopeObjects};
 pub use range::{RangePlan, RangeRequest};
 pub(crate) use routes::{answer_content, refuse as refuse_file, routes, ContentAnswerKind};
 pub use service::{
@@ -55,9 +59,9 @@ pub use versions::{Committed, FileProvenance, MAX_SIZE_CONTENTS, MAX_SIZE_OBJECT
 pub use view::{
     CommitView, ContentQuery, EntryView, FileChangeView, FileDetailsView, FileHistorySizeView,
     FileQuery, FolderPageView, FolderRequest, FolderView, HistoryEntryView, HistoryQuery,
-    HistoryView, LabelRequest, LibraryHistorySizeView, LibraryQuery, ListingQuery, MintRequest,
-    MintView, MoveRequest, ObjectQuery, RemoveRequest, RestoreRequest, UploadQuery, UserView,
-    VersionView, VersionsView,
+    HistoryView, LabelRequest, LibraryHistorySizeView, LibraryQuery, ListingQuery, ListingRequest,
+    MintRequest, MintView, MoveRequest, ObjectQuery, RemoveRequest, RestoreRequest, UploadQuery,
+    UserView, VersionView, VersionsView,
 };
 
 /// `tracing` target of this module's stdout-only diagnostics, outside `filesquid::activity`
@@ -91,6 +95,8 @@ pub const DETAILS_OPERATION: &str = "files.details";
 pub const HISTORY_OPERATION: &str = "files.history";
 /// Journal operation of a refused versions read.
 pub const VERSIONS_OPERATION: &str = "files.versions";
+/// Journal operation of a refused or failed whole-file download.
+pub const DOWNLOAD_OPERATION: &str = "files.download";
 /// Journal operation of a refused content read.
 pub const READ_OPERATION: &str = "files.read_content";
 /// Journal operation of an upload.

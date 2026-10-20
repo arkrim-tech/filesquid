@@ -5,18 +5,19 @@
 
 use super::error::FileError;
 use super::names::{content_disposition, Disposition};
+use super::nodes::listing_query;
 use super::range::{RangePlan, RangeRequest};
 use super::service::{ContentAnswer, ContentRequest};
 use super::versions::Committed;
 use super::view::{
     ContentQuery, FileQuery, FolderRequest, HistoryQuery, LabelRequest, LibraryQuery, ListingQuery,
-    MoveRequest, ObjectQuery, RemoveRequest, RestoreRequest, UploadQuery,
+    ListingRequest, MoveRequest, ObjectQuery, RemoveRequest, RestoreRequest, UploadQuery,
 };
 use super::{
-    DETAILS_OPERATION, FOLDER_OPERATION, HISTORY_OPERATION, HISTORY_SIZE_OPERATION,
-    LABEL_OPERATION, LIBRARY_HISTORY_SIZE_OPERATION, LIST_OPERATION, MAX_UPLOAD_BYTES,
-    MOVE_OPERATION, READ_OPERATION, REMOVE_OPERATION, RESTORE_OPERATION, UPLOAD_OPERATION,
-    VERSIONS_OPERATION,
+    DETAILS_OPERATION, DOWNLOAD_OPERATION, FOLDER_OPERATION, HISTORY_OPERATION,
+    HISTORY_SIZE_OPERATION, LABEL_OPERATION, LIBRARY_HISTORY_SIZE_OPERATION, LIST_OPERATION,
+    MAX_UPLOAD_BYTES, MOVE_OPERATION, READ_OPERATION, REMOVE_OPERATION, RESTORE_OPERATION,
+    UPLOAD_OPERATION, VERSIONS_OPERATION,
 };
 use crate::auth::{journal_entry, Action, Principal};
 use crate::error::ErrorCode;
@@ -33,12 +34,14 @@ use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Extension, Json};
+use futures_util::StreamExt;
 use serde::Serialize;
 
 /// The file operation routes, relative to [`crate::API_PREFIX`].
 pub(crate) fn routes() -> Vec<Route> {
     vec![
         ("/files/listing", get(listing), Action::ReadFiles),
+        ("/files/download", get(download), Action::ReadFiles),
         ("/files/details", get(details), Action::ReadFiles),
         ("/files/history", get(history), Action::ReadFiles),
         ("/files/versions", get(versions), Action::ReadFiles),
@@ -86,14 +89,88 @@ fn body<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, FileError> {
         .map_err(|_| FileError::invalid("The JSON body has unknown, missing or malformed fields."))
 }
 
-/// `GET /api/v1/files/listing`.
+/// `GET /api/v1/files/listing`: by library, object and prefix, or by navigation node.
 async fn listing(
     State(state): State<ApiState>,
     Extension(principal): Extension<Principal>,
-    request: Result<Query<ListingQuery>, QueryRejection>,
+    request: Result<Query<ListingRequest>, QueryRejection>,
 ) -> Response {
-    let outcome = async { files(&state)?.listing(query(request)?).await }.await;
+    let outcome = async {
+        let files = files(&state)?;
+        let listing = resolve_listing(&state, &principal, files.clone(), query(request)?).await?;
+        files.listing(listing).await
+    }
+    .await;
     read_answer(&state, LIST_OPERATION, &principal, outcome).await
+}
+
+/// The listing a request names, resolving a node on a blocking thread: the navigation
+/// service and the host's scope catalog may block on storage.
+async fn resolve_listing(
+    state: &ApiState,
+    principal: &Principal,
+    files: std::sync::Arc<dyn super::FileOperations>,
+    request: ListingRequest,
+) -> Result<ListingQuery, FileError> {
+    let navigation = state.navigation();
+    let principal = principal.clone();
+    let resolve = move || listing_query(request, &principal, navigation, files.as_ref());
+    tokio::task::spawn_blocking(resolve)
+        .await
+        .map_err(|_| FileError::internal("the listing task failed"))?
+}
+
+/// `GET /api/v1/files/download`: one whole file version, streamed as an attachment named by
+/// its display name.
+async fn download(
+    State(state): State<ApiState>,
+    Extension(principal): Extension<Principal>,
+    request: Result<Query<FileQuery>, QueryRejection>,
+) -> Response {
+    let outcome = async { files(&state)?.download(query(request)?).await }.await;
+    let download = match outcome {
+        Ok(download) => download,
+        Err(err) => return refuse(&state, DOWNLOAD_OPERATION, principal.actor(), err).await,
+    };
+    let disposition = content_disposition(Disposition::Attachment, &download.file_name);
+    let body = Body::from_stream(journaled_stream(state, principal, download.body));
+    let mut response = (StatusCode::OK, body).into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        HeaderName::from_static("x-content-type-options"),
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static(download.media_type));
+    headers.insert(CONTENT_LENGTH, HeaderValue::from(download.total));
+    if let Ok(value) = HeaderValue::from_str(&disposition) {
+        headers.insert(CONTENT_DISPOSITION, value);
+    }
+    response
+}
+
+/// `body`, journaling the error that ends it early once as [`DOWNLOAD_OPERATION`] before
+/// the transport aborts the answer.
+fn journaled_stream(
+    state: ApiState,
+    principal: Principal,
+    body: super::DownloadStream,
+) -> impl futures_util::Stream<Item = Result<Bytes, std::io::Error>> + Send {
+    body.then(move |piece| {
+        let state = state.clone();
+        let actor = principal.actor();
+        async move {
+            match piece {
+                Ok(bytes) => Ok(bytes),
+                Err(err) => {
+                    let code = err.error_code();
+                    refuse(&state, DOWNLOAD_OPERATION, actor, err).await;
+                    Err(std::io::Error::other(format!(
+                        "download ended early: {code}"
+                    )))
+                }
+            }
+        }
+    })
 }
 
 /// `GET /api/v1/files/details`.

@@ -97,6 +97,21 @@ impl NavigationService {
         node.to_handle()
     }
 
+    /// `Ok` when `node` exists and `principal` may read it and every ancestor: the check the
+    /// listing of its children makes first. May block, as [`Self::list`] does.
+    ///
+    /// # Errors
+    ///
+    /// `not_found` for a node that is unknown or unreadable; `unavailable` or `internal` when
+    /// a port fails.
+    pub fn check_readable(
+        &self,
+        principal: &Principal,
+        node: &NodeRef,
+    ) -> Result<(), NavigationError> {
+        self.resolve(principal, node).map(|_| ())
+    }
+
     /// Whether `principal` may read `node` (not its ancestors).
     pub(crate) fn may_read(&self, principal: &Principal, node: &NodeRef) -> bool {
         self.access.may_read(principal, node)

@@ -87,6 +87,9 @@ fn journaled_owner_state() -> (ApiState, LaunchToken, Monitor, Arc<MemoryJournal
     );
     state.install_validation(Arc::new(validation));
     history_fixture::install_sample_history(&state);
+    state.install_preferences(Arc::new(
+        filesquid_api::preferences::MemoryPreferenceStore::new(),
+    ));
     state.install_navigation(Arc::new(filesquid_api::navigation::NavigationService::new(
         Arc::new(filesquid_api::library::MemoryCatalog::new()),
         Arc::new(filesquid_api::navigation::MemoryFolderIndex::new()),
@@ -333,6 +336,7 @@ fn every_routed_path_declares_its_action() {
             "/api/v1/admin/ocfl/validation-settings" => Action::ConfigureValidation,
             admin if admin.starts_with("/api/v1/admin/") => Action::ReadMonitor,
             "/api/v1/files/listing"
+            | "/api/v1/files/download"
             | "/api/v1/files/details"
             | "/api/v1/files/history"
             | "/api/v1/files/versions"
@@ -355,6 +359,7 @@ fn every_routed_path_declares_its_action() {
             "/api/v1/libraries/repair-candidates" => Action::ReadLibraries,
             "/api/v1/libraries/repairs" => Action::RepairLibraries,
             "/api/v1/navigation" => Action::ReadNavigation,
+            "/api/v1/preferences" => Action::ManagePreferences,
             file if file.starts_with("/api/v1/files/") => Action::ReadHistory,
             other => panic!("{other} has no expected action in this test"),
         };
@@ -383,6 +388,7 @@ fn action_names_are_unique_dotted_identifiers() {
             "library.read",
             "library.repair",
             "navigation.read",
+            "preferences.manage",
             "public"
         ]
     );

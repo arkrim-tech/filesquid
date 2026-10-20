@@ -124,6 +124,7 @@ pub fn sample(
     match (method.as_str(), path) {
         ("GET", "/api/v1/files/listing") | ("GET", "/api/v1/files/versions") => plain(""),
         ("GET" | "HEAD", "/api/v1/files/content")
+        | ("GET", "/api/v1/files/download")
         | ("GET", "/api/v1/files/details")
         | ("GET", "/api/v1/files/history") => plain("&path=a.txt"),
         ("PUT", "/api/v1/files/upload") => (
@@ -155,6 +156,11 @@ pub fn sample(
             json_body(json!({ "version": "v1", "path": "a.txt" })),
         ),
         (_, "/api/v1/content/{handle}") => (content_url(state, token, path), None),
+        ("PUT", "/api/v1/preferences") => {
+            let defaults = filesquid_api::preferences::Preferences::default();
+            let body = serde_json::to_vec(&defaults).expect("json");
+            (path.into(), Some(("application/json", body)))
+        }
         _ => (path.to_string(), None),
     }
 }
