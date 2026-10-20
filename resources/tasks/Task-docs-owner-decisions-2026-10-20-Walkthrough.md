@@ -61,4 +61,28 @@ The README's `# About this project` section was reviewed after the PRD edits; ne
 
 ## Verification
 
-<!-- hook-output -->
+The module SRS and plan files live inside crates, so `bash scripts/changed_scope.sh` classifies this documentation-only change as `rust:filesquid-api,filesquid-cli,filesquid-desktop,filesquid-metadata,filesquid-native,filesquid-ocfl,filesquid-prov,filesquid-server` (changed: crates/api, crates/cli, crates/metadata, crates/ocfl), not `docs`. As the rules require for a `rust:` scope, the head commit was verified with the full suite, `TMPDIR=/dev/shm/owner-decisions FULL=1 bash scripts/pre-commit.sh`, after `npm ci` in `apps/filesquid/ui` and `apps/imagesquid`. Raw summary lines of the run:
+
+```text
+✅ Branch Validation passed.
+✅ Traceability Validation passed: 96 PRD requirements, 84 resolved SRS references.
+✅ Workspace Boundary validation passed.
+✅ Format validation passed.
+✅ ADR structure (ISO 42010) passed.
+✅ PRD allocation passed.
+✅ Plan traceability passed.
+✅ Relative links and anchors passed.
+✅ MVP progress bar passed.
+✅ Task cleanup passed.
+✅ Documentation validation passed.
+✅ Change scope validation passed (168 assertions).
+ℹ️  Test scope: full
+✅ Clippy passed (108s).
+✅ Workspace tests passed (264s).
+✅ Rustdoc passed (48s).
+✅ Vitest passed (3s).
+✅ Lint and test validation passed (test scope: full).
+✅ All Pre-Commit Hooks Passed! Test scope: full (887s)
+```
+
+Hook summary line: `Test scope: full`.
