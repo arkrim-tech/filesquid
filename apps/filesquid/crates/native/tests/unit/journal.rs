@@ -439,3 +439,187 @@ fn both_stores_assign_ids_before_the_entries_are_written() {
     drop(stores);
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
+
+/// An entry carrying `client_event_id` (API-S-030).
+fn client_event(id: &str) -> JournalEntry {
+    let mut entry = JournalEntry::new("ui.console.warn", Outcome::Info).level(Level::Warn);
+    entry.client_event_id = Some(id.to_string());
+    entry
+}
+
+/// Each client event ID is stored once by both stores (API-S-030): appending it again,
+/// in the same call or a later one, stores nothing and answers the first entry's id.
+#[test]
+fn both_stores_store_each_client_event_id_once() {
+    let (stores, dir) = stores("client-events");
+    let id = "00000001-0000-4000-8000-000000000000";
+    for store in &stores {
+        let first = store
+            .append_new(&[client_event(id), client_event(id)])
+            .expect("append");
+        assert!(first[0].1, "stored now");
+        assert_eq!(first[1], (first[0].0, false), "the same id in one call");
+        let again = store.append_new(&[client_event(id)]).expect("append");
+        assert_eq!(again, [(first[0].0, false)]);
+        assert_eq!(store.count(&JournalQuery::default()).unwrap(), 1);
+        let stored = store.entry(first[0].0).unwrap().expect("entry");
+        assert_eq!(stored.client_event_id.as_deref(), Some(id));
+        store
+            .append(&[JournalEntry::new("host.started", Outcome::Info)])
+            .expect("entries without a client event id are never de-duplicated");
+        store
+            .append(&[JournalEntry::new("host.started", Outcome::Info)])
+            .expect("append");
+        assert_eq!(store.count(&JournalQuery::default()).unwrap(), 3);
+    }
+    drop(stores);
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+/// The SQLite store's unique index keeps de-duplicating after the database is reopened.
+#[test]
+fn client_event_de_duplication_survives_a_restart() {
+    let dir = temp_dir("client-events-restart");
+    let path = dir.join("filesquid.sqlite");
+    let id = "00000002-0000-4000-8000-000000000000";
+    let first = {
+        let store = SqliteJournal::open(&path, "host-a").expect("open");
+        store.append_new(&[client_event(id)]).expect("append")[0]
+    };
+    let store = SqliteJournal::open(&path, "host-a").expect("reopen");
+    assert_eq!(
+        store.append_new(&[client_event(id)]).expect("append"),
+        [(first.0, false)]
+    );
+    assert_eq!(store.count(&JournalQuery::default()).unwrap(), 1);
+    drop(store);
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+/// A client event ID that is not an opaque token is dropped by both stores, so two such
+/// entries are both kept instead of colliding on one redacted key.
+#[test]
+fn a_client_event_id_that_is_not_opaque_is_dropped_and_its_entry_kept() {
+    let (stores, dir) = stores("client-event-redaction");
+    for store in &stores {
+        store
+            .append(&[
+                client_event("Grandma's birthday"),
+                client_event("Ben's party"),
+            ])
+            .expect("append");
+        let entries = store.query(&JournalQuery::default()).unwrap().entries;
+        assert_eq!(entries.len(), 2, "neither entry is lost");
+        assert!(entries.iter().all(|e| e.client_event_id.is_none()));
+    }
+    drop(stores);
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+/// An entry with a preset id whose client event ID another row holds answers the
+/// holder's id, not its own.
+#[test]
+fn a_preset_id_repeating_a_held_client_event_id_answers_the_holder() {
+    let (stores, dir) = stores("client-event-preset");
+    let id = "00000004-0000-4000-8000-000000000000";
+    for store in &stores {
+        let held = store.append_new(&[client_event(id)]).expect("append")[0].0;
+        let mut replay = client_event(id);
+        replay.id = Some(store.allocate_ids(1).expect("allocate")[0]);
+        assert_eq!(
+            store.append_new(&[replay]).expect("append"),
+            [(held, false)]
+        );
+        assert_eq!(store.count(&JournalQuery::default()).unwrap(), 1);
+    }
+    drop(stores);
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+/// The library, object and operation ID filters of API-S-031 select the same entries in
+/// both stores, and `entry` reads one entry by id.
+#[test]
+fn both_stores_filter_by_library_object_and_operation_id() {
+    let (stores, dir) = stores("query-filters");
+    let object = "urn:uuid:5f0c3e44-2a7b-4c1d-9e8f-0123456789ab";
+    for store in &stores {
+        store
+            .append(&[
+                JournalEntry::new("ocfl.commit", Outcome::Succeeded)
+                    .operation_id("op-1")
+                    .object_ref(format!("{object}@v1"))
+                    .target("lib-a"),
+                JournalEntry::new("ocfl.validation.finding", Outcome::Info)
+                    .target("lib-a")
+                    .target(object),
+                JournalEntry::new("ocfl.commit", Outcome::Succeeded)
+                    .operation_id("op-2")
+                    .object_ref(format!("{object}0@v1"))
+                    .target("lib-b"),
+            ])
+            .expect("append");
+        let ids = |query: JournalQuery| -> Vec<i64> {
+            store
+                .query(&query)
+                .unwrap()
+                .entries
+                .iter()
+                .filter_map(|e| e.id)
+                .collect()
+        };
+        let all = ids(JournalQuery::default());
+        let library = JournalQuery {
+            library_id: Some("lib-a".into()),
+            ..JournalQuery::default()
+        };
+        assert_eq!(ids(library), all[..2]);
+        let by_object = JournalQuery {
+            object_id: Some(object.into()),
+            ..JournalQuery::default()
+        };
+        assert_eq!(
+            ids(by_object),
+            all[..2],
+            "a longer object id is another object"
+        );
+        let by_operation = JournalQuery {
+            operation_id: Some("op-2".into()),
+            ..JournalQuery::default()
+        };
+        assert_eq!(ids(by_operation.clone()), all[2..]);
+        assert_eq!(store.count(&by_operation).unwrap(), 1);
+        assert_eq!(
+            store.entry(all[1]).unwrap().expect("entry").operation,
+            "ocfl.validation.finding"
+        );
+        assert!(store.entry(all[2] + 100).unwrap().is_none());
+    }
+    drop(stores);
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+/// A journal created before client event IDs existed gains the column and its unique
+/// index on open.
+#[test]
+fn an_older_journal_gains_the_client_event_id_column_on_open() {
+    let dir = temp_dir("migrate-client-events");
+    let path = dir.join("filesquid.sqlite");
+    {
+        let conn = rusqlite::Connection::open(&path).expect("old database");
+        conn.execute_batch(
+            "CREATE TABLE activity_journal (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, time_ms INTEGER NOT NULL,
+                host TEXT NOT NULL, process_id TEXT, actor TEXT NOT NULL,
+                operation TEXT NOT NULL, outcome TEXT NOT NULL, level TEXT NOT NULL,
+                target_ids TEXT NOT NULL, duration_ms INTEGER, error_code TEXT,
+                operation_id TEXT, object_ref TEXT);",
+        )
+        .expect("old schema");
+    }
+    let store = SqliteJournal::open(&path, "host-a").expect("migrated open");
+    let id = "00000003-0000-4000-8000-000000000000";
+    store.append(&[client_event(id)]).expect("append");
+    assert!(!store.append_new(&[client_event(id)]).expect("append")[0].1);
+    drop(store);
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}

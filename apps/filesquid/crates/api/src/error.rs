@@ -31,9 +31,14 @@ pub enum ErrorCode {
     MethodNotAllowed,
     /// The expected revision no longer matches; reread and decide (HTTP 409).
     Conflict,
+    /// The request body is larger than the route accepts (HTTP 413).
+    PayloadTooLarge,
     /// The requested byte range starts past the end of the file (HTTP 416); the answer
     /// carries `Content-Range: bytes */<length>`.
     RangeNotSatisfiable,
+    /// The caller sent more requests than the route's rate bound allows; the answer carries
+    /// `Retry-After` (HTTP 429).
+    RateLimited,
     /// The host failed while handling the request (HTTP 500).
     Internal,
     /// The host or module is not ready or not enabled; try again later (HTTP 503).
@@ -42,14 +47,16 @@ pub enum ErrorCode {
 
 impl ErrorCode {
     /// Every error code, in contract order.
-    pub const ALL: [ErrorCode; 9] = [
+    pub const ALL: [ErrorCode; 11] = [
         ErrorCode::InvalidRequest,
         ErrorCode::Unauthorized,
         ErrorCode::Forbidden,
         ErrorCode::NotFound,
         ErrorCode::MethodNotAllowed,
         ErrorCode::Conflict,
+        ErrorCode::PayloadTooLarge,
         ErrorCode::RangeNotSatisfiable,
+        ErrorCode::RateLimited,
         ErrorCode::Internal,
         ErrorCode::Unavailable,
     ];
@@ -63,7 +70,9 @@ impl ErrorCode {
             ErrorCode::NotFound => StatusCode::NOT_FOUND,
             ErrorCode::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
             ErrorCode::Conflict => StatusCode::CONFLICT,
+            ErrorCode::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             ErrorCode::RangeNotSatisfiable => StatusCode::RANGE_NOT_SATISFIABLE,
+            ErrorCode::RateLimited => StatusCode::TOO_MANY_REQUESTS,
             ErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
             ErrorCode::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
         }
@@ -78,16 +87,19 @@ impl ErrorCode {
             ErrorCode::NotFound => "not_found",
             ErrorCode::MethodNotAllowed => "method_not_allowed",
             ErrorCode::Conflict => "conflict",
+            ErrorCode::PayloadTooLarge => "payload_too_large",
             ErrorCode::RangeNotSatisfiable => "range_not_satisfiable",
+            ErrorCode::RateLimited => "rate_limited",
             ErrorCode::Internal => "internal",
             ErrorCode::Unavailable => "unavailable",
         }
     }
 
-    /// Whether repeating the same request unchanged may succeed. Only `unavailable` is
-    /// retryable; a `conflict` needs a reread first, so it is not.
+    /// Whether repeating the same request unchanged may succeed: `unavailable`, and
+    /// `rate_limited` once `Retry-After` has passed. A `conflict` needs a reread first, so
+    /// it is not.
     pub fn retryable(self) -> bool {
-        matches!(self, ErrorCode::Unavailable)
+        matches!(self, ErrorCode::Unavailable | ErrorCode::RateLimited)
     }
 }
 

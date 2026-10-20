@@ -20,6 +20,7 @@ use filesquid_ocfl::write::{BoundContext, CommitReceipt, VersionBoundFiles, Vers
 use filesquid_ocfl::VersionNum;
 use filesquid_ocfl::{Declaration, SpecVersion};
 use std::collections::{BTreeMap, BTreeSet};
+use tracing::Instrument;
 
 /// Most entities one snapshot read accepts (AGENTS.md §22).
 pub const MAX_SNAPSHOT_ENTITIES: usize = 1_000_000;
@@ -179,7 +180,8 @@ where
     }
     let sealed = bound.map(|inner| Sealed { inner, transform });
     let sealed = sealed.as_ref().map(|s| s as &dyn VersionBoundFiles);
-    match model.commit_with(meta, sealed).await {
+    let span = super::message::commit_span(meta.message.as_deref());
+    match model.commit_with(meta, sealed).instrument(span).await {
         Err(ChangeError::NothingToCommit) => Ok(None),
         result => published(result).map(Some),
     }
@@ -318,7 +320,8 @@ where
     model.stage_bytes(&path, &sealed).await?;
     let sealed = transform.seal(&companion, text)?;
     model.stage_bytes(&companion, &sealed).await?;
-    match model.commit(meta).await {
+    let span = super::message::commit_span(meta.message.as_deref());
+    match model.commit(meta).instrument(span).await {
         Err(ChangeError::NothingToCommit) => Ok(None),
         result => published(result).map(Some),
     }

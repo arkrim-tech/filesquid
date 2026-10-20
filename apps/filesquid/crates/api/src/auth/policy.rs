@@ -80,6 +80,9 @@ pub enum Action {
     ReadNavigation,
     /// Read and replace the caller's own UI preferences (`/api/v1/preferences`, API-S-011).
     ManagePreferences,
+    /// Journal the UI's console warnings and errors (`POST /api/v1/client-events`,
+    /// API-S-030).
+    RecordClientEvents,
     /// Deliberately public, unauthenticated: only the liveness probe
     /// (`GET /api/v1/health/live`), which says that the process is up and nothing else. The
     /// router leaves the route-table entry with this action unguarded; the guard itself
@@ -90,7 +93,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, in declaration order.
-    pub const ALL: [Action; 17] = [
+    pub const ALL: [Action; 18] = [
         Action::ReadHealth,
         Action::ReadContract,
         Action::SubscribeEvents,
@@ -107,6 +110,7 @@ impl Action {
         Action::RepairLibraries,
         Action::ReadNavigation,
         Action::ManagePreferences,
+        Action::RecordClientEvents,
         Action::Public,
     ];
 
@@ -129,6 +133,7 @@ impl Action {
             Action::RepairLibraries => "library.repair",
             Action::ReadNavigation => "navigation.read",
             Action::ManagePreferences => "preferences.manage",
+            Action::RecordClientEvents => "client_events.write",
             Action::Public => "public",
         }
     }
