@@ -11,10 +11,11 @@
  *
  * Navigation (UI-F2.1a): the `nav` landmark has a `navigation` named slot for the distribution's
  * navigation tree (`<fs-nav-tree slot="navigation">`); until one is slotted it shows the
- * vocabulary of the main destinations as a static list. The Monitor link follows the slot.
+ * vocabulary of the main destinations as a static list. The Monitor and Settings links follow the slot.
  *
- * Host privacy (UI-F2.1b, UI-S-004, UI-S-018): the header carries `<fs-host-indicator>`, so the
- * host and who can read files there are visible on every view; the client must therefore
+ * Host privacy (UI-F2.1b, UI-S-004, UI-S-018): the header carries `<fs-host-indicator>`, a
+ * compact badge whose popover says who can read files on the host, so the host is visible on
+ * every view without the full statement as permanent header text; the client must therefore
  * implement {@link HostClient}.
  */
 import type { Distribution } from "../distribution";
@@ -22,12 +23,13 @@ import { logoSource } from "../distribution";
 import type { LabelTable } from "../theme/labels";
 import type { ThemeStore } from "../theme/theme-store";
 import type { HealthStatus } from "../api/client";
-import { MONITOR_ROUTE } from "../app/routes";
+import { MONITOR_ROUTE, SETTINGS_ROUTE } from "../app/routes";
 import { denialLabel } from "./denial";
 import type { FsThemeControl } from "./fs-theme-control";
 import { A11Y_STYLE, releaseDocumentA11yStyle, retainDocumentA11yStyle } from "./a11y-style";
 import { focusElement, recoverFocus } from "../a11y/focus";
 import type { FsHostIndicator, HostClient } from "./fs-host-indicator";
+import type { FsSettings } from "./fs-settings";
 
 /** The part of the API client the shell needs (injectable in tests). */
 export interface ShellClient extends HostClient {
@@ -53,7 +55,7 @@ const STYLE = `
   h1 { margin: 0; min-width: 0; overflow-wrap: anywhere; font-family: var(--fs-font-heading); font-size: var(--fs-font-size-title); font-weight: 700; color: var(--fs-on-surface); }
   img { height: 2rem; width: auto; }
   fs-theme-control { margin-inline-start: auto; }
-  fs-host-indicator { flex: 1 1 100%; order: 1; }
+  fs-host-indicator { flex: 0 0 auto; }
   .body { display: flex; min-width: 0; }
   nav { display: flex; flex-direction: column; gap: var(--fs-space-4); flex: 0 0 15rem; box-sizing: border-box; min-width: 0; padding: var(--fs-space-4); background: var(--fs-surface-container); }
   ul { list-style: none; margin: 0; padding: 0; }
@@ -165,7 +167,9 @@ export class FsAppShell extends HTMLElement {
       labels.virtualExhibits,
     ];
     root.querySelector("ul.destinations")?.replaceChildren(...items.map((text) => li(text)));
-    root.querySelector("ul.tools")?.replaceChildren(li(labels.monitor, MONITOR_ROUTE));
+    root
+      .querySelector("ul.tools")
+      ?.replaceChildren(li(labels.monitor, MONITOR_ROUTE), li(labels.settings, SETTINGS_ROUTE));
     recoverFocus(root, hadFocus, () => root.querySelector("main"));
     void this.loadHealth();
   }
@@ -208,14 +212,20 @@ export class FsAppShell extends HTMLElement {
   }
 
   /**
-   * Read API health and the host descriptor again and update both, for example after a token
-   * was entered (the event channel is reopened with it). Network I/O via the client.
+   * Read API health and the host descriptor again and update the status line, the header
+   * indicator and a Settings page the shell holds, for example after a token was entered (the
+   * event channel is reopened with it). Network I/O via the client.
    *
    * @returns Resolves once the status line and the host indicator show the new answers.
    */
   async refreshHealth(): Promise<void> {
     const indicator = this.shadowRoot?.querySelector<FsHostIndicator>("fs-host-indicator");
-    await Promise.all([this.loadHealth(), indicator?.refresh()]);
+    const settings = [...this.querySelectorAll<FsSettings>(":scope > fs-settings")];
+    await Promise.all([
+      this.loadHealth(),
+      indicator?.refresh(),
+      ...settings.map((page) => page.refresh()),
+    ]);
   }
 
   /**

@@ -3,7 +3,8 @@
  * navigation listing does (API-S-021): the repository at the root level, one level of children
  * per call in the given order, `ancestors` from the repository down to the listed node, opaque
  * cursors with a bounded page size, and `not_found` for an unknown node. Tests and demos use
- * it; UI-F2.1b swaps in a source over `FileSquidClient` without changing the elements.
+ * it; the live source over `FileSquidClient` is `ClientNavigationSource` (UI-F2.1b), and the
+ * elements take either without change.
  */
 import { ApiError } from "../api/client";
 import { newOperationId } from "../api/commands";
@@ -118,15 +119,17 @@ export class MemoryNavigationSource implements NavigationSource {
   }
 
   /**
-   * Replace the whole tree and announce that everything changed.
+   * Replace the whole tree and announce the change, as the API's `navigation.change` would.
    *
    * @param root The new repository node.
+   * @param change What to announce: everything (the default), or the parents whose children
+   *   changed.
    */
-  replace(root: FixtureNode): void {
+  replace(root: FixtureNode, change: NavigationChange = { all: true }): void {
     this.root = root;
     this.reindex();
     this.cursors.clear();
-    this.emit({ all: true });
+    this.emit(change);
   }
 
   /**

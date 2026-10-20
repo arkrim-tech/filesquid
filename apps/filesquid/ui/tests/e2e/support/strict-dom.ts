@@ -14,7 +14,24 @@ export type LabelTable = Readonly<Record<string, string>>;
 export type Scheme = "light" | "dark";
 
 /**
- * Collect console errors and uncaught page errors for the whole test.
+ * True for the browser's own network line for a 503 answer from the navigation listing. The
+ * desktop and server hosts answer `GET /api/v1/navigation` with 503 `unavailable` until they
+ * install the navigation service (DE-1.1), and the UI shows that as its unavailable state; the
+ * browser still logs the refused fetch as a console error. Only that line, from that route, is
+ * excused; the app's own messages and every other route's errors still fail a test.
+ *
+ * @param text - The console message text.
+ * @param url - The URL the message is attributed to.
+ * @returns Whether it is that line.
+ */
+export function isNavigationUnavailable(text: string, url: string): boolean {
+  return /status of 503 \(/.test(text) && /\/api\/v1\/navigation(\?|$)/.test(url);
+}
+
+/**
+ * Collect console errors and uncaught page errors for the whole test. The browser's network
+ * line for a 503 from the navigation listing is not collected (see
+ * {@link isNavigationUnavailable}).
  *
  * @param page - The page to observe.
  * @param tolerate - Console lines to ignore, for a deliberately refused call. Page errors are
@@ -24,7 +41,9 @@ export type Scheme = "light" | "dark";
 export function trackErrors(page: Page, tolerate?: RegExp): string[] {
   const errors: string[] = [];
   page.on("console", (msg) => {
-    if (msg.type() === "error" && !tolerate?.test(msg.text())) errors.push(msg.text());
+    if (msg.type() !== "error" || tolerate?.test(msg.text())) return;
+    if (isNavigationUnavailable(msg.text(), msg.location().url)) return;
+    errors.push(msg.text());
   });
   page.on("pageerror", (err) => errors.push(err.message));
   return errors;

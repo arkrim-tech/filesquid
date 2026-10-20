@@ -16,6 +16,7 @@ import {
   tokenColour,
   trackErrors,
 } from "../support/strict-dom";
+import { serveNavigation } from "../support/navigation-api";
 
 const labels = activeLabels();
 const ELEMENTS = [
@@ -24,6 +25,8 @@ const ELEMENTS = [
   "fs-states",
   "fs-nav-tree",
   "fs-breadcrumb",
+  "fs-navigation-view",
+  "fs-settings",
   "fs-file-browser",
   "fs-file-preview",
   "fs-host-indicator",
@@ -53,6 +56,7 @@ test.beforeEach(async ({ page }) => {
   );
   // The host indicator follows the event channel; answer it so no real socket is attempted.
   await page.routeWebSocket(/\/api\/v1\/events$/, () => undefined);
+  await serveNavigation(page);
 });
 
 test("the built page is static, mounts the shell and defines every custom element", async ({
@@ -78,12 +82,15 @@ test("navigation, API status and theme legend words come from the active label t
   const errors = trackErrors(page);
   await page.goto("/");
   const shell = page.locator("fs-app-shell");
-  await expect(shell.locator("nav li")).toHaveText(
-    ["libraries", "collections", "virtualCollections", "virtualExhibits", "monitor"].map((key) =>
-      label(labels, key),
-    ),
+  // The live navigation tree fills the shell's navigation slot; the Monitor link follows it.
+  await expect(shell.locator("fs-nav-tree section h2")).toHaveText(
+    ["collections", "virtualCollections", "folders"].map((key) => label(labels, key)),
   );
-  await expect(shell.locator('[role="status"]')).toHaveText(
+  await expect(shell.locator("nav > ul.tools li")).toHaveText([
+    label(labels, "monitor"),
+    label(labels, "settings"),
+  ]);
+  await expect(shell.locator('p.api[role="status"]')).toHaveText(
     `${label(labels, "apiStatus")}: ok (filesquid)`,
   );
   await expect(shell.locator("fs-theme-control legend")).toHaveText(label(labels, "theme"));
@@ -115,7 +122,7 @@ test("a refused health call shows the unavailable alert, not a console error fro
   );
   const errors = trackErrors(page, /status of 503 \(/);
   await page.goto("/");
-  await expect(page.locator('fs-app-shell [role="alert"]')).toContainText(
+  await expect(page.locator('fs-app-shell p.api[role="alert"]')).toContainText(
     label(labels, "apiUnavailable"),
   );
   expect(errors).toEqual([]);

@@ -96,3 +96,61 @@ Feature: Host privacy indicator
     Given the host descriptor says host type "desktop" and the hosted service is not enrolled
     When the user tabs to the host indicator
     Then it should have an accessible name from the label table and a visible focus outline
+
+  # Compact badge and popover (owner decision 2026-10-19, option 1a)
+  Scenario: The header shows a compact badge, not the statement
+    Given the host descriptor says host type "desktop" and the hosted service is not enrolled
+    When the shell loads
+    Then the header should show the host badge "This device" with an icon
+    And the privacy statement should not be permanent header text
+
+  Scenario Outline: The popover opens by click or keyboard and carries the full statement
+    Given the host descriptor says host type "desktop" and the hosted service is not enrolled
+    When the user <opens> the host badge
+    Then a popover named "Where your files are" should open with focus in it
+    And it should say "Your files stay on this device. Only you can read them."
+    And it should show the not-enrolled state of the backup and sync service
+
+    Examples:
+      | opens                 |
+      | clicks                |
+      | presses Enter on      |
+      | presses Space on      |
+
+  Scenario: Escape or a click outside closes the popover
+    Given the host popover is open
+    When the user presses Escape
+    Then the popover should close and focus should return to the host badge
+    When the user opens the popover again and clicks outside it
+    Then the popover should close
+
+  Scenario Outline: The badge names the host type in short
+    Given the host descriptor says host type "<host type>"
+    When the shell loads
+    Then the host badge should read "<badge>"
+
+    Examples:
+      | host type | badge        |
+      | desktop   | This device  |
+      | server    | Server       |
+      | browser   | This browser |
+
+  Scenario Outline: The badge never guesses the host
+    Given the host descriptor read fails with <failure>
+    When the shell loads
+    Then the host badge should read "Host unknown"
+    And its popover should show the <state> state
+
+    Examples:
+      | failure                          | state                       |
+      | HTTP 500 while online            | error state with Retry      |
+      | HTTP 503 "unavailable"           | unavailable state with Retry |
+      | a network error while offline    | offline state with Retry    |
+      | HTTP 401 "missing_credentials"   | permission-denied state     |
+
+  Scenario: The popover links to the Settings page's Privacy section
+    Given the host popover is open
+    When the user follows "Privacy settings"
+    Then the Settings page should open with its Privacy section
+    And the Privacy section should show the full statement for the connected host
+    And the popover should close

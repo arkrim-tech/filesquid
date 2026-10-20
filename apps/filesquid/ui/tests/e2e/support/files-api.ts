@@ -10,6 +10,7 @@ import type { Page, Request, Route } from "@playwright/test";
 import { ApiError } from "../../../src/api/client";
 import { MemoryFileSource } from "../../../src/files/memory-source";
 import type { FileLocation, FileRef } from "../../../src/files/model";
+import { serveNavigation } from "./navigation-api";
 
 /** A 16x16 red PNG. */
 export const PNG = Buffer.from(
@@ -142,6 +143,7 @@ export async function serveFiles(page: Page, source: MemoryFileSource): Promise<
     }),
   );
   await page.routeWebSocket(/\/api\/v1\/events$/, () => undefined);
+  await serveNavigation(page);
   await routeReads(page, api);
   await routeWrites(page, api);
   await routeContent(page, api, handles, refuse);
