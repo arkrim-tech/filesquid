@@ -518,7 +518,7 @@ fn subscriber_none(w: &mut MonitorWorld, name: String, _library: String) {
 }
 
 #[when(
-    expr = "one committed move takes a folder from collection {string} into collection {string}"
+    expr = "the API announces one committed move of a folder from collection {string} into collection {string}"
 )]
 fn committed_move(w: &mut MonitorWorld, from: String, into: String) {
     let nav = &mut w.navigation;

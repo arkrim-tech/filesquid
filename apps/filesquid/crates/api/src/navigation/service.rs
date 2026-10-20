@@ -11,12 +11,12 @@
 //! reached the page ends there with a cursor that continues the scan, so a caller who can
 //! read few of very many siblings still makes progress without a gap or a repeat.
 
-use super::cursor::{Position, Rank};
+use super::cursor::{parent_tag, Position, Rank};
 use super::error::NavigationError;
 use super::node::{FolderScope, NodeRef};
 use super::port::{FolderIndex, NavigationAccess};
 use super::view::{NavigationPage, NavigationRequest, NodeKind, NodeView};
-use super::{DEFAULT_LIMIT, LOG_TARGET, MAX_LIMIT, MAX_SCAN};
+use super::{DEFAULT_LIMIT, LOG_TARGET, MAX_HAS_CHILDREN_SCANS, MAX_LIMIT, MAX_SCAN};
 use crate::auth::Principal;
 use crate::library::{LibraryCatalog, PageKey};
 use filesquid_core::RepositoryId;
@@ -116,14 +116,15 @@ impl NavigationService {
         request: &NavigationRequest,
     ) -> Result<NavigationPage, NavigationError> {
         let limit = check_limit(request.limit)?;
+        let tag = parent_tag(request.node.as_deref());
         let after = request
             .cursor
             .as_deref()
-            .map(Position::decode)
+            .map(|text| Position::decode(text, &tag))
             .transpose()?;
         match request.node.as_deref() {
             None => self.list_root(principal, after),
-            Some(handle) => self.list_node(principal, handle, after, limit),
+            Some(handle) => self.list_node(principal, handle, &tag, after, limit),
         }
     }
 
@@ -137,6 +138,9 @@ impl NavigationService {
             return Err(wrong_level());
         }
         let repository = NodeRef::Repository(self.repository.id.clone());
+        if !self.access.may_read(principal, &repository) {
+            return Err(NavigationError::NotFound);
+        }
         let has_children = self.has_children(principal, &repository)?;
         Ok(NavigationPage {
             nodes: vec![view_of(
@@ -154,6 +158,7 @@ impl NavigationService {
         &self,
         principal: &Principal,
         handle: &str,
+        tag: &str,
         after: Option<Position>,
         limit: usize,
     ) -> Result<NavigationPage, NavigationError> {
@@ -171,7 +176,10 @@ impl NavigationService {
             )?);
         }
         let node_has_children = self.node_has_children(principal, &node, &after, &nodes, &next)?;
-        let next_cursor = next.as_ref().map(Position::encode).transpose()?;
+        let next_cursor = next
+            .as_ref()
+            .map(|position| position.encode(tag))
+            .transpose()?;
         Ok(NavigationPage {
             nodes,
             ancestors: breadcrumb(&chain, node_has_children)?,
@@ -199,7 +207,19 @@ impl NavigationService {
         if matches!(node, NodeRef::VirtualCollection(_)) {
             return Ok(false);
         }
-        Ok(!self.scan(principal, node, None, 1)?.children.is_empty())
+        let mut after: Option<Position> = None;
+        for _ in 0..MAX_HAS_CHILDREN_SCANS {
+            let scan = self.scan(principal, node, after.as_ref(), 1)?;
+            if !scan.children.is_empty() {
+                return Ok(true);
+            }
+            match scan.next {
+                Some(next) => after = Some(next),
+                None => return Ok(false),
+            }
+        }
+        tracing::info!(target: LOG_TARGET, "has_children gave up after many unreadable siblings");
+        Ok(false)
     }
 
     /// The nodes from the repository down to `node`, each of which must exist and be readable.
@@ -357,7 +377,11 @@ impl NavigationService {
             for child in batch {
                 scan.budget -= 1;
                 resume = Some(child.position.clone());
-                if self.access.may_read(sweep.principal, &child.node) {
+                let nameable = child.node.to_handle().is_some();
+                if !nameable {
+                    tracing::info!(target: LOG_TARGET, "a folder too deep to name was left out");
+                }
+                if nameable && self.access.may_read(sweep.principal, &child.node) {
                     scan.children.push(child);
                 }
                 if scan.children.len() > sweep.limit || scan.budget == 0 {
@@ -382,7 +406,7 @@ impl NavigationService {
     ) -> Result<Vec<Child>, NavigationError> {
         match (parent, rank) {
             (NodeRef::Repository(id), Rank::Library) => {
-                let key = after.and_then(Position::page_key);
+                let key = catalog_key(after)?;
                 let rows = self.catalog.libraries(id, key.as_ref(), want)?;
                 Ok(rows
                     .into_iter()
@@ -397,7 +421,7 @@ impl NavigationService {
                     .collect())
             }
             (NodeRef::Library(id), Rank::Collection) => {
-                let key = after.and_then(Position::page_key);
+                let key = catalog_key(after)?;
                 let rows = self.catalog.collections(id, key.as_ref(), want)?;
                 Ok(rows
                     .into_iter()
@@ -408,7 +432,7 @@ impl NavigationService {
                     .collect())
             }
             (NodeRef::Library(id), Rank::VirtualCollection) => {
-                let key = after.and_then(Position::page_key);
+                let key = catalog_key(after)?;
                 let rows = self.catalog.virtual_collections(id, key.as_ref(), want)?;
                 Ok(rows
                     .into_iter()
@@ -445,14 +469,17 @@ impl NavigationService {
     }
 
     /// `change` with only the handles `principal` may read; `None` when it names none. An
-    /// `all` change is unchanged: it names no handle.
+    /// `all` change names no handle, so it goes to every caller who may read the repository.
     pub fn filter_change(
         &self,
         principal: &Principal,
         change: &super::NavigationChange,
     ) -> Option<super::NavigationChange> {
         let super::NavigationChange::Parents { parents } = change else {
-            return Some(change.clone());
+            let repository = NodeRef::Repository(self.repository.id.clone());
+            return self
+                .may_read(principal, &repository)
+                .then(|| change.clone());
         };
         let readable: Vec<String> = parents
             .iter()
@@ -581,5 +608,13 @@ fn check_limit(limit: Option<usize>) -> Result<usize, NavigationError> {
         Some(_) => Err(NavigationError::invalid(
             "The page size must be a whole number from 1 to 1,000.",
         )),
+    }
+}
+
+/// The catalog key of a resume position, or `invalid_request` for a position that is not one.
+fn catalog_key(after: Option<&Position>) -> Result<Option<PageKey>, NavigationError> {
+    match after {
+        None => Ok(None),
+        Some(position) => position.page_key().map(Some).ok_or_else(wrong_level),
     }
 }

@@ -91,8 +91,12 @@ impl From<CatalogError> for NavigationError {
                 tracing::info!(target: LOG_TARGET, detail, "library catalog unavailable");
                 Self::Unavailable
             }
-            CatalogError::Conflict | CatalogError::Failed(_) => {
+            CatalogError::Conflict => {
                 tracing::info!(target: LOG_TARGET, "library catalog failed");
+                Self::Internal
+            }
+            CatalogError::Failed(detail) => {
+                tracing::info!(target: LOG_TARGET, detail, "library catalog failed");
                 Self::Internal
             }
         }

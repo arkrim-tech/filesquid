@@ -78,13 +78,33 @@ impl MemoryFolderIndex {
         debug_assert!(set.is_ok(), "memory folder index lock poisoned");
     }
 
-    /// The ordinary file paths of `scope`.
-    fn ordinary(&self, scope: &FolderScope) -> Result<Vec<String>, NavigationError> {
+    /// The names of the folders directly below `parent` in `scope`, from the ordinary files
+    /// under it only (the sorted set is probed from the prefix onward).
+    fn folder_names(
+        &self,
+        scope: &FolderScope,
+        parent: &str,
+    ) -> Result<BTreeSet<String>, NavigationError> {
+        let lead = if parent.is_empty() {
+            String::new()
+        } else {
+            format!("{parent}/")
+        };
         self.with(|scopes| {
-            scopes
-                .get(&key(scope))
-                .map(|files| files.all.difference(&files.out_of_view).cloned().collect())
-                .unwrap_or_default()
+            let Some(files) = scopes.get(&key(scope)) else {
+                return BTreeSet::new();
+            };
+            files
+                .all
+                .range(lead.clone()..)
+                .take_while(|path| path.starts_with(&lead))
+                .filter(|path| !files.out_of_view.contains(*path))
+                .filter_map(|path| {
+                    path[lead.len()..]
+                        .split_once('/')
+                        .map(|(first, _)| first.to_string())
+                })
+                .collect()
         })
     }
 }
@@ -97,18 +117,8 @@ impl FolderIndex for MemoryFolderIndex {
         after: Option<&str>,
         limit: usize,
     ) -> Result<Vec<String>, NavigationError> {
-        let lead = if parent.is_empty() {
-            String::new()
-        } else {
-            format!("{parent}/")
-        };
-        let names: BTreeSet<String> = self
-            .ordinary(scope)?
-            .iter()
-            .filter_map(|path| path.strip_prefix(&lead))
-            .filter_map(|rest| rest.split_once('/').map(|(first, _)| first.to_string()))
-            .collect();
-        Ok(names
+        Ok(self
+            .folder_names(scope, parent)?
             .into_iter()
             .filter(|name| after.is_none_or(|after| name.as_str() > after))
             .take(limit)
@@ -116,10 +126,7 @@ impl FolderIndex for MemoryFolderIndex {
     }
 
     fn folder_exists(&self, scope: &FolderScope, path: &str) -> Result<bool, NavigationError> {
-        let lead = format!("{path}/");
-        Ok(self
-            .ordinary(scope)?
-            .iter()
-            .any(|file| file.starts_with(&lead)))
+        let (parent, name) = path.rsplit_once('/').unwrap_or(("", path));
+        Ok(self.folder_names(scope, parent)?.contains(name))
     }
 }

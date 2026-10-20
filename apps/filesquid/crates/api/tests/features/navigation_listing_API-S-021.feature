@@ -69,7 +69,7 @@ Feature: Navigation listing
     And subscriber "Ana" may read library "Family", collection "Photos" and collection "Letters"
     And subscriber "Ben" may read library "Family" and collection "Photos" but not collection "Letters"
     And subscriber "Cy" may read nothing in library "Family"
-    When one committed move takes a folder from collection "Letters" into collection "Photos"
+    When the API announces one committed move of a folder from collection "Letters" into collection "Photos"
     Then "Ana" should receive one "navigation.change" event naming the handles of collections "Letters" and "Photos"
     And "Ben" should receive one "navigation.change" event naming only the handle of collection "Photos"
     And "Cy" should receive no "navigation.change" event

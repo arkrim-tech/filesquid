@@ -34,6 +34,9 @@ pub const MAX_LIMIT: usize = 1_000;
 /// Most children one call examines before it ends the page with a continuing cursor.
 pub const MAX_SCAN: usize = 5_000;
 
+/// Most scans one `has_children` check makes (each examines up to [`MAX_SCAN`] children).
+pub const MAX_HAS_CHILDREN_SCANS: usize = 20;
+
 mod change;
 mod cursor;
 mod error;
@@ -44,7 +47,7 @@ mod routes;
 mod service;
 mod view;
 
-pub use change::{NavigationChange, NavigationPublisher, MAX_CHANGE_PARENTS};
+pub use change::{AlwaysTrue, NavigationChange, NavigationPublisher, MAX_CHANGE_PARENTS};
 pub use error::NavigationError;
 pub use memory::MemoryFolderIndex;
 pub use node::{FolderScope, NodeRef, MAX_HANDLE_BYTES};

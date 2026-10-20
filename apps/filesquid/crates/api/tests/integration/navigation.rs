@@ -614,3 +614,128 @@ async fn more_than_64_changed_parents_become_all() {
 fn the_topic_is_documented() {
     assert!(topic::ALL.contains(&"navigation.change"));
 }
+
+// ---- Review follow-ups ----
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cursor_is_refused_at_another_parent_of_the_same_kind() {
+    let rig = NavRig::new().await;
+    let service = many_folders(&rig, 3);
+    let collection = rig.handle(&NodeRef::Collection(rig.photos.clone()));
+    let first = NavigationRequest {
+        node: Some(collection),
+        limit: Some(1),
+        ..NavigationRequest::default()
+    };
+    let page = NavRig::list(service.clone(), first).await.expect("page");
+    let folder = NodeRef::folder(FolderScope::Collection(rig.photos.clone()), "a");
+    let elsewhere = NavigationRequest {
+        node: folder.to_handle(),
+        cursor: page.next_cursor,
+        limit: Some(1),
+    };
+    let err = NavRig::list(service, elsewhere).await.expect_err("refused");
+    assert_eq!(err.error_code(), "invalid_request");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_folder_too_deep_to_name_is_left_out_and_does_not_count() {
+    let rig = NavRig::new().await;
+    let index = MemoryFolderIndex::new();
+    let scope = FolderScope::Collection(rig.photos.clone());
+    index.add_file(&scope, &format!("{}/f.txt", "x".repeat(400)));
+    index.add_file(&scope, "ok/f.txt");
+    let service = Arc::new(NavigationService::new(
+        rig.lib.catalog.clone(),
+        Arc::new(index),
+        Arc::new(filesquid_api::navigation::HostAccess),
+        RepositoryInfo::new(rig.lib.repository.clone(), None),
+    ));
+    let node = rig.handle(&NodeRef::Collection(rig.photos.clone()));
+    let request = NavigationRequest {
+        node: Some(node),
+        ..NavigationRequest::default()
+    };
+    let page = NavRig::list(service, request)
+        .await
+        .expect("page, not an internal error");
+    let names: Vec<_> = page.nodes.iter().map(|n| n.name.clone()).collect();
+    assert_eq!(names, vec![Some("ok".to_string())]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn has_children_looks_past_thousands_of_unreadable_siblings() {
+    let rig = NavRig::new().await;
+    let index = MemoryFolderIndex::new();
+    let scope = FolderScope::Collection(rig.photos.clone());
+    for n in 0..5_100 {
+        index.add_file(&scope, &format!("a{n:05}/f.txt"));
+    }
+    index.add_file(&scope, "zzz/f.txt");
+    let service = Arc::new(NavigationService::new(
+        rig.lib.catalog.clone(),
+        Arc::new(index),
+        Arc::new(FnReader(Box::new(
+            |node| !matches!(node, NodeRef::Folder { path, .. } if path != "zzz"),
+        ))),
+        RepositoryInfo::new(rig.lib.repository.clone(), None),
+    ));
+    let library = rig.handle(&NodeRef::Library(rig.library.clone()));
+    let request = NavigationRequest {
+        node: Some(library),
+        ..NavigationRequest::default()
+    };
+    let page = NavRig::list(service, request).await.expect("page");
+    let photos = page
+        .nodes
+        .iter()
+        .find(|n| n.name.as_deref() == Some("Photos"))
+        .expect("Photos");
+    assert!(photos.has_children);
+}
+
+/// Access decided by a closure.
+struct FnReader(Box<dyn Fn(&NodeRef) -> bool + Send + Sync>);
+
+impl filesquid_api::navigation::NavigationAccess for FnReader {
+    fn may_read(&self, _principal: &Principal, node: &NodeRef) -> bool {
+        (self.0)(node)
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_caller_who_may_not_read_the_repository_gets_not_found_and_no_all_event() {
+    let rig = NavRig::new().await;
+    let blind = Arc::new(rig.user(|node| !matches!(node, NodeRef::Repository(_))));
+    let err = NavRig::list(blind.clone(), NavigationRequest::default())
+        .await
+        .expect_err("refused");
+    assert_eq!(err.error_code(), "not_found");
+    assert!(blind
+        .filter_change(&Principal::Owner, &NavigationChange::everything())
+        .is_none());
+    let sighted = rig.user(|_| true);
+    assert!(sighted
+        .filter_change(&Principal::Owner, &NavigationChange::everything())
+        .is_some());
+}
+
+#[test]
+fn an_all_change_never_decodes_as_false() {
+    assert!(serde_json::from_str::<NavigationChange>(r#"{"all":false}"#).is_err());
+    assert_eq!(
+        serde_json::from_str::<NavigationChange>(r#"{"all":true}"#).expect("decodes"),
+        NavigationChange::everything()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_lag_hint_reaches_a_subscriber_whose_filter_drops_everything() {
+    let bus = filesquid_api::EventBus::new();
+    let mut subscription = bus.subscription_filtered(Arc::new(|_| None)).expect("slot");
+    for _ in 0..=filesquid_api::events::EVENT_BUFFER {
+        bus.publish(ApiEvent::new("x.y", json!({})));
+    }
+    let event = subscription.next().await.expect("the hint");
+    assert_eq!(event.topic, "events.resync");
+}

@@ -27,9 +27,29 @@ pub enum NavigationChange {
     /// So many changed (or the changed parents are not known) that a client rereads its
     /// whole visible tree.
     All {
-        /// Always `true`.
-        all: bool,
+        /// Always `true`: any other value does not decode.
+        all: AlwaysTrue,
     },
+}
+
+/// A boolean that is always `true` on the wire and refuses to decode as anything else, so an
+/// `all` change can never say `{"all": false}`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AlwaysTrue;
+
+impl Serialize for AlwaysTrue {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_bool(true)
+    }
+}
+
+impl<'de> Deserialize<'de> for AlwaysTrue {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        match bool::deserialize(deserializer)? {
+            true => Ok(Self),
+            false => Err(serde::de::Error::custom("`all` is only ever true")),
+        }
+    }
 }
 
 impl NavigationChange {
@@ -46,7 +66,7 @@ impl NavigationChange {
 
     /// The change that makes every client reread its whole visible tree.
     pub fn everything() -> Self {
-        Self::All { all: true }
+        Self::All { all: AlwaysTrue }
     }
 
     /// The change naming `nodes` as parents. A node with no handle (a folder too deep for

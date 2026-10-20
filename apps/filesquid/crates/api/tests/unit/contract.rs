@@ -715,8 +715,11 @@ fn navigation_samples() -> Vec<(&'static str, Vec<Value>)> {
         "a/b",
     );
     let handle = folder.to_handle().expect("handle");
-    let nodes = serde_json::json!({
-        "node": handle, "kind": "folder", "name": "b", "has_children": false
+    let nodes = to_value(filesquid_api::navigation::NodeView {
+        node: handle,
+        kind: NodeKind::Folder,
+        name: Some("b".to_string()),
+        has_children: false,
     });
     let page_with_ancestors = serde_json::json!({
         "nodes": [nodes.clone()], "ancestors": [nodes.clone()], "next_cursor": "c1.3330"
