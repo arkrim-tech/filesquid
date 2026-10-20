@@ -91,6 +91,12 @@ Feature: PROV-O history of every version and change
       | export a file with metadata scrubbing    | scrub   |
       | publish a public file to my AT Protocol account | publish |
 
+  Scenario: A single-file download is journaled only
+    When I download one file
+    Then the journal should record a "file.download" entry with the file ID and version
+    And no PROV-O record should be written
+    And no OCFL version should be committed
+
   Scenario: A repair is followed by a provenance-only version
     Given an object whose head has no version inventory
     When the owner consents to the repair and it completes

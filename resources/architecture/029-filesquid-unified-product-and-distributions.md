@@ -14,15 +14,17 @@ Accepted: 2026-10-15. Supersedes the "stand-alone product" and "own repository" 
 
 Amended: 2026-10-18 by [ADR 037](./037-c2pa-in-release-2.md): the first consumer release ships the `ocfl` and `metadata` modules; the `c2pa` module ships with the ImageSquid release.
 
+Amended: 2026-10-19 by [ADR 040](./040-prov-o-history.md): the `prov` module joins the modules and ships in the FileSquid MVP and release 1 with `ocfl` and `metadata` (Decision 7), and its optional `ocfl` feature is the second allowed optional cross-module dependency (Decision 4).
+
 ## Context / Requirement Reference
 
 Until now this repository delivered ImageSquid, a photo and video manager. Three engines (`filesquid-ocfl`, `filesquid-metadata`, `filesquid-provenance`) were separate products that ImageSquid called, each meant to move to its own repository ([ADR 023](./023-filesquid-ocfl-engine-and-parquet.md), [ADR 024](./024-filesquid-metadata-engine.md), [ADR 026](./026-filesquid-provenance-engine.md)). A generic FileSquid product was planned for after ImageSquid 1.0.
 
-The owner reversed that order. FileSquid is now the product this repository delivers ([FileSquid vision](../product-vision.md)). It is one Rust backend with one API and three modules: `ocfl`, `metadata` and `c2pa`. ImageSquid and Arkrim become distributions: UI layers on top of FileSquid ([FE-076](../product-vision.md#platform-api-and-hosts), [FE-077](../product-vision.md#platform-api-and-hosts), [U-24](../product-vision.md#one-api-hosts-and-distributions), [U-25](../product-vision.md#one-api-hosts-and-distributions)).
+The owner reversed that order. FileSquid is now the product this repository delivers ([FileSquid vision](../product-vision.md)). It is one Rust backend with one API and three modules: `ocfl`, `metadata` and `c2pa` (a fourth, `prov`, joined with the 2026-10-19 amendment above). ImageSquid and Arkrim become distributions: UI layers on top of FileSquid ([FE-076](../product-vision.md#platform-api-and-hosts), [FE-077](../product-vision.md#platform-api-and-hosts), [U-24](../product-vision.md#one-api-hosts-and-distributions), [U-25](../product-vision.md#one-api-hosts-and-distributions)).
 
 Requirements that drive this decision:
 
-- One Cargo workspace of module crates, with no default cross-module dependency except the `metadata` module's optional `ocfl` store, and each crate building and testing alone ([T-052](../product-vision.md#api-and-hosts)).
+- One Cargo workspace of module crates, with no default cross-module dependency; the optional ones are the `metadata` module's `ocfl` store and, since [ADR 040](./040-prov-o-history.md), the `prov` module's `ocfl` feature, and each crate building and testing alone ([T-052](../product-vision.md#api-and-hosts)).
 - Release order: FileSquid first, encrypted backup and sync second, ImageSquid after that ([C-025](../product-vision.md#release-sequence), [FE-078](../product-vision.md#platform-api-and-hosts)). Arkrim and other milestones later ([C-052](../product-vision.md#release-sequence)).
 - Distributions reuse FileSquid through its API and add no backend ([C-026](../product-vision.md#release-sequence)). Arkrim's curation jobs, Parquet and FAIR features are FileSquid modules ([FE-079](../product-vision.md#institutional-interoperability), [C-051](../product-vision.md#platforms-originals-and-service-limits)).
 - The module engines stay independently usable by programs that never run FileSquid ([FE-069](../product-vision.md#independent-library), [FE-070](../product-vision.md#independent-library), [FE-072](../product-vision.md#independent-library), [C-047](../product-vision.md#module-rules), [C-048](../product-vision.md#module-rules), [C-054](../product-vision.md#module-rules)).
@@ -42,11 +44,12 @@ Requirements that drive this decision:
 | `filesquid-ocfl` | `crates/ocfl/` | Module: storage facts, OCFL 1.1 ([ADR 016](./016-rust-ocfl-library.md), [ADR 023](./023-filesquid-ocfl-engine-and-parquet.md)) | Exists |
 | `filesquid-metadata` | `crates/metadata/` | Module: every other file fact ([ADR 024](./024-filesquid-metadata-engine.md), [ADR 027](./027-filesquid-metadata-pluggable-stores.md)) | Exists |
 | `filesquid-c2pa` | `crates/c2pa/` | Module: Content Credentials ([ADR 026](./026-filesquid-provenance-engine.md)) | Planned; docs and feature file only |
+| `filesquid-prov` | `crates/prov/` | Module: W3C PROV-O history ([ADR 040](./040-prov-o-history.md)) | Planned (amendment 2026-10-19) |
 | `filesquid-api` | `crates/api/` | The single API: routes, contract, auth, job and event bus ([ADR 030](./030-filesquid-api-and-transports.md)) | Being added |
 | `filesquid-server` | `crates/server/` | Host: Axum ([ADR 032](./032-hosting-and-privacy-model.md)) | Exists (was `imagesquid_backend`) |
 | `filesquid-desktop` | `crates/desktop/` | Host: Tauri 2 ([ADR 002](./002-tauri2-desktop-shell.md)) | Exists (was `imagesquid_desktop`) |
 
-**4. Module independence.** A module crate (`ocfl`, `metadata`, `c2pa`, and later modules) MUST NOT take a default dependency on another module crate. The one exception is the `metadata` module's optional `ocfl` store ([ADR 027](./027-filesquid-metadata-pluggable-stores.md)). Each module crate MUST build, test and publish on its own (`cargo test -p filesquid-ocfl`). Module crates MUST NOT depend on `filesquid-api`, a host, Axum, Tauri or any distribution. `filesquid-api` depends on the modules; hosts depend on `filesquid-api`. The engine rules inherited from ADR 016, 023, 024, 026 and 027 (generic OCFL API, closed `/terms/` register, from-scratch C2PA, default features, WASM builds) are unchanged.
+**4. Module independence.** A module crate (`ocfl`, `metadata`, `prov`, `c2pa`, and later modules) MUST NOT take a default dependency on another module crate. The exceptions are the `metadata` module's optional `ocfl` store ([ADR 027](./027-filesquid-metadata-pluggable-stores.md)) and the `prov` module's optional `ocfl` feature ([ADR 040](./040-prov-o-history.md)); neither is a default dependency. Each module crate MUST build, test and publish on its own (`cargo test -p filesquid-ocfl`). Module crates MUST NOT depend on `filesquid-api`, a host, Axum, Tauri or any distribution. `filesquid-api` depends on the modules; hosts depend on `filesquid-api`. The engine rules inherited from ADR 016, 023, 024, 026 and 027 (generic OCFL API, closed `/terms/` register, from-scratch C2PA, default features, WASM builds) are unchanged.
 
 **5. Distributions are UI layers only.** A distribution is a UI bundle, design tokens, a label table, brand assets and a module set, described by a `distribution.json` manifest ([ADR 031](./031-vanilla-typescript-ui-and-white-label-theming.md)). A distribution MUST NOT contain Rust, server code or its own API. If a distribution needs a backend capability FileSquid lacks (for ImageSquid: media derivatives, editing recipes, people, migration routes, AI connections, publication), that capability MUST be built as a FileSquid module behind the API and switched on by the distribution's module set. A test of placement: a capability that stores, computes or enforces anything, including application meaning such as people or recipes, is a FileSquid module behind the API; only how a distribution names and presents it (views, labels, layout) belongs in its UI layer.
 
@@ -54,7 +57,7 @@ Requirements that drive this decision:
 
 **7. Release order.**
 
-1. FileSquid: the API and the default Drive-style UI, with the `ocfl` and `metadata` modules, on the desktop and `filesquid-server` hosts (the `c2pa` module moved to the ImageSquid release by [ADR 037](./037-c2pa-in-release-2.md)).
+1. FileSquid: the API and the default Drive-style UI, with the `ocfl`, `metadata` and `prov` modules ([ADR 040](./040-prov-o-history.md)), on the desktop and `filesquid-server` hosts (the `c2pa` module moved to the ImageSquid release by [ADR 037](./037-c2pa-in-release-2.md)).
 2. Encrypted backup and sync at `*.filesquid.tech` ([ADR 032](./032-hosting-and-privacy-model.md)).
 3. ImageSquid, as a FileSquid distribution, with FileSquid's `c2pa` module.
 4. Arkrim and the other later milestones, in an order the owner chooses ([C-052](../product-vision.md#release-sequence)).
@@ -89,7 +92,7 @@ Putting every backend capability in FileSquid means a FileSquid user gets thumbn
 
 Easier: one product to build, test and release; distributions are cheap to add; module crates still stand alone; the capability placement test settles where new work goes.
 
-Harder: FileSquid grows large, because every distribution's backend needs become FileSquid modules. Mitigation: module crates with no default cross-dependencies, a module set per distribution, and FileSquid release 1 limited to the `ocfl` and `metadata` modules ([ADR 037](./037-c2pa-in-release-2.md)). CI MUST build and test each module crate alone, as well as the workspace. Rules, scripts and READMEs that assumed separate app directories (`apps/core`, `apps/backend`, `apps/desktop`, `apps/frontend`, `apps/client`, `apps/filesquid-*`) MUST be updated; those directories no longer exist.
+Harder: FileSquid grows large, because every distribution's backend needs become FileSquid modules. Mitigation: module crates with no default cross-dependencies, a module set per distribution, and FileSquid release 1 limited to the `ocfl`, `metadata` and `prov` modules ([ADR 037](./037-c2pa-in-release-2.md), [ADR 040](./040-prov-o-history.md)). CI MUST build and test each module crate alone, as well as the workspace. Rules, scripts and READMEs that assumed separate app directories (`apps/core`, `apps/backend`, `apps/desktop`, `apps/frontend`, `apps/client`, `apps/filesquid-*`) MUST be updated; those directories no longer exist.
 
 ## Related Decisions / Notes
 

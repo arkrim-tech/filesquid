@@ -12,6 +12,8 @@ Accepted
 
 Accepted: 2026-10-15. Amends [ADR 004](./004-axum-hosted-ciphertext-mailbox.md) (the ciphertext mailbox is re-scoped to the `*.filesquid.tech` service), [ADR 008](./008-browser-wasm-scope.md) and [ADR 025](./025-client-side-filesquid-engines.md) (modules MAY now run in `filesquid-server`; the browser host moves to the roadmap; modules still never process private content on the ciphertext-only service).
 
+Note 2026-10-19 (owner decision, option 1a): the Decision 6 statements and their wording are unchanged, but the UI need not show them as permanent header text. The header MUST show a compact host indicator (icon and short host label) whose popover or tooltip carries the full statement, and the Settings page's Privacy section MUST show it as well ([UI-S-004 and UI-S-018](../../apps/filesquid/ui/resources/srs.md)).
+
 ## Context / Requirement Reference
 
 Under [ADR 025](./025-client-side-filesquid-engines.md) the engines ran only on clients (desktop and browser WebAssembly), never on a server, and the only server was the Axum ciphertext mailbox ([ADR 004](./004-axum-hosted-ciphertext-mailbox.md)). The owner now wants:

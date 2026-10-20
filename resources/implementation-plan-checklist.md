@@ -46,7 +46,7 @@ Order follows the **Dependencies** fields and the [release sequence](./implement
 
 ## MVP
 
-FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by gate Task FS-3.9 (13 of 28 done). PROV-O history (Task FS-2.8) and the durable journal with the Journal tab and file panel tabs (Task FS-2.9) are in the MVP and do not depend on the `c2pa` module ([ADR 040](./architecture/040-prov-o-history.md)). C2PA is not in the MVP ([ADR 037](./architecture/037-c2pa-in-release-2.md)).
+FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by gate Task FS-3.9 (13 of 28 done). PROV-O history (Task FS-2.8) and the durable journal with the Logs view and file panel tabs (Task FS-2.9) are in the MVP and do not depend on the `c2pa` module ([ADR 040](./architecture/040-prov-o-history.md)). C2PA is not in the MVP ([ADR 037](./architecture/037-c2pa-in-release-2.md)).
 
 1. [x] [Task FS-0.0](./implementation-plan.md#task-fs-0.0) FileSquid product switch
     - [x] [API-F0.1](../apps/filesquid/crates/api/resources/plan.md#phase-f0-crate-health-route-and-transport-spike-global-task-fs-00) Health router, contract seed and transport spike S1
@@ -162,13 +162,13 @@ FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by ga
     - [ ] [API-F2.8](../apps/filesquid/crates/api/resources/plan.md#phase-f2-prov-o-history-global-task-fs-28) Journal and commit linkage for PROV-O history
     - [ ] [DE-0.10](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Installation UUID, native journal columns, outbox events and coordinator commit linkage
     - [ ] [API-F2.9](../apps/filesquid/crates/api/resources/plan.md#phase-f2-prov-o-history-global-task-fs-28) PROV-O records, history routes and backfill
-25. [ ] [Task FS-2.9](./implementation-plan.md#task-fs-2.9) Durable journal, Journal tab and file panel tabs
+25. [ ] [Task FS-2.9](./implementation-plan.md#task-fs-2.9) Durable journal, Logs view and file panel tabs
     - [ ] [API-F2.10](../apps/filesquid/crates/api/resources/plan.md#phase-f2-prov-o-history-global-task-fs-28) Client events, journal query filters and journal export
     - [ ] [API-F2.11](../apps/filesquid/crates/api/resources/plan.md#phase-f2-prov-o-history-global-task-fs-28) Durable journal: per-commit entries and sealing service
     - [ ] [CL-1.9](../apps/filesquid/crates/api/resources/plan.md#phases-f2-i1-and-f5-application-meaning-global-tasks-11-14-18) Journal rebuild in the rebuild-from-files command
     - [ ] [DE-0.11](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Host journal sealing and journal rebuild
-    - [ ] [UI-F2.15](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) File panel tabs: File facts, Descriptive, PROV-O and Audit log
-    - [ ] [UI-F2.16](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Journal tab and journal export
+    - [ ] [UI-F2.15](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) File panel tabs: File info, Description and Provenance
+    - [ ] [UI-F2.16](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Logs view and journal export
 26. [ ] [Task FS-3.1](./implementation-plan.md#task-fs-3.1) macOS desktop installer (early access)
     - [ ] [DE-F3.1](../apps/filesquid/crates/desktop/resources/plan.md#phase-f3-installers-and-performance-global-tasks-fs-31-fs-34-and-after-the-mvp-fs-311) macOS early-access DMG and the FileSquid overlay
 27. [ ] [Task FS-3.4](./implementation-plan.md#task-fs-3.4) MVP performance gate (macOS desktop)
