@@ -85,6 +85,11 @@ fn seed(store: &MemoryJournal) {
 }
 
 impl JournalWorld {
+    /// The background's monitor, for the sealing steps.
+    pub fn monitor_handle(&self) -> Option<Monitor> {
+        self.monitor.clone()
+    }
+
     fn state(&self) -> &ApiState {
         self.state.as_ref().expect("a desktop library")
     }

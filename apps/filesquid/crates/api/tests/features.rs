@@ -11,7 +11,7 @@
 //! library and repair routes of API-S-025; the version history, labels, restore and
 //! history size of API-S-014; the client events, journal query and export of API-S-030
 //! and API-S-031; the preferences, whole-file download and drive listings of API-S-011;
-//! and the metadata property routes of API-S-034).
+//! the metadata property routes of API-S-034; and the sealing service of API-S-032).
 //!
 //! Scenarios that need domain operations not built yet (import, rename, metadata writes, C2PA
 //! scans, sync) or the optional OTLP export (Task FS-3.6) have no step definitions and are
@@ -121,6 +121,9 @@ mod journal_steps;
 #[path = "support/metadata_steps.rs"]
 mod metadata_steps;
 
+#[path = "support/seal_steps.rs"]
+mod seal_steps;
+
 /// Administrator token accepted by [`admin_state`].
 const ADMIN_TOKEN: &str = "admin";
 
@@ -173,6 +176,7 @@ struct MonitorWorld {
     drive: drive_steps::DriveWorld,
     metadata: metadata_steps::MetadataWorld,
     journal: journal_steps::JournalWorld,
+    seal: seal_steps::SealWorld,
 }
 
 impl std::fmt::Debug for MonitorWorld {

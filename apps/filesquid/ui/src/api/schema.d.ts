@@ -1084,6 +1084,8 @@ export interface components {
             errors_last_5m: number;
             ocfl_error_codes: string[];
             ocfl_error_objects: number;
+            /** @description How long the oldest entry a seal left unsealed has waited, in milliseconds; null when the last seals left none or the host seals nothing (API-S-032). Over two sealing intervals (2 hours) it raises the journal_unsealed reason. */
+            journal_unsealed_age_ms?: number | null;
         };
         HealthReport: {
             status: components["schemas"]["MonitorStatus"];
