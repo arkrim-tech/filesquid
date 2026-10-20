@@ -178,3 +178,27 @@ fn the_ledger_journals_consents_and_receipts_and_keeps_them_across_a_restart() {
         "consent and both outcomes are journaled"
     );
 }
+
+#[test]
+fn a_host_chosen_id_must_be_well_formed_and_unique() {
+    let dir = TempDir::new("chosen-id");
+    let locations = HostLocations::new(&dir.folder("data"));
+    let folder = dir.folder("library");
+    locations
+        .register_as("loc-e2e-create", &folder)
+        .expect("registered");
+    assert!(locations.location("loc-e2e-create").is_some());
+    assert!(
+        locations.register_as("loc-e2e-create", &folder).is_err(),
+        "taken"
+    );
+    for bad in [
+        "e2e",
+        "loc-",
+        "loc-a/b",
+        "loc-a b",
+        &format!("loc-{}", "a".repeat(200)),
+    ] {
+        assert!(locations.register_as(bad, &folder).is_err(), "{bad}");
+    }
+}

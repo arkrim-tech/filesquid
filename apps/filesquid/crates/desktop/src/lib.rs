@@ -421,7 +421,8 @@ pub const CATALOG_OPEN_OPERATION: &str = "library.catalog.open";
 pub struct DesktopFiles(pub filesquid_native::HostFiles);
 
 /// Open the packaged-window tests' media library (test-instrumented builds only): the OCFL
-/// storage root named by [`test_fixture::E2E_LIBRARY_VARIABLE`], when it is set. A root that
+/// storage root named by [`test_fixture::E2E_LIBRARY_VARIABLE`], when it is set, and register
+/// their library folders ([`test_fixture::register_e2e_locations`]). A root or folder that
 /// cannot be opened is logged; the app starts without it.
 #[cfg(feature = "test-webdriver")]
 fn open_test_library(app: &tauri::AppHandle, data_dir: &std::path::Path) {
@@ -429,9 +430,14 @@ fn open_test_library(app: &tauri::AppHandle, data_dir: &std::path::Path) {
     if let Err(message) = test_fixture::open_e2e_library(files, data_dir) {
         tracing::error!(%message, "the packaged-window media library was not opened");
     }
+    let locations = &app.state::<DesktopLocations>().0;
+    if let Err(message) = test_fixture::register_e2e_locations(locations) {
+        tracing::error!(%message, "the packaged-window library folders were not registered");
+    }
 }
 
-/// Shipping builds open no library at launch; DE-1.1 opens the owner's libraries.
+/// Shipping builds open no library and register no folder at launch; the owner's libraries
+/// open through the library routes (DE-1.1).
 #[cfg(not(feature = "test-webdriver"))]
 fn open_test_library(_app: &tauri::AppHandle, _data_dir: &std::path::Path) {}
 

@@ -71,19 +71,37 @@ impl HostLocations {
     /// directory's folders could not be prepared, [`MAX_LOCATIONS`] are registered, or no
     /// ID could be minted.
     pub fn register(&self, folder: &Path) -> Result<String, String> {
+        let id = mint_location_id()?;
+        self.register_as(&id, folder)?;
+        Ok(id)
+    }
+
+    /// Register `folder` under the opaque `location_id` the host chose (`loc-` and at most
+    /// [`MAX_LOCATION_ID_BYTES`](filesquid_api::local_library::MAX_LOCATION_ID_BYTES) bytes
+    /// of ASCII letters, digits and `-`), as [`HostLocations::register`] does.
+    ///
+    /// # Errors
+    ///
+    /// As [`HostLocations::register`], or the ID is malformed or already registered.
+    pub fn register_as(&self, location_id: &str, folder: &Path) -> Result<(), String> {
+        if !valid_location_id(location_id) {
+            return Err("the location ID is malformed".to_string());
+        }
         let folder = storage_root(folder)?;
         let known = self.root_of_folder(&folder)?;
         let root = match known {
             Some(root) => root,
             None => self.prepare_root(&folder)?,
         };
-        let id = mint_location_id()?;
         let mut locations = self.lock()?;
         if locations.len() >= MAX_LOCATIONS {
             return Err("too many locations are registered".to_string());
         }
-        locations.insert(id.clone(), Location { folder, root });
-        Ok(id)
+        if locations.contains_key(location_id) {
+            return Err("the location ID is already registered".to_string());
+        }
+        locations.insert(location_id.to_string(), Location { folder, root });
+        Ok(())
     }
 
     /// The storage root registered as `location_id`, if any.
@@ -150,6 +168,17 @@ impl LibraryLocations for HostLocations {
             _ => true,
         }
     }
+}
+
+/// Whether `id` is a location ID: `loc-`, then ASCII letters, digits and `-`, at most
+/// [`MAX_LOCATION_ID_BYTES`](filesquid_api::local_library::MAX_LOCATION_ID_BYTES) bytes.
+/// Pure.
+fn valid_location_id(id: &str) -> bool {
+    let rest = id.strip_prefix(LOCATION_PREFIX).unwrap_or_default();
+    let allowed = |c: char| c.is_ascii_alphanumeric() || c == '-';
+    !rest.is_empty()
+        && id.len() <= filesquid_api::local_library::MAX_LOCATION_ID_BYTES
+        && rest.chars().all(allowed)
 }
 
 /// A new opaque location ID, `loc-` and a UUID v4.

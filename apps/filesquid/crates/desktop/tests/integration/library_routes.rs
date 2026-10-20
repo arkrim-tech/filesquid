@@ -299,7 +299,7 @@ fn the_owners_consented_repair_is_kept_in_the_persistent_ledger() {
     assert_eq!(candidates["candidates"][0]["object_id"], object.as_str());
     let unconsented = json!({ "library_id": library, "object_ids": [object] });
     let (status, refused) = desktop.post("/api/v1/libraries/repairs", unconsented);
-    assert!((400..500).contains(&status), "{status} {refused}");
+    assert_eq!(status, 409, "{refused}");
     assert!(
         !root.join("snapshot/v2/inventory.json").exists(),
         "no change"
