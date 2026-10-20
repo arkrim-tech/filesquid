@@ -1,6 +1,6 @@
 # Task DE-1.1 Walkthrough: Create, open, copy, rebuild library
 
-Branch: `feat/de-1.1-library-create-open-copy-rebuild` (part of global [Task 1.1](../../../../../../resources/implementation-plan.md#task-1.1)). API contract `0.18.0` (one above `0.17.0` of CL-1.9, PR #107).
+Branch: `feat/de-1.1-library-create-open-copy-rebuild` (part of global [Task 1.1](../../../../../../resources/implementation-plan.md#task-1.1)). API contract `0.19.0` (one above `0.18.0` of API-F1.4, PR #108).
 
 ## What changed
 
@@ -25,7 +25,7 @@ Branch: `feat/de-1.1-library-create-open-copy-rebuild` (part of global [Task 1.1
     - answers 200 when started, 409 while a backfill runs, and 503 until a launcher is installed;
     - each request is journaled once as `history.backfill.request`.
   - `POST /api/v1/libraries/location-choices` and the `LocationChooser` port ([`local_library/choice.rs`](../../../api/src/local_library/choice.rs)).
-  - `openapi.json` is 0.18.0, with schemas `BackfillStarted`, `LocationChoiceRequest`, `LocationChoice`, `ChoicePurpose` and `ChoiceOutcome`. `ui/src/api/schema.d.ts` was regenerated.
+  - `openapi.json` is 0.19.0, with schemas `BackfillStarted`, `LocationChoiceRequest`, `LocationChoice`, `ChoicePurpose` and `ChoiceOutcome`. `ui/src/api/schema.d.ts` was regenerated.
 - **`filesquid-desktop`**:
   - [`libraries.rs`](../../src/libraries.rs): `DesktopLibraries` wraps `LibraryCommands<HostLocations>`. After each create or open, the bound library is served:
     - its files, from the same root and leases;
@@ -215,6 +215,6 @@ None for the application. The packaged-window run sets `FILESQUID_E2E_LOCATIONS`
 `FULL=1 FILESQUID_DESKTOP_E2E=1 bash scripts/pre-commit.sh` on the final code, packaged-window e2e included:
 
 ```text
-✅ Desktop packaged-window e2e passed (108s).
-✅ All Pre-Commit Hooks Passed! Test scope: full (739s)
+✅ Desktop packaged-window e2e passed (104s).
+✅ All Pre-Commit Hooks Passed! Test scope: full (799s)
 ```
