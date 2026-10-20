@@ -14,9 +14,10 @@
 //!   caller appends once the commit is published.
 //! - [`backfill`]: the bounded, resumable job that reconstructs records for versions
 //!   committed before the history existed.
-//! - [`HistorySource`], [`HistorySnapshot`], [`MemoryHistory`] and [`OcflHistory`]: what
-//!   the history routes read, injected by the host; any index is rebuilt from the OCFL
-//!   records and flagged when a cap cut it short.
+//! - [`HistorySource`], [`HistorySnapshot`], [`MemoryHistory`], [`OcflHistory`] and
+//!   [`OcflRootsHistory`] (every storage root a host's [`HistoryRoots`] lists): what the
+//!   history routes read, injected by the host; any index is rebuilt from the OCFL records
+//!   and flagged when a cap cut it short.
 //! - [`redact_record`] and [`Redactor`]: a record with agent identities, version messages
 //!   and logical paths removed, for shared or published outputs (PRD F-046).
 //!
@@ -38,8 +39,8 @@ pub use recorder::{
 pub use redact::{redact_record, RedactError, Redactor, REDACTED_INSTALLATION};
 pub use routes::{HistoryPage, JSON_LD, MAX_EXPORT_BYTES, TRUNCATED_HEADER};
 pub use source::{
-    entry_of, HistoryError, HistorySnapshot, HistorySource, MemoryHistory, OcflHistory,
-    MAX_HISTORY_OBJECTS, MAX_HISTORY_RECORDS,
+    entry_of, HistoryError, HistoryRoots, HistorySnapshot, HistorySource, MemoryHistory,
+    OcflHistory, OcflRootsHistory, MAX_HISTORY_OBJECTS, MAX_HISTORY_RECORDS, MAX_HISTORY_ROOTS,
 };
 
 /// Journal operation of a provenance record that could not be written, or was not written

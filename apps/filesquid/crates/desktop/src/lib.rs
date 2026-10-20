@@ -50,10 +50,12 @@ pub use stdout_log::LOGGING_OPERATION;
 
 use event_channel::{Forwarding, TauriSink, FORWARDER_HEARTBEAT};
 use filesquid_api::auth::{record_token_issue, Authoriser, LaunchToken, Principal};
-use filesquid_api::history::{HostFacts, ProvenanceContext};
+use filesquid_api::history::backfill::{Backfill, BACKFILL_OPERATION};
+use filesquid_api::history::{HostFacts, OcflRootsHistory, ProvenanceContext};
 use filesquid_api::host::{HostIdentity, NotEnrolled};
 use filesquid_api::journal::{JournalEntry, Outcome};
 use filesquid_api::journal_writer::JournalSender;
+use filesquid_api::local_library::{LocalLibraryService, RepairLedger};
 use filesquid_api::ocfl_validation::ValidationService;
 use filesquid_api::registry::ProcessHandle;
 use filesquid_api::trace_layer::JournalLayer;
@@ -62,13 +64,14 @@ use filesquid_core::InstallationId;
 use filesquid_native::installation::{
     self, InstallationError, InstallationSource, INSTALLATION_CREATED,
 };
-use filesquid_native::{HostMonitor, SqliteCatalog, CATALOG_DIR};
+use filesquid_native::{CatalogRoots, HostMonitor, SqliteCatalog, CATALOG_DIR};
 use filesquid_ocfl::storage::FsBackend;
 use ipc_observer::TauriIpcObserver;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
-use std::time::Duration;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 use tauri::{Manager, RunEvent};
 use tracing::Subscriber;
 use tracing_subscriber::filter::{filter_fn, EnvFilter, FilterExt};
@@ -80,11 +83,13 @@ use tracing_subscriber::Layer;
 /// Interval between monitor ticks (host heartbeat, stalled checks, health).
 const TICK: Duration = Duration::from_secs(1);
 
-/// Desktop monitor, the event forwarder's process, and the flag that ends both loops.
+/// Desktop monitor, the event forwarder's process, the history backfill's thread, and the
+/// flag that ends all three.
 struct DesktopMonitor {
     host: Arc<HostMonitor>,
     forwarder: Arc<ProcessHandle>,
     stop: Arc<AtomicBool>,
+    backfill: Mutex<Option<JoinHandle<()>>>,
 }
 
 /// The journal sinks the host attaches once the journal opens: the journal layer, the Tauri
@@ -421,10 +426,7 @@ pub fn open_library_catalog(
     installation: &InstallationId,
 ) -> Result<SqliteCatalog, String> {
     let journal = host.monitor().announcing_store();
-    let context = ProvenanceContext {
-        installation: installation.clone(),
-        host: host_facts(),
-    };
+    let context = provenance_context(installation);
     let opened = SqliteCatalog::open(&data_dir.join(CATALOG_DIR), journal);
     opened
         .map(|catalog| {
@@ -439,6 +441,58 @@ pub fn open_library_catalog(
                 .send(JournalEntry::new(CATALOG_OPEN_OPERATION, Outcome::Failed).error_code(code));
             format!("library catalogs could not be opened ({code})")
         })
+}
+
+/// Who this host's PROV-O records name: the installation agent `installation` (DE-S-012)
+/// and this build's software agent ([`host_facts`]). Pure.
+pub fn provenance_context(installation: &InstallationId) -> ProvenanceContext {
+    ProvenanceContext {
+        installation: installation.clone(),
+        host: host_facts(),
+    }
+}
+
+/// Install the PROV-O history source of the history routes in `state` (API-S-029): every
+/// record of every library `catalog` serves, read from the libraries' OCFL storage roots for
+/// each request ([`CatalogRoots`]), so a library opened later is included. Until it is
+/// installed the history routes answer `503 unavailable`.
+///
+/// # Errors
+/// A history source is already installed; the first one is kept.
+pub fn install_history_source(state: &ApiState, catalog: Arc<SqliteCatalog>) -> Result<(), String> {
+    let history = OcflRootsHistory::new(CatalogRoots(catalog));
+    if !state.install_history(Arc::new(history)) {
+        return Err("a history source was already installed".to_string());
+    }
+    Ok(())
+}
+
+/// The local library service of this host (CL-1.1) with the repair provenance follow-up
+/// (API-S-028): after each repaired object it commits a provenance-only version whose PROV-O
+/// record names `installation`, shares the repair run's ID and names a journal entry ID the
+/// host journal allocates before the commit. Journals through `host`'s bounded queue and
+/// records repairs in `ledger`, the persistent ledger DE-1.1 injects with the repair route.
+pub fn local_library_service(
+    host: &HostMonitor,
+    installation: &InstallationId,
+    ledger: Arc<dyn RepairLedger>,
+) -> LocalLibraryService {
+    LocalLibraryService::new(host.monitor().journal(), ledger).with_provenance(
+        provenance_context(installation),
+        host.monitor().announcing_store(),
+    )
+}
+
+/// The history backfill job of this host (API-S-029; ADR 040 Decision 7): it commits as
+/// `installation`, allocates journal IDs from `host`'s journal store, journals through its
+/// bounded queue and registers each run in its process registry.
+pub fn history_backfill(host: &HostMonitor, installation: &InstallationId) -> Backfill {
+    Backfill::new(
+        provenance_context(installation),
+        host.monitor().announcing_store(),
+        host.monitor().journal(),
+        host.monitor().registry().clone(),
+    )
 }
 
 /// The software agent of this host's PROV-O records: the product, its distribution and this
@@ -463,8 +517,9 @@ fn catalog_error_code(err: &filesquid_api::library::CatalogError) -> &'static st
 
 /// Open the journal in the app data directory, attach every journal sink, install the
 /// monitor, journal a logging stack that could not be installed (`logging` false), read the
-/// installation UUID, open the library catalogs, register the event forwarder's process and start the
-/// ticker. When the catalogs cannot be opened the failure is journaled and the monitor
+/// installation UUID, open the library catalogs, install the PROV-O history source over their
+/// storage roots, register the event forwarder's process, start the ticker and start the
+/// history backfill. When the catalogs cannot be opened the failure is journaled and the monitor
 /// stopped (flushing the journal) before the launch fails. Performs filesystem and database
 /// I/O.
 fn start_monitor(
@@ -482,10 +537,13 @@ fn start_monitor(
             .send(stdout_log::logging_failure_entry());
     }
     let installation = load_installation(&data_dir, &host).inspect_err(|_| host.stop())?;
-    let catalog =
-        open_library_catalog(&data_dir, &host, &installation).inspect_err(|_| host.stop())?;
+    let catalog = Arc::new(
+        open_library_catalog(&data_dir, &host, &installation).inspect_err(|_| host.stop())?,
+    );
+    install_history_source(&state, catalog.clone()).inspect_err(|_| host.stop())?;
+    let backfill = history_backfill(&host, &installation);
     app.manage(DesktopInstallation(installation));
-    app.manage(DesktopCatalog(Arc::new(catalog)));
+    app.manage(DesktopCatalog(catalog.clone()));
     let validation = host
         .start_validation::<FsBackend>(&data_dir, &state)
         .inspect_err(|_| host.stop())?;
@@ -494,12 +552,99 @@ fn start_monitor(
     let forwarder = Arc::new(event_channel::register_forwarder(host.monitor().registry()));
     let stop = Arc::new(AtomicBool::new(false));
     spawn_ticker(host.clone(), stop.clone());
+    let backfill = spawn_backfill(backfill, catalog, stop.clone());
     app.manage(DesktopMonitor {
         host,
         forwarder,
         stop,
+        backfill: Mutex::new(backfill),
     });
     Ok(())
+}
+
+/// Longest the app's exit waits for a cancelled history backfill to end before the journal is
+/// flushed.
+const BACKFILL_STOP_WAIT: Duration = Duration::from_secs(10);
+
+/// Run the history backfill over every library on its own thread, once per launch (API-S-029):
+/// versions committed without a PROV-O record get a reconstructed one, and versions that have
+/// one are skipped, so an interrupted run resumes at the next launch. Each run registers in
+/// the process registry and journals itself; setting `stop` (at app exit) cancels it between
+/// objects. Answers the thread, or `None` when it could not be started (logged as an error,
+/// which the journal layer journals).
+fn spawn_backfill(
+    backfill: Backfill,
+    catalog: Arc<SqliteCatalog>,
+    stop: Arc<AtomicBool>,
+) -> Option<JoinHandle<()>> {
+    let spawned = std::thread::Builder::new()
+        .name("filesquid-history-backfill".into())
+        .spawn(move || report_backfill(catalog.backfill_history(&backfill, &stop)));
+    spawned
+        .inspect_err(|err| {
+            tracing::error!(
+                operation = BACKFILL_OPERATION,
+                error_code = "thread_unavailable",
+                error = %err,
+                "the history backfill could not be started"
+            );
+        })
+        .ok()
+}
+
+/// Log each library whose backfill could not run, and a catalog that could not list its
+/// libraries, as warnings with error codes only (the journal layer journals warnings; each
+/// run that started journaled itself).
+fn report_backfill(
+    result: Result<Vec<filesquid_native::LibraryBackfill>, filesquid_api::library::CatalogError>,
+) {
+    let libraries = match result {
+        Ok(libraries) => libraries,
+        Err(err) => {
+            tracing::warn!(
+                operation = BACKFILL_OPERATION,
+                error_code = catalog_error_code(&err),
+                "the history backfill could not list the libraries"
+            );
+            return;
+        }
+    };
+    for library in libraries.iter().filter(|library| library.error.is_some()) {
+        tracing::warn!(
+            operation = BACKFILL_OPERATION,
+            library_id = library.library_id.as_str(),
+            error_code = "unavailable",
+            "the history backfill could not run for a library; the next launch retries"
+        );
+    }
+}
+
+/// Wait, at most [`BACKFILL_STOP_WAIT`], for the cancelled backfill thread in `slot` to end.
+/// A thread still running then is logged and left to end with the process.
+fn wait_for_backfill(slot: &Mutex<Option<JoinHandle<()>>>) {
+    let handle = slot.lock().ok().and_then(|mut handle| handle.take());
+    let Some(handle) = handle else {
+        return;
+    };
+    let deadline = Instant::now() + BACKFILL_STOP_WAIT;
+    while !handle.is_finished() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    if !handle.is_finished() {
+        tracing::warn!(
+            operation = BACKFILL_OPERATION,
+            error_code = "stop_timeout",
+            "the history backfill did not stop in time"
+        );
+        return;
+    }
+    if handle.join().is_err() {
+        tracing::error!(
+            operation = BACKFILL_OPERATION,
+            error_code = "panicked",
+            "the history backfill thread panicked"
+        );
+    }
 }
 
 /// Tick the monitor once per [`TICK`] until `stop` is set at app exit (bounded by the app's lifetime).
@@ -553,11 +698,12 @@ fn forward_events(app: &tauri::AppHandle) {
     });
 }
 
-/// Stop the ticker and the event forwarder, complete the forwarder's process, journal
-/// `host.stopped` and flush the journal.
+/// Stop the ticker, the event forwarder and the history backfill (waiting for it, bounded),
+/// complete the forwarder's process, journal `host.stopped` and flush the journal.
 fn stop_monitor(app: &tauri::AppHandle) {
     if let Some(monitor) = app.try_state::<DesktopMonitor>() {
         monitor.stop.store(true, Ordering::SeqCst);
+        wait_for_backfill(&monitor.backfill);
         monitor.forwarder.complete();
         monitor.host.stop();
     }

@@ -13,7 +13,7 @@
 //!   futures never wait (the filesystem and in-memory backends); the routes call it off the
 //!   async executor.
 
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use filesquid_core::{
     HistoryEntry, JournalLink, OperationId, OperationKind, OperationMessage, Rfc3339Utc, VersionRef,
@@ -272,65 +272,9 @@ impl<B: StorageBackend + Send + Sync + 'static> OcflHistory<B> {
         let storage = StorageRoot::open(&self.backend)
             .await
             .map_err(unavailable)?;
-        let roots = storage.objects();
-        let mut snapshot = HistorySnapshot::complete(HistoryIndex::new());
-        let mut budget = self.max_records;
-        let mut skipped = false;
-        for root in roots.iter().take(MAX_HISTORY_OBJECTS) {
-            let Some(object) = open_object(&storage, root).await else {
-                skipped = true;
-                continue;
-            };
-            budget = read_object_records(&object, &mut snapshot, budget).await;
-            if snapshot.truncated {
-                break;
-            }
-        }
-        snapshot.truncated |= skipped || roots.len() > MAX_HISTORY_OBJECTS;
-        if snapshot.truncated {
-            tracing::warn!(
-                target: LOG_TARGET,
-                "history index is incomplete: a cap was reached or an object was unreadable"
-            );
-        }
-        Ok(snapshot)
-    }
-
-    /// Read the stored record of `version` of `object_id` (storage I/O). When no object
-    /// matched but some could not be opened (or lie past [`MAX_HISTORY_OBJECTS`]), the
-    /// target may be among them, so the answer is [`HistoryError::Unavailable`], not `None`.
-    async fn read_one(
-        &self,
-        object_id: &str,
-        version: &str,
-    ) -> Result<Option<Vec<u8>>, HistoryError> {
-        let Ok(version) = VersionNum::parse(version) else {
-            return Ok(None);
-        };
-        let storage = StorageRoot::open(&self.backend)
-            .await
-            .map_err(unavailable)?;
-        let roots = storage.objects();
-        let mut skipped = roots.len() > MAX_HISTORY_OBJECTS;
-        for root in roots.iter().take(MAX_HISTORY_OBJECTS) {
-            let Some(object) = open_object(&storage, root).await else {
-                skipped = true;
-                continue;
-            };
-            if object.id() != object_id || !object.inventory().versions.contains_key(&version) {
-                continue;
-            }
-            let record = read_record(&object, &version)
-                .await
-                .map_err(record_failure)?;
-            return subject_checked(record, object_id, &version);
-        }
-        match skipped {
-            true => Err(unavailable(
-                "an object that may hold the record is unreadable",
-            )),
-            false => Ok(None),
-        }
+        let mut reading = Reading::new(self.max_records);
+        reading.root(&storage).await;
+        Ok(reading.finish())
     }
 }
 
@@ -340,7 +284,194 @@ impl<B: StorageBackend + Send + Sync + 'static> HistorySource for OcflHistory<B>
     }
 
     fn record(&self, object_id: &str, version: &str) -> Result<Option<Vec<u8>>, HistoryError> {
-        complete_immediately(self.read_one(object_id, version)).map_err(unavailable)?
+        complete_immediately(read_one(&self.backend, object_id, version)).map_err(unavailable)?
+    }
+}
+
+/// Most storage roots one [`OcflRootsHistory`] reads.
+pub const MAX_HISTORY_ROOTS: usize = 256;
+
+/// The OCFL storage roots a host serves, listed again for every read, because a host opens
+/// and closes libraries while it runs. The host implements it over its own storage.
+pub trait HistoryRoots: Send + Sync + 'static {
+    /// The backend of one storage root; its futures must never wait.
+    type Backend: StorageBackend + Send + Sync + 'static;
+
+    /// The storage roots served now. Past [`MAX_HISTORY_ROOTS`] the rest are left out and
+    /// the answers flagged incomplete.
+    ///
+    /// # Errors
+    ///
+    /// [`HistoryError`] when the host cannot list its storage roots now.
+    fn roots(&self) -> Result<Vec<Arc<Self::Backend>>, HistoryError>;
+}
+
+/// The records of every object of every storage root a host serves, as one history: what a
+/// host that serves several libraries installs. One record cap and one object cap hold
+/// across all roots; a root that cannot be opened is logged and left out, and the answers
+/// say so (the index is flagged truncated, a lookup that found nothing is unavailable).
+#[derive(Debug)]
+pub struct OcflRootsHistory<R> {
+    roots: R,
+    max_records: usize,
+}
+
+impl<R: HistoryRoots> OcflRootsHistory<R> {
+    /// The history of the storage roots `roots` lists.
+    pub fn new(roots: R) -> Self {
+        Self {
+            roots,
+            max_records: MAX_HISTORY_RECORDS,
+        }
+    }
+
+    /// Index at most `max` records across all roots (1 to [`MAX_HISTORY_RECORDS`]); past it
+    /// the snapshot is flagged truncated.
+    #[must_use]
+    pub fn with_max_records(mut self, max: usize) -> Self {
+        self.max_records = max.clamp(1, MAX_HISTORY_RECORDS);
+        self
+    }
+
+    /// Read the records of every listed root into one index (storage I/O).
+    async fn read_index(&self) -> Result<HistorySnapshot, HistoryError> {
+        let roots = self.roots.roots()?;
+        let mut reading = Reading::new(self.max_records);
+        reading.skipped = roots.len() > MAX_HISTORY_ROOTS;
+        for backend in roots.iter().take(MAX_HISTORY_ROOTS) {
+            match StorageRoot::open(backend.as_ref()).await {
+                Ok(storage) => reading.root(&storage).await,
+                Err(err) => {
+                    tracing::warn!(target: LOG_TARGET, error = %err, "history skipped a storage root");
+                    reading.skipped = true;
+                }
+            }
+            if reading.snapshot.truncated {
+                break;
+            }
+        }
+        Ok(reading.finish())
+    }
+
+    /// Find the record of `version` of `object_id` in the listed roots (storage I/O). When
+    /// no root holds it but one could not be read, it may be there: unavailable, not `None`.
+    async fn read_any(
+        &self,
+        object_id: &str,
+        version: &str,
+    ) -> Result<Option<Vec<u8>>, HistoryError> {
+        let roots = self.roots.roots()?;
+        let mut skipped = roots.len() > MAX_HISTORY_ROOTS;
+        for backend in roots.iter().take(MAX_HISTORY_ROOTS) {
+            match read_one(backend.as_ref(), object_id, version).await {
+                Ok(Some(found)) => return Ok(Some(found)),
+                Ok(None) => {}
+                Err(HistoryError::Unavailable) => skipped = true,
+                Err(err) => return Err(err),
+            }
+        }
+        match skipped {
+            true => Err(HistoryError::Unavailable),
+            false => Ok(None),
+        }
+    }
+}
+
+impl<R: HistoryRoots> HistorySource for OcflRootsHistory<R> {
+    fn index(&self) -> Result<HistorySnapshot, HistoryError> {
+        complete_immediately(self.read_index()).map_err(unavailable)?
+    }
+
+    fn record(&self, object_id: &str, version: &str) -> Result<Option<Vec<u8>>, HistoryError> {
+        complete_immediately(self.read_any(object_id, version)).map_err(unavailable)?
+    }
+}
+
+/// One index being read from one or more storage roots: the snapshot, the records and
+/// objects it may still take, and whether anything was left out.
+struct Reading {
+    snapshot: HistorySnapshot,
+    budget: usize,
+    objects: usize,
+    skipped: bool,
+}
+
+impl Reading {
+    /// An empty index that takes at most `max_records` records and [`MAX_HISTORY_OBJECTS`]
+    /// objects.
+    fn new(max_records: usize) -> Self {
+        Self {
+            snapshot: HistorySnapshot::complete(HistoryIndex::new()),
+            budget: max_records,
+            objects: MAX_HISTORY_OBJECTS,
+            skipped: false,
+        }
+    }
+
+    /// Add the records of every object of `storage` (storage I/O), until a cap is reached.
+    async fn root<B: StorageBackend>(&mut self, storage: &StorageRoot<'_, B>) {
+        let roots = storage.objects();
+        self.skipped |= roots.len() > self.objects;
+        let take = roots.len().min(self.objects);
+        self.objects -= take;
+        for root in roots.iter().take(take) {
+            let Some(object) = open_object(storage, root).await else {
+                self.skipped = true;
+                continue;
+            };
+            self.budget = read_object_records(&object, &mut self.snapshot, self.budget).await;
+            if self.snapshot.truncated {
+                return;
+            }
+        }
+    }
+
+    /// The snapshot, flagged truncated when anything was left out (logged on stdout).
+    fn finish(mut self) -> HistorySnapshot {
+        self.snapshot.truncated |= self.skipped;
+        if self.snapshot.truncated {
+            tracing::warn!(
+                target: LOG_TARGET,
+                "history index is incomplete: a cap was reached or an object was unreadable"
+            );
+        }
+        self.snapshot
+    }
+}
+
+/// Read the stored record of `version` of `object_id` from the storage root on `backend`
+/// (storage I/O). When no object matched but some could not be opened (or lie past
+/// [`MAX_HISTORY_OBJECTS`]), the target may be among them, so the answer is
+/// [`HistoryError::Unavailable`], not `None`.
+async fn read_one<B: StorageBackend>(
+    backend: &B,
+    object_id: &str,
+    version: &str,
+) -> Result<Option<Vec<u8>>, HistoryError> {
+    let Ok(version) = VersionNum::parse(version) else {
+        return Ok(None);
+    };
+    let storage = StorageRoot::open(backend).await.map_err(unavailable)?;
+    let roots = storage.objects();
+    let mut skipped = roots.len() > MAX_HISTORY_OBJECTS;
+    for root in roots.iter().take(MAX_HISTORY_OBJECTS) {
+        let Some(object) = open_object(&storage, root).await else {
+            skipped = true;
+            continue;
+        };
+        if object.id() != object_id || !object.inventory().versions.contains_key(&version) {
+            continue;
+        }
+        let record = read_record(&object, &version)
+            .await
+            .map_err(record_failure)?;
+        return subject_checked(record, object_id, &version);
+    }
+    match skipped {
+        true => Err(unavailable(
+            "an object that may hold the record is unreadable",
+        )),
+        false => Ok(None),
     }
 }
 

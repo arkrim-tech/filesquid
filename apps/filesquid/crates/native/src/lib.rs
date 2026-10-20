@@ -20,7 +20,9 @@
 //!
 //! - default (always built): the items above.
 //! - `desktop`: desktop-only native processing: the per-library SQLite catalog
-//!   ([`SqliteCatalog`], Task DE-0.2), and later the OCFL coordinator and the durable job and
+//!   ([`SqliteCatalog`], Task DE-0.2), its libraries' storage roots for the PROV-O history
+//!   routes ([`CatalogRoots`]) and the history backfill over them
+//!   ([`SqliteCatalog::backfill_history`], Task FS-2.8 host wiring), and later the OCFL coordinator and the durable job and
 //!   media workers that DE-0.8 adds. Only `filesquid-desktop` enables it.
 //!
 //! `filesquid-desktop` links this crate with `desktop`. `filesquid-server` MAY link it with its
@@ -43,9 +45,9 @@ mod owner_only;
 
 #[cfg(feature = "desktop")]
 pub use catalog::{
-    library_ocfl_root, CommitProbe, NoProbe, PendingIntent, SqliteCatalog, CATALOG_DIR,
-    CATALOG_FILE_EXTENSION, CATALOG_SCHEMA_VERSION, MAX_LIBRARIES, OCFL_ROOT_SUFFIX,
-    RECONCILE_OPERATION, WORK_DIR_SUFFIX,
+    library_ocfl_root, CatalogRoots, CommitProbe, LibraryBackfill, NoProbe, PendingIntent,
+    SqliteCatalog, CATALOG_DIR, CATALOG_FILE_EXTENSION, CATALOG_SCHEMA_VERSION, MAX_BACKFILL_RUNS,
+    MAX_LIBRARIES, OCFL_ROOT_SUFFIX, RECONCILE_OPERATION, WORK_DIR_SUFFIX,
 };
 pub use files::{install_file_service, library_dir_name, open_fs_library, HostFiles, HostLeases};
 pub use findings_sqlite::SqliteFindings;
