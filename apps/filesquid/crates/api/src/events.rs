@@ -45,13 +45,18 @@ pub mod topic {
     pub const RESYNC: &str = "events.resync";
     /// A field of the host descriptor changed; payload the whole new `HostDescriptor`.
     pub const HOST_CHANGE: &str = "host.change";
+    /// Children of navigation nodes changed; payload `NavigationChange` (the handles of the
+    /// changed parents, or `all`). A host forwards it per subscriber, reduced to the handles
+    /// that subscriber may read.
+    pub const NAVIGATION_CHANGE: &str = "navigation.change";
     /// Every documented topic, in contract order.
-    pub const ALL: [&str; 5] = [
+    pub const ALL: [&str; 6] = [
         PROCESS_UPDATE,
         JOURNAL_ENTRY,
         HEALTH_CHANGE,
         RESYNC,
         HOST_CHANGE,
+        NAVIGATION_CHANGE,
     ];
 }
 
@@ -146,7 +151,23 @@ impl EventBus {
         Ok(EventSubscription {
             receiver: self.sender.subscribe(),
             _slot: slot,
+            filter: None,
         })
+    }
+
+    /// Open a client subscription whose events pass through `filter` (one subscriber's view:
+    /// what it may read). A host serving authenticated clients opens each client's
+    /// subscription this way.
+    ///
+    /// # Errors
+    /// A retryable `unavailable` [`ApiError`] when [`MAX_SUBSCRIBERS`] are already open.
+    pub fn subscription_filtered(
+        &self,
+        filter: EventFilter,
+    ) -> Result<EventSubscription, ApiError> {
+        let mut subscription = self.subscription()?;
+        subscription.filter = Some(filter);
+        Ok(subscription)
     }
 
     /// Raw receiver for a trusted in-process consumer. It is not counted against
@@ -240,12 +261,25 @@ impl Drop for SubscriberSlot {
     }
 }
 
+/// Reduces the events of one subscriber's stream: answers the event to deliver, changed to
+/// what that subscriber may see, or `None` to deliver nothing (for example
+/// [`topic::NAVIGATION_CHANGE`], which names the nodes whose children changed).
+pub type EventFilter = Arc<dyn Fn(ApiEvent) -> Option<ApiEvent> + Send + Sync>;
+
 /// A client's view of the bus. Dropping it (for example when the client disconnects)
 /// releases its receiver and its [`MAX_SUBSCRIBERS`] slot.
-#[derive(Debug)]
 pub struct EventSubscription {
     receiver: broadcast::Receiver<ApiEvent>,
     _slot: SubscriberSlot,
+    filter: Option<EventFilter>,
+}
+
+impl std::fmt::Debug for EventSubscription {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EventSubscription")
+            .field("filtered", &self.filter.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl EventSubscription {
@@ -254,11 +288,24 @@ impl EventSubscription {
     /// If the subscriber fell more than [`EVENT_BUFFER`] events behind, this returns one
     /// [`topic::RESYNC`] hint with the number missed, then continues with the oldest event
     /// still buffered. Cancel-safe: it can be raced in `tokio::select!` against a socket read.
+    ///
+    /// A subscription opened with [`EventBus::subscription_filtered`] skips the events its
+    /// filter drops and waits for the next; it still ends when the bus is gone.
     pub async fn next(&mut self) -> Option<ApiEvent> {
-        match self.receiver.recv().await {
-            Ok(event) => Some(event),
-            Err(RecvError::Lagged(missed)) => Some(ApiEvent::resync(missed)),
-            Err(RecvError::Closed) => None,
+        loop {
+            let event = match self.receiver.recv().await {
+                Ok(event) => event,
+                Err(RecvError::Lagged(missed)) => ApiEvent::resync(missed),
+                Err(RecvError::Closed) => return None,
+            };
+            match &self.filter {
+                None => return Some(event),
+                Some(filter) => {
+                    if let Some(kept) = filter(event) {
+                        return Some(kept);
+                    }
+                }
+            }
         }
     }
 }

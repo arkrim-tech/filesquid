@@ -87,6 +87,15 @@ fn journaled_owner_state() -> (ApiState, LaunchToken, Monitor, Arc<MemoryJournal
     );
     state.install_validation(Arc::new(validation));
     history_fixture::install_sample_history(&state);
+    state.install_navigation(Arc::new(filesquid_api::navigation::NavigationService::new(
+        Arc::new(filesquid_api::library::MemoryCatalog::new()),
+        Arc::new(filesquid_api::navigation::MemoryFolderIndex::new()),
+        Arc::new(filesquid_api::navigation::HostAccess),
+        filesquid_api::navigation::RepositoryInfo::new(
+            filesquid_core::RepositoryId::new("repository").expect("id"),
+            None,
+        ),
+    )));
     (state, token, monitor, store)
 }
 
@@ -330,6 +339,7 @@ fn every_routed_path_declares_its_action() {
             | "/api/v1/files/restorations" => Action::WriteFiles,
             "/api/v1/content/{handle}" => Action::ReadContent,
             "/api/v1/history" => Action::ReadHistory,
+            "/api/v1/navigation" => Action::ReadNavigation,
             file if file.starts_with("/api/v1/files/") => Action::ReadHistory,
             other => panic!("{other} has no expected action in this test"),
         };
@@ -354,6 +364,7 @@ fn action_names_are_unique_dotted_identifiers() {
             "files.write",
             "content.read",
             "history.read",
+            "navigation.read",
             "public"
         ]
     );

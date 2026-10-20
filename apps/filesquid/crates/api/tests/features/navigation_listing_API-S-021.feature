@@ -4,8 +4,6 @@
 # API-S-021: Navigation listing: one level of the tree per call, ancestors for the breadcrumb, permission-filtered paging
 # API-S-019: Library domain commands and queries (the source of libraries, collections and virtual collections)
 # API-S-005: Responses carry opaque handles, never raw filesystem paths or SQL
-#
-# Step definitions arrive with Task API-F1.11; until then these scenarios are reported as skipped.
 Feature: Navigation listing
   As a person browsing a FileSquid library
   I want the API to list the levels of my navigation tree and the path to where I am
