@@ -1,8 +1,8 @@
 /**
- * `<fs-states>`: what a view shows instead of its content (UI-F2.1a). Five distinct states,
+ * `<fs-states>`: what a view shows instead of its content (UI-F2.1a). Six distinct states,
  * each worded only from the active label table: loading and empty in a polite `role="status"`
- * region, error, offline and permission denied in a `role="alert"` region. Error and offline
- * offer Retry, which dispatches a bubbling, composed `fs-retry` event (ADR 031 Decision 6:
+ * region, error, offline, permission denied and unavailable (UI-F2.1b, an HTTP 503) in a
+ * `role="alert"` region. Error, offline and unavailable offer Retry, which dispatches a bubbling, composed `fs-retry` event (ADR 031 Decision 6:
  * changes flow up as events); the view that owns the data decides what to reload.
  *
  * Accessibility (UI-S-016): both live regions exist from the first render and are updated in
@@ -114,7 +114,7 @@ function region(role: "status" | "alert"): HTMLDivElement {
 
 /** True for the states announced as alerts. */
 function isAlert(state: ViewState): boolean {
-  return state.kind === "error" || state.kind === "offline" || state.kind === "denied";
+  return state.kind !== "loading" && state.kind !== "empty";
 }
 
 /** The message of a loading or empty state. */
@@ -123,17 +123,21 @@ function statusContent(state: ViewState, labels: LabelTable): Node[] {
   return [paragraph("title", text)];
 }
 
-/** The message, detail and Retry of an error, offline or denied state. */
+/** The title of an error, offline or unavailable state. */
+function alertTitle(state: ViewState, labels: LabelTable): string {
+  if (state.kind === "offline") return labels.stateOffline;
+  if (state.kind === "unavailable") return labels.stateUnavailable;
+  return labels.stateError;
+}
+
+/** The message, detail and Retry of an error, offline, denied or unavailable state. */
 function alertContent(state: ViewState, labels: LabelTable, retry: () => void): Node[] {
   if (state.kind === "denied") {
     const detail = state.reason ? reasonLabel(state.reason, labels) : undefined;
     const title = paragraph("title", labels.stateDenied);
     return detail ? [title, paragraph("detail", detail)] : [title];
   }
-  const title = paragraph(
-    "title",
-    state.kind === "offline" ? labels.stateOffline : labels.stateError,
-  );
+  const title = paragraph("title", alertTitle(state, labels));
   const button = document.createElement("button");
   button.type = "button";
   button.textContent = labels.stateRetry;

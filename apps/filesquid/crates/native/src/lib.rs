@@ -9,6 +9,8 @@
 //!
 //! - [`SqliteJournal`]: the activity journal in the host's SQLite operational store
 //!   (WAL mode, append-only, owner-only file mode on Unix);
+//! - [`SqliteJobs`]: the durable jobs of `filesquid-api` (API-S-033) in the same
+//!   operational store (Task DE-0.4);
 //! - [`SqliteFindings`]: the OCFL validation findings, cursors and last runs in the same
 //!   operational store (API-S-022);
 //! - [`DataDirChecks`]: the data-directory checks (write probe, free space);
@@ -22,8 +24,9 @@
 //! - `desktop`: desktop-only native processing: the per-library SQLite catalog
 //!   ([`SqliteCatalog`], Task DE-0.2), its libraries' storage roots for the PROV-O history
 //!   routes ([`CatalogRoots`]) and the history backfill over them
-//!   ([`SqliteCatalog::backfill_history`], Task FS-2.8 host wiring), and later the OCFL coordinator and the durable job and
-//!   media workers that DE-0.8 adds. Only `filesquid-desktop` enables it.
+//!   ([`SqliteCatalog::backfill_history`], Task FS-2.8 host wiring), and the job workers
+//!   ([`workers`]: the durable history backfill job, Tasks DE-0.4 and DE-0.8), which the
+//!   media workers of DE-0.5 join. Only `filesquid-desktop` enables it.
 //!
 //! `filesquid-desktop` links this crate with `desktop`. `filesquid-server` MAY link it with its
 //! default features only (journal store, data-directory checks, `HostMonitor`), keeping its
@@ -40,14 +43,18 @@ pub mod findings_sqlite;
 pub mod host_checks;
 pub mod host_monitor;
 pub mod installation;
+pub mod jobs_sqlite;
 pub mod journal_sqlite;
 mod owner_only;
+#[cfg(feature = "desktop")]
+pub mod workers;
 
 #[cfg(feature = "desktop")]
 pub use catalog::{
-    library_ocfl_root, CatalogRoots, CommitProbe, LibraryBackfill, NoProbe, PendingIntent,
-    SqliteCatalog, CATALOG_DIR, CATALOG_FILE_EXTENSION, CATALOG_SCHEMA_VERSION, MAX_BACKFILL_RUNS,
-    MAX_LIBRARIES, OCFL_ROOT_SUFFIX, RECONCILE_OPERATION, WORK_DIR_SUFFIX,
+    intent_entry, library_ocfl_root, CatalogRoots, CommitProbe, LibraryBackfill, NoProbe,
+    PendingIntent, SqliteCatalog, CATALOG_DIR, CATALOG_FILE_EXTENSION, CATALOG_SCHEMA_VERSION,
+    INTENT_RECORDED_OPERATION, MAX_BACKFILL_RUNS, MAX_LIBRARIES, OCFL_ROOT_SUFFIX,
+    RECONCILE_OPERATION, WORK_DIR_SUFFIX,
 };
 pub use files::{install_file_service, library_dir_name, open_fs_library, HostFiles, HostLeases};
 pub use findings_sqlite::SqliteFindings;
@@ -56,4 +63,5 @@ pub use host_monitor::{
     HostMonitor, ALREADY_INSTALLED, HOST_HEARTBEAT_TIMEOUT_MS, JOURNAL_FILE,
     VALIDATION_ALREADY_STARTED, VALIDATION_STOP_WAIT,
 };
+pub use jobs_sqlite::SqliteJobs;
 pub use journal_sqlite::SqliteJournal;

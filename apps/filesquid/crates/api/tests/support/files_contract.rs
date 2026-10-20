@@ -1,16 +1,18 @@
 //! Contract fixtures for the file operation and content routes (Task API-F1.3): a file
 //! service over an in-memory OCFL root whose object holds the files the sample requests
-//! name, the sample request of every file and content route, and serialized Rust samples of
-//! every file and content-handle schema.
+//! name, the sample request of every file and content route (and of the routes that need a
+//! body, such as `PUT /api/v1/preferences` and `POST /api/v1/client-events`), and
+//! serialized Rust samples of every file and content-handle schema.
 
 #![allow(dead_code)]
 
 use axum::http::Method;
 use filesquid_api::content::ContentTarget;
 use filesquid_api::files::{
-    CommitView, EntryView, FileChangeView, FileDetailsView, FileLibrary, FileService,
-    FolderPageView, FolderRequest, FolderView, HistoryEntryView, HistoryView, MintRequest,
-    MintView, MoveRequest, RemoveRequest, RestoreRequest, UserView, VersionView, VersionsView,
+    CommitView, EntryView, FileChangeView, FileDetailsView, FileHistorySizeView, FileLibrary,
+    FileService, FolderPageView, FolderRequest, FolderView, HistoryEntryView, HistoryView,
+    LabelRequest, LibraryHistorySizeView, MintRequest, MintView, MoveRequest, RemoveRequest,
+    RestoreRequest, UserView, VersionView, VersionsView,
 };
 use filesquid_api::local_library::{LocalLibraryService, MemoryRepairLedger};
 use filesquid_api::monitor::Monitor;
@@ -112,7 +114,8 @@ fn json_body(fields: Value) -> Option<(&'static str, Vec<u8>)> {
 /// The request URI and body of the sample call of `method path` on `state`. A file route
 /// gets the query or body that names the sample object; the content route gets a handle
 /// minted for `token` when `state` has a file service, and the documented template
-/// otherwise; every other route is called as it is, with no body.
+/// otherwise; `PUT /api/v1/preferences` gets the default preferences; every other route is
+/// called as it is, with no body.
 pub fn sample(
     state: &ApiState,
     method: &Method,
@@ -123,6 +126,7 @@ pub fn sample(
     match (method.as_str(), path) {
         ("GET", "/api/v1/files/listing") | ("GET", "/api/v1/files/versions") => plain(""),
         ("GET" | "HEAD", "/api/v1/files/content")
+        | ("GET", "/api/v1/files/download")
         | ("GET", "/api/v1/files/details")
         | ("GET", "/api/v1/files/history") => plain("&path=a.txt"),
         ("PUT", "/api/v1/files/upload") => (
@@ -141,13 +145,53 @@ pub fn sample(
             path.into(),
             json_body(json!({ "version": "v1", "paths": ["restore-me.txt"] })),
         ),
+        ("PUT", "/api/v1/files/labels") => (
+            path.into(),
+            json_body(json!({ "version": "v1", "label": "First draft" })),
+        ),
+        ("GET", "/api/v1/files/history-size") => plain("&path=a.txt"),
+        ("GET", "/api/v1/files/library-history-size") => {
+            (format!("{path}?library_id={LIBRARY}"), None)
+        }
         ("POST", "/api/v1/content-handles") => (
             path.into(),
             json_body(json!({ "version": "v1", "path": "a.txt" })),
         ),
         (_, "/api/v1/content/{handle}") => (content_url(state, token, path), None),
+        ("PUT", "/api/v1/preferences") => {
+            let defaults = filesquid_api::preferences::Preferences::default();
+            let body = serde_json::to_vec(&defaults).expect("json");
+            (path.into(), Some(("application/json", body)))
+        }
+        ("POST", "/api/v1/client-events") => (
+            path.into(),
+            json_body(json!({ "events": [{
+                "kind": "console",
+                "id": "5f0c3e44-2a7b-4c1d-9e8f-0123456789ab",
+                "level": "warn",
+                "component": "fs-file-browser",
+                "error_code": "fetch_failed"
+            }] })),
+        ),
+        ("GET", "/api/v1/admin/journal/entries/{entry}") => (journal_entry_url(state), None),
         _ => (path.to_string(), None),
     }
+}
+
+/// The URL of a journal entry `state`'s monitor holds (one is appended for it), else of
+/// entry 1.
+fn journal_entry_url(state: &ApiState) -> String {
+    use filesquid_api::journal::{JournalEntry, Outcome};
+    let id = state
+        .monitor()
+        .and_then(|m| {
+            m.store()
+                .append(&[JournalEntry::new("host.started", Outcome::Succeeded)])
+                .ok()
+        })
+        .and_then(|ids| ids.first().copied())
+        .unwrap_or(1);
+    format!("/api/v1/admin/journal/entries/{id}")
 }
 
 /// A content URL minted for `token` when `state` serves files, else `template` with a
@@ -189,12 +233,14 @@ fn versions() -> [VersionView; 2] {
             name: "owner".into(),
             address: Some("mailto:owner@example.org".into()),
         }),
+        label: Some("Final draft".into()),
     };
     let bare = VersionView {
         version: "v1".into(),
         created: "2026-10-17T00:00:00Z".into(),
         message: None,
         user: None,
+        label: None,
     };
     [full, bare]
 }
@@ -256,6 +302,7 @@ fn history() -> HistoryView {
             .map(|(change, digest)| HistoryEntryView {
                 version: versions()[1].clone(),
                 change,
+                size: digest.as_ref().map(|_| 5),
                 digest,
             })
             .collect(),
@@ -328,9 +375,26 @@ fn answer_samples() -> Vec<(&'static str, Vec<Value>)> {
         url: format!("/api/v1/content/{}", "A".repeat(43)),
         expires_at: "2026-10-18T01:00:00Z".into(),
     };
+    let file_size = FileHistorySizeView {
+        library_id: LIBRARY.into(),
+        object_id: OBJECT.into(),
+        path: "a.txt".into(),
+        versions: 3,
+        contents: 2,
+        bytes: 11,
+    };
+    let library_size = LibraryHistorySizeView {
+        library_id: LIBRARY.into(),
+        objects: 1,
+        contents: 2,
+        bytes: 11,
+        truncated: false,
+    };
     vec![
         ("ObjectVersions", vec![to_value(versions)]),
         ("FileCommit", vec![to_value(commit)]),
+        ("FileHistorySize", vec![to_value(file_size)]),
+        ("LibraryHistorySize", vec![to_value(library_size)]),
         ("FolderAnswer", vec![to_value(folder)]),
         ("ContentHandle", vec![to_value(handle)]),
     ]
@@ -362,7 +426,13 @@ fn request_samples() -> Vec<(&'static str, Vec<Value>)> {
         object_id: object_id.clone(),
         version: "v1".into(),
         paths: vec!["a.txt".into()],
-        message: Some("restore".into()),
+        label: Some("Back to the original".into()),
+    };
+    let labelled = LabelRequest {
+        library_id: library_id.clone(),
+        object_id: object_id.clone(),
+        version: "v1".into(),
+        label: Some("First draft".into()),
     };
     let mint = MintRequest {
         library_id,
@@ -375,6 +445,7 @@ fn request_samples() -> Vec<(&'static str, Vec<Value>)> {
         ("MoveRequest", vec![to_value(moved)]),
         ("RemoveRequest", vec![to_value(removed)]),
         ("RestoreRequest", vec![to_value(restored)]),
+        ("LabelRequest", vec![to_value(labelled)]),
         ("ContentHandleRequest", vec![to_value(mint)]),
     ]
 }

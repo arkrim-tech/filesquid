@@ -446,12 +446,12 @@ export class FsFileBrowser extends HTMLElement {
     if (state) states.state = state;
     const kind = state?.kind ?? "ready";
     this.dataset.state = kind;
-    if (kind === "loading" || kind === "error" || kind === "offline" || kind === "denied") {
+    if (kind !== "ready" && kind !== "empty") {
       (this.frame as Frame).listing.host.hidden = true;
     }
   }
 
-  /** Show a failed read as the error, offline or denied state. */
+  /** Show a failed read as the error, offline, denied or unavailable state. */
   private failLoad(error: unknown): void {
     const online = this.options?.online ? this.options.online() : navigator.onLine;
     console.warn("FileSquid could not list a folder", error instanceof Error ? error.name : error);

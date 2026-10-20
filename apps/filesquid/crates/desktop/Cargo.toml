@@ -84,6 +84,18 @@ name = "integration_history_wiring"
 path = "tests/integration/history_wiring.rs"
 
 [[test]]
+name = "integration_durable_jobs"
+path = "tests/integration/durable_jobs.rs"
+
+[[test]]
+name = "integration_native_boundary"
+path = "tests/integration/native_boundary.rs"
+
+[[test]]
+name = "integration_media_workers"
+path = "tests/integration/media_workers.rs"
+
+[[test]]
 name = "integration_stdout_logging"
 path = "tests/integration/stdout_logging.rs"
 

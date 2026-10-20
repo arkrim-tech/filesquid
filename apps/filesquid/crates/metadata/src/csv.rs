@@ -1,6 +1,8 @@
 //! CSV interchange: one row per object, headers `prefix:term`.
 
-use crate::{reject_file_dcterms_term, MetadataError, MetadataNamespace};
+use crate::namespace::NamespaceRegistry;
+use crate::record::parse_curie_with;
+use crate::{MetadataError, MetadataNamespace};
 
 /// A CSV column header.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -18,57 +20,101 @@ pub enum CsvError {
     EmptyHeader,
     /// Header is not `prefix:term`.
     NotCurie,
-    /// Prefix is not `exif`, `dcterms`, or `schema`.
-    UnknownPrefix,
+    /// The prefix is not a built-in namespace and is not registered; the
+    /// error names it (MD-S-012).
+    UnregisteredNamespace(String),
     /// `dcterms:` term fails the file register.
     Dcterms(MetadataError),
+    /// The term is not in the registered namespace's term list.
+    Registry(MetadataError),
     /// A quoted field is not closed before the end of the document.
     UnterminatedQuote,
 }
 
-/// Parse a single header cell such as `dcterms:title`.
+/// Parse a single header cell such as `dcterms:title`. Without a registry
+/// no extension prefix is registered.
+///
+/// # Errors
+///
+/// As [`parse_csv_header_with`].
 pub fn parse_csv_header(cell: &str) -> Result<CsvHeader, CsvError> {
+    parse_csv_header_with(cell, &NamespaceRegistry::default())
+}
+
+/// Parse a single header cell against the built-in namespaces and
+/// `registry` (`rico:title` for a registered `rico`).
+///
+/// # Errors
+///
+/// [`CsvError::EmptyHeader`], [`CsvError::NotCurie`],
+/// [`CsvError::UnregisteredNamespace`] naming the prefix,
+/// [`CsvError::Dcterms`] or [`CsvError::Registry`].
+pub fn parse_csv_header_with(
+    cell: &str,
+    registry: &NamespaceRegistry,
+) -> Result<CsvHeader, CsvError> {
     let cell = cell.trim();
     if cell.is_empty() {
         return Err(CsvError::EmptyHeader);
     }
-    let Some((prefix, term)) = cell.split_once(':') else {
-        return Err(CsvError::NotCurie);
-    };
-    if term.is_empty() {
-        return Err(CsvError::NotCurie);
+    match cell.split_once(':') {
+        Some((prefix, term)) if !prefix.is_empty() && !term.is_empty() => {}
+        _ => return Err(CsvError::NotCurie),
     }
-    let namespace = match prefix {
-        "exif" => MetadataNamespace::Exif,
-        "dcterms" => MetadataNamespace::Dcterms,
-        "schema" => MetadataNamespace::SchemaOrg,
-        _ => return Err(CsvError::UnknownPrefix),
-    };
-    if namespace == MetadataNamespace::Dcterms {
-        reject_file_dcterms_term(term).map_err(CsvError::Dcterms)?;
-    }
+    let (namespace, term) = parse_curie_with(cell, registry).map_err(csv_error)?;
     Ok(CsvHeader {
         namespace,
         term: term.to_string(),
     })
 }
 
+/// The CSV form of a register or registry refusal.
+fn csv_error(err: MetadataError) -> CsvError {
+    match err {
+        MetadataError::UnregisteredNamespace(prefix) => CsvError::UnregisteredNamespace(prefix),
+        MetadataError::UnknownExtensionTerm { .. } => CsvError::Registry(err),
+        other => CsvError::Dcterms(other),
+    }
+}
+
 /// Parse a comma-separated header line after an optional leading `id` column.
+/// Without a registry no extension prefix is registered.
+///
+/// # Errors
+///
+/// As [`parse_csv_header_line_with`].
 pub fn parse_csv_header_line(line: &str) -> Result<Vec<CsvHeader>, CsvError> {
+    parse_csv_header_line_with(line, &NamespaceRegistry::default())
+}
+
+/// Parse a comma-separated header line after an optional leading `id`
+/// column, resolving extension prefixes through `registry`.
+///
+/// # Errors
+///
+/// A header refusal ([`parse_csv_header_with`]) or
+/// [`CsvError::UnterminatedQuote`].
+pub fn parse_csv_header_line_with(
+    line: &str,
+    registry: &NamespaceRegistry,
+) -> Result<Vec<CsvHeader>, CsvError> {
     let rows = parse_records(line)?;
     let Some(cells) = rows.first() else {
         return Ok(Vec::new());
     };
-    parse_header_cells(cells)
+    parse_header_cells(cells, registry)
 }
 
 /// Parse header cells, skipping a leading `id`/`object`/`object_id` column.
-fn parse_header_cells(cells: &[String]) -> Result<Vec<CsvHeader>, CsvError> {
+fn parse_header_cells(
+    cells: &[String],
+    registry: &NamespaceRegistry,
+) -> Result<Vec<CsvHeader>, CsvError> {
     let skip = usize::from(cells.first().is_some_and(|cell| is_id_column(cell)));
     cells
         .iter()
         .skip(skip)
-        .map(|cell| parse_csv_header(cell))
+        .map(|cell| parse_csv_header_with(cell, registry))
         .collect()
 }
 
@@ -79,12 +125,7 @@ fn is_id_column(cell: &str) -> bool {
 
 /// Format a header as `prefix:term`.
 pub fn format_csv_header(header: &CsvHeader) -> String {
-    let prefix = match header.namespace {
-        MetadataNamespace::Exif => "exif",
-        MetadataNamespace::Dcterms => "dcterms",
-        MetadataNamespace::SchemaOrg => "schema",
-    };
-    format!("{prefix}:{}", header.term)
+    format!("{}:{}", header.namespace.prefix(), header.term)
 }
 
 use crate::record::Record;
@@ -100,24 +141,51 @@ pub fn to_csv(object_id: &str, record: &Record) -> String {
     format!("{}\n{}\n", headers.join(","), values.join(","))
 }
 
-/// Apply the first data row of a CSV document onto `record`.
+/// Apply the first data row of a CSV document onto `record`. Without a
+/// registry no extension prefix is registered.
+///
+/// # Errors
+///
+/// As [`apply_csv_with`].
+pub fn apply_csv(text: &str, record: &mut Record) -> Result<(), CsvError> {
+    apply_csv_with(text, &NamespaceRegistry::default(), record)
+}
+
+/// Apply the first data row of a CSV document onto `record`, resolving
+/// extension prefixes through `registry` (MD-S-012).
 ///
 /// Cells follow RFC 4180: quoted fields MAY contain commas, doubled quotes,
 /// and line breaks. Values are stored exactly as unquoted, without trimming.
-pub fn apply_csv(text: &str, record: &mut Record) -> Result<(), CsvError> {
+/// Every header is checked before any value is set, so a refused document
+/// leaves `record` unchanged.
+///
+/// # Errors
+///
+/// A header refusal ([`parse_csv_header_with`]) or
+/// [`CsvError::UnterminatedQuote`].
+pub fn apply_csv_with(
+    text: &str,
+    registry: &NamespaceRegistry,
+    record: &mut Record,
+) -> Result<(), CsvError> {
     let rows = parse_records(text)?;
     let Some(header_row) = rows.first() else {
         return Ok(());
     };
-    let headers = parse_header_cells(header_row)?;
+    let headers = parse_header_cells(header_row, registry)?;
     let Some(data) = rows.get(1) else {
         return Ok(());
     };
     let skip = usize::from(header_row.first().is_some_and(|cell| is_id_column(cell)));
     for (header, value) in headers.iter().zip(data.iter().skip(skip)) {
         record
-            .set(header.namespace, &header.term, value.as_str())
-            .map_err(CsvError::Dcterms)?;
+            .set_registered(
+                registry,
+                header.namespace.clone(),
+                &header.term,
+                value.as_str(),
+            )
+            .map_err(csv_error)?;
     }
     Ok(())
 }

@@ -2,14 +2,19 @@
 //! [`crate::ApiState`] with [`crate::ApiState::install_files`] for the file routes and the
 //! content route.
 
+use super::download::Download;
 use super::error::FileError;
+use super::nodes::ScopeObject;
 use super::service::{ContentAnswer, ContentRequest, FileService};
+use super::versions::Committed;
 use super::view::{
-    CommitView, FileDetailsView, FileQuery, FolderPageView, FolderRequest, FolderView,
-    HistoryQuery, HistoryView, ListingQuery, MoveRequest, ObjectQuery, RemoveRequest,
-    RestoreRequest, UploadQuery, VersionsView,
+    CommitView, FileDetailsView, FileHistorySizeView, FileQuery, FolderPageView, FolderRequest,
+    FolderView, HistoryQuery, HistoryView, LabelRequest, LibraryHistorySizeView, LibraryQuery,
+    ListingQuery, MoveRequest, ObjectQuery, RemoveRequest, RestoreRequest, UploadQuery,
+    VersionsView,
 };
 use crate::content::ContentTarget;
+use crate::navigation::FolderScope;
 use axum::body::Bytes;
 use filesquid_ocfl::storage::StorageBackend;
 use filesquid_ocfl::write::VersionReservations;
@@ -37,6 +42,12 @@ pub trait FileOperations: Send + Sync {
     /// The bytes and facts of one content answer.
     fn content(&self, request: ContentRequest) -> FileFuture<'_, ContentAnswer>;
 
+    /// The whole-file download of one file version, streamed.
+    fn download(&self, query: FileQuery) -> FileFuture<'_, Download>;
+
+    /// The object that holds the files of `scope`, or `None`. May block.
+    fn scope_object(&self, scope: &FolderScope) -> Option<ScopeObject>;
+
     /// `not_found` unless `target` names a file of an existing version.
     fn check_target(&self, target: ContentTarget) -> FileFuture<'_, ()>;
 
@@ -53,8 +64,17 @@ pub trait FileOperations: Send + Sync {
     /// Remove one file or folder by `actor`.
     fn remove(&self, request: RemoveRequest, actor: String) -> FileFuture<'_, CommitView>;
 
-    /// Restore files or folders from an earlier version by `actor`.
-    fn restore(&self, request: RestoreRequest, actor: String) -> FileFuture<'_, CommitView>;
+    /// Restore files or folders from an earlier version by `actor`, in one version.
+    fn restore(&self, request: RestoreRequest, actor: String) -> FileFuture<'_, Committed>;
+
+    /// Set or clear the label of one version after commit, by `actor`.
+    fn set_label(&self, request: LabelRequest, actor: String) -> FileFuture<'_, Committed>;
+
+    /// The bytes one file's history keeps.
+    fn history_size(&self, query: HistoryQuery) -> FileFuture<'_, FileHistorySizeView>;
+
+    /// The bytes a library's history keeps.
+    fn library_history_size(&self, query: LibraryQuery) -> FileFuture<'_, LibraryHistorySizeView>;
 }
 
 impl<B, R, S> FileOperations for FileService<B, R, S>
@@ -83,6 +103,14 @@ where
         Box::pin(self.content(request))
     }
 
+    fn download(&self, query: FileQuery) -> FileFuture<'_, Download> {
+        Box::pin(self.download(query))
+    }
+
+    fn scope_object(&self, scope: &FolderScope) -> Option<ScopeObject> {
+        FileService::scope_object(self, scope)
+    }
+
     fn check_target(&self, target: ContentTarget) -> FileFuture<'_, ()> {
         Box::pin(async move { FileService::check_target(self, &target).await })
     }
@@ -108,7 +136,19 @@ where
         Box::pin(async move { FileService::remove(self, request, &actor).await })
     }
 
-    fn restore(&self, request: RestoreRequest, actor: String) -> FileFuture<'_, CommitView> {
+    fn restore(&self, request: RestoreRequest, actor: String) -> FileFuture<'_, Committed> {
         Box::pin(async move { FileService::restore(self, request, &actor).await })
+    }
+
+    fn set_label(&self, request: LabelRequest, actor: String) -> FileFuture<'_, Committed> {
+        Box::pin(async move { FileService::set_label(self, request, &actor).await })
+    }
+
+    fn history_size(&self, query: HistoryQuery) -> FileFuture<'_, FileHistorySizeView> {
+        Box::pin(self.history_size(query))
+    }
+
+    fn library_history_size(&self, query: LibraryQuery) -> FileFuture<'_, LibraryHistorySizeView> {
+        Box::pin(self.library_history_size(query))
     }
 }

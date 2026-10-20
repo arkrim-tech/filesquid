@@ -87,6 +87,9 @@ fn journaled_owner_state() -> (ApiState, LaunchToken, Monitor, Arc<MemoryJournal
     );
     state.install_validation(Arc::new(validation));
     history_fixture::install_sample_history(&state);
+    state.install_preferences(Arc::new(
+        filesquid_api::preferences::MemoryPreferenceStore::new(),
+    ));
     state.install_navigation(Arc::new(filesquid_api::navigation::NavigationService::new(
         Arc::new(filesquid_api::library::MemoryCatalog::new()),
         Arc::new(filesquid_api::navigation::MemoryFolderIndex::new()),
@@ -123,7 +126,9 @@ fn protected_paths() -> Vec<String> {
 /// The routes that answer a plain `GET` with no parameters: every routed path but the file,
 /// content and library routes, which need a library, an object or a body and are tested
 /// through the router in `integration_files`, `integration_content_handles` and
-/// `integration_library_routes`.
+/// `integration_library_routes`, the client-events route, which needs a body, and the journal
+/// entry route, which needs a stored entry's ID (both tested in `unit_client_events` and
+/// `unit_journal_query`).
 fn plain_get_paths() -> Vec<String> {
     route_actions()
         .into_iter()
@@ -136,9 +141,11 @@ fn plain_get_paths() -> Vec<String> {
                     | Action::ManageLibraries
                     | Action::ReadLibraries
                     | Action::RepairLibraries
+                    | Action::RecordClientEvents
             )
         })
         .map(|(path, _)| path)
+        .filter(|path| !path.contains("{entry}"))
         .collect()
 }
 
@@ -333,16 +340,20 @@ fn every_routed_path_declares_its_action() {
             "/api/v1/admin/ocfl/validation-settings" => Action::ConfigureValidation,
             admin if admin.starts_with("/api/v1/admin/") => Action::ReadMonitor,
             "/api/v1/files/listing"
+            | "/api/v1/files/download"
             | "/api/v1/files/details"
             | "/api/v1/files/history"
             | "/api/v1/files/versions"
             | "/api/v1/files/content"
+            | "/api/v1/files/history-size"
+            | "/api/v1/files/library-history-size"
             | "/api/v1/content-handles" => Action::ReadFiles,
             "/api/v1/files/upload"
             | "/api/v1/files/folders"
             | "/api/v1/files/moves"
             | "/api/v1/files/removals"
-            | "/api/v1/files/restorations" => Action::WriteFiles,
+            | "/api/v1/files/restorations"
+            | "/api/v1/files/labels" => Action::WriteFiles,
             "/api/v1/content/{handle}" => Action::ReadContent,
             "/api/v1/history" => Action::ReadHistory,
             "/api/v1/libraries"
@@ -352,6 +363,8 @@ fn every_routed_path_declares_its_action() {
             "/api/v1/libraries/repair-candidates" => Action::ReadLibraries,
             "/api/v1/libraries/repairs" => Action::RepairLibraries,
             "/api/v1/navigation" => Action::ReadNavigation,
+            "/api/v1/preferences" => Action::ManagePreferences,
+            "/api/v1/client-events" => Action::RecordClientEvents,
             file if file.starts_with("/api/v1/files/") => Action::ReadHistory,
             other => panic!("{other} has no expected action in this test"),
         };
@@ -380,6 +393,8 @@ fn action_names_are_unique_dotted_identifiers() {
             "library.read",
             "library.repair",
             "navigation.read",
+            "preferences.manage",
+            "client_events.write",
             "public"
         ]
     );

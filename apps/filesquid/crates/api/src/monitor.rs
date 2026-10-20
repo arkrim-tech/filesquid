@@ -67,7 +67,14 @@ pub struct MonitorConfig {
     pub retention: RetentionPolicy,
     /// Clock for the registry and health window.
     pub clock: Clock,
+    /// Journal a [`METRICS_SNAPSHOT_OPERATION`] entry at most once per this many
+    /// milliseconds, from [`Monitor::tick`] after health is evaluated. `None` (the default)
+    /// and a value that is not positive journal none (API-S-031).
+    pub metrics_snapshot_every_ms: Option<i64>,
 }
+
+/// Journal operation of an optional periodic metrics snapshot (API-S-031).
+pub const METRICS_SNAPSHOT_OPERATION: &str = "metrics.snapshot";
 
 impl MonitorConfig {
     /// Defaults: 1 024-entry queue, keep everything, system clock. Who may read the monitor
@@ -78,6 +85,7 @@ impl MonitorConfig {
             writer: WriterConfig::default(),
             retention: RetentionPolicy::KeepAll,
             clock: system_clock(),
+            metrics_snapshot_every_ms: None,
         }
     }
 }
@@ -95,6 +103,8 @@ struct Inner {
     /// over a newer one.
     health: Mutex<()>,
     findings: OnceLock<Arc<dyn FindingsStore>>,
+    /// When the last metrics snapshot was journaled (Unix ms), if any.
+    last_snapshot_ms: Mutex<Option<i64>>,
 }
 
 /// Cloneable handle to a host's monitor.
@@ -137,6 +147,7 @@ impl Monitor {
                 last_status: Mutex::new(None),
                 health: Mutex::new(()),
                 findings: OnceLock::new(),
+                last_snapshot_ms: Mutex::new(None),
             }),
         }
     }
@@ -193,7 +204,33 @@ impl Monitor {
         let _serial = self.inner.health.lock().unwrap_or_else(|p| p.into_inner());
         let report = self.health_report();
         self.record_status(&report, false);
+        self.snapshot_metrics_when_due();
         report
+    }
+
+    /// Journal a [`METRICS_SNAPSHOT_OPERATION`] entry when snapshots are enabled and the
+    /// interval has passed since the last one. Queues one journal entry.
+    fn snapshot_metrics_when_due(&self) {
+        let Some(every) = self
+            .inner
+            .config
+            .metrics_snapshot_every_ms
+            .filter(|every| *every > 0)
+        else {
+            return;
+        };
+        let now = (self.inner.config.clock)();
+        let mut last = self
+            .inner
+            .last_snapshot_ms
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if last.is_some_and(|t| now >= t && now - t < every) {
+            return;
+        }
+        *last = Some(now);
+        self.journal()
+            .send(metrics_snapshot_entry(&self.inner.metrics, now));
     }
 
     /// Journal a status transition as `health.changed` and publish the report on
@@ -298,4 +335,19 @@ impl Monitor {
             })
             .ok()
     }
+}
+
+/// The [`METRICS_SNAPSHOT_OPERATION`] entry of `metrics` at `now_ms`: one `<name>:<value>`
+/// target per metric. Pure.
+pub fn metrics_snapshot_entry(metrics: &Metrics, now_ms: i64) -> JournalEntry {
+    let values = metrics.snapshot();
+    let targets = values
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(name, value)| format!("{name}:{value}"));
+    targets.fold(
+        JournalEntry::new(METRICS_SNAPSHOT_OPERATION, Outcome::Info).at_ms(now_ms),
+        |entry, target| entry.target(target),
+    )
 }

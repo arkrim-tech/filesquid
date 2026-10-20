@@ -36,6 +36,7 @@ use crate::file_ref::FileRef;
 use crate::import::ImportEntry;
 use crate::json::lower_hex;
 use crate::markdown::{from_markdown, to_markdown};
+use crate::namespace::NamespaceRegistry;
 use crate::record::Record;
 use crate::store::{MetadataStore, StoreError, METADATA_MD};
 
@@ -344,6 +345,46 @@ where
     /// [`read_record`](Self::read_record).
     pub async fn read_file_record(&self, file: &FileRef) -> Result<Option<FileRecord>, StoreError> {
         self.read_base(file).await
+    }
+
+    /// The namespace registry recorded at `file`'s record path (for
+    /// example [`NAMESPACES_MD`](crate::namespace::NAMESPACES_MD) in the
+    /// object the host keeps it in), at its pinned version or the head;
+    /// empty when there is none yet (MD-S-012).
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Registry`] for a record that is not a valid registry,
+    /// otherwise as [`read_record`](Self::read_record).
+    pub async fn read_registry(&self, file: &FileRef) -> Result<NamespaceRegistry, StoreError> {
+        let Some(text) = self.read_text(file).await? else {
+            return Ok(NamespaceRegistry::default());
+        };
+        Ok(NamespaceRegistry::from_markdown(&text)?)
+    }
+
+    /// Commit `registry` at `file`'s record path in exactly one new version,
+    /// so the registrations are canonical OCFL state that a rebuilt index
+    /// recovers (MD-S-012). A save that drops a registration, changes its
+    /// IRI or kind, or drops a term it accepted is refused. `None` when the
+    /// registry is unchanged. Concurrent changes to the same record are a
+    /// conflict, never overwritten.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Registry`] for the refusals above, otherwise as
+    /// [`commit_record_with`](Self::commit_record_with). Nothing is published
+    /// on any error.
+    pub async fn commit_registry_with(
+        &self,
+        file: &FileRef,
+        registry: &NamespaceRegistry,
+        options: &CommitOptions<'_>,
+    ) -> Result<Option<CommitReceipt>, StoreError> {
+        let base = self.read_registry(file).await?;
+        registry.check_extends(&base)?;
+        let bytes = registry.to_markdown().into_bytes();
+        self.commit_bytes(file, &bytes, options, true).await
     }
 
     /// The change model of `object_id`, so a host can stage the content of
@@ -791,8 +832,9 @@ mod native {
     use filesquid_ocfl::write::{LeaseConfig, LeaseStore, SystemClock};
     use filesquid_ocfl::{reject_git_in_ocfl_root, DigestAlgorithm, OcflError, VersionNum};
 
-    use super::{backend as boxed, OcflStore};
+    use super::{backend as boxed, CommitOptions, OcflStore};
     use crate::file_ref::FileRef;
+    use crate::namespace::{NamespaceRegistry, NAMESPACES_MD};
     use crate::record::Record;
     use crate::store::{MetadataStore, StoreError, METADATA_MD};
 
@@ -920,6 +962,43 @@ mod native {
         ) -> Result<Option<VersionNum>, StoreError> {
             let file = self.pinned(METADATA_MD, base)?;
             complete_immediately(self.store().commit_record(&file, record)).map_err(boxed)?
+        }
+
+        /// The namespace registry this object keeps at
+        /// [`NAMESPACES_MD`] (empty when it has none).
+        ///
+        /// # Errors
+        ///
+        /// As [`OcflStore::read_registry`].
+        pub fn load_registry(&self) -> Result<NamespaceRegistry, StoreError> {
+            let file = self.registry_ref()?;
+            complete_immediately(self.store().read_registry(&file)).map_err(boxed)?
+        }
+
+        /// Commit `registry` at [`NAMESPACES_MD`] as one new version; `None`
+        /// when unchanged.
+        ///
+        /// # Errors
+        ///
+        /// As [`OcflStore::commit_registry_with`].
+        pub fn save_registry(
+            &self,
+            registry: &NamespaceRegistry,
+        ) -> Result<Option<VersionNum>, StoreError> {
+            let file = self.registry_ref()?;
+            let options = CommitOptions::default();
+            let store = self.store();
+            let receipt =
+                complete_immediately(store.commit_registry_with(&file, registry, &options))
+                    .map_err(boxed)??;
+            Ok(receipt.map(|receipt| receipt.version))
+        }
+
+        /// The reference to this object's registry record.
+        fn registry_ref(&self) -> Result<FileRef, StoreError> {
+            self.file(NAMESPACES_MD)?
+                .with_record_path(NAMESPACES_MD)
+                .map_err(|_| StoreError::InvalidPath)
         }
 
         /// The bytes of the logical file `logical_path` of `version` (the

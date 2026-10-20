@@ -139,8 +139,31 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Search the activity journal */
+        /**
+         * Search the activity journal
+         * @description API-S-031. Entries with their PROV-O link; filters combine. Invalid filter values answer invalid_request.
+         */
         get: operations["getAdminJournal"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/journal/entries/{entry}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read one journal entry
+         * @description API-S-031. One entry by ID, with its PROV-O link.
+         */
+        get: operations["getAdminJournalEntry"];
         put?: never;
         post?: never;
         delete?: never;
@@ -156,7 +179,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Export matching journal entries as JSON Lines */
+        /**
+         * Export matching journal entries as JSON Lines or CSV
+         * @description API-S-031. The same filters as the journal search; opaque IDs only, never display names. Every export is journaled as journal.export.
+         */
         get: operations["exportAdminJournal"];
         put?: never;
         post?: never;
@@ -271,10 +297,30 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List one folder of an object version
-         * @description The folders and files directly below a logical-path prefix, folders first, with an opaque cursor; limit 1-1000, default 200. Answers storage facts only; a successful read is not journaled, a refusal is journaled once (API-S-017).
+         * List one folder of an object version, by path or by navigation node
+         * @description The folders and files directly below a logical-path prefix, folders first, with an opaque cursor; limit 1-1000, default 200. The folder is named either by library_id and object_id with an optional prefix, or by one collection or folder navigation node (API-S-021), never both (400 invalid_request otherwise). A node must be readable to the caller: an unknown, malformed or unreadable node, or one no object holds, answers one identical 404 not_found; a library, virtual collection or repository node answers 400 invalid_request. The reserved folders provenance (PROV-O records) and .filesquid (application data) are left out of the root's page, so a page may hold fewer entries than asked while next_cursor remains; a prefix inside them answers 404. Answers storage facts only; a successful read is not journaled, a refusal is journaled once (API-S-017).
          */
         get: operations["listFolder"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download one whole file version, streamed
+         * @description The whole file of any size as an attachment, streamed from ranged reads of at most 8 MiB so the host never holds the file in memory (NFR-003). A missing file is refused before the answer starts; a storage failure after it started ends the stream early and is journaled once. Through the desktop scheme every answer is capped at 16 MiB (DE-S-005), so the desktop UI saves larger files with ranged reads of GET /api/v1/files/content. A successful read is not journaled, a refusal is journaled once (API-S-017).
+         */
+        get: operations["downloadFile"];
         put?: never;
         post?: never;
         delete?: never;
@@ -458,7 +504,7 @@ export interface paths {
         put?: never;
         /**
          * Restore files or folders from an earlier version
-         * @description The new version points at the content the earlier version holds. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once.
+         * @description One restore operation (API-S-014): the new version points at the content the earlier version holds, a revert when it returns every file of the object to that version's and the head holds no other, else a reinstate, named so in the version's filesquid.operation.v1 message, which carries the optional label. Publishes exactly one OCFL version through the filesquid-ocfl change model and leaves earlier versions untouched, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). Paths in the reserved .filesquid folder are refused (400). With provenance configured the version carries its PROV-O record (API-S-028). The version is journaled with opaque IDs only; a refusal is journaled once.
          */
         post: operations["restoreFiles"];
         delete?: never;
@@ -711,6 +757,110 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/files/labels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set or clear the label of one version after commit
+         * @description Commits one version (operation kind label) holding the object's application-data file .filesquid/labels.json, which maps labelled versions to their later labels; null clears a commit-time label. That version's own message carries no label. The file is recovered with the object from an ordinary copy. At most 1,000 labelled versions per object. A label that would not change what the version shows is refused (409) without publishing. Labels never affect retention. With provenance configured the version carries its PROV-O record (API-S-028). Journaled with opaque IDs only; a refusal is journaled once.
+         */
+        put: operations["setVersionLabel"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/history-size": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The bytes one file's history keeps
+         * @description The versions that changed the file, its distinct contents and their bytes, each content counted once (SRS-F-065). A successful read is not journaled; a refusal is journaled once.
+         */
+        get: operations["getFileHistorySize"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/library-history-size": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The bytes a library's history keeps
+         * @description Every object's distinct contents and their bytes, each content of an object counted once, within 10,000 objects and 100,000 contents (truncated says when a bound stopped the count). Nothing is deleted, expired or thinned to free space. A successful read is not journaled; a refusal is journaled once.
+         */
+        get: operations["getLibraryHistorySize"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/client-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Journal the UI's console warnings and errors
+         * @description API-S-030. At most 20 events and 16 KiB per request; each event becomes its own journal entry (ui.console.warn, ui.console.error or ui.console.overflow), journaled once per client event ID, and the batch is acknowledged only after the entries are stored. 60 requests a minute per credential, refused requests included; a request that carries only one overflow event naming no other principal is exempt. An event naming another principal than the credential's is refused (403, journaled).
+         */
+        post: operations["postClientEvents"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the caller's UI preferences
+         * @description The caller's own saved preferences (API-S-011, SRS-F-062), or the defaults when they saved none. A successful read is not journaled, a refusal is journaled once (API-S-017).
+         */
+        get: operations["getPreferences"];
+        /**
+         * Replace the caller's UI preferences
+         * @description Replace the caller's own preferences with a complete, checked value: every field, schema 1, navigation version 1, at most 100 pinned node handles, 16 section ids of 1 to 64 characters and 1,000 collapsed node handles, each once (UI-S-017). Node entries must be handles the navigation listing wrote; no name, title, logical path, token or content handle is stored. Each pin's kind must be the kind its handle names. A host that keeps preferences for no more users answers 409 conflict (not retryable). A save is journaled once as preferences.update with the actor only, never the values.
+         */
+        put: operations["putPreferences"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -752,6 +902,8 @@ export interface components {
             operation_id?: string;
             /** @description OCFL object version the entry is about: `<object-id>@vN`. */
             object_ref?: string;
+            /** @description Client event ID (UUID v4) of an entry recorded from POST /api/v1/client-events; journaled at most once (API-S-030). */
+            client_event_id?: string;
         };
         JournalPage: {
             entries: components["schemas"]["JournalEntry"][];
@@ -813,10 +965,10 @@ export interface components {
             status: "up";
         };
         /**
-         * @description Stable error code. HTTP status: invalid_request 400, unauthorized 401, forbidden 403, not_found 404, method_not_allowed 405, conflict 409, range_not_satisfiable 416, internal 500, unavailable 503. Only unavailable is retryable. The router-wide fallbacks use 404 not_found (path not in the contract) and 405 method_not_allowed (method not documented for the path). A 416 range_not_satisfiable answer also carries Content-Range: bytes *\/<length>.
+         * @description Stable error code. HTTP status: invalid_request 400, unauthorized 401, forbidden 403, not_found 404, method_not_allowed 405, conflict 409, payload_too_large 413, range_not_satisfiable 416, rate_limited 429, internal 500, unavailable 503. Only unavailable and rate_limited are retryable (rate_limited once Retry-After has passed). The router-wide fallbacks use 404 not_found (path not in the contract) and 405 method_not_allowed (method not documented for the path). A 416 range_not_satisfiable answer also carries Content-Range: bytes *\/<length>; a 429 rate_limited answer carries Retry-After.
          * @enum {string}
          */
-        ErrorCode: "invalid_request" | "unauthorized" | "forbidden" | "not_found" | "method_not_allowed" | "conflict" | "range_not_satisfiable" | "internal" | "unavailable";
+        ErrorCode: "invalid_request" | "unauthorized" | "forbidden" | "not_found" | "method_not_allowed" | "conflict" | "payload_too_large" | "range_not_satisfiable" | "rate_limited" | "internal" | "unavailable";
         /**
          * @description Why the authorisation layer refused a call: missing_credentials (401 unauthorized), invalid_credentials (403 forbidden: the credential is not accepted by this host) or not_permitted (403 forbidden: the caller is known but may not perform this operation). Never retryable.
          * @enum {string}
@@ -960,6 +1112,8 @@ export interface components {
             message: string | null;
             /** @description Who made it, when recorded. */
             user: components["schemas"]["VersionUser"] | null;
+            /** @description The version's label (PRD F-065): the later label when one was set (PUT /api/v1/files/labels), else the label member of its filesquid.operation.v1 message; null when it has none. Labels never affect retention. Always sent; optional in the schema so clients written before labels still read it. */
+            label?: string | null;
         };
         /** @description One entry of a folder listing: a folder or a file, told apart by kind. */
         FolderEntry: {
@@ -1045,6 +1199,8 @@ export interface components {
             change: components["schemas"]["FileChange"];
             /** @description The file's digest after the change, or null when it was removed. */
             digest: string | null;
+            /** @description The file's size in bytes after the change, or null when it was removed. Always sent; optional in the schema so clients written before sizes still read it. */
+            size?: number | null;
         };
         /** @description The versions that changed one file, oldest first. */
         FileHistory: {
@@ -1133,8 +1289,8 @@ export interface components {
             version: string;
             /** @description The files or folders to restore, 1 to 1,000. */
             paths: string[];
-            /** @description The version message, 1 to 1,024 bytes and not blank. */
-            message?: string;
+            /** @description The new version's label: 1 to 512 bytes, not blank, no control characters. It is the label member of the version's filesquid.operation.v1 message; a restore takes no free message. */
+            label?: string;
         };
         /** @description Body of POST /api/v1/content-handles: exactly one file object, OCFL version and logical path. */
         ContentHandleRequest: {
@@ -1392,6 +1548,197 @@ export interface components {
             /** @description Per-object outcomes, in request order. */
             objects: components["schemas"]["ObjectRepair"][];
         };
+        /** @description Body of PUT /api/v1/files/labels: set or clear the label of one version after commit. */
+        LabelRequest: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The OCFL object identifier. */
+            object_id: string;
+            /** @description The version to label: v1, v2, ... */
+            version: string;
+            /** @description The label: 1 to 512 bytes, not blank, no control characters; null or absent clears it. */
+            label?: string | null;
+        };
+        /** @description The bytes one file's history keeps: each distinct content once. */
+        FileHistorySize: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The OCFL object identifier. */
+            object_id: string;
+            /** @description The file's logical path. */
+            path: string;
+            /** @description The versions that changed the file. */
+            versions: number;
+            /** @description The distinct contents the file has had. */
+            contents: number;
+            /** @description Their bytes, each content counted once. */
+            bytes: number;
+        };
+        /** @description The bytes a library's history keeps: each distinct content of each object once, within 10,000 objects and 100,000 contents. */
+        LibraryHistorySize: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The objects counted. */
+            objects: number;
+            /** @description The distinct contents counted. */
+            contents: number;
+            /** @description Their bytes, each content of an object counted once. */
+            bytes: number;
+            /** @description True when a bound stopped the count, so the totals are lower bounds. */
+            truncated: boolean;
+        };
+        /** @description Where the PROV-O activity of an entry's operation is (API-S-031). Entries of committed operations (outcome succeeded, with operation_id and object_ref) link to it; failed and refused entries, entries without both identifiers and file.download entries are journal_only. */
+        ProvenanceLink: {
+            /** @description True when the entry has no PROV-O activity. */
+            journal_only: boolean;
+            /** @description The operation ID the activity carries. */
+            operation_id?: string;
+            /** @description The object version the activity is about: `<object-id>@vN`. */
+            object_ref?: string;
+            /** @description API path of the version's PROV-O record (GET /api/v1/files/{id}/versions/{version}/prov), for a urn:uuid object. */
+            record?: string;
+            /** @description API path of every activity of the operation (GET /api/v1/history?operation=...). */
+            activities?: string;
+        };
+        /** @description A journal entry as the journal routes answer it: the stored entry, its PROV-O link and, only with names=true and only when the host resolves it for the caller, the current display name of the file its object ID names (display only; never stored or exported). */
+        JournalEntryView: {
+            id?: number;
+            /** Format: date-time */
+            time: string;
+            host: string;
+            process_id?: string;
+            actor: string;
+            operation: string;
+            outcome: components["schemas"]["Outcome"];
+            level: components["schemas"]["Level"];
+            target_ids: string[];
+            duration_ms?: number;
+            error_code?: string;
+            /** @description Opaque operation ID shared by every entry and OCFL version of one operation (ADR 040). */
+            operation_id?: string;
+            /** @description OCFL object version the entry is about: `<object-id>@vN`. */
+            object_ref?: string;
+            /** @description Client event ID (UUID v4) of an entry recorded from POST /api/v1/client-events; journaled at most once (API-S-030). */
+            client_event_id?: string;
+            provenance: components["schemas"]["ProvenanceLink"];
+            /** @description Current display name of the file the entry's object ID names, resolved at read time for the caller. */
+            display_name?: string;
+        };
+        JournalViewPage: {
+            entries: components["schemas"]["JournalEntryView"][];
+            next_cursor: number | null;
+        };
+        /** @description A console warning or error (API-S-030). Only these fields are read; any other field (a message, URL, file name or stack) is ignored and never stored. */
+        ClientConsoleEvent: {
+            /** @constant */
+            kind: "console";
+            /**
+             * Format: uuid
+             * @description Client event ID, a UUID v4 the event keeps for life.
+             */
+            id: string;
+            /** @enum {string} */
+            level: "warn" | "error";
+            /** @description Fixed identifier of the UI component, an opaque token. */
+            component: string;
+            /** @description Machine-readable error code, an opaque token. */
+            error_code: string;
+            /** @description At most 8 opaque IDs of what the event concerns. */
+            ids?: string[];
+            /**
+             * Format: date-time
+             * @description When the event was raised (RFC 3339), at most five minutes ahead of the host's clock; the host's time when absent.
+             */
+            time?: string;
+            /** @description The opaque principal that raised the event, as the client stored it; refused (403) when it differs from the credential's. */
+            principal?: string;
+        };
+        /** @description The page-close count of events the client could not keep because IndexedDB was unavailable or refused a write (API-S-030, the one recorded gap). No other field is accepted. */
+        ClientOverflowEvent: {
+            /** @constant */
+            kind: "overflow";
+            /**
+             * Format: uuid
+             * @description Client event ID, a UUID v4.
+             */
+            id: string;
+            component: string;
+            count: number;
+            principal?: string;
+        };
+        /** @description 1 to 20 events in a body of at most 16 KiB. */
+        ClientEventsRequest: {
+            events: (components["schemas"]["ClientConsoleEvent"] | components["schemas"]["ClientOverflowEvent"])[];
+        };
+        ClientEventsAck: {
+            /** @description Every client event ID of the batch, in request order without repeats; each is journaled now or was before. */
+            acknowledged: string[];
+            /** @description Entries this request added (IDs already journaled add none). */
+            journaled: number;
+            /** @description The credential's opaque principal, which the client stores with the events it keeps. */
+            principal: string;
+        };
+        /** @description One pinned destination: its node handle and kind, never its name (UI-S-017). */
+        PinnedDestination: {
+            /** @description An opaque node handle (API-S-021). */
+            node: string;
+            kind: components["schemas"]["NavigationKind"];
+        };
+        /** @description The navigation tree's pinned destinations, section order and collapsed nodes (UI-S-017). pinned, order and collapsed may be left out on PUT, meaning empty. */
+        NavigationPreferences: {
+            /**
+             * @description The format version.
+             * @constant
+             */
+            version: 1;
+            /** @description At most 100 pinned destinations, each node once. */
+            pinned: components["schemas"]["PinnedDestination"][];
+            /** @description At most 16 section ids in the user's order, each once. */
+            order: string[];
+            /** @description At most 1,000 collapsed node handles, each once. */
+            collapsed: string[];
+        };
+        /** @description One user's UI preferences (API-S-011, SRS-F-062): choices only, never a name, title, logical path, token or content handle. */
+        Preferences: {
+            /**
+             * @description The format version.
+             * @constant
+             */
+            schema: 1;
+            start_view: components["schemas"]["StartView"];
+            sort_key: components["schemas"]["SortKey"];
+            sort_direction: components["schemas"]["SortDirection"];
+            folder_placement: components["schemas"]["FolderPlacement"];
+            layout: components["schemas"]["Layout"];
+            /** @description Whether hovering an item shows its card. Default true. */
+            hover_card: boolean;
+            navigation: components["schemas"]["NavigationPreferences"];
+        };
+        /**
+         * @description Where the UI opens: Home or the root of the user's personal library. Default home.
+         * @enum {string}
+         */
+        StartView: "home" | "personal_root";
+        /**
+         * @description What listings are sorted by. Default name.
+         * @enum {string}
+         */
+        SortKey: "name" | "size" | "modified" | "modified_by_me" | "opened_by_me";
+        /**
+         * @description The sort direction. Default ascending.
+         * @enum {string}
+         */
+        SortDirection: "ascending" | "descending";
+        /**
+         * @description Folders before files, or sorted among them. Default on_top.
+         * @enum {string}
+         */
+        FolderPlacement: "on_top" | "mixed";
+        /**
+         * @description How listings are laid out. Default list.
+         * @enum {string}
+         */
+        Layout: "list" | "grid";
     };
     responses: {
         /** @description Invalid or malformed request (invalid_request). */
@@ -1532,6 +1879,35 @@ export interface components {
         };
         /** @description The library's storage, the repair ledger or the reservation store is not reachable now, a head is still being published (snapshot_incomplete), or the host has not installed its library commands yet (unavailable; retryable). */
         LibraryUnavailable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description The request body is larger than the route accepts (payload_too_large). */
+        PayloadTooLarge: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description Over the route's rate bound (rate_limited). Retry after Retry-After seconds. */
+        RateLimited: {
+            headers: {
+                /** @description Whole seconds until a request is admitted again. */
+                "Retry-After"?: number;
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description The host keeps no preferences yet, or their store cannot be reached (unavailable; retryable). */
+        PreferencesUnavailable: {
             headers: {
                 [name: string]: unknown;
             };
@@ -1736,12 +2112,22 @@ export interface operations {
                 level?: components["schemas"]["Level"];
                 /** @description Exact process id. */
                 process?: string;
+                /** @description A library ID among the entry's targets. */
+                library?: string;
+                /** @description An object ID: the object of the entry's object_ref, or one of its targets. */
+                object?: string;
+                /** @description A file ID (UUID): the same as object=urn:uuid:<file>. Not with object. */
+                file?: string;
+                /** @description Exact operation ID. */
+                operation_id?: string;
                 /** @description Cursor: entries with a greater id. */
                 after?: number;
                 /** @description Page size for a query (1-1000). Each operation states its default; the activity journal defaults to 100. */
                 limit?: components["parameters"]["PageSize"];
                 /** @description asc (default) or desc (newest first). */
                 order?: "asc" | "desc";
+                /** @description true: add the display name of the file each entry's object ID names, resolved now for the caller (display only). */
+                names?: boolean;
             };
             header?: never;
             path?: never;
@@ -1755,12 +2141,44 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["JournalPage"];
+                    "application/json": components["schemas"]["JournalViewPage"];
                 };
             };
             400: components["responses"]["InvalidRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    getAdminJournalEntry: {
+        parameters: {
+            query?: {
+                /** @description true: add the display name of the file each entry's object ID names, resolved now for the caller (display only). */
+                names?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description The entry ID. */
+                entry: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The entry. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JournalEntryView"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             500: components["responses"]["Internal"];
             503: components["responses"]["Unavailable"];
         };
@@ -1782,8 +2200,20 @@ export interface operations {
                 level?: components["schemas"]["Level"];
                 /** @description Exact process id. */
                 process?: string;
+                /** @description A library ID among the entry's targets. */
+                library?: string;
+                /** @description An object ID: the object of the entry's object_ref, or one of its targets. */
+                object?: string;
+                /** @description A file ID (UUID): the same as object=urn:uuid:<file>. Not with object. */
+                file?: string;
+                /** @description Exact operation ID. */
+                operation_id?: string;
                 /** @description Continue after this entry id (the value of X-Journal-Next-Cursor from a truncated export). */
                 after?: number;
+                /** @description asc (default, oldest first) or desc (newest first); X-Journal-Next-Cursor continues in the same order. */
+                order?: "asc" | "desc";
+                /** @description jsonl (default) or csv (RFC 4180, header row, CRLF line ends). */
+                format?: "jsonl" | "csv";
             };
             header?: never;
             path?: never;
@@ -1791,7 +2221,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description One JournalEntry per line. At most 1 000 000 entries per response; when more match, X-Journal-Next-Cursor is set. */
+            /** @description One JournalEntry per line (JSON Lines), or a CSV header row and one row per entry. At most 50 000 entries per response; when more match, X-Journal-Next-Cursor is set. */
             200: {
                 headers: {
                     /** @description Present only when the export stopped at its size cap with more entries left; pass it as `after` to continue. */
@@ -1800,6 +2230,7 @@ export interface operations {
                 };
                 content: {
                     "application/x-ndjson": string;
+                    "text/csv": string;
                 };
             };
             400: components["responses"]["InvalidRequest"];
@@ -1974,11 +2405,13 @@ export interface operations {
     };
     listFolder: {
         parameters: {
-            query: {
-                /** @description The library. */
-                library_id: components["parameters"]["LibraryId"];
-                /** @description The OCFL object identifier. */
-                object_id: components["parameters"]["ObjectId"];
+            query?: {
+                /** @description The library; given with object_id, never with node. */
+                library_id?: string;
+                /** @description The OCFL object; given with library_id, never with node. */
+                object_id?: string;
+                /** @description A collection or folder node handle, as the navigation listing gave it (clients never parse it), instead of library_id, object_id and prefix. */
+                node?: string;
                 /** @description The version: head (the default) or one such as v1. */
                 version?: components["parameters"]["Version"];
                 /** @description The folder, a logical-path prefix without a trailing /; the root when absent. */
@@ -2001,6 +2434,47 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FolderPage"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    downloadFile: {
+        parameters: {
+            query: {
+                /** @description The library. */
+                library_id: components["parameters"]["LibraryId"];
+                /** @description The OCFL object identifier. */
+                object_id: components["parameters"]["ObjectId"];
+                /** @description The version: head (the default) or one such as v1. */
+                version?: components["parameters"]["Version"];
+                /** @description The file's logical path. */
+                path: components["parameters"]["LogicalPath"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The whole file. */
+            200: {
+                headers: {
+                    /** @description The file's media type. */
+                    "Content-Type"?: string;
+                    /** @description The file's length in bytes. */
+                    "Content-Length"?: number;
+                    /** @description attachment, naming the file by its display name: an ASCII filename fallback and the display name as RFC 5987 filename* UTF-8 (RFC 6266). */
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
                 };
             };
             400: components["responses"]["InvalidRequest"];
@@ -2886,6 +3360,184 @@ export interface operations {
             409: components["responses"]["LibraryConflict"];
             500: components["responses"]["Internal"];
             503: components["responses"]["LibraryUnavailable"];
+        };
+    };
+    setVersionLabel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LabelRequest"];
+            };
+        };
+        responses: {
+            /** @description The version published. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileCommit"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    getFileHistorySize: {
+        parameters: {
+            query: {
+                /** @description The library. */
+                library_id: components["parameters"]["LibraryId"];
+                /** @description The OCFL object identifier. */
+                object_id: components["parameters"]["ObjectId"];
+                /** @description The file's logical path. */
+                path: components["parameters"]["LogicalPath"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The file's history size. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileHistorySize"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    getLibraryHistorySize: {
+        parameters: {
+            query: {
+                /** @description The library. */
+                library_id: components["parameters"]["LibraryId"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The library's history size. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryHistorySize"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    postClientEvents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClientEventsRequest"];
+            };
+        };
+        responses: {
+            /** @description Every event of the batch is journaled. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClientEventsAck"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            413: components["responses"]["PayloadTooLarge"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    getPreferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's preferences. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Preferences"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["PreferencesUnavailable"];
+        };
+    };
+    putPreferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Preferences"];
+            };
+        };
+        responses: {
+            /** @description The preferences as saved. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Preferences"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["PreferencesUnavailable"];
         };
     };
 }

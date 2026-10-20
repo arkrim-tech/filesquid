@@ -14,10 +14,10 @@ path = "src/lib.rs"
 # are all `filesquid-server` may use (ADR 033 amendment 2026-10-18).
 default = []
 # Desktop-only native processing: the per-library SQLite catalog (DE-0.2) and its OCFL
-# snapshot commits and reconcile (DE-0.3), and later the durable job and media workers
-# (DE-0.8). Only `filesquid-desktop` enables it; a `filesquid-server` test fails if the
+# snapshot commits and reconcile (DE-0.3), the durable job workers (DE-0.4, DE-0.8), and
+# later the media workers (DE-0.5). Only `filesquid-desktop` enables it; a `filesquid-server` test fails if the
 # server does.
-desktop = []
+desktop = ["dep:libloading"]
 
 [dependencies]
 filesquid-api = { path = "../api" }
@@ -33,6 +33,9 @@ sha2 = "0.11"
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde_json = "1"
 tracing = "0.1"
+# Loads libvips at run time inside the media worker process only (Task DE-0.5, ADR 006), so
+# no build needs libvips headers and a machine without libvips gets a clear refusal.
+libloading = { version = "0.7", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 # `O_NOFOLLOW` for owner-only files, so a symbolic link is never followed.
@@ -61,6 +64,15 @@ path = "tests/unit/installation.rs"
 [[test]]
 name = "unit_host"
 path = "tests/unit/host.rs"
+
+[[test]]
+name = "unit_jobs"
+path = "tests/unit/jobs.rs"
+
+[[test]]
+name = "unit_media"
+path = "tests/unit/media.rs"
+required-features = ["desktop"]
 
 [[test]]
 name = "features"

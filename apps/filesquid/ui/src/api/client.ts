@@ -24,7 +24,7 @@ import {
   type ContentRange,
 } from "./commands";
 import type { CompleteList } from "./complete-list";
-import type { components } from "./schema";
+import type { components, operations } from "./schema";
 
 /** Process health payload, generated from the API contract. */
 export type HealthStatus = components["schemas"]["HealthStatus"];
@@ -34,6 +34,15 @@ export type ApiEvent = components["schemas"]["ApiEvent"];
 
 /** The host descriptor, generated from the API contract (`GET /api/v1/host`, API-S-020). */
 export type HostDescriptor = components["schemas"]["HostDescriptor"];
+
+/** One page of one level of the navigation tree (API-S-021), as the contract defines it. */
+export type NavigationPageBody = components["schemas"]["NavigationPage"];
+
+/** Payload of the `navigation.change` event, as the contract defines it. */
+export type NavigationChangeBody = components["schemas"]["NavigationChange"];
+
+/** Query of `GET /api/v1/navigation` (node, cursor, limit); every field is optional. */
+export type NavigationQuery = NonNullable<operations["listNavigation"]["parameters"]["query"]>;
 
 /** Error code of a failed request, generated from the API contract. */
 export type ErrorCode = components["schemas"]["ErrorCode"];
@@ -49,6 +58,8 @@ export type EventListener = (event: ApiEvent) => void;
 
 /** Monitor health report (`GET /api/v1/admin/health`). */
 export type HealthReport = components["schemas"]["HealthReport"];
+/** One reason behind the overall health status, with machine-readable codes when it has any. */
+export type HealthReason = components["schemas"]["HealthReason"];
 /** One live or recently finished process. */
 export type ProcessView = components["schemas"]["ProcessView"];
 /** One activity journal entry. */
@@ -61,6 +72,22 @@ export type Outcome = components["schemas"]["Outcome"];
 export type Level = components["schemas"]["Level"];
 /** Metric name to value (same values as Prometheus `/metrics`). */
 export type MetricsSnapshot = Record<string, number>;
+/** Open OCFL validation findings, the schedule and each open library's runs (API-S-022). */
+export type FindingsView = components["schemas"]["FindingsView"];
+/** One open OCFL validation finding; `location` is null when the caller may not read it. */
+export type FindingView = components["schemas"]["FindingView"];
+/** One open library's validation state: running, last run and next scheduled run. */
+export type LibraryRuns = components["schemas"]["LibraryRuns"];
+/** One finished validation run. */
+export type RunView = components["schemas"]["RunView"];
+/** How a validation run ended. */
+export type RunOutcome = components["schemas"]["RunOutcome"];
+/** The schedule and object cap of validation runs. */
+export type ValidationSettings = components["schemas"]["ValidationSettings"];
+/** Which library to validate (every open one when absent) and whether to start from the start. */
+export type RunRequest = components["schemas"]["RunRequest"];
+/** The libraries whose validation run started, and those refused with their error code. */
+export type RunAccepted = components["schemas"]["RunAccepted"];
 
 /** Filters for journal queries and exports; every field is optional. */
 export interface JournalFilters {
@@ -119,7 +146,9 @@ const ERROR_CODE_VALUES = [
   "not_found",
   "method_not_allowed",
   "conflict",
+  "payload_too_large",
   "range_not_satisfiable",
+  "rate_limited",
   "internal",
   "unavailable",
 ] as const satisfies readonly ErrorCode[];
@@ -133,6 +162,22 @@ const CONTENT_ROUTE = "/api/v1/content/";
 const HANDLE_CHARS = /^[A-Za-z0-9_-]{43}$/;
 /** RFC 7230 `token`: the only characters both a header value and a subprotocol accept here. */
 const TOKEN_CHARS = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+
+/**
+ * Build the query string of a navigation listing: the node, cursor and limit that are given,
+ * in that order, URL-encoded and otherwise unchanged (handle and cursor are opaque). Pure.
+ *
+ * @param query The listing query.
+ * @returns `?…`, or `""` for the repository level.
+ */
+function navigationQuery(query: NavigationQuery): string {
+  const params = new URLSearchParams();
+  if (query.node !== undefined) params.set("node", query.node);
+  if (query.cursor !== undefined) params.set("cursor", query.cursor);
+  if (query.limit !== undefined) params.set("limit", String(query.limit));
+  const text = params.toString();
+  return text ? `?${text}` : "";
+}
 
 /** Build a query string from defined, non-empty filter values (in declaration order). */
 function queryString(filters: JournalFilters): string {
@@ -507,6 +552,22 @@ export class FileSquidClient {
     return this.request<HostDescriptor>("/api/v1/host");
   }
 
+  /**
+   * Read one page of one level of the navigation tree (`GET /api/v1/navigation`, API-S-021):
+   * the host's repository without `node`, otherwise that node's children. The node, cursor and
+   * limit are sent as given; the handle and cursor are opaque and never parsed. Network I/O.
+   *
+   * @param query The node whose children to list, the previous page's cursor and the page size
+   *   (1 to 1,000); all optional.
+   * @returns The page as the host sent it; callers check it against the contract.
+   * @throws ApiError on a non-2xx answer: `not_found` for an unknown or unreadable node,
+   *   `invalid_request` for a bad cursor or limit, 503 `unavailable` while the host has no
+   *   navigation service.
+   */
+  async navigation(query: NavigationQuery = {}): Promise<NavigationPageBody> {
+    return this.request<NavigationPageBody>(`/api/v1/navigation${navigationQuery(query)}`);
+  }
+
   /** Overall health with reasons (`GET /api/v1/admin/health`). Network I/O. */
   async adminHealth(): Promise<HealthReport> {
     return this.request<HealthReport>("/api/v1/admin/health");
@@ -520,6 +581,38 @@ export class FileSquidClient {
   /** One page of the activity journal (`GET /api/v1/admin/journal`). Network I/O. */
   async adminJournal(filters: JournalFilters = {}): Promise<JournalPage> {
     return this.request<JournalPage>(`/api/v1/admin/journal${queryString(filters)}`);
+  }
+
+  /**
+   * The open OCFL validation findings (at most 1,000, `truncated` when more are open), the
+   * schedule in force and each open library's runs (`GET /api/v1/admin/ocfl/findings`,
+   * API-S-022). Network I/O.
+   *
+   * @returns The findings view as the host sent it; a finding's `location` is null for a caller
+   *   who may not read its object.
+   * @throws ApiError on a non-2xx answer: 401 or 403 for a caller who is not the desktop owner
+   *   or a server administrator, 503 `unavailable` while the host cannot answer.
+   */
+  async adminOcflFindings(): Promise<FindingsView> {
+    return this.request<FindingsView>("/api/v1/admin/ocfl/findings");
+  }
+
+  /**
+   * Start OCFL validation runs (`POST /api/v1/admin/ocfl/validation-runs`, API-S-022): of the
+   * named library, or of every open library when `request` names none. Runs go on in the
+   * background and report on the event channel. Network I/O.
+   *
+   * @param request The library and whether to start from the beginning of its object order;
+   *   empty for every open library from its stored cursor.
+   * @returns The libraries whose run started, and those refused with their error code.
+   * @throws ApiError on a non-2xx answer: 404 `not_found` for a library that is not open,
+   *   409 for a run of it already going, 401 or 403 for a caller who may not start runs.
+   */
+  async startOcflValidation(request: RunRequest = {}): Promise<RunAccepted> {
+    return this.request<RunAccepted>("/api/v1/admin/ocfl/validation-runs", {
+      method: "POST",
+      body: request,
+    });
   }
 
   /** Counters and gauges (`GET /api/v1/admin/metrics`). Network I/O. */

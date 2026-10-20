@@ -52,6 +52,7 @@
 pub mod admin;
 pub mod auth;
 pub mod canonical;
+pub mod client_events;
 pub mod content;
 pub mod error;
 pub mod events;
@@ -59,6 +60,7 @@ pub mod files;
 pub mod health;
 pub mod history;
 pub mod host;
+pub mod jobs;
 pub mod journal;
 pub mod journal_writer;
 pub mod library;
@@ -68,6 +70,7 @@ pub mod monitor;
 pub mod navigation;
 pub mod ocfl_validation;
 pub mod operation;
+pub mod preferences;
 pub mod registry;
 pub mod replica;
 mod routes;
@@ -80,7 +83,7 @@ pub use routes::{route_actions, routed_paths, router, Liveness};
 use std::sync::{Arc, OnceLock};
 
 /// Version of the FileSquid API contract. Bumped when the contract changes.
-pub const API_VERSION: &str = "0.12.0";
+pub const API_VERSION: &str = "0.15.0";
 
 /// URL prefix shared by every API route.
 pub const API_PREFIX: &str = "/api/v1";
@@ -120,6 +123,14 @@ pub struct ApiState {
     /// The host's navigation service, installed once at startup (the navigation route
     /// answers 503 until then).
     navigation: Arc<OnceLock<Arc<navigation::NavigationService>>>,
+    /// Where the host keeps each user's preferences, installed once at startup (the
+    /// preference routes answer 503 until then).
+    preferences: Arc<OnceLock<Arc<dyn preferences::PreferenceStore>>>,
+    /// The rate bound of the client-events route, in memory only (API-S-030).
+    client_events: Arc<client_events::RateLimiter>,
+    /// The host's display-name lookup for journal pages, installed once at startup (without
+    /// one, journal pages carry no names; API-S-031).
+    journal_names: Arc<OnceLock<Arc<dyn admin::JournalNames>>>,
 }
 
 impl std::fmt::Debug for ApiState {
@@ -134,6 +145,12 @@ impl std::fmt::Debug for ApiState {
             .field("history_installed", &self.history.get().is_some())
             .field("libraries_installed", &self.libraries.get().is_some())
             .field("navigation_installed", &self.navigation.get().is_some())
+            .field("preferences_installed", &self.preferences.get().is_some())
+            .field("client_events", &self.client_events)
+            .field(
+                "journal_names_installed",
+                &self.journal_names.get().is_some(),
+            )
             .finish()
     }
 }
@@ -142,12 +159,25 @@ impl ApiState {
     /// Create state with a fresh event bus, no monitor and no authoriser (every guarded call is refused; the public liveness
     /// probe still answers).
     pub fn new() -> Self {
-        Self::with_clock(Arc::new(journal::now_ms))
+        Self::with_clocks(
+            Arc::new(journal::now_ms),
+            client_events::limiter::monotonic_clock(),
+        )
     }
 
-    /// Like [`ApiState::new`], with content handles timed by `clock` (Unix milliseconds,
-    /// UTC) instead of the system clock, so tests can move time.
+    /// Like [`ApiState::new`], with content handles and the client-events rate bound timed
+    /// by `clock` (Unix milliseconds, UTC) instead of the system clock, so tests can move
+    /// time.
     pub fn with_clock(clock: content::store::HandleClock) -> Self {
+        Self::with_clocks(clock.clone(), clock)
+    }
+
+    /// State with content handles timed by the wall `clock` and the client-events rate
+    /// window by `window_clock`.
+    fn with_clocks(
+        clock: content::store::HandleClock,
+        window_clock: content::store::HandleClock,
+    ) -> Self {
         Self {
             events: EventBus::new(),
             monitor: Arc::new(OnceLock::new()),
@@ -159,7 +189,26 @@ impl ApiState {
             history: Arc::new(OnceLock::new()),
             libraries: Arc::new(OnceLock::new()),
             navigation: Arc::new(OnceLock::new()),
+            preferences: Arc::new(OnceLock::new()),
+            client_events: Arc::new(client_events::RateLimiter::new(window_clock)),
+            journal_names: Arc::new(OnceLock::new()),
         }
+    }
+
+    /// The rate bound of the client-events route.
+    pub fn client_event_limiter(&self) -> &client_events::RateLimiter {
+        &self.client_events
+    }
+
+    /// Install the host's display-name lookup for journal pages (API-S-031). Returns false,
+    /// keeping the first, if one was already installed.
+    pub fn install_journal_names(&self, names: Arc<dyn admin::JournalNames>) -> bool {
+        self.journal_names.set(names).is_ok()
+    }
+
+    /// The installed display-name lookup for journal pages, if any.
+    pub fn journal_names(&self) -> Option<Arc<dyn admin::JournalNames>> {
+        self.journal_names.get().cloned()
     }
 
     /// Install the host's navigation service (API-S-021). Returns false, keeping the first,
@@ -171,6 +220,17 @@ impl ApiState {
     /// The installed navigation service, if any.
     pub fn navigation(&self) -> Option<Arc<navigation::NavigationService>> {
         self.navigation.get().cloned()
+    }
+
+    /// Install where the host keeps each user's preferences (API-S-011). Returns false,
+    /// keeping the first, if a store was already installed.
+    pub fn install_preferences(&self, store: Arc<dyn preferences::PreferenceStore>) -> bool {
+        self.preferences.set(store).is_ok()
+    }
+
+    /// The installed preference store, if any.
+    pub fn preferences(&self) -> Option<Arc<dyn preferences::PreferenceStore>> {
+        self.preferences.get().cloned()
     }
 
     /// Install the host's file service. Returns false, keeping the first, if one was already

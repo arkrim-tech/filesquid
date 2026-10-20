@@ -2,7 +2,9 @@
 # SRS-F-061: Activity journal and live health monitoring
 # API-S-030: Client events; API-S-031: Journal query and export; API-S-032: Durable journal
 # DE-S-013: Journal sealing and rebuild; UI-S-021: Logs view; UI-S-023: Client event delivery
-# Scenarios only; step definitions arrive with Task FS-2.9 (unbound steps are skipped by the harness).
+# The client-event, query and export scenarios are bound in tests/support/journal_steps.rs
+# (Task API-F2.10); the sealing, rebuild and UI scenarios are bound by the later FS-2.9 tasks
+# (unbound steps are skipped by the harness).
 Feature: Durable, complete and browsable activity journal
   As a library owner
   I want the journal to survive the loss of the database and to be easy to browse and export
@@ -103,6 +105,59 @@ Feature: Durable, complete and browsable activity journal
     When the page closes
     Then the journal should hold one "ui.console.overflow" entry with the count 3
     And the 2 delivered events should each have their own "ui.console.error" entry
+
+  Scenario: A client event resent after a lost acknowledgement adds no entry
+    When the UI sends a console warning twice with the same client event ID
+    Then both requests should be acknowledged
+    And the journal should hold one "ui.console.warn" entry for that client event ID
+
+  Scenario: An event raised by another principal is refused
+    When the UI sends a console warning raised by another principal
+    Then the request should be refused as not permitted and journaled as a refusal
+    And no "ui.console.warn" entry should be written
+
+  Scenario: The overflow count is bounded
+    When the UI sends one overflow event with the count 1000000
+    Then the journal should hold one "ui.console.overflow" entry with the count 1000000
+    And an overflow event with the count 0 should be refused with an error code
+    And an overflow event with the count 1000001 should be refused with an error code
+
+  Scenario: A lone overflow event naming no other principal is exempt from the rate bound
+    Given the caller has used up the rate bound
+    When the UI sends one overflow event with the count 3
+    Then the journal should hold one "ui.console.overflow" entry with the count 3
+
+  Scenario: A lone overflow event raised by another principal is not exempt
+    Given the caller has used up the rate bound
+    When the UI sends one overflow event raised by another principal
+    Then the request should get status 429
+    And no "ui.console.overflow" entry should be written
+
+  Scenario: The journal filters by file and by operation ID
+    When I filter the journal by the file
+    Then I should see only the entries about that file
+    When I filter the journal by the operation ID of the rename
+    Then I should see only the entries of that operation
+
+  Scenario: An entry links to its PROV-O activity or is marked journal-only
+    When I open the journal entry of the committed rename
+    Then it should link to the PROV-O record of its object version
+    When I open the journal entry of the failed move
+    Then it should be marked journal-only
+
+  Scenario: Display names are shown for display and never exported
+    Given the host resolves display names for the owner
+    When I read the journal with names and export it
+    Then the page should show the file's display name
+    And the export should carry opaque IDs only
+
+  Scenario: OCFL engine warnings carry the operation and the object version
+    When the OCFL engine warns about a lease takeover inside an operation
+    Then the journal entry should name the engine operation, the operation ID and the object version
+
+  Scenario: Metrics snapshots are off by default
+    When the monitor ticks with its default settings
+    Then no "metrics.snapshot" entry should be written
 
   # User interactions
   Scenario: The owner browses and filters the Logs view

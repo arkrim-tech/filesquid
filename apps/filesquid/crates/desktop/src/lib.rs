@@ -53,6 +53,7 @@ use filesquid_api::auth::{record_token_issue, Authoriser, LaunchToken, Principal
 use filesquid_api::history::backfill::{Backfill, BACKFILL_OPERATION};
 use filesquid_api::history::{HostFacts, OcflRootsHistory, ProvenanceContext};
 use filesquid_api::host::{HostIdentity, NotEnrolled};
+use filesquid_api::jobs::{JobError, Jobs};
 use filesquid_api::journal::{JournalEntry, Outcome};
 use filesquid_api::journal_writer::JournalSender;
 use filesquid_api::local_library::{LocalLibraryService, RepairLedger};
@@ -64,6 +65,8 @@ use filesquid_core::InstallationId;
 use filesquid_native::installation::{
     self, InstallationError, InstallationSource, INSTALLATION_CREATED,
 };
+use filesquid_native::workers::history_backfill;
+use filesquid_native::workers::media::{self, MediaWorkers};
 use filesquid_native::{CatalogRoots, HostMonitor, SqliteCatalog, CATALOG_DIR};
 use filesquid_ocfl::storage::FsBackend;
 use ipc_observer::TauriIpcObserver;
@@ -325,6 +328,26 @@ pub fn open_host_monitor(
 /// the monitor ticker starts the scheduled runs.
 pub struct DesktopValidation(pub ValidationService<FsBackend>);
 
+/// The durable job service of this launch (Task DE-0.4; `filesquid_native::workers`), held in Tauri's
+/// managed state for the jobs that later tasks (import, upload, migration) run.
+pub struct DesktopJobs(pub Jobs);
+
+/// The host's out-of-process libvips media workers (Task DE-0.5; DE-S-016), held in Tauri's
+/// managed state for the thumbnail and preview routes. At most two run at once.
+pub struct DesktopMedia(pub MediaWorkers);
+
+/// The media worker pool of this host: this executable started with
+/// [`media::WORKER_ARG`], one process per run, each registered in `host`'s process registry.
+/// Reads the executable's path; starts no process.
+pub fn media_workers(host: &HostMonitor) -> MediaWorkers {
+    let exe = std::env::current_exe().unwrap_or_else(|err| {
+        tracing::warn!(error = %err, "the host executable path is unknown; media workers will be refused");
+        std::path::PathBuf::new()
+    });
+    MediaWorkers::new(exe, host.monitor().registry().clone())
+        .with_args(vec![media::WORKER_ARG.to_string()])
+}
+
 /// Journal operation of an installation UUID copy restored from the other copy.
 pub const INSTALLATION_RESTORED: &str = "host.installation.restored";
 
@@ -518,8 +541,8 @@ fn catalog_error_code(err: &filesquid_api::library::CatalogError) -> &'static st
 /// Open the journal in the app data directory, attach every journal sink, install the
 /// monitor, journal a logging stack that could not be installed (`logging` false), read the
 /// installation UUID, open the library catalogs, install the PROV-O history source over their
-/// storage roots, register the event forwarder's process, start the ticker and start the
-/// history backfill. When the catalogs cannot be opened the failure is journaled and the monitor
+/// storage roots, open the durable job store and reconcile its jobs, register the event
+/// forwarder's process, start the ticker and start the history backfill job. When the catalogs cannot be opened the failure is journaled and the monitor
 /// stopped (flushing the journal) before the launch fails. Performs filesystem and database
 /// I/O.
 fn start_monitor(
@@ -541,7 +564,17 @@ fn start_monitor(
         open_library_catalog(&data_dir, &host, &installation).inspect_err(|_| host.stop())?,
     );
     install_history_source(&state, catalog.clone()).inspect_err(|_| host.stop())?;
-    let backfill = history_backfill(&host, &installation);
+    let jobs = history_backfill::open_jobs(&data_dir, &host).inspect_err(|_| host.stop())?;
+    let backfill = history_backfill::recover_jobs(&jobs)
+        .ok()
+        .map(|_| BackfillTask {
+            jobs: jobs.clone(),
+            backfill: history_backfill(&host, &installation),
+            catalog: catalog.clone(),
+            source: history_backfill::backfill_source(&installation),
+        });
+    app.manage(DesktopJobs(jobs));
+    app.manage(DesktopMedia(media_workers(&host)));
     app.manage(DesktopInstallation(installation));
     app.manage(DesktopCatalog(catalog.clone()));
     let validation = host
@@ -552,7 +585,7 @@ fn start_monitor(
     let forwarder = Arc::new(event_channel::register_forwarder(host.monitor().registry()));
     let stop = Arc::new(AtomicBool::new(false));
     spawn_ticker(host.clone(), stop.clone());
-    let backfill = spawn_backfill(backfill, catalog, stop.clone());
+    let backfill = backfill.and_then(|task| spawn_backfill(task, stop.clone()));
     app.manage(DesktopMonitor {
         host,
         forwarder,
@@ -566,20 +599,25 @@ fn start_monitor(
 /// flushed.
 const BACKFILL_STOP_WAIT: Duration = Duration::from_secs(10);
 
-/// Run the history backfill over every library on its own thread, once per launch (API-S-029):
-/// versions committed without a PROV-O record get a reconstructed one, and versions that have
-/// one are skipped, so an interrupted run resumes at the next launch. Each run registers in
-/// the process registry and journals itself; setting `stop` (at app exit) cancels it between
-/// objects. Answers the thread, or `None` when it could not be started (logged as an error,
-/// which the journal layer journals).
-fn spawn_backfill(
+/// The history backfill job one launch runs ([`history_backfill::run_backfill_job`](filesquid_native::workers::history_backfill::run_backfill_job)).
+struct BackfillTask {
+    jobs: Jobs,
     backfill: Backfill,
     catalog: Arc<SqliteCatalog>,
-    stop: Arc<AtomicBool>,
-) -> Option<JoinHandle<()>> {
+    source: String,
+}
+
+/// Run the history backfill on its own thread, once per launch, as a durable job (API-S-029,
+/// DE-S-014): it resumes the job a quit suspended, skipping the libraries its checkpoint
+/// lists, and otherwise visits every library (versions that have a record are skipped).
+/// Setting `stop` (at app exit, the last window closing included) cancels it between objects
+/// and suspends the job with its checkpoint. Each run registers in the process registry and
+/// journals itself. Answers the thread, or `None` when it could not be started (logged as an
+/// error, which the journal layer journals).
+fn spawn_backfill(task: BackfillTask, stop: Arc<AtomicBool>) -> Option<JoinHandle<()>> {
     let spawned = std::thread::Builder::new()
         .name("filesquid-history-backfill".into())
-        .spawn(move || report_backfill(catalog.backfill_history(&backfill, &stop)));
+        .spawn(move || report_backfill(run_backfill_task(&task, &stop)));
     spawned
         .inspect_err(|err| {
             tracing::error!(
@@ -592,24 +630,36 @@ fn spawn_backfill(
         .ok()
 }
 
-/// Log each library whose backfill could not run, and a catalog that could not list its
-/// libraries, as warnings with error codes only (the journal layer journals warnings; each
-/// run that started journaled itself).
-fn report_backfill(
-    result: Result<Vec<filesquid_native::LibraryBackfill>, filesquid_api::library::CatalogError>,
-) {
-    let libraries = match result {
-        Ok(libraries) => libraries,
+/// Run `task` until it completes or `stop` is set. Filesystem, database and journal I/O.
+fn run_backfill_task(
+    task: &BackfillTask,
+    stop: &AtomicBool,
+) -> Result<history_backfill::BackfillJobRun, JobError> {
+    history_backfill::run_backfill_job(
+        &task.jobs,
+        &task.catalog,
+        &task.backfill,
+        &task.source,
+        stop,
+    )
+}
+
+/// Log a backfill job that could not run, and each library whose backfill could not run, as
+/// warnings with error codes only (the journal layer journals warnings; the job and each run
+/// that started journaled themselves).
+fn report_backfill(result: Result<history_backfill::BackfillJobRun, JobError>) {
+    let run = match result {
+        Ok(run) => run,
         Err(err) => {
             tracing::warn!(
                 operation = BACKFILL_OPERATION,
-                error_code = catalog_error_code(&err),
-                "the history backfill could not list the libraries"
+                error_code = err.error_code(),
+                "the history backfill job could not run; the next launch retries"
             );
             return;
         }
     };
-    for library in libraries.iter().filter(|library| library.error.is_some()) {
+    for library in run.ran.iter().filter(|library| library.error.is_some()) {
         tracing::warn!(
             operation = BACKFILL_OPERATION,
             library_id = library.library_id.as_str(),

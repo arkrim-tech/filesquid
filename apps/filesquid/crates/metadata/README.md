@@ -38,7 +38,7 @@ For the metadata routes, `FileRecord::facts()` is the read-only projection of AP
 
 The crate builds for `wasm32-unknown-unknown` with default features off, alone or with `ocfl` (`kamadak-exif` and `id3` both compile there, so no adapter is gated). The CLI and the sidecar store are compiled out for `wasm32`. The ciphertext-only hosted service MUST NOT link this crate.
 
-All FileSquid metadata handling goes through this module, and hosts reach it through `filesquid-api`. The stand-alone interface is the metadata commands of the one FileSquid CLI, `fsquid` (`fsquid extract`, `get`, `set`, `export`, `import`, and `fsquid metadata validate`); this crate ships no binary with CSV, XMP and JSON sidecar interchange. MODS and SQL import/export interchange are out of scope (the optional SQLite store is storage, not interchange). The module MUST NOT depend on Axum or Tauri.
+All FileSquid metadata handling goes through this module, and hosts reach it through `filesquid-api`. The stand-alone interface is the metadata commands of the one FileSquid CLI, `fsquid` (`fsquid extract`, `get`, `set`, `export`, `import`, `namespace`, and `fsquid metadata validate`); this crate ships no binary with CSV, XMP and JSON sidecar interchange. MODS and SQL import/export interchange are out of scope (the optional SQLite store is storage, not interchange). The module MUST NOT depend on Axum or Tauri.
 
 The Metadata sidebar panel is part of `@filesquid/ui` in `apps/filesquid/ui/`. Descriptive and technical file facts belong to this module; application meaning (collections, people, favorites, search indexes, recipes) belongs to FileSquid's application layer (C-055).
 
@@ -58,7 +58,7 @@ The default test run skips the tests that need the `ocfl`, `ocfl-fs` or `cli` fe
 
 ## Commands and OCFL objects
 
-`extract`, `get`, `set`, `export` and `import` work on an OCFL object directory (`--object`, default `.`); `help` and `validate` need no object. `get` and `export` only read the head. `set`, `extract` and `import` are edits: each commits one new OCFL version when the record changes (an unchanged record commits nothing) and prints the version. `--id` names the object: it is required to create an object in a directory that holds none, and an existing object's identifier must match it. `--file` names a logical file the object already holds (committed, for example, by an import through `filesquid-ocfl`); `extract` takes either a media file path or `--file`, not both.
+`extract`, `get`, `set`, `export`, `import` and `namespace` work on an OCFL object directory (`--object`, default `.`); `help` needs no object, and `validate` needs one only to check its record or its registry. `get` and `export` only read the head. `set`, `extract` and `import` are edits: each commits one new OCFL version when the record changes (an unchanged record commits nothing) and prints the version. `--id` names the object: it is required to create an object in a directory that holds none, and an existing object's identifier must match it. `--file` names a logical file the object already holds (committed, for example, by an import through `filesquid-ocfl`); `extract` takes either a media file path or `--file`, not both.
 
 ```bash
 cd apps/filesquid
@@ -78,7 +78,29 @@ cargo run -p filesquid-cli -- export json harbour.json --file photo.jpg --object
 cargo run -p filesquid-cli -- import json harbour.json --file photo.jpg --object <object-dir>
 ```
 
-Import applies the `/terms/` register, rejects any namespace other than `dcterms`, `dc` (mapped to `dcterms`), `exif` and `schema`, and rejects a sidecar whose object identifier or digest does not match. A rejected import publishes no version. The sidecar is interchange only; `metadata.md` stays canonical.
+Import applies the `/terms/` register and the namespace registry: it accepts `dcterms`, `dc` (mapped to `dcterms`), `exif`, `schema` and registered extension prefixes, rejects any other prefix by name, and rejects a sidecar whose object identifier or digest does not match. A rejected import publishes no version. The sidecar is interchange only; `metadata.md` stays canonical.
+
+## Namespace registry
+
+`namespace::NamespaceRegistry` is the registry of extension namespaces (MD-S-012, [ADR 022](../../../../resources/architecture/022-dublin-core-descriptive-metadata.md)). An owner, a distribution or a module registers an extension namespace with `Registration::extension` (a prefix, an IRI and an optional term list); the owner declares a custom namespace of free keys with `Registration::custom`. The registry refuses:
+
+- the built-in prefixes `dcterms`, `dc`, `schema` and `exif`, their IRIs under another prefix, and the record-format keys (`schemaorg`, `import`, `namespaces` and the file-record header keys);
+- a prefix already registered with another IRI, an IRI already registered under another prefix, a change between extension and custom, and a re-registration that drops terms or the term list or gives an open namespace one (the same IRI may only add terms to a list);
+- a prefix that is not 1 to 64 bytes of `[a-z][A-Za-z0-9_-]*` or starts with `xml`, an IRI without a scheme, over 2,048 bytes or holding a character RFC 3987 excludes, and a term that is not 1 to 255 bytes of `[A-Za-z_][A-Za-z0-9_.-]*`; at most 1,024 namespaces and 10,000 terms each.
+
+An extension statement is `MetadataNamespace::Extension(prefix)`. `Record::set_registered` and `record::parse_curie_with` check it against the registry: an unregistered prefix is `MetadataError::UnregisteredNamespace` naming it, and a term outside the term list is `MetadataError::UnknownExtensionTerm`. `Record::set` and `parse_curie` take no registry, so every extension prefix is unregistered there. In `metadata.md` each extension prefix is its own YAML map after the built-in maps, and a record keeps the maps it holds when it is read. Extension statements round-trip through CSV (`csv::apply_csv_with`), JSON (`json::apply_json_with`) and XMP (`xmp::to_xmp_with`, which binds each prefix to its IRI, and `xmp::from_xmp_with`, which reads a namespace by its IRI under any packet prefix in one pass, and skips a packet prefix bound to two IRIs). They are never mapped onto `dcterms:`.
+
+The registry persists as its own record, `namespaces.md` by default (front matter `schema: filesquid.namespaces.v1`, then one JSON registration per line), through `OcflStore::read_registry` and `OcflStore::commit_registry_with` at the logical path the caller names (`FileRef::with_record_path`). Each change is one OCFL version, and a save that drops a registration or changes its IRI is refused (`StoreError::Registry`), so a rebuilt index recovers every registration. No term list ships with the crate; a distribution registers the vocabulary it needs (RiC-O for Arkrim).
+
+The CLI keeps the registry in `namespaces.md` of the object (or of the object `--registry` names). `set` and `import` resolve extension prefixes through it, `export xmp` binds each prefix to its registered IRI (CSV and JSON exports write prefixes as stored), and `validate` names every unregistered prefix:
+
+```bash
+cd apps/filesquid
+cargo run -p filesquid-cli -- namespace register rico https://www.ica.org/standards/RiC/ontology# --terms title,hasCreator --id urn:example:harbour --object <object-dir>
+cargo run -p filesquid-cli -- set rico:title "Fonds 12" --object <object-dir>
+cargo run -p filesquid-cli -- metadata validate --object <object-dir>
+cargo run -p filesquid-cli -- namespace list --object <object-dir>
+```
 
 ## References
 

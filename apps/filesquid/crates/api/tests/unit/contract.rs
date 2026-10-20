@@ -79,7 +79,7 @@ fn contract_is_openapi_3_1_with_the_crate_api_version() {
     let doc = contract();
     assert_eq!(doc["openapi"], "3.1.0");
     assert_eq!(doc["info"]["version"], API_VERSION);
-    assert_eq!(API_VERSION, "0.12.0");
+    assert_eq!(API_VERSION, "0.15.0");
 }
 
 #[test]
@@ -286,6 +286,9 @@ async fn owner_state() -> (ApiState, Monitor) {
     install_sample_history(&state);
     library_contract::install(&state, &monitor).await;
     state.install_navigation(Arc::new(navigation_service()));
+    state.install_preferences(Arc::new(
+        filesquid_api::preferences::MemoryPreferenceStore::new(),
+    ));
     (state, monitor)
 }
 
@@ -658,7 +661,9 @@ fn error_codes_match_the_rust_enum_with_status_and_retryability() {
         (ErrorCode::NotFound, 404, false),
         (ErrorCode::MethodNotAllowed, 405, false),
         (ErrorCode::Conflict, 409, false),
+        (ErrorCode::PayloadTooLarge, 413, false),
         (ErrorCode::RangeNotSatisfiable, 416, false),
+        (ErrorCode::RateLimited, 429, true),
         (ErrorCode::Internal, 500, false),
         (ErrorCode::Unavailable, 503, true),
     ];
@@ -683,6 +688,9 @@ fn samples() -> Vec<(&'static str, Vec<Value>)> {
         ("Outcome", all_outcomes().map(to_value).to_vec()),
         ("JournalEntry", vec![to_value(full_entry())]),
         ("JournalPage", vec![to_value(sample_page())]),
+        ("ProvenanceLink", provenance_samples()),
+        ("JournalEntryView", vec![to_value(sample_view())]),
+        ("JournalViewPage", vec![to_value(sample_view_page())]),
         ("ProcessState", all_process_states().map(to_value).to_vec()),
         ("ProcessView", vec![to_value(sample_process())]),
         (
@@ -697,10 +705,154 @@ fn samples() -> Vec<(&'static str, Vec<Value>)> {
     all.extend(validation_samples());
     all.extend(history_samples());
     all.extend(navigation_samples());
+    all.extend(preference_samples());
     all.extend(operation_samples());
     all.extend(files_contract::samples());
     all.extend(library_contract::samples());
+    all.extend(client_event_samples());
     all
+}
+
+/// Serialized samples of the preference schemas: the defaults, a value with every choice
+/// changed and a pin of every kind, and every enum value.
+fn preference_samples() -> Vec<(&'static str, Vec<Value>)> {
+    use filesquid_api::preferences::{
+        FolderPlacement, Layout, NavigationPreferences, PinKind, PinnedDestination, Preferences,
+        SortDirection, SortKey, StartView,
+    };
+    let pin = |kind| PinnedDestination {
+        node: "n1.YzE6Yw".into(),
+        kind,
+    };
+    let kinds = [
+        PinKind::Repository,
+        PinKind::Library,
+        PinKind::Collection,
+        PinKind::VirtualCollection,
+        PinKind::Folder,
+    ];
+    let navigation = NavigationPreferences {
+        version: 1,
+        pinned: kinds.map(pin).to_vec(),
+        order: vec!["libraries".into()],
+        collapsed: vec!["n1.YzE6Yw".into()],
+    };
+    let changed = Preferences {
+        start_view: StartView::PersonalRoot,
+        sort_key: SortKey::OpenedByMe,
+        sort_direction: SortDirection::Descending,
+        folder_placement: FolderPlacement::Mixed,
+        layout: Layout::Grid,
+        hover_card: false,
+        navigation: navigation.clone(),
+        ..Preferences::default()
+    };
+    let sort_keys = [
+        SortKey::Name,
+        SortKey::Size,
+        SortKey::Modified,
+        SortKey::ModifiedByMe,
+        SortKey::OpenedByMe,
+    ];
+    vec![
+        (
+            "Preferences",
+            vec![to_value(Preferences::default()), to_value(changed)],
+        ),
+        ("NavigationPreferences", vec![to_value(&navigation)]),
+        (
+            "PinnedDestination",
+            navigation.pinned.iter().map(to_value).collect(),
+        ),
+        (
+            "StartView",
+            [StartView::Home, StartView::PersonalRoot]
+                .map(to_value)
+                .to_vec(),
+        ),
+        ("SortKey", sort_keys.map(to_value).to_vec()),
+        (
+            "SortDirection",
+            [SortDirection::Ascending, SortDirection::Descending]
+                .map(to_value)
+                .to_vec(),
+        ),
+        (
+            "FolderPlacement",
+            [FolderPlacement::OnTop, FolderPlacement::Mixed]
+                .map(to_value)
+                .to_vec(),
+        ),
+        (
+            "Layout",
+            [Layout::List, Layout::Grid].map(to_value).to_vec(),
+        ),
+    ]
+}
+
+/// Both shapes of the PROV-O link: a committed entry's and a journal-only one.
+fn provenance_samples() -> Vec<Value> {
+    use filesquid_api::journal::link::{provenance_of, ProvenanceLink};
+    let mut committed = full_entry();
+    committed.outcome = Outcome::Succeeded;
+    vec![
+        to_value(provenance_of(&committed)),
+        to_value(ProvenanceLink::journal_only()),
+    ]
+}
+
+/// A named view of a committed entry.
+fn sample_view() -> filesquid_api::admin::JournalEntryView {
+    let mut entry = full_entry();
+    entry.outcome = Outcome::Succeeded;
+    filesquid_api::admin::JournalEntryView {
+        provenance: filesquid_api::journal::link::provenance_of(&entry),
+        entry,
+        display_name: Some("photo.jpg".into()),
+    }
+}
+
+fn sample_view_page() -> filesquid_api::admin::JournalViewPage {
+    filesquid_api::admin::JournalViewPage {
+        entries: vec![sample_view()],
+        next_cursor: Some(7),
+    }
+}
+
+/// The client-events request schemas, as values the route's parser accepts, and its
+/// acknowledgement.
+fn client_event_samples() -> Vec<(&'static str, Vec<Value>)> {
+    let console = json!({
+        "kind": "console",
+        "id": "5f0c3e44-2a7b-4c1d-9e8f-0123456789ab",
+        "level": "error",
+        "component": "fs-file-browser",
+        "error_code": "fetch_failed",
+        "ids": ["urn:uuid:6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b"],
+        "time": "2026-10-19T10:00:00Z",
+        "principal": "owner"
+    });
+    let overflow = json!({
+        "kind": "overflow",
+        "id": "6a1d4f55-3b8c-4d2e-8f90-123456789abc",
+        "component": "fs-console-queue",
+        "count": 3,
+        "principal": "owner"
+    });
+    let request = json!({ "events": [console.clone(), overflow.clone()] });
+    let body = serde_json::to_vec(&request).expect("json");
+    filesquid_api::client_events::parse_batch(&body, i64::MAX / 2).expect("the parser accepts it");
+    let ack = filesquid_api::client_events::ClientEventsAck {
+        acknowledged: vec!["5f0c3e44-2a7b-4c1d-9e8f-0123456789ab".into()],
+        journaled: 1,
+        principal: "owner".into(),
+    };
+    vec![
+        ("ClientConsoleEvent", vec![console]),
+        ("ClientOverflowEvent", vec![overflow]),
+        ("ClientEventsRequest", vec![request]),
+        ("ClientEventsAck", vec![to_value(ack)]),
+    ]
 }
 
 /// Serialized samples of the navigation schemas: a page of every kind of node and both
@@ -1004,7 +1156,8 @@ fn full_entry() -> JournalEntry {
         .error_code("store_unavailable")
         .duration_ms(12)
         .operation_id("op-1")
-        .object_ref("urn:uuid:6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b@v3");
+        .object_ref("urn:uuid:6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b@v3")
+        .client_event("5f0c3e44-2a7b-4c1d-9e8f-0123456789ab");
     entry.id = Some(7);
     entry.host = "host-a".into();
     entry
@@ -1161,11 +1314,13 @@ fn error_code_all_lists_every_variant() {
         | ErrorCode::NotFound
         | ErrorCode::MethodNotAllowed
         | ErrorCode::Conflict
+        | ErrorCode::PayloadTooLarge
         | ErrorCode::RangeNotSatisfiable
+        | ErrorCode::RateLimited
         | ErrorCode::Internal
         | ErrorCode::Unavailable => (),
     });
-    assert_eq!(ErrorCode::ALL.len(), 9);
+    assert_eq!(ErrorCode::ALL.len(), 11);
 }
 
 // ---- Event channel: documented topics and payloads (API-S-003) ----

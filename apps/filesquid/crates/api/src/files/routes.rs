@@ -5,16 +5,19 @@
 
 use super::error::FileError;
 use super::names::{content_disposition, Disposition};
+use super::nodes::listing_query;
 use super::range::{RangePlan, RangeRequest};
 use super::service::{ContentAnswer, ContentRequest};
+use super::versions::Committed;
 use super::view::{
-    ContentQuery, FileQuery, FolderRequest, HistoryQuery, ListingQuery, MoveRequest, ObjectQuery,
-    RemoveRequest, RestoreRequest, UploadQuery,
+    ContentQuery, FileQuery, FolderRequest, HistoryQuery, LabelRequest, LibraryQuery, ListingQuery,
+    ListingRequest, MoveRequest, ObjectQuery, RemoveRequest, RestoreRequest, UploadQuery,
 };
 use super::{
-    DETAILS_OPERATION, FOLDER_OPERATION, HISTORY_OPERATION, LIST_OPERATION, MAX_UPLOAD_BYTES,
-    MOVE_OPERATION, READ_OPERATION, REMOVE_OPERATION, RESTORE_OPERATION, UPLOAD_OPERATION,
-    VERSIONS_OPERATION,
+    DETAILS_OPERATION, DOWNLOAD_OPERATION, FOLDER_OPERATION, HISTORY_OPERATION,
+    HISTORY_SIZE_OPERATION, LABEL_OPERATION, LIBRARY_HISTORY_SIZE_OPERATION, LIST_OPERATION,
+    MAX_UPLOAD_BYTES, MOVE_OPERATION, READ_OPERATION, REMOVE_OPERATION, RESTORE_OPERATION,
+    UPLOAD_OPERATION, VERSIONS_OPERATION,
 };
 use crate::auth::{journal_entry, Action, Principal};
 use crate::error::ErrorCode;
@@ -31,12 +34,14 @@ use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Extension, Json};
+use futures_util::StreamExt;
 use serde::Serialize;
 
 /// The file operation routes, relative to [`crate::API_PREFIX`].
 pub(crate) fn routes() -> Vec<Route> {
     vec![
         ("/files/listing", get(listing), Action::ReadFiles),
+        ("/files/download", get(download), Action::ReadFiles),
         ("/files/details", get(details), Action::ReadFiles),
         ("/files/history", get(history), Action::ReadFiles),
         ("/files/versions", get(versions), Action::ReadFiles),
@@ -54,6 +59,13 @@ pub(crate) fn routes() -> Vec<Route> {
         ("/files/moves", post(move_path), Action::WriteFiles),
         ("/files/removals", post(remove), Action::WriteFiles),
         ("/files/restorations", post(restore), Action::WriteFiles),
+        ("/files/labels", put(set_label), Action::WriteFiles),
+        ("/files/history-size", get(history_size), Action::ReadFiles),
+        (
+            "/files/library-history-size",
+            get(library_history_size),
+            Action::ReadFiles,
+        ),
     ]
 }
 
@@ -77,14 +89,92 @@ fn body<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, FileError> {
         .map_err(|_| FileError::invalid("The JSON body has unknown, missing or malformed fields."))
 }
 
-/// `GET /api/v1/files/listing`.
+/// `GET /api/v1/files/listing`: by library, object and prefix, or by navigation node.
 async fn listing(
     State(state): State<ApiState>,
     Extension(principal): Extension<Principal>,
-    request: Result<Query<ListingQuery>, QueryRejection>,
+    request: Result<Query<ListingRequest>, QueryRejection>,
 ) -> Response {
-    let outcome = async { files(&state)?.listing(query(request)?).await }.await;
+    let outcome = async {
+        let files = files(&state)?;
+        let listing = resolve_listing(&state, &principal, files.clone(), query(request)?).await?;
+        files.listing(listing).await
+    }
+    .await;
     read_answer(&state, LIST_OPERATION, &principal, outcome).await
+}
+
+/// The listing a request names. A node is resolved on a blocking thread, since the
+/// navigation service and the host's scope catalog may block on storage; the path form
+/// does no blocking work and is resolved inline.
+async fn resolve_listing(
+    state: &ApiState,
+    principal: &Principal,
+    files: std::sync::Arc<dyn super::FileOperations>,
+    request: ListingRequest,
+) -> Result<ListingQuery, FileError> {
+    if request.node.is_none() {
+        return listing_query(request, principal, None, files.as_ref());
+    }
+    let navigation = state.navigation();
+    let principal = principal.clone();
+    let resolve = move || listing_query(request, &principal, navigation, files.as_ref());
+    tokio::task::spawn_blocking(resolve)
+        .await
+        .map_err(|_| FileError::internal("the listing task failed"))?
+}
+
+/// `GET /api/v1/files/download`: one whole file version, streamed as an attachment named by
+/// its display name.
+async fn download(
+    State(state): State<ApiState>,
+    Extension(principal): Extension<Principal>,
+    request: Result<Query<FileQuery>, QueryRejection>,
+) -> Response {
+    let outcome = async { files(&state)?.download(query(request)?).await }.await;
+    let download = match outcome {
+        Ok(download) => download,
+        Err(err) => return refuse(&state, DOWNLOAD_OPERATION, principal.actor(), err).await,
+    };
+    let disposition = content_disposition(Disposition::Attachment, &download.file_name);
+    let body = Body::from_stream(journaled_stream(state, principal, download.body));
+    let mut response = (StatusCode::OK, body).into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        HeaderName::from_static("x-content-type-options"),
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static(download.media_type));
+    headers.insert(CONTENT_LENGTH, HeaderValue::from(download.total));
+    if let Ok(value) = HeaderValue::from_str(&disposition) {
+        headers.insert(CONTENT_DISPOSITION, value);
+    }
+    response
+}
+
+/// `body`, journaling the error that ends it early once as [`DOWNLOAD_OPERATION`] before
+/// the transport aborts the answer.
+fn journaled_stream(
+    state: ApiState,
+    principal: Principal,
+    body: super::DownloadStream,
+) -> impl futures_util::Stream<Item = Result<Bytes, std::io::Error>> + Send {
+    body.then(move |piece| {
+        let state = state.clone();
+        let actor = principal.actor();
+        async move {
+            match piece {
+                Ok(bytes) => Ok(bytes),
+                Err(err) => {
+                    let code = err.error_code();
+                    refuse(&state, DOWNLOAD_OPERATION, actor, err).await;
+                    Err(std::io::Error::other(format!(
+                        "download ended early: {code}"
+                    )))
+                }
+            }
+        }
+    })
 }
 
 /// `GET /api/v1/files/details`.
@@ -213,7 +303,60 @@ async fn restore(
 ) -> Response {
     let actor = principal.actor().to_string();
     let outcome = async { files(&state)?.restore(body(request)?, actor).await }.await;
-    write_answer(&state, RESTORE_OPERATION, &principal, outcome).await
+    committed_answer(&state, RESTORE_OPERATION, &principal, outcome).await
+}
+
+/// `PUT /api/v1/files/labels`: set or clear the label of one version after commit.
+async fn set_label(
+    State(state): State<ApiState>,
+    Extension(principal): Extension<Principal>,
+    request: Result<Json<LabelRequest>, JsonRejection>,
+) -> Response {
+    let actor = principal.actor().to_string();
+    let outcome = async { files(&state)?.set_label(body(request)?, actor).await }.await;
+    committed_answer(&state, LABEL_OPERATION, &principal, outcome).await
+}
+
+/// `GET /api/v1/files/history-size`.
+async fn history_size(
+    State(state): State<ApiState>,
+    Extension(principal): Extension<Principal>,
+    request: Result<Query<HistoryQuery>, QueryRejection>,
+) -> Response {
+    let outcome = async { files(&state)?.history_size(query(request)?).await }.await;
+    read_answer(&state, HISTORY_SIZE_OPERATION, &principal, outcome).await
+}
+
+/// `GET /api/v1/files/library-history-size`.
+async fn library_history_size(
+    State(state): State<ApiState>,
+    Extension(principal): Extension<Principal>,
+    request: Result<Query<LibraryQuery>, QueryRejection>,
+) -> Response {
+    let outcome = async { files(&state)?.library_history_size(query(request)?).await }.await;
+    read_answer(&state, LIBRARY_HISTORY_SIZE_OPERATION, &principal, outcome).await
+}
+
+/// Answer a write that may carry its commit's journal entries: with provenance installed
+/// they are journaled (each once, under its pre-allocated ID) instead of the route's own
+/// entry; without, the write is journaled as [`write_answer`] does.
+async fn committed_answer(
+    state: &ApiState,
+    operation: &str,
+    principal: &Principal,
+    outcome: Result<Committed, FileError>,
+) -> Response {
+    let committed = match outcome {
+        Ok(committed) => committed,
+        Err(err) => return refuse(state, operation, principal.actor(), err).await,
+    };
+    if committed.entries.is_empty() {
+        return write_answer(state, operation, principal, Ok(committed.view)).await;
+    }
+    for entry in committed.entries {
+        journal_entry(state, entry).await;
+    }
+    Json(committed.view).into_response()
 }
 
 /// Answer a read: the JSON view, or the typed error after journaling the refusal.

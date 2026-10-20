@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "FileSquid API",
-    "version": "0.12.0",
+    "version": "0.15.0",
     "description": "The single FileSquid API served by every FileSquid host. See resources/architecture/030-filesquid-api-and-transports.md. Conventions: a command (mutation) sends a CommandEnvelope as the `envelope` member of its JSON request body (operation_id is the idempotency key, expected_revision the revision last read) and answers with a CommandOutcome; a query (list) takes the PageSize (`limit`, 1-1000) and Cursor (`cursor`) parameters; every failed request answers with an ApiError body (code, message, retryable). Router-wide fallbacks: any /api/v1/ path not in this contract answers 404 not_found, and a documented path called with a method it does not document answers 405 method_not_allowed; both carry the ApiError body. They are not listed per operation because no operation sends them. Authorisation is deny-by-default: every operation, including health, the contract and the event channel, requires the bearerAuth credential and is authorised before anything else runs, so a call without it answers 401 unauthorized and a call whose credential is not accepted or does not grant the operation answers 403 forbidden, before any 404 or 405; both carry the ApiError body with a DenialReason in `reason`. Each operation names the authorisation action it performs in x-filesquid-action. The one deliberate exception is GET /api/v1/health/live (x-filesquid-action public, security []), a liveness probe that answers only {\"status\":\"up\"} without a credential. The content route GET and HEAD /api/v1/content/{handle} (x-filesquid-action content.read, x-filesquid-credential content-handle, security []) is not public: its only credential is the content handle in its path, minted by POST /api/v1/content-handles for one file version (API-S-018); a Bearer token is not accepted there, and every unusable request under /api/v1/content/ (unknown, malformed, missing, expired, evicted or revoked handle, an extra path segment or another method) answers one identical 403 forbidden with reason invalid_credentials, never 401, 404 or 405. Paths marked x-filesquid-host-route are served by the hosts, not by the filesquid-api router."
   },
   "security": [
@@ -282,6 +282,43 @@
             }
           },
           {
+            "name": "library",
+            "in": "query",
+            "required": false,
+            "description": "A library ID among the entry's targets.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "object",
+            "in": "query",
+            "required": false,
+            "description": "An object ID: the object of the entry's object_ref, or one of its targets.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "file",
+            "in": "query",
+            "required": false,
+            "description": "A file ID (UUID): the same as object=urn:uuid:<file>. Not with object.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "operation_id",
+            "in": "query",
+            "required": false,
+            "description": "Exact operation ID.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "after",
             "in": "query",
             "required": false,
@@ -305,6 +342,15 @@
                 "desc"
               ]
             }
+          },
+          {
+            "name": "names",
+            "in": "query",
+            "required": false,
+            "description": "true: add the display name of the file each entry's object ID names, resolved now for the caller (display only).",
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -313,10 +359,70 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/JournalPage"
+                  "$ref": "#/components/schemas/JournalViewPage"
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "description": "API-S-031. Entries with their PROV-O link; filters combine. Invalid filter values answer invalid_request."
+      }
+    },
+    "/api/v1/admin/journal/entries/{entry}": {
+      "get": {
+        "operationId": "getAdminJournalEntry",
+        "summary": "Read one journal entry",
+        "description": "API-S-031. One entry by ID, with its PROV-O link.",
+        "x-filesquid-action": "monitor.read",
+        "parameters": [
+          {
+            "name": "entry",
+            "in": "path",
+            "required": true,
+            "description": "The entry ID.",
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "names",
+            "in": "query",
+            "required": false,
+            "description": "true: add the display name of the file each entry's object ID names, resolved now for the caller (display only).",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The entry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JournalEntryView"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
           },
           "400": {
             "$ref": "#/components/responses/InvalidRequest"
@@ -339,7 +445,7 @@
     "/api/v1/admin/journal/export": {
       "get": {
         "operationId": "exportAdminJournal",
-        "summary": "Export matching journal entries as JSON Lines",
+        "summary": "Export matching journal entries as JSON Lines or CSV",
         "x-filesquid-action": "monitor.read",
         "parameters": [
           {
@@ -406,6 +512,43 @@
             }
           },
           {
+            "name": "library",
+            "in": "query",
+            "required": false,
+            "description": "A library ID among the entry's targets.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "object",
+            "in": "query",
+            "required": false,
+            "description": "An object ID: the object of the entry's object_ref, or one of its targets.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "file",
+            "in": "query",
+            "required": false,
+            "description": "A file ID (UUID): the same as object=urn:uuid:<file>. Not with object.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "operation_id",
+            "in": "query",
+            "required": false,
+            "description": "Exact operation ID.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "after",
             "in": "query",
             "required": false,
@@ -413,13 +556,44 @@
             "schema": {
               "type": "integer"
             }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "asc (default, oldest first) or desc (newest first); X-Journal-Next-Cursor continues in the same order.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ]
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "description": "jsonl (default) or csv (RFC 4180, header row, CRLF line ends).",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "jsonl",
+                "csv"
+              ]
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "One JournalEntry per line. At most 1 000 000 entries per response; when more match, X-Journal-Next-Cursor is set.",
+            "description": "One JournalEntry per line (JSON Lines), or a CSV header row and one row per entry. At most 50 000 entries per response; when more match, X-Journal-Next-Cursor is set.",
             "content": {
               "application/x-ndjson": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "text/csv": {
                 "schema": {
                   "type": "string"
                 }
@@ -450,7 +624,8 @@
           "503": {
             "$ref": "#/components/responses/Unavailable"
           }
-        }
+        },
+        "description": "API-S-031. The same filters as the journal search; opaque IDs only, never display names. Every export is journaled as journal.export."
       }
     },
     "/api/v1/admin/metrics": {
@@ -761,15 +936,37 @@
     "/api/v1/files/listing": {
       "get": {
         "operationId": "listFolder",
-        "summary": "List one folder of an object version",
-        "description": "The folders and files directly below a logical-path prefix, folders first, with an opaque cursor; limit 1-1000, default 200. Answers storage facts only; a successful read is not journaled, a refusal is journaled once (API-S-017).",
+        "summary": "List one folder of an object version, by path or by navigation node",
+        "description": "The folders and files directly below a logical-path prefix, folders first, with an opaque cursor; limit 1-1000, default 200. The folder is named either by library_id and object_id with an optional prefix, or by one collection or folder navigation node (API-S-021), never both (400 invalid_request otherwise). A node must be readable to the caller: an unknown, malformed or unreadable node, or one no object holds, answers one identical 404 not_found; a library, virtual collection or repository node answers 400 invalid_request. The reserved folders provenance (PROV-O records) and .filesquid (application data) are left out of the root's page, so a page may hold fewer entries than asked while next_cursor remains; a prefix inside them answers 404. Answers storage facts only; a successful read is not journaled, a refusal is journaled once (API-S-017).",
         "x-filesquid-action": "files.read",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LibraryId"
+            "name": "library_id",
+            "in": "query",
+            "required": false,
+            "description": "The library; given with object_id, never with node.",
+            "schema": {
+              "type": "string"
+            }
           },
           {
-            "$ref": "#/components/parameters/ObjectId"
+            "name": "object_id",
+            "in": "query",
+            "required": false,
+            "description": "The OCFL object; given with library_id, never with node.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "node",
+            "in": "query",
+            "required": false,
+            "description": "A collection or folder node handle, as the navigation listing gave it (clients never parse it), instead of library_id, object_id and prefix.",
+            "schema": {
+              "type": "string",
+              "maxLength": 512
+            }
           },
           {
             "$ref": "#/components/parameters/Version"
@@ -797,6 +994,79 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/FolderPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/files/download": {
+      "get": {
+        "operationId": "downloadFile",
+        "summary": "Download one whole file version, streamed",
+        "description": "The whole file of any size as an attachment, streamed from ranged reads of at most 8 MiB so the host never holds the file in memory (NFR-003). A missing file is refused before the answer starts; a storage failure after it started ends the stream early and is journaled once. Through the desktop scheme every answer is capped at 16 MiB (DE-S-005), so the desktop UI saves larger files with ranged reads of GET /api/v1/files/content. A successful read is not journaled, a refusal is journaled once (API-S-017).",
+        "x-filesquid-action": "files.read",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/LibraryId"
+          },
+          {
+            "$ref": "#/components/parameters/ObjectId"
+          },
+          {
+            "$ref": "#/components/parameters/Version"
+          },
+          {
+            "$ref": "#/components/parameters/LogicalPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The whole file.",
+            "headers": {
+              "Content-Type": {
+                "description": "The file's media type.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Length": {
+                "description": "The file's length in bytes.",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Content-Disposition": {
+                "description": "attachment, naming the file by its display name: an ASCII filename fallback and the display name as RFC 5987 filename* UTF-8 (RFC 6266).",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
                 }
               }
             }
@@ -1453,7 +1723,7 @@
       "post": {
         "operationId": "restoreFiles",
         "summary": "Restore files or folders from an earlier version",
-        "description": "The new version points at the content the earlier version holds. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once.",
+        "description": "One restore operation (API-S-014): the new version points at the content the earlier version holds, a revert when it returns every file of the object to that version's and the head holds no other, else a reinstate, named so in the version's filesquid.operation.v1 message, which carries the optional label. Publishes exactly one OCFL version through the filesquid-ocfl change model and leaves earlier versions untouched, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). Paths in the reserved .filesquid folder are refused (400). With provenance configured the version carries its PROV-O record (API-S-028). The version is journaled with opaque IDs only; a refusal is journaled once.",
         "x-filesquid-action": "files.write",
         "requestBody": {
           "required": true,
@@ -2354,6 +2624,278 @@
           }
         }
       }
+    },
+    "/api/v1/files/labels": {
+      "put": {
+        "operationId": "setVersionLabel",
+        "summary": "Set or clear the label of one version after commit",
+        "description": "Commits one version (operation kind label) holding the object's application-data file .filesquid/labels.json, which maps labelled versions to their later labels; null clears a commit-time label. That version's own message carries no label. The file is recovered with the object from an ordinary copy. At most 1,000 labelled versions per object. A label that would not change what the version shows is refused (409) without publishing. Labels never affect retention. With provenance configured the version carries its PROV-O record (API-S-028). Journaled with opaque IDs only; a refusal is journaled once.",
+        "x-filesquid-action": "files.write",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LabelRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The version published.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileCommit"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/api/v1/files/history-size": {
+      "get": {
+        "operationId": "getFileHistorySize",
+        "summary": "The bytes one file's history keeps",
+        "description": "The versions that changed the file, its distinct contents and their bytes, each content counted once (SRS-F-065). A successful read is not journaled; a refusal is journaled once.",
+        "x-filesquid-action": "files.read",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/LibraryId"
+          },
+          {
+            "$ref": "#/components/parameters/ObjectId"
+          },
+          {
+            "$ref": "#/components/parameters/LogicalPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The file's history size.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileHistorySize"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/files/library-history-size": {
+      "get": {
+        "operationId": "getLibraryHistorySize",
+        "summary": "The bytes a library's history keeps",
+        "description": "Every object's distinct contents and their bytes, each content of an object counted once, within 10,000 objects and 100,000 contents (truncated says when a bound stopped the count). Nothing is deleted, expired or thinned to free space. A successful read is not journaled; a refusal is journaled once.",
+        "x-filesquid-action": "files.read",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/LibraryId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The library's history size.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryHistorySize"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/client-events": {
+      "post": {
+        "operationId": "postClientEvents",
+        "summary": "Journal the UI's console warnings and errors",
+        "description": "API-S-030. At most 20 events and 16 KiB per request; each event becomes its own journal entry (ui.console.warn, ui.console.error or ui.console.overflow), journaled once per client event ID, and the batch is acknowledged only after the entries are stored. 60 requests a minute per credential, refused requests included; a request that carries only one overflow event naming no other principal is exempt. An event naming another principal than the credential's is refused (403, journaled).",
+        "x-filesquid-action": "client_events.write",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClientEventsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Every event of the batch is journaled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientEventsAck"
+                }
+              }
+            }
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/preferences": {
+      "get": {
+        "operationId": "getPreferences",
+        "summary": "Read the caller's UI preferences",
+        "description": "The caller's own saved preferences (API-S-011, SRS-F-062), or the defaults when they saved none. A successful read is not journaled, a refusal is journaled once (API-S-017).",
+        "x-filesquid-action": "preferences.manage",
+        "responses": {
+          "200": {
+            "description": "The caller's preferences.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Preferences"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/PreferencesUnavailable"
+          }
+        }
+      },
+      "put": {
+        "operationId": "putPreferences",
+        "summary": "Replace the caller's UI preferences",
+        "description": "Replace the caller's own preferences with a complete, checked value: every field, schema 1, navigation version 1, at most 100 pinned node handles, 16 section ids of 1 to 64 characters and 1,000 collapsed node handles, each once (UI-S-017). Node entries must be handles the navigation listing wrote; no name, title, logical path, token or content handle is stored. Each pin's kind must be the kind its handle names. A host that keeps preferences for no more users answers 409 conflict (not retryable). A save is journaled once as preferences.update with the actor only, never the values.",
+        "x-filesquid-action": "preferences.manage",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Preferences"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The preferences as saved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Preferences"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/PreferencesUnavailable"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2476,6 +3018,10 @@
           "object_ref": {
             "type": "string",
             "description": "OCFL object version the entry is about: `<object-id>@vN`."
+          },
+          "client_event_id": {
+            "type": "string",
+            "description": "Client event ID (UUID v4) of an entry recorded from POST /api/v1/client-events; journaled at most once (API-S-030)."
           }
         }
       },
@@ -2719,7 +3265,7 @@
       },
       "ErrorCode": {
         "type": "string",
-        "description": "Stable error code. HTTP status: invalid_request 400, unauthorized 401, forbidden 403, not_found 404, method_not_allowed 405, conflict 409, range_not_satisfiable 416, internal 500, unavailable 503. Only unavailable is retryable. The router-wide fallbacks use 404 not_found (path not in the contract) and 405 method_not_allowed (method not documented for the path). A 416 range_not_satisfiable answer also carries Content-Range: bytes */<length>.",
+        "description": "Stable error code. HTTP status: invalid_request 400, unauthorized 401, forbidden 403, not_found 404, method_not_allowed 405, conflict 409, payload_too_large 413, range_not_satisfiable 416, rate_limited 429, internal 500, unavailable 503. Only unavailable and rate_limited are retryable (rate_limited once Retry-After has passed). The router-wide fallbacks use 404 not_found (path not in the contract) and 405 method_not_allowed (method not documented for the path). A 416 range_not_satisfiable answer also carries Content-Range: bytes */<length>; a 429 rate_limited answer carries Retry-After.",
         "enum": [
           "invalid_request",
           "unauthorized",
@@ -2727,7 +3273,9 @@
           "not_found",
           "method_not_allowed",
           "conflict",
+          "payload_too_large",
           "range_not_satisfiable",
+          "rate_limited",
           "internal",
           "unavailable"
         ]
@@ -3170,6 +3718,13 @@
               }
             ],
             "description": "Who made it, when recorded."
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The version's label (PRD F-065): the later label when one was set (PUT /api/v1/files/labels), else the label member of its filesquid.operation.v1 message; null when it has none. Labels never affect retention. Always sent; optional in the schema so clients written before labels still read it."
           }
         },
         "additionalProperties": false
@@ -3419,6 +3974,14 @@
               "null"
             ],
             "description": "The file's digest after the change, or null when it was removed."
+          },
+          "size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "description": "The file's size in bytes after the change, or null when it was removed. Always sent; optional in the schema so clients written before sizes still read it."
           }
         },
         "additionalProperties": false
@@ -3668,11 +4231,11 @@
             },
             "description": "The files or folders to restore, 1 to 1,000."
           },
-          "message": {
+          "label": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 1024,
-            "description": "The version message, 1 to 1,024 bytes and not blank."
+            "maxLength": 512,
+            "description": "The new version's label: 1 to 512 bytes, not blank, no control characters. It is the label member of the version's filesquid.operation.v1 message; a restore takes no free message."
           }
         },
         "additionalProperties": false
@@ -4493,6 +5056,533 @@
           }
         },
         "additionalProperties": false
+      },
+      "LabelRequest": {
+        "type": "object",
+        "description": "Body of PUT /api/v1/files/labels: set or clear the label of one version after commit.",
+        "required": [
+          "library_id",
+          "object_id",
+          "version"
+        ],
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library."
+          },
+          "object_id": {
+            "type": "string",
+            "description": "The OCFL object identifier."
+          },
+          "version": {
+            "type": "string",
+            "description": "The version to label: v1, v2, ..."
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 512,
+            "description": "The label: 1 to 512 bytes, not blank, no control characters; null or absent clears it."
+          }
+        },
+        "additionalProperties": false
+      },
+      "FileHistorySize": {
+        "type": "object",
+        "description": "The bytes one file's history keeps: each distinct content once.",
+        "required": [
+          "library_id",
+          "object_id",
+          "path",
+          "versions",
+          "contents",
+          "bytes"
+        ],
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library."
+          },
+          "object_id": {
+            "type": "string",
+            "description": "The OCFL object identifier."
+          },
+          "path": {
+            "type": "string",
+            "description": "The file's logical path."
+          },
+          "versions": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The versions that changed the file."
+          },
+          "contents": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The distinct contents the file has had."
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Their bytes, each content counted once."
+          }
+        },
+        "additionalProperties": false
+      },
+      "LibraryHistorySize": {
+        "type": "object",
+        "description": "The bytes a library's history keeps: each distinct content of each object once, within 10,000 objects and 100,000 contents.",
+        "required": [
+          "library_id",
+          "objects",
+          "contents",
+          "bytes",
+          "truncated"
+        ],
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library."
+          },
+          "objects": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The objects counted."
+          },
+          "contents": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The distinct contents counted."
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Their bytes, each content of an object counted once."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "True when a bound stopped the count, so the totals are lower bounds."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ProvenanceLink": {
+        "type": "object",
+        "description": "Where the PROV-O activity of an entry's operation is (API-S-031). Entries of committed operations (outcome succeeded, with operation_id and object_ref) link to it; failed and refused entries, entries without both identifiers and file.download entries are journal_only.",
+        "required": [
+          "journal_only"
+        ],
+        "properties": {
+          "journal_only": {
+            "type": "boolean",
+            "description": "True when the entry has no PROV-O activity."
+          },
+          "operation_id": {
+            "type": "string",
+            "description": "The operation ID the activity carries."
+          },
+          "object_ref": {
+            "type": "string",
+            "description": "The object version the activity is about: `<object-id>@vN`."
+          },
+          "record": {
+            "type": "string",
+            "description": "API path of the version's PROV-O record (GET /api/v1/files/{id}/versions/{version}/prov), for a urn:uuid object."
+          },
+          "activities": {
+            "type": "string",
+            "description": "API path of every activity of the operation (GET /api/v1/history?operation=...)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "JournalEntryView": {
+        "type": "object",
+        "required": [
+          "time",
+          "host",
+          "actor",
+          "operation",
+          "outcome",
+          "level",
+          "target_ids",
+          "provenance"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "host": {
+            "type": "string"
+          },
+          "process_id": {
+            "type": "string"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/Outcome"
+          },
+          "level": {
+            "$ref": "#/components/schemas/Level"
+          },
+          "target_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "duration_ms": {
+            "type": "integer"
+          },
+          "error_code": {
+            "type": "string"
+          },
+          "operation_id": {
+            "type": "string",
+            "description": "Opaque operation ID shared by every entry and OCFL version of one operation (ADR 040)."
+          },
+          "object_ref": {
+            "type": "string",
+            "description": "OCFL object version the entry is about: `<object-id>@vN`."
+          },
+          "client_event_id": {
+            "type": "string",
+            "description": "Client event ID (UUID v4) of an entry recorded from POST /api/v1/client-events; journaled at most once (API-S-030)."
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/ProvenanceLink"
+          },
+          "display_name": {
+            "type": "string",
+            "description": "Current display name of the file the entry's object ID names, resolved at read time for the caller."
+          }
+        },
+        "description": "A journal entry as the journal routes answer it: the stored entry, its PROV-O link and, only with names=true and only when the host resolves it for the caller, the current display name of the file its object ID names (display only; never stored or exported)."
+      },
+      "JournalViewPage": {
+        "type": "object",
+        "required": [
+          "entries",
+          "next_cursor"
+        ],
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JournalEntryView"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        }
+      },
+      "ClientConsoleEvent": {
+        "type": "object",
+        "description": "A console warning or error (API-S-030). Only these fields are read; any other field (a message, URL, file name or stack) is ignored and never stored.",
+        "required": [
+          "kind",
+          "id",
+          "level",
+          "component",
+          "error_code"
+        ],
+        "properties": {
+          "kind": {
+            "const": "console"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Client event ID, a UUID v4 the event keeps for life."
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "warn",
+              "error"
+            ]
+          },
+          "component": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "Fixed identifier of the UI component, an opaque token."
+          },
+          "error_code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "Machine-readable error code, an opaque token."
+          },
+          "ids": {
+            "type": "array",
+            "description": "At most 8 opaque IDs of what the event concerns.",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "time": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the event was raised (RFC 3339), at most five minutes ahead of the host's clock; the host's time when absent."
+          },
+          "principal": {
+            "type": "string",
+            "description": "The opaque principal that raised the event, as the client stored it; refused (403) when it differs from the credential's."
+          }
+        }
+      },
+      "ClientOverflowEvent": {
+        "type": "object",
+        "description": "The page-close count of events the client could not keep because IndexedDB was unavailable or refused a write (API-S-030, the one recorded gap). No other field is accepted.",
+        "required": [
+          "kind",
+          "id",
+          "component",
+          "count"
+        ],
+        "properties": {
+          "kind": {
+            "const": "overflow"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Client event ID, a UUID v4."
+          },
+          "component": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "principal": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClientEventsRequest": {
+        "type": "object",
+        "description": "1 to 20 events in a body of at most 16 KiB.",
+        "required": [
+          "events"
+        ],
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ClientConsoleEvent"
+                },
+                {
+                  "$ref": "#/components/schemas/ClientOverflowEvent"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "ClientEventsAck": {
+        "type": "object",
+        "required": [
+          "acknowledged",
+          "journaled",
+          "principal"
+        ],
+        "properties": {
+          "acknowledged": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Every client event ID of the batch, in request order without repeats; each is journaled now or was before."
+          },
+          "journaled": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Entries this request added (IDs already journaled add none)."
+          },
+          "principal": {
+            "type": "string",
+            "description": "The credential's opaque principal, which the client stores with the events it keeps."
+          }
+        },
+        "additionalProperties": false
+      },
+      "PinnedDestination": {
+        "type": "object",
+        "description": "One pinned destination: its node handle and kind, never its name (UI-S-017).",
+        "required": [
+          "node",
+          "kind"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "node": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "description": "An opaque node handle (API-S-021)."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/NavigationKind"
+          }
+        }
+      },
+      "NavigationPreferences": {
+        "type": "object",
+        "description": "The navigation tree's pinned destinations, section order and collapsed nodes (UI-S-017). pinned, order and collapsed may be left out on PUT, meaning empty.",
+        "required": [
+          "version",
+          "pinned",
+          "order",
+          "collapsed"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "type": "integer",
+            "const": 1,
+            "description": "The format version."
+          },
+          "pinned": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PinnedDestination"
+            },
+            "description": "At most 100 pinned destinations, each node once."
+          },
+          "order": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "description": "At most 16 section ids in the user's order, each once."
+          },
+          "collapsed": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512,
+              "description": "An opaque node handle (API-S-021)."
+            },
+            "description": "At most 1,000 collapsed node handles, each once."
+          }
+        }
+      },
+      "Preferences": {
+        "type": "object",
+        "description": "One user's UI preferences (API-S-011, SRS-F-062): choices only, never a name, title, logical path, token or content handle.",
+        "additionalProperties": false,
+        "required": [
+          "schema",
+          "start_view",
+          "sort_key",
+          "sort_direction",
+          "folder_placement",
+          "layout",
+          "hover_card",
+          "navigation"
+        ],
+        "properties": {
+          "schema": {
+            "type": "integer",
+            "const": 1,
+            "description": "The format version."
+          },
+          "start_view": {
+            "$ref": "#/components/schemas/StartView"
+          },
+          "sort_key": {
+            "$ref": "#/components/schemas/SortKey"
+          },
+          "sort_direction": {
+            "$ref": "#/components/schemas/SortDirection"
+          },
+          "folder_placement": {
+            "$ref": "#/components/schemas/FolderPlacement"
+          },
+          "layout": {
+            "$ref": "#/components/schemas/Layout"
+          },
+          "hover_card": {
+            "type": "boolean",
+            "description": "Whether hovering an item shows its card. Default true."
+          },
+          "navigation": {
+            "$ref": "#/components/schemas/NavigationPreferences"
+          }
+        }
+      },
+      "StartView": {
+        "type": "string",
+        "enum": [
+          "home",
+          "personal_root"
+        ],
+        "description": "Where the UI opens: Home or the root of the user's personal library. Default home."
+      },
+      "SortKey": {
+        "type": "string",
+        "enum": [
+          "name",
+          "size",
+          "modified",
+          "modified_by_me",
+          "opened_by_me"
+        ],
+        "description": "What listings are sorted by. Default name."
+      },
+      "SortDirection": {
+        "type": "string",
+        "enum": [
+          "ascending",
+          "descending"
+        ],
+        "description": "The sort direction. Default ascending."
+      },
+      "FolderPlacement": {
+        "type": "string",
+        "enum": [
+          "on_top",
+          "mixed"
+        ],
+        "description": "Folders before files, or sorted among them. Default on_top."
+      },
+      "Layout": {
+        "type": "string",
+        "enum": [
+          "list",
+          "grid"
+        ],
+        "description": "How listings are laid out. Default list."
       }
     },
     "parameters": {
@@ -4750,6 +5840,45 @@
       },
       "LibraryUnavailable": {
         "description": "The library's storage, the repair ledger or the reservation store is not reachable now, a head is still being published (snapshot_incomplete), or the host has not installed its library commands yet (unavailable; retryable).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "PayloadTooLarge": {
+        "description": "The request body is larger than the route accepts (payload_too_large).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "RateLimited": {
+        "description": "Over the route's rate bound (rate_limited). Retry after Retry-After seconds.",
+        "headers": {
+          "Retry-After": {
+            "description": "Whole seconds until a request is admitted again.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "PreferencesUnavailable": {
+        "description": "The host keeps no preferences yet, or their store cannot be reached (unavailable; retryable).",
         "content": {
           "application/json": {
             "schema": {
