@@ -3,7 +3,7 @@
  * under, one commit per file with the 64 MiB limit and a bound on a batch, where a rename or move
  * lands, and the words for a failed call.
  */
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../src/api/client";
 import {
   MAX_UPLOAD_FILES,
@@ -20,12 +20,15 @@ import labels from "../../src/theme/labels.en.json";
 
 const OBJECT = { library_id: "lib", object_id: "obj" };
 
+afterEach(() => vi.restoreAllMocks());
+
 describe("uploadName", () => {
   it.each([
     ["scan.pdf", "scan.pdf"],
     ["a/b\\c.txt", "a_b_c.txt"],
     ["  spaced.txt  ", "spaced.txt"],
-    ["tab\there.txt", "tab_here.txt"],
+    ["tab\there.txt", "tabhere.txt"],
+    ["bell\u0007\u0085.txt", "bell.txt"],
     ["", "file"],
     [".", "file"],
     ["..", "file"],
@@ -77,7 +80,28 @@ describe("uploadFiles", () => {
     expect(result.failed).toHaveLength(1);
     expect(result.failed[0]?.reason).toEqual({ error });
     expect(result.committed).toHaveLength(1);
-    vi.restoreAllMocks();
+  });
+
+  it("refuses a name longer than 255 bytes without sending it", async () => {
+    const { source, upload } = empty();
+    const long = new File(["x"], `${"a".repeat(256)}.txt`);
+    const result = await uploadFiles(source, OBJECT, "", [long]);
+    expect(upload).not.toHaveBeenCalled();
+    expect(result.failed).toMatchObject([{ reason: "name_too_long" }]);
+  });
+
+  it("hands back the files it did not try", async () => {
+    const { source, upload } = empty();
+    upload.mockResolvedValue({ ...OBJECT, version: "v2", created: "t" });
+    const files = Array.from(
+      { length: MAX_UPLOAD_FILES + 2 },
+      (_, i) => new File(["a"], `f${i}.txt`),
+    );
+    const result = await uploadFiles(source, OBJECT, "", files);
+    expect(result.left.map((f) => f.name)).toEqual([
+      `f${MAX_UPLOAD_FILES}.txt`,
+      `f${MAX_UPLOAD_FILES + 1}.txt`,
+    ]);
   });
 
   it("tries at most MAX_UPLOAD_FILES files and reports how many it left", async () => {

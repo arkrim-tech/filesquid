@@ -57,7 +57,7 @@ export const STYLE = `
   .tile .name { max-inline-size: 100%; }
   @media (max-width: 40rem) {
     .table { --fs-file-columns: minmax(0, 1fr) 5rem; }
-    .head .type, .head .modified, .head .version, .row .type-cell, .row .modified, .row .version { display: none; }
+    .head .col-type, .head .col-modified, .head .col-version, .row .type-cell, .row .modified, .row .version { display: none; }
   }
 `;
 
@@ -69,7 +69,7 @@ export function headerRow(labels: LabelTable): HTMLElement {
   head.setAttribute("aria-rowindex", "1");
   for (const column of COLUMNS) {
     const cell = document.createElement("div");
-    cell.className = column.id;
+    cell.className = `col col-${column.id}`;
     cell.setAttribute("role", "columnheader");
     cell.textContent = labels[column.label];
     head.append(cell);

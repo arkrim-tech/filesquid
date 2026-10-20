@@ -136,7 +136,8 @@ function createFileBrowser(
   browser.configure({ ...options, href: locationHash });
   browser.addEventListener("fs-location-change", (event) => {
     const { location } = (event as CustomEvent<{ location: FileLocation }>).detail;
-    win.history.pushState(null, "", locationHash(location));
+    const hash = locationHash(location);
+    if (win.location.hash !== hash) win.history.pushState(null, "", hash);
   });
   shell.append(browser);
   return browser;

@@ -31,7 +31,7 @@ import { RETRY_EVENT } from "./fs-states";
 import { failureState, type ViewState } from "./view-state";
 import { ApiError } from "../api/client";
 import {
-  MAX_PAGES,
+  MAX_LISTING_PAGES,
   PAGE_SIZE,
   affectsPath,
   fileRows,
@@ -69,6 +69,14 @@ export interface FileBrowserOptions {
   pageSize?: number;
   /** Most listing pages read for one folder (default 500). */
   maxPages?: number;
+}
+
+/** What reading the pages of a folder produced; applied only if it is still the current read. */
+interface PagesRead {
+  entries: FolderEntry[];
+  cursor: string | null;
+  pages: number;
+  head: string;
 }
 
 /** An element a distribution mounts in a panel slot. */
@@ -137,6 +145,12 @@ export class FsFileBrowser extends HTMLElement {
   /** Go to a folder of an object: loads its listing and closes any open file. */
   set location(location: FileLocation) {
     const same = this.sameLocation(location);
+    if (
+      location.library_id !== this.where.library_id ||
+      location.object_id !== this.where.object_id
+    ) {
+      this.pending.clear();
+    }
     this.where = location;
     if (same && this.dataset.state === "ready") return;
     this.closeViewer(false);
@@ -294,46 +308,52 @@ export class FsFileBrowser extends HTMLElement {
     if (this.rows.length === 0 || extent === 0) this.showState({ kind: "loading" });
     this.updateCrumbs();
     try {
-      const entries = await this.readPages(extent, abort.signal);
+      const read = await this.readPages(this.where, extent, abort.signal);
       if (generation !== this.generation) return;
-      this.entries = entries;
+      this.entries = read.entries;
+      this.cursor = read.cursor;
+      this.pages = read.pages;
+      this.head = read.head;
       this.afterLoad(hadFocus);
     } catch (error) {
-      if (generation !== this.generation) return;
+      if (generation !== this.generation || abort.signal.aborted) return;
       this.failLoad(error);
     }
   }
 
   /** Read the first page, then more pages until `extent` entries are shown (bounded). */
-  private async readPages(extent: number, signal: AbortSignal): Promise<FolderEntry[]> {
+  private async readPages(
+    where: FileLocation,
+    extent: number,
+    signal: AbortSignal,
+  ): Promise<PagesRead> {
     const source = (this.options as FileBrowserOptions).source;
     const size = this.options?.pageSize ?? PAGE_SIZE;
-    const limit = this.options?.maxPages ?? MAX_PAGES;
-    const entries: FolderEntry[] = [];
-    this.cursor = null;
-    this.pages = 0;
+    const limit = this.options?.maxPages ?? MAX_LISTING_PAGES;
+    const read: PagesRead = { entries: [], cursor: null, pages: 0, head: this.head };
     do {
-      const page = await this.readOne(source, this.cursor, size, signal);
-      entries.push(...page.entries);
-      this.cursor = page.next_cursor;
-      this.head = page.version;
-      this.pages += 1;
-    } while (this.cursor !== null && entries.length < extent && this.pages < limit);
-    return entries;
+      const page = await this.readOne(source, where, read.cursor, size, signal);
+      read.entries.push(...page.entries);
+      read.cursor = page.next_cursor;
+      read.head = page.version;
+      read.pages += 1;
+    } while (read.cursor !== null && read.entries.length < extent && read.pages < limit);
+    return read;
   }
 
   /** Read one page; a folder that exists only in the client (pending) is empty, not missing. */
   private async readOne(
     source: FileSource,
+    where: FileLocation,
     cursor: string | null,
     limit: number,
     signal: AbortSignal,
   ): Promise<FolderPage> {
     try {
-      return await source.list(this.where, cursor, limit, { signal });
+      return await source.list(where, cursor, limit, { signal });
     } catch (error) {
       const missing = error instanceof ApiError && error.code === "not_found";
-      if (!missing || !this.isPendingFolder(this.where.prefix)) throw error;
+      if (!missing || !this.isPendingFolder(where)) throw error;
       return {
         library_id: "",
         object_id: "",
@@ -346,14 +366,15 @@ export class FsFileBrowser extends HTMLElement {
   }
 
   /** True when `prefix` is a folder created in the client, or lies below one. */
-  private isPendingFolder(prefix: string): boolean {
+  private isPendingFolder(where: FileLocation): boolean {
+    const prefix = where.prefix;
     return prefix !== "" && [...this.pending].some((path) => affectsPath(path, prefix));
   }
 
   /** Load the next page when the window nears the loaded end. */
   private async loadMore(): Promise<void> {
     const options = this.options;
-    const limit = options?.maxPages ?? MAX_PAGES;
+    const limit = options?.maxPages ?? MAX_LISTING_PAGES;
     if (!options || this.cursor === null || this.loadingMore || this.pages >= limit) return;
     this.loadingMore = true;
     const generation = this.generation;
@@ -409,7 +430,7 @@ export class FsFileBrowser extends HTMLElement {
       files: String(sum.files),
       size: formatSize(sum.bytes, this.labels, document.documentElement.lang || "en"),
     });
-    const capped = more && this.pages >= (this.options?.maxPages ?? MAX_PAGES);
+    const capped = more && this.pages >= (this.options?.maxPages ?? MAX_LISTING_PAGES);
     limit.hidden = !capped;
     limit.textContent = capped
       ? formatLabel(this.labels.fileLimitReached, { count: String(this.entries.length) })
@@ -510,7 +531,9 @@ export class FsFileBrowser extends HTMLElement {
     frame.listing.element.hidden = true;
     frame.panels.hidden = this.panels.length === 0;
     frame.viewer.preview.file = ref;
-    for (const panel of this.panels) if (panel.element) panel.element.fileRef = ref;
+    const mounted = this.panels.filter((panel) => panel.element);
+    this.mountPanels();
+    for (const panel of mounted) if (panel.element) panel.element.fileRef = ref;
     this.writes?.syncToolbar();
     this.emit("fs-file-open", { file: ref });
   }
@@ -590,6 +613,10 @@ export class FsFileBrowser extends HTMLElement {
   private mountPanels(): void {
     const frame = this.frame;
     if (!frame) return;
+    if (this.current === null) {
+      frame.panels.hidden = true;
+      return;
+    }
     for (const panel of this.panels) {
       if (!panel.element) {
         panel.element = panel.create();
@@ -598,7 +625,7 @@ export class FsFileBrowser extends HTMLElement {
     }
     const slots = this.panels.map((panel) => slot(panel));
     frame.panels.replaceChildren(...slots);
-    frame.panels.hidden = this.current === null || slots.length === 0;
+    frame.panels.hidden = slots.length === 0;
   }
 
   /** Give the preview its labels, source and renderers. */

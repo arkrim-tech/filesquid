@@ -36,7 +36,23 @@ export function listKeyTarget(key: string, input: ListKeyInput): number | undefi
   const last = input.count - 1;
   if (move === "first") return 0;
   if (move === "last") return last;
-  return Math.min(last, Math.max(0, input.index + move));
+  const target = input.index + move;
+  if (target >= 0 && target <= last) return target;
+  return outOfRange(input, move, last);
+}
+
+/**
+ * Where a move that leaves the list lands. In a grid an arrow up or down keeps its column: up
+ * from the first row and down from the last row stay put, and down from an earlier row into a
+ * short last row goes to the last item. Other moves stop at the ends.
+ */
+function outOfRange(input: ListKeyInput, move: number, last: number): number {
+  if (input.columns > 1 && Math.abs(move) === input.columns) {
+    const lastRow = Math.floor(last / input.columns);
+    if (move > 0 && Math.floor(input.index / input.columns) < lastRow) return last;
+    return input.index;
+  }
+  return move < 0 ? 0 : last;
 }
 
 /** The move a key asks for, or undefined for a key that is not a listing key. */

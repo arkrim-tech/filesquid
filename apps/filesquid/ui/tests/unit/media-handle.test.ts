@@ -163,7 +163,34 @@ describe("MediaHandleController", () => {
       await settle();
       el.dispatchEvent(new Event("loadeddata"));
     }
-    expect(mint.mock.calls.length).toBeLessThanOrEqual(MAX_REMINTS + 1);
+    expect(mint).toHaveBeenCalledTimes(MAX_REMINTS + 1);
+    expect(states).toContain("error");
+  });
+
+  it("pauses a playing video and drops its source on dispose", async () => {
+    const state = { currentTime: 5, paused: false };
+    const el = video(state);
+    el.pause = vi.fn();
+    const controller = new MediaHandleController(el, minter(), () => undefined);
+    await controller.start();
+    controller.dispose();
+    expect(el.pause).toHaveBeenCalledTimes(1);
+    expect(el.hasAttribute("src")).toBe(false);
+  });
+
+  it("does not resume a video that was disposed before its new handle loaded", async () => {
+    const state = { currentTime: 7, paused: false };
+    const el = video(state);
+    const controller = new MediaHandleController(el, minter(), () => undefined);
+    await controller.start();
+    el.dispatchEvent(new Event("error"));
+    await settle();
+    controller.dispose();
+    state.currentTime = 0;
+    el.dispatchEvent(new Event("loadedmetadata"));
+    await settle();
+    expect(state.currentTime).toBe(0);
+    expect(el.play).not.toHaveBeenCalled();
   });
 
   it("does nothing after dispose, and ignores a mint that finishes late", async () => {

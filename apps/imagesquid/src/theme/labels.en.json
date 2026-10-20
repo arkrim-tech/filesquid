@@ -94,7 +94,6 @@
   "sizeMB": "{value} MB",
   "sizeGB": "{value} GB",
   "sizeTB": "{value} TB",
-  "fileBrowser": "File browser",
   "fileRoot": "All photos",
   "fileColumnName": "Name",
   "fileColumnSize": "Size",
@@ -130,9 +129,8 @@
   "fileNoPreviewHelp": "The original photo is stored unchanged.",
   "filePreviewError": "This file could not be loaded",
   "fileTextTruncated": "Showing the first {size} only",
-  "fileSummary": "Folders: {folders} · Files: {files} · Total size: {size}",
+  "fileSummary": "Folders: {folders} · Photos: {files} · Loaded size: {size}",
   "fileMoreToLoad": "More items are not loaded yet",
-  "fileLoadingMore": "Loading more…",
   "fileLimitReached": "Showing the first {count} items only",
   "fileDropTarget": "Drop to upload into {folder}",
   "fileUploading": "Uploading {current} of {total}: {name}",
@@ -145,10 +143,11 @@
   "fileRemoved": "{name} removed. Version {version} committed.",
   "fileRestored": "{name} restored. Version {version} committed.",
   "fileNameEmpty": "Enter a name.",
-  "fileNameInvalid": "A name cannot contain / or \\ and cannot be . or ..",
+  "fileNameInvalid": "A name cannot contain / or \\, control characters, and cannot be . or ..",
   "fileNameTooLong": "A name can be at most 255 bytes.",
   "fileConflict": "The files changed or another change is in progress. Reload and try again.",
   "fileActionFailed": "The action did not finish.",
-  "fileTypeUnknown": "File",
-  "fileTileMeta": "{size} · {date}"
+  "fileTypeUnknown": "Photo",
+  "fileTileMeta": "{size} · {date}",
+  "fileUploadSkipped": "{count} files were not uploaded because one batch holds at most {limit}. Try again to upload them."
 }

@@ -84,6 +84,38 @@ function fileQuery(file: FileRef): string {
   });
 }
 
+/**
+ * Read `limit` bytes of a response body after skipping `skip` bytes, then cancel the rest, so a
+ * host that ignores `Range` cannot make a preview buffer a whole file. Network I/O.
+ */
+async function readLimited(response: Response, skip: number, limit: number): Promise<Uint8Array> {
+  const reader = response.body?.getReader();
+  if (!reader) return new Uint8Array(0);
+  const chunks: Uint8Array[] = [];
+  let seen = 0;
+  let kept = 0;
+  try {
+    for (let guard = 0; guard < 1_000_000 && kept < limit; guard += 1) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const start = Math.max(0, skip - seen);
+      seen += value.byteLength;
+      const part = value.subarray(start, start + (limit - kept));
+      chunks.push(part);
+      kept += part.byteLength;
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  const out = new Uint8Array(kept);
+  let at = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  return out;
+}
+
 /** The two fields that name an object in a JSON body. */
 function bodyOf(object: ObjectRef): ObjectRef {
   return { library_id: object.library_id, object_id: object.object_id };
@@ -153,9 +185,10 @@ export class ClientFileSource implements FileSource {
       range,
       signal: options.signal,
     });
-    const bytes = new Uint8Array(await answer.response.arrayBuffer());
-    const limit = range.end === undefined ? bytes.byteLength : range.end - range.start + 1;
-    return bytes.byteLength > limit ? bytes.slice(0, limit) : bytes;
+    const wanted = range.end === undefined ? Infinity : range.end - range.start + 1;
+    // A host that ignores Range answers the whole file from byte 0: skip to the range start.
+    const skip = answer.partial ? 0 : range.start;
+    return readLimited(answer.response, skip, wanted);
   }
 
   /**

@@ -9,6 +9,7 @@ import { ApiError } from "../api/client";
 import { denialLabel } from "../components/denial";
 import type { LabelTable } from "../theme/labels";
 import {
+  MAX_NAME_BYTES,
   MAX_UPLOAD_BYTES,
   isControl,
   joinPath,
@@ -31,7 +32,7 @@ export interface UploadFailure {
   /** The name it would have been uploaded under. */
   readonly name: string;
   /** `too_large`, or what the call rejected with. */
-  readonly reason: "too_large" | { readonly error: unknown };
+  readonly reason: "too_large" | "name_too_long" | { readonly error: unknown };
 }
 
 /** What a batch upload did. */
@@ -42,19 +43,21 @@ export interface UploadResult {
   readonly failed: readonly UploadFailure[];
   /** Files beyond {@link MAX_UPLOAD_FILES} that were not tried. */
   readonly skipped: number;
+  /** Those files themselves, so they can be offered again. */
+  readonly left: readonly File[];
 }
 
 /**
- * The name a file is uploaded under: its own name with path separators and control characters
- * replaced by `_` and surrounding spaces trimmed (a name left empty, `.` or `..` becomes
+ * The name a file is uploaded under: its own name with path separators replaced by `_`, control
+ * characters removed (as the API does for display names) and surrounding spaces trimmed (a name left empty, `.` or `..` becomes
  * `file`). Pure.
  *
  * @param name The file's name as the browser gives it.
  * @returns The name to upload under.
  */
 export function uploadName(name: string): string {
-  const unsafe = (ch: string) => ch === "/" || ch === "\\" || isControl(ch);
-  const clean = Array.from(name, (ch) => (unsafe(ch) ? "_" : ch))
+  const clean = Array.from(name, (ch) => (ch === "/" || ch === "\\" ? "_" : ch))
+    .filter((ch) => !isControl(ch))
     .join("")
     .trim();
   return clean === "" || clean === "." || clean === ".." ? "file" : clean;
@@ -90,6 +93,10 @@ export async function uploadFiles(
       failed.push({ file, name, reason: "too_large" });
       continue;
     }
+    if (new TextEncoder().encode(name).length > MAX_NAME_BYTES) {
+      failed.push({ file, name, reason: "name_too_long" });
+      continue;
+    }
     try {
       committed.push(await source.upload(object, joinPath(prefix, name), file));
     } catch (error) {
@@ -97,7 +104,12 @@ export async function uploadFiles(
       failed.push({ file, name, reason: { error } });
     }
   }
-  return { committed, failed, skipped: files.length - batch.length };
+  return {
+    committed,
+    failed,
+    skipped: files.length - batch.length,
+    left: files.slice(batch.length),
+  };
 }
 
 /** The kind of an error, without its message. */

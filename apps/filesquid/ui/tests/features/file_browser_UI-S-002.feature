@@ -27,12 +27,17 @@ Feature: File browser
     Then no row, tile, heading, breadcrumb segment, status message, accessible name or attribute should contain a stored name
     And each file should be named by the display name the API returned
 
-  Scenario: A folder opens from the listing and from the breadcrumb
+  Scenario: A folder opens from the listing and Back returns
     When I open the folder "Contracts"
     Then the breadcrumb should list "All files" and "Contracts" with "Contracts" as the current page
     And the address should name the folder
     When I go back
     Then the root listing should be shown again
+
+  Scenario: The breadcrumb returns to a parent folder
+    Given I am in the folder "Contracts"
+    When I choose "All files" in the breadcrumb
+    Then the root listing should be shown
 
   Scenario: A file opens in a preview and closes back to its row
     When I open "readme.txt"
@@ -119,12 +124,19 @@ Feature: File browser
     Then the alert should say the files changed or another change is in progress
     And "readme.txt" should still be listed
 
-  Scenario: Permission denied, offline and empty are told apart
+  Scenario: Permission denied is shown with the reason
     Given the host denies listing with the reason "not_permitted"
+    When I open the file browser
     Then the browser should show the permission denied state with "Not permitted"
+
+  Scenario: Offline is told apart from an error
     Given the browser is offline and the host cannot be reached
+    When I open the file browser
     Then the browser should show the offline state
+
+  Scenario: An empty folder is not an error
     Given the folder holds nothing
+    When I open the file browser
     Then the browser should show the empty state and no error
 
   # Previews through content handles (UI-S-014)
@@ -147,7 +159,9 @@ Feature: File browser
     And the video should resume at the same position, still paused
 
   Scenario: A second failure shows the error
-    Given the new handle is refused too
+    Given a video is open whose content handle is refused
+    When the media element reports an error
+    And the new content handle is refused too
     Then the preview should show "This file could not be loaded" and mint no third handle
 
   Scenario: Text is read with one ranged read of 64 KiB

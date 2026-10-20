@@ -19,7 +19,7 @@ import type {
   ObjectRef,
 } from "./model";
 import { lastSegment } from "./model";
-import type { FileSource } from "./source";
+import type { FileSource, SourceOptions } from "./source";
 
 /** One file of the fixture. */
 export interface MemoryFile {
@@ -115,7 +115,12 @@ function within(path: string, base: string): boolean {
 
 /** Compare by Unicode code point, as the API orders names. */
 function byName(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
+  const left = Array.from(a, (ch) => ch.codePointAt(0) ?? 0);
+  const right = Array.from(b, (ch) => ch.codePointAt(0) ?? 0);
+  for (let i = 0; i < Math.min(left.length, right.length); i += 1) {
+    if (left[i] !== right[i]) return (left[i] as number) < (right[i] as number) ? -1 : 1;
+  }
+  return left.length - right.length;
 }
 
 /** A file source answering from memory. */
@@ -150,7 +155,9 @@ export class MemoryFileSource implements FileSource {
     location: FileLocation,
     cursor?: string | null,
     limit: number = DEFAULT_LIMIT,
+    options?: SourceOptions,
   ): Promise<FolderPage> {
+    if (options?.signal?.aborted) throw new DOMException("aborted", "AbortError");
     this.check();
     if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LIMIT)
       throw refusal(400, "invalid_request");

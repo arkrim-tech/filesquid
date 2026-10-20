@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 import {
   MAX_NAME_BYTES,
-  MAX_PAGES,
+  MAX_LISTING_PAGES,
   MAX_UPLOAD_BYTES,
   OVERSCAN_ROWS,
   PAGE_SIZE,
@@ -47,7 +47,7 @@ describe("limits", () => {
     expect(MAX_UPLOAD_BYTES).toBe(67_108_864);
     expect(TEXT_PREVIEW_BYTES).toBe(65_536);
     expect(PAGE_SIZE).toBe(200);
-    expect(MAX_PAGES).toBe(500);
+    expect(MAX_LISTING_PAGES).toBe(500);
     expect(MAX_NAME_BYTES).toBe(255);
     expect(OVERSCAN_ROWS).toBe(5);
   });
@@ -136,6 +136,8 @@ describe("validateName", () => {
     ["..", "reserved"],
     ["a\u0000b", "control"],
     ["a\u001fb", "control"],
+    ["a\u0085b", "control"],
+    ["a\u007fb", "control"],
     ["é".repeat(128), "long"],
   ])("refuses %j as %s", (name, problem) => {
     expect(validateName(name)).toBe(problem);
@@ -166,6 +168,8 @@ describe("formatSize", () => {
     [19_293_798, "18.4 MB"],
     [1_288_490_189, "1.2 GB"],
     [2 ** 40 * 3, "3 TB"],
+    [1_048_524, "1 MB"],
+    [1_023, "1,023 B"],
   ])("%d bytes is %s", (bytes, text) => {
     expect(formatSize(bytes, labels, "en")).toBe(text);
   });
@@ -203,6 +207,8 @@ describe("location route", () => {
     "#/files/only-library",
     "#/files/l/o/../x",
     "#/files/l/o/%E0%A4%A",
+    "#/files/l/o/a%2F..%2Fb",
+    "#/files/l/o/a%5Cb",
   ])("does not read %j", (hash) => {
     expect(parseLocationHash(hash)).toBeUndefined();
   });

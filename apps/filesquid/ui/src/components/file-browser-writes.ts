@@ -20,15 +20,18 @@ import {
   type FileCommit,
   type FileLocation,
   type FileRow,
+  type ObjectRef,
 } from "../files/model";
 import {
   errorKind,
   failureText,
   folderProblem,
+  MAX_UPLOAD_FILES,
   moveTarget,
   problemText,
   uploadFiles,
   type UploadFailure,
+  type UploadResult,
 } from "../files/ops";
 import type { FileSource } from "../files/source";
 import type { Frame } from "./file-browser-frame";
@@ -61,6 +64,7 @@ type FormMode = { readonly kind: "folder" } | { readonly kind: "rename"; readonl
 
 /** What Undo restores. */
 interface UndoOffer {
+  readonly object: ObjectRef;
   readonly version: string;
   readonly paths: readonly string[];
   readonly name: string;
@@ -122,6 +126,12 @@ export class FileWrites {
     bar.newFolder.setAttribute("aria-disabled", String(this.busy));
   }
 
+  /** The library and object shown now. */
+  private objectNow(): ObjectRef {
+    const where = this.host.location();
+    return { library_id: where.library_id, object_id: where.object_id };
+  }
+
   /** Open the rename or move form for the target row (F2). */
   rename(row: FileRow | undefined = this.host.target()): void {
     if (row) this.open({ kind: "rename", row }, this.focused());
@@ -135,11 +145,12 @@ export class FileWrites {
    */
   async remove(row: FileRow | undefined = this.host.target()): Promise<void> {
     if (!row || this.busy) return;
-    const outcome = await this.run(() => this.host.source.remove(this.host.location(), row.path));
+    const object = this.objectNow();
+    const outcome = await this.run(() => this.host.source.remove(object, row.path));
     if (!outcome) return;
     this.host.committed("remove", outcome, [row.path]);
     const version = previousVersion(outcome.version);
-    this.undoOffer = version ? { version, paths: [row.path], name: row.name } : undefined;
+    this.undoOffer = version ? { object, version, paths: [row.path], name: row.name } : undefined;
     const text = formatLabel(this.host.labels.fileRemoved, {
       name: row.name,
       version: outcome.version,
@@ -175,7 +186,7 @@ export class FileWrites {
     this.setBusy(false);
     const last = result.committed[result.committed.length - 1];
     if (last) this.host.committed("upload", last, []);
-    this.reportUpload(result.committed.length, last, result.failed);
+    this.reportUpload(result.committed.length, last, result);
     if (last) await this.host.reload();
   }
 
@@ -188,20 +199,25 @@ export class FileWrites {
   }
 
   /** Report a finished upload batch: committed, or what failed. */
-  private reportUpload(
-    count: number,
-    last: FileCommit | undefined,
-    failed: readonly UploadFailure[],
-  ): void {
+  private reportUpload(count: number, last: FileCommit | undefined, result: UploadResult): void {
     const { labels } = this.host;
-    this.retryable = failed.filter((f) => f.reason !== "too_large").map((f) => f.file);
-    if (failed.length === 0 && last) {
+    const failed = result.failed;
+    const retriable = failed.filter((f) => typeof f.reason !== "string").map((f) => f.file);
+    this.retryable = [...retriable, ...result.left];
+    if (failed.length === 0 && result.skipped === 0 && last) {
       this.showStatus(
         formatLabel(labels.fileUploaded, { count: String(count), version: last.version }),
       );
       return;
     }
     const lines = failed.map((f) => this.failureLine(f));
+    if (result.skipped > 0) {
+      const text = formatLabel(labels.fileUploadSkipped, {
+        count: String(result.skipped),
+        limit: String(MAX_UPLOAD_FILES),
+      });
+      lines.push(text);
+    }
     const retry =
       this.retryable.length > 0
         ? [this.action("retry", labels.stateRetry, () => void this.upload(this.retryable))]
@@ -216,6 +232,9 @@ export class FileWrites {
       const limit = formatSize(MAX_UPLOAD_BYTES, labels);
       return formatLabel(labels.fileTooLarge, { name: failure.name, limit });
     }
+    if (failure.reason === "name_too_long") {
+      return `${formatLabel(labels.fileUploadFailed, { name: failure.name })} ${labels.fileNameTooLong}`;
+    }
     const head = formatLabel(labels.fileUploadFailed, { name: failure.name });
     return `${head} ${failureText(failure.reason.error, labels)}`;
   }
@@ -225,7 +244,7 @@ export class FileWrites {
     const offer = this.undoOffer;
     if (!offer || this.busy) return;
     const outcome = await this.run(() =>
-      this.host.source.restore(this.host.location(), offer.version, offer.paths),
+      this.host.source.restore(offer.object, offer.version, offer.paths),
     );
     if (!outcome) return;
     this.undoOffer = undefined;
@@ -321,8 +340,9 @@ export class FileWrites {
     if (!commit) return;
     this.close(true);
     this.host.committed("move", commit, [row.path, to]);
+    const shown = name.trim() === "" ? row.name : name.trim();
     this.showStatus(
-      formatLabel(this.host.labels.fileMoved, { name: row.name, version: commit.version }),
+      formatLabel(this.host.labels.fileMoved, { name: shown, version: commit.version }),
     );
     await this.host.reload();
   }

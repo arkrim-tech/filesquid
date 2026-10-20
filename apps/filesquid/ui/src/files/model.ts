@@ -86,7 +86,7 @@ export const TEXT_PREVIEW_BYTES = 64 * 1024;
 /** Entries asked for per listing page. */
 export const PAGE_SIZE = 200;
 /** Most listing pages read for one folder (100,000 entries). */
-export const MAX_PAGES = 500;
+export const MAX_LISTING_PAGES = 500;
 /** Longest file or folder name, in UTF-8 bytes. */
 export const MAX_NAME_BYTES = 255;
 /** Rows kept in the DOM above and below the visible ones. */
@@ -220,13 +220,13 @@ export function affectsPath(changed: string, path: string): boolean {
 export type NameProblem = "empty" | "separator" | "reserved" | "control" | "long";
 
 /**
- * True for a control character: C0 (below space) and DEL. Pure.
+ * True for a control character: C0 (below space), DEL and C1 (U+0080 to U+009F). Pure.
  *
  * @param character One character.
  */
 export function isControl(character: string): boolean {
   const code = character.codePointAt(0) ?? 0;
-  return code < 0x20 || code === 0x7f;
+  return code < 0x20 || (code >= 0x7f && code <= 0x9f);
 }
 
 /**
@@ -261,6 +261,13 @@ export function previousVersion(version: string): string | undefined {
 /** Binary size units, smallest first, with the label key of each. */
 const SIZE_UNITS: readonly LabelKey[] = ["sizeB", "sizeKB", "sizeMB", "sizeGB", "sizeTB"];
 
+/** The value as it will be shown in `unit`, rounded, so 1,023.96 KB steps up to the next unit. */
+function roundedSize(value: number, unit: number): number {
+  const digits = unit === 0 || value >= 100 ? 0 : 1;
+  const factor = 10 ** digits;
+  return Math.round(value * factor) / factor;
+}
+
 /**
  * Write a size as the label table words it: whole bytes below 1 KB, otherwise one decimal (none
  * at 100 and above) in KB, MB, GB or TB of 1,024 units. Pure.
@@ -273,7 +280,7 @@ const SIZE_UNITS: readonly LabelKey[] = ["sizeB", "sizeKB", "sizeMB", "sizeGB", 
 export function formatSize(bytes: number, labels: LabelTable, locale?: string): string {
   let value = bytes;
   let unit = 0;
-  while (value >= 1024 && unit < SIZE_UNITS.length - 1) {
+  while (unit < SIZE_UNITS.length - 1 && roundedSize(value, unit) >= 1024) {
     value /= 1024;
     unit += 1;
   }
@@ -339,7 +346,9 @@ export function parseLocationHash(hash: string): FileLocation | undefined {
     return undefined;
   }
   const [library_id, object_id, ...folders] = segments;
-  const usable = segments.every((s) => s !== "" && s !== "." && s !== "..");
+  const usable = segments.every(
+    (s) => s !== "" && s !== "." && s !== ".." && !s.includes("/") && !s.includes("\\"),
+  );
   if (!usable || !library_id || !object_id) return undefined;
   return { library_id, object_id, prefix: folders.join("/") };
 }

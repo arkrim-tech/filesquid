@@ -95,6 +95,11 @@ export class FsFilePreview extends HTMLElement {
     void this.show();
   }
 
+  /** Show the file again when the element is put back into the document. */
+  connectedCallback(): void {
+    if (this.options && this.shadowRoot?.childElementCount === 0) void this.show();
+  }
+
   /** Stop the preview's work when the element leaves the document. */
   disconnectedCallback(): void {
     this.dispose();
@@ -157,7 +162,10 @@ export class FsFilePreview extends HTMLElement {
       labels: options.labels,
       source: options.source,
       signal,
-      onDispose: (cleanup) => this.cleanups.push(cleanup),
+      onDispose: (cleanup) => {
+        if (signal.aborted) cleanup();
+        else this.cleanups.push(cleanup);
+      },
     };
   }
 

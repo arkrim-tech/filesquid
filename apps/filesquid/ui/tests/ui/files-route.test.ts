@@ -18,6 +18,7 @@ beforeEach(() => {
   document.body.replaceChildren(host);
 });
 afterEach(() => {
+  vi.restoreAllMocks();
   stop?.();
   document.body.replaceChildren();
   window.history.replaceState(null, "", "#/");
@@ -67,11 +68,26 @@ describe("bindFilesRoute", () => {
     window.history.replaceState(null, "", "#/files/lib/obj");
     stop = bindFilesRoute(host, { labels, source });
     await settle();
+    const push = vi.spyOn(window.history, "pushState");
     await click(control(browser() as FsFileBrowser, "Contracts"));
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(push).toHaveBeenCalledWith(null, "", "#/files/lib/obj/Contracts");
     expect(window.location.hash).toBe("#/files/lib/obj/Contracts");
     await settle();
     expect(list).toHaveBeenCalledTimes(2);
     expect(one(browser() as FsFileBrowser, "fs-breadcrumb")).toBeDefined();
+  });
+
+  it("does not push a second entry for the folder that is already open", async () => {
+    window.history.replaceState(null, "", "#/files/lib/obj/Contracts");
+    stop = bindFilesRoute(host, { labels, source: fixture() });
+    await settle();
+    const push = vi.spyOn(window.history, "pushState");
+    const crumb = (browser() as FsFileBrowser).shadowRoot?.querySelector("fs-breadcrumb");
+    const links = crumb?.shadowRoot?.querySelectorAll("a") ?? [];
+    (links[links.length - 1] as HTMLAnchorElement).click();
+    await settle();
+    expect(push).not.toHaveBeenCalled();
   });
 
   it("stops following the hash once unbound", async () => {

@@ -133,7 +133,11 @@ const AUDIO = kindRenderer("audio", (context) => timed("audio", context));
 /** The built-in text renderer: the first {@link TEXT_PREVIEW_BYTES} bytes through one ranged read. */
 const TEXT = kindRenderer("text", async (context) => {
   const range = { start: 0, end: TEXT_PREVIEW_BYTES - 1 };
-  const bytes = await context.source.readRange(context.file, range, { signal: context.signal });
+  // An empty file has no byte to read (the API answers a range on it with 416).
+  const bytes =
+    context.details.size === 0
+      ? new Uint8Array(0)
+      : await context.source.readRange(context.file, range, { signal: context.signal });
   const figure = document.createElement("figure");
   const pre = named(document.createElement("pre"), context.file.display_name);
   pre.tabIndex = 0;

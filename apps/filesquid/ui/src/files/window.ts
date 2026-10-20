@@ -51,8 +51,9 @@ export function visibleWindow(input: WindowInput): WindowRange {
   const rows = Math.ceil(count / columns);
   const top = atLeast(input.scrollTop, 0);
   const bottom = top + atLeast(input.viewport, 0);
-  const firstRow = Math.max(0, Math.floor(top / rowHeight) - input.overscan);
-  const lastRow = Math.min(rows, Math.ceil(bottom / rowHeight) + input.overscan);
+  const overscan = Math.floor(atLeast(input.overscan, 0));
+  const firstRow = Math.max(0, Math.floor(top / rowHeight) - overscan);
+  const lastRow = Math.min(rows, Math.ceil(bottom / rowHeight) + overscan);
   return {
     start: Math.min(count, firstRow * columns),
     end: Math.min(count, lastRow * columns),

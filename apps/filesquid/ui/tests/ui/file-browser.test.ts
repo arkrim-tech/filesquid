@@ -105,7 +105,7 @@ describe("<fs-file-browser> listing", () => {
   it("summarises folders, files and total size in the footer", async () => {
     const browser = await mount(fixture());
     expect(one(browser, ".table").getAttribute("aria-rowcount")).toBe("6");
-    expect(one(browser, ".summary").textContent).toBe("Folders: 2 · Files: 3 · Total size: 19 B");
+    expect(one(browser, ".summary").textContent).toBe("Folders: 2 · Files: 3 · Loaded size: 19 B");
   });
 
   it("switches to the grid layout and back, keeping display names", async () => {
@@ -152,7 +152,7 @@ describe("<fs-file-browser> navigation", () => {
     expect(names(browser)).toContain("Contracts");
   });
 
-  it("moves focus into the new folder's list after opening it from the keyboard", async () => {
+  it("moves focus into the new folder's list after opening a folder that has focus", async () => {
     const browser = await mount(fixture());
     control(browser, "Contracts").focus();
     await click(control(browser, "Contracts"));
@@ -308,6 +308,39 @@ describe("<fs-file-browser> viewer", () => {
   });
 });
 
+describe("<fs-file-browser> loads and objects", () => {
+  it("does not report a load that was aborted by leaving the document as a failure", async () => {
+    const source = fixture();
+    const real = source.list.bind(source);
+    const gate = deferred();
+    vi.spyOn(source, "list").mockImplementation(async (location, cursor, limit, options) => {
+      await gate.promise;
+      if (options?.signal?.aborted) throw new DOMException("aborted", "AbortError");
+      return real(location, cursor, limit, options);
+    });
+    const browser = await mount(source);
+    browser.remove();
+    gate.resolve();
+    await settle();
+    expect(browser.dataset.state).not.toBe("error");
+  });
+
+  it("forgets folders created in one object when another object is opened", async () => {
+    const browser = await mount(fixture());
+    await click(one(browser, "button.new-folder"));
+    one<HTMLInputElement>(browser, "form.name-form input[name=name]").value = "Photos";
+    one<HTMLFormElement>(browser, "form.name-form").dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true }),
+    );
+    await settle();
+    await settle();
+    expect(names(browser)).toContain("Photos");
+    browser.location = { library_id: "lib", object_id: "obj-two", prefix: "" };
+    await settle();
+    expect(names(browser)).not.toContain("Photos");
+  });
+});
+
 describe("<fs-file-browser> states", () => {
   it("shows loading first, then the listing", async () => {
     const source = fixture();
@@ -411,6 +444,15 @@ describe("<fs-file-browser> virtual window", () => {
     expect(focused.isConnected).toBe(true);
   });
 
+  it("keeps one Tab stop when the chosen row has scrolled out of the window", async () => {
+    const browser = await mount(many());
+    control(browser, "Document 0001.txt").focus();
+    (rootOf(browser).activeElement as HTMLElement).blur();
+    await scrollTo(browser, 48 * 150);
+    const stops = all(browser, ".name").filter((el) => el.getAttribute("tabindex") === "0");
+    expect(stops).toHaveLength(1);
+  });
+
   it("stops after the page limit and says how many items it shows", async () => {
     const source = many();
     const browser = await mount(source, { pageSize: 100, maxPages: 2 });
@@ -466,11 +508,15 @@ describe("<fs-file-browser> keyboard and accessibility", () => {
 
   it("disables Rename and Remove until a row is chosen, without removing them from the Tab order", async () => {
     const browser = await mount(fixture());
+    expect(one(browser, "button.rename").hasAttribute("disabled")).toBe(false);
+    expect(one(browser, "button.remove").hasAttribute("disabled")).toBe(false);
     expect(one(browser, "button.rename").getAttribute("aria-disabled")).toBe("true");
     expect(one(browser, "button.remove").getAttribute("aria-disabled")).toBe("true");
     control(browser, "readme.txt").focus();
     expect(one(browser, "button.rename").getAttribute("aria-disabled")).toBe("false");
     expect(one(browser, "button.remove").getAttribute("aria-disabled")).toBe("false");
+    expect(one(browser, "button.rename").hasAttribute("disabled")).toBe(false);
+    expect(one(browser, "button.remove").hasAttribute("disabled")).toBe(false);
   });
 });
 

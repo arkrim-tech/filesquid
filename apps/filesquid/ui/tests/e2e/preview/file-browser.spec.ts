@@ -19,6 +19,14 @@ import {
 } from "../support/strict-dom";
 
 const labels = activeLabels();
+
+/** A label with its placeholders filled, the way the UI words it. */
+function fill(key: string, values: Record<string, string>): string {
+  return label(labels, key).replace(
+    /\{([a-zA-Z]+)\}/g,
+    (whole, name: string) => values[name] ?? whole,
+  );
+}
 const LONG_TEXT = `${"0123456789abcdef".repeat(4096)}\nTAIL-MARKER`;
 const STORED = [
   "3f9a0001",
@@ -121,7 +129,9 @@ test("the browser is a defined element and lists display names in the list layou
     "aria-pressed",
     "true",
   );
-  await expect(page.locator("fs-file-browser .summary")).toContainText("Folders: 2 · Files: 6");
+  await expect(page.locator("fs-file-browser .summary")).toContainText(
+    fill("fileSummary", { folders: "2", files: "6", size: "" }).replace(/ Loaded size:.*$/, ""),
+  );
   const everything = await deepText(page);
   for (const stored of STORED) expect(everything).not.toContain(stored);
   expect(errors).toEqual([]);
@@ -212,7 +222,8 @@ test("an image previews through a content handle that is used only as the media 
     };
   }, handle);
   expect(hygiene).toEqual({ storage: false, links: false, history: false });
-  expect(await deepText(page)).not.toContain(`>${handle}<`);
+  // The handle appears once in the page: as the media src, never as text or in another attribute.
+  expect((await deepText(page)).split(handle)).toHaveLength(2);
   for (const stored of STORED) expect(await deepText(page)).not.toContain(stored);
   expect(errors).toEqual([]);
 });
@@ -291,7 +302,9 @@ test("text previews through one ranged read of the first 64 KiB and says it is c
   const pre = page.locator("fs-file-preview pre");
   await expect(pre).toHaveAttribute("aria-label", "long.txt");
   await expect(pre).not.toContainText("TAIL-MARKER");
-  await expect(page.locator("fs-file-preview .note")).toHaveText("Showing the first 64 KB only");
+  await expect(page.locator("fs-file-preview .note")).toHaveText(
+    fill("fileTextTruncated", { size: "64 KB" }),
+  );
   expect(api.ranges).toEqual(["bytes=0-65535"]);
   expect(errors).toEqual([]);
 });
@@ -331,7 +344,7 @@ test("writes are single calls: upload, new folder, rename, remove and Undo", asy
     buffer: Buffer.from("%PDF-scan"),
   });
   await expect(page.locator("fs-file-browser .frame > .status")).toHaveText(
-    "Uploaded 1. Version v2 committed.",
+    fill("fileUploaded", { count: "1", version: "v2" }),
   );
   await expect(page.getByRole("button", { name: "scan.pdf" })).toBeVisible();
   expect(api.writes).toEqual(["PUT upload scan.pdf"]);
@@ -341,7 +354,7 @@ test("writes are single calls: upload, new folder, rename, remove and Undo", asy
   await page.keyboard.type("Photos");
   await page.keyboard.press("Enter");
   await expect(page.locator("fs-file-browser .frame > .status")).toHaveText(
-    "Folder Photos created. It stays pending until a file is added.",
+    fill("fileFolderCreated", { name: "Photos" }),
   );
   await expect(
     page.locator("fs-file-browser .row", { hasText: "Photos" }).locator(".pending"),
@@ -349,22 +362,24 @@ test("writes are single calls: upload, new folder, rename, remove and Undo", asy
 
   await page.getByRole("button", { name: "readme.txt" }).focus();
   await page.getByRole("button", { name: label(labels, "fileRenameMove") }).click();
-  await expect(page.getByRole("form", { name: "Rename or move readme.txt" })).toBeVisible();
+  await expect(
+    page.getByRole("form", { name: fill("fileRenameTitle", { name: "readme.txt" }) }),
+  ).toBeVisible();
   await page.keyboard.type("notes-final.txt");
   await page.keyboard.press("Enter");
   await expect(page.locator("fs-file-browser .frame > .status")).toHaveText(
-    "readme.txt moved. Version v3 committed.",
+    fill("fileMoved", { name: "notes-final.txt", version: "v3" }),
   );
 
   await page.getByRole("button", { name: "scan.pdf" }).focus();
   await page.getByRole("button", { name: label(labels, "fileRemove") }).click();
   await expect(page.locator("fs-file-browser .frame > .status")).toContainText(
-    "scan.pdf removed. Version v4 committed.",
+    fill("fileRemoved", { name: "scan.pdf", version: "v4" }),
   );
   await expect(page.getByRole("button", { name: "scan.pdf" })).toHaveCount(0);
   await page.getByRole("button", { name: label(labels, "fileUndo") }).click();
   await expect(page.locator("fs-file-browser .frame > .status")).toHaveText(
-    "scan.pdf restored. Version v5 committed.",
+    fill("fileRestored", { name: "scan.pdf", version: "v5" }),
   );
   await expect(page.getByRole("button", { name: "scan.pdf" })).toBeVisible();
   expect(api.writes.map((w) => w.split(" ")[1])).toEqual([

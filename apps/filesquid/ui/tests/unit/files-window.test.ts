@@ -64,6 +64,16 @@ describe("visibleWindow", () => {
     });
   });
 
+  it("treats a negative or fractional overscan as a whole, non-negative number", () => {
+    const input = { ...base, count: 1000, scrollTop: 4800 };
+    expect(visibleWindow({ ...input, overscan: -3 })).toEqual(
+      visibleWindow({ ...input, overscan: 0 }),
+    );
+    const fractional = visibleWindow({ ...input, overscan: 2.7 });
+    expect(Number.isInteger(fractional.start)).toBe(true);
+    expect(fractional).toEqual(visibleWindow({ ...input, overscan: 2 }));
+  });
+
   it("keeps the window small however long the list is", () => {
     const window = visibleWindow({ ...base, count: 100_000, scrollTop: 2_400_000 });
     expect(window.end - window.start).toBeLessThanOrEqual(20);
@@ -112,6 +122,14 @@ describe("listKeyTarget", () => {
     expect(listKeyTarget("PageDown", { ...list, index: 50 })).toBe(60);
     expect(listKeyTarget("PageUp", { ...list, index: 5 })).toBe(0);
     expect(listKeyTarget("PageDown", { ...list, index: 95 })).toBe(99);
+  });
+
+  it("keeps the column in a grid: up from the first row stays, down into a short last row ends", () => {
+    const grid = { ...list, count: 10, columns: 4 };
+    expect(listKeyTarget("ArrowUp", { ...grid, index: 2 })).toBe(2);
+    expect(listKeyTarget("ArrowDown", { ...grid, index: 6 })).toBe(9);
+    expect(listKeyTarget("ArrowDown", { ...grid, index: 9 })).toBe(9);
+    expect(listKeyTarget("ArrowDown", { ...grid, index: 1 })).toBe(5);
   });
 
   it("ignores the sideways arrows and other keys in a list", () => {

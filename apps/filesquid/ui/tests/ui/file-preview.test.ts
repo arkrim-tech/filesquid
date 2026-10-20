@@ -174,6 +174,30 @@ describe("<fs-file-preview>", () => {
     });
     const preview = await mount(src, ref("0a1b2c3d.png", "facade-study.png"));
     expect(preview.dataset.state).toBe("denied");
+    const states = preview.shadowRoot?.querySelector("fs-states") as HTMLElement;
+    expect(states.shadowRoot?.querySelector(".detail")?.textContent).toBe(labels.authNotPermitted);
+  });
+
+  it("shows an empty text file as empty without reading a range", async () => {
+    const src = new MemoryFileSource({
+      library_id: "lib",
+      object_id: "obj",
+      files: [{ path: "empty.txt", content: "" }],
+    });
+    const read = vi.spyOn(src, "readRange");
+    const preview = await mount(src, ref("empty.txt", "empty.txt"));
+    expect(read).not.toHaveBeenCalled();
+    expect(preview.dataset.state).toBe("ready");
+    expect(preview.shadowRoot?.querySelector("pre")?.textContent).toBe("");
+  });
+
+  it("shows the file again when the element is put back into the document", async () => {
+    const preview = await mount(source(), ref("0a1b2c40.txt", "readme.txt"));
+    preview.remove();
+    expect(preview.shadowRoot?.querySelector("pre")).not.toBeNull();
+    document.body.append(preview);
+    await settle();
+    expect(preview.shadowRoot?.querySelector("pre")?.textContent).toBe("hello world");
   });
 
   it("mints one new handle on a media error and shows the error if that fails too", async () => {

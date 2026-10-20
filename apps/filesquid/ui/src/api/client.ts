@@ -407,7 +407,7 @@ export interface MintedHandle {
 
 /** Options for a call that only needs a way to be cancelled. */
 export interface AbortOptions {
-  /** Cancels the upload. */
+  /** Cancels the call. */
   signal?: AbortSignal;
 }
 
@@ -690,6 +690,11 @@ export class FileSquidClient {
       method: "POST",
       body: request,
       signal: options.signal,
+    }).catch((error: unknown) => {
+      if (error instanceof SyntaxError) {
+        throw new TypeError("content handle answer is not a content handle");
+      }
+      throw error;
     });
     const record = (typeof answer === "object" && answer !== null ? answer : {}) as Record<
       string,

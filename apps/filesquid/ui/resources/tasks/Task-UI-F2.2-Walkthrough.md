@@ -12,8 +12,8 @@ Holistic review first ([holistic-ui.md](../../../../../.agents/rules/holistic-ui
 | [UI-S-019](../srs.md) | Every component shows a file's display name from the API and never its stored name; downloads use the API's download name | `file-browser.test.ts` and `file-browser-writes.test.ts` scan every shadow root's text and attributes for the stored names after listing, folder navigation, preview, rename, remove and Undo; `files-model.test.ts` (the row carries the stored path only in `key` and `path`); the Playwright spec scans the built page the same way |
 | [UI-S-014](../srs.md) | Client authorisation: a content handle is the only credential the UI may put in a URL, only as a media `src`; one new handle on a media error, resuming position and paused state | `tests/unit/files-source.test.ts` (`mintContentHandle`: authenticated POST, answer checked, no quote of the handle in an error), `tests/unit/media-handle.test.ts`, `tests/ui/file-preview.test.ts`, Playwright (real PNG, WebM and WAV decoded through handles; a video resumed at 1 s paused; a second failure shows the error with exactly two mints; handle absent from address, storage, cookie, history, links and text) |
 | [UI-S-016](../srs.md) | Accessibility contracts | shared stylesheet first in each new shadow root (`component-styles.test.ts`), named `table`, `toolbar`, `region` and `complementary` landmarks and the audit in `file-browser.test.ts`, roving Tab stop and list keys, focus recovery, 320 px and 200 % text without sideways scroll, reduced motion, the 2px focus ring (Playwright) |
-| [UI-S-001](../srs.md) | Components styled only through design tokens and worded only through the label table | `component-styles.test.ts` covers `fs-file-browser.ts`, `fs-file-preview.ts` and the three helper stylesheets; 62 new keys are in `REQUIRED_LABEL_KEYS`, both `labels.en.json` files and every assertion reads the table |
-| [UI-S-005](../srs.md) | A distribution's label table defines every key of the default table | the 62 new keys are in `apps/imagesquid/src/theme/labels.en.json` (its tests pass) |
+| [UI-S-001](../srs.md) | Components styled only through design tokens and worded only through the label table | `component-styles.test.ts` covers `fs-file-browser.ts`, `fs-file-preview.ts` and the three helper stylesheets; 61 new keys are in `REQUIRED_LABEL_KEYS`, both `labels.en.json` files and every assertion reads the table |
+| [UI-S-005](../srs.md) | A distribution's label table defines every key of the default table | the 61 new keys are in `apps/imagesquid/src/theme/labels.en.json` (its tests pass) |
 | [UI-S-013](../srs.md) | UI tests against production artifacts with strict DOM assertions | `tests/e2e/preview/file-browser.spec.ts` (17 tests) against `vite build` plus `vite preview` |
 | [UI-S-006](../srs.md) | Drive-style views, sorting, selection and preferences (forward) | not built here by design: the row model, column table, `FileSource` writes and `fs-file-open` event are the hooks UI-F2.8 extends |
 | [UI-S-022](../srs.md) | File panel tabs (forward) | `registerPanel` and the `fileRef` contract; each tab will be its own element mounted in a slot |
@@ -52,7 +52,7 @@ Constraint gates (the Plan's C1 to C22, each coded and tested):
 - **Files model and sources** ([`src/files/`](../../src/files/)): `model.ts` (types from the generated contract, limits, `FileRow`, names, sizes, dates, the location route, preview kinds), `window.ts`, `keys.ts`, `source.ts` (`FileSource`, `ClientFileSource`), `memory-source.ts` (fixture answering like the file routes, used by tests), `ops.ts` (batch upload, name rules, failure words), `media-handle.ts` (single re-mint controller).
 - **`FileSquidClient`** ([`api/client.ts`](../../src/api/client.ts)): `mintContentHandle()` (authenticated `POST /api/v1/content-handles`; the answer is checked: 43 base64url characters and exactly the content route; returns the URL on the active host base; neither handle nor URL is ever in an error or log) and `putBytes()` (raw `PUT`, as the upload route takes).
 - **Route** ([`app/routes.ts`](../../src/app/routes.ts), [`app/main.ts`](../../src/app/main.ts)): `bindFilesRoute` shows the browser for `#/files/<library>/<object>/<folder>/...`; entering a folder writes the address with `pushState`; Back follows.
-- **Labels** (default and ImageSquid): 62 `size*` and `file*` keys; ImageSquid words three of them for photos.
+- **Labels** (default and ImageSquid): 61 `size*` and `file*` keys; ImageSquid words three of them for photos.
 - **Existing tests updated**: `component-styles.test.ts` lists the two new elements, `production-build.spec.ts` defines them.
 - **Docs**: package [README](../../README.md) section "File browser", [plan.md](../plan.md) box and status, the root checklist box, two feature files.
 
@@ -65,6 +65,8 @@ Constraint gates (the Plan's C1 to C22, each coded and tested):
 - **Upload contract.** `FileSquidClient.upload()` (multipart with a `CommandEnvelope`, UI-S-012) does not match `PUT /files/upload` (octet-stream, identifying fields in the query), so the browser uses the new `putBytes()`. The platform engineer should confirm which of the two the SRS means for file uploads.
 - **No file events.** The browser reloads after its own writes only; it does not follow other writers. A file-change event on the event channel would let it refresh (UI-F2.1b adds `navigation.change`).
 - **Server-backed Playwright suite not run.** `npm run test:e2e` builds `filesquid-server` with Cargo and this task builds no Rust; its code is unchanged by this task. The static preview suite was run (see below). On this machine the installed Playwright (1.64.1) expects a different Chromium build than `/opt/pw-browsers` holds, so a local, uncommitted config pointing `executablePath` at the installed headless shell ran the same specs.
+
+A first Cubic review of the head commit found 50 items (2 P1, 28 P2, 20 P3); the fixes are in the second commit and covered by new tests (single Tab stop when the stop row is scrolled out, Undo into the object removed from, aborted loads not shown as errors, stale loads not overwriting state, `Range`-ignoring hosts, empty text files, grid arrow keys, upload batch limits and name length, and others).
 
 ## How it was tested
 
@@ -95,7 +97,7 @@ Mocked environment variables: none.
 
 ```
 
- RUN  v4.1.12 /home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui
+ RUN  v4.1.12 <repo>/apps/filesquid/ui
 
  ❯ tests/ui/file-browser-writes.test.ts (25 tests | 25 failed) 52ms
      × uploads each chosen file with one PUT into the current folder and reports the committed version 13ms
@@ -130,7 +132,7 @@ Mocked environment variables: none.
    Start at  02:31:24
    Duration  1.89s (transform 1.40s, setup 168ms, import 1.48s, tests 127ms, environment 1.34s)
 
-JUNIT report written to /home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/tests/allure-results/vitest-junit.xml
+JUNIT report written to <repo>/apps/filesquid/ui/tests/allure-results/vitest-junit.xml
 ```
 
 ### Lint, format and types (apps/filesquid/ui)
@@ -155,25 +157,25 @@ tsc exit 0
 > vitest run
 
 
- RUN  v4.1.12 /home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui
+ RUN  v4.1.12 <repo>/apps/filesquid/ui
 
- ✓ tests/ui/nav-tree.test.ts (26 tests) 937ms
- ✓ tests/ui/file-browser-writes.test.ts (27 tests) 1218ms
- ✓ tests/ui/file-browser.test.ts (33 tests) 1569ms
-     ✓ is a defined custom element that mounts alone, without panels or a distribution  343ms
- ✓ tests/unit/component-styles.test.ts (126 tests) 71ms
+ ✓ tests/ui/nav-tree.test.ts (26 tests) 1118ms
+ ✓ tests/ui/file-browser-writes.test.ts (30 tests) 1581ms
+     ✓ uploads each chosen file with one PUT into the current folder and reports the committed version  316ms
+ ✓ tests/ui/file-browser.test.ts (36 tests) 2202ms
+     ✓ is a defined custom element that mounts alone, without panels or a distribution  367ms
 stderr | tests/ui/host-indicator.test.ts > <fs-host-indicator> loading and error > shows the error state and no host when the descriptor cannot be read
 FileSquid host descriptor could not be read ApiError: FileSquid API /api/v1/host failed with HTTP 500
-    at /home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/tests/ui/host-indicator.test.ts:205:46
-    at file:///home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11
-    at file:///home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26
-    at file:///home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20
+    at <repo>/apps/filesquid/ui/tests/ui/host-indicator.test.ts:205:46
+    at file://<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11
+    at file://<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26
+    at file://<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20
     at new Promise (<anonymous>)
-    at runWithCancel (file:///home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)
-    at file:///home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20
+    at runWithCancel (file://<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)
+    at file://<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20
     at new Promise (<anonymous>)
-    at runWithTimeout (file:///home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)
-    at file:///home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2956:64 {
+    at runWithTimeout (file://<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)
+    at file://<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2956:64 {
   status: 500,
   path: '/api/v1/host',
   code: undefined,
@@ -183,16 +185,16 @@ FileSquid host descriptor could not be read ApiError: FileSquid API /api/v1/host
 
 stderr | tests/ui/host-indicator.test.ts > <fs-host-indicator> loading and error > shows the denied state for an authorisation denial
 FileSquid host descriptor could not be read ApiError: FileSquid API /api/v1/host failed with HTTP 401 (missing_credentials)
-    at /home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/tests/ui/host-indicator.test.ts:214:20
-    at file:///home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11
-    at file:///home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26
-    at file:///home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20
+    at <repo>/apps/filesquid/ui/tests/ui/host-indicator.test.ts:214:20
+    at file://<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11
+    at file://<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26
+    at file://<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20
     at new Promise (<anonymous>)
-    at runWithCancel (file:///home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)
-    at file:///home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20
+    at runWithCancel (file://<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)
+    at file://<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20
     at new Promise (<anonymous>)
-    at runWithTimeout (file:///home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)
-    at file:///home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2956:64 {
+    at runWithTimeout (file://<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)
+    at file://<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2956:64 {
   status: 401,
   path: '/api/v1/host',
   code: 'unauthorized',
@@ -202,29 +204,29 @@ FileSquid host descriptor could not be read ApiError: FileSquid API /api/v1/host
 
 stderr | tests/ui/host-indicator.test.ts > <fs-host-indicator> loading and error > shows the offline state with Retry when the read fails while the browser is offline
 FileSquid host descriptor could not be read TypeError: Failed to fetch
-    at /home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/tests/ui/host-indicator.test.ts:233:29
-    at file:///home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11
-    at file:///home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26
-    at file:///home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20
+    at <repo>/apps/filesquid/ui/tests/ui/host-indicator.test.ts:233:29
+    at file://<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11
+    at file://<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26
+    at file://<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20
     at new Promise (<anonymous>)
-    at runWithCancel (file:///home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)
-    at file:///home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20
+    at runWithCancel (file://<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)
+    at file://<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20
     at new Promise (<anonymous>)
-    at runWithTimeout (file:///home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)
-    at file:///home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2956:64
+    at runWithTimeout (file://<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)
+    at file://<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2956:64
 
 stderr | tests/ui/host-indicator.test.ts > <fs-host-indicator> loading and error > reads again when Retry is pressed and recovers
 FileSquid host descriptor could not be read ApiError: FileSquid API /api/v1/host failed with HTTP 500
-    at /home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/tests/ui/host-indicator.test.ts:245:29
-    at file:///home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11
-    at file:///home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26
-    at file:///home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20
+    at <repo>/apps/filesquid/ui/tests/ui/host-indicator.test.ts:245:29
+    at file://<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11
+    at file://<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26
+    at file://<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20
     at new Promise (<anonymous>)
-    at runWithCancel (file:///home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)
-    at file:///home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20
+    at runWithCancel (file://<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)
+    at file://<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20
     at new Promise (<anonymous>)
-    at runWithTimeout (file:///home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)
-    at file:///home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2956:64 {
+    at runWithTimeout (file://<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)
+    at file://<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2956:64 {
   status: 500,
   path: '/api/v1/host',
   code: undefined,
@@ -235,59 +237,60 @@ FileSquid host descriptor could not be read ApiError: FileSquid API /api/v1/host
 stderr | tests/ui/host-indicator.test.ts > <fs-host-indicator> follows the host > reads again when a host.change payload breaks the contract
 FileSquid host.change payload broke the contract; reading the descriptor
 
- ✓ tests/ui/host-indicator.test.ts (27 tests) 277ms
- ✓ tests/ui/accessibility.test.ts (19 tests) 522ms
- ✓ tests/unit/client-auth.test.ts (23 tests) 69ms
- ✓ tests/unit/client-io.test.ts (22 tests) 66ms
- ✓ tests/unit/theme.test.ts (26 tests) 32ms
- ✓ tests/unit/files-source.test.ts (19 tests) 37ms
- ✓ tests/ui/monitor.test.ts (14 tests) 232ms
- ✓ tests/unit/navigation-store.test.ts (19 tests) 39ms
+ ✓ tests/unit/component-styles.test.ts (126 tests) 99ms
+ ✓ tests/ui/host-indicator.test.ts (27 tests) 303ms
+ ✓ tests/ui/accessibility.test.ts (19 tests) 530ms
+ ✓ tests/unit/files-source.test.ts (22 tests) 57ms
+ ✓ tests/unit/client-auth.test.ts (23 tests) 61ms
+ ✓ tests/unit/client-io.test.ts (22 tests) 65ms
+ ✓ tests/unit/theme.test.ts (26 tests) 58ms
 stderr | tests/ui/file-preview.test.ts > <fs-file-preview> > shows the error state with Try again when the details cannot be read, and retries
 FileSquid could not preview a file Error
 
 stderr | tests/ui/file-preview.test.ts > <fs-file-preview> > shows permission denied with the reason's label
 FileSquid could not preview a file ApiError
 
- ✓ tests/ui/file-preview.test.ts (13 tests) 153ms
- ✓ tests/unit/navigation-model.test.ts (30 tests) 37ms
- ✓ tests/ui/app-shell.test.ts (18 tests) 444ms
- ✓ tests/unit/a11y-audit.test.ts (19 tests) 111ms
- ✓ tests/unit/navigation-source.test.ts (18 tests) 41ms
- ✓ tests/unit/theme-store.test.ts (23 tests) 33ms
- ✓ tests/unit/media-handle.test.ts (11 tests) 82ms
- ✓ tests/unit/files-model.test.ts (52 tests) 48ms
- ✓ tests/unit/commands.test.ts (45 tests) 37ms
- ✓ tests/unit/host-descriptor.test.ts (43 tests) 42ms
- ✓ tests/unit/files-memory-source.test.ts (13 tests) 33ms
- ✓ tests/unit/files-ops.test.ts (20 tests) 91ms
- ✓ tests/unit/focus.test.ts (16 tests) 89ms
- ✓ tests/unit/files-window.test.ts (17 tests) 23ms
- ✓ tests/ui/states.test.ts (16 tests) 105ms
- ✓ tests/unit/test-reporting.test.ts (12 tests) 15ms
+ ✓ tests/ui/file-preview.test.ts (15 tests) 268ms
+ ✓ tests/ui/monitor.test.ts (14 tests) 279ms
+ ✓ tests/unit/navigation-store.test.ts (19 tests) 49ms
+ ✓ tests/ui/app-shell.test.ts (18 tests) 379ms
+ ✓ tests/unit/a11y-audit.test.ts (19 tests) 144ms
+ ✓ tests/unit/navigation-model.test.ts (30 tests) 45ms
+Not implemented: HTMLMediaElement's pause() method
+ ✓ tests/unit/media-handle.test.ts (13 tests) 112ms
+ ✓ tests/unit/navigation-source.test.ts (18 tests) 39ms
+ ✓ tests/unit/theme-store.test.ts (23 tests) 39ms
+ ✓ tests/unit/files-model.test.ts (58 tests) 74ms
+ ✓ tests/unit/files-ops.test.ts (23 tests) 112ms
+ ✓ tests/unit/commands.test.ts (45 tests) 35ms
+ ✓ tests/unit/host-descriptor.test.ts (43 tests) 41ms
+ ✓ tests/unit/files-memory-source.test.ts (14 tests) 27ms
+ ✓ tests/unit/files-window.test.ts (19 tests) 24ms
+ ✓ tests/unit/focus.test.ts (16 tests) 81ms
+ ✓ tests/ui/states.test.ts (16 tests) 141ms
+ ✓ tests/unit/test-reporting.test.ts (12 tests) 18ms
+ ✓ tests/unit/test-scripts.test.ts (10 tests) 1163ms
  ✓ tests/unit/host-adapter.test.ts (13 tests) 76ms
- ✓ tests/unit/test-scripts.test.ts (10 tests) 982ms
- ✓ tests/ui/theme-control.test.ts (8 tests) 99ms
- ✓ tests/unit/admin-client.test.ts (6 tests) 19ms
+ ✓ tests/ui/files-route.test.ts (6 tests) 455ms
+ ✓ tests/ui/theme-control.test.ts (8 tests) 82ms
+ ✓ tests/unit/admin-client.test.ts (6 tests) 23ms
  ✓ tests/unit/nav-tree-keys.test.ts (8 tests) 13ms
- ✓ tests/unit/client.test.ts (8 tests) 21ms
- ✓ tests/unit/preferences.test.ts (10 tests) 19ms
- ✓ tests/ui/files-route.test.ts (5 tests) 444ms
-     ✓ shows the browser at the folder the hash names, now and after a hash change  311ms
- ✓ tests/ui/breadcrumb.test.ts (6 tests) 74ms
- ✓ tests/unit/view-state.test.ts (4 tests) 10ms
+ ✓ tests/unit/client.test.ts (8 tests) 17ms
+ ✓ tests/unit/preferences.test.ts (10 tests) 28ms
+ ✓ tests/ui/breadcrumb.test.ts (6 tests) 82ms
+ ✓ tests/unit/host-client.test.ts (4 tests) 21ms
+ ✓ tests/unit/view-state.test.ts (4 tests) 15ms
  ✓ tests/unit/contrast.test.ts (13 tests) 26ms
- ✓ tests/unit/host-client.test.ts (4 tests) 14ms
- ✓ tests/ui/monitor-route.test.ts (2 tests) 28ms
- ✓ tests/unit/distribution.test.ts (3 tests) 8ms
- ✓ tests/unit/contract.test.ts (1 test) 153ms
+ ✓ tests/unit/distribution.test.ts (3 tests) 7ms
+ ✓ tests/ui/monitor-route.test.ts (2 tests) 30ms
+ ✓ tests/unit/contract.test.ts (1 test) 160ms
 
  Test Files  43 passed (43)
-      Tests  848 passed (848)
-   Start at  02:48:42
-   Duration  16.71s (transform 2.80s, setup 1.87s, import 5.15s, tests 8.44s, environment 24.44s)
+      Tests  874 passed (874)
+   Start at  03:07:27
+   Duration  18.24s (transform 2.98s, setup 1.93s, import 5.47s, tests 10.18s, environment 26.05s)
 
-JUNIT report written to /home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/filesquid/ui/tests/allure-results/vitest-junit.xml
+JUNIT report written to <repo>/apps/filesquid/ui/tests/allure-results/vitest-junit.xml
 ```
 
 ### Playwright on the production build (apps/filesquid/ui, `vite build` plus `vite preview`)
@@ -296,41 +299,41 @@ JUNIT report written to /home/user/filesquid/.claude/worktrees/agent-a85044533a2
 
 Running 33 tests using 2 workers
 
-  ✓   1 [chromium] › tests/e2e/preview/host-indicator.spec.ts:86:1 › the indicator is a defined custom element in the shell header, named from the label table (306ms)
-  ✓   2 [chromium] › tests/e2e/preview/file-browser.spec.ts:88:1 › the browser is a defined element and lists display names in the list layout from the label table (399ms)
-  ✓   3 [chromium] › tests/e2e/preview/host-indicator.spec.ts:100:1 › the desktop host says only you can read your files, and shows the not-enrolled state (246ms)
-  ✓   4 [chromium] › tests/e2e/preview/file-browser.spec.ts:130:1 › a file row shows size, type hint, modified date and version (317ms)
-  ✓   5 [chromium] › tests/e2e/preview/host-indicator.spec.ts:114:1 › a server names its operator, who can read the files, and states the at-rest duty (226ms)
-  ✓   7 [chromium] › tests/e2e/preview/host-indicator.spec.ts:127:1 › a server without an operator name uses the unnamed-operator label (212ms)
-  ✓   6 [chromium] › tests/e2e/preview/file-browser.spec.ts:142:1 › computed token values are exact in the browser in light and dark (455ms)
-  ✓   8 [chromium] › tests/e2e/preview/host-indicator.spec.ts:139:1 › the browser host says files are decrypted only in this browser (235ms)
-  ✓  10 [chromium] › tests/e2e/preview/host-indicator.spec.ts:152:1 › enrolled backup and sync are shown apart from the host, as ciphertext only (239ms)
-  ✓   9 [chromium] › tests/e2e/preview/file-browser.spec.ts:165:1 › opening a folder updates the breadcrumb and the address, and Back returns (509ms)
-  ✓  11 [chromium] › tests/e2e/preview/host-indicator.spec.ts:177:1 › a host.change event updates the indicator without a reload or another read (257ms)
-  ✓  13 [chromium] › tests/e2e/preview/host-indicator.spec.ts:199:1 › events.resync makes the indicator read the descriptor again (233ms)
-  ✓  12 [chromium] › tests/e2e/preview/file-browser.spec.ts:186:1 › an image previews through a content handle that is used only as the media src (409ms)
-  ✓  15 [chromium] › tests/e2e/preview/file-browser.spec.ts:220:1 › a handle that fails is replaced once; a second failure shows the error and mints no third (321ms)
-  ✓  16 [chromium] › tests/e2e/preview/file-browser.spec.ts:236:1 › a video resumes at the same position and paused state after one new handle (445ms)
-  ✓  14 [chromium] › tests/e2e/preview/host-indicator.spec.ts:212:1 › loading shows no host until the descriptor arrives (1.0s)
-  ✓  17 [chromium] › tests/e2e/preview/file-browser.spec.ts:272:1 › audio plays natively and is named by the display name (447ms)
-  ✓  18 [chromium] › tests/e2e/preview/host-indicator.spec.ts:224:1 › a failed read shows the error state and never a guessed host, then Retry recovers (327ms)
-  ✓  20 [chromium] › tests/e2e/preview/host-indicator.spec.ts:242:1 › computed token values are exact in light and dark (275ms)
-  ✓  19 [chromium] › tests/e2e/preview/file-browser.spec.ts:285:1 › text previews through one ranged read of the first 64 KiB and says it is cut (390ms)
-  ✓  21 [chromium] › tests/e2e/preview/host-indicator.spec.ts:267:1 › the indicator is reachable by keyboard and has a visible focus outline (284ms)
-  ✓  22 [chromium] › tests/e2e/preview/file-browser.spec.ts:299:1 › a format it cannot show says so and shows no viewer (330ms)
-  ✓  23 [chromium] › tests/e2e/preview/production-build.spec.ts:58:1 › the built page is static, mounts the shell and defines every custom element (263ms)
-  ✓  24 [chromium] › tests/e2e/preview/file-browser.spec.ts:312:1 › the viewer steps through files, closes with Escape and returns focus to the row (429ms)
-  ✓  25 [chromium] › tests/e2e/preview/production-build.spec.ts:75:1 › navigation, API status and theme legend words come from the active label table (263ms)
-  ✓  27 [chromium] › tests/e2e/preview/production-build.spec.ts:93:1 › computed token values are exact in light and dark (270ms)
-  ✓  28 [chromium] › tests/e2e/preview/production-build.spec.ts:109:1 › a refused health call shows the unavailable alert, not a console error from the app (239ms)
-  ✓  26 [chromium] › tests/e2e/preview/file-browser.spec.ts:325:1 › writes are single calls: upload, new folder, rename, remove and Undo (785ms)
-  ✓  29 [chromium] › tests/e2e/preview/file-browser.spec.ts:382:1 › a refused write shows the label for its reason and changes nothing (250ms)
-  ✓  30 [chromium] › tests/e2e/preview/file-browser.spec.ts:397:1 › a long folder is virtualised, pages in on demand and stays keyboard reachable (437ms)
-  ✓  31 [chromium] › tests/e2e/preview/file-browser.spec.ts:437:1 › the layout does not scroll sideways at 320 px, at 200 % text size, or both, in list and grid (280ms)
-  ✓  32 [chromium] › tests/e2e/preview/file-browser.spec.ts:454:1 › motion stops under reduced motion and focus is the 2px primary ring (303ms)
-  ✓  33 [chromium] › tests/e2e/preview/file-browser.spec.ts:479:1 › a failed listing shows the error state with Try again, and retrying loads it (252ms)
+  ✓   1 [chromium] › tests/e2e/preview/host-indicator.spec.ts:86:1 › the indicator is a defined custom element in the shell header, named from the label table (800ms)
+  ✓   2 [chromium] › tests/e2e/preview/file-browser.spec.ts:96:1 › the browser is a defined element and lists display names in the list layout from the label table (853ms)
+  ✓   4 [chromium] › tests/e2e/preview/file-browser.spec.ts:140:1 › a file row shows size, type hint, modified date and version (305ms)
+  ✓   3 [chromium] › tests/e2e/preview/host-indicator.spec.ts:100:1 › the desktop host says only you can read your files, and shows the not-enrolled state (316ms)
+  ✓   6 [chromium] › tests/e2e/preview/host-indicator.spec.ts:114:1 › a server names its operator, who can read the files, and states the at-rest duty (277ms)
+  ✓   5 [chromium] › tests/e2e/preview/file-browser.spec.ts:152:1 › computed token values are exact in the browser in light and dark (484ms)
+  ✓   7 [chromium] › tests/e2e/preview/host-indicator.spec.ts:127:1 › a server without an operator name uses the unnamed-operator label (263ms)
+  ✓   9 [chromium] › tests/e2e/preview/host-indicator.spec.ts:139:1 › the browser host says files are decrypted only in this browser (272ms)
+  ✓   8 [chromium] › tests/e2e/preview/file-browser.spec.ts:175:1 › opening a folder updates the breadcrumb and the address, and Back returns (485ms)
+  ✓  10 [chromium] › tests/e2e/preview/host-indicator.spec.ts:152:1 › enrolled backup and sync are shown apart from the host, as ciphertext only (236ms)
+  ✓  12 [chromium] › tests/e2e/preview/host-indicator.spec.ts:177:1 › a host.change event updates the indicator without a reload or another read (244ms)
+  ✓  11 [chromium] › tests/e2e/preview/file-browser.spec.ts:196:1 › an image previews through a content handle that is used only as the media src (458ms)
+  ✓  13 [chromium] › tests/e2e/preview/host-indicator.spec.ts:199:1 › events.resync makes the indicator read the descriptor again (244ms)
+  ✓  14 [chromium] › tests/e2e/preview/file-browser.spec.ts:231:1 › a handle that fails is replaced once; a second failure shows the error and mints no third (343ms)
+  ✓  16 [chromium] › tests/e2e/preview/file-browser.spec.ts:247:1 › a video resumes at the same position and paused state after one new handle (536ms)
+  ✓  17 [chromium] › tests/e2e/preview/file-browser.spec.ts:283:1 › audio plays natively and is named by the display name (303ms)
+  ✓  15 [chromium] › tests/e2e/preview/host-indicator.spec.ts:212:1 › loading shows no host until the descriptor arrives (1.1s)
+  ✓  19 [chromium] › tests/e2e/preview/host-indicator.spec.ts:224:1 › a failed read shows the error state and never a guessed host, then Retry recovers (272ms)
+  ✓  18 [chromium] › tests/e2e/preview/file-browser.spec.ts:296:1 › text previews through one ranged read of the first 64 KiB and says it is cut (362ms)
+  ✓  20 [chromium] › tests/e2e/preview/host-indicator.spec.ts:242:1 › computed token values are exact in light and dark (298ms)
+  ✓  21 [chromium] › tests/e2e/preview/file-browser.spec.ts:312:1 › a format it cannot show says so and shows no viewer (357ms)
+  ✓  22 [chromium] › tests/e2e/preview/host-indicator.spec.ts:267:1 › the indicator is reachable by keyboard and has a visible focus outline (319ms)
+  ✓  23 [chromium] › tests/e2e/preview/file-browser.spec.ts:325:1 › the viewer steps through files, closes with Escape and returns focus to the row (456ms)
+  ✓  24 [chromium] › tests/e2e/preview/production-build.spec.ts:58:1 › the built page is static, mounts the shell and defines every custom element (314ms)
+  ✓  26 [chromium] › tests/e2e/preview/production-build.spec.ts:75:1 › navigation, API status and theme legend words come from the active label table (249ms)
+  ✓  27 [chromium] › tests/e2e/preview/production-build.spec.ts:93:1 › computed token values are exact in light and dark (233ms)
+  ✓  28 [chromium] › tests/e2e/preview/production-build.spec.ts:109:1 › a refused health call shows the unavailable alert, not a console error from the app (193ms)
+  ✓  25 [chromium] › tests/e2e/preview/file-browser.spec.ts:338:1 › writes are single calls: upload, new folder, rename, remove and Undo (828ms)
+  ✓  29 [chromium] › tests/e2e/preview/file-browser.spec.ts:397:1 › a refused write shows the label for its reason and changes nothing (291ms)
+  ✓  30 [chromium] › tests/e2e/preview/file-browser.spec.ts:412:1 › a long folder is virtualised, pages in on demand and stays keyboard reachable (379ms)
+  ✓  31 [chromium] › tests/e2e/preview/file-browser.spec.ts:452:1 › the layout does not scroll sideways at 320 px, at 200 % text size, or both, in list and grid (247ms)
+  ✓  32 [chromium] › tests/e2e/preview/file-browser.spec.ts:469:1 › motion stops under reduced motion and focus is the 2px primary ring (254ms)
+  ✓  33 [chromium] › tests/e2e/preview/file-browser.spec.ts:494:1 › a failed listing shows the error state with Try again, and retrying loads it (250ms)
 
-  33 passed (15.1s)
+  33 passed (16.1s)
 exit 0
 ```
 
@@ -356,19 +359,19 @@ tsc exit 0
 > vitest run
 
 
- RUN  v4.1.12 /home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/imagesquid
+ RUN  v4.1.12 <repo>/apps/imagesquid
 
- ✓ tests/unit/test-reporting.test.ts (12 tests) 25ms
- ✓ tests/unit/theme.test.ts (10 tests) 20ms
- ✓ tests/ui/distribution.test.ts (5 tests) 206ms
- ✓ tests/unit/test-scripts.test.ts (10 tests) 992ms
+ ✓ tests/unit/test-reporting.test.ts (12 tests) 19ms
+ ✓ tests/unit/theme.test.ts (10 tests) 19ms
+ ✓ tests/unit/test-scripts.test.ts (10 tests) 1077ms
+ ✓ tests/ui/distribution.test.ts (5 tests) 166ms
 
  Test Files  4 passed (4)
       Tests  37 passed (37)
-   Start at  02:49:29
-   Duration  2.08s (transform 1.03s, setup 262ms, import 1.16s, tests 1.24s, environment 2.21s)
+   Start at  03:08:21
+   Duration  2.36s (transform 1.38s, setup 291ms, import 1.45s, tests 1.28s, environment 2.39s)
 
-JUNIT report written to /home/user/filesquid/.claude/worktrees/agent-a85044533a2959408/apps/imagesquid/tests/allure-results/vitest-junit.xml
+JUNIT report written to <repo>/apps/imagesquid/tests/allure-results/vitest-junit.xml
 ```
 
 ### Playwright on the production build (apps/imagesquid)

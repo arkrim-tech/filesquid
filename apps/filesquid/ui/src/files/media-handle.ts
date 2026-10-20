@@ -38,6 +38,7 @@ export class MediaHandleController {
   private armed = true;
   private reminted = 0;
   private disposed = false;
+  private onMetadata?: () => void;
   private readonly onError = () => void this.recover();
   private readonly onLoad = () => this.loaded();
 
@@ -69,9 +70,16 @@ export class MediaHandleController {
     this.element.setAttribute("src", url);
   }
 
-  /** Detach: remove the listeners and ignore any mint still in flight. Idempotent. */
+  /**
+   * Detach: remove the listeners, stop playback, drop the source and ignore any mint still in
+   * flight. Idempotent.
+   */
   dispose(): void {
     this.disposed = true;
+    if (this.onMetadata) this.element.removeEventListener("loadedmetadata", this.onMetadata);
+    this.onMetadata = undefined;
+    if (isTimed(this.element) && !this.element.paused) this.element.pause();
+    this.element.removeAttribute("src");
     this.element.removeEventListener("error", this.onError);
     this.element.removeEventListener("load", this.onLoad);
     this.element.removeEventListener("loadeddata", this.onLoad);
@@ -118,7 +126,9 @@ export class MediaHandleController {
   private attach(url: string, resume: Resume): void {
     const el = this.element;
     if (isTimed(el)) {
-      el.addEventListener("loadedmetadata", () => void this.resume(el, resume), { once: true });
+      if (this.onMetadata) el.removeEventListener("loadedmetadata", this.onMetadata);
+      this.onMetadata = () => void this.resume(el, resume);
+      el.addEventListener("loadedmetadata", this.onMetadata, { once: true });
     }
     el.setAttribute("src", url);
   }

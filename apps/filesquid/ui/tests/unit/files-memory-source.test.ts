@@ -59,7 +59,23 @@ describe("MemoryFileSource listing", () => {
   it("rejects every call with the failure it was told to raise", async () => {
     const s = source();
     s.failure = new Error("boom");
+    const file = { ...LOCATION, version: "v1", path: "top.png", display_name: "top.png" };
     await expect(s.list(LOCATION)).rejects.toThrow("boom");
+    await expect(s.details(file)).rejects.toThrow("boom");
+    await expect(s.remove(LOCATION, "top.png")).rejects.toThrow("boom");
+  });
+
+  it("orders names by Unicode code point, not by UTF-16 unit", async () => {
+    const s = new MemoryFileSource({
+      library_id: "lib",
+      object_id: "obj",
+      files: [
+        { path: "\u{1F600}.txt", content: "a" },
+        { path: "\uFF21.txt", content: "b" },
+      ],
+    });
+    const page = await s.list(LOCATION);
+    expect(page.entries.map((e) => e.name)).toEqual(["\uFF21.txt", "\u{1F600}.txt"]);
   });
 });
 

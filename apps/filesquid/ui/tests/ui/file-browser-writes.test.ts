@@ -169,6 +169,35 @@ describe("upload", () => {
     expect(one(browser, ".drop").hidden).toBe(true);
   });
 
+  it("says how many files a batch left out and offers them again", async () => {
+    const source = fixture();
+    const upload = vi.spyOn(source, "upload").mockResolvedValue({
+      library_id: "lib",
+      object_id: "obj",
+      version: "v2",
+      created: "t",
+    });
+    const browser = await mount(source);
+    const files = Array.from({ length: 1002 }, (_, i) => new File(["a"], `f${i}.txt`));
+    await choose(browser, files);
+    expect(upload).toHaveBeenCalledTimes(1000);
+    expect(alert(browser)).toContain(
+      "2 files were not uploaded because one batch holds at most 1000.",
+    );
+    await click(one(browser, "button.retry"));
+    await idle(browser);
+    expect(upload).toHaveBeenCalledTimes(1002);
+  });
+
+  it("refuses a name longer than 255 bytes before sending it", async () => {
+    const source = fixture();
+    const upload = vi.spyOn(source, "upload");
+    const browser = await mount(source);
+    await choose(browser, [new File(["a"], `${"n".repeat(256)}.txt`)]);
+    expect(upload).not.toHaveBeenCalled();
+    expect(alert(browser)).toContain(labels.fileNameTooLong);
+  });
+
   it("strips path separators from the name it uploads under", async () => {
     const source = fixture();
     const upload = vi.spyOn(source, "upload");
@@ -273,7 +302,7 @@ describe("rename or move", () => {
     expect(one<HTMLInputElement>(browser, "input[name=folder]").value).toBe("");
     await submit(browser, { name: "notes-final.txt" });
     expect(move).toHaveBeenCalledWith(expect.anything(), "3f9a0005.txt", "notes-final.txt");
-    expect(status(browser)).toBe("readme.txt moved. Version v2 committed.");
+    expect(status(browser)).toBe("notes-final.txt moved. Version v2 committed.");
     expect(deepText(rootOf(browser))).not.toContain("3f9a0005");
   });
 
@@ -394,9 +423,26 @@ describe("remove and restore", () => {
     expect(rootOf(browser).querySelector("button.undo")).toBeNull();
   });
 
-  it("never shows a stored name after any write", async () => {
+  it("restores into the object the file was removed from, even after another object is opened", async () => {
+    const source = fixture();
+    const restore = vi.spyOn(source, "restore");
+    const browser = await mount(source);
+    control(browser, "readme.txt").focus();
+    await click(one(browser, "button.remove"));
+    browser.location = { library_id: "other-lib", object_id: "other-obj", prefix: "" };
+    await click(one(browser, "button.undo"));
+    expect(restore).toHaveBeenCalledWith({ library_id: "lib", object_id: "obj" }, "v1", [
+      "3f9a0005.txt",
+    ]);
+  });
+
+  it("never shows a stored name after a move, a remove and an undo", async () => {
     const browser = await mount(fixture());
     control(browser, "readme.txt").focus();
+    await click(one(browser, "button.rename"));
+    await submit(browser, { name: "renamed.txt", folder: "Drawings" });
+    control(browser, "Drawings");
+    control(browser, "facade-study.png").focus();
     await click(one(browser, "button.remove"));
     await click(one(browser, "button.undo"));
     for (const stored of STORED_NAMES) expect(deepText(rootOf(browser))).not.toContain(stored);

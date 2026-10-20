@@ -98,7 +98,6 @@ export const REQUIRED_LABEL_KEYS = [
   "sizeMB",
   "sizeGB",
   "sizeTB",
-  "fileBrowser",
   "fileRoot",
   "fileColumnName",
   "fileColumnSize",
@@ -136,7 +135,6 @@ export const REQUIRED_LABEL_KEYS = [
   "fileTextTruncated",
   "fileSummary",
   "fileMoreToLoad",
-  "fileLoadingMore",
   "fileLimitReached",
   "fileDropTarget",
   "fileUploading",
@@ -155,6 +153,7 @@ export const REQUIRED_LABEL_KEYS = [
   "fileActionFailed",
   "fileTypeUnknown",
   "fileTileMeta",
+  "fileUploadSkipped",
 ] as const;
 
 /** One required label key. */

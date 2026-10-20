@@ -217,7 +217,9 @@ export class FileList {
     });
     this.canvas.style.setProperty("--rows", String(range.rows));
     this.canvas.style.setProperty("--cols", String(columns));
-    this.element.setAttribute("aria-rowcount", this.more ? "-1" : String(this.rows.length + 1));
+    if (this.layout === "list") {
+      this.element.setAttribute("aria-rowcount", this.more ? "-1" : String(this.rows.length + 1));
+    } else this.element.removeAttribute("aria-rowcount");
     const wanted = new Set<string>();
     for (let i = range.start; i < range.end; i += 1) {
       wanted.add((this.rows[i] as FileRow).key);
@@ -232,7 +234,8 @@ export class FileList {
   /** Create or update the node of row `index` and position it. */
   private place(index: number, columns: number): void {
     const row = this.rows[index] as FileRow;
-    const signature = `${this.layout}|${row.name}|${row.size}|${row.modified}|${row.version}|${row.pending}`;
+    const link = row.kind === "folder" ? this.options.href(row) : "";
+    const signature = `${this.layout}|${row.name}|${row.size}|${row.modified}|${row.version}|${row.pending}|${link}`;
     let node = this.nodes.get(row.key);
     if (!node || this.signatures.get(node) !== signature)
       node = this.replaceNode(row, node, signature);
@@ -288,8 +291,12 @@ export class FileList {
   /** Make exactly one name control focusable by Tab: the chosen row's, else the first row's. */
   private applyTabStop(): void {
     const stop = this.rows[this.indexOfTab()]?.key;
+    // When the stop row is scrolled out of the window, the first rendered row stands in, so the
+    // listing always has one Tab stop.
+    const standIn = this.nodes.has(stop ?? "") ? stop : this.canvas.firstElementChild;
     for (const [key, node] of this.nodes) {
-      node.querySelector(".name")?.setAttribute("tabindex", key === stop ? "0" : "-1");
+      const isStop = key === standIn || node === standIn;
+      node.querySelector(".name")?.setAttribute("tabindex", isStop ? "0" : "-1");
       if (key === this.chosen) node.dataset.active = "";
       else delete node.dataset.active;
     }

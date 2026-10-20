@@ -182,6 +182,34 @@ describe("ClientFileSource", () => {
     expect(bytes.byteLength).toBe(10);
   });
 
+  it("takes the bytes at the range start when the host ignores Range and answers 200", async () => {
+    const whole = Uint8Array.from({ length: 100 }, (_, i) => i);
+    const { client } = clientWith(() => new Response(whole, { status: 200 }));
+    const bytes = await new ClientFileSource(client).readRange(REF, { start: 20, end: 24 });
+    expect([...bytes]).toEqual([20, 21, 22, 23, 24]);
+  });
+
+  it("stops reading a body that is longer than the range", async () => {
+    let pulled = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled += 1;
+        controller.enqueue(new Uint8Array(1024));
+      },
+    });
+    const { client } = clientWith(() => new Response(body, { status: 200 }));
+    const bytes = await new ClientFileSource(client).readRange(REF, { start: 0, end: 1500 });
+    expect(bytes.byteLength).toBe(1501);
+    expect(pulled).toBeLessThan(10);
+  });
+
+  it("answers a non-JSON mint answer with a TypeError", async () => {
+    const { client } = clientWith(() => new Response("<html>", { status: 200 }));
+    await expect(
+      client.mintContentHandle({ library_id: "l", object_id: "o", version: "v1", path: "p" }),
+    ).rejects.toBeInstanceOf(TypeError);
+  });
+
   it("uploads one file as one PUT with the path in the query", async () => {
     const { client, seen } = clientWith(() => json(200, COMMIT));
     const body = new Blob(["abc"]);
