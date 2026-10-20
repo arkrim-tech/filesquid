@@ -1,5 +1,5 @@
 //! `POST /api/v1/client-events` (API-S-030). The auth layer has authenticated and authorised
-//! the caller for [`Action::RecordClientEvents`] before [`record`] runs. The handler then:
+//! the caller for [`Action::RecordClientEvents`] before the handler runs. The handler then:
 //!
 //! 1. reads at most [`MAX_BODY_BYTES`] (`payload_too_large` past it);
 //! 2. parses and checks the batch ([`parse_batch`]; `invalid_request` on any fault);
