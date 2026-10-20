@@ -58,7 +58,7 @@ Order follows the **Dependencies** fields and the [release sequence](./implement
 
 ## MVP
 
-FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by gate Task FS-3.9 (13 of 28 done). PROV-O history (Task FS-2.8) and the durable journal with the Logs view and file panel tabs (Task FS-2.9) are in the MVP and do not depend on the `c2pa` module ([ADR 040](./architecture/040-prov-o-history.md)). C2PA is not in the MVP ([ADR 037](./architecture/037-c2pa-in-release-2.md)).
+FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by gate Task FS-3.9 (14 of 28 done). PROV-O history (Task FS-2.8) and the durable journal with the Logs view and file panel tabs (Task FS-2.9) are in the MVP and do not depend on the `c2pa` module ([ADR 040](./architecture/040-prov-o-history.md)). C2PA is not in the MVP ([ADR 037](./architecture/037-c2pa-in-release-2.md)).
 
 1. [x] [Task FS-0.0](./implementation-plan.md#task-fs-0.0) FileSquid product switch
     - [x] [API-F0.1](../apps/filesquid/crates/api/resources/plan.md#phase-f0-crate-health-route-and-transport-spike-global-task-fs-00) Health router, contract seed and transport spike S1

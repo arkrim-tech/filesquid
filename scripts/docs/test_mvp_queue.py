@@ -204,6 +204,19 @@ class InProgress(unittest.TestCase):
         self.assertNotIn("IO-0.9", listed)
         self.assertNotIn("IO-0.9", q.render_queue(result, [], kept, "2026-10-18T17:40:00Z"))
 
+    def test_under_way_counts_flat_pr_only_entries(self):
+        """A PR on a module of an untouched global counts its global once as under way."""
+        result = q.compute_in_progress(rows(), {"DE-0.1": 46, "DE-0.2": 47})
+        self.assertEqual([(e.global_row.task_id, e.nested) for e in result.entries], [("0.4", True), ("0.5", False), ("0.5", False)])
+        self.assertEqual(q.count_under_way(result), 2)
+
+    def test_under_way_skips_ticked_globals(self):
+        """A flat entry under a ticked global is not counted; that global is already done."""
+        parsed = rows()
+        parsed[0].modules.append(q.ModuleRow("IO-0.2", False, "[IO-0.2](../a/plan.md#x)", "Two"))
+        result = q.compute_in_progress(parsed, {"IO-0.2": 52})
+        self.assertEqual(q.count_under_way(result), 1)
+
     def test_pr_on_global_without_modules(self):
         """A PR on a global task lists it, even with no module rows."""
         result = q.compute_in_progress(rows(), {"FS-3.9": 50})
