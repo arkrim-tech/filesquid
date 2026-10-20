@@ -11,6 +11,7 @@
 
 use super::candidates::candidates;
 use super::error::LocalLibraryError;
+use super::journal_rebuild::{rebuild_journal, JournalRestore};
 use super::ledger::{RepairLedger, RepairRecord};
 use super::provenance::{commit_repair_record, Provenance, Repaired, PROVENANCE_NOT_CONFIGURED};
 use super::rebuild::{rebuild, RebuildReport};
@@ -51,6 +52,7 @@ pub struct LocalLibraryService {
     ledger: Arc<dyn RepairLedger>,
     clock: Clock,
     provenance: Option<Provenance>,
+    journal_restore: Option<JournalRestore>,
 }
 
 impl std::fmt::Debug for LocalLibraryService {
@@ -69,6 +71,7 @@ impl LocalLibraryService {
             ledger,
             clock: Arc::new(now_ms),
             provenance: None,
+            journal_restore: None,
         }
     }
 
@@ -82,6 +85,14 @@ impl LocalLibraryService {
         ids: Arc<dyn JournalStore>,
     ) -> Self {
         self.provenance = Some(Provenance { context, ids });
+        self
+    }
+
+    /// Also restore the journal on every rebuild from files: the library's per-commit entries
+    /// and sealed segments, into `restore`'s store, de-duplicated by journal ID (Task CL-1.9,
+    /// API-S-032). Without it a rebuild reports no journal.
+    pub fn with_journal_restore(mut self, restore: JournalRestore) -> Self {
+        self.journal_restore = Some(restore);
         self
     }
 
@@ -144,19 +155,20 @@ impl LocalLibraryService {
         result
     }
 
-    /// Rebuild what `root` holds from its OCFL files alone, for `actor`. Findings are
-    /// reported, never repaired; nothing is written.
+    /// Rebuild what `root` holds from its OCFL files alone, for `actor`, and with a journal
+    /// restore installed, its journal. Findings are reported, never repaired; nothing is
+    /// written to `root`. The journal restore needs a Tokio runtime.
     ///
     /// # Errors
     ///
-    /// The open errors of the storage root, or `unavailable`.
+    /// The open errors of the storage root, `journal_too_large`, or `unavailable`.
     pub async fn rebuild<B: StorageBackend>(
         &self,
         actor: &str,
         library_id: &LibraryId,
         root: &B,
     ) -> Result<RebuildReport, LocalLibraryError> {
-        let result = rebuild(root).await;
+        let result = self.rebuild_all(root).await;
         self.journal_outcome(actor, REBUILD_OPERATION, library_id, &result);
         result
     }
@@ -343,6 +355,19 @@ impl LocalLibraryService {
             self.journal.send(entry);
         }
         object_answer(target.object_id, version, outcome)
+    }
+
+    /// The catalog rebuild of `root`, then, with a journal restore installed, its journal.
+    /// Storage and journal-store I/O.
+    async fn rebuild_all<B: StorageBackend>(
+        &self,
+        root: &B,
+    ) -> Result<RebuildReport, LocalLibraryError> {
+        let mut report = rebuild(root).await?;
+        if let Some(restore) = &self.journal_restore {
+            report.journal = Some(rebuild_journal(root, restore).await?);
+        }
+        Ok(report)
     }
 
     /// Journal `result` of a domain operation, succeeded or failed.

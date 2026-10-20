@@ -6,7 +6,7 @@
 
 use axum::http::Method;
 use filesquid_api::local_library::{
-    LibraryCommands, LibraryLocations, LibraryRequest, LibraryRoot, LibraryView,
+    JournalRebuild, LibraryCommands, LibraryLocations, LibraryRequest, LibraryRoot, LibraryView,
     LocalLibraryService, LocationRequest, MemoryRepairLedger, ObjectFindings, ObjectRepair,
     RebuildReport, RebuiltObject, RepairAnswer, RepairCandidate, RepairCandidates, RepairConsent,
     RepairRequest, RepairResult, SnapshotCopyRequest, UnreadableObject, CONSENT_STATEMENT_ID,
@@ -270,10 +270,25 @@ pub fn samples() -> Vec<(&'static str, Vec<Value>)> {
         ("UnreadableObject", vec![to_value(unreadable.clone())]),
         (
             "RebuildReport",
-            vec![to_value(RebuildReport {
-                objects: vec![rebuilt()],
-                unreadable: vec![unreadable],
-            })],
+            vec![
+                to_value(RebuildReport {
+                    objects: vec![rebuilt()],
+                    unreadable: vec![unreadable.clone()],
+                    journal: None,
+                }),
+                to_value(RebuildReport {
+                    objects: vec![rebuilt()],
+                    unreadable: vec![unreadable],
+                    journal: Some(journal_rebuild()),
+                }),
+            ],
+        ),
+        (
+            "JournalRebuild",
+            vec![
+                to_value(journal_rebuild()),
+                to_value(JournalRebuild::default()),
+            ],
         ),
         ("RepairCandidate", vec![to_value(candidate())]),
         (
@@ -308,4 +323,15 @@ pub fn samples() -> Vec<(&'static str, Vec<Value>)> {
             })],
         ),
     ]
+}
+
+/// A journal rebuild that restored entries and found one conflict.
+fn journal_rebuild() -> JournalRebuild {
+    JournalRebuild {
+        restored: 42,
+        already_present: 3,
+        conflicting: 1,
+        unreadable: 0,
+        last_sealed_at: Some("2026-10-20T10:00:00Z".into()),
+    }
 }
