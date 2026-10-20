@@ -283,7 +283,14 @@ CL-1.1 defines the meaning of the local-library commands and the version-invento
   - **Related Tests:** [`file_activity_and_comments_F-064.feature`](../tests/features/file_activity_and_comments_F-064.feature)
   - **Agent Prompt:** `@AGENTS.md Begin by creating a new feature branch for Task API-F2.4. Then begin development, running Cargo from apps/filesquid/ with -p filesquid-api (module directory apps/filesquid/crates/api/). Write failing tests first proving a user never receives journal rows about objects they may not read. Additionally, invoke the @feature-writer skill to translate SRS requirements into executable BDD feature tests. Upon completion, YOU MUST generate apps/filesquid/crates/api/resources/tasks/Task-API-F2.4-Walkthrough.md directly in the project repository with clear SRS mapping (including BOTH the ID and full human-readable title text) in the secondary section, and strictly delete the internal tracking Plan/ToDos documents before checking off the Markdown box locally in apps/filesquid/crates/api/resources/plan.md, and the matching boxes in the repository-root resources/implementation-plan-checklist.md. Then commit your changes and push the branch to origin.`
 
-- [ ] **Task API-F2.5: Version listing, labels, restore and history size**
+- [x] **Task API-F2.5: Version listing, labels, restore and history size**
+  - **Status:** Done 2026-10-20 ([walkthrough](./tasks/Task-API-F2.5-Walkthrough.md)).
+    - `GET /files/history` entries now carry `size` and `label`, and `GET /files/versions` carries `label`.
+    - `POST /files/restorations` takes a `label` instead of a free `message` and commits kind `revert` or `reinstate`.
+    - New routes: `PUT /files/labels` (labels set later, stored in the object's reserved `.filesquid/labels.json`), `GET /files/history-size` and `GET /files/library-history-size`.
+    - Restore and label commits carry their PROV-O record once the host calls `FileService::install_provenance`.
+    - The later-label design is recorded in [API-S-014](./srs.md).
+    - Search over labels waits for the search routes of F-063.
   - **Description:** List a file's OCFL versions with `created`, `user`, `message`, size, digest and label; ranged reads of any version; restore as one revert-or-reinstate operation producing exactly one new version; labels as the version `message` at commit or as recoverable, searchable application data afterwards; history size per file and per library; no delete, expiry or thinning operation anywhere in the contract.
   - **Estimated Time:** 12 hours
   - **Dependencies:** API-F1.3

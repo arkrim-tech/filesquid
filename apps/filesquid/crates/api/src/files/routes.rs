@@ -7,12 +7,14 @@ use super::error::FileError;
 use super::names::{content_disposition, Disposition};
 use super::range::{RangePlan, RangeRequest};
 use super::service::{ContentAnswer, ContentRequest};
+use super::versions::Committed;
 use super::view::{
-    ContentQuery, FileQuery, FolderRequest, HistoryQuery, ListingQuery, MoveRequest, ObjectQuery,
-    RemoveRequest, RestoreRequest, UploadQuery,
+    ContentQuery, FileQuery, FolderRequest, HistoryQuery, LabelRequest, LibraryQuery, ListingQuery,
+    MoveRequest, ObjectQuery, RemoveRequest, RestoreRequest, UploadQuery,
 };
 use super::{
-    DETAILS_OPERATION, FOLDER_OPERATION, HISTORY_OPERATION, LIST_OPERATION, MAX_UPLOAD_BYTES,
+    DETAILS_OPERATION, FOLDER_OPERATION, HISTORY_OPERATION, HISTORY_SIZE_OPERATION,
+    LABEL_OPERATION, LIBRARY_HISTORY_SIZE_OPERATION, LIST_OPERATION, MAX_UPLOAD_BYTES,
     MOVE_OPERATION, READ_OPERATION, REMOVE_OPERATION, RESTORE_OPERATION, UPLOAD_OPERATION,
     VERSIONS_OPERATION,
 };
@@ -54,6 +56,13 @@ pub(crate) fn routes() -> Vec<Route> {
         ("/files/moves", post(move_path), Action::WriteFiles),
         ("/files/removals", post(remove), Action::WriteFiles),
         ("/files/restorations", post(restore), Action::WriteFiles),
+        ("/files/labels", put(set_label), Action::WriteFiles),
+        ("/files/history-size", get(history_size), Action::ReadFiles),
+        (
+            "/files/library-history-size",
+            get(library_history_size),
+            Action::ReadFiles,
+        ),
     ]
 }
 
@@ -213,7 +222,60 @@ async fn restore(
 ) -> Response {
     let actor = principal.actor().to_string();
     let outcome = async { files(&state)?.restore(body(request)?, actor).await }.await;
-    write_answer(&state, RESTORE_OPERATION, &principal, outcome).await
+    committed_answer(&state, RESTORE_OPERATION, &principal, outcome).await
+}
+
+/// `PUT /api/v1/files/labels`: set or clear the label of one version after commit.
+async fn set_label(
+    State(state): State<ApiState>,
+    Extension(principal): Extension<Principal>,
+    request: Result<Json<LabelRequest>, JsonRejection>,
+) -> Response {
+    let actor = principal.actor().to_string();
+    let outcome = async { files(&state)?.set_label(body(request)?, actor).await }.await;
+    committed_answer(&state, LABEL_OPERATION, &principal, outcome).await
+}
+
+/// `GET /api/v1/files/history-size`.
+async fn history_size(
+    State(state): State<ApiState>,
+    Extension(principal): Extension<Principal>,
+    request: Result<Query<HistoryQuery>, QueryRejection>,
+) -> Response {
+    let outcome = async { files(&state)?.history_size(query(request)?).await }.await;
+    read_answer(&state, HISTORY_SIZE_OPERATION, &principal, outcome).await
+}
+
+/// `GET /api/v1/files/library-history-size`.
+async fn library_history_size(
+    State(state): State<ApiState>,
+    Extension(principal): Extension<Principal>,
+    request: Result<Query<LibraryQuery>, QueryRejection>,
+) -> Response {
+    let outcome = async { files(&state)?.library_history_size(query(request)?).await }.await;
+    read_answer(&state, LIBRARY_HISTORY_SIZE_OPERATION, &principal, outcome).await
+}
+
+/// Answer a write that may carry its commit's journal entries: with provenance installed
+/// they are journaled (each once, under its pre-allocated ID) instead of the route's own
+/// entry; without, the write is journaled as [`write_answer`] does.
+async fn committed_answer(
+    state: &ApiState,
+    operation: &str,
+    principal: &Principal,
+    outcome: Result<Committed, FileError>,
+) -> Response {
+    let committed = match outcome {
+        Ok(committed) => committed,
+        Err(err) => return refuse(state, operation, principal.actor(), err).await,
+    };
+    if committed.entries.is_empty() {
+        return write_answer(state, operation, principal, Ok(committed.view)).await;
+    }
+    for entry in committed.entries {
+        journal_entry(state, entry).await;
+    }
+    Json(committed.view).into_response()
 }
 
 /// Answer a read: the JSON view, or the typed error after journaling the refusal.
