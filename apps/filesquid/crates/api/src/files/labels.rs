@@ -119,20 +119,26 @@ impl Labels {
         serde_json::to_vec(self).unwrap_or_default()
     }
 
-    /// The file's bytes, refused when they would exceed [`MAX_LABELS_FILE_BYTES`], so a
-    /// written file is always one that reads back.
+    /// The file's bytes, refused unless [`Labels::parse`] reads them back: within
+    /// [`MAX_LABELS_FILE_BYTES`] and with every label valid. A written file is always one
+    /// that reads back.
     ///
     /// # Errors
     ///
-    /// `conflict` when the file would be too large.
+    /// `conflict` when the file would be too large; `invalid_request` when a label breaks
+    /// the label rules.
     pub fn to_bounded_bytes(&self) -> Result<Vec<u8>, FileError> {
         let bytes = self.to_bytes();
-        match bytes.len() as u64 <= MAX_LABELS_FILE_BYTES {
-            true => Ok(bytes),
-            false => Err(FileError::conflict(
+        if bytes.len() as u64 > MAX_LABELS_FILE_BYTES {
+            return Err(FileError::conflict(
                 "This object's labels would exceed their size bound; clear some labels first.",
-            )),
+            ));
         }
+        for label in self.labels.values().flatten() {
+            check_label(label)?;
+        }
+        Self::parse(&bytes)?;
+        Ok(bytes)
     }
 
     /// The label `version` shows: its later label when the file names it, else
@@ -230,6 +236,16 @@ mod tests {
         let labels = filled(MAX_LABELS, &label);
         let bytes = labels.to_bounded_bytes().expect("within the bound");
         assert!(Labels::parse(&bytes).is_ok());
+    }
+
+    #[test]
+    fn a_file_with_an_invalid_label_is_never_written() {
+        let mut labels = Labels::new();
+        labels
+            .set("v1", None, Some(" ".into()))
+            .expect("set does not check");
+        let err = labels.to_bounded_bytes().expect_err("refused");
+        assert_eq!(err.code(), crate::ErrorCode::InvalidRequest);
     }
 
     #[test]
