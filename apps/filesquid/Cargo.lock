@@ -1432,6 +1432,7 @@ dependencies = [
  "filesquid-ocfl",
  "fs4",
  "libc",
+ "libloading",
  "rusqlite",
  "serde_json",
  "sha2 0.11.1",

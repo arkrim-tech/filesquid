@@ -1,7 +1,7 @@
 //! Cucumber harness for the per-library SQLite catalog Gherkin under
 //! `tests/catalog_features/` (Task DE-0.2: F-001, F-009, DE-S-009; Task DE-0.3: NFR-001,
-//! F-042, DE-S-010). Needs the `desktop`
-//! feature. Writes JUnit to `tests/allure-results/catalog-cucumber-junit.xml`.
+//! F-042, DE-S-010; Task DE-0.5: NFR-002, NFR-003, DE-S-016, the media workers under
+//! `media_workers_NFR-002.feature`). Needs the `desktop` feature. Writes JUnit to `tests/allure-results/catalog-cucumber-junit.xml`.
 
 #[path = "support/catalog_fixture.rs"]
 mod catalog_fixture;
@@ -15,6 +15,9 @@ use filesquid_api::library::{
 };
 use filesquid_api::operation::{ExpectedRevision, OperationId};
 use filesquid_core::{CollectionId, FileId, LibraryId, VirtualCollectionId, VirtualMembership};
+use filesquid_native::workers::media::{
+    vips, MediaError, MediaWorkers, Rendered, ThumbnailRequest,
+};
 use filesquid_native::{library_ocfl_root, CommitProbe};
 use filesquid_ocfl::storage::{complete_immediately, FsBackend};
 use std::collections::BTreeMap;
@@ -37,6 +40,20 @@ struct CatalogWorld {
     backup: Option<PathBuf>,
     /// How many entries the host journal held right after the first index.
     journaled: Option<usize>,
+    /// The media worker scenario's state.
+    media: MediaRig,
+}
+
+/// A media worker scenario: its directory, monitor, worker pool and last answer.
+#[derive(Default)]
+struct MediaRig {
+    dir: Option<PathBuf>,
+    monitor: Option<filesquid_api::monitor::Monitor>,
+    pool: Option<Arc<MediaWorkers>>,
+    source: Option<PathBuf>,
+    answer: Option<Result<Rendered, MediaError>>,
+    /// Run the worker logic in this process (the desktop tests run it out of process).
+    direct: bool,
 }
 
 impl std::fmt::Debug for CatalogWorld {
@@ -506,6 +523,192 @@ fn listed(w: &mut CatalogWorld, title: String) {
     assert_eq!(titles, [title]);
 }
 
+/// A monitor over an in-memory journal, for the media worker scenarios.
+fn media_monitor() -> filesquid_api::monitor::Monitor {
+    filesquid_api::monitor::Monitor::start(
+        Arc::new(MemoryJournal::new("desktop")),
+        Arc::new(filesquid_api::monitor::StaticHostChecks::healthy()),
+        filesquid_api::monitor::MonitorConfig::new("desktop"),
+        filesquid_api::EventBus::new(),
+    )
+}
+
+impl MediaRig {
+    /// Start the scenario with a pool running `program` with `args` (filesystem I/O).
+    fn start(&mut self, program: &str, args: &[&str]) {
+        let dir = temp_root("media");
+        let monitor = media_monitor();
+        let pool = MediaWorkers::new(PathBuf::from(program), monitor.registry().clone())
+            .with_args(args.iter().map(|a| a.to_string()).collect());
+        std::fs::write(dir.join("still.ppm"), b"P6\n1 1\n255\n\0\0\0").expect("still");
+        self.dir = Some(dir);
+        self.pool = Some(Arc::new(pool));
+        self.monitor = Some(monitor);
+    }
+
+    /// Start a scenario that runs the worker logic in this process (filesystem I/O).
+    fn start_direct(&mut self) {
+        self.dir = Some(temp_root("media"));
+        self.direct = true;
+    }
+
+    /// Ask for a thumbnail of the scenario's still: from the pool, or from the worker logic
+    /// directly.
+    fn ask(&self, max_edge: u32) -> Result<Rendered, MediaError> {
+        let dir = self.dir.as_ref().expect("dir");
+        let request = ThumbnailRequest {
+            source: self.source.clone().unwrap_or_else(|| dir.join("still.ppm")),
+            dest: dir.join("thumb.png"),
+            max_edge,
+        };
+        match self.direct {
+            true => serve_directly(&request),
+            false => self.pool.as_ref().expect("pool").thumbnail(&request),
+        }
+    }
+
+    /// Stop the monitor and remove the directory.
+    fn finish(&mut self) {
+        if let Some(monitor) = self.monitor.take() {
+            monitor.shutdown();
+        }
+        if let Some(dir) = self.dir.take() {
+            std::fs::remove_dir_all(dir).expect("cleanup");
+        }
+    }
+}
+
+/// The worker logic's answer to `request`, as the pool would map it.
+fn serve_directly(request: &ThumbnailRequest) -> Result<Rendered, MediaError> {
+    let json = serde_json::json!({
+        "op": "thumbnail",
+        "source": request.source,
+        "dest": request.dest,
+        "max_edge": request.max_edge,
+    });
+    let answer: serde_json::Value =
+        serde_json::from_str(&vips::serve(&json.to_string())).expect("answer");
+    if answer["ok"] != true {
+        let code = answer["error_code"].as_str().unwrap_or_default();
+        return Err(MediaError::Refused(code.to_string()));
+    }
+    let size = |key: &str| u32::try_from(answer[key].as_u64().unwrap_or(0)).unwrap_or(0);
+    Ok(Rendered {
+        width: size("width"),
+        height: size("height"),
+    })
+}
+
+#[given(expr = "a still of {int} by {int} pixels")]
+fn still(w: &mut CatalogWorld, width: usize, height: usize) {
+    w.media.start_direct();
+    let path = w.media.dir.as_ref().expect("dir").join("still.ppm");
+    let mut bytes = format!("P6\n{width} {height}\n255\n").into_bytes();
+    bytes.resize(bytes.len() + width * height * 3, 90);
+    std::fs::write(&path, bytes).expect("ppm");
+    w.media.source = Some(path);
+}
+
+#[given(expr = "a still that only ImageMagick could decode")]
+fn magick_only_still(w: &mut CatalogWorld) {
+    w.media.start_direct();
+    let path = w.media.dir.as_ref().expect("dir").join("still.bmp");
+    let mut bytes = b"BM".to_vec();
+    for word in [70u32, 0, 54, 40, 2, 2] {
+        bytes.extend_from_slice(&word.to_le_bytes());
+    }
+    bytes.extend_from_slice(&1u16.to_le_bytes());
+    bytes.extend_from_slice(&24u16.to_le_bytes());
+    bytes.resize(70, 200);
+    std::fs::write(&path, bytes).expect("bmp");
+    w.media.source = Some(path);
+}
+
+#[given(expr = "workers that each take a moment")]
+fn slow_workers(w: &mut CatalogWorld) {
+    let script = r#"cat >/dev/null; sleep 0.2; echo '{"ok":true,"width":1,"height":1}'"#;
+    w.media.start("sh", &["-c", script]);
+}
+
+#[given(expr = "a worker that crashes")]
+fn crashing_worker(w: &mut CatalogWorld) {
+    let marker = std::env::temp_dir().join(format!("fs-media-crashed-{}", std::process::id()));
+    let _ = std::fs::remove_file(&marker);
+    let script = format!(
+        r#"if [ -e '{0}' ]; then cat >/dev/null; echo '{{"ok":true,"width":1,"height":1}}'; else touch '{0}'; kill -9 $$; fi"#,
+        marker.display()
+    );
+    w.media.start("sh", &["-c", &script]);
+}
+
+#[when(expr = "the host asks for a thumbnail of at most {int} pixels")]
+fn ask_thumbnail(w: &mut CatalogWorld, max_edge: u32) {
+    w.media.answer = Some(w.media.ask(max_edge));
+}
+
+#[when(expr = "six thumbnails are asked for at once")]
+fn ask_six(w: &mut CatalogWorld) {
+    let pool = w.media.pool.clone().expect("pool");
+    let dir = w.media.dir.clone().expect("dir");
+    let runs: Vec<_> = (0..6)
+        .map(|n| {
+            let (pool, dir) = (pool.clone(), dir.clone());
+            std::thread::spawn(move || {
+                pool.thumbnail(&ThumbnailRequest {
+                    source: dir.join("still.ppm"),
+                    dest: dir.join(format!("out-{n}.png")),
+                    max_edge: 8,
+                })
+            })
+        })
+        .collect();
+    for run in runs {
+        run.join().expect("thread").expect("rendered");
+    }
+}
+
+/// Whether the scenario's answer is the refusal of a machine without libvips, which the
+/// libvips scenarios accept in place of their outcome.
+fn libvips_missing(w: &CatalogWorld) -> bool {
+    matches!(w.media.answer, Some(Err(MediaError::Refused(ref code))) if code == "libvips_unavailable")
+}
+
+#[then(expr = "the thumbnail should be {int} by {int} pixels")]
+fn thumbnail_size(w: &mut CatalogWorld, width: u32, height: u32) {
+    if !libvips_missing(w) {
+        let rendered = w.media.answer.clone().expect("asked").expect("rendered");
+        assert_eq!((rendered.width, rendered.height), (width, height));
+    }
+    w.media.finish();
+}
+
+#[then(expr = "the request should be refused as {string}")]
+fn refused_as(w: &mut CatalogWorld, code: String) {
+    if !libvips_missing(w) {
+        let answer = w.media.answer.clone().expect("asked");
+        assert_eq!(answer.err().map(|e| e.error_code().to_string()), Some(code));
+    }
+    if w.media.source.is_some() {
+        w.media.finish();
+    }
+}
+
+#[then(expr = "the next run through the same workers should succeed")]
+fn next_succeeds(w: &mut CatalogWorld) {
+    assert!(
+        w.media.ask(16).is_ok(),
+        "the same pool runs the next worker"
+    );
+    w.media.finish();
+}
+
+#[then(expr = "no more than {int} workers should have run at the same time")]
+fn peak_at_most(w: &mut CatalogWorld, most: usize) {
+    let peak = w.media.pool.as_ref().expect("pool").peak_running();
+    assert!(peak <= most && peak > 0, "{peak}");
+    w.media.finish();
+}
+
 #[tokio::main]
 async fn main() {
     let results = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/allure-results");
@@ -521,6 +724,11 @@ async fn main() {
                 .normalized(),
         )
         .fail_on_skipped()
-        .run_and_exit(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/catalog_features"))
+        // Scenarios tagged @unix use `sh` stand-in workers; other platforms skip them (the
+        // desktop crate runs the real worker out of process on every platform).
+        .filter_run_and_exit(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/catalog_features"),
+            |_, _, scenario| cfg!(unix) || !scenario.tags.iter().any(|tag| tag == "unix"),
+        )
         .await;
 }
