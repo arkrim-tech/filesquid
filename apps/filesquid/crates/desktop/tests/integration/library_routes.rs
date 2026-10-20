@@ -270,6 +270,28 @@ fn an_opened_folder_feeds_the_history_and_copies_and_rebuilds_without_paths() {
         2,
         "the chosen root's records: {body}"
     );
+    let listing =
+        format!("/api/v1/files/listing?library_id={library}&object_id=urn:uuid:{library}");
+    let (status, page) = desktop.get(&listing);
+    assert_eq!(
+        status, 200,
+        "the file routes serve the opened folder: {page}"
+    );
+    assert!(
+        !page["entries"].as_array().expect("entries").is_empty(),
+        "{page}"
+    );
+    let listing =
+        format!("/api/v1/files/listing?library_id={library}&object_id=urn:uuid:{library}");
+    let (status, page) = desktop.get(&listing);
+    assert_eq!(
+        status, 200,
+        "the file routes serve the opened folder: {page}"
+    );
+    assert!(
+        !page["entries"].as_array().expect("entries").is_empty(),
+        "{page}"
+    );
     let copy = dir.join("copy");
     std::fs::create_dir_all(&copy).expect("copy folder");
     let destination = desktop.register(&copy);
@@ -335,10 +357,42 @@ fn the_navigation_lists_the_installations_repository_and_its_libraries() {
     assert_eq!(status, 503, "no navigation installed yet");
     install_navigation(&desktop.state, desktop.catalog.clone(), &installation())
         .expect("installed");
+    let service = LibraryService::new(desktop.catalog.clone(), desktop.host.monitor().journal());
+    let create = CommandRequest {
+        envelope: envelope("op-nav", NEW_LIBRARY_REVISION, "library"),
+        command: LibraryCommand::CreateLibrary {
+            repository_id: RepositoryId::new(INSTALLATION).expect("repo"),
+            name: "Family archive".into(),
+        },
+    };
+    let library = service.execute("owner", create).expect("create");
+    let library = library.created_id.expect("library id");
+    let service = LibraryService::new(desktop.catalog.clone(), desktop.host.monitor().journal());
+    let create = CommandRequest {
+        envelope: envelope("op-nav", NEW_LIBRARY_REVISION, "library"),
+        command: LibraryCommand::CreateLibrary {
+            repository_id: RepositoryId::new(INSTALLATION).expect("repo"),
+            name: "Family archive".into(),
+        },
+    };
+    service.execute("owner", create).expect("create");
     let (status, page) = desktop.get("/api/v1/navigation");
     assert_eq!(status, 200, "{page}");
     let nodes = page["nodes"].as_array().expect("nodes");
     assert_eq!(nodes.len(), 1, "the installation's one repository: {page}");
+    let repository = nodes[0]["node"].as_str().expect("handle").to_string();
+    let (status, page) = desktop.get(&format!("/api/v1/navigation?node={repository}"));
+    assert_eq!(status, 200, "{page}");
+    let libraries = page["nodes"].as_array().expect("nodes");
+    assert_eq!(libraries.len(), 1, "the repository's library: {page}");
+    assert_eq!(libraries[0]["name"], "Family archive", "{page}");
+    let repository = nodes[0]["node"].as_str().expect("handle").to_string();
+    let (status, page) = desktop.get(&format!("/api/v1/navigation?node={repository}"));
+    assert_eq!(status, 200, "{page}");
+    let libraries = page["nodes"].as_array().expect("nodes");
+    assert_eq!(libraries.len(), 1, "{page}");
+    assert_eq!(libraries[0]["name"], "Family archive", "{page}");
+    assert!(page.to_string().contains(&library) || libraries[0]["node"].is_string());
     let filter = owner_event_filter(&desktop.state).expect("filter");
     let change = NavigationChange::All { all: AlwaysTrue }
         .to_event()

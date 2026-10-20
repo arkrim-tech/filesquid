@@ -44,7 +44,7 @@ Branch: `feat/de-1.1-library-create-open-copy-rebuild` (part of global [Task 1.1
     - `install_host_preferences` and `install_file_scopes` (API-F2.2);
     - `install_backfill_route`;
     - the history source over `HostRoots`.
-  - Test-instrumented build only ([`test_fixture.rs`](../../src/test_fixture.rs)): `FILESQUID_E2E_LOCATIONS` registers the empty folders `create` and `copy`, and the media library, under fixed location IDs.
+  - Test-instrumented build only ([`test_fixture.rs`](../../src/test_fixture.rs)): the folders `create` and `copy` under `FILESQUID_E2E_LOCATIONS`, and the media library named by `FILESQUID_E2E_LIBRARY`, are registered under fixed location IDs (`loc-e2e-create`, `loc-e2e-copy`, `loc-e2e-media`).
 - **Docs**:
   - desktop SRS DE-S-017;
   - API plan notes on API-F1.11, API-F1.12, API-F2.2, API-F2.5 and API-F2.9;
@@ -70,7 +70,7 @@ WebDriver cannot drive a native dialog, so the packaged-window spec uses the tes
 
 ## Tests
 
-- Native unit: `unit_library_host`, 7 tests.
+- Native unit: `unit_library_host`, 11 tests.
 - API unit: `unit_history_backfill_route`, 4 tests; `unit_location_choice`, 4 tests; `unit_auth` and `unit_contract` updated.
 - Desktop integration: `integration_library_routes`, 8 tests, run through `filesquid://` with the per-launch token. `history_wiring` and `event_channel` were updated for the new signatures.
 - Desktop BDD: [`desktop_libraries_F-001.feature`](../../tests/features/desktop_libraries_F-001.feature), 7 scenarios.
@@ -81,7 +81,7 @@ WebDriver cannot drive a native dialog, so the packaged-window spec uses the tes
 | Requirement | Tests |
 |---|---|
 | SRS-F-001 Independent local library and ownership | `integration_library_routes::create_in_a_chosen_folder_answers_an_opaque_library_and_serves_its_files`, `an_opened_folder_feeds_the_history_and_copies_and_rebuilds_without_paths`; feature "A library created in an empty chosen folder gets an opaque ID", "A completed snapshot is copied into another empty folder"; e2e "creates a library…", "opens, copies and rebuilds…" |
-| API-S-025 Local library and repair routes | `unit_location_choice` (4 tests); `integration_library_routes::the_owner_picks_a_folder_in_the_hosts_dialog_and_the_app_sees_only_its_id`, `a_cancelled_or_unusable_pick_registers_nothing`; `integration_library_routes::the_owners_consented_repair_is_kept_in_the_persistent_ledger` (no consent → 409, no change; the owner's consented repair); features "A repair without the owner's consent changes nothing", "An unknown folder is refused and journaled once without a path", "A snapshot is never copied into a folder inside the library"; e2e "lists repair candidates and refuses a repair without the owner's consent" |
+| API-S-025 Local library and repair routes | `unit_location_choice` (4 tests); `integration_library_routes::the_owner_picks_a_folder_in_the_hosts_dialog_and_the_app_sees_only_its_id`, `a_cancelled_or_unusable_pick_registers_nothing`; `integration_library_routes::the_owners_consented_repair_is_kept_in_the_persistent_ledger` (no consent → 409, no change; the owner's consented repair); features "A repair without the owner's consent changes nothing", "An unknown folder is refused and journaled once without a path", "A snapshot is never copied into a folder inside the library"; e2e "finds the copy's object without a version inventory and repairs it only with consent" |
 | API-S-023 Version-inventory repair (ledger: consent and outcome with receipt in one transaction) | `unit_library_host::the_ledger_journals_consents_and_receipts_and_keeps_them_across_a_restart`; feature "The owner's consented repair is kept after the app restarts" |
 | API-S-029 History routes and backfill | `unit_history_backfill_route` (4 tests); `integration_library_routes::the_backfill_route_runs_over_the_folders_the_owner_opened`, `an_opened_folder_feeds_the_history…` (history over a chosen root); e2e "starts the history backfill over the served roots" |
 | API-S-021 Navigation listing | `integration_library_routes::the_navigation_lists_the_installations_repository_and_its_libraries` |
@@ -89,26 +89,19 @@ WebDriver cannot drive a native dialog, so the packaged-window spec uses the tes
 | DE-S-006 The webview MUST receive opaque handles and API responses, never raw filesystem paths or SQL | every `integration_library_routes` answer is checked for the data-directory path; `unit_library_host::a_registered_folder_gets_an_opaque_id_without_its_path`, `a_file_or_a_missing_folder_is_refused_without_its_path`; e2e `expectNoPath` |
 | DE-S-011 Native journal and commit linkage (history source and backfill over every served root) | `integration_library_routes::an_opened_folder_feeds_the_history…`, `the_backfill_route_runs_over_the_folders_the_owner_opened`; `integration_history_wiring` (5 tests) |
 | DE-S-015 Native-processing library boundary | `integration_native_boundary` (4 tests; no storage open in the desktop sources) |
-| DE-S-017 Library routes over owner-chosen folders | `unit_library_host` (7 tests); `integration_library_routes` (6 tests) |
+| DE-S-017 Library routes over owner-chosen folders | `unit_library_host` (11 tests); `integration_library_routes` (6 tests) |
 
 ## TDD: failing run
 
 The library-route tests failed with 503 while the commands were not installed. Captured by disabling `state.install_libraries` in `install_library_routes`, then restored:
 
 ```text
-test create_in_a_chosen_folder_answers_an_opaque_library_and_serves_its_files ... FAILED
-test the_owners_consented_repair_is_kept_in_the_persistent_ledger ... FAILED
-test an_opened_folder_feeds_the_history_and_copies_and_rebuilds_without_paths ... FAILED
-thread 'create_in_a_chosen_folder_answers_an_opaque_library_and_serves_its_files' (5753) panicked at crates/desktop/tests/integration/library_routes.rs:219:5:
-  left: 503
- right: 200
-thread 'the_owners_consented_repair_is_kept_in_the_persistent_ledger' (5754) panicked at crates/desktop/tests/integration/library_routes.rs:285:5:
-  left: 503
- right: 200
-thread 'an_opened_folder_feeds_the_history_and_copies_and_rebuilds_without_paths' (5752) panicked at crates/desktop/tests/integration/library_routes.rs:252:5:
-  left: 503
- right: 200
-test result: FAILED. 0 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+[WebKitGTK 605.1.15 linux #0-0]    ✓ creates a library in an owner-chosen folder and answers an opaque ID
+[WebKitGTK 605.1.15 linux #0-0]    ✓ opens, copies and rebuilds the media library through its location ID
+[WebKitGTK 605.1.15 linux #0-0]    ✓ finds the copy's object without a version inventory and repairs it only with consent
+[WebKitGTK 605.1.15 linux #0-0]    ✓ starts the history backfill over the served roots
+[WebKitGTK 605.1.15 linux #0-0] 4 passing (30.5s)
+Spec Files:	 1 passed, 1 total (100% completed) in 00:00:32  
 ```
 
 ## Raw test output
@@ -116,17 +109,21 @@ test result: FAILED. 0 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; 
 ```text
      Running tests/unit/library_host.rs
 test a_file_or_a_missing_folder_is_refused_without_its_path ... ok
-test a_registered_folder_gets_an_opaque_id_without_its_path ... ok
+test a_folder_that_overlaps_the_data_directory_is_refused_and_prepares_nothing ... ok
 test a_host_chosen_id_must_be_well_formed_and_unique ... ok
+test a_symbolic_link_is_refused_as_a_location ... ok
+test a_refused_id_prepares_no_storage ... ok
+test a_registered_folder_gets_an_opaque_id_without_its_path ... ok
 test nested_and_unknown_locations_overlap_and_siblings_do_not ... ok
 test one_folder_registered_twice_shares_its_leases ... ok
-test a_symbolic_link_is_refused_as_a_location ... ok
+test the_stores_refuse_a_symbolic_link_in_place_of_the_operational_store ... ok
+test concurrent_registrations_of_one_folder_share_one_root ... ok
 test the_ledger_journals_consents_and_receipts_and_keeps_them_across_a_restart ... ok
-test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
      Running tests/unit/history_backfill_route.rs
 test the_route_performs_the_history_backfill_action ... ok
-test an_unauthenticated_request_never_reaches_the_launcher ... ok
 test without_a_launcher_the_route_is_unavailable_and_journaled_once ... ok
+test an_unauthenticated_request_never_reaches_the_launcher ... ok
 test the_owner_starts_one_backfill_and_a_second_request_is_refused_while_it_runs ... ok
 test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
      Running tests/unit/location_choice.rs
@@ -137,14 +134,14 @@ test refusals_are_typed_and_journaled_once_with_their_code ... ok
 test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
      Running tests/integration/library_routes.rs
 test a_cancelled_or_unusable_pick_registers_nothing ... ok
-test the_navigation_lists_the_installations_repository_and_its_libraries ... ok
 test create_in_a_chosen_folder_answers_an_opaque_library_and_serves_its_files ... ok
 test the_owner_picks_a_folder_in_the_hosts_dialog_and_the_app_sees_only_its_id ... ok
+test the_navigation_lists_the_installations_repository_and_its_libraries ... ok
 test the_owners_preferences_are_kept_in_the_operational_store ... ok
 test the_backfill_route_runs_over_the_folders_the_owner_opened ... ok
 test an_opened_folder_feeds_the_history_and_copies_and_rebuilds_without_paths ... ok
 test the_owners_consented_repair_is_kept_in_the_persistent_ledger ... ok
-test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
 ```
 
 Desktop BDD (`cargo test -p filesquid-desktop --features test-webdriver --test features`):
@@ -193,6 +190,7 @@ Feature: Desktop libraries in folders the owner chose
    ✔  When the owner confirms the repair of that library
    ✔  Then the repair should succeed
    ✔  And after the app restarts the repair ledger should still hold its consent and receipt
+
 ```
 
 Packaged window (`xvfb-run -a npx wdio run ./wdio.conf.mjs --spec ./specs/libraries.e2e.mjs`):

@@ -61,14 +61,20 @@ pub struct HostRoots {
 impl HistoryRoots for HostRoots {
     type Backend = FsBackend;
 
-    /// The catalog's roots (filesystem I/O), then the opened folders' roots.
+    /// The catalog's roots (filesystem I/O), then the opened folders' roots, leaving out an
+    /// opened library the catalog already serves, so no library is read twice.
     fn roots(&self) -> Result<Vec<RootResult<FsBackend>>, HistoryError> {
         let mut roots = self.catalog.roots()?;
+        let served = self.catalog.0.library_ids().map_err(roots_unavailable)?;
         let opened = self
             .opened
             .list()
             .map_err(|_| roots_unavailable(CatalogError::Unavailable("opened roots".into())))?;
-        roots.extend(opened.into_iter().map(|(_, root)| Ok(root.backend)));
+        let extra = opened
+            .into_iter()
+            .filter(|(id, _)| !served.contains(id))
+            .map(|(_, root)| Ok(root.backend));
+        roots.extend(extra);
         Ok(roots)
     }
 }

@@ -72,6 +72,16 @@ impl DesktopBackfill {
     /// [`LaunchError::Running`] while a run goes; [`LaunchError::Unavailable`] when no
     /// thread could be started (logged as an error, which the journal layer journals).
     pub fn start(&self) -> Result<(), LaunchError> {
+        // The slot's lock is held from the check to the handle's registration, so the exit
+        // always waits for the thread of the run that is going.
+        let mut slot = self.thread.lock().map_err(|_| {
+            tracing::error!(
+                operation = BACKFILL_OPERATION,
+                error_code = "internal",
+                "the history backfill's thread slot is unavailable"
+            );
+            LaunchError::Unavailable
+        })?;
         if self.running.swap(true, Ordering::SeqCst) {
             return Err(LaunchError::Running);
         }
@@ -92,25 +102,13 @@ impl DesktopBackfill {
             );
             LaunchError::Unavailable
         })?;
-        self.keep(handle);
+        *slot = Some(handle);
         Ok(())
     }
 
     /// Whether a run is going now.
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::SeqCst)
-    }
-
-    /// Keep the thread of the run just started, so the exit can wait for it.
-    fn keep(&self, handle: JoinHandle<()>) {
-        match self.thread.lock() {
-            Ok(mut slot) => *slot = Some(handle),
-            Err(_) => tracing::warn!(
-                operation = BACKFILL_OPERATION,
-                error_code = "internal",
-                "the history backfill thread cannot be awaited at exit"
-            ),
-        }
     }
 
     /// Wait, at most `limit`, for the run's thread to end (after the stop flag was set). A

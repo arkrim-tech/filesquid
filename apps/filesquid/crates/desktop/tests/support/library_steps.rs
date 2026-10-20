@@ -48,6 +48,7 @@ pub struct LibraryRig {
     library: Option<String>,
     root: Option<PathBuf>,
     answer: Option<(u16, String)>,
+    remove_on_drop: bool,
 }
 
 impl std::fmt::Debug for LibraryRig {
@@ -62,6 +63,12 @@ impl Drop for LibraryRig {
     fn drop(&mut self) {
         if let Some(host) = self.host.take() {
             host.stop();
+        }
+        // Drop the routes' state, and with it every SQLite connection it holds, before the
+        // directory goes (Windows cannot remove an open database file).
+        self.state = ApiState::new();
+        if !self.remove_on_drop {
+            return;
         }
         if let Err(err) = std::fs::remove_dir_all(&self.dir) {
             eprintln!("scenario directory not removed: {err}");
@@ -83,8 +90,14 @@ impl LibraryRig {
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("data")).expect("data dir");
+        Self::launch_in(dir)
+    }
+
+    /// Launch the desktop's library routes over the data directory in `dir`, as a new
+    /// process would: a new API state, token, monitor and folder registry.
+    fn launch_in(dir: PathBuf) -> Self {
         let data = dir.join("data");
-        std::fs::create_dir_all(&data).expect("data dir");
         let state = ApiState::new();
         let token = install_launch_token(&state).expect("token");
         let files = install_file_service(&state).expect("files");
@@ -112,6 +125,7 @@ impl LibraryRig {
             library: None,
             root: None,
             answer: None,
+            remove_on_drop: true,
         }
     }
 
@@ -148,6 +162,18 @@ impl LibraryRig {
     fn answer(&self) -> (u16, Value) {
         let (status, text) = self.answer.as_ref().expect("an answer");
         (*status, serde_json::from_str(text).unwrap_or(Value::Null))
+    }
+
+    /// Quit and launch the desktop again over the same data directory: the old API state,
+    /// with its repair ledger connection, is dropped first.
+    fn restart(&mut self) {
+        self.stop();
+        self.state = ApiState::new();
+        let mut fresh = Self::launch_in(self.dir.clone());
+        fresh.library = self.library.take();
+        fresh.root = self.root.take();
+        std::mem::swap(self, &mut fresh);
+        fresh.remove_on_drop = false;
     }
 
     /// Stop the host, flushing the journal, and answer its entries.
@@ -408,7 +434,7 @@ fn repaired(world: &mut DesktopWorld) {
 #[then("after the app restarts the repair ledger should still hold its consent and receipt")]
 fn ledger_kept(world: &mut DesktopWorld) {
     let rig = rig(world);
-    rig.stop();
+    rig.restart();
     let path = rig.dir.join("data").join(JOURNAL_FILE);
     let ledger = SqliteRepairLedger::open(&path, "desktop").expect("ledger");
     assert_eq!(ledger.consent_count().expect("consents"), 1);

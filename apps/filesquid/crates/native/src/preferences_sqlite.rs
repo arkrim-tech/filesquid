@@ -4,7 +4,7 @@
 //! opaque actor name. At most [`MAX_PREFERENCE_USERS`] users.
 
 use filesquid_api::preferences::{PreferenceStore, PreferenceStoreError, Preferences};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
@@ -30,6 +30,15 @@ impl std::fmt::Debug for SqlitePreferences {
     }
 }
 
+/// The flags of the store's connection: never through a symbolic link
+/// (`SQLITE_OPEN_NOFOLLOW`), as the other operational stores open the file. Pure.
+fn open_flags() -> OpenFlags {
+    OpenFlags::SQLITE_OPEN_READ_WRITE
+        | OpenFlags::SQLITE_OPEN_CREATE
+        | OpenFlags::SQLITE_OPEN_NO_MUTEX
+        | OpenFlags::SQLITE_OPEN_NOFOLLOW
+}
+
 /// A store failure as the port reports it; the detail goes to stdout only.
 fn unavailable(err: impl std::fmt::Display) -> PreferenceStoreError {
     PreferenceStoreError::Unavailable(err.to_string())
@@ -45,7 +54,7 @@ impl SqlitePreferences {
     /// The database or its table could not be opened.
     pub fn open(path: &Path) -> Result<Self, PreferenceStoreError> {
         crate::owner_only::create_owner_only(path).map_err(unavailable)?;
-        let conn = Connection::open(path).map_err(unavailable)?;
+        let conn = Connection::open_with_flags(path, open_flags()).map_err(unavailable)?;
         conn.busy_timeout(std::time::Duration::from_secs(5))
             .map_err(unavailable)?;
         conn.execute_batch(SCHEMA).map_err(unavailable)?;
@@ -80,26 +89,26 @@ impl PreferenceStore for SqlitePreferences {
 
     fn save(&self, user: &str, preferences: &Preferences) -> Result<(), PreferenceStoreError> {
         let text = serde_json::to_string(preferences).map_err(unavailable)?;
-        let conn = self.lock()?;
-        let known: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM ui_preferences WHERE user = ?1",
-                params![user],
-                |row| row.get(0),
+        let mut conn = self.lock()?;
+        // An immediate transaction takes the write lock first, so the cap check and the
+        // upsert are one step even across connections to the same file.
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(unavailable)?;
+        let changed = tx
+            .execute(
+                "INSERT INTO ui_preferences (user, preferences)
+                 SELECT ?1, ?2
+                 WHERE EXISTS (SELECT 1 FROM ui_preferences WHERE user = ?1)
+                    OR (SELECT COUNT(*) FROM ui_preferences) < ?3
+                 ON CONFLICT(user) DO UPDATE SET preferences = excluded.preferences",
+                params![user, text, MAX_PREFERENCE_USERS],
             )
             .map_err(unavailable)?;
-        let users: i64 = conn
-            .query_row("SELECT COUNT(*) FROM ui_preferences", [], |row| row.get(0))
-            .map_err(unavailable)?;
-        if known == 0 && users >= MAX_PREFERENCE_USERS {
-            return Err(PreferenceStoreError::Full);
+        tx.commit().map_err(unavailable)?;
+        match changed {
+            0 => Err(PreferenceStoreError::Full),
+            _ => Ok(()),
         }
-        conn.execute(
-            "INSERT INTO ui_preferences (user, preferences) VALUES (?1, ?2)
-             ON CONFLICT(user) DO UPDATE SET preferences = excluded.preferences",
-            params![user, text],
-        )
-        .map(|_| ())
-        .map_err(unavailable)
     }
 }

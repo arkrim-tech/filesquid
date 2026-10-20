@@ -202,3 +202,68 @@ fn a_host_chosen_id_must_be_well_formed_and_unique() {
         assert!(locations.register_as(bad, &folder).is_err(), "{bad}");
     }
 }
+
+#[test]
+fn a_folder_that_overlaps_the_data_directory_is_refused_and_prepares_nothing() {
+    let dir = TempDir::new("data-overlap");
+    let data = dir.folder("data");
+    let locations = HostLocations::new(&data);
+    for folder in [data.clone(), dir.folder("data/files"), dir.0.clone()] {
+        let err = locations.register(&folder).expect_err("refused");
+        assert!(err.contains("data directory"), "{err}");
+    }
+    assert!(!data.join("locations").exists(), "nothing was prepared");
+}
+
+#[test]
+fn a_refused_id_prepares_no_storage() {
+    let dir = TempDir::new("refused-id");
+    let data = dir.folder("data");
+    let locations = HostLocations::new(&data);
+    locations
+        .register_as("loc-taken", &dir.folder("first"))
+        .expect("first");
+    let before = std::fs::read_dir(data.join("locations"))
+        .expect("dir")
+        .count();
+    assert!(locations
+        .register_as("loc-taken", &dir.folder("second"))
+        .is_err());
+    let after = std::fs::read_dir(data.join("locations"))
+        .expect("dir")
+        .count();
+    assert_eq!(before, after, "the refused folder got no lease folder");
+}
+
+#[test]
+fn concurrent_registrations_of_one_folder_share_one_root() {
+    let dir = TempDir::new("concurrent");
+    let locations = Arc::new(HostLocations::new(&dir.folder("data")));
+    let folder = dir.folder("library");
+    let ids: Vec<String> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..8)
+            .map(|_| scope.spawn(|| locations.register(&folder).expect("registered")))
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().expect("join"))
+            .collect()
+    });
+    let first = locations.location(&ids[0]).expect("root");
+    for id in &ids[1..] {
+        let root = locations.location(id).expect("root");
+        assert!(Arc::ptr_eq(&first.reservations, &root.reservations));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn the_stores_refuse_a_symbolic_link_in_place_of_the_operational_store() {
+    let dir = TempDir::new("store-link");
+    let real = dir.0.join("elsewhere.sqlite");
+    std::fs::write(&real, b"").expect("file");
+    let link = dir.0.join(JOURNAL_FILE);
+    std::os::unix::fs::symlink(&real, &link).expect("link");
+    assert!(SqliteRepairLedger::open(&link, "desktop").is_err());
+    assert!(filesquid_native::SqlitePreferences::open(&link).is_err());
+}

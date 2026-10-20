@@ -10,8 +10,16 @@
  * values it needs are passed in as arguments.
  */
 import { browser, expect } from "@wdio/globals";
-import { E2E_LIBRARY_ID } from "../support/media-library.mjs";
-import { COPY_LOCATION, CREATE_LOCATION, MEDIA_LOCATION } from "../support/library-folders.mjs";
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { E2E_LIBRARY_ID, E2E_OBJECT_ID } from "../support/media-library.mjs";
+import {
+  COPY_LIBRARY_ID,
+  COPY_LOCATION,
+  CREATE_LOCATION,
+  MEDIA_LOCATION,
+  removeHeadInventories,
+} from "../support/library-folders.mjs";
 
 /**
  * The scheme base URL the app page uses on this platform (ADR 030 Decision 3).
@@ -114,17 +122,42 @@ describe("the library routes in a packaged window", () => {
     }
   });
 
-  it("lists repair candidates and refuses a repair without the owner's consent", async () => {
-    const query = `/api/v1/libraries/repair-candidates?library_id=${E2E_LIBRARY_ID}`;
+  it("finds the copy's object without a version inventory and repairs it only with consent", async () => {
+    const copy = path.join(process.env.FILESQUID_E2E_LOCATIONS, "copy");
+    const heads = removeHeadInventories(copy);
+    expect(heads.length).toBe(1);
+    const opened = await call("POST", "/api/v1/libraries/openings", {
+      location_id: COPY_LOCATION,
+      library_id: COPY_LIBRARY_ID,
+    });
+    expect(opened.status).toBe(200);
+    const query = `/api/v1/libraries/repair-candidates?library_id=${COPY_LIBRARY_ID}`;
     const candidates = await call("GET", query, null);
     expect(candidates.status).toBe(200);
-    expect(candidates.json.candidates).toEqual([]);
+    expect(candidates.json.candidates.map((c) => c.object_id)).toEqual([E2E_OBJECT_ID]);
+    const objects = [E2E_OBJECT_ID];
     const refused = await call("POST", "/api/v1/libraries/repairs", {
-      library_id: E2E_LIBRARY_ID,
-      object_ids: ["urn:uuid:5e2e0000-0000-4000-8000-0000000000aa"],
+      library_id: COPY_LIBRARY_ID,
+      object_ids: objects,
     });
     expect(refused.status).toBe(409);
-    expectNoPath(refused);
+    expect(existsSync(path.join(heads[0], "inventory.json"))).toBe(false);
+    const repaired = await call("POST", "/api/v1/libraries/repairs", {
+      library_id: COPY_LIBRARY_ID,
+      object_ids: objects,
+      consent: {
+        library_id: COPY_LIBRARY_ID,
+        object_ids: objects,
+        statement_id: "version_inventory_repair.v1",
+        confirmed: true,
+      },
+    });
+    expect(repaired.status).toBe(200);
+    expect(repaired.json.objects[0].result).toBe("repaired");
+    expect(existsSync(path.join(heads[0], "inventory.json"))).toBe(true);
+    for (const answer of [opened, candidates, refused, repaired]) {
+      expectNoPath(answer);
+    }
   });
 
   it("starts the history backfill over the served roots", async () => {

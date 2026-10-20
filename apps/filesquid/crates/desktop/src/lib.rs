@@ -550,11 +550,15 @@ pub fn install_library_routes(
     installation: &InstallationId,
     serving: LibraryServing,
 ) -> Result<Arc<HostLocations>, String> {
-    let ledger = SqliteRepairLedger::open(&serving.data_dir.join(JOURNAL_FILE), "filesquid-desktop")
-        .map_err(|err| {
-            tracing::error!(operation = LIBRARY_ROUTES_OPERATION, error_code = "unavailable", error = %err, "the repair ledger could not be opened");
-            "the repair ledger could not be opened".to_string()
-        })?;
+    let path = serving.data_dir.join(JOURNAL_FILE);
+    let ledger = SqliteRepairLedger::open(&path, "filesquid-desktop").map_err(|_| {
+        tracing::error!(
+            operation = LIBRARY_ROUTES_OPERATION,
+            error_code = "unavailable",
+            "the repair ledger could not be opened"
+        );
+        "the repair ledger could not be opened".to_string()
+    })?;
     let service = local_library_service(host, installation, Arc::new(ledger));
     let locations = Arc::new(HostLocations::new(&serving.data_dir));
     let libraries = DesktopLibraries::new(service, locations.clone(), serving);

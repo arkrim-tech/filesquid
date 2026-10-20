@@ -67,9 +67,9 @@ impl HostLocations {
     ///
     /// # Errors
     ///
-    /// A message that never names a path: the folder is not a plain directory, the data
-    /// directory's folders could not be prepared, [`MAX_LOCATIONS`] are registered, or no
-    /// ID could be minted.
+    /// A message that never names a path: the folder is not a plain directory, it overlaps
+    /// the app's data directory, the data directory's folders could not be prepared,
+    /// [`MAX_LOCATIONS`] are registered, or no ID could be minted.
     pub fn register(&self, folder: &Path) -> Result<String, String> {
         let id = mint_location_id()?;
         self.register_as(&id, folder)?;
@@ -88,11 +88,9 @@ impl HostLocations {
             return Err("the location ID is malformed".to_string());
         }
         let folder = storage_root(folder)?;
-        let known = self.root_of_folder(&folder)?;
-        let root = match known {
-            Some(root) => root,
-            None => self.prepare_root(&folder)?,
-        };
+        self.refuse_data_dir_overlap(&folder)?;
+        // One lock across the checks, the preparation and the insertion, so concurrent
+        // registrations of one folder share its root and a refused one prepares nothing.
         let mut locations = self.lock()?;
         if locations.len() >= MAX_LOCATIONS {
             return Err("too many locations are registered".to_string());
@@ -100,7 +98,26 @@ impl HostLocations {
         if locations.contains_key(location_id) {
             return Err("the location ID is already registered".to_string());
         }
+        let known = locations.values().find(|known| known.folder == folder);
+        let root = match known {
+            Some(known) => known.root.clone(),
+            None => self.prepare_root(&folder)?,
+        };
         locations.insert(location_id.to_string(), Location { folder, root });
+        Ok(())
+    }
+
+    /// Refuse a folder that is, holds or lies inside the data directory, so no lease, parts
+    /// or staging folder of the host can become part of a library's storage root. Reads
+    /// filesystem metadata.
+    fn refuse_data_dir_overlap(&self, folder: &Path) -> Result<(), String> {
+        let data = self
+            .data_dir
+            .canonicalize()
+            .map_err(|_| "the data directory could not be resolved".to_string())?;
+        if folder.starts_with(&data) || data.starts_with(folder) {
+            return Err("the folder overlaps the app's data directory".to_string());
+        }
         Ok(())
     }
 
@@ -108,14 +125,6 @@ impl HostLocations {
     pub fn root_of(&self, location_id: &str) -> Option<HostRoot> {
         let locations = self.locations.lock().ok()?;
         locations.get(location_id).map(|found| found.root.clone())
-    }
-
-    /// The storage root already registered for the canonical `folder`, so a folder
-    /// registered twice shares one backend and one set of leases.
-    fn root_of_folder(&self, folder: &Path) -> Result<Option<HostRoot>, String> {
-        let locations = self.lock()?;
-        let found = locations.values().find(|known| known.folder == folder);
-        Ok(found.map(|known| known.root.clone()))
     }
 
     /// The backend and leases of `folder` under `<data dir>/locations/<digest>/`. Creates
@@ -246,8 +255,8 @@ impl OpenedRoots {
 }
 
 impl OpenedRoots {
-    /// Run `backfill` once over each opened root, writing under its own leases, until each
-    /// is done, its cap is reached or `cancel` is set (checked between roots and, inside
+    /// Run `backfill` over each opened root, writing under its own leases, until each is
+    /// done, its run cap is reached or `cancel` is set (checked between roots and, inside
     /// each run, between objects). Each run registers in the process registry and journals
     /// itself. Filesystem and journal I/O.
     ///
@@ -278,13 +287,35 @@ impl OpenedRoots {
 pub struct OpenedBackfill {
     /// The library.
     pub library_id: LibraryId,
-    /// The run's report, or why it could not start.
-    pub report: Result<BackfillReport, BackfillError>,
+    /// The reports of its runs (more than one when a run reached its cap), or why a run
+    /// could not start.
+    pub report: Result<Vec<BackfillReport>, BackfillError>,
+}
+
+/// Backfill `root` until it is done, [`MAX_BACKFILL_RUNS`](crate::MAX_BACKFILL_RUNS) runs
+/// were made, or `cancel` is set: a run that reached its cap is followed by another, as the
+/// catalog's backfill does. Answers every run's report, or the first run that could not start.
+/// Filesystem and journal I/O.
+fn backfill_root(
+    root: &HostRoot,
+    backfill: &Backfill,
+    cancel: &AtomicBool,
+) -> Result<Vec<BackfillReport>, BackfillError> {
+    let mut reports = Vec::new();
+    for _ in 0..crate::MAX_BACKFILL_RUNS {
+        let report = backfill_once(root, backfill, cancel)?;
+        let again = report.reached_cap && !report.cancelled;
+        reports.push(report);
+        if !again {
+            break;
+        }
+    }
+    Ok(reports)
 }
 
 /// One backfill run over `root`; the filesystem backend's futures never wait. Filesystem and
 /// journal I/O.
-fn backfill_root(
+fn backfill_once(
     root: &HostRoot,
     backfill: &Backfill,
     cancel: &AtomicBool,

@@ -14,7 +14,7 @@
 use crate::journal_sqlite::SqliteJournal;
 use filesquid_api::journal::JournalEntry;
 use filesquid_api::local_library::{LedgerError, RecordedRepair, RepairLedger, RepairRecord};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, ErrorCode, OpenFlags};
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
@@ -66,10 +66,14 @@ impl SqliteRepairLedger {
     pub fn open(path: &Path, host: impl Into<String>) -> Result<Self, LedgerError> {
         let host = host.into();
         drop(SqliteJournal::open(path, host.clone()).map_err(failed)?);
-        let conn = Connection::open(path).map_err(failed)?;
+        let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_CREATE
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | OpenFlags::SQLITE_OPEN_NOFOLLOW;
+        let conn = Connection::open_with_flags(path, flags).map_err(classify)?;
         conn.busy_timeout(std::time::Duration::from_secs(5))
-            .map_err(failed)?;
-        conn.execute_batch(SCHEMA).map_err(failed)?;
+            .map_err(classify)?;
+        conn.execute_batch(SCHEMA).map_err(classify)?;
         Ok(Self {
             host,
             conn: Mutex::new(conn),
@@ -84,7 +88,7 @@ impl SqliteRepairLedger {
     pub fn consent_count(&self) -> Result<i64, LedgerError> {
         let conn = self.lock()?;
         conn.query_row("SELECT COUNT(*) FROM repair_consents", [], |row| row.get(0))
-            .map_err(failed)
+            .map_err(classify)
     }
 
     /// The receipts recorded, oldest first, at most [`MAX_RECEIPTS_READ`]. Reads the
@@ -100,11 +104,11 @@ impl SqliteRepairLedger {
                 "SELECT object_id, version, digest_algorithm, inventory_digest, written
                  FROM repair_receipts ORDER BY id LIMIT ?1",
             )
-            .map_err(failed)?;
+            .map_err(classify)?;
         let rows = stmt
             .query_map(params![MAX_RECEIPTS_READ as i64], receipt_row)
-            .map_err(failed)?;
-        rows.map(|row| row.map_err(failed).and_then(|r| r))
+            .map_err(classify)?;
+        rows.map(|row| row.map_err(classify).and_then(|r| r))
             .collect()
     }
 
@@ -123,17 +127,25 @@ impl SqliteRepairLedger {
         then: impl FnOnce(&rusqlite::Transaction<'_>, i64) -> rusqlite::Result<usize>,
     ) -> Result<(), LedgerError> {
         let mut conn = self.lock()?;
-        let tx = conn.transaction().map_err(unavailable)?;
+        let tx = conn.transaction().map_err(classify)?;
         let journal_id =
             SqliteJournal::record_in_transaction(&tx, &self.host, entry).map_err(failed)?;
-        then(&tx, journal_id).map_err(failed)?;
-        tx.commit().map_err(unavailable)
+        then(&tx, journal_id).map_err(classify)?;
+        tx.commit().map_err(classify)
     }
 }
 
-/// A store that could not take the write now (busy or locked), as the port reports it.
-fn unavailable(err: rusqlite::Error) -> LedgerError {
-    LedgerError::Unavailable(err.to_string())
+/// An SQLite failure as the port reports it: a busy or locked database is `Unavailable` (a
+/// retry may succeed), every other failure `Failed`. Pure.
+fn classify(err: rusqlite::Error) -> LedgerError {
+    let busy = matches!(
+        err.sqlite_error_code(),
+        Some(ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked)
+    );
+    match busy {
+        true => LedgerError::Unavailable(err.to_string()),
+        false => LedgerError::Failed(err.to_string()),
+    }
 }
 
 /// One stored receipt row; a malformed `written` list is reported, never skipped.
