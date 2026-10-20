@@ -8,9 +8,9 @@
 |---|---|---|
 | [SRS-F-061](../../../../../resources/srs.md#srs-f-061-activity-journal-and-live-health-monitoring) | Activity journal and live health monitoring | [`ocfl_validation_findings_monitor_F-061.feature`](../../tests/features/ocfl_validation_findings_monitor_F-061.feature), `tests/ui/ocfl-findings.test.ts`, `tests/ui/monitor.test.ts`, `tests/e2e/preview/ocfl-findings.spec.ts`, `tests/e2e/ocfl-findings.spec.ts` |
 | [API-S-022](../../../crates/api/resources/srs.md) | OCFL validation findings MUST reach health and the Monitor | client methods (`tests/unit/admin-client.test.ts`); errors apart from warnings, withheld location, last and next run, schedule, truncated note, live refresh (Vitest and preview Playwright); real findings and run routes (server Playwright) |
-| [UI-S-005](../srs.md) | A distribution's label table MUST define every key of the default table | the 37 new keys are in `REQUIRED_LABEL_KEYS` and in the FileSquid and ImageSquid tables (`apps/imagesquid` tests pass) |
+| [UI-S-005](../srs.md) | A distribution's label table MUST define every key of the default table | the 39 new keys are in `REQUIRED_LABEL_KEYS` and in the FileSquid and ImageSquid tables (`apps/imagesquid` tests pass) |
 | [UI-S-016](../srs.md) | Accessibility contracts | each findings table is named by its `h3` inside a named, focusable scroll region (`ocfl-findings.test.ts`); the accessibility audit and the 320 px / 200 % reflow test in `accessibility.spec.ts` pass with the new section |
-| [UI-S-013](../srs.md) | UI tests against production artifacts with strict DOM assertions | preview and server-backed Playwright suites: elements defined, words from the label table, token colours in light and dark, no console errors |
+| [UI-S-013](../srs.md) | UI tests against production artifacts with strict DOM assertions | preview and server-backed Playwright suites: elements defined, words from the label table, token colours in light and dark, no console errors (the server-backed findings spec gives the page the token before its first call, so no call is refused and no console line is tolerated) |
 
 ## Constraint gates
 
@@ -33,7 +33,7 @@
 - **Client** ([`src/api/client.ts`](../../src/api/client.ts)): `adminOcflFindings()`, `startOcflValidation(request)`, and the contract types `FindingsView`, `FindingView`, `LibraryRuns`, `RunView`, `RunOutcome`, `ValidationSettings`, `RunRequest`, `RunAccepted` and `HealthReason`.
 - **`<fs-ocfl-findings>`** ([`fs-ocfl-findings.ts`](../../src/components/fs-ocfl-findings.ts)), with pure row builders in [`ocfl-findings-view.ts`](../../src/components/ocfl-findings-view.ts): a Validation runs table, the schedule, an Errors table, a separate Warnings table, W010 read-only notes, a truncated note, and Validate now with a status line.
 - **`<fs-monitor>`** ([`fs-monitor.ts`](../../src/components/fs-monitor.ts)): a new `ocfl` section after Health; `MonitorClient` gains the two methods; `MonitorOptions.repairHref`; it refreshes the section on `health.change` and on `ocfl.validation` process updates; it words the `ocfl_validation_errors` reason from `healthOcflErrors`, and each reason item carries `data-reason`.
-- **Labels:** 37 new keys (`monitorFindings`, `healthOcflErrors`, `findings*`, `run*`) in [`labels.ts`](../../src/theme/labels.ts), [`labels.en.json`](../../src/theme/labels.en.json) and ImageSquid's table.
+- **Labels:** 39 new keys (`monitorFindings`, `healthOcflErrors`, `findings*`, `run*`, two of them added in review) in [`labels.ts`](../../src/theme/labels.ts), [`labels.en.json`](../../src/theme/labels.en.json) and ImageSquid's table.
 - **Docs:** the package README section "Monitor: OCFL validation findings", the root README "View logs" bullet, the plan row, and a note in UI-1.1 on passing `repairHref`.
 
 ## Holistic UI decisions
@@ -46,6 +46,16 @@
 
 - `filesquid-server` opens no OCFL library until SV-F1.2 (`start_validation` in `crates/server/src/lib.rs`). Against the real server, the findings route therefore answers no findings and no libraries. The server-backed Playwright suite proves that the real routes are wired (an empty findings answer, the real schedule, `POST` answering `{"started":[],"refused":[]}`). The E023, closure, W010, withheld-location and run-time criteria are proven against the production build with answers shaped like the contract. **Needed for a server-backed E023 proof:** a way for the server to open a library and validate it, for example a test-only fixture like the desktop's `FILESQUID_E2E_LIBRARY`, wired to `ValidationService::open_library`.
 - No new route or field is assumed.
+
+## Review fixes (Cubic round 1: 6 P2, 2 P3)
+
+- The server-backed findings spec no longer tolerates 401 and WebSocket console lines. It sets the token before the first call, so nothing is refused.
+- A queued refresh checks the element's generation, so a removed element starts no new read (test "starts no queued read after it is removed").
+- Gherkin: the refusal scenario now names the API's 403 answer instead of a role the Background excludes. Scenarios were added for a refused library, `events.resync` and the truncated lower bound.
+- When the findings list is truncated, the W010 note says "at least" (new label `findingsReadOnlyPartial`).
+- `events.resync` makes the Monitor read health, processes, metrics, the journal and the findings again.
+- Validate now names each refused library with its error code (new label `findingsRunRefused`, pure `runSummary`).
+- README: Retry is offered for the error, offline and unavailable states, not for denied.
 
 ## How it was tested
 
@@ -100,6 +110,17 @@
   ✓  45 [chromium] › tests/e2e/preview/ocfl-findings.spec.ts:249:1 › (5) the last and next run times come from the findings route; Validate now starts a run (387ms)
   ✓  47 [chromium] › tests/e2e/preview/ocfl-findings.spec.ts:288:1 › error and warning codes take their colours from tokens in light and dark (379ms)
   49 passed (17.7s)
+```
+
+### After the round 1 review fixes
+
+```text
+ Test Files  49 passed (49)
+      Tests  1039 passed (1039)
+  ✓  30 [chromium] › tests/e2e/ocfl-findings.spec.ts:37:1 › the findings section reads the real findings route with the token (394ms)
+  ✓  32 [chromium] › tests/e2e/ocfl-findings.spec.ts:68:1 › Validate now starts runs through the real run route and says nothing was open (337ms)
+  42 passed (24.9s)
+  49 passed (17.6s)
 ```
 
 ### Pre-commit hook on the head commit

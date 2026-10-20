@@ -44,6 +44,8 @@ export type MonitorClient = Pick<
 const VALIDATION_PROCESS = "ocfl.validation";
 /** Code of the health reason for open OCFL validation errors (API-S-022). */
 const OCFL_REASON = "ocfl_validation_errors";
+/** Topic the event channel sends when it may have dropped events; everything is read again. */
+const RESYNC_TOPIC = "events.resync";
 
 /** Where the server host's token is kept while the page is open (in memory only). */
 export interface TokenStore {
@@ -233,6 +235,7 @@ export class FsMonitor extends HTMLElement {
 
   /** Apply one live event from the event channel. */
   private applyEvent(event: ApiEvent): void {
+    if (event.topic === RESYNC_TOPIC) return this.resync();
     if (!isObject(event.data)) return;
     if (event.topic === "process.update") {
       const view = event.data as ProcessView;
@@ -245,6 +248,17 @@ export class FsMonitor extends HTMLElement {
     } else if (event.topic === "journal.entry") {
       this.addJournalEntry(event.data as JournalEntry);
     }
+  }
+
+  /**
+   * Read everything again after `events.resync`, which the event channel sends when it may
+   * have dropped events: health, processes and metrics, the journal page and the OCFL
+   * findings. Network I/O.
+   */
+  private resync(): void {
+    void this.refresh();
+    void this.searchJournal();
+    void this.findings?.refresh();
   }
 
   /** Add a live journal entry matching the current filter; newest first, each id once. */

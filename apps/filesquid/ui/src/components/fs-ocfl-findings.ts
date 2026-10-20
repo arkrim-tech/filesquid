@@ -30,6 +30,7 @@ import {
   readOnlyNotes,
   runHeads,
   runRow,
+  runSummary,
   scheduleItems,
 } from "./ocfl-findings-view";
 import { failureState, type ViewState } from "./view-state";
@@ -125,7 +126,9 @@ export class FsOcflFindings extends HTMLElement {
     if (this.queued) return this.queued;
     const current = this.inFlight;
     if (!current) return this.load();
+    const generation = this.generation;
     this.queued = current.then(() => {
+      if (generation !== this.generation) return;
       this.queued = undefined;
       return this.load();
     });
@@ -226,11 +229,7 @@ export class FsOcflFindings extends HTMLElement {
     this.starting = true;
     try {
       const accepted = await options.client.startOcflValidation({});
-      const started = String(accepted.started.length);
-      const refused = String(accepted.refused.length);
-      const none = accepted.started.length + accepted.refused.length === 0;
-      const words = formatLabel(options.labels.findingsRunResult, { started, refused });
-      this.setResult(none ? options.labels.findingsNoLibraries : words, "started");
+      this.setResult(runSummary(accepted, options.labels), "started");
     } catch (error) {
       console.warn("OCFL validation could not start", error);
       const reason = this.failureWords(error, options.labels);
@@ -288,7 +287,7 @@ export class FsOcflFindings extends HTMLElement {
     root
       .querySelector('[data-part="schedule"]')
       ?.replaceChildren(...scheduleItems(view.settings, labels));
-    const notes = readOnlyNotes(warnings, labels, this.options?.repairHref);
+    const notes = readOnlyNotes(warnings, labels, view.truncated, this.options?.repairHref);
     notes.forEach((note) => note.classList.add("note"));
     root.querySelector('[data-part="notes"]')?.replaceChildren(...notes);
     const truncated = root.querySelector<HTMLElement>('[data-note="truncated"]');

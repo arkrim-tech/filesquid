@@ -6,7 +6,8 @@
  * libraries arrive (SV-F1.2), so it answers no findings and no library runs; the E023, W010,
  * withheld-location and run-time cases are proven against the production build with
  * contract-shaped answers in `preview/ocfl-findings.spec.ts`. Strict DOM assertions: elements
- * defined, words from the active label table, no console errors beyond the refused first call.
+ * defined, words from the active label table, and no console errors at all: the page has the
+ * token from its first call, so no call is refused and nothing is tolerated.
  */
 import { expect, test, type Page } from "@playwright/test";
 import { ADMIN_TOKEN } from "./admin-token";
@@ -14,15 +15,15 @@ import { activeLabels, expectElementsDefined, label, trackErrors } from "./suppo
 
 const labels = activeLabels();
 
-/** The browser's own console line for the Monitor's first, unauthenticated call. */
-const REFUSED_CALL = /status of 401 \(|WebSocket connection to .* failed/;
-
-/** Open the Monitor and sign in with the administrator token. */
+/**
+ * Open the Monitor with the administrator token as the page's launch token, so every call,
+ * the first included, is authorised and the console stays clean.
+ */
 async function signIn(page: Page): Promise<void> {
+  await page.addInitScript((value) => {
+    Object.defineProperty(window, "__FILESQUID_LAUNCH_TOKEN__", { value, enumerable: false });
+  }, ADMIN_TOKEN);
   await page.goto("/#/monitor");
-  const form = page.locator("fs-monitor form[data-form='token']");
-  await form.locator("input").fill(ADMIN_TOKEN);
-  await form.locator("button").click();
 }
 
 /** The cells of the body rows of one table part, as text. */
@@ -33,8 +34,8 @@ async function cells(page: Page, part: string): Promise<string[][]> {
   );
 }
 
-test("the findings section reads the real findings route after sign-in", async ({ page }) => {
-  const errors = trackErrors(page, REFUSED_CALL);
+test("the findings section reads the real findings route with the token", async ({ page }) => {
+  const errors = trackErrors(page);
   const answer = page.waitForResponse(
     (response) =>
       response.url().endsWith("/api/v1/admin/ocfl/findings") && response.status() === 200,
@@ -67,7 +68,7 @@ test("the findings section reads the real findings route after sign-in", async (
 test("Validate now starts runs through the real run route and says nothing was open", async ({
   page,
 }) => {
-  const errors = trackErrors(page, REFUSED_CALL);
+  const errors = trackErrors(page);
   await signIn(page);
   const findings = page.locator("fs-monitor fs-ocfl-findings");
   await expect(findings).toHaveAttribute("data-state", "ready");

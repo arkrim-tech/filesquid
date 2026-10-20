@@ -335,4 +335,49 @@ describe("<fs-ocfl-findings>", () => {
     expect(el.shadowRoot?.querySelector("img")).toBeNull();
     expect(rows(el, "errors")[0]?.[1]).toBe("<img src=x onerror=alert(1)>");
   });
+
+  it("starts no queued read after it is removed", async () => {
+    const fake = fakeClient(view([]));
+    const el = mount(fake.client);
+    await settle();
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const read = fake.client.adminOcflFindings;
+    fake.client.adminOcflFindings = async () => {
+      await gate;
+      return read();
+    };
+    const before = fake.reads();
+    void el.refresh();
+    void el.refresh();
+    el.remove();
+    release();
+    await settle();
+    await settle();
+    expect(fake.reads() - before).toBe(1);
+  });
+
+  it("says at least how many objects are read-only when the list is truncated", async () => {
+    const el = mount(fakeClient(view([finding("W010")], { truncated: true })).client);
+    await settle();
+    const note = el.shadowRoot?.querySelector('[data-note="read-only"]');
+    expect(note?.textContent).toBe(
+      labels.findingsReadOnlyPartial.replace("{count}", "1").replace("{name}", LIB),
+    );
+  });
+
+  it("names each library whose run was not started and why", async () => {
+    const fake = fakeClient(view([]));
+    fake.answerRun({ started: [], refused: [{ library_id: LIB, error_code: "already_running" }] });
+    const el = mount(fake.client);
+    await settle();
+    el.shadowRoot?.querySelector<HTMLButtonElement>('button[data-action="validate"]')?.click();
+    await settle();
+    const result = el.shadowRoot?.querySelector('[data-part="run-result"]');
+    const summary = labels.findingsRunResult.replace("{started}", "0").replace("{refused}", "1");
+    const refused = labels.findingsRunRefused
+      .replace("{name}", LIB)
+      .replace("{code}", "already_running");
+    expect(result?.textContent).toBe(`${summary} ${refused}`);
+  });
 });

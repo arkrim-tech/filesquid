@@ -4,7 +4,13 @@
  * have no version inventory (W010). Every value is set with `textContent`; nothing the API
  * sends becomes markup, and a location the API withholds (null) is never filled in.
  */
-import type { FindingView, LibraryRuns, RunView, ValidationSettings } from "../api/client";
+import type {
+  FindingView,
+  LibraryRuns,
+  RunAccepted,
+  RunView,
+  ValidationSettings,
+} from "../api/client";
 import { formatLabel, type LabelKey, type LabelTable } from "../theme/labels";
 
 /** The warning of an object whose head has no version inventory (OCFL-S-020, UI-1.1 repair). */
@@ -198,21 +204,23 @@ export function readOnlyCounts(findings: readonly FindingView[]): Map<string, nu
  * One note per library with W010 objects: their files can be read but not changed, with a
  * link to the UI-1.1 repair offer when the distribution gives its address.
  *
+ * When the findings list is truncated the count is a lower bound and says "at least".
+ *
  * @param findings The open findings.
  * @param labels The active label table.
+ * @param truncated Whether the route listed fewer findings than are open.
  * @param repairHref The address of a library's repair offer, when the distribution has one.
  * @returns The note paragraphs.
  */
 export function readOnlyNotes(
   findings: readonly FindingView[],
   labels: LabelTable,
+  truncated: boolean,
   repairHref?: (libraryId: string) => string,
 ): HTMLParagraphElement[] {
+  const template = truncated ? labels.findingsReadOnlyPartial : labels.findingsReadOnly;
   return [...readOnlyCounts(findings)].map(([library, count]) => {
-    const note = text(
-      "p",
-      formatLabel(labels.findingsReadOnly, { count: String(count), name: library }),
-    );
+    const note = text("p", formatLabel(template, { count: String(count), name: library }));
     note.dataset.note = "read-only";
     note.dataset.libraryId = library;
     if (!repairHref) return note;
@@ -222,6 +230,27 @@ export function readOnlyNotes(
     note.append(" ", link);
     return note;
   });
+}
+
+/**
+ * The words for an answered Validate now: nothing open to validate when no library was
+ * named, otherwise how many runs started and were not, followed by each refused library and
+ * its error code. Pure.
+ *
+ * @param accepted The run route's answer.
+ * @param labels The active label table.
+ * @returns The status text.
+ */
+export function runSummary(accepted: RunAccepted, labels: LabelTable): string {
+  if (accepted.started.length + accepted.refused.length === 0) return labels.findingsNoLibraries;
+  const summary = formatLabel(labels.findingsRunResult, {
+    started: String(accepted.started.length),
+    refused: String(accepted.refused.length),
+  });
+  const refusals = accepted.refused.map((refusal) =>
+    formatLabel(labels.findingsRunRefused, { name: refusal.library_id, code: refusal.error_code }),
+  );
+  return [summary, ...refusals].join(" ");
 }
 
 /** Create a table cell with text. */

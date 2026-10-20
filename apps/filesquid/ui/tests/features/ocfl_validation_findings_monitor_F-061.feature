@@ -83,7 +83,22 @@ Feature: OCFL validation findings in the Monitor
     Then the OCFL validation section should show the unavailable state with Retry
     And the other Monitor sections should still show their data
 
-  Scenario: Starting a run is refused
-    Given I may not start validation runs
+  Scenario: The API refuses the request to start runs
+    Given the run route answers 403 "not_permitted", for example because my session ended
     When I press "Validate now"
     Then the section should say that validation could not start and why, in words from the label table
+
+  Scenario: A library's run is not started
+    Given a run of one open library is already going
+    When I press "Validate now"
+    Then the section should name that library and the reason "already_running"
+
+  Scenario: The event channel asks for a resync
+    Given the findings section is shown
+    When an "events.resync" event arrives
+    Then the Monitor should read health, processes, the journal and the findings again
+
+  Scenario: A truncated list gives a lower bound for read-only objects
+    Given the findings route says its list is truncated and lists a W010 warning
+    When the Monitor loads
+    Then the read-only note should say "at least" that many objects

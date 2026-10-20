@@ -350,6 +350,31 @@ describe("<fs-monitor>", () => {
     expect(fake.findingsReads()).toBe(first + 2);
   });
 
+  it("re-reads health, processes, the journal and the findings on events.resync", async () => {
+    const fake = fakeClient();
+    let healthReads = 0;
+    let journalReads = 0;
+    const readHealth = fake.client.adminHealth;
+    const readJournal = fake.client.adminJournal;
+    fake.client.adminHealth = () => {
+      healthReads += 1;
+      return readHealth();
+    };
+    fake.client.adminJournal = (filters) => {
+      journalReads += 1;
+      return readJournal(filters);
+    };
+    mount(fake.client);
+    await settle();
+    await settle();
+    const [health0, journal0, findings0] = [healthReads, journalReads, fake.findingsReads()];
+    fake.emit({ topic: "events.resync", data: {} });
+    await settle();
+    expect(healthReads).toBe(health0 + 1);
+    expect(journalReads).toBe(journal0 + 1);
+    expect(fake.findingsReads()).toBe(findings0 + 1);
+  });
+
   it("keeps the other sections up when the findings route is unavailable", async () => {
     const fake = fakeClient();
     fake.client.adminOcflFindings = () =>
