@@ -94,6 +94,9 @@ mod history_fixture;
 #[path = "support/version_steps.rs"]
 mod version_steps;
 
+#[path = "support/retention_contract.rs"]
+mod retention_contract;
+
 #[path = "support/library_routes_fixture.rs"]
 mod library_routes_fixture;
 

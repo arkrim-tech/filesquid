@@ -3,6 +3,7 @@
 //! through the router over a real OCFL storage root on the local filesystem.
 
 use crate::files_fixture::{query, Answer, FilesRig, LIBRARY, OBJECT};
+use crate::retention_contract::version_removals;
 use crate::MonitorWorld;
 use axum::http::Method;
 use cucumber::{given, then, when};
@@ -255,19 +256,27 @@ async fn library_size(w: &mut MonitorWorld, contents: usize, bytes: u64) {
 #[then(expr = "the contract should offer no version deletion, expiry or thinning")]
 fn no_deletion(_w: &mut MonitorWorld) {
     let doc: Value = serde_json::from_str(filesquid_api::CONTRACT).expect("contract");
-    for (path, item) in doc["paths"].as_object().expect("paths") {
-        assert!(item.get("delete").is_none(), "{path} offers DELETE");
-        for word in ["expir", "thin", "prune", "purge"] {
-            assert!(!path.to_lowercase().contains(word), "{path}");
-        }
-    }
+    assert_eq!(version_removals(&doc), Vec::<String>::new());
 }
 
 #[then(expr = "version {string} should hold its PROV-O record")]
 async fn prov_record(w: &mut MonitorWorld, version: String) {
-    let paths = head_paths(w.versions.rig()).await;
-    let record = format!("provenance/{version}.jsonld");
-    assert!(paths.contains(&record), "{paths:?}");
+    let rig = w.versions.rig();
+    let path = format!("provenance%2F{version}.jsonld");
+    let uri = format!(
+        "/api/v1/files/content?{}",
+        query(&format!("path={path}&version={version}"))
+    );
+    let answer = rig.get(&uri).await;
+    assert_eq!(answer.status.as_u16(), 200, "the record is in {version}");
+    let record: Value = serde_json::from_slice(&answer.body).expect("a JSON-LD record");
+    assert!(record.get("@context").is_some(), "{record}");
+    let restores = rig.journaled("files.restore");
+    let operation = restores[0].operation_id.clone().expect("operation id");
+    assert!(
+        record.to_string().contains(&operation),
+        "the record names the restore's operation {operation}"
+    );
 }
 
 #[then(expr = "the restore should be journaled once with its commit")]

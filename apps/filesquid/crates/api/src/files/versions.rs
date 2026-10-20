@@ -25,7 +25,7 @@ use crate::library::mint_uuid_v4;
 use filesquid_core::{OperationId, OperationKind};
 use filesquid_ocfl::change::{ChangeError, ChangeModel, VersionMeta};
 use filesquid_ocfl::inventory::{User, VersionNum};
-use filesquid_ocfl::read::Object;
+use filesquid_ocfl::read::{Object, StorageRoot};
 use filesquid_ocfl::storage::{StorageBackend, StorageKey};
 use filesquid_ocfl::view;
 use filesquid_ocfl::write::{CommitReceipt, VersionBoundFiles, VersionReservations};
@@ -307,7 +307,8 @@ impl<B: StorageBackend, R, S> FileService<B, R, S> {
     }
 
     /// The bytes a library's history keeps: each distinct content of each object once,
-    /// within [`MAX_SIZE_OBJECTS`] and [`MAX_SIZE_CONTENTS`].
+    /// within [`MAX_SIZE_OBJECTS`] and [`MAX_SIZE_CONTENTS`]. `truncated` is also set when
+    /// the storage root holds an object that could not be opened, which is left out.
     pub async fn library_history_size(
         &self,
         query: LibraryQuery,
@@ -315,12 +316,17 @@ impl<B: StorageBackend, R, S> FileService<B, R, S> {
         let library = self.library(&query.library_id)?;
         library.scan().await?;
         let roots = library.roots_snapshot();
+        let stored = StorageRoot::open(library.files.backend.as_ref())
+            .await?
+            .objects()
+            .len();
         let mut total = LibraryHistorySizeView {
             library_id: query.library_id,
             objects: 0,
             contents: 0,
             bytes: 0,
-            truncated: roots.len() > MAX_SIZE_OBJECTS,
+            // An object the scan could not open is not counted, so the total is partial.
+            truncated: roots.len() > MAX_SIZE_OBJECTS || stored > roots.len(),
         };
         for root in roots.iter().take(MAX_SIZE_OBJECTS) {
             let object = Object::open(library.files.backend.as_ref(), root).await?;
