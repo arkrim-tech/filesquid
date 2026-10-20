@@ -12,9 +12,11 @@
 //!   `Range` per request, each answer capped at [`MAX_ANSWER_BYTES`] (the desktop scheme's
 //!   buffer cap, DE-S-005). A listing names its folder by library, object and prefix, or by a
 //!   collection or folder navigation node readable to the caller (Task API-F2.2), and leaves
-//!   out the [`RESERVED_FOLDERS`]. The whole-file download streams one file version of any
-//!   size in ranged reads as an attachment; a refusal, or a failure after the answer started,
-//!   is journaled once as [`DOWNLOAD_OPERATION`].
+//!   out the [`RESERVED_FOLDERS`]. On `filesquid-server` the whole-file download streams one
+//!   file version of any size in ranged reads as an attachment; the desktop scheme caps every
+//!   answer at [`MAX_ANSWER_BYTES`], so the desktop saves a larger file with ranged content
+//!   reads. A refusal, or a failure after the answer started, is journaled once as
+//!   [`DOWNLOAD_OPERATION`].
 //! - **Writes** (action `files.write`): upload, move or rename, remove and restore. Each one
 //!   calls the IO-1.2 view API, which publishes exactly one version through the
 //!   `filesquid-ocfl` change model, or is refused without publishing (nothing would change,
