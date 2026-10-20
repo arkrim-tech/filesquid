@@ -37,7 +37,7 @@ Also MD-S-008: Canonical metadata record (one per-file record `<file-uuid>.metad
 |---|---|
 | MD-S-013 Import record: record, schema, header fields | `unit_import_record::file_record::*`, BDD "The record opens with the original name, display name, extension, format and media type" |
 | MD-S-013 Import record: unavailable facts with a reason | `entry_validation::the_upload_profile_is_valid_and_lists_what_an_upload_cannot_know`, `an_unavailable_fact_serializes_with_its_reason`, BDD "Every missing fact is listed as unavailable with a reason" |
-| MD-S-013 Import record: reported size must equal verified size | `differing_reported_and_verified_sizes_are_rejected`, BDD "A source size that differs from the verified size is rejected" |
+| MD-S-013 Import record: reported and cited sizes must equal the verified size | `differing_reported_and_verified_sizes_are_rejected`, `the_cited_size_must_be_the_verified_size`, BDD "A source size that differs from the verified size is rejected" |
 | MD-S-013 Import record: RFC 3339 UTC times | `timestamps_must_be_rfc_3339_utc`, `a_file_time_must_be_rfc_3339_utc_too` |
 | MD-S-013 Import record: base64 for non-UTF-8 | `raw_values::*`, `a_non_utf8_original_name_round_trips_exactly`, `a_non_utf8_name_survives_the_store`, BDD "Names and values that are not UTF-8 round-trip as base64" |
 | MD-S-013 Import record: bounds: 256 names, 1 MiB, 64 KiB, truncated, incomplete | `attribute_bounds::*`, BDD "Attribute inspection stops at 256 names and 1 MiB and marks what it cut", "A value over 64 KiB is kept as size and SHA-256 only" |
@@ -150,7 +150,7 @@ test attribute_bounds::the_read_budget_is_one_mebibyte_across_the_entry ... ok
 test result: ok. 46 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
 ```
 
-`cargo test -p filesquid-metadata --all-features --locked` (all binaries, including the BDD feature run with both `wasm32` builds): exit 0; per binary: lib 3, cli 22, csv 10, extract 13, file_record_store 23, file_ref 3, import_record 58, isolation 4, json 19, markdown 3, register 10, sidecar 8, store 28 passed, 0 failed. BDD: 43 scenarios (42 passed, 1 skipped), 129 steps (128 passed, 1 skipped); the skipped step is the existing UI-only "Metadata panel" scenario.
+`cargo test -p filesquid-metadata --all-features --locked` (all binaries, including the BDD feature run with both `wasm32` builds): exit 0; per binary: lib 3, cli 22, csv 10, extract 13, file_record_store 23, file_ref 3, import_record 59, isolation 4, json 19, markdown 3, register 10, sidecar 8, store 28 passed, 0 failed. BDD: 43 scenarios (42 passed, 1 skipped), 129 steps (128 passed, 1 skipped); the skipped step is the existing UI-only "Metadata panel" scenario.
 
 `cargo check -p filesquid-metadata --lib --no-default-features [--features ocfl] --target wasm32-unknown-unknown --locked`: both `Finished`.
 

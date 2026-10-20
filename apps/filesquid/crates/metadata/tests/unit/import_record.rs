@@ -1067,3 +1067,28 @@ mod review_fixes_two {
         assert_eq!(attrs.validate(), Ok(()));
     }
 }
+
+mod review_fixes_three {
+    use super::*;
+
+    #[test]
+    fn a_digest_is_only_kept_for_a_value_over_64_kib() {
+        let mut entry = entry();
+        entry.attributes = Fact::value(Attributes {
+            entries: vec![attribute(
+                "small",
+                AttrValue::Digest {
+                    sha256: "a".repeat(64),
+                },
+                MAX_STORED_VALUE_BYTES,
+            )],
+            names_enumerated: 1,
+            truncated: false,
+            bytes_inspected: 0,
+        });
+        assert_eq!(
+            entry.validate(),
+            Err(ImportError::AttributeValueInconsistent)
+        );
+    }
+}

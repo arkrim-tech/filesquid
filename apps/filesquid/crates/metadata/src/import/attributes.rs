@@ -88,7 +88,8 @@ impl Attributes {
     /// [`ImportError::AttributeBytesUnderReported`] when the whole values
     /// stored add up to more bytes than `bytes_inspected` claims,
     /// [`ImportError::AttributeValueInconsistent`] for a whole value whose
-    /// length is not its `size` or a digest that is not SHA-256 hex,
+    /// length is not its `size`, or a digest that is not SHA-256 hex or is kept for a
+    /// value of at most 64 KiB,
     /// and [`ImportError::TruncationNotMarked`] when names were left out
     /// without the `truncated` mark.
     pub fn validate(&self) -> Result<(), ImportError> {
@@ -127,7 +128,9 @@ impl Attributes {
         for attribute in &self.entries {
             let consistent = match &attribute.value {
                 AttrValue::Full { value } => value.as_bytes().len() as u64 == attribute.size,
-                AttrValue::Digest { sha256 } => is_sha256_hex(sha256),
+                AttrValue::Digest { sha256 } => {
+                    attribute.size > MAX_STORED_VALUE_BYTES && is_sha256_hex(sha256)
+                }
                 AttrValue::Incomplete | AttrValue::Withheld => true,
             };
             if !consistent {
