@@ -1,4 +1,5 @@
-//! Durable jobs on the desktop (Task DE-0.4; DE-S-014, API-S-033; NFR-003, ADR 007).
+//! Durable jobs on the desktop and the history backfill job worker (Task DE-0.4, moved here
+//! from the desktop host by Task DE-0.8; DE-S-014, DE-S-015, API-S-033; NFR-003, ADR 007).
 //!
 //! The host keeps its jobs in the operational store (`<data dir>/filesquid.sqlite`,
 //! [`SqliteJobs`]) and runs them through `filesquid-api`'s [`Jobs`] service, which owns the
@@ -12,13 +13,12 @@
 //! checkpoint lists the libraries it completed, so a resumed run skips them, and its source
 //! identity is the installation, so a job written by another installation is never resumed.
 
+use crate::{HostMonitor, LibraryBackfill, SqliteCatalog, SqliteJobs, JOURNAL_FILE};
 use filesquid_api::history::backfill::BackfillReport;
 use filesquid_api::history::backfill::{Backfill, BACKFILL_OPERATION};
 use filesquid_api::jobs::{Job, JobError, JobSpec, JobState, Jobs, RunningJob};
 use filesquid_api::library::mint_uuid_v4;
 use filesquid_core::{InstallationId, LibraryId};
-use filesquid_native::{HostMonitor, LibraryBackfill, SqliteCatalog, SqliteJobs, JOURNAL_FILE};
-use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -67,18 +67,19 @@ pub fn backfill_source(installation: &InstallationId) -> String {
     format!("installation:{}", installation.as_str())
 }
 
-/// What a backfill job stores between runs: the libraries it completed.
-#[derive(Debug, Default, Serialize, Deserialize)]
-struct BackfillCheckpoint {
-    done: Vec<String>,
+/// The checkpoint text of a backfill that completed the libraries `done`:
+/// `{"done": ["<library-id>", ...]}`. Pure.
+pub fn backfill_checkpoint(done: &[LibraryId]) -> String {
+    let ids: Vec<&str> = done.iter().map(LibraryId::as_str).collect();
+    serde_json::json!({ "done": ids }).to_string()
 }
 
-/// The checkpoint text of a backfill that completed the libraries `done`. Pure.
-pub fn backfill_checkpoint(done: &[LibraryId]) -> String {
-    let checkpoint = BackfillCheckpoint {
-        done: done.iter().map(|id| id.as_str().to_string()).collect(),
-    };
-    serde_json::to_string(&checkpoint).unwrap_or_else(|_| "{}".to_string())
+/// The library IDs a checkpoint's JSON lists under `done`, if it is a checkpoint. Pure.
+fn checkpoint_done(value: &serde_json::Value) -> Option<Vec<String>> {
+    let done = value.get("done")?.as_array()?;
+    done.iter()
+        .map(|id| id.as_str().map(str::to_string))
+        .collect()
 }
 
 /// The libraries a checkpoint says are complete. An unreadable checkpoint is logged and
@@ -87,9 +88,10 @@ fn done_libraries(checkpoint: Option<&str>) -> Vec<String> {
     let Some(text) = checkpoint else {
         return Vec::new();
     };
-    match serde_json::from_str::<BackfillCheckpoint>(text) {
-        Ok(checkpoint) => checkpoint.done,
-        Err(_) => {
+    let parsed = serde_json::from_str::<serde_json::Value>(text).ok();
+    match parsed.as_ref().and_then(checkpoint_done) {
+        Some(done) => done,
+        None => {
             tracing::warn!(
                 operation = BACKFILL_OPERATION,
                 error_code = "checkpoint_unreadable",

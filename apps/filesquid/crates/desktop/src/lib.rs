@@ -37,7 +37,6 @@
 pub mod api_protocol;
 pub mod app_window;
 pub mod capability_policy;
-pub mod durable_jobs;
 pub mod event_channel;
 pub mod ipc_gate;
 pub mod ipc_observer;
@@ -66,6 +65,7 @@ use filesquid_core::InstallationId;
 use filesquid_native::installation::{
     self, InstallationError, InstallationSource, INSTALLATION_CREATED,
 };
+use filesquid_native::workers::history_backfill;
 use filesquid_native::{CatalogRoots, HostMonitor, SqliteCatalog, CATALOG_DIR};
 use filesquid_ocfl::storage::FsBackend;
 use ipc_observer::TauriIpcObserver;
@@ -327,7 +327,7 @@ pub fn open_host_monitor(
 /// the monitor ticker starts the scheduled runs.
 pub struct DesktopValidation(pub ValidationService<FsBackend>);
 
-/// The durable job service of this launch (Task DE-0.4; [`durable_jobs`]), held in Tauri's
+/// The durable job service of this launch (Task DE-0.4; `filesquid_native::workers`), held in Tauri's
 /// managed state for the jobs that later tasks (import, upload, migration) run.
 pub struct DesktopJobs(pub Jobs);
 
@@ -547,14 +547,14 @@ fn start_monitor(
         open_library_catalog(&data_dir, &host, &installation).inspect_err(|_| host.stop())?,
     );
     install_history_source(&state, catalog.clone()).inspect_err(|_| host.stop())?;
-    let jobs = durable_jobs::open_jobs(&data_dir, &host).inspect_err(|_| host.stop())?;
-    let backfill = durable_jobs::recover_jobs(&jobs)
+    let jobs = history_backfill::open_jobs(&data_dir, &host).inspect_err(|_| host.stop())?;
+    let backfill = history_backfill::recover_jobs(&jobs)
         .ok()
         .map(|_| BackfillTask {
             jobs: jobs.clone(),
             backfill: history_backfill(&host, &installation),
             catalog: catalog.clone(),
-            source: durable_jobs::backfill_source(&installation),
+            source: history_backfill::backfill_source(&installation),
         });
     app.manage(DesktopJobs(jobs));
     app.manage(DesktopInstallation(installation));
@@ -581,7 +581,7 @@ fn start_monitor(
 /// flushed.
 const BACKFILL_STOP_WAIT: Duration = Duration::from_secs(10);
 
-/// The history backfill job one launch runs ([`durable_jobs::run_backfill_job`]).
+/// The history backfill job one launch runs ([`history_backfill::run_backfill_job`](filesquid_native::workers::history_backfill::run_backfill_job)).
 struct BackfillTask {
     jobs: Jobs,
     backfill: Backfill,
@@ -616,8 +616,8 @@ fn spawn_backfill(task: BackfillTask, stop: Arc<AtomicBool>) -> Option<JoinHandl
 fn run_backfill_task(
     task: &BackfillTask,
     stop: &AtomicBool,
-) -> Result<durable_jobs::BackfillJobRun, JobError> {
-    durable_jobs::run_backfill_job(
+) -> Result<history_backfill::BackfillJobRun, JobError> {
+    history_backfill::run_backfill_job(
         &task.jobs,
         &task.catalog,
         &task.backfill,
@@ -629,7 +629,7 @@ fn run_backfill_task(
 /// Log a backfill job that could not run, and each library whose backfill could not run, as
 /// warnings with error codes only (the journal layer journals warnings; the job and each run
 /// that started journaled themselves).
-fn report_backfill(result: Result<durable_jobs::BackfillJobRun, JobError>) {
+fn report_backfill(result: Result<history_backfill::BackfillJobRun, JobError>) {
     let run = match result {
         Ok(run) => run,
         Err(err) => {
