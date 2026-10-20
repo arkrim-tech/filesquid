@@ -78,6 +78,8 @@ export class FsLibraryStart extends HTMLElement {
     const options = this.options;
     if (!this.shadowRoot || !options) return;
     const { labels } = options;
+    this.generation += 1;
+    this.busy = false;
     const feedback = new Feedback(labels);
     this.feedback = feedback;
     const cards = node("div", "cards");

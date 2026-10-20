@@ -226,6 +226,20 @@ describe("<fs-library-start>", () => {
     expect(navigated).toEqual([]);
   });
 
+  it("accepts new clicks after being removed and attached again mid-flow", async () => {
+    const source = new FakeLibrarySource();
+    source.choice = () => new Promise(() => undefined);
+    const { page } = await mount(source);
+    button(page, "create").click();
+    await settle();
+    page.remove();
+    document.body.append(page);
+    await settle();
+    button(page, "open").click();
+    await settle();
+    expect(source.calls).toEqual(["choose:create", "choose:open"]);
+  });
+
   it("never renders a filesystem path", async () => {
     const { page } = await mount();
     button(page, "create").click();

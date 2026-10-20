@@ -217,7 +217,11 @@ function answerFor(
     });
   }
   if (path.endsWith("/repairs")) return repairAnswer(api, record);
-  return ok({ library_id: LIB, spec_version: "1.1", objects: 2 });
+  return ok({
+    library_id: typeof record.library_id === "string" ? record.library_id : LIB,
+    spec_version: "1.1",
+    objects: 2,
+  });
 }
 
 /** The location-choices answer for the chooser's current mode. */

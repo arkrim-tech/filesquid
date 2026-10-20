@@ -312,11 +312,12 @@ Not implemented: HTMLMediaElement's pause() method
  ✓ tests/unit/contract.test.ts (1 test) 175ms
 
  Test Files  56 passed (56)
-      Tests  1205 passed (1205)
+      Tests  1206 passed (1206)
    Start at  23:48:14
    Duration  19.94s (transform 2.83s, setup 1.95s, import 6.34s, tests 14.12s, environment 27.20s)
 
 JUNIT report written to /home/user/filesquid/.claude/worktrees/agent-a2375308b5fb6e7d4/apps/filesquid/ui/tests/allure-results/vitest-junit.xml
+vitest exit 0
 ```
 
 ### Playwright, production build plus vite preview (apps/filesquid/ui)
@@ -389,6 +390,7 @@ Running 62 tests using 2 workers
   ✓  62 [chromium] › tests/e2e/preview/ocfl-findings.spec.ts:289:1 › error and warning codes take their colours from tokens in light and dark (189ms)
 
   62 passed (16.8s)
+pw exit 0
 ```
 
 ### Vitest and Playwright preview (apps/imagesquid)
@@ -417,6 +419,7 @@ Running 62 tests using 2 workers
 
 JUNIT report written to /home/user/filesquid/.claude/worktrees/agent-a2375308b5fb6e7d4/apps/imagesquid/tests/allure-results/vitest-junit.xml
 
+vitest exit 0
 Running 5 tests using 1 worker
 
   ✓  1 [chromium] › tests/e2e/preview/production-build.spec.ts:57:1 › the built page is static, mounts the shell and defines every custom element (217ms)
@@ -426,4 +429,5 @@ Running 5 tests using 1 worker
   ✓  5 [chromium] › tests/e2e/preview/production-build.spec.ts:127:1 › the library flow runs in ImageSquid with its own label table (UI-1.1) (195ms)
 
   5 passed (5.6s)
+exit 0
 ```

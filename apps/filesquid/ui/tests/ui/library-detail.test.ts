@@ -238,6 +238,7 @@ describe("<fs-library-detail>", () => {
     page.libraryId = "lib-2";
     await settle();
     expect(action(page, "copy").getAttribute("aria-disabled")).not.toBe("true");
+    expect(source.calls).toContain("copy:lib-1:loc-1");
     finish(COPY_REPORT);
     await settle();
     expect(rootOf(page).querySelector('[data-result="copy"]')?.children.length).toBe(0);
