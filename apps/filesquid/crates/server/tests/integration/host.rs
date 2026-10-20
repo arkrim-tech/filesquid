@@ -331,3 +331,54 @@ fn the_binary_refuses_a_non_unicode_operator_name() {
         "refused before opening"
     );
 }
+
+/// POST `body` to `path` with the administrator token: status and JSON body.
+async fn post(
+    state: ApiState,
+    config: &ServerConfig,
+    path: &str,
+    body: serde_json::Value,
+) -> (u16, serde_json::Value) {
+    let request = Request::post(path)
+        .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_string()))
+        .expect("request");
+    let response = app(config, state).oneshot(request).await.expect("answer");
+    let status = response.status().as_u16();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    (status, serde_json::from_slice(&bytes).expect("JSON"))
+}
+
+#[tokio::test]
+async fn the_server_offers_no_folder_dialog_or_backfill_launcher_yet() {
+    let dir = data_dir("no-chooser");
+    let config = config(&dir, Some("Example Archive")).expect("config");
+    let state = ApiState::new();
+    let host = start_server(&config, &state, None).expect("server starts");
+    let body = serde_json::json!({ "purpose": "create" });
+    let (status, answer) = post(
+        state.clone(),
+        &config,
+        "/api/v1/libraries/location-choices",
+        body,
+    )
+    .await;
+    assert_eq!(status, 503, "{answer}");
+    assert_eq!(answer["code"], "unavailable");
+    let (status, answer) = post(
+        state.clone(),
+        &config,
+        "/api/v1/admin/history/backfill",
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(status, 503, "{answer}");
+    host.stop();
+    let _ = std::fs::remove_dir_all(&dir);
+}

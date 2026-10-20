@@ -1,4 +1,4 @@
-//! The desktop's folder choice for the library routes (Task DE-1.1; API-S-025, DE-S-017;
+//! The desktop's folder choice for the library routes (Task DE-1.1; API-S-034, DE-S-017;
 //! owner decision 2026-10-20): the host's [`LocationChooser`] behind
 //! `POST /api/v1/libraries/location-choices`.
 //!
@@ -12,6 +12,7 @@ use filesquid_native::HostLocations;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use tauri::Manager;
 
 /// A native folder dialog.
 pub trait FolderDialog: Send + Sync {
@@ -24,13 +25,33 @@ pub trait FolderDialog: Send + Sync {
 }
 
 /// The platform's native folder dialog through `rfd` (GTK 3 on Linux, `NSOpenPanel` on
-/// macOS, the common item dialog on Windows), awaited on the calling (blocking) thread.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct RfdDialog;
+/// macOS, the common item dialog on Windows), awaited on the calling (blocking) thread and
+/// parented to the app's main window (DE-S-017). GTK 3 takes no foreign parent, so on Linux
+/// the dialog opens without one, which DE-S-017 allows.
+#[derive(Clone)]
+pub struct RfdDialog {
+    app: tauri::AppHandle,
+}
+
+impl std::fmt::Debug for RfdDialog {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RfdDialog").finish_non_exhaustive()
+    }
+}
+
+impl RfdDialog {
+    /// The dialog of the app `app`, parented to its main window when it has one. Pure.
+    pub fn new(app: tauri::AppHandle) -> Self {
+        Self { app }
+    }
+}
 
 impl FolderDialog for RfdDialog {
     fn pick(&self, purpose: ChoicePurpose) -> Result<Option<PathBuf>, ChooseError> {
-        let dialog = rfd::AsyncFileDialog::new().set_title(dialog_title(purpose));
+        let mut dialog = rfd::AsyncFileDialog::new().set_title(dialog_title(purpose));
+        if let Some(window) = self.app.get_webview_window(crate::app_window::MAIN_WINDOW) {
+            dialog = dialog.set_parent(&window);
+        }
         let picked = tauri::async_runtime::block_on(dialog.pick_folder());
         Ok(picked.map(|handle| handle.path().to_path_buf()))
     }

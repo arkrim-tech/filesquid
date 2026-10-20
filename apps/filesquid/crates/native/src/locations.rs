@@ -4,8 +4,8 @@
 //! A folder never crosses the API as a path. [`HostLocations::register`] resolves the folder
 //! once (every symbolic link on the way resolved, the folder itself never a link), prepares
 //! its storage backend and its fenced version leases under `<data dir>/locations/<digest>/`
-//! (named by a digest of the canonical folder); registering one folder twice shares its
-//! backend and leases, and answers an opaque `loc-<uuid>` ID. The library commands and the file
+//! (named by a digest of the canonical folder); registering one folder again answers its
+//! existing ID, and a second host-chosen ID for it shares its backend and leases, and answers an opaque `loc-<uuid>` ID. The library commands and the file
 //! routes of a library opened there write through the same leases
 //! ([`HostLocations::root_of`], [`crate::files::open_fs_library_root`]).
 //!
@@ -61,9 +61,10 @@ impl HostLocations {
         }
     }
 
-    /// Register the folder the owner chose and answer its new opaque location ID. Creates
-    /// the location's parts and lease folders in the data directory; reads nothing in the
-    /// folder itself.
+    /// Register the folder the owner chose and answer its opaque location ID: a new one, or
+    /// the existing one when the folder is already registered (API-S-034), so repeated
+    /// choices never accumulate registrations for one folder. Creates the location's parts
+    /// and lease folders in the data directory; reads nothing in the folder itself.
     ///
     /// # Errors
     ///
@@ -71,14 +72,20 @@ impl HostLocations {
     /// the app's data directory, the data directory's folders could not be prepared,
     /// [`MAX_LOCATIONS`] are registered, or no ID could be minted.
     pub fn register(&self, folder: &Path) -> Result<String, String> {
+        let folder = self.checked_folder(folder)?;
+        let mut locations = self.lock()?;
+        if let Some(known) = id_of_folder(&locations, &folder) {
+            return Ok(known);
+        }
         let id = mint_location_id()?;
-        self.register_as(&id, folder)?;
+        self.insert(&mut locations, &id, folder)?;
         Ok(id)
     }
 
     /// Register `folder` under the opaque `location_id` the host chose (`loc-` and at most
     /// [`MAX_LOCATION_ID_BYTES`](filesquid_api::local_library::MAX_LOCATION_ID_BYTES) bytes
-    /// of ASCII letters, digits and `-`), as [`HostLocations::register`] does.
+    /// of ASCII letters, digits and `-`). A folder registered under another ID shares that
+    /// registration's backend and leases.
     ///
     /// # Errors
     ///
@@ -87,11 +94,29 @@ impl HostLocations {
         if !valid_location_id(location_id) {
             return Err("the location ID is malformed".to_string());
         }
+        let folder = self.checked_folder(folder)?;
+        let mut locations = self.lock()?;
+        self.insert(&mut locations, location_id, folder)
+    }
+
+    /// `folder` resolved to its canonical path and checked against the data directory.
+    /// Reads filesystem metadata.
+    fn checked_folder(&self, folder: &Path) -> Result<PathBuf, String> {
         let folder = storage_root(folder)?;
         self.refuse_data_dir_overlap(&folder)?;
-        // One lock across the checks, the preparation and the insertion, so concurrent
-        // registrations of one folder share its root and a refused one prepares nothing.
-        let mut locations = self.lock()?;
+        Ok(folder)
+    }
+
+    /// Insert `folder` as `location_id` into the locked registry: the checks, the
+    /// preparation of a new folder's storage and the insertion happen under one lock, so
+    /// concurrent registrations of one folder share its root and a refused one prepares
+    /// nothing. Creates directories for a folder registered for the first time.
+    fn insert(
+        &self,
+        locations: &mut HashMap<String, Location>,
+        location_id: &str,
+        folder: PathBuf,
+    ) -> Result<(), String> {
         if locations.len() >= MAX_LOCATIONS {
             return Err("too many locations are registered".to_string());
         }
@@ -177,6 +202,16 @@ impl LibraryLocations for HostLocations {
             _ => true,
         }
     }
+}
+
+/// The ID a canonical `folder` is registered under in `locations` (the smallest, when it
+/// has several), if any. Pure.
+fn id_of_folder(locations: &HashMap<String, Location>, folder: &Path) -> Option<String> {
+    locations
+        .iter()
+        .filter(|(_, known)| known.folder == folder)
+        .map(|(id, _)| id.clone())
+        .min()
 }
 
 /// Whether `id` is a location ID: `loc-`, then ASCII letters, digits and `-`, at most

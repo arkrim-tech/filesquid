@@ -56,22 +56,25 @@ fn a_registered_folder_gets_an_opaque_id_without_its_path() {
 }
 
 #[test]
-fn one_folder_registered_twice_shares_its_leases() {
+fn one_folder_chosen_twice_keeps_its_id_and_a_second_host_id_shares_its_leases() {
     let dir = TempDir::new("shared");
     let locations = HostLocations::new(&dir.folder("data"));
     let folder = dir.folder("library");
     let first = locations.register(&folder).expect("first");
-    let second = locations.register(&folder).expect("second");
-    assert_ne!(first, second);
+    let again = locations.register(&folder).expect("again");
+    assert_eq!(first, again, "a repeated choice answers the existing ID");
+    locations
+        .register_as("loc-e2e-same", &folder)
+        .expect("host id");
     let a = locations.location(&first).expect("a");
-    let b = locations.location(&second).expect("b");
+    let b = locations.location("loc-e2e-same").expect("b");
     assert!(Arc::ptr_eq(&a.reservations, &b.reservations));
     assert!(Arc::ptr_eq(&a.backend, &b.backend));
     let leases = dir.0.join("data").join("locations");
     let entries = std::fs::read_dir(&leases).expect("locations dir").count();
-    assert_eq!(entries, 1, "both registrations use one lease folder");
+    assert_eq!(entries, 1, "one lease folder for the folder");
     assert!(
-        locations.overlaps(&first, &second),
+        locations.overlaps(&first, "loc-e2e-same"),
         "the same folder overlaps"
     );
 }
@@ -236,7 +239,7 @@ fn a_refused_id_prepares_no_storage() {
 }
 
 #[test]
-fn concurrent_registrations_of_one_folder_share_one_root() {
+fn concurrent_choices_of_one_folder_get_one_id() {
     let dir = TempDir::new("concurrent");
     let locations = Arc::new(HostLocations::new(&dir.folder("data")));
     let folder = dir.folder("library");
@@ -249,11 +252,10 @@ fn concurrent_registrations_of_one_folder_share_one_root() {
             .map(|h| h.join().expect("join"))
             .collect()
     });
-    let first = locations.location(&ids[0]).expect("root");
-    for id in &ids[1..] {
-        let root = locations.location(id).expect("root");
-        assert!(Arc::ptr_eq(&first.reservations, &root.reservations));
-    }
+    assert!(
+        ids.iter().all(|id| *id == ids[0]),
+        "one ID for one folder: {ids:?}"
+    );
 }
 
 #[cfg(unix)]

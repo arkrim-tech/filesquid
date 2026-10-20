@@ -794,7 +794,8 @@ fn install_library_services(
         data_dir: data_dir.to_path_buf(),
     };
     let locations = install_library_routes(&state, host, installation, serving)?;
-    install_folder_choice(&state, &locations, Box::new(folder_choice::RfdDialog))?;
+    let dialog = Box::new(folder_choice::RfdDialog::new(app.clone()));
+    install_folder_choice(&state, &locations, dialog)?;
     app.manage(DesktopValidation(validation));
     app.manage(DesktopLocations(locations));
     Ok(())

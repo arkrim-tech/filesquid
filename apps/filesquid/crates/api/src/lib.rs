@@ -83,7 +83,7 @@ pub use routes::{route_actions, routed_paths, router, Liveness};
 use std::sync::{Arc, OnceLock};
 
 /// Version of the FileSquid API contract. Bumped when the contract changes.
-pub const API_VERSION: &str = "0.17.0";
+pub const API_VERSION: &str = "0.18.0";
 
 /// URL prefix shared by every API route.
 pub const API_PREFIX: &str = "/api/v1";

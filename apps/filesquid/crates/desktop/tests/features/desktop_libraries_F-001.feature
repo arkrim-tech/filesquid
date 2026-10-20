@@ -2,6 +2,7 @@
 # SRS-F-001: Independent local library and ownership
 # API-S-025: Local library and repair routes: hosts inject the storage root and the repair ledger; answers carry opaque identifiers, never a path; the repair is the desktop owner's alone and needs the owner's consent
 # DE-S-006: The webview receives opaque handles and API responses, never raw filesystem paths or SQL
+# DE-S-018: Library routes over owner-chosen folders: opaque location IDs, shared leases, a persistent repair ledger, and each bound library served
 Feature: Desktop libraries in folders the owner chose
   As the owner using the FileSquid desktop app
   I want to create, open, copy and repair my libraries in folders I choose

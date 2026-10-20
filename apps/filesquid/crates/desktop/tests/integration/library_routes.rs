@@ -15,7 +15,9 @@ use filesquid_api::journal::{JournalEntry, Outcome};
 use filesquid_api::library::{
     CommandRequest, LibraryCommand, LibraryService, NEW_LIBRARY_REVISION,
 };
-use filesquid_api::local_library::choice::{ChoicePurpose, ChooseError, LocationChooser};
+use filesquid_api::local_library::choice::{
+    ChoicePurpose, ChooseError, LocationChooser, CHOOSE_OPERATION,
+};
 use filesquid_api::local_library::{CONSENT_STATEMENT_ID, REPAIR_OPERATION};
 use filesquid_api::navigation::{AlwaysTrue, NavigationChange};
 use filesquid_api::operation::{CommandEnvelope, ExpectedRevision, OperationId, OperationScope};
@@ -497,13 +499,34 @@ fn the_owner_picks_a_folder_in_the_hosts_dialog_and_the_app_sees_only_its_id() {
         .expect("location")
         .to_string();
     assert!(!choice.to_string().contains("Picked"), "{choice}");
+    let (status, again) = desktop.post(
+        "/api/v1/libraries/location-choices",
+        json!({ "purpose": "open" }),
+    );
+    assert_eq!(status, 200, "{again}");
+    assert_eq!(
+        again["location_id"],
+        location.as_str(),
+        "the same folder keeps its ID"
+    );
     let (status, created) = desktop.post("/api/v1/libraries", json!({ "location_id": location }));
     assert_eq!(status, 200, "{created}");
     assert!(
         folder.join("0=ocfl_1.1").is_file(),
         "the library is in the picked folder"
     );
-    desktop.stop();
+    let (_, entries) = desktop.stop();
+    let choices: Vec<_> = entries
+        .iter()
+        .filter(|e| e.operation == CHOOSE_OPERATION)
+        .collect();
+    assert_eq!(choices.len(), 3, "each request journaled once");
+    let journaled = format!("{choices:?}");
+    assert!(!journaled.contains("Picked"), "no folder name: {journaled}");
+    assert!(
+        !journaled.contains(dir.to_string_lossy().as_ref()),
+        "no path"
+    );
 }
 
 #[test]

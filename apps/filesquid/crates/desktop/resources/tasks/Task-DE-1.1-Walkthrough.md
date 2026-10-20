@@ -1,6 +1,6 @@
 # Task DE-1.1 Walkthrough: Create, open, copy, rebuild library
 
-Branch: `feat/de-1.1-library-create-open-copy-rebuild` (part of global [Task 1.1](../../../../../../resources/implementation-plan.md#task-1.1)). API contract `0.17.0` (one above `0.16.0` of API-F2.11, PR #105).
+Branch: `feat/de-1.1-library-create-open-copy-rebuild` (part of global [Task 1.1](../../../../../../resources/implementation-plan.md#task-1.1)). API contract `0.18.0` (one above `0.17.0` of CL-1.9, PR #107).
 
 ## What changed
 
@@ -25,7 +25,7 @@ Branch: `feat/de-1.1-library-create-open-copy-rebuild` (part of global [Task 1.1
     - answers 200 when started, 409 while a backfill runs, and 503 until a launcher is installed;
     - each request is journaled once as `history.backfill.request`.
   - `POST /api/v1/libraries/location-choices` and the `LocationChooser` port ([`local_library/choice.rs`](../../../api/src/local_library/choice.rs)).
-  - `openapi.json` is 0.17.0, with schemas `BackfillStarted`, `LocationChoiceRequest`, `LocationChoice`, `ChoicePurpose` and `ChoiceOutcome`. `ui/src/api/schema.d.ts` was regenerated.
+  - `openapi.json` is 0.18.0, with schemas `BackfillStarted`, `LocationChoiceRequest`, `LocationChoice`, `ChoicePurpose` and `ChoiceOutcome`. `ui/src/api/schema.d.ts` was regenerated.
 - **`filesquid-desktop`**:
   - [`libraries.rs`](../../src/libraries.rs): `DesktopLibraries` wraps `LibraryCommands<HostLocations>`. After each create or open, the bound library is served:
     - its files, from the same root and leases;
@@ -46,7 +46,7 @@ Branch: `feat/de-1.1-library-create-open-copy-rebuild` (part of global [Task 1.1
     - the history source over `HostRoots`.
   - Test-instrumented build only ([`test_fixture.rs`](../../src/test_fixture.rs)): the folders `create` and `copy` under `FILESQUID_E2E_LOCATIONS`, and the media library named by `FILESQUID_E2E_LIBRARY`, are registered under fixed location IDs (`loc-e2e-create`, `loc-e2e-copy`, `loc-e2e-media`).
 - **Docs**:
-  - desktop SRS DE-S-017;
+  - desktop SRS DE-S-018 (DE-S-017 and API-S-034 came from the folder-choice docs PR #106);
   - API plan notes on API-F1.11, API-F1.12, API-F2.2, API-F2.5 and API-F2.9;
   - the README packaged-window section.
 
@@ -66,7 +66,7 @@ The API port is `LocationChooser`, installed with `ApiState::install_location_ch
 - It registers the picked folder in `HostLocations` and answers only the location ID.
 - The path never leaves the host.
 
-WebDriver cannot drive a native dialog, so the packaged-window spec uses the test-instrumented registration. The route itself is tested with a scripted dialog. The ADR 002 amendment is in the orchestrator's docs PR.
+WebDriver cannot drive a native dialog, so the packaged-window spec uses the test-instrumented registration. The route itself is tested with a scripted dialog. The ADR 002 amendment and the requirements API-S-034 and DE-S-017 came from the docs PR #106. A folder chosen again answers its existing ID. The dialog is parented to the main window where the backend supports it; GTK 3 on Linux takes no parent, which DE-S-017 allows.
 
 ## Tests
 
@@ -89,7 +89,9 @@ WebDriver cannot drive a native dialog, so the packaged-window spec uses the tes
 | DE-S-006 The webview MUST receive opaque handles and API responses, never raw filesystem paths or SQL | every `integration_library_routes` answer is checked for the data-directory path; `unit_library_host::a_registered_folder_gets_an_opaque_id_without_its_path`, `a_file_or_a_missing_folder_is_refused_without_its_path`; e2e `expectNoPath` |
 | DE-S-011 Native journal and commit linkage (history source and backfill over every served root) | `integration_library_routes::an_opened_folder_feeds_the_history…`, `the_backfill_route_runs_over_the_folders_the_owner_opened`; `integration_history_wiring` (5 tests) |
 | DE-S-015 Native-processing library boundary | `integration_native_boundary` (4 tests; no storage open in the desktop sources) |
-| DE-S-017 Library routes over owner-chosen folders | `unit_library_host` (11 tests); `integration_library_routes` (6 tests) |
+| DE-S-018 Library routes over owner-chosen folders | `unit_library_host` (11 tests); `integration_library_routes` (8 tests) |
+| DE-S-017 Native library folder choice | `integration_library_routes::the_owner_picks_a_folder_in_the_hosts_dialog_and_the_app_sees_only_its_id` (a chosen folder answered as an ID the create route accepts; the same folder chosen again keeps its ID; the journal carries no folder name or path), `a_cancelled_or_unusable_pick_registers_nothing`; `unit_library_host::concurrent_choices_of_one_folder_get_one_id`; the packaged-window spec registers its folders through `FILESQUID_E2E_LOCATIONS` |
+| API-S-034 Library location choices | `unit_location_choice` (4 tests: chosen, cancelled, refusals journaled once with their codes, no dialog or unreadable body, unauthenticated); `unit_contract`; `filesquid-server` `integration_host::the_server_offers_no_folder_dialog_or_backfill_launcher_yet` (503 `unavailable`) |
 
 ## TDD: failing run
 
@@ -109,15 +111,15 @@ Spec Files:	 1 passed, 1 total (100% completed) in 00:00:32
 ```text
      Running tests/unit/library_host.rs
 test a_file_or_a_missing_folder_is_refused_without_its_path ... ok
-test a_folder_that_overlaps_the_data_directory_is_refused_and_prepares_nothing ... ok
 test a_host_chosen_id_must_be_well_formed_and_unique ... ok
-test a_symbolic_link_is_refused_as_a_location ... ok
 test a_refused_id_prepares_no_storage ... ok
 test a_registered_folder_gets_an_opaque_id_without_its_path ... ok
+test a_folder_that_overlaps_the_data_directory_is_refused_and_prepares_nothing ... ok
+test a_symbolic_link_is_refused_as_a_location ... ok
+test one_folder_chosen_twice_keeps_its_id_and_a_second_host_id_shares_its_leases ... ok
 test nested_and_unknown_locations_overlap_and_siblings_do_not ... ok
-test one_folder_registered_twice_shares_its_leases ... ok
 test the_stores_refuse_a_symbolic_link_in_place_of_the_operational_store ... ok
-test concurrent_registrations_of_one_folder_share_one_root ... ok
+test concurrent_choices_of_one_folder_get_one_id ... ok
 test the_ledger_journals_consents_and_receipts_and_keeps_them_across_a_restart ... ok
 test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
      Running tests/unit/history_backfill_route.rs
@@ -127,8 +129,8 @@ test an_unauthenticated_request_never_reaches_the_launcher ... ok
 test the_owner_starts_one_backfill_and_a_second_request_is_refused_while_it_runs ... ok
 test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
      Running tests/unit/location_choice.rs
-test a_cancelled_dialog_answers_cancelled_and_journals_it ... ok
 test a_picked_folder_answers_its_opaque_location_id_only ... ok
+test a_cancelled_dialog_answers_cancelled_and_journals_it ... ok
 test without_a_dialog_or_with_an_unreadable_body_nothing_is_asked ... ok
 test refusals_are_typed_and_journaled_once_with_their_code ... ok
 test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
@@ -213,6 +215,6 @@ None for the application. The packaged-window run sets `FILESQUID_E2E_LOCATIONS`
 `FULL=1 FILESQUID_DESKTOP_E2E=1 bash scripts/pre-commit.sh` on the final code, packaged-window e2e included:
 
 ```text
-✅ Desktop packaged-window e2e passed (109s).
-✅ All Pre-Commit Hooks Passed! Test scope: full (820s)
+✅ Desktop packaged-window e2e passed (108s).
+✅ All Pre-Commit Hooks Passed! Test scope: full (739s)
 ```
