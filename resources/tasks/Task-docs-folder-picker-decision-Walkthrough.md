@@ -54,8 +54,16 @@ rust:filesquid-api,filesquid-desktop,filesquid-native,filesquid-server npm:apps/
 Crate and package resources count as the crate or package, so the scope includes `rust:`. The full suite was therefore run (`FULL=1 bash scripts/pre-commit.sh`, with a shared Cargo target, `CARGO_INCREMENTAL=0`, `CARGO_PROFILE_DEV_DEBUG=0` and a private `TMPDIR`). Its summary line:
 
 ```
-✅ All Pre-Commit Hooks Passed! Test scope: full (1067s)
+✅ All Pre-Commit Hooks Passed! Test scope: full (433s, on the round-1 fixes; the first commit passed in 1067s)
 ```
+
+## Cubic review round 1
+
+- API-S-034 now says the route is a host interaction rather than a library command, so it takes no `CommandEnvelope`. A folder that is already registered is answered with its existing location ID, so retries do not pile up registrations.
+- DE-S-017 and ADR 002 now require the dialog's parent only where the backend supports one. On Linux, only the XDG portal does; `rfd` can fall back to zenity.
+- UI-1.1 passes the ID as `destination_location_id` to `snapshot-copies`, names Playwright coverage for the folder flow, and lists API-S-034. Global Task 1.1 lists API-S-034 and DE-S-017.
+- DE-1.1 says it spans `filesquid-api` and `filesquid-desktop` as a follow-up to API-F1.12. Its test prompt covers redaction of paths, storage keys, folder names and content.
+- ADR 030's consequence now limits the claim to hosts that implement `LocationChooser`.
 
 ## Sync Execution Report
 

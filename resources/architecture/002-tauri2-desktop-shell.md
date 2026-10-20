@@ -66,7 +66,7 @@ Universal CSS plus honest capability states is the practical reading of "works t
 - Linux-first validation will catch the weakest webview before macOS/Windows CSS assumptions accumulate.
 - Custom window chrome MAY be used later so title bars match; native file dialogs MAY still look native.
 - Tauri 2.x is used; Tauri 3 remains alpha at writing and is not adopted.
-- Assumed for the native folder choice (2026-10-20): `rfd` shows the operating system's own folder dialog on macOS, Linux and Windows from the Rust host while the Tauri event loop runs, with the main window as its parent; Task DE-1.1 proves this in the packaged window on macOS.
+- Assumed for the native folder choice (2026-10-20): `rfd` shows the operating system's own folder dialog on macOS, Linux and Windows from the Rust host while the Tauri event loop runs, with the main window as its parent where the platform's dialog backend supports one (on Linux only the XDG desktop portal does); Task DE-1.1 proves this in the packaged window on macOS.
 
 ## Alternatives Considered
 
