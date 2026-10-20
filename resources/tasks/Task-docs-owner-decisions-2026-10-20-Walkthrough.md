@@ -65,7 +65,9 @@ Cubic's first review (head `74a1606`) found 13 issues (0 P1, 9 P2, 4 P3), all fi
 
 ## Verification
 
-The module SRS and plan files live inside crates, so `bash scripts/changed_scope.sh` classifies this documentation-only change as `rust:filesquid-api,filesquid-cli,filesquid-desktop,filesquid-metadata,filesquid-native,filesquid-ocfl,filesquid-prov,filesquid-server` (changed: crates/api, crates/cli, crates/metadata, crates/ocfl), not `docs`. As the rules require for a `rust:` scope, the first PR head, commit `74a1606` (the decisions and this walkthrough before the review rounds), was verified with the full suite, `TMPDIR=/dev/shm/owner-decisions FULL=1 bash scripts/pre-commit.sh`, after `npm ci` in `apps/filesquid/ui` and `apps/imagesquid`. Raw summary lines of the run:
+The module SRS and plan files live inside crates, so `bash scripts/changed_scope.sh` classifies this documentation-only change as `rust:filesquid-api,filesquid-cli,filesquid-desktop,filesquid-metadata,filesquid-native,filesquid-ocfl,filesquid-prov,filesquid-server` (changed: crates/api, crates/cli, crates/metadata, crates/ocfl), not `docs`. The rules therefore require the full suite, `TMPDIR=/dev/shm/owner-decisions FULL=1 bash scripts/pre-commit.sh`, run after `npm ci` in `apps/filesquid/ui` and `apps/imagesquid`.
+
+The first full run (cold Cargo cache, 887s) checked the working tree before the first commit. Three small documentation edits (an ADR 036 sentence, the API-F2.13 upload text and one walkthrough row) were made while it ran; the runs in the table below cover them. Its raw summary lines:
 
 ```text
 ✅ Branch Validation passed.
@@ -89,13 +91,12 @@ The module SRS and plan files live inside crates, so `bash scripts/changed_scope
 ✅ All Pre-Commit Hooks Passed! Test scope: full (887s)
 ```
 
-Hook summary line: `Test scope: full`.
-
-Later commits, each run on its own tree before it was pushed:
+Each pushed commit was then checked on its own tree before it was pushed (separate runs, warm cache):
 
 | Commit | Run | Summary line |
 |---|---|---|
-| `74a1606` | `FULL=1 bash scripts/pre-commit.sh` | `✅ All Pre-Commit Hooks Passed! Test scope: full (318s)` |
+| `74a1606` (first PR head) | `FULL=1 bash scripts/pre-commit.sh` | `✅ All Pre-Commit Hooks Passed! Test scope: full (318s)` |
 | `528903c` (Cubic round 1 fixes) | `bash scripts/pre-commit.sh` | `✅ All Pre-Commit Hooks Passed! Test scope: rust:filesquid-api,filesquid-cli,filesquid-desktop,filesquid-metadata,filesquid-native,filesquid-ocfl,filesquid-prov,filesquid-server (343s)` |
+| `8de2781` (Cubic round 2 fix) | `FULL=1 bash scripts/pre-commit.sh` | `✅ All Pre-Commit Hooks Passed! Test scope: full (316s)` |
 
-The commit that adds this table, and any later fix commit, is verified the same way before it is pushed; its summary line is recorded in the pull request.
+A commit that changes this table cannot list its own run; that run's summary line is posted in the pull request.
