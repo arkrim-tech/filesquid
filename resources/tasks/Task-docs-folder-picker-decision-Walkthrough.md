@@ -51,10 +51,10 @@ The hook's change-aware scope, from `bash scripts/changed_scope.sh` against `ori
 rust:filesquid-api,filesquid-desktop,filesquid-native,filesquid-server npm:apps/filesquid/ui,apps/imagesquid
 ```
 
-Crate and package resources count as the crate or package, so the scope includes `rust:`. The full suite was therefore run (`FULL=1 bash scripts/pre-commit.sh`, with a shared Cargo target, `CARGO_INCREMENTAL=0`, `CARGO_PROFILE_DEV_DEBUG=0` and a private `TMPDIR`). Its summary line:
+Crate and package resources count as the crate or package, so the scope includes `rust:`. The full suite was therefore run (`FULL=1 bash scripts/pre-commit.sh`, with a shared Cargo target, `CARGO_INCREMENTAL=0`, `CARGO_PROFILE_DEV_DEBUG=0` and a private `TMPDIR`). Its summary line on the round-1 fixes (the first commit's run passed the same way, in 1067s):
 
 ```
-✅ All Pre-Commit Hooks Passed! Test scope: full (433s, on the round-1 fixes; the first commit passed in 1067s)
+✅ All Pre-Commit Hooks Passed! Test scope: full (433s)
 ```
 
 ## Cubic review round 1
