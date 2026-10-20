@@ -76,6 +76,14 @@ function monitorClient(failing: () => number | undefined): MonitorClient {
     adminJournal: () => guard({ entries: [], next_cursor: null }),
     adminMetrics: () => guard({}),
     adminJournalExport: () => guard(""),
+    adminOcflFindings: () =>
+      guard({
+        findings: [],
+        truncated: false,
+        settings: { interval_ms: 604_800_000, object_cap: 100_000 },
+        libraries: [],
+      }),
+    startOcflValidation: () => guard({ started: [], refused: [] }),
     subscribe: () => () => undefined,
   };
 }

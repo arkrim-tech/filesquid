@@ -1,6 +1,6 @@
 # @filesquid/ui
 
-FileSquid's default distribution and the component library every distribution builds on: the `FileSquidClient` API client and host adapter, vanilla TypeScript custom elements (`<fs-app-shell>`, `<fs-monitor>`, `<fs-nav-tree>`, `<fs-breadcrumb>`, `<fs-states>`, `<fs-host-indicator>`, `<fs-file-browser>`, `<fs-file-preview>`), design tokens and label tables ([ADR 031](../../../resources/architecture/031-vanilla-typescript-ui-and-white-label-theming.md)). Requirements: [SRS](./resources/srs.md). Plan: [plan](./resources/plan.md).
+FileSquid's default distribution and the component library every distribution builds on: the `FileSquidClient` API client and host adapter, vanilla TypeScript custom elements (`<fs-app-shell>`, `<fs-monitor>`, `<fs-ocfl-findings>`, `<fs-nav-tree>`, `<fs-breadcrumb>`, `<fs-states>`, `<fs-host-indicator>`, `<fs-file-browser>`, `<fs-file-preview>`), design tokens and label tables ([ADR 031](../../../resources/architecture/031-vanilla-typescript-ui-and-white-label-theming.md)). Requirements: [SRS](./resources/srs.md). Plan: [plan](./resources/plan.md).
 
 ## Develop and test
 
@@ -83,6 +83,19 @@ expect(accessibilityViolations(shell)).toEqual([]); // positive tabindex, unname
 ```
 
 `npm test` covers the helpers and component states in jsdom; `npm run test:e2e` checks Chromium's accessibility tree, Tab order, focus rings in light and dark, slotted content, reduced motion, contrast preferences, reflow (320 px at 100 % and 200 % text, 640 px and 1280 px at 200 %) and RTL against the built UI ([`tests/e2e/accessibility.spec.ts`](./tests/e2e/accessibility.spec.ts)).
+
+## Monitor: OCFL validation findings
+
+`<fs-monitor>` (`bindMonitorRoute(shell, { labels, client, tokens?, pollMs?, repairHref? })`, route `#/monitor`) holds an **OCFL validation** section below Health (Task UI-F2.14 in the [plan](./resources/plan.md), [API-S-022](../crates/api/resources/srs.md)). The section is its own element, `<fs-ocfl-findings>`, configured with `{ labels, client, repairHref?, online? }`, where the client implements `FindingsClient` (`adminOcflFindings()` and `startOcflValidation(request)`, which `FileSquidClient` does).
+
+- **Reads** `GET /api/v1/admin/ocfl/findings` (`client.adminOcflFindings()`): a **Validation runs** table with one row per open library (running or idle, last run start and end, outcome, objects checked and not checked, next scheduled run; "Never" and "Not scheduled" when there is none, "Nothing open to validate" with no library open), the schedule in force (hours between runs, objects per run), an **Errors** table and, apart from it, a **Warnings** table (library, object, version, code, location). A location the API withholds (null) shows "Not shown", never a path. When the route says `truncated` (more than 1,000 open), a note says more findings are open than are listed.
+- **W010.** A library with W010 warnings gets a note that the files in those objects can be read but not changed. When the findings list is truncated the count says "at least". With `repairHref(libraryId)` the note links to that library's repair offer (UI-1.1 supplies it); without it the note has no link.
+- **Validate now** posts an empty `RunRequest` to `POST /api/v1/admin/ocfl/validation-runs` (`client.startOcflValidation({})`), says how many runs started and how many were refused, naming each refused library with its error code, or why the start was refused, then reads the findings again.
+- **Live updates.** The Monitor calls `refresh()` on every `health.change` and on every `process.update` whose kind is `ocfl.validation`; on `events.resync` it reads health, processes, metrics, the journal page and the findings again. Refreshes are coalesced: one read in flight and at most one queued behind it, and a queued read is dropped once the element leaves the page.
+- **Health reason.** The `ocfl_validation_errors` reason is worded from the `healthOcflErrors` label with its codes and number of objects.
+- **Failure.** A failed read shows `<fs-states>` in this section only (denied, unavailable on a 503, offline or error); the error, offline and unavailable states offer Retry, the denied state does not (the caller's authorization must be corrected first). The rest of the Monitor stays up.
+
+Its words are the `monitorFindings`, `healthOcflErrors`, `findings*` and `run*` keys of the label table. Tests: `tests/ui/ocfl-findings.test.ts` (Vitest DOM), `tests/e2e/preview/ocfl-findings.spec.ts` (production build with contract-shaped answers: E023 with the degraded reason, closure by `health.change`, W010 apart with health ok, a withheld location, run times, token colours in light and dark) and `tests/e2e/ocfl-findings.spec.ts` (built UI on the real `filesquid-server` and its findings and run routes).
 
 ## Navigation, breadcrumb and view states
 

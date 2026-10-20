@@ -79,3 +79,61 @@ describe("admin methods", () => {
     await expect(client.adminMetrics()).rejects.toBeInstanceOf(ApiError);
   });
 });
+
+describe("OCFL validation methods (API-S-022)", () => {
+  /** A fetch stub that records method, URL and body, and answers `body`. */
+  function bodies(body: string, status = 200) {
+    const calls: { method: string; url: string; body: string | null; type: string | null }[] = [];
+    const fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      calls.push({
+        method: init?.method ?? "GET",
+        url: String(input),
+        body: typeof init?.body === "string" ? init.body : null,
+        type: headers.get("content-type"),
+      });
+      return new Response(body, { status, headers: { "content-type": "application/json" } });
+    };
+    return { calls, fetch: fetch as typeof globalThis.fetch };
+  }
+
+  it("read the open findings and runs", async () => {
+    const answer = { findings: [], truncated: false, settings: {}, libraries: [] };
+    const r = bodies(JSON.stringify(answer));
+    const client = new FileSquidClient({ baseUrl: "", fetch: r.fetch, token: "t" });
+    await expect(client.adminOcflFindings()).resolves.toEqual(answer);
+    expect(r.calls).toEqual([
+      { method: "GET", url: "/api/v1/admin/ocfl/findings", body: null, type: null },
+    ]);
+  });
+
+  it("start a run of every open library with an empty RunRequest", async () => {
+    const r = bodies(JSON.stringify({ started: ["l"], refused: [] }));
+    const client = new FileSquidClient({ baseUrl: "", fetch: r.fetch });
+    await expect(client.startOcflValidation()).resolves.toEqual({ started: ["l"], refused: [] });
+    expect(r.calls).toEqual([
+      {
+        method: "POST",
+        url: "/api/v1/admin/ocfl/validation-runs",
+        body: "{}",
+        type: "application/json",
+      },
+    ]);
+  });
+
+  it("start a run of one library from the beginning of its order", async () => {
+    const r = bodies(JSON.stringify({ started: ["l"], refused: [] }));
+    const client = new FileSquidClient({ baseUrl: "", fetch: r.fetch });
+    await client.startOcflValidation({ library_id: "l", from_start: true });
+    expect(r.calls[0]?.body).toBe('{"library_id":"l","from_start":true}');
+  });
+
+  it("raise ApiError for a run already going", async () => {
+    const body = JSON.stringify({ code: "conflict", message: "x", retryable: true });
+    const client = new FileSquidClient({ baseUrl: "", fetch: bodies(body, 409).fetch });
+    await expect(client.startOcflValidation({ library_id: "l" })).rejects.toMatchObject({
+      status: 409,
+      path: "/api/v1/admin/ocfl/validation-runs",
+    });
+  });
+});
