@@ -34,6 +34,7 @@ Feature: Version history, labels and restore through the API
     Given the owner labelled version "v1" as "First draft"
     When the owner clears the label of version "v1"
     Then version "v1" should have no label
+    And the object should have 4 versions
 
   Scenario: A label that changes nothing makes no version
     Given the owner labelled version "v1" as "First draft"

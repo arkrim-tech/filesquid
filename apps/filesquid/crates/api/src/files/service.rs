@@ -304,6 +304,7 @@ impl<B: StorageBackend, R, S> FileService<B, R, S> {
             path: &view.path,
         };
         view.display_name = self.display_name(file).await;
+        super::versions::apply_labels(&object, std::slice::from_mut(&mut view.last_change)).await?;
         Ok(view)
     }
 

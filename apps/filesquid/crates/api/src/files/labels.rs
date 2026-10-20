@@ -119,6 +119,22 @@ impl Labels {
         serde_json::to_vec(self).unwrap_or_default()
     }
 
+    /// The file's bytes, refused when they would exceed [`MAX_LABELS_FILE_BYTES`], so a
+    /// written file is always one that reads back.
+    ///
+    /// # Errors
+    ///
+    /// `conflict` when the file would be too large.
+    pub fn to_bounded_bytes(&self) -> Result<Vec<u8>, FileError> {
+        let bytes = self.to_bytes();
+        match bytes.len() as u64 <= MAX_LABELS_FILE_BYTES {
+            true => Ok(bytes),
+            false => Err(FileError::conflict(
+                "This object's labels would exceed their size bound; clear some labels first.",
+            )),
+        }
+    }
+
     /// The label `version` shows: its later label when the file names it, else
     /// `commit_label`.
     pub fn effective(&self, version: &str, commit_label: Option<String>) -> Option<String> {
@@ -183,6 +199,37 @@ mod tests {
             .set("v2", Some("A".into()), Some("A".into()))
             .expect("back");
         assert_eq!(labels, Labels::new());
+    }
+
+    /// Labels with `count` entries `v1`... set to `label`.
+    fn filled(count: usize, label: &str) -> Labels {
+        let mut labels = Labels::new();
+        for n in 1..=count {
+            labels
+                .set(&format!("v{n}"), None, Some(label.to_string()))
+                .expect("set");
+        }
+        labels
+    }
+
+    #[test]
+    fn the_thousand_and_first_labelled_version_is_refused() {
+        let mut labels = filled(MAX_LABELS, "Kept");
+        let refused = labels.set("v1001", None, Some("One more".into()));
+        let err = refused.expect_err("over the cap");
+        assert_eq!(err.code(), crate::ErrorCode::Conflict);
+        labels
+            .set("v1", None, Some("Renamed".into()))
+            .expect("an existing entry still changes");
+        labels.set("v2", None, None).expect("and clears");
+    }
+
+    #[test]
+    fn the_largest_allowed_labels_file_stays_within_its_read_bound() {
+        let label = "\\\"".repeat(MAX_LABEL_BYTES / 2);
+        let labels = filled(MAX_LABELS, &label);
+        let bytes = labels.to_bounded_bytes().expect("within the bound");
+        assert!(Labels::parse(&bytes).is_ok());
     }
 
     #[test]

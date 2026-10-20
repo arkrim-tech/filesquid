@@ -133,6 +133,7 @@ async fn an_earlier_version_is_served_with_ranged_reads() {
         .call(Method::GET, &uri, &[("range", "bytes=1-2")], Vec::new())
         .await;
     assert_eq!(answer.status, StatusCode::PARTIAL_CONTENT);
+    assert_eq!(answer.header("content-range"), "bytes 1-2/5");
     assert_eq!(answer.body, b"lp");
 }
 
@@ -202,6 +203,9 @@ async fn a_later_label_is_committed_as_application_data_and_shown() {
         .await
         .json();
     assert_eq!(versions["versions"][0]["label"], "First draft");
+    let uri = format!("/api/v1/files/details?{}", query("path=a.txt&version=v1"));
+    let details = rig.get(&uri).await.json();
+    assert_eq!(details["last_change"]["label"], "First draft", "{details}");
 }
 
 #[tokio::test]

@@ -23,7 +23,7 @@ use crate::history::{commit_meta, CommitOperation, CommitRecorder, ProvenanceCon
 use crate::journal::{JournalEntry, JournalStore, Outcome};
 use crate::library::mint_uuid_v4;
 use filesquid_core::{OperationId, OperationKind};
-use filesquid_ocfl::change::{ChangeModel, VersionMeta};
+use filesquid_ocfl::change::{ChangeError, ChangeModel, VersionMeta};
 use filesquid_ocfl::inventory::{User, VersionNum};
 use filesquid_ocfl::read::Object;
 use filesquid_ocfl::storage::{StorageBackend, StorageKey};
@@ -400,12 +400,20 @@ where
     R: VersionReservations,
     S: StorageBackend,
 {
-    model.stage_bytes(LABELS_PATH, &labels.to_bytes()).await?;
+    model
+        .stage_bytes(LABELS_PATH, &labels.to_bounded_bytes()?)
+        .await?;
     let committed = model
         .commit_with(prepared.meta.clone(), prepared.bound())
         .await;
-    let Err(err) = committed else {
-        return committed.map_err(FileError::from);
+    let err = match committed {
+        Ok(receipt) => return Ok(receipt),
+        // Published: the version stands, and the staging area is kept as the engine asks.
+        Err(ChangeError::StagingNotCleared { receipt, reason }) => {
+            tracing::warn!(target: super::LOG_TARGET, %reason, "a label version kept its staging area");
+            return Ok(*receipt);
+        }
+        Err(err) => err,
     };
     if let Err(reset) = model.reset().await {
         tracing::warn!(target: super::LOG_TARGET, error = %reset, "a refused label left its staging area");
