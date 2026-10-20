@@ -116,11 +116,16 @@ Feature: Durable, complete and browsable activity journal
     Then the request should be refused as not permitted and journaled as a refusal
     And no "ui.console.warn" entry should be written
 
-  Scenario: The overflow count is bounded and exempt from the rate bound
-    Given the caller has used up the rate bound
+  Scenario: The overflow count is bounded
     When the UI sends one overflow event with the count 1000000
     Then the journal should hold one "ui.console.overflow" entry with the count 1000000
     And an overflow event with the count 0 should be refused with an error code
+    And an overflow event with the count 1000001 should be refused with an error code
+
+  Scenario: A lone overflow event is exempt from the rate bound
+    Given the caller has used up the rate bound
+    When the UI sends one overflow event with the count 3
+    Then the journal should hold one "ui.console.overflow" entry with the count 3
 
   Scenario: The journal filters by file and by operation ID
     When I filter the journal by the file

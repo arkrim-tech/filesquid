@@ -41,8 +41,9 @@ use crate::ApiState;
 /// Journal operation of every export.
 pub const EXPORT_OPERATION: &str = "journal.export";
 
-/// Export stops after this many pages ([`MAX_PAGE`] entries each) to bound one response.
-const MAX_EXPORT_PAGES: usize = 1_000;
+/// Export stops after this many pages ([`MAX_PAGE`] entries each, so at most 50,000
+/// entries) to bound the memory of one response; [`NEXT_CURSOR_HEADER`] continues it.
+pub const MAX_EXPORT_PAGES: usize = 50;
 
 /// Most distinct objects whose names one page resolves; entries of further objects carry
 /// no name (names are for display only).
@@ -151,7 +152,9 @@ impl JournalParams {
         match (&self.object, &self.file) {
             (Some(_), Some(_)) => Err("file"),
             (Some(object), None) => opaque(object, "object").map(Some),
-            (None, Some(file)) if is_uuid(file) => Ok(Some(format!("{URN_UUID}{file}"))),
+            (None, Some(file)) if is_uuid(file) => {
+                Ok(Some(format!("{URN_UUID}{}", file.to_ascii_lowercase())))
+            }
             (None, Some(_)) => Err("file"),
             (None, None) => Ok(None),
         }
@@ -269,7 +272,8 @@ pub(super) async fn one(
         Err(error) => return error.into_response(),
     };
     let Ok(id) = entry.parse::<i64>() else {
-        return bad_request("entry").into_response();
+        return ApiError::new(ErrorCode::InvalidRequest, "The entry ID must be a number.")
+            .into_response();
     };
     let store = monitor.store();
     let found = match blocking("api.admin.journal.entry", move || store.entry(id)).await {

@@ -496,16 +496,41 @@ fn client_event_de_duplication_survives_a_restart() {
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
 
-/// A client event ID that is not an opaque token is redacted by both stores.
+/// A client event ID that is not an opaque token is dropped by both stores, so two such
+/// entries are both kept instead of colliding on one redacted key.
 #[test]
-fn a_client_event_id_that_is_not_opaque_is_redacted() {
+fn a_client_event_id_that_is_not_opaque_is_dropped_and_its_entry_kept() {
     let (stores, dir) = stores("client-event-redaction");
     for store in &stores {
         store
-            .append(&[client_event("Grandma's birthday")])
+            .append(&[
+                client_event("Grandma's birthday"),
+                client_event("Ben's party"),
+            ])
             .expect("append");
-        let stored = &store.query(&JournalQuery::default()).unwrap().entries[0];
-        assert_eq!(stored.client_event_id.as_deref(), Some(REDACTED));
+        let entries = store.query(&JournalQuery::default()).unwrap().entries;
+        assert_eq!(entries.len(), 2, "neither entry is lost");
+        assert!(entries.iter().all(|e| e.client_event_id.is_none()));
+    }
+    drop(stores);
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+/// An entry with a preset id whose client event ID another row holds answers the
+/// holder's id, not its own.
+#[test]
+fn a_preset_id_repeating_a_held_client_event_id_answers_the_holder() {
+    let (stores, dir) = stores("client-event-preset");
+    let id = "00000004-0000-4000-8000-000000000000";
+    for store in &stores {
+        let held = store.append_new(&[client_event(id)]).expect("append")[0].0;
+        let mut replay = client_event(id);
+        replay.id = Some(store.allocate_ids(1).expect("allocate")[0]);
+        assert_eq!(
+            store.append_new(&[replay]).expect("append"),
+            [(held, false)]
+        );
+        assert_eq!(store.count(&JournalQuery::default()).unwrap(), 1);
     }
     drop(stores);
     std::fs::remove_dir_all(dir).expect("cleanup");

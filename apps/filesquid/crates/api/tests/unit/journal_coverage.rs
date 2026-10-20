@@ -184,3 +184,73 @@ fn enabled_metrics_snapshots_are_journaled_once_per_interval_with_opaque_values(
     );
     monitor.shutdown();
 }
+
+#[test]
+fn an_engine_event_naming_its_object_never_takes_another_object_from_its_span() {
+    let store = journaled(|| {
+        let span = activity_span("op-9", Some("urn:uuid:aa@v2"));
+        let _entered = span.enter();
+        tracing::warn!(target: "filesquid_ocfl::read::enumerate", object = "urn:uuid:bb", "cannot enumerate");
+    });
+    let entries = store
+        .query(&JournalQuery::default())
+        .expect("query")
+        .entries;
+    assert_eq!(entries[0].operation_id.as_deref(), Some("op-9"));
+    assert_eq!(entries[0].object_ref, None, "not the span's object");
+    assert_eq!(entries[0].target_ids, ["urn:uuid:bb"]);
+}
+
+#[test]
+fn a_snapshot_interval_that_is_not_positive_journals_nothing() {
+    for every in [0, -5] {
+        let mut config = MonitorConfig::new("host-a");
+        config.metrics_snapshot_every_ms = Some(every);
+        let monitor = monitor(config);
+        monitor.tick();
+        monitor.tick();
+        assert!(snapshots(&monitor).is_empty(), "interval {every}");
+        monitor.shutdown();
+    }
+}
+
+#[test]
+fn a_backward_clock_step_does_not_suppress_snapshots() {
+    let now = Arc::new(AtomicI64::new(10_000_000));
+    let clock = now.clone();
+    let mut config = MonitorConfig::new("host-a");
+    config.clock = Arc::new(move || clock.load(Ordering::SeqCst));
+    config.metrics_snapshot_every_ms = Some(60_000);
+    let monitor = monitor(config);
+    monitor.tick();
+    now.fetch_sub(5_000_000, Ordering::SeqCst);
+    monitor.tick();
+    assert_eq!(snapshots(&monitor).len(), 2);
+    monitor.shutdown();
+}
+
+#[test]
+fn a_snapshot_records_the_health_the_same_tick_evaluated() {
+    let mut config = MonitorConfig::new("host-a");
+    config.metrics_snapshot_every_ms = Some(60_000);
+    let monitor = Monitor::start(
+        Arc::new(MemoryJournal::new("host-a")),
+        Arc::new(StaticHostChecks {
+            data_dir_writable: false,
+            free_bytes: None,
+        }),
+        config,
+        EventBus::new(),
+    );
+    monitor.tick();
+    let taken = snapshots(&monitor);
+    assert!(
+        taken[0]
+            .target_ids
+            .iter()
+            .any(|t| t.starts_with("filesquid_health_status:") && t != "filesquid_health_status:0"),
+        "{:?}",
+        taken[0].target_ids
+    );
+    monitor.shutdown();
+}

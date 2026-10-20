@@ -1078,3 +1078,33 @@ fn a_command_journals_its_intent_before_its_commit() {
         .expect("command journaled");
     assert!(intent < create, "{ops:?}");
 }
+
+/// An intent the coordinator recorded first and its commit then records again is journaled
+/// once.
+#[test]
+fn an_intent_recorded_before_its_commit_is_journaled_once() {
+    let fx = Fixture::new("intent-once");
+    let lib = fx.create_library("Family archive");
+    let intent = PendingIntent {
+        library_id: lib.clone(),
+        operation_id: OperationId::new("op-once").expect("op"),
+        operation: "library.collection.create".into(),
+        expected_revision: ExpectedRevision::new("1").expect("rev"),
+        recorded_at_ms: 1_792_281_600_000,
+    };
+    fx.catalog.record_intent(&intent).expect("record");
+    fx.catalog
+        .commit(raw(
+            lib.as_str(),
+            "1",
+            "op-once",
+            vec![put_collection(&lib, "c-once")],
+        ))
+        .expect("commit");
+    let intents = all_entries(fx.journal.as_ref())
+        .into_iter()
+        .filter(|e| e.operation == "library.intent.recorded")
+        .filter(|e| e.operation_id.as_deref() == Some("op-once"))
+        .count();
+    assert_eq!(intents, 1);
+}

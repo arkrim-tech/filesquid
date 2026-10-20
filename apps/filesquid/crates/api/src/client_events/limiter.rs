@@ -13,6 +13,14 @@ use std::sync::Mutex;
 use super::{RATE_LIMIT, RATE_WINDOW_MS};
 use crate::content::store::HandleClock;
 
+/// A monotonic clock in milliseconds since the first call: the window's clock on a host, so
+/// a step of the wall clock never stretches or shortens the window.
+pub fn monotonic_clock() -> HandleClock {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    let start = *START.get_or_init(std::time::Instant::now);
+    std::sync::Arc::new(move || i64::try_from(start.elapsed().as_millis()).unwrap_or(i64::MAX))
+}
+
 /// Most credentials tracked at once.
 pub const MAX_TRACKED_CREDENTIALS: usize = 1_024;
 
@@ -44,7 +52,8 @@ impl std::fmt::Debug for RateLimiter {
 }
 
 impl RateLimiter {
-    /// A limiter timed by `clock` (Unix milliseconds, UTC).
+    /// A limiter timed by `clock` in milliseconds: [`monotonic_clock`] on a host, a test
+    /// clock in tests.
     pub fn new(clock: HandleClock) -> Self {
         Self {
             clock,
@@ -52,7 +61,7 @@ impl RateLimiter {
         }
     }
 
-    /// The host time now (Unix milliseconds, UTC).
+    /// The window clock now, in milliseconds.
     pub fn now_ms(&self) -> i64 {
         (self.clock)()
     }
@@ -60,8 +69,8 @@ impl RateLimiter {
     /// Count one request of the credential whose token digest is `digest`, or refuse it
     /// when that credential already sent [`RATE_LIMIT`] requests in the window.
     pub fn admit(&self, digest: [u8; 32]) -> RateDecision {
-        let now = self.now_ms();
         let mut windows = self.windows.lock().unwrap_or_else(|p| p.into_inner());
+        let now = self.now_ms();
         if !windows.contains_key(&digest) {
             make_room(&mut windows, now);
         }

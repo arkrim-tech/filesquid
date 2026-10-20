@@ -9,8 +9,9 @@
 //!
 //! **Activity spans and engine warnings** (API-S-031). Code that drives the OCFL engine
 //! enters an [`activity_span`] naming the operation ID and, when known, the object
-//! reference; an event inside it that names neither takes them from the nearest enclosing
-//! activity span. A warning or error of the OCFL engine (a `filesquid_ocfl` target, such as
+//! reference; an event inside it takes each of the two it does not name from the nearest
+//! enclosing activity span that names it (an engine event that names its `object` keeps its
+//! own object and takes no object reference from the span). A warning or error of the OCFL engine (a `filesquid_ocfl` target, such as
 //! its Git, copy and storage-hierarchy guards and lease takeovers) is journaled as
 //! `ocfl.engine.<module path>` (for example `ocfl.engine.write.lease`) unless it names an
 //! `operation`; its `object` field becomes a target and, with its `version` field, the
@@ -244,6 +245,7 @@ fn entry_of(fields: Whitelist, links: SpanLinks, target: &str, level: Level) -> 
         .and_then(Outcome::parse)
         .unwrap_or(default_outcome);
     let engine_ref = fields.engine_object_ref();
+    let span_ref = links.object_ref.filter(|_| fields.object.is_none());
     let operation = match (&fields.operation, fields.engine) {
         (Some(operation), _) => operation.clone(),
         (None, true) => engine_operation(target),
@@ -258,7 +260,7 @@ fn entry_of(fields: Whitelist, links: SpanLinks, target: &str, level: Level) -> 
     }
     entry.error_code = fields.error_code;
     entry.operation_id = fields.operation_id.or(links.operation_id);
-    entry.object_ref = fields.object_ref.or(engine_ref).or(links.object_ref);
+    entry.object_ref = fields.object_ref.or(engine_ref).or(span_ref);
     entry.duration_ms = fields.duration_ms;
     entry
 }

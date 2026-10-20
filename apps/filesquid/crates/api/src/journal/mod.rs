@@ -265,7 +265,10 @@ impl JournalEntry {
         self.error_code.iter_mut().for_each(scrub);
         self.target_ids.iter_mut().for_each(scrub);
         self.operation_id.iter_mut().for_each(scrub);
-        self.client_event_id.iter_mut().for_each(scrub);
+        // A client event ID that is not opaque is dropped rather than redacted: every such
+        // ID would become the same `redacted` key and the store's unique index would then
+        // skip later, different events. The entry is kept without de-duplication.
+        self.client_event_id = self.client_event_id.filter(|id| is_opaque(id));
         if let Some(object_ref) = &mut self.object_ref {
             if !is_object_ref(object_ref) {
                 *object_ref = REDACTED.to_string();
@@ -516,7 +519,9 @@ pub trait JournalStore: Send + Sync {
     fn append(&self, entries: &[JournalEntry]) -> Result<Vec<i64>, JournalError>;
     /// [`append`](Self::append), also answering for each entry whether this call stored it
     /// (`false` for a preset id the store already held), so a caller announces a replayed
-    /// entry once. The default reports every entry as newly stored.
+    /// entry once. The default reports every entry as newly stored, so it cannot report a
+    /// preset id or client event ID the store skipped: a store that de-duplicates MUST
+    /// override it (both stores of FileSquid do).
     ///
     /// # Errors
     /// As [`append`](Self::append).

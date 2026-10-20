@@ -44,14 +44,29 @@ pub fn intent_entry(intent: &PendingIntent) -> JournalEntry {
         .target(format!("revision:{}", intent.expected_revision.as_str()))
 }
 
-/// Store `intent`, replacing an earlier intent of the same operation ID, and its
-/// [`INTENT_RECORDED_OPERATION`] entry in the journal outbox, in one transaction. Database
-/// I/O.
+/// Store `intent`, replacing an earlier intent of the same operation ID, and, when none was
+/// pending, its [`INTENT_RECORDED_OPERATION`] entry in the journal outbox, in one
+/// transaction. Database I/O.
 pub(crate) fn record(conn: &Connection, intent: &PendingIntent) -> Result<(), CatalogError> {
     let tx = conn.unchecked_transaction().map_err(sql)?;
+    let already = is_pending(&tx, intent.operation_id.as_str())?;
     store(&tx, intent)?;
-    outbox::push(&tx, &intent_entry(intent))?;
+    if !already {
+        outbox::push(&tx, &intent_entry(intent))?;
+    }
     tx.commit().map_err(sql)
+}
+
+/// Whether an intent of `operation_id` is already recorded: recording it again (a commit of
+/// an operation whose intent the coordinator recorded first) journals nothing new.
+/// Database I/O.
+fn is_pending(tx: &Transaction<'_>, operation_id: &str) -> Result<bool, CatalogError> {
+    tx.query_row(
+        "SELECT EXISTS (SELECT 1 FROM pending_intents WHERE operation_id = ?1)",
+        params![operation_id],
+        |r| r.get::<_, bool>(0),
+    )
+    .map_err(sql)
 }
 
 /// Store `intent` in `tx`. Database I/O.

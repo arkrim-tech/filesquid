@@ -241,7 +241,7 @@ async fn the_sixty_first_request_in_a_minute_gets_429_and_every_event_is_journal
 }
 
 #[tokio::test]
-async fn the_rate_bound_is_per_credential_and_rolls_with_the_window() {
+async fn the_rate_bound_rolls_with_the_window() {
     let host = Host::start();
     for n in 0..RATE_LIMIT as u32 {
         host.post(batch(vec![console(n, "warn")])).await;
@@ -307,10 +307,11 @@ async fn an_event_raised_by_the_same_principal_is_accepted() {
 
 #[tokio::test]
 async fn the_overflow_count_must_be_an_integer_from_one_to_a_million() {
+    assert_eq!(MAX_OVERFLOW_COUNT, 1_000_000, "API-S-030 pins the bound");
     let host = Host::start();
     let refused = [
         json!(0),
-        json!(MAX_OVERFLOW_COUNT + 1),
+        json!(1_000_001),
         json!(-1),
         json!(2.5),
         json!("12"),
@@ -323,7 +324,7 @@ async fn the_overflow_count_must_be_an_integer_from_one_to_a_million() {
         assert_eq!(status, StatusCode::BAD_REQUEST, "count {count}");
         assert_eq!(body["code"], "invalid_request");
     }
-    for (n, count) in [1, MAX_OVERFLOW_COUNT].into_iter().enumerate() {
+    for (n, count) in [1, 1_000_000].into_iter().enumerate() {
         let (status, _, _) = host
             .post(batch(vec![overflow(100 + n as u32, json!(count))]))
             .await;
@@ -331,9 +332,7 @@ async fn the_overflow_count_must_be_an_integer_from_one_to_a_million() {
     }
     let stored = host.entries_named(OVERFLOW_OPERATION);
     assert_eq!(stored.len(), 2);
-    assert!(stored[1]
-        .target_ids
-        .contains(&format!("count:{MAX_OVERFLOW_COUNT}")));
+    assert!(stored[1].target_ids.contains(&"count:1000000".to_string()));
     assert_eq!(stored[0].level, Level::Warn);
     host.monitor.shutdown();
 }
@@ -532,5 +531,53 @@ async fn the_acknowledgement_follows_the_durable_write() {
         ..JournalQuery::default()
     };
     assert_eq!(host.monitor.store().count(&query).expect("count"), 1);
+    host.monitor.shutdown();
+}
+
+#[tokio::test]
+async fn a_lone_overflow_event_naming_another_principal_is_counted_toward_the_rate_bound() {
+    let host = Host::start();
+    let mut foreign = overflow(1, json!(2));
+    foreign["principal"] = json!("administrator");
+    for _ in 0..RATE_LIMIT {
+        let (status, _, _) = host.post(batch(vec![foreign.clone()])).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+    let (status, _, _) = host.post(batch(vec![foreign])).await;
+    assert_eq!(
+        status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "refusals are bounded too"
+    );
+    assert_eq!(host.entries_named("api.auth.denied").len(), RATE_LIMIT);
+    host.monitor.shutdown();
+}
+
+#[tokio::test]
+async fn malformed_and_oversized_requests_count_toward_the_rate_bound() {
+    let host = Host::start();
+    for n in 0..RATE_LIMIT {
+        let body = if n % 2 == 0 {
+            b"{not json".to_vec()
+        } else {
+            vec![b' '; MAX_BODY_BYTES + 1]
+        };
+        let (status, _, _) = host.post_bytes(body).await;
+        assert!(
+            [StatusCode::BAD_REQUEST, StatusCode::PAYLOAD_TOO_LARGE].contains(&status),
+            "{status}"
+        );
+    }
+    let (status, retry, _) = host.post(batch(vec![console(1, "warn")])).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert!(retry.is_some());
+    let (status, _, _) = host.post_bytes(b"{not json".to_vec()).await;
+    assert_eq!(
+        status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "a refused request over the bound"
+    );
+    let (status, _, _) = host.post(batch(vec![overflow(2, json!(1))])).await;
+    assert_eq!(status, StatusCode::OK, "a lone overflow is still exempt");
     host.monitor.shutdown();
 }

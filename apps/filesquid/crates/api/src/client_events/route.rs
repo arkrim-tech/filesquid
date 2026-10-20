@@ -3,10 +3,10 @@
 //!
 //! 1. reads at most [`MAX_BODY_BYTES`] (`payload_too_large` past it);
 //! 2. parses and checks the batch ([`parse_batch`]; `invalid_request` on any fault);
-//! 3. applies the rate bound, unless the request carries only one overflow event
-//!    (`rate_limited`, `429` with `Retry-After`);
+//! 3. applies the rate bound (`rate_limited`, `429` with `Retry-After`) to every request,
+//!    refused ones included, except a lone overflow event that names no other principal;
 //! 4. refuses the whole batch when an event names another principal than the credential's
-//!    (journaled as an authorisation refusal);
+//!    (journaled as an authorisation refusal, after the rate bound, so refusals are bounded);
 //! 5. writes one journal entry per new client event ID through the journal store, and only
 //!    then acknowledges every ID of the batch.
 //!
@@ -21,11 +21,11 @@ use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
 use serde::{Deserialize, Serialize};
 
-use super::{parse_batch, Batch, RateDecision, MAX_BODY_BYTES};
+use super::{parse_batch, Batch, BatchError, RateDecision, MAX_BODY_BYTES};
 use crate::admin::blocking;
 use crate::auth::{deny, presented_credential, token_digest, Action, Credential, Principal};
 use crate::error::{ApiError, DenialReason, ErrorCode};
-use crate::journal::JournalEntry;
+use crate::journal::{now_ms, JournalEntry};
 use crate::monitor::Monitor;
 use crate::ApiState;
 
@@ -75,15 +75,21 @@ async fn accept(
     body: Body,
 ) -> Result<ClientEventsAck, Refusal> {
     let monitor = installed_monitor(state).map_err(refusal)?;
-    let bytes = to_bytes(body, MAX_BODY_BYTES)
-        .await
-        .map_err(|_| refusal(too_large()))?;
-    let limiter = state.client_event_limiter();
-    let batch = parse_batch(&bytes, limiter.now_ms())
-        .map_err(|e| refusal(ApiError::new(ErrorCode::InvalidRequest, e.0)))?;
-    check_rate(state, headers, &batch)?;
-    check_principal(state, principal, &batch).await?;
-    let entries = entries_of(&batch, principal.actor(), limiter.now_ms());
+    let Ok(bytes) = to_bytes(body, MAX_BODY_BYTES).await else {
+        return Err(counted(state, headers, too_large()));
+    };
+    let batch = match parse_batch(&bytes, now_ms()) {
+        Ok(batch) => batch,
+        Err(e) => return Err(counted(state, headers, invalid(e))),
+    };
+    let foreign = names_foreign_principal(principal, &batch);
+    if foreign || !batch.is_lone_overflow() {
+        check_rate(state, headers)?;
+    }
+    if foreign {
+        return Err(refuse_foreign(state, principal).await);
+    }
+    let entries = entries_of(&batch, principal.actor(), now_ms());
     let journaled = write(monitor, entries).await.map_err(refusal)?;
     Ok(ClientEventsAck {
         acknowledged: unique_ids(&batch),
@@ -115,11 +121,24 @@ fn too_large() -> ApiError {
     )
 }
 
-/// Count the request against its credential, unless it carries only one overflow event.
-fn check_rate(state: &ApiState, headers: &HeaderMap, batch: &Batch) -> Result<(), Refusal> {
-    if batch.is_lone_overflow() {
-        return Ok(());
+/// `invalid_request` for a batch the schema refuses.
+fn invalid(error: BatchError) -> ApiError {
+    ApiError::new(ErrorCode::InvalidRequest, error.0)
+}
+
+/// Count a request refused before it was parsed (too large or malformed) against its
+/// credential, so refused requests are bounded too: `rate_limited` when over the bound, else
+/// `error`.
+fn counted(state: &ApiState, headers: &HeaderMap, error: ApiError) -> Refusal {
+    match check_rate(state, headers) {
+        Ok(()) => refusal(error),
+        Err(limited) => limited,
     }
+}
+
+/// Count one request against its credential; `rate_limited` when over the bound. Only a
+/// parsed lone overflow event that names no other principal skips this.
+fn check_rate(state: &ApiState, headers: &HeaderMap) -> Result<(), Refusal> {
     let Credential::Bearer(token) = presented_credential(headers) else {
         return Ok(());
     };
@@ -142,20 +161,17 @@ fn rate_limited(retry_after_s: u64) -> Response {
     response
 }
 
-/// Refuse, and journal the refusal, when an event names another principal.
-async fn check_principal(
-    state: &ApiState,
-    principal: &Principal,
-    batch: &Batch,
-) -> Result<(), Refusal> {
-    let foreign = batch
+/// True when an event of `batch` names another principal than `principal`. Pure.
+fn names_foreign_principal(principal: &Principal, batch: &Batch) -> bool {
+    batch
         .events
         .iter()
         .filter_map(|e| e.principal())
-        .any(|raised| raised != principal.actor());
-    if !foreign {
-        return Ok(());
-    }
+        .any(|raised| raised != principal.actor())
+}
+
+/// Journal the refusal of a batch that names another principal, and answer it.
+async fn refuse_foreign(state: &ApiState, principal: &Principal) -> Refusal {
     let denial = deny(
         state,
         DenialReason::NotPermitted,
@@ -163,7 +179,7 @@ async fn check_principal(
         Some(Action::RecordClientEvents),
     )
     .await;
-    Err(refusal(denial))
+    refusal(denial)
 }
 
 /// One entry per event, in request order. Pure.

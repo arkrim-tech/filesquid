@@ -68,7 +68,8 @@ pub struct MonitorConfig {
     /// Clock for the registry and health window.
     pub clock: Clock,
     /// Journal a [`METRICS_SNAPSHOT_OPERATION`] entry at most once per this many
-    /// milliseconds, from [`Monitor::tick`]. `None` (the default) journals none (API-S-031).
+    /// milliseconds, from [`Monitor::tick`] after health is evaluated. `None` (the default)
+    /// and a value that is not positive journal none (API-S-031).
     pub metrics_snapshot_every_ms: Option<i64>,
 }
 
@@ -200,17 +201,22 @@ impl Monitor {
     /// health change. Performs I/O through [`health_report`](Self::health_report).
     pub fn tick(&self) -> HealthReport {
         self.inner.registry.check_stalled();
-        self.snapshot_metrics_when_due();
         let _serial = self.inner.health.lock().unwrap_or_else(|p| p.into_inner());
         let report = self.health_report();
         self.record_status(&report, false);
+        self.snapshot_metrics_when_due();
         report
     }
 
     /// Journal a [`METRICS_SNAPSHOT_OPERATION`] entry when snapshots are enabled and the
     /// interval has passed since the last one. Queues one journal entry.
     fn snapshot_metrics_when_due(&self) {
-        let Some(every) = self.inner.config.metrics_snapshot_every_ms else {
+        let Some(every) = self
+            .inner
+            .config
+            .metrics_snapshot_every_ms
+            .filter(|every| *every > 0)
+        else {
             return;
         };
         let now = (self.inner.config.clock)();
@@ -219,7 +225,7 @@ impl Monitor {
             .last_snapshot_ms
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        if last.is_some_and(|t| now - t < every) {
+        if last.is_some_and(|t| now >= t && now - t < every) {
             return;
         }
         *last = Some(now);

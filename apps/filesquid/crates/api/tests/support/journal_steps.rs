@@ -254,12 +254,18 @@ async fn over_the_rate_bound(w: &mut MonitorWorld) {
 
 #[given(expr = "the caller has used up the rate bound")]
 async fn use_up_rate(w: &mut MonitorWorld) {
-    let already = w.journal.answers.len() as u32;
-    for n in 0..RATE_LIMIT as u32 {
-        w.journal
-            .post_events(vec![console(1000 + already + n, "warn")])
+    let first = 1000 + w.journal.answers.len() as u32;
+    for n in 0..=RATE_LIMIT as u32 {
+        let (status, _, body) = w
+            .journal
+            .post_events(vec![console(first + n, "warn")])
             .await;
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            return;
+        }
+        assert_eq!(status, StatusCode::OK, "{body}");
     }
+    panic!("the rate bound never answered 429");
 }
 
 #[when(expr = "the UI sends a console warning twice with the same client event ID")]

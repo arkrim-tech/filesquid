@@ -147,24 +147,36 @@ impl ApiState {
     /// Create state with a fresh event bus, no monitor and no authoriser (every guarded call is refused; the public liveness
     /// probe still answers).
     pub fn new() -> Self {
-        Self::with_clock(Arc::new(journal::now_ms))
+        Self::with_clocks(
+            Arc::new(journal::now_ms),
+            client_events::limiter::monotonic_clock(),
+        )
     }
 
     /// Like [`ApiState::new`], with content handles and the client-events rate bound timed
     /// by `clock` (Unix milliseconds, UTC) instead of the system clock, so tests can move
     /// time.
     pub fn with_clock(clock: content::store::HandleClock) -> Self {
+        Self::with_clocks(clock.clone(), clock)
+    }
+
+    /// State with content handles timed by the wall `clock` and the client-events rate
+    /// window by `window_clock`.
+    fn with_clocks(
+        clock: content::store::HandleClock,
+        window_clock: content::store::HandleClock,
+    ) -> Self {
         Self {
             events: EventBus::new(),
             monitor: Arc::new(OnceLock::new()),
             authoriser: Arc::new(OnceLock::new()),
             host: Arc::new(OnceLock::new()),
             files: Arc::new(OnceLock::new()),
-            content_handles: Arc::new(content::ContentHandles::new(clock.clone())),
+            content_handles: Arc::new(content::ContentHandles::new(clock)),
             validation: Arc::new(OnceLock::new()),
             history: Arc::new(OnceLock::new()),
             navigation: Arc::new(OnceLock::new()),
-            client_events: Arc::new(client_events::RateLimiter::new(clock)),
+            client_events: Arc::new(client_events::RateLimiter::new(window_clock)),
             journal_names: Arc::new(OnceLock::new()),
         }
     }

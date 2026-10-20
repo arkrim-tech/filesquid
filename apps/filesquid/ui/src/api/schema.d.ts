@@ -628,7 +628,7 @@ export interface paths {
         put?: never;
         /**
          * Journal the UI's console warnings and errors
-         * @description API-S-030. At most 20 events and 16 KiB per request; each event becomes its own journal entry (ui.console.warn, ui.console.error or ui.console.overflow), journaled once per client event ID, and the batch is acknowledged only after the entries are stored. 60 requests a minute per credential; a request that carries only one overflow event is exempt. An event naming another principal than the credential's is refused (403, journaled).
+         * @description API-S-030. At most 20 events and 16 KiB per request; each event becomes its own journal entry (ui.console.warn, ui.console.error or ui.console.overflow), journaled once per client event ID, and the batch is acknowledged only after the entries are stored. 60 requests a minute per credential, refused requests included; a request that carries only one overflow event naming no other principal is exempt. An event naming another principal than the credential's is refused (403, journaled).
          */
         post: operations["postClientEvents"];
         delete?: never;
@@ -1712,7 +1712,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description One JournalEntry per line (JSON Lines), or a CSV header row and one row per entry. At most 1 000 000 entries per response; when more match, X-Journal-Next-Cursor is set. */
+            /** @description One JournalEntry per line (JSON Lines), or a CSV header row and one row per entry. At most 50 000 entries per response; when more match, X-Journal-Next-Cursor is set. */
             200: {
                 headers: {
                     /** @description Present only when the export stopped at its size cap with more entries left; pass it as `after` to continue. */

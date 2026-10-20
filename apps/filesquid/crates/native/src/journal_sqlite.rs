@@ -152,7 +152,7 @@ fn journal_columns(conn: &Connection) -> Result<Vec<String>, JournalError> {
 }
 
 /// Insert one entry and return its id and whether it was stored now. A skipped entry
-/// answers the id it carries, or the id of the row holding its client event ID.
+/// answers the id of the row holding its client event ID, else the id it carries.
 fn insert(
     conn: &Connection,
     default_host: &str,
@@ -190,21 +190,25 @@ fn insert(
     if changed > 0 {
         return Ok((e.id.unwrap_or_else(|| conn.last_insert_rowid()), true));
     }
-    let held = match (&e.id, &e.client_event_id) {
-        (Some(id), _) => *id,
-        (None, Some(client)) => client_event_row(conn, client)?,
-        (None, None) => return Err(JournalError("journal row was not stored".into())),
+    let holder = match &e.client_event_id {
+        Some(client) => client_event_row(conn, client)?,
+        None => None,
     };
-    Ok((held, false))
+    match holder.or(e.id) {
+        Some(held) => Ok((held, false)),
+        None => Err(JournalError("journal row was not stored".into())),
+    }
 }
 
-/// The id of the row holding the client event ID `client`. Database I/O.
-fn client_event_row(conn: &Connection, client: &str) -> Result<i64, JournalError> {
+/// The id of the row holding the client event ID `client`, if any. Database I/O.
+fn client_event_row(conn: &Connection, client: &str) -> Result<Option<i64>, JournalError> {
+    use rusqlite::OptionalExtension;
     conn.query_row(
         "SELECT id FROM activity_journal WHERE client_event_id = ?1",
         [client],
         |r| r.get(0),
     )
+    .optional()
     .map_err(sql_err)
 }
 
@@ -297,10 +301,13 @@ fn link_filters(q: &JournalQuery, parts: &mut Vec<String>, args: &mut Vec<Value>
         args.push(Value::Text(o.clone()));
     }
     if let Some(o) = &q.object_id {
-        parts.push(format!("(substr(object_ref, 1, ?) = ? OR {TARGET_MATCH})"));
-        let prefix = format!("{o}@");
-        args.push(Value::Integer(prefix.chars().count() as i64));
-        args.push(Value::Text(prefix));
+        // `<object>@` <= object_ref < `<object>A` is the prefix `<object>@` as a range the
+        // object_ref index can serve (`A` follows `@` in every collation SQLite uses here).
+        parts.push(format!(
+            "((object_ref >= ? AND object_ref < ?) OR {TARGET_MATCH})"
+        ));
+        args.push(Value::Text(format!("{o}@")));
+        args.push(Value::Text(format!("{o}A")));
         args.push(Value::Text(o.clone()));
     }
 }

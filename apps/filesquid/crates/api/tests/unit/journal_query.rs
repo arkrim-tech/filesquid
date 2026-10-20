@@ -144,6 +144,12 @@ async fn the_journal_filters_by_object_id_and_by_file() {
     assert_eq!(by_object, [1, 2, 3, 4]);
     assert_eq!(host.ids(&format!("file={FILE}")).await, by_object);
     assert_eq!(host.ids(&format!("file={OTHER}")).await, [5]);
+    let upper = FILE.to_ascii_uppercase();
+    assert_eq!(
+        host.ids(&format!("file={upper}")).await,
+        by_object,
+        "a UUID in capitals"
+    );
     host.monitor.shutdown();
 }
 
@@ -194,6 +200,10 @@ async fn one_entry_is_returned_by_id() {
     let entry: Value = serde_json::from_str(&body).expect("json");
     assert_eq!(entry["id"], 2);
     assert_eq!(entry["operation"], "metadata.edit");
+    let (status, _, body) = host.get("/api/v1/admin/journal/entries/two").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let error: Value = serde_json::from_str(&body).expect("json");
+    assert_eq!(error["message"], "The entry ID must be a number.");
     let (status, _, body) = host.get("/api/v1/admin/journal/entries/99").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(

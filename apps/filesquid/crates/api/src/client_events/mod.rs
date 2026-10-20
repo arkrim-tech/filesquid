@@ -8,11 +8,13 @@
 //! merge them. Every event carries a client event ID (UUID v4) that the journal store keeps
 //! under a unique index, so a batch resent after a lost acknowledgement, or delivered again
 //! on the next open, adds no entry. A credential may send at most [`RATE_LIMIT`] requests per
-//! [`RATE_WINDOW_MS`]; a request that carries only one overflow event is exempt.
+//! [`RATE_WINDOW_MS`], refused requests included; a request that carries only one overflow
+//! event naming no other principal is exempt.
 //!
-//! - [`schema`] parses and checks a batch (pure): only the level, a component identifier,
-//!   an error code and opaque IDs are read; any other field, such as a message, URL, file
-//!   name or stack, is never read and never stored.
+//! - [`schema`] parses and checks a batch (pure): only the kind, the client event ID, the
+//!   level, a component identifier, an error code, opaque IDs, the time, the principal and
+//!   the overflow count are read; any other field, such as a message, URL, file name or
+//!   stack, is never read and never stored.
 //! - [`limiter`] holds the per-credential rate bound in memory.
 //! - [`route`] is the handler: bounds, rate, principal check, then one durable write.
 
