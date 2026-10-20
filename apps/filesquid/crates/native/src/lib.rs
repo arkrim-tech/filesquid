@@ -24,7 +24,8 @@
 //! - `desktop`: desktop-only native processing: the per-library SQLite catalog
 //!   ([`SqliteCatalog`], Task DE-0.2), its libraries' storage roots for the PROV-O history
 //!   routes ([`CatalogRoots`]) and the history backfill over them
-//!   ([`SqliteCatalog::backfill_history`], Task FS-2.8 host wiring), and later the OCFL coordinator and the durable job and
+//!   ([`SqliteCatalog::backfill_history`], Task FS-2.8 host wiring), the job workers
+//!   ([`workers`]: the durable history backfill job, Tasks DE-0.4 and DE-0.8), and later the OCFL coordinator and the durable job and
 //!   media workers that DE-0.8 adds. Only `filesquid-desktop` enables it.
 //!
 //! `filesquid-desktop` links this crate with `desktop`. `filesquid-server` MAY link it with its
@@ -45,6 +46,8 @@ pub mod installation;
 pub mod jobs_sqlite;
 pub mod journal_sqlite;
 mod owner_only;
+#[cfg(feature = "desktop")]
+pub mod workers;
 
 #[cfg(feature = "desktop")]
 pub use catalog::{

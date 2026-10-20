@@ -1,0 +1,89 @@
+# Task DE-0.8 Walkthrough: Native-processing library boundary (`filesquid-native`)
+
+Branch: `feat/de-0.8-native-boundary` (global [Task 0.5](../../../../../../resources/implementation-plan.md#task-0.5)).
+
+## Requirements
+
+- **TC-005 Shared Rust graph, hosted mailbox isolation and OCFL writer**: each host links only what its privacy boundary allows.
+- **DE-S-015 Native-processing library boundary** (new): SQLite storage, the OCFL coordinator and the job and media workers live in `filesquid-native`, the desktop-only parts behind its `desktop` feature; the Tauri package is a thin host; only the two hosts link `filesquid-native`, the server with default features only.
+- **ADR 001 Shared Rust core with Tauri and Axum hosts**, and the **ADR 033 amendment of 2026-10-18** (`filesquid-native`'s `desktop` feature, never enabled by the server).
+
+## What changed
+
+- SQLite storage was already in `filesquid-native`: the journal (CL-0.1), the findings, the per-library catalogs (DE-0.2), the canonical OCFL coordinator with its leases and staging (DE-0.3) and the job store (DE-0.4).
+- The remaining native processing in the host, the durable history backfill job worker of DE-0.4 (`durable_jobs.rs`: its lease-renewal thread and the per-library worker loop), moves to `filesquid-native::workers::history_backfill`, behind the `desktop` feature. The move is a file rename. It also drops a `serde` derive in favour of `serde_json::Value`, so `filesquid-native` gains no dependency. The desktop host calls it at launch exactly as before.
+- Media workers do not exist yet. DE-0.5 adds them to `filesquid_native::workers`.
+- New boundary rules, each also run on a synthetic violation:
+  - `filesquid-desktop` `integration_native_boundary` reads `cargo metadata`. Only `filesquid-desktop` (with `desktop`) and `filesquid-server` (no features) may link `filesquid-native`, and neither host may link a SQLite driver directly.
+  - The same test scans the desktop `src/`. It may not open storage directly (`rusqlite`, `Connection::open`, `FsBackend::new`, `LeaseStore::new`, `ChangeModel::new`, `StagingArea::new`), run a worker loop (`thread::scope`, `.backfill_library(`, `.renew()`), or call `std::fs::`, except in the build-time capability check and the test-instrumented range fixture.
+  - The existing `filesquid-server` `unit_native_features` test still proves that the server's resolved feature graph never enables `desktop`.
+- `filesquid-native` still builds alone, without `desktop` (`cargo check -p filesquid-native`).
+
+## SRS traceability
+
+| Requirement | Tests |
+|---|---|
+| DE-S-015 Native-processing library boundary: only the hosts link `filesquid-native`; no SQLite driver in a host | desktop `integration_native_boundary::only_the_hosts_link_filesquid_native_and_the_desktop_has_no_sqlite_driver`, `the_linking_rules_reject_a_sqlite_driver_in_a_host_and_native_in_the_api`; native feature `native_boundary_TC-005.feature` (4 scenarios) |
+| DE-S-015 Native-processing library boundary: thin Tauri host | desktop `integration_native_boundary::the_desktop_host_holds_no_native_storage_or_worker_code`, `the_source_rule_rejects_storage_opens_and_worker_loops` |
+| TC-005 Shared Rust graph, hosted mailbox isolation and OCFL writer; ADR 033 amendment: server default features only | server `unit_native_features` (2), native feature scenario "The server links filesquid-native with default features only" |
+| DE-S-014 Durable jobs and checkpoint-on-quit: unchanged after the move | desktop `integration_durable_jobs` (6), `integration_history_wiring` (5) |
+
+## TDD: failing run
+
+The boundary test before the worker moved:
+
+```text
+test the_desktop_host_holds_no_native_storage_or_worker_code ... FAILED
+["durable_jobs.rs: thread::scope", "durable_jobs.rs: .backfill_library(", "durable_jobs.rs: .renew()"]
+test result: FAILED. 3 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+```
+
+## Known gaps
+
+- The ciphertext-only hosted service crate does not exist yet. The linking rule already refuses `filesquid-native` in any package but the two hosts, so it will cover that crate too.
+- The WASM builds (ADR 025) are module crates, which the same rule covers; there is no separate WASM package yet.
+
+## Mocked Environment Variables
+
+None.
+
+## Raw test output
+
+```text
+$ cargo test -p filesquid-desktop --test integration_native_boundary --locked
+running 4 tests
+test the_linking_rules_reject_a_sqlite_driver_in_a_host_and_native_in_the_api ... ok
+test the_source_rule_rejects_storage_opens_and_worker_loops ... ok
+test the_desktop_host_holds_no_native_storage_or_worker_code ... ok
+test only_the_hosts_link_filesquid_native_and_the_desktop_has_no_sqlite_driver ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+$ cargo test -p filesquid-desktop --test integration_durable_jobs --locked
+running 6 tests
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.43s
+$ cargo test -p filesquid-server --test unit_native_features --locked
+running 2 tests
+test the_rule_rejects_a_tree_with_the_desktop_feature ... ok
+test the_server_links_filesquid_native_with_default_features_only ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+$ cargo test -p filesquid-native --test features --locked
+Feature: Durable jobs in the host's operational store
+  Scenario: A job suspended at quit resumes from its checkpoint after a restart
+  Scenario: A crashed run's lease is released once it expires
+  Scenario: An expired worker cannot write after another worker took the job over
+  Scenario: A job whose source changed is not resumed
+Feature: The native-processing library boundary
+  Scenario: The desktop host links the desktop-only native processing
+  Scenario: The server links filesquid-native with default features only
+  Scenario: No crate but the two hosts links filesquid-native
+  Scenario: Only filesquid-native links a SQLite driver
+Feature: Native journal store and data-directory checks
+  Scenario: The SQLite journal store writes no log file
+  Scenario: A host monitor opens its store in the data directory
+  Scenario: A data directory that cannot be written fails health
+11 scenarios (11 passed)
+37 steps (37 passed)
+$ cargo check -p filesquid-native --locked
+    Finished `dev` profile [unoptimized] target(s) in 0.15s
+```
+
+The head-commit hook run is recorded in the pull request.

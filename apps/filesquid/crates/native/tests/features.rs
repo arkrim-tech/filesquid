@@ -1,6 +1,7 @@
 //! Cucumber harness for the `filesquid-native` Gherkin under `tests/features/` (F-061: the
 //! SQLite journal store and the data-directory checks that the hosts inject into
-//! `filesquid-api`; NFR-003: the SQLite job store under the API's durable jobs). Writes JUnit to `tests/allure-results/cucumber-junit.xml`.
+//! `filesquid-api`; NFR-003: the SQLite job store under the API's durable jobs; TC-005: which
+//! packages may link `filesquid-native`). Writes JUnit to `tests/allure-results/cucumber-junit.xml`.
 
 use cucumber::{given, then, when, writer, World, WriterExt as _};
 use filesquid_api::health::{HealthReport, HealthStatus};
@@ -26,6 +27,7 @@ struct NativeWorld {
     writable: Option<bool>,
     health: Option<HealthReport>,
     jobs: Option<JobRig>,
+    links: Vec<(String, String, Vec<String>)>,
 }
 
 /// Number of the next job rig, so concurrent scenarios never share a data directory.
@@ -342,6 +344,85 @@ fn failed_with(w: &mut NativeWorld, code: String) {
     assert_eq!(job.state, JobState::Failed);
     assert_eq!(job.error_code.as_deref(), Some(code.as_str()));
     rig.finish();
+}
+
+/// Every direct dependency in the workspace as (package, dependency, enabled features), read
+/// from `cargo metadata` (I/O: spawns the `cargo` running the tests).
+fn workspace_links() -> Vec<(String, String, Vec<String>)> {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml");
+    let output = std::process::Command::new(cargo)
+        .args(["metadata", "--format-version", "1", "--no-deps", "--locked"])
+        .arg("--manifest-path")
+        .arg(manifest)
+        .output()
+        .expect("run cargo metadata");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let metadata: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json");
+    let packages = metadata["packages"].as_array().cloned().unwrap_or_default();
+    let mut links = Vec::new();
+    for package in &packages {
+        let name = package["name"].as_str().unwrap_or_default();
+        for dep in package["dependencies"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+        {
+            let features = dep["features"].as_array().cloned().unwrap_or_default();
+            let features = features
+                .iter()
+                .filter_map(|f| f.as_str().map(str::to_string))
+                .collect();
+            let dep_name = dep["name"].as_str().unwrap_or_default().to_string();
+            links.push((name.to_string(), dep_name, features));
+        }
+    }
+    links
+}
+
+#[given(expr = "the workspace's Cargo metadata")]
+fn cargo_metadata(w: &mut NativeWorld) {
+    w.links = workspace_links();
+}
+
+#[then(expr = "{string} should link {string} with the feature {string}")]
+fn links_with_feature(w: &mut NativeWorld, package: String, dep: String, feature: String) {
+    let found = w.links.iter().find(|(p, d, _)| *p == package && *d == dep);
+    let (_, _, features) = found.expect("linked");
+    assert_eq!(features, &[feature]);
+}
+
+#[then(expr = "{string} should link {string} with no feature")]
+fn links_without_feature(w: &mut NativeWorld, package: String, dep: String) {
+    let found = w.links.iter().find(|(p, d, _)| *p == package && *d == dep);
+    let (_, _, features) = found.expect("linked");
+    assert!(features.is_empty(), "{features:?}");
+}
+
+#[then(expr = "no package other than {string} and {string} should link {string}")]
+fn only_two_link(w: &mut NativeWorld, first: String, second: String, dep: String) {
+    let others: Vec<&String> = w
+        .links
+        .iter()
+        .filter(|(p, d, _)| *d == dep && *p != first && *p != second)
+        .map(|(p, _, _)| p)
+        .collect();
+    assert!(others.is_empty(), "{others:?}");
+}
+
+#[then(expr = "no package other than {string} should link {string}")]
+fn only_one_links(w: &mut NativeWorld, only: String, dep: String) {
+    let others: Vec<&String> = w
+        .links
+        .iter()
+        .filter(|(p, d, _)| *d == dep && *p != only)
+        .map(|(p, _, _)| p)
+        .collect();
+    assert!(others.is_empty(), "{others:?}");
 }
 
 #[tokio::main]

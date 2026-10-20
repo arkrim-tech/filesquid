@@ -18,10 +18,10 @@ use filesquid_api::operation::{CommandEnvelope, ExpectedRevision, OperationId, O
 use filesquid_api::ApiState;
 use filesquid_core::RESTART_RESUMABLE_WITHIN_SECS;
 use filesquid_core::{InstallationId, LibraryId, RepositoryId};
-use filesquid_desktop_lib::durable_jobs::{
+use filesquid_desktop_lib::{history_backfill, open_host_monitor, open_library_catalog};
+use filesquid_native::workers::history_backfill::{
     backfill_checkpoint, backfill_source, open_jobs, recover_jobs, run_backfill_job,
 };
-use filesquid_desktop_lib::{history_backfill, open_host_monitor, open_library_catalog};
 use filesquid_native::{
     HostMonitor, SqliteCatalog, SqliteJobs, SqliteJournal, CATALOG_DIR, JOURNAL_FILE,
 };
