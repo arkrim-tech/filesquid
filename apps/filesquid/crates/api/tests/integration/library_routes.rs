@@ -203,6 +203,22 @@ async fn opening_an_open_location_answers_its_library_again() {
 }
 
 #[tokio::test]
+async fn an_open_library_folder_under_a_second_location_id_is_refused_once() {
+    let rig = LibraryRig::new(Mount::Desktop);
+    let (_, location) = rig.create("lib").await;
+    rig.locations.alias(&location, "loc-again");
+    let before = failures(&rig).len();
+    let answer = rig
+        .post(
+            "/api/v1/libraries/openings",
+            json!({ "location_id": "loc-again" }),
+        )
+        .await;
+    assert_error(&answer, 409, "conflict");
+    assert_one_refusal(&rig, before, OPEN_OPERATION, "location_in_use");
+}
+
+#[tokio::test]
 async fn open_libraries_are_bounded() {
     let rig = LibraryRig::new(Mount::Desktop);
     for n in 0..MAX_OPEN_LIBRARIES {

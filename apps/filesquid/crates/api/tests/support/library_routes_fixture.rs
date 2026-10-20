@@ -112,6 +112,14 @@ impl TestLocations {
         id
     }
 
+    /// Register the folder of location `id` again, under the new ID `alias`, as a host would
+    /// when the owner picks the same folder twice.
+    pub fn alias(&self, id: &str, alias: &str) {
+        let mut roots = self.roots.lock().expect("locations");
+        let entry = roots.get(id).expect("registered location").clone();
+        roots.insert(alias.to_string(), entry);
+    }
+
     /// The folder of location `id`.
     pub fn folder(&self, id: &str) -> PathBuf {
         let roots = self.roots.lock().expect("locations");

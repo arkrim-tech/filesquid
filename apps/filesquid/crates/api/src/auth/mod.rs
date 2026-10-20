@@ -90,7 +90,9 @@ impl Authoriser {
     }
 
     /// `filesquid-server` before accounts exist: the holder of the administrator `token` is
-    /// the [`Principal::Administrator`] and may do everything on the host ([`HostPolicy`]).
+    /// the [`Principal::Administrator`] and may do everything on the host except the
+    /// version-inventory repair (`library.repair`), which only a library's owner may run
+    /// ([`HostPolicy`]).
     pub fn server_administrator(token: impl Into<String>) -> Self {
         let authenticator = TokenAuthenticator::new(token, Principal::Administrator);
         Self::new(Arc::new(authenticator), Arc::new(HostPolicy))

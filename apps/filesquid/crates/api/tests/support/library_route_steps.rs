@@ -104,6 +104,20 @@ async fn create(w: &mut MonitorWorld) {
     w.routes.answer = Some(w.routes.rig().post("/api/v1/libraries", body).await);
 }
 
+#[when(expr = "the owner opens the library's folder through the API")]
+async fn open(w: &mut MonitorWorld) {
+    let body = json!({ "location_id": w.routes.location });
+    let rig = w.routes.rig();
+    w.routes.answer = Some(rig.post("/api/v1/libraries/openings", body).await);
+}
+
+#[then(expr = "the answer should name the same library with {int} objects")]
+fn same_library(w: &mut MonitorWorld, objects: u64) {
+    let body = w.routes.answer().json();
+    assert_eq!(body["library_id"], w.routes.library.as_str(), "{body}");
+    assert_eq!(body["objects"], objects, "{body}");
+}
+
 #[when(
     expr = "the owner copies a completed snapshot of the library to an empty folder through the API"
 )]

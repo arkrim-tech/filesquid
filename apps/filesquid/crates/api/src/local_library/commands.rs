@@ -90,7 +90,8 @@ impl<L: LibraryLocations> LibraryCommands<L> {
     ///
     /// # Errors
     ///
-    /// `invalid_request`, `location_not_found`, `location_in_use`, `library_already_open`,
+    /// `invalid_location`, `invalid_library`, `location_not_found`, `location_in_use` (the
+    /// location is, holds or lies inside an open library's folder), `library_already_open`,
     /// `too_many_libraries`, or the create errors of [`LocalLibraryService::create_root`].
     pub async fn create(
         &self,
@@ -226,7 +227,9 @@ impl<L: LibraryLocations> LibraryCommands<L> {
     }
 
     /// The library ID and root a create or open would bind, checking the IDs, the location,
-    /// what is already open and the bound. Nothing is written.
+    /// what is already open (a second location ID for an open library's folder, or one
+    /// inside or around it, is refused, so one OCFL root is never bound twice) and the
+    /// bound. Nothing is written.
     fn plan_binding(
         &self,
         request: &LocationRequest,
@@ -247,6 +250,12 @@ impl<L: LibraryLocations> LibraryCommands<L> {
             if binding == Binding::Open && same {
                 return Ok((bound, root));
             }
+            return Err(location_in_use());
+        }
+        let aliased = open
+            .values()
+            .any(|location| self.locations.overlaps(location, &request.location_id));
+        if aliased {
             return Err(location_in_use());
         }
         let library_id = match &request.library_id {

@@ -17,6 +17,12 @@ Feature: Library and repair routes
     Then the answer should name an opaque library ID and no filesystem path
     And the registered folder should hold only the OCFL 1.1 storage-root declaration
 
+  Scenario: Open a library's folder through the API
+    Given the desktop owner's library with a complete object and an object without a version inventory
+    When the owner opens the library's folder through the API
+    Then the answer should name the same library with 2 objects
+    And the library folder should be unchanged
+
   Scenario: A folder that already holds a file is refused once
     Given the desktop owner's host with a registered folder that holds a file
     When the owner creates a library in that folder through the API
@@ -64,7 +70,7 @@ Feature: Library and repair routes
     And exactly one refusal "missing_credentials" should be journaled for "api.auth.denied"
     And the library folder should be unchanged
 
-  Scenario: Every server caller, the administrator included, is refused the repair
+  Scenario: The server administrator is refused the repair
     Given the server administrator's library with a complete object and an object without a version inventory
     When the server administrator repairs the object without a version inventory with consent through the API
     Then the answer should be the error "forbidden"
