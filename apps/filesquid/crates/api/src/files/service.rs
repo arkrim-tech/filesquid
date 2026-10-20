@@ -11,10 +11,10 @@ use super::range::{RangePlan, RangeRequest};
 use super::view::EntryView;
 use super::view::{
     CommitView, FileDetailsView, FileQuery, FolderPageView, FolderRequest, FolderView,
-    HistoryQuery, HistoryView, ListingQuery, MoveRequest, ObjectQuery, RemoveRequest,
-    RestoreRequest, UploadQuery, VersionView, VersionsView,
+    HistoryQuery, HistoryView, ListingQuery, MoveRequest, ObjectQuery, RemoveRequest, UploadQuery,
+    VersionView, VersionsView,
 };
-use super::{media, DEFAULT_PAGE, HOLDER, MAX_ANSWER_BYTES, MAX_MESSAGE_BYTES, MAX_RESTORE_PATHS};
+use super::{media, DEFAULT_PAGE, HOLDER, MAX_ANSWER_BYTES, MAX_MESSAGE_BYTES};
 use crate::content::ContentTarget;
 use filesquid_core::LibraryId;
 use filesquid_ocfl::change::{ChangeModel, StagingArea, VersionMeta};
@@ -53,24 +53,24 @@ pub fn staging_prefix(base: &str, object_id: &str) -> String {
 }
 
 /// Most content lengths one library keeps; the cache starts over when it is full.
-const MAX_CACHED_SIZES: usize = 4_096;
+pub(super) const MAX_CACHED_SIZES: usize = 4_096;
 
 /// One open library: what the host injected, where each object lives, the lengths of the
 /// contents read so far, and the lock that serialises the API's writes to it.
-struct Library<B, R, S> {
-    files: FileLibrary<B, R, S>,
-    roots: Mutex<HashMap<String, String>>,
+pub(super) struct Library<B, R, S> {
+    pub(super) files: FileLibrary<B, R, S>,
+    pub(super) roots: Mutex<HashMap<String, String>>,
     /// Content length by content digest. Stored content never changes, so an entry never
     /// goes stale; it spares each ranged read the backend's `head`, which may read the whole
     /// file (the filesystem backend hashes it for its entity tag).
-    sizes: Mutex<HashMap<String, u64>>,
-    writes: tokio::sync::Mutex<()>,
+    pub(super) sizes: Mutex<HashMap<String, u64>>,
+    pub(super) writes: tokio::sync::Mutex<()>,
 }
 
 impl<B: StorageBackend, R, S> Library<B, R, S> {
     /// The storage-root path of `object_id`, from the cache or, on a miss, by one scan of the
     /// root.
-    async fn locate(&self, object_id: &str) -> Result<String, FileError> {
+    pub(super) async fn locate(&self, object_id: &str) -> Result<String, FileError> {
         if let Some(root) = self.cached(object_id) {
             return Ok(root);
         }
@@ -85,7 +85,7 @@ impl<B: StorageBackend, R, S> Library<B, R, S> {
 
     /// Read every object root the storage root holds and cache the ones not cached yet. An
     /// object that cannot be opened is left out; a storage outage ends the scan.
-    async fn scan(&self) -> Result<(), FileError> {
+    pub(super) async fn scan(&self) -> Result<(), FileError> {
         let backend = self.files.backend.as_ref();
         let roots = StorageRoot::open(backend).await?.objects().to_vec();
         for root in roots {
@@ -104,7 +104,7 @@ impl<B: StorageBackend, R, S> Library<B, R, S> {
 
     /// The length of the logical file `path` of `version`, whose content digest is
     /// `digest`: from the cache, or read once from the backend.
-    async fn size_of(
+    pub(super) async fn size_of(
         &self,
         object: &Object<'_, B>,
         version: &VersionNum,
@@ -124,7 +124,7 @@ impl<B: StorageBackend, R, S> Library<B, R, S> {
     }
 
     /// The staging area of `object_id`.
-    fn staging(&self, object_id: &str) -> Result<StagingArea<'_, S>, FileError>
+    pub(super) fn staging(&self, object_id: &str) -> Result<StagingArea<'_, S>, FileError>
     where
         S: StorageBackend,
     {
@@ -149,6 +149,9 @@ pub struct FileService<B, R, S> {
     libraries: Arc<Libraries<B, R, S>>,
     clock: FileClock,
     names: Arc<OnceLock<Arc<dyn DisplayNames>>>,
+    /// Who commits and where commit journal IDs come from; restore and label commits
+    /// write a PROV-O record once installed (API-S-028).
+    pub(super) provenance: Arc<OnceLock<super::versions::FileProvenance>>,
 }
 
 impl<B, R, S> Clone for FileService<B, R, S> {
@@ -157,6 +160,7 @@ impl<B, R, S> Clone for FileService<B, R, S> {
             libraries: self.libraries.clone(),
             clock: self.clock.clone(),
             names: self.names.clone(),
+            provenance: self.provenance.clone(),
         }
     }
 }
@@ -179,6 +183,7 @@ impl<B, R, S> FileService<B, R, S> {
             libraries: Arc::new(Mutex::new(HashMap::new())),
             clock,
             names: Arc::new(OnceLock::new()),
+            provenance: Arc::new(OnceLock::new()),
         }
     }
 
@@ -250,7 +255,7 @@ impl<B, R, S> FileService<B, R, S> {
     }
 
     /// The open library `library_id`.
-    fn library(&self, library_id: &str) -> Result<Arc<Library<B, R, S>>, FileError> {
+    pub(super) fn library(&self, library_id: &str) -> Result<Arc<Library<B, R, S>>, FileError> {
         lock(&self.libraries)
             .get(library_id)
             .cloned()
@@ -258,7 +263,7 @@ impl<B, R, S> FileService<B, R, S> {
     }
 
     /// Now as RFC 3339 UTC, for a version's `created`.
-    fn created(&self) -> String {
+    pub(super) fn created(&self) -> String {
         rfc3339_utc(u64::try_from((self.clock)()).unwrap_or(0))
     }
 }
@@ -299,6 +304,7 @@ impl<B: StorageBackend, R, S> FileService<B, R, S> {
             path: &view.path,
         };
         view.display_name = self.display_name(file).await;
+        super::versions::apply_labels(&object, std::slice::from_mut(&mut view.last_change)).await?;
         Ok(view)
     }
 
@@ -313,7 +319,10 @@ impl<B: StorageBackend, R, S> FileService<B, R, S> {
             return Err(FileError::not_found());
         }
         let ids = (&query.library_id, &query.object_id, &query.path);
-        Ok(HistoryView::of(ids.0, ids.1, ids.2, entries))
+        let mut history = HistoryView::of(ids.0, ids.1, ids.2, entries);
+        self.complete_history(&library, &object, &mut history)
+            .await?;
+        Ok(history)
     }
 
     /// Every version of an object.
@@ -321,14 +330,16 @@ impl<B: StorageBackend, R, S> FileService<B, R, S> {
         let library = self.library(&query.library_id)?;
         let root = library.locate(&query.object_id).await?;
         let object = Object::open(library.files.backend.as_ref(), &root).await?;
+        let mut versions: Vec<VersionView> = view::object_versions(&object)
+            .iter()
+            .map(VersionView::of)
+            .collect();
+        super::versions::apply_labels(&object, &mut versions).await?;
         Ok(VersionsView {
             library_id: query.library_id,
             object_id: query.object_id,
             head: object.inventory().head.to_string(),
-            versions: view::object_versions(&object)
-                .iter()
-                .map(VersionView::of)
-                .collect(),
+            versions,
         })
     }
 
@@ -401,6 +412,7 @@ impl<B: StorageBackend, R, S> FileService<B, R, S> {
     /// empty folder. A file at the path or at one of its parents is a `conflict`.
     pub async fn create_folder(&self, request: FolderRequest) -> Result<FolderView, FileError> {
         check_logical_path(&request.path)?;
+        super::labels::refuse_reserved(&request.path)?;
         let library = self.library(&request.library_id)?;
         let root = library.locate(&request.object_id).await?;
         let object = Object::open(library.files.backend.as_ref(), &root).await?;
@@ -438,6 +450,7 @@ where
         bytes: &[u8],
         actor: &str,
     ) -> Result<CommitView, FileError> {
+        super::labels::refuse_reserved(&query.path)?;
         let meta = self.meta(actor, query.message.as_deref())?;
         let library = self.library(&query.library_id)?;
         let _writing = library.writes.lock().await;
@@ -454,6 +467,8 @@ where
         request: MoveRequest,
         actor: &str,
     ) -> Result<CommitView, FileError> {
+        super::labels::refuse_reserved(&request.from)?;
+        super::labels::refuse_reserved(&request.to)?;
         let meta = self.meta(actor, request.message.as_deref())?;
         let library = self.library(&request.library_id)?;
         let _writing = library.writes.lock().await;
@@ -470,6 +485,7 @@ where
         request: RemoveRequest,
         actor: &str,
     ) -> Result<CommitView, FileError> {
+        super::labels::refuse_reserved(&request.path)?;
         let meta = self.meta(actor, request.message.as_deref())?;
         let library = self.library(&request.library_id)?;
         let _writing = library.writes.lock().await;
@@ -477,28 +493,6 @@ where
         let staging = library.staging(&request.object_id)?;
         let model = change_model(&library, &root, &request.object_id, staging);
         let receipt = view::remove_path(&model, &request.path, meta).await?;
-        Ok(commit_view(&request.library_id, receipt))
-    }
-
-    /// Restore files or folders from an earlier version in one new version.
-    pub async fn restore(
-        &self,
-        request: RestoreRequest,
-        actor: &str,
-    ) -> Result<CommitView, FileError> {
-        let meta = self.meta(actor, request.message.as_deref())?;
-        let version = restore_version(&request)?;
-        request
-            .paths
-            .iter()
-            .try_for_each(|path| check_logical_path(path))?;
-        let library = self.library(&request.library_id)?;
-        let _writing = library.writes.lock().await;
-        let root = library.locate(&request.object_id).await?;
-        let staging = library.staging(&request.object_id)?;
-        let model = change_model(&library, &root, &request.object_id, staging);
-        let paths: Vec<&str> = request.paths.iter().map(String::as_str).collect();
-        let receipt = view::restore(&model, &version, &paths, meta).await?;
         Ok(commit_view(&request.library_id, receipt))
     }
 
@@ -522,7 +516,7 @@ where
 }
 
 /// The change model of `object_id` at `root` of `library`, staging in `staging`.
-fn change_model<'a, B, R, S>(
+pub(super) fn change_model<'a, B, R, S>(
     library: &'a Library<B, R, S>,
     root: &str,
     object_id: &str,
@@ -544,19 +538,8 @@ where
     )
 }
 
-/// The checked version and path count of a restore.
-fn restore_version(request: &RestoreRequest) -> Result<VersionNum, FileError> {
-    if request.paths.is_empty() || request.paths.len() > MAX_RESTORE_PATHS {
-        return Err(FileError::invalid(format!(
-            "A restore names 1 to {MAX_RESTORE_PATHS} files or folders."
-        )));
-    }
-    VersionNum::parse(&request.version)
-        .map_err(|_| FileError::invalid("A restore names one earlier version, such as v1."))
-}
-
 /// The answer of a published version.
-fn commit_view(library_id: &str, receipt: CommitReceipt) -> CommitView {
+pub(super) fn commit_view(library_id: &str, receipt: CommitReceipt) -> CommitView {
     CommitView {
         library_id: library_id.to_string(),
         object_id: receipt.object_id,
@@ -567,7 +550,7 @@ fn commit_view(library_id: &str, receipt: CommitReceipt) -> CommitView {
 
 /// The version `text` names, the head when absent or `head`; `not_found` for a version the
 /// object does not have.
-fn resolve<B: StorageBackend>(
+pub(super) fn resolve<B: StorageBackend>(
     object: &Object<'_, B>,
     text: Option<&str>,
 ) -> Result<VersionNum, FileError> {
@@ -595,7 +578,7 @@ fn page_size(limit: Option<usize>) -> Result<usize, FileError> {
 
 /// Refuse a logical path that breaks the OCFL rules: empty, beginning or ending with `/`
 /// (E053), or with an empty, `.` or `..` element (E052). Pure.
-fn check_logical_path(path: &str) -> Result<(), FileError> {
+pub(super) fn check_logical_path(path: &str) -> Result<(), FileError> {
     let edges = path.is_empty() || path.starts_with('/') || path.ends_with('/');
     let bad_element = path
         .split('/')
@@ -616,7 +599,7 @@ fn prefixes(path: &str) -> impl Iterator<Item = &str> {
 
 /// Read `len` bytes of `path` of `version` from `start`, in pieces of at most
 /// [`MAX_RANGE_BYTES`]; at most `len / MAX_RANGE_BYTES + 1` pieces (AGENTS.md §22).
-async fn read<B: StorageBackend>(
+pub(super) async fn read<B: StorageBackend>(
     object: &Object<'_, B>,
     version: &VersionNum,
     path: &str,
@@ -694,7 +677,7 @@ pub struct ContentAnswer {
 }
 
 /// `mutex`'s guard, recovering from a poisoned lock: every update leaves the map consistent.
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+pub(super) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)

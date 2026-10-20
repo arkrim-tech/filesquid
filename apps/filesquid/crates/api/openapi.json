@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "FileSquid API",
-    "version": "0.12.0",
+    "version": "0.13.0",
     "description": "The single FileSquid API served by every FileSquid host. See resources/architecture/030-filesquid-api-and-transports.md. Conventions: a command (mutation) sends a CommandEnvelope as the `envelope` member of its JSON request body (operation_id is the idempotency key, expected_revision the revision last read) and answers with a CommandOutcome; a query (list) takes the PageSize (`limit`, 1-1000) and Cursor (`cursor`) parameters; every failed request answers with an ApiError body (code, message, retryable). Router-wide fallbacks: any /api/v1/ path not in this contract answers 404 not_found, and a documented path called with a method it does not document answers 405 method_not_allowed; both carry the ApiError body. They are not listed per operation because no operation sends them. Authorisation is deny-by-default: every operation, including health, the contract and the event channel, requires the bearerAuth credential and is authorised before anything else runs, so a call without it answers 401 unauthorized and a call whose credential is not accepted or does not grant the operation answers 403 forbidden, before any 404 or 405; both carry the ApiError body with a DenialReason in `reason`. Each operation names the authorisation action it performs in x-filesquid-action. The one deliberate exception is GET /api/v1/health/live (x-filesquid-action public, security []), a liveness probe that answers only {\"status\":\"up\"} without a credential. The content route GET and HEAD /api/v1/content/{handle} (x-filesquid-action content.read, x-filesquid-credential content-handle, security []) is not public: its only credential is the content handle in its path, minted by POST /api/v1/content-handles for one file version (API-S-018); a Bearer token is not accepted there, and every unusable request under /api/v1/content/ (unknown, malformed, missing, expired, evicted or revoked handle, an extra path segment or another method) answers one identical 403 forbidden with reason invalid_credentials, never 401, 404 or 405. Paths marked x-filesquid-host-route are served by the hosts, not by the filesquid-api router."
   },
   "security": [
@@ -1453,7 +1453,7 @@
       "post": {
         "operationId": "restoreFiles",
         "summary": "Restore files or folders from an earlier version",
-        "description": "The new version points at the content the earlier version holds. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once.",
+        "description": "One restore operation (API-S-014): the new version points at the content the earlier version holds, a revert when it returns every file of the object to that version's and the head holds no other, else a reinstate, named so in the version's filesquid.operation.v1 message, which carries the optional label. Publishes exactly one OCFL version through the filesquid-ocfl change model and leaves earlier versions untouched, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). Paths in the reserved .filesquid folder are refused (400). With provenance configured the version carries its PROV-O record (API-S-028). The version is journaled with opaque IDs only; a refusal is journaled once.",
         "x-filesquid-action": "files.write",
         "requestBody": {
           "required": true,
@@ -2354,6 +2354,149 @@
           }
         }
       }
+    },
+    "/api/v1/files/labels": {
+      "put": {
+        "operationId": "setVersionLabel",
+        "summary": "Set or clear the label of one version after commit",
+        "description": "Commits one version (operation kind label) holding the object's application-data file .filesquid/labels.json, which maps labelled versions to their later labels; null clears a commit-time label. That version's own message carries no label. The file is recovered with the object from an ordinary copy. At most 1,000 labelled versions per object. A label that would not change what the version shows is refused (409) without publishing. Labels never affect retention. With provenance configured the version carries its PROV-O record (API-S-028). Journaled with opaque IDs only; a refusal is journaled once.",
+        "x-filesquid-action": "files.write",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LabelRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The version published.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileCommit"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/api/v1/files/history-size": {
+      "get": {
+        "operationId": "getFileHistorySize",
+        "summary": "The bytes one file's history keeps",
+        "description": "The versions that changed the file, its distinct contents and their bytes, each content counted once (SRS-F-065). A successful read is not journaled; a refusal is journaled once.",
+        "x-filesquid-action": "files.read",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/LibraryId"
+          },
+          {
+            "$ref": "#/components/parameters/ObjectId"
+          },
+          {
+            "$ref": "#/components/parameters/LogicalPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The file's history size.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileHistorySize"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/files/library-history-size": {
+      "get": {
+        "operationId": "getLibraryHistorySize",
+        "summary": "The bytes a library's history keeps",
+        "description": "Every object's distinct contents and their bytes, each content of an object counted once, within 10,000 objects and 100,000 contents (truncated says when a bound stopped the count). Nothing is deleted, expired or thinned to free space. A successful read is not journaled; a refusal is journaled once.",
+        "x-filesquid-action": "files.read",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/LibraryId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The library's history size.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryHistorySize"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3170,6 +3313,13 @@
               }
             ],
             "description": "Who made it, when recorded."
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The version's label (PRD F-065): the later label when one was set (PUT /api/v1/files/labels), else the label member of its filesquid.operation.v1 message; null when it has none. Labels never affect retention. Always sent; optional in the schema so clients written before labels still read it."
           }
         },
         "additionalProperties": false
@@ -3419,6 +3569,14 @@
               "null"
             ],
             "description": "The file's digest after the change, or null when it was removed."
+          },
+          "size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "description": "The file's size in bytes after the change, or null when it was removed. Always sent; optional in the schema so clients written before sizes still read it."
           }
         },
         "additionalProperties": false
@@ -3668,11 +3826,11 @@
             },
             "description": "The files or folders to restore, 1 to 1,000."
           },
-          "message": {
+          "label": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 1024,
-            "description": "The version message, 1 to 1,024 bytes and not blank."
+            "maxLength": 512,
+            "description": "The new version's label: 1 to 512 bytes, not blank, no control characters. It is the label member of the version's filesquid.operation.v1 message; a restore takes no free message."
           }
         },
         "additionalProperties": false
@@ -4490,6 +4648,118 @@
             "items": {
               "$ref": "#/components/schemas/ObjectRepair"
             }
+          }
+        },
+        "additionalProperties": false
+      },
+      "LabelRequest": {
+        "type": "object",
+        "description": "Body of PUT /api/v1/files/labels: set or clear the label of one version after commit.",
+        "required": [
+          "library_id",
+          "object_id",
+          "version"
+        ],
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library."
+          },
+          "object_id": {
+            "type": "string",
+            "description": "The OCFL object identifier."
+          },
+          "version": {
+            "type": "string",
+            "description": "The version to label: v1, v2, ..."
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 512,
+            "description": "The label: 1 to 512 bytes, not blank, no control characters; null or absent clears it."
+          }
+        },
+        "additionalProperties": false
+      },
+      "FileHistorySize": {
+        "type": "object",
+        "description": "The bytes one file's history keeps: each distinct content once.",
+        "required": [
+          "library_id",
+          "object_id",
+          "path",
+          "versions",
+          "contents",
+          "bytes"
+        ],
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library."
+          },
+          "object_id": {
+            "type": "string",
+            "description": "The OCFL object identifier."
+          },
+          "path": {
+            "type": "string",
+            "description": "The file's logical path."
+          },
+          "versions": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The versions that changed the file."
+          },
+          "contents": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The distinct contents the file has had."
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Their bytes, each content counted once."
+          }
+        },
+        "additionalProperties": false
+      },
+      "LibraryHistorySize": {
+        "type": "object",
+        "description": "The bytes a library's history keeps: each distinct content of each object once, within 10,000 objects and 100,000 contents.",
+        "required": [
+          "library_id",
+          "objects",
+          "contents",
+          "bytes",
+          "truncated"
+        ],
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library."
+          },
+          "objects": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The objects counted."
+          },
+          "contents": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The distinct contents counted."
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Their bytes, each content of an object counted once."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "True when a bound stopped the count, so the totals are lower bounds."
           }
         },
         "additionalProperties": false

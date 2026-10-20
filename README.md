@@ -307,6 +307,13 @@ cd apps/filesquid
 cargo test -p filesquid-api --locked --test integration_library_routes --test features
 ```
 
+Version history (API-F2.5, API-S-014: per-version size and label, ranged reads of an earlier version, restore as one revert-or-reinstate version, labels set later as application data in the object's reserved `.filesquid/` folder, history size per file and per library, and the PROV-O record of restore and label commits) is tested through the router against a real OCFL storage root in the system temporary directory, which each test removes:
+
+```sh
+cd apps/filesquid
+cargo test -p filesquid-api --locked --test integration_versions --test features
+```
+
 The host-side I/O the API must not do lives in the native-processing library `filesquid-native` (`crates/native`): the SQLite journal store, the data-directory checks (write probe, free space) and `HostMonitor`, which both hosts link ([ADR 033](./resources/architecture/033-activity-journal-and-live-health-monitoring.md) amendment 2026-10-18). Its unit tests and BDD features run alone:
 
 ```sh

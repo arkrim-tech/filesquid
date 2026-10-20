@@ -148,9 +148,65 @@ pub struct RestoreRequest {
     pub version: String,
     /// The files or folders to restore, 1 to [`super::MAX_RESTORE_PATHS`].
     pub paths: Vec<String>,
-    /// The version message, 1 to [`super::MAX_MESSAGE_BYTES`] bytes.
+    /// The new version's label (PRD F-065), the `label` member of its
+    /// `filesquid.operation.v1` message. A restore takes no free message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
+    pub label: Option<String>,
+}
+
+/// Body of `PUT /api/v1/files/labels`: set or clear the label of one version after commit.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LabelRequest {
+    /// The library.
+    pub library_id: String,
+    /// The OCFL object.
+    pub object_id: String,
+    /// The version to label (`v1`, `v2`, ...).
+    pub version: String,
+    /// The label; `null` or absent clears it.
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
+/// Query of `GET /api/v1/files/library-history-size`.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LibraryQuery {
+    /// The library.
+    pub library_id: String,
+}
+
+/// The bytes one file's history keeps: each distinct content once.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct FileHistorySizeView {
+    /// The library.
+    pub library_id: String,
+    /// The OCFL object.
+    pub object_id: String,
+    /// The file's logical path.
+    pub path: String,
+    /// The versions that changed the file.
+    pub versions: usize,
+    /// The distinct contents the file has had.
+    pub contents: usize,
+    /// Their bytes, each content counted once.
+    pub bytes: u64,
+}
+
+/// The bytes a library's history keeps: each distinct content of each object once.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct LibraryHistorySizeView {
+    /// The library.
+    pub library_id: String,
+    /// The objects counted.
+    pub objects: usize,
+    /// The distinct contents counted.
+    pub contents: usize,
+    /// Their bytes, each content of an object counted once.
+    pub bytes: u64,
+    /// True when the bounds stopped the count, so the totals are lower bounds.
+    pub truncated: bool,
 }
 
 /// Body of `POST /api/v1/content-handles`.
@@ -187,14 +243,18 @@ pub struct VersionView {
     pub message: Option<String>,
     /// Who made it, when recorded.
     pub user: Option<UserView>,
+    /// The version's label (PRD F-065): a later label when one was set, else the `label`
+    /// member of its operation message; `null` when it has none.
+    pub label: Option<String>,
 }
 
 impl VersionView {
-    /// The view of `info`.
+    /// The view of `info`, labelled with its commit-time label.
     pub fn of(info: &VersionInfo) -> Self {
         Self {
             version: info.version.to_string(),
             created: info.created.clone(),
+            label: super::labels::commit_label(info.message.as_deref()),
             message: info.message.clone(),
             user: info.user.as_ref().map(|u| UserView {
                 name: u.name.clone(),
@@ -351,6 +411,8 @@ pub struct HistoryEntryView {
     pub change: FileChangeView,
     /// The file's digest after the change, or `null` when it was removed.
     pub digest: Option<String>,
+    /// The file's size in bytes after the change, or `null` when it was removed.
+    pub size: Option<u64>,
 }
 
 /// How a version changed a file.
@@ -406,6 +468,7 @@ impl HistoryView {
                     version: VersionView::of(&e.version),
                     change: e.change.into(),
                     digest: e.digest,
+                    size: None,
                 })
                 .collect(),
         }
