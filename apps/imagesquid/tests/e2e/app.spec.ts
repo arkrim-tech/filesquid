@@ -27,6 +27,7 @@ test("ImageSquid brand, album vocabulary and FileSquid API health", async ({ pag
     "Albums",
     "Galleries",
     "Exhibits",
+    "Create or open a library",
     "Monitor",
     "Settings",
   ]);
@@ -146,8 +147,8 @@ for (const scheme of ["light", "dark"] as const) {
     await expect(page.locator("fs-host-indicator button.badge")).toHaveText(
       labels.hostBadgeServer ?? "",
     );
-    // Skip, theme, the host badge in the header, then the Monitor link.
-    for (let step = 0; step < 4; step += 1) {
+    // Skip, theme, the host badge in the header, then the library and Monitor links.
+    for (let step = 0; step < 5; step += 1) {
       await page.keyboard.press("Tab");
       seen.push(
         await page.evaluate(() => {
@@ -164,6 +165,7 @@ for (const scheme of ["light", "dark"] as const) {
       `Skip to main content | ${ring}`,
       `System | ${ring}`,
       `${labels.hostBadgeServer} | ${ring}`,
+      `${labels.libraryNavLink} | ${ring}`,
       `Monitor | ${ring}`,
     ]);
     await page.keyboard.press("Enter");

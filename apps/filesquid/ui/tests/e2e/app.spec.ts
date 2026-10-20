@@ -47,7 +47,11 @@ test("shell mounts with FileSquid brand, internal vocabulary and live API health
   // The live navigation tree fills the navigation slot; this server has no navigation service
   // yet, so the tree shows the unavailable state (UI-F2.1b). The Monitor link follows it.
   await expect(shell.locator("fs-nav-tree fs-states")).toHaveAttribute("data-state", "unavailable");
-  await expect(shell.locator("nav > ul.tools li")).toHaveText(["Monitor", "Settings"]);
+  await expect(shell.locator("nav > ul.tools li")).toHaveText([
+    "Create or open a library",
+    "Monitor",
+    "Settings",
+  ]);
   await expect(shell.locator('p.api[role="status"]')).toHaveText("API: ok (filesquid)");
   await expect(shell.locator('p.api[role="alert"]')).toHaveCount(0);
   expect(errors).toEqual([]);

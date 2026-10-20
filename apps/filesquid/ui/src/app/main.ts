@@ -3,7 +3,8 @@
  * FileSquid's official brand and the internal vocabulary, talking to whichever host serves
  * this page. The navigation tree in the shell's navigation slot reads the host's live
  * navigation listing (UI-F2.1b), and `#/navigation/<node>` shows that destination with its
- * breadcrumb; `#/settings` shows the Settings page with its Privacy section; `#/monitor` shows the Monitor dashboard; `#/files/<library>/<object>` shows the
+ * breadcrumb; `#/settings` shows the Settings page with its Privacy section; `#/monitor` shows the Monitor dashboard, whose W010 note links to the library's repair offer;
+ * `#/library` creates, opens or recovers a library and `#/library/<id>` shows it; `#/files/<library>/<object>` shows the
  * file browser until the API lists files by navigation node. On the desktop host the client
  * uses the per-launch token; on the server host the Monitor asks for the administrator token,
  * which is kept in memory only, and entering it reconnects the event channel and reads the
@@ -13,9 +14,12 @@ import "../theme/tokens.css";
 import labels from "../theme/labels.en.json";
 import {
   ClientFileSource,
+  ClientLibrarySource,
   ClientNavigationSource,
+  LibraryRegistry,
   applyLocale,
   bindFilesRoute,
+  bindLibraryRoute,
   bindMonitorRoute,
   bindNavigationRoute,
   bindSettingsRoute,
@@ -23,6 +27,7 @@ import {
   createThemeStore,
   defineElements,
   detectHost,
+  libraryRepairHref,
   memoryTokenStore,
   resolveLocale,
   type Distribution,
@@ -58,5 +63,14 @@ tree.configure({ labels, source: navigation });
 shell?.append(tree);
 if (shell) bindNavigationRoute(shell, { labels, source: navigation, tree });
 if (shell) bindSettingsRoute(shell, { labels, client });
-if (shell) bindMonitorRoute(shell, { labels, client, tokens: desktop ? undefined : tokens });
+const libraries = {
+  labels,
+  source: new ClientLibrarySource(client),
+  registry: new LibraryRegistry(),
+};
+if (shell) bindLibraryRoute(shell, libraries);
+if (shell) {
+  const monitor = { labels, client, tokens: desktop ? undefined : tokens };
+  bindMonitorRoute(shell, { ...monitor, repairHref: libraryRepairHref });
+}
 if (shell) bindFilesRoute(shell, { labels, source: new ClientFileSource(client) });

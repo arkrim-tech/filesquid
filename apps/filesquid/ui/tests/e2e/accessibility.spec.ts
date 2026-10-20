@@ -90,6 +90,8 @@ test("landmarks, headings and control names come from the label table", async ({
         - button "Try again"
       - list:
         - listitem:
+          - link "Create or open a library"
+        - listitem:
           - link "Monitor"
         - listitem:
           - link "Settings"
@@ -140,11 +142,11 @@ test("light-DOM content slotted into the shell gets the same focus ring", async 
     document.querySelector("fs-app-shell")?.append(button);
   });
   const ring = `solid 2px ${await tokenColour(page, "--fs-primary")}`;
-  // Skip, theme, host badge, the tree's Try again (no navigation service here), Monitor,
-  // Settings, then the slotted button.
+  // Skip, theme, host badge, the tree's Try again (no navigation service here), the library
+  // link, Monitor, Settings, then the slotted button.
   await expect(page.locator("fs-nav-tree fs-states")).toHaveAttribute("data-state", "unavailable");
   await expect(page.locator("fs-host-indicator button.badge")).toHaveText("Server");
-  for (let step = 0; step < 7; step += 1) await page.keyboard.press("Tab");
+  for (let step = 0; step < 8; step += 1) await page.keyboard.press("Tab");
   const item = await focused(page);
   expect(item.text).toBe("Slotted action");
   expect(item.outline).toBe(ring);
