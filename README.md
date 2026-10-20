@@ -328,6 +328,14 @@ cd apps/filesquid
 cargo test -p filesquid-api --locked --test integration_metadata --test unit_canonical --test features
 ```
 
+The display and download names of API-F1.13 (API-S-027: display names on the file history and object versions, a rename that changes only the display name in one new version, the refused move of a file's stored original, `Content-Disposition` with its ASCII and FileId fallbacks, and the FileId default for sharing) are tested the same way; the `Content-Disposition` builder has unit tests in the library:
+
+```sh
+cd apps/filesquid
+cargo test -p filesquid-api --locked --lib files::names
+cargo test -p filesquid-api --locked --test integration_names --test unit_canonical --test features
+```
+
 File and folder import on the desktop (Task DE-1.2, API-S-036, DE-S-019): `POST /api/v1/imports` takes a command envelope whose operation ID is the idempotency key. The owner picks files or a folder in the system's own dialog, shown by the Rust host. One durable import job then runs on a native worker thread, with these limits:
 
 - each file gets at most 5 attempts;

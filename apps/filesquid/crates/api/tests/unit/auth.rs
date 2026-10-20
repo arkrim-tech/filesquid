@@ -362,6 +362,7 @@ fn every_routed_path_declares_its_action() {
             | "/api/v1/files/labels"
             | "/api/v1/files/metadata/statements"
             | "/api/v1/files/metadata/removals"
+            | "/api/v1/files/renames"
             | "/api/v1/files/metadata/registrations"
             | "/api/v1/imports" => Action::WriteFiles,
             "/api/v1/content/{handle}" => Action::ReadContent,

@@ -8,9 +8,11 @@ Purpose:
     GitHub or reads the clock: the caller passes everything in, so every
     function can be unit tested (see `test_mvp_queue.py`).
 
-    - In progress: a global task with some but not all module rows ticked
+    - In progress: an open global task with at least one module row ticked
       (its unticked rows are listed), plus every unticked task whose ID appears
-      in the head branch or title of an open pull request.
+      in the head branch or title of an open pull request. A ticked global
+      task is done and never listed. The "N more are under way" count in the
+      summary is the number of distinct open global tasks listed.
     - Up next: the first five unticked, not-in-progress module rows, in
       checklist order, whose Dependencies are all ticked or in progress.
 
@@ -297,6 +299,12 @@ def only_unticked(pr_ids: dict, rows: list) -> dict:
 def compute_in_progress(rows: list, pr_ids: dict) -> InProgress:
     """Select the tasks being worked on.
 
+    An open global task is under way when at least one of its module rows is
+    ticked (this includes every row ticked while the global box is still
+    open) or when an open pull request names it. A pull request on an open
+    module row of an otherwise untouched global lists that row alone. A ticked
+    global task is done and never appears.
+
     Args:
         rows: Parsed MVP global tasks.
         pr_ids: Task ID to open PR number, for unticked tasks only.
@@ -306,10 +314,10 @@ def compute_in_progress(rows: list, pr_ids: dict) -> InProgress:
     """
     entries = []
     active = set()
-    for task in rows:
+    for task in (t for t in rows if not t.done):
         open_rows = [m for m in task.modules if not m.done]
-        partial = 0 < len(open_rows) < len(task.modules)
-        if not task.done and (partial or task.task_id in pr_ids):
+        started = len(open_rows) < len(task.modules)
+        if started or task.task_id in pr_ids:
             entries.append(Entry(task, open_rows, True))
             active.update([task.task_id, *(m.task_id for m in open_rows)])
             continue
@@ -324,8 +332,8 @@ def count_under_way(inprog: InProgress) -> int:
 
     A nested entry and a flat module entry (a PR on a module of an otherwise
     untouched global) both name their global task; two flat entries under one
-    global count it once. A global whose box is already ticked is done, so a
-    flat entry under it is not counted.
+    global count it once. `compute_in_progress` never lists a ticked global,
+    and the filter here keeps the count correct for any entries passed in.
 
     Args:
         inprog: The In progress selection from `compute_in_progress`.

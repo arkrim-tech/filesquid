@@ -464,7 +464,7 @@ export interface paths {
         put?: never;
         /**
          * Move or rename one file or folder
-         * @description A folder moves every file below it; no bytes are written. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once.
+         * @description A folder moves every file below it; no bytes are written. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once. A file object's stored original (`original/` of `files/<file-id>`) never moves: such a move is refused (400) with a pointer to `POST /api/v1/files/renames`, since a rename changes only the display name (API-S-027).
          */
         post: operations["moveFiles"];
         delete?: never;
@@ -617,26 +617,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/admin/history/backfill": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Start the PROV-O history backfill
-         * @description API-S-029. The desktop owner or a server administrator starts one backfill over every OCFL storage root the host serves, in the background, and the route answers 200 at once. Each run registers in the process registry (`prov.backfill`), checkpoints per object, stops at its cap or on cancel (the host's exit), skips versions that already have a record, and commits one provenance-only version per object. The request carries no body. A request while a backfill runs is refused 409 conflict. The request is journaled once as `history.backfill.request` (succeeded, or failed with its error code: `backfill_running`, `unavailable`); each run journals itself. Starting a job changes no library content or organisation, so there is no CommandEnvelope.
-         */
-        post: operations["startHistoryBackfill"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/navigation": {
         parameters: {
             query?: never;
@@ -691,26 +671,6 @@ export interface paths {
          * @description Opens the OCFL storage root in the folder the host registered as location_id through the engine's guards, and binds the library ID (library_id when given, else a new UUID v4) to it. Writes and repairs nothing. Opening a location that is already open answers its library again. Refusals: invalid_location, invalid_library, location_not_found, location_in_use, library_already_open, too_many_libraries, not_a_storage_root and git_in_root. Only a failure is journaled, as library.root.open. Every refusal is journaled once, with its error code and opaque IDs only (an authorisation refusal as api.auth.denied); answers carry opaque library and object identifiers, never a filesystem path, storage key or OCFL content path (API-S-005, API-S-025).
          */
         post: operations["openLibrary"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/libraries/location-choices": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Let the owner pick a folder in the host's dialog
-         * @description API-S-025. The host shows its own native folder dialog for the purpose named (an empty folder for a new library, a folder that holds a library, or an empty folder for a snapshot copy), registers the folder the owner picks under an opaque location ID, and answers that ID, or that the owner cancelled. The folder never crosses the API as a path, title or storage key (API-S-005); the UI names the ID in the create, open and snapshot-copy routes. One dialog is open at a time: a request while one is open is refused 409 conflict (`dialog_open`), as is a picked folder the host cannot register (`location_refused`). A host without a dialog (filesquid-server) answers 503 unavailable. Each request is journaled once as `library.location.choose`: succeeded with the location ID, cancelled, or failed with its error code.
-         */
-        post: operations["chooseLibraryLocation"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1055,6 +1015,66 @@ export interface paths {
         get: operations["getFileFacts"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/renames": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rename a file
+         * @description Set the display name of a file object's original (API-S-027): the record's display name changes and nothing else, so the stored name, the logical path, the original name and every import entry stay. Publishes exactly one new version of the file's metadata record through the metadata module's `ocfl` store with the caller as the version user, or is refused without publishing (400 for an empty name, one over 1,024 bytes or one with `/` or NUL; 409 when the name is already the display name or another writer moved the record first). The version is journaled as `files.rename` with opaque IDs only; a refusal is journaled once.
+         */
+        post: operations["renameFile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/history/backfill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start the PROV-O history backfill
+         * @description API-S-029. The desktop owner or a server administrator starts one backfill over every OCFL storage root the host serves, in the background, and the route answers 200 at once. Each run registers in the process registry (`prov.backfill`), checkpoints per object, stops at its cap or on cancel (the host's exit), skips versions that already have a record, and commits one provenance-only version per object. The request carries no body. A request while a backfill runs is refused 409 conflict. The request is journaled once as `history.backfill.request` (succeeded, or failed with its error code: `backfill_running`, `unavailable`); each run journals itself. Starting a job changes no library content or organisation, so there is no CommandEnvelope.
+         */
+        post: operations["startHistoryBackfill"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/libraries/location-choices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Let the owner pick a folder in the host's dialog
+         * @description API-S-025. The host shows its own native folder dialog for the purpose named (an empty folder for a new library, a folder that holds a library, or an empty folder for a snapshot copy), registers the folder the owner picks under an opaque location ID, and answers that ID, or that the owner cancelled. The folder never crosses the API as a path, title or storage key (API-S-005); the UI names the ID in the create, open and snapshot-copy routes. One dialog is open at a time: a request while one is open is refused 409 conflict (`dialog_open`), as is a picked folder the host cannot register (`location_refused`). A host without a dialog (filesquid-server) answers 503 unavailable. Each request is journaled once as `library.location.choose`: succeeded with the location ID, cancelled, or failed with its error code.
+         */
+        post: operations["chooseLibraryLocation"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1412,6 +1432,8 @@ export interface components {
             object_id: string;
             /** @description The file's logical path. */
             path: string;
+            /** @description The name users see for the file (API-S-027): its metadata record's display name for a file object's original, else its stored name. */
+            display_name: string;
             /** @description The versions that changed it. */
             entries: components["schemas"]["FileHistoryEntry"][];
         };
@@ -1423,6 +1445,8 @@ export interface components {
             object_id: string;
             /** @description The head version. */
             head: string;
+            /** @description For a file object, the name users see for its file at the head (API-S-027): its metadata record's display name; null for any other object. */
+            display_name: string | null;
             /** @description Every version. */
             versions: components["schemas"]["VersionRecord"][];
         };
@@ -2153,6 +2177,15 @@ export interface components {
             /** @description The version read. */
             version: string;
             facts: components["schemas"]["FileFacts"];
+        };
+        /** @description Rename one file: set its display name. */
+        RenameRequest: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The file. */
+            file_id: string;
+            /** @description The new display name, 1 to 1,024 bytes without `/` or NUL. */
+            display_name: string;
         };
         /** @description A history backfill that started in the background (API-S-029). Its runs appear in the process registry and the journal as `prov.backfill`. */
         BackfillStarted: {
@@ -3616,39 +3649,6 @@ export interface operations {
             503: components["responses"]["Unavailable"];
         };
     };
-    startHistoryBackfill: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The backfill started in the background. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BackfillStarted"];
-                };
-            };
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
-            /** @description A history backfill is already running (`conflict`). */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiError"];
-                };
-            };
-            500: components["responses"]["Internal"];
-            503: components["responses"]["Unavailable"];
-        };
-    };
     listNavigation: {
         parameters: {
             query?: {
@@ -3742,44 +3742,6 @@ export interface operations {
             409: components["responses"]["LibraryConflict"];
             500: components["responses"]["Internal"];
             503: components["responses"]["LibraryUnavailable"];
-        };
-    };
-    chooseLibraryLocation: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["LocationChoiceRequest"];
-            };
-        };
-        responses: {
-            /** @description The folder the owner picked, by its opaque location ID, or that they cancelled. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LocationChoice"];
-                };
-            };
-            400: components["responses"]["InvalidRequest"];
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
-            /** @description A folder dialog is already open, or the picked folder cannot hold a library (`conflict`). */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiError"];
-                };
-            };
-            500: components["responses"]["Internal"];
-            503: components["responses"]["Unavailable"];
         };
     };
     startImport: {
@@ -4346,6 +4308,108 @@ export interface operations {
             404: components["responses"]["NotFound"];
             500: components["responses"]["Internal"];
             503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    renameFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RenameRequest"];
+            };
+        };
+        responses: {
+            /** @description The version published. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MetadataCommit"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    startHistoryBackfill: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The backfill started in the background. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackfillStarted"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description A history backfill is already running (`conflict`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            500: components["responses"]["Internal"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    chooseLibraryLocation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LocationChoiceRequest"];
+            };
+        };
+        responses: {
+            /** @description The folder the owner picked, by its opaque location ID, or that they cancelled. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocationChoice"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description A folder dialog is already open, or the picked folder cannot hold a library (`conflict`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            500: components["responses"]["Internal"];
+            503: components["responses"]["Unavailable"];
         };
     };
 }

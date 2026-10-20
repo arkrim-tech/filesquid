@@ -1680,7 +1680,7 @@
       "post": {
         "operationId": "moveFiles",
         "summary": "Move or rename one file or folder",
-        "description": "A folder moves every file below it; no bytes are written. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once.",
+        "description": "A folder moves every file below it; no bytes are written. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once. A file object's stored original (`original/` of `files/<file-id>`) never moves: such a move is refused (400) with a pointer to `POST /api/v1/files/renames`, since a rename changes only the display name (API-S-027).",
         "x-filesquid-action": "files.write",
         "requestBody": {
           "required": true,
@@ -2337,48 +2337,6 @@
         }
       }
     },
-    "/api/v1/admin/history/backfill": {
-      "post": {
-        "operationId": "startHistoryBackfill",
-        "summary": "Start the PROV-O history backfill",
-        "description": "API-S-029. The desktop owner or a server administrator starts one backfill over every OCFL storage root the host serves, in the background, and the route answers 200 at once. Each run registers in the process registry (`prov.backfill`), checkpoints per object, stops at its cap or on cancel (the host's exit), skips versions that already have a record, and commits one provenance-only version per object. The request carries no body. A request while a backfill runs is refused 409 conflict. The request is journaled once as `history.backfill.request` (succeeded, or failed with its error code: `backfill_running`, `unavailable`); each run journals itself. Starting a job changes no library content or organisation, so there is no CommandEnvelope.",
-        "x-filesquid-action": "history.backfill",
-        "responses": {
-          "200": {
-            "description": "The backfill started in the background.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BackfillStarted"
-                }
-              }
-            }
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "409": {
-            "description": "A history backfill is already running (`conflict`).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "500": {
-            "$ref": "#/components/responses/Internal"
-          },
-          "503": {
-            "$ref": "#/components/responses/Unavailable"
-          }
-        }
-      }
-    },
     "/api/v1/navigation": {
       "get": {
         "operationId": "listNavigation",
@@ -2526,61 +2484,6 @@
           },
           "503": {
             "$ref": "#/components/responses/LibraryUnavailable"
-          }
-        }
-      }
-    },
-    "/api/v1/libraries/location-choices": {
-      "post": {
-        "operationId": "chooseLibraryLocation",
-        "summary": "Let the owner pick a folder in the host's dialog",
-        "description": "API-S-025. The host shows its own native folder dialog for the purpose named (an empty folder for a new library, a folder that holds a library, or an empty folder for a snapshot copy), registers the folder the owner picks under an opaque location ID, and answers that ID, or that the owner cancelled. The folder never crosses the API as a path, title or storage key (API-S-005); the UI names the ID in the create, open and snapshot-copy routes. One dialog is open at a time: a request while one is open is refused 409 conflict (`dialog_open`), as is a picked folder the host cannot register (`location_refused`). A host without a dialog (filesquid-server) answers 503 unavailable. Each request is journaled once as `library.location.choose`: succeeded with the location ID, cancelled, or failed with its error code.",
-        "x-filesquid-action": "library.manage",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/LocationChoiceRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "The folder the owner picked, by its opaque location ID, or that they cancelled.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LocationChoice"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/InvalidRequest"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "409": {
-            "description": "A folder dialog is already open, or the picked folder cannot hold a library (`conflict`).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "500": {
-            "$ref": "#/components/responses/Internal"
-          },
-          "503": {
-            "$ref": "#/components/responses/Unavailable"
           }
         }
       }
@@ -3462,6 +3365,154 @@
           },
           "503": {
             "$ref": "#/components/responses/FilesUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/files/renames": {
+      "post": {
+        "operationId": "renameFile",
+        "summary": "Rename a file",
+        "description": "Set the display name of a file object's original (API-S-027): the record's display name changes and nothing else, so the stored name, the logical path, the original name and every import entry stay. Publishes exactly one new version of the file's metadata record through the metadata module's `ocfl` store with the caller as the version user, or is refused without publishing (400 for an empty name, one over 1,024 bytes or one with `/` or NUL; 409 when the name is already the display name or another writer moved the record first). The version is journaled as `files.rename` with opaque IDs only; a refusal is journaled once.",
+        "x-filesquid-action": "files.write",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The version published.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetadataCommit"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/history/backfill": {
+      "post": {
+        "operationId": "startHistoryBackfill",
+        "summary": "Start the PROV-O history backfill",
+        "description": "API-S-029. The desktop owner or a server administrator starts one backfill over every OCFL storage root the host serves, in the background, and the route answers 200 at once. Each run registers in the process registry (`prov.backfill`), checkpoints per object, stops at its cap or on cancel (the host's exit), skips versions that already have a record, and commits one provenance-only version per object. The request carries no body. A request while a backfill runs is refused 409 conflict. The request is journaled once as `history.backfill.request` (succeeded, or failed with its error code: `backfill_running`, `unavailable`); each run journals itself. Starting a job changes no library content or organisation, so there is no CommandEnvelope.",
+        "x-filesquid-action": "history.backfill",
+        "responses": {
+          "200": {
+            "description": "The backfill started in the background.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackfillStarted"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "description": "A history backfill is already running (`conflict`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/libraries/location-choices": {
+      "post": {
+        "operationId": "chooseLibraryLocation",
+        "summary": "Let the owner pick a folder in the host's dialog",
+        "description": "API-S-025. The host shows its own native folder dialog for the purpose named (an empty folder for a new library, a folder that holds a library, or an empty folder for a snapshot copy), registers the folder the owner picks under an opaque location ID, and answers that ID, or that the owner cancelled. The folder never crosses the API as a path, title or storage key (API-S-005); the UI names the ID in the create, open and snapshot-copy routes. One dialog is open at a time: a request while one is open is refused 409 conflict (`dialog_open`), as is a picked folder the host cannot register (`location_refused`). A host without a dialog (filesquid-server) answers 503 unavailable. Each request is journaled once as `library.location.choose`: succeeded with the location ID, cancelled, or failed with its error code.",
+        "x-filesquid-action": "library.manage",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocationChoiceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The folder the owner picked, by its opaque location ID, or that they cancelled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocationChoice"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "description": "A folder dialog is already open, or the picked folder cannot hold a library (`conflict`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
           }
         }
       }
@@ -4569,6 +4620,7 @@
           "library_id",
           "object_id",
           "path",
+          "display_name",
           "entries"
         ],
         "properties": {
@@ -4583,6 +4635,10 @@
           "path": {
             "type": "string",
             "description": "The file's logical path."
+          },
+          "display_name": {
+            "type": "string",
+            "description": "The name users see for the file (API-S-027): its metadata record's display name for a file object's original, else its stored name."
           },
           "entries": {
             "type": "array",
@@ -4601,6 +4657,7 @@
           "library_id",
           "object_id",
           "head",
+          "display_name",
           "versions"
         ],
         "properties": {
@@ -4615,6 +4672,13 @@
           "head": {
             "type": "string",
             "description": "The head version."
+          },
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For a file object, the name users see for its file at the head (API-S-027): its metadata record's display name; null for any other object."
           },
           "versions": {
             "type": "array",
@@ -6773,6 +6837,30 @@
           },
           "facts": {
             "$ref": "#/components/schemas/FileFacts"
+          }
+        }
+      },
+      "RenameRequest": {
+        "type": "object",
+        "description": "Rename one file: set its display name.",
+        "required": [
+          "library_id",
+          "file_id",
+          "display_name"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library."
+          },
+          "file_id": {
+            "type": "string",
+            "description": "The file."
+          },
+          "display_name": {
+            "type": "string",
+            "description": "The new display name, 1 to 1,024 bytes without `/` or NUL."
           }
         }
       },
