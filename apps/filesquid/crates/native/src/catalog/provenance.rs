@@ -98,8 +98,8 @@ impl SqliteCatalog {
         backfill: &Backfill,
         cancel: &AtomicBool,
     ) -> Result<Vec<LibraryBackfill>, CatalogError> {
-        let ids: Vec<LibraryId> = self.lock()?.values().map(|l| l.id.clone()).collect();
-        let done = ids
+        let done = self
+            .library_ids()?
             .into_iter()
             .take_while(|_| !cancel.load(Ordering::SeqCst))
             .map(|id| self.backfill_library(id, backfill, cancel))
@@ -107,9 +107,18 @@ impl SqliteCatalog {
         Ok(done)
     }
 
+    /// The libraries this catalog serves, in ID order (at most [`super::MAX_LIBRARIES`]).
+    ///
+    /// # Errors
+    /// [`CatalogError`] when the lock is poisoned.
+    pub fn library_ids(&self) -> Result<Vec<LibraryId>, CatalogError> {
+        Ok(self.lock()?.values().map(|l| l.id.clone()).collect())
+    }
+
     /// Run `backfill` over `library_id` until it is done, capped by [`MAX_BACKFILL_RUNS`],
-    /// cancelled or a run cannot start. Filesystem, database and journal I/O.
-    fn backfill_library(
+    /// cancelled (the last report says so) or a run cannot start (a library no longer
+    /// served included). Filesystem, database and journal I/O.
+    pub fn backfill_library(
         &self,
         library_id: LibraryId,
         backfill: &Backfill,

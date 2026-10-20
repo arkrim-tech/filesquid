@@ -84,6 +84,10 @@ name = "integration_history_wiring"
 path = "tests/integration/history_wiring.rs"
 
 [[test]]
+name = "integration_durable_jobs"
+path = "tests/integration/durable_jobs.rs"
+
+[[test]]
 name = "integration_stdout_logging"
 path = "tests/integration/stdout_logging.rs"
 
