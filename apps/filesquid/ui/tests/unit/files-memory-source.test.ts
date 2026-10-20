@@ -115,13 +115,61 @@ describe("MemoryFileSource files", () => {
 });
 
 describe("MemoryFileSource writes", () => {
-  it("an upload commits one new version holding the file", async () => {
+  it("an upload creates the file's own object at v1 and leaves the object shown as it was", async () => {
     const s = source();
-    const commit = await s.upload(LOCATION, "new.txt", new Blob(["hello"]));
-    expect(commit.version).toBe("v2");
-    expect(s.head).toBe("v2");
-    const page = await s.list(LOCATION);
-    expect(page.entries.map((e) => e.name)).toContain("new.txt");
+    const facts = { name: "new.txt", name_normalization: "nfc", media_type: "text/plain" } as const;
+    const commit = await s.upload(LOCATION, facts, new Blob(["hello"]));
+    expect(commit.file_id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    expect(commit).toMatchObject({
+      library_id: "lib",
+      object_id: `urn:uuid:${commit.file_id}`,
+      version: "v1",
+    });
+    expect(s.head).toBe("v1");
+    expect((await s.list(LOCATION)).entries.map((e) => e.name)).not.toContain("new.txt");
+    expect(s.uploads).toEqual([
+      expect.objectContaining({
+        file_id: commit.file_id,
+        name: "new.txt",
+        name_normalization: "nfc",
+        media_type: "text/plain",
+        size: 5,
+        version: "v1",
+      }),
+    ]);
+  });
+
+  it("an upload naming a file_id is a new version of that file; unchanged bytes are a conflict", async () => {
+    const s = source();
+    const first = await s.upload(LOCATION, { name: "a.txt" }, new Blob(["one"]));
+    const again = { name: "a.txt", file_id: first.file_id };
+    const second = await s.upload(LOCATION, again, new Blob(["two"]));
+    expect(second).toMatchObject({ file_id: first.file_id, version: "v2" });
+    await expect(s.upload(LOCATION, again, new Blob(["two"]))).rejects.toMatchObject({
+      code: "conflict",
+    });
+    const unknown = { name: "a.txt", file_id: "0b7e2c1a-3d4f-4a5b-8c6d-7e8f9a0b1c2d" };
+    await expect(s.upload(LOCATION, unknown, new Blob(["x"]))).rejects.toMatchObject({
+      code: "not_found",
+    });
+  });
+
+  it.each([
+    ["an empty name", { name: "" }],
+    ["a name with a slash", { name: "a/b.txt" }],
+    ["a name with NUL", { name: "a\u0000b" }],
+    ["a name over 1,024 bytes", { name: "n".repeat(1025) }],
+    ["a name that is not ASCII without its form", { name: "Café.txt" }],
+    ["a media type that is not type/subtype", { name: "a.txt", media_type: "text" }],
+    ["a time that is not RFC 3339 UTC", { name: "a.txt", last_modified: "2026-10-20 08:00" }],
+  ])("refuses %s as invalid_request without a version", async (_case, facts) => {
+    const s = source();
+    await expect(s.upload(LOCATION, facts, new Blob(["x"]))).rejects.toMatchObject({
+      code: "invalid_request",
+    });
+    expect(s.uploads).toEqual([]);
   });
 
   it("a folder stays pending until a file is added beneath it", async () => {

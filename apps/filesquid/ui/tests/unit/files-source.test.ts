@@ -49,6 +49,13 @@ const REF: FileRef = {
   display_name: "photo.png",
 };
 const COMMIT = { library_id: "lib-1", object_id: "urn:uuid:o1", version: "v4", created: "t" };
+const UPLOAD = {
+  library_id: "lib-1",
+  file_id: "0b7e2c1a-3d4f-4a5b-8c6d-7e8f9a0b1c2d",
+  object_id: "urn:uuid:0b7e2c1a-3d4f-4a5b-8c6d-7e8f9a0b1c2d",
+  version: "v1",
+  created: "2026-10-20T08:00:01Z",
+};
 
 describe("FileSquidClient.mintContentHandle", () => {
   const request = { library_id: "lib-1", object_id: "o", version: "v3", path: "x.png" };
@@ -122,6 +129,33 @@ describe("FileSquidClient.putBytes", () => {
       .catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ApiError);
     expect((error as ApiError).code).toBe("conflict");
+  });
+});
+
+describe("FileSquidClient.uploadFile", () => {
+  it("declares the body's size and sends only the facts that are set, as the contract's query", async () => {
+    const { client, seen } = clientWith(() => json(200, UPLOAD));
+    const body = new Blob([new Uint8Array(5)]);
+    const answer = await client.uploadFile({ library_id: "lib 1", name: "a&b.txt" }, body);
+    expect(answer).toEqual(UPLOAD);
+    const url = new URL(String(seen[0]?.url));
+    expect(url.pathname).toBe("/api/v1/files/upload");
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      library_id: "lib 1",
+      name: "a&b.txt",
+      size: "5",
+    });
+    expect(seen[0]?.init.method).toBe("PUT");
+    expect(new Headers(seen[0]?.init.headers).get("content-type")).toBe("application/octet-stream");
+  });
+
+  it("rejects with ApiError when the upload is refused", async () => {
+    const { client } = clientWith(() => json(400, { code: "invalid_request", retryable: false }));
+    const error = await client
+      .uploadFile({ library_id: "l", name: "a.txt" }, new Blob(["x"]))
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).code).toBe("invalid_request");
   });
 });
 
@@ -210,20 +244,44 @@ describe("ClientFileSource", () => {
     ).rejects.toBeInstanceOf(TypeError);
   });
 
-  it("uploads one file as one PUT with the path in the query", async () => {
-    const { client, seen } = clientWith(() => json(200, COMMIT));
+  it("uploads one file as one PUT with the client's facts in the query and no path", async () => {
+    const { client, seen } = clientWith(() => json(200, UPLOAD));
     const body = new Blob(["abc"]);
-    expect(await new ClientFileSource(client).upload(LOCATION, "A b/new.txt", body)).toEqual(
-      COMMIT,
-    );
+    const facts = {
+      name: "Café 2023.txt",
+      name_normalization: "nfc",
+      media_type: "text/plain",
+      last_modified: "2026-10-20T08:00:00.000Z",
+    } as const;
+    expect(await new ClientFileSource(client).upload(LOCATION, facts, body)).toEqual(UPLOAD);
     const url = new URL(String(seen[0]?.url));
     expect(url.pathname).toBe("/api/v1/files/upload");
     expect(Object.fromEntries(url.searchParams)).toEqual({
       library_id: "lib-1",
-      object_id: "urn:uuid:o1",
-      path: "A b/new.txt",
+      name: "Café 2023.txt",
+      size: "3",
+      media_type: "text/plain",
+      last_modified: "2026-10-20T08:00:00.000Z",
+      name_normalization: "nfc",
     });
+    expect(seen).toHaveLength(1);
     expect(seen[0]?.init.method).toBe("PUT");
+    expect(seen[0]?.init.body).toBe(body);
+  });
+
+  it("names the file whose content an upload replaces with file_id", async () => {
+    const { client, seen } = clientWith(() => json(200, { ...UPLOAD, version: "v2" }));
+    const facts = { name: "a.txt", name_normalization: "nfc", file_id: UPLOAD.file_id } as const;
+    await new ClientFileSource(client).upload(LOCATION, facts, new Blob(["new"]));
+    const query = new URL(String(seen[0]?.url)).searchParams;
+    expect(query.get("file_id")).toBe(UPLOAD.file_id);
+    expect([...query.keys()].sort()).toEqual([
+      "file_id",
+      "library_id",
+      "name",
+      "name_normalization",
+      "size",
+    ]);
   });
 
   it.each([
