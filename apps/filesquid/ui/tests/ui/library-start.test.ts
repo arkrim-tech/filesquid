@@ -212,6 +212,20 @@ describe("<fs-library-start>", () => {
     });
   });
 
+  it("does not navigate when the page was removed while the flow was pending", async () => {
+    const source = new FakeLibrarySource();
+    let answer: (value: { outcome: "chosen"; location_id: string }) => void = () => undefined;
+    source.choice = () => new Promise((resolve) => (answer = resolve));
+    const { page, navigated } = await mount(source);
+    button(page, "create").click();
+    await settle();
+    page.remove();
+    answer({ outcome: "chosen", location_id: "loc-1" });
+    await settle();
+    expect(source.calls).toEqual(["choose:create"]);
+    expect(navigated).toEqual([]);
+  });
+
   it("never renders a filesystem path", async () => {
     const { page } = await mount();
     button(page, "create").click();

@@ -104,6 +104,7 @@ describe("<fs-library-repair> offer", () => {
     expect(q<FsStates>(page, "fs-states").state).toEqual({
       kind: "unavailable",
     });
+    expect(q<FsStates>(page, "fs-states").shadowRoot?.textContent).toContain(labels.stateRetry);
     expect(rootOf(page).querySelector('[data-action="review"]')).toBeNull();
   });
 });
@@ -146,6 +147,15 @@ describe("<fs-library-repair> consent", () => {
     expect(source.calls).toEqual(["candidates:lib-1"]);
     expect(rootOf(page).activeElement?.getAttribute("data-action")).toBe("review");
     expect(rootOf(page).querySelector('[data-section="results"]')).toBeNull();
+  });
+
+  it("Confirm keeps focus on the opener while the repair runs", async () => {
+    const source = new FakeLibrarySource();
+    source.repaired = () => new Promise(() => undefined);
+    const { page } = await mount(source);
+    await click(page, '[data-action="review"]');
+    await click(page, '[data-action="confirm"]');
+    expect(rootOf(page).activeElement?.getAttribute("data-action")).toBe("review");
   });
 
   it("Escape cancels like the Cancel button", async () => {

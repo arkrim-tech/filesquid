@@ -41,6 +41,7 @@ export class FsLibraryStart extends HTMLElement {
   private feedback?: Feedback;
   private busy = false;
   private last?: Flow;
+  private generation = 0;
 
   constructor() {
     super();
@@ -65,6 +66,11 @@ export class FsLibraryStart extends HTMLElement {
   /** Render when attached. */
   connectedCallback(): void {
     this.render();
+  }
+
+  /** Stop a flow still in flight from navigating once the page is gone. */
+  disconnectedCallback(): void {
+    this.generation += 1;
   }
 
   /** Build the heading, the intro, the feedback block and the three cards. */
@@ -114,6 +120,7 @@ export class FsLibraryStart extends HTMLElement {
     const options = this.options;
     const feedback = this.feedback;
     if (!options || !feedback || this.busy) return;
+    const generation = this.generation;
     this.last = flow;
     this.setBusy(true);
     feedback.note(options.labels.libraryChoosing);
@@ -121,18 +128,20 @@ export class FsLibraryStart extends HTMLElement {
       const choice = await step("choose", () =>
         options.source.chooseLocation(flow === "create" ? "create" : "open"),
       );
+      if (generation !== this.generation) return;
       if (choice.outcome !== "chosen" || !choice.location_id) {
         feedback.note(options.labels.libraryCancelled);
         return;
       }
       feedback.note(options.labels.libraryWorking);
       const view = await this.complete(flow, choice.location_id);
+      if (generation !== this.generation) return;
       feedback.clear();
       (options.navigate ?? goTo)(libraryHref(view.library_id));
     } catch (error) {
-      this.fail(error);
+      if (generation === this.generation) this.fail(error);
     } finally {
-      this.setBusy(false);
+      if (generation === this.generation) this.setBusy(false);
     }
   }
 

@@ -86,6 +86,7 @@ export class FsLibraryRepair extends HTMLElement {
   private listBox?: HTMLElement;
   private resultsBox?: HTMLElement;
   private candidates: readonly RepairCandidate[] = [];
+  private opener?: HTMLButtonElement;
 
   constructor() {
     super();
@@ -212,6 +213,7 @@ export class FsLibraryRepair extends HTMLElement {
   private openDialog(opener: HTMLButtonElement): void {
     const { labels } = this.options as RepairPageOptions;
     if (this.busy || this.shadowRoot?.querySelector('[role="dialog"]')) return;
+    this.opener = opener;
     const count = String(this.candidates.length);
     const title = node("h3", undefined, formatLabel(labels.repairDialogTitle, { count }));
     title.id = "repair-title";
@@ -271,7 +273,7 @@ export class FsLibraryRepair extends HTMLElement {
     const options = this.options as RepairPageOptions;
     const feedback = this.feedback as Feedback;
     const request = consentRequest(this.library as string, this.candidates);
-    this.closeDialog();
+    this.closeDialog(this.opener);
     if (!request || this.busy) return;
     this.busy = true;
     const generation = this.generation;

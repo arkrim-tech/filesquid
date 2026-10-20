@@ -57,7 +57,8 @@ export class ClientLibrarySource implements LibrarySource {
    * @returns `chosen` with the folder's opaque location ID, or `cancelled`.
    * @throws ApiError as the API answers it (409 a dialog is already open or the folder cannot
    *   hold a library, 503 `unavailable` on a host without a chooser, denials).
-   * @throws TypeError when the answer breaks the contract.
+   * @throws TypeError when the answer breaks the contract (a body that is not JSON surfaces from
+   *   the client as a SyntaxError; the pages show both as an error).
    */
   async chooseLocation(purpose: ChoicePurpose): Promise<LocationChoice> {
     return parseLocationChoice(await this.post(ROUTES.choose, { purpose }));
@@ -70,7 +71,8 @@ export class ClientLibrarySource implements LibrarySource {
    * @param locationId The folder's opaque location ID.
    * @returns The created library.
    * @throws ApiError as the API answers it (409 root_not_empty, location_in_use, and so on).
-   * @throws TypeError when the answer breaks the contract.
+   * @throws TypeError when the answer breaks the contract (a body that is not JSON surfaces from
+   *   the client as a SyntaxError; the pages show both as an error).
    */
   async create(locationId: string): Promise<LibraryView> {
     return parseLibraryView(await this.post(ROUTES.create, { location_id: locationId }));
@@ -83,7 +85,8 @@ export class ClientLibrarySource implements LibrarySource {
    * @param locationId The folder's opaque location ID.
    * @returns The library; the same one again when the folder is already open.
    * @throws ApiError as the API answers it (409 not_a_storage_root, git_in_root, and so on).
-   * @throws TypeError when the answer breaks the contract.
+   * @throws TypeError when the answer breaks the contract (a body that is not JSON surfaces from
+   *   the client as a SyntaxError; the pages show both as an error).
    */
   async open(locationId: string): Promise<LibraryView> {
     return parseLibraryView(await this.post(ROUTES.open, { location_id: locationId }));
@@ -97,7 +100,8 @@ export class ClientLibrarySource implements LibrarySource {
    * @param destinationLocationId The empty destination folder's opaque location ID.
    * @returns What was copied and which copied objects failed validation.
    * @throws ApiError as the API answers it.
-   * @throws TypeError when the answer breaks the contract.
+   * @throws TypeError when the answer breaks the contract (a body that is not JSON surfaces from
+   *   the client as a SyntaxError; the pages show both as an error).
    */
   async copy(libraryId: string, destinationLocationId: string): Promise<SnapshotCopyReport> {
     const body = { library_id: libraryId, destination_location_id: destinationLocationId };
@@ -111,7 +115,8 @@ export class ClientLibrarySource implements LibrarySource {
    * @param libraryId The open library.
    * @returns Each object read, those unreadable, and the objects flagged for repair.
    * @throws ApiError as the API answers it (404 library_not_open, 503 unavailable).
-   * @throws TypeError when the answer breaks the contract.
+   * @throws TypeError when the answer breaks the contract (a body that is not JSON surfaces from
+   *   the client as a SyntaxError; the pages show both as an error).
    */
   async rebuild(libraryId: string): Promise<RebuildReport> {
     return parseRebuildReport(await this.post(ROUTES.rebuild, { library_id: libraryId }));
@@ -124,7 +129,8 @@ export class ClientLibrarySource implements LibrarySource {
    * @param libraryId The open library.
    * @returns At most 1,000 candidates and whether more exist.
    * @throws ApiError as the API answers it.
-   * @throws TypeError when the answer breaks the contract.
+   * @throws TypeError when the answer breaks the contract (a body that is not JSON surfaces from
+   *   the client as a SyntaxError; the pages show both as an error).
    */
   async repairCandidates(libraryId: string): Promise<RepairCandidates> {
     const path = `${ROUTES.candidates}?library_id=${encodeURIComponent(libraryId)}`;
@@ -140,7 +146,8 @@ export class ClientLibrarySource implements LibrarySource {
    * @returns One outcome per object, in request order.
    * @throws ApiError as the API answers it (403 not the owner, 409 consent_required or
    *   consent_mismatch, 404, 503).
-   * @throws TypeError when the answer breaks the contract.
+   * @throws TypeError when the answer breaks the contract (a body that is not JSON surfaces from
+   *   the client as a SyntaxError; the pages show both as an error).
    */
   async repair(request: RepairRequest): Promise<RepairAnswer> {
     return parseRepairAnswer(await this.post(ROUTES.repair, request));

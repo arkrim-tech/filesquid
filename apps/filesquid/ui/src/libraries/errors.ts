@@ -2,8 +2,8 @@
  * How the library flow shows a failure (UI-1.1, API-S-034, API-S-025): a 503 `unavailable` is
  * the unavailable state (with its reason when the folder chooser answered it), an authorisation
  * denial is the denied state, and a conflict, a missing location or library and an invalid
- * request are messages in the active label table that say nothing was changed. Anything else is
- * offline or an error. Pure.
+ * request are messages in the active label table that say nothing was changed. Any other status
+ * answer is a generic message, and a failure with no answer is offline or an error. Pure.
  */
 import { ApiError } from "../api/client";
 import type { ViewState } from "../components/view-state";

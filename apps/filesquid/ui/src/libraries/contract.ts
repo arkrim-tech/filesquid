@@ -6,6 +6,7 @@
  */
 import {
   MAX_LOCATION_ID_BYTES,
+  MAX_REPAIR_OBJECTS,
   type LibraryView,
   type LocationChoice,
   type ObjectRepair,
@@ -30,9 +31,9 @@ function isText(value: unknown): value is string {
   return typeof value === "string" && value !== "";
 }
 
-/** True for an array whose every item is a non-empty string. */
+/** True for a non-empty array whose every item is a non-empty string. */
 function isTexts(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every(isText);
+  return Array.isArray(value) && value.length > 0 && value.every(isText);
 }
 
 /** The error for an answer outside the contract; it names the route, never the answer. */
@@ -95,6 +96,11 @@ export function parseSnapshotCopyReport(value: unknown): SnapshotCopyReport {
   };
 }
 
+/** True for an array (possibly empty) of non-empty strings. */
+function isTextList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(isText);
+}
+
 /** True when `value` is one object a rebuild read. */
 function isRebuiltObject(value: unknown): boolean {
   return (
@@ -103,7 +109,7 @@ function isRebuiltObject(value: unknown): boolean {
     isText(value.head) &&
     isCount(value.files) &&
     isText(value.digest_algorithm) &&
-    isTexts(value.error_codes) &&
+    isTextList(value.error_codes) &&
     typeof value.missing_version_inventory === "boolean"
   );
 }
@@ -141,11 +147,12 @@ function isCandidate(value: unknown): boolean {
  *
  * @param value The parsed JSON answer.
  * @returns The candidates and whether more exist.
- * @throws TypeError when a candidate is malformed.
+ * @throws TypeError when a candidate is malformed or more than 1,000 are listed.
  */
 export function parseRepairCandidates(value: unknown): RepairCandidates {
   if (!isRecord(value) || !Array.isArray(value.candidates)) throw breaks("repair candidates");
-  if (!value.candidates.every(isCandidate) || typeof value.truncated !== "boolean") {
+  const bounded = value.candidates.length <= MAX_REPAIR_OBJECTS;
+  if (!bounded || !value.candidates.every(isCandidate) || typeof value.truncated !== "boolean") {
     throw breaks("repair candidates");
   }
   return value as unknown as RepairCandidates;
@@ -174,5 +181,11 @@ export function parseRepairAnswer(value: unknown): RepairAnswer {
     throw breaks("repair");
   }
   if (!Array.isArray(value.objects) || !value.objects.every(isObjectRepair)) throw breaks("repair");
+  const optional = value.objects.every((item: Record<string, unknown>) =>
+    [item.provenance_version, item.provenance_error_code].every(
+      (field) => field === undefined || typeof field === "string",
+    ),
+  );
+  if (!optional) throw breaks("repair");
   return value as unknown as RepairAnswer;
 }

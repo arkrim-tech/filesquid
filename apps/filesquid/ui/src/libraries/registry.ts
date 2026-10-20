@@ -54,7 +54,13 @@ export class LibraryRegistry {
    * @param report What the rebuild found.
    */
   rememberRebuild(libraryId: string, report: RebuildReport): void {
+    this.rebuilds.delete(libraryId);
     this.rebuilds.set(libraryId, report);
+    while (this.rebuilds.size > MAX_LIBRARIES) {
+      const oldest = this.rebuilds.keys().next().value;
+      if (oldest === undefined) return;
+      this.rebuilds.delete(oldest);
+    }
   }
 
   /**

@@ -159,6 +159,7 @@ export class FsLibraryDetail extends HTMLElement {
     const id = this.library;
     if (!this.shadowRoot || !options || id === undefined) return;
     this.generation += 1;
+    this.busy = false;
     const { labels, registry } = options;
     this.note = new Feedback(labels, "repair-note");
     this.actions = new Feedback(labels, "actions");
@@ -285,23 +286,26 @@ export class FsLibraryDetail extends HTMLElement {
     this.setBusy(true);
     const generation = this.generation;
     try {
-      if (which === "copy") await this.copy(feedback);
-      else await this.rebuild(feedback);
+      if (which === "copy") await this.copy(feedback, generation);
+      else await this.rebuild(feedback, generation);
     } catch (error) {
       if (generation === this.generation) this.fail(error, feedback);
     } finally {
-      this.busy = false;
-      this.setBusy(false);
+      if (generation === this.generation) {
+        this.busy = false;
+        this.setBusy(false);
+      }
     }
   }
 
   /** Choose a destination, copy the snapshot there and report it. */
-  private async copy(feedback: Feedback): Promise<void> {
+  private async copy(feedback: Feedback, generation: number): Promise<void> {
     const { labels, source } = this.options as LibraryPageOptions;
     const id = this.library as string;
     this.showResult("copy", []);
     feedback.note(labels.libraryChoosing);
     const choice = await step("choose", () => source.chooseLocation("copy_destination"));
+    if (generation !== this.generation) return;
     if (choice.outcome !== "chosen" || !choice.location_id) {
       feedback.note(labels.libraryCancelled);
       return;
@@ -309,18 +313,20 @@ export class FsLibraryDetail extends HTMLElement {
     feedback.note(labels.libraryWorking);
     const destination = choice.location_id;
     const report = await step("copy", () => source.copy(id, destination));
+    if (generation !== this.generation) return;
     feedback.clear();
     this.showResult("copy", copyReport(report, labels));
   }
 
   /** Rebuild the catalog from files, report it and read the repair candidates again. */
-  private async rebuild(feedback: Feedback): Promise<void> {
+  private async rebuild(feedback: Feedback, generation: number): Promise<void> {
     const { labels, source, registry } = this.options as LibraryPageOptions;
     const id = this.library as string;
     this.showResult("rebuild", []);
     feedback.note(labels.libraryWorking);
     const report = await step("rebuild", () => source.rebuild(id));
     registry.rememberRebuild(id, report);
+    if (generation !== this.generation) return;
     feedback.clear();
     this.showResult("rebuild", rebuildReport(report, labels));
     await this.loadCandidates();

@@ -236,7 +236,7 @@
   "libraryCopyInvalid": "{object}: validation errors {codes}",
   "libraryCopyInvalidTitle": "{count} copied object(s) have validation errors",
   "libraryRebuild": "Rebuild catalog from files",
-  "libraryRebuildHelp": "Read every object from its OCFL files alone. Nothing is written, adopted or repaired.",
+  "libraryRebuildHelp": "Read every object from its OCFL files alone. Nothing in the library's files is written, adopted or repaired.",
   "libraryRebuilt": "Read {objects} object(s) from files. Not readable: {unreadable}. With validation errors: {invalid}.",
   "libraryRebuiltInvalid": "{object}: validation errors {codes}",
   "libraryUnreadable": "An object could not be opened ({code}).",

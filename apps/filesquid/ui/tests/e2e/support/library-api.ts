@@ -138,10 +138,63 @@ export async function serveLibraries(page: Page): Promise<LibraryApi> {
     const url = new URL(request.url());
     const body = request.method() === "GET" ? url.search : (request.postDataJSON() as unknown);
     api.seen.push({ path: url.pathname, method: request.method(), body });
-    const answer = answerFor(api, url.pathname, body);
+    const answer = refusedShape(request.method(), url, body) ?? answerFor(api, url.pathname, body);
     await route.fulfill({ status: answer.status, json: answer.json });
   });
   return api;
+}
+
+/** The method, required fields and optional fields of each route, as the contract defines them. */
+const ROUTE_SHAPES: Record<string, { method: string; required: string[]; optional: string[] }> = {
+  "/api/v1/libraries/location-choices": { method: "POST", required: ["purpose"], optional: [] },
+  "/api/v1/libraries": { method: "POST", required: ["location_id"], optional: ["library_id"] },
+  "/api/v1/libraries/openings": {
+    method: "POST",
+    required: ["location_id"],
+    optional: ["library_id"],
+  },
+  "/api/v1/libraries/snapshot-copies": {
+    method: "POST",
+    required: ["library_id", "destination_location_id"],
+    optional: [],
+  },
+  "/api/v1/libraries/rebuilds": { method: "POST", required: ["library_id"], optional: [] },
+  "/api/v1/libraries/repair-candidates": { method: "GET", required: [], optional: [] },
+  "/api/v1/libraries/repairs": {
+    method: "POST",
+    required: ["library_id", "object_ids"],
+    optional: ["consent"],
+  },
+};
+
+/**
+ * Refuse what the real routes refuse before they read anything: another method (405), a body
+ * with a field the route does not define or without one it requires (400), and for the
+ * candidates query any parameter but `library_id`.
+ *
+ * @param method - The request method.
+ * @param url - The request URL.
+ * @param body - The parsed JSON body, or the query string of a GET.
+ * @returns The refusal, or undefined when the request is well formed.
+ */
+function refusedShape(
+  method: string,
+  url: URL,
+  body: unknown,
+): { status: number; json: unknown } | undefined {
+  const shape = ROUTE_SHAPES[url.pathname];
+  if (!shape) return { status: 404, json: error("not_found") };
+  if (method !== shape.method) return { status: 405, json: error("method_not_allowed") };
+  if (method === "GET") {
+    const keys = [...url.searchParams.keys()];
+    const ok = keys.length === 1 && keys[0] === "library_id";
+    return ok ? undefined : { status: 400, json: error("invalid_request") };
+  }
+  const keys = Object.keys((body ?? {}) as Record<string, unknown>);
+  const allowed = [...shape.required, ...shape.optional];
+  const complete = shape.required.every((key) => keys.includes(key));
+  const known = keys.every((key) => allowed.includes(key));
+  return complete && known ? undefined : { status: 400, json: error("invalid_request") };
 }
 
 /** The status and JSON the fake answers for one library request. */
@@ -151,7 +204,6 @@ function answerFor(
   body: unknown,
 ): { status: number; json: unknown } {
   const ok = (json: unknown) => ({ status: 200, json });
-  const refuse = (status: number, code: string) => ({ status, json: error(code) });
   const record = (body ?? {}) as Record<string, unknown>;
   if (path.endsWith("/location-choices")) return choose(api, record);
   if (path.endsWith("/repair-candidates")) return ok(candidates(api.needing));
@@ -165,8 +217,6 @@ function answerFor(
     });
   }
   if (path.endsWith("/repairs")) return repairAnswer(api, record);
-  const keys = Object.keys(record);
-  if (keys.length !== 1 || keys[0] !== "location_id") return refuse(400, "invalid_request");
   return ok({ library_id: LIB, spec_version: "1.1", objects: 2 });
 }
 

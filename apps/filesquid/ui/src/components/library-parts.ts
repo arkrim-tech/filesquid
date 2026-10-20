@@ -7,6 +7,7 @@ import type { Failure, LibraryAction } from "../libraries/errors";
 import type { LibrarySource } from "../libraries/model";
 import type { LibraryRegistry } from "../libraries/registry";
 import type { LabelTable } from "../theme/labels";
+import { focusElement } from "../a11y/focus";
 import { A11Y_STYLE } from "./a11y-style";
 import type { FsStates } from "./fs-states";
 
@@ -181,7 +182,9 @@ export class Feedback {
    * @param text The sentence from the label table.
    */
   note(text: string): void {
+    const retryHadFocus = this.states.shadowRoot?.activeElement != null;
     this.clear();
+    if (retryHadFocus) focusElement(this.status);
     this.status.textContent = text;
   }
 

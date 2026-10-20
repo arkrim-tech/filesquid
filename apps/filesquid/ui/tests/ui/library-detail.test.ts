@@ -17,6 +17,7 @@ import {
 import labels from "../../src/theme/labels.en.json";
 import {
   CANDIDATES,
+  COPY_REPORT,
   FakeLibrarySource,
   LIBRARY,
   REBUILD,
@@ -225,6 +226,21 @@ describe("<fs-library-detail>", () => {
     states.dispatchEvent(new CustomEvent("fs-retry", { bubbles: true, composed: true }));
     await settle();
     expect(rootOf(page).querySelector('[data-section="repair-note"]')).not.toBeNull();
+  });
+
+  it("a copy that finishes after the page moved to another library shows nothing there", async () => {
+    const source = new FakeLibrarySource();
+    let finish: (value: typeof COPY_REPORT) => void = () => undefined;
+    source.copied = () => new Promise((resolve) => (finish = resolve));
+    const { page } = await mount(source);
+    action(page, "copy").click();
+    await settle();
+    page.libraryId = "lib-2";
+    await settle();
+    expect(action(page, "copy").getAttribute("aria-disabled")).not.toBe("true");
+    finish(COPY_REPORT);
+    await settle();
+    expect(rootOf(page).querySelector('[data-result="copy"]')?.children.length).toBe(0);
   });
 
   it("follows a changed library ID", async () => {

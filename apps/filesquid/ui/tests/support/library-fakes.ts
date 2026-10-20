@@ -96,8 +96,10 @@ export function apiError(
 /** Answer an {@link Answer}: reject with an error, call a function, or resolve a value. */
 async function answer<T>(value: Answer<T>): Promise<T> {
   if (value instanceof Error) throw value;
-  if (typeof value === "function") return (value as () => T | Promise<T>)();
-  return value;
+  if (typeof value !== "function") return value;
+  const produced = await (value as () => T | Error | Promise<T | Error>)();
+  if (produced instanceof Error) throw produced;
+  return produced;
 }
 
 /** A recording, scriptable {@link LibrarySource}. */

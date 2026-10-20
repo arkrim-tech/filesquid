@@ -104,6 +104,14 @@ describe("LibraryRegistry", () => {
     expect(registry.lastRebuild("lib-1")).toBeDefined();
   });
 
+  it("keeps at most 64 rebuild reports even for libraries it never saw", () => {
+    const registry = new LibraryRegistry();
+    const report = { objects: [], unreadable: [] };
+    for (let i = 0; i < 70; i += 1) registry.rememberRebuild(`l${i}`, report);
+    expect(registry.lastRebuild("l5")).toBeUndefined();
+    expect(registry.lastRebuild("l6")).toBeDefined();
+  });
+
   it("keeps at most 64 libraries, dropping the oldest", () => {
     const registry = new LibraryRegistry();
     for (let i = 0; i < 70; i += 1) registry.remember({ ...LIBRARY, library_id: `l${i}` });

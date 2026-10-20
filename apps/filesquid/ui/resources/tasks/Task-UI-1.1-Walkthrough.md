@@ -64,8 +64,8 @@ Hook summary line on the head commit: `All Pre-Commit Hooks Passed! Test scope: 
 
 ## Decisions and gaps for the platform engineer
 
-- No new route or field is assumed. Everything uses the generated types in `schema.d.ts` (contract 0.19.0).
-- The mockups show a library **name**, **free disk space** and a **recent libraries** list. The API has no library name, free-space or recent-library field, and the UI never receives a path, so none of them is shown. Adding them needs API fields and an owner decision.
+- No new route or field is assumed. Everything uses the generated types in `schema.d.ts` (contract 0.20.0 after merging main).
+- The mockups show a library **name**, **free disk space** and a **recent libraries** list. The API has no library name, no per-library free-space field (the health report's `free_bytes` is host-wide) and no recent-library field, and the UI never receives a path, so none of them is shown. Adding them needs API fields and an owner decision.
 - The rebuild route is synchronous. Mockup 04's progress with Pause and resume needs a job with checkpoints; until then the recover flow shows a working state and then the report.
 - A 409 answer carries only the code `conflict`; the rule that refused it (`root_not_empty`, `not_a_storage_root`, `git_in_root`, `location_in_use`, and so on) is only in the journal. The UI therefore words each conflict per step and lists the likely causes. Naming the rule in the answer would let the UI say exactly why.
 - The server-backed Playwright suites (`tests/e2e/*.spec.ts`, which start `filesquid-server` through Cargo) were updated for the new link but not run here, because UI-only work runs no Cargo. The static preview suites were run.
@@ -189,10 +189,10 @@ FileSquid host descriptor could not be read ApiError: FileSquid API /api/v1/host
 stderr | tests/ui/host-indicator.test.ts > <fs-host-indicator> follows the host > reads again when a host.change payload breaks the contract
 FileSquid host.change payload broke the contract; reading the descriptor
 
- ✓ tests/ui/host-indicator.test.ts (40 tests) 340ms
- ✓ tests/ui/file-browser-writes.test.ts (36 tests) 1324ms
- ✓ tests/ui/file-browser.test.ts (37 tests) 1365ms
- ✓ tests/ui/nav-tree.test.ts (26 tests) 607ms
+ ✓ tests/ui/host-indicator.test.ts (40 tests) 318ms
+ ✓ tests/ui/file-browser.test.ts (37 tests) 1382ms
+ ✓ tests/ui/file-browser-writes.test.ts (36 tests) 1459ms
+ ✓ tests/ui/nav-tree.test.ts (26 tests) 767ms
 stderr | tests/ui/ocfl-findings.test.ts > <fs-ocfl-findings> > words a refused start from the label table
 OCFL validation could not start ApiError: FileSquid API /api/v1/admin/ocfl/validation-runs failed with HTTP 403 (not_permitted)
     at /home/user/filesquid/.claude/worktrees/agent-a2375308b5fb6e7d4/apps/filesquid/ui/tests/ui/ocfl-findings.test.ts:275:7
@@ -231,21 +231,21 @@ OCFL findings could not be read ApiError: FileSquid API /api/v1/admin/ocfl/findi
   retryable: false
 }
 
- ✓ tests/ui/ocfl-findings.test.ts (21 tests) 317ms
- ✓ tests/unit/files-source.test.ts (26 tests) 57ms
- ✓ tests/unit/component-styles.test.ts (181 tests) 89ms
- ✓ tests/ui/accessibility.test.ts (19 tests) 432ms
- ✓ tests/ui/navigation-view.test.ts (20 tests) 162ms
+ ✓ tests/ui/ocfl-findings.test.ts (21 tests) 420ms
+ ✓ tests/unit/files-source.test.ts (26 tests) 67ms
+ ✓ tests/unit/component-styles.test.ts (181 tests) 77ms
+ ✓ tests/ui/accessibility.test.ts (19 tests) 510ms
+ ✓ tests/ui/library-repair.test.ts (19 tests) 319ms
+ ✓ tests/ui/navigation-view.test.ts (20 tests) 185ms
 stderr | tests/ui/file-preview.test.ts > <fs-file-preview> > shows the error state with Try again when the details cannot be read, and retries
 FileSquid could not preview a file Error
 
 stderr | tests/ui/file-preview.test.ts > <fs-file-preview> > shows permission denied with the reason's label
 FileSquid could not preview a file ApiError
 
- ✓ tests/ui/file-preview.test.ts (16 tests) 150ms
- ✓ tests/unit/client-auth.test.ts (23 tests) 41ms
- ✓ tests/unit/client-io.test.ts (22 tests) 37ms
- ✓ tests/ui/library-repair.test.ts (18 tests) 318ms
+ ✓ tests/ui/file-preview.test.ts (16 tests) 171ms
+ ✓ tests/unit/client-auth.test.ts (23 tests) 39ms
+ ✓ tests/unit/client-io.test.ts (22 tests) 47ms
 stderr | tests/ui/monitor.test.ts > <fs-monitor> > keeps the other sections up when the findings route is unavailable
 OCFL findings could not be read ApiError: FileSquid API /api/v1/admin/ocfl/findings failed with HTTP 503
     at Object.fake.client.adminOcflFindings (/home/user/filesquid/.claude/worktrees/agent-a2375308b5fb6e7d4/apps/filesquid/ui/tests/ui/monitor.test.ts:431:22)
@@ -265,59 +265,58 @@ OCFL findings could not be read ApiError: FileSquid API /api/v1/admin/ocfl/findi
   retryable: false
 }
 
- ✓ tests/ui/monitor.test.ts (21 tests) 3894ms
-     ✓ shows only the newest 200 rows after a long stream during a journal re-read  3444ms
- ✓ tests/unit/theme.test.ts (26 tests) 37ms
- ✓ tests/unit/files-memory-source.test.ts (29 tests) 56ms
- ✓ tests/ui/app-shell.test.ts (19 tests) 338ms
- ✓ tests/ui/library-detail.test.ts (16 tests) 213ms
- ✓ tests/unit/files-ops.test.ts (47 tests) 111ms
- ✓ tests/unit/navigation-store.test.ts (19 tests) 32ms
+ ✓ tests/ui/monitor.test.ts (21 tests) 4360ms
+     ✓ shows only the newest 200 rows after a long stream during a journal re-read  3921ms
+ ✓ tests/ui/app-shell.test.ts (19 tests) 395ms
+ ✓ tests/unit/files-memory-source.test.ts (29 tests) 90ms
+ ✓ tests/ui/library-detail.test.ts (17 tests) 392ms
+ ✓ tests/unit/theme.test.ts (26 tests) 28ms
+ ✓ tests/unit/files-ops.test.ts (47 tests) 117ms
+ ✓ tests/ui/library-start.test.ts (15 tests) 213ms
+ ✓ tests/unit/navigation-store.test.ts (19 tests) 29ms
 Not implemented: HTMLMediaElement's pause() method
- ✓ tests/unit/media-handle.test.ts (14 tests) 84ms
- ✓ tests/ui/nav-tree-live.test.ts (11 tests) 204ms
- ✓ tests/ui/library-start.test.ts (14 tests) 156ms
- ✓ tests/unit/navigation-model.test.ts (30 tests) 27ms
- ✓ tests/unit/navigation-source.test.ts (18 tests) 28ms
- ✓ tests/unit/a11y-audit.test.ts (19 tests) 84ms
+ ✓ tests/unit/media-handle.test.ts (14 tests) 87ms
+ ✓ tests/ui/nav-tree-live.test.ts (11 tests) 254ms
+ ✓ tests/unit/a11y-audit.test.ts (19 tests) 88ms
+ ✓ tests/unit/navigation-model.test.ts (30 tests) 35ms
+ ✓ tests/unit/navigation-source.test.ts (18 tests) 35ms
  ✓ tests/unit/navigation-client.test.ts (13 tests) 20ms
- ✓ tests/unit/theme-store.test.ts (23 tests) 25ms
- ✓ tests/unit/files-model.test.ts (58 tests) 49ms
- ✓ tests/unit/commands.test.ts (45 tests) 31ms
- ✓ tests/unit/host-descriptor.test.ts (43 tests) 26ms
- ✓ tests/unit/library-client.test.ts (16 tests) 26ms
+ ✓ tests/unit/theme-store.test.ts (23 tests) 39ms
+ ✓ tests/unit/files-model.test.ts (58 tests) 51ms
+ ✓ tests/unit/commands.test.ts (45 tests) 28ms
+ ✓ tests/unit/library-client.test.ts (17 tests) 28ms
+ ✓ tests/unit/host-descriptor.test.ts (43 tests) 27ms
  ✓ tests/unit/admin-client.test.ts (10 tests) 24ms
- ✓ tests/unit/files-window.test.ts (19 tests) 19ms
- ✓ tests/unit/focus.test.ts (16 tests) 65ms
- ✓ tests/ui/states.test.ts (18 tests) 93ms
- ✓ tests/ui/settings.test.ts (5 tests) 88ms
- ✓ tests/unit/library-errors.test.ts (14 tests) 19ms
- ✓ tests/unit/navigation-contract.test.ts (30 tests) 19ms
- ✓ tests/ui/library-route.test.ts (6 tests) 66ms
- ✓ tests/unit/test-scripts.test.ts (10 tests) 794ms
+ ✓ tests/unit/files-window.test.ts (19 tests) 17ms
+ ✓ tests/unit/focus.test.ts (16 tests) 68ms
+ ✓ tests/ui/states.test.ts (18 tests) 95ms
+ ✓ tests/ui/settings.test.ts (5 tests) 123ms
+ ✓ tests/unit/library-errors.test.ts (15 tests) 17ms
+ ✓ tests/unit/navigation-contract.test.ts (30 tests) 18ms
+ ✓ tests/unit/test-scripts.test.ts (10 tests) 771ms
  ✓ tests/unit/test-reporting.test.ts (12 tests) 13ms
- ✓ tests/unit/host-adapter.test.ts (13 tests) 69ms
- ✓ tests/ui/files-route.test.ts (6 tests) 333ms
- ✓ tests/ui/theme-control.test.ts (8 tests) 59ms
- ✓ tests/unit/nav-tree-keys.test.ts (8 tests) 15ms
- ✓ tests/unit/client.test.ts (8 tests) 26ms
- ✓ tests/unit/library-model.test.ts (7 tests) 13ms
- ✓ tests/unit/preferences.test.ts (10 tests) 35ms
- ✓ tests/ui/breadcrumb.test.ts (6 tests) 87ms
+ ✓ tests/ui/library-route.test.ts (6 tests) 107ms
+ ✓ tests/unit/host-adapter.test.ts (13 tests) 73ms
+ ✓ tests/ui/theme-control.test.ts (8 tests) 55ms
+ ✓ tests/ui/files-route.test.ts (6 tests) 293ms
+ ✓ tests/unit/nav-tree-keys.test.ts (8 tests) 10ms
+ ✓ tests/unit/client.test.ts (8 tests) 20ms
+ ✓ tests/unit/library-model.test.ts (7 tests) 14ms
+ ✓ tests/unit/preferences.test.ts (10 tests) 16ms
  ✓ tests/unit/view-state.test.ts (5 tests) 9ms
- ✓ tests/unit/host-client.test.ts (4 tests) 14ms
- ✓ tests/unit/contrast.test.ts (13 tests) 14ms
+ ✓ tests/ui/breadcrumb.test.ts (6 tests) 70ms
+ ✓ tests/unit/host-client.test.ts (4 tests) 17ms
+ ✓ tests/unit/contrast.test.ts (13 tests) 11ms
  ✓ tests/unit/distribution.test.ts (3 tests) 6ms
- ✓ tests/ui/monitor-route.test.ts (2 tests) 29ms
- ✓ tests/unit/contract.test.ts (1 test) 185ms
+ ✓ tests/ui/monitor-route.test.ts (2 tests) 24ms
+ ✓ tests/unit/contract.test.ts (1 test) 175ms
 
  Test Files  56 passed (56)
-      Tests  1200 passed (1200)
-   Start at  23:34:26
-   Duration  18.88s (transform 2.66s, setup 1.81s, import 6.01s, tests 12.77s, environment 25.60s)
+      Tests  1205 passed (1205)
+   Start at  23:48:14
+   Duration  19.94s (transform 2.83s, setup 1.95s, import 6.34s, tests 14.12s, environment 27.20s)
 
 JUNIT report written to /home/user/filesquid/.claude/worktrees/agent-a2375308b5fb6e7d4/apps/filesquid/ui/tests/allure-results/vitest-junit.xml
-vitest exit 0
 ```
 
 ### Playwright, production build plus vite preview (apps/filesquid/ui)
@@ -326,71 +325,70 @@ vitest exit 0
 
 Running 62 tests using 2 workers
 
-  ✓   2 [chromium] › tests/e2e/preview/host-indicator.spec.ts:96:1 › the indicator is a defined custom element in the shell header, named from the label table (359ms)
-  ✓   1 [chromium] › tests/e2e/preview/file-browser.spec.ts:96:1 › the browser is a defined element and lists display names in the list layout from the label table (446ms)
-  ✓   3 [chromium] › tests/e2e/preview/host-indicator.spec.ts:110:1 › the desktop host says only you can read your files, and shows the not-enrolled state (250ms)
-  ✓   4 [chromium] › tests/e2e/preview/file-browser.spec.ts:140:1 › a file row shows size, type hint, modified date and version (297ms)
-  ✓   5 [chromium] › tests/e2e/preview/host-indicator.spec.ts:124:1 › a server names its operator, who can read the files, and states the at-rest duty (209ms)
-  ✓   7 [chromium] › tests/e2e/preview/host-indicator.spec.ts:137:1 › a server without an operator name uses the unnamed-operator label (169ms)
-  ✓   6 [chromium] › tests/e2e/preview/file-browser.spec.ts:152:1 › computed token values are exact in the browser in light and dark (344ms)
-  ✓   8 [chromium] › tests/e2e/preview/host-indicator.spec.ts:149:1 › the browser host says files are decrypted only in this browser (223ms)
-  ✓  10 [chromium] › tests/e2e/preview/host-indicator.spec.ts:162:1 › enrolled backup and sync are shown apart from the host, as ciphertext only (188ms)
-  ✓   9 [chromium] › tests/e2e/preview/file-browser.spec.ts:175:1 › opening a folder updates the breadcrumb and the address, and Back returns (464ms)
-  ✓  11 [chromium] › tests/e2e/preview/host-indicator.spec.ts:187:1 › a host.change event updates the indicator without a reload or another read (210ms)
-  ✓  13 [chromium] › tests/e2e/preview/host-indicator.spec.ts:209:1 › events.resync makes the indicator read the descriptor again (234ms)
-  ✓  12 [chromium] › tests/e2e/preview/file-browser.spec.ts:196:1 › an image previews through a content handle that is used only as the media src (415ms)
-  ✓  15 [chromium] › tests/e2e/preview/file-browser.spec.ts:231:1 › a handle that fails is replaced once; a second failure shows the error and mints no third (294ms)
-  ✓  16 [chromium] › tests/e2e/preview/file-browser.spec.ts:247:1 › a video resumes at the same position and paused state after one new handle (429ms)
-  ✓  14 [chromium] › tests/e2e/preview/host-indicator.spec.ts:222:1 › loading shows no host until the descriptor arrives (997ms)
-  ✓  17 [chromium] › tests/e2e/preview/file-browser.spec.ts:283:1 › audio plays natively and is named by the display name (274ms)
-  ✓  18 [chromium] › tests/e2e/preview/host-indicator.spec.ts:234:1 › a failed read shows the error state and never a guessed host, then Retry recovers (323ms)
-  ✓  19 [chromium] › tests/e2e/preview/file-browser.spec.ts:296:1 › text previews through one ranged read of the first 64 KiB and says it is cut (323ms)
-  ✓  20 [chromium] › tests/e2e/preview/host-indicator.spec.ts:256:1 › the header shows a compact badge with the short host label, not the statement (173ms)
-  ✓  21 [chromium] › tests/e2e/preview/file-browser.spec.ts:312:1 › a format it cannot show says so and shows no viewer (271ms)
-  ✓  22 [chromium] › tests/e2e/preview/host-indicator.spec.ts:271:1 › Enter opens the popover with the full statement; Escape closes it and returns focus (223ms)
-  ✓  23 [chromium] › tests/e2e/preview/file-browser.spec.ts:325:1 › the viewer steps through files, closes with Escape and returns focus to the row (307ms)
-  ✓  24 [chromium] › tests/e2e/preview/host-indicator.spec.ts:296:1 › Privacy settings opens the Settings page, whose Privacy section has the full statement (387ms)
-  ✓  25 [chromium] › tests/e2e/preview/file-browser.spec.ts:338:1 › an upload is one PUT of the client's facts that creates the file's own object (268ms)
-  ✓  26 [chromium] › tests/e2e/preview/host-indicator.spec.ts:331:1 › computed token values are exact in light and dark (680ms)
-  ✓  27 [chromium] › tests/e2e/preview/file-browser.spec.ts:370:1 › writes are single calls: new folder, rename, remove and Undo (541ms)
-  ✓  28 [chromium] › tests/e2e/preview/host-indicator.spec.ts:378:1 › the badge is reachable by keyboard and has a visible focus outline (225ms)
-  ✓  29 [chromium] › tests/e2e/preview/file-browser.spec.ts:417:1 › a refused write shows the label for its reason and changes nothing (265ms)
-  ✓  30 [chromium] › tests/e2e/preview/library.spec.ts:45:1 › the start page offers create, open and recover in the active vocabulary (227ms)
-  ✓  31 [chromium] › tests/e2e/preview/file-browser.spec.ts:432:1 › a long folder is virtualised, pages in on demand and stays keyboard reachable (489ms)
-  ✓  32 [chromium] › tests/e2e/preview/library.spec.ts:74:1 › (1) create asks for a folder, passes the location ID on and shows the library, with no path (309ms)
-  ✓  34 [chromium] › tests/e2e/preview/library.spec.ts:96:1 › (1) open passes the location ID to the open route (292ms)
-  ✓  33 [chromium] › tests/e2e/preview/file-browser.spec.ts:472:1 › the layout does not scroll sideways at 320 px, at 200 % text size, or both, in list and grid (308ms)
-  ✓  36 [chromium] › tests/e2e/preview/file-browser.spec.ts:489:1 › motion stops under reduced motion and focus is the 2px primary ring (278ms)
-  ✓  35 [chromium] › tests/e2e/preview/library.spec.ts:110:1 › (1) recover opens the copy, rebuilds from files and reports without repairing (308ms)
-  ✓  37 [chromium] › tests/e2e/preview/file-browser.spec.ts:514:1 › a failed listing shows the error state with Try again, and retrying loads it (284ms)
-  ✓  38 [chromium] › tests/e2e/preview/library.spec.ts:143:1 › (1) copy asks for a destination and passes it as destination_location_id (291ms)
-  ✓  39 [chromium] › tests/e2e/preview/navigation.spec.ts:62:1 › the live tree fills the shell's navigation slot, worded from the label table (233ms)
-  ✓  40 [chromium] › tests/e2e/preview/library.spec.ts:166:1 › (2) a cancelled folder choice sends no library request and says nothing changed (277ms)
-  ✓  41 [chromium] › tests/e2e/preview/navigation.spec.ts:83:1 › a level is read page by page through next_cursor until it is null (234ms)
-  ✓  42 [chromium] › tests/e2e/preview/library.spec.ts:180:1 › (3) 503 unavailable is the unavailable state with its reason and a Retry, and the choices stay (364ms)
-  ✓  43 [chromium] › tests/e2e/preview/navigation.spec.ts:121:1 › a destination opens with a breadcrumb filled from ancestors (373ms)
-  ✓  44 [chromium] › tests/e2e/preview/library.spec.ts:207:1 › (4) confirm sends the consent for exactly the named objects and shows each result (340ms)
-  ✓  45 [chromium] › tests/e2e/preview/navigation.spec.ts:142:1 › a deep link to a destination shows its breadcrumb after a reload (307ms)
-  ✓  47 [chromium] › tests/e2e/preview/navigation.spec.ts:154:1 › navigation.change reads only the named level again, without a reload (189ms)
-  ✓  46 [chromium] › tests/e2e/preview/library.spec.ts:243:1 › (4) cancel and Escape send nothing and return focus to the opener (358ms)
-  ✓  48 [chromium] › tests/e2e/preview/navigation.spec.ts:177:1 › a 503 shows the unavailable state with Retry, never an empty tree (274ms)
-  ✓  49 [chromium] › tests/e2e/preview/library.spec.ts:266:1 › (4) a refused repair says nothing was changed and shows no result (388ms)
-  ✓  51 [chromium] › tests/e2e/preview/library.spec.ts:281:1 › (5) the Monitor's W010 note links to the library's repair offer (320ms)
-  ✓  50 [chromium] › tests/e2e/preview/navigation.spec.ts:194:1 › computed token values of the tree and breadcrumb are exact in light and dark (490ms)
-  ✓  53 [chromium] › tests/e2e/preview/ocfl-findings.spec.ts:174:1 › (1) an E023 finding shows with its code beside the degraded health reason (267ms)
-  ✓  52 [chromium] › tests/e2e/preview/library.spec.ts:334:1 › colours come from tokens in light and dark (563ms)
-  ✓  54 [chromium] › tests/e2e/preview/ocfl-findings.spec.ts:200:1 › (2) the finding disappears after a clean revalidation's health.change, without a reload (321ms)
-  ✓  55 [chromium] › tests/e2e/preview/production-build.spec.ts:62:1 › the built page is static, mounts the shell and defines every custom element (243ms)
-  ✓  56 [chromium] › tests/e2e/preview/ocfl-findings.spec.ts:220:1 › (3) a W010 warning is listed apart from errors and health stays ok (267ms)
-  ✓  57 [chromium] › tests/e2e/preview/production-build.spec.ts:79:1 › navigation, API status and theme legend words come from the active label table (228ms)
-  ✓  58 [chromium] › tests/e2e/preview/ocfl-findings.spec.ts:238:1 › (4) no location is rendered when the API withholds it (249ms)
-  ✓  59 [chromium] › tests/e2e/preview/production-build.spec.ts:101:1 › computed token values are exact in light and dark (242ms)
-  ✓  61 [chromium] › tests/e2e/preview/production-build.spec.ts:117:1 › a refused health call shows the unavailable alert, not a console error from the app (229ms)
-  ✓  60 [chromium] › tests/e2e/preview/ocfl-findings.spec.ts:250:1 › (5) the last and next run times come from the findings route; Validate now starts a run (333ms)
-  ✓  62 [chromium] › tests/e2e/preview/ocfl-findings.spec.ts:289:1 › error and warning codes take their colours from tokens in light and dark (232ms)
+  ✓   1 [chromium] › tests/e2e/preview/host-indicator.spec.ts:96:1 › the indicator is a defined custom element in the shell header, named from the label table (272ms)
+  ✓   2 [chromium] › tests/e2e/preview/file-browser.spec.ts:96:1 › the browser is a defined element and lists display names in the list layout from the label table (358ms)
+  ✓   3 [chromium] › tests/e2e/preview/host-indicator.spec.ts:110:1 › the desktop host says only you can read your files, and shows the not-enrolled state (216ms)
+  ✓   4 [chromium] › tests/e2e/preview/file-browser.spec.ts:140:1 › a file row shows size, type hint, modified date and version (284ms)
+  ✓   5 [chromium] › tests/e2e/preview/host-indicator.spec.ts:124:1 › a server names its operator, who can read the files, and states the at-rest duty (195ms)
+  ✓   7 [chromium] › tests/e2e/preview/host-indicator.spec.ts:137:1 › a server without an operator name uses the unnamed-operator label (160ms)
+  ✓   6 [chromium] › tests/e2e/preview/file-browser.spec.ts:152:1 › computed token values are exact in the browser in light and dark (360ms)
+  ✓   8 [chromium] › tests/e2e/preview/host-indicator.spec.ts:149:1 › the browser host says files are decrypted only in this browser (201ms)
+  ✓  10 [chromium] › tests/e2e/preview/host-indicator.spec.ts:162:1 › enrolled backup and sync are shown apart from the host, as ciphertext only (220ms)
+  ✓  11 [chromium] › tests/e2e/preview/host-indicator.spec.ts:187:1 › a host.change event updates the indicator without a reload or another read (169ms)
+  ✓   9 [chromium] › tests/e2e/preview/file-browser.spec.ts:175:1 › opening a folder updates the breadcrumb and the address, and Back returns (438ms)
+  ✓  12 [chromium] › tests/e2e/preview/host-indicator.spec.ts:209:1 › events.resync makes the indicator read the descriptor again (204ms)
+  ✓  13 [chromium] › tests/e2e/preview/file-browser.spec.ts:196:1 › an image previews through a content handle that is used only as the media src (400ms)
+  ✓  15 [chromium] › tests/e2e/preview/file-browser.spec.ts:231:1 › a handle that fails is replaced once; a second failure shows the error and mints no third (269ms)
+  ✓  16 [chromium] › tests/e2e/preview/file-browser.spec.ts:247:1 › a video resumes at the same position and paused state after one new handle (289ms)
+  ✓  14 [chromium] › tests/e2e/preview/host-indicator.spec.ts:222:1 › loading shows no host until the descriptor arrives (968ms)
+  ✓  17 [chromium] › tests/e2e/preview/file-browser.spec.ts:283:1 › audio plays natively and is named by the display name (252ms)
+  ✓  18 [chromium] › tests/e2e/preview/host-indicator.spec.ts:234:1 › a failed read shows the error state and never a guessed host, then Retry recovers (272ms)
+  ✓  19 [chromium] › tests/e2e/preview/file-browser.spec.ts:296:1 › text previews through one ranged read of the first 64 KiB and says it is cut (280ms)
+  ✓  20 [chromium] › tests/e2e/preview/host-indicator.spec.ts:256:1 › the header shows a compact badge with the short host label, not the statement (202ms)
+  ✓  21 [chromium] › tests/e2e/preview/file-browser.spec.ts:312:1 › a format it cannot show says so and shows no viewer (332ms)
+  ✓  22 [chromium] › tests/e2e/preview/host-indicator.spec.ts:271:1 › Enter opens the popover with the full statement; Escape closes it and returns focus (287ms)
+  ✓  23 [chromium] › tests/e2e/preview/file-browser.spec.ts:325:1 › the viewer steps through files, closes with Escape and returns focus to the row (329ms)
+  ✓  24 [chromium] › tests/e2e/preview/host-indicator.spec.ts:296:1 › Privacy settings opens the Settings page, whose Privacy section has the full statement (341ms)
+  ✓  25 [chromium] › tests/e2e/preview/file-browser.spec.ts:338:1 › an upload is one PUT of the client's facts that creates the file's own object (254ms)
+  ✓  26 [chromium] › tests/e2e/preview/host-indicator.spec.ts:331:1 › computed token values are exact in light and dark (652ms)
+  ✓  27 [chromium] › tests/e2e/preview/file-browser.spec.ts:370:1 › writes are single calls: new folder, rename, remove and Undo (552ms)
+  ✓  28 [chromium] › tests/e2e/preview/host-indicator.spec.ts:378:1 › the badge is reachable by keyboard and has a visible focus outline (216ms)
+  ✓  29 [chromium] › tests/e2e/preview/file-browser.spec.ts:417:1 › a refused write shows the label for its reason and changes nothing (289ms)
+  ✓  30 [chromium] › tests/e2e/preview/library.spec.ts:45:1 › the start page offers create, open and recover in the active vocabulary (187ms)
+  ✓  32 [chromium] › tests/e2e/preview/library.spec.ts:74:1 › (1) create asks for a folder, passes the location ID on and shows the library, with no path (272ms)
+  ✓  31 [chromium] › tests/e2e/preview/file-browser.spec.ts:432:1 › a long folder is virtualised, pages in on demand and stays keyboard reachable (431ms)
+  ✓  33 [chromium] › tests/e2e/preview/library.spec.ts:96:1 › (1) open passes the location ID to the open route (237ms)
+  ✓  34 [chromium] › tests/e2e/preview/file-browser.spec.ts:472:1 › the layout does not scroll sideways at 320 px, at 200 % text size, or both, in list and grid (364ms)
+  ✓  35 [chromium] › tests/e2e/preview/library.spec.ts:110:1 › (1) recover opens the copy, rebuilds from files and reports without repairing (288ms)
+  ✓  36 [chromium] › tests/e2e/preview/file-browser.spec.ts:489:1 › motion stops under reduced motion and focus is the 2px primary ring (297ms)
+  ✓  37 [chromium] › tests/e2e/preview/library.spec.ts:143:1 › (1) copy asks for a destination and passes it as destination_location_id (258ms)
+  ✓  38 [chromium] › tests/e2e/preview/file-browser.spec.ts:514:1 › a failed listing shows the error state with Try again, and retrying loads it (269ms)
+  ✓  39 [chromium] › tests/e2e/preview/library.spec.ts:166:1 › (2) a cancelled folder choice sends no library request and says nothing changed (246ms)
+  ✓  40 [chromium] › tests/e2e/preview/navigation.spec.ts:62:1 › the live tree fills the shell's navigation slot, worded from the label table (196ms)
+  ✓  41 [chromium] › tests/e2e/preview/library.spec.ts:180:1 › (3) 503 unavailable is the unavailable state with its reason and a Retry, and the choices stay (297ms)
+  ✓  42 [chromium] › tests/e2e/preview/navigation.spec.ts:83:1 › a level is read page by page through next_cursor until it is null (205ms)
+  ✓  43 [chromium] › tests/e2e/preview/library.spec.ts:207:1 › (4) confirm sends the consent for exactly the named objects and shows each result (340ms)
+  ✓  44 [chromium] › tests/e2e/preview/navigation.spec.ts:121:1 › a destination opens with a breadcrumb filled from ancestors (317ms)
+  ✓  46 [chromium] › tests/e2e/preview/navigation.spec.ts:142:1 › a deep link to a destination shows its breadcrumb after a reload (279ms)
+  ✓  45 [chromium] › tests/e2e/preview/library.spec.ts:244:1 › (4) cancel and Escape send nothing and return focus to the opener (377ms)
+  ✓  47 [chromium] › tests/e2e/preview/navigation.spec.ts:154:1 › navigation.change reads only the named level again, without a reload (197ms)
+  ✓  48 [chromium] › tests/e2e/preview/library.spec.ts:267:1 › (4) a refused repair says nothing was changed and shows no result (272ms)
+  ✓  49 [chromium] › tests/e2e/preview/navigation.spec.ts:177:1 › a 503 shows the unavailable state with Retry, never an empty tree (252ms)
+  ✓  50 [chromium] › tests/e2e/preview/library.spec.ts:282:1 › (5) the Monitor's W010 note links to the library's repair offer (245ms)
+  ✓  52 [chromium] › tests/e2e/preview/library.spec.ts:335:1 › colours come from tokens in light and dark (527ms)
+  ✓  51 [chromium] › tests/e2e/preview/navigation.spec.ts:194:1 › computed token values of the tree and breadcrumb are exact in light and dark (746ms)
+  ✓  53 [chromium] › tests/e2e/preview/ocfl-findings.spec.ts:174:1 › (1) an E023 finding shows with its code beside the degraded health reason (207ms)
+  ✓  54 [chromium] › tests/e2e/preview/production-build.spec.ts:62:1 › the built page is static, mounts the shell and defines every custom element (235ms)
+  ✓  55 [chromium] › tests/e2e/preview/ocfl-findings.spec.ts:200:1 › (2) the finding disappears after a clean revalidation's health.change, without a reload (249ms)
+  ✓  56 [chromium] › tests/e2e/preview/production-build.spec.ts:79:1 › navigation, API status and theme legend words come from the active label table (190ms)
+  ✓  57 [chromium] › tests/e2e/preview/ocfl-findings.spec.ts:220:1 › (3) a W010 warning is listed apart from errors and health stays ok (225ms)
+  ✓  58 [chromium] › tests/e2e/preview/production-build.spec.ts:101:1 › computed token values are exact in light and dark (193ms)
+  ✓  59 [chromium] › tests/e2e/preview/ocfl-findings.spec.ts:238:1 › (4) no location is rendered when the API withholds it (266ms)
+  ✓  60 [chromium] › tests/e2e/preview/production-build.spec.ts:117:1 › a refused health call shows the unavailable alert, not a console error from the app (218ms)
+  ✓  61 [chromium] › tests/e2e/preview/ocfl-findings.spec.ts:250:1 › (5) the last and next run times come from the findings route; Validate now starts a run (265ms)
+  ✓  62 [chromium] › tests/e2e/preview/ocfl-findings.spec.ts:289:1 › error and warning codes take their colours from tokens in light and dark (189ms)
 
-  62 passed (17.4s)
-pw exit 0
+  62 passed (16.8s)
 ```
 
 ### Vitest and Playwright preview (apps/imagesquid)
@@ -407,27 +405,25 @@ pw exit 0
 
  RUN  v4.1.12 /home/user/filesquid/.claude/worktrees/agent-a2375308b5fb6e7d4/apps/imagesquid
 
- ✓ tests/unit/test-reporting.test.ts (12 tests) 21ms
+ ✓ tests/unit/test-reporting.test.ts (12 tests) 26ms
  ✓ tests/unit/theme.test.ts (10 tests) 13ms
- ✓ tests/unit/test-scripts.test.ts (10 tests) 848ms
- ✓ tests/ui/distribution.test.ts (5 tests) 147ms
+ ✓ tests/unit/test-scripts.test.ts (10 tests) 683ms
+ ✓ tests/ui/distribution.test.ts (5 tests) 122ms
 
  Test Files  4 passed (4)
       Tests  37 passed (37)
-   Start at  23:35:09
-   Duration  2.04s (transform 1.18s, setup 197ms, import 1.26s, tests 1.03s, environment 1.97s)
+   Start at  23:49:00
+   Duration  1.69s (transform 882ms, setup 238ms, import 970ms, tests 844ms, environment 1.73s)
 
 JUNIT report written to /home/user/filesquid/.claude/worktrees/agent-a2375308b5fb6e7d4/apps/imagesquid/tests/allure-results/vitest-junit.xml
-exit 0
 
 Running 5 tests using 1 worker
 
-  ✓  1 [chromium] › tests/e2e/preview/production-build.spec.ts:57:1 › the built page is static, mounts the shell and defines every custom element (198ms)
-  ✓  2 [chromium] › tests/e2e/preview/production-build.spec.ts:74:1 › navigation, API status and theme legend words come from the active label table (134ms)
-  ✓  3 [chromium] › tests/e2e/preview/production-build.spec.ts:98:1 › computed ImageSquid token values are exact in light and dark (140ms)
-  ✓  4 [chromium] › tests/e2e/preview/production-build.spec.ts:114:1 › a refused health call shows the unavailable alert (120ms)
-  ✓  5 [chromium] › tests/e2e/preview/production-build.spec.ts:127:1 › the library flow runs in ImageSquid with its own label table (UI-1.1) (187ms)
+  ✓  1 [chromium] › tests/e2e/preview/production-build.spec.ts:57:1 › the built page is static, mounts the shell and defines every custom element (217ms)
+  ✓  2 [chromium] › tests/e2e/preview/production-build.spec.ts:74:1 › navigation, API status and theme legend words come from the active label table (151ms)
+  ✓  3 [chromium] › tests/e2e/preview/production-build.spec.ts:98:1 › computed ImageSquid token values are exact in light and dark (151ms)
+  ✓  4 [chromium] › tests/e2e/preview/production-build.spec.ts:114:1 › a refused health call shows the unavailable alert (129ms)
+  ✓  5 [chromium] › tests/e2e/preview/production-build.spec.ts:127:1 › the library flow runs in ImageSquid with its own label table (UI-1.1) (195ms)
 
-  5 passed (5.5s)
-exit 0
+  5 passed (5.6s)
 ```

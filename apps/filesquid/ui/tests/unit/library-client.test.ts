@@ -144,6 +144,29 @@ describe("ClientLibrarySource", () => {
     await expect(source.create("loc-1")).rejects.toBeInstanceOf(TypeError);
   });
 
+  it("rejects an invalid copied object without codes, over 1,000 candidates and a non-string provenance field", async () => {
+    const invalid = [{ object_id: "o", error_codes: [] }];
+    const copy = { objects: 1, files: 1, bytes: 1, invalid_objects: invalid };
+    await expect(setup(copy).source.copy("a", "b")).rejects.toBeInstanceOf(TypeError);
+    const one = CANDIDATES.candidates[0];
+    const many = { candidates: Array.from({ length: 1001 }, () => one), truncated: true };
+    await expect(setup(many).source.repairCandidates("a")).rejects.toBeInstanceOf(TypeError);
+    const object = {
+      object_id: "o",
+      version: "v2",
+      result: "repaired",
+      error_code: null,
+      retryable: false,
+    };
+    const answer = {
+      library_id: "a",
+      run_id: "r",
+      objects: [{ ...object, provenance_version: 2 }],
+    };
+    const request = { library_id: "a", object_ids: ["o"] };
+    await expect(setup(answer).source.repair(request)).rejects.toBeInstanceOf(TypeError);
+  });
+
   it("rejects malformed copy, rebuild, candidate and repair answers", async () => {
     await expect(setup({ objects: 1 }).source.copy("a", "b")).rejects.toBeInstanceOf(TypeError);
     await expect(setup({ objects: "x" }).source.rebuild("a")).rejects.toBeInstanceOf(TypeError);

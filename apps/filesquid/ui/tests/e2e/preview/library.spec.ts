@@ -218,6 +218,7 @@ test("(4) confirm sends the consent for exactly the named objects and shows each
   await expect(dialog.locator("li")).toHaveText(OBJECTS);
   expect(api.to("/api/v1/libraries/repairs")).toEqual([]);
   await dialog.locator('button[data-action="confirm"]').click();
+  await expect.poll(() => api.to("/api/v1/libraries/repairs").length).toBe(1);
   expect(api.to("/api/v1/libraries/repairs").map(({ body }) => body)).toEqual([
     {
       library_id: LIB,

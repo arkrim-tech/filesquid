@@ -62,7 +62,7 @@ export interface LibrarySource {
   copy(libraryId: string, destinationLocationId: string): Promise<SnapshotCopyReport>;
   /** Read every object of an open library from its files, writing nothing. */
   rebuild(libraryId: string): Promise<RebuildReport>;
-  /** List the objects whose head lacks its version inventory. */
+  /** List the objects whose head lacks its version inventory or its sidecar. */
   repairCandidates(libraryId: string): Promise<RepairCandidates>;
   /** Run the consented version-inventory repair. */
   repair(request: RepairRequest): Promise<RepairAnswer>;
