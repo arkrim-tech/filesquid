@@ -10,7 +10,13 @@
 //!   cursor and 1 to 1,000 entries per page ([`DEFAULT_PAGE`] by default), file details,
 //!   a file's version history, an object's versions, and ranged content reads with one
 //!   `Range` per request, each answer capped at [`MAX_ANSWER_BYTES`] (the desktop scheme's
-//!   buffer cap, DE-S-005).
+//!   buffer cap, DE-S-005). A listing names its folder by library, object and prefix, or by a
+//!   collection or folder navigation node readable to the caller (Task API-F2.2), and leaves
+//!   out the [`RESERVED_FOLDERS`]. On `filesquid-server` the whole-file download streams one
+//!   file version of any size in ranged reads as an attachment; the desktop scheme caps every
+//!   answer at [`MAX_ANSWER_BYTES`], so the desktop saves a larger file with ranged content
+//!   reads. A refusal, or a failure after the answer started, is journaled once as
+//!   [`DOWNLOAD_OPERATION`].
 //! - **Writes** (action `files.write`): upload, move or rename, remove and restore. Each one
 //!   calls the IO-1.2 view API, which publishes exactly one version through the
 //!   `filesquid-ocfl` change model, or is refused without publishing (nothing would change,
@@ -31,21 +37,25 @@
 //! ([`FileLibrary`]) into a [`FileService`]; this module does no storage I/O of its own
 //! (API-S-006).
 
+mod download;
 mod error;
 mod handle;
 pub mod labels;
 pub mod media;
 pub mod names;
+mod nodes;
 mod range;
 mod routes;
 mod service;
 mod versions;
 mod view;
 
+pub use download::{Download, DownloadStream};
 pub use error::FileError;
 pub use handle::{FileFuture, FileOperations};
-pub use labels::{APP_DATA_FOLDER, LABELS_PATH, MAX_LABELS};
+pub use labels::{APP_DATA_FOLDER, LABELS_PATH, MAX_LABELS, PROVENANCE_FOLDER, RESERVED_FOLDERS};
 pub use names::{DisplayNames, NameFuture, StoredFile};
+pub use nodes::{ScopeObject, ScopeObjects};
 pub use range::{RangePlan, RangeRequest};
 pub(crate) use routes::{answer_content, refuse as refuse_file, routes, ContentAnswerKind};
 pub use service::{
@@ -55,9 +65,9 @@ pub use versions::{Committed, FileProvenance, MAX_SIZE_CONTENTS, MAX_SIZE_OBJECT
 pub use view::{
     CommitView, ContentQuery, EntryView, FileChangeView, FileDetailsView, FileHistorySizeView,
     FileQuery, FolderPageView, FolderRequest, FolderView, HistoryEntryView, HistoryQuery,
-    HistoryView, LabelRequest, LibraryHistorySizeView, LibraryQuery, ListingQuery, MintRequest,
-    MintView, MoveRequest, ObjectQuery, RemoveRequest, RestoreRequest, UploadQuery, UserView,
-    VersionView, VersionsView,
+    HistoryView, LabelRequest, LibraryHistorySizeView, LibraryQuery, ListingQuery, ListingRequest,
+    MintRequest, MintView, MoveRequest, ObjectQuery, RemoveRequest, RestoreRequest, UploadQuery,
+    UserView, VersionView, VersionsView,
 };
 
 /// `tracing` target of this module's stdout-only diagnostics, outside `filesquid::activity`
@@ -91,6 +101,8 @@ pub const DETAILS_OPERATION: &str = "files.details";
 pub const HISTORY_OPERATION: &str = "files.history";
 /// Journal operation of a refused versions read.
 pub const VERSIONS_OPERATION: &str = "files.versions";
+/// Journal operation of a refused or failed whole-file download.
+pub const DOWNLOAD_OPERATION: &str = "files.download";
 /// Journal operation of a refused content read.
 pub const READ_OPERATION: &str = "files.read_content";
 /// Journal operation of an upload.

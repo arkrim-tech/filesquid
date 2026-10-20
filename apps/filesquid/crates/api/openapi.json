@@ -936,15 +936,37 @@
     "/api/v1/files/listing": {
       "get": {
         "operationId": "listFolder",
-        "summary": "List one folder of an object version",
-        "description": "The folders and files directly below a logical-path prefix, folders first, with an opaque cursor; limit 1-1000, default 200. Answers storage facts only; a successful read is not journaled, a refusal is journaled once (API-S-017).",
+        "summary": "List one folder of an object version, by path or by navigation node",
+        "description": "The folders and files directly below a logical-path prefix, folders first, with an opaque cursor; limit 1-1000, default 200. The folder is named either by library_id and object_id with an optional prefix, or by one collection or folder navigation node (API-S-021), never both (400 invalid_request otherwise). A node must be readable to the caller: an unknown, malformed or unreadable node, or one no object holds, answers one identical 404 not_found; a library, virtual collection or repository node answers 400 invalid_request. The reserved folders provenance (PROV-O records) and .filesquid (application data) are left out of the root's page, so a page may hold fewer entries than asked while next_cursor remains; a prefix inside them answers 404. Answers storage facts only; a successful read is not journaled, a refusal is journaled once (API-S-017).",
         "x-filesquid-action": "files.read",
         "parameters": [
           {
-            "$ref": "#/components/parameters/LibraryId"
+            "name": "library_id",
+            "in": "query",
+            "required": false,
+            "description": "The library; given with object_id, never with node.",
+            "schema": {
+              "type": "string"
+            }
           },
           {
-            "$ref": "#/components/parameters/ObjectId"
+            "name": "object_id",
+            "in": "query",
+            "required": false,
+            "description": "The OCFL object; given with library_id, never with node.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "node",
+            "in": "query",
+            "required": false,
+            "description": "A collection or folder node handle, as the navigation listing gave it (clients never parse it), instead of library_id, object_id and prefix.",
+            "schema": {
+              "type": "string",
+              "maxLength": 512
+            }
           },
           {
             "$ref": "#/components/parameters/Version"
@@ -972,6 +994,79 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/FolderPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/files/download": {
+      "get": {
+        "operationId": "downloadFile",
+        "summary": "Download one whole file version, streamed",
+        "description": "The whole file of any size as an attachment, streamed from ranged reads of at most 8 MiB so the host never holds the file in memory (NFR-003). A missing file is refused before the answer starts; a storage failure after it started ends the stream early and is journaled once. Through the desktop scheme every answer is capped at 16 MiB (DE-S-005), so the desktop UI saves larger files with ranged reads of GET /api/v1/files/content. A successful read is not journaled, a refusal is journaled once (API-S-017).",
+        "x-filesquid-action": "files.read",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/LibraryId"
+          },
+          {
+            "$ref": "#/components/parameters/ObjectId"
+          },
+          {
+            "$ref": "#/components/parameters/Version"
+          },
+          {
+            "$ref": "#/components/parameters/LogicalPath"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The whole file.",
+            "headers": {
+              "Content-Type": {
+                "description": "The file's media type.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Length": {
+                "description": "The file's length in bytes.",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Content-Disposition": {
+                "description": "attachment, naming the file by its display name: an ASCII filename fallback and the display name as RFC 5987 filename* UTF-8 (RFC 6266).",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
                 }
               }
             }
@@ -2762,6 +2857,84 @@
           },
           "503": {
             "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/preferences": {
+      "get": {
+        "operationId": "getPreferences",
+        "summary": "Read the caller's UI preferences",
+        "description": "The caller's own saved preferences (API-S-011, SRS-F-062), or the defaults when they saved none. A successful read is not journaled, a refusal is journaled once (API-S-017).",
+        "x-filesquid-action": "preferences.manage",
+        "responses": {
+          "200": {
+            "description": "The caller's preferences.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Preferences"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/PreferencesUnavailable"
+          }
+        }
+      },
+      "put": {
+        "operationId": "putPreferences",
+        "summary": "Replace the caller's UI preferences",
+        "description": "Replace the caller's own preferences with a complete, checked value: every field, schema 1, navigation version 1, at most 100 pinned node handles, 16 section ids of 1 to 64 characters and 1,000 collapsed node handles, each once (UI-S-017). Node entries must be handles the navigation listing wrote; no name, title, logical path, token or content handle is stored. Each pin's kind must be the kind its handle names. A host that keeps preferences for no more users answers 409 conflict (not retryable). A save is journaled once as preferences.update with the actor only, never the values.",
+        "x-filesquid-action": "preferences.manage",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Preferences"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The preferences as saved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Preferences"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/PreferencesUnavailable"
           }
         }
       }
@@ -5302,6 +5475,157 @@
         },
         "additionalProperties": false
       },
+      "PinnedDestination": {
+        "type": "object",
+        "description": "One pinned destination: its node handle and kind, never its name (UI-S-017).",
+        "required": [
+          "node",
+          "kind"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "node": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512,
+            "description": "An opaque node handle (API-S-021)."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/NavigationKind"
+          }
+        }
+      },
+      "NavigationPreferences": {
+        "type": "object",
+        "description": "The navigation tree's pinned destinations, section order and collapsed nodes (UI-S-017). pinned, order and collapsed may be left out on PUT, meaning empty.",
+        "required": [
+          "version",
+          "pinned",
+          "order",
+          "collapsed"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "type": "integer",
+            "const": 1,
+            "description": "The format version."
+          },
+          "pinned": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PinnedDestination"
+            },
+            "description": "At most 100 pinned destinations, each node once."
+          },
+          "order": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "description": "At most 16 section ids in the user's order, each once."
+          },
+          "collapsed": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512,
+              "description": "An opaque node handle (API-S-021)."
+            },
+            "description": "At most 1,000 collapsed node handles, each once."
+          }
+        }
+      },
+      "Preferences": {
+        "type": "object",
+        "description": "One user's UI preferences (API-S-011, SRS-F-062): choices only, never a name, title, logical path, token or content handle.",
+        "additionalProperties": false,
+        "required": [
+          "schema",
+          "start_view",
+          "sort_key",
+          "sort_direction",
+          "folder_placement",
+          "layout",
+          "hover_card",
+          "navigation"
+        ],
+        "properties": {
+          "schema": {
+            "type": "integer",
+            "const": 1,
+            "description": "The format version."
+          },
+          "start_view": {
+            "$ref": "#/components/schemas/StartView"
+          },
+          "sort_key": {
+            "$ref": "#/components/schemas/SortKey"
+          },
+          "sort_direction": {
+            "$ref": "#/components/schemas/SortDirection"
+          },
+          "folder_placement": {
+            "$ref": "#/components/schemas/FolderPlacement"
+          },
+          "layout": {
+            "$ref": "#/components/schemas/Layout"
+          },
+          "hover_card": {
+            "type": "boolean",
+            "description": "Whether hovering an item shows its card. Default true."
+          },
+          "navigation": {
+            "$ref": "#/components/schemas/NavigationPreferences"
+          }
+        }
+      },
+      "StartView": {
+        "type": "string",
+        "enum": [
+          "home",
+          "personal_root"
+        ],
+        "description": "Where the UI opens: Home or the root of the user's personal library. Default home."
+      },
+      "SortKey": {
+        "type": "string",
+        "enum": [
+          "name",
+          "size",
+          "modified",
+          "modified_by_me",
+          "opened_by_me"
+        ],
+        "description": "What listings are sorted by. Default name."
+      },
+      "SortDirection": {
+        "type": "string",
+        "enum": [
+          "ascending",
+          "descending"
+        ],
+        "description": "The sort direction. Default ascending."
+      },
+      "FolderPlacement": {
+        "type": "string",
+        "enum": [
+          "on_top",
+          "mixed"
+        ],
+        "description": "Folders before files, or sorted among them. Default on_top."
+      },
+      "Layout": {
+        "type": "string",
+        "enum": [
+          "list",
+          "grid"
+        ],
+        "description": "How listings are laid out. Default list."
+      },
       "BackfillStarted": {
         "type": "object",
         "description": "A history backfill that started in the background (API-S-029). Its runs appear in the process registry and the journal as `prov.backfill`.",
@@ -5603,6 +5927,16 @@
             }
           }
         },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "PreferencesUnavailable": {
+        "description": "The host keeps no preferences yet, or their store cannot be reached (unavailable; retryable).",
         "content": {
           "application/json": {
             "schema": {
