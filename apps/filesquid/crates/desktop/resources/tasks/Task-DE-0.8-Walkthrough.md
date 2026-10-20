@@ -42,6 +42,8 @@ test result: FAILED. 3 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; 
 
 - Round 1 (6 P2/P3): fixed the feature step that checked only the first linking entry, the `std::fs` rule that missed `use std::fs` and grouped imports, the SQLite scenario that covered `rusqlite` only, a stale doc phrase, and the untested checkpoint parser. One finding was answered rather than changed: DE-0.8 stays ticked although no media workers exist. There were none in the host to extract, DE-0.5 builds its worker in `filesquid_native::workers` from the start, and DE-S-015 with its boundary test keeps every worker out of the host.
 
+- Round 2 (1 P3), fixed: this raw output was regenerated after the round-1 tests were added.
+
 ## Known gaps
 
 - The ciphertext-only hosted service crate does not exist yet. The linking rule already refuses `filesquid-native` in any package but the two hosts, so it will cover that crate too.
@@ -53,6 +55,8 @@ None.
 
 ## Raw test output
 
+After Cubic round 1:
+
 ```text
 $ cargo test -p filesquid-desktop --test integration_native_boundary --locked
 running 4 tests
@@ -60,15 +64,22 @@ test the_linking_rules_reject_a_sqlite_driver_in_a_host_and_native_in_the_api ..
 test the_source_rule_rejects_storage_opens_and_worker_loops ... ok
 test the_desktop_host_holds_no_native_storage_or_worker_code ... ok
 test only_the_hosts_link_filesquid_native_and_the_desktop_has_no_sqlite_driver ... ok
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
 $ cargo test -p filesquid-desktop --test integration_durable_jobs --locked
-running 6 tests
-test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.43s
+running 7 tests
+test a_job_for_another_installation_is_failed_and_a_new_one_runs ... ok
+test quitting_suspends_the_backfill_job_with_its_checkpoint_kept ... ok
+test restart_recovery_reads_only_jobs_and_stays_within_the_budget ... ok
+test a_backfill_job_completes_and_records_both_libraries_in_its_checkpoint ... ok
+test the_next_launch_resumes_the_job_without_rescanning_completed_libraries ... ok
+test a_run_left_by_a_crash_is_waited_out_and_resumed ... ok
+test an_unreadable_checkpoint_visits_every_library_again ... ok
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.46s
 $ cargo test -p filesquid-server --test unit_native_features --locked
 running 2 tests
 test the_rule_rejects_a_tree_with_the_desktop_feature ... ok
 test the_server_links_filesquid_native_with_default_features_only ... ok
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
 $ cargo test -p filesquid-native --test features --locked
 Feature: Durable jobs in the host's operational store
   Scenario: A job suspended at quit resumes from its checkpoint after a restart
@@ -79,15 +90,17 @@ Feature: The native-processing library boundary
   Scenario: The desktop host links the desktop-only native processing
   Scenario: The server links filesquid-native with default features only
   Scenario: No crate but the two hosts links filesquid-native
-  Scenario: Only filesquid-native links a SQLite driver
+  Scenario Outline: Only filesquid-native links a SQLite driver
+  Scenario Outline: Only filesquid-native links a SQLite driver
+  Scenario Outline: Only filesquid-native links a SQLite driver
 Feature: Native journal store and data-directory checks
   Scenario: The SQLite journal store writes no log file
   Scenario: A host monitor opens its store in the data directory
   Scenario: A data directory that cannot be written fails health
-11 scenarios (11 passed)
-37 steps (37 passed)
+13 scenarios (13 passed)
+41 steps (41 passed)
 $ cargo check -p filesquid-native --locked
-    Finished `dev` profile [unoptimized] target(s) in 0.15s
+    Finished `dev` profile [unoptimized] target(s) in 0.60s
 ```
 
 The head-commit hook run is recorded in the pull request.
