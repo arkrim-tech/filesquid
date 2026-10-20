@@ -22,6 +22,14 @@ pub enum LocalLibraryError {
     /// The caller may not run this operation (the repair is the desktop owner's or the
     /// library owner's only).
     Forbidden,
+    /// The location or library the request names is not known to this host; `code` names
+    /// which (`location_not_found`, `library_not_open`).
+    NotFound {
+        /// Stable machine-readable rule name.
+        code: &'static str,
+        /// Message shown to people.
+        message: &'static str,
+    },
     /// The operation is refused by a rule about the storage root, the destination or the
     /// consent; `code` names the rule (for example `root_not_empty`, `consent_required`).
     Refused {
@@ -45,6 +53,11 @@ impl LocalLibraryError {
         Self::Invalid { code, message }
     }
 
+    /// Shorthand for [`LocalLibraryError::NotFound`].
+    pub const fn not_found(code: &'static str, message: &'static str) -> Self {
+        Self::NotFound { code, message }
+    }
+
     /// Shorthand for [`LocalLibraryError::Refused`].
     pub const fn refused(code: &'static str, message: &'static str) -> Self {
         Self::Refused { code, message }
@@ -53,7 +66,9 @@ impl LocalLibraryError {
     /// Stable error code for journals and UIs.
     pub fn error_code(&self) -> &'static str {
         match self {
-            Self::Invalid { code, .. } | Self::Refused { code, .. } => code,
+            Self::Invalid { code, .. }
+            | Self::NotFound { code, .. }
+            | Self::Refused { code, .. } => code,
             Self::Forbidden => "forbidden",
             Self::Unavailable => "unavailable",
             Self::Internal => "internal",
@@ -66,6 +81,7 @@ impl LocalLibraryError {
         match self {
             Self::Invalid { .. } => ErrorCode::InvalidRequest,
             Self::Forbidden => ErrorCode::Forbidden,
+            Self::NotFound { .. } => ErrorCode::NotFound,
             Self::Refused { code, .. } if RETRYABLE_REFUSALS.contains(code) => {
                 ErrorCode::Unavailable
             }
@@ -87,7 +103,9 @@ impl LocalLibraryError {
     /// The message shown to people. It names no path, key, object root or file.
     pub fn message(&self) -> &'static str {
         match self {
-            Self::Invalid { message, .. } | Self::Refused { message, .. } => message,
+            Self::Invalid { message, .. }
+            | Self::NotFound { message, .. }
+            | Self::Refused { message, .. } => message,
             Self::Forbidden => "Only the owner of this library can do this.",
             Self::Unavailable => "The library folder is not available right now. Try again.",
             Self::Internal => "FileSquid could not complete the request.",

@@ -34,15 +34,15 @@ use filesquid_ocfl::RepairReceipt;
 use std::sync::Arc;
 
 /// Journal operation of creating a library's storage root.
-const CREATE_OPERATION: &str = "library.root.create";
+pub const CREATE_OPERATION: &str = "library.root.create";
 /// Journal operation of opening a storage root (failures only).
-const OPEN_OPERATION: &str = "library.root.open";
+pub const OPEN_OPERATION: &str = "library.root.open";
 /// Journal operation of copying a completed snapshot.
-const COPY_OPERATION: &str = "library.snapshot.copy";
+pub const COPY_OPERATION: &str = "library.snapshot.copy";
 /// Journal operation of rebuilding from files.
-const REBUILD_OPERATION: &str = "library.rebuild";
+pub const REBUILD_OPERATION: &str = "library.rebuild";
 /// Journal operation of the repair candidate query (failures only).
-const CANDIDATES_OPERATION: &str = "library.repair_candidates";
+pub const CANDIDATES_OPERATION: &str = "library.repair_candidates";
 
 /// Runs the local library operations of [`crate::local_library`] for every host.
 #[derive(Clone)]
@@ -363,6 +363,23 @@ impl LocalLibraryService {
                 .target(library_id.as_str())
                 .at_ms((self.clock)()),
         );
+    }
+
+    /// Journal a refusal of `operation` that the API made before reaching the operation
+    /// itself (an unknown location or library, a bound), naming `target` when there is one.
+    pub(super) fn journal_refusal(
+        &self,
+        actor: &str,
+        operation: &'static str,
+        target: Option<&str>,
+        err: &LocalLibraryError,
+    ) {
+        let entry = failure_entry(operation, err).actor(actor);
+        let entry = match target {
+            Some(target) => entry.target(target),
+            None => entry,
+        };
+        self.journal.send(entry.at_ms((self.clock)()));
     }
 
     /// Journal `result` only when it failed.
