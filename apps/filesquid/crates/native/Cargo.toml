@@ -17,7 +17,7 @@ default = []
 # snapshot commits and reconcile (DE-0.3), the durable job workers (DE-0.4, DE-0.8), and
 # later the media workers (DE-0.5). Only `filesquid-desktop` enables it; a `filesquid-server` test fails if the
 # server does.
-desktop = ["dep:libloading", "dep:filesquid-metadata", "dep:unicode-normalization"]
+desktop = ["dep:libloading", "dep:filesquid-metadata", "dep:icu_normalizer"]
 
 [dependencies]
 filesquid-api = { path = "../api" }
@@ -38,8 +38,9 @@ tracing = "0.1"
 libloading = { version = "0.7", optional = true }
 # The import record of each imported file (Task DE-1.2, MD-0.8, ADR 038).
 filesquid-metadata = { path = "../metadata", optional = true }
-# The Unicode normalisation form of an imported file's original name (SRS-F-002, MD-S-013).
-unicode-normalization = { version = "0.1.26", optional = true }
+# The Unicode normalisation form of an imported file's original name (SRS-F-002, MD-S-013);
+# already in the lockfile through `url`, pinned to that version, its compiled data only.
+icu_normalizer = { version = "=2.3.0", default-features = false, features = ["compiled_data"], optional = true }
 
 [target.'cfg(unix)'.dependencies]
 # `O_NOFOLLOW` for owner-only files, so a symbolic link is never followed.
