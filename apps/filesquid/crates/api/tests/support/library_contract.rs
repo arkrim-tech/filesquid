@@ -1,0 +1,307 @@
+//! Contract fixtures for the library and repair routes (Task API-F1.12): library commands
+//! over in-memory OCFL roots registered as locations, the sample request of every library
+//! route, and serialized Rust samples of every library and repair schema.
+
+#![allow(dead_code)]
+
+use axum::http::Method;
+use filesquid_api::local_library::{
+    LibraryCommands, LibraryLocations, LibraryRequest, LibraryRoot, LibraryView,
+    LocalLibraryService, LocationRequest, MemoryRepairLedger, ObjectFindings, ObjectRepair,
+    RebuildReport, RebuiltObject, RepairAnswer, RepairCandidate, RepairCandidates, RepairConsent,
+    RepairRequest, RepairResult, SnapshotCopyRequest, UnreadableObject, CONSENT_STATEMENT_ID,
+};
+use filesquid_api::monitor::Monitor;
+use filesquid_api::ApiState;
+use filesquid_core::LibraryId;
+use filesquid_ocfl::change::{ChangeModel, StagingArea, VersionMeta};
+use filesquid_ocfl::storage::{MemoryBackend, StorageBackend, StorageKey};
+use filesquid_ocfl::write::{rfc3339_utc, LeaseConfig, LeaseStore, SystemClock};
+use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::sync::Arc;
+
+/// The library the samples name.
+pub const LIBRARY: &str = "0d6e1f2a-3b4c-4d5e-8f60-718293a4b5c6";
+
+/// The W010 object of the sample library.
+const OBJECT: &str = "urn:uuid:7c1d2e3f-4a5b-4c6d-8e7f-90a1b2c3d4e5";
+
+/// The location of a new library, of the sample library and of the copy.
+const NEW: &str = "loc-new";
+const SAMPLE: &str = "loc-sample";
+const COPY: &str = "loc-copy";
+
+/// Lease TTL 60 s with a 10 s margin.
+const LEASES: LeaseConfig = LeaseConfig {
+    ttl_ms: 60_000,
+    margin_ms: 10_000,
+};
+
+/// The lease store of a sample location.
+type Leases = LeaseStore<MemoryBackend, SystemClock>;
+
+/// In-memory locations, as a host would register the folders an owner chose.
+struct MemoryLocations {
+    roots: HashMap<&'static str, LibraryRoot<MemoryBackend, Leases>>,
+}
+
+impl LibraryLocations for MemoryLocations {
+    type Backend = MemoryBackend;
+    type Reservations = Leases;
+
+    fn location(&self, location_id: &str) -> Option<LibraryRoot<MemoryBackend, Leases>> {
+        self.roots.get(location_id).cloned()
+    }
+
+    fn overlaps(&self, a: &str, b: &str) -> bool {
+        a == b
+    }
+}
+
+/// An empty in-memory location with its own leases.
+fn location() -> LibraryRoot<MemoryBackend, Leases> {
+    let leases = LeaseStore::new(MemoryBackend::new(), "leases", SystemClock, LEASES);
+    LibraryRoot {
+        backend: Arc::new(MemoryBackend::new()),
+        reservations: Arc::new(leases.expect("leases")),
+    }
+}
+
+/// Install library commands on `state` whose sample library is open and holds one W010
+/// object, with an empty location for a new library and one for the copy.
+pub async fn install(state: &ApiState, monitor: &Monitor) {
+    let roots: HashMap<&'static str, _> = [NEW, SAMPLE, COPY]
+        .into_iter()
+        .map(|id| (id, location()))
+        .collect();
+    let sample = roots[SAMPLE].clone();
+    let locations = Arc::new(MemoryLocations { roots });
+    let service = LocalLibraryService::new(monitor.journal(), Arc::new(MemoryRepairLedger::new()));
+    let commands = LibraryCommands::new(service, locations);
+    let request = LocationRequest {
+        location_id: SAMPLE.to_string(),
+        library_id: Some(library()),
+    };
+    commands.create("owner", request).await.expect("create");
+    commit_w010(&sample).await;
+    assert!(state.install_libraries(Arc::new(commands)));
+}
+
+/// Commit the sample object's v1 and v2, then remove its head version inventory and sidecar.
+async fn commit_w010(root: &LibraryRoot<MemoryBackend, Leases>) {
+    let staging = MemoryBackend::new();
+    for path in ["a.txt", "b.txt"] {
+        let area = StagingArea::new(&staging, "fixture").expect("staging");
+        let backend = root.backend.as_ref();
+        let leases = root.reservations.as_ref();
+        let model = ChangeModel::new(backend, leases, "fixture", "objects/sample", OBJECT, area);
+        model.stage_bytes(path, b"x").await.expect("stage");
+        model.commit(VersionMeta::new(now())).await.expect("commit");
+    }
+    for name in ["inventory.json", "inventory.json.sha256"] {
+        let key = StorageKey::new(&format!("objects/sample/v2/{name}")).expect("key");
+        root.backend.delete(&key).await.expect("remove");
+    }
+}
+
+/// Now, RFC 3339 UTC.
+fn now() -> String {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    rfc3339_utc(millis)
+}
+
+/// The sample library ID.
+fn library() -> LibraryId {
+    LibraryId::new(LIBRARY).expect("library id")
+}
+
+/// A sample request body: its content type and bytes.
+type SampleBody = Option<(&'static str, Vec<u8>)>;
+
+/// A JSON body.
+fn json_body(body: Value) -> SampleBody {
+    Some(("application/json", body.to_string().into_bytes()))
+}
+
+/// The request URI and body of the sample call of `method path`, or `None` when `path` is
+/// not a library route.
+pub fn sample(method: &Method, path: &str) -> Option<(String, SampleBody)> {
+    let body = match (method.as_str(), path) {
+        ("POST", "/api/v1/libraries") => json!({ "location_id": NEW }),
+        ("POST", "/api/v1/libraries/openings") => {
+            json!({ "location_id": SAMPLE, "library_id": LIBRARY })
+        }
+        ("POST", "/api/v1/libraries/snapshot-copies") => {
+            json!({ "library_id": LIBRARY, "destination_location_id": COPY })
+        }
+        ("POST", "/api/v1/libraries/rebuilds") => json!({ "library_id": LIBRARY }),
+        ("GET", "/api/v1/libraries/repair-candidates") => {
+            return Some((format!("{path}?library_id={LIBRARY}"), None));
+        }
+        ("POST", "/api/v1/libraries/repairs") => {
+            serde_json::to_value(repair_request()).expect("json")
+        }
+        _ => return None,
+    };
+    Some((path.to_string(), json_body(body)))
+}
+
+/// The consented repair of the sample object.
+fn repair_request() -> RepairRequest {
+    RepairRequest {
+        library_id: library(),
+        object_ids: vec![OBJECT.to_string()],
+        consent: Some(RepairConsent {
+            library_id: library(),
+            object_ids: vec![OBJECT.to_string()],
+            statement_id: CONSENT_STATEMENT_ID.to_string(),
+            confirmed: true,
+        }),
+    }
+}
+
+/// `value` as JSON.
+fn to_value<T: serde::Serialize>(value: T) -> Value {
+    serde_json::to_value(value).expect("serializable")
+}
+
+/// A repaired and a refused object outcome, between them carrying every member.
+fn object_repairs() -> [ObjectRepair; 2] {
+    let repaired = ObjectRepair {
+        object_id: OBJECT.to_string(),
+        version: Some("v2".to_string()),
+        result: RepairResult::Repaired,
+        error_code: None,
+        retryable: false,
+        provenance_version: Some("v3".to_string()),
+        provenance_error_code: None,
+    };
+    let refused = ObjectRepair {
+        version: None,
+        result: RepairResult::Refused,
+        error_code: Some("nothing_to_repair".to_string()),
+        provenance_version: None,
+        provenance_error_code: Some("provenance_not_configured".to_string()),
+        ..repaired.clone()
+    };
+    [repaired, refused]
+}
+
+/// The rebuilt sample object.
+fn rebuilt() -> RebuiltObject {
+    RebuiltObject {
+        object_id: OBJECT.to_string(),
+        head: "v2".to_string(),
+        files: 2,
+        digest_algorithm: "sha256".to_string(),
+        error_codes: vec!["E023".to_string()],
+        missing_version_inventory: true,
+    }
+}
+
+/// The sample candidate.
+fn candidate() -> RepairCandidate {
+    RepairCandidate {
+        object_id: OBJECT.to_string(),
+        head: "v2".to_string(),
+        digest_algorithm: "sha256".to_string(),
+        interrupted: false,
+        committable_after_repair: true,
+    }
+}
+
+/// Serialized samples of every library and repair schema.
+pub fn samples() -> Vec<(&'static str, Vec<Value>)> {
+    let findings = ObjectFindings {
+        object_id: OBJECT.to_string(),
+        error_codes: vec!["E092".to_string()],
+    };
+    let copy = filesquid_api::local_library::CopyReport {
+        objects: 1,
+        files: 9,
+        bytes: 2_048,
+        invalid_objects: vec![findings.clone()],
+    };
+    let unreadable = UnreadableObject {
+        error_code: "unreadable".to_string(),
+    };
+    let mut unconsented = repair_request();
+    unconsented.consent = None;
+    vec![
+        (
+            "LibraryLocationRequest",
+            vec![to_value(LocationRequest {
+                location_id: SAMPLE.to_string(),
+                library_id: Some(library()),
+            })],
+        ),
+        (
+            "LibraryView",
+            vec![to_value(LibraryView {
+                library_id: library(),
+                spec_version: "1.1".to_string(),
+                objects: 1,
+            })],
+        ),
+        (
+            "SnapshotCopyRequest",
+            vec![to_value(SnapshotCopyRequest {
+                library_id: library(),
+                destination_location_id: COPY.to_string(),
+            })],
+        ),
+        (
+            "LibraryRequest",
+            vec![to_value(LibraryRequest {
+                library_id: library(),
+            })],
+        ),
+        ("ObjectFindings", vec![to_value(findings)]),
+        ("SnapshotCopyReport", vec![to_value(copy)]),
+        ("RebuiltObject", vec![to_value(rebuilt())]),
+        ("UnreadableObject", vec![to_value(unreadable.clone())]),
+        (
+            "RebuildReport",
+            vec![to_value(RebuildReport {
+                objects: vec![rebuilt()],
+                unreadable: vec![unreadable],
+            })],
+        ),
+        ("RepairCandidate", vec![to_value(candidate())]),
+        (
+            "RepairCandidates",
+            vec![to_value(RepairCandidates {
+                candidates: vec![candidate()],
+                truncated: false,
+            })],
+        ),
+        (
+            "RepairConsent",
+            vec![to_value(repair_request().consent.expect("consent"))],
+        ),
+        (
+            "RepairRequest",
+            vec![to_value(repair_request()), to_value(unconsented)],
+        ),
+        (
+            "RepairResult",
+            vec![
+                to_value(RepairResult::Repaired),
+                to_value(RepairResult::Refused),
+            ],
+        ),
+        ("ObjectRepair", object_repairs().map(to_value).to_vec()),
+        (
+            "RepairAnswer",
+            vec![to_value(RepairAnswer {
+                library_id: library(),
+                run_id: "5f0c1d2e-3a4b-4c5d-8e6f-708192a3b4c5".to_string(),
+                objects: object_repairs().to_vec(),
+            })],
+        ),
+    ]
+}

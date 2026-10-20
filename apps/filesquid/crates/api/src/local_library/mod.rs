@@ -22,6 +22,11 @@
 //!   directory, for named objects, by the owner, after recorded consent, journaled per object
 //!   in the same transaction as its receipt (API-S-023, OCFL-S-020).
 //!
+//! The versioned routes of these operations (API-S-025, Task API-F1.12) are in
+//! `routes`: the host registers each folder the owner chose under an opaque location ID
+//! and injects them through [`LibraryLocations`]; [`LibraryCommands`] binds libraries to
+//! locations and calls [`LocalLibraryService`], installed as [`LibraryOperations`].
+//!
 //! Open, copy, rebuild and the candidate query never write to the source root, and none of
 //! them repairs (F-001: direct inspection and copy MUST NOT authorize in-place edits of OCFL
 //! inventories). Answers and journal entries carry opaque IDs and codes only: no filesystem
@@ -33,18 +38,28 @@
 const LOG_TARGET: &str = "filesquid::local_library";
 
 mod candidates;
+mod commands;
 mod error;
 mod ledger;
+mod locations;
+mod operations;
 mod provenance;
 mod rebuild;
 mod repair;
 mod root;
+pub(crate) mod routes;
 mod service;
 mod snapshot;
 mod transfer;
 
+pub use commands::{LibraryCommands, MAX_OPEN_LIBRARIES};
 pub use error::LocalLibraryError;
 pub use ledger::{LedgerError, MemoryRepairLedger, RecordedRepair, RepairLedger, RepairRecord};
+pub use locations::{
+    LibraryLocations, LibraryRequest, LibraryRoot, LibraryView, LocationRequest,
+    SnapshotCopyRequest, MAX_LOCATION_ID_BYTES,
+};
+pub use operations::{LibraryFuture, LibraryOperations};
 pub use provenance::{
     JOURNAL_IDS_UNAVAILABLE, PROVENANCE_COMMIT_FAILED, PROVENANCE_NOT_CONFIGURED,
 };
@@ -55,5 +70,8 @@ pub use repair::{
     REPAIR_OPERATION,
 };
 pub use root::RootSummary;
-pub use service::LocalLibraryService;
+pub use service::{
+    LocalLibraryService, CANDIDATES_OPERATION, COPY_OPERATION, CREATE_OPERATION, OPEN_OPERATION,
+    REBUILD_OPERATION,
+};
 pub use snapshot::{CopyReport, ObjectFindings};

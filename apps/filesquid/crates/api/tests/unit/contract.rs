@@ -12,9 +12,14 @@ mod files_contract;
 #[path = "../support/history_fixture.rs"]
 mod history_fixture;
 
+#[path = "../support/library_contract.rs"]
+mod library_contract;
+
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
-use filesquid_api::auth::{Action, Authoriser, DenialReason};
+use filesquid_api::auth::{
+    Action, Authoriser, DenialReason, HostPolicy, Principal, TokenAuthenticator,
+};
 use filesquid_api::events::{topic, EventResync};
 use filesquid_api::health::{HealthInputs, HealthReason, HealthReport, HealthStatus};
 use filesquid_api::history::HistoryPage;
@@ -74,7 +79,7 @@ fn contract_is_openapi_3_1_with_the_crate_api_version() {
     let doc = contract();
     assert_eq!(doc["openapi"], "3.1.0");
     assert_eq!(doc["info"]["version"], API_VERSION);
-    assert_eq!(API_VERSION, "0.10.0");
+    assert_eq!(API_VERSION, "0.11.0");
 }
 
 #[test]
@@ -252,10 +257,20 @@ fn authorised_state() -> ApiState {
     state
 }
 
-/// Authorised API state whose monitor is running, so admin routes answer 200, with a file
-/// service whose library holds the objects the sample requests name.
+/// API state whose authoriser accepts [`TOKEN`] as the desktop owner's, the one caller the
+/// policy grants every action, the repair included.
+fn owner_authorised_state() -> ApiState {
+    let state = ApiState::new();
+    let owner = TokenAuthenticator::new(TOKEN, Principal::Owner);
+    state.install_authoriser(Authoriser::new(Arc::new(owner), Arc::new(HostPolicy)));
+    state
+}
+
+/// The owner's API state with a running monitor, so admin routes answer 200, a file service
+/// whose library holds the objects the sample requests name, and library commands whose
+/// sample library is open.
 async fn owner_state() -> (ApiState, Monitor) {
-    let state = authorised_state();
+    let state = owner_authorised_state();
     let monitor = Monitor::start(
         Arc::new(MemoryJournal::new("host-a")),
         std::sync::Arc::new(filesquid_api::monitor::StaticHostChecks::healthy()),
@@ -269,13 +284,15 @@ async fn owner_state() -> (ApiState, Monitor) {
         ValidationService::new(Arc::new(MemoryFindingsStore::new()), monitor.clone());
     state.install_validation(Arc::new(validation));
     install_sample_history(&state);
+    library_contract::install(&state, &monitor).await;
     (state, monitor)
 }
 
 /// Send one request carrying [`TOKEN`] through the router, with the sample query and body of
 /// its route ([`files_contract::sample`]); return the status and body bytes.
 async fn call(state: &ApiState, method: &Method, path: &str) -> (StatusCode, Vec<u8>) {
-    let (uri, body) = files_contract::sample(state, method, path, TOKEN);
+    let (uri, body) = library_contract::sample(method, path)
+        .unwrap_or_else(|| files_contract::sample(state, method, path, TOKEN));
     let mut request = Request::builder()
         .method(method.clone())
         .uri(uri)
@@ -666,6 +683,7 @@ fn samples() -> Vec<(&'static str, Vec<Value>)> {
     all.extend(history_samples());
     all.extend(operation_samples());
     all.extend(files_contract::samples());
+    all.extend(library_contract::samples());
     all
 }
 

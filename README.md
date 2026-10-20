@@ -291,6 +291,13 @@ cargo test -p filesquid-server --locked --test integration_auth
 cargo test -p filesquid-desktop --locked --test integration_api_protocol
 ```
 
+The library and repair routes (API-F1.12, API-S-025: create, open, copy a completed snapshot, rebuild from files, the version-inventory repair candidates and the owner-consented repair under `/api/v1/libraries`) are tested through the router on the desktop owner's and the server administrator's mount, against real OCFL storage roots in the system temporary directory that a test host registers under opaque location IDs; each test removes its directory:
+
+```sh
+cd apps/filesquid
+cargo test -p filesquid-api --locked --test integration_library_routes --test features
+```
+
 The host-side I/O the API must not do lives in the native-processing library `filesquid-native` (`crates/native`): the SQLite journal store, the data-directory checks (write probe, free space) and `HostMonitor`, which both hosts link ([ADR 033](./resources/architecture/033-activity-journal-and-live-health-monitoring.md) amendment 2026-10-18). Its unit tests and BDD features run alone:
 
 ```sh
