@@ -133,6 +133,15 @@ export class FileWrites {
     return { library_id: where.library_id, object_id: where.object_id };
   }
 
+  /**
+   * The browser moved to another folder or object: close the name form, which names the
+   * folder it was opened for, without returning focus. A call still in flight answers later
+   * without touching the form or focus of the new location.
+   */
+  leave(): void {
+    if (this.mode) this.close(false);
+  }
+
   /** True when `object` is the object shown now. */
   private isShown(object: ObjectRef): boolean {
     const where = this.host.location();
@@ -333,31 +342,44 @@ export class FileWrites {
       (mode.kind === "rename" ? folderProblem(form.folder.value) : undefined);
     if (problem) return this.formError(problemText(problem, this.host.labels));
     this.formError("");
-    if (mode.kind === "folder") await this.createFolder(form.name.value.trim());
-    else await this.move(mode.row, form.name.value, form.folder.value);
+    if (mode.kind === "folder") await this.createFolder(mode, form.name.value.trim());
+    else await this.move(mode, form.name.value, form.folder.value);
   }
 
-  /** Create a folder in the current folder (one call; nothing is written to the object). */
-  private async createFolder(name: string): Promise<void> {
-    const path = joinPath(this.host.location().prefix, name);
-    const answer = await this.run(() => this.host.source.createFolder(this.host.location(), path));
+  /**
+   * Create a folder in the current folder (one call; nothing is written to the object). An
+   * answer that arrives after the browser left that object marks nothing pending in the new one.
+   */
+  private async createFolder(mode: FormMode, name: string): Promise<void> {
+    const where = this.host.location();
+    const path = joinPath(where.prefix, name);
+    const answer = await this.run(() => this.host.source.createFolder(where, path));
     if (!answer) return;
-    if (answer.pending) this.host.pendFolder(path);
+    if (answer.pending && this.isShown(where)) this.host.pendFolder(path);
     const text = answer.pending
       ? this.host.labels.fileFolderCreated
       : this.host.labels.fileFolderExists;
-    this.close(true);
+    if (this.mode === mode) this.close(true);
     this.showStatus(formatLabel(text, { name }));
     await this.host.reload();
   }
 
-  /** Rename or move a row with one call. */
-  private async move(row: FileRow, name: string, folder: string): Promise<void> {
+  /**
+   * Rename or move the form's row with one call. Focus returns to the opener only while the
+   * form that asked is still open, so a late answer leaves a new location alone.
+   */
+  private async move(
+    mode: Extract<FormMode, { kind: "rename" }>,
+    name: string,
+    folder: string,
+  ): Promise<void> {
+    const row = mode.row;
     const to = moveTarget(row, name, folder);
     if (to === undefined) return this.close(true);
-    const commit = await this.run(() => this.host.source.move(this.host.location(), row.path, to));
+    const where = this.host.location();
+    const commit = await this.run(() => this.host.source.move(where, row.path, to));
     if (!commit) return;
-    this.close(true);
+    if (this.mode === mode) this.close(true);
     this.host.committed("move", commit, [row.path, to]);
     const shown = name.trim() === "" ? row.name : name.trim();
     this.showStatus(

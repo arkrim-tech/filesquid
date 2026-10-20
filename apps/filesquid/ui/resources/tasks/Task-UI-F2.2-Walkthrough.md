@@ -68,7 +68,7 @@ Constraint gates (the Plan's C1 to C22, each coded and tested):
 
 A first Cubic review of the head commit found 50 items (2 P1, 28 P2, 20 P3); the fixes are in the second commit and covered by new tests (single Tab stop when the stop row is scrolled out, Undo into the object removed from, aborted loads not shown as errors, stale loads not overwriting state, `Range`-ignoring hosts, empty text files, grid arrow keys, upload batch limits and name length, and others).
 
-The second Cubic review (of the fix commit) found one P2: a preview whose details arrived after it left the page still started the media controller, which added listeners and minted a handle. The third commit makes a disposed controller's `start()` a no-op and starts no renderer for aborted work. The same commit hardens the two P1 fixes against the same class of fault: a commit to another object than the one shown (an Undo after switching objects, or a call answered after the object changed) is announced in `fs-files-change` but no longer changes the shown object's head, viewer or focus, and Retry uploads the failed files into the folder they were meant for, not the folder shown when Retry is pressed. Each fix has a test that failed first; afterwards `npm test` passed (879 tests) and the static preview Playwright suite passed on the production build (33 passed).
+The second Cubic review (of the fix commit) found one P2: a preview whose details arrived after it left the page still started the media controller, which added listeners and minted a handle. The third commit makes a disposed controller's `start()` a no-op and starts no renderer for aborted work. The same commit hardens the two P1 fixes against the same class of fault: a commit to another object than the one shown (an Undo after switching objects, or a call answered after the object changed) is announced in `fs-files-change` but no longer changes the shown object's head, viewer or focus, and Retry uploads the failed files into the folder they were meant for, not the folder shown when Retry is pressed. The third Cubic review found one P2 and one P3: a rename or new folder that answered after another object was opened still returned focus to its opener (and a late new folder could be marked pending in the new object), and this walkthrough cited figures without their output. The fourth commit closes the name form when the browser moves to another location, returns focus only while the form that asked is still open, and marks a late folder pending only in the object it was created in. Each review fix has a test that failed first; the red runs and the passing runs after the fixes are under "Review fixes" in the raw output below.
 
 ## How it was tested
 
@@ -337,6 +337,48 @@ Running 33 tests using 2 workers
 
   33 passed (16.1s)
 exit 0
+```
+
+### Review fixes (Cubic rounds 2 and 3, apps/filesquid/ui)
+
+Red runs of the new tests before each fix (`npx vitest run` on the named files):
+
+```
+ tests/ui/file-browser-writes.test.ts (round-one P1 hardening)
+     × tries the failed files again in the folder they were meant for, after moving away
+     × does not move focus into another object's listing when Undo restores into the first
+     × keeps a file of another object open when a removal from the first commits late
+      Tests  3 failed | 30 passed (33)
+
+ tests/unit/media-handle.test.ts, tests/ui/file-preview.test.ts (round 2)
+     × does not start once disposed: no mint, no listeners and no state
+     × mints nothing when the details arrive after the preview left the page
+      Tests  2 failed | 28 passed (30)
+
+ tests/ui/file-browser-writes.test.ts (round 3)
+     × closes an open name form when another object is opened
+     × does not return focus to the opener when a rename answers late
+     × does not show a folder created late in the object opened since
+      Tests  3 failed | 33 passed (36)
+```
+
+`npm test` after the fixes:
+
+```
+ ✓ tests/unit/contract.test.ts (1 test) 139ms
+ Test Files  43 passed (43)
+      Tests  882 passed (882)
+   Start at  03:33:09
+   Duration  14.65s (transform 2.73s, setup 1.67s, import 4.72s, tests 7.72s, environment 20.88s)
+```
+
+Playwright on the production build after the fixes (`FILESQUID_E2E=1`, preview config):
+
+```
+  ✓  32 [chromium] › tests/e2e/preview/file-browser.spec.ts:469:1 › motion stops under reduced motion and focus is the 2px primary ring (238ms)
+  ✓  33 [chromium] › tests/e2e/preview/file-browser.spec.ts:494:1 › a failed listing shows the error state with Try again, and retrying loads it (235ms)
+
+  33 passed (14.4s)
 ```
 
 ### Lint, format and types (apps/imagesquid)

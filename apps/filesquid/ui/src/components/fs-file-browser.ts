@@ -151,6 +151,7 @@ export class FsFileBrowser extends HTMLElement {
     ) {
       this.pending.clear();
     }
+    if (!same) this.writes?.leave();
     this.where = location;
     if (same && this.dataset.state === "ready") return;
     this.closeViewer(false);

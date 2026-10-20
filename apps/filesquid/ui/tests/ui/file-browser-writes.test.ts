@@ -7,7 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../src/api/client";
 import type { FsFileBrowser } from "../../src/index";
-import { MAX_UPLOAD_BYTES, type FileCommit } from "../../src/files/model";
+import { MAX_UPLOAD_BYTES, type FileCommit, type FolderAnswer } from "../../src/files/model";
 import {
   LOCATION,
   STORED_NAMES,
@@ -496,5 +496,59 @@ describe("remove and restore", () => {
     await click(one(browser, "button.remove"));
     await click(one(browser, "button.undo"));
     for (const stored of STORED_NAMES) expect(deepText(rootOf(browser))).not.toContain(stored);
+  });
+});
+
+describe("answers that arrive after another object is opened", () => {
+  const OTHER = { library_id: "other-lib", object_id: "other-obj", prefix: "" };
+
+  /** Submit the name form without waiting for the call to answer. */
+  function send(browser: FsFileBrowser, name: string): void {
+    one<HTMLInputElement>(browser, 'form.name-form input[name="name"]').value = name;
+    one<HTMLFormElement>(browser, "form.name-form").dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true }),
+    );
+  }
+
+  it("closes an open name form when another object is opened", async () => {
+    const browser = await mount(fixture());
+    await click(one(browser, "button.new-folder"));
+    browser.location = OTHER;
+    await settle();
+    expect(one(browser, "form.name-form").hidden).toBe(true);
+  });
+
+  it("does not return focus to the opener when a rename answers late", async () => {
+    const source = fixture();
+    let answer: (commit: FileCommit) => void = () => undefined;
+    vi.spyOn(source, "move").mockImplementation(
+      () => new Promise<FileCommit>((resolve) => (answer = resolve)),
+    );
+    const browser = await mount(source);
+    control(browser, "readme.txt").focus();
+    await click(one(browser, "button.rename"));
+    send(browser, "renamed.txt");
+    browser.location = OTHER;
+    await settle();
+    (rootOf(browser).activeElement as HTMLElement | null)?.blur();
+    answer({ library_id: "lib", object_id: "obj", version: "v2", created: "t" });
+    await idle(browser);
+    expect(rootOf(browser).activeElement).toBeNull();
+  });
+
+  it("does not show a folder created late in the object opened since", async () => {
+    const source = fixture();
+    let answer: (folder: FolderAnswer) => void = () => undefined;
+    vi.spyOn(source, "createFolder").mockImplementation(
+      () => new Promise<FolderAnswer>((resolve) => (answer = resolve)),
+    );
+    const browser = await mount(source);
+    await click(one(browser, "button.new-folder"));
+    send(browser, "Photos");
+    browser.location = OTHER;
+    await settle();
+    answer({ library_id: "lib", object_id: "obj", path: "Photos", pending: true });
+    await idle(browser);
+    expect(names(browser)).not.toContain("Photos");
   });
 });
