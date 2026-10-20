@@ -57,6 +57,11 @@
 - Validate now names each refused library with its error code (new label `findingsRunRefused`, pure `runSummary`).
 - README: Retry is offered for the error, offline and unavailable states, not for denied.
 
+## Review fixes (Cubic round 2: 2 P2 on one issue, 1 P3)
+
+- A journal re-read (`events.resync` or a search) merges the live entries that arrived while it was in flight, so the older page never drops a newer entry. Rows are merged newest first, each id once (pure `newestFirst`). Test: "keeps a live journal entry that arrives while a resync reads the journal".
+- README: a denied read needs the caller's authorization corrected, which is not necessarily a new credential.
+
 ## How it was tested
 
 1. Failing tests first: 27 failed before any implementation (below).

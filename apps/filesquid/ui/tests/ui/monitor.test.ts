@@ -375,6 +375,33 @@ describe("<fs-monitor>", () => {
     expect(fake.findingsReads()).toBe(findings0 + 1);
   });
 
+  it("keeps a live journal entry that arrives while a resync reads the journal", async () => {
+    const fake = fakeClient();
+    const el = mount(fake.client);
+    await settle();
+    await settle();
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const load = fake.client.adminJournal;
+    fake.client.adminJournal = async (filters) => {
+      await gate;
+      return load(filters);
+    };
+    fake.emit({ topic: "events.resync", data: {} });
+    fake.emit({ topic: "journal.entry", data: entry(9, "ocfl.validation.finding") });
+    release();
+    await settle();
+    await settle();
+    const ops = [
+      ...(el.shadowRoot?.querySelectorAll('[data-section="journal"] tbody tr') ?? []),
+    ].map((r) => r.querySelectorAll("td")[1]?.textContent);
+    expect(ops).toEqual([
+      "ocfl.validation.finding",
+      "<img src=x onerror=alert(1)>",
+      "host.started",
+    ]);
+  });
+
   it("keeps the other sections up when the findings route is unavailable", async () => {
     const fake = fakeClient();
     fake.client.adminOcflFindings = () =>

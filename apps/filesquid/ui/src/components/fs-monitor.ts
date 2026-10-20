@@ -109,6 +109,11 @@ export class FsMonitor extends HTMLElement {
   private processes = new Map<string, ProcessView>();
   private journal: JournalEntry[] = [];
   private operationFilter = "";
+  /**
+   * Live journal entries that arrived while a journal page was being read; merged into the
+   * page when it answers, so a re-read never drops a newer entry.
+   */
+  private liveDuringRead?: JournalEntry[];
   /** The OCFL validation section, refreshed on `health.change` and validation updates. */
   private findings?: FsOcflFindings;
   private unsubscribe?: () => void;
@@ -265,9 +270,8 @@ export class FsMonitor extends HTMLElement {
   private addJournalEntry(entry: JournalEntry): void {
     if (this.operationFilter && entry.operation !== this.operationFilter) return;
     if (this.journal.some((row) => row.id === entry.id)) return;
-    this.journal = [entry, ...this.journal]
-      .sort((a, b) => (b.id ?? 0) - (a.id ?? 0))
-      .slice(0, MAX_JOURNAL_ROWS);
+    this.liveDuringRead?.push(entry);
+    this.journal = newestFirst([entry, ...this.journal]);
     this.renderJournal();
   }
 
@@ -463,11 +467,16 @@ export class FsMonitor extends HTMLElement {
   private async searchJournal(): Promise<void> {
     const client = this.options?.client;
     if (!client) return;
+    const live: JournalEntry[] = [];
+    this.liveDuringRead = live;
     try {
-      this.journal = (await client.adminJournal(this.journalFilters())).entries;
+      const page = await client.adminJournal(this.journalFilters());
+      this.journal = newestFirst([...live, ...page.entries]);
       this.renderJournal();
     } catch (error) {
       this.showError(error);
+    } finally {
+      if (this.liveDuringRead === live) this.liveDuringRead = undefined;
     }
   }
 
@@ -514,6 +523,24 @@ function reasonItem(reason: HealthReason, labels: LabelTable): HTMLLIElement {
   const item = el("li", reasonText(reason, labels));
   item.dataset.reason = reason.code;
   return item;
+}
+
+/**
+ * Journal rows newest first by id, each id once, at most {@link MAX_JOURNAL_ROWS}. Pure.
+ *
+ * @param entries Entries in any order, possibly repeated.
+ * @returns The rows to show.
+ */
+function newestFirst(entries: readonly JournalEntry[]): JournalEntry[] {
+  const byId = new Map<number, JournalEntry>();
+  const unnumbered: JournalEntry[] = [];
+  for (const entry of entries) {
+    if (entry.id === undefined || entry.id === null) unnumbered.push(entry);
+    else if (!byId.has(entry.id)) byId.set(entry.id, entry);
+  }
+  return [...byId.values(), ...unnumbered]
+    .sort((a, b) => (b.id ?? 0) - (a.id ?? 0))
+    .slice(0, MAX_JOURNAL_ROWS);
 }
 
 /** Format a byte count as GiB with one decimal, for example "10.0 GiB". */
