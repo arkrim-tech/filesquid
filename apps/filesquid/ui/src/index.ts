@@ -4,6 +4,8 @@
  */
 import { FsAppShell } from "./components/fs-app-shell";
 import { FsBreadcrumb } from "./components/fs-breadcrumb";
+import { FsFileBrowser } from "./components/fs-file-browser";
+import { FsFilePreview } from "./components/fs-file-preview";
 import { FsHostIndicator } from "./components/fs-host-indicator";
 import { FsMonitor } from "./components/fs-monitor";
 import { FsNavTree } from "./components/fs-nav-tree";
@@ -32,6 +34,33 @@ export { FsStates, RETRY_EVENT, type StatesOptions } from "./components/fs-state
 export { failureState, type ViewState, type ViewStateKind } from "./components/view-state";
 export { FsNavTree, type NavTreeOptions } from "./components/fs-nav-tree";
 export { FsBreadcrumb, type BreadcrumbOptions } from "./components/fs-breadcrumb";
+export { FsFilePreview, type FilePreviewOptions } from "./components/fs-file-preview";
+export {
+  FsFileBrowser,
+  type FileBrowserOptions,
+  type FilePanel,
+  type PanelFactory,
+} from "./components/fs-file-browser";
+export type { FileLayout } from "./components/file-list";
+export type { WriteOperation } from "./components/file-browser-writes";
+export * from "./files/model";
+export {
+  ClientFileSource,
+  type FileClient,
+  type FileSource,
+  type SourceOptions,
+} from "./files/source";
+export { MemoryFileSource, type MemoryFile, type MemoryOptions } from "./files/memory-source";
+export { MediaHandleController, MAX_REMINTS, type MediaState } from "./files/media-handle";
+export { columnsFor, revealScrollTop, visibleWindow } from "./files/window";
+export { listKeyTarget } from "./files/keys";
+export { uploadName, uploadFiles, moveTarget, MAX_UPLOAD_FILES } from "./files/ops";
+export {
+  builtInRenderers,
+  pickRenderer,
+  type PreviewContext,
+  type PreviewRenderer,
+} from "./files/preview";
 export { treeKeyAction, type KeyItem, type TreeKeyAction } from "./components/nav-tree-keys";
 export {
   EMPTY_NAVIGATION_PREFERENCES,
@@ -102,7 +131,14 @@ export {
   type PortError,
 } from "./api/commands";
 export { createHostClient, DESKTOP_EVENT, LAUNCH_TOKEN_GLOBAL, launchToken } from "./api/host";
-export { MONITOR_ROUTE, bindMonitorRoute, memoryTokenStore, type RouteHost } from "./app/routes";
+export {
+  MONITOR_ROUTE,
+  bindFilesRoute,
+  bindMonitorRoute,
+  memoryTokenStore,
+  type FilesRouteOptions,
+  type RouteHost,
+} from "./app/routes";
 export {
   accessibilityViolations,
   accessibleName,
@@ -142,6 +178,12 @@ export function defineElements(): void {
   if (!customElements.get("fs-states")) customElements.define("fs-states", FsStates);
   if (!customElements.get("fs-nav-tree")) customElements.define("fs-nav-tree", FsNavTree);
   if (!customElements.get("fs-breadcrumb")) customElements.define("fs-breadcrumb", FsBreadcrumb);
+  if (!customElements.get("fs-file-preview")) {
+    customElements.define("fs-file-preview", FsFilePreview);
+  }
+  if (!customElements.get("fs-file-browser")) {
+    customElements.define("fs-file-browser", FsFileBrowser);
+  }
   if (!customElements.get("fs-host-indicator")) {
     customElements.define("fs-host-indicator", FsHostIndicator);
   }
