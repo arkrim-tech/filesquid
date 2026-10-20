@@ -4,8 +4,6 @@
 # API-S-021: Navigation listing: one level of the tree per call, ancestors for the breadcrumb, permission-filtered paging
 # API-S-019: Library domain commands and queries (the source of libraries, collections and virtual collections)
 # API-S-005: Responses carry opaque handles, never raw filesystem paths or SQL
-#
-# Step definitions arrive with Task API-F1.11; until then these scenarios are reported as skipped.
 Feature: Navigation listing
   As a person browsing a FileSquid library
   I want the API to list the levels of my navigation tree and the path to where I am
@@ -71,7 +69,7 @@ Feature: Navigation listing
     And subscriber "Ana" may read library "Family", collection "Photos" and collection "Letters"
     And subscriber "Ben" may read library "Family" and collection "Photos" but not collection "Letters"
     And subscriber "Cy" may read nothing in library "Family"
-    When one committed move takes a folder from collection "Letters" into collection "Photos"
+    When the API announces one committed move of a folder from collection "Letters" into collection "Photos"
     Then "Ana" should receive one "navigation.change" event naming the handles of collections "Letters" and "Photos"
     And "Ben" should receive one "navigation.change" event naming only the handle of collection "Photos"
     And "Cy" should receive no "navigation.change" event

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "FileSquid API",
-    "version": "0.10.0",
+    "version": "0.11.0",
     "description": "The single FileSquid API served by every FileSquid host. See resources/architecture/030-filesquid-api-and-transports.md. Conventions: a command (mutation) sends a CommandEnvelope as the `envelope` member of its JSON request body (operation_id is the idempotency key, expected_revision the revision last read) and answers with a CommandOutcome; a query (list) takes the PageSize (`limit`, 1-1000) and Cursor (`cursor`) parameters; every failed request answers with an ApiError body (code, message, retryable). Router-wide fallbacks: any /api/v1/ path not in this contract answers 404 not_found, and a documented path called with a method it does not document answers 405 method_not_allowed; both carry the ApiError body. They are not listed per operation because no operation sends them. Authorisation is deny-by-default: every operation, including health, the contract and the event channel, requires the bearerAuth credential and is authorised before anything else runs, so a call without it answers 401 unauthorized and a call whose credential is not accepted or does not grant the operation answers 403 forbidden, before any 404 or 405; both carry the ApiError body with a DenialReason in `reason`. Each operation names the authorisation action it performs in x-filesquid-action. The one deliberate exception is GET /api/v1/health/live (x-filesquid-action public, security []), a liveness probe that answers only {\"status\":\"up\"} without a credential. The content route GET and HEAD /api/v1/content/{handle} (x-filesquid-action content.read, x-filesquid-credential content-handle, security []) is not public: its only credential is the content handle in its path, minted by POST /api/v1/content-handles for one file version (API-S-018); a Bearer token is not accepted there, and every unusable request under /api/v1/content/ (unknown, malformed, missing, expired, evicted or revoked handle, an extra path segment or another method) answers one identical 403 forbidden with reason invalid_credentials, never 401, 404 or 405. Paths marked x-filesquid-host-route are served by the hosts, not by the filesquid-api router."
   },
   "security": [
@@ -141,6 +141,9 @@
         },
         "host.change": {
           "$ref": "#/components/schemas/HostDescriptor"
+        },
+        "navigation.change": {
+          "$ref": "#/components/schemas/NavigationChange"
         }
       }
     },
@@ -2004,6 +2007,55 @@
           }
         }
       }
+    },
+    "/api/v1/navigation": {
+      "get": {
+        "operationId": "listNavigation",
+        "summary": "List one level of the navigation tree",
+        "description": "One level of the tree a UI shows as its navigation and breadcrumb (API-S-021). Without node: the host's one repository. With node: that node's children - a repository's libraries; a library's collections, then its virtual collections, then the folders its unfiled files imply; a collection's folders; a folder's subfolders; nothing under a virtual collection; never files. A folder exists only when committed ordinary files imply it, so one implied only by hidden or deleted files is not listed. Every node carries an opaque handle (at most 512 bytes, never a path, storage key, SQL or token), its kind, its name and has_children (true only when the caller may read a child). ancestors holds the nodes from the repository down to and including the listed node, for the breadcrumb. Paging: limit 1-1000 (default 200) and an opaque cursor, in a stable order - the fixed kind order library, collection, virtual_collection, folder; libraries, collections and virtual collections in catalog order; folders by name in Unicode code-point order; no repeat or gap across pages. A page may hold fewer nodes than limit while next_cursor is present (nodes the caller may not read are skipped); keep following next_cursor until it is null. Only nodes the caller may read are listed, counted or named in an ancestor trail; an unknown node and one the caller may not read, or one under an unreadable ancestor, get the same 404 not_found. A folder whose handle would exceed 512 bytes cannot be named and is not listed. A malformed cursor, a cursor of another level, a limit outside 1-1000 or an unknown parameter answers 400 invalid_request. A successful read is not journaled; a refusal is journaled once as navigation.list (API-S-017). Subscribe to navigation.change on the event channel to know when to read a level again.",
+        "x-filesquid-action": "navigation.read",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/NavigationNode"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of one level of the tree.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NavigationPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2031,9 +2083,10 @@
           "journal.entry",
           "health.change",
           "events.resync",
-          "host.change"
+          "host.change",
+          "navigation.change"
         ],
-        "description": "Documented event topics: process.update (a process or job changed), journal.entry (an activity journal entry was written), health.change (the health status changed), events.resync (events were missed; reread state), host.change (a host descriptor field changed; the payload is the whole new HostDescriptor; reread GET /api/v1/host after events.resync or a reconnect)."
+        "description": "Documented event topics: process.update (a process or job changed), journal.entry (an activity journal entry was written), health.change (the health status changed), events.resync (events were missed; reread state), host.change (a host descriptor field changed; the payload is the whole new HostDescriptor; reread GET /api/v1/host after events.resync or a reconnect), navigation.change (children of navigation nodes changed; the payload is a NavigationChange; read the named parents' levels of GET /api/v1/navigation again, or the whole visible tree on all, events.resync or a reconnect)."
       },
       "EventResync": {
         "type": "object",
@@ -3618,6 +3671,99 @@
             "description": "Most objects one run checks (default 100,000)."
           }
         }
+      },
+      "NavigationKind": {
+        "type": "string",
+        "enum": [
+          "repository",
+          "library",
+          "collection",
+          "virtual_collection",
+          "folder"
+        ],
+        "description": "What a navigation node stands for. A listing orders children by this fixed order (library, collection, virtual_collection, folder); a client never sorts by the names."
+      },
+      "NavigationNode": {
+        "type": "object",
+        "description": "One node of the navigation tree.",
+        "required": [
+          "node",
+          "kind",
+          "name",
+          "has_children"
+        ],
+        "properties": {
+          "node": {
+            "type": "string",
+            "maxLength": 512,
+            "description": "The opaque handle. Clients MUST NOT parse it; it holds no filesystem path, storage key, OCFL content path, SQL or token."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/NavigationKind"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The title of a library, collection or virtual collection; the last segment of a folder's logical path; for a repository, the name its host is configured with, or null (the UI then uses its own label)."
+          },
+          "has_children": {
+            "type": "boolean",
+            "description": "True only when the caller may read at least one child of the node. A virtual collection never has children here."
+          }
+        }
+      },
+      "NavigationPage": {
+        "type": "object",
+        "description": "One page of one level of the navigation tree (API-S-021).",
+        "required": [
+          "nodes",
+          "ancestors",
+          "next_cursor"
+        ],
+        "properties": {
+          "nodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NavigationNode"
+            },
+            "description": "The nodes of this page, in the stable order of the listing."
+          },
+          "ancestors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NavigationNode"
+            },
+            "description": "For a listed node: the nodes from the repository down to and including that node, so one call fills a breadcrumb. Empty at the repository level."
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The opaque cursor of the next page, or null on the last page."
+          }
+        }
+      },
+      "NavigationChange": {
+        "type": "object",
+        "description": "Payload of navigation.change: after a committed change adds, removes, renames or moves a node, the nodes whose children changed. Exactly one of parents (1 to 64 handles) and all is present. A subscriber receives only the handles it may read and no event when it may read none.",
+        "properties": {
+          "parents": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "description": "The handles (1 to 64) of the nodes whose children changed; read those levels again."
+          },
+          "all": {
+            "type": "boolean",
+            "const": true,
+            "description": "True when more than 64 changed or the changed parents are not known; read the whole visible tree again."
+          }
+        }
       }
     },
     "parameters": {
@@ -3685,6 +3831,16 @@
         "description": "One byte range: bytes=a-b, bytes=a- or bytes=-n. A malformed header, another unit or several ranges are ignored.",
         "schema": {
           "type": "string"
+        }
+      },
+      "NavigationNode": {
+        "name": "node",
+        "in": "query",
+        "required": false,
+        "description": "The opaque handle of the node whose children to list, as an earlier answer gave it (clients never parse it). Absent: the host's repository level. An unknown, malformed or unreadable handle answers one identical 404 not_found.",
+        "schema": {
+          "type": "string",
+          "maxLength": 512
         }
       }
     },

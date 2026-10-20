@@ -65,6 +65,8 @@ pub enum Action {
     /// Read the PROV-O history: activities, records and their export (`/history`,
     /// `/files/{id}/history`, `/files/{id}/versions/{version}/prov`; API-S-029).
     ReadHistory,
+    /// Read the navigation tree (`GET /api/v1/navigation`, API-S-021).
+    ReadNavigation,
     /// Deliberately public, unauthenticated: only the liveness probe
     /// (`GET /api/v1/health/live`), which says that the process is up and nothing else. The
     /// router leaves the route-table entry with this action unguarded; the guard itself
@@ -75,7 +77,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, in declaration order.
-    pub const ALL: [Action; 12] = [
+    pub const ALL: [Action; 13] = [
         Action::ReadHealth,
         Action::ReadContract,
         Action::SubscribeEvents,
@@ -87,6 +89,7 @@ impl Action {
         Action::WriteFiles,
         Action::ReadContent,
         Action::ReadHistory,
+        Action::ReadNavigation,
         Action::Public,
     ];
 
@@ -104,6 +107,7 @@ impl Action {
             Action::WriteFiles => "files.write",
             Action::ReadContent => "content.read",
             Action::ReadHistory => "history.read",
+            Action::ReadNavigation => "navigation.read",
             Action::Public => "public",
         }
     }
