@@ -185,13 +185,12 @@ class InProgress(unittest.TestCase):
         self.assertNotIn("DE-0.1", result.active)
 
     def test_pr_module_under_ticked_global(self):
-        """An unticked module with a PR is listed even when its global box is ticked."""
+        """An unticked module with a PR under a ticked global is not listed: the global is done."""
         parsed = rows()
         parsed[0].modules.append(q.ModuleRow("IO-0.2", False, "[IO-0.2](../a/plan.md#x)", "Two"))
         result = q.compute_in_progress(parsed, {"IO-0.2": 52})
-        flat = [e for e in result.entries if not e.nested]
-        self.assertEqual([e.modules[0].task_id for e in flat], ["IO-0.2"])
-        self.assertIn("IO-0.2", result.active)
+        self.assertEqual([e for e in result.entries if e.global_row.done], [])
+        self.assertNotIn("IO-0.2", result.active)
 
     def test_recorded_pr_of_a_since_ticked_task_is_dropped(self):
         """A recorded PR whose task is now ticked is neither listed nor kept."""
@@ -222,6 +221,48 @@ class InProgress(unittest.TestCase):
         result = q.compute_in_progress(rows(), {"FS-3.9": 50})
         self.assertIn("FS-3.9", result.active)
         self.assertEqual(result.entries[-1].global_row.task_id, "FS-3.9")
+
+
+class UnderWayCount(unittest.TestCase):
+    """The "N more are under way" count, the In progress list and the prose agree."""
+
+    def test_all_rows_ticked_but_global_open_is_under_way(self):
+        """A global whose module rows are all ticked but whose box is open is listed and counted."""
+        parsed = rows()
+        for module in parsed[2].modules:  # Task 0.5
+            module.done = True
+        result = q.compute_in_progress(parsed, {})
+        self.assertEqual([(e.global_row.task_id, e.nested) for e in result.entries], [("0.4", True), ("0.5", True)])
+        self.assertEqual(result.entries[1].modules, [])
+        self.assertEqual(q.count_under_way(result), 2)
+        self.assertIn("2 of 2 module rows ticked", q.render_queue(result, [], {}, "2026-10-18T17:40:00Z"))
+
+    def test_no_ticked_rows_and_no_pull_request_is_not_under_way(self):
+        """An open global with no ticked row and no PR is neither listed nor counted."""
+        result = q.compute_in_progress(rows(), {})
+        self.assertEqual([e.global_row.task_id for e in result.entries], ["0.4"])
+        self.assertEqual(q.count_under_way(result), 1)
+
+    def test_pr_on_partial_global_and_its_row_counts_once(self):
+        """A PR on a partly ticked global and on one of its rows is one entry, one count."""
+        result = q.compute_in_progress(rows(), {"0.4": 50, "IO-0.9": 51})
+        self.assertEqual(len(result.entries), 1)
+        self.assertEqual(q.count_under_way(result), 1)
+
+    def test_count_matches_list_and_excludes_done(self):
+        """The count equals the distinct open globals named by the list."""
+        parsed = rows()
+        result = q.compute_in_progress(parsed, {"DE-0.1": 46, "FS-3.9": 50})
+        listed = {e.global_row.task_id for e in result.entries}
+        open_ids = {g.task_id for g in parsed if not g.done}
+        self.assertTrue(listed <= open_ids)
+        self.assertEqual(q.count_under_way(result), len(listed))
+
+    def test_summary_prose_defines_the_count(self):
+        """The summary states the same definition the code uses."""
+        block = u.render_summary([u.Task("0.4", False, 1, 2, 10)], "queue", 1)
+        self.assertIn("with at least one module row ticked", block)
+        self.assertNotIn("some but not all module rows ticked", block)
 
 
 class UpNext(unittest.TestCase):
