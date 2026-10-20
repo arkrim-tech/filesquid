@@ -471,3 +471,33 @@ fn a_refused_submission_is_journaled_with_its_operation_id() {
     );
     assert_eq!(refused[0].error_code.as_deref(), Some("unavailable"));
 }
+
+/// Cubic round 2: a delayed renewal or checkpoint never moves the lease end backwards.
+#[test]
+fn a_late_renewal_never_shortens_the_lease() {
+    let rig = Rig::new();
+    let jobs = rig.jobs("launch-1");
+    let job = jobs.submit(spec("s")).unwrap();
+    drop(jobs.start(&job.id, "s").unwrap());
+    let stored = rig.store.get(&job.id).unwrap().unwrap();
+    let lease = rules::lease_of(&stored).unwrap();
+    let later = rules::renew(stored, &lease, START_MS + 5_000, TTL_MS).unwrap();
+    let end = later.lease_expires_ms;
+    let delayed = rules::renew(later.clone(), &lease, START_MS + 1_000, TTL_MS).unwrap();
+    assert_eq!(delayed.lease_expires_ms, end);
+    let checkpointed =
+        rules::checkpoint(later, &lease, ("{}", 0, None), START_MS + 1_000, TTL_MS).unwrap();
+    assert_eq!(checkpointed.lease_expires_ms, end);
+}
+
+/// Cubic round 2: a stale worker is fenced whatever it sends.
+#[test]
+fn a_stale_worker_is_fenced_even_with_an_oversized_checkpoint() {
+    let rig = Rig::new();
+    let jobs = rig.jobs("launch-1");
+    let job = jobs.submit(spec("s")).unwrap();
+    let mut stale = jobs.start(&job.id, "s").unwrap();
+    rig.advance(TTL_MS + 1);
+    let huge = "x".repeat(MAX_CHECKPOINT_BYTES + 1);
+    assert_eq!(stale.checkpoint(&huge, 1, None), Err(JobError::Fenced));
+}

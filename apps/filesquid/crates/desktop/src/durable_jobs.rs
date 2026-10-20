@@ -231,15 +231,18 @@ fn start_when_free(
     }
 }
 
-/// Sleep up to `ms` milliseconds in [`LEASE_WAIT_STEP`]s, returning early once `stop` is set.
+/// Sleep `ms` milliseconds in [`LEASE_WAIT_STEP`]s, the last one only as long as what is
+/// left, returning early once `stop` is set.
 fn wait_unless_stopped(ms: i64, stop: &AtomicBool) {
-    let step = LEASE_WAIT_STEP.as_millis() as i64;
-    let steps = (ms.max(0) + step - 1) / step;
+    let total = Duration::from_millis(u64::try_from(ms.max(0)).unwrap_or(0));
+    let deadline = Instant::now() + total;
+    let steps = total.as_millis().div_ceil(LEASE_WAIT_STEP.as_millis());
     for _ in 0..steps {
-        if stop.load(Ordering::SeqCst) {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if stop.load(Ordering::SeqCst) || left.is_zero() {
             return;
         }
-        std::thread::sleep(LEASE_WAIT_STEP);
+        std::thread::sleep(LEASE_WAIT_STEP.min(left));
     }
 }
 

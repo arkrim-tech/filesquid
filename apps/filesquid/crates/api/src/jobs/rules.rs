@@ -70,12 +70,12 @@ pub fn lease_of(job: &Job) -> Result<Lease, JobError> {
     }
 }
 
-/// Store `checkpoint` and the progress under `lease` and renew the lease until
+/// Store `checkpoint` and the progress under `lease` and renew the lease until at least
 /// `now_ms + ttl_ms`.
 ///
 /// # Errors
-/// [`JobError::TooLarge`] past [`MAX_CHECKPOINT_BYTES`]; [`JobError::Fenced`] when the
-/// lease is no longer the job's.
+/// [`JobError::Fenced`] when the lease is no longer the job's (checked first, so a stale
+/// worker is always fenced); [`JobError::TooLarge`] past [`MAX_CHECKPOINT_BYTES`].
 pub fn checkpoint(
     mut job: Job,
     lease: &Lease,
@@ -83,28 +83,35 @@ pub fn checkpoint(
     now_ms: i64,
     ttl_ms: i64,
 ) -> Result<Job, JobError> {
+    check_lease(&job, lease, now_ms)?;
     if checkpoint.len() > MAX_CHECKPOINT_BYTES {
         return Err(JobError::TooLarge);
     }
-    check_lease(&job, lease, now_ms)?;
     job.checkpoint = Some(checkpoint.to_string());
     job.done = done;
     job.total = total;
-    job.lease_expires_ms = Some(now_ms.saturating_add(ttl_ms));
+    job.lease_expires_ms = Some(extended(&job, now_ms, ttl_ms));
     job.updated_ms = now_ms;
     Ok(job)
 }
 
-/// Renew `lease` until `now_ms + ttl_ms` without changing the checkpoint: what a worker
-/// does while one long unit of work runs.
+/// Renew `lease` until at least `now_ms + ttl_ms` without changing the checkpoint: what a
+/// worker does while one long unit of work runs.
 ///
 /// # Errors
 /// [`JobError::Fenced`] when the lease is no longer the job's.
 pub fn renew(mut job: Job, lease: &Lease, now_ms: i64, ttl_ms: i64) -> Result<Job, JobError> {
     check_lease(&job, lease, now_ms)?;
-    job.lease_expires_ms = Some(now_ms.saturating_add(ttl_ms));
+    job.lease_expires_ms = Some(extended(&job, now_ms, ttl_ms));
     job.updated_ms = now_ms;
     Ok(job)
+}
+
+/// The lease end after a renewal at `now_ms`: never earlier than the stored end, so a
+/// delayed renewal or checkpoint cannot shorten a lease another call already extended.
+fn extended(job: &Job, now_ms: i64, ttl_ms: i64) -> i64 {
+    let renewed = now_ms.saturating_add(ttl_ms);
+    job.lease_expires_ms.map_or(renewed, |end| end.max(renewed))
 }
 
 /// Give the lease back at quit: the job is pending again with its checkpoint kept.
