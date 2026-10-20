@@ -1,0 +1,213 @@
+//! The upload route's write (Task API-F1.4; API-S-026, MD-S-013, ADR 038 Decision 3): an upload
+//! creates the file's own OCFL object `files/<file-id>` with the original at
+//! `original/<file-uuid>.<ext>` and its metadata record beside it, in one version, never at a
+//! logical path the client chooses. An upload naming an existing file is a new version of
+//! that file's object: the new bytes at the same stored path and one more import entry. The
+//! verified size is the size of the bytes received; a declared size that differs fails
+//! verification and commits nothing.
+
+use super::error::FileError;
+use super::service::{change_model, FileService};
+use super::view::{UploadQuery, UploadView};
+use super::{media, MAX_MESSAGE_BYTES};
+use crate::canonical::{
+    ascii_name_form, commit_file_original, file_object_id, file_object_root, new_upload_record,
+    read_file_original, reupload_record, CanonicalError, OwnerReadable, UploadInput,
+};
+use crate::ErrorCode;
+use filesquid_core::FileId;
+use filesquid_metadata::file_record::FileRecord;
+use filesquid_metadata::import::NameForm;
+use filesquid_ocfl::read::Object;
+use filesquid_ocfl::storage::StorageBackend;
+use filesquid_ocfl::write::VersionReservations;
+
+/// The file an upload writes: its identifier and object, and its record at the head, if any.
+struct Target {
+    file_id: FileId,
+    root: String,
+    object_id: String,
+    previous: Option<FileRecord>,
+    next_version: String,
+}
+
+impl<B, R, S> FileService<B, R, S>
+where
+    B: StorageBackend,
+    R: VersionReservations,
+    S: StorageBackend,
+{
+    /// Commit one upload of `bytes` by `actor`: a new file object, or a new version of the
+    /// object of `query.file_id`.
+    ///
+    /// # Errors
+    /// `invalid_request` for a name, media type, time, size or message that is refused (a
+    /// declared size that is not the body's among them); `not_found` for an unknown library
+    /// or file; `conflict` when the upload would change nothing or another writer moved the
+    /// head; a storage failure otherwise. Nothing is published on any error.
+    pub async fn upload(
+        &self,
+        query: UploadQuery,
+        bytes: &[u8],
+        actor: &str,
+    ) -> Result<UploadView, FileError> {
+        let form = name_form(&query)?;
+        let meta = self.meta(actor, query.message.as_deref())?;
+        let library = self.library(&query.library_id)?;
+        let _writing = library.writes.lock().await;
+        let backend = library.files.backend.as_ref();
+        let target = upload_target(backend, query.file_id.as_deref()).await?;
+        let started = self.created();
+        let media_type = query
+            .media_type
+            .clone()
+            .unwrap_or_else(|| media::media_type(&query.name).to_string());
+        let input = UploadInput {
+            name: &query.name,
+            name_normalization: form,
+            declared_size: query.size,
+            media_type: &media_type,
+            last_modified: query.last_modified.as_deref(),
+            operation_id: None,
+            started: &started,
+            finished: &self.created(),
+            object_version: &target.next_version,
+        };
+        let record = upload_record(&target, &input, bytes)?;
+        let staging = library.staging(&target.object_id)?;
+        let model = change_model(&library, &target.root, &target.object_id, staging);
+        let previous = target.previous.as_ref();
+        let committed = commit_file_original(
+            &model,
+            &OwnerReadable,
+            &target.file_id,
+            &record,
+            previous,
+            bytes,
+            meta,
+        )
+        .await
+        .map_err(canonical_error)?;
+        let receipt = committed.ok_or_else(|| {
+            FileError::conflict("The upload would change nothing, so no version was made.")
+        })?;
+        library.remember(&target.object_id, &target.root);
+        Ok(UploadView {
+            library_id: query.library_id,
+            file_id: target.file_id.as_str().to_string(),
+            object_id: receipt.object_id,
+            version: receipt.version.to_string(),
+            created: receipt.created,
+        })
+    }
+}
+
+/// The normalisation form of the uploaded name: the one the client stated, or NFC for an
+/// ASCII name.
+fn name_form(query: &UploadQuery) -> Result<NameForm, FileError> {
+    if query
+        .message
+        .as_ref()
+        .is_some_and(|m| m.len() > MAX_MESSAGE_BYTES)
+    {
+        return Err(FileError::invalid(format!(
+            "A version message is 1 to {MAX_MESSAGE_BYTES} bytes and not blank."
+        )));
+    }
+    query
+        .name_normalization
+        .or_else(|| ascii_name_form(&query.name))
+        .ok_or_else(|| FileError::invalid("A name that is not ASCII needs its name_normalization."))
+}
+
+/// The file an upload writes: a new file, or the existing file `file_id` with its record and
+/// the version the upload will publish.
+async fn upload_target<B: StorageBackend>(
+    backend: &B,
+    file_id: Option<&str>,
+) -> Result<Target, FileError> {
+    let (file_id, existing) = match file_id {
+        Some(id) => (parse_file_id(id)?, true),
+        None => (mint_file_id()?, false),
+    };
+    let root = file_object_root(&file_id).map_err(canonical_error)?;
+    let object_id = file_object_id(&file_id);
+    let original = read_file_original(backend, &OwnerReadable, &file_id)
+        .await
+        .map_err(canonical_error)?;
+    let previous = match (existing, original) {
+        (true, Some(original)) => Some(original.record),
+        (true, None) => return Err(FileError::not_found()),
+        (false, Some(_)) => return Err(FileError::conflict("That file already exists.")),
+        (false, None) => None,
+    };
+    let next_version = match &previous {
+        Some(_) => next_version(backend, &root).await?,
+        None => "v1".to_string(),
+    };
+    Ok(Target {
+        file_id,
+        root,
+        object_id,
+        previous,
+        next_version,
+    })
+}
+
+/// The record an upload commits: the first record of a new file, or the previous record
+/// with one more import entry.
+fn upload_record(
+    target: &Target,
+    input: &UploadInput<'_>,
+    bytes: &[u8],
+) -> Result<FileRecord, FileError> {
+    let record = match &target.previous {
+        Some(previous) => reupload_record(&target.file_id, previous, input, bytes),
+        None => new_upload_record(&target.file_id, input, bytes),
+    };
+    record.map_err(canonical_error)
+}
+
+/// The version after the head of the object at `root`.
+async fn next_version<B: StorageBackend>(backend: &B, root: &str) -> Result<String, FileError> {
+    let object = Object::open(backend, root).await?;
+    let next = object.head().next().ok_or_else(|| {
+        FileError::conflict("The file has reached the last version its numbering allows.")
+    })?;
+    Ok(next.to_string())
+}
+
+/// The file identifier `id` names.
+fn parse_file_id(id: &str) -> Result<FileId, FileError> {
+    match crate::library::is_uuid_v4(id) {
+        true => FileId::new(id).map_err(|_| FileError::invalid("A file_id is a UUID v4.")),
+        false => Err(FileError::invalid("A file_id is a UUID v4.")),
+    }
+}
+
+/// A new file identifier (UUID v4, ADR 021).
+fn mint_file_id() -> Result<FileId, FileError> {
+    let id = crate::library::mint_uuid_v4()
+        .map_err(|_| FileError::unavailable("the random source is unavailable"))?;
+    FileId::new(&id).map_err(|_| FileError::internal("a minted file identifier was refused"))
+}
+
+/// The file error of a canonical refusal or failure.
+fn canonical_error(err: CanonicalError) -> FileError {
+    match err {
+        CanonicalError::Encode(reason) | CanonicalError::InvalidIdentifier(reason) => {
+            FileError::invalid(format!("The upload was refused: {reason}."))
+        }
+        CanonicalError::Conflict => {
+            FileError::conflict("Another change reached the file first; try again.")
+        }
+        CanonicalError::Unavailable(detail) => FileError::unavailable(detail),
+        CanonicalError::HeadWithoutInventory => FileError::new(
+            ErrorCode::Conflict,
+            "The file's last version has no version inventory; repair the library first.",
+        ),
+        CanonicalError::Decode { .. } | CanonicalError::Failed(_) => {
+            FileError::internal("the file object could not be read or written")
+        }
+    }
+}

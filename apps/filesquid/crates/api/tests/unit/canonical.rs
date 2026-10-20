@@ -2,18 +2,21 @@
 //! layout, entity encoding and operation message, and snapshot commits and reads through
 //! the change model on the in-memory storage backend.
 
+use filesquid_api::canonical::original::original_path_for;
 use filesquid_api::canonical::{
     commit_file_original, commit_snapshot, create_storage_root, file_object_id, file_object_root,
-    operation_message, parse_operation_message, read_file_original, read_snapshot,
-    snapshot_object_id, touched, CanonicalError, LibraryHead, OperationRecord, OriginalRecord,
-    OwnerReadable, SnapshotDelta, SnapshotEntity, SnapshotFile, SnapshotKey, VirtualEntry,
-    SNAPSHOT_ROOT,
+    new_upload_record, operation_message, parse_operation_message, read_file_original,
+    read_snapshot, reupload_record, snapshot_object_id, touched, CanonicalError, FileOriginal,
+    LibraryHead, OperationRecord, OwnerReadable, SnapshotDelta, SnapshotEntity, SnapshotFile,
+    SnapshotKey, UploadInput, VirtualEntry, SNAPSHOT_ROOT,
 };
 use filesquid_api::library::{CatalogChange, CatalogError, FileState, LibraryRecord};
 use filesquid_core::{
     Collection, CollectionId, File, FileId, Folder, FolderId, Library, LibraryId, RepositoryId,
     VirtualCollection, VirtualCollectionId, VirtualMembership,
 };
+use filesquid_metadata::file_record::{extension_of, FileRecord};
+use filesquid_metadata::import::NameForm;
 use filesquid_ocfl::change::{ChangeModel, StagingArea, VersionMeta};
 use filesquid_ocfl::read::Object;
 use filesquid_ocfl::storage::{complete_immediately, MemoryBackend};
@@ -349,7 +352,55 @@ fn an_entity_that_does_not_match_its_path_is_refused_on_read() {
     assert!(filesquid_api::canonical::entity::decode("folders/x.json", other_schema).is_err());
 }
 
-/// Commit `bytes` as the original of `file`, named `original_name` by the owner.
+/// The upload facts of `name` with `media_type`, declaring `size` bytes.
+fn upload<'a>(name: &'a str, media_type: &'a str, size: u64, op: &'a str) -> UploadInput<'a> {
+    UploadInput {
+        name,
+        name_normalization: NameForm::Nfc,
+        declared_size: size,
+        media_type,
+        last_modified: Some("2026-10-18T09:30:00Z"),
+        operation_id: Some(op),
+        started: "2026-10-19T00:00:00Z",
+        finished: "2026-10-19T00:00:01Z",
+        object_version: "v1",
+    }
+}
+
+/// The record of the first upload of `bytes` as `original_name`.
+fn first_record(
+    file: &FileId,
+    original_name: &str,
+    media_type: &str,
+    bytes: &[u8],
+) -> Result<FileRecord, CanonicalError> {
+    let input = upload(original_name, media_type, bytes.len() as u64, "op-9");
+    new_upload_record(file, &input, bytes)
+}
+
+/// Commit `record` and `bytes` as the original of `file` over `previous`.
+fn commit_record(
+    rig: &Rig,
+    file: &FileId,
+    record: &FileRecord,
+    previous: Option<&FileRecord>,
+    bytes: &[u8],
+    op: &str,
+) -> Result<Option<filesquid_ocfl::write::CommitReceipt>, CanonicalError> {
+    let root = file_object_root(file).unwrap();
+    let model = rig.model(&root, &file_object_id(file));
+    ready(commit_file_original(
+        &model,
+        &OwnerReadable,
+        file,
+        record,
+        previous,
+        bytes,
+        meta(&record_of(op)),
+    ))
+}
+
+/// Commit the first upload of `bytes` as the original of `file`, named `original_name`.
 fn commit_original(
     rig: &Rig,
     file: &FileId,
@@ -357,17 +408,16 @@ fn commit_original(
     media_type: &str,
     op: &str,
 ) -> Result<Option<filesquid_ocfl::write::CommitReceipt>, CanonicalError> {
-    let described = OriginalRecord::new(original_name, media_type)?;
-    let root = file_object_root(file).unwrap();
-    let model = rig.model(&root, &file_object_id(file));
-    ready(commit_file_original(
-        &model,
-        &OwnerReadable,
-        file,
-        &described,
-        b"jpeg bytes",
-        meta(&record(op, "1")),
-    ))
+    let record = first_record(file, original_name, media_type, JPEG)?;
+    commit_record(rig, file, &record, None, JPEG, op)
+}
+
+/// The bytes the original tests store.
+const JPEG: &[u8] = b"jpeg bytes";
+
+/// The operation record of `op`.
+fn record_of(op: &str) -> OperationRecord {
+    record(op, "1")
 }
 
 /// The logical paths at the head of `file`'s object.
@@ -375,6 +425,13 @@ fn head_paths(rig: &Rig, file: &FileId) -> Vec<String> {
     let object = ready(Object::open(&rig.root, &file_object_root(file).unwrap())).unwrap();
     let state = object.state(object.head()).unwrap();
     state.paths().map(str::to_string).collect()
+}
+
+/// The original of `file` at its head.
+fn read_original(rig: &Rig, file: &FileId) -> FileOriginal {
+    ready(read_file_original(&rig.root, &OwnerReadable, file))
+        .unwrap()
+        .expect("original")
 }
 
 #[test]
@@ -392,16 +449,16 @@ fn a_file_original_is_its_own_object_with_its_metadata_record() {
             format!("original/{FILE}.metadata.md")
         ]
     );
-    let read = ready(read_file_original(&rig.root, &OwnerReadable, &file))
-        .unwrap()
-        .expect("original");
+    let read = read_original(&rig, &file);
     assert_eq!(read.path, format!("original/{FILE}.JPG"));
-    assert_eq!(read.record.original_name(), "IMG_0001.JPG");
+    assert_eq!(read.record.original_name().as_text(), Some("IMG_0001.JPG"));
+    assert_eq!(read.record.display_name(), "IMG_0001.JPG");
     assert_eq!(read.record.extension(), Some("JPG"));
-    assert_eq!(read.record.media_type(), "image/jpeg");
-    let again = commit_original(&rig, &file, "IMG_0001.JPG", "image/jpeg", "op-10").unwrap();
+    assert_eq!(read.record.media_type(), Some("image/jpeg"));
+    assert_eq!(read.record.imports().len(), 1);
+    let again = commit_record(&rig, &file, &read.record, Some(&read.record), JPEG, "op-10");
     assert!(
-        again.is_none(),
+        again.unwrap().is_none(),
         "the same original and record write no version"
     );
 }
@@ -412,47 +469,67 @@ fn an_owner_name_round_trips_through_its_metadata_record() {
     let file = FileId::new(FILE).unwrap();
     let original = "Café au lait — 写真 (1).JPEG";
     commit_original(&rig, &file, original, "image/jpeg", "op-9").unwrap();
-    let read = ready(read_file_original(&rig.root, &OwnerReadable, &file))
-        .unwrap()
-        .expect("original");
+    let read = read_original(&rig, &file);
     assert_eq!(read.path, format!("original/{FILE}.JPEG"));
-    assert_eq!(read.record.original_name(), original);
+    assert_eq!(read.record.original_name().as_text(), Some(original));
     assert!(head_paths(&rig, &file).iter().all(|p| !p.contains("Caf")));
 }
 
 #[test]
-fn the_metadata_record_is_readable_front_matter() {
-    let record = OriginalRecord::new("a \"b\"", "text/plain").unwrap();
-    let bytes = filesquid_api::canonical::original::encode_companion(&record).unwrap();
-    assert_eq!(
-        String::from_utf8(bytes.clone()).unwrap(),
-        "---\nschema: filesquid.original.v1\noriginal_name: \"a \\\"b\\\"\"\nextension: null\nmedia_type: \"text/plain\"\n---\n"
-    );
-    let path = "original/x.metadata.md";
-    let decode = |b: &[u8]| filesquid_api::canonical::original::decode_companion(path, b);
-    assert_eq!(decode(&bytes).unwrap(), record);
-    let refused = [
-        &b"---\nschema: other\noriginal_name: \"a\"\nextension: null\nmedia_type: \"text/plain\"\n---\n"[..],
-        b"---\nschema: filesquid.original.v1\noriginal_name: \"a.txt\"\nextension: null\nmedia_type: \"text/plain\"\n---\n",
-        b"---\nschema: filesquid.original.v1\noriginal_name: \"a\"\nextension: null\nmedia_type: \"text\"\n---\n",
-    ];
-    for bytes in refused {
-        assert!(matches!(decode(bytes), Err(CanonicalError::Decode { .. })));
-    }
+fn the_metadata_record_is_the_metadata_modules_file_record() {
+    let rig = Rig::new();
+    let file = FileId::new(FILE).unwrap();
+    commit_original(&rig, &file, "a.jpg", "image/jpeg", "op-9").unwrap();
+    let read = read_original(&rig, &file);
+    let object = ready(Object::open(&rig.root, &file_object_root(&file).unwrap())).unwrap();
+    let record_path = format!("original/{FILE}.metadata.md");
+    let stored = ready(filesquid_ocfl::view::read_range(
+        &object,
+        object.head(),
+        &record_path,
+        0,
+        1 << 20,
+    ))
+    .unwrap();
+    let text = String::from_utf8(stored).unwrap();
+    assert_eq!(text, read.record.to_markdown(), "one codec writes it");
+    assert_eq!(FileRecord::from_markdown(&text).unwrap(), read.record);
+    let entry = &read.record.imports()[0].acquisition;
+    assert_eq!(entry.object_id, format!("urn:uuid:{FILE}"));
+    assert_eq!(entry.logical_path.as_deref(), Some(read.path.as_str()));
+    assert_eq!(entry.size, JPEG.len() as u64);
+}
+
+#[test]
+fn the_old_four_line_record_is_refused_on_read() {
+    let rig = Rig::new();
+    let file = FileId::new(FILE).unwrap();
+    let old = "---\nschema: filesquid.original.v1\noriginal_name: \"a.jpg\"\nextension: \"jpg\"\nmedia_type: \"image/jpeg\"\n---\n";
+    let model = rig.model(&file_object_root(&file).unwrap(), &file_object_id(&file));
+    ready(model.stage_bytes(&format!("original/{FILE}.jpg"), JPEG)).unwrap();
+    ready(model.stage_bytes(&format!("original/{FILE}.metadata.md"), old.as_bytes())).unwrap();
+    ready(model.commit(meta(&record_of("op-12")))).unwrap();
+    let refused = ready(read_file_original(&rig.root, &OwnerReadable, &file));
+    assert!(matches!(refused, Err(CanonicalError::Decode { .. })));
 }
 
 #[test]
 fn the_stored_name_is_the_file_identifier_and_its_extension_only() {
     let file = FileId::new(FILE).unwrap();
-    let name = |n: &str| {
-        let record = OriginalRecord::new(n, "application/octet-stream").unwrap();
-        filesquid_api::canonical::original::stored_name(&file, record.extension()).unwrap()
-    };
-    assert_eq!(name("写真.PNG"), format!("{FILE}.PNG"));
-    assert_eq!(name("notes.tar.gz"), format!("{FILE}.gz"));
-    assert_eq!(name("Holiday 2023.jpg"), format!("{FILE}.jpg"));
-    for no_extension in ["写真", ".bashrc", "...", "report.v2 draft", "photo.jp g"] {
-        assert_eq!(name(no_extension), FILE, "{no_extension:?}");
+    let path = |n: &str| original_path_for(&file, extension_of(n)).unwrap();
+    assert_eq!(path("写真.PNG"), format!("original/{FILE}.PNG"));
+    assert_eq!(path("notes.tar.gz"), format!("original/{FILE}.gz"));
+    assert_eq!(path("Holiday 2023.jpg"), format!("original/{FILE}.jpg"));
+    let bare = format!("original/{FILE}");
+    for no_extension in [
+        "写真",
+        ".bashrc",
+        "...",
+        "report.v2 draft",
+        "photo.jp g",
+        "a.abcdefghijklmnopq",
+    ] {
+        assert_eq!(path(no_extension), bare, "{no_extension:?}");
     }
     let stored = |ext| filesquid_api::canonical::original::stored_name(&file, Some(ext));
     for bad in ["metadata.md", "", "j pg", "abcdefghijklmnopq"] {
@@ -464,16 +541,23 @@ fn the_stored_name_is_the_file_identifier_and_its_extension_only() {
 }
 
 #[test]
+fn a_long_extension_stays_in_the_record_but_not_in_the_stored_name() {
+    let rig = Rig::new();
+    let file = FileId::new(FILE).unwrap();
+    commit_original(&rig, &file, "scan.abcdefghijklmnopq", "image/tiff", "op-9").unwrap();
+    let read = read_original(&rig, &file);
+    assert_eq!(read.path, format!("original/{FILE}"));
+    assert_eq!(read.record.extension(), Some("abcdefghijklmnopq"));
+}
+
+#[test]
 fn an_original_name_or_media_type_that_is_not_valid_is_refused() {
     let rig = Rig::new();
     let file = FileId::new(FILE).unwrap();
     let long = "a".repeat(1025);
     for bad in ["", "a/b", "a\0b", long.as_str()] {
         let refused = commit_original(&rig, &file, bad, "image/jpeg", "op-10");
-        assert!(
-            matches!(refused, Err(CanonicalError::InvalidIdentifier(_))),
-            "{bad:?}"
-        );
+        assert!(matches!(refused, Err(CanonicalError::Encode(_))), "{bad:?}");
     }
     for bad in [
         "",
@@ -486,10 +570,7 @@ fn an_original_name_or_media_type_that_is_not_valid_is_refused() {
         "image/jpeg; q=1",
     ] {
         let refused = commit_original(&rig, &file, "a.jpg", bad, "op-11");
-        assert!(
-            matches!(refused, Err(CanonicalError::InvalidIdentifier(_))),
-            "{bad:?}"
-        );
+        assert!(matches!(refused, Err(CanonicalError::Encode(_))), "{bad:?}");
     }
     assert_eq!(
         ready(read_file_original(&rig.root, &OwnerReadable, &file)).unwrap(),
@@ -498,17 +579,88 @@ fn an_original_name_or_media_type_that_is_not_valid_is_refused() {
 }
 
 #[test]
-fn a_metadata_record_without_its_original_is_refused_on_read() {
+fn an_upload_whose_declared_size_differs_builds_no_record() {
+    let file = FileId::new(FILE).unwrap();
+    let input = upload("a.jpg", "image/jpeg", JPEG.len() as u64 + 1, "op-9");
+    let refused = new_upload_record(&file, &input, JPEG);
+    assert!(matches!(refused, Err(CanonicalError::Encode(_))));
+}
+
+#[test]
+fn a_record_that_does_not_cite_the_bytes_commits_nothing() {
     let rig = Rig::new();
     let file = FileId::new(FILE).unwrap();
-    let described = OriginalRecord::new("a.jpg", "image/jpeg").unwrap();
-    let text = filesquid_api::canonical::original::encode_companion(&described).unwrap();
-    let model = rig.model(&file_object_root(&file).unwrap(), &file_object_id(&file));
-    let path = format!("original/{FILE}.metadata.md");
-    ready(model.stage_bytes(&path, &text)).unwrap();
-    ready(model.commit(meta(&record("op-12", "1")))).unwrap();
-    let refused = ready(read_file_original(&rig.root, &OwnerReadable, &file));
-    assert!(matches!(refused, Err(CanonicalError::Decode { .. })));
+    let record = first_record(&file, "a.jpg", "image/jpeg", JPEG).unwrap();
+    let refused = commit_record(&rig, &file, &record, None, b"other bytes", "op-9");
+    assert!(matches!(refused, Err(CanonicalError::Encode(_))));
+    let other = FileId::new("8e2d3c0f-5a4b-4f72-9b1c-3d0e6f7a8b91").unwrap();
+    let refused = commit_record(&rig, &other, &record, None, JPEG, "op-9");
+    assert!(matches!(refused, Err(CanonicalError::Encode(_))));
+    assert_eq!(
+        ready(read_file_original(&rig.root, &OwnerReadable, &file)).unwrap(),
+        None
+    );
+}
+
+#[test]
+fn the_head_record_committed_again_must_cite_the_bytes() {
+    let rig = Rig::new();
+    let file = FileId::new(FILE).unwrap();
+    commit_original(&rig, &file, "a.jpg", "image/jpeg", "op-9").unwrap();
+    let head = read_original(&rig, &file).record;
+    let refused = commit_record(&rig, &file, &head, Some(&head), b"other bytes", "op-10");
+    assert!(matches!(refused, Err(CanonicalError::Encode(_))));
+    assert_eq!(head_paths(&rig, &file).len(), 2);
+    assert_eq!(read_original(&rig, &file).record, head);
+}
+
+#[test]
+fn a_referenced_import_entry_cannot_describe_a_stored_original() {
+    use filesquid_metadata::import::{ByteStorage, ImportEntry};
+    let rig = Rig::new();
+    let file = FileId::new(FILE).unwrap();
+    let record = first_record(&file, "a.jpg", "image/jpeg", JPEG).unwrap();
+    let mut entry: ImportEntry = record.imports()[0].clone();
+    entry.acquisition.storage = ByteStorage::Referenced;
+    entry.acquisition.logical_path = None;
+    let referenced = FileRecord::new(
+        record.original_name().clone(),
+        NameForm::Nfc,
+        record.extension().map(str::to_string),
+        None,
+        record.media_type().map(str::to_string),
+        entry,
+    )
+    .unwrap();
+    let refused = commit_record(&rig, &file, &referenced, None, JPEG, "op-9");
+    assert!(matches!(refused, Err(CanonicalError::Encode(_))));
+}
+
+#[test]
+fn a_new_upload_of_the_same_file_appends_one_import_entry() {
+    let rig = Rig::new();
+    let file = FileId::new(FILE).unwrap();
+    commit_original(&rig, &file, "a.jpg", "image/jpeg", "op-9").unwrap();
+    let first = read_original(&rig, &file).record;
+    let bytes = b"new jpeg bytes";
+    let input = UploadInput {
+        object_version: "v2",
+        ..upload("a (2).jpg", "image/jpeg", bytes.len() as u64, "op-10")
+    };
+    let next = reupload_record(&file, &first, &input, bytes).unwrap();
+    let receipt = commit_record(&rig, &file, &next, Some(&first), bytes, "op-10")
+        .unwrap()
+        .expect("a new version");
+    assert_eq!(receipt.version.to_string(), "v2");
+    let read = read_original(&rig, &file);
+    assert_eq!(read.path, format!("original/{FILE}.jpg"));
+    assert_eq!(read.record.imports().len(), 2);
+    assert_eq!(read.record.display_name(), "a.jpg", "the name stays");
+    let replaced = commit_record(&rig, &file, &first, Some(&next), JPEG, "op-11");
+    assert!(
+        matches!(replaced, Err(CanonicalError::Encode(_))),
+        "an import entry is never removed"
+    );
 }
 
 #[test]

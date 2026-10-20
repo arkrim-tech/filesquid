@@ -14,6 +14,10 @@ axum = "0.8"
 filesquid-core = { path = "../core" }
 # The OCFL engine, without its filesystem backend: hosts inject the storage root (API-S-006).
 filesquid-ocfl = { path = "../ocfl", default-features = false }
+# The per-file metadata record (`FileRecord`, the only codec of `<file-uuid>.metadata.md`), the
+# namespace registry and the `ocfl` store (API-S-026, MD-S-008, MD-S-012), without the native
+# sidecar store: the API does no filesystem I/O (API-S-006).
+filesquid-metadata = { path = "../metadata", default-features = false, features = ["ocfl"] }
 # PROV-O records and the history index, with records in OCFL objects (API-S-028, API-S-029).
 filesquid-prov = { path = "../prov", features = ["ocfl"] }
 # Streams of the whole-file download (API-S-011).
@@ -143,6 +147,10 @@ path = "tests/integration/library_routes.rs"
 [[test]]
 name = "integration_versions"
 path = "tests/integration/versions.rs"
+
+[[test]]
+name = "integration_metadata"
+path = "tests/integration/metadata.rs"
 
 [[test]]
 name = "integration_drive"

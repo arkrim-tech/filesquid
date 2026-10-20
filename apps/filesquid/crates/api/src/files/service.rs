@@ -12,12 +12,13 @@ use super::range::{RangePlan, RangeRequest};
 use super::view::EntryView;
 use super::view::{
     CommitView, FileDetailsView, FileQuery, FolderPageView, FolderRequest, FolderView,
-    HistoryQuery, HistoryView, ListingQuery, MoveRequest, ObjectQuery, RemoveRequest, UploadQuery,
-    VersionView, VersionsView,
+    HistoryQuery, HistoryView, ListingQuery, MoveRequest, ObjectQuery, RemoveRequest, VersionView,
+    VersionsView,
 };
 use super::{media, DEFAULT_PAGE, HOLDER, MAX_ANSWER_BYTES, MAX_MESSAGE_BYTES};
 use crate::content::ContentTarget;
 use filesquid_core::LibraryId;
+use filesquid_metadata::file_record::safe_display_name;
 use filesquid_ocfl::change::{ChangeModel, StagingArea, VersionMeta};
 use filesquid_ocfl::digest::DigestAlgorithm;
 use filesquid_ocfl::inventory::{User, VersionNum};
@@ -65,6 +66,8 @@ pub(super) struct Library<B, R, S> {
     /// goes stale; it spares each ranged read the backend's `head`, which may read the whole
     /// file (the filesystem backend hashes it for its entity tag).
     pub(super) sizes: Mutex<HashMap<String, u64>>,
+    /// Per-file metadata records by content digest (records never change in place).
+    pub(super) records: Mutex<HashMap<String, Arc<filesquid_metadata::file_record::FileRecord>>>,
     pub(super) writes: tokio::sync::Mutex<()>,
 }
 
@@ -77,6 +80,11 @@ impl<B: StorageBackend, R, S> Library<B, R, S> {
         }
         self.scan().await?;
         self.cached(object_id).ok_or_else(FileError::not_found)
+    }
+
+    /// Remember that `object_id` lives at `root`, as a write that created it learned.
+    pub(super) fn remember(&self, object_id: &str, root: &str) {
+        lock(&self.roots).insert(object_id.to_string(), root.to_string());
     }
 
     /// The cached root of `object_id`.
@@ -232,6 +240,24 @@ impl<B, R, S> FileService<B, R, S> {
             .unwrap_or_else(|| "file".to_string())
     }
 
+    /// The display name and media type an answer about `file` carries: the record's, when
+    /// `described` is the record of that original, else the stored-file display name and the
+    /// media type derived from the extension.
+    pub(super) async fn answer_names(
+        &self,
+        file: StoredFile<'_>,
+        described: Option<&super::records::Described>,
+    ) -> (String, String) {
+        let derived = || media::media_type(file.path).to_string();
+        match described {
+            Some(d) => (
+                safe_display_name(d.display_name()),
+                d.media_type().unwrap_or_else(derived),
+            ),
+            None => (self.display_name(file).await, derived()),
+        }
+    }
+
     /// Fill in the display name of every file entry of `page`.
     async fn name_entries(&self, page: &mut FolderPageView) {
         for entry in &mut page.entries {
@@ -261,6 +287,7 @@ impl<B, R, S> FileService<B, R, S> {
             files: library,
             roots: Mutex::new(HashMap::new()),
             sizes: Mutex::new(HashMap::new()),
+            records: Mutex::new(HashMap::new()),
             writes: tokio::sync::Mutex::new(()),
         };
         libraries.insert(library_id.as_str().to_string(), Arc::new(opened));
@@ -283,6 +310,11 @@ impl<B, R, S> FileService<B, R, S> {
             .get(library_id)
             .cloned()
             .ok_or_else(FileError::not_found)
+    }
+
+    /// The clock commits are dated by.
+    pub(super) fn clock(&self) -> FileClock {
+        self.clock.clone()
     }
 
     /// Now as RFC 3339 UTC, for a version's `created`.
@@ -316,6 +348,9 @@ impl<B: StorageBackend, R, S> FileService<B, R, S> {
         let mut view = FolderPageView::of(&query.library_id, page);
         view.entries.retain(|entry| !is_reserved_folder(entry));
         self.name_entries(&mut view).await;
+        if let Some(described) = library.described(&object, &version).await? {
+            name_by_record(&mut view, &described);
+        }
         Ok(view)
     }
 
@@ -328,13 +363,19 @@ impl<B: StorageBackend, R, S> FileService<B, R, S> {
         let version = resolve(&object, query.version.as_deref())?;
         let details = view::file_details(&object, &version, &query.path).await?;
         let mut view = FileDetailsView::of(&query.library_id, details);
+        let described = library
+            .described(&object, &version)
+            .await?
+            .filter(|d| d.original_path == query.path);
         let file = StoredFile {
             library_id: &view.library_id,
             object_id: &view.object_id,
             version: &view.version,
             path: &view.path,
         };
-        view.display_name = self.display_name(file).await;
+        let (display_name, media_type) = self.answer_names(file, described.as_ref()).await;
+        view.display_name = display_name;
+        view.media_type = media_type;
         super::versions::apply_labels(&object, std::slice::from_mut(&mut view.last_change)).await?;
         Ok(view)
     }
@@ -388,16 +429,18 @@ impl<B: StorageBackend, R, S> FileService<B, R, S> {
         let total = library
             .size_of(&object, &version, &request.path, &file.digest)
             .await?;
-        let media_type = media::media_type(&request.path);
+        let described = library
+            .described(&object, &version)
+            .await?
+            .filter(|d| d.original_path == request.path);
         let version_name = version.to_string();
-        let file_name = self
-            .display_name(StoredFile {
-                library_id: &request.library_id,
-                object_id: &request.object_id,
-                version: &version_name,
-                path: &request.path,
-            })
-            .await;
+        let stored = StoredFile {
+            library_id: &request.library_id,
+            object_id: &request.object_id,
+            version: &version_name,
+            path: &request.path,
+        };
+        let (file_name, media_type) = self.answer_names(stored, described.as_ref()).await;
         // A HEAD with a Range describes the GET for that range; one without describes the
         // whole file, so a client learns its length.
         let plan = match (request.head_only, request.range) {
@@ -474,24 +517,6 @@ where
     R: VersionReservations,
     S: StorageBackend,
 {
-    /// Add or replace one file in one new version.
-    pub async fn upload(
-        &self,
-        query: UploadQuery,
-        bytes: &[u8],
-        actor: &str,
-    ) -> Result<CommitView, FileError> {
-        super::labels::refuse_reserved(&query.path)?;
-        let meta = self.meta(actor, query.message.as_deref())?;
-        let library = self.library(&query.library_id)?;
-        let _writing = library.writes.lock().await;
-        let root = library.locate(&query.object_id).await?;
-        let staging = library.staging(&query.object_id)?;
-        let model = change_model(&library, &root, &query.object_id, staging);
-        let receipt = view::add_file(&model, &query.path, bytes, meta).await?;
-        Ok(commit_view(&query.library_id, receipt))
-    }
-
     /// Move or rename one file or folder in one new version.
     pub async fn move_path(
         &self,
@@ -528,7 +553,11 @@ where
     }
 
     /// The version record of a write by `actor` with `message`.
-    fn meta(&self, actor: &str, message: Option<&str>) -> Result<VersionMeta, FileError> {
+    pub(super) fn meta(
+        &self,
+        actor: &str,
+        message: Option<&str>,
+    ) -> Result<VersionMeta, FileError> {
         let user = User {
             name: actor.to_string(),
             address: None,
@@ -622,6 +651,24 @@ pub(super) fn check_logical_path(path: &str) -> Result<(), FileError> {
     }
 }
 
+/// Name the original of `page` by its record's display name and leave the record itself out,
+/// so neither the stored name nor the record's file name is shown as a name. Pure.
+fn name_by_record(page: &mut FolderPageView, described: &super::records::Described) {
+    page.entries.retain(
+        |entry| !matches!(entry, EntryView::File { path, .. } if *path == described.record_path),
+    );
+    for entry in &mut page.entries {
+        if let EntryView::File {
+            path, display_name, ..
+        } = entry
+        {
+            if *path == described.original_path {
+                *display_name = safe_display_name(described.display_name());
+            }
+        }
+    }
+}
+
 /// True for a folder entry that is one of the reserved folders. Pure.
 fn is_reserved_folder(entry: &EntryView) -> bool {
     matches!(entry, EntryView::Folder { path, .. } if in_reserved_folder(path))
@@ -704,8 +751,9 @@ pub struct ContentAnswer {
     pub plan: RangePlan,
     /// The file's length.
     pub total: u64,
-    /// The media type it carries.
-    pub media_type: &'static str,
+    /// The media type it carries: the record's for a per-file object's original, else the
+    /// one derived from the extension.
+    pub media_type: String,
     /// The display name the answer names the file by ([`super::names`]).
     pub file_name: String,
     /// The bytes (empty for `HEAD` and `416`).

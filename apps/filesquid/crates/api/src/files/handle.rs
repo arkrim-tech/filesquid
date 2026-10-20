@@ -6,11 +6,15 @@ use super::download::Download;
 use super::error::FileError;
 use super::nodes::ScopeObject;
 use super::service::{ContentAnswer, ContentRequest, FileService};
+use super::statements::{
+    FactsView, FileRecordQuery, MetadataCommitView, NamespacesView, RegisterNamespaceRequest,
+    RemoveStatementRequest, SetStatementRequest, StatementsView, TermQuery, TermsView,
+};
 use super::versions::Committed;
 use super::view::{
     CommitView, FileDetailsView, FileHistorySizeView, FileQuery, FolderPageView, FolderRequest,
     FolderView, HistoryQuery, HistoryView, LabelRequest, LibraryHistorySizeView, LibraryQuery,
-    ListingQuery, MoveRequest, ObjectQuery, RemoveRequest, RestoreRequest, UploadQuery,
+    ListingQuery, MoveRequest, ObjectQuery, RemoveRequest, RestoreRequest, UploadQuery, UploadView,
     VersionsView,
 };
 use crate::content::ContentTarget;
@@ -51,9 +55,9 @@ pub trait FileOperations: Send + Sync {
     /// `not_found` unless `target` names a file of an existing version.
     fn check_target(&self, target: ContentTarget) -> FileFuture<'_, ()>;
 
-    /// Add or replace one file by `actor`.
+    /// Upload one file by `actor`: a new file object, or new content for an existing file.
     fn upload(&self, query: UploadQuery, bytes: Bytes, actor: String)
-        -> FileFuture<'_, CommitView>;
+        -> FileFuture<'_, UploadView>;
 
     /// Whether a folder exists or stays pending; writes nothing.
     fn create_folder(&self, request: FolderRequest) -> FileFuture<'_, FolderView>;
@@ -69,6 +73,39 @@ pub trait FileOperations: Send + Sync {
 
     /// Set or clear the label of one version after commit, by `actor`.
     fn set_label(&self, request: LabelRequest, actor: String) -> FileFuture<'_, Committed>;
+
+    /// The statements of one file.
+    fn statements(&self, query: FileRecordQuery) -> FileFuture<'_, StatementsView>;
+
+    /// The read-only projection of one file's import record.
+    fn facts(&self, query: FileRecordQuery) -> FileFuture<'_, FactsView>;
+
+    /// Where a bare term name can go, in the add order.
+    fn terms(&self, query: TermQuery) -> FileFuture<'_, TermsView>;
+
+    /// A library's namespace registry.
+    fn namespaces(&self, library_id: String) -> FileFuture<'_, NamespacesView>;
+
+    /// Set one statement by `actor`.
+    fn set_statement(
+        &self,
+        request: SetStatementRequest,
+        actor: String,
+    ) -> FileFuture<'_, MetadataCommitView>;
+
+    /// Remove one statement by `actor`.
+    fn remove_statement(
+        &self,
+        request: RemoveStatementRequest,
+        actor: String,
+    ) -> FileFuture<'_, MetadataCommitView>;
+
+    /// Register a namespace by `actor`.
+    fn register_namespace(
+        &self,
+        request: RegisterNamespaceRequest,
+        actor: String,
+    ) -> FileFuture<'_, MetadataCommitView>;
 
     /// The bytes one file's history keeps.
     fn history_size(&self, query: HistoryQuery) -> FileFuture<'_, FileHistorySizeView>;
@@ -120,7 +157,7 @@ where
         query: UploadQuery,
         bytes: Bytes,
         actor: String,
-    ) -> FileFuture<'_, CommitView> {
+    ) -> FileFuture<'_, UploadView> {
         Box::pin(async move { FileService::upload(self, query, &bytes, &actor).await })
     }
 
@@ -146,6 +183,46 @@ where
 
     fn history_size(&self, query: HistoryQuery) -> FileFuture<'_, FileHistorySizeView> {
         Box::pin(self.history_size(query))
+    }
+
+    fn statements(&self, query: FileRecordQuery) -> FileFuture<'_, StatementsView> {
+        Box::pin(self.statements(query))
+    }
+
+    fn facts(&self, query: FileRecordQuery) -> FileFuture<'_, FactsView> {
+        Box::pin(self.facts(query))
+    }
+
+    fn terms(&self, query: TermQuery) -> FileFuture<'_, TermsView> {
+        Box::pin(self.terms(query))
+    }
+
+    fn namespaces(&self, library_id: String) -> FileFuture<'_, NamespacesView> {
+        Box::pin(async move { FileService::namespaces(self, &library_id).await })
+    }
+
+    fn set_statement(
+        &self,
+        request: SetStatementRequest,
+        actor: String,
+    ) -> FileFuture<'_, MetadataCommitView> {
+        Box::pin(async move { FileService::set_statement(self, request, &actor).await })
+    }
+
+    fn remove_statement(
+        &self,
+        request: RemoveStatementRequest,
+        actor: String,
+    ) -> FileFuture<'_, MetadataCommitView> {
+        Box::pin(async move { FileService::remove_statement(self, request, &actor).await })
+    }
+
+    fn register_namespace(
+        &self,
+        request: RegisterNamespaceRequest,
+        actor: String,
+    ) -> FileFuture<'_, MetadataCommitView> {
+        Box::pin(async move { FileService::register_namespace(self, request, &actor).await })
     }
 
     fn library_history_size(&self, query: LibraryQuery) -> FileFuture<'_, LibraryHistorySizeView> {

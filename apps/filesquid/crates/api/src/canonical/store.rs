@@ -3,13 +3,16 @@
 //! API does no filesystem I/O itself; every function here performs storage I/O through it.
 
 use super::entity::{decode, encode, LibraryHead, SnapshotEntity, SnapshotFile, VirtualEntry};
-use super::layout::{file_object_root, original_path, SnapshotKey, SNAPSHOT_ROOT};
+use super::layout::{file_object_root, SnapshotKey, SNAPSHOT_ROOT};
 use super::message::{parse_operation_message, OperationRecord};
 use super::original::{
-    companion_path, decode_companion, encode_companion, stored_name, FileOriginal, OriginalRecord,
+    check_new_original, check_same_original, companion_path, decode_record, encode_record,
+    original_path_of, FileOriginal,
 };
 use super::{CanonicalError, ProfileTransform};
 use filesquid_core::{Collection, FileId, Folder};
+use filesquid_metadata::file_record::FileRecord;
+use filesquid_metadata::store::ocfl::MAX_RECORD_BYTES;
 use filesquid_ocfl::change::{ChangeError, ChangeModel, VersionMeta};
 use filesquid_ocfl::digest::DigestAlgorithm;
 use filesquid_ocfl::read::{LogicalFile, Object, ReadError};
@@ -269,7 +272,7 @@ pub async fn read_version_journal<B: StorageBackend>(
     let Some(file) = state.get(&path) else {
         return Ok(Vec::new());
     };
-    let stored = read_entity(object, backend, file).await?;
+    let stored = read_entity(object, backend, file, MAX_ENTITY_BYTES).await?;
     let plain = transform.open(&path, stored)?;
     journal_lines(&path, &plain)
 }
@@ -320,21 +323,25 @@ fn published(result: Result<CommitReceipt, ChangeError>) -> Result<CommitReceipt
     }
 }
 
-/// Commit the bytes of the original of `file_id`, described by `record` (the owner's file
-/// name and the media type), as a version of the file object `model` writes (one OCFL object
-/// per file, ADR 023), with `meta`. The bytes are stored as `original/<file-uuid>.<ext>` and,
-/// in the same version, the metadata record `original/<file-uuid>.metadata.md` holds
-/// `record`. Committing the same original and record again writes no version and answers
-/// `None`, as [`commit_snapshot`] does for an unchanged state.
+/// Commit the bytes of the original of `file_id` and its metadata record `record` as one
+/// version of the file object `model` writes (one OCFL object per file, ADR 023), with
+/// `meta`. The bytes are stored as `original/<file-uuid>.<ext>` and, in the same version, the
+/// record (the `filesquid-metadata` [`FileRecord`], API-S-026) as
+/// `original/<file-uuid>.metadata.md`. `previous` is the record at the head, if any: the new
+/// record must extend it and add the import entries that cite these bytes
+/// ([`check_new_original`]). Committing the head's original and record again writes no
+/// version and answers `None`, as [`commit_snapshot`] does for an unchanged state.
 ///
 /// # Errors
-/// As [`commit_snapshot`], and [`CanonicalError::InvalidIdentifier`] for a file identifier
-/// that cannot name a path segment.
+/// As [`commit_snapshot`]; [`CanonicalError::InvalidIdentifier`] for a file identifier that
+/// cannot name a path segment; [`CanonicalError::Encode`] for a record that does not extend
+/// `previous` or does not cite these bytes. Nothing is staged on a refusal.
 pub async fn commit_file_original<B, R, S>(
     model: &ChangeModel<'_, B, R, S>,
     transform: &dyn ProfileTransform,
     file_id: &FileId,
-    record: &OriginalRecord,
+    record: &FileRecord,
+    previous: Option<&FileRecord>,
     bytes: &[u8],
     meta: VersionMeta,
 ) -> Result<Option<CommitReceipt>, CanonicalError>
@@ -343,13 +350,16 @@ where
     R: VersionReservations,
     S: StorageBackend,
 {
-    let path = original_path(&stored_name(file_id, record.extension())?)?;
+    let path = original_path_of(file_id, record)?;
+    match previous == Some(record) {
+        true => check_same_original(record, bytes)?,
+        false => check_new_original(file_id, record, previous, &path, bytes)?,
+    }
     let companion = companion_path(file_id)?;
-    let text = encode_companion(record)?;
     model.reset().await?;
     let sealed = transform.seal(&path, bytes.to_vec())?;
     model.stage_bytes(&path, &sealed).await?;
-    let sealed = transform.seal(&companion, text)?;
+    let sealed = transform.seal(&companion, encode_record(record))?;
     model.stage_bytes(&companion, &sealed).await?;
     let span = super::message::commit_span(meta.message.as_deref());
     match model.commit(meta).instrument(span).await {
@@ -360,12 +370,12 @@ where
 
 /// The original of `file_id` at the head of its file object in the storage root `backend`,
 /// with its metadata record, or `None` when the object does not exist yet. The record's
-/// original name is the name to display and to name an owner download under; the stored
-/// name is a storage detail.
+/// display name is the name to show and to name an owner download under; the stored name is
+/// a storage detail.
 ///
 /// # Errors
-/// [`CanonicalError::Decode`] for a metadata record that cannot be read back, or a head
-/// without the record or the original it names; a read failure otherwise.
+/// [`CanonicalError::Decode`] for a metadata record that is not a valid file record, or a
+/// head without the record or the original it names; a read failure otherwise.
 pub async fn read_file_original<B: StorageBackend>(
     backend: &B,
     transform: &dyn ProfileTransform,
@@ -382,9 +392,9 @@ pub async fn read_file_original<B: StorageBackend>(
         .files()
         .find(|file| file.path == companion)
         .ok_or_else(|| not_one_original(&root))?;
-    let bytes = read_entity(&object, backend, file).await?;
-    let record = decode_companion(&companion, &transform.open(&companion, bytes)?)?;
-    let path = original_path(&stored_name(file_id, record.extension())?)?;
+    let bytes = read_entity(&object, backend, file, MAX_RECORD_BYTES).await?;
+    let record = decode_record(&companion, &transform.open(&companion, bytes)?)?;
+    let path = original_path_of(file_id, &record)?;
     if !state.paths().any(|p| p == path) {
         return Err(not_one_original(&root));
     }
@@ -473,19 +483,20 @@ async fn read_entities<B: StorageBackend>(
     }
     let mut entities = Vec::new();
     for file in state.files().filter(is_entity) {
-        let stored = read_entity(object, backend, file).await?;
+        let stored = read_entity(object, backend, file, MAX_ENTITY_BYTES).await?;
         let plain = transform.open(&file.path, stored)?;
         entities.push(decode(&file.path, &plain)?);
     }
     Ok(entities)
 }
 
-/// The stored bytes of one entity or companion file, refused before reading when larger than
-/// [`MAX_ENTITY_BYTES`] and verified against its digest.
+/// The stored bytes of one entity or metadata record, refused before reading when larger
+/// than `limit` and verified against its digest.
 async fn read_entity<B: StorageBackend>(
     object: &Object<'_, B>,
     backend: &B,
     file: &LogicalFile,
+    limit: u64,
 ) -> Result<Vec<u8>, CanonicalError> {
     let refuse = |reason: &str| CanonicalError::Decode {
         path: file.path.clone(),
@@ -493,14 +504,13 @@ async fn read_entity<B: StorageBackend>(
     };
     let storage = |e| CanonicalError::from(ReadError::Storage(e));
     let key = object.content_key(file)?;
-    if backend.head(&key).await.map_err(storage)?.size > MAX_ENTITY_BYTES {
-        return Err(refuse("entity is larger than 1 MiB"));
+    if backend.head(&key).await.map_err(storage)?.size > limit {
+        return Err(refuse("the file is larger than its read bound"));
     }
-    let stored = read_verified(backend, &key, MAX_ENTITY_BYTES)
-        .await
-        .map_err(storage)?;
-    if stored.len() as u64 > MAX_ENTITY_BYTES {
-        return Err(refuse("entity is larger than 1 MiB"));
+    let chunk = limit.min(filesquid_ocfl::storage::MAX_CHUNK_BYTES);
+    let stored = read_verified(backend, &key, chunk).await.map_err(storage)?;
+    if stored.len() as u64 > limit {
+        return Err(refuse("the file is larger than its read bound"));
     }
     let digest = DigestAlgorithm::ENGINE.digest_hex(&stored);
     if !DigestAlgorithm::ENGINE.matches(&digest, &file.digest) {

@@ -308,14 +308,6 @@ async fn listings_leave_out_the_reserved_folders() {
 #[tokio::test]
 async fn files_cannot_be_written_into_the_provenance_folder() {
     let rig = FilesRig::with_files(&[("a.txt", b"alpha")]).await;
-    let uri = format!(
-        "/api/v1/files/upload?{}",
-        query(&format!("path={}", encode("provenance/v9.jsonld")))
-    );
-    let answer = rig
-        .call(axum::http::Method::PUT, &uri, &[], b"{}".to_vec())
-        .await;
-    assert_error(&answer, 400, "invalid_request");
     let moved = rig
         .post(
             "/api/v1/files/moves",

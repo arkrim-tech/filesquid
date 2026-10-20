@@ -136,29 +136,41 @@ async fn a_write_through_the_host_service_publishes_one_version() {
     open_fs_library(&files, &library(), &root, &data).expect("open");
     let upload = UploadQuery {
         library_id: LIBRARY.into(),
-        object_id: OBJECT.into(),
-        path: "b.txt".into(),
+        file_id: None,
+        name: "b.txt".into(),
+        size: 3,
+        media_type: None,
+        last_modified: None,
+        name_normalization: None,
         message: None,
     };
     let commit = FileOperations::upload(&files, upload, b"bee".to_vec().into(), "owner".into())
         .await
         .expect("upload");
-    assert_eq!(commit.version, "v2");
-    let stored = root.join("objects/a/v2/content/b.txt");
+    assert_eq!(commit.version, "v1", "a new file object");
+    let id = commit.file_id.clone();
+    let object_root = format!("files/{id}");
+    let stored = root.join(format!("{object_root}/v1/content/original/{id}.txt"));
     assert_eq!(std::fs::read(stored).expect("read back"), b"bee");
     let backend = FsBackend::new(&root, temp.0.join("check-parts")).expect("backend");
-    let object = filesquid_ocfl::read::Object::open(&backend, "objects/a")
+    let object = filesquid_ocfl::read::Object::open(&backend, &object_root)
         .await
         .expect("object");
-    assert_eq!(object.head().to_string(), "v2", "exactly one new version");
-    let versions: Vec<String> = object
-        .inventory()
-        .versions
-        .keys()
-        .map(ToString::to_string)
-        .collect();
-    assert_eq!(versions, ["v1", "v2"]);
-    assert!(!root.join("objects/a/v3").exists());
+    assert_eq!(object.head().to_string(), "v1", "exactly one version");
+    let record = format!("original/{id}.metadata.md");
+    assert!(object
+        .state(object.head())
+        .expect("state")
+        .get(&record)
+        .is_some());
+    let untouched = filesquid_ocfl::read::Object::open(&backend, "objects/a")
+        .await
+        .expect("object");
+    assert_eq!(
+        untouched.head().to_string(),
+        "v1",
+        "the other object is untouched"
+    );
 }
 
 #[cfg(unix)]

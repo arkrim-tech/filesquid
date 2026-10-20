@@ -11,11 +11,13 @@
 //! library and repair routes of API-S-025; the version history, labels, restore and
 //! history size of API-S-014; the client events, journal query and export of API-S-030
 //! and API-S-031; the preferences, whole-file download and drive listings of API-S-011;
-//! and the sealing service and journal rebuild of API-S-032).
+//! the metadata property routes of API-S-035; and the sealing service and journal rebuild of
+//! API-S-032).
 //!
-//! Scenarios that need domain operations not built yet (import, rename, metadata writes, C2PA
-//! scans, sync) or the optional OTLP export (Task FS-3.6) have no step definitions and are
-//! reported as skipped until those land.
+//! Scenarios that need domain operations not built yet (import, rename, the metadata writes
+//! beyond the API-S-035 routes, such as the inspector's EXIF edits, C2PA scans, sync) or the
+//! optional OTLP export (Task FS-3.6) have no step definitions and are reported as skipped
+//! until those land.
 
 use axum::body::Body;
 use axum::http::{header, Request};
@@ -115,11 +117,12 @@ mod drive_fixture;
 
 #[path = "support/drive_steps.rs"]
 mod drive_steps;
+
 #[path = "support/journal_steps.rs"]
 mod journal_steps;
+#[path = "support/metadata_steps.rs"]
+mod metadata_steps;
 
-#[path = "support/rebuild_steps.rs"]
-mod rebuild_steps;
 #[path = "support/seal_steps.rs"]
 mod seal_steps;
 
@@ -173,9 +176,9 @@ struct MonitorWorld {
     routes: library_route_steps::LibraryRouteWorld,
     navigation: navigation_steps::NavigationWorld,
     drive: drive_steps::DriveWorld,
+    metadata: metadata_steps::MetadataWorld,
     journal: journal_steps::JournalWorld,
     seal: seal_steps::SealWorld,
-    rebuild: rebuild_steps::RebuildWorld,
 }
 
 impl std::fmt::Debug for MonitorWorld {
