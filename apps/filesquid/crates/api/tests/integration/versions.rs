@@ -5,6 +5,9 @@
 #[path = "../support/files_fixture.rs"]
 mod files_fixture;
 
+#[path = "../support/retention_contract.rs"]
+mod retention_contract;
+
 use axum::http::{Method, StatusCode};
 use files_fixture::{digest, query, Answer, FilesRig, LIBRARY, OBJECT};
 use filesquid_api::files::{LABELS_PATH, MAX_LABELS};
@@ -13,6 +16,7 @@ use filesquid_api::journal::Outcome;
 use filesquid_core::{InstallationId, MAX_LABEL_BYTES};
 use filesquid_ocfl::read::Object;
 use filesquid_prov::HostFacts;
+use retention_contract::version_removals;
 use serde_json::{json, Value};
 
 /// Where the rig's object lives in the storage root.
@@ -302,28 +306,66 @@ async fn library_history_size_counts_every_kept_content_once() {
     assert_eq!(size["truncated"], false);
 }
 
+#[tokio::test]
+async fn an_object_that_cannot_be_opened_marks_the_library_size_truncated() {
+    let rig = FilesRig::with_files(&[("a.txt", b"alpha")]).await;
+    let broken = rig.dir.join("root").join("objects").join("broken");
+    std::fs::create_dir_all(&broken).expect("broken object folder");
+    std::fs::write(broken.join("0=ocfl_object_1.1"), "ocfl_object_1.1\n").expect("namaste");
+    let uri = format!("/api/v1/files/library-history-size?library_id={LIBRARY}");
+    let size = rig.get(&uri).await.json();
+    assert_eq!(size["objects"], 1, "{size}");
+    assert_eq!(size["bytes"], 5);
+    assert_eq!(
+        size["truncated"], true,
+        "an unreadable object makes the total partial"
+    );
+}
+
+#[tokio::test]
+async fn a_folder_restore_brings_back_earlier_files_and_keeps_later_ones() {
+    let rig = FilesRig::with_files(&[("docs/a.txt", b"alpha")]).await;
+    rig.commit(&[("docs/a.txt", b"bravo!"), ("docs/new.txt", b"new")])
+        .await;
+    let request = body(json!({ "version": "v1", "paths": ["docs"] }));
+    let answer = rig.post("/api/v1/files/restorations", request).await;
+    assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
+    let paths = head_paths(&rig).await;
+    assert!(paths.contains(&"docs/a.txt".to_string()));
+    assert!(
+        paths.contains(&"docs/new.txt".to_string()),
+        "a restore never removes a file: {paths:?}"
+    );
+    let uri = format!("/api/v1/files/content?{}", query("path=docs%2Fa.txt"));
+    assert_eq!(rig.get(&uri).await.body, b"alpha");
+}
+
 // ---- Retention ----
 
 #[test]
 fn the_contract_offers_no_version_deletion_expiry_or_thinning() {
     let doc: Value = serde_json::from_str(filesquid_api::CONTRACT).expect("contract");
-    for (path, item) in doc["paths"].as_object().expect("paths") {
-        let lower = path.to_lowercase();
-        for word in ["expir", "thin", "prune", "purge"] {
-            assert!(!lower.contains(word), "{path}");
-        }
-        assert!(item.get("delete").is_none(), "{path} offers DELETE");
-        for op in item.as_object().expect("item").values() {
-            let id = op["operationId"]
-                .as_str()
-                .unwrap_or_default()
-                .to_lowercase();
-            assert!(
-                !id.contains("deleteversion") && !id.contains("expire"),
-                "{id}"
-            );
-        }
-    }
+    assert_eq!(version_removals(&doc), Vec::<String>::new());
+}
+
+#[test]
+fn the_retention_check_catches_a_removal_under_any_method() {
+    let doc = json!({ "paths": {
+        "/api/v1/files/version-cleanups": { "post": {
+            "operationId": "cleanUp", "summary": "Discard old versions of a file"
+        }},
+        "/api/v1/files/old": { "put": { "operationId": "removeVersion", "summary": "Tidy" }},
+        "/api/v1/files/removals": { "post": {
+            "operationId": "removeFiles", "summary": "Remove one file or folder"
+        }}
+    }});
+    assert_eq!(
+        version_removals(&doc),
+        [
+            "put /api/v1/files/old",
+            "post /api/v1/files/version-cleanups"
+        ]
+    );
 }
 
 // ---- Provenance and journal ----

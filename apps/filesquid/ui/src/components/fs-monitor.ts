@@ -1,8 +1,9 @@
 /**
  * `<fs-monitor>`: the FileSquid Monitor dashboard (ADR 033, SRS-F-061). Shows overall
- * health with reasons, live processes, storage, throughput and queues, and the activity
- * journal with search, live tail and JSON Lines export. Every value is rendered with
- * `textContent`; journal data never becomes markup.
+ * health with reasons, the OCFL validation findings and runs (`<fs-ocfl-findings>`, UI-F2.14,
+ * refreshed on `health.change` and on `ocfl.validation` process updates), live processes,
+ * storage, throughput and queues, and the activity journal with search, live tail and JSON
+ * Lines export. Every value is rendered with `textContent`; journal data never becomes markup.
  *
  * Accessibility (UI-S-016): each table is named by its section heading and sits in a named,
  * focusable scroll region, so narrow windows scroll the table rather than the page; when a
@@ -14,13 +15,15 @@ import {
   ApiError,
   type ApiEvent,
   type FileSquidClient,
+  type HealthReason,
   type HealthReport,
   type JournalEntry,
   type MetricsSnapshot,
   type ProcessView,
 } from "../api/client";
-import type { LabelKey, LabelTable } from "../theme/labels";
+import { formatLabel, type LabelKey, type LabelTable } from "../theme/labels";
 import { denialLabel, type DenialText } from "./denial";
+import type { FsOcflFindings } from "./fs-ocfl-findings";
 import { A11Y_STYLE } from "./a11y-style";
 import { replaceKeepingFocus } from "../a11y/focus";
 
@@ -32,8 +35,17 @@ export type MonitorClient = Pick<
   | "adminJournal"
   | "adminMetrics"
   | "adminJournalExport"
+  | "adminOcflFindings"
+  | "startOcflValidation"
   | "subscribe"
 >;
+
+/** Kind of the process a validation run registers (API-S-022). */
+const VALIDATION_PROCESS = "ocfl.validation";
+/** Code of the health reason for open OCFL validation errors (API-S-022). */
+const OCFL_REASON = "ocfl_validation_errors";
+/** Topic the event channel sends when it may have dropped events; everything is read again. */
+const RESYNC_TOPIC = "events.resync";
 
 /** Where the server host's token is kept while the page is open (in memory only). */
 export interface TokenStore {
@@ -53,6 +65,11 @@ export interface MonitorOptions {
   tokens?: TokenStore;
   /** Interval for refreshing health, processes and metrics; 0 disables polling. Default 5000. */
   pollMs?: number;
+  /**
+   * The address of a library's version-inventory repair offer (UI-1.1). The OCFL validation
+   * section links its W010 note there; without it the note has no link.
+   */
+  repairHref?: (libraryId: string) => string;
 }
 
 /** Everything the dashboard shows after a full load. */
@@ -92,6 +109,13 @@ export class FsMonitor extends HTMLElement {
   private processes = new Map<string, ProcessView>();
   private journal: JournalEntry[] = [];
   private operationFilter = "";
+  /**
+   * Live journal entries that arrived while a journal page was being read; merged into the
+   * page when it answers, so a re-read never drops a newer entry.
+   */
+  private liveDuringRead?: JournalEntry[];
+  /** The OCFL validation section, refreshed on `health.change` and validation updates. */
+  private findings?: FsOcflFindings;
   private unsubscribe?: () => void;
   private timer?: ReturnType<typeof setInterval>;
   /** Bumped by every stop; a load that finishes under an older generation is discarded. */
@@ -216,25 +240,50 @@ export class FsMonitor extends HTMLElement {
 
   /** Apply one live event from the event channel. */
   private applyEvent(event: ApiEvent): void {
+    if (event.topic === RESYNC_TOPIC) return this.resync();
     if (!isObject(event.data)) return;
     if (event.topic === "process.update") {
       const view = event.data as ProcessView;
       this.processes.set(view.id, view);
       this.renderProcesses();
+      if (view.kind === VALIDATION_PROCESS) void this.findings?.refresh();
     } else if (event.topic === "health.change") {
       this.renderHealth(event.data as HealthReport);
+      void this.findings?.refresh();
     } else if (event.topic === "journal.entry") {
       this.addJournalEntry(event.data as JournalEntry);
     }
+  }
+
+  /**
+   * Read everything again after `events.resync`, which the event channel sends when it may
+   * have dropped events: health, processes and metrics, the journal page and the OCFL
+   * findings. Network I/O.
+   */
+  private resync(): void {
+    void this.refresh();
+    void this.searchJournal();
+    void this.findings?.refresh();
+  }
+
+  /**
+   * Keep a live entry for the journal read in flight, if any. Bounded: only the newest
+   * {@link MAX_JOURNAL_ROWS} are kept, since no more are ever shown, so a stalled read under a
+   * continuing stream cannot grow memory.
+   */
+  private bufferDuringRead(entry: JournalEntry): void {
+    const live = this.liveDuringRead;
+    if (!live) return;
+    live.push(entry);
+    if (live.length > MAX_JOURNAL_ROWS) live.shift();
   }
 
   /** Add a live journal entry matching the current filter; newest first, each id once. */
   private addJournalEntry(entry: JournalEntry): void {
     if (this.operationFilter && entry.operation !== this.operationFilter) return;
     if (this.journal.some((row) => row.id === entry.id)) return;
-    this.journal = [entry, ...this.journal]
-      .sort((a, b) => (b.id ?? 0) - (a.id ?? 0))
-      .slice(0, MAX_JOURNAL_ROWS);
+    this.bufferDuringRead(entry);
+    this.journal = newestFirst([entry, ...this.journal]);
     this.renderJournal();
   }
 
@@ -247,6 +296,7 @@ export class FsMonitor extends HTMLElement {
    */
   private showError(error: unknown): void {
     this.stop();
+    this.findings = undefined;
     const root = this.shadowRoot;
     const labels = this.options?.labels;
     if (!root || !labels) return;
@@ -297,8 +347,10 @@ export class FsMonitor extends HTMLElement {
     const root = this.shadowRoot;
     const labels = this.options?.labels;
     if (!root || !labels) return;
+    this.findings = this.findingsSection();
     const sections = [
       section("health", labels.monitorHealth, el("p", ""), document.createElement("ul")),
+      section("ocfl", labels.monitorFindings, this.findings),
       section(
         "processes",
         labels.monitorProcesses,
@@ -317,6 +369,23 @@ export class FsMonitor extends HTMLElement {
     root.querySelector('[data-section="health"] p')?.classList.add("status");
   }
 
+  /**
+   * Create the OCFL validation section's element. It reads its findings once it is in the
+   * document. Network I/O happens there, not here.
+   */
+  private findingsSection(): FsOcflFindings {
+    const findings = document.createElement("fs-ocfl-findings") as FsOcflFindings;
+    const options = this.options;
+    if (options) {
+      findings.configure({
+        labels: options.labels,
+        client: options.client,
+        repairHref: options.repairHref,
+      });
+    }
+    return findings;
+  }
+
   /** Render the overall status and its reasons. */
   private renderHealth(health: HealthReport): void {
     const target = this.shadowRoot?.querySelector<HTMLElement>('[data-section="health"]');
@@ -325,7 +394,9 @@ export class FsMonitor extends HTMLElement {
     target.dataset.status = health.status;
     const status = target.querySelector(".status");
     if (status) status.textContent = labels[STATUS_LABEL[health.status]];
-    target.querySelector("ul")?.replaceChildren(...health.reasons.map((r) => el("li", r.detail)));
+    target
+      .querySelector("ul")
+      ?.replaceChildren(...health.reasons.map((r) => reasonItem(r, labels)));
     this.renderStorage(health);
   }
 
@@ -408,11 +479,16 @@ export class FsMonitor extends HTMLElement {
   private async searchJournal(): Promise<void> {
     const client = this.options?.client;
     if (!client) return;
+    const live: JournalEntry[] = [];
+    this.liveDuringRead = live;
     try {
-      this.journal = (await client.adminJournal(this.journalFilters())).entries;
+      const page = await client.adminJournal(this.journalFilters());
+      this.journal = newestFirst([...live, ...page.entries]);
       this.renderJournal();
     } catch (error) {
       this.showError(error);
+    } finally {
+      if (this.liveDuringRead === live) this.liveDuringRead = undefined;
     }
   }
 
@@ -437,6 +513,47 @@ const STATUS_LABEL: Record<HealthReport["status"], LabelKey> = {
   degraded: "statusDegraded",
   failing: "statusFailing",
 };
+
+/**
+ * The words of one health reason: the open OCFL validation errors from the label table, with
+ * their codes and the number of affected objects; any other reason as the API words it. Pure.
+ *
+ * @param reason The reason as the health report carries it.
+ * @param labels The active label table.
+ * @returns The text to show.
+ */
+export function reasonText(reason: HealthReason, labels: LabelTable): string {
+  if (reason.code !== OCFL_REASON || !reason.codes || reason.objects === undefined) {
+    return reason.detail;
+  }
+  const values = { codes: reason.codes.join(", "), objects: String(reason.objects) };
+  return formatLabel(labels.healthOcflErrors, values);
+}
+
+/** Build the list item of one health reason, keyed by its code. */
+function reasonItem(reason: HealthReason, labels: LabelTable): HTMLLIElement {
+  const item = el("li", reasonText(reason, labels));
+  item.dataset.reason = reason.code;
+  return item;
+}
+
+/**
+ * Journal rows newest first by id, each id once, at most {@link MAX_JOURNAL_ROWS}. Pure.
+ *
+ * @param entries Entries in any order, possibly repeated.
+ * @returns The rows to show.
+ */
+function newestFirst(entries: readonly JournalEntry[]): JournalEntry[] {
+  const byId = new Map<number, JournalEntry>();
+  const unnumbered: JournalEntry[] = [];
+  for (const entry of entries) {
+    if (entry.id === undefined || entry.id === null) unnumbered.push(entry);
+    else if (!byId.has(entry.id)) byId.set(entry.id, entry);
+  }
+  return [...byId.values(), ...unnumbered]
+    .sort((a, b) => (b.id ?? 0) - (a.id ?? 0))
+    .slice(0, MAX_JOURNAL_ROWS);
+}
 
 /** Format a byte count as GiB with one decimal, for example "10.0 GiB". */
 export function formatGiB(bytes: number): string {

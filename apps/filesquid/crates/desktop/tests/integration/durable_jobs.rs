@@ -18,10 +18,10 @@ use filesquid_api::operation::{CommandEnvelope, ExpectedRevision, OperationId, O
 use filesquid_api::ApiState;
 use filesquid_core::RESTART_RESUMABLE_WITHIN_SECS;
 use filesquid_core::{InstallationId, LibraryId, RepositoryId};
-use filesquid_desktop_lib::durable_jobs::{
+use filesquid_desktop_lib::{history_backfill, open_host_monitor, open_library_catalog};
+use filesquid_native::workers::history_backfill::{
     backfill_checkpoint, backfill_source, open_jobs, recover_jobs, run_backfill_job,
 };
-use filesquid_desktop_lib::{history_backfill, open_host_monitor, open_library_catalog};
 use filesquid_native::{
     HostMonitor, SqliteCatalog, SqliteJobs, SqliteJournal, CATALOG_DIR, JOURNAL_FILE,
 };
@@ -352,5 +352,44 @@ fn restart_recovery_reads_only_jobs_and_stays_within_the_budget() {
         started.elapsed()
     );
     next.stop();
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+/// Cubic round 1 (DE-0.8): an unreadable checkpoint counts as none, so every library is
+/// visited again.
+#[test]
+fn an_unreadable_checkpoint_visits_every_library_again() {
+    let dir = data_dir("unreadable");
+    libraries_without_history(&dir, &["op-a", "op-b"]);
+    for (n, bad) in [r#"{"done":"x"}"#, "not json"].into_iter().enumerate() {
+        let launch = Launch::open(&dir);
+        let job = launch
+            .jobs
+            .submit(JobSpec {
+                kind: BACKFILL_OPERATION.into(),
+                operation_id: format!("6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4{n}"),
+                source: backfill_source(&installation()),
+            })
+            .expect("submitted");
+        let mut running = launch
+            .jobs
+            .start(&job.id, &backfill_source(&installation()))
+            .expect("started");
+        running.checkpoint(bad, 1, Some(2)).expect("checkpoint");
+        running.suspend().expect("quit");
+        let backfill = history_backfill(&launch.host, &installation());
+        let run = run_backfill_job(
+            &launch.jobs,
+            &launch.catalog,
+            &backfill,
+            &backfill_source(&installation()),
+            &AtomicBool::new(false),
+        )
+        .expect("ran");
+        assert_eq!(run.job_id, job.id);
+        assert_eq!(run.ran.len(), 2, "{bad}: both libraries visited");
+        assert_eq!(run.state, JobState::Completed);
+        launch.stop();
+    }
     std::fs::remove_dir_all(dir).expect("cleanup");
 }

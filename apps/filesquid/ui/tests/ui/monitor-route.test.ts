@@ -19,6 +19,8 @@ const client: MonitorClient = {
   adminJournal: never,
   adminMetrics: never,
   adminJournalExport: never,
+  adminOcflFindings: never,
+  startOcflValidation: never,
   subscribe: () => () => undefined,
 };
 

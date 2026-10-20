@@ -13,6 +13,7 @@
 
 use super::error::FileError;
 use filesquid_core::{OperationMessage, MAX_LABEL_BYTES};
+use filesquid_ocfl::inventory::VersionNum;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -97,11 +98,18 @@ pub fn commit_label(message: Option<&str>) -> Option<String> {
 }
 
 /// The labels file: each named version's later label, `None` for a cleared one.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Labels {
     schema: u32,
     labels: BTreeMap<String, Option<String>>,
+}
+
+impl Default for Labels {
+    /// No later label, in the current schema.
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Labels {
@@ -123,6 +131,10 @@ impl Labels {
             .map_err(|_| FileError::internal("a labels file is not valid JSON of schema 1"))?;
         let valid = labels.schema == SCHEMA
             && labels.labels.len() <= MAX_LABELS
+            && labels
+                .labels
+                .keys()
+                .all(|version| VersionNum::parse(version).is_ok())
             && labels
                 .labels
                 .values()
@@ -206,6 +218,22 @@ impl Labels {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_default_labels_file_is_the_current_schema_and_reads_back() {
+        let labels = Labels::default();
+        assert_eq!(labels, Labels::new());
+        let bytes = labels.to_bounded_bytes().expect("bytes");
+        assert_eq!(Labels::parse(&bytes).expect("parse"), labels);
+    }
+
+    #[test]
+    fn a_labels_file_naming_something_other_than_a_version_is_refused() {
+        let bad = br#"{"schema":1,"labels":{"draft":"A"}}"#;
+        assert!(Labels::parse(bad).is_err());
+        let good = br#"{"schema":1,"labels":{"v12":"A","v3":null}}"#;
+        assert!(Labels::parse(good).is_ok());
+    }
 
     #[test]
     fn the_reserved_folder_is_the_folder_and_its_contents_only() {

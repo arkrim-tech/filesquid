@@ -6,7 +6,7 @@ Branch `feat/api-f2.5-versions-labels-restore`, module `filesquid-api` ([plan ro
 
 | SRS ID and title | Covered by |
 |---|---|
-| [API-S-014](../srs.md) Version listing, ranged reads, restore, labels, history size, no deletion | `integration_versions` (16 tests), `version_history_labels_restore_API-S-014.feature` (9 scenarios), `unit_contract` |
+| [API-S-014](../srs.md) Version listing, ranged reads, restore, labels, history size, no deletion | `integration_versions` (19 tests), `version_history_labels_restore_API-S-014.feature` (9 scenarios), `unit_contract` |
 | [SRS-F-065](../../../../../../resources/srs.md#srs-f-065-file-version-history-and-retention) File version history and retention | the same tests: one version per restore, earlier versions untouched, commit-time and later labels, history size, no delete, expiry or thinning route |
 | [API-S-028](../srs.md) PROV-O record per commit and journal linkage | `a_restore_commits_its_prov_o_record_and_journals_once`, `a_later_label_commits_its_prov_o_record`, the provenance scenario |
 | [API-S-002](../srs.md) Versioned contract and generated types | `unit_contract` drift and sample tests, regenerated `ui/src/api/schema.d.ts` |
@@ -55,24 +55,27 @@ Left for later rows:
 `cargo test -p filesquid-api --locked --test integration_versions --test unit_contract --test unit_auth`:
 
 ```text
-running 16 tests
+running 19 tests
+test a_label_that_changes_nothing_is_refused_without_a_version ... ok
 test a_file_history_carries_size_digest_label_and_version_facts ... ok
 test a_deleted_version_has_no_size ... ok
-test a_later_label_commits_its_prov_o_record ... ok
-test a_label_that_changes_nothing_is_refused_without_a_version ... ok
-test an_earlier_version_is_served_with_ranged_reads ... ok
+test a_folder_restore_brings_back_earlier_files_and_keeps_later_ones ... ok
 test a_restore_commits_its_prov_o_record_and_journals_once ... ok
+test a_later_label_commits_its_prov_o_record ... ok
 test a_later_label_is_committed_as_application_data_and_shown ... ok
-test library_history_size_counts_every_kept_content_once ... ok
-test labels_are_bounded_and_checked ... ok
-test history_size_counts_each_kept_content_of_a_file_once ... ok
+test an_earlier_version_is_served_with_ranged_reads ... ok
+test an_object_that_cannot_be_opened_marks_the_library_size_truncated ... ok
 test a_later_label_overrides_and_clears_a_commit_time_label ... ok
-test the_application_data_folder_is_reserved ... ok
-test restore_takes_a_label_not_a_free_message ... ok
+test history_size_counts_each_kept_content_of_a_file_once ... ok
+test labels_are_bounded_and_checked ... ok
+test library_history_size_counts_every_kept_content_once ... ok
 test restore_of_every_file_of_a_version_is_a_revert ... ok
-test the_contract_offers_no_version_deletion_expiry_or_thinning ... ok
+test the_application_data_folder_is_reserved ... ok
+test the_retention_check_catches_a_removal_under_any_method ... ok
+test restore_takes_a_label_not_a_free_message ... ok
 test restore_reinstates_chosen_files_in_exactly_one_version_with_a_label ... ok
-test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test the_contract_offers_no_version_deletion_expiry_or_thinning ... ok
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
 running 35 tests
 test a_host_route_cannot_be_made_public_through_the_guard ... ok
 test a_present_but_unusable_authorization_header_is_not_a_missing_one ... ok
