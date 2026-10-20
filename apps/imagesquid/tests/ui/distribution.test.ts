@@ -76,6 +76,7 @@ it("renders ImageSquid brand and vocabulary in the shared shell", async () => {
     "Galleries",
     "Exhibits",
     "Monitor",
+    "Settings",
   ]);
   expect(root?.querySelector('[role="status"]')?.textContent).toBe("Archives API: ok (filesquid)");
 });

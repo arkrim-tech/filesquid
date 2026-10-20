@@ -494,15 +494,15 @@ test("motion stops under reduced motion and focus is the 2px primary ring", asyn
 test("a failed listing shows the error state with Try again, and retrying loads it", async ({
   page,
 }) => {
-  const errors = trackErrors(page, /status of 503/);
+  const errors = trackErrors(page, /status of 500/);
   const source = fixture();
   const api = await serveFiles(page, source);
   let fail = true;
   await page.route(/\/api\/v1\/files\/listing\?/, (route) => {
     if (!fail) return route.fallback();
     return route.fulfill({
-      status: 503,
-      json: { code: "unavailable", message: "x", retryable: true },
+      status: 500,
+      json: { code: "internal", message: "x", retryable: false },
     });
   });
   await page.goto("/#/files/lib/obj");
