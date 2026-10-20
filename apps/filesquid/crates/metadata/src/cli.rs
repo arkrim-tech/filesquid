@@ -230,24 +230,32 @@ fn positional<'a>(args: &'a [String], flags: &[&str]) -> Vec<&'a str> {
 /// The namespace registry the command uses: the one in `--registry`, else
 /// the one `object` keeps (file I/O).
 fn load_registry(args: &[String], object: &LocalObject) -> Result<NamespaceRegistry, String> {
-    let Some(dir) = checked_flag(args, "--registry")? else {
-        return object.load_registry().map_err(|e| error_text(&e));
-    };
+    match checked_flag(args, "--registry")? {
+        Some(dir) => load_named_registry(dir),
+        None => object.load_registry().map_err(|e| error_text(&e)),
+    }
+}
+
+/// The registry kept by the object in `dir`, which must exist (file I/O).
+fn load_named_registry(dir: &str) -> Result<NamespaceRegistry, String> {
     let registry = LocalObject::open(Path::new(dir), None)
         .map_err(|e| format!("--registry {dir}: {}", error_text(&e)))?;
     registry.load_registry().map_err(|e| error_text(&e))
 }
 
-/// The registry `validate` checks against: none without `--object` or
-/// `--registry`, so a built-in term validates without an object.
+/// The registry `validate <term>` checks against: `--registry`, else the
+/// one in `--object`, else none, so a built-in term validates without an
+/// object (file I/O).
 fn validate_registry(rest: &[String]) -> Result<NamespaceRegistry, String> {
-    let named = ["--object", "--registry"]
-        .iter()
-        .any(|flag| rest.iter().any(|arg| arg == flag));
-    if !named {
+    if let Some(dir) = checked_flag(rest, "--registry")? {
+        return load_named_registry(dir);
+    }
+    if checked_flag(rest, "--object")?.is_none() {
         return Ok(NamespaceRegistry::default());
     }
-    load_registry(rest, &open_object(rest)?)
+    open_object(rest)?
+        .load_registry()
+        .map_err(|e| error_text(&e))
 }
 
 fn validate_args(rest: &[String]) -> Result<i32, String> {
@@ -510,10 +518,10 @@ fn cmd_import(rest: &[String]) -> Result<i32, String> {
 fn cmd_namespace(rest: &[String]) -> Result<i32, String> {
     let pos = positional(rest, NAMESPACE_FLAGS);
     let pos: Vec<&str> = pos.into_iter().filter(|arg| *arg != CUSTOM_FLAG).collect();
-    match pos.first().copied() {
-        Some("register") => namespace_register(rest, &pos[1..]),
-        Some("list") => namespace_list(rest),
-        _ => Err("namespace requires register <prefix> <iri> or list".into()),
+    match (pos.first().copied(), pos.len()) {
+        (Some("register"), 3) => namespace_register(rest, pos[1], pos[2]),
+        (Some("list"), 1) => namespace_list(rest),
+        _ => Err("namespace takes exactly register <prefix> <iri>, or list".into()),
     }
 }
 
@@ -552,10 +560,7 @@ fn registration_from(rest: &[String], prefix: &str, iri: &str) -> Result<Registr
 }
 
 /// Register one namespace and commit the registry.
-fn namespace_register(rest: &[String], args: &[&str]) -> Result<i32, String> {
-    let (Some(prefix), Some(iri)) = (args.first(), args.get(1)) else {
-        return Err("namespace register requires <prefix> <iri>".into());
-    };
+fn namespace_register(rest: &[String], prefix: &str, iri: &str) -> Result<i32, String> {
     let registration = registration_from(rest, prefix, iri)?;
     let object = open_registry_object(rest)?;
     let mut registry = object.load_registry().map_err(|e| error_text(&e))?;

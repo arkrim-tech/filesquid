@@ -537,6 +537,8 @@ fn namespace_register_refuses_a_built_in_prefix_and_another_iri() {
     )
     .expect("custom");
     assert_eq!(code, 0);
+    assert_eq!(validate_in(&object, Some("mine:any_key")), Ok(0));
+    assert_eq!(versions(&object), ["v1", "v2", "v3"]);
     let listed = run(&args(&[
         "namespace",
         "list",
@@ -609,6 +611,71 @@ fn a_separate_registry_object_is_named_with_registry() {
     .expect("set with --registry");
     assert_eq!(code, 0);
     assert!(metadata_md(&object).contains("rico:"));
+    std::fs::remove_dir_all(&dir).unwrap();
+    std::fs::remove_dir_all(&other_dir).unwrap();
+}
+
+#[test]
+fn validate_reads_a_named_registry_without_an_object() {
+    let (dir, registry) = rico_object("ns-validate-registry");
+    let registry_arg = registry.to_string_lossy().into_owned();
+    let code = run(&args(&[
+        "validate",
+        "rico:title",
+        "--registry",
+        &registry_arg,
+    ]));
+    assert_eq!(code, Ok(0));
+    let code = run(&args(&[
+        "validate",
+        "lido:title",
+        "--registry",
+        &registry_arg,
+    ]));
+    assert_eq!(code, Ok(1));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn namespace_subcommands_refuse_extra_operands() {
+    let (dir, object) = rico_object("ns-operands");
+    let object_arg = object.to_string_lossy().into_owned();
+    let err = run(&args(&[
+        "namespace",
+        "register",
+        "geo",
+        "https://example.org/geo#",
+        "extra",
+        "--object",
+        &object_arg,
+    ]))
+    .expect_err("three operands");
+    assert!(err.contains("register"), "{err}");
+    let err = run(&args(&[
+        "namespace",
+        "list",
+        "extra",
+        "--object",
+        &object_arg,
+    ]))
+    .expect_err("an operand");
+    assert!(err.contains("list"), "{err}");
+    assert_eq!(versions(&object), ["v1", "v2"]);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn extension_statements_round_trip_through_cli_json() {
+    let (dir, object) = rico_object("ns-json");
+    set_in(&object, "rico:title", "Fonds 12");
+    let sidecar = dir.join("out.json");
+    assert_eq!(run_json("export", &sidecar, "urn:x:1", &object), Ok(0));
+    assert!(std::fs::read_to_string(&sidecar)
+        .unwrap()
+        .contains("\"rico\""));
+    let (other_dir, other) = rico_object("ns-json-target");
+    assert_eq!(run_json("import", &sidecar, "urn:x:1", &other), Ok(0));
+    assert!(metadata_md(&other).contains("rico:\n  title: Fonds 12\n"));
     std::fs::remove_dir_all(&dir).unwrap();
     std::fs::remove_dir_all(&other_dir).unwrap();
 }

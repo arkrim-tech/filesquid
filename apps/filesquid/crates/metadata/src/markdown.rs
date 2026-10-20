@@ -119,6 +119,9 @@ pub fn from_markdown(text: &str) -> Record {
         }
         // A top-level line that opens no map (a file-record header line)
         // ends the map before it; only indented lines are its statements.
+        if line.trim().is_empty() {
+            continue;
+        }
         if !line.starts_with(' ') {
             ns = None;
             continue;

@@ -49,6 +49,14 @@ fn an_object_without_a_registry_reads_as_empty() {
 }
 
 #[test]
+fn an_existing_object_without_a_registry_record_reads_as_empty() {
+    let rig = Rig::memory();
+    rig.seed(REGISTRY_OBJECT, &[("metadata.md", b"---\n---\n")]);
+    let registry = ready(rig.store().read_registry(&registry_ref())).unwrap();
+    assert!(registry.registrations().is_empty());
+}
+
+#[test]
 fn a_registration_is_committed_in_one_version_and_read_back() {
     let rig = Rig::memory();
     let receipt = ready(rig.store().commit_registry_with(
@@ -128,6 +136,9 @@ fn a_new_registration_is_a_new_version() {
     )
     .unwrap();
     assert_eq!(rig.versions(REGISTRY_OBJECT), ["v1", "v2"]);
+    let head = ready(rig.store().read_registry(&registry_ref())).unwrap();
+    assert_eq!(head, grown);
+    assert!(head.get("mine").is_some());
     let pinned = ready(
         rig.store()
             .read_registry(&registry_ref().with_version("v1")),

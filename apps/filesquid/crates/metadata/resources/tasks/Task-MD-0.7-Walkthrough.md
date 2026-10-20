@@ -30,6 +30,15 @@ JSON import applies the `/terms/` register and the namespace registry checks; an
 - CLI: `namespace register <prefix> <iri> [--terms a,b] [--custom]`, `namespace list`, `--registry <dir>`; `set`, `import` and `export` use the registry; `validate [prefix:term]` checks a term or, without one, every statement of the record and names each unregistered prefix.
 - Docs: crate README (Namespace registry section), module SRS MD-S-005 and MD-S-012, root PRD F-052 and SRS-F-052 command lists, ADR 036 (metadata command list, dated revision).
 
+## Cubic round 1 changes
+
+- A term list is never dropped and an open namespace never gains one (re-registration and registry saves); IRIs holding a character RFC 3987 excludes (`{}|\^` and backtick) are refused.
+- XMP import reads every registered namespace in one pass over the packet, and a packet prefix bound to two IRIs (a nested rebinding) is not read; a packet with more than 1,024 `xmlns:` declarations yields no extension statements.
+- `metadata.md`: a blank line inside a map keeps it open. CSV: `parse_csv_header_line_with`.
+- CLI: `validate <term> --registry <dir>` needs no object; `namespace register` takes exactly two operands and `list` none.
+- Tests: the BDD authoring scenarios commit through `LocalObject` and read the stored `metadata.md` back; store tests for an existing object without a registry record and for the head after a second registration; CLI tests for a usable custom namespace, JSON round-trip, `--registry` without an object and extra operands.
+- Docs: product vision C-057, U-63 and T-045 name the metadata commands including `namespace`; README example passes `--id`; the README says which exports consult the registry.
+
 ## Notes for API-F1.4 (platform engineer)
 
 - `MetadataNamespace` is no longer `Copy` (it carries the extension prefix) and has a new variant; `Statement::prefix()` returns `&str`. Clone where a namespace was copied, and match `Extension(_)`.

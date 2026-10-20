@@ -1676,16 +1676,26 @@ fn author_extension(world: &mut MetadataWorld, curie: String, value: String) {
 #[then(expr = "metadata.md should hold {word} {word} {string} in its own map")]
 fn holds_extension_map(world: &mut MetadataWorld, prefix: String, term: String, value: String) {
     assert_eq!(world.write_result, Some(Ok(())));
-    let text = to_markdown(&world.ns_record);
+    let dir = fresh_object_dir();
+    let object = LocalObject::open(&dir, Some("urn:x:extension")).expect("open");
+    object.save(&world.ns_record).expect("commit metadata.md");
+    let committed = object
+        .read_file(METADATA_MD, None)
+        .expect("read metadata.md");
+    let text = String::from_utf8(committed).expect("UTF-8");
+    world.object_dir = Some(dir);
     assert!(
         text.contains(&format!("{prefix}:\n  {term}: {value}\n")),
         "{text}"
     );
+    assert_eq!(object.load().expect("reload"), world.ns_record);
+    world.inspected = text;
 }
 
 #[then("no dcterms statement should be written")]
 fn no_dcterms_statement(world: &mut MetadataWorld) {
-    let text = to_markdown(&world.ns_record);
+    let text = &world.inspected;
+    assert!(!text.is_empty(), "the committed metadata.md was read");
     assert!(!text.contains("dcterms:"), "{text}");
 }
 

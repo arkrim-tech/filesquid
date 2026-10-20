@@ -42,6 +42,9 @@ const MAX_IRI_BYTES: usize = 2048;
 /// Longest term, in bytes.
 const MAX_TERM_BYTES: usize = 255;
 
+/// Characters RFC 3987 excludes from an IRI (besides spaces and controls).
+const FORBIDDEN_IRI_CHARS: &[char] = &['"', '<', '>', '{', '}', '|', '\\', '^', '`'];
+
 /// The built-in prefixes a registration MUST NOT redefine.
 const BUILT_IN_PREFIXES: &[&str] = &["dcterms", "dc", "schema", "exif"];
 
@@ -200,8 +203,8 @@ pub enum RegistryError {
     /// with `xml`.
     #[error("the prefix {0:?} is not a valid namespace prefix")]
     InvalidPrefix(String),
-    /// The IRI is empty, too long, has no scheme or holds a space or control
-    /// character.
+    /// The IRI is empty, too long, has no scheme or holds a space, a control
+    /// character or a character RFC 3987 excludes (`"<>{}|\^` and backtick).
     #[error("the IRI is not a valid absolute IRI of at most 2,048 bytes")]
     InvalidIri,
     /// A term is not 1 to 255 bytes of `[A-Za-z_][A-Za-z0-9_.-]*`.
@@ -229,8 +232,9 @@ pub enum RegistryError {
     /// A re-registration changes extension into custom or back.
     #[error("the namespace {0} cannot change between extension and custom")]
     KindChanged(String),
-    /// A re-registration or save drops terms the namespace accepted.
-    #[error("the namespace {0} cannot drop terms it accepted")]
+    /// A re-registration or save drops a term or the term list, or gives an
+    /// open namespace a term list.
+    #[error("the namespace {0} must keep its term list and every term in it")]
     TermsRemoved(String),
     /// A save drops a registration.
     #[error("the namespace {0} cannot be unregistered")]
@@ -423,8 +427,8 @@ fn entry_lines(text: &str) -> Result<Vec<&str>, RegistryError> {
     Ok(entries)
 }
 
-/// `new` keeps what `old` registered: its IRI, its kind and every term it
-/// accepted.
+/// `new` keeps what `old` registered: its IRI, its kind, and its term list
+/// with every term in it (an open namespace stays open).
 fn check_kept(old: &Registration, new: &Registration) -> Result<(), RegistryError> {
     if new.iri != old.iri {
         return Err(RegistryError::PrefixTaken {
@@ -435,13 +439,13 @@ fn check_kept(old: &Registration, new: &Registration) -> Result<(), RegistryErro
     if new.kind != old.kind {
         return Err(RegistryError::KindChanged(old.prefix.clone()));
     }
-    let Some(old_terms) = &old.terms else {
-        return match new.terms {
-            None => Ok(()),
-            Some(_) => Err(RegistryError::TermsRemoved(old.prefix.clone())),
-        };
+    let kept = match (&old.terms, &new.terms) {
+        (None, None) => true,
+        (Some(old_terms), Some(new_terms)) => old_terms.iter().all(|t| new_terms.contains(t)),
+        // A term list is never dropped, and an open namespace never gains one.
+        _ => false,
     };
-    if old_terms.iter().all(|term| new.allows(term)) {
+    if kept {
         return Ok(());
     }
     Err(RegistryError::TermsRemoved(old.prefix.clone()))
@@ -480,7 +484,7 @@ fn check_iri(iri: &str) -> Result<(), RegistryError> {
     });
     let chars_ok = !iri
         .chars()
-        .any(|c| c.is_whitespace() || c.is_control() || matches!(c, '"' | '<' | '>'));
+        .any(|c| c.is_whitespace() || c.is_control() || FORBIDDEN_IRI_CHARS.contains(&c));
     if scheme_ok && chars_ok && iri.len() <= MAX_IRI_BYTES {
         return Ok(());
     }

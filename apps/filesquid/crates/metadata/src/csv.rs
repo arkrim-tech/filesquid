@@ -78,12 +78,31 @@ fn csv_error(err: MetadataError) -> CsvError {
 }
 
 /// Parse a comma-separated header line after an optional leading `id` column.
+/// Without a registry no extension prefix is registered.
+///
+/// # Errors
+///
+/// As [`parse_csv_header_line_with`].
 pub fn parse_csv_header_line(line: &str) -> Result<Vec<CsvHeader>, CsvError> {
+    parse_csv_header_line_with(line, &NamespaceRegistry::default())
+}
+
+/// Parse a comma-separated header line after an optional leading `id`
+/// column, resolving extension prefixes through `registry`.
+///
+/// # Errors
+///
+/// A header refusal ([`parse_csv_header_with`]) or
+/// [`CsvError::UnterminatedQuote`].
+pub fn parse_csv_header_line_with(
+    line: &str,
+    registry: &NamespaceRegistry,
+) -> Result<Vec<CsvHeader>, CsvError> {
     let rows = parse_records(line)?;
     let Some(cells) = rows.first() else {
         return Ok(Vec::new());
     };
-    parse_header_cells(cells, &NamespaceRegistry::default())
+    parse_header_cells(cells, registry)
 }
 
 /// Parse header cells, skipping a leading `id`/`object`/`object_id` column.

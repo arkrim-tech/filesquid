@@ -105,36 +105,54 @@ pub fn from_xmp(text: &str) -> Record {
 
 /// Read `dcterms:`, `dc:` and registered extension elements from an XMP
 /// packet. An extension namespace is found by its registered IRI under any
-/// prefix the packet binds to it; elements of unregistered namespaces and
+/// prefix the packet binds to it, in one pass over the packet. A packet
+/// prefix bound to more than one IRI is ambiguous without XML scoping and is
+/// not read, and a packet with more than 1,024 `xmlns:` declarations
+/// yields no extension statements. Elements of unregistered namespaces and
 /// terms a registration or the register refuses are left out.
 pub fn from_xmp_with(text: &str, registry: &NamespaceRegistry) -> Record {
     let mut record = from_xmp(text);
-    let bindings = xmlns_bindings(text);
-    for registration in registry.registrations() {
-        let namespace = MetadataNamespace::Extension(registration.prefix().to_string());
-        let packet_prefixes = bindings.iter().filter(|(name, iri)| {
-            iri == registration.iri() && !matches!(name.as_str(), "dc" | "dcterms")
-        });
-        for (name, _) in packet_prefixes {
-            let mut pairs = Vec::new();
-            pull_tags(text, &format!("{name}:"), &mut pairs);
-            for (term, value) in pairs {
-                // A term the registration refuses is not part of the record.
-                let _ = record.set_registered(registry, namespace.clone(), &term, value);
-            }
-        }
+    let names = packet_prefixes(text, registry);
+    for (index, term, value) in pull_prefixed(text, &names) {
+        let namespace = MetadataNamespace::Extension(names[index].1.clone());
+        // A term the registration refuses is not part of the record.
+        let _ = record.set_registered(registry, namespace, &term, value);
     }
     record
 }
 
+/// The packet prefixes bound to a registered IRI, each with the registered
+/// prefix it stands for. A packet prefix bound to two IRIs anywhere in the
+/// packet is left out, so a nested rebinding can never bring an element of
+/// another namespace in.
+fn packet_prefixes(text: &str, registry: &NamespaceRegistry) -> Vec<(String, String)> {
+    let Some(bindings) = xmlns_bindings(text) else {
+        return Vec::new();
+    };
+    let mut names: Vec<(String, String)> = Vec::new();
+    for (name, iri) in &bindings {
+        let ambiguous = bindings.iter().any(|(n, other)| n == name && other != iri);
+        let built_in = matches!(name.as_str(), "dc" | "dcterms");
+        let known = names.iter().any(|(n, _)| n == name);
+        let Some(prefix) = registry.prefix_of_iri(iri) else {
+            continue;
+        };
+        if !ambiguous && !built_in && !known {
+            names.push((name.clone(), prefix.to_string()));
+        }
+    }
+    names
+}
+
 /// The `xmlns:<name>="<iri>"` declarations of a packet (single or double
-/// quotes), at most [`MAX_BINDINGS`].
-fn xmlns_bindings(text: &str) -> Vec<(String, String)> {
+/// quotes); `None` when it holds more than [`MAX_BINDINGS`], since a
+/// rebinding past the cap could not be seen.
+fn xmlns_bindings(text: &str) -> Option<Vec<(String, String)>> {
     let mut bindings = Vec::new();
     let mut rest = text;
     while let Some(start) = rest.find("xmlns:") {
         if bindings.len() >= MAX_BINDINGS {
-            break;
+            return None;
         }
         rest = &rest[start + "xmlns:".len()..];
         let Some((name, after)) = rest.split_once('=') else {
@@ -148,7 +166,51 @@ fn xmlns_bindings(text: &str) -> Vec<(String, String)> {
         };
         bindings.push((name.trim().to_string(), xml_unescape(iri)));
     }
-    bindings
+    Some(bindings)
+}
+
+/// Every `<name:term>value</name:term>` element whose `name` is one of
+/// `names`, in packet order, as `(index into names, term, value)`: one pass
+/// over the packet.
+fn pull_prefixed(text: &str, names: &[(String, String)]) -> Vec<(usize, String, String)> {
+    let mut found = Vec::new();
+    if names.is_empty() {
+        return found;
+    }
+    let mut rest = text;
+    while let Some(start) = rest.find('<') {
+        rest = &rest[start + 1..];
+        let Some(gt) = rest.find('>') else {
+            break;
+        };
+        let tag = rest[..gt].trim();
+        rest = &rest[gt + 1..];
+        let Some((index, name, term)) = element_name(tag, names) else {
+            continue;
+        };
+        let close = format!("</{name}:{term}>");
+        // An element without its close ends the scan (one pass, as `pull_tags`).
+        let Some(end) = rest.find(&close) else {
+            break;
+        };
+        found.push((index, term.to_string(), element_text(&rest[..end])));
+        rest = &rest[end + close.len()..];
+    }
+    found
+}
+
+/// The `names` index, packet prefix and term of an opening tag `name:term`
+/// without attributes, or `None` for any other tag.
+fn element_name<'t>(tag: &'t str, names: &[(String, String)]) -> Option<(usize, &'t str, &'t str)> {
+    if tag.ends_with('/') || tag.contains(char::is_whitespace) {
+        return None;
+    }
+    let (name, term) = tag.split_once(':')?;
+    if term.is_empty() {
+        return None;
+    }
+    let index = names.iter().position(|(n, _)| n == name)?;
+    Some((index, name, term))
 }
 
 /// Every `dcterms:` and `dc:` element of an XMP packet as `(term, value)`,

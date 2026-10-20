@@ -9,7 +9,10 @@
 //! their own `metadata.md` map, round-trip through CSV, JSON and XMP, and are
 //! never mapped onto `dcterms:`.
 
-use filesquid_metadata::csv::{apply_csv, apply_csv_with, parse_csv_header_with, to_csv, CsvError};
+use filesquid_metadata::csv::{
+    apply_csv, apply_csv_with, parse_csv_header_line, parse_csv_header_line_with,
+    parse_csv_header_with, to_csv, CsvError,
+};
 use filesquid_metadata::json::{apply_json, apply_json_with, to_json, JsonError, JsonTarget};
 use filesquid_metadata::markdown::{from_markdown, to_markdown};
 use filesquid_metadata::namespace::{
@@ -220,6 +223,34 @@ mod registration {
     }
 
     #[test]
+    fn a_term_list_cannot_be_dropped_and_an_open_namespace_cannot_gain_one() {
+        let mut registry = registry();
+        let open = Registration::extension("rico", RICO_IRI, None, Registrant::Owner);
+        assert_eq!(
+            registry.register(open),
+            Err(RegistryError::TermsRemoved("rico".to_string()))
+        );
+        assert_eq!(
+            registry.check("rico", "colour"),
+            Err(MetadataError::UnknownExtensionTerm {
+                prefix: "rico".to_string(),
+                term: "colour".to_string(),
+            })
+        );
+        let mut base = NamespaceRegistry::default();
+        base.register(rico()).unwrap();
+        let text = base.to_markdown().replace(
+            "\"terms\":[\"title\",\"hasCreator\",\"date\"]",
+            "\"terms\":null",
+        );
+        let widened = NamespaceRegistry::from_markdown(&text).unwrap();
+        assert_eq!(
+            widened.check_extends(&base),
+            Err(RegistryError::TermsRemoved("rico".to_string()))
+        );
+    }
+
+    #[test]
     fn an_iri_belongs_to_one_prefix() {
         let mut registry = registry();
         let twin = Registration::extension("ric", RICO_IRI, None, Registrant::Owner);
@@ -266,6 +297,11 @@ mod registration {
         for iri in [
             "",
             "no-scheme",
+            "https://example.org/{x}",
+            "https://example.org/a\\b",
+            "https://example.org/a|b",
+            "https://example.org/a^b",
+            "https://example.org/a`b",
             "https://example.org/a b",
             &format!("https://{}", "a".repeat(2048)),
         ] {
@@ -489,6 +525,12 @@ mod markdown {
     }
 
     #[test]
+    fn a_blank_line_inside_a_map_keeps_the_map_open() {
+        let record = from_markdown("---\nrico:\n  title: Kept\n\n  hasCreator: Also kept\n---\n");
+        assert_eq!(record.get("rico:hasCreator").unwrap().value, "Also kept");
+    }
+
+    #[test]
     fn a_map_of_an_unregistered_prefix_is_kept_on_read() {
         let text = "---\ndcterms:\n  title: Harbour\nlido:\n  title: Kept\n---\n";
         let record = from_markdown(text);
@@ -508,6 +550,17 @@ mod csv {
         let mut back = Record::default();
         apply_csv_with(&text, &registry(), &mut back).unwrap();
         assert_eq!(back, record);
+    }
+
+    #[test]
+    fn a_csv_header_line_resolves_registered_prefixes() {
+        let headers =
+            parse_csv_header_line_with("id,dcterms:title,rico:title", &registry()).unwrap();
+        assert_eq!(headers[1].namespace, ext("rico"));
+        assert_eq!(
+            parse_csv_header_line("id,rico:title"),
+            Err(CsvError::UnregisteredNamespace("rico".to_string()))
+        );
     }
 
     #[test]
@@ -639,6 +692,31 @@ mod xmp {
                 term: "shelf mark".to_string(),
             })
         );
+    }
+
+    #[test]
+    fn xmp_import_skips_a_packet_prefix_bound_to_two_iris() {
+        let packet = format!(
+            "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\
+             <rdf:Description xmlns:r=\"{RICO_IRI}\"><r:title>Fonds 12</r:title>\
+             <x:wrap xmlns:x=\"https://example.org/x#\" xmlns:r=\"https://example.org/other#\">\
+             <r:hasCreator>Not RiC-O</r:hasCreator></x:wrap></rdf:Description></rdf:RDF>"
+        );
+        let record = from_xmp_with(&packet, &registry());
+        assert!(record.get("rico:hasCreator").is_none(), "{record:?}");
+        assert!(record.statements.is_empty(), "{record:?}");
+    }
+
+    #[test]
+    fn xmp_import_reads_every_packet_prefix_of_a_registered_iri_in_one_pass() {
+        let packet = format!(
+            "<rdf:Description xmlns:a=\"{RICO_IRI}\" xmlns:b=\"{RICO_IRI}\" xmlns:m=\"{MINE_IRI}\">\
+             <b:hasCreator>Port</b:hasCreator><a:title>Fonds</a:title><m:shelf>B-7</m:shelf>\
+             </rdf:Description>"
+        );
+        let record = from_xmp_with(&packet, &registry());
+        let curies: Vec<String> = record.statements.iter().map(|s| s.curie()).collect();
+        assert_eq!(curies, ["rico:hasCreator", "rico:title", "mine:shelf"]);
     }
 
     #[test]
