@@ -50,7 +50,7 @@ pub const MODULES: &[Module] = &[Module {
 const METADATA_OBJECT_FLAGS: [&str; 2] = ["--object", "--registry"];
 
 /// The object directories a metadata command names: `--object` (default `.`) and
-/// `--registry` when given. Pure.
+/// `--registry` when given and not the same path. Pure.
 fn metadata_objects(args: &[String]) -> Vec<PathBuf> {
     let named = |flag: &str| {
         args.windows(2)
@@ -59,7 +59,7 @@ fn metadata_objects(args: &[String]) -> Vec<PathBuf> {
     };
     let object = named(METADATA_OBJECT_FLAGS[0]).unwrap_or_else(|| PathBuf::from("."));
     let mut dirs = vec![object];
-    dirs.extend(named(METADATA_OBJECT_FLAGS[1]));
+    dirs.extend(named(METADATA_OBJECT_FLAGS[1]).filter(|registry| !dirs.contains(registry)));
     dirs
 }
 

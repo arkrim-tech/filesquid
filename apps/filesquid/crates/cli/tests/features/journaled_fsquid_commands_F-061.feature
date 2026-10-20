@@ -24,6 +24,13 @@ Feature: Every fsquid command that changes something or fails is journaled
     Then the journal should hold 1 entry
 
   # Edge case
+  Scenario: A successful export writes a file outside the object and is journaled
+    When I set a title on a new object with fsquid
+    And I export the object's metadata as CSV with fsquid
+    Then the journal should hold 2 entries
+    And the last entry should be a "cli.metadata.export" entry that "succeeded"
+
+  # Edge case
   Scenario: fsquid writes beside a running desktop host
     Given another connection holds the journal open
     When I set a title on a new object with fsquid

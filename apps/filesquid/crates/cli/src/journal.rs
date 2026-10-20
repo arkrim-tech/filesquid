@@ -14,9 +14,10 @@
 //! no journal.
 //!
 //! Whether a command changed state is read from the OCFL objects it names: their committed
-//! heads before and after it runs ([`object_heads`]). A module command that writes a file
-//! outside its objects (listed in [`Module::file_writers`]) changes state whenever it
-//! succeeds.
+//! heads before and after it runs ([`object_heads`]). An object whose inventory exists but
+//! cannot be read counts as changed, so no change goes unjournaled. A module command that
+//! writes a file outside its objects (listed in [`Module::file_writers`]) changes state
+//! whenever it succeeds.
 
 use crate::{resolve, usage, Module, Route};
 use filesquid_api::journal::{JournalEntry, JournalError, JournalStore, Outcome};
@@ -50,7 +51,7 @@ pub const ROUTE_OPERATION: &str = "cli.route";
 const ACTOR: &str = "cli";
 
 /// Largest inventory read to learn an object's head (an OCFL inventory larger than this is
-/// not read, and the object counts as unchanged).
+/// not read, and a command on that object is journaled as a change).
 const MAX_INVENTORY_BYTES: u64 = 64 << 20;
 
 /// The data directory: `FILESQUID_DATA_DIR` when `var` (its value) is set and not empty,
@@ -135,14 +136,16 @@ fn run_module(
     let objects = (module.objects)(args);
     let before = object_heads(&objects);
     let result = (module.run)(args);
-    let changed = changed_heads(&before, &object_heads(&objects));
+    let after = object_heads(&objects);
+    let changed = changed_heads(&before.heads, &after.heads);
     let code = report(&result);
-    let writes_file = module.file_writers.contains(&command);
+    let unobserved = before.unobserved + after.unobserved > 0;
+    let changes = !changed.is_empty() || unobserved || module.file_writers.contains(&command);
     let failure = failure_code(&result);
-    let Some(entry) = command_entry(module.name, command, failure, &changed, writes_file) else {
+    let Some(entry) = command_entry(module.name, command, failure, &changed, changes) else {
         return code;
     };
-    record(journal, entry, out, code)
+    record(journal, entry, out, code, changes)
 }
 
 /// The error code of a module command's result: `command_error` for an error the module
@@ -169,42 +172,47 @@ fn report(result: &Result<i32, String>) -> i32 {
 
 /// Journal a command line that names no module command, with `error_code`.
 fn route_failure(error_code: &str, journal: &dyn JournalStore, out: &mut dyn Write) -> i32 {
-    record(
-        journal,
-        failed(ROUTE_OPERATION.into(), error_code),
-        out,
-        EXIT_USAGE,
-    )
+    let entry = failed(ROUTE_OPERATION.into(), error_code);
+    record(journal, entry, out, EXIT_USAGE, false)
 }
 
 /// Write `entry` to `journal` and answer `code`; when the write fails, print the redacted
-/// entry to `out` marked `"journal_write_failed": true` and answer a non-zero code. Writes
-/// to the journal, `out` and stderr.
-fn record(journal: &dyn JournalStore, entry: JournalEntry, out: &mut dyn Write, code: i32) -> i32 {
+/// entry to `out` marked `"journal_write_failed": true` and answer
+/// [`EXIT_JOURNAL_WRITE_FAILED`] for a command that `changed` state or succeeded, else its
+/// own failure code. Writes to the journal, `out` and stderr.
+fn record(
+    journal: &dyn JournalStore,
+    entry: JournalEntry,
+    out: &mut dyn Write,
+    code: i32,
+    changed: bool,
+) -> i32 {
     let Err(err) = journal.append(std::slice::from_ref(&entry)) else {
         return code;
     };
     eprintln!("fsquid: the journal entry could not be written: {err}");
     write_marked(out, &entry, "journal_write_failed");
-    match code {
-        0 => EXIT_JOURNAL_WRITE_FAILED,
-        other => other,
+    match changed || code == 0 {
+        true => EXIT_JOURNAL_WRITE_FAILED,
+        false => code,
     }
 }
 
 /// The entry of a module command that failed with `failure` (or succeeded, `None`) after
-/// changing the objects in `changed`, or `None` for a success that changed nothing. Pure.
+/// committing the objects in `changed`; `changes` is whether it changed state at all (a
+/// commit, a file written outside its objects, or an object whose head could not be read),
+/// and a success without changes has no entry. Pure.
 fn command_entry(
     module: &str,
     command: &str,
     failure: Option<&str>,
     changed: &[ObjectHead],
-    writes_file: bool,
+    changes: bool,
 ) -> Option<JournalEntry> {
     let operation = format!("cli.{module}.{command}");
     let mut entry = match failure {
         Some(code) => failed(operation, code),
-        None if changed.is_empty() && !writes_file => return None,
+        None if !changes => return None,
         None => JournalEntry::new(operation, Outcome::Succeeded).actor(ACTOR),
     };
     if let Some(first) = changed.first() {
@@ -275,26 +283,64 @@ pub struct ObjectHead {
     pub head: String,
 }
 
-/// The committed head of each OCFL object directory in `dirs` that holds one, read from its
-/// root inventory. Filesystem I/O.
-pub fn object_heads(dirs: &[PathBuf]) -> Vec<ObjectHead> {
-    dirs.iter().filter_map(|dir| object_head(dir)).collect()
+/// What [`object_heads`] read.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Heads {
+    /// The committed head of each directory that holds an object.
+    pub heads: Vec<ObjectHead>,
+    /// Directories whose root inventory exists but could not be read: a command that may
+    /// have changed them is journaled as a change.
+    pub unobserved: usize,
 }
 
-/// The committed head of the object in `dir`, or `None` when it holds no readable one.
+/// The committed head of each OCFL object directory in `dirs` that holds one, read from its
+/// root inventory. Filesystem I/O.
+pub fn object_heads(dirs: &[PathBuf]) -> Heads {
+    let mut found = Heads::default();
+    for dir in dirs {
+        match object_head(dir) {
+            Ok(Some(head)) => found.heads.push(head),
+            Ok(None) => {}
+            Err(reason) => {
+                eprintln!("fsquid: the object's inventory could not be read: {reason}");
+                found.unobserved += 1;
+            }
+        }
+    }
+    found
+}
+
+/// The committed head of the object in `dir`, or `None` when `dir` holds no inventory.
 /// Filesystem I/O.
-fn object_head(dir: &Path) -> Option<ObjectHead> {
-    let file = std::fs::File::open(dir.join("inventory.json")).ok()?;
+///
+/// # Errors
+/// Why an inventory that exists could not be read: an I/O failure, more than
+/// [`MAX_INVENTORY_BYTES`], or no `id` and `head`.
+fn object_head(dir: &Path) -> Result<Option<ObjectHead>, String> {
+    let path = dir.join("inventory.json");
+    let file = match std::fs::File::open(&path) {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(format!("{}: {err}", path.display())),
+    };
     let mut text = String::new();
-    file.take(MAX_INVENTORY_BYTES)
+    file.take(MAX_INVENTORY_BYTES + 1)
         .read_to_string(&mut text)
-        .ok()?;
-    let inventory: serde_json::Value = serde_json::from_str(&text).ok()?;
-    Some(ObjectHead {
-        dir: dir.to_path_buf(),
-        id: inventory["id"].as_str()?.to_string(),
-        head: inventory["head"].as_str()?.to_string(),
-    })
+        .map_err(|err| format!("{}: {err}", path.display()))?;
+    if text.len() as u64 > MAX_INVENTORY_BYTES {
+        return Err(format!("{}: larger than the CLI reads", path.display()));
+    }
+    let inventory: serde_json::Value =
+        serde_json::from_str(&text).map_err(|err| format!("{}: {err}", path.display()))?;
+    let field = |name: &str| inventory[name].as_str().map(str::to_string);
+    match (field("id"), field("head")) {
+        (Some(id), Some(head)) => Ok(Some(ObjectHead {
+            dir: dir.to_path_buf(),
+            id,
+            head,
+        })),
+        _ => Err(format!("{}: no id and head", path.display())),
+    }
 }
 
 /// The heads in `after` that are not in `before`: the objects a command committed. Pure.

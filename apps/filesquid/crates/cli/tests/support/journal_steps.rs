@@ -137,6 +137,28 @@ fn read_title(w: &mut CliWorld) {
         .fsquid(&["get", "dcterms:title", "--object", &object]);
 }
 
+#[when("I export the object's metadata as CSV with fsquid")]
+fn export_csv(w: &mut CliWorld) {
+    let object = w.journal.object().to_string_lossy().into_owned();
+    let sidecar = w.journal.root().join("holiday.csv");
+    let sidecar = sidecar.to_string_lossy().into_owned();
+    w.journal
+        .fsquid(&["export", "csv", &sidecar, "--object", &object]);
+}
+
+#[then(expr = "the journal should hold {int} entries")]
+fn entries_count(w: &mut CliWorld, count: usize) {
+    assert_eq!(w.journal.entries().len(), count);
+}
+
+#[then(expr = "the last entry should be a {string} entry that {string}")]
+fn last_entry(w: &mut CliWorld, operation: String, outcome: String) {
+    let entries = w.journal.entries();
+    let last = entries.last().expect("an entry");
+    assert_eq!(last.operation, operation);
+    assert_eq!(last.outcome.as_str(), outcome);
+}
+
 #[when(expr = "I run the fsquid binary with {string}")]
 fn run_binary(w: &mut CliWorld, line: String) {
     let args: Vec<&str> = line.split_whitespace().collect();

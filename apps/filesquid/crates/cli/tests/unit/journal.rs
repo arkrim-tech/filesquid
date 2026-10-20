@@ -213,3 +213,73 @@ fn a_journal_write_that_fails_after_a_commit_exits_non_zero_with_the_entry() {
         "the change itself was committed"
     );
 }
+
+#[test]
+fn a_successful_export_writes_a_file_and_is_journaled() {
+    let scratch = Scratch::new("export");
+    let store = MemoryJournal::new(JOURNAL_HOST);
+    set_title(&store, &scratch.object());
+    let sidecar = scratch.0.join("holiday.csv").to_string_lossy().into_owned();
+    let (code, _) = run_on(&store, &scratch.object(), &["export", "csv", &sidecar]);
+    assert_eq!(code, 0);
+    assert!(scratch.0.join("holiday.csv").exists());
+    let journaled = entries(&store);
+    assert_eq!(journaled.len(), 2, "{journaled:?}");
+    assert_eq!(journaled[1].operation, "cli.metadata.export");
+    assert_eq!(journaled[1].outcome, Outcome::Succeeded);
+    assert!(!serde_json::to_string(&journaled[1])
+        .expect("json")
+        .contains("holiday"));
+}
+
+#[test]
+fn a_registry_that_is_the_object_is_named_once() {
+    let scratch = Scratch::new("registry");
+    let store = MemoryJournal::new(JOURNAL_HOST);
+    let object = scratch.object();
+    set_title(&store, &object);
+    let (code, _) = run_on(
+        &store,
+        &object,
+        &[
+            "set",
+            "dcterms:title",
+            "Another title",
+            "--registry",
+            &object,
+        ],
+    );
+    assert_eq!(code, 0);
+    let journaled = entries(&store);
+    assert_eq!(journaled.len(), 2, "{journaled:?}");
+    assert_eq!(
+        journaled[1].object_ref.as_deref(),
+        Some(&*format!("{OBJECT_ID}@v2"))
+    );
+    assert!(journaled[1].target_ids.is_empty(), "{journaled:?}");
+}
+
+#[test]
+fn an_inventory_that_cannot_be_read_counts_as_unobserved() {
+    use filesquid_cli::journal::object_heads;
+    let scratch = Scratch::new("unreadable");
+    let object = scratch.0.join("holiday-album");
+    std::fs::create_dir_all(&object).expect("dir");
+    std::fs::write(object.join("inventory.json"), b"{ not json").expect("inventory");
+    let empty = scratch.0.join("empty");
+    let heads = object_heads(&[object, empty]);
+    assert!(heads.heads.is_empty());
+    assert_eq!(
+        heads.unobserved, 1,
+        "a missing inventory is no object, not unobserved"
+    );
+}
+
+#[test]
+fn a_failed_command_whose_entry_cannot_be_written_keeps_its_own_code() {
+    let scratch = Scratch::new("failed-write");
+    set_title(&MemoryJournal::new(JOURNAL_HOST), &scratch.object());
+    let (code, out) = run_on(&Refusing, &scratch.object(), &["get", "dcterms:creator"]);
+    assert_eq!(code, 1, "nothing changed, so the command's own code stays");
+    assert!(out.contains("\"journal_write_failed\":true"), "{out}");
+}

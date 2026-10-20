@@ -102,7 +102,7 @@ fn an_unopenable_journal_refuses_the_command_and_changes_nothing() {
     std::fs::write(&not_a_dir, b"a file, not a directory").expect("file");
     let object = scratch.path("object");
     let out = set_title(&not_a_dir, &object);
-    assert!(!out.status.success(), "{out:?}");
+    assert_eq!(out.status.code(), Some(3), "{out:?}");
     assert!(!object.exists(), "nothing was written");
     let stdout = String::from_utf8(out.stdout).expect("utf-8");
     let lines: Vec<&str> = stdout.lines().collect();

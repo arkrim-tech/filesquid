@@ -14,8 +14,8 @@ The `fsquid` CLI journals through the same path as the hosts ([API-S-031](../../
 
 - **Dependencies** (`Cargo.toml`): `filesquid-api` (journal entry types, `JournalStore`), `filesquid-native` with default features (`SqliteJournal`, `JOURNAL_FILE`), `dirs` 7.0.0 (already in the lockfile through Tauri, whose `app_data_dir` is `dirs::data_dir()` joined with the app identifier; checked in the Tauri 2.12.4 source) and `serde_json`. The lockfile gains no new crate.
 - **Journal** (`src/journal.rs`): the data directory is `FILESQUID_DATA_DIR` when set and not empty, otherwise `dirs::data_dir()/tech.filesquid.desktop`, the desktop's own. `open_journal` creates the directory and opens `filesquid.sqlite` in WAL mode before any command runs. `run_journaled` routes as before and writes one redacted entry per command that changes state or fails: `cli.<module>.<command>`, actor `cli`, host `fsquid`, outcome, error code (`command_error` for an error the module reports, `command_failed` for a non-zero exit) and the OCFL object identifier and version it committed as `object_ref`. A command line that names no module command is one failed `cli.route` entry (`module_required`, `unknown_command`). A success that changes nothing writes none; help needs no journal.
-- **What "changed state" means**: the committed heads of the OCFL objects a command names (`--object`, default `.`, and `--registry` for metadata), read from their root inventories before and after it runs. A module command that writes a file outside its objects whenever it succeeds (metadata `export`) is listed in `Module::file_writers` and always journaled on success. The metadata module needed no change.
-- **Refusals and failed writes**: a journal that cannot be opened refuses the command before it reads or writes anything else: exit 3, stderr names `FILESQUID_DATA_DIR`, stdout one JSON line (the redacted entry, `error_code: journal_unavailable`) marked `"journal_unavailable": true`. A journal write that fails exits 4 (or keeps the command's own failure code) and prints the redacted entry marked `"journal_write_failed": true`.
+- **What "changed state" means**: the committed heads of the OCFL objects a command names (`--object`, default `.`, and `--registry` for metadata when it is another directory), read from their root inventories before and after it runs. An inventory that exists but cannot be read (I/O, over 64 MiB, no `id` and `head`) counts as a change, so no change goes unjournaled. A module command that writes a file outside its objects whenever it succeeds (metadata `export`) is listed in `Module::file_writers` and always journaled on success. The metadata module needed no change.
+- **Refusals and failed writes**: a journal that cannot be opened refuses the command before it reads or writes anything else: exit 3, stderr names `FILESQUID_DATA_DIR`, stdout one JSON line (the redacted entry, `error_code: journal_unavailable`) marked `"journal_unavailable": true`. A journal write that fails prints the redacted entry marked `"journal_write_failed": true` and exits 4 whenever the command changed state or succeeded; a failed command that changed nothing keeps its own code.
 - **Native boundary** (DE-0.8 follow-up): `NATIVE_LINKERS` in `desktop/tests/integration/native_boundary.rs` admits `("filesquid-cli", &[])`, a new test asserts the CLI links `filesquid-native` with no feature, and the synthetic case rejects a CLI with `desktop` or a direct `rusqlite`. `native_boundary_TC-005.feature` has a CLI scenario and a three-package rule, with the matching native Cucumber step (the two-package step it replaces is removed).
 - **Docs**: DE-S-015; the root README `## View logs` (the "planned" bullet replaced by the working behaviour, and the commands below, run as written); the CLI README; the CLI plan header.
 
@@ -31,10 +31,12 @@ The metadata module prints its own success line (for example `set dcterms:title:
 | API-S-031 a failed command leaves one failed entry | `a_failed_command_leaves_one_failed_entry`, `a_refused_command_leaves_one_failed_entry_with_its_error_code` |
 | API-S-031 `fsquid validate` and unknown commands leave one failed `cli.route` entry | `validate_without_its_module_leaves_one_failed_route_entry`, `an_unknown_command_leaves_one_failed_route_entry`; BDD "A command line that names no module command is journaled as a failed route" |
 | API-S-031 a no-op leaves none | `a_command_that_changes_nothing_leaves_no_entry`; BDD "A command that changes nothing is not journaled" |
-| API-S-031 a failed write after a commit exits non-zero with `journal_write_failed` | `a_journal_write_that_fails_after_a_commit_exits_non_zero_with_the_entry` |
+| API-S-031 a file written outside the objects is a change | `a_successful_export_writes_a_file_and_is_journaled`; BDD "A successful export writes a file outside the object and is journaled" |
+| API-S-031 an unreadable inventory counts as a change; one object named once | `an_inventory_that_cannot_be_read_counts_as_unobserved`, `a_registry_that_is_the_object_is_named_once` |
+| API-S-031 a failed write after a commit exits non-zero with `journal_write_failed` | `a_journal_write_that_fails_after_a_commit_exits_non_zero_with_the_entry`, `a_failed_command_whose_entry_cannot_be_written_keeps_its_own_code` |
 | API-S-031 `FILESQUID_DATA_DIR` selects the journal | `integration_binary::filesquid_data_dir_selects_the_journal` |
 | API-S-031 WAL mode beside a running host | `a_command_runs_while_another_connection_holds_the_journal_in_wal_mode`; BDD "fsquid writes beside a running desktop host" |
-| API-S-031 an unopenable journal refuses, changes nothing, prints `journal_unavailable` | `an_unopenable_journal_refuses_the_command_and_changes_nothing`; BDD "A journal that cannot be opened refuses the command" |
+| API-S-031 an unopenable journal refuses (exit 3), changes nothing, prints `journal_unavailable` | `an_unopenable_journal_refuses_the_command_and_changes_nothing`; BDD "A journal that cannot be opened refuses the command" |
 | DE-S-015 the CLI links `filesquid-native` with default features only | `integration_native_boundary::the_cli_links_filesquid_native_with_default_features_only`, `the_linking_rules_reject_a_sqlite_driver_in_a_host_and_native_in_the_api`; native BDD "The fsquid CLI links filesquid-native with default features only", "No crate but the two hosts and the CLI links filesquid-native" |
 
 ## TDD: failing run before implementation
@@ -70,30 +72,34 @@ None. The tests set `FILESQUID_DATA_DIR` to scratch directories under the system
 ```text
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-12 scenarios (12 passed)
+13 scenarios (13 passed)
 test an_unopenable_journal_refuses_the_command_and_changes_nothing ... ok
 test filesquid_data_dir_selects_the_journal ... ok
 test a_command_runs_while_another_connection_holds_the_journal_in_wal_mode ... ok
-test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
-test a_failed_command_leaves_one_failed_entry ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+test a_failed_command_whose_entry_cannot_be_written_keeps_its_own_code ... ok
+test a_command_that_changes_nothing_leaves_no_entry ... ok
 test a_refused_command_leaves_one_failed_entry_with_its_error_code ... ok
+test a_failed_command_leaves_one_failed_entry ... ok
+test a_command_that_commits_leaves_one_redacted_entry ... ok
+test an_inventory_that_cannot_be_read_counts_as_unobserved ... ok
 test an_unknown_command_leaves_one_failed_route_entry ... ok
 test validate_without_its_module_leaves_one_failed_route_entry ... ok
+test a_successful_export_writes_a_file_and_is_journaled ... ok
 test a_journal_write_that_fails_after_a_commit_exits_non_zero_with_the_entry ... ok
-test a_command_that_changes_nothing_leaves_no_entry ... ok
-test a_command_that_commits_leaves_one_redacted_entry ... ok
-test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+test a_registry_that_is_the_object_is_named_once ... ok
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
 test bare_module_name_shows_module_help ... ok
 test module_group_strips_the_module_name ... ok
 test help_forms_resolve_to_help ... ok
 test module_names_are_not_command_names ... ok
 test shared_command_names_are_qualifier_only ... ok
-test unknown_command_is_an_error ... ok
 test unique_command_runs_at_top_level ... ok
+test unknown_command_is_an_error ... ok
 test usage_names_fsquid_and_both_forms ... ok
-test validate_without_module_needs_the_module ... ok
-test validate_with_module_runs ... ok
 test fsquid_is_the_only_cli_binary_in_the_workspace ... ok
+test validate_with_module_runs ... ok
+test validate_without_module_needs_the_module ... ok
 test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 ```
@@ -113,6 +119,12 @@ Feature: Every fsquid command that changes something or fails is journaled
    ✔  And I set the same title again with fsquid
    ✔  And I read the title with fsquid
    ✔  Then the journal should hold 1 entry
+  Scenario: A successful export writes a file outside the object and is journaled
+   ✔> Given a fresh FileSquid data directory
+   ✔  When I set a title on a new object with fsquid
+   ✔  And I export the object's metadata as CSV with fsquid
+   ✔  Then the journal should hold 2 entries
+   ✔  And the last entry should be a "cli.metadata.export" entry that "succeeded"
   Scenario: fsquid writes beside a running desktop host
    ✔> Given a fresh FileSquid data directory
    ✔  Given another connection holds the journal open
@@ -154,8 +166,8 @@ Feature: One command-line tool named fsquid
    ✔  Then the only CLI binary should be fsquid
 [Summary]
 2 features
-12 scenarios (12 passed)
-37 steps (37 passed)
+13 scenarios (13 passed)
+42 steps (42 passed)
 ```
 
 `cargo test -p filesquid-desktop --locked --test integration_native_boundary`:
