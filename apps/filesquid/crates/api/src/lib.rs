@@ -23,6 +23,8 @@
 //! alive only while it keeps reading), 3,600 seconds after its mint at the latest, and when
 //! its minting credential ends.
 //!
+//! [`local_library`] creates, opens, copies, rebuilds and repairs the OCFL storage roots a
+//! host injects, through the library and repair routes under `/api/v1/libraries`.
 //! [`navigation`] lists one level of the navigation tree per call (the repository, its
 //! libraries, their collections, virtual collections and folders) with the ancestors a
 //! breadcrumb needs, over the same catalog and folder listing, and announces changes with
@@ -79,7 +81,7 @@ pub use routes::{route_actions, routed_paths, router, Liveness};
 use std::sync::{Arc, OnceLock};
 
 /// Version of the FileSquid API contract. Bumped when the contract changes.
-pub const API_VERSION: &str = "0.11.0";
+pub const API_VERSION: &str = "0.12.0";
 
 /// URL prefix shared by every API route.
 pub const API_PREFIX: &str = "/api/v1";
@@ -113,6 +115,9 @@ pub struct ApiState {
     /// The host's history source, installed once at startup (the history routes answer 503
     /// until then).
     history: Arc<OnceLock<Arc<dyn history::HistorySource>>>,
+    /// The host's library commands, installed once at startup (the library and repair
+    /// routes answer 503 until then).
+    libraries: Arc<OnceLock<Arc<dyn local_library::LibraryOperations>>>,
     /// The host's navigation service, installed once at startup (the navigation route
     /// answers 503 until then).
     navigation: Arc<OnceLock<Arc<navigation::NavigationService>>>,
@@ -128,6 +133,7 @@ impl std::fmt::Debug for ApiState {
             .field("content_handles", &self.content_handles)
             .field("validation_installed", &self.validation.get().is_some())
             .field("history_installed", &self.history.get().is_some())
+            .field("libraries_installed", &self.libraries.get().is_some())
             .field("navigation_installed", &self.navigation.get().is_some())
             .finish()
     }
@@ -152,6 +158,7 @@ impl ApiState {
             content_handles: Arc::new(content::ContentHandles::new(clock)),
             validation: Arc::new(OnceLock::new()),
             history: Arc::new(OnceLock::new()),
+            libraries: Arc::new(OnceLock::new()),
             navigation: Arc::new(OnceLock::new()),
         }
     }
@@ -237,6 +244,17 @@ impl ApiState {
     /// The installed history source, if any.
     pub fn history(&self) -> Option<Arc<dyn history::HistorySource>> {
         self.history.get().cloned()
+    }
+
+    /// Install the host's library commands for the library and repair routes (API-S-025).
+    /// Returns false, keeping the first, if they were already installed.
+    pub fn install_libraries(&self, libraries: Arc<dyn local_library::LibraryOperations>) -> bool {
+        self.libraries.set(libraries).is_ok()
+    }
+
+    /// The installed library commands, if any.
+    pub fn libraries(&self) -> Option<Arc<dyn local_library::LibraryOperations>> {
+        self.libraries.get().cloned()
     }
 
     /// The installed monitor, if any.
