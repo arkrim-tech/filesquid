@@ -299,6 +299,15 @@ fn recorded(w: &mut MonitorWorld, operation: String) {
     assert_eq!(outcomes[0].journal.operation, operation);
 }
 
+#[then(expr = "the object's outcome row should be failed with {string}")]
+fn outcome_row_failed(w: &mut MonitorWorld, code: String) {
+    let outcomes = w.routes.rig().ledger.outcomes();
+    let row = &outcomes.last().expect("outcome row").journal;
+    assert_eq!(row.outcome, Outcome::Failed);
+    assert_eq!(row.error_code.as_deref(), Some(code.as_str()));
+    assert!(outcomes.last().expect("outcome row").receipt.is_none());
+}
+
 #[then(expr = "the repaired object should accept a new version")]
 async fn committable(w: &mut MonitorWorld) {
     let rig = w.routes.rig();

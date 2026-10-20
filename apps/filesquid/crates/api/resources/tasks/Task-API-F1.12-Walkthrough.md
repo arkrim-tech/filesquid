@@ -6,10 +6,10 @@ Branch `feat/api-f1.12-library-repair-routes`, module `filesquid-api` ([plan row
 
 | SRS ID and title | Covered by |
 |---|---|
-| [API-S-025](../srs.md) Local library and repair routes | `integration_library_routes` (23 tests, desktop and server mounts), `library_and_repair_routes_API-S-025.feature` (11 scenarios), `unit_contract`, `unit_auth` |
+| [API-S-025](../srs.md) Local library and repair routes | `integration_library_routes` (23 tests: create, open, snapshot copy, rebuild and the candidate query on both the desktop and the server mount; the administrator's repair refusal on the server mount; the other refusals and the repair on the desktop mount), `library_and_repair_routes_API-S-025.feature` (11 scenarios), `unit_contract`, `unit_auth` |
 | [API-S-023](../srs.md) Version-inventory repair, consented and journaled | repair, consent, `nothing_to_repair` and one-row-per-object tests and scenarios through the route |
 | [API-S-002](../srs.md) Versioned contract and generated types | `unit_contract` drift and sample tests; `ui/src/api/schema.d.ts` regenerated, UI `tests/unit/contract.test.ts` |
-| [API-S-003](../srs.md) One router, mounted unchanged by every host | every route test runs on the desktop owner's and the server administrator's mount |
+| [API-S-003](../srs.md) One router, mounted unchanged by every host | the five tests named above for create, open, copy, rebuild and the candidate query run the same router on the desktop owner's and the server administrator's mount; the BDD feature has scenarios on both |
 | [API-S-004](../srs.md) Deny-by-default authorisation | missing and wrong credential, server administrator `not_permitted`; `every_routed_path_declares_its_action` |
 | [API-S-005](../srs.md) No paths, storage keys or content paths in answers | `assert_redacted` on every answer and the whole journal |
 | [API-S-006](../srs.md) Application-layer isolation | routes call `LocalLibraryService` only; storage injected through `LibraryLocations`; `unit_isolation` keeps `filesquid-native` out of the graph |
@@ -168,6 +168,8 @@ Feature: Library and repair routes
    ✔  Given the desktop owner's library with a complete object and an object without a version inventory
    ✔  When the owner repairs the complete object with consent through the API
    ✔  Then the object should be answered as refused with "nothing_to_repair"
+   ✔  And the consent and one outcome row per object should be recorded as "ocfl.repair.version_inventory"
+   ✔  And the object's outcome row should be failed with "nothing_to_repair"
    ✔  And the library folder should be unchanged
   Scenario: A repair without consent is refused once and changes nothing
    ✔  Given the desktop owner's library with a complete object and an object without a version inventory
@@ -199,7 +201,7 @@ Whole BDD run:
 [Summary]
 19 features
 302 scenarios (191 passed, 111 skipped)
-973 steps (862 passed, 111 skipped)
+975 steps (864 passed, 111 skipped)
 ```
 
 The head-commit hook run (`FULL=1 bash scripts/pre-commit.sh`, `Test scope: full`) is recorded in the pull request.

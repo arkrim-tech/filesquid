@@ -54,6 +54,8 @@ Feature: Library and repair routes
     Given the desktop owner's library with a complete object and an object without a version inventory
     When the owner repairs the complete object with consent through the API
     Then the object should be answered as refused with "nothing_to_repair"
+    And the consent and one outcome row per object should be recorded as "ocfl.repair.version_inventory"
+    And the object's outcome row should be failed with "nothing_to_repair"
     And the library folder should be unchanged
 
   Scenario: A repair without consent is refused once and changes nothing
