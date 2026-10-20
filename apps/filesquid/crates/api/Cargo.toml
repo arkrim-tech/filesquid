@@ -101,6 +101,10 @@ name = "unit_journal_seal"
 path = "tests/unit/journal_seal.rs"
 
 [[test]]
+name = "unit_journal_rebuild"
+path = "tests/unit/journal_rebuild.rs"
+
+[[test]]
 name = "unit_host"
 path = "tests/unit/host.rs"
 
