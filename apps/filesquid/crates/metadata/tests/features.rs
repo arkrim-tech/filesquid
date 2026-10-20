@@ -13,9 +13,15 @@ use cucumber::{given, then, when, writer, StatsWriter as _, World, WriterExt as 
 use filesquid_metadata::cli::USAGE;
 use filesquid_metadata::csv::{apply_csv, to_csv};
 use filesquid_metadata::extract::{extract_from_bytes, extract_from_reader};
+use filesquid_metadata::fact::{Fact, Reason};
+use filesquid_metadata::file_record::{extension_of, FileRecord, RecordError};
 use filesquid_metadata::file_ref::FileRef;
+use filesquid_metadata::import::attributes::{AttrValue, AttributeCollector, Attributes};
+use filesquid_metadata::import::scrub::IdentityClass;
+use filesquid_metadata::import::{ImportEntry, ImportError, NameForm};
 use filesquid_metadata::json::{apply_json, parse_json, sha256_hex, to_json, JsonTarget};
 use filesquid_metadata::markdown::to_markdown;
+use filesquid_metadata::raw::Raw;
 use filesquid_metadata::record::Record;
 use filesquid_metadata::store::ocfl::LocalObject;
 use filesquid_metadata::store::sidecar::SidecarStore;
@@ -29,6 +35,8 @@ use filesquid_ocfl::validate::validate_object;
 use filesquid_ocfl::write::{rfc3339_utc, CommitError, LeaseConfig, LeaseStore, SystemClock};
 use filesquid_ocfl::VersionNum;
 
+#[path = "support/import_rig.rs"]
+mod import_rig;
 #[path = "support/ocfl_rig.rs"]
 mod rig;
 #[path = "support/wasm.rs"]
@@ -88,6 +96,32 @@ struct MetadataWorld {
     commit_outcome: Option<Result<Option<VersionNum>, StoreError>>,
     /// Versions, message, user and paths of the last commit made with options.
     options_outcome: Option<CommittedWithOptions>,
+    /// The OCFL object of the import record scenarios.
+    scene: Option<ImportScene>,
+    /// The object's `v1` files right after the first import.
+    v1_files: BTreeMap<String, Vec<u8>>,
+    /// The object's versions before the last save.
+    versions_before_save: Vec<String>,
+    /// Why the last save of a file record was refused.
+    refusal: Option<RecordError>,
+    /// Why the last import entry was rejected.
+    entry_error: Option<ImportError>,
+    /// The import entry a scenario built.
+    entry: Option<ImportEntry>,
+    /// The attributes a scenario collected.
+    attributes: Option<Attributes>,
+    /// JSON a scenario produced (a projection or a scrubbed entry).
+    produced_json: String,
+}
+
+/// The in-memory OCFL object of an import record scenario.
+struct ImportScene(rig::Rig<MemoryBackend>);
+
+impl std::fmt::Debug for ImportScene {
+    /// The rig holds backends without a useful `Debug`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ImportScene")
+    }
 }
 
 /// What a commit with options published: the object's versions, and the new
@@ -987,6 +1021,591 @@ fn extractable(world: &mut MetadataWorld) {
         "only filesquid-ocfl may be a path dependency"
     );
     assert!(path_deps[0].starts_with("filesquid-ocfl"));
+}
+
+// MD-S-008, MD-S-013: the per-file record and its import section.
+
+/// The stored original and its per-file record.
+fn record_file() -> FileRef {
+    FileRef::new(import_rig::OBJECT, import_rig::STORED)
+        .and_then(|file| file.with_record_path(import_rig::RECORD))
+        .expect("file ref")
+}
+
+/// A file record of an upload named `name`.
+fn record_named(name: &[u8]) -> FileRecord {
+    let text = String::from_utf8_lossy(name).into_owned();
+    FileRecord::new(
+        Raw::from_bytes(name),
+        NameForm::Nfc,
+        extension_of(&text).map(str::to_string),
+        Some("JPEG".to_string()),
+        Some("image/jpeg".to_string()),
+        import_rig::entry_named(name),
+    )
+    .expect("file record")
+}
+
+/// Import `record`: stage the content and commit the record over it.
+fn import_into_scene(world: &mut MetadataWorld, record: &FileRecord) {
+    let scene = ImportScene(rig::Rig::memory());
+    let store = scene.0.store();
+    let model = store.change_model(import_rig::OBJECT).expect("model");
+    ready(model.stage_bytes(import_rig::STORED, b"pixels")).expect("stage content");
+    ready(store.commit_import(&record_file(), record)).expect("import");
+    let root = rig::object_root(import_rig::OBJECT);
+    world.v1_files = scene.0.snapshot(&format!("{root}/v1/"));
+    drop(store);
+    world.scene = Some(scene);
+}
+
+/// The scene of the running scenario.
+fn scene(world: &MetadataWorld) -> &rig::Rig<MemoryBackend> {
+    &world.scene.as_ref().expect("an imported object").0
+}
+
+/// The head record of the scenario's object.
+fn head_record(world: &MetadataWorld) -> FileRecord {
+    ready(scene(world).store().read_file_record(&record_file()))
+        .expect("read")
+        .expect("a record")
+}
+
+/// The stored text of the head record, as the object holds it.
+fn head_text(world: &MetadataWorld) -> String {
+    let rig = scene(world);
+    let version = rig.head(import_rig::OBJECT);
+    let root = rig::object_root(import_rig::OBJECT);
+    let key = format!("{root}/{version}/content/{}", import_rig::RECORD);
+    let bytes = rig.snapshot(&format!("{root}/")).remove(&key);
+    // The head version may not hold the record itself; the newest one does.
+    let bytes = bytes.unwrap_or_else(|| newest_record_bytes(rig));
+    String::from_utf8(bytes).expect("record text")
+}
+
+/// The record's bytes in the newest version that holds them.
+fn newest_record_bytes(rig: &rig::Rig<MemoryBackend>) -> Vec<u8> {
+    let root = rig::object_root(import_rig::OBJECT);
+    let files = rig.snapshot(&format!("{root}/"));
+    let suffix = format!("/content/{}", import_rig::RECORD);
+    let mut found: Vec<(&String, &Vec<u8>)> =
+        files.iter().filter(|(k, _)| k.ends_with(&suffix)).collect();
+    found.sort_by_key(|(k, _)| k.len());
+    found
+        .last()
+        .map(|(_, v)| (*v).clone())
+        .expect("a stored record")
+}
+
+/// Keep the refusal of a save for the Then steps.
+fn keep_refusal(world: &mut MetadataWorld, result: Result<(), StoreError>) {
+    world.refusal = match result {
+        Err(StoreError::Record(err)) => Some(err),
+        Err(other) => panic!("unexpected {other:?}"),
+        Ok(()) => None,
+    };
+}
+
+#[when(expr = "I import a file named {string} into an OCFL object")]
+fn import_named(world: &mut MetadataWorld, name: String) {
+    import_into_scene(world, &record_named(name.as_bytes()));
+}
+
+#[then("the version should hold the stored original and its per-file metadata record")]
+fn version_holds_both(world: &mut MetadataWorld) {
+    let root = rig::object_root(import_rig::OBJECT);
+    assert!(world
+        .v1_files
+        .contains_key(&format!("{root}/v1/content/{}", import_rig::STORED)));
+    assert!(world
+        .v1_files
+        .contains_key(&format!("{root}/v1/content/{}", import_rig::RECORD)));
+}
+
+#[then("the object should hold no metadata.md")]
+fn no_plain_metadata_md(world: &mut MetadataWorld) {
+    let root = rig::object_root(import_rig::OBJECT);
+    let files = scene(world).snapshot(&format!("{root}/"));
+    let plain = format!("/content/{METADATA_MD}");
+    assert!(!files.keys().any(|key| key.ends_with(&plain)));
+}
+
+#[then("the imported object should pass the OCFL validator")]
+fn imported_object_is_valid(world: &mut MetadataWorld) {
+    let rig = scene(world);
+    let root = rig::object_root(import_rig::OBJECT);
+    let report = ready(validate_object(&rig.storage, &root)).expect("validate");
+    assert!(report.is_valid(), "{:?}", report.errors());
+}
+
+#[then("the record should open with the schema identifier and the original name Holiday 2023.JPG")]
+fn record_opens_with_schema(world: &mut MetadataWorld) {
+    let text = head_text(world);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines[1], "schema: filesquid.original.v1");
+    assert_eq!(lines[2], r#"original_name: "Holiday 2023.JPG""#);
+}
+
+#[then("the display name should be the original name")]
+fn display_is_original(world: &mut MetadataWorld) {
+    let record = head_record(world);
+    assert_eq!(record.display_name(), "Holiday 2023.JPG");
+}
+
+#[then("the extension, format and media type should be recorded")]
+fn header_facts_recorded(world: &mut MetadataWorld) {
+    let record = head_record(world);
+    assert_eq!(record.extension(), Some("JPG"));
+    assert_eq!(record.format(), Some("JPEG"));
+    assert_eq!(record.media_type(), Some("image/jpeg"));
+}
+
+/// A second acquisition of the same file.
+fn second_entry() -> ImportEntry {
+    let mut again = import_rig::entry();
+    again.acquisition.job_id = Fact::value("job-2".to_string());
+    again
+}
+
+#[when("I import the same file again")]
+fn import_again(world: &mut MetadataWorld) {
+    let options = filesquid_metadata::store::ocfl::CommitOptions::default();
+    let store = scene(world).store();
+    ready(store.append_import_with(&record_file(), second_entry(), &options))
+        .expect("append")
+        .expect("a version");
+}
+
+#[then("the object should have a new version with two import entries")]
+fn two_entries_in_a_new_version(world: &mut MetadataWorld) {
+    assert_eq!(scene(world).versions(import_rig::OBJECT), ["v1", "v2"]);
+    assert_eq!(head_record(world).imports().len(), 2);
+}
+
+#[then("the first version should be unchanged")]
+fn v1_unchanged(world: &mut MetadataWorld) {
+    let root = rig::object_root(import_rig::OBJECT);
+    let now = scene(world).snapshot(&format!("{root}/v1/"));
+    assert_eq!(now, world.v1_files);
+}
+
+/// Save `record` over the head and keep the refusal, if any.
+fn save_whole_record(world: &mut MetadataWorld, record: &FileRecord) {
+    world.versions_before_save = scene(world).versions(import_rig::OBJECT);
+    let options = filesquid_metadata::store::ocfl::CommitOptions::default();
+    let result = ready(scene(world).store().commit_file_record_with(
+        &record_file(),
+        record,
+        &options,
+    ));
+    keep_refusal(world, result.map(|_| ()));
+}
+
+#[when("I save the record with a changed import entry")]
+fn save_changed_entry(world: &mut MetadataWorld) {
+    let text = head_text(world).replace("studio.local", "other.local");
+    save_whole_record(world, &FileRecord::from_markdown(&text).expect("parse"));
+}
+
+#[when("I save the record with only the first import entry")]
+fn save_first_entry_only(world: &mut MetadataWorld) {
+    save_whole_record(world, &record_named(b"Holiday 2023.JPG"));
+}
+
+#[when("I save the record with another original name")]
+fn save_other_name(world: &mut MetadataWorld) {
+    let text = head_text(world).replacen(
+        r#"original_name: "Holiday 2023.JPG""#,
+        r#"original_name: "Other.JPG""#,
+        1,
+    );
+    save_whole_record(world, &FileRecord::from_markdown(&text).expect("parse"));
+}
+
+#[then("the save should be refused for changing an import entry")]
+fn refused_changed_entry(world: &mut MetadataWorld) {
+    assert_eq!(
+        world.refusal.take(),
+        Some(RecordError::ImportEntryChanged { index: 0 })
+    );
+}
+
+#[then("the save should be refused for removing an import entry")]
+fn refused_removed_entry(world: &mut MetadataWorld) {
+    assert_eq!(world.refusal.take(), Some(RecordError::ImportEntryRemoved));
+}
+
+#[then("the save should be refused for changing the original name")]
+fn refused_changed_name(world: &mut MetadataWorld) {
+    assert_eq!(world.refusal.take(), Some(RecordError::OriginalNameChanged));
+}
+
+#[then("the object's versions should be unchanged")]
+fn versions_unchanged(world: &mut MetadataWorld) {
+    let now = scene(world).versions(import_rig::OBJECT);
+    assert_eq!(now, world.versions_before_save);
+}
+
+#[when(expr = "I rename the file to {string}")]
+fn rename_file(world: &mut MetadataWorld, name: String) {
+    let mut record = head_record(world);
+    record.set_display_name(&name).expect("display name");
+    save_whole_record(world, &record);
+    assert_eq!(world.refusal, None);
+}
+
+#[then("the display name should be Harbour.jpg and the original name Holiday 2023.JPG")]
+fn renamed_display_only(world: &mut MetadataWorld) {
+    let record = head_record(world);
+    assert_eq!(record.display_name(), "Harbour.jpg");
+    assert_eq!(record.original_name().as_bytes(), b"Holiday 2023.JPG");
+}
+
+#[then("the import entries should be unchanged")]
+fn imports_unchanged(world: &mut MetadataWorld) {
+    let record = head_record(world);
+    assert_eq!(
+        record.imports(),
+        record_named(b"Holiday 2023.JPG").imports()
+    );
+}
+
+#[when("I set dcterms:title Harbour on the file's record")]
+fn set_title_on_file_record(world: &mut MetadataWorld) {
+    let mut statements = Record::default();
+    statements
+        .set(MetadataNamespace::Dcterms, "title", "Harbour")
+        .expect("title");
+    ready(scene(world).store().save(&record_file(), &statements)).expect("save");
+}
+
+#[then(
+    "the record should hold dcterms title Harbour and still hold its original name and import entry"
+)]
+fn statements_kept_header(world: &mut MetadataWorld) {
+    let record = head_record(world);
+    assert_eq!(
+        record.statements().get("dcterms:title").unwrap().value,
+        "Harbour"
+    );
+    assert_eq!(record.original_name().as_bytes(), b"Holiday 2023.JPG");
+    assert_eq!(record.imports().len(), 1);
+}
+
+#[when("I import a file whose reported size differs from the verified size")]
+fn import_mismatched_size(world: &mut MetadataWorld) {
+    let scene = ImportScene(rig::Rig::memory());
+    let store = scene.0.store();
+    let model = store.change_model(import_rig::OBJECT).expect("model");
+    ready(model.stage_bytes(import_rig::STORED, b"pixels")).expect("stage content");
+    let mut entry = import_rig::entry();
+    entry.source.reported_size = Fact::value(7);
+    let record = FileRecord::new(
+        Raw::from_bytes(b"Holiday 2023.JPG"),
+        NameForm::Nfc,
+        Some("JPG".to_string()),
+        None,
+        None,
+        entry,
+    );
+    world.entry_error = match record {
+        Err(RecordError::Import(error)) => Some(error),
+        Err(other) => panic!("unexpected {other:?}"),
+        // No record can be built, so no commit is attempted.
+        Ok(record) => {
+            let _ = ready(store.commit_import(&record_file(), &record));
+            None
+        }
+    };
+    drop(store);
+    world.scene = Some(scene);
+}
+
+#[then("the import should be rejected for the size mismatch")]
+fn import_rejected_for_size(world: &mut MetadataWorld) {
+    let error = world.entry_error.take();
+    assert_eq!(
+        error,
+        Some(ImportError::SizeMismatch {
+            reported: 7,
+            verified: 6
+        })
+    );
+}
+
+#[then("nothing should be published")]
+fn nothing_published(world: &mut MetadataWorld) {
+    assert!(!scene(world).storage_has_object(import_rig::OBJECT));
+}
+
+/// A file name that is not UTF-8.
+const BINARY_NAME: [u8; 6] = [b'a', 0xFF, b'.', b'j', b'p', b'g'];
+
+#[when("I import a file whose name and extended attribute are not UTF-8")]
+fn import_binary(world: &mut MetadataWorld) {
+    let mut entry = import_rig::entry_named(&BINARY_NAME);
+    let mut collector = AttributeCollector::new();
+    collector
+        .add(&[0xC3, 0x28], 2, &[0xFF, 0x00])
+        .expect("attribute");
+    entry.attributes = Fact::value(collector.finish());
+    let record = FileRecord::new(
+        Raw::from_bytes(&BINARY_NAME),
+        NameForm::Unnormalised,
+        Some("jpg".to_string()),
+        None,
+        None,
+        entry,
+    )
+    .expect("record");
+    import_into_scene(world, &record);
+}
+
+#[then("the record should store them as base64 marked with encoding base64")]
+fn stored_as_base64(world: &mut MetadataWorld) {
+    let text = head_text(world);
+    assert!(
+        text.contains(r#"original_name: {"encoding":"base64""#),
+        "{text}"
+    );
+    assert!(
+        text.matches(r#""encoding":"base64""#).count() >= 3,
+        "{text}"
+    );
+}
+
+#[then("they should read back byte for byte")]
+fn base64_reads_back(world: &mut MetadataWorld) {
+    let record = head_record(world);
+    assert_eq!(record.original_name().as_bytes(), &BINARY_NAME);
+    let Fact::Value(attributes) = &record.imports()[0].attributes else {
+        panic!("attributes");
+    };
+    assert_eq!(attributes.entries[0].name.as_bytes(), &[0xC3, 0x28]);
+    let AttrValue::Full { value } = &attributes.entries[0].value else {
+        panic!("value");
+    };
+    assert_eq!(value.as_bytes(), &[0xFF, 0x00]);
+}
+
+#[when("I import a file through an upload that provides only a name, size, time and media type")]
+fn upload_entry(world: &mut MetadataWorld) {
+    world.entry = Some(import_rig::entry());
+}
+
+/// Whether `fact` is unavailable because an upload does not carry it.
+fn not_uploaded<T>(fact: &Fact<T>) -> bool {
+    matches!(fact, Fact::Unavailable(u) if u.unavailable == Reason::NotProvidedByUpload)
+}
+
+#[then(
+    "every other source, volume and attribute fact should be unavailable with the reason not provided by upload"
+)]
+fn the_rest_is_unavailable(world: &mut MetadataWorld) {
+    let entry = world.entry.take().expect("entry");
+    let s = &entry.source;
+    let v = &entry.volume;
+    let checks = [
+        not_uploaded(&s.absolute_path),
+        not_uploaded(&s.import_root),
+        not_uploaded(&s.relative_path),
+        not_uploaded(&s.birth_time),
+        not_uploaded(&s.status_changed_time),
+        not_uploaded(&s.accessed_time),
+        not_uploaded(&s.date_added_time),
+        not_uploaded(&s.owner_name),
+        not_uploaded(&s.owner_id),
+        not_uploaded(&s.group_name),
+        not_uploaded(&s.group_id),
+        not_uploaded(&s.posix_mode),
+        not_uploaded(&s.acl),
+        not_uploaded(&s.flags),
+        not_uploaded(&s.link),
+        not_uploaded(&v.name),
+        not_uploaded(&v.uuid),
+        not_uploaded(&v.filesystem_type),
+        not_uploaded(&v.mount_point),
+        not_uploaded(&v.kind),
+        not_uploaded(&entry.attributes),
+    ];
+    assert!(checks.iter().all(|ok| *ok), "{checks:?}");
+}
+
+#[when("I inspect 300 extended attributes of 8 KiB each")]
+fn inspect_many_attributes(world: &mut MetadataWorld) {
+    const VALUE: usize = 8 * 1024;
+    let value = vec![9u8; VALUE];
+    let mut collector = AttributeCollector::new();
+    for index in 0..300 {
+        if collector.names_remaining() == 0 {
+            break;
+        }
+        let take = (collector.read_budget() as usize).min(VALUE);
+        let name = format!("user.attribute{index}");
+        collector
+            .add(name.as_bytes(), VALUE as u64, &value[..take])
+            .expect("add");
+    }
+    collector.note_names_enumerated(300);
+    world.attributes = Some(collector.finish());
+}
+
+#[then("at most 256 names should be kept and the entry marked truncated with 300 names enumerated")]
+fn names_capped(world: &mut MetadataWorld) {
+    let attrs = world.attributes.as_ref().expect("attributes");
+    assert_eq!(attrs.entries.len(), 256);
+    assert!(attrs.truncated);
+    assert_eq!(attrs.names_enumerated, 300);
+    assert_eq!(attrs.validate(), Ok(()));
+}
+
+#[then("at most 1 MiB of value bytes should be recorded as read")]
+fn bytes_capped(world: &mut MetadataWorld) {
+    let attrs = world.attributes.as_ref().expect("attributes");
+    assert_eq!(attrs.bytes_inspected, 1024 * 1024);
+}
+
+#[then("every value cut by the budget should have an incomplete digest")]
+fn cut_values_incomplete(world: &mut MetadataWorld) {
+    let attrs = world.attributes.as_ref().expect("attributes");
+    let whole = attrs
+        .entries
+        .iter()
+        .filter(|a| matches!(a.value, AttrValue::Full { .. }))
+        .count();
+    let cut = attrs
+        .entries
+        .iter()
+        .filter(|a| matches!(a.value, AttrValue::Incomplete))
+        .count();
+    assert_eq!((whole, cut), (128, 128));
+}
+
+#[then("a re-import should get its own budget of 256 names and 1 MiB")]
+fn re_import_gets_its_own_budget(_world: &mut MetadataWorld) {
+    let fresh = AttributeCollector::new();
+    assert_eq!(fresh.names_remaining(), 256);
+    assert_eq!(fresh.read_budget(), 1024 * 1024);
+}
+
+#[when("I inspect an extended attribute of 70000 bytes")]
+fn inspect_big_attribute(world: &mut MetadataWorld) {
+    let value = vec![1u8; 70_000];
+    let mut collector = AttributeCollector::new();
+    collector.add(b"user.big", 70_000, &value).expect("add");
+    world.attributes = Some(collector.finish());
+}
+
+#[then("the record should hold its size and SHA-256 and not the value")]
+fn big_value_is_digest_only(world: &mut MetadataWorld) {
+    let attrs = world.attributes.as_ref().expect("attributes");
+    let entry = &attrs.entries[0];
+    assert_eq!(entry.size, 70_000);
+    let AttrValue::Digest { sha256 } = &entry.value else {
+        panic!("{:?}", entry.value);
+    };
+    assert_eq!(
+        sha256,
+        "267ccbdc4e1d24891e18130d2690fc4f796b460f92a7fff15773b694143a965b"
+    );
+}
+
+#[when("I import a file with a full set of source facts and read its projection")]
+fn read_projection(world: &mut MetadataWorld) {
+    let mut record = record_named(b"Holiday 2023.JPG");
+    record
+        .append_import(import_rig::rich_entry())
+        .expect("append");
+    world.produced_json = serde_json::to_string(&record.facts()).expect("json");
+}
+
+#[then("the projection should show the original name, relative path, volume name and OCFL object")]
+fn projection_shows_names(world: &mut MetadataWorld) {
+    for wanted in ["Holiday 2023.JPG", "Macintosh HD", import_rig::OBJECT] {
+        assert!(world.produced_json.contains(wanted), "{wanted}");
+    }
+}
+
+#[then("it should not show the absolute path, the import root, the host name or any account")]
+fn projection_hides_identity(world: &mut MetadataWorld) {
+    for secret in [
+        "/Users/pieter",
+        "studio.local",
+        "pieter",
+        "staff",
+        "/Volumes",
+    ] {
+        assert!(!world.produced_json.contains(secret), "{secret}");
+    }
+}
+
+#[when("I scrub every identity class of a full import entry")]
+fn scrub_everything(world: &mut MetadataWorld) {
+    let scrubbed = import_rig::rich_entry().scrubbed(&IdentityClass::ALL);
+    assert_eq!(scrubbed.validate(), Ok(()));
+    world.produced_json = serde_json::to_string(&scrubbed).expect("json");
+    world.entry = Some(scrubbed);
+}
+
+#[then(
+    "no path, account, host name, numeric ID, origin URL, quarantine agent or Finder comment should remain"
+)]
+fn nothing_identifying_remains(world: &mut MetadataWorld) {
+    for secret in [
+        "/Users",
+        "pieter",
+        "studio.local",
+        "staff",
+        "0081;",
+        "http",
+        "memo",
+    ] {
+        assert!(!world.produced_json.contains(secret), "{secret}");
+    }
+    let entry = world.entry.take().expect("scrubbed entry");
+    assert!(matches!(entry.source.owner_id, Fact::Unavailable(_)));
+    assert!(matches!(entry.source.group_id, Fact::Unavailable(_)));
+}
+
+#[then("each removed fact should be listed as withheld by policy")]
+fn removed_facts_are_listed(world: &mut MetadataWorld) {
+    assert!(world.produced_json.contains("withheld_by_policy"));
+    assert!(world.produced_json.contains(r#""state":"withheld""#));
+}
+
+#[when("I inspect the import record modules")]
+fn inspect_import_modules(world: &mut MetadataWorld) {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let files = [
+        "raw.rs",
+        "fact.rs",
+        "file_record.rs",
+        "import/mod.rs",
+        "import/attributes.rs",
+        "import/scrub.rs",
+        "import/time.rs",
+    ];
+    let mut hits = Vec::new();
+    for file in files {
+        let text = fs::read_to_string(src.join(file)).expect("module source");
+        for needle in [
+            "std::fs",
+            "std::path",
+            "std::env",
+            "std::process",
+            "std::net",
+        ] {
+            if text.contains(needle) {
+                hits.push(format!("{file}: {needle}"));
+            }
+        }
+    }
+    world.inspected = hits.join("\n");
+}
+
+#[then("they should use no filesystem, path or environment access")]
+fn no_filesystem_access(world: &mut MetadataWorld) {
+    assert_eq!(world.inspected, "", "the import record reads no filesystem");
 }
 
 #[tokio::main]

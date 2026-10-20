@@ -21,7 +21,7 @@
 
 use std::io::{Error as IoError, ErrorKind};
 
-use filesquid_ocfl::change::{ChangeError, ChangeModel, StagingArea, VersionMeta};
+use filesquid_ocfl::change::{ChangeError, ChangeModel, PathChange, StagingArea, VersionMeta};
 use filesquid_ocfl::inventory::User;
 use filesquid_ocfl::read::Object;
 use filesquid_ocfl::storage::{StorageBackend, StorageKey, MAX_CHUNK_BYTES, MAX_OBJECT_BYTES};
@@ -31,11 +31,17 @@ use filesquid_ocfl::write::{
 use filesquid_ocfl::{DigestAlgorithm, VersionNum};
 use sha2::{Digest, Sha256};
 
+use crate::file_record::{FileRecord, RecordError};
 use crate::file_ref::FileRef;
+use crate::import::ImportEntry;
 use crate::json::lower_hex;
 use crate::markdown::{from_markdown, to_markdown};
 use crate::record::Record;
 use crate::store::{MetadataStore, StoreError, METADATA_MD};
+
+mod cited;
+
+use cited::CitedContent;
 
 /// Largest `metadata.md` the store reads or commits: 64 MiB.
 pub const MAX_RECORD_BYTES: u64 = 64 * 1024 * 1024;
@@ -168,22 +174,250 @@ where
         record: &Record,
         options: &CommitOptions<'_>,
     ) -> Result<Option<CommitReceipt>, StoreError> {
-        let bytes = to_markdown(record).into_bytes();
+        let base = self.read_text(file).await?;
+        let bytes = statements_bytes(file, base.as_deref(), record)?;
+        self.commit_bytes(file, &bytes, options, true).await
+    }
+
+    /// Commit `record`, the whole per-file record, as the file's metadata
+    /// record in exactly one new version, discarding any change set this
+    /// writer left staged first. The save is refused when it edits or removes
+    /// an existing `import` entry or the original file name
+    /// ([`RecordError`], MD-S-013), when a new entry cites another object or
+    /// path than `file`, or when the path holds a record that is not a file
+    /// record. `None` when the record is unchanged. A rename is such a save
+    /// with a new display name.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Record`] for the refusals above, otherwise as
+    /// [`commit_record_with`](Self::commit_record_with). Nothing is published
+    /// on any error.
+    pub async fn commit_file_record_with(
+        &self,
+        file: &FileRef,
+        record: &FileRecord,
+        options: &CommitOptions<'_>,
+    ) -> Result<Option<CommitReceipt>, StoreError> {
+        let base = self.read_base(file).await?;
+        let bytes = file_record_bytes(file, base.as_ref(), record)?;
+        self.commit_bytes(file, &bytes, options, true).await
+    }
+
+    /// [`commit_file_record_with`](Self::commit_file_record_with) with the
+    /// stand-alone defaults, returning only the new version.
+    ///
+    /// # Errors
+    ///
+    /// As [`commit_file_record_with`](Self::commit_file_record_with).
+    pub async fn commit_file_record(
+        &self,
+        file: &FileRef,
+        record: &FileRecord,
+    ) -> Result<Option<VersionNum>, StoreError> {
+        let options = CommitOptions::default();
+        let receipt = self.commit_file_record_with(file, record, &options).await?;
+        Ok(receipt.map(|receipt| receipt.version))
+    }
+
+    /// Commit an import: the file record over the content the caller staged
+    /// through [`change_model`](Self::change_model), in one version, so the
+    /// record and the content are never apart (ADR 038 Decision 1). Nothing
+    /// staged is discarded, so a failure leaves a retryable change set:
+    /// calling this again restages the record and publishes both. The
+    /// refusals and errors are those of
+    /// [`commit_file_record_with`](Self::commit_file_record_with).
+    ///
+    /// # Errors
+    ///
+    /// As [`commit_file_record_with`](Self::commit_file_record_with).
+    pub async fn commit_import_with(
+        &self,
+        file: &FileRef,
+        record: &FileRecord,
+        options: &CommitOptions<'_>,
+    ) -> Result<Option<CommitReceipt>, StoreError> {
+        let base = self.read_base(file).await?;
+        let bytes = file_record_bytes(file, base.as_ref(), record)?;
+        let first_new = base.as_ref().map_or(0, |base| base.imports().len());
+        self.verify_staged(file, record, first_new).await?;
+        let guard = CitedContent::new(record, first_new, options.bound);
+        self.commit_cited(file, &bytes, options, &guard, false)
+            .await
+    }
+
+    /// Check that the content each new managed entry cites is staged at its
+    /// logical path with the entry's SHA-256 (MD-S-013: the record never
+    /// claims verification of other bytes). A referenced entry stages no
+    /// content.
+    async fn verify_staged(
+        &self,
+        file: &FileRef,
+        record: &FileRecord,
+        first_new: usize,
+    ) -> Result<(), StoreError> {
+        let status = self
+            .model(file.object_id())?
+            .status()
+            .await
+            .map_err(change_error)?;
+        for entry in record.imports().iter().skip(first_new) {
+            let cited = &entry.acquisition;
+            let Some(path) = cited.logical_path.as_deref() else {
+                continue;
+            };
+            let staged = staged_digest(&status.changes, path);
+            check_digest(staged, &cited.sha256)?;
+        }
+        Ok(())
+    }
+
+    /// Check that the content each new managed entry cites is in the head of
+    /// the object at its logical path with the entry's SHA-256: a re-import
+    /// of bytes the object already holds.
+    async fn verify_held(
+        &self,
+        file: &FileRef,
+        record: &FileRecord,
+        first_new: usize,
+    ) -> Result<(), StoreError> {
+        let object = self.open(file.object_id()).await?;
+        let state = object.state(object.head()).map_err(backend)?;
+        for entry in record.imports().iter().skip(first_new) {
+            let cited = &entry.acquisition;
+            let Some(path) = cited.logical_path.as_deref() else {
+                continue;
+            };
+            let held = state.get(path).map(|f| f.digest.as_str());
+            check_digest(held, &cited.sha256)?;
+        }
+        Ok(())
+    }
+
+    /// [`commit_import_with`](Self::commit_import_with) with the stand-alone
+    /// defaults, returning only the new version.
+    ///
+    /// # Errors
+    ///
+    /// As [`commit_import_with`](Self::commit_import_with).
+    pub async fn commit_import(
+        &self,
+        file: &FileRef,
+        record: &FileRecord,
+    ) -> Result<Option<VersionNum>, StoreError> {
+        let options = CommitOptions::default();
+        let receipt = self.commit_import_with(file, record, &options).await?;
+        Ok(receipt.map(|receipt| receipt.version))
+    }
+
+    /// Append the entry of a re-import to the file's record in a new
+    /// version; earlier entries stay exactly as they are.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Record`] with [`RecordError::NoFileRecord`] when the
+    /// file has no record, [`RecordError::Import`] for an invalid entry, or
+    /// as [`commit_file_record_with`](Self::commit_file_record_with).
+    pub async fn append_import_with(
+        &self,
+        file: &FileRef,
+        entry: ImportEntry,
+        options: &CommitOptions<'_>,
+    ) -> Result<Option<CommitReceipt>, StoreError> {
+        let base = self.read_base(file).await?;
+        let mut next = base.clone().ok_or(RecordError::NoFileRecord)?;
+        next.append_import(entry)?;
+        let bytes = file_record_bytes(file, base.as_ref(), &next)?;
+        let first_new = base.as_ref().map_or(0, |base| base.imports().len());
+        self.verify_held(file, &next, first_new).await?;
+        let guard = CitedContent::new(&next, first_new, options.bound);
+        self.commit_cited(file, &bytes, options, &guard, true).await
+    }
+
+    /// The whole per-file record of the pinned version of `file`, or of the
+    /// head; `None` when the object, the version or the record is absent.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Record`] when the record is not a valid
+    /// `filesquid.original.v1` file record, otherwise as
+    /// [`read_record`](Self::read_record).
+    pub async fn read_file_record(&self, file: &FileRef) -> Result<Option<FileRecord>, StoreError> {
+        self.read_base(file).await
+    }
+
+    /// The change model of `object_id`, so a host can stage the content of
+    /// an import ([`ChangeModel::stage_bytes`]) before
+    /// [`commit_import_with`](Self::commit_import_with) commits the record
+    /// over it. The staging prefix is this writer's own for the object.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::InvalidPath`] for an object root that could escape the
+    /// storage root.
+    pub fn change_model(&self, object_id: &str) -> Result<ChangeModel<'a, B, R, S>, StoreError> {
+        self.model(object_id)
+    }
+
+    /// [`commit_bytes`](Self::commit_bytes) for an import record: `guard`
+    /// replaces the caller's bound files and checks, inside the commit, that
+    /// the version still holds the content the new entries cite, so a
+    /// concurrent change of that content is a [`StoreError::Conflict`]
+    /// instead of a record citing stale bytes (MD-S-013, OCFL-S-016).
+    async fn commit_cited(
+        &self,
+        file: &FileRef,
+        bytes: &[u8],
+        options: &CommitOptions<'_>,
+        guard: &CitedContent<'_>,
+        reset_first: bool,
+    ) -> Result<Option<CommitReceipt>, StoreError> {
+        let guarded = CommitOptions {
+            user: options.user.clone(),
+            message: options.message.clone(),
+            bound: Some(guard),
+        };
+        let result = self.commit_bytes(file, bytes, &guarded, reset_first).await;
+        result.map_err(|err| guard.explain(err))
+    }
+
+    /// Stage `bytes` as the record of `file` and publish one version.
+    /// `reset_first` discards a change set this writer left staged before
+    /// staging; an import passes `false` to commit over its staged content.
+    async fn commit_bytes(
+        &self,
+        file: &FileRef,
+        bytes: &[u8],
+        options: &CommitOptions<'_>,
+        reset_first: bool,
+    ) -> Result<Option<CommitReceipt>, StoreError> {
         if bytes.len() as u64 > MAX_RECORD_BYTES {
-            return Err(too_large(METADATA_MD, MAX_RECORD_BYTES));
+            return Err(too_large(record_path(file), MAX_RECORD_BYTES));
         }
         let model = self.model(file.object_id())?;
-        model.reset().await.map_err(change_error)?;
+        if reset_first {
+            model.reset().await.map_err(change_error)?;
+        }
         model
-            .stage_bytes(METADATA_MD, &bytes)
+            .stage_bytes(record_path(file), bytes)
             .await
             .map_err(change_error)?;
         if let Err(err) = check_pinned(&model, file).await {
-            model.reset().await.map_err(change_error)?;
+            if reset_first {
+                model.reset().await.map_err(change_error)?;
+            }
             return Err(err);
         }
         let meta = self.edit_meta(options)?;
         publish(&model, meta, options.bound).await
+    }
+
+    /// The file record at the record path, `None` when there is none.
+    async fn read_base(&self, file: &FileRef) -> Result<Option<FileRecord>, StoreError> {
+        let Some(text) = self.read_text(file).await? else {
+            return Ok(None);
+        };
+        Ok(Some(FileRecord::from_markdown(&text)?))
     }
 
     /// The record of the pinned version of `file`, or of the head. An object
@@ -197,23 +431,26 @@ where
     /// overwrites it with a lossy copy) or larger than [`MAX_RECORD_BYTES`],
     /// or a read failure.
     pub async fn read_record(&self, file: &FileRef) -> Result<Record, StoreError> {
+        let text = self.read_text(file).await?;
+        Ok(text.map_or_else(Record::default, |text| from_markdown(&text)))
+    }
+
+    /// The text of the record of the pinned version of `file`, or of the
+    /// head; `None` for an object with no version or a version without it.
+    async fn read_text(&self, file: &FileRef) -> Result<Option<String>, StoreError> {
         if self.head(file.object_id()).await?.is_none() {
-            return Ok(Record::default());
+            return Ok(None);
         }
         let object = self.open(file.object_id()).await?;
         let version = pinned_or_head(&object, file)?;
-        if object
-            .state(&version)
-            .map_err(backend)?
-            .get(METADATA_MD)
-            .is_none()
-        {
-            return Ok(Record::default());
+        let path = record_path(file);
+        if object.state(&version).map_err(backend)?.get(path).is_none() {
+            return Ok(None);
         }
-        let bytes = read_logical(&object, &version, METADATA_MD, MAX_RECORD_BYTES).await?;
+        let bytes = read_logical(&object, &version, path, MAX_RECORD_BYTES).await?;
         let text = String::from_utf8(bytes)
             .map_err(|e| StoreError::Backend(Box::new(IoError::new(ErrorKind::InvalidData, e))))?;
-        Ok(from_markdown(&text))
+        Ok(Some(text))
     }
 
     /// The bytes of the logical file `file` names, at its pinned version or
@@ -321,6 +558,81 @@ where
     }
 }
 
+/// The logical path of the record of `file`: the path its caller named, else
+/// `metadata.md`.
+fn record_path(file: &FileRef) -> &str {
+    file.record_path().unwrap_or(METADATA_MD)
+}
+
+/// The bytes of a statements-only save of `file`. A record at the path that
+/// is a file record keeps its header and every import entry; a plain
+/// `metadata.md` is replaced by the statements; a file whose caller named a
+/// record path needs the record to exist already.
+fn statements_bytes(
+    file: &FileRef,
+    base: Option<&str>,
+    record: &Record,
+) -> Result<Vec<u8>, StoreError> {
+    let plain = || Ok(to_markdown(record).into_bytes());
+    let Some(text) = base else {
+        return match file.record_path() {
+            Some(_) => Err(RecordError::NoFileRecord.into()),
+            None => plain(),
+        };
+    };
+    match FileRecord::from_markdown(text) {
+        Ok(existing) => Ok(existing
+            .with_statements(record.clone())
+            .to_markdown()
+            .into_bytes()),
+        Err(RecordError::UnsupportedSchema) if file.record_path().is_none() => plain(),
+        Err(err) => Err(err.into()),
+    }
+}
+
+/// The bytes of a save of the whole file record `next` over `base`: valid,
+/// extending `base` append-only, and with every new entry citing `file`.
+fn file_record_bytes(
+    file: &FileRef,
+    base: Option<&FileRecord>,
+    next: &FileRecord,
+) -> Result<Vec<u8>, StoreError> {
+    next.validate()?;
+    let first_new = base.map_or(0, |base| base.imports().len());
+    if let Some(base) = base {
+        next.check_extends(base)?;
+    }
+    next.check_binding(
+        first_new,
+        file.object_id(),
+        file.logical_path(),
+        record_path(file),
+    )?;
+    Ok(next.to_markdown().into_bytes())
+}
+
+/// The digest staged at `path` by the change set, when it stages content there.
+fn staged_digest<'c>(changes: &'c [PathChange], path: &str) -> Option<&'c str> {
+    changes.iter().find_map(|change| match change {
+        PathChange::Added {
+            path: p, digest, ..
+        } if p == path => Some(digest.as_str()),
+        PathChange::Changed { path: p, to, .. } if p == path => Some(to.as_str()),
+        PathChange::Reinstated { path: p, digest } if p == path => Some(digest.as_str()),
+        PathChange::Renamed { to, digest, .. } if to == path => Some(digest.as_str()),
+        _ => None,
+    })
+}
+
+/// `found` must be the digest an entry cites.
+fn check_digest(found: Option<&str>, cited: &str) -> Result<(), StoreError> {
+    match found {
+        None => Err(RecordError::ContentNotStaged.into()),
+        Some(digest) if digest != cited => Err(RecordError::ContentDigestMismatch.into()),
+        Some(_) => Ok(()),
+    }
+}
+
 /// Refuse an edit whose pinned version is not the base the change set was
 /// staged against. The change model then publishes onto that base, or, as
 /// OCFL-S-016 requires, rebases onto a later head only when no intervening
@@ -370,7 +682,7 @@ where
 {
     let err = match model.commit_with(meta, bound).await {
         Ok(receipt) => {
-            tracing::info!(object = %receipt.object_id, version = %receipt.version, "committed metadata.md");
+            tracing::info!(object = %receipt.object_id, version = %receipt.version, "committed metadata record");
             return Ok(Some(receipt));
         }
         Err(ChangeError::NothingToCommit) => {
@@ -378,7 +690,7 @@ where
             return Ok(None);
         }
         Err(ChangeError::StagingNotCleared { receipt, reason }) => {
-            tracing::warn!(object = %receipt.object_id, version = %receipt.version, %reason, "committed metadata.md; staging area kept");
+            tracing::warn!(object = %receipt.object_id, version = %receipt.version, %reason, "committed metadata record; staging area kept");
             return Ok(Some(*receipt));
         }
         Err(err) => err,

@@ -1,0 +1,242 @@
+/**
+ * The static frame of `<fs-file-browser>` (UI-F2.2): the breadcrumb, the toolbar, the name form
+ * used for a new folder and for rename or move, the two live regions, the listing area (states,
+ * the list itself, the summary and the drop target), the viewer with its preview, and the panel
+ * area. {@link buildFrame} builds it from the active label table and returns typed references,
+ * so the element and the writes controller never query the DOM by selector. Every word is set
+ * with `textContent` from the label table.
+ */
+import type { LabelTable } from "../theme/labels";
+import type { FsBreadcrumb } from "./fs-breadcrumb";
+import type { FsFilePreview } from "./fs-file-preview";
+import type { FsStates } from "./fs-states";
+
+/** References into the frame. */
+export interface Frame {
+  /** The outer element. */
+  readonly root: HTMLElement;
+  /** Folder trail. */
+  readonly breadcrumb: FsBreadcrumb;
+  /** Toolbar controls. */
+  readonly bar: {
+    readonly upload: HTMLButtonElement;
+    readonly newFolder: HTMLButtonElement;
+    readonly rename: HTMLButtonElement;
+    readonly remove: HTMLButtonElement;
+    readonly list: HTMLButtonElement;
+    readonly grid: HTMLButtonElement;
+    readonly input: HTMLInputElement;
+  };
+  /** The name form. */
+  readonly form: {
+    readonly element: HTMLFormElement;
+    readonly name: HTMLInputElement;
+    readonly folderField: HTMLElement;
+    readonly folder: HTMLInputElement;
+    readonly error: HTMLElement;
+    readonly submit: HTMLButtonElement;
+    readonly cancel: HTMLButtonElement;
+  };
+  /** Polite live region. */
+  readonly status: HTMLElement;
+  /** Assertive live region. */
+  readonly alert: HTMLElement;
+  /** The listing area. */
+  readonly listing: {
+    readonly element: HTMLElement;
+    readonly drop: HTMLElement;
+    readonly states: FsStates;
+    readonly host: HTMLElement;
+    readonly summary: HTMLElement;
+    readonly more: HTMLElement;
+    readonly limit: HTMLElement;
+  };
+  /** The viewer. */
+  readonly viewer: {
+    readonly element: HTMLElement;
+    readonly back: HTMLButtonElement;
+    readonly title: HTMLElement;
+    readonly position: HTMLElement;
+    readonly previous: HTMLButtonElement;
+    readonly next: HTMLButtonElement;
+    readonly preview: FsFilePreview;
+  };
+  /** The panel area. */
+  readonly panels: HTMLElement;
+}
+
+export const STYLE = `
+  .frame { display: flex; flex-direction: column; gap: var(--fs-space-3); min-width: 0; }
+  .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--fs-space-2); }
+  .spacer { flex: 1 1 auto; }
+  .group { display: inline-flex; gap: var(--fs-space-1); }
+  button { padding: var(--fs-space-1) var(--fs-space-3); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface); color: var(--fs-on-surface); font: inherit; cursor: pointer; transition: background-color var(--fs-motion-duration), color var(--fs-motion-duration); }
+  button:hover { background: var(--fs-surface-container); }
+  button.primary, button[aria-pressed="true"] { border-color: var(--fs-primary); background: var(--fs-primary-container); color: var(--fs-on-primary-container); font-weight: 600; }
+  button[aria-disabled="true"] { opacity: 0.5; cursor: default; }
+  .name-form { display: flex; flex-wrap: wrap; align-items: end; gap: var(--fs-space-2) var(--fs-space-3); padding: var(--fs-space-3); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface-container); }
+  .name-form label { display: flex; flex-direction: column; gap: var(--fs-space-1); font-size: var(--fs-font-size-small); color: var(--fs-on-surface-variant); }
+  .name-form input { min-width: 12rem; padding: var(--fs-space-1) var(--fs-space-2); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface); color: var(--fs-on-surface); font: inherit; }
+  .form-error { flex: 1 1 100%; margin: 0; color: var(--fs-error); font-size: var(--fs-font-size-small); }
+  .status, .alert { display: flex; flex-wrap: wrap; align-items: center; gap: var(--fs-space-2) var(--fs-space-3); overflow-wrap: anywhere; }
+  .status:empty, .alert:empty { display: none; }
+  .alert { color: var(--fs-error); }
+  .alert p, .status p { margin: 0; }
+  .main { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--fs-space-4); min-width: 0; }
+  .listing, .viewer { position: relative; flex: 1 1 24rem; display: flex; flex-direction: column; gap: var(--fs-space-2); min-width: 0; }
+  .panels { flex: 0 1 20rem; display: flex; flex-direction: column; gap: var(--fs-space-3); min-width: 0; }
+  .panels section { min-width: 0; }
+  .drop { position: absolute; inset: 0; z-index: 1; display: flex; align-items: center; justify-content: center; padding: var(--fs-space-4); border: 2px dashed var(--fs-primary); border-radius: var(--fs-radius); background: var(--fs-primary-container); color: var(--fs-on-primary-container); font-weight: 600; text-align: center; }
+  .summary, .more, .limit { margin: 0; font-size: var(--fs-font-size-small); color: var(--fs-on-surface-variant); }
+  .viewer header { display: flex; flex-wrap: wrap; align-items: center; gap: var(--fs-space-2) var(--fs-space-3); }
+  .viewer h2 { flex: 1 1 8rem; min-width: 0; margin: 0; font-family: var(--fs-font-heading); font-size: var(--fs-font-size-title); overflow-wrap: anywhere; }
+  .position { font-size: var(--fs-font-size-small); color: var(--fs-on-surface-variant); }
+  [hidden] { display: none !important; }
+`;
+
+/** Create an element with a class and optional text. */
+function node<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  className: string,
+  text?: string,
+): HTMLElementTagNameMap[K] {
+  const element = document.createElement(tag);
+  element.className = className;
+  if (text !== undefined) element.textContent = text;
+  return element;
+}
+
+/** A `type="button"` with a class and its label. */
+function button(className: string, text: string): HTMLButtonElement {
+  const out = node("button", className, text);
+  out.type = "button";
+  return out;
+}
+
+/** A labelled text input, returning the label element and the input. */
+function field(text: string, name: string): { label: HTMLLabelElement; input: HTMLInputElement } {
+  const label = document.createElement("label");
+  const input = document.createElement("input");
+  input.type = "text";
+  input.name = name;
+  input.autocomplete = "off";
+  label.append(node("span", "field-label", text), input);
+  return { label, input };
+}
+
+/** The toolbar and its controls. */
+function buildToolbar(labels: LabelTable): { element: HTMLElement; bar: Frame["bar"] } {
+  const element = node("div", "toolbar");
+  element.setAttribute("role", "toolbar");
+  element.setAttribute("aria-label", labels.fileToolbar);
+  const upload = button("upload primary", labels.fileUpload);
+  const newFolder = button("new-folder", labels.fileNewFolder);
+  const rename = button("rename", labels.fileRenameMove);
+  const remove = button("remove", labels.fileRemove);
+  for (const target of [rename, remove]) target.setAttribute("aria-disabled", "true");
+  const list = button("layout", labels.fileViewList);
+  const grid = button("layout", labels.fileViewGrid);
+  list.dataset.layout = "list";
+  grid.dataset.layout = "grid";
+  list.setAttribute("aria-pressed", "true");
+  grid.setAttribute("aria-pressed", "false");
+  const group = node("div", "group");
+  group.setAttribute("role", "group");
+  group.setAttribute("aria-label", labels.fileLayouts);
+  group.append(list, grid);
+  const input = document.createElement("input");
+  input.type = "file";
+  input.multiple = true;
+  input.hidden = true;
+  input.tabIndex = -1;
+  input.setAttribute("aria-hidden", "true");
+  element.append(upload, newFolder, rename, remove, node("span", "spacer"), group, input);
+  return { element, bar: { upload, newFolder, rename, remove, list, grid, input } };
+}
+
+/** The name form. */
+function buildForm(labels: LabelTable): Frame["form"] {
+  const element = node("form", "name-form");
+  element.hidden = true;
+  element.noValidate = true;
+  const name = field(labels.fileFieldName, "name");
+  const folder = field(labels.fileFieldFolder, "folder");
+  const error = node("p", "form-error");
+  error.setAttribute("role", "alert");
+  const submit = node("button", "submit primary", labels.fileSave);
+  submit.type = "submit";
+  const cancel = button("cancel", labels.fileCancel);
+  element.append(name.label, folder.label, submit, cancel, error);
+  return {
+    element,
+    name: name.input,
+    folderField: folder.label,
+    folder: folder.input,
+    error,
+    submit,
+    cancel,
+  };
+}
+
+/** The listing area. */
+function buildListing(labels: LabelTable): Frame["listing"] {
+  const element = node("section", "listing");
+  const drop = node("div", "drop");
+  drop.hidden = true;
+  const states = document.createElement("fs-states") as FsStates;
+  states.configure({ labels });
+  states.hidden = true;
+  const host = node("div", "list-host");
+  const summary = node("p", "summary");
+  const more = node("p", "more", labels.fileMoreToLoad);
+  const limit = node("p", "limit");
+  more.hidden = true;
+  limit.hidden = true;
+  element.append(drop, states, host, summary, more, limit);
+  return { element, drop, states, host, summary, more, limit };
+}
+
+/** The viewer with its header and preview. */
+function buildViewer(labels: LabelTable): Frame["viewer"] {
+  const element = node("section", "viewer");
+  element.hidden = true;
+  element.setAttribute("aria-label", labels.filePreview);
+  const back = button("back", labels.fileBackToList);
+  const title = node("h2", "viewer-title");
+  title.tabIndex = -1;
+  const position = node("span", "position");
+  const previous = button("previous", labels.filePrevious);
+  const next = button("next", labels.fileNext);
+  const header = document.createElement("header");
+  header.append(back, title, position, previous, next);
+  const preview = document.createElement("fs-file-preview") as FsFilePreview;
+  element.append(header, preview);
+  return { element, back, title, position, previous, next, preview };
+}
+
+/**
+ * Build the frame.
+ *
+ * @param labels The active label table.
+ * @returns The frame and its references.
+ */
+export function buildFrame(labels: LabelTable): Frame {
+  const root = node("div", "frame");
+  const breadcrumb = document.createElement("fs-breadcrumb") as FsBreadcrumb;
+  breadcrumb.configure({ labels });
+  const { element: toolbar, bar } = buildToolbar(labels);
+  const form = buildForm(labels);
+  const status = node("div", "status");
+  status.setAttribute("role", "status");
+  const alert = node("div", "alert");
+  alert.setAttribute("role", "alert");
+  const listing = buildListing(labels);
+  const viewer = buildViewer(labels);
+  const panels = node("aside", "panels");
+  panels.hidden = true;
+  panels.setAttribute("aria-label", labels.filePanels);
+  const main = node("div", "main");
+  main.append(listing.element, viewer.element, panels);
+  root.append(breadcrumb, toolbar, form.element, status, alert, main);
+  return { root, breadcrumb, bar, form, status, alert, listing, viewer, panels };
+}

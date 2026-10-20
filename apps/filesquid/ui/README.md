@@ -1,6 +1,6 @@
 # @filesquid/ui
 
-FileSquid's default distribution and the component library every distribution builds on: the `FileSquidClient` API client and host adapter, vanilla TypeScript custom elements (`<fs-app-shell>`, `<fs-monitor>`, `<fs-nav-tree>`, `<fs-breadcrumb>`, `<fs-states>`, `<fs-host-indicator>`), design tokens and label tables ([ADR 031](../../../resources/architecture/031-vanilla-typescript-ui-and-white-label-theming.md)). Requirements: [SRS](./resources/srs.md). Plan: [plan](./resources/plan.md).
+FileSquid's default distribution and the component library every distribution builds on: the `FileSquidClient` API client and host adapter, vanilla TypeScript custom elements (`<fs-app-shell>`, `<fs-monitor>`, `<fs-nav-tree>`, `<fs-breadcrumb>`, `<fs-states>`, `<fs-host-indicator>`, `<fs-file-browser>`, `<fs-file-preview>`), design tokens and label tables ([ADR 031](../../../resources/architecture/031-vanilla-typescript-ui-and-white-label-theming.md)). Requirements: [SRS](./resources/srs.md). Plan: [plan](./resources/plan.md).
 
 ## Develop and test
 
@@ -105,6 +105,30 @@ shell.append(tree);
 ```
 
 `npm test` covers the model, store, source, loader, key rules and elements in jsdom; `npm run test:e2e` checks them in the built UI ([`tests/e2e/navigation.spec.ts`](./tests/e2e/navigation.spec.ts)): accessibility tree, treeview keys, persistence across a reload, refused storage, the five states in light and dark, focus rings, motion, forced colours and reflow.
+
+## File browser
+
+`<fs-file-browser>` (Task UI-F2.2; [UI-S-002, UI-S-019](./resources/srs.md); walkthrough: [Task-UI-F2.2-Walkthrough.md](./resources/tasks/Task-UI-F2.2-Walkthrough.md)) is the Drive-style browser of one OCFL object: a list (default) or grid of folders and files with name, size, type hint, modified and version, a breadcrumb of folders, a viewer with a preview, and upload, new folder, rename or move, remove and Undo. Every row, tile, heading and message shows the file's **display name** from the API; the stored name is never rendered. It reads and writes only through a `FileSource` (`ClientFileSource` over `FileSquidClient`; `MemoryFileSource` for tests and demos), so it never fetches by itself.
+
+```ts
+defineElements();
+const browser = document.createElement("fs-file-browser") as FsFileBrowser;
+browser.configure({ labels, source: new ClientFileSource(client) });
+browser.location = { library_id, object_id, prefix: "" }; // loads the folder
+browser.registerPanel("details", () => myDetailsPanel()); // sidebar slot, gets `fileRef`
+browser.registerPreviewRenderer(myRenderer); // tried before the built-ins
+shell.append(browser);
+```
+
+- **Route.** `bindFilesRoute(shell, { labels, source })` shows the browser for `#/files/<library>/<object>/<folder>/...` (each segment percent-encoded; see `locationHash`) and follows the Back button. Until the navigation tree supplies a library and object (UI-F2.1b), this route is the way to reach the browser.
+- **Writes.** Each is one API call that commits one OCFL version: `PUT files/upload` (one call per file, at most 64 MiB, refused before sending beyond that), `POST files/folders` (the folder stays pending, marked, until a file is added beneath it), `POST files/moves` (rename or move; typing the name already shown keeps the stored name), `POST files/removals` and `POST files/restorations` (Undo restores from the version before the removal). There is no delete-forever control. A refusal shows the label for its reason and changes nothing.
+- **Preview.** The preview reads the file's media type from `GET files/details`. Image, video and audio files play natively through a **content handle** minted by `FileSquidClient.mintContentHandle` ([UI-S-014](./resources/srs.md)): the handle URL is only ever a media element's `src`, never in the address, history, storage, a log, text or a link. On a media error one new handle is minted and playback resumes at the same position and paused state; a second failure shows the error. Text is read with one ranged read of the first 64 KiB. Anything else says there is no preview.
+- **Panel slots.** A panel is an element with a `fileRef` property (`FileRef`: `library_id`, `object_id`, `version`, `path`, `display_name`, or null when no file is open). `registerPanel(id, create)` mounts it in the sidebar in registration order; panels get no reference to each other (ADR 028 Decision 6).
+- **Events** (bubbling, composed): `fs-location-change` (`detail.location`), `fs-file-open` (`detail.file`, null on close), `fs-files-change` (`detail.operation`, `detail.commit`).
+- **Large folders.** Only the rows near the viewport are in the DOM (5 rows of overscan; rows are `3rem` tall in the list and `9rem` in the grid, so text scaling holds), rows are keyed by logical path and keep their element and focus, and pages of 200 entries load as the window nears the end, up to 500 pages.
+- **Keyboard.** The listing is one Tab stop; ArrowUp, ArrowDown, Home, End, PageUp and PageDown move the active row (the sideways arrows too in the grid), Enter opens it, F2 renames and Delete removes it. Rename and Remove in the toolbar act on the row that last had focus, or on the open file.
+
+The element lists one object's logical tree because that is what the file routes (API-F1.3) answer; library-level file queries and the navigation node handles arrive with UI-F2.1b and UI-F2.8 and feed the same `FileLocation`.
 
 ## Host adapter and client interface
 

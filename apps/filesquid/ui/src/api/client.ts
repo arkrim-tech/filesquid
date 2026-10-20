@@ -127,6 +127,12 @@ const ERROR_CODE_VALUES = [
 ] as const satisfies readonly ErrorCode[];
 /** Every {@link ErrorCode} the contract defines, for validating response bodies at run time. */
 const ERROR_CODES: CompleteList<ErrorCode, typeof ERROR_CODE_VALUES> = ERROR_CODE_VALUES;
+/** Path of the content handle mint (API-S-018). */
+const CONTENT_HANDLES_PATH = "/api/v1/content-handles";
+/** Path prefix of the content route; a handle's URL is this plus the handle. */
+const CONTENT_ROUTE = "/api/v1/content/";
+/** A content handle: 256 random bits as 43 base64url characters without padding. */
+const HANDLE_CHARS = /^[A-Za-z0-9_-]{43}$/;
 /** RFC 7230 `token`: the only characters both a header value and a subprotocol accept here. */
 const TOKEN_CHARS = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 
@@ -386,6 +392,27 @@ export interface CommandOptions {
   signal?: AbortSignal;
 }
 
+/** What a content handle mint names: exactly one file, OCFL version and logical path. */
+export type ContentHandleRequest = components["schemas"]["ContentHandleRequest"];
+
+/** A minted content handle as the client returns it (API-S-018, UI-S-014). */
+export interface MintedHandle {
+  /**
+   * The handle URL on the active host's base. It is a credential: use it only as the `src` of
+   * `<img>`, `<video>`, `<audio>` or `<source>`; never put it in the page address, history,
+   * storage, a log, rendered text, an error or a link to another window.
+   */
+  readonly url: string;
+  /** Absolute expiry, RFC 3339 UTC. */
+  readonly expires_at: string;
+}
+
+/** Options for a call that only needs a way to be cancelled. */
+export interface AbortOptions {
+  /** Cancels the call. */
+  signal?: AbortSignal;
+}
+
 /** Options for {@link FileSquidClient.upload}. */
 export interface UploadOptions {
   /** File name sent with the `file` part. */
@@ -621,6 +648,68 @@ export class FileSquidClient {
       signal: options.signal,
     });
     return this.outcome(path, envelope.operation_id, response);
+  }
+
+  /**
+   * Send raw bytes with `PUT` as `application/octet-stream` (the file upload route, whose
+   * identifying fields travel in the query string). Network I/O.
+   *
+   * @param path API path with its query, for example `/api/v1/files/upload?...`.
+   * @param body The bytes.
+   * @param options Abort signal.
+   * @returns The parsed JSON answer.
+   * @throws ApiError on a non-2xx answer (a `409` included: the route reports a refused change
+   *   as an error, not as an outcome), or when the token cannot be sent.
+   */
+  async putBytes<T>(path: string, body: Blob, options: AbortOptions = {}): Promise<T> {
+    const response = await this.send(path, {
+      method: "PUT",
+      headers: { "Content-Type": "application/octet-stream" },
+      body,
+      signal: options.signal,
+    });
+    return (await response.json()) as T;
+  }
+
+  /**
+   * Mint a content handle for one file version (`POST /api/v1/content-handles`, API-S-018),
+   * with an authenticated request, and return its URL on the active host's base. The answer is
+   * checked before it is used: a handle is 43 base64url characters and its URL is exactly the
+   * content route for it, so a malformed or redirecting answer is refused. Neither the handle
+   * nor the URL is ever part of an error or a log line. Network I/O.
+   *
+   * @param request The one file version to read.
+   * @param options Abort signal.
+   * @returns The URL, only for a media element's `src` (see {@link MintedHandle}), and its expiry.
+   * @throws ApiError when the mint is refused, or when the token cannot be sent.
+   * @throws TypeError when the answer is not a content handle.
+   */
+  async mintContentHandle(
+    request: ContentHandleRequest,
+    options: AbortOptions = {},
+  ): Promise<MintedHandle> {
+    const answer = await this.request<unknown>(CONTENT_HANDLES_PATH, {
+      method: "POST",
+      body: request,
+      signal: options.signal,
+    }).catch((error: unknown) => {
+      if (error instanceof SyntaxError) {
+        throw new TypeError("content handle answer is not a content handle");
+      }
+      throw error;
+    });
+    const record = (typeof answer === "object" && answer !== null ? answer : {}) as Record<
+      string,
+      unknown
+    >;
+    const { handle, url, expires_at } = record;
+    const valid =
+      typeof handle === "string" &&
+      HANDLE_CHARS.test(handle) &&
+      url === `${CONTENT_ROUTE}${handle}` &&
+      typeof expires_at === "string";
+    if (!valid) throw new TypeError("content handle answer is not a content handle");
+    return { url: `${this.options.baseUrl}${url}`, expires_at };
   }
 
   /**
