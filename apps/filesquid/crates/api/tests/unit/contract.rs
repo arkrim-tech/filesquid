@@ -79,7 +79,7 @@ fn contract_is_openapi_3_1_with_the_crate_api_version() {
     let doc = contract();
     assert_eq!(doc["openapi"], "3.1.0");
     assert_eq!(doc["info"]["version"], API_VERSION);
-    assert_eq!(API_VERSION, "0.14.0");
+    assert_eq!(API_VERSION, "0.15.0");
 }
 
 #[test]
@@ -1125,6 +1125,7 @@ fn sample_inputs() -> HealthInputs {
         errors_last_5m: 0,
         ocfl_error_codes: vec!["E023".into()],
         ocfl_error_objects: 1,
+        journal_unsealed_age_ms: None,
     }
 }
 

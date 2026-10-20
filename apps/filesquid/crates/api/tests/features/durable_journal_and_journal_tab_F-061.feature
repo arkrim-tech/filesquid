@@ -3,7 +3,8 @@
 # API-S-030: Client events; API-S-031: Journal query and export; API-S-032: Durable journal
 # DE-S-013: Journal sealing and rebuild; UI-S-021: Logs view; UI-S-023: Client event delivery
 # The client-event, query and export scenarios are bound in tests/support/journal_steps.rs
-# (Task API-F2.10); the sealing, rebuild and UI scenarios are bound by the later FS-2.9 tasks
+# (Task API-F2.10), the sealing scenarios in tests/support/seal_steps.rs (Task API-F2.11); the
+# per-commit, rebuild and UI scenarios are bound by the later FS-2.9 tasks
 # (unbound steps are skipped by the harness).
 Feature: Durable, complete and browsable activity journal
   As a library owner
@@ -22,7 +23,7 @@ Feature: Durable, complete and browsable activity journal
   Scenario: Other events are sealed every hour
     Given an authorisation refusal and a health change were journaled
     When the hourly seal runs
-    Then the library's journal object should gain one JSON Lines segment with those entries
+    Then the installation's journal object should gain one JSON Lines segment with those entries
     And the seal should be a registered, journaled process
 
   Scenario: Library events are sealed on library close
@@ -49,6 +50,17 @@ Feature: Durable, complete and browsable activity journal
     Given the library's storage root is not writable during a seal
     When the next seal runs after the storage root is writable again
     Then every entry that was not sealed should be in the new segment
+
+  Scenario: A seal with nothing but its own bookkeeping writes nothing
+    Given host entries that are not yet sealed
+    And the hourly seal has run
+    When the hourly seal runs again with nothing new
+    Then no journal version should be added and nothing should be journaled
+
+  Scenario: Entries left unsealed for two sealing intervals degrade health
+    Given the library's storage root is not writable during a seal
+    When two sealing intervals pass and the seal fails again
+    Then health should be degraded with the reason "journal_unsealed"
 
   Scenario: A browser console warning reaches the journal
     When the UI reports a console warning

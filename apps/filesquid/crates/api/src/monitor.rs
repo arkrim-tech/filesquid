@@ -5,6 +5,7 @@
 
 use crate::events::topic;
 use crate::health::{evaluate, HealthInputs, HealthReport, HealthStatus, ERROR_WINDOW_MS};
+use crate::journal::seal::SealStatus;
 use crate::journal::{
     JournalEntry, JournalError, JournalQuery, JournalStore, Level, Outcome, RetentionPolicy,
 };
@@ -103,6 +104,8 @@ struct Inner {
     /// over a newer one.
     health: Mutex<()>,
     findings: OnceLock<Arc<dyn FindingsStore>>,
+    /// The sealing service's status, for the `journal_unsealed` rule (API-S-032).
+    seal_status: OnceLock<Arc<dyn SealStatus>>,
     /// When the last metrics snapshot was journaled (Unix ms), if any.
     last_snapshot_ms: Mutex<Option<i64>>,
 }
@@ -147,6 +150,7 @@ impl Monitor {
                 last_status: Mutex::new(None),
                 health: Mutex::new(()),
                 findings: OnceLock::new(),
+                seal_status: OnceLock::new(),
                 last_snapshot_ms: Mutex::new(None),
             }),
         }
@@ -263,6 +267,18 @@ impl Monitor {
         }
     }
 
+    /// Use `status` as the source of the oldest unsealed journal entry for the
+    /// `journal_unsealed` health rule (API-S-032). Returns false, keeping the first, if one
+    /// was already installed.
+    pub fn install_seal_status(&self, status: Arc<dyn SealStatus>) -> bool {
+        self.inner.seal_status.set(status).is_ok()
+    }
+
+    /// The monitor's clock now (Unix milliseconds, UTC).
+    pub fn now_ms(&self) -> i64 {
+        (self.inner.config.clock)()
+    }
+
     /// Use `store` as the source of open OCFL validation findings for the health rules
     /// (API-S-022). Returns false, keeping the first, if one was already installed.
     pub fn install_findings(&self, store: Arc<dyn FindingsStore>) -> bool {
@@ -292,6 +308,12 @@ impl Monitor {
         self.inner.writer.shutdown();
     }
 
+    /// How long the oldest entry a seal left unsealed has waited at `now`, if any.
+    fn unsealed_age(&self, now: i64) -> Option<i64> {
+        let oldest = self.inner.seal_status.get()?.oldest_unsealed_ms()?;
+        Some((now - oldest).max(0))
+    }
+
     /// Collect the facts the health rules need (I/O).
     fn gather_inputs(&self) -> HealthInputs {
         let now = (self.inner.config.clock)();
@@ -319,6 +341,7 @@ impl Monitor {
             errors_last_5m: self.inner.store.count(&errors).unwrap_or(0),
             ocfl_error_codes: ocfl.codes,
             ocfl_error_objects: ocfl.objects,
+            journal_unsealed_age_ms: self.unsealed_age(now),
         }
     }
 

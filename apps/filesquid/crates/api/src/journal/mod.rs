@@ -14,6 +14,7 @@ pub mod commit;
 pub mod csv;
 pub mod link;
 mod memory;
+pub mod seal;
 
 pub use memory::MemoryJournal;
 

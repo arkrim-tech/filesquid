@@ -12,6 +12,7 @@ fn healthy() -> HealthInputs {
         errors_last_5m: 0,
         ocfl_error_codes: Vec::new(),
         ocfl_error_objects: 0,
+        journal_unsealed_age_ms: None,
     }
 }
 
