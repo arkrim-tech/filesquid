@@ -717,6 +717,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import files or a folder the owner picks in the host's dialog
+         * @description API-S-036. The host shows its own native dialog for the source named (`files` or `folder`), and imports what the owner picks into the open library as one durable import job (kind `import`): each file's original and its metadata record with the facts the host's operating system provides are committed in one version of the file's own object, as an upload is (API-S-026, ADR 038). The body carries a CommandEnvelope whose scope is `library:<library_id>`; its operation ID is the idempotency key, so the same operation ID answers the same job instead of starting a second import. An import only adds new files, so the expected revision is not compared. The answer is the job, or `cancelled` when the owner closed the dialog (no job). No path, file name or storage key crosses the API in the request, the answer, an error or the journal. A request while a dialog is open is refused 409 conflict (`dialog_open`); a library that is not open answers 404 not_found; a host without an import dialog (filesquid-server) answers 503 unavailable. Each request is journaled once as `import.start`; each file as `import.file`.
+         */
+        post: operations["startImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/libraries/snapshot-copies": {
         parameters: {
             query?: never;
@@ -2156,6 +2176,29 @@ export interface components {
         LocationChoice: {
             outcome: components["schemas"]["ChoiceOutcome"];
             location_id?: string;
+        };
+        /**
+         * @description What the owner picks in the host's dialog.
+         * @enum {string}
+         */
+        ImportSource: "files" | "folder";
+        /**
+         * @description How an import request ended.
+         * @enum {string}
+         */
+        ImportOutcome: "started" | "cancelled";
+        ImportRequest: {
+            envelope: components["schemas"]["CommandEnvelope"];
+            library_id: string;
+            /** @description The collection the files join; the library's home collection when absent. */
+            collection_id?: string;
+            source: components["schemas"]["ImportSource"];
+        };
+        ImportAnswer: {
+            operation_id: string;
+            outcome: components["schemas"]["ImportOutcome"];
+            /** @description The import job; absent when cancelled. */
+            job_id?: string;
         };
     };
     responses: {
@@ -3727,6 +3770,53 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             /** @description A folder dialog is already open, or the picked folder cannot hold a library (`conflict`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            500: components["responses"]["Internal"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    startImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportRequest"];
+            };
+        };
+        responses: {
+            /** @description The import job, or that the owner cancelled. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportAnswer"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description The library is not open on this host (`not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description A dialog is already open (`conflict`). */
             409: {
                 headers: {
                     [name: string]: unknown;
