@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "FileSquid API",
-    "version": "0.11.0",
+    "version": "0.12.0",
     "description": "The single FileSquid API served by every FileSquid host. See resources/architecture/030-filesquid-api-and-transports.md. Conventions: a command (mutation) sends a CommandEnvelope as the `envelope` member of its JSON request body (operation_id is the idempotency key, expected_revision the revision last read) and answers with a CommandOutcome; a query (list) takes the PageSize (`limit`, 1-1000) and Cursor (`cursor`) parameters; every failed request answers with an ApiError body (code, message, retryable). Router-wide fallbacks: any /api/v1/ path not in this contract answers 404 not_found, and a documented path called with a method it does not document answers 405 method_not_allowed; both carry the ApiError body. They are not listed per operation because no operation sends them. Authorisation is deny-by-default: every operation, including health, the contract and the event channel, requires the bearerAuth credential and is authorised before anything else runs, so a call without it answers 401 unauthorized and a call whose credential is not accepted or does not grant the operation answers 403 forbidden, before any 404 or 405; both carry the ApiError body with a DenialReason in `reason`. Each operation names the authorisation action it performs in x-filesquid-action. The one deliberate exception is GET /api/v1/health/live (x-filesquid-action public, security []), a liveness probe that answers only {\"status\":\"up\"} without a credential. The content route GET and HEAD /api/v1/content/{handle} (x-filesquid-action content.read, x-filesquid-credential content-handle, security []) is not public: its only credential is the content handle in its path, minted by POST /api/v1/content-handles for one file version (API-S-018); a Bearer token is not accepted there, and every unusable request under /api/v1/content/ (unknown, malformed, missing, expired, evicted or revoked handle, an extra path segment or another method) answers one identical 403 forbidden with reason invalid_credentials, never 401, 404 or 405. Paths marked x-filesquid-host-route are served by the hosts, not by the filesquid-api router."
   },
   "security": [
@@ -2056,6 +2056,304 @@
           }
         }
       }
+    },
+    "/api/v1/libraries": {
+      "post": {
+        "operationId": "createLibrary",
+        "summary": "Create a library in an empty folder",
+        "description": "Makes the folder the host registered as location_id the OCFL 1.1 storage root of a library: writes only the 0=ocfl_1.1 declaration, never over an existing file, and needs no account or connection (F-001). Answers the library ID (library_id when given, else a new UUID v4), which stays bound to the location until the host stops. Refusals: invalid_location, invalid_library, location_not_found, location_in_use, library_already_open, too_many_libraries (at most 64 open libraries) and root_not_empty. The outcome is journaled as library.root.create. Every refusal is journaled once, with its error code and opaque IDs only (an authorisation refusal as api.auth.denied); answers carry opaque library and object identifiers, never a filesystem path, storage key or OCFL content path (API-S-005, API-S-025).",
+        "x-filesquid-action": "library.manage",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryLocationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The library created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryView"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/LibraryNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/LibraryConflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/LibraryUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/libraries/openings": {
+      "post": {
+        "operationId": "openLibrary",
+        "summary": "Open the library in a folder",
+        "description": "Opens the OCFL storage root in the folder the host registered as location_id through the engine's guards, and binds the library ID (library_id when given, else a new UUID v4) to it. Writes and repairs nothing. Opening a location that is already open answers its library again. Refusals: invalid_location, invalid_library, location_not_found, location_in_use, library_already_open, too_many_libraries, not_a_storage_root and git_in_root. Only a failure is journaled, as library.root.open. Every refusal is journaled once, with its error code and opaque IDs only (an authorisation refusal as api.auth.denied); answers carry opaque library and object identifiers, never a filesystem path, storage key or OCFL content path (API-S-005, API-S-025).",
+        "x-filesquid-action": "library.manage",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryLocationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The library opened.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryView"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/LibraryNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/LibraryConflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/LibraryUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/libraries/snapshot-copies": {
+      "post": {
+        "operationId": "copyLibrarySnapshot",
+        "summary": "Copy a completed snapshot to an empty folder",
+        "description": "Copies the committed files of every object of the open library into the empty folder the host registered as destination_location_id, never over an existing file, and validates the copy, so it is a checked OCFL root ordinary tools can read (F-042). The library is only read. Refusals: library_not_open, location_not_found, destination_overlaps_library (the destination is the folder of an open library, or inside or around one), destination_not_empty, snapshot_unreadable and snapshot_incomplete (retryable while a head is being published). The outcome is journaled as library.snapshot.copy. Every refusal is journaled once, with its error code and opaque IDs only (an authorisation refusal as api.auth.denied); answers carry opaque library and object identifiers, never a filesystem path, storage key or OCFL content path (API-S-005, API-S-025).",
+        "x-filesquid-action": "library.manage",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SnapshotCopyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "What the copy wrote and what its validation found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SnapshotCopyReport"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/LibraryNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/LibraryConflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/LibraryUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/libraries/rebuilds": {
+      "post": {
+        "operationId": "rebuildLibrary",
+        "summary": "Rebuild a library from its files",
+        "description": "Reads every object of the open library from its OCFL files alone, so a host can rebuild its catalog without its database. Validation errors are reported, never adopted or repaired, and an object whose head has no version inventory is flagged. Writes nothing. Refusals: library_not_open and the open errors of the storage root. The outcome is journaled as library.rebuild. Every refusal is journaled once, with its error code and opaque IDs only (an authorisation refusal as api.auth.denied); answers carry opaque library and object identifiers, never a filesystem path, storage key or OCFL content path (API-S-005, API-S-025).",
+        "x-filesquid-action": "library.manage",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Everything the rebuild found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RebuildReport"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/LibraryNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/LibraryConflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/LibraryUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/libraries/repair-candidates": {
+      "get": {
+        "operationId": "listRepairCandidates",
+        "summary": "Objects whose head has no version inventory",
+        "description": "The objects of the open library whose committed head lacks its version inventory or its sidecar (W010): what the UI may offer to repair, at most 1,000 (OCFL-S-020, API-S-023). Writes and repairs nothing. Refusals: library_not_open and the open errors of the storage root. Only a failure is journaled, as library.repair_candidates. Every refusal is journaled once, with its error code and opaque IDs only (an authorisation refusal as api.auth.denied); answers carry opaque library and object identifiers, never a filesystem path, storage key or OCFL content path (API-S-005, API-S-025).",
+        "x-filesquid-action": "library.read",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/LibraryId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The repair candidates.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepairCandidates"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/LibraryNotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/LibraryUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/libraries/repairs": {
+      "post": {
+        "operationId": "repairVersionInventories",
+        "summary": "Repair the version inventory of named objects, with the owner's consent",
+        "description": "The one command that adds a file to an existing version directory: for each named object whose committed head has no version inventory, adds one copy of the root inventory and its sidecar to the head version directory and changes nothing else (OCFL-S-020, API-S-023). Only a library's owner may run it: the desktop owner; on filesquid-server every caller, the administrator included, is refused 403 not_permitted until server accounts give a library owner a principal. The request names the library and 1 to 1,000 distinct objects and carries the owner's consent to statement version_inventory_repair.v1 for exactly those objects; without it the request is refused (consent_required, consent_mismatch) and nothing is written. Each object gets its own outcome in the answer: an object whose head already holds its version inventory and sidecar is refused nothing_to_repair, never repaired. The consent and each object's outcome are journaled as ocfl.repair.version_inventory (opaque IDs, version, outcome, error code). Refusals of the whole request: invalid_objects, consent_required, consent_mismatch, library_not_open and the open errors of the storage root. Every refusal is journaled once, with its error code and opaque IDs only (an authorisation refusal as api.auth.denied); answers carry opaque library and object identifiers, never a filesystem path, storage key or OCFL content path (API-S-005, API-S-025).",
+        "x-filesquid-action": "library.repair",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RepairRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "One outcome per requested object, in request order.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepairAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/LibraryNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/LibraryConflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/LibraryUnavailable"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3764,6 +4062,437 @@
             "description": "True when more than 64 changed or the changed parents are not known; read the whole visible tree again."
           }
         }
+      },
+      "LibraryLocationRequest": {
+        "type": "object",
+        "description": "Body of POST /api/v1/libraries and POST /api/v1/libraries/openings: the folder the owner chose, by the opaque location ID the host registered it under, never by its path.",
+        "required": [
+          "location_id"
+        ],
+        "properties": {
+          "location_id": {
+            "type": "string",
+            "description": "The opaque location ID, 1 to 128 bytes.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "library_id": {
+            "type": "string",
+            "description": "The library ID to use, at most 128 bytes; a new UUID v4 when absent.",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "additionalProperties": false
+      },
+      "LibraryView": {
+        "type": "object",
+        "description": "A created or opened library.",
+        "required": [
+          "library_id",
+          "spec_version",
+          "objects"
+        ],
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library, bound to the location until the host stops."
+          },
+          "spec_version": {
+            "type": "string",
+            "description": "The OCFL version the storage root declares (1.1)."
+          },
+          "objects": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The objects discovered in it."
+          }
+        },
+        "additionalProperties": false
+      },
+      "SnapshotCopyRequest": {
+        "type": "object",
+        "description": "Body of POST /api/v1/libraries/snapshot-copies.",
+        "required": [
+          "library_id",
+          "destination_location_id"
+        ],
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library: an opaque ID, at most 128 bytes.",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "destination_location_id": {
+            "type": "string",
+            "description": "The opaque location ID of the empty folder to copy into, 1 to 128 bytes.",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "additionalProperties": false
+      },
+      "LibraryRequest": {
+        "type": "object",
+        "description": "Body of POST /api/v1/libraries/rebuilds: the open library.",
+        "required": [
+          "library_id"
+        ],
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library: an opaque ID, at most 128 bytes.",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "additionalProperties": false
+      },
+      "ObjectFindings": {
+        "type": "object",
+        "description": "An object of a snapshot copy whose validation found errors.",
+        "required": [
+          "object_id",
+          "error_codes"
+        ],
+        "properties": {
+          "object_id": {
+            "type": "string",
+            "description": "The object identifier."
+          },
+          "error_codes": {
+            "type": "array",
+            "description": "The distinct OCFL validation codes of its errors (E###), sorted.",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "SnapshotCopyReport": {
+        "type": "object",
+        "description": "What a snapshot copy wrote and what its validation found.",
+        "required": [
+          "objects",
+          "files",
+          "bytes",
+          "invalid_objects"
+        ],
+        "properties": {
+          "objects": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Objects copied."
+          },
+          "files": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Files written to the destination."
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Bytes written to the destination."
+          },
+          "invalid_objects": {
+            "type": "array",
+            "description": "Copied objects whose validation found errors; empty for a clean copy.",
+            "items": {
+              "$ref": "#/components/schemas/ObjectFindings"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "RebuiltObject": {
+        "type": "object",
+        "description": "One object rebuilt from its files.",
+        "required": [
+          "object_id",
+          "head",
+          "files",
+          "digest_algorithm",
+          "error_codes",
+          "missing_version_inventory"
+        ],
+        "properties": {
+          "object_id": {
+            "type": "string",
+            "description": "The object identifier."
+          },
+          "head": {
+            "type": "string",
+            "description": "The committed head version."
+          },
+          "files": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Logical files in the head version."
+          },
+          "digest_algorithm": {
+            "type": "string",
+            "description": "The object's digest algorithm (sha256 or sha512)."
+          },
+          "error_codes": {
+            "type": "array",
+            "description": "Distinct OCFL validation error codes (E###), sorted; empty for a valid object.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "missing_version_inventory": {
+            "type": "boolean",
+            "description": "Whether the head lacks its version inventory or its sidecar: a candidate for the consented repair."
+          }
+        },
+        "additionalProperties": false
+      },
+      "UnreadableObject": {
+        "type": "object",
+        "description": "An object a rebuild could not open; its location is not reported.",
+        "required": [
+          "error_code"
+        ],
+        "properties": {
+          "error_code": {
+            "type": "string",
+            "description": "The OCFL validation code when an OCFL rule is broken (E###), else unreadable."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RebuildReport": {
+        "type": "object",
+        "description": "Everything a rebuild from files found.",
+        "required": [
+          "objects",
+          "unreadable"
+        ],
+        "properties": {
+          "objects": {
+            "type": "array",
+            "description": "Objects read, in object-root order.",
+            "items": {
+              "$ref": "#/components/schemas/RebuiltObject"
+            }
+          },
+          "unreadable": {
+            "type": "array",
+            "description": "Objects that could not be opened.",
+            "items": {
+              "$ref": "#/components/schemas/UnreadableObject"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "RepairCandidate": {
+        "type": "object",
+        "description": "An object the UI may offer to repair.",
+        "required": [
+          "object_id",
+          "head",
+          "digest_algorithm",
+          "interrupted",
+          "committable_after_repair"
+        ],
+        "properties": {
+          "object_id": {
+            "type": "string",
+            "description": "The object identifier."
+          },
+          "head": {
+            "type": "string",
+            "description": "The committed head version that lacks its version inventory."
+          },
+          "digest_algorithm": {
+            "type": "string",
+            "description": "The object's digest algorithm (sha256 or sha512)."
+          },
+          "interrupted": {
+            "type": "boolean",
+            "description": "True when the head already holds its version inventory but not its sidecar: an interrupted repair the command completes."
+          },
+          "committable_after_repair": {
+            "type": "boolean",
+            "description": "True for sha256 objects; a sha512 object stays readable-only after the repair."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RepairCandidates": {
+        "type": "object",
+        "description": "The repair-candidate query's answer.",
+        "required": [
+          "candidates",
+          "truncated"
+        ],
+        "properties": {
+          "candidates": {
+            "type": "array",
+            "description": "Candidates in object-root order, at most 1,000.",
+            "items": {
+              "$ref": "#/components/schemas/RepairCandidate"
+            }
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "True when more candidates exist than were answered."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RepairConsent": {
+        "type": "object",
+        "description": "The owner's consent from the repair dialog: the library and exactly the objects it named, and the statement it showed.",
+        "required": [
+          "library_id",
+          "object_ids",
+          "statement_id",
+          "confirmed"
+        ],
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library the dialog named."
+          },
+          "object_ids": {
+            "type": "array",
+            "description": "The objects the dialog named: exactly those of the request.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "statement_id": {
+            "type": "string",
+            "description": "The statement shown: version_inventory_repair.v1. A consent to other words is refused."
+          },
+          "confirmed": {
+            "type": "boolean",
+            "description": "True only when the owner confirmed; cancelling sends no request."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RepairRequest": {
+        "type": "object",
+        "description": "Body of POST /api/v1/libraries/repairs.",
+        "required": [
+          "library_id",
+          "object_ids"
+        ],
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The open library."
+          },
+          "object_ids": {
+            "type": "array",
+            "description": "The objects to repair: 1 to 1,000 distinct identifiers, each at most 1,024 bytes.",
+            "items": {
+              "type": "string",
+              "description": "An object identifier.",
+              "minLength": 1,
+              "maxLength": 1024
+            }
+          },
+          "consent": {
+            "description": "The owner's consent; a request without a confirmed consent is refused.",
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RepairConsent"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "RepairResult": {
+        "type": "string",
+        "description": "What happened to one object.",
+        "enum": [
+          "repaired",
+          "refused"
+        ]
+      },
+      "ObjectRepair": {
+        "type": "object",
+        "description": "One object's repair outcome.",
+        "required": [
+          "object_id",
+          "version",
+          "result",
+          "error_code",
+          "retryable"
+        ],
+        "properties": {
+          "object_id": {
+            "type": "string",
+            "description": "The object identifier, as requested."
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The head version, when the object was found."
+          },
+          "result": {
+            "$ref": "#/components/schemas/RepairResult"
+          },
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it was refused (for example nothing_to_repair, object_not_found, reservation_held); null when repaired."
+          },
+          "retryable": {
+            "type": "boolean",
+            "description": "Whether the same request may succeed later."
+          },
+          "provenance_version": {
+            "type": "string",
+            "description": "The provenance-only version that records a repaired object, when it was committed."
+          },
+          "provenance_error_code": {
+            "type": "string",
+            "description": "Why a repaired object's provenance record was not written, when it was not."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RepairAnswer": {
+        "type": "object",
+        "description": "The answer to a repair command.",
+        "required": [
+          "library_id",
+          "run_id",
+          "objects"
+        ],
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library."
+          },
+          "run_id": {
+            "type": "string",
+            "description": "The repair run: the operation ID its consent and outcome entries share, an opaque UUID v4."
+          },
+          "objects": {
+            "type": "array",
+            "description": "Per-object outcomes, in request order.",
+            "items": {
+              "$ref": "#/components/schemas/ObjectRepair"
+            }
+          }
+        },
+        "additionalProperties": false
       }
     },
     "parameters": {
@@ -3991,6 +4720,36 @@
             }
           }
         },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "LibraryNotFound": {
+        "description": "The location ID is not one the host registered (location_not_found), or the library is not open on this host (library_not_open) (not_found). The answer's code is not_found; the journal entry names which.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "LibraryConflict": {
+        "description": "Refused by a rule about the storage root, the destination or the consent (conflict); nothing was written. The journal entry names the rule: root_not_empty, not_a_storage_root, git_in_root, destination_not_empty, snapshot_unreadable, destination_overlaps_library, location_in_use, library_already_open, too_many_libraries, consent_required or consent_mismatch.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "LibraryUnavailable": {
+        "description": "The library's storage, the repair ledger or the reservation store is not reachable now, a head is still being published (snapshot_incomplete), or the host has not installed its library commands yet (unavailable; retryable).",
         "content": {
           "application/json": {
             "schema": {

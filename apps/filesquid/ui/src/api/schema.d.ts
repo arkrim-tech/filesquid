@@ -591,6 +591,126 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/libraries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a library in an empty folder
+         * @description Makes the folder the host registered as location_id the OCFL 1.1 storage root of a library: writes only the 0=ocfl_1.1 declaration, never over an existing file, and needs no account or connection (F-001). Answers the library ID (library_id when given, else a new UUID v4), which stays bound to the location until the host stops. Refusals: invalid_location, invalid_library, location_not_found, location_in_use, library_already_open, too_many_libraries (at most 64 open libraries) and root_not_empty. The outcome is journaled as library.root.create. Every refusal is journaled once, with its error code and opaque IDs only (an authorisation refusal as api.auth.denied); answers carry opaque library and object identifiers, never a filesystem path, storage key or OCFL content path (API-S-005, API-S-025).
+         */
+        post: operations["createLibrary"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/libraries/openings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Open the library in a folder
+         * @description Opens the OCFL storage root in the folder the host registered as location_id through the engine's guards, and binds the library ID (library_id when given, else a new UUID v4) to it. Writes and repairs nothing. Opening a location that is already open answers its library again. Refusals: invalid_location, invalid_library, location_not_found, location_in_use, library_already_open, too_many_libraries, not_a_storage_root and git_in_root. Only a failure is journaled, as library.root.open. Every refusal is journaled once, with its error code and opaque IDs only (an authorisation refusal as api.auth.denied); answers carry opaque library and object identifiers, never a filesystem path, storage key or OCFL content path (API-S-005, API-S-025).
+         */
+        post: operations["openLibrary"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/libraries/snapshot-copies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Copy a completed snapshot to an empty folder
+         * @description Copies the committed files of every object of the open library into the empty folder the host registered as destination_location_id, never over an existing file, and validates the copy, so it is a checked OCFL root ordinary tools can read (F-042). The library is only read. Refusals: library_not_open, location_not_found, destination_overlaps_library (the destination is the folder of an open library, or inside or around one), destination_not_empty, snapshot_unreadable and snapshot_incomplete (retryable while a head is being published). The outcome is journaled as library.snapshot.copy. Every refusal is journaled once, with its error code and opaque IDs only (an authorisation refusal as api.auth.denied); answers carry opaque library and object identifiers, never a filesystem path, storage key or OCFL content path (API-S-005, API-S-025).
+         */
+        post: operations["copyLibrarySnapshot"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/libraries/rebuilds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rebuild a library from its files
+         * @description Reads every object of the open library from its OCFL files alone, so a host can rebuild its catalog without its database. Validation errors are reported, never adopted or repaired, and an object whose head has no version inventory is flagged. Writes nothing. Refusals: library_not_open and the open errors of the storage root. The outcome is journaled as library.rebuild. Every refusal is journaled once, with its error code and opaque IDs only (an authorisation refusal as api.auth.denied); answers carry opaque library and object identifiers, never a filesystem path, storage key or OCFL content path (API-S-005, API-S-025).
+         */
+        post: operations["rebuildLibrary"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/libraries/repair-candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Objects whose head has no version inventory
+         * @description The objects of the open library whose committed head lacks its version inventory or its sidecar (W010): what the UI may offer to repair, at most 1,000 (OCFL-S-020, API-S-023). Writes and repairs nothing. Refusals: library_not_open and the open errors of the storage root. Only a failure is journaled, as library.repair_candidates. Every refusal is journaled once, with its error code and opaque IDs only (an authorisation refusal as api.auth.denied); answers carry opaque library and object identifiers, never a filesystem path, storage key or OCFL content path (API-S-005, API-S-025).
+         */
+        get: operations["listRepairCandidates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/libraries/repairs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Repair the version inventory of named objects, with the owner's consent
+         * @description The one command that adds a file to an existing version directory: for each named object whose committed head has no version inventory, adds one copy of the root inventory and its sidecar to the head version directory and changes nothing else (OCFL-S-020, API-S-023). Only a library's owner may run it: the desktop owner; on filesquid-server every caller, the administrator included, is refused 403 not_permitted until server accounts give a library owner a principal. The request names the library and 1 to 1,000 distinct objects and carries the owner's consent to statement version_inventory_repair.v1 for exactly those objects; without it the request is refused (consent_required, consent_mismatch) and nothing is written. Each object gets its own outcome in the answer: an object whose head already holds its version inventory and sidecar is refused nothing_to_repair, never repaired. The consent and each object's outcome are journaled as ocfl.repair.version_inventory (opaque IDs, version, outcome, error code). Refusals of the whole request: invalid_objects, consent_required, consent_mismatch, library_not_open and the open errors of the storage root. Every refusal is journaled once, with its error code and opaque IDs only (an authorisation refusal as api.auth.denied); answers carry opaque library and object identifiers, never a filesystem path, storage key or OCFL content path (API-S-005, API-S-025).
+         */
+        post: operations["repairVersionInventories"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1129,6 +1249,149 @@ export interface components {
              */
             all?: true;
         };
+        /** @description Body of POST /api/v1/libraries and POST /api/v1/libraries/openings: the folder the owner chose, by the opaque location ID the host registered it under, never by its path. */
+        LibraryLocationRequest: {
+            /** @description The opaque location ID, 1 to 128 bytes. */
+            location_id: string;
+            /** @description The library ID to use, at most 128 bytes; a new UUID v4 when absent. */
+            library_id?: string;
+        };
+        /** @description A created or opened library. */
+        LibraryView: {
+            /** @description The library, bound to the location until the host stops. */
+            library_id: string;
+            /** @description The OCFL version the storage root declares (1.1). */
+            spec_version: string;
+            /** @description The objects discovered in it. */
+            objects: number;
+        };
+        /** @description Body of POST /api/v1/libraries/snapshot-copies. */
+        SnapshotCopyRequest: {
+            /** @description The library: an opaque ID, at most 128 bytes. */
+            library_id: string;
+            /** @description The opaque location ID of the empty folder to copy into, 1 to 128 bytes. */
+            destination_location_id: string;
+        };
+        /** @description Body of POST /api/v1/libraries/rebuilds: the open library. */
+        LibraryRequest: {
+            /** @description The library: an opaque ID, at most 128 bytes. */
+            library_id: string;
+        };
+        /** @description An object of a snapshot copy whose validation found errors. */
+        ObjectFindings: {
+            /** @description The object identifier. */
+            object_id: string;
+            /** @description The distinct OCFL validation codes of its errors (E###), sorted. */
+            error_codes: string[];
+        };
+        /** @description What a snapshot copy wrote and what its validation found. */
+        SnapshotCopyReport: {
+            /** @description Objects copied. */
+            objects: number;
+            /** @description Files written to the destination. */
+            files: number;
+            /** @description Bytes written to the destination. */
+            bytes: number;
+            /** @description Copied objects whose validation found errors; empty for a clean copy. */
+            invalid_objects: components["schemas"]["ObjectFindings"][];
+        };
+        /** @description One object rebuilt from its files. */
+        RebuiltObject: {
+            /** @description The object identifier. */
+            object_id: string;
+            /** @description The committed head version. */
+            head: string;
+            /** @description Logical files in the head version. */
+            files: number;
+            /** @description The object's digest algorithm (sha256 or sha512). */
+            digest_algorithm: string;
+            /** @description Distinct OCFL validation error codes (E###), sorted; empty for a valid object. */
+            error_codes: string[];
+            /** @description Whether the head lacks its version inventory or its sidecar: a candidate for the consented repair. */
+            missing_version_inventory: boolean;
+        };
+        /** @description An object a rebuild could not open; its location is not reported. */
+        UnreadableObject: {
+            /** @description The OCFL validation code when an OCFL rule is broken (E###), else unreadable. */
+            error_code: string;
+        };
+        /** @description Everything a rebuild from files found. */
+        RebuildReport: {
+            /** @description Objects read, in object-root order. */
+            objects: components["schemas"]["RebuiltObject"][];
+            /** @description Objects that could not be opened. */
+            unreadable: components["schemas"]["UnreadableObject"][];
+        };
+        /** @description An object the UI may offer to repair. */
+        RepairCandidate: {
+            /** @description The object identifier. */
+            object_id: string;
+            /** @description The committed head version that lacks its version inventory. */
+            head: string;
+            /** @description The object's digest algorithm (sha256 or sha512). */
+            digest_algorithm: string;
+            /** @description True when the head already holds its version inventory but not its sidecar: an interrupted repair the command completes. */
+            interrupted: boolean;
+            /** @description True for sha256 objects; a sha512 object stays readable-only after the repair. */
+            committable_after_repair: boolean;
+        };
+        /** @description The repair-candidate query's answer. */
+        RepairCandidates: {
+            /** @description Candidates in object-root order, at most 1,000. */
+            candidates: components["schemas"]["RepairCandidate"][];
+            /** @description True when more candidates exist than were answered. */
+            truncated: boolean;
+        };
+        /** @description The owner's consent from the repair dialog: the library and exactly the objects it named, and the statement it showed. */
+        RepairConsent: {
+            /** @description The library the dialog named. */
+            library_id: string;
+            /** @description The objects the dialog named: exactly those of the request. */
+            object_ids: string[];
+            /** @description The statement shown: version_inventory_repair.v1. A consent to other words is refused. */
+            statement_id: string;
+            /** @description True only when the owner confirmed; cancelling sends no request. */
+            confirmed: boolean;
+        };
+        /** @description Body of POST /api/v1/libraries/repairs. */
+        RepairRequest: {
+            /** @description The open library. */
+            library_id: string;
+            /** @description The objects to repair: 1 to 1,000 distinct identifiers, each at most 1,024 bytes. */
+            object_ids: string[];
+            /** @description The owner's consent; a request without a confirmed consent is refused. */
+            consent?: components["schemas"]["RepairConsent"] | null;
+        };
+        /**
+         * @description What happened to one object.
+         * @enum {string}
+         */
+        RepairResult: "repaired" | "refused";
+        /** @description One object's repair outcome. */
+        ObjectRepair: {
+            /** @description The object identifier, as requested. */
+            object_id: string;
+            /** @description The head version, when the object was found. */
+            version: string | null;
+            result: components["schemas"]["RepairResult"];
+            /** @description Why it was refused (for example nothing_to_repair, object_not_found, reservation_held); null when repaired. */
+            error_code: string | null;
+            /** @description Whether the same request may succeed later. */
+            retryable: boolean;
+            /** @description The provenance-only version that records a repaired object, when it was committed. */
+            provenance_version?: string;
+            /** @description Why a repaired object's provenance record was not written, when it was not. */
+            provenance_error_code?: string;
+        };
+        /** @description The answer to a repair command. */
+        RepairAnswer: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The repair run: the operation ID its consent and outcome entries share, an opaque UUID v4. */
+            run_id: string;
+            /** @description Per-object outcomes, in request order. */
+            objects: components["schemas"]["ObjectRepair"][];
+        };
     };
     responses: {
         /** @description Invalid or malformed request (invalid_request). */
@@ -1243,6 +1506,33 @@ export interface components {
                 "X-Content-Type-Options"?: string;
                 /** @description default-src 'none'; sandbox */
                 "Content-Security-Policy"?: string;
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description The location ID is not one the host registered (location_not_found), or the library is not open on this host (library_not_open) (not_found). The answer's code is not_found; the journal entry names which. */
+        LibraryNotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description Refused by a rule about the storage root, the destination or the consent (conflict); nothing was written. The journal entry names the rule: root_not_empty, not_a_storage_root, git_in_root, destination_not_empty, snapshot_unreadable, destination_overlaps_library, location_in_use, library_already_open, too_many_libraries, consent_required or consent_mismatch. */
+        LibraryConflict: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description The library's storage, the repair ledger or the reservation store is not reachable now, a head is still being published (snapshot_incomplete), or the host has not installed its library commands yet (unavailable; retryable). */
+        LibraryUnavailable: {
+            headers: {
                 [name: string]: unknown;
             };
             content: {
@@ -2412,6 +2702,190 @@ export interface operations {
             404: components["responses"]["NotFound"];
             500: components["responses"]["Internal"];
             503: components["responses"]["Unavailable"];
+        };
+    };
+    createLibrary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LibraryLocationRequest"];
+            };
+        };
+        responses: {
+            /** @description The library created. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryView"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LibraryNotFound"];
+            409: components["responses"]["LibraryConflict"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["LibraryUnavailable"];
+        };
+    };
+    openLibrary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LibraryLocationRequest"];
+            };
+        };
+        responses: {
+            /** @description The library opened. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryView"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LibraryNotFound"];
+            409: components["responses"]["LibraryConflict"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["LibraryUnavailable"];
+        };
+    };
+    copyLibrarySnapshot: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SnapshotCopyRequest"];
+            };
+        };
+        responses: {
+            /** @description What the copy wrote and what its validation found. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SnapshotCopyReport"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LibraryNotFound"];
+            409: components["responses"]["LibraryConflict"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["LibraryUnavailable"];
+        };
+    };
+    rebuildLibrary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LibraryRequest"];
+            };
+        };
+        responses: {
+            /** @description Everything the rebuild found. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RebuildReport"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LibraryNotFound"];
+            409: components["responses"]["LibraryConflict"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["LibraryUnavailable"];
+        };
+    };
+    listRepairCandidates: {
+        parameters: {
+            query: {
+                /** @description The library. */
+                library_id: components["parameters"]["LibraryId"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The repair candidates. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepairCandidates"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LibraryNotFound"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["LibraryUnavailable"];
+        };
+    };
+    repairVersionInventories: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RepairRequest"];
+            };
+        };
+        responses: {
+            /** @description One outcome per requested object, in request order. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepairAnswer"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LibraryNotFound"];
+            409: components["responses"]["LibraryConflict"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["LibraryUnavailable"];
         };
     };
 }
