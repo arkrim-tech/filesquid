@@ -36,10 +36,14 @@
 
 pub mod api_protocol;
 pub mod app_window;
+pub mod backfill;
 pub mod capability_policy;
 pub mod event_channel;
+pub mod folder_choice;
 pub mod ipc_gate;
 pub mod ipc_observer;
+pub mod libraries;
+pub mod navigation;
 pub mod panic_journal;
 pub mod stdout_log;
 #[cfg(feature = "test-webdriver")]
@@ -48,12 +52,13 @@ pub mod test_fixture;
 pub use event_channel::EVENT_NAME;
 pub use stdout_log::LOGGING_OPERATION;
 
+use backfill::{BackfillTask, DesktopBackfill, BACKFILL_STOP_WAIT};
 use event_channel::{Forwarding, TauriSink, FORWARDER_HEARTBEAT};
 use filesquid_api::auth::{record_token_issue, Authoriser, LaunchToken, Principal};
-use filesquid_api::history::backfill::{Backfill, BACKFILL_OPERATION};
+use filesquid_api::history::backfill::Backfill;
 use filesquid_api::history::{HostFacts, OcflRootsHistory, ProvenanceContext};
 use filesquid_api::host::{HostIdentity, NotEnrolled};
-use filesquid_api::jobs::{JobError, Jobs};
+use filesquid_api::jobs::Jobs;
 use filesquid_api::journal::{JournalEntry, Outcome};
 use filesquid_api::journal_writer::JournalSender;
 use filesquid_api::local_library::{LocalLibraryService, RepairLedger};
@@ -67,14 +72,17 @@ use filesquid_native::installation::{
 };
 use filesquid_native::workers::history_backfill;
 use filesquid_native::workers::media::{self, MediaWorkers};
-use filesquid_native::{CatalogRoots, HostMonitor, SqliteCatalog, CATALOG_DIR};
+use filesquid_native::{
+    CatalogRoots, HostLocations, HostMonitor, HostRoots, OpenedRoots, SqliteCatalog,
+    SqlitePreferences, SqliteRepairLedger, CATALOG_DIR, JOURNAL_FILE,
+};
 use filesquid_ocfl::storage::FsBackend;
 use ipc_observer::TauriIpcObserver;
+use libraries::{DesktopLibraries, LibraryServing};
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
-use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 use tauri::{Manager, RunEvent};
 use tracing::Subscriber;
 use tracing_subscriber::filter::{filter_fn, EnvFilter, FilterExt};
@@ -92,7 +100,7 @@ struct DesktopMonitor {
     host: Arc<HostMonitor>,
     forwarder: Arc<ProcessHandle>,
     stop: Arc<AtomicBool>,
-    backfill: Mutex<Option<JoinHandle<()>>>,
+    backfill: Arc<DesktopBackfill>,
 }
 
 /// The journal sinks the host attaches once the journal opens: the journal layer, the Tauri
@@ -414,7 +422,8 @@ pub const CATALOG_OPEN_OPERATION: &str = "library.catalog.open";
 pub struct DesktopFiles(pub filesquid_native::HostFiles);
 
 /// Open the packaged-window tests' media library (test-instrumented builds only): the OCFL
-/// storage root named by [`test_fixture::E2E_LIBRARY_VARIABLE`], when it is set. A root that
+/// storage root named by [`test_fixture::E2E_LIBRARY_VARIABLE`], when it is set, and register
+/// their library folders ([`test_fixture::register_e2e_locations`]). A root or folder that
 /// cannot be opened is logged; the app starts without it.
 #[cfg(feature = "test-webdriver")]
 fn open_test_library(app: &tauri::AppHandle, data_dir: &std::path::Path) {
@@ -422,9 +431,14 @@ fn open_test_library(app: &tauri::AppHandle, data_dir: &std::path::Path) {
     if let Err(message) = test_fixture::open_e2e_library(files, data_dir) {
         tracing::error!(%message, "the packaged-window media library was not opened");
     }
+    let locations = &app.state::<DesktopLocations>().0;
+    if let Err(message) = test_fixture::register_e2e_locations(locations) {
+        tracing::error!(%message, "the packaged-window library folders were not registered");
+    }
 }
 
-/// Shipping builds open no library at launch; DE-1.1 opens the owner's libraries.
+/// Shipping builds open no library and register no folder at launch; the owner's libraries
+/// open through the library routes (DE-1.1).
 #[cfg(not(feature = "test-webdriver"))]
 fn open_test_library(_app: &tauri::AppHandle, _data_dir: &std::path::Path) {}
 
@@ -476,14 +490,23 @@ pub fn provenance_context(installation: &InstallationId) -> ProvenanceContext {
 }
 
 /// Install the PROV-O history source of the history routes in `state` (API-S-029): every
-/// record of every library `catalog` serves, read from the libraries' OCFL storage roots for
-/// each request ([`CatalogRoots`]), so a library opened later is included. Until it is
-/// installed the history routes answer `503 unavailable`.
+/// record of every library `catalog` serves and of every library opened in a folder the owner
+/// chose (`opened`, Task DE-1.1), read from the libraries' OCFL storage roots for each request
+/// ([`HostRoots`]), so a library opened later is included. Until it is installed the history
+/// routes answer `503 unavailable`.
 ///
 /// # Errors
 /// A history source is already installed; the first one is kept.
-pub fn install_history_source(state: &ApiState, catalog: Arc<SqliteCatalog>) -> Result<(), String> {
-    let history = OcflRootsHistory::new(CatalogRoots(catalog));
+pub fn install_history_source(
+    state: &ApiState,
+    catalog: Arc<SqliteCatalog>,
+    opened: Arc<OpenedRoots>,
+) -> Result<(), String> {
+    let roots = HostRoots {
+        catalog: CatalogRoots(catalog),
+        opened,
+    };
+    let history = OcflRootsHistory::new(roots);
     if !state.install_history(Arc::new(history)) {
         return Err("a history source was already installed".to_string());
     }
@@ -504,6 +527,109 @@ pub fn local_library_service(
         provenance_context(installation),
         host.monitor().announcing_store(),
     )
+}
+
+/// Journal operation of the library routes' installation at launch.
+pub const LIBRARY_ROUTES_OPERATION: &str = "library.routes.install";
+
+/// The folders the owner registered for the library routes (Task DE-1.1), held in Tauri's
+/// managed state so the host can register a folder the owner picks.
+pub struct DesktopLocations(pub Arc<HostLocations>);
+
+/// Install the library and repair routes' host side in `state` (API-S-025, Task DE-1.1): the
+/// library commands over the folders the owner registers ([`HostLocations`] in `data_dir`),
+/// with the repair service of [`local_library_service`] over the persistent repair ledger
+/// ([`SqliteRepairLedger`] in the operational store), serving each bound library with
+/// `serving`. Answers the folder registry. Opens a database connection.
+///
+/// # Errors
+/// The repair ledger could not be opened, or library commands are already installed.
+pub fn install_library_routes(
+    state: &ApiState,
+    host: &HostMonitor,
+    installation: &InstallationId,
+    serving: LibraryServing,
+) -> Result<Arc<HostLocations>, String> {
+    let path = serving.data_dir.join(JOURNAL_FILE);
+    let ledger = SqliteRepairLedger::open(&path, "filesquid-desktop").map_err(|_| {
+        tracing::error!(
+            operation = LIBRARY_ROUTES_OPERATION,
+            error_code = "unavailable",
+            "the repair ledger could not be opened"
+        );
+        "the repair ledger could not be opened".to_string()
+    })?;
+    let service = local_library_service(host, installation, Arc::new(ledger));
+    let locations = Arc::new(HostLocations::new(&serving.data_dir));
+    let libraries = DesktopLibraries::new(service, locations.clone(), serving);
+    if !state.install_libraries(Arc::new(libraries)) {
+        return Err("library commands were already installed".to_string());
+    }
+    Ok(locations)
+}
+
+/// Install where this desktop keeps each user's UI preferences (API-S-011, API-F2.2): the
+/// operational store in `data_dir` ([`SqlitePreferences`]). Opens a database connection.
+///
+/// # Errors
+/// The store could not be opened, or one is already installed.
+pub fn install_host_preferences(
+    state: &ApiState,
+    data_dir: &std::path::Path,
+) -> Result<(), String> {
+    let store = SqlitePreferences::open(&data_dir.join(JOURNAL_FILE))
+        .map_err(|_| "the preference store could not be opened".to_string())?;
+    if !state.install_preferences(Arc::new(store)) {
+        return Err("a preference store was already installed".to_string());
+    }
+    Ok(())
+}
+
+/// Tell the file service which OCFL object holds each folder scope's files, for the listing
+/// by navigation node (API-F2.2): [`navigation::CatalogScopes`].
+///
+/// # Errors
+/// The file service already has its scope objects.
+pub fn install_file_scopes(files: &filesquid_native::HostFiles) -> Result<(), String> {
+    if !files.install_scope_objects(Arc::new(navigation::CatalogScopes)) {
+        return Err("the file service's scope objects were already installed".to_string());
+    }
+    Ok(())
+}
+
+/// Install the folder choice of the library routes (`POST /api/v1/libraries/location-choices`)
+/// in `state`: `dialog` shows the native folder dialog and the picked folder is registered in
+/// `locations` ([`folder_choice::DesktopChooser`]). Pure.
+///
+/// # Errors
+/// A folder chooser is already installed.
+pub fn install_folder_choice(
+    state: &ApiState,
+    locations: &Arc<HostLocations>,
+    dialog: Box<dyn folder_choice::FolderDialog>,
+) -> Result<(), String> {
+    let chooser = folder_choice::DesktopChooser::new(locations.clone(), dialog);
+    if !state.install_location_chooser(Arc::new(chooser)) {
+        return Err("a folder chooser was already installed".to_string());
+    }
+    Ok(())
+}
+
+/// Give the file service's restore and label commits their PROV-O record (API-F2.5): they
+/// name `installation` and a journal entry ID `host`'s journal store allocates.
+///
+/// # Errors
+/// The file service already has a provenance context.
+pub fn install_file_provenance(
+    files: &filesquid_native::HostFiles,
+    host: &HostMonitor,
+    installation: &InstallationId,
+) -> Result<(), String> {
+    let context = provenance_context(installation);
+    if !files.install_provenance(context, host.monitor().announcing_store()) {
+        return Err("the file service's provenance was already installed".to_string());
+    }
+    Ok(())
 }
 
 /// The history backfill job of this host (API-S-029; ADR 040 Decision 7): it commits as
@@ -541,10 +667,12 @@ fn catalog_error_code(err: &filesquid_api::library::CatalogError) -> &'static st
 /// Open the journal in the app data directory, attach every journal sink, install the
 /// monitor, journal a logging stack that could not be installed (`logging` false), read the
 /// installation UUID, open the library catalogs, install the PROV-O history source over their
-/// storage roots, open the durable job store and reconcile its jobs, register the event
-/// forwarder's process, start the ticker and start the history backfill job. When the catalogs cannot be opened the failure is journaled and the monitor
-/// stopped (flushing the journal) before the launch fails. Performs filesystem and database
-/// I/O.
+/// storage roots and the folders the owner opens, open the durable job store and reconcile
+/// its jobs, install the navigation listing, install the library routes and the file provenance
+/// ([`install_library_services`]), register the event forwarder's process, start the ticker
+/// and start the history backfill job. When a step fails the failure is journaled and the
+/// monitor stopped (flushing the journal) before the launch fails. Performs filesystem and
+/// database I/O.
 fn start_monitor(
     app: &tauri::AppHandle,
     journal: &HostJournal,
@@ -563,138 +691,114 @@ fn start_monitor(
     let catalog = Arc::new(
         open_library_catalog(&data_dir, &host, &installation).inspect_err(|_| host.stop())?,
     );
-    install_history_source(&state, catalog.clone()).inspect_err(|_| host.stop())?;
-    let jobs = history_backfill::open_jobs(&data_dir, &host).inspect_err(|_| host.stop())?;
-    let backfill = history_backfill::recover_jobs(&jobs)
-        .ok()
-        .map(|_| BackfillTask {
-            jobs: jobs.clone(),
-            backfill: history_backfill(&host, &installation),
-            catalog: catalog.clone(),
-            source: history_backfill::backfill_source(&installation),
-        });
-    app.manage(DesktopJobs(jobs));
+    let opened = Arc::new(OpenedRoots::new());
+    install_history_source(&state, catalog.clone(), opened.clone()).inspect_err(|_| host.stop())?;
+    let (task, recovered) =
+        prepare_backfill(app, &data_dir, &host, &installation, &catalog, &opened)
+            .inspect_err(|_| host.stop())?;
     app.manage(DesktopMedia(media_workers(&host)));
-    app.manage(DesktopInstallation(installation));
-    app.manage(DesktopCatalog(catalog.clone()));
-    let validation = host
-        .start_validation::<FsBackend>(&data_dir, &state)
+    navigation::install_navigation(&state, catalog.clone(), &installation)
         .inspect_err(|_| host.stop())?;
-    app.manage(DesktopValidation(validation));
+    app.manage(DesktopCatalog(catalog));
+    install_library_services(app, &host, &installation, &data_dir, opened)
+        .inspect_err(|_| host.stop())?;
+    app.manage(DesktopInstallation(installation));
     open_test_library(app, &data_dir);
     let forwarder = Arc::new(event_channel::register_forwarder(host.monitor().registry()));
     let stop = Arc::new(AtomicBool::new(false));
     spawn_ticker(host.clone(), stop.clone());
-    let backfill = backfill.and_then(|task| spawn_backfill(task, stop.clone()));
+    let backfill = Arc::new(DesktopBackfill::new(task, stop.clone()));
+    install_backfill_route(&state, &backfill, recovered).inspect_err(|_| host.stop())?;
     app.manage(DesktopMonitor {
         host,
         forwarder,
         stop,
-        backfill: Mutex::new(backfill),
+        backfill,
     });
     Ok(())
 }
 
-/// Longest the app's exit waits for a cancelled history backfill to end before the journal is
-/// flushed.
-const BACKFILL_STOP_WAIT: Duration = Duration::from_secs(10);
-
-/// The history backfill job one launch runs ([`history_backfill::run_backfill_job`](filesquid_native::workers::history_backfill::run_backfill_job)).
-struct BackfillTask {
-    jobs: Jobs,
-    backfill: Backfill,
-    catalog: Arc<SqliteCatalog>,
-    source: String,
-}
-
-/// Run the history backfill on its own thread, once per launch, as a durable job (API-S-029,
-/// DE-S-014): it resumes the job a quit suspended, skipping the libraries its checkpoint
-/// lists, and otherwise visits every library (versions that have a record are skipped).
-/// Setting `stop` (at app exit, the last window closing included) cancels it between objects
-/// and suspends the job with its checkpoint. Each run registers in the process registry and
-/// journals itself. Answers the thread, or `None` when it could not be started (logged as an
-/// error, which the journal layer journals).
-fn spawn_backfill(task: BackfillTask, stop: Arc<AtomicBool>) -> Option<JoinHandle<()>> {
-    let spawned = std::thread::Builder::new()
-        .name("filesquid-history-backfill".into())
-        .spawn(move || report_backfill(run_backfill_task(&task, &stop)));
-    spawned
-        .inspect_err(|err| {
-            tracing::error!(
-                operation = BACKFILL_OPERATION,
-                error_code = "thread_unavailable",
-                error = %err,
-                "the history backfill could not be started"
-            );
-        })
-        .ok()
-}
-
-/// Run `task` until it completes or `stop` is set. Filesystem, database and journal I/O.
-fn run_backfill_task(
-    task: &BackfillTask,
-    stop: &AtomicBool,
-) -> Result<history_backfill::BackfillJobRun, JobError> {
-    history_backfill::run_backfill_job(
-        &task.jobs,
-        &task.catalog,
-        &task.backfill,
-        &task.source,
-        stop,
-    )
-}
-
-/// Log a backfill job that could not run, and each library whose backfill could not run, as
-/// warnings with error codes only (the journal layer journals warnings; the job and each run
-/// that started journaled themselves).
-fn report_backfill(result: Result<history_backfill::BackfillJobRun, JobError>) {
-    let run = match result {
-        Ok(run) => run,
-        Err(err) => {
-            tracing::warn!(
-                operation = BACKFILL_OPERATION,
-                error_code = err.error_code(),
-                "the history backfill job could not run; the next launch retries"
-            );
-            return;
-        }
+/// Open the durable job store in `data_dir`, reconcile its jobs and keep it in Tauri's
+/// managed state, answering the history backfill task of this host over `catalog` and the
+/// folders `opened`, and whether the jobs were reconciled (only then does the launch run
+/// it). Performs database I/O.
+///
+/// # Errors
+/// The job store could not be opened.
+fn prepare_backfill(
+    app: &tauri::AppHandle,
+    data_dir: &std::path::Path,
+    host: &HostMonitor,
+    installation: &InstallationId,
+    catalog: &Arc<SqliteCatalog>,
+    opened: &Arc<OpenedRoots>,
+) -> Result<(BackfillTask, bool), String> {
+    let jobs = history_backfill::open_jobs(data_dir, host)?;
+    let recovered = history_backfill::recover_jobs(&jobs).is_ok();
+    let task = BackfillTask {
+        jobs: jobs.clone(),
+        backfill: history_backfill(host, installation),
+        catalog: catalog.clone(),
+        source: history_backfill::backfill_source(installation),
+        opened: opened.clone(),
     };
-    for library in run.ran.iter().filter(|library| library.error.is_some()) {
-        tracing::warn!(
-            operation = BACKFILL_OPERATION,
-            library_id = library.library_id.as_str(),
-            error_code = "unavailable",
-            "the history backfill could not run for a library; the next launch retries"
-        );
-    }
+    app.manage(DesktopJobs(jobs));
+    Ok((task, recovered))
 }
 
-/// Wait, at most [`BACKFILL_STOP_WAIT`], for the cancelled backfill thread in `slot` to end.
-/// A thread still running then is logged and left to end with the process.
-fn wait_for_backfill(slot: &Mutex<Option<JoinHandle<()>>>) {
-    let handle = slot.lock().ok().and_then(|mut handle| handle.take());
-    let Some(handle) = handle else {
-        return;
+/// Install `backfill` as the launcher of the backfill route (API-S-029) and, when the jobs
+/// were `recovered`, start this launch's run (DE-S-011): a run that cannot start is logged by
+/// the runner, and the launch goes on.
+///
+/// # Errors
+/// A backfill launcher is already installed.
+pub fn install_backfill_route(
+    state: &ApiState,
+    backfill: &Arc<DesktopBackfill>,
+    recovered: bool,
+) -> Result<(), String> {
+    if !state.install_history_backfill(backfill.clone()) {
+        return Err("a history backfill launcher was already installed".to_string());
+    }
+    if recovered {
+        let _ = backfill.start();
+    }
+    Ok(())
+}
+
+/// Start the OCFL validation, give the file service its PROV-O provenance and its scope
+/// objects, install the preference store, install the library routes and their native folder
+/// choice over the folders the owner registers, serving each library they bind
+/// (Task DE-1.1); keep the validation and the folder registry in Tauri's managed state.
+/// Performs filesystem and database I/O.
+///
+/// # Errors
+/// The validation, the provenance or the library routes could not be installed.
+fn install_library_services(
+    app: &tauri::AppHandle,
+    host: &HostMonitor,
+    installation: &InstallationId,
+    data_dir: &std::path::Path,
+    opened: Arc<OpenedRoots>,
+) -> Result<(), String> {
+    let state = app.state::<ApiState>();
+    let validation = host.start_validation::<FsBackend>(data_dir, &state)?;
+    let files = app.state::<DesktopFiles>().0.clone();
+    install_file_provenance(&files, host, installation)?;
+    install_file_scopes(&files)?;
+    install_host_preferences(&state, data_dir)?;
+    let serving = LibraryServing {
+        files,
+        validation: Some(validation.clone()),
+        opened,
+        data_dir: data_dir.to_path_buf(),
     };
-    let deadline = Instant::now() + BACKFILL_STOP_WAIT;
-    while !handle.is_finished() && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    if !handle.is_finished() {
-        tracing::warn!(
-            operation = BACKFILL_OPERATION,
-            error_code = "stop_timeout",
-            "the history backfill did not stop in time"
-        );
-        return;
-    }
-    if handle.join().is_err() {
-        tracing::error!(
-            operation = BACKFILL_OPERATION,
-            error_code = "panicked",
-            "the history backfill thread panicked"
-        );
-    }
+    let locations = install_library_routes(&state, host, installation, serving)?;
+    let dialog = Box::new(folder_choice::RfdDialog::new(app.clone()));
+    install_folder_choice(&state, &locations, dialog)?;
+    app.manage(DesktopValidation(validation));
+    app.manage(DesktopLocations(locations));
+    Ok(())
 }
 
 /// Tick the monitor once per [`TICK`] until `stop` is set at app exit (bounded by the app's lifetime).
@@ -714,7 +818,8 @@ fn spawn_ticker(host: Arc<HostMonitor>, stop: Arc<AtomicBool>) {
 }
 
 /// Start forwarding the API bus to the app's webviews through one counted subscription
-/// ([`event_channel::pump`]) until the bus closes or the app exits. When no subscription slot
+/// ([`event_channel::pump`]), reduced to what the owner may read
+/// ([`navigation::owner_event_filter`]), until the bus closes or the app exits. When no subscription slot
 /// is free, the refusal is journaled, the forwarder's process fails, and the API keeps
 /// working without push.
 fn forward_events(app: &tauri::AppHandle) {
@@ -726,8 +831,9 @@ fn forward_events(app: &tauri::AppHandle) {
         );
         return;
     };
-    let Some(subscription) = event_channel::open_subscription(&app.state::<ApiState>().events)
-    else {
+    let state = app.state::<ApiState>();
+    let filter = navigation::owner_event_filter(&state);
+    let Some(subscription) = event_channel::open_subscription(&state.events, filter) else {
         monitor.forwarder.fail("unavailable");
         return;
     };
@@ -753,7 +859,7 @@ fn forward_events(app: &tauri::AppHandle) {
 fn stop_monitor(app: &tauri::AppHandle) {
     if let Some(monitor) = app.try_state::<DesktopMonitor>() {
         monitor.stop.store(true, Ordering::SeqCst);
-        wait_for_backfill(&monitor.backfill);
+        monitor.backfill.wait(BACKFILL_STOP_WAIT);
         monitor.forwarder.complete();
         monitor.host.stop();
     }

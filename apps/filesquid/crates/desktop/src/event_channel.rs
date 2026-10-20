@@ -18,7 +18,7 @@
 
 use crate::api_protocol::app_origins;
 use filesquid_api::registry::{ProcessHandle, ProcessRegistry, ProcessSpec};
-use filesquid_api::{ApiEvent, EventBus, EventSubscription};
+use filesquid_api::{ApiEvent, EventBus, EventFilter, EventSubscription};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -98,11 +98,16 @@ pub struct PumpReport {
     pub end: PumpEnd,
 }
 
-/// Open the forwarder's counted subscription on `bus`. When the bus already serves its
-/// maximum number of subscriptions, journal the refusal as `desktop.events.subscription`
+/// Open the forwarder's counted subscription on `bus`, reduced by `filter` when one is given
+/// (the navigation service's per-subscriber filter, API-S-021). When the bus already serves
+/// its maximum number of subscriptions, journal the refusal as `desktop.events.subscription`
 /// (error code `unavailable`) and return `None`; the API keeps working without push.
-pub fn open_subscription(bus: &EventBus) -> Option<EventSubscription> {
-    match bus.subscription() {
+pub fn open_subscription(bus: &EventBus, filter: Option<EventFilter>) -> Option<EventSubscription> {
+    let opened = match filter {
+        Some(filter) => bus.subscription_filtered(filter),
+        None => bus.subscription(),
+    };
+    match opened {
         Ok(subscription) => Some(subscription),
         Err(error) => {
             // `EventBus::subscription` refuses only with the retryable `unavailable` code.

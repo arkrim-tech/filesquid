@@ -1,5 +1,6 @@
 //! Cucumber harness for the `filesquid-desktop` Gherkin under `tests/features/` (F-057 and
-//! F-056: DE-S-001, DE-S-005; F-037: DE-S-001, DE-S-002, DE-S-006; F-061: DE-S-002, DE-S-003).
+//! F-056: DE-S-001, DE-S-005; F-037: DE-S-001, DE-S-002, DE-S-006; F-061: DE-S-002, DE-S-003;
+//! F-001: SRS-F-001, API-S-025, DE-S-006).
 //! Needs the `test-webdriver`
 //! feature for the 100 MB test file.
 //! Writes a JUnit report to `tests/allure-results/`, cleared before each run.
@@ -50,6 +51,9 @@ mod policy_support;
 #[path = "support/mock_app.rs"]
 mod mock_app;
 
+#[path = "support/library_steps.rs"]
+mod library_steps;
+
 /// State shared by the steps of one scenario.
 #[derive(Debug, Default, World)]
 struct DesktopWorld {
@@ -70,6 +74,7 @@ struct DesktopWorld {
     ipc_reply: Option<http::Response<Vec<u8>>>,
     invoke_keys: Vec<String>,
     download_allowed: Option<bool>,
+    library: Option<library_steps::LibraryRig>,
 }
 
 /// The host monitor opened by the real launch path, in a scratch data directory that is
@@ -272,7 +277,8 @@ fn not_satisfiable(world: &mut DesktopWorld, length: u64) {
 #[given("an app window subscribed to the event channel")]
 #[given("an app window subscribed to the event channel that is not reading")]
 fn subscribed(world: &mut DesktopWorld) {
-    world.subscription = Some(open_subscription(&world.state().events).expect("subscription"));
+    world.subscription =
+        Some(open_subscription(&world.state().events, None).expect("subscription"));
 }
 
 #[when("a process update is published")]

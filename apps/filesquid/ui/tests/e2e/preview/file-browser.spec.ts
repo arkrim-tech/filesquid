@@ -335,20 +335,41 @@ test("the viewer steps through files, closes with Escape and returns focus to th
   await expect(page.getByRole("button", { name: "model-export.blend" })).toBeFocused();
 });
 
-test("writes are single calls: upload, new folder, rename, remove and Undo", async ({ page }) => {
+test("an upload is one PUT of the client's facts that creates the file's own object", async ({
+  page,
+}) => {
   const errors = trackErrors(page);
   const api = await open(page);
   await page.locator("fs-file-browser input[type=file]").setInputFiles({
-    name: "scan.pdf",
+    name: "Café scan.pdf",
     mimeType: "application/pdf",
     buffer: Buffer.from("%PDF-scan"),
   });
   await expect(page.locator("fs-file-browser .frame > .status")).toHaveText(
-    fill("fileUploaded", { count: "1", version: "v2" }),
+    fill("fileUploaded", { count: "1", version: "v1" }),
   );
-  await expect(page.getByRole("button", { name: "scan.pdf" })).toBeVisible();
-  expect(api.writes).toEqual(["PUT upload scan.pdf"]);
+  expect(api.writes).toEqual(["PUT upload Café scan.pdf"]);
+  expect(api.uploads).toEqual([
+    {
+      library_id: "lib",
+      name: "Café scan.pdf",
+      size: "9",
+      media_type: "application/pdf",
+      last_modified: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/),
+      name_normalization: "nfc",
+    },
+  ]);
+  expect(api.source.uploads).toEqual([
+    expect.objectContaining({ name: "Café scan.pdf", size: 9, version: "v1" }),
+  ]);
+  expect(api.source.head).toBe("v1");
+  await expect(page.getByRole("button", { name: "readme.txt" })).toBeVisible();
+  expect(errors).toEqual([]);
+});
 
+test("writes are single calls: new folder, rename, remove and Undo", async ({ page }) => {
+  const errors = trackErrors(page);
+  const api = await open(page);
   await page.getByRole("button", { name: label(labels, "fileNewFolder") }).click();
   await expect(page.getByRole("textbox", { name: label(labels, "fileFolderName") })).toBeFocused();
   await page.keyboard.type("Photos");
@@ -368,28 +389,27 @@ test("writes are single calls: upload, new folder, rename, remove and Undo", asy
   await page.keyboard.type("notes-final.txt");
   await page.keyboard.press("Enter");
   await expect(page.locator("fs-file-browser .frame > .status")).toHaveText(
-    fill("fileMoved", { name: "notes-final.txt", version: "v3" }),
+    fill("fileMoved", { name: "notes-final.txt", version: "v2" }),
   );
 
-  await page.getByRole("button", { name: "scan.pdf" }).focus();
+  await page.getByRole("button", { name: "model-export.blend" }).focus();
   await page.getByRole("button", { name: label(labels, "fileRemove") }).click();
   await expect(page.locator("fs-file-browser .frame > .status")).toContainText(
-    fill("fileRemoved", { name: "scan.pdf", version: "v4" }),
+    fill("fileRemoved", { name: "model-export.blend", version: "v3" }),
   );
-  await expect(page.getByRole("button", { name: "scan.pdf" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "model-export.blend" })).toHaveCount(0);
   await page.getByRole("button", { name: label(labels, "fileUndo") }).click();
   await expect(page.locator("fs-file-browser .frame > .status")).toHaveText(
-    fill("fileRestored", { name: "scan.pdf", version: "v5" }),
+    fill("fileRestored", { name: "model-export.blend", version: "v4" }),
   );
-  await expect(page.getByRole("button", { name: "scan.pdf" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "model-export.blend" })).toBeVisible();
   expect(api.writes.map((w) => w.split(" ")[1])).toEqual([
-    "upload",
     "folders",
     "moves",
     "removals",
     "restorations",
   ]);
-  expect(api.writes.at(-1)).toContain('"version":"v3"');
+  expect(api.writes.at(-1)).toContain('"version":"v2"');
   expect(await deepText(page)).not.toContain("3f9a0005");
   expect(errors).toEqual([]);
 });

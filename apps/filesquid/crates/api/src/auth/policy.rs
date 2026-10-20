@@ -80,6 +80,10 @@ pub enum Action {
     ReadNavigation,
     /// Read and replace the caller's own UI preferences (`/api/v1/preferences`, API-S-011).
     ManagePreferences,
+    /// Start the PROV-O history backfill over every storage root the host serves
+    /// (`POST /api/v1/admin/history/backfill`; API-S-029): the desktop owner or a server
+    /// administrator.
+    RunHistoryBackfill,
     /// Journal the UI's console warnings and errors (`POST /api/v1/client-events`,
     /// API-S-030).
     RecordClientEvents,
@@ -93,7 +97,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, in declaration order.
-    pub const ALL: [Action; 18] = [
+    pub const ALL: [Action; 19] = [
         Action::ReadHealth,
         Action::ReadContract,
         Action::SubscribeEvents,
@@ -110,6 +114,7 @@ impl Action {
         Action::RepairLibraries,
         Action::ReadNavigation,
         Action::ManagePreferences,
+        Action::RunHistoryBackfill,
         Action::RecordClientEvents,
         Action::Public,
     ];
@@ -133,6 +138,7 @@ impl Action {
             Action::RepairLibraries => "library.repair",
             Action::ReadNavigation => "navigation.read",
             Action::ManagePreferences => "preferences.manage",
+            Action::RunHistoryBackfill => "history.backfill",
             Action::RecordClientEvents => "client_events.write",
             Action::Public => "public",
         }

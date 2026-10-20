@@ -173,6 +173,14 @@ name = "unit_history"
 path = "tests/unit/history.rs"
 
 [[test]]
+name = "unit_history_backfill_route"
+path = "tests/unit/history_backfill_route.rs"
+
+[[test]]
+name = "unit_location_choice"
+path = "tests/unit/location_choice.rs"
+
+[[test]]
 name = "unit_history_jobs"
 path = "tests/unit/history_jobs.rs"
 

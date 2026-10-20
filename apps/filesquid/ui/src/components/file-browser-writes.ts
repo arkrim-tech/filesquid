@@ -184,18 +184,20 @@ export class FileWrites {
   }
 
   /**
-   * Upload files into a folder: the folder shown (the chosen files, or dropped ones), or the
-   * folder a failed batch was meant for when it is tried again.
+   * Upload files into a library, each as its own file (API-S-026): the library shown (the
+   * chosen files, or dropped ones), or the one a failed batch was meant for when it is tried
+   * again. Each file is one `PUT` that commits one version in that file's own object, so the
+   * folder shown gains no version.
    *
    * @param files The files.
-   * @param where The object and folder to upload into; the one shown by default.
+   * @param where The location whose library to upload into; the one shown by default.
    * @returns Resolves when every file was tried and the listing refreshed.
    */
   async upload(files: readonly File[], where: FileLocation = this.host.location()): Promise<void> {
     if (files.length === 0 || this.busy) return;
     const { labels, source } = this.host;
     this.setBusy(true);
-    const result = await uploadFiles(source, where, where.prefix, files, (current, total, name) =>
+    const result = await uploadFiles(source, where, files, (current, total, name) =>
       this.showStatus(
         formatLabel(labels.fileUploading, { current: String(current), total: String(total), name }),
       ),
@@ -248,7 +250,7 @@ export class FileWrites {
     this.showAlert(lines, retry);
   }
 
-  /** Try the files of the last failed batch again, in the folder they were meant for. */
+  /** Try the files of the last failed batch again, in the library they were meant for. */
   private async retry(): Promise<void> {
     await this.upload(this.retryable, this.retryWhere);
   }

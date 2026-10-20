@@ -26,6 +26,7 @@
 //! [`crate::auth::Action::ReadHistory`].
 
 pub mod backfill;
+pub mod launch;
 mod recorder;
 mod redact;
 pub(crate) mod routes;

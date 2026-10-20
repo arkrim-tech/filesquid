@@ -131,6 +131,12 @@ pub struct ApiState {
     /// The host's display-name lookup for journal pages, installed once at startup (without
     /// one, journal pages carry no names; API-S-031).
     journal_names: Arc<OnceLock<Arc<dyn admin::JournalNames>>>,
+    /// The host's history backfill launcher, installed once at startup (the backfill route
+    /// answers 503 until then; API-S-029).
+    history_backfill: Arc<OnceLock<Arc<dyn history::launch::BackfillLauncher>>>,
+    /// The host's folder dialog for the library routes, installed once at startup (the
+    /// folder-choice route answers 503 until then; API-S-025).
+    location_chooser: Arc<OnceLock<Arc<dyn local_library::choice::LocationChooser>>>,
 }
 
 impl std::fmt::Debug for ApiState {
@@ -150,6 +156,14 @@ impl std::fmt::Debug for ApiState {
             .field(
                 "journal_names_installed",
                 &self.journal_names.get().is_some(),
+            )
+            .field(
+                "history_backfill_installed",
+                &self.history_backfill.get().is_some(),
+            )
+            .field(
+                "location_chooser_installed",
+                &self.location_chooser.get().is_some(),
             )
             .finish()
     }
@@ -192,6 +206,8 @@ impl ApiState {
             preferences: Arc::new(OnceLock::new()),
             client_events: Arc::new(client_events::RateLimiter::new(window_clock)),
             journal_names: Arc::new(OnceLock::new()),
+            history_backfill: Arc::new(OnceLock::new()),
+            location_chooser: Arc::new(OnceLock::new()),
         }
     }
 
@@ -298,6 +314,34 @@ impl ApiState {
     /// one was already installed.
     pub fn install_history(&self, source: Arc<dyn history::HistorySource>) -> bool {
         self.history.set(source).is_ok()
+    }
+
+    /// Install the host's history backfill launcher for the backfill route (API-S-029).
+    /// Returns false, keeping the first, if one was already installed.
+    pub fn install_history_backfill(
+        &self,
+        launcher: Arc<dyn history::launch::BackfillLauncher>,
+    ) -> bool {
+        self.history_backfill.set(launcher).is_ok()
+    }
+
+    /// Install the host's folder dialog for the folder-choice route (API-S-025). Returns
+    /// false, keeping the first, if one was already installed.
+    pub fn install_location_chooser(
+        &self,
+        chooser: Arc<dyn local_library::choice::LocationChooser>,
+    ) -> bool {
+        self.location_chooser.set(chooser).is_ok()
+    }
+
+    /// The installed folder dialog, if any.
+    pub fn location_chooser(&self) -> Option<Arc<dyn local_library::choice::LocationChooser>> {
+        self.location_chooser.get().cloned()
+    }
+
+    /// The installed history backfill launcher, if any.
+    pub fn history_backfill(&self) -> Option<Arc<dyn history::launch::BackfillLauncher>> {
+        self.history_backfill.get().cloned()
     }
 
     /// The installed history source, if any.

@@ -289,7 +289,17 @@ async fn owner_state() -> (ApiState, Monitor) {
     state.install_preferences(Arc::new(
         filesquid_api::preferences::MemoryPreferenceStore::new(),
     ));
+    state.install_history_backfill(Arc::new(StartingLauncher));
     (state, monitor)
+}
+
+/// A backfill launcher that always starts.
+struct StartingLauncher;
+
+impl filesquid_api::history::launch::BackfillLauncher for StartingLauncher {
+    fn launch(&self, _actor: &str) -> Result<(), filesquid_api::history::launch::LaunchError> {
+        Ok(())
+    }
 }
 
 /// A navigation service over an empty catalog: the repository level answers 200.
@@ -1077,7 +1087,11 @@ fn history_samples() -> Vec<(&'static str, Vec<Value>)> {
             truncated: true,
         },
     ];
+    let started = filesquid_api::history::launch::BackfillStarted {
+        status: "started".into(),
+    };
     vec![
+        ("BackfillStarted", vec![to_value(started)]),
         (
             "OperationKind",
             filesquid_core::OperationKind::ALL.map(to_value).to_vec(),

@@ -9,7 +9,7 @@
 import type { Page, Request, Route } from "@playwright/test";
 import { ApiError } from "../../../src/api/client";
 import { MemoryFileSource } from "../../../src/files/memory-source";
-import type { FileLocation, FileRef } from "../../../src/files/model";
+import type { FileLocation, FileRef, NameNormalization } from "../../../src/files/model";
 import { serveNavigation } from "./navigation-api";
 
 /** A 16x16 red PNG. */
@@ -68,7 +68,24 @@ export interface FilesApi {
   readonly listings: { prefix: string; cursor: string | null }[];
   /** Methods and paths of every write the page sent. */
   readonly writes: string[];
+  /** The query of every upload the page sent, as sent. */
+  readonly uploads: Record<string, string>[];
 }
+
+/** The normalisation forms the upload route names. */
+const NAME_FORMS = new Set(["nfc", "nfd", "nfkc", "nfkd", "unnormalised"]);
+
+/** The query keys `PUT /api/v1/files/upload` takes (contract 0.18.0); any other is refused. */
+const UPLOAD_KEYS = new Set([
+  "library_id",
+  "file_id",
+  "name",
+  "size",
+  "media_type",
+  "last_modified",
+  "name_normalization",
+  "message",
+]);
 
 /** The query of a request as an object. */
 function queryOf(request: Request): URLSearchParams {
@@ -123,6 +140,7 @@ export async function serveFiles(page: Page, source: MemoryFileSource): Promise<
     failContent: (count) => void (refuse.count = count),
     listings: [],
     writes: [],
+    uploads: [],
   };
   await page.route("**/api/v1/health", (route) =>
     route.fulfill({ json: { schema_version: 1, status: "ok", product: "filesquid" } }),
@@ -184,10 +202,11 @@ async function routeReads(page: Page, api: FilesApi): Promise<void> {
 async function routeWrites(page: Page, api: FilesApi): Promise<void> {
   const object = { library_id: "lib", object_id: "obj" };
   await page.route(/\/api\/v1\/files\/upload\?/, (route) => {
-    const path = queryOf(route.request()).get("path") ?? "";
-    api.writes.push(`PUT upload ${path}`);
-    const body = new Blob([new Uint8Array(route.request().postDataBuffer() ?? [])]);
-    return answer(route, () => api.source.upload(object, path, body));
+    const q = queryOf(route.request());
+    const bytes = route.request().postDataBuffer() ?? Buffer.alloc(0);
+    api.uploads.push(Object.fromEntries(q));
+    api.writes.push(`PUT upload ${q.get("name") ?? ""}`);
+    return answer(route, () => uploadAsTheApi(api.source, q, bytes));
   });
   const post = (name: string, call: (body: Record<string, unknown>) => Promise<unknown>) =>
     page.route(new RegExp(`/api/v1/files/${name}$`), (route) => {
@@ -201,6 +220,36 @@ async function routeWrites(page: Page, api: FilesApi): Promise<void> {
   await post("restorations", (b) =>
     api.source.restore(object, String(b.version), b.paths as string[]),
   );
+}
+
+/**
+ * Answer an upload as the API's query rules do: an unknown key (a `path` or `object_id` of the
+ * old upload form among them), a missing `library_id`, `name` or `size`, a normalisation form
+ * the contract does not name, or a declared size that is not the body's is refused with
+ * `invalid_request` before the source is asked.
+ */
+async function uploadAsTheApi(
+  source: MemoryFileSource,
+  q: URLSearchParams,
+  bytes: Buffer,
+): Promise<unknown> {
+  const unknown = [...q.keys()].some((key) => !UPLOAD_KEYS.has(key));
+  const missing = ["library_id", "name", "size"].some((key) => q.get(key) === null);
+  const form = q.get("name_normalization");
+  const badForm = form !== null && !NAME_FORMS.has(form);
+  const badSize = q.get("size") !== String(bytes.byteLength);
+  if (unknown || missing || badForm || badSize) {
+    throw new ApiError(400, "/api/v1/files/upload", { code: "invalid_request" });
+  }
+  const facts = {
+    name: q.get("name") ?? "",
+    file_id: q.get("file_id") ?? undefined,
+    media_type: q.get("media_type") ?? undefined,
+    last_modified: q.get("last_modified") ?? undefined,
+    name_normalization: (q.get("name_normalization") ?? undefined) as NameNormalization | undefined,
+  };
+  const body = new Blob([new Uint8Array(bytes)]);
+  return source.upload({ library_id: q.get("library_id") ?? "" }, facts, body);
 }
 
 /** Mint a handle and serve the content it names. */

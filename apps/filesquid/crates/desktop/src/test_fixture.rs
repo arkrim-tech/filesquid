@@ -47,6 +47,55 @@ pub fn open_e2e_library(
         .map(|_| ())
 }
 
+/// Environment variable naming a folder whose subfolders `create` and `copy` the
+/// packaged-window tests use as owner-chosen library folders (Task DE-1.1): a native folder
+/// dialog cannot be driven by WebDriver, so the test-instrumented build registers them at
+/// launch under the fixed IDs [`E2E_CREATE_LOCATION`] and [`E2E_COPY_LOCATION`], and the media
+/// library of [`E2E_LIBRARY_VARIABLE`] as [`E2E_MEDIA_LOCATION`].
+pub const E2E_LOCATIONS_VARIABLE: &str = "FILESQUID_E2E_LOCATIONS";
+
+/// The location ID of the packaged-window tests' empty folder for a new library.
+pub const E2E_CREATE_LOCATION: &str = "loc-e2e-create";
+
+/// The location ID of the packaged-window tests' empty folder for a snapshot copy.
+pub const E2E_COPY_LOCATION: &str = "loc-e2e-copy";
+
+/// The location ID of the packaged-window tests' media library.
+pub const E2E_MEDIA_LOCATION: &str = "loc-e2e-media";
+
+/// Register the packaged-window tests' folders in `locations` ([`E2E_LOCATIONS_VARIABLE`],
+/// [`E2E_LIBRARY_VARIABLE`]). Does nothing for a variable that is unset. Creates
+/// directories in the data directory.
+///
+/// # Errors
+///
+/// A message when a variable is set but blank, or a folder cannot be registered.
+pub fn register_e2e_locations(locations: &filesquid_native::HostLocations) -> Result<(), String> {
+    if let Some(dir) = set_variable(E2E_LOCATIONS_VARIABLE)? {
+        let dir = std::path::Path::new(&dir);
+        locations.register_as(E2E_CREATE_LOCATION, &dir.join("create"))?;
+        locations.register_as(E2E_COPY_LOCATION, &dir.join("copy"))?;
+    }
+    if let Some(media) = set_variable(E2E_LIBRARY_VARIABLE)? {
+        locations.register_as(E2E_MEDIA_LOCATION, std::path::Path::new(&media))?;
+    }
+    Ok(())
+}
+
+/// The value of `name`, `None` when unset.
+///
+/// # Errors
+///
+/// A message when it is set but blank (it never falls back to the working directory).
+fn set_variable(name: &str) -> Result<Option<std::ffi::OsString>, String> {
+    match std::env::var_os(name) {
+        Some(value) if value.to_string_lossy().trim().is_empty() => {
+            Err(format!("{name} is set but blank"))
+        }
+        found => Ok(found),
+    }
+}
+
 /// Scheme path of the fixture (outside `/api/v1/`, so it never shadows an API route).
 pub const FIXTURE_PATH: &str = "/__filesquid_test__/range-fixture";
 

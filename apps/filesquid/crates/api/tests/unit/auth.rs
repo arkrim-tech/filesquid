@@ -141,6 +141,7 @@ fn plain_get_paths() -> Vec<String> {
                     | Action::ManageLibraries
                     | Action::ReadLibraries
                     | Action::RepairLibraries
+                    | Action::RunHistoryBackfill
                     | Action::RecordClientEvents
             )
         })
@@ -338,6 +339,7 @@ fn every_routed_path_declares_its_action() {
             "/api/v1/host" => Action::ReadHost,
             "/api/v1/admin/ocfl/validation-runs" => Action::RunValidation,
             "/api/v1/admin/ocfl/validation-settings" => Action::ConfigureValidation,
+            "/api/v1/admin/history/backfill" => Action::RunHistoryBackfill,
             admin if admin.starts_with("/api/v1/admin/") => Action::ReadMonitor,
             "/api/v1/files/listing"
             | "/api/v1/files/download"
@@ -367,7 +369,8 @@ fn every_routed_path_declares_its_action() {
             "/api/v1/libraries"
             | "/api/v1/libraries/openings"
             | "/api/v1/libraries/snapshot-copies"
-            | "/api/v1/libraries/rebuilds" => Action::ManageLibraries,
+            | "/api/v1/libraries/rebuilds"
+            | "/api/v1/libraries/location-choices" => Action::ManageLibraries,
             "/api/v1/libraries/repair-candidates" => Action::ReadLibraries,
             "/api/v1/libraries/repairs" => Action::RepairLibraries,
             "/api/v1/navigation" => Action::ReadNavigation,
@@ -402,6 +405,7 @@ fn action_names_are_unique_dotted_identifiers() {
             "library.repair",
             "navigation.read",
             "preferences.manage",
+            "history.backfill",
             "client_events.write",
             "public"
         ]
