@@ -28,7 +28,8 @@
 //!   ([`workers`]: the durable history backfill job, Tasks DE-0.4 and DE-0.8), which the
 //!   media workers of DE-0.5 join; and the library routes' host side (Task DE-1.1): the folders
 //!   the owner chose ([`HostLocations`], served by [`open_fs_library_root`]) and the
-//!   persistent repair ledger ([`SqliteRepairLedger`]). Only `filesquid-desktop` enables it.
+//!   persistent repair ledger ([`SqliteRepairLedger`]), and each user's UI preferences
+//!   ([`SqlitePreferences`]). Only `filesquid-desktop` enables it.
 //!
 //! `filesquid-desktop` links this crate with `desktop`. `filesquid-server` MAY link it with its
 //! default features only (journal store, data-directory checks, `HostMonitor`), keeping its
@@ -50,6 +51,8 @@ pub mod journal_sqlite;
 #[cfg(feature = "desktop")]
 pub mod locations;
 mod owner_only;
+#[cfg(feature = "desktop")]
+pub mod preferences_sqlite;
 #[cfg(feature = "desktop")]
 pub mod repair_ledger;
 #[cfg(feature = "desktop")]
@@ -75,5 +78,7 @@ pub use jobs_sqlite::SqliteJobs;
 pub use journal_sqlite::SqliteJournal;
 #[cfg(feature = "desktop")]
 pub use locations::{HostLocations, HostRoot, OpenedBackfill, OpenedRoots};
+#[cfg(feature = "desktop")]
+pub use preferences_sqlite::{SqlitePreferences, MAX_PREFERENCE_USERS};
 #[cfg(feature = "desktop")]
 pub use repair_ledger::SqliteRepairLedger;

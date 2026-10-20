@@ -18,6 +18,7 @@ use filesquid_api::library::{
 use filesquid_api::local_library::{CONSENT_STATEMENT_ID, REPAIR_OPERATION};
 use filesquid_api::navigation::{AlwaysTrue, NavigationChange};
 use filesquid_api::operation::{CommandEnvelope, ExpectedRevision, OperationId, OperationScope};
+use filesquid_api::preferences::PreferenceStore;
 use filesquid_api::{ApiEvent, ApiState};
 use filesquid_core::{InstallationId, LibraryId, RepositoryId};
 use filesquid_desktop_lib::api_protocol::handle;
@@ -25,13 +26,14 @@ use filesquid_desktop_lib::backfill::{BackfillTask, DesktopBackfill};
 use filesquid_desktop_lib::libraries::LibraryServing;
 use filesquid_desktop_lib::navigation::{install_navigation, owner_event_filter};
 use filesquid_desktop_lib::{
-    history_backfill, install_backfill_route, install_file_provenance, install_history_source,
-    install_launch_token, install_library_routes, open_host_monitor, open_library_catalog,
+    history_backfill, install_backfill_route, install_file_provenance, install_file_scopes,
+    install_history_source, install_host_preferences, install_launch_token, install_library_routes,
+    open_host_monitor, open_library_catalog,
 };
 use filesquid_native::workers::history_backfill::{backfill_source, open_jobs};
 use filesquid_native::{
     install_file_service, HostFiles, HostLocations, HostMonitor, OpenedRoots, SqliteCatalog,
-    SqliteJournal, SqliteRepairLedger, CATALOG_DIR, JOURNAL_FILE,
+    SqliteJournal, SqlitePreferences, SqliteRepairLedger, CATALOG_DIR, JOURNAL_FILE,
 };
 use journal::block_on;
 use serde_json::{json, Value};
@@ -387,4 +389,26 @@ fn the_backfill_route_runs_over_the_folders_the_owner_opened() {
         !runs.is_empty(),
         "the opened folder's run registered and journaled"
     );
+}
+
+#[test]
+fn the_owners_preferences_are_kept_in_the_operational_store() {
+    let dir = fresh_dir("preferences");
+    let desktop = Desktop::launch(dir.join("data"));
+    let (status, _) = desktop.get("/api/v1/preferences");
+    assert_eq!(status, 503, "no store installed yet");
+    install_host_preferences(&desktop.state, &desktop.dir).expect("installed");
+    install_file_scopes(&desktop.files).expect("scopes");
+    let (status, defaults) = desktop.get("/api/v1/preferences");
+    assert_eq!(status, 200, "{defaults}");
+    let (status, saved) = desktop.send("PUT", "/api/v1/preferences", Some(defaults.clone()), true);
+    assert_eq!(status, 200, "{saved}");
+    let data = desktop.dir.clone();
+    desktop.stop();
+    let store = SqlitePreferences::open(&data.join(JOURNAL_FILE)).expect("store");
+    let kept = store.load("owner").expect("load").expect("saved");
+    assert_eq!(serde_json::to_value(kept).expect("json"), saved);
+    let files = HostFiles::new();
+    assert!(install_file_scopes(&files).is_ok());
+    assert!(install_file_scopes(&files).is_err(), "installed once");
 }

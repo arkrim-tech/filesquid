@@ -73,7 +73,7 @@ use filesquid_native::workers::history_backfill;
 use filesquid_native::workers::media::{self, MediaWorkers};
 use filesquid_native::{
     CatalogRoots, HostLocations, HostMonitor, HostRoots, OpenedRoots, SqliteCatalog,
-    SqliteRepairLedger, CATALOG_DIR, JOURNAL_FILE,
+    SqlitePreferences, SqliteRepairLedger, CATALOG_DIR, JOURNAL_FILE,
 };
 use filesquid_ocfl::storage::FsBackend;
 use ipc_observer::TauriIpcObserver;
@@ -563,6 +563,35 @@ pub fn install_library_routes(
     Ok(locations)
 }
 
+/// Install where this desktop keeps each user's UI preferences (API-S-011, API-F2.2): the
+/// operational store in `data_dir` ([`SqlitePreferences`]). Opens a database connection.
+///
+/// # Errors
+/// The store could not be opened, or one is already installed.
+pub fn install_host_preferences(
+    state: &ApiState,
+    data_dir: &std::path::Path,
+) -> Result<(), String> {
+    let store = SqlitePreferences::open(&data_dir.join(JOURNAL_FILE))
+        .map_err(|_| "the preference store could not be opened".to_string())?;
+    if !state.install_preferences(Arc::new(store)) {
+        return Err("a preference store was already installed".to_string());
+    }
+    Ok(())
+}
+
+/// Tell the file service which OCFL object holds each folder scope's files, for the listing
+/// by navigation node (API-F2.2): [`navigation::CatalogScopes`].
+///
+/// # Errors
+/// The file service already has its scope objects.
+pub fn install_file_scopes(files: &filesquid_native::HostFiles) -> Result<(), String> {
+    if !files.install_scope_objects(Arc::new(navigation::CatalogScopes)) {
+        return Err("the file service's scope objects were already installed".to_string());
+    }
+    Ok(())
+}
+
 /// Give the file service's restore and label commits their PROV-O record (API-F2.5): they
 /// name `installation` and a journal entry ID `host`'s journal store allocates.
 ///
@@ -714,8 +743,8 @@ pub fn install_backfill_route(
     Ok(())
 }
 
-/// Start the OCFL validation, give the file service its PROV-O provenance, and install the
-/// library routes over the folders the owner registers, serving each library they bind
+/// Start the OCFL validation, give the file service its PROV-O provenance and its scope
+/// objects, install the preference store, and install the library routes over the folders the owner registers, serving each library they bind
 /// (Task DE-1.1); keep the validation and the folder registry in Tauri's managed state.
 /// Performs filesystem and database I/O.
 ///
@@ -732,6 +761,8 @@ fn install_library_services(
     let validation = host.start_validation::<FsBackend>(data_dir, &state)?;
     let files = app.state::<DesktopFiles>().0.clone();
     install_file_provenance(&files, host, installation)?;
+    install_file_scopes(&files)?;
+    install_host_preferences(&state, data_dir)?;
     let serving = LibraryServing {
         files,
         validation: Some(validation.clone()),

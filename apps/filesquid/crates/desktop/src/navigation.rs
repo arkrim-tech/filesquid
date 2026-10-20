@@ -8,6 +8,7 @@
 
 use filesquid_api::auth::Principal;
 use filesquid_api::events::EventFilter;
+use filesquid_api::files::{ScopeObject, ScopeObjects};
 use filesquid_api::library::LibraryCatalog;
 use filesquid_api::navigation::{
     FolderIndex, FolderScope, HostAccess, NavigationError, NavigationService, RepositoryInfo,
@@ -35,6 +36,19 @@ impl FolderIndex for CatalogFolders {
 
     fn folder_exists(&self, _scope: &FolderScope, _path: &str) -> Result<bool, NavigationError> {
         Ok(false)
+    }
+}
+
+/// Which OCFL object holds the files of each folder scope, for the file listing by
+/// navigation node (API-F2.2). The catalog records no object for a collection's files yet
+/// (the import of Task DE-1.2 adds them), so no object holds any scope and every node
+/// listing answers `not_found`. Pure.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CatalogScopes;
+
+impl ScopeObjects for CatalogScopes {
+    fn object_of(&self, _scope: &FolderScope) -> Option<ScopeObject> {
+        None
     }
 }
 
