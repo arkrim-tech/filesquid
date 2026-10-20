@@ -24,7 +24,7 @@
 //!   object `files/<file-id>` with its original and metadata record, or a new version of it
 //!   (Task API-F1.4, API-S-026). Creating a folder writes nothing: OCFL stores no empty folder, so a new
 //!   folder stays pending in the client until a file is added beneath it.
-//! - **Metadata properties** (Task API-F1.4, API-S-034; [`statements`]): reads of a file's
+//! - **Metadata properties** (Task API-F1.4, API-S-035; [`statements`]): reads of a file's
 //!   statements, of the add order of a bare term name, of the library's namespace registry and
 //!   of the read-only import-record projection take `files.read`; setting or removing a
 //!   statement and registering a namespace take `files.write`, each one version through the

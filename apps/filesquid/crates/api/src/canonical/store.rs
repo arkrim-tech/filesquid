@@ -229,21 +229,52 @@ pub async fn read_commit_journal<B: StorageBackend>(
         return Ok(Vec::new());
     }
     let object = Object::open(backend, SNAPSHOT_ROOT).await?;
+    read_object_journal(backend, &object, transform, after).await
+}
+
+/// The journal entry lines every version of `object` after `after` (every version when
+/// `None`) wrote into its `provenance/<version>.journal.jsonl`, oldest version first, each
+/// read from the version that wrote it. Versions without a journal file are skipped. Any
+/// object a commit recorded through `CommitRecorder` holds them: the snapshot, a file
+/// object's version labels, a repaired object's provenance-only version. Storage I/O.
+///
+/// # Errors
+/// As [`read_commit_journal`].
+pub async fn read_object_journal<B: StorageBackend>(
+    backend: &B,
+    object: &Object<'_, B>,
+    transform: &dyn ProfileTransform,
+    after: Option<&VersionNum>,
+) -> Result<Vec<String>, CanonicalError> {
     let mut lines = Vec::new();
     for version in object.inventory().versions.keys() {
         if after.is_some_and(|seen| version <= seen) {
             continue;
         }
-        let path = format!("{HISTORY_PREFIX}{version}{JOURNAL_SUFFIX}");
-        let state = object.state(version)?;
-        let Some(file) = state.get(&path) else {
-            continue;
-        };
-        let stored = read_entity(&object, backend, file, MAX_ENTITY_BYTES).await?;
-        let plain = transform.open(&path, stored)?;
-        lines.extend(journal_lines(&path, &plain)?);
+        lines.extend(read_version_journal(backend, object, transform, version).await?);
     }
     Ok(lines)
+}
+
+/// The journal entry lines `version` of `object` wrote into its
+/// `provenance/<version>.journal.jsonl`; empty when that version has none. Storage I/O.
+///
+/// # Errors
+/// As [`read_commit_journal`].
+pub async fn read_version_journal<B: StorageBackend>(
+    backend: &B,
+    object: &Object<'_, B>,
+    transform: &dyn ProfileTransform,
+    version: &VersionNum,
+) -> Result<Vec<String>, CanonicalError> {
+    let path = format!("{HISTORY_PREFIX}{version}{JOURNAL_SUFFIX}");
+    let state = object.state(version)?;
+    let Some(file) = state.get(&path) else {
+        return Ok(Vec::new());
+    };
+    let stored = read_entity(object, backend, file, MAX_ENTITY_BYTES).await?;
+    let plain = transform.open(&path, stored)?;
+    journal_lines(&path, &plain)
 }
 
 /// Refuse a journal file that a replay could not read back: more than

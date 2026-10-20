@@ -16,7 +16,7 @@ Holistic UI check:
 
 | SRS ID and title | Covered by |
 |---|---|
-| [API-S-034](../srs.md) Metadata property routes | `integration_metadata` (13 tests), `metadata_property_routes_API-S-034.feature` (8 scenarios), `unit_contract`, `unit_auth` |
+| [API-S-035](../srs.md) Metadata property routes | `integration_metadata` (13 tests), `metadata_property_routes_API-S-035.feature` (8 scenarios), `unit_contract`, `unit_auth` |
 | [API-S-026](../srs.md) The FileSquid OCFL application profile: one record codec, uploads create `files/<file-id>` | `unit_canonical` (32 tests, 12 on originals), `an_upload_creates_the_file_object_with_its_original_and_record_in_one_version`, `a_later_upload_of_the_same_file_is_a_new_version_with_one_more_import_entry` |
 | [API-S-027](../srs.md) Display and download names, the facts projection | `content_download_and_listing_take_the_name_and_media_type_from_the_record`, `the_facts_projection_has_no_absolute_path_host_or_account` |
 | [API-S-018](../srs.md) Content handles and ranged reads (the record's media type) | `content_download_and_listing_take_the_name_and_media_type_from_the_record`, the content scenario |
@@ -25,7 +25,7 @@ Holistic UI check:
 | [MD-S-013](../../../metadata/resources/srs.md) Import record | `an_upload_whose_declared_size_differs_fails_verification_and_commits_nothing`, `a_name_that_is_not_ascii_needs_its_normalisation_form`, the canonical tests |
 | [MD-S-014](../../../metadata/resources/srs.md) Commit options | every edit commits through `OcflStore` with the caller as the version user |
 | [API-S-008](../srs.md) File operation routes | `file_operation_routes_API-S-008.feature` (upload scenario rewritten), `integration_files` |
-| [API-S-002](../srs.md) Versioned contract and generated types | contract 0.17.0, `unit_contract` drift and sample tests, regenerated `ui/src/api/schema.d.ts` |
+| [API-S-002](../srs.md) Versioned contract and generated types | contract 0.18.0, `unit_contract` drift and sample tests, regenerated `ui/src/api/schema.d.ts` |
 
 ## What changed
 
@@ -49,7 +49,7 @@ Holistic UI check:
   - The registry is `namespaces.md` in the library's collection-snapshot object; registration needs `files.write`.
   - The facts projection is read-only.
   - Every edit is one OCFL version through `OcflStore`, journaled with opaque IDs only.
-- **SRS:** a new [API-S-034](../srs.md). API-S-026 was already amended by the owner's decision.
+- **SRS:** a new [API-S-035](../srs.md). API-S-026 was already amended by the owner's decision.
 
 ## Test output
 

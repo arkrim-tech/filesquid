@@ -1613,12 +1613,13 @@ export interface components {
             /** @description The OCFL validation code when an OCFL rule is broken (E###), else unreadable. */
             error_code: string;
         };
-        /** @description Everything a rebuild from files found. */
+        /** @description Everything a rebuild from files found, and with the host's journal restore, what it restored of the library's journal. */
         RebuildReport: {
             /** @description Objects read, in object-root order. */
             objects: components["schemas"]["RebuiltObject"][];
             /** @description Objects that could not be opened. */
             unreadable: components["schemas"]["UnreadableObject"][];
+            journal?: components["schemas"]["JournalRebuild"];
         };
         /** @description An object the UI may offer to repair. */
         RepairCandidate: {
@@ -1881,6 +1882,22 @@ export interface components {
          * @enum {string}
          */
         Layout: "list" | "grid";
+        /** @description What a rebuild from files restored of the library's journal into the host's journal store, de-duplicated by journal ID (API-S-032). */
+        JournalRebuild: {
+            /** @description Entries the store did not hold and now does. */
+            restored: number;
+            /** @description Entries the store already held under the same ID. */
+            already_present: number;
+            /** @description Entries whose ID or client event ID the store holds for another entry; the held entry is kept. */
+            conflicting: number;
+            /** @description Segments, objects, files or lines that could not be read, and lines with no ID. */
+            unreadable: number;
+            /**
+             * Format: date-time
+             * @description When the library's last seal was committed (RFC 3339); absent when it was never sealed.
+             */
+            last_sealed_at?: string;
+        };
         /** @description The OCFL version an upload published in the file's own object (API-S-026). */
         UploadCommit: {
             /** @description The library. */

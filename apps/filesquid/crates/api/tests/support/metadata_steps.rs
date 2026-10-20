@@ -1,4 +1,4 @@
-//! Step definitions for `metadata_property_routes_API-S-034.feature` (Task API-F1.4): uploads
+//! Step definitions for `metadata_property_routes_API-S-035.feature` (Task API-F1.4): uploads
 //! that create a file's own object with its record, statement edits, namespace registration,
 //! term placement and the facts projection, through the router over a real OCFL storage root
 //! on the local filesystem.
@@ -9,6 +9,7 @@ use axum::http::Method;
 use cucumber::{given, then, when};
 use filesquid_metadata::fact::Fact;
 use filesquid_metadata::file_record::FileRecord;
+use filesquid_metadata::import::NameForm;
 use filesquid_ocfl::read::Object;
 use serde_json::{json, Value};
 
@@ -140,7 +141,17 @@ fn unavailable<T>(fact: &Fact<T>) -> bool {
 async fn record_names(w: &mut MonitorWorld, name: String) {
     let record = head_record(&mut w.metadata).await;
     assert_eq!(record.display_name(), name);
+    assert_eq!(
+        record.name_normalization(),
+        NameForm::Nfc,
+        "the form the client stated"
+    );
     let entry = &record.imports()[0];
+    assert_eq!(entry.source.name_normalization, NameForm::Nfc);
+    assert!(
+        matches!(entry.source.modified_time, Fact::Unavailable(_)),
+        "not sent"
+    );
     assert_eq!(entry.source.verified_size, 10);
     assert!(matches!(entry.source.reported_size, Fact::Value(10)));
     assert!(matches!(entry.host.os_name, Fact::Value(_)));

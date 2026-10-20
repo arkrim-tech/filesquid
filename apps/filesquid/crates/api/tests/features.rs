@@ -11,10 +11,11 @@
 //! library and repair routes of API-S-025; the version history, labels, restore and
 //! history size of API-S-014; the client events, journal query and export of API-S-030
 //! and API-S-031; the preferences, whole-file download and drive listings of API-S-011;
-//! the metadata property routes of API-S-034; and the sealing service of API-S-032).
+//! the metadata property routes of API-S-035; and the sealing service and journal rebuild of
+//! API-S-032).
 //!
 //! Scenarios that need domain operations not built yet (import, rename, the metadata writes
-//! beyond the API-S-034 routes, such as the inspector's EXIF edits, C2PA scans, sync) or the
+//! beyond the API-S-035 routes, such as the inspector's EXIF edits, C2PA scans, sync) or the
 //! optional OTLP export (Task FS-3.6) have no step definitions and are reported as skipped
 //! until those land.
 

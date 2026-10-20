@@ -1,4 +1,4 @@
-# API-S-034: Metadata property routes
+# API-S-035: Metadata property routes
 # API-S-026: one codec for the per-file metadata record; uploads create the file's own object
 # API-S-027: the read-only import-record projection
 # SRS-F-052 / PRD F-052: metadata module; MD-S-002, MD-S-012, MD-S-013, MD-S-014
