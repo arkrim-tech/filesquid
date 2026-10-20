@@ -63,6 +63,10 @@ name = "unit_host"
 path = "tests/unit/host.rs"
 
 [[test]]
+name = "unit_jobs"
+path = "tests/unit/jobs.rs"
+
+[[test]]
 name = "features"
 path = "tests/features.rs"
 harness = false
