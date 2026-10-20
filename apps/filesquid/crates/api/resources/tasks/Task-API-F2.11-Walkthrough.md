@@ -1,6 +1,6 @@
 # Task API-F2.11 Walkthrough: Durable journal, per-commit entries and sealing service
 
-Branch: `feat/api-f2.11-durable-journal-sealing` (global [Task FS-2.9](../../../../../../resources/implementation-plan.md#task-fs-2.9); [ADR 033](../../../../../../resources/architecture/033-activity-journal-and-live-health-monitoring.md) Decision 7). API contract `0.15.0`.
+Branch: `feat/api-f2.11-durable-journal-sealing` (global [Task FS-2.9](../../../../../../resources/implementation-plan.md#task-fs-2.9); [ADR 033](../../../../../../resources/architecture/033-activity-journal-and-live-health-monitoring.md) Decision 7). API contract `0.16.0`.
 
 ## API-S-032: Durable journal
 
@@ -12,7 +12,7 @@ Also PRD [F-061](../../../../../../resources/prd.md#f-061-activity-journal-and-l
 - **Journal objects** (`journal::seal`, `object.rs`): `OcflJournalObject` commits through the `filesquid-ocfl` change model into an injected storage root (`JournalRoot`: backend, reservations, staging, profile transform). The object is `urn:filesquid:journal:<scope-id>` at `journal/`; each seal adds one version holding `segments/<first>-<through>.jsonl` (20-digit IDs), committed as the installation's OCFL `user` with a `filesquid.journal.seal.v1` message. The cursor is the highest `through` among the head's segments, so it advances with the commit and never before it. `read_sealed_entries` reads every segment back (digest checked, 16 MiB per segment) for the CL-1.9 rebuild.
 - **Sealing service** (`service.rs`): `SealService::seal_all` (hourly and at app close) and `close_library` (library close) seal each open library's entries (those naming its library ID) into its object and every other entry into the installation's object, at most 50,000 entries and 16 MiB per scope per run. A run is a registered `journal.seal` process; each scope's result is journaled as `journal.seal` (`succeeded` with counts and the object reference, or `failed` with `unavailable` or `invalid`) beside the segment's `ocfl.commit`. A failed scope commits nothing, so its entries wait for the next run. A run with nothing but the seal's own bookkeeping registers, commits and journals nothing.
 - **Health** (constraint 9): `Monitor::install_seal_status` takes the service; `HealthInputs.journal_unsealed_age_ms` (optional in the contract) is the age of the oldest entry a seal left unsealed, and the `journal_unsealed` reason turns health `degraded` above two sealing intervals (2 hours) until no entry is left unsealed beyond two sealing intervals.
-- **Contract**: 0.15.0 (`HealthInputs.journal_unsealed_age_ms`); `schema.d.ts` regenerated.
+- **Contract**: 0.16.0 (`HealthInputs.journal_unsealed_age_ms`); `schema.d.ts` regenerated.
 
 ## Not delivered in this task, and why
 
