@@ -17,7 +17,9 @@
 //!   answer at [`MAX_ANSWER_BYTES`], so the desktop saves a larger file with ranged content
 //!   reads. A refusal, or a failure after the answer started, is journaled once as
 //!   [`DOWNLOAD_OPERATION`].
-//! - **Writes** (action `files.write`): upload, move or rename, remove and restore. Each one
+//! - **Writes** (action `files.write`): upload, move, rename, remove and restore. A rename
+//!   sets only the display name in the file's metadata record (Task API-F1.13, API-S-027),
+//!   and a file object's stored original never moves. Each one
 //!   publishes exactly one version through the `filesquid-ocfl` change model, or is refused
 //!   without publishing (nothing would change, another change is staged, the head is
 //!   incomplete); there is no second write path (API-S-008). An upload creates the file's own
@@ -115,6 +117,8 @@ pub const VERSIONS_OPERATION: &str = "files.versions";
 pub const DOWNLOAD_OPERATION: &str = "files.download";
 /// Journal operation of a refused statements read.
 pub const METADATA_READ_OPERATION: &str = "files.metadata.read";
+/// Journal operation of a rename (the display name only).
+pub const RENAME_OPERATION: &str = "files.rename";
 /// Journal operation of a statement set.
 pub const METADATA_SET_OPERATION: &str = "files.metadata.set";
 /// Journal operation of a statement removal.

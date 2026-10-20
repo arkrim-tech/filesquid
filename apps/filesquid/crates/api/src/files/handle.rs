@@ -8,7 +8,8 @@ use super::nodes::ScopeObject;
 use super::service::{ContentAnswer, ContentRequest, FileService};
 use super::statements::{
     FactsView, FileRecordQuery, MetadataCommitView, NamespacesView, RegisterNamespaceRequest,
-    RemoveStatementRequest, SetStatementRequest, StatementsView, TermQuery, TermsView,
+    RemoveStatementRequest, RenameRequest, SetStatementRequest, StatementsView, TermQuery,
+    TermsView,
 };
 use super::versions::Committed;
 use super::view::{
@@ -92,6 +93,9 @@ pub trait FileOperations: Send + Sync {
         request: SetStatementRequest,
         actor: String,
     ) -> FileFuture<'_, MetadataCommitView>;
+
+    /// Rename a file (its display name only) by `actor`.
+    fn rename(&self, request: RenameRequest, actor: String) -> FileFuture<'_, MetadataCommitView>;
 
     /// Remove one statement by `actor`.
     fn remove_statement(
@@ -207,6 +211,10 @@ where
         actor: String,
     ) -> FileFuture<'_, MetadataCommitView> {
         Box::pin(async move { FileService::set_statement(self, request, &actor).await })
+    }
+
+    fn rename(&self, request: RenameRequest, actor: String) -> FileFuture<'_, MetadataCommitView> {
+        Box::pin(async move { FileService::rename(self, request, &actor).await })
     }
 
     fn remove_statement(

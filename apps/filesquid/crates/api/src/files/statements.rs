@@ -117,6 +117,18 @@ pub struct RemoveStatementRequest {
     pub curie: String,
 }
 
+/// Body of `POST /api/v1/files/renames`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RenameRequest {
+    /// The library.
+    pub library_id: String,
+    /// The file.
+    pub file_id: String,
+    /// The new display name, 1 to 1,024 bytes without `/` or NUL.
+    pub display_name: String,
+}
+
 /// A version a metadata edit published.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct MetadataCommitView {
@@ -413,6 +425,24 @@ where
             .await
     }
 
+    /// Rename a file by `actor`: set its display name in one new version of its metadata
+    /// record. The stored name, the logical path and the original name stay (API-S-027).
+    pub async fn rename(
+        &self,
+        request: RenameRequest,
+        actor: &str,
+    ) -> Result<MetadataCommitView, FileError> {
+        let name = request.display_name.clone();
+        let edit = |record: &mut FileRecord| {
+            record
+                .set_display_name(&name)
+                .map_err(|e| FileError::invalid(format!("The name was refused: {e}.")))
+        };
+        let ids = (&request.library_id, &request.file_id);
+        self.edit_record(ids, actor, super::RENAME_OPERATION, edit)
+            .await
+    }
+
     /// Remove one statement of a file by `actor`, in one new version of its object.
     pub async fn remove_statement(
         &self,
@@ -492,7 +522,7 @@ where
         edit(&mut record)?;
         if record == original.record {
             return Err(FileError::conflict(
-                "The statement already has that value, so no version was made.",
+                "Nothing would change, so no version was made.",
             ));
         }
         let record_path = companion_path(&id).map_err(|_| FileError::not_found())?;

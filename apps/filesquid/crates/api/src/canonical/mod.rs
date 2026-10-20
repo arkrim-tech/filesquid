@@ -6,7 +6,8 @@
 //!
 //! The meaning lives here once, for every host: the layout ([`layout`]), the entity encoding
 //! ([`entity`]), the operation message that carries a receipt ([`message`]), a file's original
-//! and its metadata record holding its original name ([`original`]), the profile
+//! and its metadata record holding its original name ([`original`]), the name a sharing
+//! or publication output gives a file ([`outgoing`]), the profile
 //! transform seam ([`ProfileTransform`]), and commits and reads through the `filesquid-ocfl`
 //! change model, generic over the host's storage backend ([`store`]). A host coordinates the
 //! sequence of ADR 005 around it: record intent, commit the snapshot version, then update its
@@ -17,6 +18,7 @@ mod error;
 pub mod layout;
 pub mod message;
 pub mod original;
+pub mod outgoing;
 pub mod store;
 mod transform;
 pub mod upload;
@@ -28,6 +30,7 @@ pub use layout::{
 };
 pub use message::{operation_kind, operation_message, parse_operation_message, OperationRecord};
 pub use original::{FileOriginal, COMPANION_SUFFIX};
+pub use outgoing::{outgoing_name, OutgoingNames};
 pub use store::{
     commit_file_original, commit_snapshot, commit_snapshot_with, create_storage_root,
     read_commit_journal, read_file_original, read_object_journal, read_snapshot,
