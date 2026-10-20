@@ -104,7 +104,7 @@ FAILED (failures=3)
 Command: `python3 -m unittest discover -s scripts/docs -p 'test_*.py'`
 
 ```text
-Ran 56 tests in 4.912s
+Ran 54 tests in 4.995s
 
 OK
 ```
@@ -116,3 +116,8 @@ Command: `python3 scripts/docs/update_mvp_progress.py --check` exits 0.
 ```text
 ✅ All Pre-Commit Hooks Passed! Test scope: docs (19s)
 ```
+
+### Cubic round 1
+
+- P3 (fixed): two new tests duplicated existing coverage and were removed (`test_open_pull_request_on_open_rows_only_counts_once`, `test_done_global_is_never_listed_or_counted`); 54 tests remain and pass (`Ran 54 tests in 4.995s`, `OK`).
+- P2 (declined): keeping a flat entry for an open PR on a module under a ticked global would list an item the count excludes. A ticked global is done, so the list, the count and the prose agree by not listing it. Owner decision if the opposite is wanted.

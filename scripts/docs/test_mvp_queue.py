@@ -237,25 +237,10 @@ class UnderWayCount(unittest.TestCase):
         self.assertEqual(q.count_under_way(result), 2)
         self.assertIn("2 of 2 module rows ticked", q.render_queue(result, [], {}, "2026-10-18T17:40:00Z"))
 
-    def test_open_pull_request_on_open_rows_only_counts_once(self):
-        """Two PRs on open rows of one untouched global count that global once."""
-        result = q.compute_in_progress(rows(), {"DE-0.1": 46, "DE-0.2": 47})
-        self.assertEqual(len([e for e in result.entries if e.global_row.task_id == "0.5"]), 2)
-        self.assertEqual(q.count_under_way(result), 2)
-
     def test_no_ticked_rows_and_no_pull_request_is_not_under_way(self):
         """An open global with no ticked row and no PR is neither listed nor counted."""
         result = q.compute_in_progress(rows(), {})
         self.assertEqual([e.global_row.task_id for e in result.entries], ["0.4"])
-        self.assertEqual(q.count_under_way(result), 1)
-
-    def test_done_global_is_never_listed_or_counted(self):
-        """A ticked global with an unticked row and a PR is done: not listed, not counted, not active."""
-        parsed = rows()
-        parsed[0].modules.append(q.ModuleRow("IO-0.2", False, "[IO-0.2](../a/plan.md#x)", "Two"))
-        result = q.compute_in_progress(parsed, {"IO-0.2": 52})
-        self.assertEqual([e.global_row.task_id for e in result.entries], ["0.4"])
-        self.assertNotIn("IO-0.2", result.active)
         self.assertEqual(q.count_under_way(result), 1)
 
     def test_pr_on_partial_global_and_its_row_counts_once(self):
