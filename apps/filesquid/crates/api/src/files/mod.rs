@@ -17,6 +17,11 @@
 //!   another change is staged, the head is incomplete); there is no second write path
 //!   (API-S-008). Creating a folder writes nothing: OCFL stores no empty folder, so a new
 //!   folder stays pending in the client until a file is added beneath it.
+//! - **Version history** (Task API-F2.5, API-S-014): file history entries carry each
+//!   version's size and label, object versions carry labels, a restore is one `revert` or
+//!   `reinstate` version that may carry a label, a label can be set or cleared later as
+//!   application data in the object ([`labels`]), and history sizes are reported per file
+//!   and per library. No route deletes, expires or thins a version.
 //! - **Journal.** Every refusal is journaled once (an authorisation refusal as
 //!   `api.auth.denied`, any other as the operation with outcome `failed` and its code), and
 //!   every published version as the operation with opaque IDs only; successful reads are not
@@ -28,26 +33,31 @@
 
 mod error;
 mod handle;
+pub mod labels;
 pub mod media;
 pub mod names;
 mod range;
 mod routes;
 mod service;
+mod versions;
 mod view;
 
 pub use error::FileError;
 pub use handle::{FileFuture, FileOperations};
+pub use labels::{APP_DATA_FOLDER, LABELS_PATH, MAX_LABELS};
 pub use names::{DisplayNames, NameFuture, StoredFile};
 pub use range::{RangePlan, RangeRequest};
 pub(crate) use routes::{answer_content, refuse as refuse_file, routes, ContentAnswerKind};
 pub use service::{
     staging_prefix, ContentAnswer, ContentRequest, FileClock, FileLibrary, FileService,
 };
+pub use versions::{Committed, FileProvenance, MAX_SIZE_CONTENTS, MAX_SIZE_OBJECTS};
 pub use view::{
-    CommitView, ContentQuery, EntryView, FileChangeView, FileDetailsView, FileQuery,
-    FolderPageView, FolderRequest, FolderView, HistoryEntryView, HistoryQuery, HistoryView,
-    ListingQuery, MintRequest, MintView, MoveRequest, ObjectQuery, RemoveRequest, RestoreRequest,
-    UploadQuery, UserView, VersionView, VersionsView,
+    CommitView, ContentQuery, EntryView, FileChangeView, FileDetailsView, FileHistorySizeView,
+    FileQuery, FolderPageView, FolderRequest, FolderView, HistoryEntryView, HistoryQuery,
+    HistoryView, LabelRequest, LibraryHistorySizeView, LibraryQuery, ListingQuery, MintRequest,
+    MintView, MoveRequest, ObjectQuery, RemoveRequest, RestoreRequest, UploadQuery, UserView,
+    VersionView, VersionsView,
 };
 
 /// `tracing` target of this module's stdout-only diagnostics, outside `filesquid::activity`
@@ -93,3 +103,9 @@ pub const MOVE_OPERATION: &str = "files.move";
 pub const REMOVE_OPERATION: &str = "files.remove";
 /// Journal operation of a restore.
 pub const RESTORE_OPERATION: &str = "files.restore";
+/// Journal operation of a label set or cleared after commit.
+pub const LABEL_OPERATION: &str = "files.label";
+/// Journal operation of a refused file history-size read.
+pub const HISTORY_SIZE_OPERATION: &str = "files.history_size";
+/// Journal operation of a refused library history-size read.
+pub const LIBRARY_HISTORY_SIZE_OPERATION: &str = "files.library_history_size";

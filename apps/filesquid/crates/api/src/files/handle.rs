@@ -4,10 +4,12 @@
 
 use super::error::FileError;
 use super::service::{ContentAnswer, ContentRequest, FileService};
+use super::versions::Committed;
 use super::view::{
-    CommitView, FileDetailsView, FileQuery, FolderPageView, FolderRequest, FolderView,
-    HistoryQuery, HistoryView, ListingQuery, MoveRequest, ObjectQuery, RemoveRequest,
-    RestoreRequest, UploadQuery, VersionsView,
+    CommitView, FileDetailsView, FileHistorySizeView, FileQuery, FolderPageView, FolderRequest,
+    FolderView, HistoryQuery, HistoryView, LabelRequest, LibraryHistorySizeView, LibraryQuery,
+    ListingQuery, MoveRequest, ObjectQuery, RemoveRequest, RestoreRequest, UploadQuery,
+    VersionsView,
 };
 use crate::content::ContentTarget;
 use axum::body::Bytes;
@@ -53,8 +55,17 @@ pub trait FileOperations: Send + Sync {
     /// Remove one file or folder by `actor`.
     fn remove(&self, request: RemoveRequest, actor: String) -> FileFuture<'_, CommitView>;
 
-    /// Restore files or folders from an earlier version by `actor`.
-    fn restore(&self, request: RestoreRequest, actor: String) -> FileFuture<'_, CommitView>;
+    /// Restore files or folders from an earlier version by `actor`, in one version.
+    fn restore(&self, request: RestoreRequest, actor: String) -> FileFuture<'_, Committed>;
+
+    /// Set or clear the label of one version after commit, by `actor`.
+    fn set_label(&self, request: LabelRequest, actor: String) -> FileFuture<'_, Committed>;
+
+    /// The bytes one file's history keeps.
+    fn history_size(&self, query: HistoryQuery) -> FileFuture<'_, FileHistorySizeView>;
+
+    /// The bytes a library's history keeps.
+    fn library_history_size(&self, query: LibraryQuery) -> FileFuture<'_, LibraryHistorySizeView>;
 }
 
 impl<B, R, S> FileOperations for FileService<B, R, S>
@@ -108,7 +119,19 @@ where
         Box::pin(async move { FileService::remove(self, request, &actor).await })
     }
 
-    fn restore(&self, request: RestoreRequest, actor: String) -> FileFuture<'_, CommitView> {
+    fn restore(&self, request: RestoreRequest, actor: String) -> FileFuture<'_, Committed> {
         Box::pin(async move { FileService::restore(self, request, &actor).await })
+    }
+
+    fn set_label(&self, request: LabelRequest, actor: String) -> FileFuture<'_, Committed> {
+        Box::pin(async move { FileService::set_label(self, request, &actor).await })
+    }
+
+    fn history_size(&self, query: HistoryQuery) -> FileFuture<'_, FileHistorySizeView> {
+        Box::pin(self.history_size(query))
+    }
+
+    fn library_history_size(&self, query: LibraryQuery) -> FileFuture<'_, LibraryHistorySizeView> {
+        Box::pin(self.library_history_size(query))
     }
 }

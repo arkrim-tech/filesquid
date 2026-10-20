@@ -458,7 +458,7 @@ export interface paths {
         put?: never;
         /**
          * Restore files or folders from an earlier version
-         * @description The new version points at the content the earlier version holds. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once.
+         * @description One restore operation (API-S-014): the new version points at the content the earlier version holds, a revert when it returns every file of the object to that version's and the head holds no other, else a reinstate, named so in the version's filesquid.operation.v1 message, which carries the optional label. Publishes exactly one OCFL version through the filesquid-ocfl change model and leaves earlier versions untouched, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). Paths in the reserved .filesquid folder are refused (400). With provenance configured the version carries its PROV-O record (API-S-028). The version is journaled with opaque IDs only; a refusal is journaled once.
          */
         post: operations["restoreFiles"];
         delete?: never;
@@ -705,6 +705,66 @@ export interface paths {
          * @description The one command that adds a file to an existing version directory: for each named object whose committed head has no version inventory, adds one copy of the root inventory and its sidecar to the head version directory and changes nothing else (OCFL-S-020, API-S-023). Only a library's owner may run it: the desktop owner; on filesquid-server every caller, the administrator included, is refused 403 not_permitted until server accounts give a library owner a principal. The request names the library and 1 to 1,000 distinct objects and carries the owner's consent to statement version_inventory_repair.v1 for exactly those objects; without it the request is refused (consent_required, consent_mismatch) and nothing is written. Each object gets its own outcome in the answer: an object whose head already holds its version inventory and sidecar is refused nothing_to_repair, never repaired. The consent and each object's outcome are journaled as ocfl.repair.version_inventory (opaque IDs, version, outcome, error code). Refusals of the whole request: invalid_objects, consent_required, consent_mismatch, library_not_open and the open errors of the storage root. Every refusal is journaled once, with its error code and opaque IDs only (an authorisation refusal as api.auth.denied); answers carry opaque library and object identifiers, never a filesystem path, storage key or OCFL content path (API-S-005, API-S-025).
          */
         post: operations["repairVersionInventories"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/labels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set or clear the label of one version after commit
+         * @description Commits one version (operation kind label) holding the object's application-data file .filesquid/labels.json, which maps labelled versions to their later labels; null clears a commit-time label. That version's own message carries no label. The file is recovered with the object from an ordinary copy. At most 1,000 labelled versions per object. A label that would not change what the version shows is refused (409) without publishing. Labels never affect retention. With provenance configured the version carries its PROV-O record (API-S-028). Journaled with opaque IDs only; a refusal is journaled once.
+         */
+        put: operations["setVersionLabel"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/history-size": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The bytes one file's history keeps
+         * @description The versions that changed the file, its distinct contents and their bytes, each content counted once (SRS-F-065). A successful read is not journaled; a refusal is journaled once.
+         */
+        get: operations["getFileHistorySize"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/library-history-size": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The bytes a library's history keeps
+         * @description Every object's distinct contents and their bytes, each content of an object counted once, within 10,000 objects and 100,000 contents (truncated says when a bound stopped the count). Nothing is deleted, expired or thinned to free space. A successful read is not journaled; a refusal is journaled once.
+         */
+        get: operations["getLibraryHistorySize"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -960,6 +1020,8 @@ export interface components {
             message: string | null;
             /** @description Who made it, when recorded. */
             user: components["schemas"]["VersionUser"] | null;
+            /** @description The version's label (PRD F-065): the later label when one was set (PUT /api/v1/files/labels), else the label member of its filesquid.operation.v1 message; null when it has none. Labels never affect retention. Always sent; optional in the schema so clients written before labels still read it. */
+            label?: string | null;
         };
         /** @description One entry of a folder listing: a folder or a file, told apart by kind. */
         FolderEntry: {
@@ -1045,6 +1107,8 @@ export interface components {
             change: components["schemas"]["FileChange"];
             /** @description The file's digest after the change, or null when it was removed. */
             digest: string | null;
+            /** @description The file's size in bytes after the change, or null when it was removed. Always sent; optional in the schema so clients written before sizes still read it. */
+            size?: number | null;
         };
         /** @description The versions that changed one file, oldest first. */
         FileHistory: {
@@ -1133,8 +1197,8 @@ export interface components {
             version: string;
             /** @description The files or folders to restore, 1 to 1,000. */
             paths: string[];
-            /** @description The version message, 1 to 1,024 bytes and not blank. */
-            message?: string;
+            /** @description The new version's label: 1 to 512 bytes, not blank, no control characters. It is the label member of the version's filesquid.operation.v1 message; a restore takes no free message. */
+            label?: string;
         };
         /** @description Body of POST /api/v1/content-handles: exactly one file object, OCFL version and logical path. */
         ContentHandleRequest: {
@@ -1391,6 +1455,45 @@ export interface components {
             run_id: string;
             /** @description Per-object outcomes, in request order. */
             objects: components["schemas"]["ObjectRepair"][];
+        };
+        /** @description Body of PUT /api/v1/files/labels: set or clear the label of one version after commit. */
+        LabelRequest: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The OCFL object identifier. */
+            object_id: string;
+            /** @description The version to label: v1, v2, ... */
+            version: string;
+            /** @description The label: 1 to 512 bytes, not blank, no control characters; null or absent clears it. */
+            label?: string | null;
+        };
+        /** @description The bytes one file's history keeps: each distinct content once. */
+        FileHistorySize: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The OCFL object identifier. */
+            object_id: string;
+            /** @description The file's logical path. */
+            path: string;
+            /** @description The versions that changed the file. */
+            versions: number;
+            /** @description The distinct contents the file has had. */
+            contents: number;
+            /** @description Their bytes, each content counted once. */
+            bytes: number;
+        };
+        /** @description The bytes a library's history keeps: each distinct content of each object once, within 10,000 objects and 100,000 contents. */
+        LibraryHistorySize: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The objects counted. */
+            objects: number;
+            /** @description The distinct contents counted. */
+            contents: number;
+            /** @description Their bytes, each content of an object counted once. */
+            bytes: number;
+            /** @description True when a bound stopped the count, so the totals are lower bounds. */
+            truncated: boolean;
         };
     };
     responses: {
@@ -2886,6 +2989,99 @@ export interface operations {
             409: components["responses"]["LibraryConflict"];
             500: components["responses"]["Internal"];
             503: components["responses"]["LibraryUnavailable"];
+        };
+    };
+    setVersionLabel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LabelRequest"];
+            };
+        };
+        responses: {
+            /** @description The version published. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileCommit"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    getFileHistorySize: {
+        parameters: {
+            query: {
+                /** @description The library. */
+                library_id: components["parameters"]["LibraryId"];
+                /** @description The OCFL object identifier. */
+                object_id: components["parameters"]["ObjectId"];
+                /** @description The file's logical path. */
+                path: components["parameters"]["LogicalPath"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The file's history size. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileHistorySize"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    getLibraryHistorySize: {
+        parameters: {
+            query: {
+                /** @description The library. */
+                library_id: components["parameters"]["LibraryId"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The library's history size. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryHistorySize"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
         };
     };
 }
