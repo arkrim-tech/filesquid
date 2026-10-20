@@ -374,10 +374,11 @@ fn a_crash_after_the_snapshot_replays_the_commits_journal_entries_once() {
         .collect();
     assert!(lost.is_empty(), "the crash lost the outbox: {lost:?}");
     let fx = Fixture::recording(fx.release(), journal.clone(), Arc::new(NoCrash));
-    let replayed: Vec<JournalEntry> = all_entries(journal.as_ref())
-        .into_iter()
-        .filter(|e| e.operation_id.as_deref() == Some("op-summer"))
-        .collect();
+    let (intents, replayed) = committed_and_intents(journal.as_ref(), "op-summer");
+    assert_eq!(
+        intents, 1,
+        "the intent was journaled in its own transaction"
+    );
     let operations: Vec<&str> = replayed.iter().map(|e| e.operation.as_str()).collect();
     assert_eq!(operations, ["ocfl.commit", "library.collection.create"]);
     for entry in &replayed {
@@ -401,10 +402,8 @@ fn an_unrecorded_catalog_still_links_its_commits() {
     let lib = fx.create_library("Family archive");
     let op = OperationId::new("op-summer").unwrap();
     fx.run_as(op, "1", summer(&lib)).expect("collection");
-    let linked: Vec<JournalEntry> = all_entries(fx.journal.as_ref())
-        .into_iter()
-        .filter(|e| e.operation_id.as_deref() == Some("op-summer"))
-        .collect();
+    let (intents, linked) = committed_and_intents(fx.journal.as_ref(), "op-summer");
+    assert_eq!(intents, 1, "the intent is journaled too");
     let operations: Vec<&str> = linked.iter().map(|e| e.operation.as_str()).collect();
     assert_eq!(operations, ["ocfl.commit", "library.collection.create"]);
     assert!(linked
@@ -465,6 +464,18 @@ fn linked_to(journal: &dyn filesquid_api::journal::JournalStore, op: &str) -> Ve
         .collect()
 }
 
+/// The number of `library.intent.recorded` entries of `op` (API-S-031), and its other
+/// entries: those of its commit.
+fn committed_and_intents(
+    journal: &dyn filesquid_api::journal::JournalStore,
+    op: &str,
+) -> (usize, Vec<JournalEntry>) {
+    let (intents, committed): (Vec<JournalEntry>, Vec<JournalEntry>) = linked_to(journal, op)
+        .into_iter()
+        .partition(|e| e.operation == filesquid_native::INTENT_RECORDED_OPERATION);
+    (intents.len(), committed)
+}
+
 /// Owner decision 2026-10-19 with DE-0.10 (ADR 040 Decision 1): in a catalog that records
 /// PROV-O history, a command that changes nothing commits no version and therefore no PROV-O
 /// record, and stores no receipt and no journal entry (no `ocfl.commit` either); the next
@@ -501,7 +512,11 @@ fn a_recorded_no_op_commits_no_version_and_journals_nothing() {
     fx.run_as(changed, "2", rename("Summer 2026"))
         .expect("rename");
     assert_eq!(snapshot(&fx.root, &lib).unwrap().version.to_string(), "v3");
-    let linked = linked_to(journal.as_ref(), "op-new-title");
+    let (intents, linked) = committed_and_intents(journal.as_ref(), "op-new-title");
+    assert_eq!(
+        intents, 1,
+        "the intent of a command that changed something is journaled"
+    );
     let operations: Vec<&str> = linked.iter().map(|e| e.operation.as_str()).collect();
     assert_eq!(operations, ["ocfl.commit", "library.collection.rename"]);
     assert!(linked

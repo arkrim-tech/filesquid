@@ -54,6 +54,24 @@ pub fn parse_operation_message(message: &str) -> Result<Option<OperationRecord>,
     serde_json::from_value(value).map(Some).map_err(unreadable)
 }
 
+/// The operation ID a FileSquid version message names, receipt or not; `None` for any
+/// other message. Pure.
+pub fn message_operation_id(message: &str) -> Option<String> {
+    let json = message.strip_prefix(OPERATION_PREFIX)?;
+    let value: serde_json::Value = serde_json::from_str(json).ok()?;
+    value.get("operation_id")?.as_str().map(str::to_string)
+}
+
+/// The [`crate::trace_layer::activity_span`] of a commit whose version message is
+/// `message`, so the engine's warnings during that commit are journaled with its operation
+/// ID (API-S-031); a disabled span when the message names none.
+pub fn commit_span(message: Option<&str>) -> tracing::Span {
+    match message.and_then(message_operation_id) {
+        Some(id) => crate::trace_layer::activity_span(&id, None),
+        None => tracing::Span::none(),
+    }
+}
+
 /// The PROV-O operation kind of a catalog commit journaled as `operation` (ADR 040
 /// Decision 2): file state changes keep their own kind, a copied snapshot is a copy, and
 /// every other library, collection or virtual-collection change is catalog organisation.

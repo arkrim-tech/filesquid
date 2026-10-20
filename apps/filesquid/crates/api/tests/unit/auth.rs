@@ -123,7 +123,9 @@ fn protected_paths() -> Vec<String> {
 /// The routes that answer a plain `GET` with no parameters: every routed path but the file,
 /// content and library routes, which need a library, an object or a body and are tested
 /// through the router in `integration_files`, `integration_content_handles` and
-/// `integration_library_routes`.
+/// `integration_library_routes`, the client-events route, which needs a body, and the journal
+/// entry route, which needs a stored entry's ID (both tested in `unit_client_events` and
+/// `unit_journal_query`).
 fn plain_get_paths() -> Vec<String> {
     route_actions()
         .into_iter()
@@ -136,9 +138,11 @@ fn plain_get_paths() -> Vec<String> {
                     | Action::ManageLibraries
                     | Action::ReadLibraries
                     | Action::RepairLibraries
+                    | Action::RecordClientEvents
             )
         })
         .map(|(path, _)| path)
+        .filter(|path| !path.contains("{entry}"))
         .collect()
 }
 
@@ -355,6 +359,7 @@ fn every_routed_path_declares_its_action() {
             "/api/v1/libraries/repair-candidates" => Action::ReadLibraries,
             "/api/v1/libraries/repairs" => Action::RepairLibraries,
             "/api/v1/navigation" => Action::ReadNavigation,
+            "/api/v1/client-events" => Action::RecordClientEvents,
             file if file.starts_with("/api/v1/files/") => Action::ReadHistory,
             other => panic!("{other} has no expected action in this test"),
         };
@@ -383,6 +388,7 @@ fn action_names_are_unique_dotted_identifiers() {
             "library.read",
             "library.repair",
             "navigation.read",
+            "client_events.write",
             "public"
         ]
     );

@@ -27,6 +27,7 @@ use filesquid_ocfl::storage::{MemoryBackend, StorageBackend};
 use filesquid_ocfl::write::{rfc3339_utc, VersionReservations};
 use filesquid_prov::ocfl::{missing_records, stage_reconstructed};
 use serde::{Deserialize, Serialize};
+use tracing::Instrument;
 
 use super::recorder::{commit_meta, CommitOperation, CommitRecorder, ProvenanceContext};
 use crate::journal::{now_ms, JournalEntry, JournalStore, Level, Outcome};
@@ -299,8 +300,10 @@ impl Backfill {
         run.handle.heartbeat();
         let recorder = CommitRecorder::new(self.context.clone(), operation.clone(), ids[0]);
         let meta = commit_meta(&self.context, &operation, now);
+        let span = crate::trace_layer::activity_span(operation.operation_id.as_str(), None);
         let receipt = model
             .commit_with(meta, Some(&recorder))
+            .instrument(span)
             .await
             .map_err(|err| {
                 tracing::warn!(target: LOG_TARGET, error = %err, "backfill could not commit");

@@ -155,8 +155,35 @@ pub fn sample(
             json_body(json!({ "version": "v1", "path": "a.txt" })),
         ),
         (_, "/api/v1/content/{handle}") => (content_url(state, token, path), None),
+        ("POST", "/api/v1/client-events") => (
+            path.into(),
+            json_body(json!({ "events": [{
+                "kind": "console",
+                "id": "5f0c3e44-2a7b-4c1d-9e8f-0123456789ab",
+                "level": "warn",
+                "component": "fs-file-browser",
+                "error_code": "fetch_failed"
+            }] })),
+        ),
+        ("GET", "/api/v1/admin/journal/entries/{entry}") => (journal_entry_url(state), None),
         _ => (path.to_string(), None),
     }
+}
+
+/// The URL of a journal entry `state`'s monitor holds (one is appended for it), else of
+/// entry 1.
+fn journal_entry_url(state: &ApiState) -> String {
+    use filesquid_api::journal::{JournalEntry, Outcome};
+    let id = state
+        .monitor()
+        .and_then(|m| {
+            m.store()
+                .append(&[JournalEntry::new("host.started", Outcome::Succeeded)])
+                .ok()
+        })
+        .and_then(|ids| ids.first().copied())
+        .unwrap_or(1);
+    format!("/api/v1/admin/journal/entries/{id}")
 }
 
 /// A content URL minted for `token` when `state` serves files, else `template` with a

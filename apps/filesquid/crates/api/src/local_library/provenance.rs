@@ -12,6 +12,7 @@ use filesquid_core::{OperationId, OperationKind};
 use filesquid_ocfl::change::{ChangeModel, StagingArea};
 use filesquid_ocfl::storage::{MemoryBackend, StorageBackend};
 use filesquid_ocfl::write::{rfc3339_utc, VersionReservations};
+use tracing::Instrument;
 
 use super::LOG_TARGET;
 use crate::history::{commit_meta, CommitOperation, CommitRecorder, ProvenanceContext};
@@ -86,8 +87,10 @@ pub(super) async fn commit_repair_record<B: StorageBackend, R: VersionReservatio
         area,
     );
     let meta = commit_meta(&provenance.context, &operation, now);
+    let span = crate::trace_layer::activity_span(operation.operation_id.as_str(), None);
     let receipt = model
         .commit_bound_only(meta, &recorder)
+        .instrument(span)
         .await
         .map_err(|err| {
             tracing::warn!(target: LOG_TARGET, error = %err, "the repair record was not committed");

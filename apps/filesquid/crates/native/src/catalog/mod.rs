@@ -37,7 +37,7 @@ mod schema;
 mod write;
 
 pub use canonical::{library_ocfl_root, OCFL_ROOT_SUFFIX, WORK_DIR_SUFFIX};
-pub use intent::PendingIntent;
+pub use intent::{intent_entry, PendingIntent, INTENT_RECORDED_OPERATION};
 pub use provenance::{CatalogRoots, LibraryBackfill, MAX_BACKFILL_RUNS};
 pub use reconcile::RECONCILE_OPERATION;
 

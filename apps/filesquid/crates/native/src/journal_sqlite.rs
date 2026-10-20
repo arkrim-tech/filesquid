@@ -39,23 +39,33 @@ BEGIN SELECT RAISE(ABORT, 'activity_journal is append-only; use retention'); END
 
 /// Columns added after the first release of the schema, as `(name, type)`.
 /// [`migrate`] adds each one a journal created earlier lacks (DE-0.10:
-/// the PROV-O linkage of ADR 040 Decision 6).
-const ADDED_COLUMNS: [(&str, &str); 2] = [("operation_id", "TEXT"), ("object_ref", "TEXT")];
+/// the PROV-O linkage of ADR 040 Decision 6; API-F2.10: the client event ID of
+/// API-S-030).
+const ADDED_COLUMNS: [(&str, &str); 3] = [
+    ("operation_id", "TEXT"),
+    ("object_ref", "TEXT"),
+    ("client_event_id", "TEXT"),
+];
 
-/// Indexes on the added columns, created after the migration.
+/// Indexes on the added columns, created after the migration. The client event ID is
+/// unique, so each one is journaled at most once, across restarts (API-S-030); rows without
+/// one hold NULL, which a unique index never compares equal.
 const LINK_INDEXES: &str = "
 CREATE INDEX IF NOT EXISTS activity_journal_operation_id ON activity_journal(operation_id);
 CREATE INDEX IF NOT EXISTS activity_journal_object_ref ON activity_journal(object_ref);
+CREATE UNIQUE INDEX IF NOT EXISTS activity_journal_client_event_id
+    ON activity_journal(client_event_id);
 ";
 
+/// Insert one row; a row whose id or client event ID is already stored is skipped.
 const INSERT: &str = "INSERT INTO activity_journal
     (time_ms, host, process_id, actor, operation, outcome, level, target_ids, duration_ms,
-     error_code, operation_id, object_ref, id)
-    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
-    ON CONFLICT(id) DO NOTHING";
+     error_code, operation_id, object_ref, client_event_id, id)
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+    ON CONFLICT DO NOTHING";
 
 const COLUMNS: &str = "id, time_ms, host, process_id, actor, operation, outcome, level, \
-     target_ids, duration_ms, error_code, operation_id, object_ref";
+     target_ids, duration_ms, error_code, operation_id, object_ref, client_event_id";
 
 /// Journal store backed by an SQLite file. Created with its schema on first open.
 pub struct SqliteJournal {
@@ -141,7 +151,8 @@ fn journal_columns(conn: &Connection) -> Result<Vec<String>, JournalError> {
     Ok(names)
 }
 
-/// Insert one entry and return its id.
+/// Insert one entry and return its id and whether it was stored now. A skipped entry
+/// answers the id of the row holding its client event ID, else the id it carries.
 fn insert(
     conn: &Connection,
     default_host: &str,
@@ -171,12 +182,34 @@ fn insert(
                 e.error_code,
                 e.operation_id,
                 e.object_ref,
+                e.client_event_id,
                 e.id
             ],
         )
         .map_err(sql_err)?;
-    let id = e.id.unwrap_or_else(|| conn.last_insert_rowid());
-    Ok((id, changed > 0))
+    if changed > 0 {
+        return Ok((e.id.unwrap_or_else(|| conn.last_insert_rowid()), true));
+    }
+    let holder = match &e.client_event_id {
+        Some(client) => client_event_row(conn, client)?,
+        None => None,
+    };
+    match holder.or(e.id) {
+        Some(held) => Ok((held, false)),
+        None => Err(JournalError("journal row was not stored".into())),
+    }
+}
+
+/// The id of the row holding the client event ID `client`, if any. Database I/O.
+fn client_event_row(conn: &Connection, client: &str) -> Result<Option<i64>, JournalError> {
+    use rusqlite::OptionalExtension;
+    conn.query_row(
+        "SELECT id FROM activity_journal WHERE client_event_id = ?1",
+        [client],
+        |r| r.get(0),
+    )
+    .optional()
+    .map_err(sql_err)
 }
 
 /// Reserve `count` ids above every stored and every earlier reserved id by advancing the
@@ -214,6 +247,10 @@ fn reserve_ids(conn: &mut Connection, count: i64) -> Result<Vec<i64>, JournalErr
     Ok((first..=last).collect())
 }
 
+/// The condition that one parameter is among an entry's targets (a JSON array of strings).
+const TARGET_MATCH: &str = "EXISTS (SELECT 1 FROM json_each(activity_journal.target_ids) \
+     WHERE json_each.value = ?)";
+
 /// WHERE clause and parameters for the filters of `q` (cursor and limit excluded).
 fn where_clause(q: &JournalQuery) -> (String, Vec<Value>) {
     let mut parts = Vec::new();
@@ -243,12 +280,36 @@ fn where_clause(q: &JournalQuery) -> (String, Vec<Value>) {
     if let Some(p) = &q.process_id {
         push("process_id = ?", Value::Text(p.clone()));
     }
+    link_filters(q, &mut parts, &mut args);
     let sql = if parts.is_empty() {
         "1 = 1".to_string()
     } else {
         parts.join(" AND ")
     };
     (sql, args)
+}
+
+/// Add the library, operation ID and object filters of `q` (API-S-031) to `parts` and
+/// `args`. An object matches its object reference's object (`<object>@...`) or a target.
+fn link_filters(q: &JournalQuery, parts: &mut Vec<String>, args: &mut Vec<Value>) {
+    if let Some(l) = &q.library_id {
+        parts.push(TARGET_MATCH.to_string());
+        args.push(Value::Text(l.clone()));
+    }
+    if let Some(o) = &q.operation_id {
+        parts.push("operation_id = ?".to_string());
+        args.push(Value::Text(o.clone()));
+    }
+    if let Some(o) = &q.object_id {
+        // `<object>@` <= object_ref < `<object>A` is the prefix `<object>@` as a range the
+        // object_ref index can serve (`A` follows `@` in every collation SQLite uses here).
+        parts.push(format!(
+            "((object_ref >= ? AND object_ref < ?) OR {TARGET_MATCH})"
+        ));
+        args.push(Value::Text(format!("{o}@")));
+        args.push(Value::Text(format!("{o}A")));
+        args.push(Value::Text(o.clone()));
+    }
 }
 
 /// Map one result row to an entry.
@@ -271,6 +332,7 @@ fn row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<JournalEntry> {
         error_code: row.get(10)?,
         operation_id: row.get(11)?,
         object_ref: row.get(12)?,
+        client_event_id: row.get(13)?,
     })
 }
 
@@ -326,6 +388,15 @@ impl JournalStore for SqliteJournal {
             .collect::<Result<Vec<_>, _>>()
             .map_err(sql_err)?;
         Ok(JournalPage::from_overfetch(rows, limit))
+    }
+
+    fn entry(&self, id: i64) -> Result<Option<JournalEntry>, JournalError> {
+        use rusqlite::OptionalExtension;
+        let conn = self.lock()?;
+        let sql = format!("SELECT {COLUMNS} FROM activity_journal WHERE id = ?1");
+        conn.query_row(&sql, [id], row_to_entry)
+            .optional()
+            .map_err(sql_err)
     }
 
     fn count(&self, q: &JournalQuery) -> Result<u64, JournalError> {
