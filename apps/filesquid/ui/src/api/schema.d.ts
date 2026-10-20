@@ -1993,6 +1993,8 @@ export interface operations {
                 operation_id?: string;
                 /** @description Continue after this entry id (the value of X-Journal-Next-Cursor from a truncated export). */
                 after?: number;
+                /** @description asc (default, oldest first) or desc (newest first); X-Journal-Next-Cursor continues in the same order. */
+                order?: "asc" | "desc";
                 /** @description jsonl (default) or csv (RFC 4180, header row, CRLF line ends). */
                 format?: "jsonl" | "csv";
             };

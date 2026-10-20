@@ -238,13 +238,14 @@ fn opaque(index: usize, object: &Map<String, Value>, name: &str) -> Result<Strin
         .ok_or_else(|| BatchError::field(index, name))
 }
 
-/// The required client event ID: a UUID v4.
+/// The required client event ID: a UUID v4, in lowercase, so a resend spelled in other
+/// letter case is the same ID.
 fn event_id(index: usize, object: &Map<String, Value>) -> Result<String, BatchError> {
     object
         .get("id")
         .and_then(Value::as_str)
         .filter(|v| is_uuid_v4(v))
-        .map(str::to_string)
+        .map(str::to_ascii_lowercase)
         .ok_or_else(|| BatchError::field(index, "id"))
 }
 

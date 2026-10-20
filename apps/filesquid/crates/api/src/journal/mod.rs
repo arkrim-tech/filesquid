@@ -198,9 +198,10 @@ impl JournalEntry {
         self
     }
 
-    /// Set the client event ID (UUID v4) of an entry recorded from a client event.
+    /// Set the client event ID (UUID v4) of an entry recorded from a client event, in
+    /// lowercase (UUIDs are case-insensitive, and the store de-duplicates the exact text).
     pub fn client_event(mut self, id: impl Into<String>) -> Self {
-        self.client_event_id = Some(id.into());
+        self.client_event_id = Some(id.into().to_ascii_lowercase());
         self
     }
 
@@ -247,9 +248,11 @@ impl JournalEntry {
     }
 
     /// This entry with every identifier field that is not an opaque token replaced by
-    /// [`REDACTED`]. Every write path applies it, so a title, path or caption passed by
-    /// mistake never reaches the store, the event channel or stdout. The entry itself is
-    /// kept, because the journal never drops events.
+    /// [`REDACTED`], except a client event ID that is not opaque, which is dropped instead,
+    /// so such entries never collide on one redacted de-duplication key. Every write path
+    /// applies it, so a title, path or caption passed by mistake never reaches the store,
+    /// the event channel or stdout. The entry itself is kept, because the journal never
+    /// drops events.
     pub fn redacted(mut self) -> Self {
         let scrub = |v: &mut String| {
             if !is_opaque(v) {

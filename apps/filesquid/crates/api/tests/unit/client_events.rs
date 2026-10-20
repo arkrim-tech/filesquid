@@ -581,3 +581,43 @@ async fn malformed_and_oversized_requests_count_toward_the_rate_bound() {
     assert_eq!(status, StatusCode::OK, "a lone overflow is still exempt");
     host.monitor.shutdown();
 }
+
+#[tokio::test]
+async fn a_resend_in_other_letter_case_is_the_same_client_event() {
+    let host = Host::start();
+    let mut upper = console(0xab, "warn");
+    upper["id"] = json!(uuid(0xab).to_ascii_uppercase());
+    host.post(batch(vec![console(0xab, "warn")])).await;
+    let (status, _, ack) = host.post(batch(vec![upper])).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(ack["journaled"], 0);
+    assert_eq!(ack["acknowledged"], json!([uuid(0xab)]));
+    assert_eq!(host.console_entries().len(), 1);
+    host.monitor.shutdown();
+}
+
+#[tokio::test]
+async fn requests_before_the_journal_starts_still_count_toward_the_rate_bound() {
+    let state = ApiState::new();
+    let token = LaunchToken::generate().expect("token");
+    state.install_authoriser(Authoriser::desktop_owner(&token));
+    let post = |state: ApiState| {
+        let token = token.secret().to_string();
+        async move {
+            let body = serde_json::to_vec(&batch(vec![console(1, "warn")])).expect("json");
+            let request = Request::post(PATH)
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::from(body))
+                .expect("request");
+            router(state)
+                .oneshot(request)
+                .await
+                .expect("answer")
+                .status()
+        }
+    };
+    for _ in 0..RATE_LIMIT {
+        assert_eq!(post(state.clone()).await, StatusCode::SERVICE_UNAVAILABLE);
+    }
+    assert_eq!(post(state).await, StatusCode::TOO_MANY_REQUESTS);
+}

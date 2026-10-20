@@ -558,6 +558,19 @@
             }
           },
           {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "asc (default, oldest first) or desc (newest first); X-Journal-Next-Cursor continues in the same order.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ]
+            }
+          },
+          {
             "name": "format",
             "in": "query",
             "required": false,

@@ -1024,8 +1024,9 @@ fn a_version_1_catalog_is_migrated_and_brought_to_its_snapshot() {
 }
 
 /// Recording an intent is journaled as `library.intent.recorded` (API-S-031): written in the
-/// intent's own transaction through the outbox, so it reaches the host journal with the
-/// next forward, naming the operation ID and the library, never a title.
+/// intent's own transaction through the outbox and held there while the intent is pending,
+/// so it reaches the host journal once its commit clears the intent (a no-op withdraws it),
+/// naming the operation ID and the library, never a title.
 #[test]
 fn a_recorded_intent_is_journaled_as_library_intent_recorded() {
     let fx = Fixture::new("intent-journal");
@@ -1041,11 +1042,31 @@ fn a_recorded_intent_is_journaled_as_library_intent_recorded() {
     assert_eq!(fx.catalog.outbox_len(&lib).expect("outbox"), 1);
     let journal = Arc::new(MemoryJournal::new("desktop"));
     let again = Fixture::over(fx.release(), journal.clone());
-    let recorded: Vec<JournalEntry> = all_entries(journal.as_ref())
-        .into_iter()
-        .filter(|e| e.operation == "library.intent.recorded")
-        .collect();
-    assert_eq!(recorded.len(), 1, "forwarded at the next open");
+    let recorded = |journal: &MemoryJournal| -> Vec<JournalEntry> {
+        all_entries(journal)
+            .into_iter()
+            .filter(|e| e.operation == "library.intent.recorded")
+            .collect()
+    };
+    assert!(
+        recorded(&journal).is_empty(),
+        "held while the intent is pending, even across an open"
+    );
+    again
+        .catalog
+        .commit(raw(
+            lib.as_str(),
+            "1",
+            "op-journaled",
+            vec![put_collection(&lib, "c-journaled")],
+        ))
+        .expect("commit");
+    let recorded = recorded(&journal);
+    assert_eq!(
+        recorded.len(),
+        1,
+        "forwarded once its commit cleared the intent"
+    );
     let entry = &recorded[0];
     assert_eq!(entry.operation_id.as_deref(), Some("op-journaled"));
     assert!(entry.target_ids.contains(&lib.as_str().to_string()));
@@ -1107,4 +1128,29 @@ fn an_intent_recorded_before_its_commit_is_journaled_once() {
         .filter(|e| e.operation_id.as_deref() == Some("op-once"))
         .count();
     assert_eq!(intents, 1);
+}
+
+/// An unrelated commit forwarding the outbox never forwards the entry of another
+/// operation's pending intent, so a later no-op of that operation journals nothing.
+#[test]
+fn an_unrelated_commit_holds_back_a_pending_intent_entry() {
+    let fx = Fixture::new("intent-held");
+    let lib = fx.create_library("Family archive");
+    let intent = PendingIntent {
+        library_id: lib.clone(),
+        operation_id: OperationId::new("op-later-no-op").expect("op"),
+        operation: "library.collection.rename".into(),
+        expected_revision: ExpectedRevision::new("1").expect("rev"),
+        recorded_at_ms: 1_792_281_600_000,
+    };
+    fx.catalog.record_intent(&intent).expect("record");
+    fx.create_collection(&lib, "Summer");
+    fx.catalog
+        .commit(raw(lib.as_str(), "2", "op-later-no-op", Vec::new()))
+        .expect("no-op");
+    let leaked = all_entries(fx.journal.as_ref())
+        .into_iter()
+        .any(|e| e.operation_id.as_deref() == Some("op-later-no-op"));
+    assert!(!leaked, "a no-op journals nothing");
+    assert_eq!(fx.catalog.outbox_len(&lib).expect("outbox"), 0);
 }

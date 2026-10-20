@@ -5,13 +5,21 @@
 //! catalog forwards the outbox to the host's activity journal store and deletes what the
 //! store accepted. Entries the store refused stay and are forwarded by the next commit or at
 //! the next open, so none is dropped. A crash between the store's append and the delete can
-//! forward an entry twice; it is never lost.
+//! forward an entry twice; it is never lost. The `library.intent.recorded` entry of an intent
+//! that is still pending waits until the intent is cleared or discarded ([`HELD`]).
 
 use super::failed;
 use super::rows::sql;
 use filesquid_api::journal::{JournalEntry, JournalStore};
 use filesquid_api::library::CatalogError;
 use rusqlite::{params, Connection, Transaction};
+
+/// Outbox rows held back from forwarding: the `library.intent.recorded` entry of an intent
+/// that is still pending. Its operation's outcome is not known yet, and a commit that
+/// changes nothing withdraws it (no activity, no entry), so it is forwarded only once the
+/// intent is cleared by its commit or discarded by a failure.
+const HELD: &str = "json_extract(entry, '$.operation') = 'library.intent.recorded' \
+     AND json_extract(entry, '$.operation_id') IN (SELECT operation_id FROM pending_intents)";
 
 /// Entries forwarded per store append.
 pub(crate) const FORWARD_BATCH: i64 = 256;
@@ -58,7 +66,9 @@ pub(crate) fn len(conn: &Connection) -> Result<u64, CatalogError> {
 /// The oldest waiting entries (at most [`FORWARD_BATCH`]) with their outbox ids. Database I/O.
 fn oldest(conn: &Connection) -> Result<Vec<(i64, JournalEntry)>, CatalogError> {
     let mut stmt = conn
-        .prepare("SELECT id, entry FROM journal_outbox ORDER BY id LIMIT ?1")
+        .prepare(&format!(
+            "SELECT id, entry FROM journal_outbox WHERE NOT ({HELD}) ORDER BY id LIMIT ?1"
+        ))
         .map_err(sql)?;
     let rows = stmt
         .query_map(params![FORWARD_BATCH], |r| {
@@ -93,7 +103,7 @@ pub(crate) fn forward(conn: &Connection, store: &dyn JournalStore) -> Result<usi
             .append(&entries)
             .map_err(|e| CatalogError::Unavailable(format!("host journal: {}", e.0)))?;
         conn.execute(
-            "DELETE FROM journal_outbox WHERE id <= ?1",
+            &format!("DELETE FROM journal_outbox WHERE id <= ?1 AND NOT ({HELD})"),
             params![last_id],
         )
         .map_err(sql)?;

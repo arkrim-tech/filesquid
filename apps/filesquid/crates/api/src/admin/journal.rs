@@ -127,9 +127,12 @@ pub(super) struct JournalParams {
     file: Option<String>,
     operation_id: Option<String>,
     after: Option<i64>,
-    limit: Option<usize>,
+    /// Read as text and checked only by the routes that use it, so the export, which
+    /// ignores it, never refuses a value it does not read.
+    limit: Option<String>,
     order: Option<String>,
-    names: Option<bool>,
+    /// As `limit`: checked only by the routes that read names.
+    names: Option<String>,
     format: Option<String>,
 }
 
@@ -137,10 +140,11 @@ impl JournalParams {
     /// The requested page size: absent means the journal default (`0`); an explicit `limit`
     /// MUST be a [`PageSize`] (1 to [`filesquid_core::MAX_PAGE_SIZE`]), else `Err("limit")`.
     fn page_limit(&self) -> Result<usize, &'static str> {
-        let Some(limit) = self.limit else {
+        let Some(limit) = &self.limit else {
             return Ok(0);
         };
-        u32::try_from(limit)
+        limit
+            .parse::<u32>()
             .ok()
             .and_then(|n| PageSize::new(n).ok())
             .map(|size| size.get() as usize)
@@ -210,7 +214,17 @@ fn opaque(value: &str, name: &'static str) -> Result<String, &'static str> {
 /// Query string of `GET /admin/journal/entries/{entry}`.
 #[derive(Debug, Default, Deserialize)]
 pub(super) struct EntryParams {
-    names: Option<bool>,
+    names: Option<String>,
+}
+
+/// Whether `names` asks for display names: absent or `false` is no, `true` is yes; any
+/// other value is `Err("names")`. Pure.
+fn asks_names(names: Option<&str>) -> Result<bool, &'static str> {
+    match names {
+        None | Some("false") => Ok(false),
+        Some("true") => Ok(true),
+        Some(_) => Err("names"),
+    }
 }
 
 /// `invalid_request` error naming the invalid query parameter.
@@ -244,8 +258,11 @@ pub(super) async fn page(
         Ok(found) => found,
         Err(error) => return error.into_response(),
     };
-    let query = match params.to_query() {
-        Ok(query) => query,
+    let (query, asked) = match params
+        .to_query()
+        .and_then(|q| asks_names(params.names.as_deref()).map(|a| (q, a)))
+    {
+        Ok(found) => found,
         Err(param) => return bad_request(param).into_response(),
     };
     let store = monitor.store();
@@ -256,7 +273,7 @@ pub(super) async fn page(
         }
         Err(error) => return error.into_response(),
     };
-    let names = wanted_names(&state, params.names);
+    let names = wanted_names(&state, asked);
     Json(view_page(page, names, &principal).await).into_response()
 }
 
@@ -270,6 +287,9 @@ pub(super) async fn one(
     let (monitor, params) = match monitor_params(&state, params) {
         Ok(found) => found,
         Err(error) => return error.into_response(),
+    };
+    let Ok(asked) = asks_names(params.names.as_deref()) else {
+        return bad_request("names").into_response();
     };
     let Ok(id) = entry.parse::<i64>() else {
         return ApiError::new(ErrorCode::InvalidRequest, "The entry ID must be a number.")
@@ -286,14 +306,14 @@ pub(super) async fn one(
     let Some(entry) = found else {
         return ApiError::new(ErrorCode::NotFound, "No journal entry has this ID.").into_response();
     };
-    let names = wanted_names(&state, params.names);
+    let names = wanted_names(&state, asked);
     let mut named = resolve_names(names.as_deref(), &principal, std::slice::from_ref(&entry)).await;
     Json(view(entry, &mut named)).into_response()
 }
 
 /// The host's name lookup, when the caller asked for names and the host installed one.
-fn wanted_names(state: &ApiState, asked: Option<bool>) -> Option<std::sync::Arc<dyn JournalNames>> {
-    if asked == Some(true) {
+fn wanted_names(state: &ApiState, asked: bool) -> Option<std::sync::Arc<dyn JournalNames>> {
+    if asked {
         state.journal_names()
     } else {
         None
@@ -377,10 +397,11 @@ pub(super) async fn export(
         Ok(found) => found,
         Err(error) => return error.into_response(),
     };
-    // The export does not document `limit` (it always reads full pages) or names (it never
-    // carries them), so those parameters are ignored rather than validated.
+    // The export does not document `limit` (it always reads full pages) or `names` (it never
+    // carries them); both are read as text and never checked here, so any value is ignored.
     let params = JournalParams {
         limit: None,
+        names: None,
         ..params
     };
     let (mut query, format) = match params
@@ -391,7 +412,6 @@ pub(super) async fn export(
         Err(param) => return bad_request(param).into_response(),
     };
     query.limit = MAX_PAGE;
-    query.descending = false;
     let store = monitor.store();
     let pages = move || export_pages(store.as_ref(), query, MAX_EXPORT_PAGES, format);
     let exported = blocking("api.admin.journal.export", pages).await;

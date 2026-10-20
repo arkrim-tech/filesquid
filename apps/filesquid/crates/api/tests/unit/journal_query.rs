@@ -437,3 +437,36 @@ fn the_store_query_filters_match_the_route_filters() {
     );
     assert!(store.entry(77).expect("entry").is_none());
 }
+
+#[tokio::test]
+async fn the_export_honours_the_order_and_ignores_limit_and_names() {
+    let host = Host::start();
+    let (status, _, body) = host
+        .get("/api/v1/admin/journal/export?order=desc&limit=abc&names=maybe")
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let ids: Vec<i64> = body
+        .lines()
+        .map(|l| {
+            serde_json::from_str::<Value>(l).expect("line")["id"]
+                .as_i64()
+                .expect("id")
+        })
+        .collect();
+    assert_eq!(ids, [6, 5, 4, 3, 2, 1]);
+    host.monitor.shutdown();
+}
+
+#[tokio::test]
+async fn a_names_value_that_is_not_a_boolean_is_refused_where_names_are_read() {
+    let host = Host::start();
+    let (status, _, _) = host.get("/api/v1/admin/journal?names=maybe").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _, _) = host
+        .get("/api/v1/admin/journal/entries/1?names=maybe")
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _, _) = host.get("/api/v1/admin/journal?names=false").await;
+    assert_eq!(status, StatusCode::OK);
+    host.monitor.shutdown();
+}

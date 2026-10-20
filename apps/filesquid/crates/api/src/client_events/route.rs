@@ -74,7 +74,6 @@ async fn accept(
     headers: &HeaderMap,
     body: Body,
 ) -> Result<ClientEventsAck, Refusal> {
-    let monitor = installed_monitor(state).map_err(refusal)?;
     let Ok(bytes) = to_bytes(body, MAX_BODY_BYTES).await else {
         return Err(counted(state, headers, too_large()));
     };
@@ -89,6 +88,7 @@ async fn accept(
     if foreign {
         return Err(refuse_foreign(state, principal).await);
     }
+    let monitor = installed_monitor(state).map_err(refusal)?;
     let entries = entries_of(&batch, principal.actor(), now_ms());
     let journaled = write(monitor, entries).await.map_err(refusal)?;
     Ok(ClientEventsAck {

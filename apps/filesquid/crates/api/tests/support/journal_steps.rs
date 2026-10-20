@@ -286,7 +286,10 @@ fn both_acknowledged(w: &mut MonitorWorld) {
 
 #[then(expr = "the journal should hold one {string} entry for that client event ID")]
 fn one_entry_for_the_id(w: &mut MonitorWorld, operation: String) {
-    assert_eq!(w.journal.named(&operation).len(), 1);
+    let entries = w.journal.named(&operation);
+    assert_eq!(entries.len(), 1);
+    let sent = format!("{:08x}-0000-4000-8000-000000000000", 7);
+    assert_eq!(entries[0].client_event_id.as_deref(), Some(sent.as_str()));
 }
 
 #[when(expr = "the UI sends a console warning raised by another principal")]
@@ -327,8 +330,23 @@ fn overflow_entry(w: &mut MonitorWorld, operation: String, count: u64) {
 async fn overflow_refused(w: &mut MonitorWorld, count: u64) {
     let mut event = overflow(count);
     event["id"] = json!("6a1d4f55-3b8c-4d2e-8f90-123456789abc");
-    let (status, _, _) = w.journal.post_events(vec![event]).await;
+    let (status, _, body) = w.journal.post_events(vec![event]).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+    let error: Value = serde_json::from_str(&body).expect("json");
+    assert_eq!(error["code"], "invalid_request");
+}
+
+#[when(expr = "the UI sends one overflow event raised by another principal")]
+async fn foreign_overflow(w: &mut MonitorWorld) {
+    let mut event = overflow(2);
+    event["principal"] = json!("administrator");
+    w.journal.post_events(vec![event]).await;
+}
+
+#[then(expr = "the request should get status {int}")]
+fn status_is(w: &mut MonitorWorld, status: u16) {
+    let (got, _, body) = w.journal.answers.last().expect("an answer");
+    assert_eq!(got.as_u16(), status, "{body}");
 }
 
 #[when(expr = "I filter the journal by the file")]
