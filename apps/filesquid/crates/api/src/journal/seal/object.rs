@@ -15,7 +15,7 @@ use std::sync::Arc;
 use filesquid_core::InstallationId;
 use filesquid_ocfl::change::{ChangeError, ChangeModel, StagingArea, VersionMeta};
 use filesquid_ocfl::digest::DigestAlgorithm;
-use filesquid_ocfl::read::{Object, ReadError};
+use filesquid_ocfl::read::{LogicalFile, Object, ReadError};
 use filesquid_ocfl::storage::{read_verified, StorageBackend, StorageKey};
 use filesquid_ocfl::write::{rfc3339_utc, VersionReservations};
 use filesquid_ocfl::{Declaration, SpecVersion};
@@ -325,8 +325,41 @@ pub async fn read_sealed_entries<B: StorageBackend>(
     backend: &B,
     transform: &dyn ProfileTransform,
 ) -> Result<Vec<JournalEntry>, SealError> {
+    let mut entries = Vec::new();
+    let mut failed = None;
+    let mut keep = |segment: Result<Vec<JournalEntry>, SealError>| match segment {
+        Ok(read) => {
+            entries.extend(read);
+            true
+        }
+        Err(err) => {
+            failed = Some(err);
+            false
+        }
+    };
+    visit_sealed_segments(backend, transform, &mut keep).await?;
+    match failed {
+        Some(err) => Err(err),
+        None => Ok(entries),
+    }
+}
+
+/// Hand each segment of the journal object in `backend`, in journal ID order, to `visit`:
+/// its entries, or why that one segment could not be read, so a caller can keep the other
+/// segments. `visit` answers `false` to stop. Nothing is visited without the object.
+/// Storage I/O.
+///
+/// # Errors
+/// Opening the object or listing its head: [`SealError::Invalid`] for an object that cannot
+/// be opened or holds more than [`MAX_SEGMENTS`] segments; [`SealError::Unavailable`] for
+/// storage trouble.
+pub async fn visit_sealed_segments<B: StorageBackend>(
+    backend: &B,
+    transform: &dyn ProfileTransform,
+    visit: &mut (dyn FnMut(Result<Vec<JournalEntry>, SealError>) -> bool + Send),
+) -> Result<(), SealError> {
     if !has_journal_object(backend).await? {
-        return Ok(Vec::new());
+        return Ok(());
     }
     let object = Object::open(backend, JOURNAL_OBJECT_ROOT)
         .await
@@ -342,33 +375,46 @@ pub async fn read_sealed_entries<B: StorageBackend>(
         )));
     }
     files.sort_by(|a, b| a.path.cmp(&b.path));
-    let mut entries = Vec::new();
     for file in files {
-        let key = object.content_key(file).map_err(read_error)?;
-        let unavailable =
-            |e: filesquid_ocfl::storage::StorageError| SealError::Unavailable(e.to_string());
-        if backend.head(&key).await.map_err(unavailable)?.size > MAX_SEGMENT_BYTES as u64 {
-            return Err(SealError::Invalid(format!(
-                "{}: segment too large",
-                file.path
-            )));
+        let segment = read_segment(backend, &object, file, transform).await;
+        if !visit(segment) {
+            break;
         }
-        let stored = read_verified(backend, &key, READ_CHUNK)
-            .await
-            .map_err(unavailable)?;
-        let digest = DigestAlgorithm::ENGINE.digest_hex(&stored);
-        if !DigestAlgorithm::ENGINE.matches(&digest, &file.digest) {
-            return Err(SealError::Invalid(format!(
-                "{}: digest mismatch",
-                file.path
-            )));
-        }
-        let plain = transform
-            .open(&file.path, stored)
-            .map_err(|e| SealError::Invalid(format!("{e:?}")))?;
-        entries.extend(parse_segment(&file.path, &plain)?);
     }
-    Ok(entries)
+    Ok(())
+}
+
+/// The entries of one segment, read within [`MAX_SEGMENT_BYTES`] and checked against its
+/// digest. Storage I/O.
+async fn read_segment<B: StorageBackend>(
+    backend: &B,
+    object: &Object<'_, B>,
+    file: &LogicalFile,
+    transform: &dyn ProfileTransform,
+) -> Result<Vec<JournalEntry>, SealError> {
+    let key = object.content_key(file).map_err(read_error)?;
+    let unavailable =
+        |e: filesquid_ocfl::storage::StorageError| SealError::Unavailable(e.to_string());
+    if backend.head(&key).await.map_err(unavailable)?.size > MAX_SEGMENT_BYTES as u64 {
+        return Err(SealError::Invalid(format!(
+            "{}: segment too large",
+            file.path
+        )));
+    }
+    let stored = read_verified(backend, &key, READ_CHUNK)
+        .await
+        .map_err(unavailable)?;
+    let digest = DigestAlgorithm::ENGINE.digest_hex(&stored);
+    if !DigestAlgorithm::ENGINE.matches(&digest, &file.digest) {
+        return Err(SealError::Invalid(format!(
+            "{}: digest mismatch",
+            file.path
+        )));
+    }
+    let plain = transform
+        .open(&file.path, stored)
+        .map_err(|e| SealError::Invalid(format!("{e:?}")))?;
+    parse_segment(&file.path, &plain)
 }
 
 /// When the last seal of the journal object in `backend` was committed: the RFC 3339

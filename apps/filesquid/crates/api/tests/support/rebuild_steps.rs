@@ -154,9 +154,26 @@ async fn library_root() -> (Arc<MemoryBackend>, Arc<Leases>) {
     (backend, Arc::new(leases))
 }
 
-/// Seal the library's entries of `monitor`'s store into its journal object.
+/// The installation's journal object, in a storage root of its own.
+async fn installation_object() -> Arc<dyn JournalObject> {
+    let (backend, leases) = library_root().await;
+    let transform: Arc<dyn ProfileTransform> = Arc::new(OwnerReadable);
+    let root = JournalRoot {
+        backend,
+        reservations: leases,
+        staging: Arc::new(MemoryBackend::new()),
+        transform,
+        holder: "seal".into(),
+    };
+    let installation = InstallationId::parse(INSTALLATION).expect("installation");
+    Arc::new(OcflJournalObject::new(root, INSTALLATION, &installation))
+}
+
+/// Seal the library's entries of `monitor`'s store into its journal object, and every other
+/// entry into the installation's.
 async fn seal(w: &RebuildWorld, monitor: &Monitor) {
-    let seals = SealService::new(monitor.clone(), w.journal_object(), SealConfig::default());
+    let installation = installation_object().await;
+    let seals = SealService::new(monitor.clone(), installation, SealConfig::default());
     seals.open_library(LIBRARY, w.journal_object());
     let report = seals.seal_all().await;
     assert!(report.all_sealed(), "{report:?}");

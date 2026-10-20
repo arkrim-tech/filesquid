@@ -20,7 +20,7 @@ use filesquid_api::monitor::{Monitor, MonitorConfig, StaticHostChecks};
 use filesquid_api::EventBus;
 use filesquid_core::{InstallationId, LibraryId, OperationId, OperationKind};
 use filesquid_ocfl::change::{ChangeModel, StagingArea};
-use filesquid_ocfl::storage::MemoryBackend;
+use filesquid_ocfl::storage::{MemoryBackend, StorageBackend};
 use filesquid_ocfl::write::{LeaseConfig, LeaseStore, SystemClock};
 use std::sync::Arc;
 
@@ -371,4 +371,173 @@ async fn a_committed_operations_entries_come_back_without_any_seal() {
     );
     assert_eq!(journal.restored, 2);
     assert_eq!(journal.last_sealed_at, None, "never sealed");
+}
+
+/// Overwrite the one stored file whose key ends with `suffix` with bytes that match no
+/// digest or format.
+async fn corrupt(backend: &MemoryBackend, suffix: &str) {
+    let listing = backend.list("", None, 1000).await.expect("list");
+    let keys: Vec<_> = listing
+        .keys
+        .iter()
+        .filter(|k| k.as_str().ends_with(suffix))
+        .collect();
+    assert_eq!(
+        keys.len(),
+        1,
+        "one file ends with {suffix}: {:?}",
+        listing.keys
+    );
+    backend
+        .put(keys[0], b"not what was stored")
+        .await
+        .expect("overwrite");
+}
+
+/// Seal `monitor`'s library entries into `library`'s journal object.
+async fn seal(host: &Host, library: &Library) {
+    host.monitor.journal().flush();
+    let seals = SealService::new(
+        host.monitor.clone(),
+        Arc::new(Unsealed),
+        SealConfig::default(),
+    );
+    seals.open_library(LIB, library.journal_object());
+    let report = seals.seal_all().await;
+    assert!(
+        report.outcome(&format!("library:{LIB}")).is_some(),
+        "{report:?}"
+    );
+}
+
+/// An installation journal object that is never written: these tests seal libraries only.
+struct Unsealed;
+
+impl JournalObject for Unsealed {
+    fn object_id(&self) -> &str {
+        "urn:filesquid:journal:installation"
+    }
+
+    fn last_sealed(
+        &self,
+    ) -> filesquid_api::journal::seal::SealFuture<
+        '_,
+        Result<i64, filesquid_api::journal::seal::SealError>,
+    > {
+        Box::pin(async { Ok(i64::MAX - 1) })
+    }
+
+    fn commit_segment<'a>(
+        &'a self,
+        _segment: &'a filesquid_api::journal::seal::Segment,
+    ) -> filesquid_api::journal::seal::SealFuture<
+        'a,
+        Result<String, filesquid_api::journal::seal::SealError>,
+    > {
+        Box::pin(async { Ok("v1".to_string()) })
+    }
+}
+
+async fn rebuild_into(
+    fresh: &Arc<MemoryJournal>,
+    library: &Library,
+) -> filesquid_api::local_library::JournalRebuild {
+    Rebuilder::new(Some(fresh.clone()))
+        .service
+        .rebuild("owner", &library_id(), library.backend.as_ref())
+        .await
+        .expect("rebuild")
+        .journal
+        .expect("journal")
+}
+
+#[tokio::test]
+async fn one_unreadable_segment_costs_only_its_own_entries() {
+    let host = Host::new();
+    let library = Library::new().await;
+    let first = host.record(&[library_event("library.file.hide")]);
+    seal(&host, &library).await;
+    let second = host.record(&[library_event("library.file.unhide")]);
+    seal(&host, &library).await;
+    host.monitor.shutdown();
+    corrupt(library.backend.as_ref(), &format!("{:020}.jsonl", first[0])).await;
+    let fresh = Arc::new(MemoryJournal::new("desktop"));
+    let journal = rebuild_into(&fresh, &library).await;
+    let restored = all_ids(&fresh);
+    assert_eq!(journal.unreadable, 1, "{journal:?}");
+    assert!(
+        restored.contains(&second[0]),
+        "the readable segment is kept"
+    );
+    assert!(!restored.contains(&first[0]));
+}
+
+#[tokio::test]
+async fn one_unreadable_version_file_costs_only_its_own_entries() {
+    let host = Host::new();
+    let library = Library::new().await;
+    let first = host.store.allocate_ids(1).expect("ids");
+    library.commit("op-1", Vec::new(), first.clone()).await;
+    let second = host.store.allocate_ids(1).expect("ids");
+    library.commit("op-2", Vec::new(), second.clone()).await;
+    host.monitor.shutdown();
+    corrupt(
+        library.backend.as_ref(),
+        "snapshot/v1/content/provenance/v1.journal.jsonl",
+    )
+    .await;
+    let fresh = Arc::new(MemoryJournal::new("desktop"));
+    let journal = rebuild_into(&fresh, &library).await;
+    assert_eq!(journal.unreadable, 1, "{journal:?}");
+    assert_eq!(
+        all_ids(&fresh),
+        second,
+        "the later version's entries are kept"
+    );
+}
+
+#[tokio::test]
+async fn an_entry_that_differs_in_any_field_is_conflicting() {
+    let host = Host::new();
+    let library = Library::new().await;
+    let reserved = host.store.allocate_ids(2).expect("ids");
+    let mut own = library_event("library.collection.create");
+    own.id = Some(reserved[1]);
+    let committed = library.commit("op-1", vec![own], reserved.clone()).await;
+    host.monitor.shutdown();
+    let fresh = Arc::new(MemoryJournal::new("desktop"));
+    let mut lookalike = committed
+        .iter()
+        .find(|e| e.id == Some(reserved[1]))
+        .expect("own entry")
+        .clone();
+    lookalike.target_ids = vec!["another-library".into()];
+    fresh.append(&[lookalike]).expect("lookalike");
+    let journal = rebuild_into(&fresh, &library).await;
+    assert_eq!(
+        (journal.restored, journal.conflicting),
+        (1, 1),
+        "{journal:?}"
+    );
+}
+
+#[tokio::test]
+async fn an_unopenable_journal_object_is_counted_once() {
+    let host = Host::new();
+    let library = Library::new().await;
+    host.record(&[library_event("library.file.hide")]);
+    seal(&host, &library).await;
+    host.monitor.shutdown();
+    library
+        .backend
+        .put(
+            &filesquid_ocfl::storage::StorageKey::new("journal/inventory.json").expect("key"),
+            b"{",
+        )
+        .await
+        .expect("overwrite");
+    let fresh = Arc::new(MemoryJournal::new("desktop"));
+    let journal = rebuild_into(&fresh, &library).await;
+    assert_eq!(journal.unreadable, 1, "{journal:?}");
+    assert_eq!(journal.last_sealed_at, None);
 }

@@ -248,16 +248,30 @@ pub async fn read_object_journal<B: StorageBackend>(
         if after.is_some_and(|seen| version <= seen) {
             continue;
         }
-        let path = format!("{HISTORY_PREFIX}{version}{JOURNAL_SUFFIX}");
-        let state = object.state(version)?;
-        let Some(file) = state.get(&path) else {
-            continue;
-        };
-        let stored = read_entity(object, backend, file).await?;
-        let plain = transform.open(&path, stored)?;
-        lines.extend(journal_lines(&path, &plain)?);
+        lines.extend(read_version_journal(backend, object, transform, version).await?);
     }
     Ok(lines)
+}
+
+/// The journal entry lines `version` of `object` wrote into its
+/// `provenance/<version>.journal.jsonl`; empty when that version has none. Storage I/O.
+///
+/// # Errors
+/// As [`read_commit_journal`].
+pub async fn read_version_journal<B: StorageBackend>(
+    backend: &B,
+    object: &Object<'_, B>,
+    transform: &dyn ProfileTransform,
+    version: &VersionNum,
+) -> Result<Vec<String>, CanonicalError> {
+    let path = format!("{HISTORY_PREFIX}{version}{JOURNAL_SUFFIX}");
+    let state = object.state(version)?;
+    let Some(file) = state.get(&path) else {
+        return Ok(Vec::new());
+    };
+    let stored = read_entity(object, backend, file).await?;
+    let plain = transform.open(&path, stored)?;
+    journal_lines(&path, &plain)
 }
 
 /// Refuse a journal file that a replay could not read back: more than

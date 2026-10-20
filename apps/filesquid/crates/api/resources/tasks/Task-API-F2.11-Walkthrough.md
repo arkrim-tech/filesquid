@@ -17,7 +17,7 @@ Also PRD [F-061](../../../../../../resources/prd.md#f-061-activity-journal-and-l
 ## Not delivered in this task, and why
 
 - **Host wiring** is [DE-0.11](../../../desktop/resources/plan.md): running the seals hourly, at app close and at library close as the desktop does, keeping the installation's object at `<data dir>/journal.ocfl/` and catching up a missed seal at start.
-- **The rebuild** is [CL-1.9](../plan.md): it reads `read_commit_journal` and `read_sealed_entries` into a fresh store, de-duplicated by journal ID.
+- **The rebuild** is [CL-1.9](../plan.md): it reads the per-commit journal files and the sealed segments into the journal store the host injects, de-duplicated by journal ID.
 - **File routes** (`/api/v1/files/...`, API-F1.3) still commit without `CommitRecorder`, so their versions carry no per-commit journal file yet and API-S-032's "every committed operation" is not met for them: their entries reach the durable journal only through the seals, so losing the database before the next seal loses them. A per-commit file needs the operation ID those commits do not have yet; their operation IDs are [API-F2.12](../plan.md) (after API-F2.13's command envelopes), and by the owner's 2026-10-20 "follow-ups" decision this gap is folded into [API-F2.12](../plan.md), whose commits also go through `CommitRecorder`.
 - **Library classification**: an entry belongs to a library when it names the library ID among its targets; an entry that names only an object of the library (some `ocfl.commit` entries) is sealed with the installation's events, and is in its commit's version as well.
 - **Seal commits carry no PROV-O record**: the journal object is the journal itself; its versions name the seal run in their message and are journaled as `ocfl.commit`.

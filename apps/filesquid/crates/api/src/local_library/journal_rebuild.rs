@@ -10,17 +10,17 @@
 //! nothing; an ID the store already holds for another entry is reported as `conflicting`
 //! and the held entry is kept, never overwritten.
 //!
-//! A segment, object or line that cannot be read or parsed (or a line with no ID) is
-//! counted as `unreadable` and the rebuild goes on; a storage or store outage stops it as
+//! A segment, object, version file or line that cannot be read or parsed (or a line with no
+//! ID) is counted as `unreadable` and the rebuild goes on with the rest; a storage or store outage stops it as
 //! `unavailable`. What is lost with the store is bounded: events after the last seal that
 //! changed nothing (one sealing interval while seals succeed).
 
 use super::error::LocalLibraryError;
 use super::LOG_TARGET;
-use crate::canonical::{read_object_journal, CanonicalError, ProfileTransform};
-use crate::journal::seal::{last_sealed_at, read_sealed_entries, SealError, JOURNAL_OBJECT_ROOT};
+use crate::canonical::{read_version_journal, CanonicalError, ProfileTransform};
+use crate::journal::seal::{last_sealed_at, visit_sealed_segments, SealError, JOURNAL_OBJECT_ROOT};
 use crate::journal::{JournalEntry, JournalError, JournalStore};
-use filesquid_ocfl::read::StorageRoot;
+use filesquid_ocfl::read::{Object, StorageRoot};
 use filesquid_ocfl::storage::StorageBackend;
 use filesquid_ocfl::ReadError;
 use serde::{Deserialize, Serialize};
@@ -113,34 +113,47 @@ pub(super) async fn rebuild_journal<B: StorageBackend>(
     let mut found = Found::default();
     collect_sealed(backend, transform, &mut found).await?;
     collect_committed(backend, transform, &mut found).await?;
-    let last_sealed = read_last_seal(backend, &mut found).await?;
+    let last_sealed = read_last_seal(backend).await?;
     let mut report = append_entries(restore.store.clone(), found.entries).await?;
     report.unreadable = found.unreadable;
     report.last_sealed_at = last_sealed;
     Ok(report)
 }
 
-/// Keep every entry of the library's sealed segments. Storage I/O.
+/// Keep every entry of the library's readable sealed segments, segment by segment, so the
+/// cap stops the read as soon as it is passed and one bad segment costs only itself.
+/// Storage I/O.
 async fn collect_sealed<B: StorageBackend>(
     backend: &B,
     transform: &dyn ProfileTransform,
     found: &mut Found,
 ) -> Result<(), LocalLibraryError> {
-    match read_sealed_entries(backend, transform).await {
-        Ok(entries) => entries.into_iter().try_for_each(|e| found.add(e)),
-        Err(err) => seal_unreadable(&err, found),
+    let mut stopped = None;
+    let mut keep = |segment: Result<Vec<JournalEntry>, SealError>| {
+        let kept = match segment {
+            Ok(entries) => entries.into_iter().try_for_each(|e| found.add(e)),
+            Err(err) => seal_unreadable(&err, found),
+        };
+        let go_on = kept.is_ok();
+        stopped = kept.err();
+        go_on
+    };
+    let visited = visit_sealed_segments(backend, transform, &mut keep).await;
+    if let Some(err) = stopped {
+        return Err(err);
     }
+    visited.or_else(|err| seal_unreadable(&err, found))
 }
 
-/// When the last seal ran, or `None` (counted unreadable) when the object cannot say.
-/// Storage I/O.
+/// When the last seal ran, or `None` when the object cannot say: an object that cannot be
+/// opened was already counted unreadable by [`collect_sealed`]. Storage I/O.
 async fn read_last_seal<B: StorageBackend>(
     backend: &B,
-    found: &mut Found,
 ) -> Result<Option<String>, LocalLibraryError> {
     match last_sealed_at(backend).await {
         Ok(at) => Ok(at),
-        Err(err) => seal_unreadable(&err, found).map(|()| None),
+        Err(SealError::Unavailable(_)) => Err(LocalLibraryError::Unavailable),
+        Err(SealError::Invalid(_)) => Ok(None),
     }
 }
 
@@ -166,7 +179,21 @@ async fn collect_committed<B: StorageBackend>(
                 continue;
             }
         };
-        match read_object_journal(backend, &object, transform, None).await {
+        collect_versions(backend, &object, transform, found).await?;
+    }
+    Ok(())
+}
+
+/// Keep the per-commit entries of each version of `object`; a version whose file cannot be
+/// read is counted and the others are kept. Storage I/O.
+async fn collect_versions<B: StorageBackend>(
+    backend: &B,
+    object: &Object<'_, B>,
+    transform: &dyn ProfileTransform,
+    found: &mut Found,
+) -> Result<(), LocalLibraryError> {
+    for version in object.inventory().versions.keys() {
+        match read_version_journal(backend, object, transform, version).await {
             Ok(lines) => found.add_lines(&lines)?,
             Err(err) => file_unreadable(&err, found)?,
         }
@@ -262,9 +289,14 @@ fn tally_held(
     Ok(())
 }
 
-/// Whether two entries under one ID record the same event. Pure.
-fn same_entry(a: &JournalEntry, b: &JournalEntry) -> bool {
-    a.operation == b.operation && a.outcome == b.outcome && a.time_ms == b.time_ms
+/// Whether `restored` is the entry the store `held` under its ID: equal in every field once
+/// shaped as the store stores it (redacted, with the store's host when it names none). Pure.
+fn same_entry(held: &JournalEntry, restored: &JournalEntry) -> bool {
+    let mut stored = restored.clone().redacted();
+    if stored.host.is_empty() {
+        stored.host = held.host.clone();
+    }
+    *held == stored
 }
 
 /// A journal-store failure as `unavailable`, logged on stdout.
