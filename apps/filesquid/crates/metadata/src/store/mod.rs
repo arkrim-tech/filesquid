@@ -17,6 +17,7 @@ use std::error::Error;
 
 use thiserror::Error;
 
+use crate::file_record::RecordError;
 use crate::file_ref::FileRef;
 use crate::record::Record;
 
@@ -56,6 +57,11 @@ pub enum StoreError {
     /// create it with.
     #[error("no OCFL object here yet; an object identifier is needed to create one")]
     MissingObjectId,
+    /// The file's record is missing, invalid, or the save would change what
+    /// is immutable (an import entry or the original file name); nothing
+    /// was published.
+    #[error("file record refused: {0}")]
+    Record(#[from] RecordError),
     /// The backend failed; the source says why.
     #[error("metadata store backend failed")]
     Backend(#[source] Box<dyn Error + Send + Sync>),

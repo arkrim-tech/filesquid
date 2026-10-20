@@ -148,6 +148,12 @@ impl<B: StorageBackend> Rig<B> {
         panic!("more than {MAX_PAGES} pages under {prefix}");
     }
 
+    /// Whether `object_id` has any key in the storage root.
+    pub fn storage_has_object(&self, object_id: &str) -> bool {
+        let prefix = format!("{}/", object_root(object_id));
+        !self.snapshot(&prefix).is_empty()
+    }
+
     /// Delete `rel` inside the object root of `object_id`.
     pub fn delete(&self, object_id: &str, rel: &str) {
         let key = StorageKey::new(&format!("{}/{rel}", object_root(object_id))).expect("key");

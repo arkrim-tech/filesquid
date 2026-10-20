@@ -29,6 +29,10 @@ pub struct FileRef {
     version: Option<String>,
     /// Relative, `/`-separated path of the file inside the object.
     logical_path: String,
+    /// Where the `ocfl` store keeps this file's metadata record, when the
+    /// caller names it (FileSquid: `<file-uuid>.metadata.md` beside the
+    /// stored original). `None` keeps the record at `metadata.md`.
+    record_path: Option<String>,
 }
 
 /// Return whether `path` is a relative `/`-separated path without escapes.
@@ -56,7 +60,26 @@ impl FileRef {
             object_id: object_id.to_string(),
             version: None,
             logical_path: logical_path.to_string(),
+            record_path: None,
         })
+    }
+
+    /// Name the logical path of this file's own metadata record, for the
+    /// `ocfl` store: FileSquid keeps one record per file,
+    /// `<file-uuid>.metadata.md`, in the directory of the stored original
+    /// (MD-S-008). A referenced import has no stored original, and passes
+    /// the record's own path to [`new`](Self::new) as well.
+    ///
+    /// # Errors
+    ///
+    /// [`FileRefError::InvalidLogicalPath`] when the path is not a valid
+    /// logical path.
+    pub fn with_record_path(mut self, record_path: &str) -> Result<Self, FileRefError> {
+        if !is_valid_logical_path(record_path) {
+            return Err(FileRefError::InvalidLogicalPath);
+        }
+        self.record_path = Some(record_path.to_string());
+        Ok(self)
     }
 
     /// Pin the object version this reference names.
@@ -79,5 +102,11 @@ impl FileRef {
     /// Logical path of the file inside the object.
     pub fn logical_path(&self) -> &str {
         &self.logical_path
+    }
+
+    /// Logical path of the file's own metadata record, when the caller named
+    /// one.
+    pub fn record_path(&self) -> Option<&str> {
+        self.record_path.as_deref()
     }
 }
