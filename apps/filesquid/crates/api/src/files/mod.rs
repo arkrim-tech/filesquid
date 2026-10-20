@@ -18,11 +18,17 @@
 //!   reads. A refusal, or a failure after the answer started, is journaled once as
 //!   [`DOWNLOAD_OPERATION`].
 //! - **Writes** (action `files.write`): upload, move or rename, remove and restore. Each one
-//!   calls the IO-1.2 view API, which publishes exactly one version through the
-//!   `filesquid-ocfl` change model, or is refused without publishing (nothing would change,
-//!   another change is staged, the head is incomplete); there is no second write path
-//!   (API-S-008). Creating a folder writes nothing: OCFL stores no empty folder, so a new
+//!   publishes exactly one version through the `filesquid-ocfl` change model, or is refused
+//!   without publishing (nothing would change, another change is staged, the head is
+//!   incomplete); there is no second write path (API-S-008). An upload creates the file's own
+//!   object `files/<file-id>` with its original and metadata record, or a new version of it
+//!   (Task API-F1.4, API-S-026). Creating a folder writes nothing: OCFL stores no empty folder, so a new
 //!   folder stays pending in the client until a file is added beneath it.
+//! - **Metadata properties** (Task API-F1.4, API-S-034; [`statements`]): reads of a file's
+//!   statements, of the add order of a bare term name, of the library's namespace registry and
+//!   of the read-only import-record projection take `files.read`; setting or removing a
+//!   statement and registering a namespace take `files.write`, each one version through the
+//!   metadata module's `ocfl` store.
 //! - **Version history** (Task API-F2.5, API-S-014): file history entries carry each
 //!   version's size and label, object versions carry labels, a restore is one `revert` or
 //!   `reinstate` version that may carry a label, a label can be set or cleared later as

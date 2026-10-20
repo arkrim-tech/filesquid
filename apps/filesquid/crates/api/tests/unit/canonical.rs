@@ -559,7 +559,16 @@ fn an_original_name_or_media_type_that_is_not_valid_is_refused() {
         let refused = commit_original(&rig, &file, bad, "image/jpeg", "op-10");
         assert!(matches!(refused, Err(CanonicalError::Encode(_))), "{bad:?}");
     }
-    for bad in ["", "image", "image/", "/jpeg", "image/jp eg"] {
+    for bad in [
+        "",
+        "image",
+        "image/",
+        "/jpeg",
+        "image/jp eg",
+        "+image/jpeg",
+        "image/.jpeg",
+        "image/jpeg; q=1",
+    ] {
         let refused = commit_original(&rig, &file, "a.jpg", bad, "op-11");
         assert!(matches!(refused, Err(CanonicalError::Encode(_))), "{bad:?}");
     }
@@ -591,6 +600,40 @@ fn a_record_that_does_not_cite_the_bytes_commits_nothing() {
         ready(read_file_original(&rig.root, &OwnerReadable, &file)).unwrap(),
         None
     );
+}
+
+#[test]
+fn the_head_record_committed_again_must_cite_the_bytes() {
+    let rig = Rig::new();
+    let file = FileId::new(FILE).unwrap();
+    commit_original(&rig, &file, "a.jpg", "image/jpeg", "op-9").unwrap();
+    let head = read_original(&rig, &file).record;
+    let refused = commit_record(&rig, &file, &head, Some(&head), b"other bytes", "op-10");
+    assert!(matches!(refused, Err(CanonicalError::Encode(_))));
+    assert_eq!(head_paths(&rig, &file).len(), 2);
+    assert_eq!(read_original(&rig, &file).record, head);
+}
+
+#[test]
+fn a_referenced_import_entry_cannot_describe_a_stored_original() {
+    use filesquid_metadata::import::{ByteStorage, ImportEntry};
+    let rig = Rig::new();
+    let file = FileId::new(FILE).unwrap();
+    let record = first_record(&file, "a.jpg", "image/jpeg", JPEG).unwrap();
+    let mut entry: ImportEntry = record.imports()[0].clone();
+    entry.acquisition.storage = ByteStorage::Referenced;
+    entry.acquisition.logical_path = None;
+    let referenced = FileRecord::new(
+        record.original_name().clone(),
+        NameForm::Nfc,
+        record.extension().map(str::to_string),
+        None,
+        record.media_type().map(str::to_string),
+        entry,
+    )
+    .unwrap();
+    let refused = commit_record(&rig, &file, &referenced, None, JPEG, "op-9");
+    assert!(matches!(refused, Err(CanonicalError::Encode(_))));
 }
 
 #[test]

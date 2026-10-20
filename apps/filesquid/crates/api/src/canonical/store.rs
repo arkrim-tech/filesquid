@@ -6,8 +6,8 @@ use super::entity::{decode, encode, LibraryHead, SnapshotEntity, SnapshotFile, V
 use super::layout::{file_object_root, SnapshotKey, SNAPSHOT_ROOT};
 use super::message::{parse_operation_message, OperationRecord};
 use super::original::{
-    check_new_original, companion_path, decode_record, encode_record, original_path_of,
-    FileOriginal,
+    check_new_original, check_same_original, companion_path, decode_record, encode_record,
+    original_path_of, FileOriginal,
 };
 use super::{CanonicalError, ProfileTransform};
 use filesquid_core::{Collection, FileId, Folder};
@@ -320,8 +320,9 @@ where
     S: StorageBackend,
 {
     let path = original_path_of(file_id, record)?;
-    if previous != Some(record) {
-        check_new_original(file_id, record, previous, &path, bytes)?;
+    match previous == Some(record) {
+        true => check_same_original(record, bytes)?,
+        false => check_new_original(file_id, record, previous, &path, bytes)?,
     }
     let companion = companion_path(file_id)?;
     model.reset().await?;

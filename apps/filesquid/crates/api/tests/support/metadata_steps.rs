@@ -7,6 +7,8 @@ use crate::files_fixture::{encode, upload_uri, Answer, FilesRig, LIBRARY};
 use crate::MonitorWorld;
 use axum::http::Method;
 use cucumber::{given, then, when};
+use filesquid_metadata::fact::Fact;
+use filesquid_metadata::file_record::FileRecord;
 use filesquid_ocfl::read::Object;
 use serde_json::{json, Value};
 
@@ -109,20 +111,10 @@ async fn object_holds(w: &mut MonitorWorld, version: String) {
     );
 }
 
-#[then(
-    expr = "the record should name {string} with its upload facts and every other fact unavailable"
-)]
-async fn record_names(w: &mut MonitorWorld, name: String) {
-    let id = w.metadata.file_id();
-    let rig = w.metadata.rig().await;
-    let facts = rig
-        .get(&format!(
-            "/api/v1/files/facts?library_id={LIBRARY}&file_id={id}"
-        ))
-        .await
-        .json();
-    assert_eq!(facts["facts"]["original_name"], name);
-    assert_eq!(facts["facts"]["imports"][0]["method"], "api_upload");
+/// The record at the head of the uploaded file's object.
+async fn head_record(w: &mut MetadataWorld) -> FileRecord {
+    let id = w.file_id();
+    let rig = w.rig().await;
     let object = Object::open(rig.root.as_ref(), &format!("files/{id}"))
         .await
         .expect("object");
@@ -131,12 +123,74 @@ async fn record_names(w: &mut MonitorWorld, name: String) {
         .await
         .expect("record")
         .size;
-    let text = filesquid_ocfl::view::read_range(&object, object.head(), &path, 0, size)
+    let bytes = filesquid_ocfl::view::read_range(&object, object.head(), &path, 0, size)
         .await
         .expect("bytes");
-    assert!(String::from_utf8(text)
-        .expect("utf-8")
-        .contains("not_provided_by_upload"));
+    FileRecord::from_markdown(&String::from_utf8(bytes).expect("utf-8")).expect("record")
+}
+
+/// True when `fact` is listed as unavailable.
+fn unavailable<T>(fact: &Fact<T>) -> bool {
+    matches!(fact, Fact::Unavailable(_))
+}
+
+#[then(
+    expr = "the record should name {string} with the client's facts and the receiving host's system, architecture and FileSquid version"
+)]
+async fn record_names(w: &mut MonitorWorld, name: String) {
+    let record = head_record(&mut w.metadata).await;
+    assert_eq!(record.display_name(), name);
+    let entry = &record.imports()[0];
+    assert_eq!(entry.source.verified_size, 10);
+    assert!(matches!(entry.source.reported_size, Fact::Value(10)));
+    assert!(matches!(entry.host.os_name, Fact::Value(_)));
+    assert!(matches!(entry.host.architecture, Fact::Value(_)));
+    assert!(!entry.host.filesquid_version.is_empty());
+}
+
+#[then(
+    expr = "every source, volume and attribute fact the upload did not supply should be listed as unavailable"
+)]
+async fn others_unavailable(w: &mut MonitorWorld) {
+    let record = head_record(&mut w.metadata).await;
+    let entry = &record.imports()[0];
+    let (source, volume, host) = (&entry.source, &entry.volume, &entry.host);
+    let listed = [
+        unavailable(&source.absolute_path),
+        unavailable(&source.import_root),
+        unavailable(&source.relative_path),
+        unavailable(&source.birth_time),
+        unavailable(&source.modified_time),
+        unavailable(&source.status_changed_time),
+        unavailable(&source.accessed_time),
+        unavailable(&source.date_added_time),
+        unavailable(&source.owner_name),
+        unavailable(&source.owner_id),
+        unavailable(&source.group_name),
+        unavailable(&source.group_id),
+        unavailable(&source.posix_mode),
+        unavailable(&source.acl),
+        unavailable(&source.flags),
+        unavailable(&source.link),
+        unavailable(&volume.name),
+        unavailable(&volume.uuid),
+        unavailable(&volume.filesystem_type),
+        unavailable(&volume.mount_point),
+        unavailable(&volume.kind),
+        unavailable(&entry.attributes),
+        unavailable(&host.os_version),
+        unavailable(&host.os_build),
+        unavailable(&host.host_name),
+        unavailable(&host.account),
+        unavailable(&entry.acquisition.job_id),
+    ];
+    assert!(listed.iter().all(|listed| *listed), "{listed:?}");
+}
+
+#[then(expr = "no file object should have been created")]
+async fn no_object(w: &mut MonitorWorld) {
+    let rig = w.metadata.rig().await;
+    assert!(!rig.dir.join("root").join("files").exists());
 }
 
 #[when(expr = "the owner sets {string} to {string}")]

@@ -133,6 +133,41 @@ async fn a_later_upload_of_the_same_file_is_a_new_version_with_one_more_import_e
 }
 
 #[tokio::test]
+async fn a_later_upload_with_another_media_type_is_answered_with_it() {
+    let rig = FilesRig::new().await;
+    let first = upload(&rig, "notes", b"# a", "media_type=text%2Fmarkdown").await;
+    let id = first["file_id"].as_str().expect("file id");
+    let rest = format!("file_id={id}&media_type=text%2Fplain");
+    let again = upload(&rig, "notes", b"plain", &rest).await;
+    let path = encode(&format!("original/{id}"));
+    let content = rig
+        .get(&format!(
+            "/api/v1/files/content?{}",
+            object_query(&again, &format!("path={path}"))
+        ))
+        .await;
+    assert_eq!(content.body, b"plain");
+    assert_eq!(content.header("content-type"), "text/plain");
+}
+
+#[tokio::test]
+async fn details_name_the_original_by_its_record() {
+    let rig = FilesRig::new().await;
+    let upload = upload(&rig, "Holiday.JPG", b"jpeg", "media_type=image%2Fjpeg").await;
+    let id = upload["file_id"].as_str().expect("file id");
+    let path = encode(&format!("original/{id}.JPG"));
+    let details = rig
+        .get(&format!(
+            "/api/v1/files/details?{}",
+            object_query(&upload, &format!("path={path}"))
+        ))
+        .await
+        .json();
+    assert_eq!(details["display_name"], "Holiday.JPG");
+    assert_eq!(details["media_type"], "image/jpeg");
+}
+
+#[tokio::test]
 async fn content_download_and_listing_take_the_name_and_media_type_from_the_record() {
     let rig = FilesRig::new().await;
     let upload = upload(
@@ -279,10 +314,17 @@ async fn unknown_dcterms_names_and_unregistered_prefixes_are_refused_without_a_v
         "dcterms:accrualPeriodicity",
         "rico:title",
         "title",
+        "schema:foo:bar",
+        "exif:9lives",
     ] {
         let answer = set(&rig, &upload, curie, "x").await;
         assert_error(&answer, 400, "invalid_request");
     }
+    assert_eq!(
+        statements(&rig, &upload, "").await["version"],
+        "v1",
+        "no version"
+    );
     let unregistered = set(&rig, &upload, "rico:title", "x").await;
     assert!(unregistered.json()["message"]
         .as_str()

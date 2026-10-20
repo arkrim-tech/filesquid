@@ -20,6 +20,7 @@ use super::layout::{segment, ORIGINAL_DIR};
 use super::CanonicalError;
 use filesquid_core::FileId;
 use filesquid_metadata::file_record::FileRecord;
+use filesquid_metadata::import::ByteStorage;
 use filesquid_ocfl::DigestAlgorithm;
 
 /// Suffix of a metadata record's file name, as for the metadata module's sidecars (ADR 027).
@@ -109,8 +110,8 @@ pub fn decode_record(path: &str, bytes: &[u8]) -> Result<FileRecord, CanonicalEr
 
 /// Check that `record` may be committed over `previous` (the record at the head, if any)
 /// beside `bytes` stored at `path` in the object of `file_id`: it extends the previous record
-/// (MD-S-013), adds at least one import entry, and every new entry cites that object, that
-/// path, the SHA-256 of `bytes` and their length.
+/// (MD-S-013), adds at least one import entry, and every new entry is a copied import that
+/// cites that object, that path, the SHA-256 of `bytes` and their length.
 ///
 /// # Errors
 /// [`CanonicalError::Encode`] naming the first rule the record breaks.
@@ -139,6 +140,12 @@ pub fn check_new_original(
     record
         .check_binding(first_new, &object_id, path, &companion)
         .map_err(|e| refuse(e.to_string()))?;
+    let copied = record.imports()[first_new..]
+        .iter()
+        .all(|entry| entry.acquisition.storage == ByteStorage::Copied);
+    if !copied {
+        return Err(refuse("an original's import entry stores its bytes".into()));
+    }
     let digest = DigestAlgorithm::Sha256.digest_hex(bytes);
     let cites_bytes = record.imports()[first_new..].iter().all(|entry| {
         entry.acquisition.sha256 == digest && entry.acquisition.size == bytes.len() as u64
@@ -147,6 +154,24 @@ pub fn check_new_original(
         true => Ok(()),
         false => Err(refuse(
             "an import entry cites other content than the original".into(),
+        )),
+    }
+}
+
+/// Check that `bytes` are the content the last import entry of an unchanged `record` cites,
+/// so committing the head's record again can never store other bytes under it.
+///
+/// # Errors
+/// [`CanonicalError::Encode`] when the bytes are not the cited content.
+pub fn check_same_original(record: &FileRecord, bytes: &[u8]) -> Result<(), CanonicalError> {
+    let digest = DigestAlgorithm::Sha256.digest_hex(bytes);
+    let cited = record.imports().last().is_some_and(|entry| {
+        entry.acquisition.sha256 == digest && entry.acquisition.size == bytes.len() as u64
+    });
+    match cited {
+        true => Ok(()),
+        false => Err(CanonicalError::Encode(
+            "the bytes are not the content the record cites".into(),
         )),
     }
 }

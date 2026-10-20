@@ -16,8 +16,8 @@ Holistic UI check:
 
 | SRS ID and title | Covered by |
 |---|---|
-| [API-S-034](../srs.md) Metadata property routes | `integration_metadata` (11 tests), `metadata_property_routes_API-S-034.feature` (8 scenarios), `unit_contract`, `unit_auth` |
-| [API-S-026](../srs.md) The FileSquid OCFL application profile: one record codec, uploads create `files/<file-id>` | `unit_canonical` (30 tests, 10 on originals), `an_upload_creates_the_file_object_with_its_original_and_record_in_one_version`, `a_later_upload_of_the_same_file_is_a_new_version_with_one_more_import_entry` |
+| [API-S-034](../srs.md) Metadata property routes | `integration_metadata` (13 tests), `metadata_property_routes_API-S-034.feature` (8 scenarios), `unit_contract`, `unit_auth` |
+| [API-S-026](../srs.md) The FileSquid OCFL application profile: one record codec, uploads create `files/<file-id>` | `unit_canonical` (32 tests, 12 on originals), `an_upload_creates_the_file_object_with_its_original_and_record_in_one_version`, `a_later_upload_of_the_same_file_is_a_new_version_with_one_more_import_entry` |
 | [API-S-027](../srs.md) Display and download names, the facts projection | `content_download_and_listing_take_the_name_and_media_type_from_the_record`, `the_facts_projection_has_no_absolute_path_host_or_account` |
 | [API-S-018](../srs.md) Content handles and ranged reads (the record's media type) | `content_download_and_listing_take_the_name_and_media_type_from_the_record`, the content scenario |
 | [MD-S-002](../../../metadata/resources/srs.md) The `/terms/` register and Schema.org overflow | `unknown_dcterms_names_and_unregistered_prefixes_are_refused_without_a_version`, `a_term_name_is_offered_dcterms_first_then_schema_then_registered_namespaces` |
@@ -55,51 +55,57 @@ Holistic UI check:
 
 ```text
 $ cargo test -p filesquid-api --locked --test integration_metadata --test unit_canonical --test features
-running 11 tests
+     Running tests/integration/metadata.rs (/home/user/.cargo-target-shared/debug/deps/integration_metadata-4b057c93d4884fc2)
+running 13 tests
 test a_name_that_is_not_ascii_needs_its_normalisation_form ... ok
 test a_file_the_desktop_committed_is_edited_through_the_same_record ... ok
+test a_later_upload_with_another_media_type_is_answered_with_it ... ok
 test a_later_upload_of_the_same_file_is_a_new_version_with_one_more_import_entry ... ok
-test an_upload_creates_the_file_object_with_its_original_and_record_in_one_version ... ok
 test an_upload_whose_declared_size_differs_fails_verification_and_commits_nothing ... ok
+test an_upload_creates_the_file_object_with_its_original_and_record_in_one_version ... ok
+test content_download_and_listing_take_the_name_and_media_type_from_the_record ... ok
+test details_name_the_original_by_its_record ... ok
 test a_term_name_is_offered_dcterms_first_then_schema_then_registered_namespaces ... ok
 test a_registered_namespace_accepts_its_terms_and_is_kept_in_the_snapshot_object ... ok
 test the_facts_projection_has_no_absolute_path_host_or_account ... ok
-test content_download_and_listing_take_the_name_and_media_type_from_the_record ... ok
 test unknown_dcterms_names_and_unregistered_prefixes_are_refused_without_a_version ... ok
 test statements_are_set_read_and_removed_one_version_each ... ok
-test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
-running 30 tests
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+     Running tests/unit/canonical.rs (/home/user/.cargo-target-shared/debug/deps/unit_canonical-fa601950e2b172f5)
+running 32 tests
 test a_commit_journal_a_replay_could_not_read_is_refused_before_publishing ... ok
 test a_head_without_its_version_inventory_is_refused_and_nothing_is_written ... ok
 test a_committed_snapshot_reads_back_entity_for_entity ... ok
 test a_file_original_is_its_own_object_with_its_metadata_record ... ok
 test a_provenance_only_message_names_no_receipt ... ok
-test a_long_extension_stays_in_the_record_but_not_in_the_stored_name ... ok
-test a_recorded_kind_is_written_and_read_back_by_both_readers ... ok
-test a_root_without_a_snapshot_has_no_commit_journal ... ok
 test a_record_that_does_not_cite_the_bytes_commits_nothing ... ok
-test a_storage_root_is_created_only_in_an_empty_folder ... ok
+test a_recorded_kind_is_written_and_read_back_by_both_readers ... ok
+test a_referenced_import_entry_cannot_describe_a_stored_original ... ok
+test a_root_without_a_snapshot_has_no_commit_journal ... ok
 test a_stale_draft_left_in_staging_is_never_published ... ok
+test a_long_extension_stays_in_the_record_but_not_in_the_stored_name ... ok
+test a_storage_root_is_created_only_in_an_empty_folder ... ok
+test a_later_version_changes_only_the_entities_it_touches ... ok
 test an_entity_that_does_not_match_its_path_is_refused_on_read ... ok
 test an_entity_whose_identifier_cannot_name_a_path_is_a_decode_error ... ok
 test an_original_name_or_media_type_that_is_not_valid_is_refused ... ok
-test an_owner_name_round_trips_through_its_metadata_record ... ok
-test a_new_upload_of_the_same_file_appends_one_import_entry ... ok
+test an_unreadable_operation_message_is_refused_on_read ... ok
 test an_upload_whose_declared_size_differs_builds_no_record ... ok
 test canonical_failures_keep_their_meaning_at_the_catalog_port ... ok
 test catalog_operations_map_to_history_kinds ... ok
 test each_change_touches_the_library_and_its_own_entity ... ok
 test every_entity_has_one_logical_path_and_back ... ok
-test an_unreadable_operation_message_is_refused_on_read ... ok
-test a_later_version_changes_only_the_entities_it_touches ... ok
+test an_owner_name_round_trips_through_its_metadata_record ... ok
+test a_new_upload_of_the_same_file_appends_one_import_entry ... ok
 test identifiers_that_cannot_name_a_path_segment_are_refused ... ok
+test the_metadata_record_is_the_metadata_modules_file_record ... ok
+test the_head_record_committed_again_must_cite_the_bytes ... ok
 test the_old_four_line_record_is_refused_on_read ... ok
 test the_operation_message_carries_its_receipt ... ok
-test the_metadata_record_is_the_metadata_modules_file_record ... ok
 test the_stored_name_is_the_file_identifier_and_its_extension_only ... ok
 test history_files_ride_the_snapshot_version_and_are_not_entities ... ok
 test an_entity_file_larger_than_the_bound_is_refused_before_it_is_read ... ok
-test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
 ```
 
 ```text
@@ -107,10 +113,12 @@ Feature: Metadata property routes
   Scenario: An upload creates the file's object with its original and metadata record
    ✔  When the owner uploads "Holiday 2023.JPG" as a new file
    ✔  Then the file's object should hold the original and its metadata record in version "v1"
-   ✔  And the record should name "Holiday 2023.JPG" with its upload facts and every other fact unavailable
+   ✔  And the record should name "Holiday 2023.JPG" with the client's facts and the receiving host's system, architecture and FileSquid version
+   ✔  And every source, volume and attribute fact the upload did not supply should be listed as unavailable
   Scenario: An upload whose declared size differs commits nothing
    ✔  When the owner uploads "a.txt" declaring 9 bytes but sending 5
    ✔  Then the metadata answer should be the error "invalid_request"
+   ✔  And no file object should have been created
   Scenario: Statements are set, read and removed, one version each
    ✔  Given the owner uploaded "harbour.jpg"
    ✔  When the owner sets "dcterms:title" to "Harbour"
@@ -145,8 +153,8 @@ Feature: Metadata property routes
    ✔  Then the answer should carry the media type "text/markdown" and the name "Café.md"
 [Summary]
 22 features
-336 scenarios (230 passed, 106 skipped)
-1141 steps (1035 passed, 106 skipped)
+338 scenarios (236 passed, 102 skipped)
+1161 steps (1059 passed, 102 skipped)
 ```
 
 The head-commit hook run (`FULL=1 bash scripts/pre-commit.sh`, `Test scope: full`) is recorded in the pull request.

@@ -18,6 +18,7 @@ use super::view::{
 use super::{media, DEFAULT_PAGE, HOLDER, MAX_ANSWER_BYTES, MAX_MESSAGE_BYTES};
 use crate::content::ContentTarget;
 use filesquid_core::LibraryId;
+use filesquid_metadata::file_record::safe_display_name;
 use filesquid_ocfl::change::{ChangeModel, StagingArea, VersionMeta};
 use filesquid_ocfl::digest::DigestAlgorithm;
 use filesquid_ocfl::inventory::{User, VersionNum};
@@ -250,7 +251,7 @@ impl<B, R, S> FileService<B, R, S> {
         let derived = || media::media_type(file.path).to_string();
         match described {
             Some(d) => (
-                safe_name(d.display_name()).unwrap_or_else(|| "file".to_string()),
+                safe_display_name(d.display_name()),
                 d.media_type().unwrap_or_else(derived),
             ),
             None => (self.display_name(file).await, derived()),
@@ -362,13 +363,19 @@ impl<B: StorageBackend, R, S> FileService<B, R, S> {
         let version = resolve(&object, query.version.as_deref())?;
         let details = view::file_details(&object, &version, &query.path).await?;
         let mut view = FileDetailsView::of(&query.library_id, details);
+        let described = library
+            .described(&object, &version)
+            .await?
+            .filter(|d| d.original_path == query.path);
         let file = StoredFile {
             library_id: &view.library_id,
             object_id: &view.object_id,
             version: &view.version,
             path: &view.path,
         };
-        view.display_name = self.display_name(file).await;
+        let (display_name, media_type) = self.answer_names(file, described.as_ref()).await;
+        view.display_name = display_name;
+        view.media_type = media_type;
         super::versions::apply_labels(&object, std::slice::from_mut(&mut view.last_change)).await?;
         Ok(view)
     }
@@ -656,8 +663,7 @@ fn name_by_record(page: &mut FolderPageView, described: &super::records::Describ
         } = entry
         {
             if *path == described.original_path {
-                *display_name =
-                    safe_name(described.display_name()).unwrap_or_else(|| "file".to_string());
+                *display_name = safe_display_name(described.display_name());
             }
         }
     }

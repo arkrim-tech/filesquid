@@ -13,9 +13,10 @@
 //! and API-S-031; the preferences, whole-file download and drive listings of API-S-011;
 //! the metadata property routes of API-S-034; and the sealing service of API-S-032).
 //!
-//! Scenarios that need domain operations not built yet (import, rename, metadata writes, C2PA
-//! scans, sync) or the optional OTLP export (Task FS-3.6) have no step definitions and are
-//! reported as skipped until those land.
+//! Scenarios that need domain operations not built yet (import, rename, the metadata writes
+//! beyond the API-S-034 routes, such as the inspector's EXIF edits, C2PA scans, sync) or the
+//! optional OTLP export (Task FS-3.6) have no step definitions and are reported as skipped
+//! until those land.
 
 use axum::body::Body;
 use axum::http::{header, Request};

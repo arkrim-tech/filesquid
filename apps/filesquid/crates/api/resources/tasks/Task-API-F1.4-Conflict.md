@@ -69,6 +69,6 @@ Nothing has been implemented for API-F1.4 yet. Work continues only once the owne
 The owner chose **Option A with 3a** ("A+3a"), recorded in [ADR 038](../../../../../../resources/architecture/038-import-file-record.md) Decision 8, [API-S-026](../srs.md) and the API-F1.4 [plan row](../plan.md):
 
 - `filesquid-metadata`'s `FileRecord` is the only codec of `<file-uuid>.metadata.md`.
-- An upload creates the per-file object `files/<file-id>` with `original/<file-uuid>.<ext>` and its record in its first version.
+- An upload creates the per-file object `files/<file-id>` with `original/<file-uuid>.<ext>` and its record in its first version. The stored name keeps `.<ext>` only when the extension is 1 to 16 ASCII letters or digits after a dot that does not start the name; otherwise the original is stored as `original/<file-uuid>` with no suffix, and the record keeps the full extension.
 
 This task implements it.

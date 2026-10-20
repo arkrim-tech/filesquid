@@ -10,11 +10,13 @@ Feature: Metadata property routes
   Scenario: An upload creates the file's object with its original and metadata record
     When the owner uploads "Holiday 2023.JPG" as a new file
     Then the file's object should hold the original and its metadata record in version "v1"
-    And the record should name "Holiday 2023.JPG" with its upload facts and every other fact unavailable
+    And the record should name "Holiday 2023.JPG" with the client's facts and the receiving host's system, architecture and FileSquid version
+    And every source, volume and attribute fact the upload did not supply should be listed as unavailable
 
   Scenario: An upload whose declared size differs commits nothing
     When the owner uploads "a.txt" declaring 9 bytes but sending 5
     Then the metadata answer should be the error "invalid_request"
+    And no file object should have been created
 
   Scenario: Statements are set, read and removed, one version each
     Given the owner uploaded "harbour.jpg"

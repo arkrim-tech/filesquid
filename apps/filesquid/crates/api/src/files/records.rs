@@ -12,8 +12,10 @@ use super::error::FileError;
 use super::service::{lock, read, Library};
 use crate::canonical::original::{companion_path, decode_record, original_path_of};
 use filesquid_core::FileId;
+use filesquid_metadata::fact::Fact;
 use filesquid_metadata::file_record::FileRecord;
 use filesquid_metadata::store::ocfl::MAX_RECORD_BYTES;
+use filesquid_ocfl::digest::DigestAlgorithm;
 use filesquid_ocfl::inventory::VersionNum;
 use filesquid_ocfl::read::Object;
 use filesquid_ocfl::storage::StorageBackend;
@@ -35,9 +37,21 @@ pub(crate) struct Described {
 }
 
 impl Described {
-    /// The record's media type, when it names one.
+    /// The media type of the original as it stands: the type the latest upload reported,
+    /// since a later upload of new bytes may change it, else the record's media type.
     pub fn media_type(&self) -> Option<String> {
-        self.record.media_type().map(str::to_string)
+        let latest =
+            self.record
+                .imports()
+                .last()
+                .and_then(|entry| match &entry.source.os_content_type {
+                    Fact::Value(content) => match &content.mime {
+                        Fact::Value(mime) => Some(mime.clone()),
+                        Fact::Unavailable(_) => None,
+                    },
+                    Fact::Unavailable(_) => None,
+                });
+        latest.or_else(|| self.record.media_type().map(str::to_string))
     }
 
     /// The record's display name.
@@ -109,6 +123,12 @@ impl<B: StorageBackend, R, S> Library<B, R, S> {
             ));
         }
         let bytes = read(object, version, path, 0, size).await?;
+        let read_digest = DigestAlgorithm::ENGINE.digest_hex(&bytes);
+        if !DigestAlgorithm::ENGINE.matches(&read_digest, digest) {
+            return Err(FileError::internal(
+                "a metadata record does not match its digest",
+            ));
+        }
         let record = decode_record(path, &bytes)
             .map_err(|_| FileError::internal("a metadata record is not a valid file record"))?;
         let record = Arc::new(record);

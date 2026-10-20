@@ -23,7 +23,7 @@ use filesquid_core::{FileId, LibraryId};
 use filesquid_metadata::file_record::{FileFacts, FileRecord};
 use filesquid_metadata::file_ref::FileRef;
 use filesquid_metadata::namespace::{
-    NamespaceKind, NamespaceRegistry, Registration, NAMESPACES_MD,
+    valid_term, NamespaceKind, NamespaceRegistry, Registration, NAMESPACES_MD,
 };
 use filesquid_metadata::record::parse_curie_with;
 use filesquid_metadata::store::ocfl::{CommitOptions, OcflStore};
@@ -397,6 +397,11 @@ where
         let registry = self.registry(&request.library_id).await?;
         let (namespace, term) =
             parse_curie_with(&request.curie, &registry).map_err(metadata_error)?;
+        if !valid_term(term) {
+            return Err(FileError::invalid(
+                "A term name is letters, digits, `_`, `-` and `.`, starting with a letter or `_`.",
+            ));
+        }
         let edit = |record: &mut FileRecord| {
             record
                 .statements_mut()
