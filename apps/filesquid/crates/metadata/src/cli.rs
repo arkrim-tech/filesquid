@@ -247,10 +247,11 @@ fn load_named_registry(dir: &str) -> Result<NamespaceRegistry, String> {
 /// one in `--object`, else none, so a built-in term validates without an
 /// object (file I/O).
 fn validate_registry(rest: &[String]) -> Result<NamespaceRegistry, String> {
+    let object = checked_flag(rest, "--object")?;
     if let Some(dir) = checked_flag(rest, "--registry")? {
         return load_named_registry(dir);
     }
-    if checked_flag(rest, "--object")?.is_none() {
+    if object.is_none() {
         return Ok(NamespaceRegistry::default());
     }
     open_object(rest)?

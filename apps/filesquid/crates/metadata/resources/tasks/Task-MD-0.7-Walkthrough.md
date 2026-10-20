@@ -35,7 +35,7 @@ JSON import applies the `/terms/` register and the namespace registry checks; an
 - A term list is never dropped and an open namespace never gains one (re-registration and registry saves); IRIs holding a character RFC 3987 excludes (`{}|\^` and backtick) are refused.
 - XMP import reads every registered namespace in one pass over the packet, and a packet prefix bound to two IRIs (a nested rebinding) is not read; a packet with more than 1,024 `xmlns:` declarations yields no extension statements.
 - `metadata.md`: a blank line inside a map keeps it open. CSV: `parse_csv_header_line_with`.
-- CLI: `validate <term> --registry <dir>` needs no object; `namespace register` takes exactly two operands and `list` none.
+- CLI: `validate <prefix:term> --registry <dir>` needs no object; `namespace register` takes exactly two operands and `list` none.
 - Tests: the BDD authoring scenarios commit through `LocalObject` and read the stored `metadata.md` back; store tests for an existing object without a registry record and for the head after a second registration; CLI tests for a usable custom namespace, JSON round-trip, `--registry` without an object and extra operands.
 - Docs: product vision C-057, U-63 and T-045 name the metadata commands including `namespace`; README example passes `--id`; the README says which exports consult the registry.
 

@@ -626,6 +626,15 @@ fn validate_reads_a_named_registry_without_an_object() {
         &registry_arg,
     ]));
     assert_eq!(code, Ok(0));
+    let err = run(&args(&[
+        "validate",
+        "rico:title",
+        "--registry",
+        &registry_arg,
+        "--object",
+    ]))
+    .expect_err("--object without a value");
+    assert!(err.contains("--object"), "{err}");
     let code = run(&args(&[
         "validate",
         "lido:title",

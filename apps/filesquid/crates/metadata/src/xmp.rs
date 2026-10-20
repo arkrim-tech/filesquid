@@ -144,57 +144,116 @@ fn packet_prefixes(text: &str, registry: &NamespaceRegistry) -> Vec<(String, Str
     names
 }
 
-/// The `xmlns:<name>="<iri>"` declarations of a packet (single or double
-/// quotes); `None` when it holds more than [`MAX_BINDINGS`], since a
-/// rebinding past the cap could not be seen.
+/// The `xmlns:<name>="<iri>"` declarations in the start tags of a packet
+/// (single or double quotes; text, comments and CDATA are not read); `None`
+/// when it holds more than [`MAX_BINDINGS`], since a rebinding past the cap
+/// could not be seen.
 fn xmlns_bindings(text: &str) -> Option<Vec<(String, String)>> {
     let mut bindings = Vec::new();
-    let mut rest = text;
-    while let Some(start) = rest.find("xmlns:") {
-        if bindings.len() >= MAX_BINDINGS {
-            return None;
-        }
-        rest = &rest[start + "xmlns:".len()..];
-        let Some((name, after)) = rest.split_once('=') else {
-            break;
-        };
-        let Some(quote) = after.chars().next().filter(|c| matches!(c, '"' | '\'')) else {
+    for (_, tag, _) in tag_spans(text) {
+        if tag.starts_with('/') {
             continue;
-        };
-        let Some((iri, _)) = after[1..].split_once(quote) else {
-            break;
-        };
-        bindings.push((name.trim().to_string(), xml_unescape(iri)));
+        }
+        let mut rest = tag;
+        while let Some(start) = rest.find("xmlns:") {
+            if bindings.len() >= MAX_BINDINGS {
+                return None;
+            }
+            rest = &rest[start + "xmlns:".len()..];
+            let Some((name, after)) = rest.split_once('=') else {
+                break;
+            };
+            let Some(quote) = after.chars().next().filter(|c| matches!(c, '"' | '\'')) else {
+                continue;
+            };
+            let Some((iri, _)) = after[1..].split_once(quote) else {
+                break;
+            };
+            bindings.push((name.trim().to_string(), xml_unescape(iri)));
+        }
     }
     Some(bindings)
 }
 
-/// Every `<name:term>value</name:term>` element whose `name` is one of
-/// `names`, in packet order, as `(index into names, term, value)`: one pass
-/// over the packet.
+/// The tags of a packet in order, as `(offset of '<', text between '<' and
+/// '>', offset after '>')`, skipping comments, CDATA sections, processing
+/// instructions and declarations: one pass over the packet.
+fn tag_spans(text: &str) -> Vec<(usize, &str, usize)> {
+    let mut spans = Vec::new();
+    let mut pos = 0;
+    while let Some(offset) = text[pos..].find('<') {
+        let start = pos + offset;
+        let rest = &text[start + 1..];
+        let skip_to = match rest {
+            r if r.starts_with("!--") => r.find("-->").map(|e| e + 3),
+            r if r.starts_with("![CDATA[") => r.find("]]>").map(|e| e + 3),
+            r => r.find('>').map(|e| e + 1),
+        };
+        let Some(skip_to) = skip_to else {
+            break;
+        };
+        pos = start + 1 + skip_to;
+        let tag = &rest[..skip_to - 1];
+        if !tag.starts_with(['?', '!']) {
+            spans.push((start, tag.trim(), pos));
+        }
+    }
+    spans
+}
+
+/// A registered element still open during [`pull_prefixed`].
+struct OpenElement<'t> {
+    /// Index into the packet prefixes.
+    index: usize,
+    /// The element's term.
+    term: &'t str,
+    /// Offset where its body starts.
+    body_start: usize,
+    /// Whether a registered element is nested in it (a structured value).
+    has_child: bool,
+}
+
+/// Most registered elements open at once; deeper ones are not read.
+const MAX_DEPTH: usize = 64;
+
+/// Every innermost `<name:term>value</name:term>` element whose `name` is
+/// one of `names`, in the order they close, as `(index into names, term,
+/// value)`. An element holding another registered element is a structure:
+/// its nested properties are read instead. One pass over the packet.
 fn pull_prefixed(text: &str, names: &[(String, String)]) -> Vec<(usize, String, String)> {
     let mut found = Vec::new();
     if names.is_empty() {
         return found;
     }
-    let mut rest = text;
-    while let Some(start) = rest.find('<') {
-        rest = &rest[start + 1..];
-        let Some(gt) = rest.find('>') else {
-            break;
-        };
-        let tag = rest[..gt].trim();
-        rest = &rest[gt + 1..];
-        let Some((index, name, term)) = element_name(tag, names) else {
+    let mut open: Vec<OpenElement<'_>> = Vec::new();
+    for (start, tag, end) in tag_spans(text) {
+        if let Some(close) = tag.strip_prefix('/') {
+            let closes_top = open.last().is_some_and(|top| {
+                close.split_once(':') == Some((names[top.index].0.as_str(), top.term))
+            });
+            let Some(element) = open.pop_if(|_| closes_top) else {
+                continue;
+            };
+            if !element.has_child {
+                let value = element_text(&text[element.body_start..start]);
+                found.push((element.index, element.term.to_string(), value));
+            }
+            continue;
+        }
+        let Some((index, _, term)) = element_name(tag, names) else {
             continue;
         };
-        let close = format!("</{name}:{term}>");
-        // An element without its close ends the scan (one pass, as `pull_tags`).
-        let Some(end) = rest.find(&close) else {
-            break;
-        };
-        found.push((index, term.to_string(), element_text(&rest[..end])));
-        rest = &rest[end + close.len()..];
+        if let Some(parent) = open.last_mut() {
+            parent.has_child = true;
+        }
+        if open.len() < MAX_DEPTH {
+            open.push(OpenElement {
+                index,
+                term,
+                body_start: end,
+                has_child: false,
+            });
+        }
     }
     found
 }

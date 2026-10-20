@@ -720,6 +720,33 @@ mod xmp {
     }
 
     #[test]
+    fn xmp_import_reads_registered_properties_nested_in_another() {
+        let packet = format!(
+            "<rdf:Description xmlns:r=\"{RICO_IRI}\">\
+             <r:date><r:title>Inner title</r:title><r:hasCreator>Inner creator</r:hasCreator></r:date>\
+             </rdf:Description>"
+        );
+        let record = from_xmp_with(&packet, &registry());
+        let curies: Vec<String> = record.statements.iter().map(|s| s.curie()).collect();
+        assert_eq!(curies, ["rico:title", "rico:hasCreator"], "{record:?}");
+    }
+
+    #[test]
+    fn xmp_import_reads_declarations_only_from_start_tags() {
+        let packet = format!(
+            "<rdf:Description xmlns:r=\"{RICO_IRI}\">\
+             <!-- xmlns:r=\"https://example.org/comment#\" -->\
+             <r:title>xmlns:r=\"https://example.org/value#\"</r:title>\
+             </rdf:Description>"
+        );
+        let record = from_xmp_with(&packet, &registry());
+        assert_eq!(
+            record.get("rico:title").map(|s| s.value.as_str()),
+            Some("xmlns:r=\"https://example.org/value#\"")
+        );
+    }
+
+    #[test]
     fn xmp_import_reads_a_namespace_by_its_iri_under_any_packet_prefix() {
         let packet = format!(
             "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\
