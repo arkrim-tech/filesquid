@@ -51,11 +51,24 @@ Feature: File browser
     And the grid layout should be the pressed layout
 
   # Writes: each is one API call that commits one OCFL version
-  Scenario: Uploading files commits one version per file
-    When I choose a file "scan.pdf" to upload into the current folder
-    Then one upload call should be sent for "scan.pdf"
-    And the status should say the upload committed a new version
-    And "scan.pdf" should be listed
+  Scenario: Uploading files commits one version per file, each in the file's own object
+    When I choose a file "Café scan.pdf" to upload
+    Then one upload call should be sent for "Café scan.pdf"
+    And its query should hold the library, the name, its normalisation form "nfc", the size, the media type and the last-modified time
+    And its query should hold no logical path and no object
+    And the status should say the upload committed version "v1"
+    And the object shown should gain no version
+
+  Scenario: A media type with parameters is sent as its type/subtype only
+    When I upload a file whose media type is "text/plain;charset=utf-8"
+    Then one upload call should be sent with the name, its normalisation form and the size
+    And its media type should be "text/plain"
+
+  Scenario: A media type or time the API cannot take is left out, and the file still uploads
+    When I upload a file whose media type is "text" and whose last-modified time is in the year 10000
+    Then one upload call should be sent with the name, its normalisation form and the size
+    And it should send no media type
+    And it should send no last-modified time
 
   Scenario: A new folder stays pending until a file is added
     When I create the folder "Photos"
@@ -90,11 +103,11 @@ Feature: File browser
     When I try to create a folder named "a/b", or with only spaces, or longer than 255 bytes
     Then the form should say why and no call should be sent
 
-  Scenario: Dropped files upload into the folder shown
+  Scenario: Dropped files upload into the library shown
     When I drag files over the listing
     Then the listing should say "Drop to upload into" the folder
     When I drop the files
-    Then each file should be uploaded into that folder
+    Then each file should be uploaded into that library under its own name
 
   # Virtualised listing
   Scenario: A long folder keeps only the rows near the viewport in the page

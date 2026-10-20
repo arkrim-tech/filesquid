@@ -57,7 +57,7 @@ async function submit(browser: FsFileBrowser, fields: Record<string, string>): P
 }
 
 describe("upload", () => {
-  it("uploads each chosen file with one PUT into the current folder and reports the committed version", async () => {
+  it("uploads each chosen file with one PUT as its own file and reports the committed version", async () => {
     const source = fixture();
     const upload = vi.spyOn(source, "upload");
     const browser = await mount(source, { location: { ...LOCATION, prefix: "Contracts" } });
@@ -65,18 +65,20 @@ describe("upload", () => {
     browser.addEventListener("fs-files-change", (e) => events.push((e as CustomEvent).detail));
     await choose(browser, [new File(["abc"], "scan.pdf"), new File(["defg"], "memo.pdf")]);
     expect(upload).toHaveBeenCalledTimes(2);
-    expect(upload.mock.calls.map((c) => c[1])).toEqual([
-      "Contracts/scan.pdf",
-      "Contracts/memo.pdf",
+    expect(upload.mock.calls.map((c) => [c[0].library_id, c[1].name])).toEqual([
+      ["lib", "scan.pdf"],
+      ["lib", "memo.pdf"],
     ]);
-    expect(status(browser)).toBe("Uploaded 2. Version v3 committed.");
-    expect(names(browser)).toEqual(
-      expect.arrayContaining(["scan.pdf", "memo.pdf", "harbour-masterplan-v7.pdf"]),
-    );
+    expect(upload.mock.calls.every((c) => !("path" in c[1]) && !("file_id" in c[1]))).toBe(true);
+    expect(status(browser)).toBe("Uploaded 2. Version v1 committed.");
+    expect(source.head).toBe("v1");
+    expect(source.uploads.map((u) => u.name)).toEqual(["scan.pdf", "memo.pdf"]);
+    expect(names(browser)).toEqual(["harbour-masterplan-v7.pdf", "tender-response.pdf"]);
+    const file = source.uploads[1]?.file_id;
     expect(events).toEqual([
       expect.objectContaining({
         operation: "upload",
-        commit: expect.objectContaining({ version: "v3" }),
+        commit: expect.objectContaining({ object_id: `urn:uuid:${file}`, version: "v1" }),
       }),
     ]);
   });
@@ -96,8 +98,9 @@ describe("upload", () => {
     const source = fixture();
     const upload = vi.spyOn(source, "upload").mockResolvedValue({
       library_id: "lib",
-      object_id: "obj",
-      version: "v2",
+      file_id: "f",
+      object_id: "urn:uuid:f",
+      version: "v1",
       created: "t",
     });
     const browser = await mount(source);
@@ -120,13 +123,13 @@ describe("upload", () => {
     await choose(browser, [new File(["a"], "one.txt"), new File(["b"], "two.txt")]);
     expect(alert(browser)).toContain("Not uploaded: one.txt");
     expect(alert(browser)).toContain(labels.fileConflict);
-    expect(names(browser)).toContain("two.txt");
+    expect(source.uploads.map((u) => u.name)).toEqual(["two.txt"]);
     await click(one(browser, "button.retry"));
-    await settle();
-    expect(names(browser)).toContain("one.txt");
+    await idle(browser);
+    expect(source.uploads.map((u) => u.name)).toEqual(["two.txt", "one.txt"]);
   });
 
-  it("tries the failed files again in the folder they were meant for, after moving away", async () => {
+  it("tries the failed files again in the library they were meant for, after moving away", async () => {
     const source = fixture();
     const real = source.upload.bind(source);
     let calls = 0;
@@ -141,7 +144,10 @@ describe("upload", () => {
     await settle();
     await click(one(browser, "button.retry"));
     await idle(browser);
-    expect(upload.mock.calls.map((c) => c[1])).toEqual(["Contracts/one.txt", "Contracts/one.txt"]);
+    expect(upload.mock.calls.map((c) => [c[0].library_id, c[1].name])).toEqual([
+      ["lib", "one.txt"],
+      ["lib", "one.txt"],
+    ]);
   });
 
   it("shows a drop target for dragged files and uploads what is dropped", async () => {
@@ -163,7 +169,7 @@ describe("upload", () => {
     expect(one(browser, ".drop").textContent).toBe("Drop to upload into Drawings");
     drag("drop", [new File(["z"], "dropped.txt")]);
     await idle(browser);
-    expect(upload.mock.calls[0]?.[1]).toBe("Drawings/dropped.txt");
+    expect(upload.mock.calls[0]?.[1].name).toBe("dropped.txt");
     expect(one(browser, ".drop").hidden).toBe(true);
   });
 
@@ -191,8 +197,9 @@ describe("upload", () => {
     const source = fixture();
     const upload = vi.spyOn(source, "upload").mockResolvedValue({
       library_id: "lib",
-      object_id: "obj",
-      version: "v2",
+      file_id: "f",
+      object_id: "urn:uuid:f",
+      version: "v1",
       created: "t",
     });
     const browser = await mount(source);
@@ -221,7 +228,7 @@ describe("upload", () => {
     const upload = vi.spyOn(source, "upload");
     const browser = await mount(source);
     await choose(browser, [new File(["a"], "a/b\\c.txt")]);
-    expect(upload.mock.calls[0]?.[1]).toBe("a_b_c.txt");
+    expect(upload.mock.calls[0]?.[1].name).toBe("a_b_c.txt");
   });
 });
 
