@@ -5,10 +5,27 @@ use crate::MetadataNamespace;
 
 /// Render a record as Obsidian-style Markdown with YAML front matter.
 pub fn to_markdown(record: &Record) -> String {
+    render(record, "", "")
+}
+
+/// Render `record` with `head` before and `tail` after its namespace maps in
+/// the front matter. The per-file record puts its header and `import` list
+/// there ([`FileRecord`](crate::file_record::FileRecord)); both are whole
+/// lines ending in a line feed, or empty.
+pub(crate) fn render(record: &Record, head: &str, tail: &str) -> String {
     let mut out = String::from("---\n");
+    out.push_str(head);
     append_ns(&mut out, "dcterms", MetadataNamespace::Dcterms, record);
     append_ns(&mut out, "exif", MetadataNamespace::Exif, record);
-    append_ns(&mut out, "schema", MetadataNamespace::SchemaOrg, record);
+    // A file record's own `schema:` identifier takes the key, so its
+    // Schema.org statements move to `schemaorg:`.
+    let schema_key = if head.is_empty() {
+        "schema"
+    } else {
+        "schemaorg"
+    };
+    append_ns(&mut out, schema_key, MetadataNamespace::SchemaOrg, record);
+    out.push_str(tail);
     out.push_str("---\n");
     if !record.body.trim().is_empty() {
         out.push('\n');
@@ -80,7 +97,7 @@ pub fn from_markdown(text: &str) -> Record {
             ns = match name.trim() {
                 "dcterms" => Some(MetadataNamespace::Dcterms),
                 "exif" => Some(MetadataNamespace::Exif),
-                "schema" => Some(MetadataNamespace::SchemaOrg),
+                "schema" | "schemaorg" => Some(MetadataNamespace::SchemaOrg),
                 _ => None,
             };
             continue;

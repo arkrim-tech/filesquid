@@ -41,6 +41,93 @@ Feature: Reusable filesquid-metadata engine
     When I commit a metadata edit with a version user, an operation message and a version-bound record
     Then the edit should publish one version carrying that user, that message and the record
 
+  # MD-S-008, MD-S-013: the per-file record with its import section (owner decision 2026-10-19, ADR 038)
+  Scenario: A file's one record lives beside its stored original in the same version
+    When I import a file named "Holiday 2023.JPG" into an OCFL object
+    Then the version should hold the stored original and its per-file metadata record
+    And the object should hold no metadata.md
+    And the imported object should pass the OCFL validator
+
+  Scenario: The record opens with the original name, display name, extension, format and media type
+    When I import a file named "Holiday 2023.JPG" into an OCFL object
+    Then the record should open with the schema identifier and the original name Holiday 2023.JPG
+    And the display name should be the original name
+    And the extension, format and media type should be recorded
+
+  Scenario: A re-import appends an entry in a new OCFL version
+    When I import a file named "Holiday 2023.JPG" into an OCFL object
+    And I import the same file again
+    Then the object should have a new version with two import entries
+    And the first version should be unchanged
+
+  Scenario: A save that changes an import entry is refused
+    When I import a file named "Holiday 2023.JPG" into an OCFL object
+    And I save the record with a changed import entry
+    Then the save should be refused for changing an import entry
+    And the object's versions should be unchanged
+
+  Scenario: A save that removes an import entry is refused
+    When I import a file named "Holiday 2023.JPG" into an OCFL object
+    And I import the same file again
+    And I save the record with only the first import entry
+    Then the save should be refused for removing an import entry
+
+  Scenario: A save that changes the original file name is refused
+    When I import a file named "Holiday 2023.JPG" into an OCFL object
+    And I save the record with another original name
+    Then the save should be refused for changing the original name
+    And the object's versions should be unchanged
+
+  Scenario: A rename changes only the display name
+    When I import a file named "Holiday 2023.JPG" into an OCFL object
+    And I rename the file to "Harbour.jpg"
+    Then the display name should be Harbour.jpg and the original name Holiday 2023.JPG
+    And the import entries should be unchanged
+
+  Scenario: A statements edit keeps the header and the import section
+    When I import a file named "Holiday 2023.JPG" into an OCFL object
+    And I set dcterms:title Harbour on the file's record
+    Then the record should hold dcterms title Harbour and still hold its original name and import entry
+
+  Scenario: A source size that differs from the verified size fails the import
+    When I import a file whose reported size differs from the verified size
+    Then the import should be rejected for the size mismatch
+    And nothing should be published
+
+  Scenario: Names and values that are not UTF-8 round-trip as base64
+    When I import a file whose name and extended attribute are not UTF-8
+    Then the record should store them as base64 marked with encoding base64
+    And they should read back byte for byte
+
+  Scenario: Every missing fact is listed as unavailable with a reason
+    When I import a file through an upload that provides only a name, size, time and media type
+    Then every other source, volume and attribute fact should be unavailable with the reason not provided by upload
+
+  Scenario: Attribute inspection stops at 256 names and 1 MiB and marks what it cut
+    When I inspect 300 extended attributes of 8 KiB each
+    Then at most 256 names should be kept and the entry marked truncated with 300 names enumerated
+    And at most 1 MiB of value bytes should be recorded as read
+    And every value cut by the budget should have an incomplete digest
+    And a re-import should get its own budget of 256 names and 1 MiB
+
+  Scenario: A value over 64 KiB is kept as size and SHA-256 only
+    When I inspect an extended attribute of 70000 bytes
+    Then the record should hold its size and SHA-256 and not the value
+
+  Scenario: The read projection omits paths, host and account
+    When I import a file with a full set of source facts and read its projection
+    Then the projection should show the original name, relative path, volume name and OCFL object
+    And it should not show the absolute path, the import root, the host name or any account
+
+  Scenario: The outgoing policy scrubs the identity fields
+    When I scrub every identity class of a full import entry
+    Then no path, account, host name, numeric ID, origin URL, quarantine agent or Finder comment should remain
+    And each removed fact should be listed as withheld by policy
+
+  Scenario: The import record builds for the browser without filesystem access
+    When I inspect the import record modules
+    Then they should use no filesystem, path or environment access
+
   Scenario: A head without its version inventory stays refused
     Given an OCFL object whose head has no version inventory
     When I set dcterms:title Dawn through the ocfl store
@@ -146,7 +233,7 @@ Feature: Reusable filesquid-metadata engine
   # Source
   # - resources/prd.md F-052
   # - resources/srs.md SRS-F-052
-  # - apps/filesquid/crates/metadata/resources/srs.md MD-S-007 extraction, MD-S-008 canonical metadata.md, MD-S-010 JSON sidecar import/export, MD-S-014 commit options
+  # - apps/filesquid/crates/metadata/resources/srs.md MD-S-007 extraction, MD-S-008 canonical metadata.md, MD-S-010 JSON sidecar import/export, MD-S-013 import record, MD-S-014 commit options
   # - resources/architecture/027-filesquid-metadata-pluggable-stores.md (per-edit OCFL versioning)
   # - resources/architecture/022-dublin-core-descriptive-metadata.md (Sidecar JSON)
   # - resources/architecture/024-filesquid-metadata-engine.md
