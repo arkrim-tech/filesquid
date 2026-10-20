@@ -8,7 +8,8 @@
 //! API-S-029 and API-S-032; the host descriptor of API-S-020, except its `@server-start`
 //! scenarios, which the `filesquid-server` harness runs; the file operation routes and
 //! content handles of API-S-008 and API-S-018; the navigation listing of API-S-021; and the
-//! client events, journal query and export of API-S-030 and API-S-031).
+//! library and repair routes of API-S-025; and the client events, journal query and
+//! export of API-S-030 and API-S-031).
 //!
 //! Scenarios that need domain operations not built yet (import, rename, metadata writes, C2PA
 //! scans, sync) or the optional OTLP export (Task FS-3.6) have no step definitions and are
@@ -90,6 +91,11 @@ mod history_steps;
 #[path = "support/history_fixture.rs"]
 mod history_fixture;
 
+#[path = "support/library_routes_fixture.rs"]
+mod library_routes_fixture;
+
+#[path = "support/library_route_steps.rs"]
+mod library_route_steps;
 #[path = "support/navigation_steps.rs"]
 mod navigation_steps;
 
@@ -142,6 +148,7 @@ struct MonitorWorld {
     validation: validation_steps::ValidationWorld,
 
     history: history_steps::HistoryWorld,
+    routes: library_route_steps::LibraryRouteWorld,
     navigation: navigation_steps::NavigationWorld,
     journal: journal_steps::JournalWorld,
 }

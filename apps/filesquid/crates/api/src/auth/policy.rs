@@ -65,6 +65,17 @@ pub enum Action {
     /// Read the PROV-O history: activities, records and their export (`/history`,
     /// `/files/{id}/history`, `/files/{id}/versions/{version}/prov`; API-S-029).
     ReadHistory,
+    /// Create, open, copy and rebuild local libraries (`/api/v1/libraries`,
+    /// `/libraries/openings`, `/libraries/snapshot-copies`, `/libraries/rebuilds`;
+    /// API-S-025).
+    ManageLibraries,
+    /// Read a library's version-inventory repair candidates
+    /// (`GET /api/v1/libraries/repair-candidates`; API-S-025).
+    ReadLibraries,
+    /// Run the consented version-inventory repair (`POST /api/v1/libraries/repairs`;
+    /// API-S-023, API-S-025). Only a library's owner may: the desktop owner; the server
+    /// administrator does not own libraries and is never granted it.
+    RepairLibraries,
     /// Read the navigation tree (`GET /api/v1/navigation`, API-S-021).
     ReadNavigation,
     /// Journal the UI's console warnings and errors (`POST /api/v1/client-events`,
@@ -80,7 +91,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, in declaration order.
-    pub const ALL: [Action; 14] = [
+    pub const ALL: [Action; 17] = [
         Action::ReadHealth,
         Action::ReadContract,
         Action::SubscribeEvents,
@@ -92,6 +103,9 @@ impl Action {
         Action::WriteFiles,
         Action::ReadContent,
         Action::ReadHistory,
+        Action::ManageLibraries,
+        Action::ReadLibraries,
+        Action::RepairLibraries,
         Action::ReadNavigation,
         Action::RecordClientEvents,
         Action::Public,
@@ -111,6 +125,9 @@ impl Action {
             Action::WriteFiles => "files.write",
             Action::ReadContent => "content.read",
             Action::ReadHistory => "history.read",
+            Action::ManageLibraries => "library.manage",
+            Action::ReadLibraries => "library.read",
+            Action::RepairLibraries => "library.repair",
             Action::ReadNavigation => "navigation.read",
             Action::RecordClientEvents => "client_events.write",
             Action::Public => "public",
@@ -196,16 +213,22 @@ impl std::fmt::Debug for TokenAuthenticator {
     }
 }
 
-/// The single-owner policy of this release: the desktop owner and the server administrator
-/// may perform every action on the host. Adding a principal is a compile error here until
-/// its permissions are decided, so no new caller is granted anything by accident.
+/// The single-owner policy of this release: the desktop owner may perform every action on
+/// the host, and the server administrator every action except the version-inventory repair
+/// ([`Action::RepairLibraries`]), which only a library's owner may run and the administrator
+/// does not own the libraries (API-S-025; a server library owner arrives with API-F1.9).
+/// Adding a principal is a compile error here until its permissions are decided, so no new
+/// caller is granted anything by accident.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct HostPolicy;
 
 impl Policy for HostPolicy {
-    fn permits(&self, principal: &Principal, _action: Action, resource: &Resource) -> bool {
+    fn permits(&self, principal: &Principal, action: Action, resource: &Resource) -> bool {
         match principal {
-            Principal::Owner | Principal::Administrator => *resource == Resource::Host,
+            Principal::Owner => *resource == Resource::Host,
+            Principal::Administrator => {
+                *resource == Resource::Host && action != Action::RepairLibraries
+            }
         }
     }
 }
