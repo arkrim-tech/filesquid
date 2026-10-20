@@ -899,7 +899,7 @@ The system MUST implement [PRD F-052](./prd.md#f-052-metadata-module) with the a
 - XMP sidecar read/write MUST ship with CSV.
 - JSON sidecar import/export MUST ship with CSV and XMP: one UTF-8 JSON document per OCFL object that binds statements to the OCFL object identifier and the SHA-256 digest of the described logical file, exposed as `export json` and `import json`. Import MUST apply the `/terms/` register checks and MUST reject a sidecar whose digest does not match the target file. A JSON sidecar MUST NOT replace `metadata.md` as canonical.
 - Interchange MUST NOT include MODS or SQL ([C-049](./product-vision.md#module-rules)).
-- The crate's commands `extract`, `get`, `set`, `export`, `import` and `fsquid metadata validate` MUST be available in the native `fsquid` CLI, usable without the FileSquid app; the crate ships no binary of its own ([T-045](./product-vision.md#canonical-ocfl-state-and-evidence)).
+- The crate's commands `extract`, `get`, `set`, `export`, `import`, `namespace` and `fsquid metadata validate` MUST be available in the native `fsquid` CLI, usable without the FileSquid app; the crate ships no binary of its own ([T-045](./product-vision.md#canonical-ocfl-state-and-evidence)).
 
 **Properties API and panel**
 - The module MUST provide a properties API: populated key/value rows with prefixes, and an Add property search across `/terms/`, then Schema.org, then registered extension namespaces, with an option to add a key in a declared custom namespace. FileSquid MUST expose it through the FileSquid API and present it in the Metadata panel ([SRS-F-055](#srs-f-055-default-ui-and-panel-composition), [SRS-F-046](#srs-f-046-media-metadata-inspection-correction-and-privacy-exports)).
