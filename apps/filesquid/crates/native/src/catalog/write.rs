@@ -169,11 +169,11 @@ fn commit_in_transaction(
     Ok(receipt)
 }
 
-/// Finish a checked commit with no change: remove its intent (no work remains) and commit
-/// `tx`, storing neither a receipt, a journal entry, a snapshot version nor a new revision
-/// (owner decision, 2026-10-19). Database I/O.
+/// Finish a checked commit with no change: remove its intent (no work remains) and the
+/// intent's outbox entry, and commit `tx`, storing neither a receipt, a journal entry, a
+/// snapshot version nor a new revision (owner decision, 2026-10-19). Database I/O.
 fn finish_unchanged(tx: Transaction<'_>, commit: &CatalogCommit) -> Result<(), CatalogError> {
-    intent::clear(&tx, commit.operation_id.as_str())?;
+    intent::withdraw(&tx, commit.operation_id.as_str())?;
     tx.commit().map_err(sql)
 }
 

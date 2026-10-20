@@ -51,9 +51,10 @@ pub mod workers;
 
 #[cfg(feature = "desktop")]
 pub use catalog::{
-    library_ocfl_root, CatalogRoots, CommitProbe, LibraryBackfill, NoProbe, PendingIntent,
-    SqliteCatalog, CATALOG_DIR, CATALOG_FILE_EXTENSION, CATALOG_SCHEMA_VERSION, MAX_BACKFILL_RUNS,
-    MAX_LIBRARIES, OCFL_ROOT_SUFFIX, RECONCILE_OPERATION, WORK_DIR_SUFFIX,
+    intent_entry, library_ocfl_root, CatalogRoots, CommitProbe, LibraryBackfill, NoProbe,
+    PendingIntent, SqliteCatalog, CATALOG_DIR, CATALOG_FILE_EXTENSION, CATALOG_SCHEMA_VERSION,
+    INTENT_RECORDED_OPERATION, MAX_BACKFILL_RUNS, MAX_LIBRARIES, OCFL_ROOT_SUFFIX,
+    RECONCILE_OPERATION, WORK_DIR_SUFFIX,
 };
 pub use files::{install_file_service, library_dir_name, open_fs_library, HostFiles, HostLeases};
 pub use findings_sqlite::SqliteFindings;

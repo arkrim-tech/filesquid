@@ -83,6 +83,18 @@ name = "unit_admin"
 path = "tests/unit/admin.rs"
 
 [[test]]
+name = "unit_client_events"
+path = "tests/unit/client_events.rs"
+
+[[test]]
+name = "unit_journal_query"
+path = "tests/unit/journal_query.rs"
+
+[[test]]
+name = "unit_journal_coverage"
+path = "tests/unit/journal_coverage.rs"
+
+[[test]]
 name = "unit_host"
 path = "tests/unit/host.rs"
 

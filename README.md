@@ -405,8 +405,12 @@ TOKEN=$(cat filesquid-data/admin-token)
 curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8083/api/v1/admin/health
 curl -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:8083/api/v1/admin/journal?order=desc&limit=20"
 curl -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:8083/api/v1/admin/journal/export?operation=host.started" > journal.jsonl
+curl -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:8083/api/v1/admin/journal/export?format=csv&outcome=succeeded" -o journal.csv
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8083/api/v1/admin/journal/entries/1
 curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8083/metrics
 ```
+
+The journal routes filter by `from` and `to` (RFC 3339), `actor`, `operation`, `outcome`, `level`, `process`, `library`, `object` or `file` (a file ID, the same as `object=urn:uuid:<file>`) and `operation_id`; the export takes the same filters and `format=jsonl` (the default) or `format=csv` (RFC 4180 with a header row and CRLF line ends, opaque IDs only), at most 50,000 entries per response (`X-Journal-Next-Cursor` continues it), and every export is journaled as `journal.export`. Each entry of a page or of `GET /api/v1/admin/journal/entries/{entry}` carries `provenance`: for a committed operation, links (API paths) to its PROV-O record and activities; otherwise `"journal_only": true` (failed and refused attempts, single-file downloads and events that commit nothing). `names=true` adds the current display name of the file an entry names, when the host resolves it for the caller; names are never stored or exported. `POST /api/v1/client-events` journals browser console warnings and errors, once per client event ID, as `ui.console.warn`, `ui.console.error` or `ui.console.overflow`: at most 20 events and 16 KiB per request and 60 requests a minute per credential, refused requests included, except a request carrying only one `ui.console.overflow` event, which is never rate-limited. The route exists in this release; the default UI starts forwarding its console to it with UI-F2.16.
 
 On Windows there is no token file: start the server with `FILESQUID_ADMIN_TOKEN` set as shown under **Server host**, set `$TOKEN` to the same value in PowerShell, and call `curl.exe` with the same arguments.
 

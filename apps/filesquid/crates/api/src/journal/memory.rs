@@ -4,12 +4,22 @@ use super::{
     retention_cutoff, retention_entry, JournalEntry, JournalError, JournalPage, JournalQuery,
     JournalStore, RetentionPolicy,
 };
+use std::collections::HashMap;
 use std::sync::Mutex;
+
+/// The entries in id order, the highest id handed out, and the id of the entry holding each
+/// client event ID.
+#[derive(Default)]
+struct State {
+    entries: Vec<JournalEntry>,
+    last_id: i64,
+    client_events: HashMap<String, i64>,
+}
 
 /// Journal store that keeps entries in memory (lost when the process ends).
 pub struct MemoryJournal {
     host: String,
-    state: Mutex<(Vec<JournalEntry>, i64)>,
+    state: Mutex<State>,
 }
 
 impl MemoryJournal {
@@ -17,36 +27,44 @@ impl MemoryJournal {
     pub fn new(host: impl Into<String>) -> Self {
         Self {
             host: host.into(),
-            state: Mutex::new((Vec::new(), 0)),
+            state: Mutex::new(State::default()),
         }
     }
 
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, (Vec<JournalEntry>, i64)>, JournalError> {
+    fn lock(&self) -> Result<std::sync::MutexGuard<'_, State>, JournalError> {
         self.state
             .lock()
             .map_err(|_| JournalError("memory journal lock poisoned".into()))
     }
 }
 
-/// Store `entry` in id order and return its id and whether it was stored now: a preset id
+/// Store `entry` in id order and return its id and whether it was stored now: an entry whose
+/// client event ID is already held is not stored (the holder's id is answered); a preset id
 /// is kept (and an entry already stored under it is not stored again); otherwise the next
 /// id is assigned.
-fn store_one(state: &mut (Vec<JournalEntry>, i64), mut entry: JournalEntry) -> (i64, bool) {
-    let Some(id) = entry.id else {
-        state.1 += 1;
-        entry.id = Some(state.1);
-        state.0.push(entry);
-        return (state.1, true);
+fn store_one(state: &mut State, mut entry: JournalEntry) -> (i64, bool) {
+    if let Some(held) = entry
+        .client_event_id
+        .as_ref()
+        .and_then(|c| state.client_events.get(c))
+    {
+        return (*held, false);
+    }
+    let id = match entry.id {
+        Some(id) => id,
+        None => state.last_id + 1,
     };
-    let stored = match state.0.binary_search_by_key(&Some(id), |e| e.id) {
-        Ok(_) => false,
-        Err(at) => {
-            state.0.insert(at, entry);
-            true
-        }
+    entry.id = Some(id);
+    state.last_id = state.last_id.max(id);
+    let at = match state.entries.binary_search_by_key(&Some(id), |e| e.id) {
+        Ok(_) => return (id, false),
+        Err(at) => at,
     };
-    state.1 = state.1.max(id);
-    (id, stored)
+    if let Some(client) = &entry.client_event_id {
+        state.client_events.insert(client.clone(), id);
+    }
+    state.entries.insert(at, entry);
+    (id, true)
 }
 
 impl JournalStore for MemoryJournal {
@@ -75,9 +93,9 @@ impl JournalStore for MemoryJournal {
     fn allocate_ids(&self, count: usize) -> Result<Vec<i64>, JournalError> {
         let count = super::check_allocation(count)?;
         let mut guard = self.lock()?;
-        let first = guard.1 + 1;
-        guard.1 += count;
-        Ok((first..=guard.1).collect())
+        let first = guard.last_id + 1;
+        guard.last_id += count;
+        Ok((first..=guard.last_id).collect())
     }
 
     fn query(&self, query: &JournalQuery) -> Result<JournalPage, JournalError> {
@@ -86,7 +104,7 @@ impl JournalStore for MemoryJournal {
         let matching = |e: &&JournalEntry| query.past_cursor(e) && query.matches(e);
         let hits: Vec<JournalEntry> = if query.descending {
             guard
-                .0
+                .entries
                 .iter()
                 .rev()
                 .filter(matching)
@@ -95,7 +113,7 @@ impl JournalStore for MemoryJournal {
                 .collect()
         } else {
             guard
-                .0
+                .entries
                 .iter()
                 .filter(matching)
                 .take(limit + 1)
@@ -106,7 +124,12 @@ impl JournalStore for MemoryJournal {
     }
 
     fn count(&self, query: &JournalQuery) -> Result<u64, JournalError> {
-        Ok(self.lock()?.0.iter().filter(|e| query.matches(e)).count() as u64)
+        Ok(self
+            .lock()?
+            .entries
+            .iter()
+            .filter(|e| query.matches(e))
+            .count() as u64)
     }
 
     fn apply_retention(&self, policy: RetentionPolicy, now_ms: i64) -> Result<u64, JournalError> {
@@ -115,9 +138,15 @@ impl JournalStore for MemoryJournal {
         };
         let deleted = {
             let mut guard = self.lock()?;
-            let before = guard.0.len();
-            guard.0.retain(|e| e.time_ms >= cutoff);
-            (before - guard.0.len()) as u64
+            let before = guard.entries.len();
+            guard.entries.retain(|e| e.time_ms >= cutoff);
+            let kept: HashMap<String, i64> = guard
+                .entries
+                .iter()
+                .filter_map(|e| Some((e.client_event_id.clone()?, e.id?)))
+                .collect();
+            guard.client_events = kept;
+            (before - guard.entries.len()) as u64
         };
         self.append(&[retention_entry(deleted, now_ms)])?;
         Ok(deleted)

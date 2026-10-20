@@ -31,7 +31,7 @@ Task FS-2.2 [ ] 46h: UI-F2.2 [x] UI-F2.3 [ ] UI-F2.4 [ ]
 Task 1.2 [ ] 34h: DE-1.2 [ ] UI-1.2 [ ]
 Task FS-2.5 [ ] 114h: API-F2.2 [ ] API-F2.3 [ ] API-F2.5 [x] API-F2.13 [ ] UI-F2.8 [ ] UI-F2.9 [ ] UI-F2.11 [ ]
 Task FS-2.8 [ ] 76h: CO-0.11 [ ] IO-1.5 [ ] PV-0.1 [ ] MD-0.9 [ ] PV-0.2 [ ] API-F2.8 [ ] DE-0.10 [ ] API-F2.9 [ ]
-Task FS-2.9 [ ] 70h: API-F2.10 [ ] IO-1.6 [ ] API-F2.12 [ ] CLI-0.2 [ ] API-F2.11 [ ] CL-1.9 [ ] DE-0.11 [ ] UI-F2.15 [ ] UI-F2.16 [ ]
+Task FS-2.9 [ ] 70h: API-F2.10 [x] IO-1.6 [ ] API-F2.12 [ ] CLI-0.2 [ ] API-F2.11 [ ] CL-1.9 [ ] DE-0.11 [ ] UI-F2.15 [ ] UI-F2.16 [ ]
 Task FS-3.1 [ ] 16h: DE-F3.1 [ ]
 Task FS-3.4 [ ] 24h: DE-F3.2 [ ] UI-F3.1 [ ]
 Task FS-3.9 [ ] 12h:
@@ -87,7 +87,7 @@ Task FS-3.9 [ ] 12h:
     <line class="divider" x1="431.67" y1="28" x2="431.67" y2="46"/>
     <rect x="500.48" y="28" width="0.00" height="18" fill="#1a7f37"><title>Task FS-2.8: 0 of 76 hours</title></rect>
     <line class="divider" x1="500.48" y1="28" x2="500.48" y2="46"/>
-    <rect x="546.36" y="28" width="0.00" height="18" fill="#1a7f37"><title>Task FS-2.9: 0 of 70 hours</title></rect>
+    <rect x="546.36" y="28" width="4.69" height="18" fill="#1a7f37"><title>Task FS-2.9: 8 of 70 hours</title></rect>
     <line class="divider" x1="546.36" y1="28" x2="546.36" y2="46"/>
     <rect x="588.61" y="28" width="0.00" height="18" fill="#1a7f37"><title>Task FS-3.1: 0 of 16 hours</title></rect>
     <line class="divider" x1="588.61" y1="28" x2="588.61" y2="46"/>
