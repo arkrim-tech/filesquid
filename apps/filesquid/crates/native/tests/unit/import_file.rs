@@ -199,7 +199,8 @@ async fn a_file_above_the_in_memory_bound_is_refused_before_it_is_read() {
         .expect_err("refused");
     assert_eq!(failure, ImportFailure::TooLarge);
     assert_eq!(failure.error_code(), "too_large_for_this_build");
-    assert!(failure.retryable());
+    assert!(failure.retryable(), "a later build may import it");
+    assert!(!failure.retry_now(), "no attempt within this job can");
 }
 
 #[tokio::test]
@@ -213,4 +214,5 @@ async fn a_missing_source_is_refused_without_retry() {
     let failure = import_file(&files, &missing).await.expect_err("refused");
     assert_eq!(failure.error_code(), "source_missing");
     assert!(!failure.retryable());
+    assert!(!failure.retry_now());
 }

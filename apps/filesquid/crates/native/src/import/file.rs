@@ -79,6 +79,12 @@ impl ImportFailure {
             ImportFailure::Commit { retryable, .. } => *retryable,
         }
     }
+
+    /// Whether trying again within the same job may succeed: a retryable failure other than
+    /// [`ImportFailure::TooLarge`], which only a later build (the streamed stage) lifts.
+    pub fn retry_now(&self) -> bool {
+        self.retryable() && *self != ImportFailure::TooLarge
+    }
 }
 
 /// The failure of a commit the API refused.

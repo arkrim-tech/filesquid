@@ -336,7 +336,7 @@ async fn import_with_attempts(
         }
         match import_file(context.files, &request).await {
             Ok(view) => return imported(context, running, view),
-            Err(failure) if !failure.retryable() => {
+            Err(failure) if !failure.retry_now() => {
                 return quarantine(context, running, failure.error_code())
             }
             Err(failure) => last = failure.error_code(),
