@@ -44,6 +44,7 @@ pub const CONSENT_STATEMENT: &str = "For each object named, one version inventor
 
 /// The owner's consent from the UI-1.1 dialog.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RepairConsent {
     /// The library the dialog named.
     pub library_id: LibraryId,
@@ -57,6 +58,7 @@ pub struct RepairConsent {
 
 /// The explicit repair command: the library, the objects and the owner's consent.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RepairRequest {
     /// The library whose storage root the host injected.
     pub library_id: LibraryId,
