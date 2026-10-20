@@ -26,6 +26,7 @@ const ELEMENTS = [
   "fs-host-indicator.ts",
   "fs-monitor.ts",
   "fs-nav-tree.ts",
+  "fs-ocfl-findings.ts",
   "fs-states.ts",
   "fs-theme-control.ts",
 ];

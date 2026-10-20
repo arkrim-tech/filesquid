@@ -182,6 +182,63 @@ Feature: Reusable filesquid-metadata engine
     When I import a JSON sidecar holding rico:title
     Then the JSON import should be rejected naming the prefix rico
 
+  # MD-S-012: namespace registry and extension statements
+  Scenario: A distribution registers an extension namespace and authors a statement in it
+    Given the namespace rico is registered with a term list
+    When I author rico:title "Fonds 12" on a file
+    Then metadata.md should hold rico title "Fonds 12" in its own map
+    And no dcterms statement should be written
+
+  Scenario: An owner declares a custom namespace of free keys
+    Given the owner declares the custom namespace mine
+    When I author mine:shelf_mark "B-7" on a file
+    Then metadata.md should hold mine shelf_mark "B-7" in its own map
+
+  Scenario Outline: A registration cannot redefine a built-in namespace
+    When I register the namespace <prefix>
+    Then the registration should be refused naming <prefix>
+
+    Examples:
+      | prefix  |
+      | dcterms |
+      | dc      |
+      | schema  |
+      | exif    |
+
+  Scenario: A prefix keeps its one IRI
+    Given the namespace rico is registered with a term list
+    When I register rico again with another IRI
+    Then the registration should be refused naming rico
+    And rico should keep its first IRI
+
+  Scenario: A term list rejects unknown terms
+    Given the namespace rico is registered with a term list
+    When I author rico:colour "red" on a file
+    Then the write should be rejected naming colour
+
+  Scenario: A statement in an unregistered namespace is rejected by name
+    Given the namespace rico is registered with a term list
+    When I author lido:title "x" on a file
+    Then the write should be rejected naming lido
+
+  Scenario: Extension statements round-trip through metadata.md, CSV, JSON and XMP
+    Given the namespace rico is registered with a term list
+    When I author rico:title "Fonds 12" on a file
+    Then the statement should round-trip unchanged through metadata.md, CSV, JSON and XMP
+
+  Scenario: Registrations persist in canonical OCFL state
+    Given the namespace rico is registered with a term list
+    When I commit the registry to an OCFL object
+    Then a store opened afresh over that object should recover the registration
+    And the registry object should pass the OCFL validator
+
+  Scenario: The CLI validate command reports an unregistered prefix
+    Given an OCFL object whose registry holds rico
+    When I validate lido:title with the CLI
+    Then validate should fail
+    When I validate rico:title with the CLI
+    Then validate should succeed
+
   Scenario: JSON sidecar does not replace metadata.md
     Given an OCFL object with a logical file and dcterms:title Harbour
     When I export the object's JSON sidecar
