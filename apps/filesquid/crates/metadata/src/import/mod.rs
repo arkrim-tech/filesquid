@@ -78,6 +78,9 @@ pub enum ImportError {
     /// The whole values stored hold more bytes than the entry says it read.
     #[error("the attribute values stored exceed the bytes the entry says it read")]
     AttributeBytesUnderReported,
+    /// A stored attribute value does not match its size or is not a digest.
+    #[error("a stored attribute value does not match its size or digest form")]
+    AttributeValueInconsistent,
     /// The cited logical path is not a valid relative logical path.
     #[error("the cited logical path is not a valid relative logical path")]
     InvalidLogicalPath,
@@ -422,11 +425,7 @@ impl ImportEntry {
     /// The cited digest and logical path must be well formed.
     fn validate_citation(&self) -> Result<(), ImportError> {
         let a = &self.acquisition;
-        let hex = a.sha256.len() == 64
-            && a.sha256
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
-        if !hex {
+        if !attributes::is_sha256_hex(&a.sha256) {
             return Err(ImportError::InvalidDigest);
         }
         match (a.storage, &a.logical_path) {

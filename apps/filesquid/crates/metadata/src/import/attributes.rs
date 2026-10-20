@@ -87,6 +87,8 @@ impl Attributes {
     /// [`ImportError::AttributeValueTooLarge`] for a whole value over 64 KiB,
     /// [`ImportError::AttributeBytesUnderReported`] when the whole values
     /// stored add up to more bytes than `bytes_inspected` claims,
+    /// [`ImportError::AttributeValueInconsistent`] for a whole value whose
+    /// length is not its `size` or a digest that is not SHA-256 hex,
     /// and [`ImportError::TruncationNotMarked`] when names were left out
     /// without the `truncated` mark.
     pub fn validate(&self) -> Result<(), ImportError> {
@@ -104,6 +106,7 @@ impl Attributes {
                 _ => None,
             })
             .collect();
+        self.validate_values()?;
         if whole.iter().any(|len| *len > MAX_STORED_VALUE_BYTES) {
             return Err(ImportError::AttributeValueTooLarge);
         }
@@ -115,6 +118,32 @@ impl Attributes {
         }
         Ok(())
     }
+}
+
+impl Attributes {
+    /// Each stored value must match what its attribute claims: a whole value
+    /// is exactly `size` bytes and a digest is 64 lowercase hex digits.
+    fn validate_values(&self) -> Result<(), ImportError> {
+        for attribute in &self.entries {
+            let consistent = match &attribute.value {
+                AttrValue::Full { value } => value.as_bytes().len() as u64 == attribute.size,
+                AttrValue::Digest { sha256 } => is_sha256_hex(sha256),
+                AttrValue::Incomplete | AttrValue::Withheld => true,
+            };
+            if !consistent {
+                return Err(ImportError::AttributeValueInconsistent);
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Whether `text` is 64 lowercase hex digits.
+pub(crate) fn is_sha256_hex(text: &str) -> bool {
+    text.len() == 64
+        && text
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 /// Collects attributes within the bounds, for a host that reads them.
@@ -164,6 +193,8 @@ impl AttributeCollector {
     /// remaining budget. Nothing is added then.
     pub fn add(&mut self, name: &[u8], size: u64, read: &[u8]) -> Result<(), ImportError> {
         if self.names_remaining() == 0 {
+            // The name is left out: remember that, so the entry is marked truncated.
+            self.enumerated = self.enumerated.max(self.entries.len() as u64 + 1);
             return Err(ImportError::TooManyAttributeNames);
         }
         let taken = read.len() as u64;

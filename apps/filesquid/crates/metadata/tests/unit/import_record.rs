@@ -1007,3 +1007,63 @@ mod review_fixes {
         assert_eq!(record.facts().display_name, "ab_c.jpg");
     }
 }
+
+mod review_fixes_two {
+    use super::*;
+
+    #[test]
+    fn a_whole_value_must_be_its_declared_size_and_a_digest_must_be_sha256_hex() {
+        let mut entry = entry();
+        entry.attributes = Fact::value(Attributes {
+            entries: vec![attribute(
+                "a",
+                AttrValue::Full {
+                    value: Raw::from_bytes(&[1, 2, 3]),
+                },
+                5,
+            )],
+            names_enumerated: 1,
+            truncated: false,
+            bytes_inspected: 3,
+        });
+        assert_eq!(
+            entry.validate(),
+            Err(ImportError::AttributeValueInconsistent)
+        );
+        for bad in ["", "xyz", &"A".repeat(64)] {
+            let mut entry = super::entry();
+            entry.attributes = Fact::value(Attributes {
+                entries: vec![attribute(
+                    "a",
+                    AttrValue::Digest {
+                        sha256: bad.to_string(),
+                    },
+                    70_000,
+                )],
+                names_enumerated: 1,
+                truncated: false,
+                bytes_inspected: 0,
+            });
+            assert_eq!(
+                entry.validate(),
+                Err(ImportError::AttributeValueInconsistent),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_refused_257th_name_still_marks_the_entry_truncated() {
+        let mut collector = AttributeCollector::new();
+        for i in 0..MAX_ATTRIBUTE_NAMES {
+            collector
+                .add(format!("user.n{i}").as_bytes(), 0, &[])
+                .unwrap();
+        }
+        assert!(collector.add(b"user.extra", 0, &[]).is_err());
+        let attrs = collector.finish();
+        assert!(attrs.truncated);
+        assert_eq!(attrs.names_enumerated, 257);
+        assert_eq!(attrs.validate(), Ok(()));
+    }
+}

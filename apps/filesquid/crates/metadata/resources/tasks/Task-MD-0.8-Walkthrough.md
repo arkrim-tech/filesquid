@@ -4,7 +4,7 @@ Branch: `feat/md-0.8-import-record` (part of global Task FS-1.3).
 
 ## MD-S-013: Import record
 
-Also MD-S-008 (Canonical metadata is `metadata.md`: one per-file record `<file-uuid>.metadata.md`, each edit one new OCFL version).
+Also MD-S-008: Canonical metadata record (one per-file record `<file-uuid>.metadata.md`, each edit one new OCFL version).
 
 ## What changed
 
@@ -35,17 +35,17 @@ Also MD-S-008 (Canonical metadata is `metadata.md`: one per-file record `<file-u
 
 | Requirement | Tests |
 |---|---|
-| MD-S-013 record, schema, header fields | `unit_import_record::file_record::*`, BDD "The record opens with the original name, display name, extension, format and media type" |
-| MD-S-013 unavailable facts with a reason | `entry_validation::the_upload_profile_is_valid_and_lists_what_an_upload_cannot_know`, `an_unavailable_fact_serializes_with_its_reason`, BDD "Every missing fact is listed as unavailable with a reason" |
-| MD-S-013 reported size must equal verified size | `differing_reported_and_verified_sizes_are_rejected`, BDD "A source size that differs from the verified size is rejected" |
-| MD-S-013 RFC 3339 UTC times | `timestamps_must_be_rfc_3339_utc`, `a_file_time_must_be_rfc_3339_utc_too` |
-| MD-S-013 base64 for non-UTF-8 | `raw_values::*`, `a_non_utf8_original_name_round_trips_exactly`, `a_non_utf8_name_survives_the_store`, BDD "Names and values that are not UTF-8 round-trip as base64" |
-| MD-S-013 bounds: 256 names, 1 MiB, 64 KiB, truncated, incomplete | `attribute_bounds::*`, BDD "Attribute inspection stops at 256 names and 1 MiB and marks what it cut", "A value over 64 KiB is kept as size and SHA-256 only" |
-| MD-S-013 append-only, refusal of a changed or removed entry or the original name | `a_save_that_changes_an_import_entry_is_refused`, `..._removes_an_import_entry_...`, `..._changes_the_original_name_...` (pure and store), BDD refusal scenarios |
-| MD-S-013 re-import appends in a new OCFL version | `a_re_import_appends_an_entry_in_a_new_version_and_leaves_v1_untouched`, BDD "A re-import appends an entry in a new OCFL version" |
-| MD-S-013 no filesystem reads, wasm32 | BDD "The import record builds for the browser without filesystem access", "Engine builds for the browser" (default features and `ocfl`) |
-| MD-S-013 / ADR 038 Decision 6 read access and identity classes | `projection_and_scrub::*`, BDD "The read projection omits paths, host and account", "The outgoing policy scrubs the identity fields" |
-| MD-S-008 per-file record path, one version per edit | `the_record_lives_beside_the_original_in_the_same_version_as_its_content`, `a_statements_only_save_keeps_the_header_and_every_import_entry`, `a_plain_metadata_md_is_unchanged_by_the_per_file_path`, BDD "A file's one record lives beside its stored original in the same version", "A statements edit keeps the header and the import section", "A rename changes only the display name" |
+| MD-S-013 Import record: record, schema, header fields | `unit_import_record::file_record::*`, BDD "The record opens with the original name, display name, extension, format and media type" |
+| MD-S-013 Import record: unavailable facts with a reason | `entry_validation::the_upload_profile_is_valid_and_lists_what_an_upload_cannot_know`, `an_unavailable_fact_serializes_with_its_reason`, BDD "Every missing fact is listed as unavailable with a reason" |
+| MD-S-013 Import record: reported size must equal verified size | `differing_reported_and_verified_sizes_are_rejected`, BDD "A source size that differs from the verified size is rejected" |
+| MD-S-013 Import record: RFC 3339 UTC times | `timestamps_must_be_rfc_3339_utc`, `a_file_time_must_be_rfc_3339_utc_too` |
+| MD-S-013 Import record: base64 for non-UTF-8 | `raw_values::*`, `a_non_utf8_original_name_round_trips_exactly`, `a_non_utf8_name_survives_the_store`, BDD "Names and values that are not UTF-8 round-trip as base64" |
+| MD-S-013 Import record: bounds: 256 names, 1 MiB, 64 KiB, truncated, incomplete | `attribute_bounds::*`, BDD "Attribute inspection stops at 256 names and 1 MiB and marks what it cut", "A value over 64 KiB is kept as size and SHA-256 only" |
+| MD-S-013 Import record: append-only, refusal of a changed or removed entry or the original name | `a_save_that_changes_an_import_entry_is_refused`, `..._removes_an_import_entry_...`, `..._changes_the_original_name_...` (pure and store), BDD refusal scenarios |
+| MD-S-013 Import record: re-import appends in a new OCFL version | `a_re_import_appends_an_entry_in_a_new_version_and_leaves_v1_untouched`, BDD "A re-import appends an entry in a new OCFL version" |
+| MD-S-013 Import record: no filesystem reads, wasm32 | BDD "The import record builds for the browser without filesystem access", "Engine builds for the browser" (default features and `ocfl`) |
+| MD-S-013 Import record, with ADR 038 Decision 6: read access and identity classes | `projection_and_scrub::*`, BDD "The read projection omits paths, host and account", "The outgoing policy scrubs the identity fields" |
+| MD-S-008 Canonical metadata record (one `<file-uuid>.metadata.md` per file, one OCFL version per edit): per-file record path, one version per edit | `the_record_lives_beside_the_original_in_the_same_version_as_its_content`, `a_statements_only_save_keeps_the_header_and_every_import_entry`, `a_plain_metadata_md_is_unchanged_by_the_per_file_path`, BDD "A file's one record lives beside its stored original in the same version", "A statements edit keeps the header and the import section", "A rename changes only the display name" |
 
 ## TDD: failing run before implementation
 
@@ -150,7 +150,7 @@ test attribute_bounds::the_read_budget_is_one_mebibyte_across_the_entry ... ok
 test result: ok. 46 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
 ```
 
-`cargo test -p filesquid-metadata --all-features --locked` (all binaries, including the BDD feature run with both `wasm32` builds): exit 0; per binary: lib 3, cli 22, csv 10, extract 13, file_record_store 23, file_ref 3, import_record 56, isolation 4, json 19, markdown 3, register 10, sidecar 8, store 28 passed, 0 failed. BDD: 43 scenarios (42 passed, 1 skipped), 129 steps (128 passed, 1 skipped); the skipped step is the existing UI-only "Metadata panel" scenario.
+`cargo test -p filesquid-metadata --all-features --locked` (all binaries, including the BDD feature run with both `wasm32` builds): exit 0; per binary: lib 3, cli 22, csv 10, extract 13, file_record_store 23, file_ref 3, import_record 58, isolation 4, json 19, markdown 3, register 10, sidecar 8, store 28 passed, 0 failed. BDD: 43 scenarios (42 passed, 1 skipped), 129 steps (128 passed, 1 skipped); the skipped step is the existing UI-only "Metadata panel" scenario.
 
 `cargo check -p filesquid-metadata --lib --no-default-features [--features ocfl] --target wasm32-unknown-unknown --locked`: both `Finished`.
 
