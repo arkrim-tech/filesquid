@@ -228,6 +228,10 @@ pub fn sample(
             path.into(),
             file_body(json!({ "curie": "dcterms:subject" })),
         ),
+        ("POST", "/api/v1/files/renames") => (
+            path.into(),
+            file_body(json!({ "display_name": "Été à Nice.jpg" })),
+        ),
         ("GET", "/api/v1/files/metadata/terms") => {
             (format!("{path}?library_id={LIBRARY}&name=title"), None)
         }
@@ -388,6 +392,7 @@ fn history() -> HistoryView {
         library_id: LIBRARY.into(),
         object_id: OBJECT.into(),
         path: "a.jpg".into(),
+        display_name: "Été à Nice.jpg".into(),
         entries: changes
             .into_iter()
             .map(|(change, digest)| HistoryEntryView {
@@ -448,6 +453,7 @@ fn answer_samples() -> Vec<(&'static str, Vec<Value>)> {
         library_id: LIBRARY.into(),
         object_id: OBJECT.into(),
         head: "v2".into(),
+        display_name: Some("Été à Nice.jpg".into()),
         versions: versions().to_vec(),
     };
     let commit = CommitView {
@@ -490,7 +496,16 @@ fn answer_samples() -> Vec<(&'static str, Vec<Value>)> {
         truncated: false,
     };
     vec![
-        ("ObjectVersions", vec![to_value(versions)]),
+        (
+            "ObjectVersions",
+            vec![
+                to_value(&versions),
+                to_value(VersionsView {
+                    display_name: None,
+                    ..versions.clone()
+                }),
+            ],
+        ),
         ("FileCommit", vec![to_value(commit)]),
         ("UploadCommit", vec![to_value(upload)]),
         ("FileHistorySize", vec![to_value(file_size)]),
@@ -554,7 +569,7 @@ fn request_samples() -> Vec<(&'static str, Vec<Value>)> {
 fn metadata_samples() -> Vec<(&'static str, Vec<Value>)> {
     use filesquid_api::files::statements::{
         CandidateKind, MetadataCommitView, NamespacesView, RegisterNamespaceRequest,
-        RemoveStatementRequest, SetStatementRequest, StatementSource, StatementView,
+        RemoveStatementRequest, RenameRequest, SetStatementRequest, StatementSource, StatementView,
         StatementsView, TermCandidate, TermsView,
     };
     use filesquid_metadata::namespace::{NamespaceKind, Registrant, Registration};
@@ -617,6 +632,11 @@ fn metadata_samples() -> Vec<(&'static str, Vec<Value>)> {
         curie: "dcterms:title".into(),
         value: "Harbour".into(),
     };
+    let rename = RenameRequest {
+        library_id: LIBRARY.into(),
+        file_id: FILE.into(),
+        display_name: "Été à Nice.jpg".into(),
+    };
     let removal = RemoveStatementRequest {
         library_id: LIBRARY.into(),
         file_id: FILE.into(),
@@ -649,6 +669,7 @@ fn metadata_samples() -> Vec<(&'static str, Vec<Value>)> {
         ("FileStatements", vec![to_value(&statements)]),
         ("SetStatementRequest", vec![to_value(set)]),
         ("RemoveStatementRequest", vec![to_value(removal)]),
+        ("RenameRequest", vec![to_value(rename)]),
         ("MetadataCommit", vec![to_value(commit)]),
         (
             "CandidateKind",

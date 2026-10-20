@@ -464,7 +464,7 @@ export interface paths {
         put?: never;
         /**
          * Move or rename one file or folder
-         * @description A folder moves every file below it; no bytes are written. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once.
+         * @description A folder moves every file below it; no bytes are written. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once. A file object's stored original (`original/` of `files/<file-id>`) never moves: such a move is refused (400) with a pointer to `POST /api/v1/files/renames`, since a rename changes only the display name (API-S-027).
          */
         post: operations["moveFiles"];
         delete?: never;
@@ -1001,6 +1001,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/files/renames": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rename a file
+         * @description Set the display name of a file object's original (API-S-027): the record's display name changes and nothing else, so the stored name, the logical path, the original name and every import entry stay. Publishes exactly one new version of the file's metadata record through the metadata module's `ocfl` store with the caller as the version user, or is refused without publishing (400 for an empty name, one over 1,024 bytes or one with `/` or NUL; 409 when the name is already the display name or another writer moved the record first). The version is journaled as `files.rename` with opaque IDs only; a refusal is journaled once.
+         */
+        post: operations["renameFile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1352,6 +1372,8 @@ export interface components {
             object_id: string;
             /** @description The file's logical path. */
             path: string;
+            /** @description The name users see for the file (API-S-027): its metadata record's display name for a file object's original, else its stored name. */
+            display_name: string;
             /** @description The versions that changed it. */
             entries: components["schemas"]["FileHistoryEntry"][];
         };
@@ -1363,6 +1385,8 @@ export interface components {
             object_id: string;
             /** @description The head version. */
             head: string;
+            /** @description For a file object, the name users see for its file at the head (API-S-027): its metadata record's display name; null for any other object. */
+            display_name: string | null;
             /** @description Every version. */
             versions: components["schemas"]["VersionRecord"][];
         };
@@ -2093,6 +2117,15 @@ export interface components {
             /** @description The version read. */
             version: string;
             facts: components["schemas"]["FileFacts"];
+        };
+        /** @description Rename one file: set its display name. */
+        RenameRequest: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The file. */
+            file_id: string;
+            /** @description The new display name, 1 to 1,024 bytes without `/` or NUL. */
+            display_name: string;
         };
     };
     responses: {
@@ -4120,6 +4153,37 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    renameFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RenameRequest"];
+            };
+        };
+        responses: {
+            /** @description The version published. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MetadataCommit"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             500: components["responses"]["Internal"];
             503: components["responses"]["FilesUnavailable"];
         };

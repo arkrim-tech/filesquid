@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "FileSquid API",
-    "version": "0.18.0",
+    "version": "0.19.0",
     "description": "The single FileSquid API served by every FileSquid host. See resources/architecture/030-filesquid-api-and-transports.md. Conventions: a command (mutation) sends a CommandEnvelope as the `envelope` member of its JSON request body (operation_id is the idempotency key, expected_revision the revision last read) and answers with a CommandOutcome; a query (list) takes the PageSize (`limit`, 1-1000) and Cursor (`cursor`) parameters; every failed request answers with an ApiError body (code, message, retryable). Router-wide fallbacks: any /api/v1/ path not in this contract answers 404 not_found, and a documented path called with a method it does not document answers 405 method_not_allowed; both carry the ApiError body. They are not listed per operation because no operation sends them. Authorisation is deny-by-default: every operation, including health, the contract and the event channel, requires the bearerAuth credential and is authorised before anything else runs, so a call without it answers 401 unauthorized and a call whose credential is not accepted or does not grant the operation answers 403 forbidden, before any 404 or 405; both carry the ApiError body with a DenialReason in `reason`. Each operation names the authorisation action it performs in x-filesquid-action. The one deliberate exception is GET /api/v1/health/live (x-filesquid-action public, security []), a liveness probe that answers only {\"status\":\"up\"} without a credential. The content route GET and HEAD /api/v1/content/{handle} (x-filesquid-action content.read, x-filesquid-credential content-handle, security []) is not public: its only credential is the content handle in its path, minted by POST /api/v1/content-handles for one file version (API-S-018); a Bearer token is not accepted there, and every unusable request under /api/v1/content/ (unknown, malformed, missing, expired, evicted or revoked handle, an extra path segment or another method) answers one identical 403 forbidden with reason invalid_credentials, never 401, 404 or 405. Paths marked x-filesquid-host-route are served by the hosts, not by the filesquid-api router."
   },
   "security": [
@@ -1680,7 +1680,7 @@
       "post": {
         "operationId": "moveFiles",
         "summary": "Move or rename one file or folder",
-        "description": "A folder moves every file below it; no bytes are written. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once.",
+        "description": "A folder moves every file below it; no bytes are written. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once. A file object's stored original (`original/` of `files/<file-id>`) never moves: such a move is refused (400) with a pointer to `POST /api/v1/files/renames`, since a rename changes only the display name (API-S-027).",
         "x-filesquid-action": "files.write",
         "requestBody": {
           "required": true,
@@ -3303,6 +3303,57 @@
           }
         }
       }
+    },
+    "/api/v1/files/renames": {
+      "post": {
+        "operationId": "renameFile",
+        "summary": "Rename a file",
+        "description": "Set the display name of a file object's original (API-S-027): the record's display name changes and nothing else, so the stored name, the logical path, the original name and every import entry stay. Publishes exactly one new version of the file's metadata record through the metadata module's `ocfl` store with the caller as the version user, or is refused without publishing (400 for an empty name, one over 1,024 bytes or one with `/` or NUL; 409 when the name is already the display name or another writer moved the record first). The version is journaled as `files.rename` with opaque IDs only; a refusal is journaled once.",
+        "x-filesquid-action": "files.write",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The version published.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetadataCommit"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -4407,6 +4458,7 @@
           "library_id",
           "object_id",
           "path",
+          "display_name",
           "entries"
         ],
         "properties": {
@@ -4421,6 +4473,10 @@
           "path": {
             "type": "string",
             "description": "The file's logical path."
+          },
+          "display_name": {
+            "type": "string",
+            "description": "The name users see for the file (API-S-027): its metadata record's display name for a file object's original, else its stored name."
           },
           "entries": {
             "type": "array",
@@ -4439,6 +4495,7 @@
           "library_id",
           "object_id",
           "head",
+          "display_name",
           "versions"
         ],
         "properties": {
@@ -4453,6 +4510,13 @@
           "head": {
             "type": "string",
             "description": "The head version."
+          },
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For a file object, the name users see for its file at the head (API-S-027): its metadata record's display name; null for any other object."
           },
           "versions": {
             "type": "array",
@@ -6611,6 +6675,30 @@
           },
           "facts": {
             "$ref": "#/components/schemas/FileFacts"
+          }
+        }
+      },
+      "RenameRequest": {
+        "type": "object",
+        "description": "Rename one file: set its display name.",
+        "required": [
+          "library_id",
+          "file_id",
+          "display_name"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library."
+          },
+          "file_id": {
+            "type": "string",
+            "description": "The file."
+          },
+          "display_name": {
+            "type": "string",
+            "description": "The new display name, 1 to 1,024 bytes without `/` or NUL."
           }
         }
       }
