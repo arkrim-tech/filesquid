@@ -26,7 +26,9 @@
 //!   routes ([`CatalogRoots`]) and the history backfill over them
 //!   ([`SqliteCatalog::backfill_history`], Task FS-2.8 host wiring), and the job workers
 //!   ([`workers`]: the durable history backfill job, Tasks DE-0.4 and DE-0.8), which the
-//!   media workers of DE-0.5 join. Only `filesquid-desktop` enables it.
+//!   media workers of DE-0.5 join; and the library routes' host side (Task DE-1.1): the folders
+//!   the owner chose ([`HostLocations`], served by [`open_fs_library_root`]) and the
+//!   persistent repair ledger ([`SqliteRepairLedger`]). Only `filesquid-desktop` enables it.
 //!
 //! `filesquid-desktop` links this crate with `desktop`. `filesquid-server` MAY link it with its
 //! default features only (journal store, data-directory checks, `HostMonitor`), keeping its
@@ -45,17 +47,23 @@ pub mod host_monitor;
 pub mod installation;
 pub mod jobs_sqlite;
 pub mod journal_sqlite;
+#[cfg(feature = "desktop")]
+pub mod locations;
 mod owner_only;
+#[cfg(feature = "desktop")]
+pub mod repair_ledger;
 #[cfg(feature = "desktop")]
 pub mod workers;
 
 #[cfg(feature = "desktop")]
 pub use catalog::{
-    intent_entry, library_ocfl_root, CatalogRoots, CommitProbe, LibraryBackfill, NoProbe,
-    PendingIntent, SqliteCatalog, CATALOG_DIR, CATALOG_FILE_EXTENSION, CATALOG_SCHEMA_VERSION,
-    INTENT_RECORDED_OPERATION, MAX_BACKFILL_RUNS, MAX_LIBRARIES, OCFL_ROOT_SUFFIX,
-    RECONCILE_OPERATION, WORK_DIR_SUFFIX,
+    intent_entry, library_ocfl_root, CatalogRoots, CommitProbe, HostRoots, LibraryBackfill,
+    NoProbe, PendingIntent, SqliteCatalog, CATALOG_DIR, CATALOG_FILE_EXTENSION,
+    CATALOG_SCHEMA_VERSION, INTENT_RECORDED_OPERATION, MAX_BACKFILL_RUNS, MAX_LIBRARIES,
+    OCFL_ROOT_SUFFIX, RECONCILE_OPERATION, WORK_DIR_SUFFIX,
 };
+#[cfg(feature = "desktop")]
+pub use files::open_fs_library_root;
 pub use files::{install_file_service, library_dir_name, open_fs_library, HostFiles, HostLeases};
 pub use findings_sqlite::SqliteFindings;
 pub use host_checks::{probe_name, DataDirChecks, MAX_PROBE_ATTEMPTS};
@@ -65,3 +73,7 @@ pub use host_monitor::{
 };
 pub use jobs_sqlite::SqliteJobs;
 pub use journal_sqlite::SqliteJournal;
+#[cfg(feature = "desktop")]
+pub use locations::{HostLocations, HostRoot, OpenedBackfill, OpenedRoots};
+#[cfg(feature = "desktop")]
+pub use repair_ledger::SqliteRepairLedger;

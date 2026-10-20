@@ -13,6 +13,7 @@
 
 use super::LOG_TARGET;
 use super::{canonical, error_code, reconcile, reconcile_library, OpenLibrary, SqliteCatalog};
+use crate::locations::OpenedRoots;
 use filesquid_api::history::backfill::{Backfill, BackfillError, BackfillReport};
 use filesquid_api::history::{HistoryError, HistoryRoots, RootResult};
 use filesquid_api::library::CatalogError;
@@ -42,6 +43,32 @@ impl HistoryRoots for CatalogRoots {
             .into_iter()
             .map(|reader| reader.map(Arc::new).map_err(roots_unavailable))
             .collect();
+        Ok(roots)
+    }
+}
+
+/// Every OCFL storage root the desktop serves, for the history routes: the catalog's
+/// libraries ([`CatalogRoots`]) and the libraries opened in folders the owner chose
+/// ([`OpenedRoots`], Task DE-1.1), listed again for every read.
+#[derive(Clone, Debug)]
+pub struct HostRoots {
+    /// The catalog's libraries.
+    pub catalog: CatalogRoots,
+    /// The libraries opened in owner-chosen folders.
+    pub opened: Arc<OpenedRoots>,
+}
+
+impl HistoryRoots for HostRoots {
+    type Backend = FsBackend;
+
+    /// The catalog's roots (filesystem I/O), then the opened folders' roots.
+    fn roots(&self) -> Result<Vec<RootResult<FsBackend>>, HistoryError> {
+        let mut roots = self.catalog.roots()?;
+        let opened = self
+            .opened
+            .list()
+            .map_err(|_| roots_unavailable(CatalogError::Unavailable("opened roots".into())))?;
+        roots.extend(opened.into_iter().map(|(_, root)| Ok(root.backend)));
         Ok(roots)
     }
 }

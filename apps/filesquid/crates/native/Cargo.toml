@@ -94,3 +94,8 @@ harness = false
 name = "unit_canonical_commit"
 path = "tests/unit/canonical_commit.rs"
 required-features = ["desktop"]
+
+[[test]]
+name = "unit_library_host"
+path = "tests/unit/library_host.rs"
+required-features = ["desktop"]

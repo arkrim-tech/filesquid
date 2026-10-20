@@ -83,6 +83,39 @@ pub fn open_fs_library(
     Ok(files.open_library(library_id, library))
 }
 
+#[cfg(feature = "desktop")]
+/// Serve `library_id` through `files` from the storage root and leases `root` already holds
+/// (a folder the owner chose, [`crate::locations::HostLocations`]), so the file routes and
+/// the library commands write that root through one set of fenced leases. The staging area
+/// goes under `<data_dir>/files/<digest>/staging` ([`library_dir_name`]). Returns false,
+/// changing nothing, when the library is already open. Creates directories.
+///
+/// # Errors
+///
+/// A message naming what could not be prepared; it never names a path.
+pub fn open_fs_library_root(
+    files: &HostFiles,
+    library_id: &LibraryId,
+    root: &crate::locations::HostRoot,
+    data_dir: &Path,
+) -> Result<bool, String> {
+    if files.is_open(library_id) {
+        return Ok(false);
+    }
+    let files_dir = data_dir.join(FILES_DIR);
+    let dir = files_dir.join(library_dir_name(library_id));
+    real_dir(&files_dir, "the files folder")?;
+    real_dir(&dir, "the library's folder")?;
+    let staging = backend_at(&dir, "staging", "the staging area")?;
+    let library = FileLibrary {
+        backend: root.backend.clone(),
+        reservations: root.reservations.clone(),
+        staging: Arc::new(staging),
+        staging_prefix: STAGING_PREFIX.to_string(),
+    };
+    Ok(files.open_library(library_id, library))
+}
+
 /// The folder name of `library_id` under `files/`: the first 32 hex digits of its SHA-256
 /// digest, so an identifier such as `..` or one with a separator cannot leave the folder.
 /// Pure.
@@ -94,7 +127,7 @@ pub fn library_dir_name(library_id: &LibraryId) -> String {
 
 /// Create `dir` (and its parents) when it is missing and refuse it when it is a symbolic link or not a
 /// directory, so the leases and staging cannot be redirected outside the data directory.
-fn real_dir(dir: &Path, what: &str) -> Result<(), String> {
+pub(crate) fn real_dir(dir: &Path, what: &str) -> Result<(), String> {
     match std::fs::symlink_metadata(dir) {
         Ok(meta) if meta.file_type().is_dir() => Ok(()),
         Ok(_) => Err(format!("{what} is not a plain directory")),
@@ -108,7 +141,7 @@ fn real_dir(dir: &Path, what: &str) -> Result<(), String> {
 /// checked without following links; on Unix the directory found at `root` must be the very
 /// directory (device and inode) the resolved path names, so swapping `root` for a link
 /// between the two steps is refused rather than served.
-fn storage_root(root: &Path) -> Result<std::path::PathBuf, String> {
+pub(crate) fn storage_root(root: &Path) -> Result<std::path::PathBuf, String> {
     let unopened = || "the storage root could not be opened".to_string();
     let canonical = std::fs::canonicalize(root).map_err(|_| unopened())?;
     let at_root = std::fs::symlink_metadata(root).map_err(|_| unopened())?;
