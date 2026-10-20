@@ -15,6 +15,7 @@ use filesquid_api::journal::{JournalEntry, Outcome};
 use filesquid_api::library::{
     CommandRequest, LibraryCommand, LibraryService, NEW_LIBRARY_REVISION,
 };
+use filesquid_api::local_library::choice::{ChoicePurpose, ChooseError, LocationChooser};
 use filesquid_api::local_library::{CONSENT_STATEMENT_ID, REPAIR_OPERATION};
 use filesquid_api::navigation::{AlwaysTrue, NavigationChange};
 use filesquid_api::operation::{CommandEnvelope, ExpectedRevision, OperationId, OperationScope};
@@ -23,12 +24,13 @@ use filesquid_api::{ApiEvent, ApiState};
 use filesquid_core::{InstallationId, LibraryId, RepositoryId};
 use filesquid_desktop_lib::api_protocol::handle;
 use filesquid_desktop_lib::backfill::{BackfillTask, DesktopBackfill};
+use filesquid_desktop_lib::folder_choice::{dialog_title, DesktopChooser, FolderDialog};
 use filesquid_desktop_lib::libraries::LibraryServing;
 use filesquid_desktop_lib::navigation::{install_navigation, owner_event_filter};
 use filesquid_desktop_lib::{
     history_backfill, install_backfill_route, install_file_provenance, install_file_scopes,
-    install_history_source, install_host_preferences, install_launch_token, install_library_routes,
-    open_host_monitor, open_library_catalog,
+    install_folder_choice, install_history_source, install_host_preferences, install_launch_token,
+    install_library_routes, open_host_monitor, open_library_catalog,
 };
 use filesquid_native::workers::history_backfill::{backfill_source, open_jobs};
 use filesquid_native::{
@@ -411,4 +413,60 @@ fn the_owners_preferences_are_kept_in_the_operational_store() {
     let files = HostFiles::new();
     assert!(install_file_scopes(&files).is_ok());
     assert!(install_file_scopes(&files).is_err(), "installed once");
+}
+
+/// A folder dialog in which the owner picks `folder`, or cancels when it is `None`.
+struct ScriptedDialog(Option<PathBuf>);
+
+impl FolderDialog for ScriptedDialog {
+    fn pick(&self, _purpose: ChoicePurpose) -> Result<Option<PathBuf>, ChooseError> {
+        Ok(self.0.clone())
+    }
+}
+
+#[test]
+fn the_owner_picks_a_folder_in_the_hosts_dialog_and_the_app_sees_only_its_id() {
+    let dir = fresh_dir("choice");
+    let folder = dir.join("Picked library");
+    std::fs::create_dir_all(&folder).expect("folder");
+    let desktop = Desktop::launch(dir.join("data"));
+    let body = json!({ "purpose": "create" });
+    let (status, _) = desktop.post("/api/v1/libraries/location-choices", body.clone());
+    assert_eq!(status, 503, "no chooser installed yet");
+    let dialog = Box::new(ScriptedDialog(Some(folder.clone())));
+    install_folder_choice(&desktop.state, &desktop.locations, dialog).expect("installed");
+    let (status, choice) = desktop.post("/api/v1/libraries/location-choices", body);
+    assert_eq!(status, 200, "{choice}");
+    assert_eq!(choice["outcome"], "chosen");
+    let location = choice["location_id"]
+        .as_str()
+        .expect("location")
+        .to_string();
+    assert!(!choice.to_string().contains("Picked"), "{choice}");
+    let (status, created) = desktop.post("/api/v1/libraries", json!({ "location_id": location }));
+    assert_eq!(status, 200, "{created}");
+    assert!(
+        folder.join("0=ocfl_1.1").is_file(),
+        "the library is in the picked folder"
+    );
+    desktop.stop();
+}
+
+#[test]
+fn a_cancelled_or_unusable_pick_registers_nothing() {
+    let dir = fresh_dir("choice-refused");
+    let file = dir.join("notes.txt");
+    std::fs::write(&file, b"mine").expect("file");
+    let locations = Arc::new(HostLocations::new(&dir.join("data")));
+    let cancelled = DesktopChooser::new(locations.clone(), Box::new(ScriptedDialog(None)));
+    assert_eq!(cancelled.choose(ChoicePurpose::Open), Ok(None));
+    let refused = DesktopChooser::new(locations, Box::new(ScriptedDialog(Some(file))));
+    assert_eq!(
+        refused.choose(ChoicePurpose::Create),
+        Err(ChooseError::Refused)
+    );
+    assert_eq!(
+        dialog_title(ChoicePurpose::CopyDestination),
+        "Choose an empty folder for the copy"
+    );
 }

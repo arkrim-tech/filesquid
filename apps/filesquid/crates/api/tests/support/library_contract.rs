@@ -5,6 +5,10 @@
 #![allow(dead_code)]
 
 use axum::http::Method;
+use filesquid_api::local_library::choice::{
+    ChoiceOutcome, ChoicePurpose, ChooseError, LocationChoice, LocationChoiceRequest,
+    LocationChooser,
+};
 use filesquid_api::local_library::{
     LibraryCommands, LibraryLocations, LibraryRequest, LibraryRoot, LibraryView,
     LocalLibraryService, LocationRequest, MemoryRepairLedger, ObjectFindings, ObjectRepair,
@@ -86,6 +90,16 @@ pub async fn install(state: &ApiState, monitor: &Monitor) {
     commands.create("owner", request).await.expect("create");
     commit_w010(&sample).await;
     assert!(state.install_libraries(Arc::new(commands)));
+    assert!(state.install_location_chooser(Arc::new(PickingChooser)));
+}
+
+/// A folder dialog in which the owner always picks the empty folder of a new library.
+struct PickingChooser;
+
+impl LocationChooser for PickingChooser {
+    fn choose(&self, _purpose: ChoicePurpose) -> Result<Option<String>, ChooseError> {
+        Ok(Some(NEW.to_string()))
+    }
 }
 
 /// Commit the sample object's v1 and v2, then remove its head version inventory and sidecar.
@@ -139,6 +153,7 @@ pub fn sample(method: &Method, path: &str) -> Option<(String, SampleBody)> {
             json!({ "library_id": LIBRARY, "destination_location_id": COPY })
         }
         ("POST", "/api/v1/libraries/rebuilds") => json!({ "library_id": LIBRARY }),
+        ("POST", "/api/v1/libraries/location-choices") => json!({ "purpose": "create" }),
         ("GET", "/api/v1/libraries/repair-candidates") => {
             return Some((format!("{path}?library_id={LIBRARY}"), None));
         }
@@ -236,6 +251,41 @@ pub fn samples() -> Vec<(&'static str, Vec<Value>)> {
     let mut unconsented = repair_request();
     unconsented.consent = None;
     vec![
+        (
+            "ChoicePurpose",
+            [
+                ChoicePurpose::Create,
+                ChoicePurpose::Open,
+                ChoicePurpose::CopyDestination,
+            ]
+            .map(to_value)
+            .to_vec(),
+        ),
+        (
+            "ChoiceOutcome",
+            [ChoiceOutcome::Chosen, ChoiceOutcome::Cancelled]
+                .map(to_value)
+                .to_vec(),
+        ),
+        (
+            "LocationChoiceRequest",
+            vec![to_value(LocationChoiceRequest {
+                purpose: ChoicePurpose::Open,
+            })],
+        ),
+        (
+            "LocationChoice",
+            vec![
+                to_value(LocationChoice {
+                    outcome: ChoiceOutcome::Chosen,
+                    location_id: Some(NEW.to_string()),
+                }),
+                to_value(LocationChoice {
+                    outcome: ChoiceOutcome::Cancelled,
+                    location_id: None,
+                }),
+            ],
+        ),
         (
             "LibraryLocationRequest",
             vec![to_value(LocationRequest {

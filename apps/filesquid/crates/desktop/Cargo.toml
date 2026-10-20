@@ -35,6 +35,10 @@ serde_json = "1"
 # check) as tracing spans and events, which the host journals (`ipc_observer`, Task DE-0.9).
 tauri = { version = "2.11.5", features = ["tracing"] }
 tauri-plugin-wdio-webdriver = { version = "1.5.0", optional = true }
+# The native folder dialog of the library routes' folder choice (Task DE-1.1, owner decision
+# 2026-10-20), shown from Rust; not a Tauri plugin, so the webview gets no dialog permission
+# (DE-S-002). GTK 3 only on Linux, the toolkit Tauri already links. MIT.
+rfd = { version = "0.17.2", default-features = false, features = ["gtk3"] }
 tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }

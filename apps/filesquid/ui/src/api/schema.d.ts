@@ -697,6 +697,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/libraries/location-choices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Let the owner pick a folder in the host's dialog
+         * @description API-S-025. The host shows its own native folder dialog for the purpose named (an empty folder for a new library, a folder that holds a library, or an empty folder for a snapshot copy), registers the folder the owner picks under an opaque location ID, and answers that ID, or that the owner cancelled. The folder never crosses the API as a path, title or storage key (API-S-005); the UI names the ID in the create, open and snapshot-copy routes. One dialog is open at a time: a request while one is open is refused 409 conflict (`dialog_open`), as is a picked folder the host cannot register (`location_refused`). A host without a dialog (filesquid-server) answers 503 unavailable. Each request is journaled once as `library.location.choose`: succeeded with the location ID, cancelled, or failed with its error code.
+         */
+        post: operations["chooseLibraryLocation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/libraries/snapshot-copies": {
         parameters: {
             query?: never;
@@ -1765,6 +1785,24 @@ export interface components {
         BackfillStarted: {
             /** @enum {string} */
             status: "started";
+        };
+        /**
+         * @description What a picked folder is for.
+         * @enum {string}
+         */
+        ChoicePurpose: "create" | "open" | "copy_destination";
+        /**
+         * @description How a folder choice ended.
+         * @enum {string}
+         */
+        ChoiceOutcome: "chosen" | "cancelled";
+        LocationChoiceRequest: {
+            purpose: components["schemas"]["ChoicePurpose"];
+        };
+        /** @description The opaque location ID of the folder the owner picked; absent when they cancelled. */
+        LocationChoice: {
+            outcome: components["schemas"]["ChoiceOutcome"];
+            location_id?: string;
         };
     };
     responses: {
@@ -3298,6 +3336,44 @@ export interface operations {
             409: components["responses"]["LibraryConflict"];
             500: components["responses"]["Internal"];
             503: components["responses"]["LibraryUnavailable"];
+        };
+    };
+    chooseLibraryLocation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LocationChoiceRequest"];
+            };
+        };
+        responses: {
+            /** @description The folder the owner picked, by its opaque location ID, or that they cancelled. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocationChoice"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description A folder dialog is already open, or the picked folder cannot hold a library (`conflict`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            500: components["responses"]["Internal"];
+            503: components["responses"]["Unavailable"];
         };
     };
     copyLibrarySnapshot: {

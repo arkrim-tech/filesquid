@@ -2471,6 +2471,61 @@
         }
       }
     },
+    "/api/v1/libraries/location-choices": {
+      "post": {
+        "operationId": "chooseLibraryLocation",
+        "summary": "Let the owner pick a folder in the host's dialog",
+        "description": "API-S-025. The host shows its own native folder dialog for the purpose named (an empty folder for a new library, a folder that holds a library, or an empty folder for a snapshot copy), registers the folder the owner picks under an opaque location ID, and answers that ID, or that the owner cancelled. The folder never crosses the API as a path, title or storage key (API-S-005); the UI names the ID in the create, open and snapshot-copy routes. One dialog is open at a time: a request while one is open is refused 409 conflict (`dialog_open`), as is a picked folder the host cannot register (`location_refused`). A host without a dialog (filesquid-server) answers 503 unavailable. Each request is journaled once as `library.location.choose`: succeeded with the location ID, cancelled, or failed with its error code.",
+        "x-filesquid-action": "library.manage",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocationChoiceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The folder the owner picked, by its opaque location ID, or that they cancelled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocationChoice"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "description": "A folder dialog is already open, or the picked folder cannot hold a library (`conflict`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
     "/api/v1/libraries/snapshot-copies": {
       "post": {
         "operationId": "copyLibrarySnapshot",
@@ -5646,6 +5701,52 @@
             "enum": [
               "started"
             ]
+          }
+        }
+      },
+      "ChoicePurpose": {
+        "type": "string",
+        "description": "What a picked folder is for.",
+        "enum": [
+          "create",
+          "open",
+          "copy_destination"
+        ]
+      },
+      "ChoiceOutcome": {
+        "type": "string",
+        "description": "How a folder choice ended.",
+        "enum": [
+          "chosen",
+          "cancelled"
+        ]
+      },
+      "LocationChoiceRequest": {
+        "type": "object",
+        "required": [
+          "purpose"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "purpose": {
+            "$ref": "#/components/schemas/ChoicePurpose"
+          }
+        }
+      },
+      "LocationChoice": {
+        "type": "object",
+        "description": "The opaque location ID of the folder the owner picked; absent when they cancelled.",
+        "required": [
+          "outcome"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "outcome": {
+            "$ref": "#/components/schemas/ChoiceOutcome"
+          },
+          "location_id": {
+            "type": "string",
+            "maxLength": 128
           }
         }
       }

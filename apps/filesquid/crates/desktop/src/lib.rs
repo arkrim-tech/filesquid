@@ -39,6 +39,7 @@ pub mod app_window;
 pub mod backfill;
 pub mod capability_policy;
 pub mod event_channel;
+pub mod folder_choice;
 pub mod ipc_gate;
 pub mod ipc_observer;
 pub mod libraries;
@@ -592,6 +593,24 @@ pub fn install_file_scopes(files: &filesquid_native::HostFiles) -> Result<(), St
     Ok(())
 }
 
+/// Install the folder choice of the library routes (`POST /api/v1/libraries/location-choices`)
+/// in `state`: `dialog` shows the native folder dialog and the picked folder is registered in
+/// `locations` ([`folder_choice::DesktopChooser`]). Pure.
+///
+/// # Errors
+/// A folder chooser is already installed.
+pub fn install_folder_choice(
+    state: &ApiState,
+    locations: &Arc<HostLocations>,
+    dialog: Box<dyn folder_choice::FolderDialog>,
+) -> Result<(), String> {
+    let chooser = folder_choice::DesktopChooser::new(locations.clone(), dialog);
+    if !state.install_location_chooser(Arc::new(chooser)) {
+        return Err("a folder chooser was already installed".to_string());
+    }
+    Ok(())
+}
+
 /// Give the file service's restore and label commits their PROV-O record (API-F2.5): they
 /// name `installation` and a journal entry ID `host`'s journal store allocates.
 ///
@@ -744,7 +763,8 @@ pub fn install_backfill_route(
 }
 
 /// Start the OCFL validation, give the file service its PROV-O provenance and its scope
-/// objects, install the preference store, and install the library routes over the folders the owner registers, serving each library they bind
+/// objects, install the preference store, install the library routes and their native folder
+/// choice over the folders the owner registers, serving each library they bind
 /// (Task DE-1.1); keep the validation and the folder registry in Tauri's managed state.
 /// Performs filesystem and database I/O.
 ///
@@ -770,6 +790,7 @@ fn install_library_services(
         data_dir: data_dir.to_path_buf(),
     };
     let locations = install_library_routes(&state, host, installation, serving)?;
+    install_folder_choice(&state, &locations, Box::new(folder_choice::RfdDialog))?;
     app.manage(DesktopValidation(validation));
     app.manage(DesktopLocations(locations));
     Ok(())

@@ -361,7 +361,8 @@ fn every_routed_path_declares_its_action() {
             "/api/v1/libraries"
             | "/api/v1/libraries/openings"
             | "/api/v1/libraries/snapshot-copies"
-            | "/api/v1/libraries/rebuilds" => Action::ManageLibraries,
+            | "/api/v1/libraries/rebuilds"
+            | "/api/v1/libraries/location-choices" => Action::ManageLibraries,
             "/api/v1/libraries/repair-candidates" => Action::ReadLibraries,
             "/api/v1/libraries/repairs" => Action::RepairLibraries,
             "/api/v1/navigation" => Action::ReadNavigation,

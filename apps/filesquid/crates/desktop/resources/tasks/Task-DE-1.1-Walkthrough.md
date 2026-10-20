@@ -24,7 +24,8 @@ Branch: `feat/de-1.1-library-create-open-copy-rebuild` (part of global [Task 1.1
     - the host port `BackfillLauncher`, installed with `ApiState::install_history_backfill`;
     - answers 200 when started, 409 while a backfill runs, and 503 until a launcher is installed;
     - each request is journaled once as `history.backfill.request`.
-  - `openapi.json` is 0.17.0, with schema `BackfillStarted`. `ui/src/api/schema.d.ts` was regenerated.
+  - `POST /api/v1/libraries/location-choices` and the `LocationChooser` port ([`local_library/choice.rs`](../../../api/src/local_library/choice.rs)).
+  - `openapi.json` is 0.17.0, with schemas `BackfillStarted`, `LocationChoiceRequest`, `LocationChoice`, `ChoicePurpose` and `ChoiceOutcome`. `ui/src/api/schema.d.ts` was regenerated.
 - **`filesquid-desktop`**:
   - [`libraries.rs`](../../src/libraries.rs): `DesktopLibraries` wraps `LibraryCommands<HostLocations>`. After each create or open, the bound library is served:
     - its files, from the same root and leases;
@@ -49,21 +50,29 @@ Branch: `feat/de-1.1-library-create-open-copy-rebuild` (part of global [Task 1.1
   - API plan notes on API-F1.11, API-F1.12, API-F2.2, API-F2.5 and API-F2.9;
   - the README packaged-window section.
 
-## Open decision: how the owner picks a folder
+## Folder choice (owner decision 2026-10-20: "go with A with rfd")
 
-No document specifies how a folder the owner picks becomes a location ID. ADR 002 and DE-S-002 forbid the dialog plugin and every webview path, and the contract has no route that yields a location ID. The host side is ready: `HostLocations::register` takes the folder from a host-side picker. The picker itself waits on the orchestrator or owner. The options handed back are:
+`POST /api/v1/libraries/location-choices` (`library.manage`) takes the body `{"purpose": "create" | "open" | "copy_destination"}`. It answers:
 
-- (A) an API route that asks the host for a native folder dialog and answers an opaque location ID;
-- (B) native menu items;
-- (C) no picker yet.
+- `{"outcome": "chosen", "location_id": "loc-…"}`, or `{"outcome": "cancelled"}`;
+- `409` while a dialog is open (`dialog_open`), or for a folder that cannot hold a library (`location_refused`);
+- `503` on a host without a dialog (`filesquid-server`).
 
-Until then, only the test-instrumented build registers folders.
+Each request is journaled once as `library.location.choose`.
+
+The API port is `LocationChooser`, installed with `ApiState::install_location_chooser`. The desktop's chooser is [`folder_choice.rs`](../../src/folder_choice.rs):
+
+- `DesktopChooser` shows `RfdDialog`, the `rfd` 0.17.2 `AsyncFileDialog` with only the `gtk3` feature, so it adds no new toolkit to the lockfile. `rfd` is not a Tauri plugin, so DE-S-002's check passes.
+- It registers the picked folder in `HostLocations` and answers only the location ID.
+- The path never leaves the host.
+
+WebDriver cannot drive a native dialog, so the packaged-window spec uses the test-instrumented registration. The route itself is tested with a scripted dialog. The ADR 002 amendment is in the orchestrator's docs PR.
 
 ## Tests
 
 - Native unit: `unit_library_host`, 7 tests.
-- API unit: `unit_history_backfill_route`, 4 tests; `unit_auth` and `unit_contract` updated.
-- Desktop integration: `integration_library_routes`, 6 tests, run through `filesquid://` with the per-launch token. `history_wiring` and `event_channel` were updated for the new signatures.
+- API unit: `unit_history_backfill_route`, 4 tests; `unit_location_choice`, 4 tests; `unit_auth` and `unit_contract` updated.
+- Desktop integration: `integration_library_routes`, 8 tests, run through `filesquid://` with the per-launch token. `history_wiring` and `event_channel` were updated for the new signatures.
 - Desktop BDD: [`desktop_libraries_F-001.feature`](../../tests/features/desktop_libraries_F-001.feature), 7 scenarios.
 - Packaged window (WebdriverIO/Tauri-service, Xvfb): [`libraries.e2e.mjs`](../../tests/e2e/specs/libraries.e2e.mjs), 4 tests.
 
@@ -72,7 +81,7 @@ Until then, only the test-instrumented build registers folders.
 | Requirement | Tests |
 |---|---|
 | SRS-F-001 Independent local library and ownership | `integration_library_routes::create_in_a_chosen_folder_answers_an_opaque_library_and_serves_its_files`, `an_opened_folder_feeds_the_history_and_copies_and_rebuilds_without_paths`; feature "A library created in an empty chosen folder gets an opaque ID", "A completed snapshot is copied into another empty folder"; e2e "creates a library…", "opens, copies and rebuilds…" |
-| API-S-025 Local library and repair routes | `integration_library_routes::the_owners_consented_repair_is_kept_in_the_persistent_ledger` (no consent → 409, no change; the owner's consented repair); features "A repair without the owner's consent changes nothing", "An unknown folder is refused and journaled once without a path", "A snapshot is never copied into a folder inside the library"; e2e "lists repair candidates and refuses a repair without the owner's consent" |
+| API-S-025 Local library and repair routes | `unit_location_choice` (4 tests); `integration_library_routes::the_owner_picks_a_folder_in_the_hosts_dialog_and_the_app_sees_only_its_id`, `a_cancelled_or_unusable_pick_registers_nothing`; `integration_library_routes::the_owners_consented_repair_is_kept_in_the_persistent_ledger` (no consent → 409, no change; the owner's consented repair); features "A repair without the owner's consent changes nothing", "An unknown folder is refused and journaled once without a path", "A snapshot is never copied into a folder inside the library"; e2e "lists repair candidates and refuses a repair without the owner's consent" |
 | API-S-023 Version-inventory repair (ledger: consent and outcome with receipt in one transaction) | `unit_library_host::the_ledger_journals_consents_and_receipts_and_keeps_them_across_a_restart`; feature "The owner's consented repair is kept after the app restarts" |
 | API-S-029 History routes and backfill | `unit_history_backfill_route` (4 tests); `integration_library_routes::the_backfill_route_runs_over_the_folders_the_owner_opened`, `an_opened_folder_feeds_the_history…` (history over a chosen root); e2e "starts the history backfill over the served roots" |
 | API-S-021 Navigation listing | `integration_library_routes::the_navigation_lists_the_installations_repository_and_its_libraries` |
@@ -107,27 +116,35 @@ test result: FAILED. 0 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; 
 ```text
      Running tests/unit/library_host.rs
 test a_file_or_a_missing_folder_is_refused_without_its_path ... ok
-test a_symbolic_link_is_refused_as_a_location ... ok
-test a_host_chosen_id_must_be_well_formed_and_unique ... ok
 test a_registered_folder_gets_an_opaque_id_without_its_path ... ok
+test a_host_chosen_id_must_be_well_formed_and_unique ... ok
 test nested_and_unknown_locations_overlap_and_siblings_do_not ... ok
 test one_folder_registered_twice_shares_its_leases ... ok
+test a_symbolic_link_is_refused_as_a_location ... ok
 test the_ledger_journals_consents_and_receipts_and_keeps_them_across_a_restart ... ok
 test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
      Running tests/unit/history_backfill_route.rs
 test the_route_performs_the_history_backfill_action ... ok
-test without_a_launcher_the_route_is_unavailable_and_journaled_once ... ok
 test an_unauthenticated_request_never_reaches_the_launcher ... ok
+test without_a_launcher_the_route_is_unavailable_and_journaled_once ... ok
 test the_owner_starts_one_backfill_and_a_second_request_is_refused_while_it_runs ... ok
 test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running tests/unit/location_choice.rs
+test a_cancelled_dialog_answers_cancelled_and_journals_it ... ok
+test a_picked_folder_answers_its_opaque_location_id_only ... ok
+test without_a_dialog_or_with_an_unreadable_body_nothing_is_asked ... ok
+test refusals_are_typed_and_journaled_once_with_their_code ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
      Running tests/integration/library_routes.rs
+test a_cancelled_or_unusable_pick_registers_nothing ... ok
 test the_navigation_lists_the_installations_repository_and_its_libraries ... ok
 test create_in_a_chosen_folder_answers_an_opaque_library_and_serves_its_files ... ok
+test the_owner_picks_a_folder_in_the_hosts_dialog_and_the_app_sees_only_its_id ... ok
 test the_owners_preferences_are_kept_in_the_operational_store ... ok
 test the_backfill_route_runs_over_the_folders_the_owner_opened ... ok
 test an_opened_folder_feeds_the_history_and_copies_and_rebuilds_without_paths ... ok
 test the_owners_consented_repair_is_kept_in_the_persistent_ledger ... ok
-test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
 ```
 
 Desktop BDD (`cargo test -p filesquid-desktop --features test-webdriver --test features`):
