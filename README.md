@@ -305,6 +305,13 @@ cd apps/filesquid
 cargo test -p filesquid-api --locked --test integration_library_routes --test features
 ```
 
+Version history (API-F2.5, API-S-014: per-version size and label, ranged reads of an earlier version, restore as one revert-or-reinstate version, labels set later as application data in the object's reserved `.filesquid/` folder, history size per file and per library, and the PROV-O record of restore and label commits) is tested through the router against a real OCFL storage root in the system temporary directory, which each test removes:
+
+```sh
+cd apps/filesquid
+cargo test -p filesquid-api --locked --test integration_versions --test features
+```
+
 The host-side I/O the API must not do lives in the native-processing library `filesquid-native` (`crates/native`): the SQLite journal store, the data-directory checks (write probe, free space) and `HostMonitor`, which both hosts link ([ADR 033](./resources/architecture/033-activity-journal-and-live-health-monitoring.md) amendment 2026-10-18). Its unit tests and BDD features run alone:
 
 ```sh
@@ -380,6 +387,7 @@ FileSquid's own tooling records **100% of activity** in its activity journal and
 - **`fsquid` CLI journal (planned, Task CLI-0.2; not implemented yet):** `fsquid` commands do not write journal entries today. Once Task CLI-0.2 lands, each `fsquid` command that changes something or fails will write one redacted entry (`cli.<module>.<command>`) to `filesquid.sqlite` in `FILESQUID_DATA_DIR` when that variable is set, and otherwise in the desktop app's data directory, beside a running desktop app. A command that cannot open that journal will refuse to run ([ADR 036](./resources/architecture/036-single-fsquid-cli.md) Decision 8).
 - **Desktop refusals:** everything the desktop shell refuses is journaled: IPC calls refused by the host or by Tauri (`desktop.ipc.refused`), navigation off the app (`desktop.navigation.refused`), new windows (`desktop.window.refused`), permission requests (`desktop.permission.refused`) and foreign downloads (`desktop.download.refused`), plus window opening and closing and host panics (`desktop.panic`). A failure before the journal opens at launch, and the record of a panic on the journal writer's own thread, are written straight to stdout as a redacted JSON line marked `journal_unavailable`, whatever `RUST_LOG` says; Rust's default panic hook still prints the panic message to stderr. Entries name the command, window or permission kind as an opaque id, never a payload, address, path or key ([ADR 002](./resources/architecture/002-tauri2-desktop-shell.md), Task DE-0.9).
 - **Monitor dashboard:** open the app and choose **Monitor** in the navigation (route `#/monitor`). On the desktop the owner needs no sign-in: the host hands its own pages the per-launch token. On `filesquid-server`, enter the admin token: the value of `FILESQUID_ADMIN_TOKEN`, or the token generated at first start into `<data dir>/admin-token` (owner-only file permissions on Unix; the server logs the path, never the token). Until then the shell's API status reads **Missing credentials**; a wrong token reads **Invalid credentials**. The UI keeps the token in memory only, so enter it again after a reload ([`@filesquid/ui` README](./apps/filesquid/ui/README.md#authenticating-to-the-filesquid-api)).
+- **OCFL validation findings:** the Monitor's **OCFL validation** section, below Health, lists the open validation errors (for example E023, a file left under an object's head version) and, apart from them, the warnings (for example W010, an object whose files can be read but not changed), each with its library, object, version and code, plus a location only when the API shows it to you. It shows each open library's last and next run and the schedule, updates live, and **Validate now** starts a run of every open library ([`@filesquid/ui` README](./apps/filesquid/ui/README.md#monitor-ocfl-validation-findings)). `filesquid-server` opens no OCFL library yet, so on the server the section says there is nothing open to validate.
 
 To run `filesquid-server` with the default UI and read the journal from a terminal, change to `apps/filesquid` and run:
 

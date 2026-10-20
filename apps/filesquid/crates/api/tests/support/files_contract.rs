@@ -8,9 +8,10 @@
 use axum::http::Method;
 use filesquid_api::content::ContentTarget;
 use filesquid_api::files::{
-    CommitView, EntryView, FileChangeView, FileDetailsView, FileLibrary, FileService,
-    FolderPageView, FolderRequest, FolderView, HistoryEntryView, HistoryView, MintRequest,
-    MintView, MoveRequest, RemoveRequest, RestoreRequest, UserView, VersionView, VersionsView,
+    CommitView, EntryView, FileChangeView, FileDetailsView, FileHistorySizeView, FileLibrary,
+    FileService, FolderPageView, FolderRequest, FolderView, HistoryEntryView, HistoryView,
+    LabelRequest, LibraryHistorySizeView, MintRequest, MintView, MoveRequest, RemoveRequest,
+    RestoreRequest, UserView, VersionView, VersionsView,
 };
 use filesquid_api::local_library::{LocalLibraryService, MemoryRepairLedger};
 use filesquid_api::monitor::Monitor;
@@ -141,6 +142,14 @@ pub fn sample(
             path.into(),
             json_body(json!({ "version": "v1", "paths": ["restore-me.txt"] })),
         ),
+        ("PUT", "/api/v1/files/labels") => (
+            path.into(),
+            json_body(json!({ "version": "v1", "label": "First draft" })),
+        ),
+        ("GET", "/api/v1/files/history-size") => plain("&path=a.txt"),
+        ("GET", "/api/v1/files/library-history-size") => {
+            (format!("{path}?library_id={LIBRARY}"), None)
+        }
         ("POST", "/api/v1/content-handles") => (
             path.into(),
             json_body(json!({ "version": "v1", "path": "a.txt" })),
@@ -216,12 +225,14 @@ fn versions() -> [VersionView; 2] {
             name: "owner".into(),
             address: Some("mailto:owner@example.org".into()),
         }),
+        label: Some("Final draft".into()),
     };
     let bare = VersionView {
         version: "v1".into(),
         created: "2026-10-17T00:00:00Z".into(),
         message: None,
         user: None,
+        label: None,
     };
     [full, bare]
 }
@@ -283,6 +294,7 @@ fn history() -> HistoryView {
             .map(|(change, digest)| HistoryEntryView {
                 version: versions()[1].clone(),
                 change,
+                size: digest.as_ref().map(|_| 5),
                 digest,
             })
             .collect(),
@@ -355,9 +367,26 @@ fn answer_samples() -> Vec<(&'static str, Vec<Value>)> {
         url: format!("/api/v1/content/{}", "A".repeat(43)),
         expires_at: "2026-10-18T01:00:00Z".into(),
     };
+    let file_size = FileHistorySizeView {
+        library_id: LIBRARY.into(),
+        object_id: OBJECT.into(),
+        path: "a.txt".into(),
+        versions: 3,
+        contents: 2,
+        bytes: 11,
+    };
+    let library_size = LibraryHistorySizeView {
+        library_id: LIBRARY.into(),
+        objects: 1,
+        contents: 2,
+        bytes: 11,
+        truncated: false,
+    };
     vec![
         ("ObjectVersions", vec![to_value(versions)]),
         ("FileCommit", vec![to_value(commit)]),
+        ("FileHistorySize", vec![to_value(file_size)]),
+        ("LibraryHistorySize", vec![to_value(library_size)]),
         ("FolderAnswer", vec![to_value(folder)]),
         ("ContentHandle", vec![to_value(handle)]),
     ]
@@ -389,7 +418,13 @@ fn request_samples() -> Vec<(&'static str, Vec<Value>)> {
         object_id: object_id.clone(),
         version: "v1".into(),
         paths: vec!["a.txt".into()],
-        message: Some("restore".into()),
+        label: Some("Back to the original".into()),
+    };
+    let labelled = LabelRequest {
+        library_id: library_id.clone(),
+        object_id: object_id.clone(),
+        version: "v1".into(),
+        label: Some("First draft".into()),
     };
     let mint = MintRequest {
         library_id,
@@ -402,6 +437,7 @@ fn request_samples() -> Vec<(&'static str, Vec<Value>)> {
         ("MoveRequest", vec![to_value(moved)]),
         ("RemoveRequest", vec![to_value(removed)]),
         ("RestoreRequest", vec![to_value(restored)]),
+        ("LabelRequest", vec![to_value(labelled)]),
         ("ContentHandleRequest", vec![to_value(mint)]),
     ]
 }

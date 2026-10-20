@@ -341,12 +341,15 @@ fn every_routed_path_declares_its_action() {
             | "/api/v1/files/history"
             | "/api/v1/files/versions"
             | "/api/v1/files/content"
+            | "/api/v1/files/history-size"
+            | "/api/v1/files/library-history-size"
             | "/api/v1/content-handles" => Action::ReadFiles,
             "/api/v1/files/upload"
             | "/api/v1/files/folders"
             | "/api/v1/files/moves"
             | "/api/v1/files/removals"
-            | "/api/v1/files/restorations" => Action::WriteFiles,
+            | "/api/v1/files/restorations"
+            | "/api/v1/files/labels" => Action::WriteFiles,
             "/api/v1/content/{handle}" => Action::ReadContent,
             "/api/v1/history" => Action::ReadHistory,
             "/api/v1/libraries"

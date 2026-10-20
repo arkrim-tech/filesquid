@@ -131,6 +131,10 @@ name = "integration_library_routes"
 path = "tests/integration/library_routes.rs"
 
 [[test]]
+name = "integration_versions"
+path = "tests/integration/versions.rs"
+
+[[test]]
 name = "integration_content_handles"
 path = "tests/integration/content_handles.rs"
 
