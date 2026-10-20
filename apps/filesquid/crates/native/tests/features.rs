@@ -391,16 +391,30 @@ fn cargo_metadata(w: &mut NativeWorld) {
 
 #[then(expr = "{string} should link {string} with the feature {string}")]
 fn links_with_feature(w: &mut NativeWorld, package: String, dep: String, feature: String) {
-    let found = w.links.iter().find(|(p, d, _)| *p == package && *d == dep);
-    let (_, _, features) = found.expect("linked");
-    assert_eq!(features, &[feature]);
+    let found = feature_sets(&w.links, &package, &dep);
+    assert!(!found.is_empty(), "{package} does not link {dep}");
+    assert!(found.iter().all(|f| **f == [feature.clone()]), "{found:?}");
 }
 
 #[then(expr = "{string} should link {string} with no feature")]
 fn links_without_feature(w: &mut NativeWorld, package: String, dep: String) {
-    let found = w.links.iter().find(|(p, d, _)| *p == package && *d == dep);
-    let (_, _, features) = found.expect("linked");
-    assert!(features.is_empty(), "{features:?}");
+    let found = feature_sets(&w.links, &package, &dep);
+    assert!(!found.is_empty(), "{package} does not link {dep}");
+    assert!(found.iter().all(|f| f.is_empty()), "{found:?}");
+}
+
+/// The features of every entry by which `package` links `dep` (normal, dev, build and
+/// target-specific entries alike). Pure.
+fn feature_sets<'a>(
+    links: &'a [(String, String, Vec<String>)],
+    package: &str,
+    dep: &str,
+) -> Vec<&'a Vec<String>> {
+    links
+        .iter()
+        .filter(|(p, d, _)| p == package && d == dep)
+        .map(|(_, _, features)| features)
+        .collect()
 }
 
 #[then(expr = "no package other than {string} and {string} should link {string}")]

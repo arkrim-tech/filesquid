@@ -15,7 +15,7 @@ Branch: `feat/de-0.8-native-boundary` (global [Task 0.5](../../../../../../resou
 - Media workers do not exist yet. DE-0.5 adds them to `filesquid_native::workers`.
 - New boundary rules, each also run on a synthetic violation:
   - `filesquid-desktop` `integration_native_boundary` reads `cargo metadata`. Only `filesquid-desktop` (with `desktop`) and `filesquid-server` (no features) may link `filesquid-native`, and neither host may link a SQLite driver directly.
-  - The same test scans the desktop `src/`. It may not open storage directly (`rusqlite`, `Connection::open`, `FsBackend::new`, `LeaseStore::new`, `ChangeModel::new`, `StagingArea::new`), run a worker loop (`thread::scope`, `.backfill_library(`, `.renew()`), or call `std::fs::`, except in the build-time capability check and the test-instrumented range fixture.
+  - The same test scans the desktop `src/`. It may not open storage directly (`rusqlite`, `Connection::open`, `FsBackend::new`, `LeaseStore::new`, `ChangeModel::new`, `StagingArea::new`), run a worker loop (`thread::scope`, `.backfill_library(`, `.renew()`), or use `std::fs` in any form, except in the build-time capability check and the test-instrumented range fixture. Any form means a path, a `use std::fs`, or `fs` inside a grouped `use std::{...}`.
   - The existing `filesquid-server` `unit_native_features` test still proves that the server's resolved feature graph never enables `desktop`.
 - `filesquid-native` still builds alone, without `desktop` (`cargo check -p filesquid-native`).
 
@@ -23,10 +23,10 @@ Branch: `feat/de-0.8-native-boundary` (global [Task 0.5](../../../../../../resou
 
 | Requirement | Tests |
 |---|---|
-| DE-S-015 Native-processing library boundary: only the hosts link `filesquid-native`; no SQLite driver in a host | desktop `integration_native_boundary::only_the_hosts_link_filesquid_native_and_the_desktop_has_no_sqlite_driver`, `the_linking_rules_reject_a_sqlite_driver_in_a_host_and_native_in_the_api`; native feature `native_boundary_TC-005.feature` (4 scenarios) |
+| DE-S-015 Native-processing library boundary: only the hosts link `filesquid-native`; no SQLite driver in a host | desktop `integration_native_boundary::only_the_hosts_link_filesquid_native_and_the_desktop_has_no_sqlite_driver`, `the_linking_rules_reject_a_sqlite_driver_in_a_host_and_native_in_the_api`; native feature `native_boundary_TC-005.feature` (6 scenarios: every linking entry is checked, and the SQLite driver outline covers `rusqlite`, `libsqlite3-sys` and `sqlx`) |
 | DE-S-015 Native-processing library boundary: thin Tauri host | desktop `integration_native_boundary::the_desktop_host_holds_no_native_storage_or_worker_code`, `the_source_rule_rejects_storage_opens_and_worker_loops` |
 | TC-005 Shared Rust graph, hosted mailbox isolation and OCFL writer; ADR 033 amendment: server default features only | server `unit_native_features` (2), native feature scenario "The server links filesquid-native with default features only" |
-| DE-S-014 Durable jobs and checkpoint-on-quit: unchanged after the move | desktop `integration_durable_jobs` (6), `integration_history_wiring` (5) |
+| DE-S-014 Durable jobs and checkpoint-on-quit: unchanged after the move | desktop `integration_durable_jobs` (7: `an_unreadable_checkpoint_visits_every_library_again` added for the checkpoint parser), `integration_history_wiring` (5) |
 
 ## TDD: failing run
 
@@ -37,6 +37,10 @@ test the_desktop_host_holds_no_native_storage_or_worker_code ... FAILED
 ["durable_jobs.rs: thread::scope", "durable_jobs.rs: .backfill_library(", "durable_jobs.rs: .renew()"]
 test result: FAILED. 3 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
 ```
+
+## Cubic review
+
+- Round 1 (6 P2/P3): fixed the feature step that checked only the first linking entry, the `std::fs` rule that missed `use std::fs` and grouped imports, the SQLite scenario that covered `rusqlite` only, a stale doc phrase, and the untested checkpoint parser. One finding was answered rather than changed: DE-0.8 stays ticked although no media workers exist. There were none in the host to extract, DE-0.5 builds its worker in `filesquid_native::workers` from the start, and DE-S-015 with its boundary test keeps every worker out of the host.
 
 ## Known gaps
 

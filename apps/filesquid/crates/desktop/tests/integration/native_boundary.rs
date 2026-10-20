@@ -19,18 +19,20 @@ const NATIVE_LINKERS: [(&str, &[&str]); 2] = [
 
 /// Calls that open storage directly or drive a worker loop: native processing that belongs
 /// in `filesquid-native`, never in the host.
-const NATIVE_ONLY_PATTERNS: [&str; 10] = [
+const NATIVE_ONLY_PATTERNS: [&str; 9] = [
     "rusqlite",
     "Connection::open",
     "FsBackend::new",
     "LeaseStore::new",
     "ChangeModel::new",
     "StagingArea::new",
-    "std::fs::",
     "thread::scope",
     ".backfill_library(",
     ".renew()",
 ];
+
+/// How the filesystem rule names `std::fs` in its findings.
+const FS_FINDING: &str = "std::fs";
 
 /// Host sources allowed to use `std::fs`: the build-time capability check and the
 /// test-instrumented range fixture (never shipped).
@@ -116,14 +118,34 @@ fn link_violations(deps: &BTreeMap<String, Vec<(String, Vec<String>)>>) -> Vec<S
     found
 }
 
-/// The native-only patterns in the source `text` of `file`. Pure.
+/// The native-only patterns in the source `text` of `file`, and its use of `std::fs` in any
+/// form (a path, a `use std::fs`, or `fs` inside a grouped `use std::{...}`) outside the
+/// allowed files. Pure.
 fn source_violations(file: &str, text: &str) -> Vec<String> {
-    NATIVE_ONLY_PATTERNS
+    let mut found: Vec<String> = NATIVE_ONLY_PATTERNS
         .iter()
         .filter(|pattern| text.contains(*pattern))
-        .filter(|pattern| !(**pattern == "std::fs::" && FS_ALLOWED.contains(&file)))
         .map(|pattern| format!("{file}: {pattern}"))
-        .collect()
+        .collect();
+    if uses_std_fs(text) && !FS_ALLOWED.contains(&file) {
+        found.push(format!("{file}: {FS_FINDING}"));
+    }
+    found
+}
+
+/// Whether `text` names `std::fs`: directly, or as `fs` in a grouped `std::{...}` import
+/// (spaces and line breaks ignored). Pure.
+fn uses_std_fs(text: &str) -> bool {
+    let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+    if compact.contains("std::fs") {
+        return true;
+    }
+    compact.split("std::{").skip(1).any(|group| {
+        let inside = group.split('}').next().unwrap_or_default();
+        inside
+            .split(',')
+            .any(|item| item == "fs" || item.starts_with("fs::"))
+    })
 }
 
 /// Every native-only pattern in the desktop crate's `src/` (filesystem I/O, one level: the
@@ -196,4 +218,17 @@ fn the_source_rule_rejects_storage_opens_and_worker_loops() {
     assert_eq!(source_violations("lib.rs", text).len(), 3);
     assert!(source_violations("test_fixture.rs", "std::fs::write(p, b)").is_empty());
     assert_eq!(source_violations("lib.rs", "std::fs::write(p, b)").len(), 1);
+    assert_eq!(
+        source_violations("lib.rs", "use std::fs;\nfs::write(p, b)").len(),
+        1
+    );
+    assert_eq!(
+        source_violations("lib.rs", "use std::{\n    fs,\n    io,\n};").len(),
+        1
+    );
+    assert_eq!(
+        source_violations("lib.rs", "use std::{fs::File, io};").len(),
+        1
+    );
+    assert!(source_violations("lib.rs", "use std::{io, sync::Arc};").is_empty());
 }

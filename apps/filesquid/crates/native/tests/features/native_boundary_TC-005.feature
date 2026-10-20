@@ -20,5 +20,11 @@ Feature: The native-processing library boundary
     Then no package other than "filesquid-desktop" and "filesquid-server" should link "filesquid-native"
 
   # Error case
-  Scenario: Only filesquid-native links a SQLite driver
-    Then no package other than "filesquid-native" should link "rusqlite"
+  Scenario Outline: Only filesquid-native links a SQLite driver
+    Then no package other than "filesquid-native" should link "<driver>"
+
+    Examples:
+      | driver         |
+      | rusqlite       |
+      | libsqlite3-sys |
+      | sqlx           |
