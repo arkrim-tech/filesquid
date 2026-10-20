@@ -28,14 +28,16 @@ pub enum OutgoingNames {
 /// describes, under `policy`.
 ///
 /// # Errors
-/// [`CanonicalError::InvalidIdentifier`] when the FileId name cannot be one path segment.
+/// [`CanonicalError::InvalidIdentifier`] when the FileId name cannot be one path segment,
+/// whichever the policy, so a bad identifier never yields a name.
 pub fn outgoing_name(
     file_id: &FileId,
     record: &FileRecord,
     policy: OutgoingNames,
 ) -> Result<String, CanonicalError> {
+    let id_name = file_id_name(file_id, record)?;
     match policy {
-        OutgoingNames::FileId => file_id_name(file_id, record),
+        OutgoingNames::FileId => Ok(id_name),
         OutgoingNames::OriginalName => Ok(safe_display_name(record.display_name())),
     }
 }

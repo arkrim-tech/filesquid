@@ -1,6 +1,6 @@
 # Task API-F1.13 Walkthrough: Display names and download names
 
-Branch `feat/api-f1.13-display-download-names`, module `filesquid-api` ([plan row](../plan.md)), part of global Task FS-1.3. The stored-name half moved into API-F1.4 (owner decision 2026-10-20, "A+3a"). Contract 0.19.0.
+Branch `feat/api-f1.13-display-download-names`, module `filesquid-api` ([plan row](../plan.md)), part of global Task FS-1.3. The stored-name half moved into API-F1.4 (owner decision 2026-10-20, "A+3a"). Contract 0.20.0.
 
 ## What changed
 
@@ -31,7 +31,7 @@ Branch `feat/api-f1.13-display-download-names`, module `filesquid-api` ([plan ro
 | [API-S-027](../srs.md) | Display and download names | `integration_names` (7 tests), `display_and_download_names_API-S-027.feature` (6 scenarios), `files::names` unit tests, `unit_canonical` sharing tests |
 | [API-S-026](../srs.md) | The FileSquid OCFL application profile (the original's stored name is fixed) | `a_move_of_a_file_objects_original_is_refused_with_a_pointer_to_rename`, `a_rename_changes_only_the_display_name_in_one_new_version` |
 | [API-S-005](../srs.md) | Opaque handles, never raw filesystem paths (the one safe display transformation) | `the_display_name_matches_the_metadata_modules_safe_display_name` |
-| [API-S-002](../srs.md) | The versioned API contract owned by this crate | `unit_contract` (rename route, `RenameRequest`, new `display_name` properties, 0.19.0), regenerated `schema.d.ts` |
+| [API-S-002](../srs.md) | The versioned API contract owned by this crate | `unit_contract` (rename route, `RenameRequest`, new `display_name` properties, 0.20.0), regenerated `schema.d.ts` |
 
 ## Test output
 
