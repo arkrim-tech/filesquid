@@ -268,12 +268,14 @@ def render_svg(tasks: list, percent: int) -> str:
 """
 
 
-def render_summary(tasks: list, queue_md: str) -> str:
+def render_summary(tasks: list, queue_md: str, under_way: int) -> str:
     """Return the Markdown block that goes between the progress markers.
 
     Args:
         tasks: MVP tasks with hours attached.
         queue_md: The In progress and Up next Markdown from `mvp_queue.render_queue`.
+        under_way: Number of open global tasks listed In progress, so the
+            count in the summary is the list below it and cannot drift from it.
 
     Returns:
         The marker block, including both markers.
@@ -282,12 +284,11 @@ def render_summary(tasks: list, queue_md: str) -> str:
     credit = sum(task.credit() for task in tasks)
     percent = percent_done(tasks)
     done = sum(task.done for task in tasks)
-    started = sum(not task.done and task.modules_done > 0 for task in tasks)
     return (
         f"{START}\n"
         f"![MVP progress: {percent}% complete](./assets/mvp-progress.svg)\n\n"
         f"**MVP progress: {percent}%**, about {round(credit)} of {total} estimated hours. "
-        f"{done} of {len(tasks)} tasks are done and {started} more are under way. "
+        f"{done} of {len(tasks)} tasks are done and {under_way} more are under way. "
         "Each segment of the bar is one task below, as wide as its estimated hours in the implementation "
         "plan; an open task fills by the share of its module rows that are ticked. Below the bar, In progress "
         "lists the open tasks being worked on (global tasks with some but not all module rows ticked, and "
@@ -420,7 +421,8 @@ def build_queue(checklist: str, rows: list, checking: bool):
         checking: True in `--check` mode.
 
     Returns:
-        A tuple of (render function taking a timestamp, timestamp to use).
+        A tuple of (render function taking a timestamp, timestamp to use,
+        recorded timestamp, number of open global tasks listed In progress).
     """
     block = checklist[checklist.index(START):] if START in checklist else ""
     recorded, old_stamp = mvp_queue.parse_recorded(block)
@@ -433,12 +435,35 @@ def build_queue(checklist: str, rows: list, checking: bool):
     for warning in warnings:
         print(f"warning: {warning}", file=sys.stderr)
     kept = raw_ids if checking else None
-    return (lambda when: mvp_queue.render_queue(inprog, up_next, pr_ids, when, kept)), stamp, old_stamp
+    under_way = mvp_queue.count_under_way(inprog)
+    return (lambda when: mvp_queue.render_queue(inprog, up_next, pr_ids, when, kept)), stamp, old_stamp, under_way
 
 
-def render_block(tasks: list, render, stamp: str) -> str:
+def render_block(tasks: list, render, stamp: str, under_way: int) -> str:
     """Return the full marker block for one timestamp."""
-    return render_summary(tasks, render(stamp))
+    return render_summary(tasks, render(stamp), under_way)
+
+
+DONE_COUNT = re.compile(r"\(\d+ of \d+ done\)")
+
+
+def sync_heading_count(checklist: str, tasks: list) -> str:
+    """Return the checklist with the `(N of M done)` count under `## MVP` generated.
+
+    The count sits in the hand-written paragraph after the heading; it is
+    rewritten from the ticks so it always matches the summary.
+
+    Args:
+        checklist: The full checklist Markdown.
+        tasks: MVP tasks parsed from the checklist.
+
+    Returns:
+        The checklist with the first count after `## MVP` replaced; unchanged
+        when the paragraph has none.
+    """
+    head, rest = checklist.split("\n## MVP\n", 1)
+    count = f"({sum(task.done for task in tasks)} of {len(tasks)} done)"
+    return f"{head}\n## MVP\n{DONE_COUNT.sub(count, rest, count=1)}"
 
 
 def expected_outputs(checklist: str, checking: bool):
@@ -460,10 +485,11 @@ def expected_outputs(checklist: str, checking: bool):
     problems = attach_hours(tasks, PLAN.read_text(encoding="utf-8"))
     if problems:
         return None, problems
-    render, stamp, old_stamp = build_queue(checklist, mvp_queue.parse_rows(mvp_section(checklist)), checking)
-    block = render_block(tasks, render, stamp)
-    if not checking and old_stamp and replace_block(checklist, render_block(tasks, render, old_stamp)) == checklist:
-        block = render_block(tasks, render, old_stamp)
+    render, stamp, old_stamp, under_way = build_queue(checklist, mvp_queue.parse_rows(mvp_section(checklist)), checking)
+    checklist = sync_heading_count(checklist, tasks)
+    block = render_block(tasks, render, stamp, under_way)
+    if not checking and old_stamp and replace_block(checklist, render_block(tasks, render, old_stamp, under_way)) == checklist:
+        block = render_block(tasks, render, old_stamp, under_way)
     return (replace_block(checklist, block), render_svg(tasks, percent_done(tasks))), []
 
 
