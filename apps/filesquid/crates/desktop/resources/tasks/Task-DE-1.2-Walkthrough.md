@@ -1,6 +1,6 @@
 # Task DE-1.2 Walkthrough: File and folder import
 
-Branch: `feat/de-1.2-file-folder-import` (part of global [Task 1.2](../../../../../../resources/implementation-plan.md#task-1.2)). API contract `0.20.0` (one above `0.19.0` of DE-1.1, PR #109).
+Branch: `feat/de-1.2-file-folder-import` (part of global [Task 1.2](../../../../../../resources/implementation-plan.md#task-1.2)). API contract `0.21.0` (one above `0.20.0` of API-F1.13, PR #111).
 
 ## What changed
 
@@ -13,7 +13,7 @@ Branch: `feat/de-1.2-file-folder-import` (part of global [Task 1.2](../../../../
     - refusals: `404 not_found` (`library_not_found`), `409 conflict` (`dialog_open`), `503 unavailable` (also on `filesquid-server`, which has no starter);
     - each request is journaled once as `import.start`, never with a path.
   - [`FileService::import_original`](../../../api/src/files/import.rs) is the one import commit. A host hands it the bytes and the gathered `SourceImport` facts, and it writes the file's own object exactly as the API-F1.4 upload does: `original/<uuid>.<ext>` and `original/<uuid>.metadata.md` with the import entry, in one version. It refuses bytes whose length is not the stated size (`size_mismatch`).
-  - `openapi.json` is 0.20.0, with schemas `ImportRequest`, `ImportAnswer`, `ImportSource` and `ImportOutcome`. `ui/src/api/schema.d.ts` was regenerated.
+  - `openapi.json` is 0.21.0, with schemas `ImportRequest`, `ImportAnswer`, `ImportSource` and `ImportOutcome`. `ui/src/api/schema.d.ts` was regenerated.
 - **`filesquid-native`** (`desktop` feature; [`import/`](../../../native/src/import/mod.rs)):
   - `facts`, `xattr`, `volume`, `host`, `names` and `time` gather the import-record facts before the file is read, using `libc` only:
     - stat facts and times in nanoseconds;
@@ -167,7 +167,7 @@ Feature: Desktop file and folder import
 173 steps (173 passed)
 ```
 
-The API contract tests (`unit_contract`, version 0.20.0 and the import schemas' samples) and the authorisation table (`unit_auth`, `/api/v1/imports` under `files.write`) also pass. The full pre-commit run is recorded in the pull request.
+The API contract tests (`unit_contract`, version 0.21.0 and the import schemas' samples) and the authorisation table (`unit_auth`, `/api/v1/imports` under `files.write`) also pass. The full pre-commit run is recorded in the pull request.
 
 ## SRS mapping
 
