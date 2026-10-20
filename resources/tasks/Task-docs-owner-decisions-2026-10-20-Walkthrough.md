@@ -65,7 +65,7 @@ Cubic's first review (head `74a1606`) found 13 issues (0 P1, 9 P2, 4 P3), all fi
 
 ## Verification
 
-The module SRS and plan files live inside crates, so `bash scripts/changed_scope.sh` classifies this documentation-only change as `rust:filesquid-api,filesquid-cli,filesquid-desktop,filesquid-metadata,filesquid-native,filesquid-ocfl,filesquid-prov,filesquid-server` (changed: crates/api, crates/cli, crates/metadata, crates/ocfl), not `docs`. As the rules require for a `rust:` scope, the head commit was verified with the full suite, `TMPDIR=/dev/shm/owner-decisions FULL=1 bash scripts/pre-commit.sh`, after `npm ci` in `apps/filesquid/ui` and `apps/imagesquid`. Raw summary lines of the run:
+The module SRS and plan files live inside crates, so `bash scripts/changed_scope.sh` classifies this documentation-only change as `rust:filesquid-api,filesquid-cli,filesquid-desktop,filesquid-metadata,filesquid-native,filesquid-ocfl,filesquid-prov,filesquid-server` (changed: crates/api, crates/cli, crates/metadata, crates/ocfl), not `docs`. As the rules require for a `rust:` scope, the first PR head, commit `74a1606` (the decisions and this walkthrough before the review rounds), was verified with the full suite, `TMPDIR=/dev/shm/owner-decisions FULL=1 bash scripts/pre-commit.sh`, after `npm ci` in `apps/filesquid/ui` and `apps/imagesquid`. Raw summary lines of the run:
 
 ```text
 ✅ Branch Validation passed.
@@ -90,3 +90,12 @@ The module SRS and plan files live inside crates, so `bash scripts/changed_scope
 ```
 
 Hook summary line: `Test scope: full`.
+
+Later commits, each run on its own tree before it was pushed:
+
+| Commit | Run | Summary line |
+|---|---|---|
+| `74a1606` | `FULL=1 bash scripts/pre-commit.sh` | `✅ All Pre-Commit Hooks Passed! Test scope: full (318s)` |
+| `528903c` (Cubic round 1 fixes) | `bash scripts/pre-commit.sh` | `✅ All Pre-Commit Hooks Passed! Test scope: rust:filesquid-api,filesquid-cli,filesquid-desktop,filesquid-metadata,filesquid-native,filesquid-ocfl,filesquid-prov,filesquid-server (343s)` |
+
+The commit that adds this table, and any later fix commit, is verified the same way before it is pushed; its summary line is recorded in the pull request.
