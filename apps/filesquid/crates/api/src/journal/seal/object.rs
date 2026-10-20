@@ -5,8 +5,9 @@
 //! `segments/<first>-<through>.jsonl` (20-digit, zero-padded journal IDs): the entries
 //! sealed, one JSON object per line, from journal ID `first`, having read the journal through
 //! ID `through`. The highest `through` among the head's segments is how far the object is
-//! sealed, so the cursor is part of the commit. [`read_sealed_entries`] reads every segment
-//! back with a JSON parser (the rebuild of CL-1.9).
+//! sealed, so the cursor is part of the commit. [`visit_sealed_segments`] reads the segments
+//! back one by one with a JSON parser, each with its own result (the rebuild of CL-1.9);
+//! [`read_sealed_entries`] reads them all and fails on the first that cannot be read.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -351,7 +352,7 @@ pub async fn read_sealed_entries<B: StorageBackend>(
 ///
 /// # Errors
 /// Opening the object or listing its head: [`SealError::Invalid`] for an object that cannot
-/// be opened or holds more than one million segments; [`SealError::Unavailable`] for
+/// be opened or holds more than [`MAX_SEGMENTS`] segments; [`SealError::Unavailable`] for
 /// storage trouble.
 pub async fn visit_sealed_segments<B: StorageBackend>(
     backend: &B,

@@ -31,7 +31,7 @@ mod service;
 pub use object::{
     journal_object_id, last_sealed_at, read_sealed_entries, segment_path, visit_sealed_segments,
     JournalObject, JournalRoot, OcflJournalObject, SealError, SealFuture, Segment,
-    JOURNAL_OBJECT_PREFIX, JOURNAL_OBJECT_ROOT, MAX_SEGMENT_BYTES, SEGMENT_DIR,
+    JOURNAL_OBJECT_PREFIX, JOURNAL_OBJECT_ROOT, MAX_SEGMENTS, MAX_SEGMENT_BYTES, SEGMENT_DIR,
 };
 pub use service::{ScopeReport, SealConfig, SealOutcome, SealReport, SealService, SealStatus};
 
