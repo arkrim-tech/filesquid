@@ -58,6 +58,8 @@ export type EventListener = (event: ApiEvent) => void;
 
 /** Monitor health report (`GET /api/v1/admin/health`). */
 export type HealthReport = components["schemas"]["HealthReport"];
+/** One reason behind the overall health status, with machine-readable codes when it has any. */
+export type HealthReason = components["schemas"]["HealthReason"];
 /** One live or recently finished process. */
 export type ProcessView = components["schemas"]["ProcessView"];
 /** One activity journal entry. */
@@ -70,6 +72,22 @@ export type Outcome = components["schemas"]["Outcome"];
 export type Level = components["schemas"]["Level"];
 /** Metric name to value (same values as Prometheus `/metrics`). */
 export type MetricsSnapshot = Record<string, number>;
+/** Open OCFL validation findings, the schedule and each open library's runs (API-S-022). */
+export type FindingsView = components["schemas"]["FindingsView"];
+/** One open OCFL validation finding; `location` is null when the caller may not read it. */
+export type FindingView = components["schemas"]["FindingView"];
+/** One open library's validation state: running, last run and next scheduled run. */
+export type LibraryRuns = components["schemas"]["LibraryRuns"];
+/** One finished validation run. */
+export type RunView = components["schemas"]["RunView"];
+/** How a validation run ended. */
+export type RunOutcome = components["schemas"]["RunOutcome"];
+/** The schedule and object cap of validation runs. */
+export type ValidationSettings = components["schemas"]["ValidationSettings"];
+/** Which library to validate (every open one when absent) and whether to start from the start. */
+export type RunRequest = components["schemas"]["RunRequest"];
+/** The libraries whose validation run started, and those refused with their error code. */
+export type RunAccepted = components["schemas"]["RunAccepted"];
 
 /** Filters for journal queries and exports; every field is optional. */
 export interface JournalFilters {
@@ -561,6 +579,38 @@ export class FileSquidClient {
   /** One page of the activity journal (`GET /api/v1/admin/journal`). Network I/O. */
   async adminJournal(filters: JournalFilters = {}): Promise<JournalPage> {
     return this.request<JournalPage>(`/api/v1/admin/journal${queryString(filters)}`);
+  }
+
+  /**
+   * The open OCFL validation findings (at most 1,000, `truncated` when more are open), the
+   * schedule in force and each open library's runs (`GET /api/v1/admin/ocfl/findings`,
+   * API-S-022). Network I/O.
+   *
+   * @returns The findings view as the host sent it; a finding's `location` is null for a caller
+   *   who may not read its object.
+   * @throws ApiError on a non-2xx answer: 401 or 403 for a caller who is not the desktop owner
+   *   or a server administrator, 503 `unavailable` while the host cannot answer.
+   */
+  async adminOcflFindings(): Promise<FindingsView> {
+    return this.request<FindingsView>("/api/v1/admin/ocfl/findings");
+  }
+
+  /**
+   * Start OCFL validation runs (`POST /api/v1/admin/ocfl/validation-runs`, API-S-022): of the
+   * named library, or of every open library when `request` names none. Runs go on in the
+   * background and report on the event channel. Network I/O.
+   *
+   * @param request The library and whether to start from the beginning of its object order;
+   *   empty for every open library from its stored cursor.
+   * @returns The libraries whose run started, and those refused with their error code.
+   * @throws ApiError on a non-2xx answer: 404 `not_found` for a library that is not open,
+   *   409 for a run of it already going, 401 or 403 for a caller who may not start runs.
+   */
+  async startOcflValidation(request: RunRequest = {}): Promise<RunAccepted> {
+    return this.request<RunAccepted>("/api/v1/admin/ocfl/validation-runs", {
+      method: "POST",
+      body: request,
+    });
   }
 
   /** Counters and gauges (`GET /api/v1/admin/metrics`). Network I/O. */

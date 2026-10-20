@@ -9,6 +9,7 @@ import { FsFilePreview } from "./components/fs-file-preview";
 import { FsHostIndicator } from "./components/fs-host-indicator";
 import { FsMonitor } from "./components/fs-monitor";
 import { FsNavTree } from "./components/fs-nav-tree";
+import { FsOcflFindings } from "./components/fs-ocfl-findings";
 import { FsNavigationView } from "./components/fs-navigation-view";
 import { FsSettings } from "./components/fs-settings";
 import { FsStates } from "./components/fs-states";
@@ -32,6 +33,11 @@ export {
   type ServiceView,
 } from "./host/descriptor";
 export { FsMonitor, formatGiB, processCells } from "./components/fs-monitor";
+export {
+  FsOcflFindings,
+  type FindingsClient,
+  type FindingsOptions,
+} from "./components/fs-ocfl-findings";
 export { FsStates, RETRY_EVENT, type StatesOptions } from "./components/fs-states";
 export { failureState, type ViewState, type ViewStateKind } from "./components/view-state";
 export { FsNavTree, type NavTreeOptions } from "./components/fs-nav-tree";
@@ -210,5 +216,8 @@ export function defineElements(): void {
   }
   if (!customElements.get("fs-settings")) customElements.define("fs-settings", FsSettings);
   if (!customElements.get("fs-app-shell")) customElements.define("fs-app-shell", FsAppShell);
+  if (!customElements.get("fs-ocfl-findings")) {
+    customElements.define("fs-ocfl-findings", FsOcflFindings);
+  }
   if (!customElements.get("fs-monitor")) customElements.define("fs-monitor", FsMonitor);
 }
