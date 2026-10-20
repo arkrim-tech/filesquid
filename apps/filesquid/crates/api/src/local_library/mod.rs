@@ -25,7 +25,8 @@
 //! The versioned routes of these operations (API-S-025, Task API-F1.12) are in
 //! `routes`: the host registers each folder the owner chose under an opaque location ID
 //! and injects them through [`LibraryLocations`]; [`LibraryCommands`] binds libraries to
-//! locations and calls [`LocalLibraryService`], installed as [`LibraryOperations`].
+//! locations and calls [`LocalLibraryService`], and the host installs it as the
+//! [`LibraryOperations`] the routes call.
 //!
 //! Open, copy, rebuild and the candidate query never write to the source root, and none of
 //! them repairs (F-001: direct inspection and copy MUST NOT authorize in-place edits of OCFL

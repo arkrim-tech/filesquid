@@ -358,7 +358,11 @@ async fn the_candidate_query_for_a_library_that_is_not_open_is_not_found() {
 async fn a_consented_repair_by_the_desktop_owner_makes_a_sha256_object_committable() {
     let (rig, library, location) = library_with_w010(Mount::Desktop).await;
     let refused = rig.commit_v3(&location, "obj-b", "urn:uuid:b").await;
-    assert!(refused.is_err(), "a W010 object stays closed to commits");
+    let refused = refused.expect_err("a W010 object stays closed to commits");
+    assert!(
+        refused.contains("version inventory is incomplete"),
+        "{refused}"
+    );
     let body = LibraryRig::consented(&library, &["urn:uuid:b"]);
     let answer = rig.post("/api/v1/libraries/repairs", body).await;
     assert_eq!(answer.status, StatusCode::OK, "{}", answer.text());

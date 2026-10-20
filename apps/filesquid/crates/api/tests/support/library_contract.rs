@@ -169,8 +169,9 @@ fn to_value<T: serde::Serialize>(value: T) -> Value {
     serde_json::to_value(value).expect("serializable")
 }
 
-/// A repaired and a refused object outcome, between them carrying every member.
-fn object_repairs() -> [ObjectRepair; 2] {
+/// Two repaired object outcomes, with and without a provenance record, and a refused one:
+/// between them every member, each in a shape the service answers.
+fn object_repairs() -> [ObjectRepair; 3] {
     let repaired = ObjectRepair {
         object_id: OBJECT.to_string(),
         version: Some("v2".to_string()),
@@ -180,15 +181,18 @@ fn object_repairs() -> [ObjectRepair; 2] {
         provenance_version: Some("v3".to_string()),
         provenance_error_code: None,
     };
-    let refused = ObjectRepair {
-        version: None,
-        result: RepairResult::Refused,
-        error_code: Some("nothing_to_repair".to_string()),
+    let unrecorded = ObjectRepair {
         provenance_version: None,
         provenance_error_code: Some("provenance_not_configured".to_string()),
         ..repaired.clone()
     };
-    [repaired, refused]
+    let refused = ObjectRepair {
+        result: RepairResult::Refused,
+        error_code: Some("nothing_to_repair".to_string()),
+        provenance_version: None,
+        ..repaired.clone()
+    };
+    [repaired, unrecorded, refused]
 }
 
 /// The rebuilt sample object.

@@ -144,6 +144,13 @@ async fn repair_w010(w: &mut MonitorWorld) {
     repair(w, W010.1).await;
 }
 
+#[when(
+    expr = "the server administrator repairs the object without a version inventory with consent through the API"
+)]
+async fn admin_repair_w010(w: &mut MonitorWorld) {
+    repair(w, W010.1).await;
+}
+
 #[when(expr = "the owner repairs the complete object with consent through the API")]
 async fn repair_complete(w: &mut MonitorWorld) {
     repair(w, COMPLETE.1).await;

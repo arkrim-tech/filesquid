@@ -46,7 +46,7 @@ const LEASES: LeaseConfig = LeaseConfig {
 /// Upper bound on journal pages read by [`LibraryRig::journal`] (AGENTS.md §22).
 const MAX_JOURNAL_PAGES: usize = 100;
 
-/// Upper bound on directory entries walked by [`files_under`] (AGENTS.md §22).
+/// Upper bound on directories walked by [`files_under`] (AGENTS.md §22).
 const MAX_WALK: usize = 10_000;
 
 /// Rigs created so far in this process, so each gets its own directory.

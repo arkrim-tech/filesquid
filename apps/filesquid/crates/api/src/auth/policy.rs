@@ -62,6 +62,9 @@ pub enum Action {
     /// credential's [`Action::ReadFiles`] permission again at every request (API-S-018). It
     /// is never public.
     ReadContent,
+    /// Read the PROV-O history: activities, records and their export (`/history`,
+    /// `/files/{id}/history`, `/files/{id}/versions/{version}/prov`; API-S-029).
+    ReadHistory,
     /// Create, open, copy and rebuild local libraries (`/api/v1/libraries`,
     /// `/libraries/openings`, `/libraries/snapshot-copies`, `/libraries/rebuilds`;
     /// API-S-025).
@@ -73,9 +76,6 @@ pub enum Action {
     /// API-S-023, API-S-025). Only a library's owner may: the desktop owner; the server
     /// administrator does not own libraries and is never granted it.
     RepairLibraries,
-    /// Read the PROV-O history: activities, records and their export (`/history`,
-    /// `/files/{id}/history`, `/files/{id}/versions/{version}/prov`; API-S-029).
-    ReadHistory,
     /// Deliberately public, unauthenticated: only the liveness probe
     /// (`GET /api/v1/health/live`), which says that the process is up and nothing else. The
     /// router leaves the route-table entry with this action unguarded; the guard itself

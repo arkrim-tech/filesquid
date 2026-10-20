@@ -56,8 +56,9 @@ pub struct LibraryCommands<L: LibraryLocations> {
     locations: Arc<L>,
     /// The location of each open library, by library ID.
     open: Mutex<HashMap<LibraryId, String>>,
-    /// Serialises create and open, so two of them cannot bind one location or library
-    /// twice between the check and the binding.
+    /// Serialises create, open and copy, so two of them cannot bind one location or library
+    /// twice between the check and the binding, and no library is opened in a copy's
+    /// destination while the copy runs.
     binding: tokio::sync::Mutex<()>,
 }
 
@@ -125,6 +126,7 @@ impl<L: LibraryLocations> LibraryCommands<L> {
         actor: &str,
         request: SnapshotCopyRequest,
     ) -> Result<CopyReport, LocalLibraryError> {
+        let _serialised = self.binding.lock().await;
         let library = &request.library_id;
         let dest_id = &request.destination_location_id;
         let checked = self.copy_roots(library, dest_id);

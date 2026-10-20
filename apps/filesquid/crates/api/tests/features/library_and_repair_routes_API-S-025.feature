@@ -66,12 +66,12 @@ Feature: Library and repair routes
 
   Scenario: Every server caller, the administrator included, is refused the repair
     Given the server administrator's library with a complete object and an object without a version inventory
-    When the owner repairs the object without a version inventory with consent through the API
+    When the server administrator repairs the object without a version inventory with consent through the API
     Then the answer should be the error "forbidden"
     And exactly one refusal "not_permitted" should be journaled for "api.auth.denied"
     And the library folder should be unchanged
 
-  Scenario: The server administrator can still create and rebuild a library
+  Scenario: The server administrator can still rebuild a library
     Given the server administrator's library with a complete object and an object without a version inventory
     When the owner rebuilds the library from its files through the API
     Then the rebuild should flag only the object without a version inventory
