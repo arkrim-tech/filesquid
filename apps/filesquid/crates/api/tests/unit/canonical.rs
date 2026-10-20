@@ -5,10 +5,11 @@
 use filesquid_api::canonical::original::original_path_for;
 use filesquid_api::canonical::{
     commit_file_original, commit_snapshot, create_storage_root, file_object_id, file_object_root,
-    new_upload_record, operation_message, parse_operation_message, read_file_original,
-    read_snapshot, reupload_record, snapshot_object_id, touched, CanonicalError, FileOriginal,
-    LibraryHead, OperationRecord, OwnerReadable, SnapshotDelta, SnapshotEntity, SnapshotFile,
-    SnapshotKey, UploadInput, VirtualEntry, SNAPSHOT_ROOT,
+    new_upload_record, operation_message, outgoing_name, parse_operation_message,
+    read_file_original, read_snapshot, reupload_record, snapshot_object_id, touched,
+    CanonicalError, FileOriginal, LibraryHead, OperationRecord, OutgoingNames, OwnerReadable,
+    SnapshotDelta, SnapshotEntity, SnapshotFile, SnapshotKey, UploadInput, VirtualEntry,
+    SNAPSHOT_ROOT,
 };
 use filesquid_api::library::{CatalogChange, CatalogError, FileState, LibraryRecord};
 use filesquid_core::{
@@ -915,4 +916,30 @@ fn a_commit_journal_a_replay_could_not_read_is_refused_before_publishing() {
         ready(read_snapshot(&rig.root, &OwnerReadable)).unwrap(),
         None
     );
+}
+
+#[test]
+fn sharing_names_a_file_by_its_file_id_unless_the_policy_selects_the_original_name() {
+    let file = FileId::new(FILE).unwrap();
+    let mut record = first_record(&file, "Été à Nice.JPEG", "image/jpeg", JPEG).unwrap();
+    assert_eq!(OutgoingNames::default(), OutgoingNames::FileId);
+    let shared = outgoing_name(&file, &record, OutgoingNames::default()).unwrap();
+    assert_eq!(shared, format!("{FILE}.JPEG"));
+    let named = outgoing_name(&file, &record, OutgoingNames::OriginalName).unwrap();
+    assert_eq!(named, "Été à Nice.JPEG");
+    record.set_display_name("Beach day.JPEG").unwrap();
+    let renamed = outgoing_name(&file, &record, OutgoingNames::OriginalName).unwrap();
+    assert_eq!(renamed, "Beach day.JPEG");
+    assert_eq!(
+        outgoing_name(&file, &record, OutgoingNames::FileId).unwrap(),
+        format!("{FILE}.JPEG")
+    );
+}
+
+#[test]
+fn a_sharing_name_drops_an_extension_the_stored_name_does_not_keep() {
+    let file = FileId::new(FILE).unwrap();
+    let record = first_record(&file, "notes.tar-gz~", "application/octet-stream", JPEG).unwrap();
+    let shared = outgoing_name(&file, &record, OutgoingNames::FileId).unwrap();
+    assert_eq!(shared, FILE);
 }

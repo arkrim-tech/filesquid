@@ -42,21 +42,24 @@ pub trait DisplayNames: Send + Sync {
 /// Longest display name kept, in bytes; a longer one is cut at a character boundary.
 pub const MAX_NAME_BYTES: usize = 1_024;
 
-/// `name` safe to show and to send: path separators become `_`, control characters are
-/// dropped, surrounding spaces are trimmed, and at most [`MAX_NAME_BYTES`] bytes are kept.
-/// `None` when nothing is left.
+/// `name` safe to show and to send, by the one safe transformation of API-S-005 that
+/// `filesquid-metadata`'s `safe_display_name` also applies: control characters are dropped,
+/// `/` and `\` become `_`, surrounding spaces are trimmed, and at most [`MAX_NAME_BYTES`]
+/// bytes are kept. `None` when nothing is left.
 pub fn safe_name(name: &str) -> Option<String> {
     let cleaned: String = name
         .chars()
         .filter(|c| !c.is_control())
         .map(|c| if c == '/' || c == '\\' { '_' } else { c })
         .collect();
-    let trimmed = cleaned.trim();
-    let mut end = trimmed.len().min(MAX_NAME_BYTES);
-    while !trimmed.is_char_boundary(end) {
-        end -= 1;
+    let mut kept = String::new();
+    for c in cleaned.trim_matches(' ').chars() {
+        if kept.len() + c.len_utf8() > MAX_NAME_BYTES {
+            break;
+        }
+        kept.push(c);
     }
-    let kept = &trimmed[..end];
+    let kept = kept.trim_matches(' ');
     (!kept.is_empty()).then(|| kept.to_string())
 }
 
@@ -75,32 +78,44 @@ pub enum Disposition {
     Attachment,
 }
 
-/// The `Content-Disposition` value naming the file `name` (RFC 6266): an ASCII `filename`
-/// fallback in which every other character, `"`, `\` and `%` become `_`, and the display name
-/// as `filename*=UTF-8''<percent-encoded>` (RFC 5987). `name` is passed through
-/// [`safe_name`] first.
-pub fn content_disposition(kind: Disposition, name: &str) -> String {
+/// The `Content-Disposition` value naming the file `name` (RFC 6266, API-S-027): the display
+/// name as `filename*=UTF-8''<percent-encoded>` (RFC 5987), and an ASCII `filename` fallback
+/// that keeps printable ASCII and replaces every other character and every `"`, `\`, `/`,
+/// `;` and control character with `_`. When the display name holds no ASCII letter or digit,
+/// the fallback is `id_name` instead: the FileId plus extension (the stored name). `name` is
+/// passed through [`safe_name`] first.
+pub fn content_disposition(kind: Disposition, name: &str, id_name: &str) -> String {
     let name = safe_name(name).unwrap_or_else(|| "file".to_string());
     let kind = match kind {
         Disposition::Inline => "inline",
         Disposition::Attachment => "attachment",
     };
+    let readable = name.chars().any(|c| c.is_ascii_alphanumeric());
+    let fallback = match readable {
+        true => ascii_fallback(&name),
+        false => ascii_fallback(id_name),
+    };
     format!(
-        "{kind}; filename=\"{}\"; filename*=UTF-8''{}",
-        ascii_fallback(&name),
+        "{kind}; filename=\"{fallback}\"; filename*=UTF-8''{}",
         percent_encode(&name)
     )
 }
 
-/// `name` in printable ASCII for the quoted `filename` parameter.
+/// `name` in printable ASCII for the quoted `filename` parameter; `file` when nothing is
+/// left. Pure.
 fn ascii_fallback(name: &str) -> String {
-    name.chars()
+    let fallback: String = name
+        .chars()
         .map(|c| match c {
-            '"' | '\\' | '%' => '_',
+            '"' | '\\' | '/' | ';' => '_',
             c if c.is_ascii() && !c.is_ascii_control() => c,
             _ => '_',
         })
-        .collect()
+        .collect();
+    match fallback.is_empty() {
+        true => "file".to_string(),
+        false => fallback,
+    }
 }
 
 /// `name` as RFC 5987 `value-chars`: every byte outside `attr-char` percent-encoded.
@@ -121,9 +136,12 @@ fn percent_encode(name: &str) -> String {
 mod tests {
     use super::*;
 
+    /// The FileId-plus-extension fallback the tests pass.
+    const ID: &str = "7d1c2b9e-4f3a-4e61-8a0b-2c9d5e6f7a80.jpg";
+
     #[test]
     fn a_non_ascii_name_with_spaces_gets_a_fallback_and_an_exact_utf8_form() {
-        let header = content_disposition(Disposition::Attachment, "Été à Nice 2023.jpg");
+        let header = content_disposition(Disposition::Attachment, "Été à Nice 2023.jpg", ID);
         assert_eq!(
             header,
             "attachment; filename=\"_t_ _ Nice 2023.jpg\"; \
@@ -132,15 +150,50 @@ mod tests {
     }
 
     #[test]
-    fn separators_controls_and_quotes_never_reach_the_header() {
-        let header = content_disposition(Disposition::Inline, " ../evil\n\"x\"\\%.jpg ");
+    fn quotes_backslashes_slashes_semicolons_and_controls_never_reach_the_fallback() {
+        let header = content_disposition(Disposition::Inline, " ../evil\n\"x\"\\;%.jpg ", ID);
         assert!(!header.contains('/') && !header.contains('\n'));
-        assert!(header.starts_with("inline; filename=\".._evil_x___.jpg\"; filename*=UTF-8''"));
+        assert!(
+            header.starts_with("inline; filename=\".._evil_x___%.jpg\"; filename*=UTF-8''"),
+            "{header}"
+        );
+        assert!(
+            header.ends_with("filename*=UTF-8''.._evil%22x%22_%3B%25.jpg"),
+            "{header}"
+        );
         assert_eq!(safe_name("\u{7}\t "), None);
         assert_eq!(
-            content_disposition(Disposition::Inline, "\n"),
+            content_disposition(Disposition::Inline, "\n", ID),
             "inline; filename=\"file\"; filename*=UTF-8''file"
         );
+    }
+
+    #[test]
+    fn a_name_without_an_ascii_letter_or_digit_falls_back_to_the_file_id() {
+        let header = content_disposition(Disposition::Attachment, "写真 — 夏", ID);
+        assert_eq!(
+            header,
+            format!(
+                "attachment; filename=\"{ID}\"; \
+                 filename*=UTF-8''%E5%86%99%E7%9C%9F%20%E2%80%94%20%E5%A4%8F"
+            )
+        );
+        let ascii = content_disposition(Disposition::Attachment, "写真 2.jpg", ID);
+        assert!(
+            ascii.starts_with("attachment; filename=\"__ 2.jpg\""),
+            "{ascii}"
+        );
+    }
+
+    #[test]
+    fn the_display_name_matches_the_metadata_modules_safe_display_name() {
+        let long = "é".repeat(MAX_NAME_BYTES);
+        let names = ["a\u{a0}", " spaced ", "tab\tname", "a/b\\c", long.as_str()];
+        for name in names {
+            let ours = safe_name(name).unwrap_or_else(|| "file".to_string());
+            let theirs = filesquid_metadata::file_record::safe_display_name(name);
+            assert_eq!(ours, theirs, "{name:?}");
+        }
     }
 
     #[test]

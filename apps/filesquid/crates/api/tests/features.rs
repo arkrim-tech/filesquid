@@ -11,10 +11,11 @@
 //! library and repair routes of API-S-025; the version history, labels, restore and
 //! history size of API-S-014; the client events, journal query and export of API-S-030
 //! and API-S-031; the preferences, whole-file download and drive listings of API-S-011;
-//! the metadata property routes of API-S-035; and the sealing service and journal rebuild of
+//! the metadata property routes of API-S-035; the display and download names of API-S-027;
+//! and the sealing service and journal rebuild of
 //! API-S-032).
 //!
-//! Scenarios that need domain operations not built yet (import, rename, the metadata writes
+//! Scenarios that need domain operations not built yet (import, journal-linked renames, the metadata writes
 //! beyond the API-S-035 routes, such as the inspector's EXIF edits, C2PA scans, sync) or the
 //! optional OTLP export (Task FS-3.6) have no step definitions and are reported as skipped
 //! until those land.
@@ -122,6 +123,8 @@ mod drive_steps;
 mod journal_steps;
 #[path = "support/metadata_steps.rs"]
 mod metadata_steps;
+#[path = "support/names_steps.rs"]
+mod names_steps;
 
 #[path = "support/seal_steps.rs"]
 mod seal_steps;
@@ -177,6 +180,7 @@ struct MonitorWorld {
     navigation: navigation_steps::NavigationWorld,
     drive: drive_steps::DriveWorld,
     metadata: metadata_steps::MetadataWorld,
+    names: names_steps::NamesWorld,
     journal: journal_steps::JournalWorld,
     seal: seal_steps::SealWorld,
 }

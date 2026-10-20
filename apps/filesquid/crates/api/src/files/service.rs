@@ -394,6 +394,19 @@ impl<B: StorageBackend, R, S> FileService<B, R, S> {
         let mut history = HistoryView::of(ids.0, ids.1, ids.2, entries);
         self.complete_history(&library, &object, &mut history)
             .await?;
+        let head = object.head().clone();
+        let described = library
+            .described(&object, &head)
+            .await?
+            .filter(|d| d.original_path == query.path);
+        let head_name = head.to_string();
+        let file = StoredFile {
+            library_id: &query.library_id,
+            object_id: &query.object_id,
+            version: &head_name,
+            path: &query.path,
+        };
+        history.display_name = self.answer_names(file, described.as_ref()).await.0;
         Ok(history)
     }
 
@@ -407,10 +420,12 @@ impl<B: StorageBackend, R, S> FileService<B, R, S> {
             .map(VersionView::of)
             .collect();
         super::versions::apply_labels(&object, &mut versions).await?;
+        let described = library.described(&object, object.head()).await?;
         Ok(VersionsView {
             library_id: query.library_id,
             object_id: query.object_id,
             head: object.inventory().head.to_string(),
+            display_name: described.map(|d| safe_display_name(d.display_name())),
             versions,
         })
     }
@@ -461,6 +476,7 @@ impl<B: StorageBackend, R, S> FileService<B, R, S> {
             total,
             media_type,
             file_name,
+            id_name: stored_name(&request.path).to_string(),
             bytes,
         })
     }
@@ -529,6 +545,7 @@ where
         let library = self.library(&request.library_id)?;
         let _writing = library.writes.lock().await;
         let root = library.locate(&request.object_id).await?;
+        refuse_original_move(&request, &root)?;
         let staging = library.staging(&request.object_id)?;
         let model = change_model(&library, &root, &request.object_id, staging);
         let receipt = view::move_path(&model, &request.from, &request.to, meta).await?;
@@ -669,6 +686,23 @@ fn name_by_record(page: &mut FolderPageView, described: &super::records::Describ
     }
 }
 
+/// Refuse a move of a file object's `original/`: its stored name is fixed (API-S-026), and a
+/// rename changes only the display name, through `POST /api/v1/files/renames` (API-S-027).
+/// `root` is where the object lives; only a file object lives at `files/<file-id>`, since a
+/// collection snapshot's identifier is a `urn:uuid:` too. Pure.
+fn refuse_original_move(request: &MoveRequest, root: &str) -> Result<(), FileError> {
+    let in_original = |path: &str| path == "original" || path.starts_with("original/");
+    let file_object = super::records::file_id_of(&request.object_id)
+        .and_then(|id| crate::canonical::file_object_root(&id).ok())
+        .is_some_and(|file_root| file_root == root);
+    match file_object && (in_original(&request.from) || in_original(&request.to)) {
+        true => Err(FileError::invalid(
+            "A file's stored original does not move; rename it with POST /api/v1/files/renames, which changes its display name only.",
+        )),
+        false => Ok(()),
+    }
+}
+
 /// True for a folder entry that is one of the reserved folders. Pure.
 fn is_reserved_folder(entry: &EntryView) -> bool {
     matches!(entry, EntryView::Folder { path, .. } if in_reserved_folder(path))
@@ -756,6 +790,9 @@ pub struct ContentAnswer {
     pub media_type: String,
     /// The display name the answer names the file by ([`super::names`]).
     pub file_name: String,
+    /// The stored name (FileId plus extension for a file object's original): the ASCII
+    /// fallback of a display name without an ASCII letter or digit (API-S-027).
+    pub id_name: String,
     /// The bytes (empty for `HEAD` and `416`).
     pub bytes: Vec<u8>,
 }
