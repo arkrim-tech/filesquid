@@ -121,6 +121,11 @@ async fn rebuild(w: &mut MonitorWorld) {
     w.routes.answer = Some(rig.post("/api/v1/libraries/rebuilds", body).await);
 }
 
+#[when(expr = "the server administrator rebuilds the library from its files through the API")]
+async fn admin_rebuild(w: &mut MonitorWorld) {
+    rebuild(w).await;
+}
+
 #[when(expr = "the owner asks the API which objects need a version-inventory repair")]
 async fn candidates(w: &mut MonitorWorld) {
     let uri = format!(

@@ -73,5 +73,5 @@ Feature: Library and repair routes
 
   Scenario: The server administrator can still rebuild a library
     Given the server administrator's library with a complete object and an object without a version inventory
-    When the owner rebuilds the library from its files through the API
+    When the server administrator rebuilds the library from its files through the API
     Then the rebuild should flag only the object without a version inventory
