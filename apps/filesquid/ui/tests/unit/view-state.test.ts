@@ -28,6 +28,12 @@ describe("failureState", () => {
     expect(failureState(missing, true)).toEqual({ kind: "denied", reason: "missing_credentials" });
   });
 
+  it("is unavailable for a 503 (a service the host has not installed or started yet)", () => {
+    const off = new ApiError(503, "/api/v1/navigation", { code: "unavailable", retryable: true });
+    expect(failureState(off, true)).toEqual({ kind: "unavailable" });
+    expect(failureState(off, false)).toEqual({ kind: "unavailable" });
+  });
+
   it("is an error for anything else", () => {
     expect(failureState(new ApiError(500, "/api/v1/x"), true)).toEqual({ kind: "error" });
     expect(failureState(new Error("boom"), true)).toEqual({ kind: "error" });

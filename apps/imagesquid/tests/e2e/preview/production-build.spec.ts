@@ -75,9 +75,14 @@ test("navigation, API status and theme legend words come from the active label t
   await page.goto("/");
   const shell = page.locator("fs-app-shell");
   await expect(shell.locator("nav li")).toHaveText(
-    ["libraries", "collections", "virtualCollections", "virtualExhibits", "monitor"].map((key) =>
-      label(labels, key),
-    ),
+    [
+      "libraries",
+      "collections",
+      "virtualCollections",
+      "virtualExhibits",
+      "monitor",
+      "settings",
+    ].map((key) => label(labels, key)),
   );
   await expect(shell.locator('[role="status"]')).toHaveText(
     `${label(labels, "apiStatus")}: ok (filesquid)`,

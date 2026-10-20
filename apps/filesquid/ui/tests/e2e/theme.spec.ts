@@ -159,7 +159,9 @@ test("the selected theme option and the API status meet AA as rendered", async (
   for (const scheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme: scheme });
     await page.goto("/");
-    await expect(page.locator('fs-app-shell [role="status"]')).toHaveText("API: ok (filesquid)");
+    await expect(page.locator('fs-app-shell p.api[role="status"]')).toHaveText(
+      "API: ok (filesquid)",
+    );
     const ratios = await page.evaluate(() => {
       const shell = document.querySelector("fs-app-shell");
       const control = shell?.shadowRoot?.querySelector("fs-theme-control")?.shadowRoot;
