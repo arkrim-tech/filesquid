@@ -17,7 +17,10 @@ import type {
   FileRef,
   FolderAnswer,
   FolderPage,
+  LibraryRef,
   ObjectRef,
+  UploadCommit,
+  UploadFacts,
 } from "./model";
 import { PAGE_SIZE } from "./model";
 
@@ -42,8 +45,16 @@ export interface FileSource {
   readRange(file: FileRef, range: ByteRange, options?: SourceOptions): Promise<Uint8Array>;
   /** Mint a content handle for one file version; the URL is only a media `src`. Mints. */
   mintContent(file: FileRef, options?: SourceOptions): Promise<string>;
-  /** Add or replace one file (at most 64 MiB); commits one version. Writes. */
-  upload(object: ObjectRef, path: string, body: Blob, options?: SourceOptions): Promise<FileCommit>;
+  /**
+   * Upload one file (at most 64 MiB) as its own file, or as new content of `facts.file_id`;
+   * commits one version in that file's object. Writes.
+   */
+  upload(
+    library: LibraryRef,
+    facts: UploadFacts,
+    body: Blob,
+    options?: SourceOptions,
+  ): Promise<UploadCommit>;
   /** Create a folder; it stays pending until a file is added beneath it. Writes nothing. */
   createFolder(object: ObjectRef, path: string, options?: SourceOptions): Promise<FolderAnswer>;
   /** Move or rename one file or folder; commits one version. Writes. */
@@ -62,7 +73,7 @@ export interface FileSource {
 /** The part of `FileSquidClient` the source needs (injectable in tests). */
 export type FileClient = Pick<
   FileSquidClient,
-  "request" | "read" | "putBytes" | "mintContentHandle"
+  "request" | "read" | "uploadFile" | "mintContentHandle"
 >;
 
 /** Build a query string from the defined, non-empty values. */
@@ -211,23 +222,25 @@ export class ClientFileSource implements FileSource {
   }
 
   /**
-   * Add or replace one file with `PUT /api/v1/files/upload`. Network I/O; commits a version.
+   * Upload one file with `PUT /api/v1/files/upload` (API-S-026, API-S-035): the facts in the
+   * query, the declared size from the body, no logical path. Network I/O; commits one version
+   * in the file's own object.
    *
-   * @param object The library and object.
-   * @param path The file's logical path.
+   * @param library The library.
+   * @param facts The file's name, its normalisation form and the other facts the client gives.
    * @param body The bytes (at most 64 MiB; the caller checks first).
    * @param options Abort signal.
-   * @returns The version published.
-   * @throws ApiError when the API refuses, `conflict` included.
+   * @returns The version published, with the file's identifier and object.
+   * @throws ApiError when the API refuses, `invalid_request` and `conflict` included.
    */
   upload(
-    object: ObjectRef,
-    path: string,
+    library: LibraryRef,
+    facts: UploadFacts,
     body: Blob,
     options: SourceOptions = {},
-  ): Promise<FileCommit> {
-    const route = `/api/v1/files/upload${query({ ...bodyOf(object), path })}`;
-    return this.client.putBytes<FileCommit>(route, body, options);
+  ): Promise<UploadCommit> {
+    const request = { ...facts, library_id: library.library_id };
+    return this.client.uploadFile(request, body, options);
   }
 
   /**

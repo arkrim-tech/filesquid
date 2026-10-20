@@ -11,6 +11,10 @@ import {
   folderProblem,
   moveTarget,
   problemText,
+  nameNormalization,
+  reportedMediaType,
+  reportedModified,
+  uploadFacts,
   uploadFiles,
   uploadName,
 } from "../../src/files/ops";
@@ -19,6 +23,8 @@ import { MemoryFileSource } from "../../src/files/memory-source";
 import labels from "../../src/theme/labels.en.json";
 
 const OBJECT = { library_id: "lib", object_id: "obj" };
+/** 2026-10-20T08:00:00Z in milliseconds. */
+const MODIFIED = Date.UTC(2026, 9, 20, 8, 0, 0);
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -38,6 +44,60 @@ describe("uploadName", () => {
   });
 });
 
+describe("uploadFacts", () => {
+  it("states the name, its normalisation form, the media type and the last-modified time", () => {
+    const file = new File(["x"], "ignored.txt", { type: "image/jpeg", lastModified: MODIFIED });
+    expect(uploadFacts(file, "Holiday 2023.JPG")).toEqual({
+      name: "Holiday 2023.JPG",
+      name_normalization: "nfc",
+      media_type: "image/jpeg",
+      last_modified: "2026-10-20T08:00:00.000Z",
+    });
+  });
+
+  it.each([
+    ["ascii.txt", "nfc"],
+    ["Caf\u00e9.txt", "nfc"],
+    ["Cafe\u0301.txt", "nfd"],
+    ["\u00e9e\u0301.txt", "unnormalised"],
+  ])("names %j as %s", (name, form) => {
+    expect(nameNormalization(name)).toBe(form);
+  });
+
+  it.each([
+    ["text/plain", "text/plain"],
+    ["Image/JPEG", "Image/JPEG"],
+    ["application/vnd.ms-excel", "application/vnd.ms-excel"],
+    ["text/plain;charset=utf-8", "text/plain"],
+    ["", undefined],
+    ["text", undefined],
+    ["text/", undefined],
+    ["text/pl ain", undefined],
+    ["+image/jpeg", undefined],
+    ["image/.jpeg", undefined],
+    [`a/${"b".repeat(128)}`, undefined],
+  ])("reports the media type %j as %j", (type, expected) => {
+    expect(reportedMediaType(type)).toBe(expected);
+  });
+
+  it.each([
+    [MODIFIED, "2026-10-20T08:00:00.000Z"],
+    [0, "1970-01-01T00:00:00.000Z"],
+    [Number.NaN, undefined],
+    [8.64e15 + 1, undefined],
+    [Date.UTC(10000, 0, 1), undefined],
+    [Date.UTC(-1, 0, 1), undefined],
+  ])("reports the last-modified time %d as %j", (ms, expected) => {
+    expect(reportedModified(ms)).toBe(expected);
+  });
+
+  it("leaves out a media type or time it cannot report", () => {
+    const file = new File(["x"], "a", { type: "" });
+    Object.defineProperty(file, "lastModified", { value: Number.NaN });
+    expect(uploadFacts(file, "a")).toEqual({ name: "a", name_normalization: "nfc" });
+  });
+});
+
 describe("uploadFiles", () => {
   /** A source holding nothing, with a spy on upload. */
   function empty() {
@@ -45,24 +105,43 @@ describe("uploadFiles", () => {
     return { source, upload: vi.spyOn(source, "upload") };
   }
 
-  it("uploads one file at a time into the prefix, in order, reporting progress", async () => {
+  it("uploads one file at a time as its own file, in order, with its facts, reporting progress", async () => {
     const { source, upload } = empty();
     const seen: string[] = [];
-    const files = [new File(["a"], "one.txt"), new File(["b"], "two.txt")];
-    const result = await uploadFiles(source, OBJECT, "Docs", files, (i, n, name) =>
+    const files = [
+      new File(["a"], "one.txt", { type: "text/plain", lastModified: MODIFIED }),
+      new File(["b"], "two.txt"),
+    ];
+    const result = await uploadFiles(source, OBJECT, files, (i, n, name) =>
       seen.push(`${i}/${n} ${name}`),
     );
-    expect(upload.mock.calls.map((c) => c[1])).toEqual(["Docs/one.txt", "Docs/two.txt"]);
+    expect(upload.mock.calls.map((c) => c[0].library_id)).toEqual(["lib", "lib"]);
+    expect(upload.mock.calls.map((c) => c[1].name)).toEqual(["one.txt", "two.txt"]);
+    expect(upload.mock.calls[0]?.[1]).toEqual({
+      name: "one.txt",
+      name_normalization: "nfc",
+      media_type: "text/plain",
+      last_modified: "2026-10-20T08:00:00.000Z",
+    });
+    expect(upload.mock.calls[0]?.[2]).toBe(files[0]);
     expect(seen).toEqual(["1/2 one.txt", "2/2 two.txt"]);
-    expect(result.committed.map((c) => c.version)).toEqual(["v2", "v3"]);
+    expect(result.committed.map((c) => c.version)).toEqual(["v1", "v1"]);
+    expect(new Set(result.committed.map((c) => c.file_id)).size).toBe(2);
     expect(result.failed).toEqual([]);
+    expect(source.head).toBe("v1");
+  });
+
+  it("sends the cleaned display name, never a path", async () => {
+    const { source, upload } = empty();
+    await uploadFiles(source, OBJECT, [new File(["a"], "a/b\\c.txt")]);
+    expect(upload.mock.calls[0]?.[1].name).toBe("a_b_c.txt");
   });
 
   it("refuses a file over 64 MiB without sending it and goes on with the rest", async () => {
     const { source, upload } = empty();
     const huge = new File(["x"], "huge.bin");
     Object.defineProperty(huge, "size", { value: MAX_UPLOAD_BYTES + 1 });
-    const result = await uploadFiles(source, OBJECT, "", [huge, new File(["y"], "ok.txt")]);
+    const result = await uploadFiles(source, OBJECT, [huge, new File(["y"], "ok.txt")]);
     expect(upload).toHaveBeenCalledTimes(1);
     expect(result.failed).toMatchObject([{ name: "huge.bin", reason: "too_large" }]);
     expect(result.committed).toHaveLength(1);
@@ -73,7 +152,7 @@ describe("uploadFiles", () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const error = new ApiError(409, "/api/v1/files/upload", { code: "conflict" });
     vi.spyOn(source, "upload").mockRejectedValueOnce(error);
-    const result = await uploadFiles(source, OBJECT, "", [
+    const result = await uploadFiles(source, OBJECT, [
       new File(["a"], "a.txt"),
       new File(["b"], "b.txt"),
     ]);
@@ -85,19 +164,19 @@ describe("uploadFiles", () => {
   it("refuses a name longer than 255 bytes without sending it", async () => {
     const { source, upload } = empty();
     const long = new File(["x"], `${"a".repeat(256)}.txt`);
-    const result = await uploadFiles(source, OBJECT, "", [long]);
+    const result = await uploadFiles(source, OBJECT, [long]);
     expect(upload).not.toHaveBeenCalled();
     expect(result.failed).toMatchObject([{ reason: "name_too_long" }]);
   });
 
   it("hands back the files it did not try", async () => {
     const { source, upload } = empty();
-    upload.mockResolvedValue({ ...OBJECT, version: "v2", created: "t" });
+    upload.mockResolvedValue({ ...OBJECT, file_id: "f", version: "v1", created: "t" });
     const files = Array.from(
       { length: MAX_UPLOAD_FILES + 2 },
       (_, i) => new File(["a"], `f${i}.txt`),
     );
-    const result = await uploadFiles(source, OBJECT, "", files);
+    const result = await uploadFiles(source, OBJECT, files);
     expect(result.left.map((f) => f.name)).toEqual([
       `f${MAX_UPLOAD_FILES}.txt`,
       `f${MAX_UPLOAD_FILES + 1}.txt`,
@@ -106,12 +185,12 @@ describe("uploadFiles", () => {
 
   it("tries at most MAX_UPLOAD_FILES files and reports how many it left", async () => {
     const { source, upload } = empty();
-    upload.mockResolvedValue({ ...OBJECT, version: "v2", created: "t" });
+    upload.mockResolvedValue({ ...OBJECT, file_id: "f", version: "v1", created: "t" });
     const files = Array.from(
       { length: MAX_UPLOAD_FILES + 3 },
       (_, i) => new File(["a"], `f${i}.txt`),
     );
-    const result = await uploadFiles(source, OBJECT, "", files);
+    const result = await uploadFiles(source, OBJECT, files);
     expect(upload).toHaveBeenCalledTimes(MAX_UPLOAD_FILES);
     expect(result.skipped).toBe(3);
   });

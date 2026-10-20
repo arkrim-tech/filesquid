@@ -35,6 +35,18 @@ export type ApiEvent = components["schemas"]["ApiEvent"];
 /** The host descriptor, generated from the API contract (`GET /api/v1/host`, API-S-020). */
 export type HostDescriptor = components["schemas"]["HostDescriptor"];
 
+/**
+ * The query of `PUT /api/v1/files/upload` (API-S-026, API-S-035), generated from the API
+ * contract: the library, the facts the client provides about the file (name and its Unicode
+ * normalisation form, declared size, media type, last-modified time) and, for new content of
+ * an existing file, its `file_id`. There is no logical path: the API stores the file in its own
+ * object.
+ */
+export type FileUploadQuery = operations["uploadFile"]["parameters"]["query"];
+
+/** The version an upload published in the file's own object, generated from the API contract. */
+export type UploadCommit = components["schemas"]["UploadCommit"];
+
 /** One page of one level of the navigation tree (API-S-021), as the contract defines it. */
 export type NavigationPageBody = components["schemas"]["NavigationPage"];
 
@@ -156,6 +168,8 @@ const ERROR_CODE_VALUES = [
 const ERROR_CODES: CompleteList<ErrorCode, typeof ERROR_CODE_VALUES> = ERROR_CODE_VALUES;
 /** Path of the content handle mint (API-S-018). */
 const CONTENT_HANDLES_PATH = "/api/v1/content-handles";
+/** Path of the file upload route (API-S-026). */
+const FILE_UPLOAD_PATH = "/api/v1/files/upload";
 /** Path prefix of the content route; a handle's URL is this plus the handle. */
 const CONTENT_ROUTE = "/api/v1/content/";
 /** A content handle: 256 random bits as 43 base64url characters without padding. */
@@ -177,6 +191,22 @@ function navigationQuery(query: NavigationQuery): string {
   if (query.limit !== undefined) params.set("limit", String(query.limit));
   const text = params.toString();
   return text ? `?${text}` : "";
+}
+
+/**
+ * Build the query string of an upload: every defined value, URL-encoded, numbers as decimal
+ * text. An undefined optional fact is left out; nothing else is dropped, so a required value
+ * the caller left empty reaches the API and is refused there. Pure.
+ *
+ * @param query The upload query.
+ * @returns The query string without its leading `?`.
+ */
+function uploadSearch(query: FileUploadQuery): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined) params.set(key, String(value));
+  }
+  return params.toString();
 }
 
 /** Build a query string from defined, non-empty filter values (in declaration order). */
@@ -760,6 +790,28 @@ export class FileSquidClient {
       signal: options.signal,
     });
     return (await response.json()) as T;
+  }
+
+  /**
+   * Upload one file with `PUT /api/v1/files/upload` (API-S-026, API-S-035): the bytes as the
+   * body and the facts in the query. The declared `size` is always the body's size, so the API's
+   * size check can only fail when the bytes change in transit. Network I/O; the API commits one
+   * OCFL version in the file's own object.
+   *
+   * @param query The library and the file's facts; any optional fact left undefined is not sent.
+   * @param body The bytes (at most 64 MiB; the caller checks first).
+   * @param options Abort signal.
+   * @returns The version published, with the file's identifier and object.
+   * @throws ApiError when the API refuses (`invalid_request`, `not_found`, `conflict`, ...), or
+   *   when the token cannot be sent.
+   */
+  async uploadFile(
+    query: Omit<FileUploadQuery, "size">,
+    body: Blob,
+    options: AbortOptions = {},
+  ): Promise<UploadCommit> {
+    const search = uploadSearch({ ...query, size: body.size });
+    return this.putBytes<UploadCommit>(`${FILE_UPLOAD_PATH}?${search}`, body, options);
   }
 
   /**

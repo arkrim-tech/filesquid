@@ -3,7 +3,8 @@
  * (API-F1.3): folders first then files in code-point order, a display name apart from the
  * stored name, opaque cursors with a bounded page, ranged reads, one new OCFL version per
  * write, restore from an earlier version, a folder that stays pending until a file is added,
- * and the API's refusals as `ApiError` (`not_found`, `conflict`, `invalid_request`,
+ * an upload that creates the file's own object (API-S-026) and refuses the facts the API
+ * refuses, and the API's refusals as `ApiError` (`not_found`, `conflict`, `invalid_request`,
  * `range_not_satisfiable`). Tests and demos use it; the live source is `ClientFileSource`.
  */
 import { ApiError } from "../api/client";
@@ -16,9 +17,13 @@ import type {
   FolderAnswer,
   FolderEntry,
   FolderPage,
+  LibraryRef,
+  NameNormalization,
   ObjectRef,
+  UploadCommit,
+  UploadFacts,
 } from "./model";
-import { lastSegment } from "./model";
+import { MAX_UPLOAD_BYTES, isMediaType, lastSegment } from "./model";
 import type { FileSource, SourceOptions } from "./source";
 
 /** One file of the fixture. */
@@ -37,6 +42,32 @@ export interface MemoryFile {
 export interface MemoryOptions extends ObjectRef {
   /** The files of version `v1`. */
   readonly files: readonly MemoryFile[];
+}
+
+/** One file an upload made, at its latest version, as the fixture keeps it. */
+export interface MemoryUpload {
+  /** The file (UUID v4); its object is `urn:uuid:<file_id>`. */
+  readonly file_id: string;
+  /** The name the upload sent. */
+  readonly name: string;
+  /** Its normalisation form: the one sent, or `nfc` for an ASCII name. */
+  readonly name_normalization: NameNormalization;
+  /** The media type sent, or null. */
+  readonly media_type: string | null;
+  /** The last-modified time sent, or null. */
+  readonly last_modified: string | null;
+  /** Bytes received. */
+  readonly size: number;
+  /** The file object's head version. */
+  readonly version: string;
+}
+
+/** An uploaded file with its bytes. */
+interface UploadedFile {
+  /** What the upload recorded. */
+  readonly upload: MemoryUpload;
+  /** The bytes received. */
+  readonly bytes: Uint8Array;
 }
 
 /** A file as stored in one version. */
@@ -63,6 +94,12 @@ const DEFAULT_LIMIT = 200;
 const MAX_LIMIT = 1000;
 /** Most cursors remembered; the oldest is forgotten first. */
 const MAX_CURSORS = 1000;
+/** Longest uploaded name the API accepts, in UTF-8 bytes. */
+const MAX_UPLOAD_NAME_BYTES = 1024;
+/** The shape of an RFC 3339 UTC time: date, clock and an optional fraction of any digits. */
+const RFC3339_UTC = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?Z$/;
+/** A UUID v4 in lowercase or uppercase hex. */
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 /** Time of `v1`; each later version is one minute after the one before. */
 const BASE_TIME = Date.UTC(2026, 9, 16, 9, 0, 0);
 
@@ -127,6 +164,9 @@ function byName(a: string, b: string): number {
 export class MemoryFileSource implements FileSource {
   private readonly snapshots: Snapshot[] = [];
   private readonly cursors = new Map<string, { prefix: string; offset: number }>();
+  private readonly uploaded = new Map<string, UploadedFile>();
+  /** Uploads committed so far; each one's `created` is a minute after the one before. */
+  private uploadCount = 0;
   /** When set, every call rejects with this value (a network error, a denial, ...). */
   failure: unknown = undefined;
   /** Every handle URL minted, in order, with the file it was minted for. */
@@ -143,6 +183,11 @@ export class MemoryFileSource implements FileSource {
   /** The head version label. */
   get head(): string {
     return `v${this.snapshots.length}`;
+  }
+
+  /** The files uploads made, in the order they were first uploaded, for assertions. */
+  get uploads(): MemoryUpload[] {
+    return [...this.uploaded.values()].map((file) => file.upload);
   }
 
   /** The files of the head version, for assertions. */
@@ -220,17 +265,37 @@ export class MemoryFileSource implements FileSource {
     return url;
   }
 
-  /** Add or replace one file. */
-  async upload(_object: ObjectRef, path: string, body: Blob): Promise<FileCommit> {
+  /**
+   * Upload one file as the route does (API-S-026): a new file object at `v1`, or the next
+   * version of `facts.file_id`'s object. The object shown is not changed. Refuses what the
+   * route refuses: a body over 64 MiB, a bad name, media type, time or `file_id`, or a
+   * non-ASCII name without its form (`invalid_request`); an unknown file (`not_found`);
+   * unchanged bytes (`conflict`).
+   */
+  async upload(library: LibraryRef, facts: UploadFacts, body: Blob): Promise<UploadCommit> {
     this.check();
+    const form = uploadForm(facts);
+    if (form === null || body.size > MAX_UPLOAD_BYTES) throw refusal(400, "invalid_request");
     const bytes = await readBlob(body);
-    return this.commit((files, version, created) => {
-      const name = lastSegment(path);
-      const same = files.get(path);
-      const type = TYPES[extensionOf(name) ?? ""] ?? "application/octet-stream";
-      const stored = { path, displayName: same?.displayName ?? name, bytes, mediaType: type };
-      files.set(path, { ...stored, modified: created, modifiedVersion: version });
-    });
+    const previous = facts.file_id === undefined ? undefined : this.uploaded.get(facts.file_id);
+    if (facts.file_id !== undefined && previous === undefined) throw refusal(404, "not_found");
+    if (previous && sameBytes(previous.bytes, bytes)) throw refusal(409, "conflict");
+    const file_id = previous?.upload.file_id ?? newOperationId();
+    const version = `v${previous ? Number(previous.upload.version.slice(1)) + 1 : 1}`;
+    const upload: MemoryUpload = {
+      file_id,
+      name: facts.name,
+      name_normalization: form,
+      media_type: facts.media_type ?? null,
+      last_modified: facts.last_modified ?? null,
+      size: bytes.byteLength,
+      version,
+    };
+    this.uploaded.set(file_id, { upload, bytes });
+    this.uploadCount += 1;
+    const created = new Date(BASE_TIME + this.uploadCount * 60_000).toISOString();
+    const object_id = `urn:uuid:${file_id}`;
+    return { library_id: library.library_id, file_id, object_id, version, created };
   }
 
   /** Create a folder: pending when no file lies below it yet. */
@@ -382,6 +447,53 @@ function initialFile(file: MemoryFile, created: string): Stored {
     modified: created,
     modifiedVersion: "v1",
   };
+}
+
+/**
+ * The normalisation form of an upload's name when the route would accept its facts: the form
+ * sent, or `nfc` for an ASCII name; null when a fact is refused. Pure.
+ */
+function uploadForm(facts: UploadFacts): NameNormalization | null {
+  const bytes = new TextEncoder().encode(facts.name).length;
+  const badName =
+    bytes === 0 ||
+    bytes > MAX_UPLOAD_NAME_BYTES ||
+    facts.name.includes("/") ||
+    facts.name.includes("\0");
+  const badType = facts.media_type !== undefined && !isMediaType(facts.media_type);
+  const badTime = facts.last_modified !== undefined && !isRfc3339Utc(facts.last_modified);
+  const badId = facts.file_id !== undefined && !UUID_V4.test(facts.file_id);
+  const ascii = /^\p{ASCII}*$/u.test(facts.name);
+  const form = facts.name_normalization ?? (ascii ? "nfc" : null);
+  return badName || badType || badTime || badId ? null : form;
+}
+
+/**
+ * Whether `text` is an RFC 3339 UTC time the API accepts: a real calendar date, hours below
+ * 24, minutes below 60 and seconds below 60, or 60 only as the leap second `23:59:60`. Pure.
+ */
+function isRfc3339Utc(text: string): boolean {
+  const parts = RFC3339_UTC.exec(text)?.slice(1).map(Number);
+  if (!parts) return false;
+  const [year, month, day, hour, minute, second] = parts as [
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+  ];
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  const realDate =
+    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+  const leap = hour === 23 && minute === 59 && second === 60;
+  return realDate && hour < 24 && minute < 60 && (second < 60 || leap);
+}
+
+/** True when two byte arrays are equal. */
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  return a.byteLength === b.byteLength && a.every((byte, i) => byte === b[i]);
 }
 
 /** True when both versions hold the same paths with the same content and names. */

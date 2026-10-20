@@ -7,6 +7,7 @@
  *
  * Every list is bounded (AGENTS.md section 22) by the `MAX_*` constants.
  */
+import type { FileUploadQuery } from "../api/client";
 import type { components } from "../api/schema";
 import { formatLabel, type LabelKey, type LabelTable } from "../theme/labels";
 
@@ -20,6 +21,35 @@ export type FileDetails = components["schemas"]["FileDetails"];
 export type FileCommit = components["schemas"]["FileCommit"];
 /** The answer to creating a folder. */
 export type FolderAnswer = components["schemas"]["FolderAnswer"];
+/** The version an upload published in the file's own object (API-S-026). */
+export type { UploadCommit } from "../api/client";
+/** The Unicode normalisation form of an uploaded name, as the upload route names it. */
+export type NameNormalization = NonNullable<FileUploadQuery["name_normalization"]>;
+
+/**
+ * What the client tells the API about one upload (API-S-035), besides the library and the
+ * size, which is always the size of the bytes sent. There is no logical path: the API stores
+ * the file in its own object (API-S-026).
+ */
+export interface UploadFacts {
+  /** The file's original name, as the user sees it (1 to 1,024 bytes, no `/` or NUL). */
+  readonly name: string;
+  /** Its Unicode normalisation form; the API requires it for a name that is not ASCII. */
+  readonly name_normalization?: NameNormalization;
+  /** The media type the platform reported, `type/subtype`. */
+  readonly media_type?: string;
+  /** The last-modified time the platform reported, RFC 3339 UTC. */
+  readonly last_modified?: string;
+  /** The file whose content this upload replaces; a new file when absent. */
+  readonly file_id?: string;
+}
+
+/** The library an upload goes to. */
+export interface LibraryRef {
+  /** The library. */
+  readonly library_id: string;
+}
+
 /** The object whose files are listed: a library and one OCFL object in it. */
 export interface ObjectRef {
   /** The library. */
@@ -77,6 +107,22 @@ export interface RowSummary {
   readonly files: number;
   /** Total bytes of the files. */
   readonly bytes: number;
+}
+
+/** RFC 6838 restricted name: a letter or digit, then up to 126 of `[A-Za-z0-9!#$&^_.+-]`. */
+const RESTRICTED_NAME = "[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}";
+/** A media type the upload route accepts: `type/subtype`, each a restricted name. */
+const MEDIA_TYPE = new RegExp(`^${RESTRICTED_NAME}/${RESTRICTED_NAME}$`);
+
+/**
+ * Whether `text` is a media type the upload route accepts: `type/subtype`, each an RFC 6838
+ * restricted name, with no parameters. Pure.
+ *
+ * @param text The candidate.
+ * @returns True when the API would take it.
+ */
+export function isMediaType(text: string): boolean {
+  return MEDIA_TYPE.test(text);
 }
 
 /** Largest upload the API accepts, in bytes (64 MiB). */
