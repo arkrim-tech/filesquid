@@ -1,0 +1,55 @@
+//! Durable jobs (API-S-033; PRD NFR-003; ADR 007): work with identity that survives a quit
+//! or a crash, not a UI process.
+//!
+//! A job is a row in the host's operational store (SQLite on the desktop, PostgreSQL later
+//! on the server) with an idempotent operation ID, an opaque source identity, a bounded
+//! checkpoint and an exclusive lease. The rules live here, once, for every host:
+//!
+//! - [`rules`]: the pure transitions of a job: an exclusive lease with a fencing number
+//!   (an expired worker can neither checkpoint nor finish once its lease is gone or taken
+//!   over), a size-capped checkpoint, suspension at quit (the checkpoint is kept and the
+//!   lease given back), finishing, and the release of a crashed run's expired lease.
+//! - [`JobStore`]: what a host stores: insert, read, one atomic read-modify-write, and a
+//!   bounded list of unfinished jobs. [`MemoryJobStore`] is the reference store.
+//! - [`Jobs`] and [`RunningJob`]: the service a host runs jobs through. Starting a job
+//!   revalidates its source identity, registers it in the process registry and journals it;
+//!   every state change and every refusal is journaled, with the job and operation IDs and
+//!   an error code only, never the source identity or the checkpoint. [`Jobs::recover`] is
+//!   the bounded launch-time reconciliation: it reads at most [`MAX_RECOVERED_JOBS`] jobs,
+//!   never the media they cover.
+
+mod model;
+pub mod rules;
+mod service;
+mod store;
+
+pub use model::{Job, JobError, JobSpec, JobState, Lease};
+pub use service::{Jobs, RunningJob};
+pub use store::{JobStore, MemoryJobStore};
+
+/// Default lease length: a worker that neither checkpoints nor finishes within it loses the
+/// job to the next one that starts it.
+pub const JOB_LEASE_TTL_MS: i64 = 15_000;
+
+/// Largest checkpoint a job may store, in bytes.
+pub const MAX_CHECKPOINT_BYTES: usize = 64 * 1024;
+
+/// Most unfinished jobs one recovery reads.
+pub const MAX_RECOVERED_JOBS: usize = 1_000;
+
+/// Journal operation of a submitted job.
+pub const JOB_CREATED: &str = "job.created";
+/// Journal operation of a started (`started`) or resumed (`resumed`) job.
+pub const JOB_STARTED: &str = "job.started";
+/// Journal operation of a job suspended at quit with its checkpoint kept.
+pub const JOB_SUSPENDED: &str = "job.suspended";
+/// Journal operation of a completed job.
+pub const JOB_COMPLETED: &str = "job.completed";
+/// Journal operation of a failed job.
+pub const JOB_FAILED: &str = "job.failed";
+/// Journal operation of a cancelled job.
+pub const JOB_CANCELLED: &str = "job.cancelled";
+/// Journal operation of a crashed run's expired lease released at recovery.
+pub const JOB_RECOVERED: &str = "job.recovered";
+/// Journal operation of a refused job call (a held lease, a fenced write, a finished job).
+pub const JOB_REFUSED: &str = "job.refused";

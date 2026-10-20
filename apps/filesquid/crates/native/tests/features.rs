@@ -1,15 +1,17 @@
 //! Cucumber harness for the `filesquid-native` Gherkin under `tests/features/` (F-061: the
 //! SQLite journal store and the data-directory checks that the hosts inject into
-//! `filesquid-api`). Writes JUnit to `tests/allure-results/cucumber-junit.xml`.
+//! `filesquid-api`; NFR-003: the SQLite job store under the API's durable jobs). Writes JUnit to `tests/allure-results/cucumber-junit.xml`.
 
 use cucumber::{given, then, when, writer, World, WriterExt as _};
 use filesquid_api::health::{HealthReport, HealthStatus};
+use filesquid_api::jobs::{JobError, JobSpec, JobState, JobStore, Jobs, RunningJob, JOB_RECOVERED};
 use filesquid_api::journal::{JournalEntry, JournalQuery, JournalStore, MemoryJournal, Outcome};
 use filesquid_api::monitor::{HostChecks, Monitor, MonitorConfig};
 use filesquid_api::{ApiState, EventBus};
-use filesquid_native::{DataDirChecks, HostMonitor, SqliteJournal, JOURNAL_FILE};
+use filesquid_native::{DataDirChecks, HostMonitor, SqliteJobs, SqliteJournal, JOURNAL_FILE};
 use log_names::log_files_under;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 
 #[path = "support/log_names.rs"]
@@ -23,6 +25,97 @@ struct NativeWorld {
     operations: Vec<String>,
     writable: Option<bool>,
     health: Option<HealthReport>,
+    jobs: Option<JobRig>,
+}
+
+/// Number of the next job rig, so concurrent scenarios never share a data directory.
+static NEXT_RIG: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Lease length of the job scenarios.
+const JOB_TTL_MS: i64 = 1_000;
+
+/// One host's durable jobs over the SQLite store in a scenario's data directory: the
+/// service of the current launch, its in-memory journal and monitor, a hand-moved clock,
+/// the job and the run in progress.
+struct JobRig {
+    dir: PathBuf,
+    journal: Arc<MemoryJournal>,
+    monitor: Monitor,
+    clock: Arc<AtomicI64>,
+    job_id: String,
+    running: Option<RunningJob>,
+}
+
+impl std::fmt::Debug for JobRig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JobRig")
+            .field("job_id", &self.job_id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl JobRig {
+    /// A rig over a fresh data directory (filesystem I/O).
+    fn new() -> Self {
+        let journal = Arc::new(MemoryJournal::new("host-a"));
+        let monitor = Monitor::start(
+            journal.clone(),
+            Arc::new(filesquid_api::monitor::StaticHostChecks::healthy()),
+            MonitorConfig::new("host-a"),
+            EventBus::new(),
+        );
+        Self {
+            dir: fresh_dir(&format!("jobs-{}", NEXT_RIG.fetch_add(1, Ordering::SeqCst))),
+            journal,
+            monitor,
+            clock: Arc::new(AtomicI64::new(1_760_000_000_000)),
+            job_id: String::new(),
+            running: None,
+        }
+    }
+
+    /// The job service of the launch `holder` over a newly opened store (database I/O).
+    fn launch(&self, holder: &str) -> Jobs {
+        let store = SqliteJobs::open(&self.dir.join(JOURNAL_FILE)).expect("job store");
+        let clock = self.clock.clone();
+        Jobs::new(
+            Arc::new(store),
+            self.monitor.journal(),
+            self.monitor.registry().clone(),
+            holder,
+        )
+        .with_clock(Arc::new(move || clock.load(Ordering::SeqCst)))
+        .with_lease_ttl(JOB_TTL_MS)
+    }
+
+    /// Submit a job for `source` and start it in the launch `holder`.
+    fn start_new(&mut self, holder: &str, source: &str) -> RunningJob {
+        let jobs = self.launch(holder);
+        let spec = JobSpec {
+            kind: "import".into(),
+            operation_id: "op-1".into(),
+            source: source.into(),
+        };
+        self.job_id = jobs.submit(spec).expect("submitted").id;
+        jobs.start(&self.job_id, source).expect("started")
+    }
+
+    /// The stored job (database I/O).
+    fn stored(&self) -> filesquid_api::jobs::Job {
+        let store = SqliteJobs::open(&self.dir.join(JOURNAL_FILE)).expect("job store");
+        store.get(&self.job_id).expect("read").expect("stored")
+    }
+
+    /// Move the clock past the lease.
+    fn expire(&self) {
+        self.clock.fetch_add(JOB_TTL_MS + 1, Ordering::SeqCst);
+    }
+
+    /// Stop the monitor and remove the data directory.
+    fn finish(self) {
+        self.monitor.shutdown();
+        std::fs::remove_dir_all(&self.dir).expect("cleanup");
+    }
 }
 
 /// Fresh temporary directory named after `name` (I/O).
@@ -121,6 +214,134 @@ fn health_failing(w: &mut NativeWorld, reason: String) {
     );
     let dir = w.dir.take().expect("dir");
     std::fs::remove_dir_all(dir.parent().expect("parent")).expect("cleanup");
+}
+
+#[given(expr = "a host data directory with the SQLite job store")]
+fn job_store(w: &mut NativeWorld) {
+    w.jobs = Some(JobRig::new());
+}
+
+#[given(expr = "a running job that checkpointed {string} as done")]
+fn running_with_checkpoint(w: &mut NativeWorld, done: String) {
+    let rig = w.jobs.as_mut().expect("rig");
+    let mut running = rig.start_new("launch-1", "s");
+    running.checkpoint(&done, 1, Some(2)).expect("checkpoint");
+    rig.running = Some(running);
+}
+
+#[when(expr = "the app quits")]
+fn app_quits(w: &mut NativeWorld) {
+    let rig = w.jobs.as_mut().expect("rig");
+    rig.running
+        .take()
+        .expect("running")
+        .suspend()
+        .expect("suspended");
+}
+
+#[when(expr = "the host starts again")]
+fn host_starts_again(w: &mut NativeWorld) {
+    let rig = w.jobs.as_mut().expect("rig");
+    let jobs = rig.launch("launch-2");
+    let recovered = jobs.recover().expect("recovered");
+    assert_eq!(recovered.len(), 1);
+    rig.running = Some(jobs.start(&rig.job_id, "s").expect("resumed"));
+}
+
+#[then(expr = "the job should be resumable with the checkpoint {string}")]
+fn resumed_with(w: &mut NativeWorld, done: String) {
+    let mut rig = w.jobs.take().expect("rig");
+    let running = rig.running.take().expect("running");
+    assert_eq!(running.checkpoint_text(), Some(done.as_str()));
+    running.complete().expect("completed");
+    assert_eq!(rig.stored().state, JobState::Completed);
+    rig.finish();
+}
+
+#[given(expr = "a running job whose host crashed")]
+fn crashed_job(w: &mut NativeWorld) {
+    let rig = w.jobs.as_mut().expect("rig");
+    let running = rig.start_new("launch-1", "s");
+    std::mem::forget(running);
+}
+
+#[when(expr = "the lease expires and the host recovers its jobs")]
+fn recover_after_expiry(w: &mut NativeWorld) {
+    let rig = w.jobs.as_mut().expect("rig");
+    rig.expire();
+    rig.launch("launch-2").recover().expect("recovered");
+}
+
+#[then(expr = "the job should be pending again")]
+fn pending_again(w: &mut NativeWorld) {
+    let rig = w.jobs.as_ref().expect("rig");
+    let job = rig.stored();
+    assert_eq!(job.state, JobState::Pending);
+    assert_eq!(job.holder, None);
+}
+
+#[then(expr = "the journal should record the job as recovered")]
+fn journaled_recovered(w: &mut NativeWorld) {
+    let rig = w.jobs.take().expect("rig");
+    rig.monitor.journal().flush();
+    let page = rig
+        .journal
+        .query(&JournalQuery::default())
+        .expect("journal");
+    assert!(page.entries.iter().any(|e| e.operation == JOB_RECOVERED));
+    rig.finish();
+}
+
+#[given(expr = "a running job whose lease expired")]
+fn expired_job(w: &mut NativeWorld) {
+    let rig = w.jobs.as_mut().expect("rig");
+    let running = rig.start_new("launch-1", "s");
+    rig.running = Some(running);
+    rig.expire();
+}
+
+#[when(expr = "another worker takes the job over")]
+fn take_over(w: &mut NativeWorld) {
+    let rig = w.jobs.as_mut().expect("rig");
+    let replacement = rig
+        .launch("launch-2")
+        .start(&rig.job_id, "s")
+        .expect("taken over");
+    std::mem::forget(replacement);
+}
+
+#[then(expr = "a checkpoint from the expired worker should be refused as {string}")]
+fn stale_refused(w: &mut NativeWorld, code: String) {
+    let mut rig = w.jobs.take().expect("rig");
+    let mut stale = rig.running.take().expect("running");
+    let err = stale.checkpoint("{}", 1, None).expect_err("refused");
+    assert_eq!(err, JobError::Fenced);
+    assert_eq!(err.error_code(), code);
+    assert_eq!(rig.stored().checkpoint, None, "nothing stored");
+    rig.finish();
+}
+
+#[given(expr = "a job suspended at quit for the source {string}")]
+fn suspended_for(w: &mut NativeWorld, source: String) {
+    let rig = w.jobs.as_mut().expect("rig");
+    let running = rig.start_new("launch-1", &source);
+    running.suspend().expect("suspended");
+}
+
+#[when(expr = "the host starts it for the source {string}")]
+fn start_for(w: &mut NativeWorld, source: String) {
+    let rig = w.jobs.as_mut().expect("rig");
+    let started = rig.launch("launch-2").start(&rig.job_id, &source);
+    assert_eq!(started.err(), Some(JobError::SourceChanged));
+}
+
+#[then(expr = "the job should fail with {string}")]
+fn failed_with(w: &mut NativeWorld, code: String) {
+    let rig = w.jobs.take().expect("rig");
+    let job = rig.stored();
+    assert_eq!(job.state, JobState::Failed);
+    assert_eq!(job.error_code.as_deref(), Some(code.as_str()));
+    rig.finish();
 }
 
 #[tokio::main]
