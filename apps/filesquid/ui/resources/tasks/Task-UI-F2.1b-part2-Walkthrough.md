@@ -32,7 +32,7 @@
 | C9 compact badge: icon and short label from `host_type`; statement not permanent | `<fs-host-indicator>` badge | `host-indicator.test.ts`, preview badge test |
 | C10 popover: click, Enter, Space; Escape and outside click close; focus to the badge; named dialog; polite live label | `<fs-host-indicator>` popover | `host-indicator.test.ts`, preview keyboard test |
 | C11 part-1 rules unchanged | the same read, event and validation code | all 27 part-1 indicator tests pass unchanged except the structure test |
-| C12 statement exported for Settings, Privacy | `buildHostStatement`, `HOST_STATEMENT_STYLE` | `host-indicator.test.ts` |
+| C12 the full statement in the Settings page's Privacy section | `<fs-settings>`, `bindSettingsRoute`, inline `<fs-host-indicator>`, the popover's Privacy settings link | `tests/ui/settings.test.ts`, `host-indicator.test.ts` (link), preview `host-indicator.spec.ts` (link opens `#/settings`, Privacy region, tokens light and dark) |
 
 ## What changed
 
@@ -52,8 +52,22 @@
 
 - **The file browser cannot open from a navigation node yet.** `<fs-file-browser>` lists one OCFL object (`library_id`, `object_id`, `prefix`, API-F1.3). A collection or folder node spans the files of many objects, and the handle MUST NOT be parsed, so no `FileLocation` can be derived from it. Opening the browser from the tree and breadcrumb needs an API addition: a file listing by navigation node (the library-level file views of API-S-019, for example `GET /api/v1/files/listing?node=<handle>` answering `FolderPage`). Until then `<fs-navigation-view>` shows the breadcrumb and says the destination's files cannot be listed here yet, and `#/files/...` stays.
 - **Both real hosts answer 503.** Neither `filesquid-desktop` (until DE-1.1) nor `filesquid-server` installs the navigation service yet, so the shipped tree shows the unavailable state on both. The server-backed Playwright suite proves this against the real server.
-- **Settings, Privacy.** No Settings page exists yet; UI-F2.8 mounts `buildHostStatement` there and adds the popover's "Privacy settings" link (the plan's UI-F2.8 description now says so).
+- **Settings, Privacy.** Added in the first review round: `<fs-settings>` at `#/settings` (shell link after Monitor) with its Privacy section; UI-F2.8 adds the page's other sections (the plan's UI-F2.8 description now says so).
 - **Events.** The tree, the destination view and the indicator each follow the event channel; `ClientNavigationSource` shares one channel between the tree and the view, so a page opens one channel for navigation, one for the indicator and one for the Monitor when it is shown.
+
+## Review fixes (Cubic round 1: 13 P2, 3 P3)
+
+- **Settings Privacy section** (P2, plan and implementation-plan threads): built instead of deferred. `<fs-settings>`, `bindSettingsRoute`, `SETTINGS_ROUTE`, an `inline` mode of `<fs-host-indicator>`, the popover's "Privacy settings" link, and labels `settings`, `settingsPrivacy` and `hostPrivacySettings`. The first preview run caught that `.badge { display: inline-flex }` overrode `hidden`; the indicator now hides every `[hidden]` part.
+- **Tree race** (P2): a parents change that arrives while a whole-tree read is in flight now reads the whole tree, and each re-read level takes a token so an older answer cannot overwrite a newer one. Both tests failed before the fix (`nav-tree-live.test.ts`, "overlapping reads").
+- **Destination view** (P2, P3): a refresh keeps the trail on screen; a trail that does not start at a repository is an error; a change below the destination does not re-read it; the stale-answer test now uses a source that answers out of order.
+- **File browser** (P2): a 503 on a reload hides the rows, as the other failure states do.
+- **Popover** (P2): focus leaving the page (no related target) closes it.
+- **ImageSquid wording** (P2): `navigationFilesPending` says "photos".
+- **Feature** (P2): the "badge never guesses" scenario lists each failure and the state it gives.
+- **Navigation mock** (P2): refuses another method (405), unknown, repeated or empty parameters, and a `limit` that is not plain decimal digits (400 `invalid_request`), as the route does.
+- **Server-backed tests** (P2, P3): the focus-order tests wait for the badge's host label and the tree's unavailable state before tabbing, and assert `p.api[role="status"]`.
+- **Wording** (P3): `unavailable` also covers storage that cannot be reached right now; the label is now "This is not available right now".
+- **Not changed** (P2, implementation-plan thread): installing the navigation service in the hosts is DE-1.1 and the server wiring, not a row of Task FS-2.1, whose rows are all done; the gap is routed to the api and desktop lanes.
 
 ## How it was tested
 
@@ -178,3 +192,33 @@ The new and changed specs (the full run passed all 42 tests, including `file-bro
   4 passed (5.7s)      (playwright.preview.config.ts)
   9 passed (7.5s)      (playwright.config.ts, filesquid-server)
 ```
+
+### After the round 1 review fixes
+
+Red run of the two new tree tests with the fix set aside:
+
+```
+     × reads the whole tree for a parents change that arrives while a whole read is in flight 27ms
+     × keeps the newest read of a level when an older read of it answers last 16ms
+```
+
+npm test (apps/filesquid/ui), the changed files and the summary:
+
+```
+ ✓ tests/ui/host-indicator.test.ts (40 tests) 371ms
+ ✓ tests/ui/file-browser.test.ts (37 tests) 1471ms
+ ✓ tests/ui/navigation-view.test.ts (19 tests) 150ms
+ ✓ tests/ui/nav-tree-live.test.ts (11 tests) 230ms
+ ✓ tests/ui/settings.test.ts (4 tests) 93ms
+ Test Files  48 passed (48)
+      Tests  993 passed (993)
+```
+
+Playwright, production build (apps/filesquid/ui):
+
+```
+✓  23 [chromium] › tests/e2e/preview/host-indicator.spec.ts:296:1 › Privacy settings opens the Settings page, whose Privacy section has the full statement (534ms)
+  43 passed (16.6s)
+```
+
+Playwright, built UI served by `filesquid-server` (apps/filesquid/ui): `40 passed (14.4s)`. apps/imagesquid: `37 passed` (Vitest), `4 passed` (preview), `9 passed` (server).

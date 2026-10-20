@@ -127,6 +127,10 @@ export class FsNavTree extends HTMLElement {
   /** The nodes in the last render, by handle. */
   private rendered = new Map<string, NavigationNode>();
   private generation = 0;
+  /** The generation of the last whole-tree read that finished; a read is in flight otherwise. */
+  private settled = 0;
+  /** The newest read token of each level re-read for a change. */
+  private readonly levelTokens = new Map<string, number>();
   private stopFollowing?: () => void;
   /**
    * Pins already read since the last load or store change. A pin whose read failed (other than
@@ -207,6 +211,7 @@ export class FsNavTree extends HTMLElement {
       if (generation !== this.generation || source !== this.options?.source) return;
       this.fail(error);
     }
+    this.settled = generation;
     this.render();
   }
 
@@ -221,9 +226,10 @@ export class FsNavTree extends HTMLElement {
   }
 
   /**
-   * Follow one change: `all`, a change naming the repository (its libraries changed), or any
-   * change before the first answer reads the whole tree; otherwise only the levels the named
-   * parents touch are read again.
+   * Follow one change: `all`, a change naming the repository (its libraries changed), a change
+   * before the first answer, or one while a whole-tree read is in flight (its answer may predate
+   * the change) reads the whole tree; otherwise only the levels the named parents touch are read
+   * again.
    */
   private onChange(change: NavigationChange): void {
     const repository = this.data?.repository?.node;
@@ -231,6 +237,7 @@ export class FsNavTree extends HTMLElement {
       "all" in change ||
       !this.data ||
       this.failure ||
+      this.settled !== this.generation ||
       change.parents.includes(repository ?? "")
     ) {
       void this.reload();
@@ -263,11 +270,22 @@ export class FsNavTree extends HTMLElement {
     const levels = this.levelsTouched(parents);
     if (!source || levels.length === 0) return;
     const generation = this.generation;
+    const tokens = levels.map((parent) => this.nextLevelToken(parent));
     const answers = await Promise.allSettled(levels.map((parent) => readLevel(source, parent)));
     if (generation !== this.generation || source !== this.options?.source) return;
-    answers.forEach((answer, i) => this.acceptLevel(levels[i] as string, answer));
+    answers.forEach((answer, i) => {
+      const parent = levels[i] as string;
+      if (this.levelTokens.get(parent) === tokens[i]) this.acceptLevel(parent, answer);
+    });
     this.syncLibraryChildren();
     this.syncPins();
+  }
+
+  /** Take a new read token for one level; only the newest read of a level is kept. */
+  private nextLevelToken(parent: string): number {
+    const token = (this.levelTokens.get(parent) ?? 0) + 1;
+    this.levelTokens.set(parent, token);
+    return token;
   }
 
   /** Give the sections each library's children as loaded now. */

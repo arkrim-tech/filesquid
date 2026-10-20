@@ -103,7 +103,9 @@ export class FsNavigationView extends HTMLElement {
 
   /**
    * Read the destination's trail again and show it, or the state for why it cannot be read.
-   * Shows loading meanwhile. An answer for an older read is dropped. I/O: one source read.
+   * Shows loading meanwhile only when no trail of this destination is on screen, so a refresh
+   * after a change keeps the breadcrumb (and focus in it) in place. An answer for an older read
+   * is dropped. I/O: one source read.
    *
    * @returns Resolves once the answer or the failure is shown.
    */
@@ -112,8 +114,10 @@ export class FsNavigationView extends HTMLElement {
     const handle = this.handle;
     if (!source || handle === undefined) return;
     const generation = ++this.generation;
-    this.trail = undefined;
-    this.show({ kind: "loading" });
+    if (this.trail?.at(-1)?.node !== handle) {
+      this.trail = undefined;
+      this.show({ kind: "loading" });
+    }
     try {
       const page = await source.list(handle, null, 1);
       if (generation === this.generation) this.accept(page.ancestors);
@@ -137,17 +141,26 @@ export class FsNavigationView extends HTMLElement {
     this.stopFollowing = undefined;
   }
 
-  /** Read again when everything changed, nothing is shown, or a node of the trail changed. */
+  /**
+   * Read again when everything changed, nothing is shown, or the children of a node above the
+   * destination changed (the destination or an ancestor may have been renamed or moved). A
+   * change below the destination cannot change its trail.
+   */
   private onChange(change: NavigationChange): void {
-    const trail = this.trail;
-    const touched = "all" in change || !trail || trail.some((n) => change.parents.includes(n.node));
+    const above = this.trail?.slice(0, -1);
+    const touched = "all" in change || !above || above.some((n) => change.parents.includes(n.node));
     if (touched) void this.reload();
   }
 
-  /** Show a trail; one without the destination itself breaks the contract and is an error. */
+  /**
+   * Show a trail. One that does not start at a repository or does not end at the destination
+   * breaks the contract and is shown as an error, never as a partial breadcrumb.
+   */
   private accept(ancestors: readonly NavigationNode[]): void {
     const current = ancestors.at(-1);
-    if (!current || current.node !== this.handle) {
+    const rooted = ancestors[0]?.kind === "repository";
+    if (!current || !rooted || current.node !== this.handle) {
+      this.trail = undefined;
       console.error("FileSquid navigation answer has no trail for the destination");
       this.show({ kind: "error" });
       return;
@@ -158,6 +171,7 @@ export class FsNavigationView extends HTMLElement {
 
   /** Show why the destination cannot be read: gone for `not_found`, else the failure state. */
   private fail(error: unknown): void {
+    this.trail = undefined;
     console.warn("FileSquid could not read a navigation destination", error);
     const labels = (this.options as NavigationViewOptions).labels;
     const online = this.options?.online ?? (() => navigator.onLine);

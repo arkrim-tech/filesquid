@@ -58,6 +58,38 @@ export interface NavigationApi {
   unavailable: boolean;
 }
 
+/** The route the fake answers, used in its refusals. */
+const ROUTE = "/api/v1/navigation";
+
+/** Query parameters the route accepts; any other one is `invalid_request`, as the API answers. */
+const PARAMETERS = new Set(["node", "cursor", "limit"]);
+
+/** A `limit` as the API's typed query parser reads it: plain decimal digits, no sign or exponent. */
+const DECIMAL = /^[0-9]+$/;
+
+/**
+ * Refuse what the real route refuses before it reads anything: another method (405), an
+ * unknown or repeated parameter, an empty node or cursor, or a limit that is not plain decimal
+ * digits (400 `invalid_request`). The range of `limit` and the cursor's validity are checked by
+ * the memory source, as the API does.
+ *
+ * @param method - The request method.
+ * @param query - The request's query parameters.
+ * @throws ApiError with the API's status and code for a request the route refuses.
+ */
+function checkRequest(method: string, query: URLSearchParams): void {
+  if (method !== "GET") throw new ApiError(405, ROUTE, { code: "method_not_allowed" });
+  const keys = [...query.keys()];
+  const repeated = new Set(keys).size !== keys.length;
+  const unknown = keys.some((key) => !PARAMETERS.has(key));
+  const empty = query.get("node") === "" || query.get("cursor") === "";
+  const limit = query.get("limit");
+  const badLimit = limit !== null && !DECIMAL.test(limit);
+  if (repeated || unknown || empty || badLimit) {
+    throw new ApiError(400, ROUTE, { code: "invalid_request" });
+  }
+}
+
 /**
  * Answer `GET /api/v1/navigation` from a fixture tree.
  *
@@ -90,6 +122,7 @@ export async function serveNavigation(
       return;
     }
     try {
+      checkRequest(route.request().method(), query);
       const limit = call.limit === null ? pageSize : Number(call.limit);
       await route.fulfill({ json: await api.source.list(call.node, call.cursor, limit) });
     } catch (error) {

@@ -293,6 +293,41 @@ test("Enter opens the popover with the full statement; Escape closes it and retu
   expect(errors).toEqual([]);
 });
 
+test("Privacy settings opens the Settings page, whose Privacy section has the full statement", async ({
+  page,
+}) => {
+  const errors = trackErrors(page);
+  await serve(page, [descriptor({ hosted_service: enrolled(true, false) })]);
+  await setScheme(page, "light");
+  await page.goto("/");
+  await openPopover(page);
+  await page.getByRole("link", { name: label(labels, "hostPrivacySettings") }).click();
+  await expect(page).toHaveURL(/#\/settings$/);
+  await expect(page.locator('fs-host-indicator [role="dialog"]')).toBeHidden();
+  const settings = page.locator("fs-app-shell fs-settings");
+  await expect(settings.locator("h2").first()).toHaveText(label(labels, "settings"));
+  const privacy = settings.getByRole("region", { name: label(labels, "settingsPrivacy") });
+  await expect(privacy).toBeVisible();
+  await expect(privacy.locator(".statement")).toHaveText([
+    label(labels, "hostDesktop"),
+    label(labels, "hostDesktopBackup"),
+  ]);
+  await expect(privacy.locator(".service dd")).toHaveText([
+    label(labels, "hostOn"),
+    label(labels, "hostOff"),
+  ]);
+  await expect(privacy.locator("button.badge")).toBeHidden();
+  const style = () =>
+    settings.locator('[data-section="privacy"]').evaluate((el) => {
+      const css = getComputedStyle(el);
+      return { background: css.backgroundColor, border: css.borderTopColor };
+    });
+  expect(await style()).toEqual({ background: rgbOf("#f5f5f5"), border: rgbOf("#e0e0e0") });
+  await setScheme(page, "dark");
+  expect(await style()).toEqual({ background: rgbOf("#1c1c1c"), border: rgbOf("#2a2a2a") });
+  expect(errors).toEqual([]);
+});
+
 test("computed token values are exact in light and dark", async ({ page }) => {
   const errors = trackErrors(page);
   await serve(page, [descriptor()]);

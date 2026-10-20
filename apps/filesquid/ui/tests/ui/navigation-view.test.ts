@@ -177,13 +177,68 @@ describe("<fs-navigation-view>", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it("drops an answer for a destination it has already left", async () => {
-    const source = new MemoryNavigationSource(tree);
+  it("drops an answer for a destination it has already left, even when it answers last", async () => {
+    const memory = new MemoryNavigationSource(tree);
+    const waiting = new Map<string, () => void>();
+    const source: NavigationSource = {
+      list: async (parent, cursor, limit) => {
+        const page = await memory.list(parent, cursor, limit);
+        if (parent !== "c1") await new Promise<void>((go) => waiting.set(parent as string, go));
+        return page;
+      },
+    };
     const { root, view } = await mount("c1", source);
     view.node = "l1";
     view.node = "f/1 é";
     await settle();
+    waiting.get("f/1 é")?.();
+    await settle();
+    waiting.get("l1")?.();
+    await settle();
     expect(trail(root).at(-1)?.[0]).toBe("2025");
+  });
+
+  it("keeps the trail on screen while a change reads it again", async () => {
+    const memory = new MemoryNavigationSource(tree);
+    let release: () => void = () => undefined;
+    let hold = false;
+    const source: NavigationSource = {
+      list: async (parent, cursor, limit) => {
+        const page = await memory.list(parent, cursor, limit);
+        if (hold) await new Promise<void>((go) => (release = go));
+        return page;
+      },
+      subscribe: (listener) => memory.subscribe(listener),
+    };
+    const { root, view } = await mount("c1", source);
+    hold = true;
+    memory.emit({ all: true });
+    await settle();
+    expect(view.dataset.state).toBe("ready");
+    expect(trail(root).map(([name]) => name)).toEqual([labels.repository, "Family", "Photos"]);
+    release();
+    await settle();
+    expect(view.dataset.state).toBe("ready");
+  });
+
+  it("does not read again for a change below the destination", async () => {
+    const source = new MemoryNavigationSource(tree);
+    await mount("c1", source);
+    const spy = vi.spyOn(source, "list");
+    source.emit({ parents: ["c1"] });
+    await settle();
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("shows the error state for a trail that does not start at a repository", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const photos = { node: "c1", kind: "collection", name: "Photos", has_children: true } as const;
+    const source: NavigationSource = {
+      list: async () => ({ nodes: [], ancestors: [photos], next_cursor: null }),
+    };
+    const { root, view } = await mount("c1", source);
+    expect(view.dataset.state).toBe("error");
+    expect(trail(root)).toEqual([]);
   });
 });
 

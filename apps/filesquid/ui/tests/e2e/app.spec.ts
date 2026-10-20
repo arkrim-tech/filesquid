@@ -47,7 +47,7 @@ test("shell mounts with FileSquid brand, internal vocabulary and live API health
   // The live navigation tree fills the navigation slot; this server has no navigation service
   // yet, so the tree shows the unavailable state (UI-F2.1b). The Monitor link follows it.
   await expect(shell.locator("fs-nav-tree fs-states")).toHaveAttribute("data-state", "unavailable");
-  await expect(shell.locator("nav > ul.tools li")).toHaveText(["Monitor"]);
+  await expect(shell.locator("nav > ul.tools li")).toHaveText(["Monitor", "Settings"]);
   await expect(shell.locator('p.api[role="status"]')).toHaveText("API: ok (filesquid)");
   await expect(shell.locator('p.api[role="alert"]')).toHaveCount(0);
   expect(errors).toEqual([]);
@@ -137,7 +137,7 @@ test("the signed-in token stays in memory: not in storage, URL or DOM, gone on r
 }) => {
   const errors = trackErrors(page, REFUSED_CALL);
   await page.goto("/");
-  await page.locator("fs-app-shell nav a").click();
+  await page.locator('fs-app-shell nav a[href="#/monitor"]').click();
   await expect(page).toHaveURL(/#\/monitor$/);
   await signIn(page, ADMIN_TOKEN);
   await expect(page.locator('fs-monitor [data-section="processes"] h2')).toHaveText("Processes");

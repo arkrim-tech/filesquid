@@ -174,6 +174,18 @@ describe("<fs-host-indicator> compact badge", () => {
     expect(root.activeElement).toBe(badge);
   });
 
+  it("ends the popover with a Privacy settings link that closes it when followed", async () => {
+    const indicator = await mount(fakeClient(descriptor()));
+    const root = indicator.shadowRoot as ShadowRoot;
+    root.querySelector<HTMLButtonElement>("button.badge")?.click();
+    const link = root.querySelector<HTMLAnchorElement>('[role="dialog"] a.settings-link');
+    expect(link?.textContent).toBe(labels.hostPrivacySettings);
+    expect(link?.getAttribute("href")).toBe("#/settings");
+    link?.addEventListener("click", (event) => event.preventDefault());
+    link?.click();
+    expect(root.querySelector<HTMLElement>('[role="dialog"]')?.hidden).toBe(true);
+  });
+
   it("closes again when the badge is pressed a second time", async () => {
     const indicator = await mount(fakeClient(descriptor()));
     const badge = indicator.shadowRoot?.querySelector<HTMLButtonElement>("button.badge");
@@ -196,6 +208,14 @@ describe("<fs-host-indicator> compact badge", () => {
       new FocusEvent("focusout", { bubbles: true, composed: true, relatedTarget: outside }),
     );
     expect(popover()?.hidden).toBe(true);
+  });
+
+  it("closes when focus leaves the page (no related target)", async () => {
+    const indicator = await mount(fakeClient(descriptor()));
+    indicator.shadowRoot?.querySelector<HTMLButtonElement>("button.badge")?.click();
+    const popover = indicator.shadowRoot?.querySelector<HTMLElement>('[role="dialog"]');
+    popover?.dispatchEvent(new FocusEvent("focusout", { bubbles: true, composed: true }));
+    expect(popover?.hidden).toBe(true);
   });
 
   it("keeps the popover open on a click inside it", async () => {

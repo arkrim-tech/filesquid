@@ -28,6 +28,7 @@ test("ImageSquid brand, album vocabulary and FileSquid API health", async ({ pag
     "Galleries",
     "Exhibits",
     "Monitor",
+    "Settings",
   ]);
   await expect(shell.locator('[role="status"]')).toHaveText("Archives API: ok (filesquid)");
   expect(errors).toEqual([]);
@@ -142,6 +143,9 @@ for (const scheme of ["light", "dark"] as const) {
     await expect(shell.getByRole("heading", { level: 1 })).toHaveText("ImageSquid");
     const ring = `solid 2px ${await token(page, "--fs-primary")}`;
     const seen: string[] = [];
+    await expect(page.locator("fs-host-indicator button.badge")).toHaveText(
+      labels.hostBadgeServer ?? "",
+    );
     // Skip, theme, the host badge in the header, then the Monitor link.
     for (let step = 0; step < 4; step += 1) {
       await page.keyboard.press("Tab");

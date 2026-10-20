@@ -19,7 +19,10 @@
  * non-modal dialog named by its title, and moves focus into it so it is announced; Escape or
  * the badge closes it and returns focus to the badge; a click outside or focus leaving closes
  * it. The short label is a polite live region, so a host change is announced while
- * the popover is closed.
+ * the popover is closed. The popover ends with a "Privacy settings" link to the Settings page.
+ *
+ * With `inline: true` the same element is the Settings page's Privacy section: no badge, the
+ * full statement shown in place as a named region, following the host the same way.
  */
 import { failureState, type ViewState } from "./view-state";
 import type { ApiEvent, HostDescriptor } from "../api/client";
@@ -47,6 +50,13 @@ export interface HostIndicatorOptions {
   labels: LabelTable;
   /** Client that reads the descriptor and delivers events. */
   client: HostClient;
+  /**
+   * Show the full statement in place, with no badge or popover: the Settings page's Privacy
+   * section. The header indicator leaves it unset.
+   */
+  inline?: boolean;
+  /** Where the popover's "Privacy settings" link goes; defaults to `#/settings`. */
+  settingsHref?: string;
 }
 
 /** The short badge label of each host type. */
@@ -62,7 +72,10 @@ const STYLE = `
   .badge:hover, .badge[aria-expanded="true"] { background: var(--fs-primary-container); color: var(--fs-on-primary-container); }
   .icon { display: inline-block; inline-size: 0.9em; block-size: 0.65em; border: 2px solid currentColor; border-radius: var(--fs-radius); }
   [role="dialog"] { position: absolute; inset-block-start: calc(100% + var(--fs-space-2)); inset-inline-end: 0; z-index: 2; display: grid; gap: var(--fs-space-2); box-sizing: border-box; inline-size: max-content; max-inline-size: min(24rem, calc(100vw - 2 * var(--fs-space-4))); padding: var(--fs-space-3); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface); color: var(--fs-on-surface); overflow-wrap: anywhere; }
-  [role="dialog"][hidden] { display: none; }
+  [hidden] { display: none !important; }
+  .popover.inline { position: static; inline-size: auto; max-inline-size: none; padding: 0; border: 0; background: none; }
+  .settings-link { color: var(--fs-primary); text-decoration: none; border-radius: var(--fs-radius); }
+  .settings-link:hover { text-decoration: underline; }
   h2 { margin: 0; font-size: var(--fs-font-size-small); font-weight: 700; color: var(--fs-on-surface-variant); }
   @media (forced-colors: active) {
     .badge[aria-expanded="true"] { forced-color-adjust: none; background: Highlight; color: HighlightText; }
@@ -73,6 +86,7 @@ const STYLE = `
 interface Parts {
   readonly badge: HTMLButtonElement;
   readonly label: HTMLElement;
+  readonly link: HTMLAnchorElement;
   readonly popover: HTMLElement;
   readonly title: HTMLElement;
   readonly body: HTMLElement;
@@ -208,6 +222,9 @@ export class FsHostIndicator extends HTMLElement {
     const group = root.querySelector('[role="group"]');
     group?.setAttribute("aria-label", labels.hostIndicator);
     this.parts.title.textContent = labels.hostIndicator;
+    this.parts.link.textContent = labels.hostPrivacySettings;
+    this.parts.link.setAttribute("href", this.options?.settingsHref ?? "#/settings");
+    if (this.options?.inline) showInline(this.parts);
   }
 
   /** Clicks, keys, focus moves and Retry inside the frame. */
@@ -216,15 +233,16 @@ export class FsHostIndicator extends HTMLElement {
     if (!parts) return;
     if (event.type === RETRY_EVENT) this.onRetry(event);
     else if (event.type === "click" && parts.badge.contains(event.target as Node)) this.toggle();
+    else if (event.type === "click" && parts.link.contains(event.target as Node)) this.close(false);
     else if (event.type === "keydown" && (event as KeyboardEvent).key === "Escape") {
       this.close(true);
     } else if (event.type === "focusout") this.onFocusOut(event as FocusEvent);
   }
 
-  /** Close when focus moves to something outside the indicator. */
+  /** Close when focus moves outside the indicator, or out of the page (no related target). */
   private onFocusOut(event: FocusEvent): void {
     const next = event.relatedTarget as Node | null;
-    if (next && !this.contains(next) && !this.shadowRoot?.contains(next)) this.close(false);
+    if (!next || (!this.contains(next) && !this.shadowRoot?.contains(next))) this.close(false);
   }
 
   /** Open the popover, or close it when it is open. */
@@ -243,7 +261,7 @@ export class FsHostIndicator extends HTMLElement {
   /** Close the popover; return focus to the badge when asked. Side effect: may move focus. */
   private close(refocus: boolean): void {
     const parts = this.parts;
-    if (!parts || parts.popover.hidden) return;
+    if (!parts || parts.popover.hidden || this.options?.inline) return;
     parts.popover.hidden = true;
     parts.badge.setAttribute("aria-expanded", "false");
     if (refocus) focusElement(parts.badge);
@@ -313,6 +331,7 @@ function buildFrame(root: ShadowRoot, onEvent: (event: Event) => void): Parts {
   badge.append(part("span", "icon", { "aria-hidden": "true" }), label);
   const title = part("h2", "", { id: "popover-title" });
   const body = part("div", "body");
+  const link = part("a", "settings-link") as HTMLAnchorElement;
   const popover = part("div", "popover", {
     id: "popover",
     role: "dialog",
@@ -320,12 +339,25 @@ function buildFrame(root: ShadowRoot, onEvent: (event: Event) => void): Parts {
     tabindex: "-1",
   });
   popover.hidden = true;
-  popover.append(title, body);
+  popover.append(title, body, link);
   const group = part("div", "indicator", { role: "group" });
   group.append(badge, popover);
   for (const type of ["click", "keydown", "focusout", RETRY_EVENT]) {
     group.addEventListener(type, onEvent);
   }
   root.replaceChildren(style, group);
-  return { badge, label, popover, title, body };
+  return { badge, label, link, popover, title, body };
+}
+
+/**
+ * Turn the frame into the in-place statement of the Settings page's Privacy section: no badge,
+ * no link back to Settings, and the popover shown permanently as a named region.
+ */
+function showInline(parts: Parts): void {
+  parts.badge.hidden = true;
+  parts.link.hidden = true;
+  parts.popover.hidden = false;
+  parts.popover.classList.add("inline");
+  parts.popover.setAttribute("role", "region");
+  parts.popover.removeAttribute("tabindex");
 }

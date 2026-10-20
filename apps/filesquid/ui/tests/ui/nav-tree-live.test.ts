@@ -161,6 +161,51 @@ describe("<fs-nav-tree> navigation.change with parents", () => {
   });
 });
 
+describe("<fs-nav-tree> overlapping reads", () => {
+  /** A memory source whose `l1` answers wait for the test while `hold` is set. */
+  function gatedSource() {
+    const source = new MemoryNavigationSource(library());
+    const list = source.list.bind(source);
+    const held: (() => void)[] = [];
+    const gate = { hold: false };
+    vi.spyOn(source, "list").mockImplementation(async (parent, cursor, limit) => {
+      const answer = await list(parent, cursor, limit);
+      if (parent === "l1" && gate.hold) await new Promise<void>((go) => held.push(go));
+      return answer;
+    });
+    return { source, held, gate };
+  }
+
+  it("reads the whole tree for a parents change that arrives while a whole read is in flight", async () => {
+    const { source, held, gate } = gatedSource();
+    const { root } = await mount(undefined, source);
+    gate.hold = true;
+    source.emit({ all: true });
+    await settle();
+    source.replace(library({ f9: "Inbox" }), { parents: ["l1"] });
+    gate.hold = false;
+    for (const go of held.splice(0)) go();
+    await settle();
+    await settle();
+    expect(names(root, "folder")).toEqual(["Inbox"]);
+  });
+
+  it("keeps the newest read of a level when an older read of it answers last", async () => {
+    const { source, held, gate } = gatedSource();
+    const { root } = await mount(undefined, source);
+    gate.hold = true;
+    source.replace(library({ f9: "old" }), { parents: ["l1"] });
+    await settle();
+    gate.hold = false;
+    source.replace(library({ f9: "Inbox" }), { parents: ["l1"] });
+    await settle();
+    expect(names(root, "folder")).toEqual(["Inbox"]);
+    for (const go of held.splice(0)) go();
+    await settle();
+    expect(names(root, "folder")).toEqual(["Inbox"]);
+  });
+});
+
 describe("<fs-nav-tree> an unavailable navigation service", () => {
   it("shows the unavailable state with Retry for a 503, then recovers on Retry", async () => {
     const source = new MemoryNavigationSource(library());

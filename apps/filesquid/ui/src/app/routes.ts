@@ -1,14 +1,17 @@
 /**
- * Hash routing shared by every distribution: `#/navigation/<handle>` shows a navigation
- * destination with its breadcrumb (UI-F2.1b), `#/monitor` shows the Monitor dashboard inside
- * the shell, and `#/files/<library>/<object>/<folder>/...` shows the file browser (UI-F2.2)
- * until the API lists files by navigation node; any other hash shows the shell alone. After a route change focus moves to the shell's main area (UI-S-016), so keyboard and
+ * Hash routing shared by every distribution: `#/settings` shows the Settings page,
+ * `#/navigation/<handle>` shows a navigation destination with its breadcrumb (UI-F2.1b),
+ * `#/monitor` shows the Monitor dashboard inside the shell, and
+ * `#/files/<library>/<object>/<folder>/...` shows the file browser (UI-F2.2) until the API lists
+ * files by navigation node; any other hash shows the shell alone. After a route change focus
+ * moves to the shell's main area (UI-S-016), so keyboard and
  * screen-reader users land on the new content instead of on a link that may have been removed.
  * Also provides the in-memory token store used on the server host.
  */
 import type { FileBrowserOptions, FsFileBrowser } from "../components/fs-file-browser";
 import type { MonitorOptions, TokenStore } from "../components/fs-monitor";
 import type { FsNavigationView, NavigationViewOptions } from "../components/fs-navigation-view";
+import type { FsSettings, SettingsOptions } from "../components/fs-settings";
 import { locationHash, parseLocationHash, type FileLocation } from "../files/model";
 
 /** An element the routed views are mounted in; the app shell also offers `focusMain`. */
@@ -81,6 +84,47 @@ function applyMonitorRoute(shell: HTMLElement, options: MonitorOptions, hash: st
   };
   monitor.configure(options);
   shell.append(monitor);
+}
+
+/** Hash of the Settings route. */
+export const SETTINGS_ROUTE = "#/settings";
+
+/**
+ * Show or hide an `<fs-settings>` child of `shell` to match the current hash, now and on
+ * every `hashchange`. After a `hashchange` (not on the first apply) focus moves to the shell's
+ * main area when it offers `focusMain`. Side effect: adds a window listener, mutates the
+ * shell's children and moves focus.
+ *
+ * @param shell Element the Settings page is slotted into (the app shell).
+ * @param options Labels and the client for the host descriptor.
+ * @param win Window whose hash is followed.
+ * @returns A function that removes the listener.
+ */
+export function bindSettingsRoute(
+  shell: RouteHost,
+  options: SettingsOptions,
+  win: Window = window,
+): () => void {
+  applySettingsRoute(shell, options, win.location.hash);
+  const onChange = () => {
+    applySettingsRoute(shell, options, win.location.hash);
+    shell.focusMain?.();
+  };
+  win.addEventListener("hashchange", onChange);
+  return () => win.removeEventListener("hashchange", onChange);
+}
+
+/** Mount the Settings page when `hash` is the Settings route, otherwise remove it. */
+function applySettingsRoute(shell: HTMLElement, options: SettingsOptions, hash: string): void {
+  const existing = shell.querySelector("fs-settings");
+  if (hash !== SETTINGS_ROUTE) {
+    existing?.remove();
+    return;
+  }
+  if (existing) return;
+  const settings = document.createElement("fs-settings") as FsSettings;
+  settings.configure(options);
+  shell.append(settings);
 }
 
 /** Hash prefix of a navigation destination; the URI-encoded node handle follows. */

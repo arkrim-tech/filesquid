@@ -71,7 +71,7 @@ test("landmarks, headings and control names come from the label table", async ({
   await expect(page.locator("html")).toHaveAttribute("lang", "en");
   await expect(page.locator("html")).toHaveAttribute("dir", "ltr");
   const shell = page.locator("fs-app-shell");
-  await expect(shell.locator("p.api")).toHaveText("API: ok (filesquid)");
+  await expect(shell.locator('p.api[role="status"]')).toHaveText("API: ok (filesquid)");
   await expect(shell).toMatchAriaSnapshot(`
     - button "Skip to main content"
     - banner:
@@ -86,11 +86,13 @@ test("landmarks, headings and control names come from the label table", async ({
     - navigation "Main navigation":
       - status
       - alert:
-        - paragraph: This is not available on this host yet
+        - paragraph: This is not available right now
         - button "Try again"
       - list:
         - listitem:
           - link "Monitor"
+        - listitem:
+          - link "Settings"
     - main:
       - status: "API: ok (filesquid)"
   `);
@@ -104,7 +106,9 @@ for (const scheme of ["light", "dark"] as const) {
     await withLaunchToken(page);
     await page.emulateMedia({ colorScheme: scheme });
     await page.goto("/");
-    await expect(page.locator("fs-app-shell p.api")).toBeVisible();
+    await expect(page.locator('fs-app-shell p.api[role="status"]')).toBeVisible();
+    // The badge's label comes from the host descriptor, which loads apart from health.
+    await expect(page.locator("fs-host-indicator button.badge")).toHaveText("Server");
     const ring = `solid 2px ${await tokenColour(page, "--fs-primary")}`;
     const seen: Focused[] = [];
     for (let step = 0; step < 3; step += 1) {
@@ -128,7 +132,7 @@ test("light-DOM content slotted into the shell gets the same focus ring", async 
   const errors = trackErrors(page);
   await withLaunchToken(page);
   await page.goto("/");
-  await expect(page.locator("fs-app-shell p.api")).toBeVisible();
+  await expect(page.locator('fs-app-shell p.api[role="status"]')).toBeVisible();
   await page.evaluate(() => {
     const button = document.createElement("button");
     button.type = "button";
@@ -136,9 +140,11 @@ test("light-DOM content slotted into the shell gets the same focus ring", async 
     document.querySelector("fs-app-shell")?.append(button);
   });
   const ring = `solid 2px ${await tokenColour(page, "--fs-primary")}`;
-  // Skip, theme, host badge, the tree's Try again (no navigation service here), Monitor, then
-  // the slotted button.
-  for (let step = 0; step < 6; step += 1) await page.keyboard.press("Tab");
+  // Skip, theme, host badge, the tree's Try again (no navigation service here), Monitor,
+  // Settings, then the slotted button.
+  await expect(page.locator("fs-nav-tree fs-states")).toHaveAttribute("data-state", "unavailable");
+  await expect(page.locator("fs-host-indicator button.badge")).toHaveText("Server");
+  for (let step = 0; step < 7; step += 1) await page.keyboard.press("Tab");
   const item = await focused(page);
   expect(item.text).toBe("Slotted action");
   expect(item.outline).toBe(ring);
@@ -168,7 +174,7 @@ test("opening the Monitor from the keyboard moves focus to main", async ({ page 
   const errors = trackErrors(page);
   await withLaunchToken(page);
   await page.goto("/");
-  await page.locator("fs-app-shell nav a").focus();
+  await page.locator('fs-app-shell nav a[href="#/monitor"]').focus();
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/#\/monitor$/);
   const monitor = page.locator("fs-monitor");
@@ -308,7 +314,7 @@ test("a right-to-left locale mirrors the header and navigation", async ({ page }
   const errors = trackErrors(page);
   await withLaunchToken(page);
   await page.goto("/");
-  await expect(page.locator("fs-app-shell p.api")).toBeVisible();
+  await expect(page.locator('fs-app-shell p.api[role="status"]')).toBeVisible();
   const ltr = await shellBoxes(page, ["h1", "fs-theme-control", "nav", "main"]);
   expect(ltr["fs-theme-control"]?.x).toBeGreaterThan(ltr.h1?.x ?? 0);
   expect(ltr.nav?.x).toBeLessThan(ltr.main?.x ?? 0);

@@ -26,6 +26,7 @@ const ELEMENTS = [
   "fs-nav-tree",
   "fs-breadcrumb",
   "fs-navigation-view",
+  "fs-settings",
   "fs-file-browser",
   "fs-file-preview",
   "fs-host-indicator",
@@ -85,7 +86,10 @@ test("navigation, API status and theme legend words come from the active label t
   await expect(shell.locator("fs-nav-tree section h2")).toHaveText(
     ["collections", "virtualCollections", "folders"].map((key) => label(labels, key)),
   );
-  await expect(shell.locator("nav > ul.tools li")).toHaveText([label(labels, "monitor")]);
+  await expect(shell.locator("nav > ul.tools li")).toHaveText([
+    label(labels, "monitor"),
+    label(labels, "settings"),
+  ]);
   await expect(shell.locator('p.api[role="status"]')).toHaveText(
     `${label(labels, "apiStatus")}: ok (filesquid)`,
   );

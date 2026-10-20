@@ -1,12 +1,13 @@
 /**
  * The non-content states a view can be in (UI-F2.1a): empty, loading, error, offline,
- * permission denied and unavailable (UI-F2.1b: the host answered 503 because it has not
- * installed or started the service yet), each shown distinctly by `<fs-states>`, and the rule
- * that turns a failed load into one of the four failure states. Pure.
+ * permission denied and unavailable (UI-F2.1b: the host answered 503, because it has not
+ * installed or started the service yet, or because storage cannot be read or reached right
+ * now), each shown distinctly by `<fs-states>`, and the rule that turns a failed load into one
+ * of the four failure states. Pure.
  */
 import { ApiError, type DenialReason } from "../api/client";
 
-/** HTTP status of an answer from a host that has not installed or started a service. */
+/** HTTP status of a retryable `unavailable` answer (service not ready, storage unreachable). */
 const HTTP_UNAVAILABLE = 503;
 
 /** A state `<fs-states>` shows instead of content. */

@@ -90,7 +90,7 @@ async function open(page: Page): Promise<void> {
     Object.defineProperty(window, "__FILESQUID_LAUNCH_TOKEN__", { value, enumerable: false });
   }, ADMIN_TOKEN);
   await page.goto("/");
-  await expect(page.locator("fs-app-shell p.api")).toBeVisible();
+  await expect(page.locator('fs-app-shell p.api[role="status"]')).toBeVisible();
 }
 
 /**
@@ -290,7 +290,7 @@ test("pins, section order and library collapse are kept on the device across a r
   });
   expect(saved).not.toMatch(/Photos|Archive|Family/);
   await page.reload();
-  await expect(page.locator("fs-app-shell p.api")).toBeVisible();
+  await expect(page.locator('fs-app-shell p.api[role="status"]')).toBeVisible();
   await mountNavigation(page, twoLibraries);
   await expect(headings(page)).toHaveText([
     labels.collections,

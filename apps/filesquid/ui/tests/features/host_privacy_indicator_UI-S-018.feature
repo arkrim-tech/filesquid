@@ -135,8 +135,22 @@ Feature: Host privacy indicator
       | server    | Server       |
       | browser   | This browser |
 
-  Scenario: The badge never guesses the host
-    Given the host descriptor cannot be read
+  Scenario Outline: The badge never guesses the host
+    Given the host descriptor read fails with <failure>
     When the shell loads
     Then the host badge should read "Host unknown"
-    And its popover should show the error state with Retry
+    And its popover should show the <state> state
+
+    Examples:
+      | failure                          | state                       |
+      | HTTP 500 while online            | error state with Retry      |
+      | HTTP 503 "unavailable"           | unavailable state with Retry |
+      | a network error while offline    | offline state with Retry    |
+      | HTTP 401 "missing_credentials"   | permission-denied state     |
+
+  Scenario: The popover links to the Settings page's Privacy section
+    Given the host popover is open
+    When the user follows "Privacy settings"
+    Then the Settings page should open with its Privacy section
+    And the Privacy section should show the full statement for the connected host
+    And the popover should close

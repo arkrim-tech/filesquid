@@ -10,6 +10,7 @@ import { FsHostIndicator } from "./components/fs-host-indicator";
 import { FsMonitor } from "./components/fs-monitor";
 import { FsNavTree } from "./components/fs-nav-tree";
 import { FsNavigationView } from "./components/fs-navigation-view";
+import { FsSettings } from "./components/fs-settings";
 import { FsStates } from "./components/fs-states";
 import { FsThemeControl } from "./components/fs-theme-control";
 
@@ -121,6 +122,7 @@ export {
 } from "./navigation/contract";
 export { FsNavigationView, type NavigationViewOptions } from "./components/fs-navigation-view";
 export { HOST_STATEMENT_STYLE, buildHostStatement } from "./components/host-statement";
+export { FsSettings, type SettingsOptions } from "./components/fs-settings";
 export { deviceStorage, type DeviceStorage } from "./app/device-storage";
 export type { MonitorClient, MonitorOptions, TokenStore } from "./components/fs-monitor";
 export * from "./api/client";
@@ -144,9 +146,11 @@ export { createHostClient, DESKTOP_EVENT, LAUNCH_TOKEN_GLOBAL, launchToken } fro
 export {
   MONITOR_ROUTE,
   NAVIGATION_ROUTE_PREFIX,
+  SETTINGS_ROUTE,
   bindFilesRoute,
   bindMonitorRoute,
   bindNavigationRoute,
+  bindSettingsRoute,
   memoryTokenStore,
   parseNavigationHash,
   type FilesRouteOptions,
@@ -204,6 +208,7 @@ export function defineElements(): void {
   if (!customElements.get("fs-host-indicator")) {
     customElements.define("fs-host-indicator", FsHostIndicator);
   }
+  if (!customElements.get("fs-settings")) customElements.define("fs-settings", FsSettings);
   if (!customElements.get("fs-app-shell")) customElements.define("fs-app-shell", FsAppShell);
   if (!customElements.get("fs-monitor")) customElements.define("fs-monitor", FsMonitor);
 }
