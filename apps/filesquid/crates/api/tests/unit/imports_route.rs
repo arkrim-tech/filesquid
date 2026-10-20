@@ -8,7 +8,7 @@ use axum::http::{header, Request, StatusCode};
 use filesquid_api::auth::{Authoriser, LaunchToken};
 use filesquid_api::imports::{
     ImportAnswer, ImportOutcome, ImportRequest, ImportStartError, ImportStarter,
-    IMPORT_START_OPERATION,
+    COLLECTION_NOT_SUPPORTED, IMPORT_START_OPERATION,
 };
 use filesquid_api::journal::{JournalEntry, JournalQuery, MemoryJournal, Outcome};
 use filesquid_api::monitor::{Monitor, MonitorConfig, StaticHostChecks};
@@ -213,4 +213,30 @@ async fn a_wrong_scope_no_starter_or_no_token_asks_nothing() {
         .collect();
     assert_eq!(codes, ["unavailable", "invalid_request", "invalid_request"]);
     assert!(!format!("{:?}", host.starts()).contains("someone"));
+}
+
+#[tokio::test]
+async fn a_collection_is_refused_before_any_dialog() {
+    let host = Host::start();
+    let starter = ScriptedStarter::new(Ok(Some("job-1")));
+    host.state.install_import_starter(starter.clone());
+    let mut request = body(&format!("library:{LIBRARY}"));
+    request["collection_id"] = json!("col-1");
+    let (status, answer) = host.post(request, true).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{answer}");
+    assert_eq!(answer["code"], "invalid_request");
+    assert!(
+        answer["message"]
+            .as_str()
+            .is_some_and(|m| m.contains(COLLECTION_NOT_SUPPORTED)),
+        "{answer}"
+    );
+    assert!(starter.asked.lock().expect("asked").is_empty(), "no dialog");
+    let entries = host.starts();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(
+        entries[0].error_code.as_deref(),
+        Some(COLLECTION_NOT_SUPPORTED)
+    );
+    assert_eq!(entries[0].operation_id.as_deref(), Some("op-1"));
 }

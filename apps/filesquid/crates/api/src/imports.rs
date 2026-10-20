@@ -7,7 +7,9 @@
 //! An import commits, so its body carries a [`CommandEnvelope`] (API-S-002): its operation ID
 //! is the idempotency key, and the same operation ID answers the same job instead of starting a
 //! second import. An import only adds new files and changes no existing one, so the envelope's
-//! scope MUST be `library:<library_id>` and its expected revision is not compared.
+//! scope MUST be `library:<library_id>` and its expected revision is not compared. Filing the
+//! files into a collection is not supported yet: a request naming a `collection_id` is
+//! refused before any dialog ([`COLLECTION_NOT_SUPPORTED`]).
 //!
 //! What the dialog shows and how the job runs is the host's, behind [`ImportStarter`],
 //! installed with [`crate::ApiState::install_import_starter`]; a host without one
@@ -32,6 +34,10 @@ use std::sync::Arc;
 /// Journal operation of an import request.
 pub const IMPORT_START_OPERATION: &str = "import.start";
 
+/// Journal error code of a request naming a `collection_id`: imports do not file into a
+/// collection yet, so the request is refused rather than its files left unfiled.
+pub const COLLECTION_NOT_SUPPORTED: &str = "collection_not_supported";
+
 /// What the owner picks in the host's dialog.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -51,7 +57,8 @@ pub struct ImportRequest {
     pub envelope: CommandEnvelope,
     /// The open library to import into.
     pub library_id: String,
-    /// The collection the files join; the library's home collection when absent.
+    /// Reserved for filing the files into a collection; not supported yet, so a request
+    /// that carries it is refused ([`COLLECTION_NOT_SUPPORTED`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub collection_id: Option<String>,
     /// Files or a folder.
@@ -130,6 +137,9 @@ async fn start(
         Some(request) => request,
         None => return refuse_invalid(&state, &actor).await,
     };
+    if request.collection_id.is_some() {
+        return refuse_collection(&state, &actor, &request).await;
+    }
     let started = match state.import_starter() {
         Some(starter) => run(starter, actor.clone(), request.clone()).await,
         None => Err(ImportStartError::Unavailable),
@@ -177,6 +187,19 @@ async fn refuse_invalid(state: &ApiState, actor: &str) -> Response {
     journal_entry(state, entry).await;
     let message = "The request names unknown, missing or malformed fields, or its envelope's \
                    scope is not library:<library_id>.";
+    ApiError::new(ErrorCode::InvalidRequest, message).into_response()
+}
+
+/// Journal a request naming a collection once and answer `400 invalid_request`.
+async fn refuse_collection(state: &ApiState, actor: &str, request: &ImportRequest) -> Response {
+    let entry = JournalEntry::new(IMPORT_START_OPERATION, Outcome::Failed)
+        .level(Level::Warn)
+        .actor(actor)
+        .operation_id(request.envelope.operation_id().as_str())
+        .error_code(COLLECTION_NOT_SUPPORTED);
+    journal_entry(state, entry).await;
+    let message = "Imports cannot be filed into a collection yet (collection_not_supported); \
+                   send the request without collection_id.";
     ApiError::new(ErrorCode::InvalidRequest, message).into_response()
 }
 
