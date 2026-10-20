@@ -23,9 +23,10 @@ Feature: File operation routes
     Then the listing should name "photos/a.jpg" and "photos/b.jpg"
     And no answer should carry a filesystem path or a storage key
 
-  Scenario: An upload publishes exactly one OCFL version
-    When the owner uploads "photos/c.jpg"
-    Then the object should have exactly one new version
+  Scenario: An upload creates the file's own object in exactly one OCFL version
+    When the owner uploads a new file named "c.jpg"
+    Then the upload should create the file's own object at its first version
+    And the object should have exactly 0 new versions
     And the activity journal should record one "files.upload" entry with opaque identifiers only
 
   Scenario: A move and a restore each publish one version
@@ -45,7 +46,7 @@ Feature: File operation routes
   Scenario: A new empty folder stays pending until a file is added beneath it
     When the owner creates the folder "albums"
     Then the folder should be pending and no version should be published
-    When the owner uploads "albums/first.jpg"
+    When a file "albums/first.jpg" is committed beneath it
     Then the folder "albums" should be listed
 
   Scenario: Folder listings page with an opaque cursor
@@ -59,10 +60,10 @@ Feature: File operation routes
 
   # Error cases
   Scenario: A write that changes nothing is refused without a version
-    When the owner uploads "notes.txt" with its current content
+    When the owner restores "notes.txt" from version v1 without a change
     Then the write should be refused as "conflict"
     And no version should be published
-    And the activity journal should record one refused "files.upload" entry
+    And the activity journal should record one refused "files.restore" entry
 
   Scenario: A client without the token cannot read or write files
     When a client without a token reads "notes.txt"

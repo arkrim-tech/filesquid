@@ -101,18 +101,43 @@ pub struct ObjectQuery {
     pub object_id: String,
 }
 
-/// Query of `PUT /api/v1/files/upload` (the body is the file's bytes).
+/// Query of `PUT /api/v1/files/upload`: the facts the client provides about one upload. The
+/// body is the bytes.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UploadQuery {
     /// The library.
     pub library_id: String,
-    /// The OCFL object.
-    pub object_id: String,
-    /// The logical path to add or replace.
-    pub path: String,
+    /// The file whose content this upload replaces; a new file when absent.
+    pub file_id: Option<String>,
+    /// The file name the client sent: the original name of a new file.
+    pub name: String,
+    /// The size the client declared, in bytes; it must be the size of the body.
+    pub size: u64,
+    /// The media type the client reported; derived from the name when absent.
+    pub media_type: Option<String>,
+    /// The last-modified time the client reported (RFC 3339 UTC).
+    pub last_modified: Option<String>,
+    /// The Unicode normalisation form of `name` (`nfc`, `nfd`, `nfkc`, `nfkd` or
+    /// `unnormalised`); required for a name that is not ASCII.
+    pub name_normalization: Option<filesquid_metadata::import::NameForm>,
     /// The version message, 1 to [`super::MAX_MESSAGE_BYTES`] bytes.
     pub message: Option<String>,
+}
+
+/// The answer to an upload: the version it published in the file's object.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct UploadView {
+    /// The library.
+    pub library_id: String,
+    /// The file: a new one, or the one whose content was replaced.
+    pub file_id: String,
+    /// The file's OCFL object, `urn:uuid:<file-id>`.
+    pub object_id: String,
+    /// The new head version.
+    pub version: String,
+    /// When it was created (RFC 3339 UTC).
+    pub created: String,
 }
 
 /// Body of `POST /api/v1/files/folders`.

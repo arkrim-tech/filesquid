@@ -7,7 +7,6 @@
 //! recorded size ends the stream with an error, never with a short body that looks whole.
 
 use super::error::FileError;
-use super::media;
 use super::names::StoredFile;
 use super::service::{check_logical_path, resolve, FileService, Library};
 use super::view::FileQuery;
@@ -27,8 +26,8 @@ pub type DownloadStream = Pin<Box<dyn Stream<Item = Result<Bytes, FileError>> + 
 pub struct Download {
     /// The file's length in bytes.
     pub total: u64,
-    /// The media type it carries.
-    pub media_type: &'static str,
+    /// The media type it carries: the record's for a per-file object's original.
+    pub media_type: String,
     /// The display name the answer names the file by.
     pub file_name: String,
     /// The bytes, in pieces of at most [`MAX_RANGE_BYTES`].
@@ -78,6 +77,10 @@ where
         let total = library
             .size_of(&object, &version, &query.path, &digest)
             .await?;
+        let described = library
+            .described(&object, &version)
+            .await?
+            .filter(|d| d.original_path == query.path);
         let version_name = version.to_string();
         let file = StoredFile {
             library_id: &query.library_id,
@@ -85,7 +88,7 @@ where
             version: &version_name,
             path: &query.path,
         };
-        let file_name = self.display_name(file).await;
+        let (file_name, media_type) = self.answer_names(file, described.as_ref()).await;
         let cursor = Cursor {
             library: library.clone(),
             root,
@@ -97,7 +100,7 @@ where
         };
         Ok(Download {
             total,
-            media_type: media::media_type(&query.path),
+            media_type,
             file_name,
             body: Box::pin(stream::try_unfold(cursor, next_piece)),
         })
