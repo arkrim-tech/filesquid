@@ -66,6 +66,7 @@ use filesquid_native::installation::{
     self, InstallationError, InstallationSource, INSTALLATION_CREATED,
 };
 use filesquid_native::workers::history_backfill;
+use filesquid_native::workers::media::{self, MediaWorkers};
 use filesquid_native::{CatalogRoots, HostMonitor, SqliteCatalog, CATALOG_DIR};
 use filesquid_ocfl::storage::FsBackend;
 use ipc_observer::TauriIpcObserver;
@@ -331,6 +332,22 @@ pub struct DesktopValidation(pub ValidationService<FsBackend>);
 /// managed state for the jobs that later tasks (import, upload, migration) run.
 pub struct DesktopJobs(pub Jobs);
 
+/// The host's out-of-process libvips media workers (Task DE-0.5; DE-S-016), held in Tauri's
+/// managed state for the thumbnail and preview routes. At most two run at once.
+pub struct DesktopMedia(pub MediaWorkers);
+
+/// The media worker pool of this host: this executable started with
+/// [`media::WORKER_ARG`], one process per run, each registered in `host`'s process registry.
+/// Reads the executable's path; starts no process.
+pub fn media_workers(host: &HostMonitor) -> MediaWorkers {
+    let exe = std::env::current_exe().unwrap_or_else(|err| {
+        tracing::warn!(error = %err, "the host executable path is unknown; media workers will be refused");
+        std::path::PathBuf::new()
+    });
+    MediaWorkers::new(exe, host.monitor().registry().clone())
+        .with_args(vec![media::WORKER_ARG.to_string()])
+}
+
 /// Journal operation of an installation UUID copy restored from the other copy.
 pub const INSTALLATION_RESTORED: &str = "host.installation.restored";
 
@@ -557,6 +574,7 @@ fn start_monitor(
             source: history_backfill::backfill_source(&installation),
         });
     app.manage(DesktopJobs(jobs));
+    app.manage(DesktopMedia(media_workers(&host)));
     app.manage(DesktopInstallation(installation));
     app.manage(DesktopCatalog(catalog.clone()));
     let validation = host
