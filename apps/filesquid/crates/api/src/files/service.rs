@@ -6,6 +6,7 @@
 //! (API-S-006).
 
 use super::error::FileError;
+use super::labels::in_reserved_folder;
 use super::names::{safe_name, stored_name, DisplayNames, StoredFile};
 use super::range::{RangePlan, RangeRequest};
 use super::view::EntryView;
@@ -152,6 +153,8 @@ pub struct FileService<B, R, S> {
     /// Who commits and where commit journal IDs come from; restore and label commits
     /// write a PROV-O record once installed (API-S-028).
     pub(super) provenance: Arc<OnceLock<super::versions::FileProvenance>>,
+    /// Which object holds each folder scope's files, for the listing by node.
+    scopes: Arc<OnceLock<Arc<dyn super::nodes::ScopeObjects>>>,
 }
 
 impl<B, R, S> Clone for FileService<B, R, S> {
@@ -161,6 +164,7 @@ impl<B, R, S> Clone for FileService<B, R, S> {
             clock: self.clock.clone(),
             names: self.names.clone(),
             provenance: self.provenance.clone(),
+            scopes: self.scopes.clone(),
         }
     }
 }
@@ -184,7 +188,26 @@ impl<B, R, S> FileService<B, R, S> {
             clock,
             names: Arc::new(OnceLock::new()),
             provenance: Arc::new(OnceLock::new()),
+            scopes: Arc::new(OnceLock::new()),
         }
+    }
+
+    /// Take which OCFL object holds each folder scope's files from `scopes` (the host's
+    /// catalog), for the listing by navigation node. Returns false, keeping the first, when
+    /// one was already installed. Without it, every node listing is `not_found`.
+    pub fn install_scope_objects(&self, scopes: Arc<dyn super::nodes::ScopeObjects>) -> bool {
+        self.scopes.set(scopes).is_ok()
+    }
+
+    /// The object that holds the files of `scope`, from the installed [`ScopeObjects`]
+    /// (`None` without one). May block.
+    ///
+    /// [`ScopeObjects`]: super::nodes::ScopeObjects
+    pub fn scope_object(
+        &self,
+        scope: &crate::navigation::FolderScope,
+    ) -> Option<super::nodes::ScopeObject> {
+        self.scopes.get()?.object_of(scope)
     }
 
     /// Take the owner's original file names from `names` (the host's file records). Returns
@@ -269,13 +292,20 @@ impl<B, R, S> FileService<B, R, S> {
 }
 
 impl<B: StorageBackend, R, S> FileService<B, R, S> {
-    /// One page of the folder `prefix` of a version.
+    /// One page of the folder `prefix` of a version. The [`RESERVED_FOLDERS`] are left out
+    /// of the root's page, so a page may hold fewer entries than asked while a next cursor
+    /// remains; a prefix inside one of them is `not_found`.
+    ///
+    /// [`RESERVED_FOLDERS`]: super::labels::RESERVED_FOLDERS
     pub async fn listing(&self, query: ListingQuery) -> Result<FolderPageView, FileError> {
         let limit = page_size(query.limit)?;
         let prefix = query.prefix.as_deref().unwrap_or("");
         let folder = prefix.strip_suffix('/').unwrap_or(prefix);
         if !folder.is_empty() {
             check_logical_path(folder)?;
+        }
+        if in_reserved_folder(folder) {
+            return Err(FileError::not_found());
         }
         let library = self.library(&query.library_id)?;
         let root = library.locate(&query.object_id).await?;
@@ -284,6 +314,7 @@ impl<B: StorageBackend, R, S> FileService<B, R, S> {
         let cursor = query.cursor.as_deref();
         let page = view::list_folder(&object, &version, prefix, cursor, limit).await?;
         let mut view = FolderPageView::of(&query.library_id, page);
+        view.entries.retain(|entry| !is_reserved_folder(entry));
         self.name_entries(&mut view).await;
         Ok(view)
     }
@@ -589,6 +620,11 @@ pub(super) fn check_logical_path(path: &str) -> Result<(), FileError> {
         )),
         false => Ok(()),
     }
+}
+
+/// True for a folder entry that is one of the reserved folders. Pure.
+fn is_reserved_folder(entry: &EntryView) -> bool {
+    matches!(entry, EntryView::Folder { path, .. } if in_reserved_folder(path))
 }
 
 /// `path` and each of its parent folders, longest first.

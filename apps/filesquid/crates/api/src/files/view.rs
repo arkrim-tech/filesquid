@@ -7,7 +7,8 @@ use filesquid_ocfl::view::{Entry, FileChange, FileDetails, FileHistoryEntry, Fol
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// Query of `GET /api/v1/files/listing`.
+/// The resolved listing query a [`super::FileOperations::listing`] call takes: one folder of
+/// one object, after the route resolved a [`ListingRequest`] (and its node, if any).
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ListingQuery {
@@ -15,6 +16,28 @@ pub struct ListingQuery {
     pub library_id: String,
     /// The OCFL object.
     pub object_id: String,
+    /// The version to list (`v1`, `v2`, ...); the head when absent.
+    pub version: Option<String>,
+    /// The folder, a logical-path prefix without a trailing `/`; the root when absent.
+    pub prefix: Option<String>,
+    /// The cursor of the previous page.
+    pub cursor: Option<String>,
+    /// Entries per page, 1 to 1,000; [`super::DEFAULT_PAGE`] when absent.
+    pub limit: Option<usize>,
+}
+
+/// Query of `GET /api/v1/files/listing` as the route takes it: a folder named either by
+/// library, object and prefix, or by a collection or folder navigation `node` (API-S-021),
+/// never both.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ListingRequest {
+    /// The library; given with `object_id`, never with `node`.
+    pub library_id: Option<String>,
+    /// The OCFL object; given with `library_id`, never with `node`.
+    pub object_id: Option<String>,
+    /// A collection or folder node handle, instead of `library_id`, `object_id` and `prefix`.
+    pub node: Option<String>,
     /// The version to list (`v1`, `v2`, ...); the head when absent.
     pub version: Option<String>,
     /// The folder, a logical-path prefix without a trailing `/`; the root when absent.
