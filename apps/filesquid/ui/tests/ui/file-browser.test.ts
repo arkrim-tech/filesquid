@@ -372,6 +372,17 @@ describe("<fs-file-browser> states", () => {
     expect(names(browser)).toContain("Contracts");
   });
 
+  it("hides the rows when a reload is answered 503, so stale rows are not shown as current", async () => {
+    const source = fixture();
+    const browser = await mount(source);
+    expect(browser.dataset.state).toBe("ready");
+    source.failure = new ApiError(503, "/api/v1/files/listing", { code: "unavailable" });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await (browser as unknown as { reload(): Promise<void> }).reload();
+    expect(browser.dataset.state).toBe("unavailable");
+    expect(one(browser, ".list-host").hidden).toBe(true);
+  });
+
   it("tells offline from an error and permission denied from both", async () => {
     const offline = fixture();
     offline.failure = new Error("x");

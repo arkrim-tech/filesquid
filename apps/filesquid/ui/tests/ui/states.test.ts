@@ -40,6 +40,7 @@ describe("<fs-states>", () => {
     [{ kind: "empty", message: labels.collections }, "status", labels.collections],
     [{ kind: "error" }, "alert", `${labels.stateError} ${labels.stateRetry}`],
     [{ kind: "offline" }, "alert", `${labels.stateOffline} ${labels.stateRetry}`],
+    [{ kind: "unavailable" }, "alert", `${labels.stateUnavailable} ${labels.stateRetry}`],
     [{ kind: "denied" }, "alert", labels.stateDenied],
     [
       { kind: "denied", reason: "not_permitted" },

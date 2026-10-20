@@ -119,8 +119,68 @@ Feature: Albums, folders and navigation
     Then the new order should apply until the page closes
     And the console should say that the navigation choices will not be kept
 
+  # Live navigation data (UI-F2.1b part 2; API-S-021)
+  # Happy paths
+  Scenario: The tree shows the connected host's navigation
+    Given the host lists repository "Home" with library "Family" holding collection "Photos"
+    When the default UI loads
+    Then the navigation tree should list "Photos" in the Collections section
+    And every level should be read through the navigation listing of the FileSquid API
+
+  Scenario: A destination opens with its breadcrumb
+    Given the host lists folder "2025" in collection "Photos" of library "Family"
+    When I open folder "2025" from the navigation tree
+    Then the breadcrumb should read the repository, "Family", "Photos", "2025"
+    And "2025" should be the current page in the breadcrumb and in the tree
+    And the breadcrumb should come from one listing's ancestors
+
+  # Edge cases
+  Scenario: A long level is read page by page
+    Given library "Family" holds more collections than one page carries
+    When the default UI loads
+    Then the tree should follow next_cursor until it is null
+    And every collection should be listed once, in the listing's order
+
+  Scenario: A change reads only the levels it names
+    Given the tree shows library "Family"
+    When the host announces a navigation change naming library "Family"
+    Then only the children of "Family" should be read again
+    And the tree should show the new names without a page reload
+
+  Scenario Outline: The whole tree is read again
+    Given the tree shows library "Family"
+    When <event>
+    Then the whole visible tree should be read again
+
+    Examples:
+      | event                                                     |
+      | the host announces a navigation change for all nodes      |
+      | the event channel delivers an "events.resync" hint        |
+      | the event channel opens again after a disconnect          |
+      | the host announces a navigation change naming the repository |
+
+  # Error cases
+  Scenario: The host has no navigation service yet
+    Given the host answers the navigation listing with HTTP 503 "unavailable"
+    When the default UI loads
+    Then the navigation tree should show the unavailable state with "Try again"
+    And it should not show an empty tree
+    When the host installs its navigation service and I choose "Try again"
+    Then the tree should show the host's navigation
+
+  Scenario: A destination that is gone
+    Given the address names a destination the host answers "not_found" for
+    When the destination view loads
+    Then it should say that the destination is no longer available
+    And no breadcrumb should be shown
+
+  Scenario: An answer that breaks the contract is not shown
+    Given the host answers a listing with a node of an unknown kind
+    When the navigation tree loads
+    Then the tree should show its error state
+
   # Source
   # - srs.md SRS-F-004
   # - prd.md F-004
-  # - apps/filesquid/ui/resources/srs.md UI-S-001, UI-S-016
+  # - apps/filesquid/ui/resources/srs.md UI-S-001, UI-S-012, UI-S-016
   # - apps/filesquid/ui/resources/srs.md UI-S-017; apps/filesquid/crates/api/resources/srs.md API-S-021

@@ -9,6 +9,8 @@
 //!
 //! - [`SqliteJournal`]: the activity journal in the host's SQLite operational store
 //!   (WAL mode, append-only, owner-only file mode on Unix);
+//! - [`SqliteJobs`]: the durable jobs of `filesquid-api` (API-S-033) in the same
+//!   operational store (Task DE-0.4);
 //! - [`SqliteFindings`]: the OCFL validation findings, cursors and last runs in the same
 //!   operational store (API-S-022);
 //! - [`DataDirChecks`]: the data-directory checks (write probe, free space);
@@ -40,6 +42,7 @@ pub mod findings_sqlite;
 pub mod host_checks;
 pub mod host_monitor;
 pub mod installation;
+pub mod jobs_sqlite;
 pub mod journal_sqlite;
 mod owner_only;
 
@@ -57,4 +60,5 @@ pub use host_monitor::{
     HostMonitor, ALREADY_INSTALLED, HOST_HEARTBEAT_TIMEOUT_MS, JOURNAL_FILE,
     VALIDATION_ALREADY_STARTED, VALIDATION_STOP_WAIT,
 };
+pub use jobs_sqlite::SqliteJobs;
 pub use journal_sqlite::SqliteJournal;

@@ -24,7 +24,7 @@ import {
   type ContentRange,
 } from "./commands";
 import type { CompleteList } from "./complete-list";
-import type { components } from "./schema";
+import type { components, operations } from "./schema";
 
 /** Process health payload, generated from the API contract. */
 export type HealthStatus = components["schemas"]["HealthStatus"];
@@ -34,6 +34,15 @@ export type ApiEvent = components["schemas"]["ApiEvent"];
 
 /** The host descriptor, generated from the API contract (`GET /api/v1/host`, API-S-020). */
 export type HostDescriptor = components["schemas"]["HostDescriptor"];
+
+/** One page of one level of the navigation tree (API-S-021), as the contract defines it. */
+export type NavigationPageBody = components["schemas"]["NavigationPage"];
+
+/** Payload of the `navigation.change` event, as the contract defines it. */
+export type NavigationChangeBody = components["schemas"]["NavigationChange"];
+
+/** Query of `GET /api/v1/navigation` (node, cursor, limit); every field is optional. */
+export type NavigationQuery = NonNullable<operations["listNavigation"]["parameters"]["query"]>;
 
 /** Error code of a failed request, generated from the API contract. */
 export type ErrorCode = components["schemas"]["ErrorCode"];
@@ -135,6 +144,22 @@ const CONTENT_ROUTE = "/api/v1/content/";
 const HANDLE_CHARS = /^[A-Za-z0-9_-]{43}$/;
 /** RFC 7230 `token`: the only characters both a header value and a subprotocol accept here. */
 const TOKEN_CHARS = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+
+/**
+ * Build the query string of a navigation listing: the node, cursor and limit that are given,
+ * in that order, URL-encoded and otherwise unchanged (handle and cursor are opaque). Pure.
+ *
+ * @param query The listing query.
+ * @returns `?…`, or `""` for the repository level.
+ */
+function navigationQuery(query: NavigationQuery): string {
+  const params = new URLSearchParams();
+  if (query.node !== undefined) params.set("node", query.node);
+  if (query.cursor !== undefined) params.set("cursor", query.cursor);
+  if (query.limit !== undefined) params.set("limit", String(query.limit));
+  const text = params.toString();
+  return text ? `?${text}` : "";
+}
 
 /** Build a query string from defined, non-empty filter values (in declaration order). */
 function queryString(filters: JournalFilters): string {
@@ -507,6 +532,22 @@ export class FileSquidClient {
    */
   async host(): Promise<HostDescriptor> {
     return this.request<HostDescriptor>("/api/v1/host");
+  }
+
+  /**
+   * Read one page of one level of the navigation tree (`GET /api/v1/navigation`, API-S-021):
+   * the host's repository without `node`, otherwise that node's children. The node, cursor and
+   * limit are sent as given; the handle and cursor are opaque and never parsed. Network I/O.
+   *
+   * @param query The node whose children to list, the previous page's cursor and the page size
+   *   (1 to 1,000); all optional.
+   * @returns The page as the host sent it; callers check it against the contract.
+   * @throws ApiError on a non-2xx answer: `not_found` for an unknown or unreadable node,
+   *   `invalid_request` for a bad cursor or limit, 503 `unavailable` while the host has no
+   *   navigation service.
+   */
+  async navigation(query: NavigationQuery = {}): Promise<NavigationPageBody> {
+    return this.request<NavigationPageBody>(`/api/v1/navigation${navigationQuery(query)}`);
   }
 
   /** Overall health with reasons (`GET /api/v1/admin/health`). Network I/O. */
