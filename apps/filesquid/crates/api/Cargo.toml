@@ -141,6 +141,10 @@ name = "integration_versions"
 path = "tests/integration/versions.rs"
 
 [[test]]
+name = "integration_metadata"
+path = "tests/integration/metadata.rs"
+
+[[test]]
 name = "integration_drive"
 path = "tests/integration/drive.rs"
 

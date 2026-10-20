@@ -554,6 +554,19 @@ pub fn query(rest: &str) -> String {
     format!("{base}&{rest}")
 }
 
+/// The URI of `PUT /api/v1/files/upload` for a new file named `name` declaring `size` bytes,
+/// plus `rest` (`key=value` pairs, already encoded).
+pub fn upload_uri(name: &str, size: usize, rest: &str) -> String {
+    let base = format!(
+        "/api/v1/files/upload?library_id={LIBRARY}&name={}&size={size}",
+        encode(name)
+    );
+    match rest.is_empty() {
+        true => base,
+        false => format!("{base}&{rest}"),
+    }
+}
+
 /// Percent-encode `text` for a query value.
 pub fn encode(text: &str) -> String {
     let mut out = String::new();

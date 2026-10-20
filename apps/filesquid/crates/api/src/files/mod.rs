@@ -45,8 +45,10 @@ pub mod media;
 pub mod names;
 mod nodes;
 mod range;
+mod records;
 mod routes;
 mod service;
+mod upload;
 mod versions;
 mod view;
 
@@ -67,7 +69,7 @@ pub use view::{
     FileQuery, FolderPageView, FolderRequest, FolderView, HistoryEntryView, HistoryQuery,
     HistoryView, LabelRequest, LibraryHistorySizeView, LibraryQuery, ListingQuery, ListingRequest,
     MintRequest, MintView, MoveRequest, ObjectQuery, RemoveRequest, RestoreRequest, UploadQuery,
-    UserView, VersionView, VersionsView,
+    UploadView, UserView, VersionView, VersionsView,
 };
 
 /// `tracing` target of this module's stdout-only diagnostics, outside `filesquid::activity`

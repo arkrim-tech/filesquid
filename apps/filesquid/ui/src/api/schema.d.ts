@@ -422,8 +422,8 @@ export interface paths {
         };
         get?: never;
         /**
-         * Add or replace one file
-         * @description The body is the file's bytes, at most 64 MiB. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once.
+         * Upload one file as its own object, or new content for an existing file
+         * @description The body is the file's bytes, at most 64 MiB. Without `file_id`, the upload creates the file's own OCFL object `files/<file-id>` (identifier `urn:uuid:<file-id>`, a new UUID v4) with the original at `original/<file-uuid>.<ext>` and its metadata record (the `filesquid-metadata` file record, API-S-026) beside it in v1, never at a logical path the client chooses. With `file_id`, it is a new version of that file's object: the new bytes at the same stored path and one more import entry; the display name and statements stay. The record holds the facts the client provides (name and its normalisation form, size, last-modified time, media type) and lists every other fact as unavailable (MD-S-013). The verified size is the size of the body: a declared `size` that differs fails verification, is refused (400) and commits nothing. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused without publishing (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once.
          */
         put: operations["uploadFile"];
         post?: never;
@@ -1739,6 +1739,19 @@ export interface components {
          * @enum {string}
          */
         Layout: "list" | "grid";
+        /** @description The OCFL version an upload published in the file's own object (API-S-026). */
+        UploadCommit: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The file (UUID v4): a new one, or the one whose content was replaced. */
+            file_id: string;
+            /** @description The file's OCFL object identifier, `urn:uuid:<file-id>`. */
+            object_id: string;
+            /** @description The new head version. */
+            version: string;
+            /** @description When it was created, RFC 3339 UTC. */
+            created: string;
+        };
     };
     responses: {
         /** @description Invalid or malformed request (invalid_request). */
@@ -2465,7 +2478,7 @@ export interface operations {
             /** @description The whole file. */
             200: {
                 headers: {
-                    /** @description The file's media type. */
+                    /** @description The file's media type: for a file object's original, the media type its metadata record holds; otherwise derived from the extension. */
                     "Content-Type"?: string;
                     /** @description The file's length in bytes. */
                     "Content-Length"?: number;
@@ -2612,7 +2625,7 @@ export interface operations {
                 headers: {
                     /** @description bytes */
                     "Accept-Ranges"?: string;
-                    /** @description The file's media type. */
+                    /** @description The file's media type: for a file object's original, the media type its metadata record holds; otherwise derived from the extension. */
                     "Content-Type"?: string;
                     /** @description The bytes this answer carries. */
                     "Content-Length"?: number;
@@ -2629,7 +2642,7 @@ export interface operations {
                 headers: {
                     /** @description bytes */
                     "Accept-Ranges"?: string;
-                    /** @description The file's media type. */
+                    /** @description The file's media type: for a file object's original, the media type its metadata record holds; otherwise derived from the extension. */
                     "Content-Type"?: string;
                     /** @description The bytes this answer carries. */
                     "Content-Length"?: number;
@@ -2677,7 +2690,7 @@ export interface operations {
                 headers: {
                     /** @description bytes */
                     "Accept-Ranges"?: string;
-                    /** @description The file's media type. */
+                    /** @description The file's media type: for a file object's original, the media type its metadata record holds; otherwise derived from the extension. */
                     "Content-Type"?: string;
                     /** @description The bytes this answer carries. */
                     "Content-Length"?: number;
@@ -2692,7 +2705,7 @@ export interface operations {
                 headers: {
                     /** @description bytes */
                     "Accept-Ranges"?: string;
-                    /** @description The file's media type. */
+                    /** @description The file's media type: for a file object's original, the media type its metadata record holds; otherwise derived from the extension. */
                     "Content-Type"?: string;
                     /** @description The bytes this answer carries. */
                     "Content-Length"?: number;
@@ -2718,10 +2731,18 @@ export interface operations {
             query: {
                 /** @description The library. */
                 library_id: components["parameters"]["LibraryId"];
-                /** @description The OCFL object identifier. */
-                object_id: components["parameters"]["ObjectId"];
-                /** @description The file's logical path. */
-                path: components["parameters"]["LogicalPath"];
+                /** @description The file whose content this upload replaces (UUID v4); a new file when absent. */
+                file_id?: string;
+                /** @description The file name the client sent: the original name of a new file (1 to 1,024 bytes without `/` or NUL). */
+                name: string;
+                /** @description The size the client declared, in bytes; it must be the size of the body. */
+                size: number;
+                /** @description The media type the client reported (`type/subtype`); derived from the name's extension when absent. */
+                media_type?: string;
+                /** @description The last-modified time the client reported, RFC 3339 UTC. */
+                last_modified?: string;
+                /** @description The Unicode normalisation form of `name`; required for a name that is not ASCII (an ASCII name is NFC). */
+                name_normalization?: "nfc" | "nfd" | "nfkc" | "nfkd" | "unnormalised";
                 /** @description The version message, 1 to 1,024 bytes and not blank. */
                 message?: string;
             };
@@ -2735,13 +2756,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The version published. */
+            /** @description The version published in the file's object. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FileCommit"];
+                    "application/json": components["schemas"]["UploadCommit"];
                 };
             };
             400: components["responses"]["InvalidRequest"];

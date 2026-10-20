@@ -12,7 +12,7 @@ use filesquid_api::files::{
     CommitView, EntryView, FileChangeView, FileDetailsView, FileHistorySizeView, FileLibrary,
     FileService, FolderPageView, FolderRequest, FolderView, HistoryEntryView, HistoryView,
     LabelRequest, LibraryHistorySizeView, MintRequest, MintView, MoveRequest, RemoveRequest,
-    RestoreRequest, UserView, VersionView, VersionsView,
+    RestoreRequest, UploadView, UserView, VersionView, VersionsView,
 };
 use filesquid_api::local_library::{LocalLibraryService, MemoryRepairLedger};
 use filesquid_api::monitor::Monitor;
@@ -130,7 +130,7 @@ pub fn sample(
         | ("GET", "/api/v1/files/details")
         | ("GET", "/api/v1/files/history") => plain("&path=a.txt"),
         ("PUT", "/api/v1/files/upload") => (
-            format!("{path}?{}", query("&path=new.txt")),
+            format!("{path}?library_id={LIBRARY}&name=new.txt&size=3"),
             Some(("application/octet-stream", b"new".to_vec())),
         ),
         ("POST", "/api/v1/files/folders") => (path.into(), json_body(json!({ "path": "albums" }))),
@@ -370,6 +370,13 @@ fn answer_samples() -> Vec<(&'static str, Vec<Value>)> {
         path: "albums".into(),
         pending: true,
     };
+    let upload = UploadView {
+        library_id: LIBRARY.into(),
+        file_id: "7d1c2b9e-4f3a-4e61-8a0b-2c9d5e6f7a80".into(),
+        object_id: "urn:uuid:7d1c2b9e-4f3a-4e61-8a0b-2c9d5e6f7a80".into(),
+        version: "v1".into(),
+        created: "2026-10-18T00:00:00Z".into(),
+    };
     let handle = MintView {
         handle: "A".repeat(43),
         url: format!("/api/v1/content/{}", "A".repeat(43)),
@@ -393,6 +400,7 @@ fn answer_samples() -> Vec<(&'static str, Vec<Value>)> {
     vec![
         ("ObjectVersions", vec![to_value(versions)]),
         ("FileCommit", vec![to_value(commit)]),
+        ("UploadCommit", vec![to_value(upload)]),
         ("FileHistorySize", vec![to_value(file_size)]),
         ("LibraryHistorySize", vec![to_value(library_size)]),
         ("FolderAnswer", vec![to_value(folder)]),

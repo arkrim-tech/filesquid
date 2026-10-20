@@ -262,12 +262,6 @@ async fn labels_are_bounded_and_checked() {
 #[tokio::test]
 async fn the_application_data_folder_is_reserved() {
     let rig = FilesRig::with_files(&[("a.txt", b"alpha")]).await;
-    let uri = format!(
-        "/api/v1/files/upload?{}",
-        query("path=.filesquid/labels.json")
-    );
-    let upload = rig.call(Method::PUT, &uri, &[], b"{}".to_vec()).await;
-    assert_error(&upload, 400, "invalid_request");
     let request = body(json!({ "from": "a.txt", "to": ".filesquid/a.txt" }));
     let moved = rig.post("/api/v1/files/moves", request).await;
     assert_error(&moved, 400, "invalid_request");

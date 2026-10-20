@@ -7,7 +7,9 @@
 mod files_fixture;
 
 use axum::http::{Method, StatusCode};
-use files_fixture::{digest, pattern, query, Answer, FilesRig, LIBRARY, OBJECT};
+use files_fixture::{
+    digest, encode, pattern, query, upload_uri, Answer, FilesRig, LIBRARY, OBJECT,
+};
 use filesquid_api::files::{
     DisplayNames, NameFuture, StoredFile, DEFAULT_PAGE, MAX_ANSWER_BYTES, MAX_UPLOAD_BYTES,
 };
@@ -395,42 +397,49 @@ async fn a_read_pins_the_version_it_names() {
 // ---- Writes ----
 
 #[tokio::test]
-async fn an_upload_commits_exactly_one_version_and_is_journaled() {
+async fn an_upload_creates_its_own_file_object_and_is_journaled() {
     let rig = FilesRig::with_files(&[("a.txt", b"a")]).await;
-    let uri = format!("/api/v1/files/upload?{}", query("path=new%2Fb.txt"));
+    let uri = upload_uri("b.txt", 3, "");
     let answer = rig.call(Method::PUT, &uri, &[], b"bee".to_vec()).await;
     assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
-    let commit = answer.json();
-    assert_eq!(commit["version"], "v2");
-    assert_eq!(commit["object_id"], OBJECT);
-    assert_eq!(rig.head().await, "v2");
-    let read = rig
-        .get(&format!(
-            "/api/v1/files/content?{}",
-            query("path=new%2Fb.txt")
-        ))
-        .await;
-    assert_eq!(read.body, b"bee");
+    let upload = answer.json();
+    let file_id = upload["file_id"].as_str().expect("file id").to_string();
+    let object_id = format!("urn:uuid:{file_id}");
+    assert_eq!(upload["object_id"], object_id.as_str());
+    assert_eq!(upload["version"], "v1");
+    assert_eq!(rig.head().await, "v1", "the other object is untouched");
+    let read = format!(
+        "/api/v1/files/content?library_id={LIBRARY}&object_id={}&path={}",
+        encode(&object_id),
+        encode(&format!("original/{file_id}.txt"))
+    );
+    let answer = rig.get(&read).await;
+    assert_eq!(answer.body, b"bee");
+    assert_eq!(answer.header("content-type"), "text/plain");
+    assert!(answer
+        .header("content-disposition")
+        .contains("filename=\"b.txt\""));
     let entries = rig.journaled("files.upload");
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].outcome, Outcome::Succeeded);
     assert_eq!(entries[0].actor, "owner");
-    assert!(entries[0].target_ids.contains(&"v2".to_string()));
+    assert!(entries[0].target_ids.contains(&"v1".to_string()));
     assert!(entries[0].target_ids.contains(&LIBRARY.to_string()));
-    let object_ref = format!("{OBJECT}@v2");
+    let object_ref = format!("{object_id}@v1");
     assert_eq!(entries[0].object_ref.as_deref(), Some(object_ref.as_str()));
 }
 
 #[tokio::test]
-async fn an_upload_that_changes_nothing_is_refused_without_a_version() {
+async fn an_upload_whose_declared_size_differs_commits_nothing() {
     let rig = FilesRig::with_files(&[("a.txt", b"same")]).await;
-    let uri = format!("/api/v1/files/upload?{}", query("path=a.txt"));
-    let answer = rig.call(Method::PUT, &uri, &[], b"same".to_vec()).await;
-    assert_error(&answer, 409, "conflict");
-    assert_eq!(rig.head().await, "v1");
+    let uri = upload_uri("b.txt", 5, "");
+    let answer = rig.call(Method::PUT, &uri, &[], b"four".to_vec()).await;
+    assert_error(&answer, 400, "invalid_request");
     let refused = rig.journaled("files.upload");
     assert_eq!(refused.len(), 1);
     assert_eq!(refused[0].outcome, Outcome::Failed);
+    let objects = std::fs::read_dir(rig.dir.join("root").join("files"));
+    assert!(objects.is_err(), "no file object was created");
 }
 
 /// Assert `answer` refused a write that would change nothing with `status` and `code`, and
@@ -480,7 +489,7 @@ async fn a_restore_of_the_current_version_is_refused_without_a_version() {
 #[tokio::test]
 async fn an_upload_above_the_cap_is_refused() {
     let rig = FilesRig::with_files(&[("a.txt", b"a")]).await;
-    let uri = format!("/api/v1/files/upload?{}", query("path=big.bin"));
+    let uri = upload_uri("big.bin", MAX_UPLOAD_BYTES + 1, "");
     let answer = rig
         .call(Method::PUT, &uri, &[], vec![0u8; MAX_UPLOAD_BYTES + 1])
         .await;
@@ -524,8 +533,7 @@ async fn a_file_added_beneath_a_pending_folder_persists_it() {
     let rig = FilesRig::with_files(&[("a.txt", b"a")]).await;
     rig.post("/api/v1/files/folders", body(json!({ "path": "albums" })))
         .await;
-    let uri = format!("/api/v1/files/upload?{}", query("path=albums%2Fb.txt"));
-    rig.call(Method::PUT, &uri, &[], b"b".to_vec()).await;
+    rig.commit(&[("albums/b.txt", b"b")]).await;
     let listing = rig
         .get(&format!("/api/v1/files/listing?{}", query("prefix=albums")))
         .await;
@@ -685,7 +693,7 @@ async fn file_routes_need_the_token_and_refusals_are_journaled() {
     let uri = format!("/api/v1/files/content?{}", query("path=a.txt"));
     let anonymous = files_fixture::send(&rig.state, Method::GET, &uri, &[], Vec::new()).await;
     assert_error(&anonymous, 401, "unauthorized");
-    let upload_uri = format!("/api/v1/files/upload?{}", query("path=a.txt"));
+    let upload_uri = upload_uri("a.txt", 1, "");
     let upload = files_fixture::send(
         &rig.state,
         Method::PUT,

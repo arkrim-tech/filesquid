@@ -10,7 +10,7 @@ use super::versions::Committed;
 use super::view::{
     CommitView, FileDetailsView, FileHistorySizeView, FileQuery, FolderPageView, FolderRequest,
     FolderView, HistoryQuery, HistoryView, LabelRequest, LibraryHistorySizeView, LibraryQuery,
-    ListingQuery, MoveRequest, ObjectQuery, RemoveRequest, RestoreRequest, UploadQuery,
+    ListingQuery, MoveRequest, ObjectQuery, RemoveRequest, RestoreRequest, UploadQuery, UploadView,
     VersionsView,
 };
 use crate::content::ContentTarget;
@@ -51,9 +51,9 @@ pub trait FileOperations: Send + Sync {
     /// `not_found` unless `target` names a file of an existing version.
     fn check_target(&self, target: ContentTarget) -> FileFuture<'_, ()>;
 
-    /// Add or replace one file by `actor`.
+    /// Upload one file by `actor`: a new file object, or new content for an existing file.
     fn upload(&self, query: UploadQuery, bytes: Bytes, actor: String)
-        -> FileFuture<'_, CommitView>;
+        -> FileFuture<'_, UploadView>;
 
     /// Whether a folder exists or stays pending; writes nothing.
     fn create_folder(&self, request: FolderRequest) -> FileFuture<'_, FolderView>;
@@ -120,7 +120,7 @@ where
         query: UploadQuery,
         bytes: Bytes,
         actor: String,
-    ) -> FileFuture<'_, CommitView> {
+    ) -> FileFuture<'_, UploadView> {
         Box::pin(async move { FileService::upload(self, query, &bytes, &actor).await })
     }
 

@@ -2,7 +2,9 @@
 //! API-S-005, API-S-008, API-S-017, OCFL-S-012): the file routes through the router, against
 //! a real OCFL root on the local filesystem.
 
-use crate::files_fixture::{encode, pattern, query, send, Answer, FilesRig, LIBRARY, OBJECT};
+use crate::files_fixture::{
+    encode, pattern, query, send, upload_uri, Answer, FilesRig, LIBRARY, OBJECT,
+};
 use crate::MonitorWorld;
 use axum::http::{Method, StatusCode};
 use cucumber::{given, then, when};
@@ -93,28 +95,32 @@ fn no_storage_paths(w: &mut MonitorWorld) {
     }
 }
 
-#[when(expr = "the owner uploads {string}")]
-async fn upload(w: &mut MonitorWorld, path: String) {
-    upload_bytes(w, &path, b"new bytes").await;
-}
-
-#[when(expr = "the owner uploads {string} with its current content")]
-async fn upload_same(w: &mut MonitorWorld, path: String) {
-    upload_bytes(w, &path, b"notes").await;
-}
-
-/// `PUT /api/v1/files/upload` of `bytes` as `path`.
-async fn upload_bytes(w: &mut MonitorWorld, path: &str, bytes: &[u8]) {
-    let uri = format!(
-        "/api/v1/files/upload?{}",
-        query(&format!("path={}", encode(path)))
-    );
-    let answer = w
-        .files
-        .rig()
-        .call(Method::PUT, &uri, &[], bytes.to_vec())
-        .await;
+#[when(expr = "the owner uploads a new file named {string}")]
+async fn upload(w: &mut MonitorWorld, name: String) {
+    let bytes = b"new bytes".to_vec();
+    let uri = upload_uri(&name, bytes.len(), "");
+    let answer = w.files.rig().call(Method::PUT, &uri, &[], bytes).await;
     w.files.answers.push(answer);
+}
+
+#[when(expr = "a file {string} is committed beneath it")]
+async fn committed_beneath(w: &mut MonitorWorld, path: String) {
+    w.files.rig().commit(&[(path.as_str(), b"first")]).await;
+}
+
+#[then(expr = "the upload should create the file's own object at its first version")]
+fn own_object(w: &mut MonitorWorld) {
+    let answer = w.files.last();
+    assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
+    let upload = answer.json();
+    let file_id = upload["file_id"].as_str().expect("file id");
+    assert_eq!(upload["object_id"], format!("urn:uuid:{file_id}"));
+    assert_eq!(upload["version"], "v1");
+}
+
+#[then(expr = "the object should have exactly {int} new versions")]
+async fn n_new_versions(w: &mut MonitorWorld, count: u32) {
+    assert_new_versions(w, count).await;
 }
 
 #[then(expr = "the object should have exactly one new version")]
@@ -148,8 +154,20 @@ async fn journaled_opaque(w: &mut MonitorWorld, operation: String) {
     assert_eq!(entries.len(), 1);
     let entry = &entries[0];
     assert_eq!(entry.outcome, Outcome::Succeeded);
-    let head = w.files.rig().head().await;
-    let expected = [LIBRARY.to_string(), OBJECT.to_string(), head];
+    let last = w.files.last().json();
+    let expected = match last["file_id"].is_string() {
+        // An upload writes the file's own object, which the answer names.
+        true => [
+            LIBRARY.to_string(),
+            last["object_id"].as_str().expect("object").to_string(),
+            last["version"].as_str().expect("version").to_string(),
+        ],
+        false => [
+            LIBRARY.to_string(),
+            OBJECT.to_string(),
+            w.files.rig().head().await,
+        ],
+    };
     assert_eq!(
         entry.target_ids, expected,
         "library, object and new version"
@@ -172,14 +190,24 @@ async fn move_path(w: &mut MonitorWorld, from: String, to: String) {
 
 #[when(expr = "the owner restores {string} from version {word}")]
 async fn restore(w: &mut MonitorWorld, path: String, version: String) {
-    let request = body(json!({ "version": version, "paths": [path] }));
-    let answer = w
-        .files
-        .rig()
-        .post("/api/v1/files/restorations", request)
-        .await;
+    let answer = post_restore(w, &path, &version).await;
     assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
     w.files.answers.push(answer);
+}
+
+#[when(expr = "the owner restores {string} from version {word} without a change")]
+async fn restore_unchanged(w: &mut MonitorWorld, path: String, version: String) {
+    let answer = post_restore(w, &path, &version).await;
+    w.files.answers.push(answer);
+}
+
+/// `POST /api/v1/files/restorations` of `path` from `version`.
+async fn post_restore(w: &MonitorWorld, path: &str, version: &str) -> Answer {
+    let request = body(json!({ "version": version, "paths": [path] }));
+    w.files
+        .rig()
+        .post("/api/v1/files/restorations", request)
+        .await
 }
 
 #[then(expr = "{string} and {string} should both be readable")]

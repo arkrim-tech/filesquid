@@ -144,7 +144,9 @@ async fn download(
         HeaderName::from_static("x-content-type-options"),
         HeaderValue::from_static("nosniff"),
     );
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static(download.media_type));
+    if let Ok(value) = HeaderValue::from_str(&download.media_type) {
+        headers.insert(CONTENT_TYPE, value);
+    }
     headers.insert(CONTENT_LENGTH, HeaderValue::from(download.total));
     if let Ok(value) = HeaderValue::from_str(&disposition) {
         headers.insert(CONTENT_DISPOSITION, value);
@@ -241,7 +243,8 @@ async fn read_content(
     answer_content(&state, principal.actor(), outcome, answer).await
 }
 
-/// `PUT /api/v1/files/upload`: add or replace one file; the body is its bytes.
+/// `PUT /api/v1/files/upload`: upload one file as its own object, or new content for an
+/// existing file; the body is its bytes.
 async fn upload(
     State(state): State<ApiState>,
     Extension(principal): Extension<Principal>,
@@ -259,7 +262,31 @@ async fn upload(
         files(&state)?.upload(upload, bytes, actor).await
     }
     .await;
-    write_answer(&state, UPLOAD_OPERATION, &principal, outcome).await
+    upload_answer(&state, &principal, outcome).await
+}
+
+/// Answer an upload: journal its version as [`write_answer`] does and answer the upload view,
+/// which also names the file.
+async fn upload_answer(
+    state: &ApiState,
+    principal: &Principal,
+    outcome: Result<super::UploadView, FileError>,
+) -> Response {
+    let upload = match outcome {
+        Ok(upload) => upload,
+        Err(err) => return refuse(state, UPLOAD_OPERATION, principal.actor(), err).await,
+    };
+    let commit = super::CommitView {
+        library_id: upload.library_id.clone(),
+        object_id: upload.object_id.clone(),
+        version: upload.version.clone(),
+        created: upload.created.clone(),
+    };
+    let journaled = write_answer(state, UPLOAD_OPERATION, principal, Ok(commit)).await;
+    match journaled.status().is_success() {
+        true => Json(upload).into_response(),
+        false => journaled,
+    }
 }
 
 /// `POST /api/v1/files/folders`: answers whether the folder exists or stays pending; writes
@@ -483,7 +510,9 @@ pub(crate) async fn answer_content(
         HeaderName::from_static("x-content-type-options"),
         HeaderValue::from_static("nosniff"),
     );
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static(answer.media_type));
+    if let Ok(value) = HeaderValue::from_str(&answer.media_type) {
+        headers.insert(CONTENT_TYPE, value);
+    }
     headers.insert(CONTENT_LENGTH, HeaderValue::from(len));
     if let Ok(value) = HeaderValue::from_str(&disposition) {
         headers.insert(CONTENT_DISPOSITION, value);
