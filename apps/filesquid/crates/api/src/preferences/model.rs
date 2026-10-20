@@ -115,6 +115,21 @@ pub struct PinnedDestination {
     pub kind: PinKind,
 }
 
+impl PinnedDestination {
+    /// True when `kind` is the kind the node handle names (false for a non-handle). Pure.
+    fn kind_matches(&self) -> bool {
+        let named = match NodeRef::from_handle(&self.node) {
+            Some(NodeRef::Repository(_)) => PinKind::Repository,
+            Some(NodeRef::Library(_)) => PinKind::Library,
+            Some(NodeRef::Collection(_)) => PinKind::Collection,
+            Some(NodeRef::VirtualCollection(_)) => PinKind::VirtualCollection,
+            Some(NodeRef::Folder { .. }) => PinKind::Folder,
+            None => return false,
+        };
+        named == self.kind
+    }
+}
+
 /// The navigation tree's choices (UI-S-017).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -205,6 +220,9 @@ impl NavigationPreferences {
         let pins = self.pinned.iter().map(|pin| pin.node.as_str());
         if self.pinned.len() > MAX_PINNED || !all_handles_once(pins) {
             return Err("Navigation keeps at most 100 pinned node handles, each once.");
+        }
+        if !self.pinned.iter().all(PinnedDestination::kind_matches) {
+            return Err("Each pinned destination's kind is the kind its node handle names.");
         }
         let order_ok = self.order.iter().all(|id| is_section_id(id));
         if self.order.len() > MAX_SECTIONS || !order_ok || !all_once(&self.order) {

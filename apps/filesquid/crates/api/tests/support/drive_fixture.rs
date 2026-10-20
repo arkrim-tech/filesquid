@@ -32,7 +32,8 @@ pub fn keep_preferences(rig: &FilesRig) -> Arc<MemoryPreferenceStore> {
     store
 }
 
-/// A complete preferences body with the defaults except `layout` grid and one pin.
+/// A complete preferences body with a non-default start view, sort, folder placement and
+/// hover card, a grid layout, two section ids, and `pin` pinned and collapsed.
 pub fn grid_preferences(pin: &str) -> Value {
     json!({
         "schema": 1,

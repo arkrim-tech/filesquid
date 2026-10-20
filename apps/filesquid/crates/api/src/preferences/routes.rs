@@ -99,13 +99,25 @@ async fn blocking<T: Send + 'static>(
             "The preferences could not be read or saved.",
         )
     })?;
-    joined.map_err(|PreferenceStoreError::Unavailable(detail)| {
-        tracing::info!(target: LOG_TARGET, %detail, "preference store unavailable");
-        ApiError::new(
-            ErrorCode::Unavailable,
-            "The preferences cannot be reached right now; try again shortly.",
-        )
-    })
+    joined.map_err(store_error)
+}
+
+/// The API error of a store refusal: `unavailable` (retryable) when the store cannot be
+/// reached, `conflict` (not retryable) when it keeps no more users.
+fn store_error(err: PreferenceStoreError) -> ApiError {
+    match err {
+        PreferenceStoreError::Unavailable(detail) => {
+            tracing::info!(target: LOG_TARGET, %detail, "preference store unavailable");
+            ApiError::new(
+                ErrorCode::Unavailable,
+                "The preferences cannot be reached right now; try again shortly.",
+            )
+        }
+        PreferenceStoreError::Full => ApiError::new(
+            ErrorCode::Conflict,
+            "This host keeps preferences for no more users.",
+        ),
+    }
 }
 
 /// `invalid_request` with `message`.

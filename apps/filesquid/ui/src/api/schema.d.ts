@@ -851,7 +851,7 @@ export interface paths {
         get: operations["getPreferences"];
         /**
          * Replace the caller's UI preferences
-         * @description Replace the caller's own preferences with a complete, checked value: every field, schema 1, navigation version 1, at most 100 pinned node handles, 16 section ids of 1 to 64 characters and 1,000 collapsed node handles, each once (UI-S-017). Node entries must be handles the navigation listing wrote; no name, title, logical path, token or content handle is stored. A save is journaled once as preferences.update with the actor only, never the values.
+         * @description Replace the caller's own preferences with a complete, checked value: every field, schema 1, navigation version 1, at most 100 pinned node handles, 16 section ids of 1 to 64 characters and 1,000 collapsed node handles, each once (UI-S-017). Node entries must be handles the navigation listing wrote; no name, title, logical path, token or content handle is stored. Each pin's kind must be the kind its handle names. A host that keeps preferences for no more users answers 409 conflict (not retryable). A save is journaled once as preferences.update with the actor only, never the values.
          */
         put: operations["putPreferences"];
         post?: never;
@@ -3535,6 +3535,7 @@ export interface operations {
             400: components["responses"]["InvalidRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
             500: components["responses"]["Internal"];
             503: components["responses"]["PreferencesUnavailable"];
         };

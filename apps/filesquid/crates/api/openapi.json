@@ -2853,7 +2853,7 @@
       "put": {
         "operationId": "putPreferences",
         "summary": "Replace the caller's UI preferences",
-        "description": "Replace the caller's own preferences with a complete, checked value: every field, schema 1, navigation version 1, at most 100 pinned node handles, 16 section ids of 1 to 64 characters and 1,000 collapsed node handles, each once (UI-S-017). Node entries must be handles the navigation listing wrote; no name, title, logical path, token or content handle is stored. A save is journaled once as preferences.update with the actor only, never the values.",
+        "description": "Replace the caller's own preferences with a complete, checked value: every field, schema 1, navigation version 1, at most 100 pinned node handles, 16 section ids of 1 to 64 characters and 1,000 collapsed node handles, each once (UI-S-017). Node entries must be handles the navigation listing wrote; no name, title, logical path, token or content handle is stored. Each pin's kind must be the kind its handle names. A host that keeps preferences for no more users answers 409 conflict (not retryable). A save is journaled once as preferences.update with the actor only, never the values.",
         "x-filesquid-action": "preferences.manage",
         "requestBody": {
           "required": true,
@@ -2884,6 +2884,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
           },
           "500": {
             "$ref": "#/components/responses/Internal"

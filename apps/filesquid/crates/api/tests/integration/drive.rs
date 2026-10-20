@@ -24,7 +24,9 @@ use filesquid_api::auth::Authoriser;
 use filesquid_api::files::{DOWNLOAD_OPERATION, MAX_ANSWER_BYTES};
 use filesquid_api::journal::Outcome;
 use filesquid_api::navigation::{FolderScope, NodeRef};
-use filesquid_api::preferences::{PreferenceStore, Preferences, UPDATE_OPERATION};
+use filesquid_api::preferences::{
+    PreferenceStore, Preferences, MAX_MEMORY_USERS, UPDATE_OPERATION,
+};
 use filesquid_core::{CollectionId, LibraryId};
 use navigation_fixture::NavRig;
 use serde_json::{json, Value};
@@ -146,8 +148,13 @@ async fn every_bound_of_the_preferences_is_enforced() {
             "navigation",
             json!({ "version": 1, "collapsed": [pin, pin] }),
         ),
+        (
+            "navigation",
+            json!({ "version": 1, "pinned": [{ "node": pin, "kind": "folder" }] }),
+        ),
         ("token", json!("secret")),
     ];
+    let attempts = refused.len() + 1;
     for (field, value) in refused {
         let mut body = grid_preferences(&pin);
         body[field] = value;
@@ -167,6 +174,7 @@ async fn every_bound_of_the_preferences_is_enforced() {
         "nothing was saved"
     );
     let failed = rig.journaled(UPDATE_OPERATION);
+    assert_eq!(failed.len(), attempts, "each refusal is journaled once");
     assert!(failed.iter().all(|e| e.outcome == Outcome::Failed));
     assert!(failed
         .iter()
@@ -189,6 +197,21 @@ async fn the_largest_navigation_choices_are_kept() {
     let saved = put_preferences(&rig, &body).await;
     assert_eq!(saved.status, StatusCode::OK, "{:?}", saved.json());
     assert_eq!(get_preferences(&rig).await.json(), body);
+}
+
+#[tokio::test]
+async fn a_full_store_refuses_a_new_user_without_inviting_a_retry() {
+    let rig = FilesRig::new().await;
+    let store = keep_preferences(&rig);
+    for user in 0..MAX_MEMORY_USERS {
+        store
+            .save(&format!("user-{user}"), &Preferences::default())
+            .expect("room");
+    }
+    let body = grid_preferences(&handle("c-1"));
+    let answer = put_preferences(&rig, &body).await;
+    assert_error(&answer, 409, "conflict");
+    assert_eq!(answer.json()["retryable"], false);
 }
 
 #[tokio::test]

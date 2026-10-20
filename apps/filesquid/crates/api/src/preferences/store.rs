@@ -1,9 +1,10 @@
 //! [`PreferenceStore`]: where a host keeps each user's preferences, and
 //! [`MemoryPreferenceStore`], the in-memory store of tests and of hosts that keep none.
 //!
-//! The desktop host keeps them in its SQLite database and `filesquid-server` in PostgreSQL, so
-//! a user's choices follow them to every host they sign in to (SRS-F-062). Calls may block on
-//! the database; the routes call them on a blocking thread.
+//! The design is that the desktop host keeps them in its SQLite database and
+//! `filesquid-server` in PostgreSQL, so a user's choices follow them to every host they sign in
+//! to (SRS-F-062). Neither host installs a store yet, so the routes answer `unavailable` until
+//! one does. Calls may block on the database; the routes call them on a blocking thread.
 
 use super::model::Preferences;
 use std::collections::HashMap;
@@ -18,6 +19,8 @@ pub const MAX_MEMORY_USERS: usize = 10_000;
 pub enum PreferenceStoreError {
     /// The store cannot be reached now; a retry may succeed. The detail goes to stdout only.
     Unavailable(String),
+    /// The store keeps no more users; retrying does not help.
+    Full,
 }
 
 /// Each user's saved preferences, keyed by the user's opaque actor name.
@@ -33,7 +36,9 @@ pub trait PreferenceStore: Send + Sync {
     ///
     /// # Errors
     ///
-    /// [`PreferenceStoreError::Unavailable`] when nothing was saved.
+    /// [`PreferenceStoreError::Unavailable`] when the store cannot be written, or
+    /// [`PreferenceStoreError::Full`] when it keeps no more users; either way nothing was
+    /// saved.
     fn save(&self, user: &str, preferences: &Preferences) -> Result<(), PreferenceStoreError>;
 }
 
@@ -66,8 +71,7 @@ impl PreferenceStore for MemoryPreferenceStore {
     fn save(&self, user: &str, preferences: &Preferences) -> Result<(), PreferenceStoreError> {
         let mut users = self.users();
         if users.len() >= MAX_MEMORY_USERS && !users.contains_key(user) {
-            let detail = format!("the memory store keeps at most {MAX_MEMORY_USERS} users");
-            return Err(PreferenceStoreError::Unavailable(detail));
+            return Err(PreferenceStoreError::Full);
         }
         users.insert(user.to_string(), preferences.clone());
         Ok(())

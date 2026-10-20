@@ -1,7 +1,8 @@
 //! Contract fixtures for the file operation and content routes (Task API-F1.3): a file
 //! service over an in-memory OCFL root whose object holds the files the sample requests
-//! name, the sample request of every file and content route, and serialized Rust samples of
-//! every file and content-handle schema.
+//! name, the sample request of every file and content route (and of the routes that need a
+//! body, such as `PUT /api/v1/preferences` and `POST /api/v1/client-events`), and
+//! serialized Rust samples of every file and content-handle schema.
 
 #![allow(dead_code)]
 
@@ -113,7 +114,8 @@ fn json_body(fields: Value) -> Option<(&'static str, Vec<u8>)> {
 /// The request URI and body of the sample call of `method path` on `state`. A file route
 /// gets the query or body that names the sample object; the content route gets a handle
 /// minted for `token` when `state` has a file service, and the documented template
-/// otherwise; every other route is called as it is, with no body.
+/// otherwise; `PUT /api/v1/preferences` gets the default preferences; every other route is
+/// called as it is, with no body.
 pub fn sample(
     state: &ApiState,
     method: &Method,

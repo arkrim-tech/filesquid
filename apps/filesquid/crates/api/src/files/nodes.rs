@@ -54,11 +54,12 @@ pub(super) fn listing_query(
         return Err(both_forms());
     }
     let node = NodeRef::from_handle(&handle).ok_or_else(FileError::not_found)?;
-    let (scope, prefix) = node_folder(&node)?;
     let navigation = navigation.ok_or_else(|| FileError::unavailable("no navigation service"))?;
+    // Readability first, so an unreadable node of any kind gets the one `not_found`.
     navigation
         .check_readable(principal, &node)
         .map_err(file_error)?;
+    let (scope, prefix) = node_folder(&node)?;
     let object = files
         .scope_object(&scope)
         .ok_or_else(FileError::not_found)?;

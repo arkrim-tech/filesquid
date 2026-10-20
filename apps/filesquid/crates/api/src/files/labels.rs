@@ -39,8 +39,9 @@ pub const MAX_LABELS_FILE_BYTES: u64 = 1024 * 1024;
 /// The schema of the labels file.
 const SCHEMA: u32 = 1;
 
-/// Whether `path` is the application-data folder or lies inside it.
-pub fn is_reserved(path: &str) -> bool {
+/// Whether `path` is the application-data folder or lies inside it. The general guard for
+/// every folder FileSquid keeps for itself is [`in_reserved_folder`].
+pub fn is_app_data(path: &str) -> bool {
     in_folder(path, APP_DATA_FOLDER)
 }
 
@@ -237,11 +238,11 @@ mod tests {
 
     #[test]
     fn the_reserved_folder_is_the_folder_and_its_contents_only() {
-        assert!(is_reserved(".filesquid"));
-        assert!(is_reserved(".filesquid/labels.json"));
-        assert!(!is_reserved(".filesquidx/a"));
-        assert!(!is_reserved("photos/.filesquid"));
-        assert!(!is_reserved("provenance/v1.jsonld"));
+        assert!(is_app_data(".filesquid"));
+        assert!(is_app_data(".filesquid/labels.json"));
+        assert!(!is_app_data(".filesquidx/a"));
+        assert!(!is_app_data("photos/.filesquid"));
+        assert!(!is_app_data("provenance/v1.jsonld"));
         assert!(in_reserved_folder("provenance"));
         assert!(in_reserved_folder("provenance/v1.jsonld"));
         assert!(in_reserved_folder(".filesquid/labels.json"));

@@ -104,14 +104,18 @@ async fn listing(
     read_answer(&state, LIST_OPERATION, &principal, outcome).await
 }
 
-/// The listing a request names, resolving a node on a blocking thread: the navigation
-/// service and the host's scope catalog may block on storage.
+/// The listing a request names. A node is resolved on a blocking thread, since the
+/// navigation service and the host's scope catalog may block on storage; the path form
+/// does no blocking work and is resolved inline.
 async fn resolve_listing(
     state: &ApiState,
     principal: &Principal,
     files: std::sync::Arc<dyn super::FileOperations>,
     request: ListingRequest,
 ) -> Result<ListingQuery, FileError> {
+    if request.node.is_none() {
+        return listing_query(request, principal, None, files.as_ref());
+    }
     let navigation = state.navigation();
     let principal = principal.clone();
     let resolve = move || listing_query(request, &principal, navigation, files.as_ref());

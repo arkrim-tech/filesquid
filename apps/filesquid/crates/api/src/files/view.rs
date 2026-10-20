@@ -7,7 +7,8 @@ use filesquid_ocfl::view::{Entry, FileChange, FileDetails, FileHistoryEntry, Fol
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// Query of `GET /api/v1/files/listing`.
+/// The resolved listing query a [`super::FileOperations::listing`] call takes: one folder of
+/// one object, after the route resolved a [`ListingRequest`] (and its node, if any).
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ListingQuery {
