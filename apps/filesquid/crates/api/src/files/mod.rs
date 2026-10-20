@@ -46,6 +46,7 @@
 mod download;
 mod error;
 mod handle;
+mod import;
 pub mod labels;
 pub mod media;
 mod metadata_routes;
@@ -63,6 +64,7 @@ mod view;
 pub use download::{Download, DownloadStream};
 pub use error::FileError;
 pub use handle::{FileFuture, FileOperations};
+pub use import::SourceImport;
 pub use labels::{APP_DATA_FOLDER, LABELS_PATH, MAX_LABELS, PROVENANCE_FOLDER, RESERVED_FOLDERS};
 pub use names::{DisplayNames, NameFuture, StoredFile};
 pub use nodes::{ScopeObject, ScopeObjects};

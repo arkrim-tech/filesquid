@@ -4,6 +4,7 @@
 //! file name ([`names`]).
 
 pub mod facts;
+pub mod file;
 pub mod host;
 pub mod names;
 pub mod time;

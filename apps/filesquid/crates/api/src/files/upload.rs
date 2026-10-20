@@ -23,12 +23,12 @@ use filesquid_ocfl::storage::StorageBackend;
 use filesquid_ocfl::write::VersionReservations;
 
 /// The file an upload writes: its identifier and object, and its record at the head, if any.
-struct Target {
-    file_id: FileId,
-    root: String,
-    object_id: String,
-    previous: Option<FileRecord>,
-    next_version: String,
+pub(super) struct Target {
+    pub(super) file_id: FileId,
+    pub(super) root: String,
+    pub(super) object_id: String,
+    pub(super) previous: Option<FileRecord>,
+    pub(super) next_version: String,
 }
 
 impl<B, R, S> FileService<B, R, S>
@@ -122,7 +122,7 @@ fn name_form(query: &UploadQuery) -> Result<NameForm, FileError> {
 
 /// The file an upload writes: a new file, or the existing file `file_id` with its record and
 /// the version the upload will publish.
-async fn upload_target<B: StorageBackend>(
+pub(super) async fn upload_target<B: StorageBackend>(
     backend: &B,
     file_id: Option<&str>,
 ) -> Result<Target, FileError> {
@@ -193,7 +193,7 @@ fn mint_file_id() -> Result<FileId, FileError> {
 }
 
 /// The file error of a canonical refusal or failure.
-fn canonical_error(err: CanonicalError) -> FileError {
+pub(super) fn canonical_error(err: CanonicalError) -> FileError {
     match err {
         CanonicalError::Encode(reason) | CanonicalError::InvalidIdentifier(reason) => {
             FileError::invalid(format!("The upload was refused: {reason}."))

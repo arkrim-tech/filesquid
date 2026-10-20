@@ -74,6 +74,16 @@ impl FileError {
         self.code
     }
 
+    /// The message for people (never a path).
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    /// Whether the same request may succeed later.
+    pub fn retryable(&self) -> bool {
+        self.code.retryable()
+    }
+
     /// The code's wire name, as the journal records it.
     pub fn error_code(&self) -> &'static str {
         self.code.as_str()
