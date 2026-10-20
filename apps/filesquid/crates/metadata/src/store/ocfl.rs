@@ -39,6 +39,10 @@ use crate::markdown::{from_markdown, to_markdown};
 use crate::record::Record;
 use crate::store::{MetadataStore, StoreError, METADATA_MD};
 
+mod cited;
+
+use cited::CitedContent;
+
 /// Largest `metadata.md` the store reads or commits: 64 MiB.
 pub const MAX_RECORD_BYTES: u64 = 64 * 1024 * 1024;
 
@@ -237,7 +241,9 @@ where
         let bytes = file_record_bytes(file, base.as_ref(), record)?;
         let first_new = base.as_ref().map_or(0, |base| base.imports().len());
         self.verify_staged(file, record, first_new).await?;
-        self.commit_bytes(file, &bytes, options, false).await
+        let guard = CitedContent::new(record, first_new, options.bound);
+        self.commit_cited(file, &bytes, options, &guard, false)
+            .await
     }
 
     /// Check that the content each new managed entry cites is staged at its
@@ -324,7 +330,8 @@ where
         let bytes = file_record_bytes(file, base.as_ref(), &next)?;
         let first_new = base.as_ref().map_or(0, |base| base.imports().len());
         self.verify_held(file, &next, first_new).await?;
-        self.commit_bytes(file, &bytes, options, true).await
+        let guard = CitedContent::new(&next, first_new, options.bound);
+        self.commit_cited(file, &bytes, options, &guard, true).await
     }
 
     /// The whole per-file record of the pinned version of `file`, or of the
@@ -350,6 +357,28 @@ where
     /// storage root.
     pub fn change_model(&self, object_id: &str) -> Result<ChangeModel<'a, B, R, S>, StoreError> {
         self.model(object_id)
+    }
+
+    /// [`commit_bytes`](Self::commit_bytes) for an import record: `guard`
+    /// replaces the caller's bound files and checks, inside the commit, that
+    /// the version still holds the content the new entries cite, so a
+    /// concurrent change of that content is a [`StoreError::Conflict`]
+    /// instead of a record citing stale bytes (MD-S-013, OCFL-S-016).
+    async fn commit_cited(
+        &self,
+        file: &FileRef,
+        bytes: &[u8],
+        options: &CommitOptions<'_>,
+        guard: &CitedContent<'_>,
+        reset_first: bool,
+    ) -> Result<Option<CommitReceipt>, StoreError> {
+        let guarded = CommitOptions {
+            user: options.user.clone(),
+            message: options.message.clone(),
+            bound: Some(guard),
+        };
+        let result = self.commit_bytes(file, bytes, &guarded, reset_first).await;
+        result.map_err(|err| guard.explain(err))
     }
 
     /// Stage `bytes` as the record of `file` and publish one version.

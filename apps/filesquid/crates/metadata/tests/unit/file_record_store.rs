@@ -13,8 +13,12 @@ use filesquid_metadata::record::Record;
 use filesquid_metadata::store::ocfl::{CommitOptions, OcflStore};
 use filesquid_metadata::store::{MetadataStore, StoreError, METADATA_MD};
 use filesquid_metadata::MetadataNamespace;
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use filesquid_ocfl::storage::MemoryBackend;
 use filesquid_ocfl::validate::validate_object;
+use filesquid_ocfl::write::{BoundContext, Clock, SystemClock};
 
 #[path = "../support/import_rig.rs"]
 mod import;
@@ -557,4 +561,71 @@ fn a_re_import_must_cite_content_the_object_holds() {
         "{result:?}"
     );
     assert_eq!(rig.versions(OBJECT), ["v1"]);
+}
+
+/// A clock that, the first time the store asks it for the time (after the
+/// re-import's preflight check, before its commit), has another writer
+/// replace the stored original in a new version.
+struct ReplaceOriginalOnFirstTick<'r> {
+    rig: &'r Rig<MemoryBackend>,
+    fired: AtomicBool,
+}
+
+impl Clock for ReplaceOriginalOnFirstTick<'_> {
+    fn now_millis(&self) -> Option<u64> {
+        if !self.fired.swap(true, Ordering::SeqCst) {
+            self.rig.seed(OBJECT, &[(STORED, b"other bytes")]);
+        }
+        SystemClock.now_millis()
+    }
+}
+
+#[test]
+fn a_re_import_whose_original_is_replaced_before_its_commit_is_a_conflict() {
+    let rig = Rig::memory();
+    import(&rig, &record());
+    let store = OcflStore {
+        clock: ReplaceOriginalOnFirstTick {
+            rig: &rig,
+            fired: AtomicBool::new(false),
+        },
+        storage: &rig.storage,
+        reservations: &rig.leases,
+        staging: &rig.staging,
+        staging_prefix: "metadata-changes".to_string(),
+        holder: "metadata-test".to_string(),
+        object_root: object_root as fn(&str) -> String,
+    };
+    let result =
+        ready(store.append_import_with(&file(), second_entry(), &CommitOptions::default()));
+    assert!(
+        matches!(&result, Err(StoreError::Conflict { reason }) if reason.contains(STORED)),
+        "{result:?}"
+    );
+    assert_eq!(rig.versions(OBJECT), ["v1", "v2"]);
+    assert_eq!(read(&rig).imports().len(), 1);
+}
+
+#[test]
+fn a_re_import_still_commits_the_callers_bound_files() {
+    let rig = Rig::memory();
+    import(&rig, &record());
+    let bound = |_: &BoundContext<'_>| -> Result<BTreeMap<String, Vec<u8>>, String> {
+        Ok(BTreeMap::from([("prov.ttl".to_string(), b"prov".to_vec())]))
+    };
+    let options = CommitOptions {
+        bound: Some(&bound),
+        ..CommitOptions::default()
+    };
+    ready(
+        rig.store()
+            .append_import_with(&file(), second_entry(), &options),
+    )
+    .unwrap()
+    .unwrap();
+    let root = object_root(OBJECT);
+    let object = ready(filesquid_ocfl::read::Object::open(&rig.storage, &root)).unwrap();
+    let state = object.state(object.head()).unwrap();
+    assert!(state.get("prov.ttl").is_some());
+    assert_eq!(read(&rig).imports().len(), 2);
 }

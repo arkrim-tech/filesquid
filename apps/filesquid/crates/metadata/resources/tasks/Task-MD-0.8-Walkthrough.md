@@ -21,8 +21,8 @@ Also MD-S-008: Canonical metadata record (one per-file record `<file-uuid>.metad
 
 - API-F1.4's upload: build `ImportEntry::for_upload`, `FileRecord::new`, stage the original with `change_model(..).stage_bytes`, then `commit_import_with` (one version, the caller's `CommitOptions`). The read-only route answers `FileRecord::facts()`.
 - API-F1.13: the display name is `FileRecord::display_name()`; a rename is `set_display_name` plus `commit_file_record_with` (a new version; the original name and every import entry stay). The stored name builder stays in API-F1.13 and can use `stored_extension`; the `FileRef` is `FileRef::new(object, "original/<uuid>.<ext>")` with `with_record_path("original/<uuid>.metadata.md")`.
-- Decision: the first import entry cites `object_version` as the caller supplies it (the version that holds the content); the crate checks the object and logical path, not the version, because the version is not known before the commit.
-- Decision: the original file name is not an identity class of the scrub; API-S-027's sharing default (FileId plus extension) already covers it.
+- Open for the owner: the import entry cites `object_version` as the caller supplies it (the version that holds the content). The crate checks the object, logical path and SHA-256, not the version: a staged record cannot name the version it lands in without turning every rebase into a conflict (MD-S-008), and a version-bound file may not replace an existing record path (OCFL-S-024).
+- Open for the owner: the original file name is not an identity class of the scrub (ADR 038 Decision 6 lists the classes); the C-033 / API-S-027 outgoing filename policy governs output file names, not the name fields inside a shared record.
 
 ## Cubic round 1 changes
 
@@ -30,6 +30,11 @@ Also MD-S-008: Canonical metadata record (one per-file record `<file-uuid>.metad
 - The extension MUST be the original name's; `import:` parsing refuses any non-entry line instead of dropping it; Schema.org statements in a file record are written under `schemaorg:` because the record's `schema:` identifier takes that key (both keys are read); `facts()` shows the display name after the one safe transformation of API-S-005 (`safe_display_name`).
 - Validation: timestamps accept any fraction length and allow `60` seconds only as `23:59:60`; whole attribute values may not exceed the bytes the entry says it read; a managed entry's logical path must be a valid logical path; an upload lists a missing UTI as unavailable with a reason and keeps the extension of a non-UTF-8 name; a duplicate field in a base64 envelope is refused.
 - Tests strengthened: every time field, exact SHA-256 values, the projection's relative path and volume name, numeric-ID scrub, referenced import, re-import budget, store refusals.
+
+## Takeover verification (round 4)
+
+- Re-import race (round-2 P1), reproduced and fixed: a re-import stages only the record, so the change model rebased it past a version that replaced the stored original without touching the record, and published a record citing bytes the object no longer held (the new test failed on the previous head with a published `v3`). `commit_import_with` and `append_import_with` now hand the commit a version-bound-files check (`store/ocfl/cited.rs`): the writer calls it after the fenced `vN` reservation with the exact state it will publish, and again after every rebase, so a cited path whose digest changed stops the commit before any `vN` byte is written (`StoreError::Conflict`). The caller's own bound files are still committed.
+- Tests: `a_re_import_whose_original_is_replaced_before_its_commit_is_a_conflict` (another writer replaces the original between the preflight check and the commit; nothing more is published) and `a_re_import_still_commits_the_callers_bound_files`.
 
 ## SRS traceability
 
@@ -43,6 +48,7 @@ Also MD-S-008: Canonical metadata record (one per-file record `<file-uuid>.metad
 | MD-S-013 Import record: bounds: 256 names, 1 MiB, 64 KiB, truncated, incomplete | `attribute_bounds::*`, BDD "Attribute inspection stops at 256 names and 1 MiB and marks what it cut", "A value over 64 KiB is kept as size and SHA-256 only" |
 | MD-S-013 Import record: append-only, refusal of a changed or removed entry or the original name | `a_save_that_changes_an_import_entry_is_refused`, `..._removes_an_import_entry_...`, `..._changes_the_original_name_...` (pure and store), BDD refusal scenarios |
 | MD-S-013 Import record: re-import appends in a new OCFL version | `a_re_import_appends_an_entry_in_a_new_version_and_leaves_v1_untouched`, BDD "A re-import appends an entry in a new OCFL version" |
+| MD-S-013 Import record: cited content still held when the version is published | `a_re_import_whose_original_is_replaced_before_its_commit_is_a_conflict`, `a_re_import_still_commits_the_callers_bound_files`, `staged_content_that_is_not_the_verified_content_is_refused`, `an_import_without_its_staged_content_is_refused`, `a_re_import_must_cite_content_the_object_holds` |
 | MD-S-013 Import record: no filesystem reads, wasm32 | BDD "The import record builds for the browser without filesystem access", "Engine builds for the browser" (default features and `ocfl`) |
 | MD-S-013 Import record, with ADR 038 Decision 6: read access and identity classes | `projection_and_scrub::*`, BDD "The read projection omits paths, host and account", "The outgoing policy scrubs the identity fields" |
 | MD-S-008 Canonical metadata record (one `<file-uuid>.metadata.md` per file, one OCFL version per edit): per-file record path, one version per edit | `the_record_lives_beside_the_original_in_the_same_version_as_its_content`, `a_statements_only_save_keeps_the_header_and_every_import_entry`, `a_plain_metadata_md_is_unchanged_by_the_per_file_path`, BDD "A file's one record lives beside its stored original in the same version", "A statements edit keeps the header and the import section", "A rename changes only the display name" |

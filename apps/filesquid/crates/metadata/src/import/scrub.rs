@@ -7,7 +7,8 @@
 //! [`ImportEntry::scrubbed`] returns a copy with the chosen classes
 //! withheld; each removed fact is listed as unavailable with the reason
 //! [`Reason::WithheldByPolicy`]. The original file name is not an identity
-//! class here: the sharing default of API-S-027 handles it.
+//! class here (ADR 038 Decision 6 lists the classes); the outgoing filename
+//! policy of C-033 and API-S-027 governs the names of shared files.
 
 use super::attributes::{AttrValue, Attribute, Attributes};
 use super::{Host, ImportEntry, SourceFile, SourceVolume};
