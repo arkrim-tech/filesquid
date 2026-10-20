@@ -19,6 +19,7 @@ pub mod message;
 pub mod original;
 pub mod store;
 mod transform;
+pub mod upload;
 
 pub use entity::{LibraryHead, SnapshotEntity, SnapshotFile, VirtualEntry, ENTITY_SCHEMA};
 pub use error::CanonicalError;
@@ -26,10 +27,11 @@ pub use layout::{
     file_object_id, file_object_root, snapshot_object_id, touched, SnapshotKey, SNAPSHOT_ROOT,
 };
 pub use message::{operation_kind, operation_message, parse_operation_message, OperationRecord};
-pub use original::{FileOriginal, OriginalRecord, COMPANION_SUFFIX};
+pub use original::{FileOriginal, COMPANION_SUFFIX};
 pub use store::{
     commit_file_original, commit_snapshot, commit_snapshot_with, create_storage_root,
     read_commit_journal, read_file_original, read_snapshot, LibrarySnapshot, SnapshotDelta,
     HISTORY_PREFIX, JOURNAL_SUFFIX, MAX_JOURNAL_LINES,
 };
 pub use transform::{OwnerReadable, ProfileTransform};
+pub use upload::{ascii_name_form, new_upload_record, reupload_record, UploadInput};

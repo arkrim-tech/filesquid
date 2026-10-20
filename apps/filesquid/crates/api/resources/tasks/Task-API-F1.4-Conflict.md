@@ -63,3 +63,12 @@ Without a resolution, API-F1.4 cannot meet its acceptance criteria:
 - Two writers of one schema ID would leave libraries with records that one reader or the other refuses. That breaks API-S-026's "MUST refuse a head without the record" for valid libraries and the single-owner rule for file facts (C-055).
 
 Nothing has been implemented for API-F1.4 yet. Work continues only once the owner chooses an option.
+
+## Resolution (owner decision, 2026-10-20)
+
+The owner chose **Option A with 3a** ("A+3a"), recorded in [ADR 038](../../../../../../resources/architecture/038-import-file-record.md) Decision 8, [API-S-026](../srs.md) and the API-F1.4 [plan row](../plan.md):
+
+- `filesquid-metadata`'s `FileRecord` is the only codec of `<file-uuid>.metadata.md`.
+- An upload creates the per-file object `files/<file-id>` with `original/<file-uuid>.<ext>` and its record in its first version.
+
+This task implements it.
