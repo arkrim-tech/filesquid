@@ -75,7 +75,8 @@ fn the_documented_limits_have_their_declared_values() {
             "journal.entry",
             "health.change",
             "events.resync",
-            "host.change"
+            "host.change",
+            "navigation.change"
         ]
     );
 }

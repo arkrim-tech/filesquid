@@ -33,6 +33,7 @@
 /// failure reaches the activity journal exactly once, through the service.
 const LOG_TARGET: &str = "filesquid::library";
 
+mod announce;
 mod catalog;
 mod command;
 mod error;
@@ -43,6 +44,7 @@ mod policy;
 mod query;
 mod service;
 
+pub(crate) use announce::{navigation_parents, NavigationParents};
 pub use catalog::{
     CatalogChange, CatalogCommit, CatalogError, CommitReceipt, FileEntry, FileListing, FileScope,
     Keyed, LibraryCatalog, LibraryRecord, LibraryState, PageKey,
