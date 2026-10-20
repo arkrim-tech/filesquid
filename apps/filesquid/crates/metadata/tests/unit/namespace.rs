@@ -747,6 +747,18 @@ mod xmp {
     }
 
     #[test]
+    fn xmp_import_tokenizes_quoted_attributes_and_processing_instructions() {
+        let packet = format!(
+            "<?xpacket begin='>' <r:hasCreator>Not an element</r:hasCreator> ?>\
+             <rdf:Description about=\"a>b\" note=\"xmlns:r='https://example.org/other#'\" \
+             xmlns:r = \"{RICO_IRI}\"><r:title>Fonds 12</r:title></rdf:Description>"
+        );
+        let record = from_xmp_with(&packet, &registry());
+        let curies: Vec<String> = record.statements.iter().map(|s| s.curie()).collect();
+        assert_eq!(curies, ["rico:title"], "{record:?}");
+    }
+
+    #[test]
     fn xmp_import_reads_a_namespace_by_its_iri_under_any_packet_prefix() {
         let packet = format!(
             "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\

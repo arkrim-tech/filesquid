@@ -144,8 +144,8 @@ fn packet_prefixes(text: &str, registry: &NamespaceRegistry) -> Vec<(String, Str
     names
 }
 
-/// The `xmlns:<name>="<iri>"` declarations in the start tags of a packet
-/// (single or double quotes; text, comments and CDATA are not read); `None`
+/// The `xmlns:<name>="<iri>"` attributes of the start tags of a packet
+/// (text, comments, CDATA and processing instructions are not read); `None`
 /// when it holds more than [`MAX_BINDINGS`], since a rebinding past the cap
 /// could not be seen.
 fn xmlns_bindings(text: &str) -> Option<Vec<(String, String)>> {
@@ -154,25 +154,37 @@ fn xmlns_bindings(text: &str) -> Option<Vec<(String, String)>> {
         if tag.starts_with('/') {
             continue;
         }
-        let mut rest = tag;
-        while let Some(start) = rest.find("xmlns:") {
+        for (name, value) in attributes(tag) {
+            let Some(prefix) = name.strip_prefix("xmlns:") else {
+                continue;
+            };
             if bindings.len() >= MAX_BINDINGS {
                 return None;
             }
-            rest = &rest[start + "xmlns:".len()..];
-            let Some((name, after)) = rest.split_once('=') else {
-                break;
-            };
-            let Some(quote) = after.chars().next().filter(|c| matches!(c, '"' | '\'')) else {
-                continue;
-            };
-            let Some((iri, _)) = after[1..].split_once(quote) else {
-                break;
-            };
-            bindings.push((name.trim().to_string(), xml_unescape(iri)));
+            bindings.push((prefix.to_string(), xml_unescape(value)));
         }
     }
     Some(bindings)
+}
+
+/// The `name="value"` attributes of a start tag's text (single or double
+/// quotes, whitespace allowed around `=`), up to the first malformed one.
+fn attributes(tag: &str) -> Vec<(&str, &str)> {
+    let mut found = Vec::new();
+    let mut rest = tag.trim_start_matches(|c: char| !c.is_whitespace());
+    while let Some(eq) = rest.find('=') {
+        let name = rest[..eq].trim();
+        let after = rest[eq + 1..].trim_start();
+        let Some(quote) = after.chars().next().filter(|c| matches!(c, '"' | '\'')) else {
+            break;
+        };
+        let Some(end) = after[1..].find(quote) else {
+            break;
+        };
+        found.push((name, &after[1..1 + end]));
+        rest = &after[end + 2..];
+    }
+    found
 }
 
 /// The tags of a packet in order, as `(offset of '<', text between '<' and
@@ -184,12 +196,7 @@ fn tag_spans(text: &str) -> Vec<(usize, &str, usize)> {
     while let Some(offset) = text[pos..].find('<') {
         let start = pos + offset;
         let rest = &text[start + 1..];
-        let skip_to = match rest {
-            r if r.starts_with("!--") => r.find("-->").map(|e| e + 3),
-            r if r.starts_with("![CDATA[") => r.find("]]>").map(|e| e + 3),
-            r => r.find('>').map(|e| e + 1),
-        };
-        let Some(skip_to) = skip_to else {
+        let Some(skip_to) = markup_end(rest) else {
             break;
         };
         pos = start + 1 + skip_to;
@@ -199,6 +206,27 @@ fn tag_spans(text: &str) -> Vec<(usize, &str, usize)> {
         }
     }
     spans
+}
+
+/// The offset just past the markup that `rest` (the text after a `<`)
+/// opens: a comment to `-->`, a CDATA section to `]]>`, a processing
+/// instruction to `?>`, or a tag to the first `>` outside quotes.
+fn markup_end(rest: &str) -> Option<usize> {
+    for (open, close) in [("!--", "-->"), ("![CDATA[", "]]>"), ("?", "?>")] {
+        if let Some(body) = rest.strip_prefix(open) {
+            return body.find(close).map(|end| open.len() + end + close.len());
+        }
+    }
+    let mut quote = None;
+    for (at, c) in rest.char_indices() {
+        match (quote, c) {
+            (None, '"' | '\'') => quote = Some(c),
+            (Some(open), c) if c == open => quote = None,
+            (None, '>') => return Some(at + 1),
+            _ => {}
+        }
+    }
+    None
 }
 
 /// A registered element still open during [`pull_prefixed`].
