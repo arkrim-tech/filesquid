@@ -427,9 +427,9 @@ fn one_unreadable_library_leaves_the_others_history_served() {
         format!("urn:uuid:{readable}").as_str()
     );
     assert_eq!(page["truncated"], true, "a library was left out");
-    let (status, _) = desktop.get(&format!("/api/v1/files/{readable}/versions/v1/prov"));
+    let (status, prov) = desktop.get(&format!("/api/v1/files/{readable}/versions/v1/prov"));
     assert_eq!(status, 200);
-    let text = String::from_utf8_lossy(&body).to_string();
+    let text = String::from_utf8_lossy(&prov).to_string();
     assert!(
         !text.contains(desktop.dir.to_string_lossy().as_ref()),
         "no host path"
