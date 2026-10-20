@@ -328,6 +328,22 @@ cd apps/filesquid
 cargo test -p filesquid-api --locked --test integration_metadata --test unit_canonical --test features
 ```
 
+File and folder import on the desktop (Task DE-1.2, API-S-036, DE-S-019): `POST /api/v1/imports` takes a command envelope whose operation ID is the idempotency key. The owner picks files or a folder in the system's own dialog, shown by the Rust host. One durable import job then runs on a native worker thread, with these limits:
+
+- each file gets at most 5 attempts;
+- the 10 GiB staging cap and the free-space reserve apply;
+- a quit suspends the job, and the next launch resumes it from its checkpoint.
+
+Each file is committed as its own OCFL object with its import record. The record's operating-system facts (times, owner, mode, extended attributes, volume, host and the name's Unicode form) are gathered before the file is read; a fact the platform lacks is recorded as unavailable with a reason. Until the streamed stage of the OCFL module lands, a file above 512 MiB is refused as `too_large_for_this_build`. The API route and its contract are tested in `filesquid-api` (`unit_imports_route`). The fact gathering, the one-file commit and the job (resume, attempts, quarantine and the worker) are tested in `filesquid-native` against files and OCFL storage roots in the system temporary directory. The desktop wiring is tested through the `filesquid://` scheme with a scripted dialog (`integration_imports`, and `desktop_imports_F-002.feature` in the desktop's `features`, which needs the `test-webdriver` feature):
+
+```sh
+cd apps/filesquid
+cargo test -p filesquid-api --locked --test unit_imports_route
+cargo test -p filesquid-native --features desktop --locked --test unit_import_facts --test unit_import_file --test unit_import_job
+cargo test -p filesquid-desktop --locked --test integration_imports
+cargo test -p filesquid-desktop --features test-webdriver --locked --test features
+```
+
 The host-side I/O the API must not do lives in the native-processing library `filesquid-native` (`crates/native`): the SQLite journal store, the data-directory checks (write probe, free space) and `HostMonitor`, which both hosts link ([ADR 033](./resources/architecture/033-activity-journal-and-live-health-monitoring.md) amendment 2026-10-18). Its unit tests and BDD features run alone:
 
 ```sh

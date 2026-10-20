@@ -18,8 +18,9 @@ use filesquid_core::{InstallationId, RepositoryId};
 use std::sync::Arc;
 
 /// The folders the desktop catalog's committed file paths imply. The catalog records no
-/// logical path for its files yet (the import of Task DE-1.2 adds them), so no committed path
-/// implies a folder and every scope has none. Pure.
+/// logical path for its files yet: the DE-1.2 import commits into folder-bound libraries, and
+/// indexing imports into a catalog library is follow-up work. So no committed path implies a
+/// folder and every scope has none. Pure.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CatalogFolders;
 
@@ -41,8 +42,8 @@ impl FolderIndex for CatalogFolders {
 
 /// Which OCFL object holds the files of each folder scope, for the file listing by
 /// navigation node (API-F2.2). The catalog records no object for a collection's files yet
-/// (the import of Task DE-1.2 adds them), so no object holds any scope and every node
-/// listing answers `not_found`. Pure.
+/// (indexing imports into a catalog library follows DE-1.2), so no object holds any scope and
+/// every node listing answers `not_found`. Pure.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CatalogScopes;
 
