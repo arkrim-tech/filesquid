@@ -503,8 +503,7 @@ fn restore_kind<B: StorageBackend>(
 /// The user files among `paths`: not application data, not provenance records.
 fn user_files<'a>(paths: impl Iterator<Item = &'a str>) -> BTreeSet<String> {
     paths
-        .filter(|p| !super::labels::is_reserved(p))
-        .filter(|p| !p.starts_with(crate::canonical::HISTORY_PREFIX))
+        .filter(|p| !super::labels::in_reserved_folder(p))
         .map(str::to_string)
         .collect()
 }

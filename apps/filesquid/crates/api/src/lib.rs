@@ -70,6 +70,7 @@ pub mod monitor;
 pub mod navigation;
 pub mod ocfl_validation;
 pub mod operation;
+pub mod preferences;
 pub mod registry;
 pub mod replica;
 mod routes;
@@ -122,6 +123,9 @@ pub struct ApiState {
     /// The host's navigation service, installed once at startup (the navigation route
     /// answers 503 until then).
     navigation: Arc<OnceLock<Arc<navigation::NavigationService>>>,
+    /// Where the host keeps each user's preferences, installed once at startup (the
+    /// preference routes answer 503 until then).
+    preferences: Arc<OnceLock<Arc<dyn preferences::PreferenceStore>>>,
     /// The rate bound of the client-events route, in memory only (API-S-030).
     client_events: Arc<client_events::RateLimiter>,
     /// The host's display-name lookup for journal pages, installed once at startup (without
@@ -141,6 +145,7 @@ impl std::fmt::Debug for ApiState {
             .field("history_installed", &self.history.get().is_some())
             .field("libraries_installed", &self.libraries.get().is_some())
             .field("navigation_installed", &self.navigation.get().is_some())
+            .field("preferences_installed", &self.preferences.get().is_some())
             .field("client_events", &self.client_events)
             .field(
                 "journal_names_installed",
@@ -184,6 +189,7 @@ impl ApiState {
             history: Arc::new(OnceLock::new()),
             libraries: Arc::new(OnceLock::new()),
             navigation: Arc::new(OnceLock::new()),
+            preferences: Arc::new(OnceLock::new()),
             client_events: Arc::new(client_events::RateLimiter::new(window_clock)),
             journal_names: Arc::new(OnceLock::new()),
         }
@@ -214,6 +220,17 @@ impl ApiState {
     /// The installed navigation service, if any.
     pub fn navigation(&self) -> Option<Arc<navigation::NavigationService>> {
         self.navigation.get().cloned()
+    }
+
+    /// Install where the host keeps each user's preferences (API-S-011). Returns false,
+    /// keeping the first, if a store was already installed.
+    pub fn install_preferences(&self, store: Arc<dyn preferences::PreferenceStore>) -> bool {
+        self.preferences.set(store).is_ok()
+    }
+
+    /// The installed preference store, if any.
+    pub fn preferences(&self) -> Option<Arc<dyn preferences::PreferenceStore>> {
+        self.preferences.get().cloned()
     }
 
     /// Install the host's file service. Returns false, keeping the first, if one was already

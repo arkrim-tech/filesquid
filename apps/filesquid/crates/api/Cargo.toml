@@ -16,6 +16,8 @@ filesquid-core = { path = "../core" }
 filesquid-ocfl = { path = "../ocfl", default-features = false }
 # PROV-O records and the history index, with records in OCFL objects (API-S-028, API-S-029).
 filesquid-prov = { path = "../prov", features = ["ocfl"] }
+# Streams of the whole-file download (API-S-011).
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 getrandom = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -137,6 +139,10 @@ path = "tests/integration/library_routes.rs"
 [[test]]
 name = "integration_versions"
 path = "tests/integration/versions.rs"
+
+[[test]]
+name = "integration_drive"
+path = "tests/integration/drive.rs"
 
 [[test]]
 name = "integration_content_handles"

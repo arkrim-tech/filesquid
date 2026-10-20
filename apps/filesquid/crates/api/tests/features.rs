@@ -9,8 +9,9 @@
 //! scenarios, which the `filesquid-server` harness runs; the file operation routes and
 //! content handles of API-S-008 and API-S-018; the navigation listing of API-S-021; the
 //! library and repair routes of API-S-025; the version history, labels, restore and
-//! history size of API-S-014; and the client events, journal query and export of API-S-030
-//! and API-S-031; and the sealing service of API-S-032).
+//! history size of API-S-014; the client events, journal query and export of API-S-030
+//! and API-S-031; and the preferences, whole-file download and drive listings of
+//! API-S-011).
 //!
 //! Scenarios that need domain operations not built yet (import, rename, metadata writes, C2PA
 //! scans, sync) or the optional OTLP export (Task FS-3.6) have no step definitions and are
@@ -106,11 +107,16 @@ mod library_route_steps;
 #[path = "support/navigation_steps.rs"]
 mod navigation_steps;
 
+#[path = "support/navigation_fixture.rs"]
+mod navigation_fixture;
+
+#[path = "support/drive_fixture.rs"]
+mod drive_fixture;
+
+#[path = "support/drive_steps.rs"]
+mod drive_steps;
 #[path = "support/journal_steps.rs"]
 mod journal_steps;
-
-#[path = "support/seal_steps.rs"]
-mod seal_steps;
 
 /// Administrator token accepted by [`admin_state`].
 const ADMIN_TOKEN: &str = "admin";
@@ -161,8 +167,8 @@ struct MonitorWorld {
     versions: version_steps::VersionWorld,
     routes: library_route_steps::LibraryRouteWorld,
     navigation: navigation_steps::NavigationWorld,
+    drive: drive_steps::DriveWorld,
     journal: journal_steps::JournalWorld,
-    seal: seal_steps::SealWorld,
 }
 
 impl std::fmt::Debug for MonitorWorld {
