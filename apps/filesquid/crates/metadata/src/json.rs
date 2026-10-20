@@ -27,8 +27,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::record::{Record, Statement};
-use crate::{map_dc_to_dcterms, MetadataError, MetadataNamespace};
+use crate::namespace::NamespaceRegistry;
+use crate::record::{resolve_term, Record, Statement};
+use crate::MetadataError;
 
 /// The only digest algorithm a sidecar may name (OCFL inventory spelling).
 pub const DIGEST_ALGORITHM: &str = "sha256";
@@ -36,7 +37,8 @@ pub const DIGEST_ALGORITHM: &str = "sha256";
 /// One `{namespace, term, value}` statement as written in a sidecar.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JsonStatement {
-    /// Namespace prefix: `dcterms`, `exif` or `schema` (`dc` maps to `dcterms` on import).
+    /// Namespace prefix: `dcterms`, `exif`, `schema` or a registered
+    /// extension prefix (`dc` maps to `dcterms` on import).
     pub namespace: String,
     /// Local name within the namespace, for example `title`.
     pub term: String,
@@ -137,19 +139,39 @@ pub fn parse_json(text: &str) -> Result<JsonSidecar, JsonError> {
     serde_json::from_str(text).map_err(|err| JsonError::Malformed(err.to_string()))
 }
 
-/// Apply a JSON sidecar onto `record` after every check passes.
+/// Apply a JSON sidecar onto `record` after every check passes. Without a
+/// registry no extension prefix is registered.
+///
+/// # Errors
+///
+/// As [`apply_json_with`].
+pub fn apply_json(text: &str, target: &JsonTarget, record: &mut Record) -> Result<(), JsonError> {
+    apply_json_with(text, target, &NamespaceRegistry::default(), record)
+}
+
+/// Apply a JSON sidecar onto `record` after every check passes, resolving
+/// extension prefixes through `registry` (MD-S-010, MD-S-012).
 ///
 /// Checks, in order: the document parses, the algorithm is SHA-256, the
 /// digest matches `target.digest` (hex, case-insensitive), the object
 /// identifier matches `target.object_id`, and every statement passes the
-/// namespace and `/terms/` register checks. Statements are staged on a copy,
-/// so a rejected sidecar leaves `record` unchanged.
-pub fn apply_json(text: &str, target: &JsonTarget, record: &mut Record) -> Result<(), JsonError> {
+/// namespace registry and `/terms/` register checks. Statements are staged
+/// on a copy, so a rejected sidecar leaves `record` unchanged.
+///
+/// # Errors
+///
+/// [`JsonError`] for the first check that fails.
+pub fn apply_json_with(
+    text: &str,
+    target: &JsonTarget,
+    registry: &NamespaceRegistry,
+    record: &mut Record,
+) -> Result<(), JsonError> {
     let sidecar = parse_json(text)?;
     check_binding(&sidecar, target)?;
     let mut staged = record.clone();
     for statement in &sidecar.statements {
-        stage_statement(statement, &mut staged)?;
+        stage_statement(statement, registry, &mut staged)?;
     }
     *record = staged;
     Ok(())
@@ -172,28 +194,22 @@ fn check_binding(sidecar: &JsonSidecar, target: &JsonTarget) -> Result<(), JsonE
 }
 
 /// Register-check one statement and set it on `record`.
-fn stage_statement(statement: &JsonStatement, record: &mut Record) -> Result<(), JsonError> {
-    let (namespace, term) = resolve_namespace(&statement.namespace, &statement.term)?;
-    record.set(namespace, term, statement.value.as_str())?;
+fn stage_statement(
+    statement: &JsonStatement,
+    registry: &NamespaceRegistry,
+    record: &mut Record,
+) -> Result<(), JsonError> {
+    let (namespace, term) =
+        resolve_term(&statement.namespace, &statement.term, registry).map_err(json_error)?;
+    record.set_registered(registry, namespace, term, statement.value.as_str())?;
     Ok(())
 }
 
-/// Map a sidecar prefix and term onto a registered namespace.
-///
-/// `dc` maps onto `dcterms` (MD-S-002). Any prefix outside `exif`, `dcterms`,
-/// `schema` and `dc` is unregistered until the namespace registry (MD-S-012)
-/// adds extension namespaces.
-fn resolve_namespace<'a>(
-    prefix: &str,
-    term: &'a str,
-) -> Result<(MetadataNamespace, &'a str), JsonError> {
-    match prefix {
-        "exif" => Ok((MetadataNamespace::Exif, term)),
-        "dcterms" => Ok((MetadataNamespace::Dcterms, term)),
-        "schema" => Ok((MetadataNamespace::SchemaOrg, term)),
-        "dc" => map_dc_to_dcterms(term)
-            .map(|mapped| (MetadataNamespace::Dcterms, mapped))
-            .ok_or(JsonError::Register(MetadataError::UnknownDctermsTerm)),
-        other => Err(JsonError::UnregisteredNamespace(other.to_string())),
+/// The JSON form of a register or registry refusal: an unregistered prefix
+/// is named on its own.
+fn json_error(err: MetadataError) -> JsonError {
+    match err {
+        MetadataError::UnregisteredNamespace(prefix) => JsonError::UnregisteredNamespace(prefix),
+        other => JsonError::Register(other),
     }
 }

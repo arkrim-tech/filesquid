@@ -70,6 +70,15 @@ path = "tests/unit/file_record_store.rs"
 required-features = ["ocfl"]
 
 [[test]]
+name = "unit_namespace"
+path = "tests/unit/namespace.rs"
+
+[[test]]
+name = "unit_namespace_store"
+path = "tests/unit/namespace_store.rs"
+required-features = ["ocfl"]
+
+[[test]]
 name = "unit_file_ref"
 path = "tests/unit/file_ref.rs"
 
