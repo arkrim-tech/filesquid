@@ -25,7 +25,7 @@ Holistic UI check:
 | [MD-S-013](../../../metadata/resources/srs.md) Import record | `an_upload_whose_declared_size_differs_fails_verification_and_commits_nothing`, `a_name_that_is_not_ascii_needs_its_normalisation_form`, the canonical tests |
 | [MD-S-014](../../../metadata/resources/srs.md) Commit options | every edit commits through `OcflStore` with the caller as the version user |
 | [API-S-008](../srs.md) File operation routes | `file_operation_routes_API-S-008.feature` (upload scenario rewritten), `integration_files` |
-| [API-S-002](../srs.md) Versioned contract and generated types | contract 0.16.0, `unit_contract` drift and sample tests, regenerated `ui/src/api/schema.d.ts` |
+| [API-S-002](../srs.md) Versioned contract and generated types | contract 0.17.0, `unit_contract` drift and sample tests, regenerated `ui/src/api/schema.d.ts` |
 
 ## What changed
 

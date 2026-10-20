@@ -405,7 +405,7 @@ async fn a_file_the_desktop_committed_is_edited_through_the_same_record() {
         rig.leases.as_ref(),
         "desktop",
         &root,
-        &file_object_id(&file),
+        file_object_id(&file),
         staging,
     );
     let meta = filesquid_ocfl::change::VersionMeta::new("2026-10-19T00:00:02.000Z".to_string());

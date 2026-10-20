@@ -548,13 +548,19 @@ fn registry_ref(library_id: &str) -> Result<FileRef, FileError> {
         .map_err(|_| FileError::internal("the registry reference was refused"))
 }
 
+/// Maps one of a library's object identifiers to its object root.
+type RootOf = Box<dyn Fn(&str) -> String + Send + Sync>;
+
+/// The `ocfl` metadata store of one library.
+type LibraryStore<'a, B, R, S> = OcflStore<'a, B, R, S, StoreClock, RootOf>;
+
 /// The `ocfl` metadata store over the storage of `library` (`library_id`), staging under its
 /// own prefix.
 fn store_of<'a, B, R, S>(
     library: &'a Library<B, R, S>,
     library_id: &str,
     clock: super::FileClock,
-) -> Result<OcflStore<'a, B, R, S, StoreClock, impl Fn(&str) -> String>, FileError> {
+) -> Result<LibraryStore<'a, B, R, S>, FileError> {
     let snapshot = snapshot_object_id(&parse_library_id(library_id)?);
     let files = &library.files;
     Ok(OcflStore {
@@ -564,7 +570,7 @@ fn store_of<'a, B, R, S>(
         staging_prefix: format!("{}/metadata", files.staging_prefix.trim_end_matches('/')),
         holder: HOLDER.to_string(),
         clock: StoreClock(clock),
-        object_root: move |object_id: &str| object_root(&snapshot, object_id),
+        object_root: Box::new(move |object_id: &str| object_root(&snapshot, object_id)),
     })
 }
 
