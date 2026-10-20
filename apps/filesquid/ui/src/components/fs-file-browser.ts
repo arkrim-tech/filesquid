@@ -596,12 +596,19 @@ export class FsFileBrowser extends HTMLElement {
     return this.rows.find((row) => row.path === path);
   }
 
-  /** A write committed: announce it, and close the viewer when its file was moved or removed. */
+  /**
+   * A write committed: announce it, and close the viewer when its file was moved or removed. A
+   * commit to another object than the one shown (an Undo, or a call answered after the object
+   * changed) is only announced: the shown object's head and viewer are not its.
+   */
   private onCommitted(
     operation: WriteOperation,
     commit: FileCommit,
     changed: readonly string[],
   ): void {
+    const shown =
+      commit.library_id === this.where.library_id && commit.object_id === this.where.object_id;
+    if (!shown) return this.emit("fs-files-change", { operation, commit });
     this.head = commit.version;
     const open = this.current?.path;
     const gone = (operation === "remove" || operation === "move") && open !== undefined;

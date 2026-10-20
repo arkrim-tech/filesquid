@@ -77,6 +77,24 @@ describe("<fs-file-preview>", () => {
     expect(accessibilityViolations(preview)).toEqual([]);
   });
 
+  it("mints nothing when the details arrive after the preview left the page", async () => {
+    const src = source();
+    const real = src.details.bind(src);
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    vi.spyOn(src, "details").mockImplementation(async (...args) => {
+      await gate;
+      return real(...args);
+    });
+    const mint = vi.spyOn(src, "mintContent");
+    const preview = await mount(src, ref("0a1b2c3d.png", "facade-study.png"));
+    preview.remove();
+    release();
+    await settle();
+    await settle();
+    expect(mint).not.toHaveBeenCalled();
+  });
+
   it("never shows the stored name, the handle URL or a link to it", async () => {
     const src = source();
     const preview = await mount(src, ref("0a1b2c3d.png", "facade-study.png"));

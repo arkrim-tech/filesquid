@@ -68,6 +68,8 @@ Constraint gates (the Plan's C1 to C22, each coded and tested):
 
 A first Cubic review of the head commit found 50 items (2 P1, 28 P2, 20 P3); the fixes are in the second commit and covered by new tests (single Tab stop when the stop row is scrolled out, Undo into the object removed from, aborted loads not shown as errors, stale loads not overwriting state, `Range`-ignoring hosts, empty text files, grid arrow keys, upload batch limits and name length, and others).
 
+The second Cubic review (of the fix commit) found one P2: a preview whose details arrived after it left the page still started the media controller, which added listeners and minted a handle. The third commit makes a disposed controller's `start()` a no-op and starts no renderer for aborted work. The same commit hardens the two P1 fixes against the same class of fault: a commit to another object than the one shown (an Undo after switching objects, or a call answered after the object changed) is announced in `fs-files-change` but no longer changes the shown object's head, viewer or focus, and Retry uploads the failed files into the folder they were meant for, not the folder shown when Retry is pressed. Each fix has a test that failed first; afterwards `npm test` passed (879 tests) and the static preview Playwright suite passed on the production build (33 passed).
+
 ## How it was tested
 
 TDD: the unit tests for the pure rules and the sources, and the UI tests for the preview and the browser, were written before any implementation. The first runs failed:

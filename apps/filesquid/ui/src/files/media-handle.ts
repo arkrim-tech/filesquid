@@ -56,11 +56,13 @@ export class MediaHandleController {
 
   /**
    * Mint the first handle and attach it. Side effects: network call through `mint`, sets the
-   * element's `src` and adds its listeners. A refused mint reports `error`.
+   * element's `src` and adds its listeners. A refused mint reports `error`. A controller that
+   * was disposed before it started does nothing.
    *
    * @returns Resolves once the source is set or the error is reported.
    */
   async start(): Promise<void> {
+    if (this.disposed) return;
     this.onState("loading");
     this.element.addEventListener("error", this.onError);
     this.element.addEventListener(isTimed(this.element) ? "loadeddata" : "load", this.onLoad);

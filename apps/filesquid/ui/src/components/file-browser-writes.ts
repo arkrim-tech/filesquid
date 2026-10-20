@@ -89,6 +89,7 @@ export class FileWrites {
   private busy = false;
   private undoOffer?: UndoOffer;
   private retryable: File[] = [];
+  private retryWhere?: FileLocation;
 
   /**
    * @param frame The frame whose controls and live regions this wires.
@@ -132,6 +133,12 @@ export class FileWrites {
     return { library_id: where.library_id, object_id: where.object_id };
   }
 
+  /** True when `object` is the object shown now. */
+  private isShown(object: ObjectRef): boolean {
+    const where = this.host.location();
+    return where.library_id === object.library_id && where.object_id === object.object_id;
+  }
+
   /** Open the rename or move form for the target row (F2). */
   rename(row: FileRow | undefined = this.host.target()): void {
     if (row) this.open({ kind: "rename", row }, this.focused());
@@ -168,15 +175,16 @@ export class FileWrites {
   }
 
   /**
-   * Upload files into the folder shown (the chosen files, or dropped ones).
+   * Upload files into a folder: the folder shown (the chosen files, or dropped ones), or the
+   * folder a failed batch was meant for when it is tried again.
    *
    * @param files The files.
+   * @param where The object and folder to upload into; the one shown by default.
    * @returns Resolves when every file was tried and the listing refreshed.
    */
-  async upload(files: readonly File[]): Promise<void> {
+  async upload(files: readonly File[], where: FileLocation = this.host.location()): Promise<void> {
     if (files.length === 0 || this.busy) return;
     const { labels, source } = this.host;
-    const where = this.host.location();
     this.setBusy(true);
     const result = await uploadFiles(source, where, where.prefix, files, (current, total, name) =>
       this.showStatus(
@@ -186,7 +194,7 @@ export class FileWrites {
     this.setBusy(false);
     const last = result.committed[result.committed.length - 1];
     if (last) this.host.committed("upload", last, []);
-    this.reportUpload(result.committed.length, last, result);
+    this.reportUpload(result.committed.length, last, result, where);
     if (last) await this.host.reload();
   }
 
@@ -198,12 +206,18 @@ export class FileWrites {
     await this.upload(files);
   }
 
-  /** Report a finished upload batch: committed, or what failed. */
-  private reportUpload(count: number, last: FileCommit | undefined, result: UploadResult): void {
+  /** Report a finished upload batch into `where`: committed, or what failed. */
+  private reportUpload(
+    count: number,
+    last: FileCommit | undefined,
+    result: UploadResult,
+    where: FileLocation,
+  ): void {
     const { labels } = this.host;
     const failed = result.failed;
     const retriable = failed.filter((f) => typeof f.reason !== "string").map((f) => f.file);
     this.retryable = [...retriable, ...result.left];
+    this.retryWhere = where;
     if (failed.length === 0 && result.skipped === 0 && last) {
       this.showStatus(
         formatLabel(labels.fileUploaded, { count: String(count), version: last.version }),
@@ -220,9 +234,14 @@ export class FileWrites {
     }
     const retry =
       this.retryable.length > 0
-        ? [this.action("retry", labels.stateRetry, () => void this.upload(this.retryable))]
+        ? [this.action("retry", labels.stateRetry, () => void this.retry())]
         : [];
     this.showAlert(lines, retry);
+  }
+
+  /** Try the files of the last failed batch again, in the folder they were meant for. */
+  private async retry(): Promise<void> {
+    await this.upload(this.retryable, this.retryWhere);
   }
 
   /** One line for a file that was not uploaded. */
@@ -255,7 +274,7 @@ export class FileWrites {
     });
     this.showStatus(text);
     await this.host.reload();
-    this.host.focusPath(offer.paths[0] ?? "");
+    if (this.isShown(offer.object)) this.host.focusPath(offer.paths[0] ?? "");
   }
 
   /** Open the name form for `mode`, remembering where focus returns. */

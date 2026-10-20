@@ -7,7 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../src/api/client";
 import type { FsFileBrowser } from "../../src/index";
-import { MAX_UPLOAD_BYTES } from "../../src/files/model";
+import { MAX_UPLOAD_BYTES, type FileCommit } from "../../src/files/model";
 import {
   LOCATION,
   STORED_NAMES,
@@ -124,6 +124,24 @@ describe("upload", () => {
     await click(one(browser, "button.retry"));
     await settle();
     expect(names(browser)).toContain("one.txt");
+  });
+
+  it("tries the failed files again in the folder they were meant for, after moving away", async () => {
+    const source = fixture();
+    const real = source.upload.bind(source);
+    let calls = 0;
+    const upload = vi.spyOn(source, "upload").mockImplementation(async (...args) => {
+      calls += 1;
+      if (calls === 1) throw new ApiError(409, "/api/v1/files/upload", { code: "conflict" });
+      return real(...args);
+    });
+    const browser = await mount(source, { location: { ...LOCATION, prefix: "Contracts" } });
+    await choose(browser, [new File(["a"], "one.txt")]);
+    browser.location = { ...LOCATION, prefix: "Drawings" };
+    await settle();
+    await click(one(browser, "button.retry"));
+    await idle(browser);
+    expect(upload.mock.calls.map((c) => c[1])).toEqual(["Contracts/one.txt", "Contracts/one.txt"]);
   });
 
   it("shows a drop target for dragged files and uploads what is dropped", async () => {
@@ -434,6 +452,38 @@ describe("remove and restore", () => {
     expect(restore).toHaveBeenCalledWith({ library_id: "lib", object_id: "obj" }, "v1", [
       "3f9a0005.txt",
     ]);
+  });
+
+  it("does not move focus into another object's listing when Undo restores into the first", async () => {
+    const browser = await mount(fixture());
+    control(browser, "readme.txt").focus();
+    await click(one(browser, "button.remove"));
+    browser.location = { library_id: "other-lib", object_id: "other-obj", prefix: "" };
+    await settle();
+    (rootOf(browser).activeElement as HTMLElement | null)?.blur();
+    await click(one(browser, "button.undo"));
+    await idle(browser);
+    const active = rootOf(browser).activeElement;
+    expect(active === null || !one(browser, ".table").contains(active)).toBe(true);
+  });
+
+  it("keeps a file of another object open when a removal from the first commits late", async () => {
+    const source = fixture();
+    let answer: (commit: FileCommit) => void = () => undefined;
+    vi.spyOn(source, "remove").mockImplementation(
+      () => new Promise<FileCommit>((resolve) => (answer = resolve)),
+    );
+    const browser = await mount(source);
+    control(browser, "readme.txt").focus();
+    one(browser, "button.remove").click();
+    browser.location = { library_id: "other-lib", object_id: "other-obj", prefix: "" };
+    await settle();
+    await click(control(browser, "readme.txt"));
+    await settle();
+    answer({ library_id: "lib", object_id: "obj", version: "v2", created: "t" });
+    await idle(browser);
+    expect(one(browser, ".viewer").hidden).toBe(false);
+    expect(one(browser, "h2.viewer-title").textContent).toBe("readme.txt");
   });
 
   it("never shows a stored name after a move, a remove and an undo", async () => {

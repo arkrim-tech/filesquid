@@ -136,13 +136,17 @@ export class FsFilePreview extends HTMLElement {
     }
   }
 
-  /** Render the file with the renderer that accepts it, or the unsupported message. */
+  /**
+   * Render the file with the renderer that accepts it, or the unsupported message. Work whose
+   * signal was aborted (the preview left the page or moved on) starts no renderer.
+   */
   private async present(
     file: FileRef,
     details: FileDetails,
     signal: AbortSignal,
     generation: number,
   ): Promise<void> {
+    if (signal.aborted) return;
     const options = this.options as FilePreviewOptions;
     const renderers = [...(options.renderers ?? []), ...builtInRenderers()];
     const renderer = pickRenderer(renderers, details);

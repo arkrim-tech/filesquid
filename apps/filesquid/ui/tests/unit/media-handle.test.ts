@@ -208,6 +208,21 @@ describe("MediaHandleController", () => {
     expect(mint).toHaveBeenCalledTimes(1);
   });
 
+  it("does not start once disposed: no mint, no listeners and no state", async () => {
+    const states: MediaState[] = [];
+    const el = video({ currentTime: 0, paused: true });
+    const mint = minter();
+    const controller = new MediaHandleController(el, mint, (s) => states.push(s));
+    controller.dispose();
+    await controller.start();
+    el.dispatchEvent(new Event("error"));
+    el.dispatchEvent(new Event("loadeddata"));
+    await settle();
+    expect(mint).not.toHaveBeenCalled();
+    expect(el.hasAttribute("src")).toBe(false);
+    expect(states).toEqual([]);
+  });
+
   it("never writes the handle URL or anything else to the console", async () => {
     const el = video({ currentTime: 1, paused: false });
     const controller = new MediaHandleController(el, minter([2]), () => undefined);
