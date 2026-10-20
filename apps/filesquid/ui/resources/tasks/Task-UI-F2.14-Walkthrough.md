@@ -62,6 +62,10 @@
 - A journal re-read (`events.resync` or a search) merges the live entries that arrived while it was in flight, so the older page never drops a newer entry. Rows are merged newest first, each id once (pure `newestFirst`). Test: "keeps a live journal entry that arrives while a resync reads the journal".
 - README: a denied read needs the caller's authorization corrected, which is not necessarily a new credential.
 
+## Review fixes (Cubic round 3: 1 P2)
+
+- The buffer of live entries kept during a journal re-read is bounded to the newest 200 (`MAX_JOURNAL_ROWS`, the most rows ever shown), so a stalled read cannot grow memory. Test: "shows only the newest 200 rows after a long stream during a journal re-read".
+
 ## How it was tested
 
 1. Failing tests first: 27 failed before any implementation (below).

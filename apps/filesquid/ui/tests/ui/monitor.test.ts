@@ -402,6 +402,29 @@ describe("<fs-monitor>", () => {
     ]);
   });
 
+  it("shows only the newest 200 rows after a long stream during a journal re-read", async () => {
+    const fake = fakeClient();
+    const el = mount(fake.client);
+    await settle();
+    await settle();
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const load = fake.client.adminJournal;
+    fake.client.adminJournal = async (filters) => {
+      await gate;
+      return load(filters);
+    };
+    fake.emit({ topic: "events.resync", data: {} });
+    for (let id = 10; id < 215; id += 1) {
+      fake.emit({ topic: "journal.entry", data: entry(id, "ocfl.commit") });
+    }
+    release();
+    await settle();
+    await settle();
+    const rows = el.shadowRoot?.querySelectorAll('[data-section="journal"] tbody tr') ?? [];
+    expect(rows).toHaveLength(200);
+  }, 20_000);
+
   it("keeps the other sections up when the findings route is unavailable", async () => {
     const fake = fakeClient();
     fake.client.adminOcflFindings = () =>

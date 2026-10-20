@@ -266,11 +266,23 @@ export class FsMonitor extends HTMLElement {
     void this.findings?.refresh();
   }
 
+  /**
+   * Keep a live entry for the journal read in flight, if any. Bounded: only the newest
+   * {@link MAX_JOURNAL_ROWS} are kept, since no more are ever shown, so a stalled read under a
+   * continuing stream cannot grow memory.
+   */
+  private bufferDuringRead(entry: JournalEntry): void {
+    const live = this.liveDuringRead;
+    if (!live) return;
+    live.push(entry);
+    if (live.length > MAX_JOURNAL_ROWS) live.shift();
+  }
+
   /** Add a live journal entry matching the current filter; newest first, each id once. */
   private addJournalEntry(entry: JournalEntry): void {
     if (this.operationFilter && entry.operation !== this.operationFilter) return;
     if (this.journal.some((row) => row.id === entry.id)) return;
-    this.liveDuringRead?.push(entry);
+    this.bufferDuringRead(entry);
     this.journal = newestFirst([entry, ...this.journal]);
     this.renderJournal();
   }
