@@ -6,10 +6,12 @@
 //! as a digest mismatch left by an external edit, are reported per object and never adopted
 //! or repaired; an object whose head has no version inventory (W010) is flagged as a repair
 //! candidate, not repaired. An object that cannot be opened, resolved or validated is
-//! reported by its error code only, and the rebuild goes on. Nothing is written.
+//! reported by its error code only, and the rebuild goes on. Nothing is written to the
+//! storage root; the journal half (`journal_rebuild`) writes only to the journal store.
 
 use super::candidates::head_files;
 use super::error::{is_outage, LocalLibraryError};
+use super::journal_rebuild::JournalRebuild;
 use filesquid_ocfl::read::{Object, StorageRoot};
 use filesquid_ocfl::storage::StorageBackend;
 use filesquid_ocfl::{validate_object, ReadError};
@@ -47,6 +49,9 @@ pub struct RebuildReport {
     pub objects: Vec<RebuiltObject>,
     /// Objects that could not be opened.
     pub unreadable: Vec<UnreadableObject>,
+    /// What the journal rebuild restored, when the host installed a journal restore.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub journal: Option<JournalRebuild>,
 }
 
 /// Read every object of `backend`'s storage root from its files. Writes nothing.
@@ -63,6 +68,7 @@ pub(super) async fn rebuild<B: StorageBackend>(
     let mut report = RebuildReport {
         objects: Vec::with_capacity(storage.objects().len()),
         unreadable: Vec::new(),
+        journal: None,
     };
     for root in storage.objects() {
         let read = match storage.open_object(root).await {

@@ -4932,7 +4932,7 @@
       },
       "RebuildReport": {
         "type": "object",
-        "description": "Everything a rebuild from files found.",
+        "description": "Everything a rebuild from files found, and with the host's journal restore, what it restored of the library's journal.",
         "required": [
           "objects",
           "unreadable"
@@ -4951,6 +4951,9 @@
             "items": {
               "$ref": "#/components/schemas/UnreadableObject"
             }
+          },
+          "journal": {
+            "$ref": "#/components/schemas/JournalRebuild"
           }
         },
         "additionalProperties": false
@@ -5687,6 +5690,44 @@
           "grid"
         ],
         "description": "How listings are laid out. Default list."
+      },
+      "JournalRebuild": {
+        "type": "object",
+        "description": "What a rebuild from files restored of the library's journal into the host's journal store, de-duplicated by journal ID (API-S-032).",
+        "required": [
+          "restored",
+          "already_present",
+          "conflicting",
+          "unreadable"
+        ],
+        "properties": {
+          "restored": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Entries the store did not hold and now does."
+          },
+          "already_present": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Entries the store already held under the same ID."
+          },
+          "conflicting": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Entries whose ID or client event ID the store holds for another entry; the held entry is kept."
+          },
+          "unreadable": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Segments, objects, files or lines that could not be read, and lines with no ID."
+          },
+          "last_sealed_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the library's last seal was committed (RFC 3339); absent when it was never sealed."
+          }
+        },
+        "additionalProperties": false
       },
       "BackfillStarted": {
         "type": "object",

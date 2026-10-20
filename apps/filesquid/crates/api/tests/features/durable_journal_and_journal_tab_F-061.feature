@@ -3,9 +3,9 @@
 # API-S-030: Client events; API-S-031: Journal query and export; API-S-032: Durable journal
 # DE-S-013: Journal sealing and rebuild; UI-S-021: Logs view; UI-S-023: Client event delivery
 # The client-event, query and export scenarios are bound in tests/support/journal_steps.rs
-# (Task API-F2.10), the sealing scenarios in tests/support/seal_steps.rs (Task API-F2.11); the
-# per-commit, rebuild and UI scenarios are bound by the later FS-2.9 tasks
-# (unbound steps are skipped by the harness).
+# (Task API-F2.10), the sealing scenarios in tests/support/seal_steps.rs (Task API-F2.11), the
+# rebuild scenario in tests/support/rebuild_steps.rs (Task CL-1.9); the per-commit and UI
+# scenarios are bound by the later FS-2.9 tasks (unbound steps are skipped by the harness).
 Feature: Durable, complete and browsable activity journal
   As a library owner
   I want the journal to survive the loss of the database and to be easy to browse and export

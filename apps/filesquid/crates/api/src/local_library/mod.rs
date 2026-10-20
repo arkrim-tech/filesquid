@@ -15,7 +15,9 @@
 //!   copy until it completes.
 //! - **Rebuild from files**: every object's committed head and validator findings, from the
 //!   OCFL files alone, so a host can rebuild its catalog without its database. External
-//!   edits are reported, never adopted or repaired.
+//!   edits are reported, never adopted or repaired. With a [`JournalRestore`] installed it
+//!   also restores the library's journal into the host's fresh journal store from the
+//!   per-commit entries and the sealed segments (Task CL-1.9, API-S-032).
 //! - **List repair candidates**: objects whose committed head has no version inventory
 //!   (W010), found by checking each head for that file.
 //! - **Repair a version inventory**: the one command that adds a file to an existing version
@@ -44,6 +46,7 @@ mod candidates;
 pub mod choice;
 mod commands;
 mod error;
+mod journal_rebuild;
 mod ledger;
 mod locations;
 mod operations;
@@ -58,6 +61,7 @@ mod transfer;
 
 pub use commands::{LibraryCommands, MAX_OPEN_LIBRARIES};
 pub use error::LocalLibraryError;
+pub use journal_rebuild::{JournalRebuild, JournalRestore, MAX_RESTORED_ENTRIES, RESTORE_BATCH};
 pub use ledger::{LedgerError, MemoryRepairLedger, RecordedRepair, RepairLedger, RepairRecord};
 pub use locations::{
     LibraryLocations, LibraryRequest, LibraryRoot, LibraryView, LocationRequest,
