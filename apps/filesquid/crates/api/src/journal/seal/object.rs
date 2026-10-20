@@ -371,6 +371,23 @@ pub async fn read_sealed_entries<B: StorageBackend>(
     Ok(entries)
 }
 
+/// When the last seal of the journal object in `backend` was committed: the RFC 3339
+/// `created` time of its head version, or `None` without the object. Storage I/O.
+///
+/// # Errors
+/// [`SealError::Invalid`] for an object that cannot be opened; [`SealError::Unavailable`]
+/// for storage trouble.
+pub async fn last_sealed_at<B: StorageBackend>(backend: &B) -> Result<Option<String>, SealError> {
+    if !has_journal_object(backend).await? {
+        return Ok(None);
+    }
+    let object = Object::open(backend, JOURNAL_OBJECT_ROOT)
+        .await
+        .map_err(read_error)?;
+    let head = object.inventory().versions.get(object.head());
+    Ok(head.map(|version| version.created.clone()))
+}
+
 /// The entries of one segment's bytes. Pure.
 fn parse_segment(path: &str, bytes: &[u8]) -> Result<Vec<JournalEntry>, SealError> {
     let text =
