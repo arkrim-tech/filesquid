@@ -92,6 +92,10 @@ name = "integration_native_boundary"
 path = "tests/integration/native_boundary.rs"
 
 [[test]]
+name = "integration_media_workers"
+path = "tests/integration/media_workers.rs"
+
+[[test]]
 name = "integration_stdout_logging"
 path = "tests/integration/stdout_logging.rs"
 

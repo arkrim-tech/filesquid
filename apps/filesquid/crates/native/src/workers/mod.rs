@@ -3,7 +3,8 @@
 //! package stays a thin host and no other crate links it.
 //!
 //! - [`history_backfill`]: the durable job store of a launch, the launch-time job
-//!   reconciliation and the history backfill as a durable job (DE-S-014). Media workers
-//!   (DE-0.5) join this module.
+//!   reconciliation and the history backfill as a durable job (DE-S-014).
+//! - [`media`]: the bounded, out-of-process libvips media workers (DE-0.5, DE-S-016).
 
 pub mod history_backfill;
+pub mod media;
