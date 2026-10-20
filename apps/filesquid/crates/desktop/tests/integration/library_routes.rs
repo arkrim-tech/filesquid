@@ -14,11 +14,13 @@ use filesquid_api::library::{
     CommandRequest, LibraryCommand, LibraryService, NEW_LIBRARY_REVISION,
 };
 use filesquid_api::local_library::{CONSENT_STATEMENT_ID, REPAIR_OPERATION};
+use filesquid_api::navigation::{AlwaysTrue, NavigationChange};
 use filesquid_api::operation::{CommandEnvelope, ExpectedRevision, OperationId, OperationScope};
-use filesquid_api::ApiState;
+use filesquid_api::{ApiEvent, ApiState};
 use filesquid_core::{InstallationId, LibraryId, RepositoryId};
 use filesquid_desktop_lib::api_protocol::handle;
 use filesquid_desktop_lib::libraries::LibraryServing;
+use filesquid_desktop_lib::navigation::{install_navigation, owner_event_filter};
 use filesquid_desktop_lib::{
     install_file_provenance, install_history_source, install_launch_token, install_library_routes,
     open_host_monitor, open_library_catalog,
@@ -309,4 +311,34 @@ fn the_owners_consented_repair_is_kept_in_the_persistent_ledger() {
     let receipts = ledger.receipts().expect("receipts");
     assert_eq!(receipts.len(), 1, "the receipt survives the host");
     assert_eq!(receipts[0].object_id, object);
+}
+
+#[test]
+fn the_navigation_lists_the_installations_repository_and_its_libraries() {
+    let dir = fresh_dir("navigation");
+    let desktop = Desktop::launch(dir.join("data"));
+    assert!(
+        owner_event_filter(&desktop.state).is_none(),
+        "nothing to filter yet"
+    );
+    let (status, _) = desktop.get("/api/v1/navigation");
+    assert_eq!(status, 503, "no navigation installed yet");
+    install_navigation(&desktop.state, desktop.catalog.clone(), &installation())
+        .expect("installed");
+    let (status, page) = desktop.get("/api/v1/navigation");
+    assert_eq!(status, 200, "{page}");
+    let nodes = page["nodes"].as_array().expect("nodes");
+    assert_eq!(nodes.len(), 1, "the installation's one repository: {page}");
+    let filter = owner_event_filter(&desktop.state).expect("filter");
+    let change = NavigationChange::All { all: AlwaysTrue }
+        .to_event()
+        .expect("event");
+    assert!(filter(change).is_some(), "the owner reads every change");
+    let other = ApiEvent::new("journal.entry", json!({}));
+    assert!(filter(other).is_some(), "other events pass unchanged");
+    assert!(
+        install_navigation(&desktop.state, desktop.catalog.clone(), &installation()).is_err(),
+        "installed once"
+    );
+    desktop.stop();
 }

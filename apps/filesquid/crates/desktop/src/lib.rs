@@ -41,6 +41,7 @@ pub mod event_channel;
 pub mod ipc_gate;
 pub mod ipc_observer;
 pub mod libraries;
+pub mod navigation;
 pub mod panic_journal;
 pub mod stdout_log;
 #[cfg(feature = "test-webdriver")]
@@ -608,7 +609,7 @@ fn catalog_error_code(err: &filesquid_api::library::CatalogError) -> &'static st
 /// monitor, journal a logging stack that could not be installed (`logging` false), read the
 /// installation UUID, open the library catalogs, install the PROV-O history source over their
 /// storage roots and the folders the owner opens, open the durable job store and reconcile
-/// its jobs, install the library routes and the file provenance
+/// its jobs, install the navigation listing, install the library routes and the file provenance
 /// ([`install_library_services`]), register the event forwarder's process, start the ticker
 /// and start the history backfill job. When a step fails the failure is journaled and the
 /// monitor stopped (flushing the journal) before the launch fails. Performs filesystem and
@@ -636,6 +637,8 @@ fn start_monitor(
     let backfill = prepare_backfill(app, &data_dir, &host, &installation, &catalog)
         .inspect_err(|_| host.stop())?;
     app.manage(DesktopMedia(media_workers(&host)));
+    navigation::install_navigation(&state, catalog.clone(), &installation)
+        .inspect_err(|_| host.stop())?;
     app.manage(DesktopCatalog(catalog));
     install_library_services(app, &host, &installation, &data_dir, opened)
         .inspect_err(|_| host.stop())?;
@@ -829,7 +832,8 @@ fn spawn_ticker(host: Arc<HostMonitor>, stop: Arc<AtomicBool>) {
 }
 
 /// Start forwarding the API bus to the app's webviews through one counted subscription
-/// ([`event_channel::pump`]) until the bus closes or the app exits. When no subscription slot
+/// ([`event_channel::pump`]), reduced to what the owner may read
+/// ([`navigation::owner_event_filter`]), until the bus closes or the app exits. When no subscription slot
 /// is free, the refusal is journaled, the forwarder's process fails, and the API keeps
 /// working without push.
 fn forward_events(app: &tauri::AppHandle) {
@@ -841,8 +845,9 @@ fn forward_events(app: &tauri::AppHandle) {
         );
         return;
     };
-    let Some(subscription) = event_channel::open_subscription(&app.state::<ApiState>().events)
-    else {
+    let state = app.state::<ApiState>();
+    let filter = navigation::owner_event_filter(&state);
+    let Some(subscription) = event_channel::open_subscription(&state.events, filter) else {
         monitor.forwarder.fail("unavailable");
         return;
     };

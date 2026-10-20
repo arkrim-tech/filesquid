@@ -65,7 +65,7 @@ fn the_event_name_is_the_one_the_ui_listens_to() {
 #[tokio::test]
 async fn published_events_reach_the_webview_in_order_until_the_bus_closes() {
     let state = ApiState::new();
-    let subscription = open_subscription(&state.events).expect("subscription");
+    let subscription = open_subscription(&state.events, None).expect("subscription");
     for n in 0..3 {
         state.events.publish(marker(n));
     }
@@ -85,7 +85,7 @@ async fn published_events_reach_the_webview_in_order_until_the_bus_closes() {
 #[tokio::test]
 async fn a_webview_that_fell_behind_is_told_to_reread() {
     let bus = EventBus::new();
-    let subscription = open_subscription(&bus).expect("subscription");
+    let subscription = open_subscription(&bus, None).expect("subscription");
     for n in 0..=(EVENT_BUFFER as u64) {
         bus.publish(marker(n));
     }
@@ -101,7 +101,7 @@ async fn a_webview_that_fell_behind_is_told_to_reread() {
 #[tokio::test]
 async fn an_oversized_event_reaches_the_webview_as_a_resync_hint() {
     let bus = EventBus::new();
-    let subscription = open_subscription(&bus).expect("subscription");
+    let subscription = open_subscription(&bus, None).expect("subscription");
     let big = "x".repeat(MAX_EVENT_BYTES);
     bus.publish(ApiEvent::new(
         "test.marker",
@@ -116,7 +116,7 @@ async fn an_oversized_event_reaches_the_webview_as_a_resync_hint() {
 #[tokio::test]
 async fn the_forwarder_counts_against_the_subscriber_cap() {
     let bus = EventBus::new();
-    let subscription = open_subscription(&bus).expect("subscription");
+    let subscription = open_subscription(&bus, None).expect("subscription");
     assert_eq!(bus.open_subscriptions(), 1);
     drop(subscription);
     assert_eq!(bus.open_subscriptions(), 0);
@@ -129,7 +129,7 @@ fn a_refused_subscription_is_journaled_as_an_error() {
         .map(|_| bus.subscription().expect("slot"))
         .collect();
     let mut refused = None;
-    let entries = journaled(|| refused = Some(open_subscription(&bus).is_none()));
+    let entries = journaled(|| refused = Some(open_subscription(&bus, None).is_none()));
     assert_eq!(refused, Some(true));
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].operation, "desktop.events.subscription");
@@ -140,7 +140,7 @@ fn a_refused_subscription_is_journaled_as_an_error() {
 #[test]
 fn a_failed_delivery_is_journaled_without_its_detail_and_forwarding_goes_on() {
     let bus = EventBus::new();
-    let subscription = open_subscription(&bus).expect("subscription");
+    let subscription = open_subscription(&bus, None).expect("subscription");
     bus.publish(marker(1));
     bus.publish(marker(2));
     drop(bus);
@@ -162,7 +162,7 @@ fn a_failed_delivery_is_journaled_without_its_detail_and_forwarding_goes_on() {
 #[tokio::test]
 async fn the_forwarder_stops_when_the_app_exits() {
     let state = ApiState::new();
-    let subscription = open_subscription(&state.events).expect("subscription");
+    let subscription = open_subscription(&state.events, None).expect("subscription");
     let settings = forwarding();
     let stop = settings.stop.clone();
     let stopper = tokio::spawn(async move {
@@ -190,7 +190,7 @@ async fn the_forwarder_is_a_registered_process_with_a_heartbeat() {
         MonitorConfig::new("desktop"),
         state.events.clone(),
     );
-    let subscription = open_subscription(&state.events).expect("subscription");
+    let subscription = open_subscription(&state.events, None).expect("subscription");
     let mut settings = forwarding();
     settings.process = Some(Arc::new(register_forwarder(monitor.registry())));
     let running = monitor.registry().snapshot();

@@ -272,7 +272,8 @@ fn not_satisfiable(world: &mut DesktopWorld, length: u64) {
 #[given("an app window subscribed to the event channel")]
 #[given("an app window subscribed to the event channel that is not reading")]
 fn subscribed(world: &mut DesktopWorld) {
-    world.subscription = Some(open_subscription(&world.state().events).expect("subscription"));
+    world.subscription =
+        Some(open_subscription(&world.state().events, None).expect("subscription"));
 }
 
 #[when("a process update is published")]
