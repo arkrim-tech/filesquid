@@ -40,6 +40,7 @@ pub mod backfill;
 pub mod capability_policy;
 pub mod event_channel;
 pub mod folder_choice;
+pub mod imports;
 pub mod ipc_gate;
 pub mod ipc_observer;
 pub mod libraries;
@@ -67,6 +68,7 @@ use filesquid_api::registry::ProcessHandle;
 use filesquid_api::trace_layer::JournalLayer;
 use filesquid_api::ApiState;
 use filesquid_core::InstallationId;
+use filesquid_native::import::plans::SqliteImportPlans;
 use filesquid_native::installation::{
     self, InstallationError, InstallationSource, INSTALLATION_CREATED,
 };
@@ -101,6 +103,7 @@ struct DesktopMonitor {
     forwarder: Arc<ProcessHandle>,
     stop: Arc<AtomicBool>,
     backfill: Arc<DesktopBackfill>,
+    imports: Arc<filesquid_native::import::worker::ImportWorker>,
 }
 
 /// The journal sinks the host attaches once the journal opens: the journal layer, the Tauri
@@ -709,12 +712,84 @@ fn start_monitor(
     spawn_ticker(host.clone(), stop.clone());
     let backfill = Arc::new(DesktopBackfill::new(task, stop.clone()));
     install_backfill_route(&state, &backfill, recovered).inspect_err(|_| host.stop())?;
+    let imports =
+        start_imports(app, &host, &data_dir, &stop, recovered).inspect_err(|_| host.stop())?;
     app.manage(DesktopMonitor {
         host,
         forwarder,
         stop,
         backfill,
+        imports,
     });
+    Ok(())
+}
+
+/// Longest the app's exit waits for the import worker to suspend its job.
+const IMPORT_STOP_WAIT: Duration = Duration::from_secs(10);
+
+/// This build, as import records name it (ADR 038 Decision 3). Pure.
+pub fn import_build() -> filesquid_native::import::host::Build {
+    filesquid_native::import::host::Build {
+        version: env!("CARGO_PKG_VERSION").into(),
+        build: "filesquid-desktop".into(),
+        distribution: "filesquid".into(),
+    }
+}
+
+/// Open the import plans in `data_dir`, start the native import worker (setting `stop`
+/// suspends it), queue the unfinished import jobs when the jobs were `recovered`, and install
+/// the import route with the native `rfd` dialog (Task DE-1.2). Starts a thread; database
+/// I/O.
+///
+/// # Errors
+/// The plans could not be opened, the worker not started, or the route not installed.
+fn start_imports(
+    app: &tauri::AppHandle,
+    host: &HostMonitor,
+    data_dir: &std::path::Path,
+    stop: &Arc<AtomicBool>,
+    recovered: bool,
+) -> Result<Arc<filesquid_native::import::worker::ImportWorker>, String> {
+    use filesquid_native::import::worker::{ImportServices, ImportWorker};
+    let plans = Arc::new(SqliteImportPlans::open(&data_dir.join(JOURNAL_FILE))?);
+    let jobs = app.state::<DesktopJobs>().0.clone();
+    let files = app.state::<DesktopFiles>().0.clone();
+    let worker = Arc::new(ImportWorker::spawn(ImportServices {
+        jobs: jobs.clone(),
+        files: files.clone(),
+        plans: plans.clone(),
+        journal: host.monitor().journal(),
+        build: import_build(),
+        actor: Principal::Owner.actor().to_string(),
+        staging_dir: data_dir.to_path_buf(),
+        stop: stop.clone(),
+        retry_unit: filesquid_native::import::job::RETRY_UNIT,
+    })?);
+    if recovered {
+        worker.resume_unfinished(&jobs);
+    }
+    let starting = imports::ImportStarting {
+        files,
+        jobs,
+        plans,
+        worker: worker.clone(),
+        dialog: Box::new(imports::RfdSources::new(app.clone())),
+    };
+    install_import_route(&app.state::<ApiState>(), starting)?;
+    Ok(worker)
+}
+
+/// Install the import route's starter over `starting` in `state` (API-S-036).
+///
+/// # Errors
+/// An import starter is already installed.
+pub fn install_import_route(
+    state: &ApiState,
+    starting: imports::ImportStarting,
+) -> Result<(), String> {
+    if !state.install_import_starter(Arc::new(imports::DesktopImports::new(starting))) {
+        return Err("an import starter was already installed".to_string());
+    }
     Ok(())
 }
 
@@ -860,6 +935,7 @@ fn stop_monitor(app: &tauri::AppHandle) {
     if let Some(monitor) = app.try_state::<DesktopMonitor>() {
         monitor.stop.store(true, Ordering::SeqCst);
         monitor.backfill.wait(BACKFILL_STOP_WAIT);
+        monitor.imports.wait(IMPORT_STOP_WAIT);
         monitor.forwarder.complete();
         monitor.host.stop();
     }

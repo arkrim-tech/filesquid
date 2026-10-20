@@ -180,7 +180,10 @@ fn a_folder_is_listed_in_one_stable_order_with_its_subfolders() {
         ]
     );
     let single = folder.join("a.jpg");
-    assert_eq!(list_files(&single).expect("file"), std::slice::from_ref(&single));
+    assert_eq!(
+        list_files(&single).expect("file"),
+        std::slice::from_ref(&single)
+    );
     assert!(list_files(&dir.0.join("gone")).is_err());
 }
 
