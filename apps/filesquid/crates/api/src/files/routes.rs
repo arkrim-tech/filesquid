@@ -141,7 +141,11 @@ async fn download(
         Ok(download) => download,
         Err(err) => return refuse(&state, DOWNLOAD_OPERATION, principal.actor(), err).await,
     };
-    let disposition = content_disposition(Disposition::Attachment, &download.file_name);
+    let disposition = content_disposition(
+        Disposition::Attachment,
+        &download.file_name,
+        &download.id_name,
+    );
     let body = Body::from_stream(journaled_stream(state, principal, download.body));
     let mut response = (StatusCode::OK, body).into_response();
     let headers = response.headers_mut();
@@ -507,7 +511,7 @@ pub(crate) async fn answer_content(
         true => Body::empty(),
         false => Body::from(answer.bytes),
     };
-    let disposition = content_disposition(kind.disposition, &answer.file_name);
+    let disposition = content_disposition(kind.disposition, &answer.file_name, &answer.id_name);
     let mut response = (status, body).into_response();
     let headers = response.headers_mut();
     headers.insert(ACCEPT_RANGES, HeaderValue::from_static("bytes"));

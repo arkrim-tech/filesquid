@@ -328,6 +328,14 @@ cd apps/filesquid
 cargo test -p filesquid-api --locked --test integration_metadata --test unit_canonical --test features
 ```
 
+The display and download names of API-F1.13 (API-S-027: display names on the file history and object versions, a rename that changes only the display name in one new version, the refused move of a file's stored original, `Content-Disposition` with its ASCII and FileId fallbacks, and the FileId default for sharing) are tested the same way; the `Content-Disposition` builder has unit tests in the library:
+
+```sh
+cd apps/filesquid
+cargo test -p filesquid-api --locked --lib files::names
+cargo test -p filesquid-api --locked --test integration_names --test unit_canonical --test features
+```
+
 The host-side I/O the API must not do lives in the native-processing library `filesquid-native` (`crates/native`): the SQLite journal store, the data-directory checks (write probe, free space) and `HostMonitor`, which both hosts link (the `fsquid` CLI links it too, for its journal, with default features only; [ADR 033](./resources/architecture/033-activity-journal-and-live-health-monitoring.md) amendment 2026-10-18). Its unit tests and BDD features run alone:
 
 ```sh

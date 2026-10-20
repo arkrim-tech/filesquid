@@ -494,6 +494,9 @@ pub struct HistoryView {
     pub object_id: String,
     /// The file's logical path.
     pub path: String,
+    /// The name users see for the file (API-S-027): its record's display name for a file
+    /// object's original, else its stored name.
+    pub display_name: String,
     /// The versions that changed it.
     pub entries: Vec<HistoryEntryView>,
 }
@@ -510,6 +513,8 @@ impl HistoryView {
             library_id: library_id.to_string(),
             object_id: object_id.to_string(),
             path: path.to_string(),
+            display_name: super::names::safe_name(super::names::stored_name(path))
+                .unwrap_or_else(|| "file".to_string()),
             entries: entries
                 .into_iter()
                 .map(|e| HistoryEntryView {
@@ -532,6 +537,9 @@ pub struct VersionsView {
     pub object_id: String,
     /// The head version.
     pub head: String,
+    /// For a file object, the name users see for its file at the head (API-S-027): its
+    /// record's display name; `null` for any other object.
+    pub display_name: Option<String>,
     /// Every version.
     pub versions: Vec<VersionView>,
 }
