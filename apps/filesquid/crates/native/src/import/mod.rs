@@ -6,7 +6,9 @@
 pub mod facts;
 pub mod file;
 pub mod host;
+pub mod job;
 pub mod names;
+pub mod plans;
 pub mod time;
 pub mod volume;
 pub mod xattr;
