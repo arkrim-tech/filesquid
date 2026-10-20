@@ -21,6 +21,7 @@ use super::query::{Cursor, LibraryQuery, Page, QueryAnswer, QueryRequest};
 use super::{LibraryError, LOG_TARGET};
 use crate::journal::{now_ms, JournalEntry, Level, Outcome};
 use crate::journal_writer::JournalSender;
+use crate::navigation::NavigationPublisher;
 use crate::operation::{CommandOutcome, CommandOutcomeKind, OperationId, PROTOCOL_SCHEMA_VERSION};
 use crate::registry::Clock;
 use filesquid_core::{LibraryId, RepositoryId};
@@ -33,6 +34,7 @@ pub struct LibraryService {
     clock: Clock,
     policy: DeletionPolicy,
     failures: JournalSender,
+    navigation: Option<NavigationPublisher>,
 }
 
 impl std::fmt::Debug for LibraryService {
@@ -54,7 +56,16 @@ impl LibraryService {
             clock: Arc::new(now_ms),
             policy: DeletionPolicy::default(),
             failures,
+            navigation: None,
         }
+    }
+
+    /// Publish a `navigation.change` event after each commit that adds, removes or renames
+    /// a library, collection or virtual collection, or changes which files are in view
+    /// (API-S-021).
+    pub fn with_navigation(mut self, publisher: NavigationPublisher) -> Self {
+        self.navigation = Some(publisher);
+        self
     }
 
     /// Use `clock` (Unix milliseconds, UTC) for deletion times and journal times.
@@ -126,6 +137,7 @@ impl LibraryService {
             )
             .at_ms((self.clock)());
         let operation_id = request.envelope.operation_id().clone();
+        let parents = super::navigation_parents(&library_id, &planned.changes);
         let receipt = self.catalog.commit(CatalogCommit {
             operation_id: operation_id.clone(),
             library_id,
@@ -135,7 +147,20 @@ impl LibraryService {
             created_id: planned.created_id,
             deletion: planned.deletion,
         })?;
+        self.announce(parents);
         Ok(committed(&operation_id, receipt))
+    }
+
+    /// Publish the navigation change of a committed command, if a publisher is set and the
+    /// command changed what navigation shows.
+    fn announce(&self, change: Option<super::NavigationParents>) {
+        let (Some(publisher), Some(change)) = (&self.navigation, change) else {
+            return;
+        };
+        match change {
+            super::NavigationParents::Nodes(nodes) => publisher.publish(&nodes),
+            super::NavigationParents::Everything => publisher.publish_all(),
+        }
     }
 
     /// Journal a refused command once through the bounded queue (waits while it is full),
