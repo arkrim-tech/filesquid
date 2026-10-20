@@ -95,6 +95,15 @@ describe("<fs-settings>", () => {
 });
 
 describe("bindSettingsRoute", () => {
+  it("mounts the page at once when bound while the hash is #/settings", () => {
+    const shell = document.createElement("div");
+    document.body.replaceChildren(shell);
+    window.location.hash = "#/settings";
+    const stop = bindSettingsRoute(shell, { labels, client: fakeClient().client });
+    expect(shell.querySelector("fs-settings")).not.toBeNull();
+    stop();
+  });
+
   it("mounts the page on #/settings, moves focus to main, and removes it on another route", async () => {
     const shell = document.createElement("div") as HTMLDivElement & { focusMain: () => void };
     shell.focusMain = vi.fn();

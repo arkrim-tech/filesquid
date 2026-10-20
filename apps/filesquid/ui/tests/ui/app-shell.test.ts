@@ -3,7 +3,7 @@
  * for a distribution, with a fake API client.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { FsAppShell, defineElements } from "../../src/index";
+import { FsAppShell, defineElements, type FsSettings } from "../../src/index";
 import type { Distribution } from "../../src/distribution";
 import { ApiError, type HealthStatus } from "../../src/api/client";
 import labels from "../../src/theme/labels.en.json";
@@ -131,6 +131,28 @@ describe("<fs-app-shell>", () => {
     expect(reads).toBe(1);
     await shell.refreshHealth();
     expect(reads).toBe(2);
+  });
+
+  it("refreshes a Settings page it holds when health is refreshed", async () => {
+    let reads = 0;
+    const client = {
+      health: ok,
+      host: async () => {
+        reads += 1;
+        return hostFakes().host();
+      },
+      subscribe: () => () => undefined,
+    };
+    const shell = document.createElement("fs-app-shell") as FsAppShell;
+    shell.configure({ distribution, client, theme: fakeThemeStore().store });
+    const settings = document.createElement("fs-settings") as FsSettings;
+    settings.configure({ labels, client });
+    shell.append(settings);
+    document.body.replaceChildren(shell);
+    await settle();
+    expect(reads).toBe(2);
+    await shell.refreshHealth();
+    expect(reads).toBe(4);
   });
 
   it("shows the dark-surface logo when the resolved theme is dark", async () => {

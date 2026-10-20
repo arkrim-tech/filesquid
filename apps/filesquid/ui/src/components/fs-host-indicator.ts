@@ -73,7 +73,7 @@ const STYLE = `
   .icon { display: inline-block; inline-size: 0.9em; block-size: 0.65em; border: 2px solid currentColor; border-radius: var(--fs-radius); }
   [role="dialog"] { position: absolute; inset-block-start: calc(100% + var(--fs-space-2)); inset-inline-end: 0; z-index: 2; display: grid; gap: var(--fs-space-2); box-sizing: border-box; inline-size: max-content; max-inline-size: min(24rem, calc(100vw - 2 * var(--fs-space-4))); padding: var(--fs-space-3); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface); color: var(--fs-on-surface); overflow-wrap: anywhere; }
   [hidden] { display: none !important; }
-  .popover.inline { position: static; inline-size: auto; max-inline-size: none; padding: 0; border: 0; background: none; }
+  .popover.inline { position: static; display: grid; gap: var(--fs-space-2); inline-size: auto; max-inline-size: none; padding: 0; border: 0; background: none; color: var(--fs-on-surface); overflow-wrap: anywhere; }
   .settings-link { color: var(--fs-primary); text-decoration: none; border-radius: var(--fs-radius); }
   .settings-link:hover { text-decoration: underline; }
   h2 { margin: 0; font-size: var(--fs-font-size-small); font-weight: 700; color: var(--fs-on-surface-variant); }

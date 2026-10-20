@@ -202,8 +202,10 @@ describe("<fs-navigation-view>", () => {
     const memory = new MemoryNavigationSource(tree);
     let release: () => void = () => undefined;
     let hold = false;
+    let reads = 0;
     const source: NavigationSource = {
       list: async (parent, cursor, limit) => {
+        reads += 1;
         const page = await memory.list(parent, cursor, limit);
         if (hold) await new Promise<void>((go) => (release = go));
         return page;
@@ -214,11 +216,21 @@ describe("<fs-navigation-view>", () => {
     hold = true;
     memory.emit({ all: true });
     await settle();
+    expect(reads).toBe(2);
     expect(view.dataset.state).toBe("ready");
     expect(trail(root).map(([name]) => name)).toEqual([labels.repository, "Family", "Photos"]);
     release();
     await settle();
     expect(view.dataset.state).toBe("ready");
+  });
+
+  it("drops the trail when configured with another source, showing loading until it answers", async () => {
+    const { root, view } = await mount("c1");
+    const pending: NavigationSource = { list: () => new Promise(() => undefined) };
+    view.configure({ labels, source: pending, online: () => true });
+    await settle();
+    expect(view.dataset.state).toBe("loading");
+    expect(trail(root)).toEqual([]);
   });
 
   it("does not read again for a change below the destination", async () => {

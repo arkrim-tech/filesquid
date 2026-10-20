@@ -29,6 +29,7 @@ import type { FsThemeControl } from "./fs-theme-control";
 import { A11Y_STYLE, releaseDocumentA11yStyle, retainDocumentA11yStyle } from "./a11y-style";
 import { focusElement, recoverFocus } from "../a11y/focus";
 import type { FsHostIndicator, HostClient } from "./fs-host-indicator";
+import type { FsSettings } from "./fs-settings";
 
 /** The part of the API client the shell needs (injectable in tests). */
 export interface ShellClient extends HostClient {
@@ -211,14 +212,20 @@ export class FsAppShell extends HTMLElement {
   }
 
   /**
-   * Read API health and the host descriptor again and update both, for example after a token
-   * was entered (the event channel is reopened with it). Network I/O via the client.
+   * Read API health and the host descriptor again and update the status line, the header
+   * indicator and a Settings page the shell holds, for example after a token was entered (the
+   * event channel is reopened with it). Network I/O via the client.
    *
    * @returns Resolves once the status line and the host indicator show the new answers.
    */
   async refreshHealth(): Promise<void> {
     const indicator = this.shadowRoot?.querySelector<FsHostIndicator>("fs-host-indicator");
-    await Promise.all([this.loadHealth(), indicator?.refresh()]);
+    const settings = [...this.querySelectorAll<FsSettings>(":scope > fs-settings")];
+    await Promise.all([
+      this.loadHealth(),
+      indicator?.refresh(),
+      ...settings.map((page) => page.refresh()),
+    ]);
   }
 
   /**

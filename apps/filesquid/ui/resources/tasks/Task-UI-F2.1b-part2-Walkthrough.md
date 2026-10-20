@@ -69,6 +69,15 @@
 - **Wording** (P3): `unavailable` also covers storage that cannot be reached right now; the label is now "This is not available right now".
 - **Not changed** (P2, implementation-plan thread): installing the navigation service in the hosts is DE-1.1 and the server wiring, not a row of Task FS-2.1, whose rows are all done; the gap is routed to the api and desktop lanes.
 
+## Review fixes (Cubic round 2: 2 P2, 4 P3)
+
+- **Settings after sign-in** (P2): `FsSettings.refresh()` re-reads its inline indicator, and the shell's `refreshHealth()` calls it for a Settings page it holds; the README now puts `refresh()` under `<fs-host-indicator>`.
+- **Reconfigured destination view** (P2): `configure()` drops the shown trail, so another source or label table never leaves the old breadcrumb on screen.
+- **Inline layout** (P3): the inline statement keeps its grid and gap.
+- **Tests** (P3): the keep-the-trail test asserts that the change caused a second read; the route test also binds while the hash is already `#/settings`.
+- **README** (P3): the denied state is described without Retry.
+- Run after the fixes: `npm test` 48 files, 996 tests passed; Playwright production build `43 passed (16.3s)`.
+
 ## How it was tested
 
 TDD: the new unit, jsdom and Playwright tests were written first; the first run failed (modules missing, elements undefined):

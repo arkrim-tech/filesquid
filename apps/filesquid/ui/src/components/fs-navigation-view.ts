@@ -76,6 +76,7 @@ export class FsNavigationView extends HTMLElement {
   configure(options: NavigationViewOptions): void {
     this.disconnect();
     this.options = options;
+    this.trail = undefined;
     if (this.isConnected) this.connect();
   }
 

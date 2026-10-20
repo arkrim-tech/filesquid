@@ -47,6 +47,16 @@ export class FsSettings extends HTMLElement {
     if (this.isConnected) this.render();
   }
 
+  /**
+   * Read the host descriptor again with the token known now, for example after a sign-in.
+   * Network I/O via the client.
+   *
+   * @returns Resolves once the Privacy section shows the new answer.
+   */
+  async refresh(): Promise<void> {
+    await this.shadowRoot?.querySelector<FsHostIndicator>("fs-host-indicator")?.refresh();
+  }
+
   /** Render when attached. */
   connectedCallback(): void {
     this.render();
