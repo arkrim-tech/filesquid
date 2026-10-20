@@ -311,6 +311,11 @@ impl<B, R, S> FileService<B, R, S> {
             .ok_or_else(FileError::not_found)
     }
 
+    /// The clock commits are dated by.
+    pub(super) fn clock(&self) -> FileClock {
+        self.clock.clone()
+    }
+
     /// Now as RFC 3339 UTC, for a version's `created`.
     pub(super) fn created(&self) -> String {
         rfc3339_utc(u64::try_from((self.clock)()).unwrap_or(0))

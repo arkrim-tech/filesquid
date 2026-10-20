@@ -42,12 +42,14 @@ mod error;
 mod handle;
 pub mod labels;
 pub mod media;
+mod metadata_routes;
 pub mod names;
 mod nodes;
 mod range;
 mod records;
 mod routes;
 mod service;
+pub mod statements;
 mod upload;
 mod versions;
 mod view;
@@ -105,6 +107,20 @@ pub const HISTORY_OPERATION: &str = "files.history";
 pub const VERSIONS_OPERATION: &str = "files.versions";
 /// Journal operation of a refused or failed whole-file download.
 pub const DOWNLOAD_OPERATION: &str = "files.download";
+/// Journal operation of a refused statements read.
+pub const METADATA_READ_OPERATION: &str = "files.metadata.read";
+/// Journal operation of a statement set.
+pub const METADATA_SET_OPERATION: &str = "files.metadata.set";
+/// Journal operation of a statement removal.
+pub const METADATA_REMOVE_OPERATION: &str = "files.metadata.remove";
+/// Journal operation of a refused term lookup.
+pub const TERMS_OPERATION: &str = "files.metadata.terms";
+/// Journal operation of a refused registry read.
+pub const NAMESPACES_OPERATION: &str = "files.metadata.namespaces";
+/// Journal operation of a namespace registration.
+pub const NAMESPACE_OPERATION: &str = "files.metadata.register";
+/// Journal operation of a refused import-record read.
+pub const FACTS_OPERATION: &str = "files.facts";
 /// Journal operation of a refused content read.
 pub const READ_OPERATION: &str = "files.read_content";
 /// Journal operation of an upload.

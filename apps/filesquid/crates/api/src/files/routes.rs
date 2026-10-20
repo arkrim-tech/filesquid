@@ -67,24 +67,29 @@ pub(crate) fn routes() -> Vec<Route> {
             Action::ReadFiles,
         ),
     ]
+    .into_iter()
+    .chain(super::metadata_routes::routes())
+    .collect()
 }
 
 /// The installed file service, or `unavailable` until the host installs one.
-fn files(state: &ApiState) -> Result<std::sync::Arc<dyn super::FileOperations>, FileError> {
+pub(super) fn files(
+    state: &ApiState,
+) -> Result<std::sync::Arc<dyn super::FileOperations>, FileError> {
     state
         .files()
         .ok_or_else(|| FileError::unavailable("no file service is installed"))
 }
 
 /// The query, or `invalid_request` for a missing, extra or malformed parameter.
-fn query<T>(query: Result<Query<T>, QueryRejection>) -> Result<T, FileError> {
+pub(super) fn query<T>(query: Result<Query<T>, QueryRejection>) -> Result<T, FileError> {
     query.map(|Query(q)| q).map_err(|_| {
         FileError::invalid("The query names unknown, missing or malformed parameters.")
     })
 }
 
 /// The JSON body, or `invalid_request` for a missing, extra or malformed field.
-fn body<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, FileError> {
+pub(super) fn body<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, FileError> {
     body.map(|Json(b)| b)
         .map_err(|_| FileError::invalid("The JSON body has unknown, missing or malformed fields."))
 }
@@ -387,7 +392,7 @@ async fn committed_answer(
 }
 
 /// Answer a read: the JSON view, or the typed error after journaling the refusal.
-async fn read_answer<T: Serialize>(
+pub(super) async fn read_answer<T: Serialize>(
     state: &ApiState,
     operation: &str,
     principal: &Principal,

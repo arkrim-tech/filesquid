@@ -2955,6 +2955,354 @@
           }
         }
       }
+    },
+    "/api/v1/files/metadata": {
+      "get": {
+        "operationId": "getFileStatements",
+        "summary": "Read a file's statements",
+        "description": "The populated `exif:`, `dcterms:`, `schema:` and registered extension statements of a file's metadata record, at a version or its head, each marked extracted or asserted. A successful read is not journaled; a refusal is journaled once (API-S-017).",
+        "x-filesquid-action": "files.read",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/LibraryId"
+          },
+          {
+            "$ref": "#/components/parameters/FileId"
+          },
+          {
+            "$ref": "#/components/parameters/Version"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The file's statements.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileStatements"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/files/metadata/statements": {
+      "put": {
+        "operationId": "setFileStatement",
+        "summary": "Set one statement of a file",
+        "description": "Set or replace one statement in the file's metadata record. Unknown `dcterms:` names and unregistered prefixes are refused (400), naming the prefix. Publishes exactly one OCFL version through the metadata module's `ocfl` store with the caller as the version user, or is refused without publishing (409 when nothing would change or another writer moved the record first). The version is journaled with opaque IDs only; a refusal is journaled once.",
+        "x-filesquid-action": "files.write",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetStatementRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The version published.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetadataCommit"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/files/metadata/removals": {
+      "post": {
+        "operationId": "removeFileStatement",
+        "summary": "Remove one statement of a file",
+        "description": "Remove one statement from the file's metadata record; a statement the record does not hold is 404. Publishes exactly one OCFL version through the metadata module's `ocfl` store with the caller as the version user, or is refused without publishing (409 when nothing would change or another writer moved the record first). The version is journaled with opaque IDs only; a refusal is journaled once.",
+        "x-filesquid-action": "files.write",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemoveStatementRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The version published.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetadataCommit"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/files/metadata/terms": {
+      "get": {
+        "operationId": "placeTerm",
+        "summary": "Find where a term name can go",
+        "description": "The add order of a bare term name: `dcterms:` when the `/terms/` register knows it, then the Schema.org suggestion, then each registered extension or custom namespace that accepts it. A successful read is not journaled; a refusal is journaled once (API-S-017).",
+        "x-filesquid-action": "files.read",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/LibraryId"
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "required": true,
+            "description": "The bare term name, 1 to 128 bytes without `:`.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The candidates.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TermCandidates"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/files/metadata/namespaces": {
+      "get": {
+        "operationId": "listNamespaces",
+        "summary": "List a library's registered namespaces",
+        "description": "The library's namespace registry; empty when none was registered. A successful read is not journaled; a refusal is journaled once (API-S-017).",
+        "x-filesquid-action": "files.read",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/LibraryId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The registry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Namespaces"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/files/metadata/registrations": {
+      "post": {
+        "operationId": "registerNamespace",
+        "summary": "Register a namespace",
+        "description": "Register an extension namespace (IRI and optional term list) or a custom namespace as the owner, in the library's `namespaces.md` (MD-S-012). A prefix already registered is 409. Publishes exactly one OCFL version through the metadata module's `ocfl` store with the caller as the version user, or is refused without publishing (409 when nothing would change or another writer moved the record first). The version is journaled with opaque IDs only; a refusal is journaled once.",
+        "x-filesquid-action": "files.write",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterNamespaceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The version published in the collection snapshot.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetadataCommit"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/files/facts": {
+      "get": {
+        "operationId": "getFileFacts",
+        "summary": "Read the facts of a file's import record",
+        "description": "The read-only projection of the file's metadata record: original name, display name, extension, format and media type, size and SHA-256, and per acquisition the import time, method, storage, the path relative to the import root, the volume name and the OCFL object and version. It never answers an absolute path, import root, host or account name, and no route edits it (API-S-027, MD-S-013). A successful read is not journaled; a refusal is journaled once (API-S-017).",
+        "x-filesquid-action": "files.read",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/LibraryId"
+          },
+          {
+            "$ref": "#/components/parameters/FileId"
+          },
+          {
+            "$ref": "#/components/parameters/Version"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The facts projection.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileFactsAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -5676,6 +6024,547 @@
           }
         },
         "additionalProperties": false
+      },
+      "StatementSource": {
+        "type": "string",
+        "enum": [
+          "extracted",
+          "asserted"
+        ],
+        "description": "Where a statement's value came from: extracted from the file (`exif:`) or asserted by the owner (`dcterms:`, `schema:` and extension namespaces)."
+      },
+      "MetadataStatement": {
+        "type": "object",
+        "description": "One populated statement of a file's metadata record (MD-S-002, MD-S-012).",
+        "required": [
+          "curie",
+          "prefix",
+          "term",
+          "value",
+          "source"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "curie": {
+            "type": "string",
+            "description": "`prefix:term`."
+          },
+          "prefix": {
+            "type": "string",
+            "description": "The namespace prefix: `dcterms`, `exif`, `schema` or a registered prefix."
+          },
+          "term": {
+            "type": "string",
+            "description": "The local name."
+          },
+          "value": {
+            "type": "string",
+            "description": "The literal value."
+          },
+          "source": {
+            "$ref": "#/components/schemas/StatementSource"
+          }
+        }
+      },
+      "FileStatements": {
+        "type": "object",
+        "description": "The statements of one file at one version.",
+        "required": [
+          "library_id",
+          "file_id",
+          "version",
+          "statements"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library."
+          },
+          "file_id": {
+            "type": "string",
+            "description": "The file."
+          },
+          "version": {
+            "type": "string",
+            "description": "The version read."
+          },
+          "statements": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MetadataStatement"
+            },
+            "description": "Every populated statement, in record order."
+          }
+        }
+      },
+      "SetStatementRequest": {
+        "type": "object",
+        "description": "Set one statement. `dcterms:` must pass the ISO 15836-2 `/terms/` register (`dc:` maps onto it, file-scoped `accrual*` terms are refused), `schema:` is the Schema.org overflow, and any other prefix must be registered.",
+        "required": [
+          "library_id",
+          "file_id",
+          "curie",
+          "value"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library."
+          },
+          "file_id": {
+            "type": "string",
+            "description": "The file."
+          },
+          "curie": {
+            "type": "string",
+            "description": "`prefix:term`."
+          },
+          "value": {
+            "type": "string",
+            "description": "The value, 1 to 65,536 bytes.",
+            "minLength": 1,
+            "maxLength": 65536
+          }
+        }
+      },
+      "RemoveStatementRequest": {
+        "type": "object",
+        "description": "Remove one statement.",
+        "required": [
+          "library_id",
+          "file_id",
+          "curie"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library."
+          },
+          "file_id": {
+            "type": "string",
+            "description": "The file."
+          },
+          "curie": {
+            "type": "string",
+            "description": "`prefix:term` of the statement; `dc:` names `dcterms:`."
+          }
+        }
+      },
+      "MetadataCommit": {
+        "type": "object",
+        "description": "The one OCFL version a metadata edit published, through the metadata module's `ocfl` store (MD-S-014).",
+        "required": [
+          "library_id",
+          "object_id",
+          "version",
+          "created"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library."
+          },
+          "object_id": {
+            "type": "string",
+            "description": "The OCFL object it changed: the file's object, or the library's collection snapshot for a registration."
+          },
+          "version": {
+            "type": "string",
+            "description": "The new head version."
+          },
+          "created": {
+            "type": "string",
+            "description": "When it was created, RFC 3339 UTC."
+          }
+        }
+      },
+      "CandidateKind": {
+        "type": "string",
+        "enum": [
+          "dcterms",
+          "schema",
+          "extension",
+          "custom"
+        ],
+        "description": "The namespace kind of a term candidate, in the add order."
+      },
+      "TermCandidate": {
+        "type": "object",
+        "description": "One place a term name can go.",
+        "required": [
+          "curie",
+          "kind"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "curie": {
+            "type": "string",
+            "description": "`prefix:name`."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/CandidateKind"
+          }
+        }
+      },
+      "TermCandidates": {
+        "type": "object",
+        "description": "The add order of one term name: `dcterms:` when the `/terms/` register knows it, then the Schema.org suggestion, then each registered namespace that accepts it.",
+        "required": [
+          "name",
+          "candidates"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The name looked up."
+          },
+          "candidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TermCandidate"
+            },
+            "description": "The candidates, in the add order."
+          }
+        }
+      },
+      "NamespaceKind": {
+        "type": "string",
+        "enum": [
+          "extension",
+          "custom"
+        ],
+        "description": "An extension namespace (IRI and optional term list) or an owner-declared custom namespace of free key:value pairs (MD-S-012)."
+      },
+      "NamespaceRegistrant": {
+        "anyOf": [
+          {
+            "type": "string",
+            "enum": [
+              "owner"
+            ]
+          },
+          {
+            "type": "object",
+            "required": [
+              "distribution"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "distribution": {
+                "type": "string",
+                "description": "The distribution's name."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "module"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "module": {
+                "type": "string",
+                "description": "The module's crate name."
+              }
+            }
+          }
+        ],
+        "description": "Who registered a namespace: `owner`, a distribution or a module."
+      },
+      "NamespaceRegistration": {
+        "type": "object",
+        "description": "One registered namespace.",
+        "required": [
+          "prefix",
+          "iri",
+          "kind",
+          "registrant",
+          "terms"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "prefix": {
+            "type": "string",
+            "description": "The prefix statements carry."
+          },
+          "iri": {
+            "type": "string",
+            "description": "The namespace IRI."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/NamespaceKind"
+          },
+          "registrant": {
+            "$ref": "#/components/schemas/NamespaceRegistrant"
+          },
+          "terms": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The allowed terms; null accepts any valid term name."
+          }
+        }
+      },
+      "Namespaces": {
+        "type": "object",
+        "description": "A library's namespace registry: `namespaces.md` in its collection-snapshot object (MD-S-012).",
+        "required": [
+          "library_id",
+          "namespaces"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library."
+          },
+          "namespaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NamespaceRegistration"
+            },
+            "description": "Every registration, in registration order."
+          }
+        }
+      },
+      "RegisterNamespaceRequest": {
+        "type": "object",
+        "description": "Register a namespace as the owner. A prefix that is built in (`dcterms`, `dc`, `schema`, `exif`) or a key of the record format, an IRI that is built in or already registered, and a custom namespace with a term list are refused.",
+        "required": [
+          "library_id",
+          "prefix",
+          "iri",
+          "kind"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library."
+          },
+          "prefix": {
+            "type": "string",
+            "description": "The prefix statements will carry."
+          },
+          "iri": {
+            "type": "string",
+            "description": "The namespace IRI."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/NamespaceKind"
+          },
+          "terms": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "The allowed terms of an extension namespace; any valid name when absent."
+          }
+        }
+      },
+      "RawName": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "object",
+            "required": [
+              "encoding",
+              "value"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "encoding": {
+                "type": "string",
+                "const": "base64",
+                "description": "The value is base64."
+              },
+              "value": {
+                "type": "string",
+                "description": "The exact bytes, base64 (RFC 4648, padded)."
+              }
+            }
+          }
+        ],
+        "description": "A name exactly as reported: text when it is UTF-8, otherwise its bytes as base64."
+      },
+      "ImportMethod": {
+        "type": "string",
+        "enum": [
+          "file_picker",
+          "folder",
+          "drag_and_drop",
+          "other_application",
+          "api_upload"
+        ],
+        "description": "How a file reached FileSquid."
+      },
+      "ByteStorage": {
+        "type": "string",
+        "enum": [
+          "copied",
+          "referenced"
+        ],
+        "description": "Whether the bytes were copied into the library or only referenced."
+      },
+      "ImportSummary": {
+        "type": "object",
+        "description": "One acquisition of a file, as the facts projection shows it.",
+        "required": [
+          "imported_at",
+          "method",
+          "storage",
+          "relative_path",
+          "volume_name",
+          "object_id",
+          "object_version"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "imported_at": {
+            "type": "string",
+            "description": "When the import finished, RFC 3339 UTC."
+          },
+          "method": {
+            "$ref": "#/components/schemas/ImportMethod"
+          },
+          "storage": {
+            "$ref": "#/components/schemas/ByteStorage"
+          },
+          "relative_path": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RawName"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The path relative to the import root, when known (never the absolute path)."
+          },
+          "volume_name": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RawName"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The source volume's name, when known."
+          },
+          "object_id": {
+            "type": "string",
+            "description": "The OCFL object that holds the content."
+          },
+          "object_version": {
+            "type": "string",
+            "description": "The OCFL version that holds the content."
+          }
+        }
+      },
+      "FileFacts": {
+        "type": "object",
+        "description": "The read-only projection of a file's metadata record (API-S-027, MD-S-013): no absolute path, import root, host or account names.",
+        "required": [
+          "original_name",
+          "display_name",
+          "extension",
+          "format",
+          "media_type",
+          "size",
+          "sha256",
+          "imports"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "original_name": {
+            "$ref": "#/components/schemas/RawName"
+          },
+          "display_name": {
+            "type": "string",
+            "description": "The name shown everywhere."
+          },
+          "extension": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The full file extension."
+          },
+          "format": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The format label."
+          },
+          "media_type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The media type."
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The content size in bytes."
+          },
+          "sha256": {
+            "type": "string",
+            "description": "The content's SHA-256, lowercase hex."
+          },
+          "imports": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportSummary"
+            },
+            "description": "One summary per acquisition, oldest first."
+          }
+        }
+      },
+      "FileFactsAnswer": {
+        "type": "object",
+        "description": "The facts projection of one file at one version.",
+        "required": [
+          "library_id",
+          "file_id",
+          "version",
+          "facts"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library."
+          },
+          "file_id": {
+            "type": "string",
+            "description": "The file."
+          },
+          "version": {
+            "type": "string",
+            "description": "The version read."
+          },
+          "facts": {
+            "$ref": "#/components/schemas/FileFacts"
+          }
+        }
       }
     },
     "parameters": {
@@ -5753,6 +6642,15 @@
         "schema": {
           "type": "string",
           "maxLength": 512
+        }
+      },
+      "FileId": {
+        "name": "file_id",
+        "in": "query",
+        "required": true,
+        "description": "The file (UUID v4).",
+        "schema": {
+          "type": "string"
         }
       }
     },

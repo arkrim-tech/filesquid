@@ -861,6 +861,146 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/files/metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read a file's statements
+         * @description The populated `exif:`, `dcterms:`, `schema:` and registered extension statements of a file's metadata record, at a version or its head, each marked extracted or asserted. A successful read is not journaled; a refusal is journaled once (API-S-017).
+         */
+        get: operations["getFileStatements"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/metadata/statements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set one statement of a file
+         * @description Set or replace one statement in the file's metadata record. Unknown `dcterms:` names and unregistered prefixes are refused (400), naming the prefix. Publishes exactly one OCFL version through the metadata module's `ocfl` store with the caller as the version user, or is refused without publishing (409 when nothing would change or another writer moved the record first). The version is journaled with opaque IDs only; a refusal is journaled once.
+         */
+        put: operations["setFileStatement"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/metadata/removals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Remove one statement of a file
+         * @description Remove one statement from the file's metadata record; a statement the record does not hold is 404. Publishes exactly one OCFL version through the metadata module's `ocfl` store with the caller as the version user, or is refused without publishing (409 when nothing would change or another writer moved the record first). The version is journaled with opaque IDs only; a refusal is journaled once.
+         */
+        post: operations["removeFileStatement"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/metadata/terms": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Find where a term name can go
+         * @description The add order of a bare term name: `dcterms:` when the `/terms/` register knows it, then the Schema.org suggestion, then each registered extension or custom namespace that accepts it. A successful read is not journaled; a refusal is journaled once (API-S-017).
+         */
+        get: operations["placeTerm"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/metadata/namespaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List a library's registered namespaces
+         * @description The library's namespace registry; empty when none was registered. A successful read is not journaled; a refusal is journaled once (API-S-017).
+         */
+        get: operations["listNamespaces"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/metadata/registrations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Register a namespace
+         * @description Register an extension namespace (IRI and optional term list) or a custom namespace as the owner, in the library's `namespaces.md` (MD-S-012). A prefix already registered is 409. Publishes exactly one OCFL version through the metadata module's `ocfl` store with the caller as the version user, or is refused without publishing (409 when nothing would change or another writer moved the record first). The version is journaled with opaque IDs only; a refusal is journaled once.
+         */
+        post: operations["registerNamespace"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/facts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the facts of a file's import record
+         * @description The read-only projection of the file's metadata record: original name, display name, extension, format and media type, size and SHA-256, and per acquisition the import time, method, storage, the path relative to the import root, the volume name and the OCFL object and version. It never answers an absolute path, import root, host or account name, and no route edits it (API-S-027, MD-S-013). A successful read is not journaled; a refusal is journaled once (API-S-017).
+         */
+        get: operations["getFileFacts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1752,6 +1892,189 @@ export interface components {
             /** @description When it was created, RFC 3339 UTC. */
             created: string;
         };
+        /**
+         * @description Where a statement's value came from: extracted from the file (`exif:`) or asserted by the owner (`dcterms:`, `schema:` and extension namespaces).
+         * @enum {string}
+         */
+        StatementSource: "extracted" | "asserted";
+        /** @description One populated statement of a file's metadata record (MD-S-002, MD-S-012). */
+        MetadataStatement: {
+            /** @description `prefix:term`. */
+            curie: string;
+            /** @description The namespace prefix: `dcterms`, `exif`, `schema` or a registered prefix. */
+            prefix: string;
+            /** @description The local name. */
+            term: string;
+            /** @description The literal value. */
+            value: string;
+            source: components["schemas"]["StatementSource"];
+        };
+        /** @description The statements of one file at one version. */
+        FileStatements: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The file. */
+            file_id: string;
+            /** @description The version read. */
+            version: string;
+            /** @description Every populated statement, in record order. */
+            statements: components["schemas"]["MetadataStatement"][];
+        };
+        /** @description Set one statement. `dcterms:` must pass the ISO 15836-2 `/terms/` register (`dc:` maps onto it, file-scoped `accrual*` terms are refused), `schema:` is the Schema.org overflow, and any other prefix must be registered. */
+        SetStatementRequest: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The file. */
+            file_id: string;
+            /** @description `prefix:term`. */
+            curie: string;
+            /** @description The value, 1 to 65,536 bytes. */
+            value: string;
+        };
+        /** @description Remove one statement. */
+        RemoveStatementRequest: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The file. */
+            file_id: string;
+            /** @description `prefix:term` of the statement; `dc:` names `dcterms:`. */
+            curie: string;
+        };
+        /** @description The one OCFL version a metadata edit published, through the metadata module's `ocfl` store (MD-S-014). */
+        MetadataCommit: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The OCFL object it changed: the file's object, or the library's collection snapshot for a registration. */
+            object_id: string;
+            /** @description The new head version. */
+            version: string;
+            /** @description When it was created, RFC 3339 UTC. */
+            created: string;
+        };
+        /**
+         * @description The namespace kind of a term candidate, in the add order.
+         * @enum {string}
+         */
+        CandidateKind: "dcterms" | "schema" | "extension" | "custom";
+        /** @description One place a term name can go. */
+        TermCandidate: {
+            /** @description `prefix:name`. */
+            curie: string;
+            kind: components["schemas"]["CandidateKind"];
+        };
+        /** @description The add order of one term name: `dcterms:` when the `/terms/` register knows it, then the Schema.org suggestion, then each registered namespace that accepts it. */
+        TermCandidates: {
+            /** @description The name looked up. */
+            name: string;
+            /** @description The candidates, in the add order. */
+            candidates: components["schemas"]["TermCandidate"][];
+        };
+        /**
+         * @description An extension namespace (IRI and optional term list) or an owner-declared custom namespace of free key:value pairs (MD-S-012).
+         * @enum {string}
+         */
+        NamespaceKind: "extension" | "custom";
+        /** @description Who registered a namespace: `owner`, a distribution or a module. */
+        NamespaceRegistrant: "owner" | {
+            /** @description The distribution's name. */
+            distribution: string;
+        } | {
+            /** @description The module's crate name. */
+            module: string;
+        };
+        /** @description One registered namespace. */
+        NamespaceRegistration: {
+            /** @description The prefix statements carry. */
+            prefix: string;
+            /** @description The namespace IRI. */
+            iri: string;
+            kind: components["schemas"]["NamespaceKind"];
+            registrant: components["schemas"]["NamespaceRegistrant"];
+            /** @description The allowed terms; null accepts any valid term name. */
+            terms: string[] | null;
+        };
+        /** @description A library's namespace registry: `namespaces.md` in its collection-snapshot object (MD-S-012). */
+        Namespaces: {
+            /** @description The library. */
+            library_id: string;
+            /** @description Every registration, in registration order. */
+            namespaces: components["schemas"]["NamespaceRegistration"][];
+        };
+        /** @description Register a namespace as the owner. A prefix that is built in (`dcterms`, `dc`, `schema`, `exif`) or a key of the record format, an IRI that is built in or already registered, and a custom namespace with a term list are refused. */
+        RegisterNamespaceRequest: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The prefix statements will carry. */
+            prefix: string;
+            /** @description The namespace IRI. */
+            iri: string;
+            kind: components["schemas"]["NamespaceKind"];
+            /** @description The allowed terms of an extension namespace; any valid name when absent. */
+            terms?: string[] | null;
+        };
+        /** @description A name exactly as reported: text when it is UTF-8, otherwise its bytes as base64. */
+        RawName: string | {
+            /**
+             * @description The value is base64.
+             * @constant
+             */
+            encoding: "base64";
+            /** @description The exact bytes, base64 (RFC 4648, padded). */
+            value: string;
+        };
+        /**
+         * @description How a file reached FileSquid.
+         * @enum {string}
+         */
+        ImportMethod: "file_picker" | "folder" | "drag_and_drop" | "other_application" | "api_upload";
+        /**
+         * @description Whether the bytes were copied into the library or only referenced.
+         * @enum {string}
+         */
+        ByteStorage: "copied" | "referenced";
+        /** @description One acquisition of a file, as the facts projection shows it. */
+        ImportSummary: {
+            /** @description When the import finished, RFC 3339 UTC. */
+            imported_at: string;
+            method: components["schemas"]["ImportMethod"];
+            storage: components["schemas"]["ByteStorage"];
+            /** @description The path relative to the import root, when known (never the absolute path). */
+            relative_path: components["schemas"]["RawName"] | null;
+            /** @description The source volume's name, when known. */
+            volume_name: components["schemas"]["RawName"] | null;
+            /** @description The OCFL object that holds the content. */
+            object_id: string;
+            /** @description The OCFL version that holds the content. */
+            object_version: string;
+        };
+        /** @description The read-only projection of a file's metadata record (API-S-027, MD-S-013): no absolute path, import root, host or account names. */
+        FileFacts: {
+            original_name: components["schemas"]["RawName"];
+            /** @description The name shown everywhere. */
+            display_name: string;
+            /** @description The full file extension. */
+            extension: string | null;
+            /** @description The format label. */
+            format: string | null;
+            /** @description The media type. */
+            media_type: string | null;
+            /** @description The content size in bytes. */
+            size: number;
+            /** @description The content's SHA-256, lowercase hex. */
+            sha256: string;
+            /** @description One summary per acquisition, oldest first. */
+            imports: components["schemas"]["ImportSummary"][];
+        };
+        /** @description The facts projection of one file at one version. */
+        FileFactsAnswer: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The file. */
+            file_id: string;
+            /** @description The version read. */
+            version: string;
+            facts: components["schemas"]["FileFacts"];
+        };
     };
     responses: {
         /** @description Invalid or malformed request (invalid_request). */
@@ -1946,6 +2269,8 @@ export interface components {
         Range: string;
         /** @description The opaque handle of the node whose children to list, as an earlier answer gave it (clients never parse it). Absent: the host's repository level. An unknown, malformed or unreadable handle answers one identical 404 not_found. */
         NavigationNode: string;
+        /** @description The file (UUID v4). */
+        FileId: string;
     };
     requestBodies: never;
     headers: never;
@@ -3559,6 +3884,225 @@ export interface operations {
             409: components["responses"]["Conflict"];
             500: components["responses"]["Internal"];
             503: components["responses"]["PreferencesUnavailable"];
+        };
+    };
+    getFileStatements: {
+        parameters: {
+            query: {
+                /** @description The library. */
+                library_id: components["parameters"]["LibraryId"];
+                /** @description The file (UUID v4). */
+                file_id: components["parameters"]["FileId"];
+                /** @description The version: head (the default) or one such as v1. */
+                version?: components["parameters"]["Version"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The file's statements. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileStatements"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    setFileStatement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetStatementRequest"];
+            };
+        };
+        responses: {
+            /** @description The version published. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MetadataCommit"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    removeFileStatement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RemoveStatementRequest"];
+            };
+        };
+        responses: {
+            /** @description The version published. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MetadataCommit"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    placeTerm: {
+        parameters: {
+            query: {
+                /** @description The library. */
+                library_id: components["parameters"]["LibraryId"];
+                /** @description The bare term name, 1 to 128 bytes without `:`. */
+                name: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The candidates. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TermCandidates"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    listNamespaces: {
+        parameters: {
+            query: {
+                /** @description The library. */
+                library_id: components["parameters"]["LibraryId"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The registry. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Namespaces"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    registerNamespace: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegisterNamespaceRequest"];
+            };
+        };
+        responses: {
+            /** @description The version published in the collection snapshot. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MetadataCommit"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    getFileFacts: {
+        parameters: {
+            query: {
+                /** @description The library. */
+                library_id: components["parameters"]["LibraryId"];
+                /** @description The file (UUID v4). */
+                file_id: components["parameters"]["FileId"];
+                /** @description The version: head (the default) or one such as v1. */
+                version?: components["parameters"]["Version"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The facts projection. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileFactsAnswer"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
         };
     };
 }

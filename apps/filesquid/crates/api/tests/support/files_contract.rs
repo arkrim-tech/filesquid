@@ -31,6 +31,9 @@ pub const LIBRARY: &str = "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b";
 /// The object the samples name.
 pub const OBJECT: &str = "urn:uuid:0b6f6a58-5c1d-4b5e-9f3e-2a7d8c9e0f11";
 
+/// The file object the metadata samples name (`files/<FILE>`).
+pub const FILE: &str = "7d1c2b9e-4f3a-4e61-8a0b-2c9d5e6f7a80";
+
 /// The object's percent-encoded identifier, for query strings.
 const OBJECT_QUERY: &str = "urn%3Auuid%3A0b6f6a58-5c1d-4b5e-9f3e-2a7d8c9e0f11";
 
@@ -58,6 +61,7 @@ pub async fn install(state: &ApiState, monitor: &Monitor) {
         LeaseStore::new(MemoryBackend::new(), "leases", SystemClock, LEASES).expect("leases"),
     );
     commit_samples(root.as_ref(), leases.as_ref()).await;
+    commit_file_object(root.as_ref(), leases.as_ref()).await;
     let service = FileService::new();
     let opened = service.open_library(
         &library,
@@ -88,6 +92,52 @@ async fn commit_samples(root: &MemoryBackend, leases: &Leases) {
     model.commit(meta()).await.expect("v2");
 }
 
+/// Commit the sample file object `files/<FILE>`: its original `a.txt` and its record, which
+/// holds `dcterms:subject` so the removal sample has a statement to remove.
+async fn commit_file_object(root: &MemoryBackend, leases: &Leases) {
+    use filesquid_api::canonical::{
+        commit_file_original, file_object_id, file_object_root, new_upload_record, OwnerReadable,
+        UploadInput,
+    };
+    let file = filesquid_core::FileId::new(FILE).expect("file id");
+    let input = UploadInput {
+        name: "a.txt",
+        name_normalization: filesquid_metadata::import::NameForm::Nfc,
+        declared_size: 5,
+        media_type: "text/plain",
+        last_modified: None,
+        operation_id: None,
+        started: "2026-10-18T00:00:00Z",
+        finished: "2026-10-18T00:00:01Z",
+        object_version: "v1",
+    };
+    let mut record = new_upload_record(&file, &input, b"alpha").expect("record");
+    record
+        .statements_mut()
+        .set(
+            filesquid_metadata::MetadataNamespace::Dcterms,
+            "subject",
+            "samples",
+        )
+        .expect("statement");
+    let staging = MemoryBackend::new();
+    let area = StagingArea::new(&staging, "fixture").expect("staging");
+    let root_path = file_object_root(&file).expect("root");
+    let object_id = file_object_id(&file);
+    let model = ChangeModel::new(root, leases, "fixture", &root_path, &object_id, area);
+    commit_file_original(
+        &model,
+        &OwnerReadable,
+        &file,
+        &record,
+        None,
+        b"alpha",
+        meta(),
+    )
+    .await
+    .expect("file object");
+}
+
 /// A version record dated now.
 fn meta() -> VersionMeta {
     let now = std::time::SystemTime::now()
@@ -105,6 +155,15 @@ fn query(rest: &str) -> String {
 /// A JSON body naming the sample library and object plus `fields`.
 fn json_body(fields: Value) -> Option<(&'static str, Vec<u8>)> {
     let mut body = json!({ "library_id": LIBRARY, "object_id": OBJECT });
+    for (key, value) in fields.as_object().expect("fields") {
+        body[key] = value.clone();
+    }
+    Some(("application/json", body.to_string().into_bytes()))
+}
+
+/// A JSON body naming the sample library and file plus `fields`.
+fn file_body(fields: Value) -> Option<(&'static str, Vec<u8>)> {
+    let mut body = json!({ "library_id": LIBRARY, "file_id": FILE });
     for (key, value) in fields.as_object().expect("fields") {
         body[key] = value.clone();
     }
@@ -158,6 +217,38 @@ pub fn sample(
             json_body(json!({ "version": "v1", "path": "a.txt" })),
         ),
         (_, "/api/v1/content/{handle}") => (content_url(state, token, path), None),
+        ("GET", "/api/v1/files/metadata") | ("GET", "/api/v1/files/facts") => {
+            (format!("{path}?library_id={LIBRARY}&file_id={FILE}"), None)
+        }
+        ("PUT", "/api/v1/files/metadata/statements") => (
+            path.into(),
+            file_body(json!({ "curie": "dcterms:title", "value": "Sample" })),
+        ),
+        ("POST", "/api/v1/files/metadata/removals") => (
+            path.into(),
+            file_body(json!({ "curie": "dcterms:subject" })),
+        ),
+        ("GET", "/api/v1/files/metadata/terms") => {
+            (format!("{path}?library_id={LIBRARY}&name=title"), None)
+        }
+        ("GET", "/api/v1/files/metadata/namespaces") => {
+            (format!("{path}?library_id={LIBRARY}"), None)
+        }
+        ("POST", "/api/v1/files/metadata/registrations") => (
+            path.into(),
+            Some((
+                "application/json",
+                json!({
+                    "library_id": LIBRARY,
+                    "prefix": "rico",
+                    "iri": "https://www.ica.org/standards/RiC/ontology#",
+                    "kind": "extension",
+                    "terms": ["title"],
+                })
+                .to_string()
+                .into_bytes(),
+            )),
+        ),
         ("PUT", "/api/v1/preferences") => {
             let defaults = filesquid_api::preferences::Preferences::default();
             let body = serde_json::to_vec(&defaults).expect("json");
@@ -347,6 +438,7 @@ pub fn samples() -> Vec<(&'static str, Vec<Value>)> {
     ];
     all.extend(answer_samples());
     all.extend(request_samples());
+    all.extend(metadata_samples());
     all
 }
 
@@ -456,4 +548,203 @@ fn request_samples() -> Vec<(&'static str, Vec<Value>)> {
         ("LabelRequest", vec![to_value(labelled)]),
         ("ContentHandleRequest", vec![to_value(mint)]),
     ]
+}
+
+/// Serialized samples of the metadata property schemas (Task API-F1.4).
+fn metadata_samples() -> Vec<(&'static str, Vec<Value>)> {
+    use filesquid_api::files::statements::{
+        CandidateKind, MetadataCommitView, NamespacesView, RegisterNamespaceRequest,
+        RemoveStatementRequest, SetStatementRequest, StatementSource, StatementView,
+        StatementsView, TermCandidate, TermsView,
+    };
+    use filesquid_metadata::namespace::{NamespaceKind, Registrant, Registration};
+    let statement = |prefix: &str, source| StatementView {
+        curie: format!("{prefix}:title"),
+        prefix: prefix.into(),
+        term: "title".into(),
+        value: "Harbour".into(),
+        source,
+    };
+    let statements = StatementsView {
+        library_id: LIBRARY.into(),
+        file_id: FILE.into(),
+        version: "v2".into(),
+        statements: vec![
+            statement("dcterms", StatementSource::Asserted),
+            statement("exif", StatementSource::Extracted),
+        ],
+    };
+    let candidate = |prefix: &str, kind| TermCandidate {
+        curie: format!("{prefix}:title"),
+        kind,
+    };
+    let candidates = vec![
+        candidate("dcterms", CandidateKind::Dcterms),
+        candidate("schema", CandidateKind::Schema),
+        candidate("rico", CandidateKind::Extension),
+        candidate("mine", CandidateKind::Custom),
+    ];
+    let registrations = vec![
+        Registration::extension(
+            "rico",
+            "https://example.org/rico#",
+            Some(vec!["title".into()]),
+            Registrant::Owner,
+        ),
+        Registration::extension(
+            "arkrim",
+            "https://example.org/arkrim#",
+            None,
+            Registrant::Distribution("arkrim".into()),
+        ),
+        Registration::extension(
+            "c2pa",
+            "https://example.org/c2pa#",
+            None,
+            Registrant::Module("filesquid-c2pa".into()),
+        ),
+        Registration::custom("mine", "https://example.org/mine#"),
+    ];
+    let commit = MetadataCommitView {
+        library_id: LIBRARY.into(),
+        object_id: format!("urn:uuid:{FILE}"),
+        version: "v2".into(),
+        created: "2026-10-18T00:00:00Z".into(),
+    };
+    let set = SetStatementRequest {
+        library_id: LIBRARY.into(),
+        file_id: FILE.into(),
+        curie: "dcterms:title".into(),
+        value: "Harbour".into(),
+    };
+    let removal = RemoveStatementRequest {
+        library_id: LIBRARY.into(),
+        file_id: FILE.into(),
+        curie: "dcterms:title".into(),
+    };
+    let register = |kind, terms| RegisterNamespaceRequest {
+        library_id: LIBRARY.into(),
+        prefix: "rico".into(),
+        iri: "https://example.org/rico#".into(),
+        kind,
+        terms,
+    };
+    let facts = sample_facts();
+    let summaries: Vec<Value> = facts["facts"]["imports"]
+        .as_array()
+        .expect("imports")
+        .clone();
+    vec![
+        (
+            "StatementSource",
+            vec![
+                to_value(StatementSource::Extracted),
+                to_value(StatementSource::Asserted),
+            ],
+        ),
+        (
+            "MetadataStatement",
+            statements.statements.iter().map(to_value).collect(),
+        ),
+        ("FileStatements", vec![to_value(&statements)]),
+        ("SetStatementRequest", vec![to_value(set)]),
+        ("RemoveStatementRequest", vec![to_value(removal)]),
+        ("MetadataCommit", vec![to_value(commit)]),
+        (
+            "CandidateKind",
+            candidates.iter().map(|c| to_value(c.kind)).collect(),
+        ),
+        ("TermCandidate", candidates.iter().map(to_value).collect()),
+        (
+            "TermCandidates",
+            vec![to_value(TermsView {
+                name: "title".into(),
+                candidates: candidates.clone(),
+            })],
+        ),
+        (
+            "NamespaceKind",
+            vec![
+                to_value(NamespaceKind::Extension),
+                to_value(NamespaceKind::Custom),
+            ],
+        ),
+        (
+            "NamespaceRegistrant",
+            registrations
+                .iter()
+                .map(|r| to_value(r.registrant()))
+                .collect(),
+        ),
+        (
+            "NamespaceRegistration",
+            registrations.iter().map(to_value).collect(),
+        ),
+        (
+            "Namespaces",
+            vec![to_value(NamespacesView {
+                library_id: LIBRARY.into(),
+                namespaces: registrations.clone(),
+            })],
+        ),
+        (
+            "RegisterNamespaceRequest",
+            vec![
+                to_value(register(
+                    NamespaceKind::Extension,
+                    Some(vec!["title".into()]),
+                )),
+                to_value(register(NamespaceKind::Custom, None)),
+            ],
+        ),
+        (
+            "RawName",
+            vec![
+                json!("Harbour.jpg"),
+                json!({ "encoding": "base64", "value": "/w==" }),
+            ],
+        ),
+        (
+            "ImportMethod",
+            [
+                "file_picker",
+                "folder",
+                "drag_and_drop",
+                "other_application",
+                "api_upload",
+            ]
+            .iter()
+            .map(|m| json!(m))
+            .collect(),
+        ),
+        ("ByteStorage", vec![json!("copied"), json!("referenced")]),
+        ("ImportSummary", summaries),
+        ("FileFacts", vec![facts["facts"].clone()]),
+        ("FileFactsAnswer", vec![facts]),
+    ]
+}
+
+/// The facts answer of the sample file object's record, as the route serializes it.
+fn sample_facts() -> Value {
+    use filesquid_api::canonical::{new_upload_record, UploadInput};
+    use filesquid_api::files::statements::FactsView;
+    let file = filesquid_core::FileId::new(FILE).expect("file id");
+    let input = UploadInput {
+        name: "Harbour.jpg",
+        name_normalization: filesquid_metadata::import::NameForm::Nfc,
+        declared_size: 5,
+        media_type: "image/jpeg",
+        last_modified: None,
+        operation_id: None,
+        started: "2026-10-18T00:00:00Z",
+        finished: "2026-10-18T00:00:01Z",
+        object_version: "v1",
+    };
+    let record = new_upload_record(&file, &input, b"alpha").expect("record");
+    to_value(FactsView {
+        library_id: LIBRARY.into(),
+        file_id: FILE.into(),
+        version: "v1".into(),
+        facts: record.facts(),
+    })
 }

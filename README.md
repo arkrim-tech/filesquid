@@ -321,6 +321,13 @@ cd apps/filesquid
 cargo test -p filesquid-api --locked --test integration_drive --test features
 ```
 
+The metadata property routes and the upload's file record of API-F1.4 (API-S-034, API-S-026: one `filesquid-metadata` record codec, an upload that creates the file's own OCFL object with its original and record, statement edits, namespace registration, term placement and the read-only facts projection) are tested through the router against real OCFL storage roots in the system temporary directory, which each test removes; the canonical record codec has its own unit tests:
+
+```sh
+cd apps/filesquid
+cargo test -p filesquid-api --locked --test integration_metadata --test unit_canonical --test features
+```
+
 The host-side I/O the API must not do lives in the native-processing library `filesquid-native` (`crates/native`): the SQLite journal store, the data-directory checks (write probe, free space) and `HostMonitor`, which both hosts link ([ADR 033](./resources/architecture/033-activity-journal-and-live-health-monitoring.md) amendment 2026-10-18). Its unit tests and BDD features run alone:
 
 ```sh
