@@ -1,6 +1,6 @@
 # Task DE-1.1 Walkthrough: Create, open, copy, rebuild library
 
-Branch: `feat/de-1.1-library-create-open-copy-rebuild` (part of global [Task 1.1](../../../../../../resources/implementation-plan.md#task-1.1)). API contract `0.16.0` (one above `0.15.0` of API-F2.2, PR #104).
+Branch: `feat/de-1.1-library-create-open-copy-rebuild` (part of global [Task 1.1](../../../../../../resources/implementation-plan.md#task-1.1)). API contract `0.17.0` (one above `0.16.0` of API-F2.11, PR #105).
 
 ## What changed
 
@@ -24,7 +24,7 @@ Branch: `feat/de-1.1-library-create-open-copy-rebuild` (part of global [Task 1.1
     - the host port `BackfillLauncher`, installed with `ApiState::install_history_backfill`;
     - answers 200 when started, 409 while a backfill runs, and 503 until a launcher is installed;
     - each request is journaled once as `history.backfill.request`.
-  - `openapi.json` is 0.16.0, with schema `BackfillStarted`. `ui/src/api/schema.d.ts` was regenerated.
+  - `openapi.json` is 0.17.0, with schema `BackfillStarted`. `ui/src/api/schema.d.ts` was regenerated.
 - **`filesquid-desktop`**:
   - [`libraries.rs`](../../src/libraries.rs): `DesktopLibraries` wraps `LibraryCommands<HostLocations>`. After each create or open, the bound library is served:
     - its files, from the same root and leases;
@@ -198,6 +198,6 @@ None for the application. The packaged-window run sets `FILESQUID_E2E_LOCATIONS`
 `FULL=1 FILESQUID_DESKTOP_E2E=1 bash scripts/pre-commit.sh` on the final code, packaged-window e2e included:
 
 ```text
-✅ Desktop packaged-window e2e passed (112s).
-✅ All Pre-Commit Hooks Passed! Test scope: full (606s)
+✅ Desktop packaged-window e2e passed (109s).
+✅ All Pre-Commit Hooks Passed! Test scope: full (820s)
 ```
