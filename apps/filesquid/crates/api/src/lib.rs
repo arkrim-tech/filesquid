@@ -23,6 +23,11 @@
 //! alive only while it keeps reading), 3,600 seconds after its mint at the latest, and when
 //! its minting credential ends.
 //!
+//! [`navigation`] lists one level of the navigation tree per call (the repository, its
+//! libraries, their collections, virtual collections and folders) with the ancestors a
+//! breadcrumb needs, over the same catalog and folder listing, and announces changes with
+//! the `navigation.change` event.
+//!
 //! [`replica`] holds what a client that works from a local copy needs: a permission-aware
 //! cache identity, visible coverage and recovery states, and the ledger of pending changes
 //! that become canonical only when their fenced head publication succeeds.
@@ -59,6 +64,7 @@ pub mod library;
 pub mod local_library;
 pub mod metrics;
 pub mod monitor;
+pub mod navigation;
 pub mod ocfl_validation;
 pub mod operation;
 pub mod registry;
@@ -67,13 +73,13 @@ mod routes;
 pub mod trace_layer;
 
 pub use error::{ApiError, DenialReason, ErrorCode};
-pub use events::{ApiEvent, EventBus, EventSubscription};
+pub use events::{ApiEvent, EventBus, EventFilter, EventSubscription};
 pub use routes::{route_actions, routed_paths, router, Liveness};
 
 use std::sync::{Arc, OnceLock};
 
 /// Version of the FileSquid API contract. Bumped when the contract changes.
-pub const API_VERSION: &str = "0.10.0";
+pub const API_VERSION: &str = "0.11.0";
 
 /// URL prefix shared by every API route.
 pub const API_PREFIX: &str = "/api/v1";
@@ -107,6 +113,9 @@ pub struct ApiState {
     /// The host's history source, installed once at startup (the history routes answer 503
     /// until then).
     history: Arc<OnceLock<Arc<dyn history::HistorySource>>>,
+    /// The host's navigation service, installed once at startup (the navigation route
+    /// answers 503 until then).
+    navigation: Arc<OnceLock<Arc<navigation::NavigationService>>>,
 }
 
 impl std::fmt::Debug for ApiState {
@@ -119,6 +128,7 @@ impl std::fmt::Debug for ApiState {
             .field("content_handles", &self.content_handles)
             .field("validation_installed", &self.validation.get().is_some())
             .field("history_installed", &self.history.get().is_some())
+            .field("navigation_installed", &self.navigation.get().is_some())
             .finish()
     }
 }
@@ -142,7 +152,19 @@ impl ApiState {
             content_handles: Arc::new(content::ContentHandles::new(clock)),
             validation: Arc::new(OnceLock::new()),
             history: Arc::new(OnceLock::new()),
+            navigation: Arc::new(OnceLock::new()),
         }
+    }
+
+    /// Install the host's navigation service (API-S-021). Returns false, keeping the first,
+    /// if one was already installed.
+    pub fn install_navigation(&self, navigation: Arc<navigation::NavigationService>) -> bool {
+        self.navigation.set(navigation).is_ok()
+    }
+
+    /// The installed navigation service, if any.
+    pub fn navigation(&self) -> Option<Arc<navigation::NavigationService>> {
+        self.navigation.get().cloned()
     }
 
     /// Install the host's file service. Returns false, keeping the first, if one was already

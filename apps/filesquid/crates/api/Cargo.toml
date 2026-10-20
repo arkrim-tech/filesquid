@@ -135,6 +135,14 @@ name = "unit_jobs"
 path = "tests/unit/jobs.rs"
 
 [[test]]
+name = "integration_navigation"
+path = "tests/integration/navigation.rs"
+
+[[test]]
+name = "unit_navigation"
+path = "tests/unit/navigation.rs"
+
+[[test]]
 name = "features"
 path = "tests/features.rs"
 harness = false

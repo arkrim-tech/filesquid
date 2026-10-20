@@ -74,7 +74,7 @@ fn contract_is_openapi_3_1_with_the_crate_api_version() {
     let doc = contract();
     assert_eq!(doc["openapi"], "3.1.0");
     assert_eq!(doc["info"]["version"], API_VERSION);
-    assert_eq!(API_VERSION, "0.10.0");
+    assert_eq!(API_VERSION, "0.11.0");
 }
 
 #[test]
@@ -269,7 +269,22 @@ async fn owner_state() -> (ApiState, Monitor) {
         ValidationService::new(Arc::new(MemoryFindingsStore::new()), monitor.clone());
     state.install_validation(Arc::new(validation));
     install_sample_history(&state);
+    state.install_navigation(Arc::new(navigation_service()));
     (state, monitor)
+}
+
+/// A navigation service over an empty catalog: the repository level answers 200.
+fn navigation_service() -> filesquid_api::navigation::NavigationService {
+    use filesquid_api::navigation::{HostAccess, MemoryFolderIndex, RepositoryInfo};
+    filesquid_api::navigation::NavigationService::new(
+        Arc::new(filesquid_api::library::MemoryCatalog::new()),
+        Arc::new(MemoryFolderIndex::new()),
+        Arc::new(HostAccess),
+        RepositoryInfo::new(
+            filesquid_core::RepositoryId::new("repository").expect("id"),
+            None,
+        ),
+    )
 }
 
 /// Send one request carrying [`TOKEN`] through the router, with the sample query and body of
@@ -664,9 +679,63 @@ fn samples() -> Vec<(&'static str, Vec<Value>)> {
     all.extend(host_samples());
     all.extend(validation_samples());
     all.extend(history_samples());
+    all.extend(navigation_samples());
     all.extend(operation_samples());
     all.extend(files_contract::samples());
     all
+}
+
+/// Serialized samples of the navigation schemas: a page of every kind of node and both
+/// shapes of the change event.
+fn navigation_samples() -> Vec<(&'static str, Vec<Value>)> {
+    use filesquid_api::navigation::{
+        FolderScope, NavigationChange, NavigationRequest, NodeKind, NodeRef,
+    };
+    let service = navigation_service();
+    let page = |node: Option<String>| {
+        let request = NavigationRequest {
+            node,
+            ..NavigationRequest::default()
+        };
+        service
+            .list(&filesquid_api::auth::Principal::Owner, &request)
+            .expect("page")
+    };
+    let root = page(None);
+    let repository = to_value(&root);
+    let kinds = [
+        NodeKind::Repository,
+        NodeKind::Library,
+        NodeKind::Collection,
+        NodeKind::VirtualCollection,
+        NodeKind::Folder,
+    ];
+    let folder = NodeRef::folder(
+        FolderScope::Collection(filesquid_core::CollectionId::new("c").expect("id")),
+        "a/b",
+    );
+    let handle = folder.to_handle().expect("handle");
+    let nodes = to_value(filesquid_api::navigation::NodeView {
+        node: handle,
+        kind: NodeKind::Folder,
+        name: Some("b".to_string()),
+        has_children: false,
+    });
+    let page_with_ancestors = serde_json::json!({
+        "nodes": [nodes.clone()], "ancestors": [nodes.clone()], "next_cursor": "c1.3330"
+    });
+    vec![
+        ("NavigationKind", kinds.map(to_value).to_vec()),
+        ("NavigationNode", vec![nodes]),
+        ("NavigationPage", vec![repository, page_with_ancestors]),
+        (
+            "NavigationChange",
+            vec![
+                to_value(NavigationChange::of(&[folder])),
+                to_value(NavigationChange::everything()),
+            ],
+        ),
+    ]
 }
 
 /// Serialized samples of the operation and error schemas.
@@ -1153,7 +1222,18 @@ async fn events_from_every_publisher() -> Vec<ApiEvent> {
     });
     events.extend(slow.next().await);
     events.extend(host_change_event().await);
+    events.extend(navigation_change_event().await);
     events
+}
+
+/// The `navigation.change` event a navigation publisher sends.
+async fn navigation_change_event() -> Option<ApiEvent> {
+    use filesquid_api::navigation::{NavigationPublisher, NodeRef};
+    let bus = filesquid_api::EventBus::new();
+    let mut sub = bus.subscription().expect("slot");
+    let library = filesquid_core::LibraryId::new("library").expect("id");
+    NavigationPublisher::new(bus).publish(&[NodeRef::Library(library)]);
+    sub.next().await
 }
 
 /// An enrolment port that reports enrolled once switched on.
