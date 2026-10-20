@@ -31,7 +31,7 @@ pub const BACKFILL_STOP_WAIT: Duration = Duration::from_secs(10);
 pub struct BackfillTask {
     /// The durable job service.
     pub jobs: Jobs,
-    /// The backfill of this host ([`crate::history_backfill`]).
+    /// The backfill of this host ([`crate::history_backfill()`]).
     pub backfill: Backfill,
     /// The library catalogs.
     pub catalog: Arc<SqliteCatalog>,

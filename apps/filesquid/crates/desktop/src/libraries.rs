@@ -5,7 +5,7 @@
 //! The commands keep the one meaning of create, open, snapshot copy, rebuild and repair
 //! ([`LibraryCommands`] over [`LocalLibraryService`]); the desktop only injects where the
 //! storage roots come from ([`HostLocations`]) and the persistent repair ledger
-//! ([`SqliteRepairLedger`] in the operational store). [`DesktopLibraries`] adds what a host
+//! ([`SqliteRepairLedger`](filesquid_native::SqliteRepairLedger) in the operational store). [`DesktopLibraries`] adds what a host
 //! does once a library is bound to a folder: it serves the library's files from the same
 //! root and leases ([`open_fs_library_root`]), schedules its OCFL validation and lists its
 //! root for the PROV-O history ([`OpenedRoots`]). No path ever reaches an answer.
