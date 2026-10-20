@@ -11,6 +11,10 @@
  * Open state: repositories and libraries are open unless the owner collapsed them (kept with the
  * choices); deeper nodes are closed until opened, and their children are read when they open.
  *
+ * Changes (UI-F2.1b, `navigation.change`): a change naming parents reads only the loaded levels
+ * it touches (each named parent, and the shown level holding each named node); `all`, the
+ * repository, or a change before the first answer reads the whole tree again.
+ *
  * Accessibility (UI-S-016): each section has a heading, Move up and Move down buttons (also
  * Alt+Shift+Up and Alt+Shift+Down anywhere in the section; `aria-disabled` at the ends so focus
  * stays put), a WAI-ARIA treeview with one Tab stop and the treeview keys, and a Pin toggle for
@@ -20,7 +24,9 @@
  */
 import type { LabelTable } from "../theme/labels";
 import {
+  isNotFound,
   navigationHref,
+  type NavigationChange,
   type NavigationKind,
   type NavigationNode,
   type NavigationSource,
@@ -31,6 +37,7 @@ import {
   readNavigation,
   readPins,
   type NavigationData,
+  type NavigationLevel,
   type ResolvedPin,
 } from "../navigation/loader";
 import { sharedNavigationStore, type NavigationStore } from "../navigation/store";
@@ -120,6 +127,10 @@ export class FsNavTree extends HTMLElement {
   /** The nodes in the last render, by handle. */
   private rendered = new Map<string, NavigationNode>();
   private generation = 0;
+  /** The generation of the last whole-tree read that finished; a read is in flight otherwise. */
+  private settled = 0;
+  /** The newest read token of each level re-read for a change. */
+  private readonly levelTokens = new Map<string, number>();
   private stopFollowing?: () => void;
   /**
    * Pins already read since the last load or store change. A pin whose read failed (other than
@@ -200,6 +211,7 @@ export class FsNavTree extends HTMLElement {
       if (generation !== this.generation || source !== this.options?.source) return;
       this.fail(error);
     }
+    this.settled = generation;
     this.render();
   }
 
@@ -209,8 +221,123 @@ export class FsNavTree extends HTMLElement {
     if (!options || !this.store) return;
     this.disconnect();
     this.store.addEventListener("change", this.onStoreChange);
-    this.stopFollowing = options.source.subscribe?.(() => void this.reload());
+    this.stopFollowing = options.source.subscribe?.((change) => this.onChange(change));
     void this.reload();
+  }
+
+  /**
+   * Follow one change: `all`, a change naming the repository (its libraries changed), a change
+   * before the first answer, or one while a whole-tree read is in flight (its answer may predate
+   * the change) reads the whole tree; otherwise only the levels the named parents touch are read
+   * again.
+   */
+  private onChange(change: NavigationChange): void {
+    const repository = this.data?.repository?.node;
+    if (
+      "all" in change ||
+      !this.data ||
+      this.failure ||
+      this.settled !== this.generation ||
+      change.parents.includes(repository ?? "")
+    ) {
+      void this.reload();
+      return;
+    }
+    void this.refreshParents(change.parents);
+  }
+
+  /**
+   * The loaded levels a change touches: each named parent whose children are loaded, and the
+   * level that shows each named node (its `has_children` or name may have changed). A named
+   * node that is not on screen touches nothing.
+   */
+  private levelsTouched(parents: readonly string[]): string[] {
+    const named = new Set(parents);
+    const levels = new Set<string>();
+    for (const [parent, children] of this.loaded) {
+      if (named.has(parent) || children.some((child) => named.has(child.node))) levels.add(parent);
+    }
+    return [...levels];
+  }
+
+  /**
+   * Read the levels a change touches again and show them. An answer that arrives after a
+   * newer load started, or from a source that was replaced, is dropped. I/O: source reads, at
+   * most one per loaded level.
+   */
+  private async refreshParents(parents: readonly string[]): Promise<void> {
+    const source = this.options?.source;
+    const levels = this.levelsTouched(parents);
+    if (!source || levels.length === 0) return;
+    const generation = this.generation;
+    const tokens = levels.map((parent) => this.nextLevelToken(parent));
+    const answers = await Promise.allSettled(levels.map((parent) => readLevel(source, parent)));
+    if (generation !== this.generation || source !== this.options?.source) return;
+    answers.forEach((answer, i) => {
+      const parent = levels[i] as string;
+      if (this.levelTokens.get(parent) === tokens[i]) this.acceptLevel(parent, answer);
+    });
+    this.syncLibraryChildren();
+    this.syncPins();
+  }
+
+  /** Take a new read token for one level; only the newest read of a level is kept. */
+  private nextLevelToken(parent: string): number {
+    const token = (this.levelTokens.get(parent) ?? 0) + 1;
+    this.levelTokens.set(parent, token);
+    return token;
+  }
+
+  /** Give the sections each library's children as loaded now. */
+  private syncLibraryChildren(): void {
+    const data = this.data;
+    if (!data) return;
+    const children = new Map(data.children);
+    for (const library of data.libraries) {
+      const nodes = this.loaded.get(library.node);
+      if (nodes) children.set(library.node, nodes);
+      else children.delete(library.node);
+    }
+    this.data = { ...data, children };
+  }
+
+  /**
+   * Keep one re-read level: new children replace the old, a `not_found` level closes (its
+   * node is gone or no longer readable), any other failure is logged and keeps the old
+   * children. Pins among the children take the new names; pins that left the level are read
+   * again.
+   */
+  private acceptLevel(parent: string, answer: PromiseSettledResult<NavigationLevel>): void {
+    const before = this.loaded.get(parent) ?? [];
+    if (answer.status === "rejected" && !isNotFound(answer.reason)) {
+      console.warn("FileSquid could not read a changed navigation level", answer.reason);
+      return;
+    }
+    const after = answer.status === "fulfilled" ? answer.value.nodes : [];
+    if (answer.status === "fulfilled") this.loaded.set(parent, after);
+    else this.closeLevel(parent);
+    const kept = new Map(after.map((node) => [node.node, node]));
+    for (const node of before) if (!kept.has(node.node)) this.forgetPin(node.node);
+    for (const node of after) this.renamePin(node);
+  }
+
+  /** Close a level whose node is gone. */
+  private closeLevel(parent: string): void {
+    this.loaded.delete(parent);
+    this.opened.delete(parent);
+  }
+
+  /** Forget what is known of a node that left its level, so a pin of it is read again. */
+  private forgetPin(handle: string): void {
+    this.pinCache.delete(handle);
+    this.pinsTried.delete(handle);
+    this.rendered.delete(handle);
+  }
+
+  /** Give a known pin the node as it was just listed. */
+  private renamePin(node: NavigationNode): void {
+    const known = this.pinCache.get(node.node);
+    if (known) this.pinCache.set(node.node, { pin: known.pin, node });
   }
 
   /** Stop following the store and source. */

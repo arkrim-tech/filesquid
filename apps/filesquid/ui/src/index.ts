@@ -9,6 +9,8 @@ import { FsFilePreview } from "./components/fs-file-preview";
 import { FsHostIndicator } from "./components/fs-host-indicator";
 import { FsMonitor } from "./components/fs-monitor";
 import { FsNavTree } from "./components/fs-nav-tree";
+import { FsNavigationView } from "./components/fs-navigation-view";
+import { FsSettings } from "./components/fs-settings";
 import { FsStates } from "./components/fs-states";
 import { FsThemeControl } from "./components/fs-theme-control";
 
@@ -111,6 +113,16 @@ export {
   type NavigationEnvironment,
 } from "./navigation/store";
 export { MemoryNavigationSource, type FixtureNode } from "./navigation/source";
+export { ClientNavigationSource, type NavigationClient } from "./navigation/client-source";
+export {
+  MAX_CHANGE_PARENTS,
+  MAX_PAGE_NODES,
+  parseNavigationChange,
+  parseNavigationPage,
+} from "./navigation/contract";
+export { FsNavigationView, type NavigationViewOptions } from "./components/fs-navigation-view";
+export { HOST_STATEMENT_STYLE, buildHostStatement } from "./components/host-statement";
+export { FsSettings, type SettingsOptions } from "./components/fs-settings";
 export { deviceStorage, type DeviceStorage } from "./app/device-storage";
 export type { MonitorClient, MonitorOptions, TokenStore } from "./components/fs-monitor";
 export * from "./api/client";
@@ -133,10 +145,16 @@ export {
 export { createHostClient, DESKTOP_EVENT, LAUNCH_TOKEN_GLOBAL, launchToken } from "./api/host";
 export {
   MONITOR_ROUTE,
+  NAVIGATION_ROUTE_PREFIX,
+  SETTINGS_ROUTE,
   bindFilesRoute,
   bindMonitorRoute,
+  bindNavigationRoute,
+  bindSettingsRoute,
   memoryTokenStore,
+  parseNavigationHash,
   type FilesRouteOptions,
+  type NavigationRouteOptions,
   type RouteHost,
 } from "./app/routes";
 export {
@@ -178,6 +196,9 @@ export function defineElements(): void {
   if (!customElements.get("fs-states")) customElements.define("fs-states", FsStates);
   if (!customElements.get("fs-nav-tree")) customElements.define("fs-nav-tree", FsNavTree);
   if (!customElements.get("fs-breadcrumb")) customElements.define("fs-breadcrumb", FsBreadcrumb);
+  if (!customElements.get("fs-navigation-view")) {
+    customElements.define("fs-navigation-view", FsNavigationView);
+  }
   if (!customElements.get("fs-file-preview")) {
     customElements.define("fs-file-preview", FsFilePreview);
   }
@@ -187,6 +208,7 @@ export function defineElements(): void {
   if (!customElements.get("fs-host-indicator")) {
     customElements.define("fs-host-indicator", FsHostIndicator);
   }
+  if (!customElements.get("fs-settings")) customElements.define("fs-settings", FsSettings);
   if (!customElements.get("fs-app-shell")) customElements.define("fs-app-shell", FsAppShell);
   if (!customElements.get("fs-monitor")) customElements.define("fs-monitor", FsMonitor);
 }

@@ -9,11 +9,11 @@
  * Every list, page loop and walk is bounded (AGENTS.md section 22) by the `MAX_*` constants.
  */
 import { ApiError } from "../api/client";
+import type { components } from "../api/schema";
 import { formatLabel, type LabelKey, type LabelTable } from "../theme/labels";
 
 /** What a navigation node stands for (API-S-021 `kind`). */
-export type NavigationKind =
-  "repository" | "library" | "collection" | "virtual_collection" | "folder";
+export type NavigationKind = components["schemas"]["NavigationKind"];
 
 /** Every kind, in the API's listing order. */
 export const NAVIGATION_KINDS: readonly NavigationKind[] = [
@@ -24,17 +24,13 @@ export const NAVIGATION_KINDS: readonly NavigationKind[] = [
   "folder",
 ];
 
-/** One node of the navigation tree, as the API lists it. */
-export interface NavigationNode {
-  /** Opaque handle (at most 512 bytes); never parsed, never a path. */
-  readonly node: string;
-  /** What the node stands for. */
-  readonly kind: NavigationKind;
-  /** The owner's name for it; `null` for a repository without one (its label is shown). */
-  readonly name: string | null;
-  /** True when the caller may read at least one child. */
-  readonly has_children: boolean;
-}
+/**
+ * One node of the navigation tree, as the API lists it (generated from the contract): an
+ * opaque handle of at most 512 bytes that is never parsed and never a path, its `kind`, its
+ * `name` (`null` for a repository without one, whose label is shown) and `has_children` (true
+ * when the caller may read at least one child).
+ */
+export type NavigationNode = Readonly<components["schemas"]["NavigationNode"]>;
 
 /** One page of a level. */
 export interface NavigationPage {
