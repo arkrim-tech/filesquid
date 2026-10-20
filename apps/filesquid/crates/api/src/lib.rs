@@ -59,6 +59,7 @@ pub mod files;
 pub mod health;
 pub mod history;
 pub mod host;
+pub mod jobs;
 pub mod journal;
 pub mod journal_writer;
 pub mod library;

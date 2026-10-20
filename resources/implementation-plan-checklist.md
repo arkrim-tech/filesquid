@@ -3,12 +3,11 @@
 <!-- mvp-progress:start -->
 ![MVP progress: 56% complete](./assets/mvp-progress.svg)
 
-**MVP progress: 56%**, about 540 of 968 estimated hours. 15 of 28 tasks are done and 8 more are under way. Each segment of the bar is one task below, as wide as its estimated hours in the implementation plan; an open task fills by the share of its module rows that are ticked. Below the bar, In progress lists the open tasks being worked on (global tasks with some but not all module rows ticked, and tasks with an open pull request) and Up next lists the next five new module tasks whose listed dependencies are done or in progress. Regenerate with `python3 scripts/docs/update_mvp_progress.py` after ticking boxes or opening a pull request; the check run by `scripts/verify_docs.sh` does not call GitHub and uses the pull requests recorded in the block. In a clone that registers the `mvp-progress` git merge driver (see the README), merging two pull requests that both redraw it merges their ticks and redraws it when it can, and otherwise leaves a conflict.
+**MVP progress: 56%**, about 545 of 968 estimated hours. 15 of 28 tasks are done and 8 more are under way. Each segment of the bar is one task below, as wide as its estimated hours in the implementation plan; an open task fills by the share of its module rows that are ticked. Below the bar, In progress lists the open tasks being worked on (global tasks with some but not all module rows ticked, and tasks with an open pull request) and Up next lists the next five new module tasks whose listed dependencies are done or in progress. Regenerate with `python3 scripts/docs/update_mvp_progress.py` after ticking boxes or opening a pull request; the check run by `scripts/verify_docs.sh` does not call GitHub and uses the pull requests recorded in the block. In a clone that registers the `mvp-progress` git merge driver (see the README), merging two pull requests that both redraw it merges their ticks and redraws it when it can, and otherwise leaves a conflict.
 
 **In progress**
 
-- [Task 0.5](./implementation-plan.md#task-0.5) Desktop catalog, jobs, and OCFL coordinator: 5 of 8 module rows ticked
-    - [DE-0.4](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Durable jobs and checkpoint-on-quit ([PR #95](https://github.com/arkrim-tech/filesquid/pull/95))
+- [Task 0.5](./implementation-plan.md#task-0.5) Desktop catalog, jobs, and OCFL coordinator: 6 of 8 module rows ticked
     - [DE-0.5](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Bounded media workers (libvips stills)
     - [DE-0.8](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Native-processing library boundary (`filesquid-native`)
 - [Task FS-1.3](./implementation-plan.md#task-fs-1.3) Metadata properties and the import record through the API: 2 of 5 module rows ticked
@@ -51,7 +50,7 @@
 
 Generated 2026-10-20T05:00:29Z (RFC 3339, UTC) from the ticked boxes, the module plans and the open pull requests at that time.
 <!-- generated-at: 2026-10-20T05:00:29Z -->
-<!-- in-progress-prs: API-F2.10=#97,DE-0.4=#95,FS-2.8=#91,MD-0.7=#98 -->
+<!-- in-progress-prs: API-F2.10=#97,FS-2.8=#91,MD-0.7=#98 -->
 <!-- mvp-progress:end -->
 
 This is a short, ordered view of [implementation-plan.md](./implementation-plan.md). Each numbered item is a global task in the order the dev team expects to finish it, and the nested items are the module tasks it dispatches, taken from each module's `resources/plan.md`. Task codes link to the full task description. A box is ticked when the matching box is ticked in the source plan.
@@ -128,7 +127,7 @@ FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by ga
     - [x] [DE-0.1](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Capability expansion (deny-by-default)
     - [x] [DE-0.2](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Per-library SQLite catalog
     - [x] [DE-0.3](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Intent → OCFL commit → receipt reconcile
-    - [ ] [DE-0.4](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Durable jobs and checkpoint-on-quit
+    - [x] [DE-0.4](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Durable jobs and checkpoint-on-quit
     - [ ] [DE-0.5](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Bounded media workers (libvips stills)
     - [x] [DE-0.6](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Stdout JSON logging
     - [ ] [DE-0.8](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Native-processing library boundary (`filesquid-native`)
