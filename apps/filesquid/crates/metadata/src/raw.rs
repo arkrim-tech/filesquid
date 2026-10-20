@@ -83,8 +83,10 @@ impl<'de> Visitor<'de> for RawVisitor {
         let mut value: Option<String> = None;
         while let Some(key) = map.next_key::<String>()? {
             match key.as_str() {
-                "encoding" => encoding = Some(map.next_value()?),
-                "value" => value = Some(map.next_value()?),
+                "encoding" if encoding.is_none() => encoding = Some(map.next_value()?),
+                "value" if value.is_none() => value = Some(map.next_value()?),
+                "encoding" => return Err(de::Error::duplicate_field("encoding")),
+                "value" => return Err(de::Error::duplicate_field("value")),
                 _ => return Err(de::Error::unknown_field(&key, &["encoding", "value"])),
             }
         }

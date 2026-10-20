@@ -22,7 +22,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::fact::{Fact, Reason};
-use crate::file_record::extension_of;
+use crate::file_record::extension_of_bytes;
+use crate::file_ref::is_valid_logical_path;
 use crate::raw::Raw;
 use attributes::Attributes;
 use time::is_rfc3339_utc;
@@ -74,6 +75,12 @@ pub enum ImportError {
     /// A value over 64 KiB stored whole.
     #[error("an attribute value over 64 KiB was stored whole")]
     AttributeValueTooLarge,
+    /// The whole values stored hold more bytes than the entry says it read.
+    #[error("the attribute values stored exceed the bytes the entry says it read")]
+    AttributeBytesUnderReported,
+    /// The cited logical path is not a valid relative logical path.
+    #[error("the cited logical path is not a valid relative logical path")]
+    InvalidLogicalPath,
     /// Attribute names were left out without the truncated mark.
     #[error("attribute names were left out without the truncated mark")]
     TruncationNotMarked,
@@ -156,9 +163,9 @@ pub enum Link {
 #[serde(deny_unknown_fields)]
 pub struct ContentType {
     /// Uniform Type Identifier (macOS).
-    pub uti: Option<String>,
+    pub uti: Fact<String>,
     /// MIME type.
-    pub mime: Option<String>,
+    pub mime: Fact<String>,
 }
 
 /// When, how and as what an import happened, and the content it cites.
@@ -329,10 +336,8 @@ impl ImportEntry {
     /// The entry of an upload: the facts the client provided, and every other
     /// fact listed as unavailable because an upload does not carry it.
     pub fn for_upload(facts: UploadFacts) -> Self {
-        let extension = facts
-            .name
-            .as_text()
-            .and_then(extension_of)
+        let extension = extension_of_bytes(facts.name.as_bytes())
+            .and_then(|e| std::str::from_utf8(e).ok())
             .map(str::to_string);
         let modified = facts.last_modified.map_or_else(not_uploaded, Fact::value);
         let mime = facts.media_type;
@@ -363,8 +368,8 @@ impl ImportEntry {
                 link: not_uploaded(),
                 os_content_type: match mime {
                     Some(mime) => Fact::value(ContentType {
-                        uti: None,
-                        mime: Some(mime),
+                        uti: not_uploaded(),
+                        mime: Fact::value(mime),
                     }),
                     None => not_uploaded(),
                 },
@@ -427,6 +432,9 @@ impl ImportEntry {
         match (a.storage, &a.logical_path) {
             (ByteStorage::Copied, None) => Err(ImportError::MissingLogicalPath),
             (ByteStorage::Referenced, Some(_)) => Err(ImportError::UnexpectedLogicalPath),
+            (ByteStorage::Copied, Some(path)) if !is_valid_logical_path(path) => {
+                Err(ImportError::InvalidLogicalPath)
+            }
             _ => Ok(()),
         }
     }

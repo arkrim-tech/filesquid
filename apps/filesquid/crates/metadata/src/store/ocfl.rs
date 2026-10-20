@@ -21,7 +21,7 @@
 
 use std::io::{Error as IoError, ErrorKind};
 
-use filesquid_ocfl::change::{ChangeError, ChangeModel, StagingArea, VersionMeta};
+use filesquid_ocfl::change::{ChangeError, ChangeModel, PathChange, StagingArea, VersionMeta};
 use filesquid_ocfl::inventory::User;
 use filesquid_ocfl::read::Object;
 use filesquid_ocfl::storage::{StorageBackend, StorageKey, MAX_CHUNK_BYTES, MAX_OBJECT_BYTES};
@@ -235,7 +235,57 @@ where
     ) -> Result<Option<CommitReceipt>, StoreError> {
         let base = self.read_base(file).await?;
         let bytes = file_record_bytes(file, base.as_ref(), record)?;
+        let first_new = base.as_ref().map_or(0, |base| base.imports().len());
+        self.verify_staged(file, record, first_new).await?;
         self.commit_bytes(file, &bytes, options, false).await
+    }
+
+    /// Check that the content each new managed entry cites is staged at its
+    /// logical path with the entry's SHA-256 (MD-S-013: the record never
+    /// claims verification of other bytes). A referenced entry stages no
+    /// content.
+    async fn verify_staged(
+        &self,
+        file: &FileRef,
+        record: &FileRecord,
+        first_new: usize,
+    ) -> Result<(), StoreError> {
+        let status = self
+            .model(file.object_id())?
+            .status()
+            .await
+            .map_err(change_error)?;
+        for entry in record.imports().iter().skip(first_new) {
+            let cited = &entry.acquisition;
+            let Some(path) = cited.logical_path.as_deref() else {
+                continue;
+            };
+            let staged = staged_digest(&status.changes, path);
+            check_digest(staged, &cited.sha256)?;
+        }
+        Ok(())
+    }
+
+    /// Check that the content each new managed entry cites is in the head of
+    /// the object at its logical path with the entry's SHA-256: a re-import
+    /// of bytes the object already holds.
+    async fn verify_held(
+        &self,
+        file: &FileRef,
+        record: &FileRecord,
+        first_new: usize,
+    ) -> Result<(), StoreError> {
+        let object = self.open(file.object_id()).await?;
+        let state = object.state(object.head()).map_err(backend)?;
+        for entry in record.imports().iter().skip(first_new) {
+            let cited = &entry.acquisition;
+            let Some(path) = cited.logical_path.as_deref() else {
+                continue;
+            };
+            let held = state.get(path).map(|f| f.digest.as_str());
+            check_digest(held, &cited.sha256)?;
+        }
+        Ok(())
     }
 
     /// [`commit_import_with`](Self::commit_import_with) with the stand-alone
@@ -272,6 +322,8 @@ where
         let mut next = base.clone().ok_or(RecordError::NoFileRecord)?;
         next.append_import(entry)?;
         let bytes = file_record_bytes(file, base.as_ref(), &next)?;
+        let first_new = base.as_ref().map_or(0, |base| base.imports().len());
+        self.verify_held(file, &next, first_new).await?;
         self.commit_bytes(file, &bytes, options, true).await
     }
 
@@ -521,8 +573,35 @@ fn file_record_bytes(
     if let Some(base) = base {
         next.check_extends(base)?;
     }
-    next.check_binding(first_new, file.object_id(), file.logical_path())?;
+    next.check_binding(
+        first_new,
+        file.object_id(),
+        file.logical_path(),
+        record_path(file),
+    )?;
     Ok(next.to_markdown().into_bytes())
+}
+
+/// The digest staged at `path` by the change set, when it stages content there.
+fn staged_digest<'c>(changes: &'c [PathChange], path: &str) -> Option<&'c str> {
+    changes.iter().find_map(|change| match change {
+        PathChange::Added {
+            path: p, digest, ..
+        } if p == path => Some(digest.as_str()),
+        PathChange::Changed { path: p, to, .. } if p == path => Some(to.as_str()),
+        PathChange::Reinstated { path: p, digest } if p == path => Some(digest.as_str()),
+        PathChange::Renamed { to, digest, .. } if to == path => Some(digest.as_str()),
+        _ => None,
+    })
+}
+
+/// `found` must be the digest an entry cites.
+fn check_digest(found: Option<&str>, cited: &str) -> Result<(), StoreError> {
+    match found {
+        None => Err(RecordError::ContentNotStaged.into()),
+        Some(digest) if digest != cited => Err(RecordError::ContentDigestMismatch.into()),
+        Some(_) => Ok(()),
+    }
 }
 
 /// Refuse an edit whose pinned version is not the base the change set was

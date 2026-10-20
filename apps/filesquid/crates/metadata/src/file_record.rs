@@ -111,6 +111,17 @@ pub enum RecordError {
     /// The file has no record yet.
     #[error("the file has no metadata record")]
     NoFileRecord,
+    /// A new managed entry cites the path the record itself is saved at, so
+    /// the record would replace the imported bytes.
+    #[error("the metadata record would replace the imported content")]
+    RecordAtContentPath,
+    /// A new managed entry's content is not staged at its logical path.
+    #[error("the imported content is not staged at its cited logical path")]
+    ContentNotStaged,
+    /// The content staged at the cited path is not the content the entry
+    /// verified.
+    #[error("the staged content differs from the entry's cited SHA-256")]
+    ContentDigestMismatch,
 }
 
 /// The file name extension: what follows the last dot, unless the dot starts
@@ -121,6 +132,41 @@ pub fn extension_of(name: &str) -> Option<&str> {
         return None;
     }
     Some(extension)
+}
+
+/// [`extension_of`] over the raw bytes of a name, which need not be UTF-8.
+pub fn extension_of_bytes(name: &[u8]) -> Option<&[u8]> {
+    let dot = name.iter().rposition(|b| *b == b'.')?;
+    let (stem, extension) = (&name[..dot], &name[dot + 1..]);
+    if stem.is_empty() || extension.is_empty() {
+        return None;
+    }
+    Some(extension)
+}
+
+/// The display name of the API's one safe transformation (API-S-005):
+/// control characters removed, `/` and `\` replaced by `_`, surrounding
+/// spaces trimmed, at most 1,024 bytes kept, and `file` for a name left
+/// empty. The metadata projection and the API's listings and downloads use
+/// this one function so they cannot diverge.
+pub fn safe_display_name(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .filter(|c| !c.is_control())
+        .map(|c| if c == '/' || c == '\\' { '_' } else { c })
+        .collect();
+    let mut kept = String::new();
+    for c in cleaned.trim_matches(' ').chars() {
+        if kept.len() + c.len_utf8() > MAX_NAME_BYTES {
+            break;
+        }
+        kept.push(c);
+    }
+    let kept = kept.trim_matches(' ');
+    if kept.is_empty() {
+        return "file".to_string();
+    }
+    kept.to_string()
 }
 
 /// The extension a stored original keeps: only 1 to 16 ASCII letters or
@@ -164,7 +210,8 @@ pub struct FileRecord {
 pub struct FileFacts {
     /// The original file name exactly as reported.
     pub original_name: Raw,
-    /// The name shown everywhere.
+    /// The name shown everywhere, after the safe transformation of API-S-005
+    /// ([`safe_display_name`]).
     pub display_name: String,
     /// The file extension.
     pub extension: Option<String>,
@@ -310,8 +357,9 @@ impl FileRecord {
         Ok(())
     }
 
-    /// Check the record's own rules: names, extension, format, media type,
-    /// at least one import entry, and every entry.
+    /// Check the record's own rules: names, an extension that is the
+    /// original name's, format, media type, at least one import entry, and
+    /// every entry.
     ///
     /// # Errors
     ///
@@ -328,6 +376,11 @@ impl FileRecord {
             .as_deref()
             .is_some_and(|e| !valid_extension(e))
         {
+            return Err(RecordError::InvalidExtension);
+        }
+        let named = extension_of_bytes(self.original_name.as_bytes())
+            .and_then(|e| std::str::from_utf8(e).ok());
+        if self.extension.as_deref() != named {
             return Err(RecordError::InvalidExtension);
         }
         if self.format.as_deref().is_some_and(|f| !valid_format(f)) {
@@ -369,16 +422,19 @@ impl FileRecord {
     }
 
     /// Check that the entries from `first_new` on cite `object_id` and, for a
-    /// managed import, the stored original at `logical_path`.
+    /// managed import, the stored original at `logical_path`, and that the
+    /// record, saved at `record_path`, would not replace that original.
     ///
     /// # Errors
     ///
-    /// [`RecordError::BoundToOtherObject`] or [`RecordError::BoundToOtherPath`].
+    /// [`RecordError::BoundToOtherObject`], [`RecordError::BoundToOtherPath`]
+    /// or [`RecordError::RecordAtContentPath`].
     pub fn check_binding(
         &self,
         first_new: usize,
         object_id: &str,
         logical_path: &str,
+        record_path: &str,
     ) -> Result<(), RecordError> {
         for entry in self.imports.iter().skip(first_new) {
             let cited = &entry.acquisition;
@@ -389,6 +445,9 @@ impl FileRecord {
             if stored && cited.logical_path.as_deref() != Some(logical_path) {
                 return Err(RecordError::BoundToOtherPath);
             }
+            if stored && logical_path == record_path {
+                return Err(RecordError::RecordAtContentPath);
+            }
         }
         Ok(())
     }
@@ -398,7 +457,7 @@ impl FileRecord {
         let first = &self.imports[0].acquisition;
         FileFacts {
             original_name: self.original_name.clone(),
-            display_name: self.display_name.clone(),
+            display_name: safe_display_name(&self.display_name),
             extension: self.extension.clone(),
             format: self.format.clone(),
             media_type: self.media_type.clone(),
@@ -542,9 +601,12 @@ fn parse<T: for<'de> Deserialize<'de>>(json: &str) -> Result<T, RecordError> {
 
 /// Read the `import:` list of `front`: the `  - <json>` lines after `import:`.
 fn read_imports(front: &str) -> Result<Vec<ImportEntry>, RecordError> {
-    let mut lines = front.lines().skip_while(|l| *l != "import:").skip(1);
+    let lines = front.lines().skip_while(|l| *l != "import:").skip(1);
     let mut entries = Vec::new();
-    while let Some(json) = lines.next().and_then(|l| l.strip_prefix("  - ")) {
+    for line in lines {
+        let json = line.strip_prefix("  - ").ok_or(RecordError::Malformed(
+            "a line after `import:` is not an entry",
+        ))?;
         let entry = serde_json::from_str(json)
             .map_err(|_| RecordError::Malformed("an import entry is not valid"))?;
         entries.push(entry);

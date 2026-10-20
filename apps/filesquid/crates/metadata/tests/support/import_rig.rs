@@ -11,8 +11,8 @@ use filesquid_metadata::import::{
 };
 use filesquid_metadata::raw::Raw;
 
-/// SHA-256 of the empty input, a valid cited digest.
-pub const DIGEST: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+/// SHA-256 of the six bytes `pixels` the tests stage as the stored original.
+pub const DIGEST: &str = "6ec9c2b0eb14010746c8bce8939303b382344b296206612eb8a907a37b2b2f37";
 
 /// The OCFL object the sample entries cite.
 pub const OBJECT: &str = "urn:uuid:5a1f1b2e-0000-4000-8000-000000000001";
@@ -61,7 +61,11 @@ pub fn entry_named(name: &[u8]) -> ImportEntry {
     ImportEntry::for_upload(UploadFacts {
         acquisition: acquisition(6),
         name: Raw::from_bytes(name),
-        name_normalization: NameForm::Nfc,
+        name_normalization: if std::str::from_utf8(name).is_ok() {
+            NameForm::Nfc
+        } else {
+            NameForm::Unnormalised
+        },
         reported_size: 6,
         last_modified: Some("2023-08-01T12:30:00Z".to_string()),
         media_type: Some("image/jpeg".to_string()),

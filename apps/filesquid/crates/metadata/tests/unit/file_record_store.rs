@@ -402,3 +402,159 @@ fn the_store_type_is_usable_with_the_default_commit_helper() {
         .unwrap();
     assert_eq!(version.to_string(), "v1");
 }
+
+/// Stage `bytes` at the stored original of the scene.
+fn stage(rig: &Rig<MemoryBackend>, bytes: &[u8]) {
+    let model = rig.store().change_model(OBJECT).unwrap();
+    ready(model.reset()).unwrap();
+    ready(model.stage_bytes(STORED, bytes)).unwrap();
+}
+
+#[test]
+fn staged_content_that_is_not_the_verified_content_is_refused() {
+    let rig = Rig::memory();
+    stage(&rig, b"other bytes");
+    let result = ready(rig.store().commit_import(&file(), &record()));
+    assert!(
+        matches!(
+            result,
+            Err(StoreError::Record(RecordError::ContentDigestMismatch))
+        ),
+        "{result:?}"
+    );
+    assert!(!rig.storage_has_object(OBJECT));
+}
+
+#[test]
+fn an_import_without_its_staged_content_is_refused() {
+    let rig = Rig::memory();
+    let model = rig.store().change_model(OBJECT).unwrap();
+    ready(model.reset()).unwrap();
+    ready(model.stage_bytes("original/elsewhere.JPG", b"pixels")).unwrap();
+    let result = ready(rig.store().commit_import(&file(), &record()));
+    assert!(
+        matches!(
+            result,
+            Err(StoreError::Record(RecordError::ContentNotStaged))
+        ),
+        "{result:?}"
+    );
+    assert!(!rig.storage_has_object(OBJECT));
+}
+
+#[test]
+fn a_failed_import_leaves_its_change_set_so_a_retry_can_publish() {
+    let rig = Rig::memory();
+    stage(&rig, b"pixels");
+    let mut wrong = entry();
+    wrong.acquisition.sha256 = "0".repeat(64);
+    let bad = FileRecord::new(
+        Raw::from_bytes(b"Holiday 2023.JPG"),
+        NameForm::Nfc,
+        Some("JPG".to_string()),
+        None,
+        None,
+        wrong,
+    )
+    .unwrap();
+    assert!(ready(rig.store().commit_import(&file(), &bad)).is_err());
+    let version = ready(rig.store().commit_import(&file(), &record()))
+        .unwrap()
+        .unwrap();
+    assert_eq!(version.to_string(), "v1");
+}
+
+#[test]
+fn a_record_saved_at_the_content_path_is_refused() {
+    let rig = Rig::memory();
+    stage(&rig, b"pixels");
+    let at_content = FileRef::new(OBJECT, STORED)
+        .unwrap()
+        .with_record_path(STORED)
+        .unwrap();
+    let result = ready(rig.store().commit_import(&at_content, &record()));
+    assert!(
+        matches!(
+            result,
+            Err(StoreError::Record(RecordError::RecordAtContentPath))
+        ),
+        "{result:?}"
+    );
+    let default_path = FileRef::new(OBJECT, "metadata.md").unwrap();
+    let mut entry = entry();
+    entry.acquisition.logical_path = Some("metadata.md".to_string());
+    let colliding = FileRecord::new(
+        Raw::from_bytes(b"Holiday 2023.JPG"),
+        NameForm::Nfc,
+        Some("JPG".to_string()),
+        None,
+        None,
+        entry,
+    )
+    .unwrap();
+    let model = rig.store().change_model(OBJECT).unwrap();
+    ready(model.reset()).unwrap();
+    ready(model.stage_bytes("metadata.md", b"pixels")).unwrap();
+    let result = ready(rig.store().commit_import(&default_path, &colliding));
+    assert!(
+        matches!(
+            result,
+            Err(StoreError::Record(RecordError::RecordAtContentPath))
+        ),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn a_referenced_import_commits_its_record_without_content() {
+    let rig = Rig::memory();
+    let mut referenced = entry();
+    referenced.acquisition.storage = filesquid_metadata::import::ByteStorage::Referenced;
+    referenced.acquisition.logical_path = None;
+    let record = FileRecord::new(
+        Raw::from_bytes(b"Holiday 2023.JPG"),
+        NameForm::Nfc,
+        Some("JPG".to_string()),
+        None,
+        None,
+        referenced,
+    )
+    .unwrap();
+    let file = FileRef::new(OBJECT, RECORD)
+        .unwrap()
+        .with_record_path(RECORD)
+        .unwrap();
+    let version = ready(rig.store().commit_import(&file, &record))
+        .unwrap()
+        .unwrap();
+    assert_eq!(version.to_string(), "v1");
+    let root = object_root(OBJECT);
+    let keys = rig.snapshot(&format!("{root}/"));
+    assert!(keys.contains_key(&format!("{root}/v1/content/{RECORD}")));
+    assert!(!keys.contains_key(&format!("{root}/v1/content/{STORED}")));
+    let back = ready(rig.store().read_file_record(&file)).unwrap().unwrap();
+    assert_eq!(
+        back.imports()[0].acquisition.storage,
+        filesquid_metadata::import::ByteStorage::Referenced
+    );
+}
+
+#[test]
+fn a_re_import_must_cite_content_the_object_holds() {
+    let rig = Rig::memory();
+    import(&rig, &record());
+    let mut other = second_entry();
+    other.acquisition.sha256 = "1".repeat(64);
+    let result = ready(
+        rig.store()
+            .append_import_with(&file(), other, &CommitOptions::default()),
+    );
+    assert!(
+        matches!(
+            result,
+            Err(StoreError::Record(RecordError::ContentDigestMismatch))
+        ),
+        "{result:?}"
+    );
+    assert_eq!(rig.versions(OBJECT), ["v1"]);
+}

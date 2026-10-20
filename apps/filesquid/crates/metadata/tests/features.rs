@@ -1292,15 +1292,37 @@ fn statements_kept_header(world: &mut MetadataWorld) {
     assert_eq!(record.imports().len(), 1);
 }
 
-#[when("I build an import entry whose reported size differs from the verified size")]
-fn build_mismatched_entry(world: &mut MetadataWorld) {
+#[when("I import a file whose reported size differs from the verified size")]
+fn import_mismatched_size(world: &mut MetadataWorld) {
+    let scene = ImportScene(rig::Rig::memory());
+    let store = scene.0.store();
+    let model = store.change_model(import_rig::OBJECT).expect("model");
+    ready(model.stage_bytes(import_rig::STORED, b"pixels")).expect("stage content");
     let mut entry = import_rig::entry();
     entry.source.reported_size = Fact::value(7);
-    world.entry_error = entry.validate().err();
+    let record = FileRecord::new(
+        Raw::from_bytes(b"Holiday 2023.JPG"),
+        NameForm::Nfc,
+        Some("JPG".to_string()),
+        None,
+        None,
+        entry,
+    );
+    world.entry_error = match record {
+        Err(RecordError::Import(error)) => Some(error),
+        Err(other) => panic!("unexpected {other:?}"),
+        // No record can be built, so no commit is attempted.
+        Ok(record) => {
+            let _ = ready(store.commit_import(&record_file(), &record));
+            None
+        }
+    };
+    drop(store);
+    world.scene = Some(scene);
 }
 
-#[then("the entry should be rejected for the size mismatch")]
-fn entry_rejected_for_size(world: &mut MetadataWorld) {
+#[then("the import should be rejected for the size mismatch")]
+fn import_rejected_for_size(world: &mut MetadataWorld) {
     let error = world.entry_error.take();
     assert_eq!(
         error,
@@ -1309,6 +1331,11 @@ fn entry_rejected_for_size(world: &mut MetadataWorld) {
             verified: 6
         })
     );
+}
+
+#[then("nothing should be published")]
+fn nothing_published(world: &mut MetadataWorld) {
+    assert!(!scene(world).storage_has_object(import_rig::OBJECT));
 }
 
 /// A file name that is not UTF-8.
@@ -1372,7 +1399,7 @@ fn not_uploaded<T>(fact: &Fact<T>) -> bool {
 }
 
 #[then(
-    "every other source, volume, attribute and host fact should be unavailable with the reason not provided by upload"
+    "every other source, volume and attribute fact should be unavailable with the reason not provided by upload"
 )]
 fn the_rest_is_unavailable(world: &mut MetadataWorld) {
     let entry = world.entry.take().expect("entry");
@@ -1454,6 +1481,13 @@ fn cut_values_incomplete(world: &mut MetadataWorld) {
     assert_eq!((whole, cut), (128, 128));
 }
 
+#[then("a re-import should get its own budget of 256 names and 1 MiB")]
+fn re_import_gets_its_own_budget(_world: &mut MetadataWorld) {
+    let fresh = AttributeCollector::new();
+    assert_eq!(fresh.names_remaining(), 256);
+    assert_eq!(fresh.read_budget(), 1024 * 1024);
+}
+
 #[when("I inspect an extended attribute of 70000 bytes")]
 fn inspect_big_attribute(world: &mut MetadataWorld) {
     let value = vec![1u8; 70_000];
@@ -1470,7 +1504,10 @@ fn big_value_is_digest_only(world: &mut MetadataWorld) {
     let AttrValue::Digest { sha256 } = &entry.value else {
         panic!("{:?}", entry.value);
     };
-    assert_eq!(sha256.len(), 64);
+    assert_eq!(
+        sha256,
+        "267ccbdc4e1d24891e18130d2690fc4f796b460f92a7fff15773b694143a965b"
+    );
 }
 
 #[when("I import a file with a full set of source facts and read its projection")]
@@ -1507,6 +1544,7 @@ fn scrub_everything(world: &mut MetadataWorld) {
     let scrubbed = import_rig::rich_entry().scrubbed(&IdentityClass::ALL);
     assert_eq!(scrubbed.validate(), Ok(()));
     world.produced_json = serde_json::to_string(&scrubbed).expect("json");
+    world.entry = Some(scrubbed);
 }
 
 #[then(
@@ -1524,6 +1562,9 @@ fn nothing_identifying_remains(world: &mut MetadataWorld) {
     ] {
         assert!(!world.produced_json.contains(secret), "{secret}");
     }
+    let entry = world.entry.take().expect("scrubbed entry");
+    assert!(matches!(entry.source.owner_id, Fact::Unavailable(_)));
+    assert!(matches!(entry.source.group_id, Fact::Unavailable(_)));
 }
 
 #[then("each removed fact should be listed as withheld by policy")]

@@ -185,39 +185,72 @@ mod entry_validation {
         ));
     }
 
+    /// Setters for every time field of an entry.
+    type Setter = fn(&mut filesquid_metadata::import::ImportEntry, String);
+
+    /// Every time field an entry carries, by name.
+    fn time_fields() -> Vec<(&'static str, Setter)> {
+        vec![
+            ("recorded_at", |e, t| e.acquisition.recorded_at = t),
+            ("started_at", |e, t| e.acquisition.started_at = t),
+            ("finished_at", |e, t| e.acquisition.finished_at = t),
+            ("birth_time", |e, t| e.source.birth_time = Fact::value(t)),
+            ("modified_time", |e, t| {
+                e.source.modified_time = Fact::value(t)
+            }),
+            ("status_changed_time", |e, t| {
+                e.source.status_changed_time = Fact::value(t)
+            }),
+            ("accessed_time", |e, t| {
+                e.source.accessed_time = Fact::value(t)
+            }),
+            ("date_added_time", |e, t| {
+                e.source.date_added_time = Fact::value(t)
+            }),
+        ]
+    }
+
     #[test]
-    fn timestamps_must_be_rfc_3339_utc() {
-        for bad in [
+    fn every_time_field_must_be_rfc_3339_utc() {
+        let bad = [
             "2026-10-20 10:00:00Z",
             "2026-10-20T10:00:00+02:00",
             "2026-10-20T10:00:00",
             "2026-13-20T10:00:00Z",
             "2026-02-30T10:00:00Z",
             "2026-10-20T24:00:00Z",
+            "2026-10-20T10:00:60Z",
+            "2026-10-20T10:00:00.Z",
             "yesterday",
-        ] {
-            let mut entry = entry();
-            entry.acquisition.started_at = bad.to_string();
-            assert!(
-                matches!(entry.validate(), Err(ImportError::InvalidTimestamp { .. })),
-                "{bad}"
-            );
-        }
-        for good in ["2024-02-29T00:00:00Z", "2026-10-20T10:00:00.123456789Z"] {
-            let mut entry = entry();
-            entry.acquisition.started_at = good.to_string();
-            assert_eq!(entry.validate(), Ok(()), "{good}");
+        ];
+        for (field, set) in time_fields() {
+            for text in bad {
+                let mut entry = entry();
+                set(&mut entry, text.to_string());
+                assert_eq!(
+                    entry.validate(),
+                    Err(ImportError::InvalidTimestamp { field }),
+                    "{field} {text}"
+                );
+            }
         }
     }
 
     #[test]
-    fn a_file_time_must_be_rfc_3339_utc_too() {
-        let mut entry = entry();
-        entry.source.birth_time = Fact::value("2023-08-01".to_string());
-        assert!(matches!(
-            entry.validate(),
-            Err(ImportError::InvalidTimestamp { .. })
-        ));
+    fn every_time_field_accepts_valid_timestamps() {
+        let good = [
+            "2024-02-29T00:00:00Z",
+            "2026-10-20T10:00:00.123456789Z",
+            "2026-10-20T10:00:00.1234567890123Z",
+            "2016-12-31T23:59:60Z",
+        ];
+        for (field, set) in time_fields() {
+            for text in good {
+                let mut entry = entry();
+                set(&mut entry, text.to_string());
+                assert_eq!(entry.validate(), Ok(()), "{field} {text}");
+            }
+        }
     }
 
     #[test]
@@ -298,7 +331,10 @@ mod attribute_bounds {
         let entry = &attrs.entries[0];
         assert_eq!(entry.size, MAX_STORED_VALUE_BYTES + 1);
         match &entry.value {
-            AttrValue::Digest { sha256 } => assert_eq!(sha256.len(), 64),
+            AttrValue::Digest { sha256 } => assert_eq!(
+                sha256,
+                "3266304f31be278d06c3bd3eb9aa3e00c59bedec0a890de466568b0b90b0e01f"
+            ),
             other => panic!("{other:?}"),
         }
     }
@@ -724,6 +760,17 @@ mod projection_and_scrub {
         }
         assert_eq!(facts.imports.len(), 2);
         assert_eq!(facts.size, 6);
+        assert_eq!(facts.imports[0].relative_path, None);
+        assert_eq!(facts.imports[0].volume_name, None);
+        let rich = &facts.imports[1];
+        assert_eq!(
+            rich.relative_path.as_ref().map(Raw::as_bytes),
+            Some(&b"Holiday 2023.JPG"[..])
+        );
+        assert_eq!(
+            rich.volume_name.as_ref().map(Raw::as_bytes),
+            Some(&b"Macintosh HD"[..])
+        );
     }
 
     #[test]
@@ -807,5 +854,156 @@ mod projection_and_scrub {
             assert!(!json.contains(secret), "{secret} left: {json}");
         }
         assert!(json.contains("withheld_by_policy"));
+    }
+}
+
+mod review_fixes {
+    use super::*;
+    use filesquid_metadata::file_record::safe_display_name;
+    use filesquid_metadata::import::ContentType;
+
+    #[test]
+    fn an_extension_unrelated_to_the_original_name_is_refused() {
+        let new = |name: &[u8], ext: Option<&str>| {
+            FileRecord::new(
+                Raw::from_bytes(name),
+                NameForm::Nfc,
+                ext.map(str::to_string),
+                None,
+                None,
+                entry(),
+            )
+        };
+        assert!(matches!(
+            new(b"photo.jpg", Some("png")),
+            Err(RecordError::InvalidExtension)
+        ));
+        assert!(matches!(
+            new(b"photo.jpg", None),
+            Err(RecordError::InvalidExtension)
+        ));
+        assert!(matches!(
+            new(b"photo", Some("jpg")),
+            Err(RecordError::InvalidExtension)
+        ));
+        assert!(new(b"photo.jpg", Some("jpg")).is_ok());
+        assert!(new(b".bashrc", None).is_ok());
+    }
+
+    #[test]
+    fn a_line_after_import_that_is_not_an_entry_is_refused_not_dropped() {
+        let mut text = record().to_markdown();
+        let close = text.rfind("---").unwrap();
+        text.insert_str(close, "   - {\"misindented\": true}\n");
+        assert!(matches!(
+            FileRecord::from_markdown(&text),
+            Err(RecordError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn schema_org_statements_do_not_collide_with_the_record_schema_key() {
+        let mut record = record();
+        record
+            .statements_mut()
+            .set(MetadataNamespace::SchemaOrg, "certification", "ISO")
+            .unwrap();
+        let text = record.to_markdown();
+        assert!(!text.lines().any(|l| l == "schema:"), "{text}");
+        assert_eq!(
+            text.lines().filter(|l| l.starts_with("schema: ")).count(),
+            1
+        );
+        assert!(text.contains("\nschemaorg:\n  certification: ISO"));
+        let back = FileRecord::from_markdown(&text).unwrap();
+        assert_eq!(back, record);
+    }
+
+    #[test]
+    fn a_raw_envelope_with_a_duplicate_field_is_refused() {
+        for bad in [
+            r#"{"encoding":"base64","value":"Zg==","value":"Zm8="}"#,
+            r#"{"encoding":"base64","encoding":"base64","value":"Zg=="}"#,
+        ] {
+            assert!(serde_json::from_str::<Raw>(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn stored_whole_values_cannot_exceed_the_bytes_the_entry_says_it_read() {
+        let mut entry = entry();
+        entry.attributes = Fact::value(Attributes {
+            entries: vec![attribute(
+                "a",
+                AttrValue::Full {
+                    value: Raw::from_bytes(&[1, 2, 3]),
+                },
+                3,
+            )],
+            names_enumerated: 1,
+            truncated: false,
+            bytes_inspected: 2,
+        });
+        assert_eq!(
+            entry.validate(),
+            Err(ImportError::AttributeBytesUnderReported)
+        );
+    }
+
+    #[test]
+    fn each_acquisition_gets_its_own_attribute_budget() {
+        let mut first = AttributeCollector::new();
+        let big = vec![0u8; first.read_budget() as usize];
+        first.add(b"user.a", big.len() as u64, &big).unwrap();
+        assert_eq!(first.read_budget(), 0);
+        let second = AttributeCollector::new();
+        assert_eq!(second.read_budget(), MAX_INSPECTED_BYTES);
+        assert_eq!(second.names_remaining(), MAX_ATTRIBUTE_NAMES);
+    }
+
+    #[test]
+    fn a_managed_entry_cites_a_valid_logical_path() {
+        for bad in ["/abs/x.jpg", "../x.jpg", "a//b", "a\\b", ""] {
+            let mut entry = entry();
+            entry.acquisition.logical_path = Some(bad.to_string());
+            assert_eq!(
+                entry.validate(),
+                Err(ImportError::InvalidLogicalPath),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_upload_keeps_a_utf8_extension_of_a_non_utf8_name() {
+        let entry = entry_named(&[b'a', 0xFF, b'.', b'j', b'p', b'g']);
+        assert_eq!(entry.source.extension.as_deref(), Some("jpg"));
+        let entry = entry_named(&[b'a', b'.', 0xFF]);
+        assert_eq!(entry.source.extension, None);
+    }
+
+    #[test]
+    fn an_upload_lists_the_missing_uti_as_unavailable_with_a_reason() {
+        let entry = entry();
+        let Fact::Value(ContentType { uti, mime }) = &entry.source.os_content_type else {
+            panic!("content type");
+        };
+        assert!(
+            matches!(uti, Fact::Unavailable(u) if u.unavailable == Reason::NotProvidedByUpload)
+        );
+        assert_eq!(mime, &Fact::value("image/jpeg".to_string()));
+    }
+
+    #[test]
+    fn the_display_name_is_transformed_once_for_the_projection() {
+        assert_eq!(safe_display_name("a\u{0007}b/c\\d"), "ab_c_d");
+        assert_eq!(safe_display_name("  spaced  "), "spaced");
+        assert_eq!(safe_display_name("   "), "file");
+        assert_eq!(safe_display_name("\n\t"), "file");
+        let long = "é".repeat(600);
+        assert_eq!(safe_display_name(&long).len(), 1024);
+        let mut record = record();
+        record.set_display_name("a\u{0001}b\\c.jpg").unwrap();
+        assert_eq!(record.facts().display_name, "ab_c.jpg");
     }
 }

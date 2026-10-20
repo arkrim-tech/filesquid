@@ -85,6 +85,8 @@ impl Attributes {
     /// [`ImportError::TooManyAttributeNames`] over 256 names,
     /// [`ImportError::AttributeReadOverBudget`] over 1 MiB read,
     /// [`ImportError::AttributeValueTooLarge`] for a whole value over 64 KiB,
+    /// [`ImportError::AttributeBytesUnderReported`] when the whole values
+    /// stored add up to more bytes than `bytes_inspected` claims,
     /// and [`ImportError::TruncationNotMarked`] when names were left out
     /// without the `truncated` mark.
     pub fn validate(&self) -> Result<(), ImportError> {
@@ -94,12 +96,19 @@ impl Attributes {
         if self.bytes_inspected > MAX_INSPECTED_BYTES {
             return Err(ImportError::AttributeReadOverBudget);
         }
-        let oversized = self.entries.iter().any(|a| match &a.value {
-            AttrValue::Full { value } => value.as_bytes().len() as u64 > MAX_STORED_VALUE_BYTES,
-            _ => false,
-        });
-        if oversized {
+        let whole: Vec<u64> = self
+            .entries
+            .iter()
+            .filter_map(|a| match &a.value {
+                AttrValue::Full { value } => Some(value.as_bytes().len() as u64),
+                _ => None,
+            })
+            .collect();
+        if whole.iter().any(|len| *len > MAX_STORED_VALUE_BYTES) {
             return Err(ImportError::AttributeValueTooLarge);
+        }
+        if whole.iter().sum::<u64>() > self.bytes_inspected {
+            return Err(ImportError::AttributeBytesUnderReported);
         }
         if self.names_enumerated > self.entries.len() as u64 && !self.truncated {
             return Err(ImportError::TruncationNotMarked);

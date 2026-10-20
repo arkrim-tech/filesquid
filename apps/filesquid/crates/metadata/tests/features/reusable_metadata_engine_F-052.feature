@@ -89,9 +89,10 @@ Feature: Reusable filesquid-metadata engine
     And I set dcterms:title Harbour on the file's record
     Then the record should hold dcterms title Harbour and still hold its original name and import entry
 
-  Scenario: A source size that differs from the verified size is rejected
-    When I build an import entry whose reported size differs from the verified size
-    Then the entry should be rejected for the size mismatch
+  Scenario: A source size that differs from the verified size fails the import
+    When I import a file whose reported size differs from the verified size
+    Then the import should be rejected for the size mismatch
+    And nothing should be published
 
   Scenario: Names and values that are not UTF-8 round-trip as base64
     When I import a file whose name and extended attribute are not UTF-8
@@ -100,13 +101,14 @@ Feature: Reusable filesquid-metadata engine
 
   Scenario: Every missing fact is listed as unavailable with a reason
     When I import a file through an upload that provides only a name, size, time and media type
-    Then every other source, volume, attribute and host fact should be unavailable with the reason not provided by upload
+    Then every other source, volume and attribute fact should be unavailable with the reason not provided by upload
 
   Scenario: Attribute inspection stops at 256 names and 1 MiB and marks what it cut
     When I inspect 300 extended attributes of 8 KiB each
     Then at most 256 names should be kept and the entry marked truncated with 300 names enumerated
     And at most 1 MiB of value bytes should be recorded as read
     And every value cut by the budget should have an incomplete digest
+    And a re-import should get its own budget of 256 names and 1 MiB
 
   Scenario: A value over 64 KiB is kept as size and SHA-256 only
     When I inspect an extended attribute of 70000 bytes

@@ -151,7 +151,8 @@ impl<B: StorageBackend> Rig<B> {
     /// Whether `object_id` has any key in the storage root.
     pub fn storage_has_object(&self, object_id: &str) -> bool {
         let prefix = format!("{}/", object_root(object_id));
-        !self.snapshot(&prefix).is_empty()
+        let page = ready(self.storage.list(&prefix, None, 1)).expect("list");
+        !page.keys.is_empty()
     }
 
     /// Delete `rel` inside the object root of `object_id`.

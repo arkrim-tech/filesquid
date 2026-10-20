@@ -36,7 +36,7 @@ pub struct FileRef {
 }
 
 /// Return whether `path` is a relative `/`-separated path without escapes.
-fn is_valid_logical_path(path: &str) -> bool {
+pub(crate) fn is_valid_logical_path(path: &str) -> bool {
     if path.is_empty() || path.contains(['\\', '\0', ':']) {
         return false;
     }

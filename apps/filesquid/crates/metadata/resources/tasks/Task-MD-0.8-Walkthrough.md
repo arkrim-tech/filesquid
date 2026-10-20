@@ -24,6 +24,13 @@ Also MD-S-008 (Canonical metadata is `metadata.md`: one per-file record `<file-u
 - Decision: the first import entry cites `object_version` as the caller supplies it (the version that holds the content); the crate checks the object and logical path, not the version, because the version is not known before the commit.
 - Decision: the original file name is not an identity class of the scrub; API-S-027's sharing default (FileId plus extension) already covers it.
 
+## Cubic round 1 changes
+
+- The import commit now verifies the staged content: a new managed entry's content MUST be staged at its cited logical path with the entry's SHA-256 (`commit_import_with`), or held by the object's head with that digest (`append_import_with`); otherwise `RecordError::ContentNotStaged` or `ContentDigestMismatch`, and nothing is published. A record saved at its own content path is refused (`RecordAtContentPath`).
+- The extension MUST be the original name's; `import:` parsing refuses any non-entry line instead of dropping it; Schema.org statements in a file record are written under `schemaorg:` because the record's `schema:` identifier takes that key (both keys are read); `facts()` shows the display name after the one safe transformation of API-S-005 (`safe_display_name`).
+- Validation: timestamps accept any fraction length and allow `60` seconds only as `23:59:60`; whole attribute values may not exceed the bytes the entry says it read; a managed entry's logical path must be a valid logical path; an upload lists a missing UTI as unavailable with a reason and keeps the extension of a non-UTF-8 name; a duplicate field in a base64 envelope is refused.
+- Tests strengthened: every time field, exact SHA-256 values, the projection's relative path and volume name, numeric-ID scrub, referenced import, re-import budget, store refusals.
+
 ## SRS traceability
 
 | Requirement | Tests |
@@ -143,7 +150,7 @@ test attribute_bounds::the_read_budget_is_one_mebibyte_across_the_entry ... ok
 test result: ok. 46 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
 ```
 
-`cargo test -p filesquid-metadata --all-features --locked` (all binaries, including the BDD feature run with both `wasm32` builds): exit 0; per binary: lib 3, cli 22, csv 10, extract 13, file_record_store 17, file_ref 3, import_record 46, isolation 4, json 19, markdown 3, register 10, sidecar 8, store 28 passed, 0 failed. BDD: 43 scenarios (42 passed, 1 skipped), 127 steps (126 passed, 1 skipped); the skipped step is the existing UI-only "Metadata panel" scenario.
+`cargo test -p filesquid-metadata --all-features --locked` (all binaries, including the BDD feature run with both `wasm32` builds): exit 0; per binary: lib 3, cli 22, csv 10, extract 13, file_record_store 23, file_ref 3, import_record 56, isolation 4, json 19, markdown 3, register 10, sidecar 8, store 28 passed, 0 failed. BDD: 43 scenarios (42 passed, 1 skipped), 129 steps (128 passed, 1 skipped); the skipped step is the existing UI-only "Metadata panel" scenario.
 
 `cargo check -p filesquid-metadata --lib --no-default-features [--features ocfl] --target wasm32-unknown-unknown --locked`: both `Finished`.
 

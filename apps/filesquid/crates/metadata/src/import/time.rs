@@ -2,7 +2,8 @@
 
 /// Whether `text` is an RFC 3339 UTC timestamp:
 /// `YYYY-MM-DDTHH:MM:SS[.fraction]Z`, with a real calendar date, hours below
-/// 24, minutes below 60 and seconds up to 60 (a leap second).
+/// 24, minutes below 60, seconds below 60 (60 only as the leap second
+/// `23:59:60`) and a fraction of any number of digits.
 pub(crate) fn is_rfc3339_utc(text: &str) -> bool {
     let Some(body) = text.strip_suffix('Z') else {
         return false;
@@ -45,7 +46,7 @@ fn days_in(year: u32, month: u32) -> u32 {
     }
 }
 
-/// Whether `time` is `HH:MM:SS` with an optional fraction of 1 to 9 digits.
+/// Whether `time` is `HH:MM:SS` with an optional fraction of one or more digits.
 fn valid_time(time: &str) -> bool {
     let (clock, fraction) = match time.split_once('.') {
         Some((clock, fraction)) => (clock, Some(fraction)),
@@ -60,7 +61,8 @@ fn valid_time(time: &str) -> bool {
     else {
         return false;
     };
-    let fraction_ok = fraction
-        .is_none_or(|f| (1..=9).contains(&f.len()) && f.bytes().all(|b| b.is_ascii_digit()));
-    hour < 24 && minute < 60 && second <= 60 && fraction_ok
+    let fraction_ok =
+        fraction.is_none_or(|f| !f.is_empty() && f.bytes().all(|b| b.is_ascii_digit()));
+    let leap_second_ok = second < 60 || (hour, minute, second) == (23, 59, 60);
+    hour < 24 && minute < 60 && leap_second_ok && fraction_ok
 }
