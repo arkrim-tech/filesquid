@@ -1,14 +1,14 @@
 /**
- * Hash routing shared by every distribution until the full navigation model (FS-2.1):
- * `#/monitor` shows the Monitor dashboard inside the shell, and
- * `#/files/<library>/<object>/<folder>/...` shows the file browser (UI-F2.2) until the
- * navigation tree (UI-F2.1b) supplies the library and object; any other hash shows the shell
- * alone. After a route change focus moves to the shell's main area (UI-S-016), so keyboard and
+ * Hash routing shared by every distribution: `#/navigation/<handle>` shows a navigation
+ * destination with its breadcrumb (UI-F2.1b), `#/monitor` shows the Monitor dashboard inside
+ * the shell, and `#/files/<library>/<object>/<folder>/...` shows the file browser (UI-F2.2)
+ * until the API lists files by navigation node; any other hash shows the shell alone. After a route change focus moves to the shell's main area (UI-S-016), so keyboard and
  * screen-reader users land on the new content instead of on a link that may have been removed.
  * Also provides the in-memory token store used on the server host.
  */
 import type { FileBrowserOptions, FsFileBrowser } from "../components/fs-file-browser";
 import type { MonitorOptions, TokenStore } from "../components/fs-monitor";
+import type { FsNavigationView, NavigationViewOptions } from "../components/fs-navigation-view";
 import { locationHash, parseLocationHash, type FileLocation } from "../files/model";
 
 /** An element the routed views are mounted in; the app shell also offers `focusMain`. */
@@ -81,6 +81,84 @@ function applyMonitorRoute(shell: HTMLElement, options: MonitorOptions, hash: st
   };
   monitor.configure(options);
   shell.append(monitor);
+}
+
+/** Hash prefix of a navigation destination; the URI-encoded node handle follows. */
+export const NAVIGATION_ROUTE_PREFIX = "#/navigation/";
+
+/** What the navigation route needs. */
+export interface NavigationRouteOptions extends NavigationViewOptions {
+  /** The navigation tree whose current destination follows the route, when there is one. */
+  tree?: HTMLElement & { current?: string };
+}
+
+/**
+ * The node handle of a navigation route, or undefined for any other hash or a handle whose
+ * escapes do not decode (logged). The handle stays opaque: it is decoded, never parsed. Pure
+ * apart from the console message.
+ *
+ * @param hash A location hash.
+ * @returns The handle, or undefined.
+ */
+export function parseNavigationHash(hash: string): string | undefined {
+  if (!hash.startsWith(NAVIGATION_ROUTE_PREFIX)) return undefined;
+  const encoded = hash.slice(NAVIGATION_ROUTE_PREFIX.length);
+  try {
+    const handle = decodeURIComponent(encoded);
+    return handle === "" ? undefined : handle;
+  } catch (error) {
+    console.warn("FileSquid ignored a navigation route whose handle does not decode", error);
+    return undefined;
+  }
+}
+
+/**
+ * Show or hide an `<fs-navigation-view>` child of `shell` to match the current hash, now and
+ * on every `hashchange`: `#/navigation/<handle>` (see `navigationHref`) shows that destination
+ * with its breadcrumb and marks it current in the tree; any other hash removes the view and
+ * clears the tree's current destination. After a `hashchange` (not on the first apply) focus
+ * moves to the shell's main area when it offers `focusMain`. Side effect: adds a window
+ * listener, mutates the shell's children and the tree's current destination, and moves focus.
+ *
+ * @param shell Element the view is slotted into (the app shell).
+ * @param options Labels, the navigation source and the tree.
+ * @param win Window whose hash is followed.
+ * @returns A function that removes the listener.
+ */
+export function bindNavigationRoute(
+  shell: RouteHost,
+  options: NavigationRouteOptions,
+  win: Window = window,
+): () => void {
+  applyNavigationRoute(shell, options, win.location.hash);
+  const onChange = () => {
+    applyNavigationRoute(shell, options, win.location.hash);
+    shell.focusMain?.();
+  };
+  win.addEventListener("hashchange", onChange);
+  return () => win.removeEventListener("hashchange", onChange);
+}
+
+/** Mount the view for a navigation route, move it to the route's node, or remove it. */
+function applyNavigationRoute(shell: HTMLElement, options: NavigationRouteOptions, hash: string) {
+  const handle = parseNavigationHash(hash);
+  const existing = shell.querySelector<FsNavigationView>("fs-navigation-view");
+  if (options.tree && options.tree.current !== handle) options.tree.current = handle;
+  if (handle === undefined) {
+    existing?.remove();
+    return;
+  }
+  const view = existing ?? createNavigationView(shell, options);
+  if (view.node !== handle) view.node = handle;
+}
+
+/** Create the view and add it to the shell. */
+function createNavigationView(shell: HTMLElement, options: NavigationRouteOptions) {
+  const view = document.createElement("fs-navigation-view") as FsNavigationView;
+  const { labels, source, online, href } = options;
+  view.configure({ labels, source, online, href });
+  shell.append(view);
+  return view;
 }
 
 /** The part of the browser options the files route needs: the labels and the file source. */

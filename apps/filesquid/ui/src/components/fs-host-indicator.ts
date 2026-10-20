@@ -1,31 +1,34 @@
 /**
- * `<fs-host-indicator>`: the persistent host privacy indicator (UI-S-004, UI-S-018). It says
- * which host the UI is connected to and who can read files there, then, apart from that, the
- * state of encrypted backup and sync to the hosted service. Every fact comes from the host
- * descriptor (`GET /api/v1/host`, API-S-020) and every word from the active label table; the
- * UI infers nothing.
+ * `<fs-host-indicator>`: the host privacy indicator (UI-S-004, UI-S-018). The header shows a
+ * compact badge, an icon and a short host label ("This device" on the desktop host), and the
+ * badge opens a popover with the full statement: who can read files on the connected host,
+ * then, apart from that, the state of encrypted backup and sync to the hosted service (owner
+ * decision 2026-10-19, option 1a; mockup `resources/ui-mockups/v2/40-host-indicator.svg`).
+ * Every fact comes from the host descriptor (`GET /api/v1/host`, API-S-020) and every word from
+ * the active label table; the UI infers nothing.
  *
  * The descriptor is read at start, replaced by the whole descriptor a `host.change` event
  * carries, and read again after `events.resync` or when the event channel opens again. Until
- * it arrives the indicator shows the loading state, and when it cannot be read (or breaks the
- * contract) the error, offline or denied state: it never shows a guessed host, and a failed
- * re-read replaces what was shown, so a stale host is not left on screen.
+ * it arrives the badge says the host is being checked and the popover shows the loading state;
+ * when it cannot be read (or breaks the contract) the badge says the host is unknown and the
+ * popover shows the error, offline, denied or unavailable state with Retry where it helps: it
+ * never shows a guessed host, and a failed re-read replaces what was shown.
  *
- * Accessibility (UI-S-016): the indicator is one named, focusable group, so it is reachable
- * by keyboard (visible focus ring from the shared stylesheet) and by screen reader, and its
- * content is a polite live region so a change is announced.
+ * Accessibility (UI-S-016): the badge is a button in a named group (`aria-expanded`,
+ * `aria-haspopup="dialog"`, `aria-controls`); click, Enter or Space opens the popover, a
+ * non-modal dialog named by its title, and moves focus into it so it is announced; Escape or
+ * the badge closes it and returns focus to the badge; a click outside or focus leaving closes
+ * it. The short label is a polite live region, so a host change is announced while
+ * the popover is closed.
  */
 import { failureState, type ViewState } from "./view-state";
 import type { ApiEvent, HostDescriptor } from "../api/client";
-import {
-  describeHost,
-  parseHostDescriptor,
-  type HostView,
-  type ServiceView,
-} from "../host/descriptor";
-import type { LabelTable } from "../theme/labels";
+import { describeHost, parseHostDescriptor, type HostType } from "../host/descriptor";
+import type { LabelKey, LabelTable } from "../theme/labels";
 import { A11Y_STYLE } from "./a11y-style";
 import { RETRY_EVENT, type FsStates } from "./fs-states";
+import { HOST_STATEMENT_STYLE, buildHostStatement } from "./host-statement";
+import { focusElement } from "../a11y/focus";
 
 /** The part of the API client the indicator needs (injectable in tests). */
 export interface HostClient {
@@ -46,64 +49,33 @@ export interface HostIndicatorOptions {
   client: HostClient;
 }
 
+/** The short badge label of each host type. */
+const BADGE_LABEL: Readonly<Record<HostType, LabelKey>> = {
+  desktop: "hostBadgeDesktop",
+  server: "hostBadgeServer",
+  browser: "hostBadgeBrowser",
+};
+
 const STYLE = `
-  :host { display: block; min-width: 0; font-family: var(--fs-font-sans); }
-  section { display: grid; gap: var(--fs-space-2); box-sizing: border-box; padding: var(--fs-space-2) var(--fs-space-3); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface-container); color: var(--fs-on-surface); font-size: var(--fs-font-size-small); overflow-wrap: anywhere; }
-  h2, h3 { margin: 0; font-size: var(--fs-font-size-small); font-weight: 700; color: var(--fs-on-surface-variant); }
-  p { margin: 0; }
-  .body { display: grid; gap: var(--fs-space-2); }
-  .service { display: grid; gap: var(--fs-space-1); padding-block-start: var(--fs-space-2); border-block-start: 1px solid var(--fs-outline); }
-  dl { display: flex; flex-wrap: wrap; gap: var(--fs-space-1) var(--fs-space-4); margin: 0; }
-  dl div { display: flex; gap: var(--fs-space-2); }
-  dt, dd { margin: 0; }
-  dd[data-on="true"] { font-weight: 700; }
-  dd[data-on="false"] { color: var(--fs-on-surface-variant); }
+  :host { position: relative; display: inline-block; min-width: 0; font-family: var(--fs-font-sans); font-size: var(--fs-font-size-small); }
+  .badge { display: inline-flex; align-items: center; gap: var(--fs-space-2); padding: var(--fs-space-1) var(--fs-space-3); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface-container); color: var(--fs-on-surface); font: inherit; cursor: pointer; transition: background-color var(--fs-motion-duration); }
+  .badge:hover, .badge[aria-expanded="true"] { background: var(--fs-primary-container); color: var(--fs-on-primary-container); }
+  .icon { display: inline-block; inline-size: 0.9em; block-size: 0.65em; border: 2px solid currentColor; border-radius: var(--fs-radius); }
+  [role="dialog"] { position: absolute; inset-block-start: calc(100% + var(--fs-space-2)); inset-inline-end: 0; z-index: 2; display: grid; gap: var(--fs-space-2); box-sizing: border-box; inline-size: max-content; max-inline-size: min(24rem, calc(100vw - 2 * var(--fs-space-4))); padding: var(--fs-space-3); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface); color: var(--fs-on-surface); overflow-wrap: anywhere; }
+  [role="dialog"][hidden] { display: none; }
+  h2 { margin: 0; font-size: var(--fs-font-size-small); font-weight: 700; color: var(--fs-on-surface-variant); }
+  @media (forced-colors: active) {
+    .badge[aria-expanded="true"] { forced-color-adjust: none; background: Highlight; color: HighlightText; }
+  }
 `;
 
-/** A text element with an optional class. */
-function textElement(tag: string, text: string, cls?: string): HTMLElement {
-  const element = document.createElement(tag);
-  element.textContent = text;
-  if (cls) element.className = cls;
-  return element;
-}
-
-/** One backup or sync row: a term and its On or Off value. */
-function stateRow(term: string, on: boolean, labels: LabelTable): HTMLElement {
-  const row = document.createElement("div");
-  const value = textElement("dd", on ? labels.hostOn : labels.hostOff);
-  value.dataset.on = String(on);
-  row.append(textElement("dt", term), value);
-  return row;
-}
-
-/** The hosted service area: the not-enrolled state, or backup and sync apart with the host. */
-function serviceArea(service: ServiceView, labels: LabelTable): HTMLElement {
-  const area = document.createElement("div");
-  area.className = "service";
-  area.append(textElement("h3", labels.hostServiceTitle));
-  if (!service.enrolled) {
-    area.append(textElement("p", service.text, "not-enrolled"));
-    return area;
-  }
-  const states = document.createElement("dl");
-  states.append(
-    stateRow(labels.hostBackup, service.backup, labels),
-    stateRow(labels.hostSync, service.sync, labels),
-  );
-  const at = `${labels.hostServiceAt} ${service.serviceHost}`;
-  area.append(
-    states,
-    textElement("p", at, "service-host"),
-    textElement("p", service.text, "ciphertext"),
-  );
-  return area;
-}
-
-/** The nodes that show a described host: its statements, then the service apart. */
-function hostContent(view: HostView, labels: LabelTable): Node[] {
-  const statements = view.statements.map((text) => textElement("p", text, "statement"));
-  return [...statements, serviceArea(view.service, labels)];
+/** The persistent parts of the indicator. */
+interface Parts {
+  readonly badge: HTMLButtonElement;
+  readonly label: HTMLElement;
+  readonly popover: HTMLElement;
+  readonly title: HTMLElement;
+  readonly body: HTMLElement;
 }
 
 /** Custom element that shows the host privacy indicator. */
@@ -112,6 +84,10 @@ export class FsHostIndicator extends HTMLElement {
   private unsubscribe?: () => void;
   /** Number of the newest read or applied descriptor; older answers are discarded. */
   private request = 0;
+  private parts?: Parts;
+  private readonly onOutside = (event: Event) => {
+    if (!event.composedPath().includes(this)) this.close(false);
+  };
 
   constructor() {
     super();
@@ -128,13 +104,15 @@ export class FsHostIndicator extends HTMLElement {
     if (this.isConnected) void this.start();
   }
 
-  /** Render the frame, subscribe to events and read the descriptor. */
+  /** Render the frame, listen for outside clicks, subscribe to events and read the descriptor. */
   connectedCallback(): void {
+    this.ownerDocument.addEventListener("pointerdown", this.onOutside, true);
     void this.start();
   }
 
-  /** End the event subscription and discard any read still in flight. */
+  /** End the event subscription, stop listening and discard any read still in flight. */
   disconnectedCallback(): void {
+    this.ownerDocument.removeEventListener("pointerdown", this.onOutside, true);
     this.stop();
   }
 
@@ -222,29 +200,53 @@ export class FsHostIndicator extends HTMLElement {
     this.showState({ kind: "error" });
   }
 
-  /** Build the persistent frame once: the named group, its title and its body. */
+  /** Build the persistent frame once, then word it from the label table. */
   private frame(labels: LabelTable): void {
     const root = this.shadowRoot;
     if (!root) return;
-    const existing = root.querySelector("h2");
-    if (existing) {
-      existing.textContent = labels.hostIndicator;
+    if (!this.parts) this.parts = buildFrame(root, (event) => this.onFrameEvent(event));
+    const group = root.querySelector('[role="group"]');
+    group?.setAttribute("aria-label", labels.hostIndicator);
+    this.parts.title.textContent = labels.hostIndicator;
+  }
+
+  /** Clicks, keys, focus moves and Retry inside the frame. */
+  private onFrameEvent(event: Event): void {
+    const parts = this.parts;
+    if (!parts) return;
+    if (event.type === RETRY_EVENT) this.onRetry(event);
+    else if (event.type === "click" && parts.badge.contains(event.target as Node)) this.toggle();
+    else if (event.type === "keydown" && (event as KeyboardEvent).key === "Escape") {
+      this.close(true);
+    } else if (event.type === "focusout") this.onFocusOut(event as FocusEvent);
+  }
+
+  /** Close when focus moves to something outside the indicator. */
+  private onFocusOut(event: FocusEvent): void {
+    const next = event.relatedTarget as Node | null;
+    if (next && !this.contains(next) && !this.shadowRoot?.contains(next)) this.close(false);
+  }
+
+  /** Open the popover, or close it when it is open. */
+  private toggle(): void {
+    const parts = this.parts;
+    if (!parts) return;
+    if (!parts.popover.hidden) {
+      this.close(true);
       return;
     }
-    const style = document.createElement("style");
-    style.textContent = A11Y_STYLE + STYLE;
-    const section = document.createElement("section");
-    section.tabIndex = 0;
-    section.setAttribute("role", "group");
-    const title = textElement("h2", labels.hostIndicator);
-    title.id = "title";
-    section.setAttribute("aria-labelledby", title.id);
-    const body = document.createElement("div");
-    body.className = "body";
-    body.setAttribute("aria-live", "polite");
-    section.append(title, body);
-    section.addEventListener(RETRY_EVENT, (event) => this.onRetry(event));
-    root.replaceChildren(style, section);
+    parts.popover.hidden = false;
+    parts.badge.setAttribute("aria-expanded", "true");
+    focusElement(parts.popover);
+  }
+
+  /** Close the popover; return focus to the badge when asked. Side effect: may move focus. */
+  private close(refocus: boolean): void {
+    const parts = this.parts;
+    if (!parts || parts.popover.hidden) return;
+    parts.popover.hidden = true;
+    parts.badge.setAttribute("aria-expanded", "false");
+    if (refocus) focusElement(parts.badge);
   }
 
   /** Retry from the states element: reread, and keep the event out of other views' Retry. */
@@ -254,27 +256,76 @@ export class FsHostIndicator extends HTMLElement {
     void this.load();
   }
 
-  /** Show the loading, error, offline or denied state, with no host facts. */
+  /** Show the badge label; the live region announces it only when it changed. */
+  private setBadge(text: string): void {
+    const parts = this.parts;
+    if (!parts) return;
+    if (parts.label.textContent !== text) parts.label.textContent = text;
+  }
+
+  /** Show the loading, error, offline, denied or unavailable state, with no host facts. */
   private showState(state: ViewState): void {
-    const body = this.shadowRoot?.querySelector(".body");
     const labels = this.options?.labels;
-    if (!body || !labels) return;
+    if (!this.parts || !labels) return;
     const states = document.createElement("fs-states") as FsStates;
     states.configure({ labels });
     states.state = state;
-    body.replaceChildren(states);
+    this.parts.body.replaceChildren(states);
+    this.setBadge(state.kind === "loading" ? labels.hostBadgeLoading : labels.hostBadgeUnknown);
     this.dataset.state = state.kind;
     delete this.dataset.hostType;
   }
 
   /** Show a validated descriptor. */
   private showHost(descriptor: HostDescriptor): void {
-    const body = this.shadowRoot?.querySelector(".body");
     const labels = this.options?.labels;
-    if (!body || !labels) return;
+    if (!this.parts || !labels) return;
     const view = describeHost(descriptor, labels);
-    body.replaceChildren(...hostContent(view, labels));
+    this.parts.body.replaceChildren(buildHostStatement(view, labels));
+    this.setBadge(labels[BADGE_LABEL[view.hostType]]);
     this.dataset.state = "ready";
     this.dataset.hostType = view.hostType;
   }
+}
+
+/** An element with a class and optional attributes. */
+function part(tag: string, cls: string, attributes: Record<string, string> = {}): HTMLElement {
+  const element = document.createElement(tag);
+  if (cls) element.className = cls;
+  for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, value);
+  return element;
+}
+
+/**
+ * Build the group, badge, live region and closed popover, and route their events to
+ * `onEvent`. Side effect: replaces the shadow root's children.
+ */
+function buildFrame(root: ShadowRoot, onEvent: (event: Event) => void): Parts {
+  const style = document.createElement("style");
+  style.textContent = A11Y_STYLE + STYLE + HOST_STATEMENT_STYLE;
+  const badge = part("button", "badge", {
+    type: "button",
+    "aria-expanded": "false",
+    "aria-haspopup": "dialog",
+    "aria-controls": "popover",
+  }) as HTMLButtonElement;
+  const label = part("span", "label", { "aria-live": "polite" });
+  badge.append(part("span", "icon", { "aria-hidden": "true" }), label);
+  const title = part("h2", "", { id: "popover-title" });
+  const body = part("div", "body");
+  const popover = part("div", "popover", {
+    id: "popover",
+    role: "dialog",
+    "aria-labelledby": "popover-title",
+    tabindex: "-1",
+  });
+  popover.hidden = true;
+  popover.append(title, body);
+  const group = part("div", "indicator", { role: "group" });
+  group.append(badge, popover);
+  for (const type of ["click", "keydown", "focusout", RETRY_EVENT]) {
+    group.addEventListener(type, onEvent);
+  }
+  root.replaceChildren(style, group);
+  return { badge, label, popover, title, body };
 }

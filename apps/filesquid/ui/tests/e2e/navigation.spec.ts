@@ -6,8 +6,9 @@
  * refused storage, show the five view states distinctly with token colours in light and dark,
  * draw the 2px primary focus ring, honour reduced motion and forced colours, and reflow without
  * horizontal scrolling. The navigation data comes from an in-page fixture source shaped on the
- * API's navigation listing (API-S-021); no API route exists for it yet, so nothing is fetched
- * or stubbed.
+ * API's navigation listing (API-S-021), given to the app's own tree: the real server answers
+ * that route with 503 until it installs the navigation service (the live source is proven
+ * against the production build in `preview/navigation.spec.ts`).
  */
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
@@ -89,7 +90,7 @@ async function open(page: Page): Promise<void> {
     Object.defineProperty(window, "__FILESQUID_LAUNCH_TOKEN__", { value, enumerable: false });
   }, ADMIN_TOKEN);
   await page.goto("/");
-  await expect(page.locator("fs-app-shell").getByRole("status")).toBeVisible();
+  await expect(page.locator("fs-app-shell p.api")).toBeVisible();
 }
 
 /**
@@ -131,11 +132,13 @@ async function mountNavigation(
           return { nodes: level.map(listed), ancestors, next_cursor: null };
         },
       };
+      // The app mounts its live tree in the slot; give that tree the fixture source.
       const shell = document.querySelector("fs-app-shell");
-      const tree = document.createElement("fs-nav-tree") as Configurable;
+      const tree = (shell?.querySelector("fs-nav-tree") ??
+        document.createElement("fs-nav-tree")) as Configurable;
       tree.slot = "navigation";
       tree.configure({ labels: table, source });
-      shell?.append(tree);
+      if (!tree.isConnected) shell?.append(tree);
       const folder = index.get("f1");
       if (!folder) return;
       const crumb = document.createElement("fs-breadcrumb") as Configurable;
@@ -287,7 +290,7 @@ test("pins, section order and library collapse are kept on the device across a r
   });
   expect(saved).not.toMatch(/Photos|Archive|Family/);
   await page.reload();
-  await expect(page.locator("fs-app-shell").getByRole("status")).toBeVisible();
+  await expect(page.locator("fs-app-shell p.api")).toBeVisible();
   await mountNavigation(page, twoLibraries);
   await expect(headings(page)).toHaveText([
     labels.collections,
@@ -401,11 +404,12 @@ for (const scheme of ["light", "dark"] as const) {
     const ring = `solid 2px ${await tokenColour(page, "--fs-primary")}`;
     await page.locator("fs-theme-control input[value='system']").focus();
     const seen = [];
-    for (let step = 0; step < 4; step += 1) {
+    for (let step = 0; step < 5; step += 1) {
       await page.keyboard.press("Tab");
       seen.push(await focusRing(page));
     }
     expect(seen.map((s) => s.text)).toEqual([
+      labels.hostBadgeServer,
       `Move ${labels.collections} up`,
       `Move ${labels.collections} down`,
       "Photos",

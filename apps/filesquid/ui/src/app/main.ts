@@ -1,18 +1,23 @@
 /**
  * The default FileSquid distribution: applies the saved theme, then mounts the shell with
  * FileSquid's official brand and the internal vocabulary, talking to whichever host serves
- * this page. `#/monitor` shows the Monitor dashboard; `#/files/<library>/<object>` shows the
- * file browser until the navigation tree supplies the library and object. On the desktop host the client uses the
- * per-launch token; on the server host the Monitor asks for the administrator token, which is
- * kept in memory only.
+ * this page. The navigation tree in the shell's navigation slot reads the host's live
+ * navigation listing (UI-F2.1b), and `#/navigation/<node>` shows that destination with its
+ * breadcrumb; `#/monitor` shows the Monitor dashboard; `#/files/<library>/<object>` shows the
+ * file browser until the API lists files by navigation node. On the desktop host the client
+ * uses the per-launch token; on the server host the Monitor asks for the administrator token,
+ * which is kept in memory only, and entering it reconnects the event channel and reads the
+ * host, the health and the tree again.
  */
 import "../theme/tokens.css";
 import labels from "../theme/labels.en.json";
 import {
   ClientFileSource,
+  ClientNavigationSource,
   applyLocale,
   bindFilesRoute,
   bindMonitorRoute,
+  bindNavigationRoute,
   createHostClient,
   createThemeStore,
   defineElements,
@@ -21,6 +26,7 @@ import {
   resolveLocale,
   type Distribution,
   type FsAppShell,
+  type FsNavTree,
 } from "../index";
 
 /** FileSquid's own brand: the official mark, with a white outline on dark surfaces. */
@@ -36,9 +42,19 @@ const theme = createThemeStore(window);
 theme.start();
 defineElements();
 const shell = document.querySelector<FsAppShell>("fs-app-shell");
-const tokens = memoryTokenStore(() => void shell?.refreshHealth());
+const tree = document.createElement("fs-nav-tree") as FsNavTree;
+const tokens = memoryTokenStore(() => {
+  void shell?.refreshHealth();
+  navigation.reconnect();
+  void tree.reload();
+});
 const client = createHostClient(window, () => tokens.get());
+const navigation = new ClientNavigationSource(client);
 const desktop = detectHost(window).isTauri;
 shell?.configure({ distribution: filesquid, client, theme });
+tree.slot = "navigation";
+tree.configure({ labels, source: navigation });
+shell?.append(tree);
+if (shell) bindNavigationRoute(shell, { labels, source: navigation, tree });
 if (shell) bindMonitorRoute(shell, { labels, client, tokens: desktop ? undefined : tokens });
 if (shell) bindFilesRoute(shell, { labels, source: new ClientFileSource(client) });

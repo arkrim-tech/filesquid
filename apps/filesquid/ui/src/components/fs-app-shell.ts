@@ -13,8 +13,9 @@
  * navigation tree (`<fs-nav-tree slot="navigation">`); until one is slotted it shows the
  * vocabulary of the main destinations as a static list. The Monitor link follows the slot.
  *
- * Host privacy (UI-F2.1b, UI-S-004, UI-S-018): the header carries `<fs-host-indicator>`, so the
- * host and who can read files there are visible on every view; the client must therefore
+ * Host privacy (UI-F2.1b, UI-S-004, UI-S-018): the header carries `<fs-host-indicator>`, a
+ * compact badge whose popover says who can read files on the host, so the host is visible on
+ * every view without the full statement as permanent header text; the client must therefore
  * implement {@link HostClient}.
  */
 import type { Distribution } from "../distribution";
@@ -53,7 +54,7 @@ const STYLE = `
   h1 { margin: 0; min-width: 0; overflow-wrap: anywhere; font-family: var(--fs-font-heading); font-size: var(--fs-font-size-title); font-weight: 700; color: var(--fs-on-surface); }
   img { height: 2rem; width: auto; }
   fs-theme-control { margin-inline-start: auto; }
-  fs-host-indicator { flex: 1 1 100%; order: 1; }
+  fs-host-indicator { flex: 0 0 auto; }
   .body { display: flex; min-width: 0; }
   nav { display: flex; flex-direction: column; gap: var(--fs-space-4); flex: 0 0 15rem; box-sizing: border-box; min-width: 0; padding: var(--fs-space-4); background: var(--fs-surface-container); }
   ul { list-style: none; margin: 0; padding: 0; }

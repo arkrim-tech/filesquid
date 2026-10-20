@@ -101,7 +101,7 @@ test("ImageSquid's theme control keeps a dark choice across a reload", async ({ 
 test("ImageSquid names missing credentials in its own words", async ({ page }) => {
   const errors = trackErrors(page, REFUSED_CALL);
   await page.goto("/");
-  const alert = page.locator('fs-app-shell [role="alert"]');
+  const alert = page.locator('fs-app-shell p.api[role="alert"]');
   await expect(alert).toHaveAttribute("data-reason", "missing_credentials");
   await expect(alert).toHaveText("Archives unavailable: Missing credentials");
   expect(errors).toEqual([]);
@@ -142,7 +142,8 @@ for (const scheme of ["light", "dark"] as const) {
     await expect(shell.getByRole("heading", { level: 1 })).toHaveText("ImageSquid");
     const ring = `solid 2px ${await token(page, "--fs-primary")}`;
     const seen: string[] = [];
-    for (let step = 0; step < 3; step += 1) {
+    // Skip, theme, the host badge in the header, then the Monitor link.
+    for (let step = 0; step < 4; step += 1) {
       await page.keyboard.press("Tab");
       seen.push(
         await page.evaluate(() => {
@@ -158,6 +159,7 @@ for (const scheme of ["light", "dark"] as const) {
     expect(seen).toEqual([
       `Skip to main content | ${ring}`,
       `System | ${ring}`,
+      `${labels.hostBadgeServer} | ${ring}`,
       `Monitor | ${ring}`,
     ]);
     await page.keyboard.press("Enter");

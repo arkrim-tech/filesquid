@@ -44,15 +44,12 @@ test("shell mounts with FileSquid brand, internal vocabulary and live API health
   const shell = page.locator("fs-app-shell");
   await expect(shell.locator("h1")).toHaveText("FileSquid");
   await expect(shell.locator("header img")).toHaveAttribute("alt", "FileSquid logo");
-  await expect(shell.locator("nav li")).toHaveText([
-    "Libraries",
-    "Collections",
-    "Virtual collections",
-    "Virtual exhibits",
-    "Monitor",
-  ]);
-  await expect(shell.locator('[role="status"]')).toHaveText("API: ok (filesquid)");
-  await expect(shell.locator('[role="alert"]')).toHaveCount(0);
+  // The live navigation tree fills the navigation slot; this server has no navigation service
+  // yet, so the tree shows the unavailable state (UI-F2.1b). The Monitor link follows it.
+  await expect(shell.locator("fs-nav-tree fs-states")).toHaveAttribute("data-state", "unavailable");
+  await expect(shell.locator("nav > ul.tools li")).toHaveText(["Monitor"]);
+  await expect(shell.locator('p.api[role="status"]')).toHaveText("API: ok (filesquid)");
+  await expect(shell.locator('p.api[role="alert"]')).toHaveCount(0);
   expect(errors).toEqual([]);
 });
 
@@ -84,10 +81,10 @@ test("without a token the shell names the missing credentials from the label tab
 }) => {
   const errors = trackErrors(page, REFUSED_CALL);
   await page.goto("/");
-  const alert = page.locator('fs-app-shell [role="alert"]');
+  const alert = page.locator('fs-app-shell p.api[role="alert"]');
   await expect(alert).toHaveText("API unavailable: Missing credentials");
   await expect(alert).toHaveAttribute("data-reason", "missing_credentials");
-  await expect(page.locator('fs-app-shell [role="status"]')).toHaveCount(0);
+  await expect(page.locator('fs-app-shell p.api[role="status"]')).toHaveCount(0);
   expect(errors).toEqual([]);
 });
 
@@ -120,7 +117,7 @@ test("Monitor asks for the admin token, then shows live health, processes and th
       .first(),
   ).toBeVisible();
   // Signing in also reloads the shell's API status with the same in-memory token.
-  await expect(page.locator('fs-app-shell [role="status"]')).toHaveText("API: ok (filesquid)");
+  await expect(page.locator('fs-app-shell p.api[role="status"]')).toHaveText("API: ok (filesquid)");
   expect(errors).toEqual([]);
 });
 
@@ -174,10 +171,12 @@ test("the desktop launch token authorises the shell, the Monitor and the event c
   page.on("websocket", (socket) => upgrades.push(socket.url()));
   await injectLaunchToken(page, ADMIN_TOKEN);
   await page.goto("/#/monitor");
-  await expect(page.locator('fs-app-shell [role="status"]')).toHaveText("API: ok (filesquid)");
+  await expect(page.locator('fs-app-shell p.api[role="status"]')).toHaveText("API: ok (filesquid)");
   await expect(page.locator('fs-monitor [data-section="health"] h2')).toHaveText("Health");
   await expect(page.locator("fs-monitor form[data-form='token']")).toHaveCount(0);
-  await expect.poll(() => upgrades).toEqual(["ws://127.0.0.1:4173/api/v1/events"]);
+  // One channel each for the host indicator, the navigation tree and the Monitor.
+  const events = "ws://127.0.0.1:4173/api/v1/events";
+  await expect.poll(() => upgrades).toEqual([events, events, events]);
   expect(errors).toEqual([]);
 });
 
@@ -270,7 +269,7 @@ test.describe("inside the desktop webview (custom URI scheme adapter)", () => {
 
     await page.goto("/#/monitor");
     const shell = page.locator("fs-app-shell");
-    await expect(shell.locator('[role="status"]')).toHaveText("API: ok (filesquid)");
+    await expect(shell.locator('p.api[role="status"]')).toHaveText("API: ok (filesquid)");
     const monitor = shell.locator("fs-monitor");
     await expect(monitor.locator('[data-section="health"] h2')).toHaveText("Health");
     await expect(monitor.locator("form[data-form='token']")).toHaveCount(0);
@@ -286,8 +285,8 @@ test.describe("inside the desktop webview (custom URI scheme adapter)", () => {
         .filter((call) => call.cmd === "plugin:event|listen")
         .map((call) => call.args.event),
     );
-    // One listener for the host indicator in the shell header and one for the Monitor.
-    expect(listened).toEqual(["filesquid-event", "filesquid-event"]);
+    // One listener each for the host indicator, the navigation tree and the Monitor.
+    expect(listened).toEqual(["filesquid-event", "filesquid-event", "filesquid-event"]);
     expect(paths).toContain("/api/v1/host");
 
     await emitDesktopEvent(page, {

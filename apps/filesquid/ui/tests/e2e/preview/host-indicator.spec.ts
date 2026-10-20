@@ -12,8 +12,10 @@ import {
   label,
   rgbOf,
   setScheme,
+  tokenColour,
   trackErrors,
 } from "../support/strict-dom";
+import { serveNavigation } from "../support/navigation-api";
 
 const labels = activeLabels();
 const SERVICE = "backup.filesquid.tech";
@@ -54,7 +56,8 @@ interface Api {
  */
 async function serve(page: Page, answers: (object | number)[], delayMs = 0): Promise<Api> {
   let reads = 0;
-  let socket: WebSocketRoute | undefined;
+  const sockets: WebSocketRoute[] = [];
+  await serveNavigation(page);
   await page.route("**/api/v1/health", (route) =>
     route.fulfill({ json: { schema_version: 1, status: "ok", product: "filesquid" } }),
   );
@@ -71,13 +74,20 @@ async function serve(page: Page, answers: (object | number)[], delayMs = 0): Pro
     }
     await route.fulfill({ json: answer });
   });
+  // The indicator and the navigation tree each open the event channel; events go to both.
   await page.routeWebSocket(/\/api\/v1\/events$/, (ws) => {
-    socket = ws;
+    sockets.push(ws);
   });
   return {
     reads: () => reads,
-    send: (event) => socket?.send(JSON.stringify(event)),
+    send: (event) => sockets.forEach((socket) => socket.send(JSON.stringify(event))),
   };
+}
+
+/** Open the popover with the badge and wait until it shows. */
+async function openPopover(page: Page): Promise<void> {
+  await page.locator("fs-host-indicator button.badge").click();
+  await expect(page.locator('fs-host-indicator [role="dialog"]')).toBeVisible();
 }
 
 /** Texts of the elements matching `selector` inside the indicator. */
@@ -180,7 +190,7 @@ test("a host.change event updates the indicator without a reload or another read
   const errors = trackErrors(page);
   const api = await serve(page, [descriptor()]);
   await page.goto("/");
-  await expect(inIndicator(page, ".not-enrolled")).toBeVisible();
+  await expect(inIndicator(page, ".not-enrolled")).toHaveText(label(labels, "hostNotEnrolled"));
   // The read at start, then the read when the event channel opens (events before it are lost).
   await expect.poll(api.reads).toBe(2);
   await page.evaluate(() => ((window as unknown as { marker: string }).marker = "same page"));
@@ -233,38 +243,104 @@ test("a failed read shows the error state and never a guessed host, then Retry r
   await expect(inIndicator(page, "fs-states")).toContainText(label(labels, "stateError"));
   await expect(inIndicator(page, ".statement")).toHaveCount(0);
   await expect(indicator).not.toHaveAttribute("data-host-type", /.+/);
+  await expect(inIndicator(page, "button.badge .label")).toHaveText(
+    label(labels, "hostBadgeUnknown"),
+  );
+  await openPopover(page);
   await inIndicator(page, "fs-states button").click();
   await expect(indicator).toHaveAttribute("data-state", "ready");
   await expect(inIndicator(page, ".statement")).toHaveText([label(labels, "hostDesktop")]);
   expect(errors).toEqual([]);
 });
 
+test("the header shows a compact badge with the short host label, not the statement", async ({
+  page,
+}) => {
+  const errors = trackErrors(page);
+  await serve(page, [descriptor()]);
+  await page.goto("/");
+  const badge = page.locator("fs-app-shell header fs-host-indicator button.badge");
+  await expect(badge).toBeVisible();
+  await expect(badge).toHaveText(label(labels, "hostBadgeDesktop"));
+  await expect(badge).toHaveAttribute("aria-expanded", "false");
+  await expect(inIndicator(page, ".statement")).toBeHidden();
+  await expect(page.locator('fs-host-indicator [role="dialog"]')).toBeHidden();
+  expect(errors).toEqual([]);
+});
+
+test("Enter opens the popover with the full statement; Escape closes it and returns focus", async ({
+  page,
+}) => {
+  const errors = trackErrors(page);
+  await serve(page, [descriptor()]);
+  await page.goto("/");
+  const badge = page.locator("fs-host-indicator button.badge");
+  const popover = page.getByRole("dialog", { name: label(labels, "hostIndicator") });
+  await expect(badge).toHaveText(label(labels, "hostBadgeDesktop"));
+  await badge.focus();
+  await page.keyboard.press("Enter");
+  await expect(popover).toBeVisible();
+  await expect(badge).toHaveAttribute("aria-expanded", "true");
+  await expect(popover.locator(".statement")).toHaveText([label(labels, "hostDesktop")]);
+  await expect(popover.locator(".not-enrolled")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(popover).toBeHidden();
+  await expect(badge).toBeFocused();
+  await page.keyboard.press("Space");
+  await expect(popover).toBeVisible();
+  await page.mouse.click(5, 400);
+  await expect(popover).toBeHidden();
+  expect(errors).toEqual([]);
+});
+
 test("computed token values are exact in light and dark", async ({ page }) => {
   const errors = trackErrors(page);
   await serve(page, [descriptor()]);
-  const style = () =>
-    page.locator("fs-host-indicator section").evaluate((el) => {
+  const style = (selector: string) =>
+    page.locator(`fs-host-indicator ${selector}`).evaluate((el) => {
       const css = getComputedStyle(el);
       return { background: css.backgroundColor, color: css.color, border: css.borderTopColor };
     });
   await setScheme(page, "light");
   await page.goto("/");
   await expect(page.locator("fs-host-indicator")).toHaveAttribute("data-state", "ready");
-  expect(await style()).toEqual({
-    background: rgbOf("#f5f5f5"),
-    color: rgbOf("#111111"),
-    border: rgbOf("#e0e0e0"),
-  });
+  // The badge, closed and not hovered; colour changes are polled past their transition.
+  await expect
+    .poll(() => style("button.badge"))
+    .toEqual({
+      background: rgbOf("#f5f5f5"),
+      color: rgbOf("#111111"),
+      border: rgbOf("#e0e0e0"),
+    });
   await setScheme(page, "dark");
-  expect(await style()).toEqual({
-    background: rgbOf("#1c1c1c"),
-    color: rgbOf("#e0e0e0"),
-    border: rgbOf("#2a2a2a"),
-  });
+  await expect
+    .poll(() => style("button.badge"))
+    .toEqual({
+      background: rgbOf("#1c1c1c"),
+      color: rgbOf("#e0e0e0"),
+      border: rgbOf("#2a2a2a"),
+    });
+  await openPopover(page);
+  await expect
+    .poll(() => style('[role="dialog"]'))
+    .toEqual({
+      background: rgbOf("#141414"),
+      color: rgbOf("#e0e0e0"),
+      border: rgbOf("#2a2a2a"),
+    });
+  await setScheme(page, "light");
+  await expect
+    .poll(() => style('[role="dialog"]'))
+    .toEqual({
+      background: rgbOf("#ffffff"),
+      color: rgbOf("#111111"),
+      border: rgbOf("#e0e0e0"),
+    });
+  expect(await tokenColour(page, "--fs-surface")).toBe(rgbOf("#ffffff"));
   expect(errors).toEqual([]);
 });
 
-test("the indicator is reachable by keyboard and has a visible focus outline", async ({ page }) => {
+test("the badge is reachable by keyboard and has a visible focus outline", async ({ page }) => {
   const errors = trackErrors(page);
   await serve(page, [descriptor()]);
   await page.goto("/");
@@ -273,7 +349,7 @@ test("the indicator is reachable by keyboard and has a visible focus outline", a
     page.evaluate(() => {
       let active: Element | null = document.activeElement;
       while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
-      return active?.tagName === "SECTION" && active.getAttribute("role") === "group";
+      return active?.tagName === "BUTTON" && active.classList.contains("badge");
     });
   let reached = false;
   for (let presses = 0; presses < 12 && !reached; presses += 1) {
@@ -281,7 +357,7 @@ test("the indicator is reachable by keyboard and has a visible focus outline", a
     reached = await focused();
   }
   expect(reached).toBe(true);
-  const outline = await page.locator("fs-host-indicator section").evaluate((el) => {
+  const outline = await page.locator("fs-host-indicator button.badge").evaluate((el) => {
     const css = getComputedStyle(el);
     return { style: css.outlineStyle, width: css.outlineWidth, color: css.outlineColor };
   });

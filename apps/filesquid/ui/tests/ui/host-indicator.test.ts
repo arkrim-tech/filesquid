@@ -7,7 +7,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
   accessibilityViolations,
+  buildHostStatement,
   defineElements,
+  describeHost,
   type ApiEvent,
   type FsHostIndicator,
   type HostClient,
@@ -98,16 +100,117 @@ beforeEach(() => defineElements());
 afterEach(() => vi.restoreAllMocks());
 
 describe("<fs-host-indicator> structure", () => {
-  it("is a defined custom element, named and focusable from the label table", async () => {
+  it("is a defined custom element: a named group with a badge button and a closed popover", async () => {
     expect(customElements.get("fs-host-indicator")).toBeDefined();
     const indicator = await mount(fakeClient(descriptor()));
-    const group = indicator.shadowRoot?.querySelector("section");
-    expect(group?.getAttribute("tabindex")).toBe("0");
-    expect(text(indicator, "h2")).toBe(labels.hostIndicator);
-    expect(group?.getAttribute("aria-labelledby")).toBe(
-      indicator.shadowRoot?.querySelector("h2")?.id,
+    const group = indicator.shadowRoot?.querySelector('[role="group"]');
+    expect(group?.getAttribute("aria-label")).toBe(labels.hostIndicator);
+    const badge = indicator.shadowRoot?.querySelector<HTMLButtonElement>("button.badge");
+    expect(badge?.type).toBe("button");
+    expect(badge?.getAttribute("aria-expanded")).toBe("false");
+    expect(badge?.getAttribute("aria-haspopup")).toBe("dialog");
+    const popover = indicator.shadowRoot?.querySelector<HTMLElement>('[role="dialog"]');
+    expect(badge?.getAttribute("aria-controls")).toBe(popover?.id);
+    expect(popover?.hidden).toBe(true);
+    expect(text(indicator, '[role="dialog"] h2')).toBe(labels.hostIndicator);
+    expect(popover?.getAttribute("aria-labelledby")).toBe(
+      indicator.shadowRoot?.querySelector('[role="dialog"] h2')?.id,
     );
     expect(accessibilityViolations(indicator)).toEqual([]);
+  });
+});
+
+describe("<fs-host-indicator> compact badge", () => {
+  it.each([
+    ["desktop", descriptor(), "hostBadgeDesktop"],
+    ["server", descriptor({ host_type: "server", operator_name: "Ops" }), "hostBadgeServer"],
+    ["browser", descriptor({ host_type: "browser" }), "hostBadgeBrowser"],
+  ] as const)("shows an icon and the short %s label, not the statement", async (_t, d, key) => {
+    const indicator = await mount(fakeClient(d));
+    expect(text(indicator, "button.badge .label")).toBe(labels[key]);
+    const icon = indicator.shadowRoot?.querySelector("button.badge .icon");
+    expect(icon?.getAttribute("aria-hidden")).toBe("true");
+    const badge = indicator.shadowRoot?.querySelector("button.badge");
+    expect(badge?.textContent).not.toContain(labels.hostDesktop);
+  });
+
+  it("says the host is being checked while loading, and unknown when it cannot be read", async () => {
+    let release: (value: HostDescriptor) => void = () => undefined;
+    const pending = new Promise<HostDescriptor>((resolve) => (release = resolve));
+    const loading = await mount({
+      client: { host: () => pending, subscribe: () => () => undefined },
+    });
+    expect(text(loading, "button.badge .label")).toBe(labels.hostBadgeLoading);
+    release(descriptor());
+    await settle();
+    expect(text(loading, "button.badge .label")).toBe(labels.hostBadgeDesktop);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const failed = await mount(fakeClient(new ApiError(500, "/api/v1/host")));
+    expect(text(failed, "button.badge .label")).toBe(labels.hostBadgeUnknown);
+  });
+
+  it("announces the short label in a polite live region when the host changes", async () => {
+    const fake = fakeClient(descriptor());
+    const indicator = await mount(fake);
+    const live = indicator.shadowRoot?.querySelector('button.badge .label[aria-live="polite"]');
+    expect(live?.textContent).toBe(labels.hostBadgeDesktop);
+    fake.emit({ topic: "host.change", data: descriptor({ host_type: "server" }) });
+    expect(live?.textContent).toBe(labels.hostBadgeServer);
+  });
+
+  it("opens the popover on click with focus in it, and closes on Escape with focus on the badge", async () => {
+    const indicator = await mount(fakeClient(descriptor()));
+    const root = indicator.shadowRoot as ShadowRoot;
+    const badge = root.querySelector<HTMLButtonElement>("button.badge") as HTMLButtonElement;
+    const popover = root.querySelector<HTMLElement>('[role="dialog"]') as HTMLElement;
+    badge.click();
+    expect(badge.getAttribute("aria-expanded")).toBe("true");
+    expect(popover.hidden).toBe(false);
+    expect(root.activeElement).toBe(popover);
+    expect(texts(indicator, '[role="dialog"] .statement')).toEqual([labels.hostDesktop]);
+    popover.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(popover.hidden).toBe(true);
+    expect(badge.getAttribute("aria-expanded")).toBe("false");
+    expect(root.activeElement).toBe(badge);
+  });
+
+  it("closes again when the badge is pressed a second time", async () => {
+    const indicator = await mount(fakeClient(descriptor()));
+    const badge = indicator.shadowRoot?.querySelector<HTMLButtonElement>("button.badge");
+    badge?.click();
+    badge?.click();
+    expect(indicator.shadowRoot?.querySelector<HTMLElement>('[role="dialog"]')?.hidden).toBe(true);
+  });
+
+  it("closes on a click outside the indicator, and when focus leaves it", async () => {
+    const indicator = await mount(fakeClient(descriptor()));
+    const outside = document.createElement("button");
+    document.body.append(outside);
+    const badge = indicator.shadowRoot?.querySelector<HTMLButtonElement>("button.badge");
+    const popover = () => indicator.shadowRoot?.querySelector<HTMLElement>('[role="dialog"]');
+    badge?.click();
+    outside.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, composed: true }));
+    expect(popover()?.hidden).toBe(true);
+    badge?.click();
+    popover()?.dispatchEvent(
+      new FocusEvent("focusout", { bubbles: true, composed: true, relatedTarget: outside }),
+    );
+    expect(popover()?.hidden).toBe(true);
+  });
+
+  it("keeps the popover open on a click inside it", async () => {
+    const indicator = await mount(fakeClient(descriptor()));
+    indicator.shadowRoot?.querySelector<HTMLButtonElement>("button.badge")?.click();
+    const popover = indicator.shadowRoot?.querySelector<HTMLElement>('[role="dialog"]');
+    popover?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, composed: true }));
+    expect(popover?.hidden).toBe(false);
+  });
+
+  it("stops listening for outside clicks once detached", async () => {
+    const indicator = await mount(fakeClient(descriptor()));
+    const remove = vi.spyOn(document, "removeEventListener");
+    indicator.remove();
+    expect(remove).toHaveBeenCalledWith("pointerdown", expect.any(Function), true);
   });
 });
 
@@ -377,5 +480,17 @@ describe("<fs-host-indicator> follows the host", () => {
     const indicator = await mount({ client });
     expect(indicator.dataset.state).toBe("ready");
     expect(error).toHaveBeenCalled();
+  });
+});
+
+describe("buildHostStatement (for the Settings page's Privacy section)", () => {
+  it("builds the full statement, the host first and the service apart", () => {
+    const view = describeHost(descriptor({ hosted_service: service(true, false) }), labels);
+    const element = buildHostStatement(view, labels);
+    const all = (selector: string) =>
+      [...element.querySelectorAll(selector)].map((el) => el.textContent);
+    expect(all(".statement")).toEqual([labels.hostDesktop, labels.hostDesktopBackup]);
+    expect(all(".service dd")).toEqual([labels.hostOn, labels.hostOff]);
+    expect(all(".ciphertext")).toEqual([labels.hostServiceCiphertext]);
   });
 });

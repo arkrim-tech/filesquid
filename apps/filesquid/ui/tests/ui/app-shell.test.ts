@@ -104,6 +104,10 @@ describe("<fs-app-shell>", () => {
     expect(indicator?.shadowRoot?.querySelector(".statement")?.textContent).toBe(
       labels.hostDesktop,
     );
+    const badge = indicator?.shadowRoot?.querySelector("button.badge .label");
+    expect(badge?.textContent).toBe(labels.hostBadgeDesktop);
+    const popover = indicator?.shadowRoot?.querySelector<HTMLElement>('[role="dialog"]');
+    expect(popover?.hidden).toBe(true);
   });
 
   it("reads the host descriptor again when health is refreshed, for example after sign-in", async () => {
