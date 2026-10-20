@@ -571,6 +571,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/navigation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List one level of the navigation tree
+         * @description One level of the tree a UI shows as its navigation and breadcrumb (API-S-021). Without node: the host's one repository. With node: that node's children - a repository's libraries; a library's collections, then its virtual collections, then the folders its unfiled files imply; a collection's folders; a folder's subfolders; nothing under a virtual collection; never files. A folder exists only when committed ordinary files imply it, so one implied only by hidden or deleted files is not listed. Every node carries an opaque handle (at most 512 bytes, never a path, storage key, SQL or token), its kind, its name and has_children (true only when the caller may read a child). ancestors holds the nodes from the repository down to and including the listed node, for the breadcrumb. Paging: limit 1-1000 (default 200) and an opaque cursor, in a stable order - the fixed kind order library, collection, virtual_collection, folder; libraries, collections and virtual collections in catalog order; folders by name in Unicode code-point order; no repeat or gap across pages. A page may hold fewer nodes than limit while next_cursor is present (nodes the caller may not read are skipped); keep following next_cursor until it is null. Only nodes the caller may read are listed, counted or named in an ancestor trail; an unknown node and one the caller may not read, or one under an unreadable ancestor, get the same 404 not_found. A folder whose handle would exceed 512 bytes cannot be named and is not listed. A malformed cursor, a cursor of another level, a limit outside 1-1000 or an unknown parameter answers 400 invalid_request. A successful read is not journaled; a refusal is journaled once as navigation.list (API-S-017). Subscribe to navigation.change on the event channel to know when to read a level again.
+         */
+        get: operations["listNavigation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/libraries": {
         parameters: {
             query?: never;
@@ -702,10 +722,10 @@ export interface components {
             data: unknown;
         };
         /**
-         * @description Documented event topics: process.update (a process or job changed), journal.entry (an activity journal entry was written), health.change (the health status changed), events.resync (events were missed; reread state), host.change (a host descriptor field changed; the payload is the whole new HostDescriptor; reread GET /api/v1/host after events.resync or a reconnect).
+         * @description Documented event topics: process.update (a process or job changed), journal.entry (an activity journal entry was written), health.change (the health status changed), events.resync (events were missed; reread state), host.change (a host descriptor field changed; the payload is the whole new HostDescriptor; reread GET /api/v1/host after events.resync or a reconnect), navigation.change (children of navigation nodes changed; the payload is a NavigationChange; read the named parents' levels of GET /api/v1/navigation again, or the whole visible tree on all, events.resync or a reconnect).
          * @enum {string}
          */
-        EventTopic: "process.update" | "journal.entry" | "health.change" | "events.resync" | "host.change";
+        EventTopic: "process.update" | "journal.entry" | "health.change" | "events.resync" | "host.change" | "navigation.change";
         /** @description Payload of events.resync: the subscriber missed events and MUST reread the state it shows. */
         EventResync: {
             /** @description How many events this subscriber did not receive. */
@@ -1195,6 +1215,40 @@ export interface components {
             /** @description Most objects one run checks (default 100,000). */
             object_cap: number;
         };
+        /**
+         * @description What a navigation node stands for. A listing orders children by this fixed order (library, collection, virtual_collection, folder); a client never sorts by the names.
+         * @enum {string}
+         */
+        NavigationKind: "repository" | "library" | "collection" | "virtual_collection" | "folder";
+        /** @description One node of the navigation tree. */
+        NavigationNode: {
+            /** @description The opaque handle. Clients MUST NOT parse it; it holds no filesystem path, storage key, OCFL content path, SQL or token. */
+            node: string;
+            kind: components["schemas"]["NavigationKind"];
+            /** @description The title of a library, collection or virtual collection; the last segment of a folder's logical path; for a repository, the name its host is configured with, or null (the UI then uses its own label). */
+            name: string | null;
+            /** @description True only when the caller may read at least one child of the node. A virtual collection never has children here. */
+            has_children: boolean;
+        };
+        /** @description One page of one level of the navigation tree (API-S-021). */
+        NavigationPage: {
+            /** @description The nodes of this page, in the stable order of the listing. */
+            nodes: components["schemas"]["NavigationNode"][];
+            /** @description For a listed node: the nodes from the repository down to and including that node, so one call fills a breadcrumb. Empty at the repository level. */
+            ancestors: components["schemas"]["NavigationNode"][];
+            /** @description The opaque cursor of the next page, or null on the last page. */
+            next_cursor: string | null;
+        };
+        /** @description Payload of navigation.change: after a committed change adds, removes, renames or moves a node, the nodes whose children changed. Exactly one of parents (1 to 64 handles) and all is present. A subscriber receives only the handles it may read and no event when it may read none. */
+        NavigationChange: {
+            /** @description The handles (1 to 64) of the nodes whose children changed; read those levels again. */
+            parents?: string[];
+            /**
+             * @description True when more than 64 changed or the changed parents are not known; read the whole visible tree again.
+             * @constant
+             */
+            all?: true;
+        };
         /** @description Body of POST /api/v1/libraries and POST /api/v1/libraries/openings: the folder the owner chose, by the opaque location ID the host registered it under, never by its path. */
         LibraryLocationRequest: {
             /** @description The opaque location ID, 1 to 128 bytes. */
@@ -1501,6 +1555,8 @@ export interface components {
         LogicalPath: string;
         /** @description One byte range: bytes=a-b, bytes=a- or bytes=-n. A malformed header, another unit or several ranges are ignored. */
         Range: string;
+        /** @description The opaque handle of the node whose children to list, as an earlier answer gave it (clients never parse it). Absent: the host's repository level. An unknown, malformed or unreadable handle answers one identical 404 not_found. */
+        NavigationNode: string;
     };
     requestBodies: never;
     headers: never;
@@ -2611,6 +2667,39 @@ export interface operations {
             400: components["responses"]["InvalidRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    listNavigation: {
+        parameters: {
+            query?: {
+                /** @description The opaque handle of the node whose children to list, as an earlier answer gave it (clients never parse it). Absent: the host's repository level. An unknown, malformed or unreadable handle answers one identical 404 not_found. */
+                node?: components["parameters"]["NavigationNode"];
+                /** @description Opaque cursor from the previous page. */
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size for a query (1-1000). Each operation states its default; the activity journal defaults to 100. */
+                limit?: components["parameters"]["PageSize"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of one level of the tree. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NavigationPage"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             500: components["responses"]["Internal"];
             503: components["responses"]["Unavailable"];
         };

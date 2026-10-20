@@ -10,9 +10,9 @@ use axum::http::{header, Request};
 use filesquid_api::auth::Authoriser;
 use filesquid_api::history::{
     commit_meta, entry_of, journal_path, redact_record, version_user, CommitOperation,
-    CommitRecorder, HistoryError, HistorySnapshot, HistorySource, MemoryHistory, OcflHistory,
-    ProvenanceContext, Redactor, INSTALLATION_USER_NAME, JSON_LD, PROV_RECORD_OPERATION,
-    REDACTED_INSTALLATION, TRUNCATED_HEADER,
+    CommitRecorder, HistoryError, HistoryRoots, HistorySnapshot, HistorySource, MemoryHistory,
+    OcflHistory, OcflRootsHistory, ProvenanceContext, Redactor, RootResult, INSTALLATION_USER_NAME,
+    JSON_LD, PROV_RECORD_OPERATION, REDACTED_INSTALLATION, TRUNCATED_HEADER,
 };
 use filesquid_api::journal::{JournalEntry, Level, Outcome, REDACTED};
 use filesquid_api::{router, ApiState};
@@ -594,6 +594,120 @@ fn an_ocfl_history_past_its_record_cap_is_flagged_truncated() {
     let Rig { storage, .. } = rig;
     let capped = OcflHistory::new(storage).with_max_records(1);
     let snapshot = capped.index().expect("index");
+    assert_eq!(snapshot.index.len(), 1);
+    assert!(snapshot.truncated);
+}
+
+/// A storage root holding one recorded commit (`v1`) of `object_id` by operation `op`.
+fn recorded_root(object_id: &str, op: &str) -> Arc<MemoryBackend> {
+    let rig = Rig::new();
+    rig.storage_root();
+    let staging = StagingArea::new(&rig.staging, "changes/writer").unwrap();
+    let model = ChangeModel::new(
+        &rig.storage,
+        &rig.leases,
+        "writer",
+        ROOT,
+        object_id,
+        staging,
+    );
+    ready(model.stage_bytes("a.txt", b"alpha")).unwrap();
+    let op = operation(op, OperationKind::Import);
+    let recorder = CommitRecorder::new(context(), op.clone(), 1);
+    ready(model.commit_with(commit_meta(&context(), &op, created(1)), Some(&recorder))).unwrap();
+    drop(model);
+    let Rig { storage, .. } = rig;
+    Arc::new(storage)
+}
+
+/// The storage roots a host serves, as a fixed list.
+struct FixedRoots(Vec<Arc<MemoryBackend>>);
+
+impl HistoryRoots for FixedRoots {
+    type Backend = MemoryBackend;
+
+    fn roots(&self) -> Result<Vec<RootResult<MemoryBackend>>, HistoryError> {
+        Ok(self.0.iter().cloned().map(Ok).collect())
+    }
+}
+
+const OTHER_OBJECT: &str = "urn:uuid:7a2e3d4c-5b6f-4071-9b8c-0d1e2f3a4b5c";
+
+/// Task FS-2.8 host wiring: a host that serves several libraries installs one history over
+/// all their storage roots.
+#[test]
+fn a_history_over_several_storage_roots_indexes_and_finds_every_record() {
+    let roots = FixedRoots(vec![
+        recorded_root(OBJECT_ID, "op-a"),
+        recorded_root(OTHER_OBJECT, "op-b"),
+    ]);
+    let history = OcflRootsHistory::new(roots);
+    let snapshot = history.index().expect("index");
+    assert_eq!(snapshot.index.len(), 2);
+    assert!(!snapshot.truncated);
+    let bytes = history
+        .record(OTHER_OBJECT, "v1")
+        .unwrap()
+        .expect("second root");
+    assert_eq!(parse_record(&bytes).unwrap().activity().operation(), "op-b");
+    assert_eq!(history.record("urn:uuid:other", "v1").unwrap(), None);
+}
+
+/// A storage root that cannot be opened leaves the others readable and flags the answers.
+#[test]
+fn a_storage_root_that_cannot_be_opened_flags_the_history_incomplete() {
+    let roots = FixedRoots(vec![
+        Arc::new(MemoryBackend::new()),
+        recorded_root(OBJECT_ID, "op-a"),
+    ]);
+    let history = OcflRootsHistory::new(roots);
+    let snapshot = history.index().expect("index");
+    assert_eq!(snapshot.index.len(), 1);
+    assert!(snapshot.truncated, "a root was left out");
+    assert!(history.record(OBJECT_ID, "v1").unwrap().is_some());
+    assert_eq!(
+        history.record("urn:uuid:other", "v1"),
+        Err(HistoryError::Unavailable),
+        "the record may be in the unreadable root"
+    );
+}
+
+/// A host whose first storage root could not be opened.
+struct OneFailedRoot(Arc<MemoryBackend>);
+
+impl HistoryRoots for OneFailedRoot {
+    type Backend = MemoryBackend;
+
+    fn roots(&self) -> Result<Vec<RootResult<MemoryBackend>>, HistoryError> {
+        Ok(vec![Err(HistoryError::Unavailable), Ok(self.0.clone())])
+    }
+}
+
+/// Cubic round 1: a root the host could not open leaves the other roots readable.
+#[test]
+fn a_root_the_host_could_not_open_leaves_the_others_readable() {
+    let history = OcflRootsHistory::new(OneFailedRoot(recorded_root(OBJECT_ID, "op-a")));
+    let snapshot = history.index().expect("index");
+    assert_eq!(snapshot.index.len(), 1);
+    assert!(snapshot.truncated);
+    assert!(history.record(OBJECT_ID, "v1").unwrap().is_some());
+    assert_eq!(
+        history.record("urn:uuid:other", "v1"),
+        Err(HistoryError::Unavailable)
+    );
+}
+
+/// The record cap holds across storage roots.
+#[test]
+fn a_history_over_several_roots_keeps_one_record_cap() {
+    let roots = FixedRoots(vec![
+        recorded_root(OBJECT_ID, "op-a"),
+        recorded_root(OTHER_OBJECT, "op-b"),
+    ]);
+    let snapshot = OcflRootsHistory::new(roots)
+        .with_max_records(1)
+        .index()
+        .expect("index");
     assert_eq!(snapshot.index.len(), 1);
     assert!(snapshot.truncated);
 }

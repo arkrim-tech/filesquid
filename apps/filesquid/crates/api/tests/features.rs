@@ -5,9 +5,10 @@
 //! API-S-019; the local library operations and the version-inventory repair of CL-1.1 and
 //! API-S-023; the OCFL validation findings of API-S-022; the replica, cache identity and
 //! pending changes of API-S-024; the PROV-O records, history routes and backfill of API-S-028,
-//! API-S-029 and API-S-032; the library and repair routes of API-S-025; the host descriptor of API-S-020, except its `@server-start`
-//! scenarios, which the `filesquid-server` harness runs; and the file operation routes and
-//! content handles of API-S-008 and API-S-018).
+//! API-S-029 and API-S-032; the host descriptor of API-S-020, except its `@server-start`
+//! scenarios, which the `filesquid-server` harness runs; the file operation routes and
+//! content handles of API-S-008 and API-S-018; the navigation listing of API-S-021; and the
+//! library and repair routes of API-S-025).
 //!
 //! Scenarios that need domain operations not built yet (import, rename, metadata writes, C2PA
 //! scans, sync) or the optional OTLP export (Task FS-3.6) have no step definitions and are
@@ -94,6 +95,8 @@ mod library_routes_fixture;
 
 #[path = "support/library_route_steps.rs"]
 mod library_route_steps;
+#[path = "support/navigation_steps.rs"]
+mod navigation_steps;
 
 /// Administrator token accepted by [`admin_state`].
 const ADMIN_TOKEN: &str = "admin";
@@ -142,6 +145,7 @@ struct MonitorWorld {
 
     history: history_steps::HistoryWorld,
     routes: library_route_steps::LibraryRouteWorld,
+    navigation: navigation_steps::NavigationWorld,
 }
 
 impl std::fmt::Debug for MonitorWorld {

@@ -245,6 +245,13 @@ cargo test -p filesquid-server --locked --test integration_host --test features
 cargo test -p filesquid-desktop --locked --test integration_api_protocol
 ```
 
+The navigation listing (API-S-021, `GET /api/v1/navigation` and the `navigation.change` event) is tested through the router against the in-memory catalog and a real OCFL storage root: every level of the tree, folders implied by nested logical paths, hidden and deleted files leaving no folder, the breadcrumb, stable paging across 1,001 siblings, the cursor and limit refusals, identical `not_found` answers, per-user readability and the per-subscriber event filter. The route answers `503 unavailable` until a host installs a `NavigationService` with `ApiState::install_navigation`, and a host serving authenticated clients opens each subscription with `EventBus::subscription_filtered` and `NavigationService::event_filter` so a client is told only about parents it may read:
+
+```sh
+cd apps/filesquid
+cargo test -p filesquid-api --locked --test unit_navigation --test integration_navigation --test features
+```
+
 The application-layer boundary (API-S-006) is guarded twice, and both guards must find nothing. `unit_isolation` runs `cargo tree` for `filesquid-api` with the default, no-default and all-features sets and fails on Tauri, libvips, FFmpeg, a SQLite driver, `fs4`, `filesquid-native`, a network client or an async runtime other than Tokio. It also scans every file in `crates/api/src/`, with comments and string literals removed, for `std::fs`, `tokio::fs`, `fs4`, the OS file-system extensions, file handles and network clients, including grouped `use std::{...}` imports that span lines:
 
 ```sh

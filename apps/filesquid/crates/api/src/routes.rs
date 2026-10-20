@@ -46,6 +46,7 @@ fn route_table() -> Vec<Route> {
     table.extend(crate::ocfl_validation::routes());
     table.extend(crate::history::routes::routes());
     table.extend(crate::local_library::routes::routes());
+    table.extend(crate::navigation::routes());
     table
 }
 

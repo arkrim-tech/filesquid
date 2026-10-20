@@ -76,6 +76,8 @@ pub enum Action {
     /// API-S-023, API-S-025). Only a library's owner may: the desktop owner; the server
     /// administrator does not own libraries and is never granted it.
     RepairLibraries,
+    /// Read the navigation tree (`GET /api/v1/navigation`, API-S-021).
+    ReadNavigation,
     /// Deliberately public, unauthenticated: only the liveness probe
     /// (`GET /api/v1/health/live`), which says that the process is up and nothing else. The
     /// router leaves the route-table entry with this action unguarded; the guard itself
@@ -86,7 +88,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, in declaration order.
-    pub const ALL: [Action; 15] = [
+    pub const ALL: [Action; 16] = [
         Action::ReadHealth,
         Action::ReadContract,
         Action::SubscribeEvents,
@@ -101,6 +103,7 @@ impl Action {
         Action::ManageLibraries,
         Action::ReadLibraries,
         Action::RepairLibraries,
+        Action::ReadNavigation,
         Action::Public,
     ];
 
@@ -121,6 +124,7 @@ impl Action {
             Action::ManageLibraries => "library.manage",
             Action::ReadLibraries => "library.read",
             Action::RepairLibraries => "library.repair",
+            Action::ReadNavigation => "navigation.read",
             Action::Public => "public",
         }
     }
