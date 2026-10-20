@@ -136,6 +136,17 @@ Cargo commands run from `apps/filesquid/` with `-p filesquid-ocfl` (`cargo test 
   - **Related Tests:** [`reusable_ocfl_engine_F-051.feature`](../tests/features/reusable_ocfl_engine_F-051.feature), [`prov_o_history_F-067.feature`](../../api/tests/features/prov_o_history_F-067.feature)
   - **Agent Prompt:** `@AGENTS.md Begin by creating a new feature branch for Task IO-1.5. Then begin development, running Cargo from apps/filesquid/ with -p filesquid-ocfl (module directory apps/filesquid/crates/ocfl/). Write failing tests first: the function sees the final version name and created time, a rebased commit regenerates its output, a failing function publishes nothing, and the write order of OCFL-S-018 holds on MemoryBackend and FsBackend. Additionally, invoke the @feature-writer skill to translate SRS requirements into executable BDD feature tests. Upon completion, YOU MUST generate apps/filesquid/crates/ocfl/resources/tasks/Task-IO-1.5-Walkthrough.md directly in the project repository with clear SRS mapping (including BOTH the ID and full human-readable title text) in the secondary section, and strictly delete the internal tracking Plan/ToDos documents before checking off the Markdown box locally in apps/filesquid/crates/ocfl/resources/plan.md, and the matching boxes in the repository-root resources/implementation-plan-checklist.md. Then commit your changes and push the branch to origin.`
 
+## Phase F2: Engine warnings with object references (global Task FS-2.9)
+
+- [ ] **Task IO-1.6: Copy-guard warnings name the object**
+  - **Status:** Added 2026-10-20 by the owner's decision (item 4, "follow-ups", of the API-F2.10 conflict artifact `Task-API-F2.10-Conflict.md`, PR #97); dispatched by global Task FS-2.9.
+  - **Description:** The copy guard (`read::copy_guard::refuse_copy_into_ocfl_root`) warns with the destination and the declaring root only, so the API journals its warning without an object reference. Give that `tracing` warning the identifier of the object the copy concerns (the source object in `Object::copy_file` and in checkout, the object a staging area belongs to in the change model) and the version wherever the call knows it (`copy_file`, checkout), as structured fields the API's activity layer journals as the object reference ([OCFL-S-019](./srs.md), [API-S-031](../../api/resources/srs.md)). The refusal rules and the error returned stay as they are.
+  - **Estimated Time:** 2 hours
+  - **Dependencies:** Task IO-0.4, Task IO-0.10
+  - **Related Requirements:** [OCFL-S-019](./srs.md), [API-S-031](../../api/resources/srs.md), [F-051](../../../../../resources/prd.md#f-051-ocfl-module), [F-061](../../../../../resources/prd.md#f-061-activity-journal-and-live-health-monitoring), [SRS-F-061](../../../../../resources/srs.md#srs-f-061-activity-journal-and-live-health-monitoring)
+  - **Related Tests:** [`read_only_copy_OCFL-S-019.feature`](../tests/features/read_only_copy_OCFL-S-019.feature)
+  - **Agent Prompt:** `@AGENTS.md Begin by creating a new feature branch for Task IO-1.6. Then begin development, running Cargo from apps/filesquid/ with -p filesquid-ocfl (module directory apps/filesquid/crates/ocfl/). Write failing tests first that capture the tracing event of a refused copy from copy_file, checkout and staging and assert its object (and version where known) fields on MemoryBackend and FsBackend. Additionally, invoke the @feature-writer skill to translate SRS requirements into executable BDD feature tests. Upon completion, YOU MUST generate apps/filesquid/crates/ocfl/resources/tasks/Task-IO-1.6-Walkthrough.md directly in the project repository with clear SRS mapping (including BOTH the ID and full human-readable title text) in the secondary section, and strictly delete the internal tracking Plan/ToDos documents before checking off the Markdown box locally in apps/filesquid/crates/ocfl/resources/plan.md, and the matching boxes in the repository-root resources/implementation-plan-checklist.md. Then commit your changes and push the branch to origin.`
+
 ## Phase F4: S3-compatible ciphertext backend (global Task 5.2)
 
 - [ ] **Task IO-5.1: S3-compatible backend with CAS on inventory heads**
@@ -210,6 +221,6 @@ FileSquid compiles the **library crate** through a workspace path dependency and
 
 ## Summary Timeline
 
-- **Total Estimated Time:** 161 hours (excluding gated Task IO-9.1, the IO-D rows of global Task FS-3.3, superseded IO-1.3 and IO-D.2, and Arkrim IO-A.1)
+- **Total Estimated Time:** 163 hours (excluding gated Task IO-9.1, the IO-D rows of global Task FS-3.3, superseded IO-1.3 and IO-D.2, and Arkrim IO-A.1)
 - **Critical Path:** storage trait → git guard/SHA-256 → read/validate → local write → snapshots/rebuild → independent copy → S3 CAS
 - **Publishing:** [crate and CLI (global Task FS-3.3)](#phase-f3r-publish-the-crate-and-cli-global-task-fs-33-after-the-mvp-task-104-superseded)
