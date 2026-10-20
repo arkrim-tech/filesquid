@@ -15,15 +15,31 @@ path = "src/main.rs"
 
 [dependencies]
 filesquid-metadata = { path = "../metadata", features = ["cli"] }
+# Not modules (ADR 036 Decision 8): the journal entry types and `JournalStore` path, and the
+# SQLite journal store every `fsquid` command writes to. `filesquid-native` with its default
+# features only, never `desktop` (DE-S-015).
+filesquid-api = { path = "../api" }
+filesquid-native = { path = "../native" }
+# The platform data directory, the one `filesquid-desktop` uses (Tauri's `app_data_dir` is
+# `dirs::data_dir()` joined with the app identifier); the version Tauri already locks.
+dirs = "7.0.0"
+serde_json = "1"
 
 [dev-dependencies]
 cucumber = { version = "0.23", features = ["macros", "output-junit"] }
-serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [[test]]
 name = "unit_route"
 path = "tests/unit/route.rs"
+
+[[test]]
+name = "unit_journal"
+path = "tests/unit/journal.rs"
+
+[[test]]
+name = "integration_binary"
+path = "tests/integration/binary.rs"
 
 [[test]]
 name = "features"

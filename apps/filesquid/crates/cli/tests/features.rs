@@ -1,4 +1,5 @@
-//! Cucumber harness for the F-050 `fsquid` CLI Gherkin under `tests/features/`.
+//! Cucumber harness for the `fsquid` CLI Gherkin under `tests/features/`: routing (F-050) and
+//! journaled commands (F-061, Task CLI-0.2, steps in `tests/support/journal_steps.rs`).
 //!
 //! Each run clears `tests/allure-results/` and writes
 //! `tests/allure-results/cucumber-junit.xml` with one `<testcase>` per scenario.
@@ -11,6 +12,9 @@ use std::process::Command;
 use cucumber::{then, when, writer, StatsWriter as _, World, WriterExt as _};
 use filesquid_cli::{resolve, run, Route};
 
+#[path = "support/journal_steps.rs"]
+mod journal_steps;
+
 /// World state for F-050 CLI scenarios.
 #[derive(Debug, Default, World)]
 struct CliWorld {
@@ -20,6 +24,8 @@ struct CliWorld {
     outcome: Option<Result<i32, String>>,
     /// `(package, binary)` pairs Cargo builds in the workspace (hosts excluded).
     binaries: Vec<(String, String)>,
+    /// The journaled `fsquid` runs of the F-061 scenarios.
+    journal: journal_steps::JournalWorld,
 }
 
 #[when(expr = "I run fsquid with {string}")]

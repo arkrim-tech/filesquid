@@ -15,9 +15,13 @@ Feature: The native-processing library boundary
   Scenario: The server links filesquid-native with default features only
     Then "filesquid-server" should link "filesquid-native" with no feature
 
+  # Edge case
+  Scenario: The fsquid CLI links filesquid-native with default features only
+    Then "filesquid-cli" should link "filesquid-native" with no feature
+
   # Error case
-  Scenario: No crate but the two hosts links filesquid-native
-    Then no package other than "filesquid-desktop" and "filesquid-server" should link "filesquid-native"
+  Scenario: No crate but the two hosts and the CLI links filesquid-native
+    Then no package other than "filesquid-desktop", "filesquid-server" and "filesquid-cli" should link "filesquid-native"
 
   # Error case
   Scenario Outline: Only filesquid-native links a SQLite driver
