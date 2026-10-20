@@ -18,8 +18,8 @@
 //!
 //! **Accepted bound:** while seals succeed, losing the database loses at most one sealing
 //! interval ([`SEAL_INTERVAL_MS`]) of entries that changed nothing; everything that changed
-//! files or metadata is in its commit. An entry left unsealed for two intervals turns
-//! health `degraded` with the reason `journal_unsealed` ([`SealStatus`]).
+//! files or metadata is in its commit. An entry left unsealed for more than two intervals
+//! turns health `degraded` with the reason `journal_unsealed` ([`SealStatus`]).
 //!
 //! A seal's own bookkeeping (its process entries, its `journal.seal` entries and the
 //! `ocfl.commit` of its segment) is sealed with the next real entries; a run that would seal

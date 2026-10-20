@@ -336,7 +336,7 @@ async fn nothing_added(w: &mut MonitorWorld) {
     assert_eq!(versions(&installation).await, seal.versions_before);
 }
 
-#[when(expr = "two sealing intervals pass and the seal fails again")]
+#[when(expr = "more than two sealing intervals pass and the seal fails again")]
 async fn two_intervals_pass(w: &mut MonitorWorld) {
     let seal = world(w).await;
     let report = seal.service().seal_all().await;

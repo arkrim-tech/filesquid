@@ -8,17 +8,17 @@ Also PRD [F-061](../../../../../../resources/prd.md#f-061-activity-journal-and-l
 
 ## What changed
 
-- **Per-commit entries** (constraint 1): already in place since API-F2.9. Every commit through `CommitRecorder` writes `provenance/<version>.journal.jsonl` beside its PROV-O record in the same version: the `ocfl.commit` entry and, through `with_entries`, the operation's own entries, each under its pre-allocated ID (catalog commits in `filesquid-native` and version labels in the API pass their own entry). A new test commits an operation, seals the journal and shows that the version's file and the sealed segments together hold every entry of the library, so a rebuild de-duplicating by ID recovers each exactly once.
+- **Per-commit entries** (constraint 1): already in place since API-F2.9 for every commit that goes through `CommitRecorder` (not yet the file routes, see below). Every commit through `CommitRecorder` writes `provenance/<version>.journal.jsonl` beside its PROV-O record in the same version: the `ocfl.commit` entry and, through `with_entries`, the operation's own entries, each under its pre-allocated ID (catalog commits in `filesquid-native` and version labels in the API pass their own entry). A new test commits an operation, seals the journal and shows that the version's file and the sealed segments together hold every entry of the library, so a rebuild de-duplicating by ID recovers each exactly once.
 - **Journal objects** (`journal::seal`, `object.rs`): `OcflJournalObject` commits through the `filesquid-ocfl` change model into an injected storage root (`JournalRoot`: backend, reservations, staging, profile transform). The object is `urn:filesquid:journal:<scope-id>` at `journal/`; each seal adds one version holding `segments/<first>-<through>.jsonl` (20-digit IDs), committed as the installation's OCFL `user` with a `filesquid.journal.seal.v1` message. The cursor is the highest `through` among the head's segments, so it advances with the commit and never before it. `read_sealed_entries` reads every segment back (digest checked, 16 MiB per segment) for the CL-1.9 rebuild.
 - **Sealing service** (`service.rs`): `SealService::seal_all` (hourly and at app close) and `close_library` (library close) seal each open library's entries (those naming its library ID) into its object and every other entry into the installation's object, at most 50,000 entries and 16 MiB per scope per run. A run is a registered `journal.seal` process; each scope's result is journaled as `journal.seal` (`succeeded` with counts and the object reference, or `failed` with `unavailable` or `invalid`) beside the segment's `ocfl.commit`. A failed scope commits nothing, so its entries wait for the next run. A run with nothing but the seal's own bookkeeping registers, commits and journals nothing.
-- **Health** (constraint 9): `Monitor::install_seal_status` takes the service; `HealthInputs.journal_unsealed_age_ms` (optional in the contract) is the age of the oldest entry a seal left unsealed, and the `journal_unsealed` reason turns health `degraded` above two sealing intervals (2 hours) until a seal succeeds.
+- **Health** (constraint 9): `Monitor::install_seal_status` takes the service; `HealthInputs.journal_unsealed_age_ms` (optional in the contract) is the age of the oldest entry a seal left unsealed, and the `journal_unsealed` reason turns health `degraded` above two sealing intervals (2 hours) until no entry is left unsealed beyond two sealing intervals.
 - **Contract**: 0.15.0 (`HealthInputs.journal_unsealed_age_ms`); `schema.d.ts` regenerated.
 
 ## Not delivered in this task, and why
 
 - **Host wiring** is [DE-0.11](../../../desktop/resources/plan.md): running the seals hourly, at app close and at library close as the desktop does, keeping the installation's object at `<data dir>/journal.ocfl/` and catching up a missed seal at start.
 - **The rebuild** is [CL-1.9](../plan.md): it reads `read_commit_journal` and `read_sealed_entries` into a fresh store, de-duplicated by journal ID.
-- **File routes** (`/api/v1/files/...`) still commit without `CommitRecorder`, so their versions carry no per-commit journal file yet; their entries are sealed like every other entry. Their operation IDs are [API-F2.12](../plan.md).
+- **File routes** (`/api/v1/files/...`, API-F1.3) still commit without `CommitRecorder`, so their versions carry no per-commit journal file yet and API-S-032's "every committed operation" is not met for them: their entries reach the durable journal only through the seals, so losing the database before the next seal loses them. A per-commit file needs the operation ID those commits do not have yet; their operation IDs are [API-F2.12](../plan.md) (after API-F2.13's command envelopes), and this gap is raised for the owner to fold into API-F2.12 or give its own task.
 - **Library classification**: an entry belongs to a library when it names the library ID among its targets; an entry that names only an object of the library (some `ocfl.commit` entries) is sealed with the installation's events, and is in its commit's version as well.
 - **Seal commits carry no PROV-O record**: the journal object is the journal itself; its versions name the seal run in their message and are journaled as `ocfl.commit`.
 
@@ -34,8 +34,9 @@ Also PRD [F-061](../../../../../../resources/prd.md#f-061-activity-journal-and-l
 | ADR 033 registered, journaled process | `sealing_is_a_registered_journaled_process` |
 | Segments are OCFL objects in a storage root | `segments_are_ocfl_objects_in_the_storage_root` (engine validator, no stray keys) |
 | No-op run | `a_run_with_only_the_seals_own_bookkeeping_commits_and_journals_nothing`; BDD "A seal with nothing but its own bookkeeping writes nothing" |
-| `journal_unsealed` health reason | `an_entry_left_unsealed_for_two_intervals_turns_health_degraded`; BDD "Entries left unsealed for two sealing intervals degrade health" |
+| `journal_unsealed` health reason | `an_entry_left_unsealed_for_two_intervals_turns_health_degraded`, `journal_unsealed_degrades_only_beyond_two_sealing_intervals`; BDD "Entries left unsealed for more than two sealing intervals degrade health" |
 | Redaction | `segments_hold_the_redacted_entries_only`, `sealing_is_a_registered_journaled_process` |
+| Review round 1: closed libraries, page limit, oversized entry, unreadable object | `closing_a_library_seals_it_and_stops_sealing_into_it` (no later installation copy), `a_scope_that_reads_only_other_scopes_pages_still_moves_on`, `a_scope_whose_object_cannot_be_read_counts_from_its_oldest_entry`; `service::tests` (oversized entry, page-limited scan); `object::tests::segment_paths_round_trip_their_range` (strict names); `unit_health_rules::journal_unsealed_degrades_only_beyond_two_sealing_intervals` |
 
 ## TDD: failing run before implementation
 
@@ -153,10 +154,10 @@ Feature: Durable, complete and browsable activity journal
    ✔  And the hourly seal has run
    ✔  When the hourly seal runs again with nothing new
    ✔  Then no journal version should be added and nothing should be journaled
-  Scenario: Entries left unsealed for two sealing intervals degrade health
+  Scenario: Entries left unsealed for more than two sealing intervals degrade health
    ✔> Given a desktop library with recorded activity
    ✔  Given the library's storage root is not writable during a seal
-   ✔  When two sealing intervals pass and the seal fails again
+   ✔  When more than two sealing intervals pass and the seal fails again
    ✔  Then health should be degraded with the reason "journal_unsealed"
   Scenario: A browser console warning reaches the journal
    ✔> Given a desktop library with recorded activity

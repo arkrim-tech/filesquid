@@ -140,12 +140,18 @@ pub fn segment_path(first: i64, through: i64) -> String {
     format!("{SEGMENT_DIR}/{first:020}-{through:020}.jsonl")
 }
 
-/// The `through` ID a segment path names, if it is one. Pure.
+/// The `through` ID of a segment path, only when the path is exactly the canonical form
+/// [`segment_path`] writes: two 20-digit IDs with `first <= through`. Pure.
 fn segment_through(path: &str) -> Option<i64> {
     let name = path.strip_prefix(&format!("{SEGMENT_DIR}/"))?;
     let range = name.strip_suffix(".jsonl")?;
-    let (_, through) = range.split_once('-')?;
-    through.parse().ok()
+    let (first, through) = range.split_once('-')?;
+    let id = |text: &str| -> Option<i64> {
+        let canonical = text.len() == 20 && text.bytes().all(|b| b.is_ascii_digit());
+        canonical.then(|| text.parse().ok()).flatten()
+    };
+    let (first, through) = (id(first)?, id(through)?);
+    (first <= through).then_some(through)
 }
 
 /// A journal object in an OCFL storage root, committed through the `filesquid-ocfl` change
@@ -230,7 +236,13 @@ where
         match model.commit(self.meta(segment)).await {
             Ok(receipt) => Ok(receipt.version.to_string()),
             Err(ChangeError::StagingNotCleared { receipt, .. }) => Ok(receipt.version.to_string()),
-            Err(err) => Err(change_error(err)),
+            Err(err) => {
+                // Nothing was published: clear the run's staging, which no later run reuses.
+                if let Err(reset) = model.reset().await {
+                    tracing::warn!(error = %reset, "a refused journal segment left its staging area");
+                }
+                Err(change_error(err))
+            }
         }
     }
 
@@ -324,9 +336,14 @@ pub async fn read_sealed_entries<B: StorageBackend>(
         .files()
         .filter(|f| segment_through(&f.path).is_some())
         .collect();
+    if files.len() > MAX_SEGMENTS {
+        return Err(SealError::Invalid(format!(
+            "the journal object holds more than {MAX_SEGMENTS} segments"
+        )));
+    }
     files.sort_by(|a, b| a.path.cmp(&b.path));
     let mut entries = Vec::new();
-    for file in files.into_iter().take(MAX_SEGMENTS) {
+    for file in files {
         let key = object.content_key(file).map_err(read_error)?;
         let unavailable =
             |e: filesquid_ocfl::storage::StorageError| SealError::Unavailable(e.to_string());
@@ -380,5 +397,15 @@ mod tests {
         assert_eq!(segment_through(&path), Some(42));
         assert_eq!(segment_through("segments/notes.txt"), None);
         assert_eq!(segment_through("other/1-2.jsonl"), None);
+        assert_eq!(segment_through("segments/x-99.jsonl"), None, "not an ID");
+        assert_eq!(
+            segment_through("segments/1-99.jsonl"),
+            None,
+            "not 20 digits"
+        );
+        let reversed = format!("segments/{:020}-{:020}.jsonl", 9, 3);
+        assert_eq!(segment_through(&reversed), None, "first after through");
+        let huge = format!("segments/{:020}-{}.jsonl", 1, "9".repeat(20));
+        assert_eq!(segment_through(&huge), None, "out of range");
     }
 }

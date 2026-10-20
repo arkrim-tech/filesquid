@@ -6,17 +6,19 @@
 //! 1. reads how far the scope's journal object is sealed (from its segments);
 //! 2. collects the entries after that, in journal ID order: a library's entries name its
 //!    library ID among their targets; the installation takes every other entry (an entry of
-//!    a library that is not open stays with the installation); at most
+//!    a library never opened by this service stays with the installation; one of a library
+//!    opened and later closed waits for that library's next open); at most
 //!    [`SealConfig::max_entries_per_scope`] entries and [`MAX_SEGMENT_BYTES`] per segment;
 //! 3. commits them as one segment, a new version of the object.
 //!
 //! A run in which no scope has anything but seal bookkeeping to seal registers nothing,
-//! commits nothing and journals nothing. Otherwise the run is a registered `journal.seal`
+//! commits nothing and journals nothing. A scope that read [`SealConfig::max_scan_pages`]
+//! pages of other scopes' entries commits a segment of its bookkeeping anyway, so its cursor moves on. Otherwise the run is a registered `journal.seal`
 //! process, and each scope's result is journaled as [`SEAL_OPERATION`] (`succeeded` with its
 //! counts, or `failed` with its error code), with the segment's `ocfl.commit`. A failed scope
 //! keeps its entries for the next run; its object, and so its cursor, is unchanged.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use filesquid_core::{OperationId, VersionRef};
@@ -31,10 +33,6 @@ use crate::library::mint_uuid_v4;
 use crate::monitor::Monitor;
 use crate::registry::{ProcessHandle, ProcessSpec};
 
-/// Most journal pages one scope reads per run (AGENTS.md §22): an installation scope skips
-/// library entries, so it may read more pages than it seals.
-const MAX_SCAN_PAGES: usize = 1_000;
-
 /// Longest silence before a seal run counts as stalled.
 const SEAL_HEARTBEAT_MS: i64 = 300_000;
 
@@ -43,13 +41,17 @@ const SEAL_HEARTBEAT_MS: i64 = 300_000;
 pub struct SealConfig {
     /// Most entries one scope seals per run; the rest waits for the next run.
     pub max_entries_per_scope: usize,
+    /// Most journal pages one scope reads per run (AGENTS.md §22): an installation scope
+    /// skips library entries, so it may read more pages than it seals.
+    pub max_scan_pages: usize,
 }
 
 impl Default for SealConfig {
-    /// 50,000 entries per scope per run.
+    /// 50,000 entries and 1,000 journal pages per scope per run.
     fn default() -> Self {
         Self {
             max_entries_per_scope: 50_000,
+            max_scan_pages: 1_000,
         }
     }
 }
@@ -146,6 +148,11 @@ pub struct SealService {
     monitor: Monitor,
     installation: Arc<dyn JournalObject>,
     libraries: Mutex<BTreeMap<String, Arc<dyn JournalObject>>>,
+    /// Every library opened since the service started, open or closed: the installation
+    /// scope never seals their entries.
+    known: Mutex<BTreeSet<String>>,
+    /// The last cursor read from each scope's object.
+    cursors: Mutex<BTreeMap<String, i64>>,
     config: SealConfig,
     running: tokio::sync::Mutex<()>,
     pending: Mutex<BTreeMap<String, i64>>,
@@ -158,6 +165,8 @@ impl SealService {
             monitor,
             installation,
             libraries: Mutex::new(BTreeMap::new()),
+            known: Mutex::new(BTreeSet::new()),
+            cursors: Mutex::new(BTreeMap::new()),
             config,
             running: tokio::sync::Mutex::new(()),
             pending: Mutex::new(BTreeMap::new()),
@@ -172,6 +181,7 @@ impl SealService {
             return false;
         }
         libraries.insert(library_id.to_string(), object);
+        lock(&self.known).insert(library_id.to_string());
         true
     }
 
@@ -210,10 +220,10 @@ impl SealService {
 
     /// Plan every target, then commit the planned segments in one registered process.
     async fn run(&self, targets: Vec<Target>) -> SealReport {
-        let open: Vec<String> = lock(&self.libraries).keys().cloned().collect();
+        let known: Vec<String> = lock(&self.known).iter().cloned().collect();
         let mut plans = Vec::with_capacity(targets.len());
         for target in targets {
-            let planned = self.plan(&target, &open).await;
+            let planned = self.plan(&target, &known).await;
             plans.push(Plan { target, planned });
         }
         let idle = plans.iter().all(|p| matches!(p.planned, Ok(None)));
@@ -256,7 +266,7 @@ impl SealService {
                 return (scope, SealOutcome::Nothing);
             }
             Err(err) => {
-                self.keep_pending(&scope);
+                self.keep_pending(&plan.target).await;
                 self.journal_failure(&scope, &err, process);
                 return (scope, failed(&err));
             }
@@ -285,13 +295,21 @@ impl SealService {
 
     /// The segment `target` would seal now, or `None` when only bookkeeping is unsealed.
     /// Storage and journal-store I/O.
-    async fn plan(&self, target: &Target, open: &[String]) -> Result<Option<Collected>, SealError> {
+    async fn plan(
+        &self,
+        target: &Target,
+        known: &[String],
+    ) -> Result<Option<Collected>, SealError> {
         let cursor = target.object.last_sealed().await?;
+        lock(&self.cursors).insert(target.scope.clone(), cursor);
         let store = self.monitor.store();
         let library = target.library_id.clone();
-        let open = open.to_vec();
-        let cap = self.config.max_entries_per_scope.max(1);
-        let collect = move || collect(store.as_ref(), cursor, library.as_deref(), &open, cap);
+        let known = known.to_vec();
+        let limits = Limits {
+            entries: self.config.max_entries_per_scope.max(1),
+            pages: self.config.max_scan_pages.max(1),
+        };
+        let collect = move || collect(store.as_ref(), cursor, library.as_deref(), &known, limits);
         let collected = tokio::task::spawn_blocking(collect)
             .await
             .map_err(|e| SealError::Unavailable(e.to_string()))??;
@@ -300,7 +318,7 @@ impl SealService {
         };
         let run_id = mint_uuid_v4().map_err(|e| SealError::Unavailable(e.to_string()))?;
         let segment = Segment {
-            first: entries[0].id.unwrap_or(cursor + 1),
+            first: entries.first().and_then(|e| e.id).unwrap_or(cursor + 1),
             through,
             entries,
             run_id,
@@ -363,11 +381,21 @@ impl SealService {
         };
     }
 
-    /// Keep `scope`'s pending time after a run that could not read its object; when none is
-    /// known yet, count from now, so a scope that never seals still turns health degraded.
-    fn keep_pending(&self, scope: &str) {
-        let now = self.monitor.now_ms();
-        lock(&self.pending).entry(scope.to_string()).or_insert(now);
+    /// Record `target`'s pending time after a run that could not plan it: the oldest entry
+    /// after its last known cursor (0 when none was read yet), or now when the store cannot
+    /// say, so a scope that never seals still turns health degraded. Journal-store I/O.
+    async fn keep_pending(&self, target: &Target) {
+        let cursor = lock(&self.cursors).get(&target.scope).copied().unwrap_or(0);
+        let store = self.monitor.store();
+        let library = target.library_id.clone();
+        let oldest = move || oldest_after(store.as_ref(), cursor, library.as_deref());
+        let oldest = tokio::task::spawn_blocking(oldest).await.ok().flatten();
+        let since = oldest.unwrap_or_else(|| self.monitor.now_ms());
+        let mut pending = lock(&self.pending);
+        let kept = pending
+            .get(&target.scope)
+            .map_or(since, |&ms| ms.min(since));
+        pending.insert(target.scope.clone(), kept);
     }
 }
 
@@ -411,15 +439,29 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 /// left for a later run was recorded.
 type Collection = Option<(Vec<JournalEntry>, i64, Option<i64>)>;
 
+/// When the first entry after `cursor` (of `library`, if named) was recorded, or `None` when
+/// there is none or the store fails. Journal-store I/O.
+fn oldest_after(store: &dyn JournalStore, cursor: i64, library: Option<&str>) -> Option<i64> {
+    let query = JournalQuery {
+        after_id: Some(cursor),
+        library_id: library.map(str::to_string),
+        limit: 1,
+        ..JournalQuery::default()
+    };
+    let page = store.query(&query).ok()?;
+    page.entries.first().map(|e| e.time_ms)
+}
+
 /// The entries after `cursor` that belong to the scope (`library` names it; `None` is the
-/// installation, which skips every entry naming an `open` library), at most `cap` entries
-/// and [`MAX_SEGMENT_BYTES`]; `None` when they are only seal bookkeeping. Journal-store I/O.
+/// installation, which skips every entry naming a `known` library), at most `cap` entries
+/// and [`MAX_SEGMENT_BYTES`]; `None` when they are only seal bookkeeping. An entry too large
+/// for any segment is an error. Journal-store I/O.
 fn collect(
     store: &dyn JournalStore,
     cursor: i64,
     library: Option<&str>,
-    open: &[String],
-    cap: usize,
+    known: &[String],
+    limits: Limits,
 ) -> Result<Collection, SealError> {
     let mut query = JournalQuery {
         after_id: Some(cursor),
@@ -427,26 +469,36 @@ fn collect(
         limit: MAX_PAGE,
         ..JournalQuery::default()
     };
-    let mut scan = Scan::new(cursor, cap);
-    for _ in 0..MAX_SCAN_PAGES {
+    let mut scan = Scan::new(cursor, limits.entries);
+    let mut pages = 0;
+    while pages < limits.pages {
+        pages += 1;
         let page = store
             .query(&query)
             .map_err(|e| SealError::Unavailable(e.to_string()))?;
-        let belongs = |e: &JournalEntry| library.is_some() || !names_open_library(e, open);
-        if scan.take(page.entries, belongs) {
-            break;
+        let belongs = |e: &JournalEntry| library.is_some() || !names_library(e, known);
+        if scan.take(page.entries, belongs)? {
+            return Ok(scan.finish());
         }
         let Some(next) = page.next_cursor else {
-            break;
+            return Ok(scan.finish());
         };
         query.after_id = Some(next);
     }
+    scan.exhausted = true;
     Ok(scan.finish())
 }
 
-/// True when `entry` names one of the `open` libraries among its targets. Pure.
-fn names_open_library(entry: &JournalEntry, open: &[String]) -> bool {
-    entry.target_ids.iter().any(|t| open.contains(t))
+/// True when `entry` names one of the `known` libraries among its targets. Pure.
+fn names_library(entry: &JournalEntry, known: &[String]) -> bool {
+    entry.target_ids.iter().any(|t| known.contains(t))
+}
+
+/// How much one scope's collection may take.
+#[derive(Clone, Copy)]
+struct Limits {
+    entries: usize,
+    pages: usize,
 }
 
 /// The state of one scope's collection.
@@ -456,6 +508,8 @@ struct Scan {
     bytes: usize,
     cap: usize,
     left_ms: Option<i64>,
+    /// True when the scan stopped at its page limit with entries still to read.
+    exhausted: bool,
 }
 
 impl Scan {
@@ -466,11 +520,17 @@ impl Scan {
             bytes: 0,
             cap,
             left_ms: None,
+            exhausted: false,
         }
     }
 
-    /// Take the entries of one page that `belongs` accepts; true when the scan is full.
-    fn take(&mut self, page: Vec<JournalEntry>, belongs: impl Fn(&JournalEntry) -> bool) -> bool {
+    /// Take the entries of one page that `belongs` accepts; true when the scan is full. An
+    /// entry larger than [`MAX_SEGMENT_BYTES`] on its own is an error: no segment can hold it.
+    fn take(
+        &mut self,
+        page: Vec<JournalEntry>,
+        belongs: impl Fn(&JournalEntry) -> bool,
+    ) -> Result<bool, SealError> {
         for entry in page {
             let id = entry.id.unwrap_or(self.through);
             if !belongs(&entry) {
@@ -478,23 +538,69 @@ impl Scan {
                 continue;
             }
             let size = serde_json::to_vec(&entry).map(|v| v.len() + 1).unwrap_or(0);
+            if size > MAX_SEGMENT_BYTES {
+                return Err(SealError::Invalid(format!(
+                    "journal entry {id} exceeds the segment limit"
+                )));
+            }
             if self.entries.len() >= self.cap || self.bytes + size > MAX_SEGMENT_BYTES {
                 self.left_ms = Some(entry.time_ms);
-                return true;
+                return Ok(true);
             }
             self.bytes += size;
             self.through = self.through.max(id);
             self.entries.push(entry);
         }
-        false
+        Ok(false)
     }
 
-    /// The collection, or `None` when it holds only seal bookkeeping and nothing was left
-    /// for a later run.
+    /// The collection, or `None` when it holds only seal bookkeeping, nothing was left for a
+    /// later run and the page cap did not stop the scan.
     fn finish(self) -> Collection {
-        if self.left_ms.is_none() && self.entries.iter().all(is_seal_bookkeeping) {
+        let idle = self.left_ms.is_none() && !self.exhausted;
+        if idle && self.entries.iter().all(is_seal_bookkeeping) {
             return None;
         }
         Some((self.entries, self.through, self.left_ms))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(id: i64, target: &str) -> JournalEntry {
+        let mut entry = JournalEntry::new("host.started", Outcome::Info).target(target);
+        entry.id = Some(id);
+        entry
+    }
+
+    #[test]
+    fn an_entry_larger_than_any_segment_is_an_error_not_a_panic() {
+        let mut scan = Scan::new(0, 10);
+        let huge = "x".repeat(MAX_SEGMENT_BYTES + 1);
+        let taken = scan.take(vec![entry(1, &huge)], |_| true);
+        assert!(matches!(taken, Err(SealError::Invalid(_))), "{taken:?}");
+    }
+
+    #[test]
+    fn a_scan_stopped_by_its_page_limit_still_moves_the_cursor() {
+        let mut scan = Scan::new(0, 10);
+        let taken = scan.take(vec![entry(1, "library-a"), entry(2, "library-a")], |_| {
+            false
+        });
+        assert!(!taken.expect("take"));
+        scan.exhausted = true;
+        let (entries, through, left) = scan.finish().expect("a cursor-only segment");
+        assert!(entries.is_empty());
+        assert_eq!((through, left), (2, None));
+    }
+
+    #[test]
+    fn a_scan_of_other_scopes_entries_only_is_idle_within_its_page_limit() {
+        let mut scan = Scan::new(0, 10);
+        let taken = scan.take(vec![entry(1, "library-a")], |_| false);
+        assert!(!taken.expect("take"));
+        assert!(scan.finish().is_none());
     }
 }

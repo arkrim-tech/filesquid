@@ -57,9 +57,9 @@ Feature: Durable, complete and browsable activity journal
     When the hourly seal runs again with nothing new
     Then no journal version should be added and nothing should be journaled
 
-  Scenario: Entries left unsealed for two sealing intervals degrade health
+  Scenario: Entries left unsealed for more than two sealing intervals degrade health
     Given the library's storage root is not writable during a seal
-    When two sealing intervals pass and the seal fails again
+    When more than two sealing intervals pass and the seal fails again
     Then health should be degraded with the reason "journal_unsealed"
 
   Scenario: A browser console warning reaches the journal

@@ -270,7 +270,76 @@ async fn closing_a_library_seals_it_and_stops_sealing_into_it() {
         "library close seals the library only"
     );
     assert!(!seals.is_open(LIB_A));
+    seals.seal_all().await;
+    let installation_ids = ids(&installation.sealed().await);
+    assert!(
+        lib.iter().all(|id| !installation_ids.contains(id)),
+        "a closed library's entries never reach the installation object"
+    );
     host.monitor.shutdown();
+}
+
+#[tokio::test]
+async fn a_scope_that_reads_only_other_scopes_pages_still_moves_on() {
+    let host = Host::new();
+    let library = Root::new().await;
+    let installation = Root::new().await;
+    let config = SealConfig {
+        max_scan_pages: 1,
+        ..SealConfig::default()
+    };
+    let seals = SealService::new(
+        host.monitor.clone(),
+        installation.object(INSTALLATION),
+        config,
+    );
+    seals.open_library(LIB_A, library.object(LIB_A));
+    let page = filesquid_api::journal::MAX_PAGE;
+    host.record(
+        &(0..page)
+            .map(|_| library_event(LIB_A, "library.file.hide"))
+            .collect::<Vec<_>>(),
+    );
+    let host_ids = host.record(&[host_event("host.started")]);
+    for _ in 0..3 {
+        seals.seal_all().await;
+    }
+    let sealed = ids(&installation.sealed().await);
+    assert!(sealed.contains(&host_ids[0]), "the host event is sealed");
+    host.monitor.shutdown();
+}
+
+#[tokio::test]
+async fn a_scope_whose_object_cannot_be_read_counts_from_its_oldest_entry() {
+    let host = Host::new();
+    let recorded_at = host.now.load(Ordering::SeqCst) - 10_000;
+    let seals = service(&host, Arc::new(Unreadable));
+    host.record(&[host_event("host.started").at_ms(recorded_at)]);
+    let report = seals.seal_all().await;
+    assert!(!report.all_sealed(), "{report:?}");
+    use filesquid_api::journal::seal::SealStatus;
+    assert_eq!(seals.oldest_unsealed_ms(), Some(recorded_at));
+    host.monitor.shutdown();
+}
+
+/// A journal object whose segments cannot be read.
+struct Unreadable;
+
+impl JournalObject for Unreadable {
+    fn object_id(&self) -> &str {
+        "urn:filesquid:journal:unreadable"
+    }
+
+    fn last_sealed(&self) -> SealFuture<'_, Result<i64, SealError>> {
+        Box::pin(async { Err(SealError::Unavailable("storage root offline".into())) })
+    }
+
+    fn commit_segment<'a>(
+        &'a self,
+        _segment: &'a Segment,
+    ) -> SealFuture<'a, Result<String, SealError>> {
+        Box::pin(async { Err(SealError::Unavailable("storage root offline".into())) })
+    }
 }
 
 #[tokio::test]
@@ -337,6 +406,7 @@ async fn a_run_seals_at_most_its_cap_and_the_next_run_continues() {
     let installation = Root::new().await;
     let config = SealConfig {
         max_entries_per_scope: 3,
+        ..SealConfig::default()
     };
     let seals = SealService::new(
         host.monitor.clone(),
