@@ -57,12 +57,6 @@ async fn put_label(rig: &FilesRig, version: &str, label: Value) -> Answer {
         .await
 }
 
-/// The history of `path`, as JSON.
-async fn history(rig: &FilesRig, path: &str) -> Value {
-    let uri = format!("/api/v1/files/history?{}", query(&format!("path={path}")));
-    rig.get(&uri).await.json()
-}
-
 /// The history entry of `version` of `a.txt`, or of the object's versions when the file
 /// did not change in it.
 async fn version_entry(rig: &FilesRig, version: &str) -> Value {
