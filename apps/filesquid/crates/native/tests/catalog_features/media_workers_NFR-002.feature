@@ -17,14 +17,16 @@ Feature: Bounded, out-of-process media workers
     Then the request should be refused as "unsupported_format"
 
   # Edge case
+  @unix
   Scenario: At most two workers run at once
     Given workers that each take a moment
     When six thumbnails are asked for at once
     Then no more than 2 workers should have run at the same time
 
   # Error case
+  @unix
   Scenario: A crashed worker fails only its own run
     Given a worker that crashes
     When the host asks for a thumbnail of at most 16 pixels
     Then the request should be refused as "worker_crashed"
-    And the next worker run should succeed
+    And the next run through the same workers should succeed

@@ -7,7 +7,7 @@
 use filesquid_native::workers::media;
 
 fn main() {
-    if media::is_worker_invocation(std::env::args()) {
+    if media::is_worker_invocation(std::env::args_os()) {
         std::process::exit(media::worker_main());
     }
     filesquid_desktop_lib::run();

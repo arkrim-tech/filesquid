@@ -540,6 +540,7 @@ impl MediaRig {
         let monitor = media_monitor();
         let pool = MediaWorkers::new(PathBuf::from(program), monitor.registry().clone())
             .with_args(args.iter().map(|a| a.to_string()).collect());
+        std::fs::write(dir.join("still.ppm"), b"P6\n1 1\n255\n\0\0\0").expect("still");
         self.dir = Some(dir);
         self.pool = Some(Arc::new(pool));
         self.monitor = Some(monitor);
@@ -631,7 +632,13 @@ fn slow_workers(w: &mut CatalogWorld) {
 
 #[given(expr = "a worker that crashes")]
 fn crashing_worker(w: &mut CatalogWorld) {
-    w.media.start("sh", &["-c", "kill -9 $$"]);
+    let marker = std::env::temp_dir().join(format!("fs-media-crashed-{}", std::process::id()));
+    let _ = std::fs::remove_file(&marker);
+    let script = format!(
+        r#"if [ -e '{0}' ]; then cat >/dev/null; echo '{{"ok":true,"width":1,"height":1}}'; else touch '{0}'; kill -9 $$; fi"#,
+        marker.display()
+    );
+    w.media.start("sh", &["-c", &script]);
 }
 
 #[when(expr = "the host asks for a thumbnail of at most {int} pixels")]
@@ -642,13 +649,14 @@ fn ask_thumbnail(w: &mut CatalogWorld, max_edge: u32) {
 #[when(expr = "six thumbnails are asked for at once")]
 fn ask_six(w: &mut CatalogWorld) {
     let pool = w.media.pool.clone().expect("pool");
+    let dir = w.media.dir.clone().expect("dir");
     let runs: Vec<_> = (0..6)
         .map(|n| {
-            let pool = pool.clone();
+            let (pool, dir) = (pool.clone(), dir.clone());
             std::thread::spawn(move || {
                 pool.thumbnail(&ThumbnailRequest {
-                    source: PathBuf::from(format!("in-{n}.ppm")),
-                    dest: PathBuf::from(format!("out-{n}.png")),
+                    source: dir.join("still.ppm"),
+                    dest: dir.join(format!("out-{n}.png")),
                     max_edge: 8,
                 })
             })
@@ -685,15 +693,12 @@ fn refused_as(w: &mut CatalogWorld, code: String) {
     }
 }
 
-#[then(expr = "the next worker run should succeed")]
+#[then(expr = "the next run through the same workers should succeed")]
 fn next_succeeds(w: &mut CatalogWorld) {
-    let monitor = w.media.monitor.as_ref().expect("monitor");
-    let script = r#"cat >/dev/null; echo '{"ok":true,"width":1,"height":1}'"#;
-    let healthy = MediaWorkers::new(PathBuf::from("sh"), monitor.registry().clone())
-        .with_args(vec!["-c".into(), script.into()]);
-    assert!(w.media.ask(16).is_err(), "the crashing worker still fails");
-    w.media.pool = Some(Arc::new(healthy));
-    assert!(w.media.ask(16).is_ok());
+    assert!(
+        w.media.ask(16).is_ok(),
+        "the same pool runs the next worker"
+    );
     w.media.finish();
 }
 
@@ -719,6 +724,11 @@ async fn main() {
                 .normalized(),
         )
         .fail_on_skipped()
-        .run_and_exit(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/catalog_features"))
+        // Scenarios tagged @unix use `sh` stand-in workers; other platforms skip them (the
+        // desktop crate runs the real worker out of process on every platform).
+        .filter_run_and_exit(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/catalog_features"),
+            |_, _, scenario| cfg!(unix) || !scenario.tags.iter().any(|tag| tag == "unix"),
+        )
         .await;
 }

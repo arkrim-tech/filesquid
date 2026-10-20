@@ -18,7 +18,9 @@ Branch: `feat/de-0.5-media-workers`, built on [Task DE-0.8](./Task-DE-0.8-Walkth
     - each run killed past its limit (`DEFAULT_WORKER_TIMEOUT`, 60 s);
     - each run registered as a `media.thumbnail` process, completed or failed with an error code (`worker_crashed`, `worker_timeout`, `unsupported_format`…), which the registry journals;
     - answers and entries never carry a path;
-    - requests are checked before any process starts: an edge of 1 to 4,096 px, and output as PNG, JPEG or WebP.
+    - requests are checked before any process starts: an edge of 1 to 4,096 px, output as PNG, JPEG or WebP, UTF-8 paths without NUL bytes, an encoded request of at most 64 KiB, a source that is a file, and a destination that is not the source;
+    - the request is written from a second thread, so the time limit also covers a worker that never reads it;
+    - a worker that exits unsuccessfully counts as crashed, whatever it printed.
   - **`worker_main`**: one worker run, one OS process. It reads one JSON request on stdin and writes one JSON answer line on stdout. It runs inside the desktop executable: `filesquid-desktop --filesquid-media-worker` (`WORKER_ARG`) runs the worker and exits before Tauri, any window or the catalogs start. A first version shipped the worker as its own binary target. The `filesquid-cli` gate (F-050: `fsquid` is the only CLI binary) rejected it, so the worker moved into the host executable, which also leaves the installer only one program to ship.
   - **`workers::media::vips`**, the worker side:
     - It loads libvips 8 at run time through `libloading`, already in the lockfile at 0.7.4, now an optional dependency enabled only by `desktop`. No build needs libvips headers, and a machine without libvips answers `libvips_unavailable`.
@@ -35,10 +37,10 @@ Branch: `feat/de-0.5-media-workers`, built on [Task DE-0.8](./Task-DE-0.8-Walkth
 |---|---|
 | DE-S-016 Bounded media workers; F-003 Browsing, selection and viewing: thumbnail within the bound, by a separate process | desktop `integration_media_workers::the_desktop_executable_makes_a_thumbnail_out_of_process` (the built executable with the worker argument: 64×48 PPM → 16×12 PNG; ImageMagick reported blocked); native `unit_media::the_worker_writes_a_thumbnail_within_the_requested_bound`; feature "The libvips worker makes a thumbnail within the requested bound" |
 | ADR 006 libvips for native stills, not ImageMagick: no ImageMagick fallback | native `unit_media::the_worker_blocks_the_imagemagick_loaders_and_refuses_a_magick_only_format`, `no_imagemagick_crate_is_in_the_dependency_graph`; feature "ImageMagick is never a fallback" |
-| NFR-003 Bounded processing and migration endurance; DE-S-016: at most two workers | native `unit_media::at_most_two_workers_run_at_once` (six requests; peak 2; three waves); desktop `integration_media_workers::the_host_runs_at_most_two_media_workers_from_its_own_executable`; feature "At most two workers run at once" |
-| DE-S-016 Bounded media workers: crash isolation, registry and redaction | native `unit_media::a_crashed_worker_fails_its_run_only_and_is_journaled_without_paths`; feature "A crashed worker fails only its own run" |
+| NFR-003 Bounded processing and migration endurance; DE-S-016: at most two workers | native `unit_media::at_most_two_workers_run_at_once` (six requests; peak 2; three waves); desktop `integration_media_workers::real_workers_from_the_desktop_executable_run_at_most_two_at_once` (four real out-of-process thumbnails at once); feature "At most two workers run at once" |
+| DE-S-016 Bounded media workers: crash isolation, exit status, registry and redaction | native `unit_media::a_crashed_worker_fails_its_run_only_and_the_same_pool_goes_on`, `a_worker_that_exits_unsuccessfully_has_crashed_whatever_it_printed`; feature "A crashed worker fails only its own run" |
 | DE-S-016 Bounded media workers: time limit | native `unit_media::a_worker_past_its_time_limit_is_stopped` |
-| DE-S-016 Bounded media workers: request checks | native `unit_media::a_missing_source_an_unknown_output_format_or_a_bad_request_is_refused` (refused before any process starts) |
+| DE-S-016 Bounded media workers: request checks | native `unit_media::the_pool_refuses_a_bad_request_before_any_process_starts` (format, oversized request, missing source, non-UTF-8 path, no process registered), `the_worker_refuses_bad_requests_before_libvips` (NUL path, bad JSON), `a_thumbnail_may_never_overwrite_its_source` |
 | DE-S-016 Bounded media workers: worker invocation | native `unit_media::only_the_worker_argument_starts_a_worker_run`; the F-050 gate `filesquid-cli` `features` ("fsquid is the only CLI binary") passes |
 
 ## TDD: failing runs
@@ -56,6 +58,18 @@ test the_worker_blocks_the_imagemagick_loaders_and_refuses_a_magick_only_format 
  right: Some(Refused("unsupported_format"))
 ```
 
+## Cubic review
+
+- Round 1 (1 P1, 14 P2, 3 P3), all fixed:
+  - `g_object_unref` is now resolved from GObject where libvips does not re-export it (Windows);
+  - the host checks the request before a worker starts: UTF-8 paths without NUL bytes, the 64 KiB request bound, a source that is a file, a destination that is not the source;
+  - a non-zero exit counts as a crash, the request is written from a thread so the time limit covers it, and a slot is not taken past its deadline;
+  - worker detection compares `OsStr`, so a non-UTF-8 argument cannot panic the app;
+  - the `sh` stand-in tests and scenarios are Unix-only (`#[cfg(unix)]`, `@unix`); the crash test continues on the same pool; the timeout test uses `exec sleep`;
+  - the desktop test runs real concurrent workers;
+  - README names libvips 8.13+ packages precisely, the CLI-0.2 follow-up names the native Cucumber step, and the Task 0.5 walkthrough maps DE-S-004.
+- The full hook run after merging #99 failed once: `the_worker_writes_a_thumbnail_within_the_requested_bound` got `unsupported_format`, because two test threads initialised libvips in one process at once. The real worker is one process per run. The in-process tests now take turns (`IN_PROCESS_VIPS`), and five repeated runs passed.
+
 ## Known gaps
 
 - **Packaging**: the installer must ship a libvips built without its Magick module beside the app; the worker itself is inside the desktop executable. This belongs with the installer work (DE-F3.x). Until then, a machine without libvips answers `libvips_unavailable`.
@@ -68,23 +82,28 @@ None.
 
 ## Raw test output
 
+After Cubic round 1:
+
 ```text
 $ cargo test -p filesquid-native --features desktop --test unit_media --locked
-running 8 tests
-test a_missing_source_an_unknown_output_format_or_a_bad_request_is_refused ... ok
+running 11 tests
+test a_thumbnail_may_never_overwrite_its_source ... ok
+test a_worker_that_exits_unsuccessfully_has_crashed_whatever_it_printed ... ok
 test no_imagemagick_crate_is_in_the_dependency_graph ... ok
 test only_the_worker_argument_starts_a_worker_run ... ok
-test a_crashed_worker_fails_its_run_only_and_is_journaled_without_paths ... ok
-test the_worker_writes_a_thumbnail_within_the_requested_bound ... ok
+test the_pool_refuses_a_bad_request_before_any_process_starts ... ok
+test a_crashed_worker_fails_its_run_only_and_the_same_pool_goes_on ... ok
+test the_worker_refuses_bad_requests_before_libvips ... ok
 test the_worker_blocks_the_imagemagick_loaders_and_refuses_a_magick_only_format ... ok
+test the_worker_writes_a_thumbnail_within_the_requested_bound ... ok
 test a_worker_past_its_time_limit_is_stopped ... ok
 test at_most_two_workers_run_at_once ... ok
-test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.94s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.95s
 $ cargo test -p filesquid-desktop --test integration_media_workers --locked
 running 2 tests
-test the_host_runs_at_most_two_media_workers_from_its_own_executable ... ok
 test the_desktop_executable_makes_a_thumbnail_out_of_process ... ok
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+test real_workers_from_the_desktop_executable_run_at_most_two_at_once ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
 $ cargo test -p filesquid-native --features desktop --test catalog_features --locked
 Feature: Intent, OCFL snapshot commit and receipt reconcile
   Scenario: A change is published as an OCFL version before it is acknowledged

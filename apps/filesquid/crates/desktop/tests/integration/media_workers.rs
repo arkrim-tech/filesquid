@@ -36,13 +36,40 @@ fn write_ppm(path: &Path, width: usize, height: usize) {
 }
 
 #[test]
-fn the_host_runs_at_most_two_media_workers_from_its_own_executable() {
+fn real_workers_from_the_desktop_executable_run_at_most_two_at_once() {
     let dir = dir("pool");
-    let host = open_host_monitor(&ApiState::new(), &dir, None).expect("monitor");
-    let pool = media_workers(&host);
-    assert_eq!(pool.max_workers(), DEFAULT_CPU_HEAVY_WORKERS as usize);
+    let (host, pool) = pool(&dir);
+    assert_eq!(
+        media_workers(&host).max_workers(),
+        DEFAULT_CPU_HEAVY_WORKERS as usize
+    );
     assert_eq!(pool.max_workers(), 2);
-    assert_eq!(pool.peak_running(), 0, "no worker starts at launch");
+    write_ppm(&dir.join("still.ppm"), 32, 32);
+    let pool = std::sync::Arc::new(pool);
+    let runs: Vec<_> = (0..4)
+        .map(|n| {
+            let (pool, dir) = (pool.clone(), dir.clone());
+            std::thread::spawn(move || {
+                pool.thumbnail(&ThumbnailRequest {
+                    source: dir.join("still.ppm"),
+                    dest: dir.join(format!("thumb-{n}.png")),
+                    max_edge: 8,
+                })
+            })
+        })
+        .collect();
+    for run in runs {
+        match run.join().expect("thread") {
+            Ok(rendered) => assert_eq!((rendered.width, rendered.height), (8, 8)),
+            Err(MediaError::Refused(code)) => assert_eq!(code, "libvips_unavailable"),
+            Err(other) => panic!("{other:?}"),
+        }
+    }
+    assert!(
+        (1..=2).contains(&pool.peak_running()),
+        "{}",
+        pool.peak_running()
+    );
     host.stop();
     std::fs::remove_dir_all(dir).expect("cleanup");
 }

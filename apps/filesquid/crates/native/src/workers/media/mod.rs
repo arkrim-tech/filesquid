@@ -25,7 +25,7 @@ use filesquid_core::DEFAULT_CPU_HEAVY_WORKERS;
 use serde_json::{json, Value};
 use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
@@ -54,9 +54,9 @@ const POLL: Duration = Duration::from_millis(10);
 pub const WORKER_ARG: &str = "--filesquid-media-worker";
 
 /// Whether the process arguments `args` (program name first) ask for a media worker run.
-/// Pure.
-pub fn is_worker_invocation(mut args: impl Iterator<Item = String>) -> bool {
-    args.nth(1).as_deref() == Some(WORKER_ARG)
+/// Compares raw OS strings, so an argument that is not UTF-8 never panics the app. Pure.
+pub fn is_worker_invocation(mut args: impl Iterator<Item = std::ffi::OsString>) -> bool {
+    args.nth(1).as_deref() == Some(std::ffi::OsStr::new(WORKER_ARG))
 }
 
 /// One media worker run: read the request from stdin (at most
@@ -218,18 +218,13 @@ impl MediaWorkers {
     /// Make the thumbnail `request` asks for in a worker process (process I/O).
     ///
     /// # Errors
-    /// [`MediaError`]; a request past [`MAX_EDGE`] or without a supported output format is
-    /// refused `invalid_request` before any process starts.
+    /// [`MediaError`]. Before any process starts, a request is refused `invalid_request` when
+    /// its edge is outside 1 to [`MAX_EDGE`], its output format is not supported, a path is
+    /// not UTF-8 or holds a NUL byte, the destination is the source, or the encoded request is
+    /// larger than [`vips::MAX_REQUEST_BYTES`]; and `source_unreadable` when the source is not
+    /// a file.
     pub fn thumbnail(&self, request: &ThumbnailRequest) -> Result<Rendered, MediaError> {
-        if request.max_edge == 0 || request.max_edge > MAX_EDGE || !vips::writable(&request.dest) {
-            return Err(MediaError::Refused("invalid_request".into()));
-        }
-        let answer = self.run(&json!({
-            "op": "thumbnail",
-            "source": request.source,
-            "dest": request.dest,
-            "max_edge": request.max_edge,
-        }))?;
+        let answer = self.run(&encode_thumbnail(request)?)?;
         let size = |key: &str| answer[key].as_u64().and_then(|n| u32::try_from(n).ok());
         match (size("width"), size("height")) {
             (Some(width), Some(height)) => Ok(Rendered { width, height }),
@@ -242,7 +237,7 @@ impl MediaWorkers {
     /// # Errors
     /// [`MediaError`], `libvips_unavailable` when no libvips can be loaded.
     pub fn probe(&self) -> Result<Probe, MediaError> {
-        let answer = self.run(&json!({ "op": "probe" }))?;
+        let answer = self.run(&json!({ "op": "probe" }).to_string())?;
         let version = answer["libvips"].as_str().ok_or(MediaError::Protocol)?;
         Ok(Probe {
             libvips_version: version.to_string(),
@@ -250,8 +245,9 @@ impl MediaWorkers {
         })
     }
 
-    /// Run one worker for `request` in a slot, registered as a process (process I/O).
-    fn run(&self, request: &Value) -> Result<Value, MediaError> {
+    /// Run one worker for the encoded `request` in a slot, registered as a process (process
+    /// I/O).
+    fn run(&self, request: &str) -> Result<Value, MediaError> {
         let _slot = self.acquire()?;
         let handle = self.registry.register(ProcessSpec::new(
             MEDIA_PROCESS_KIND,
@@ -286,6 +282,9 @@ impl MediaWorkers {
                 .0;
         }
         slots.waiting -= 1;
+        if Instant::now() > deadline {
+            return Err(MediaError::Busy);
+        }
         slots.running += 1;
         self.peak.fetch_max(slots.running, Ordering::SeqCst);
         Ok(SlotGuard { pool: self })
@@ -296,9 +295,11 @@ impl MediaWorkers {
         self.slots.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Start the worker, hand it `request`, and wait for its answer within the time limit
-    /// (process I/O).
-    fn spawn_and_wait(&self, request: &Value) -> Result<Value, MediaError> {
+    /// Start the worker, hand it `request` from a second thread (so a worker that never
+    /// reads cannot hold the run past its time limit), and wait for its answer within the
+    /// limit. A worker that exits unsuccessfully has crashed, whatever it printed (process
+    /// I/O).
+    fn spawn_and_wait(&self, request: &str) -> Result<Value, MediaError> {
         let mut child = Command::new(&self.program)
             .args(&self.args)
             .stdin(Stdio::piped())
@@ -306,21 +307,25 @@ impl MediaWorkers {
             .stderr(Stdio::null())
             .spawn()
             .map_err(|_| MediaError::Unavailable)?;
-        if let Some(mut stdin) = child.stdin.take() {
-            // A worker that exits without reading its request answers below; a broken pipe
-            // here is not an error of its own.
-            let _ = stdin.write_all(request.to_string().as_bytes());
+        let stdin = child.stdin.take();
+        let status = std::thread::scope(|scope| {
+            scope.spawn(move || write_request(stdin, request));
+            // The writer ends once the worker exits or is killed: its pipe closes.
+            self.wait(&mut child)
+        })?;
+        match status.success() {
+            true => read_answer(&mut child),
+            false => Err(MediaError::Crashed),
         }
-        self.wait(&mut child)?;
-        read_answer(&mut child)
     }
 
-    /// Wait for `child` to exit, killing it past the time limit (process I/O).
-    fn wait(&self, child: &mut Child) -> Result<(), MediaError> {
+    /// Wait for `child` to exit, killing it past the time limit, and answer its exit status
+    /// (process I/O).
+    fn wait(&self, child: &mut Child) -> Result<ExitStatus, MediaError> {
         let deadline = Instant::now() + self.timeout;
         while Instant::now() < deadline {
             match child.try_wait() {
-                Ok(Some(_)) => return Ok(()),
+                Ok(Some(status)) => return Ok(status),
                 Ok(None) => std::thread::sleep(POLL),
                 Err(_) => break,
             }
@@ -343,6 +348,48 @@ impl Drop for SlotGuard<'_> {
     fn drop(&mut self) {
         self.pool.lock().running -= 1;
         self.pool.freed.notify_one();
+    }
+}
+
+/// Write `request` to the worker's stdin and close it (process I/O). A worker that exits
+/// without reading its request answers on its own; a broken pipe here is not an error of
+/// its own, and is logged at debug level only.
+fn write_request(stdin: Option<std::process::ChildStdin>, request: &str) {
+    let Some(mut stdin) = stdin else {
+        return;
+    };
+    if let Err(err) = stdin.write_all(request.as_bytes()) {
+        tracing::debug!(error = %err, "a media worker did not read its whole request");
+    }
+}
+
+/// The checked worker request for `request` (reads the source's and destination folder's
+/// metadata).
+///
+/// # Errors
+/// As [`MediaWorkers::thumbnail`] lists, before any process starts.
+fn encode_thumbnail(request: &ThumbnailRequest) -> Result<String, MediaError> {
+    let invalid = || MediaError::Refused("invalid_request".into());
+    let (Some(source), Some(dest)) = (request.source.to_str(), request.dest.to_str()) else {
+        return Err(invalid());
+    };
+    let bounded = (1..=MAX_EDGE).contains(&request.max_edge);
+    let nul = source.contains('\0') || dest.contains('\0');
+    if !bounded || nul || !vips::writable(&request.dest) {
+        return Err(invalid());
+    }
+    let text =
+        json!({ "op": "thumbnail", "source": source, "dest": dest, "max_edge": request.max_edge })
+            .to_string();
+    if text.len() as u64 > vips::MAX_REQUEST_BYTES {
+        return Err(invalid());
+    }
+    if !request.source.is_file() {
+        return Err(MediaError::Refused("source_unreadable".into()));
+    }
+    match vips::same_file(&request.source, &request.dest) {
+        true => Err(invalid()),
+        false => Ok(text),
     }
 }
 

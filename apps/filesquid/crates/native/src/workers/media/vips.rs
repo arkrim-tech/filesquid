@@ -9,7 +9,8 @@
 //!
 //! - `{"op":"probe"}` → `{"ok":true,"libvips":"<version>","magick_blocked":true}`;
 //! - `{"op":"thumbnail","source":…,"dest":…,"max_edge":N}` → the still at `source` scaled to
-//!   fit `N` pixels, written to `dest` in the format its extension names, answered as
+//!   fit `N` pixels, written to `dest` (never the source itself) in the format its extension
+//!   names, answered as
 //!   `{"ok":true,"width":…,"height":…}`;
 //! - anything else → `{"ok":false,"error_code":"<code>"}`. Answers never carry a path.
 //!
@@ -33,6 +34,14 @@ const LIBRARY_NAMES: [&str; 4] = [
     "libvips-42.dll",
 ];
 
+/// GObject, which holds `g_object_unref` where the libvips library does not re-export it
+/// (Windows), under the names each platform gives it.
+const GOBJECT_NAMES: [&str; 3] = [
+    "libgobject-2.0.so.0",
+    "libgobject-2.0.0.dylib",
+    "libgobject-2.0-0.dll",
+];
+
 /// The ImageMagick operations libvips may carry, blocked with all their subclasses.
 const MAGICK_OPERATIONS: [&str; 2] = ["VipsForeignLoadMagick", "VipsForeignSaveMagick"];
 
@@ -46,6 +55,28 @@ pub fn writable(dest: &Path) -> bool {
         .and_then(|e| e.to_str())
         .unwrap_or_default();
     OUTPUT_EXTENSIONS.contains(&extension.to_ascii_lowercase().as_str())
+}
+
+/// Whether `dest` names the file `source` names (both resolved, the destination through
+/// its folder when it does not exist yet), so a thumbnail can never overwrite its original.
+/// Reads filesystem metadata.
+pub fn same_file(source: &Path, dest: &Path) -> bool {
+    let Ok(source) = source.canonicalize() else {
+        return false;
+    };
+    resolved_destination(dest).is_some_and(|dest| dest == source)
+}
+
+/// `dest` with its folder resolved, whether or not the file exists yet. Reads filesystem
+/// metadata.
+fn resolved_destination(dest: &Path) -> Option<std::path::PathBuf> {
+    if let Ok(found) = dest.canonicalize() {
+        return Some(found);
+    }
+    let name = dest.file_name()?;
+    let parent = dest.parent().filter(|p| !p.as_os_str().is_empty());
+    let folder = parent.unwrap_or(Path::new(".")).canonicalize().ok()?;
+    Some(folder.join(name))
 }
 
 /// The JSON answer line to the JSON `request`. Loads libvips and reads and writes files.
@@ -74,11 +105,15 @@ fn thumbnail(request: &Value) -> Value {
     let dest = request["dest"].as_str().unwrap_or_default();
     let edge = request["max_edge"].as_u64().unwrap_or(0);
     let valid = !source.is_empty() && (1..=u64::from(MAX_EDGE)).contains(&edge);
-    if !valid || !writable(Path::new(dest)) {
+    let nul = source.contains('\0') || dest.contains('\0');
+    if !valid || nul || !writable(Path::new(dest)) {
         return refusal("invalid_request");
     }
     if !Path::new(source).is_file() {
         return refusal("source_unreadable");
+    }
+    if same_file(Path::new(source), Path::new(dest)) {
+        return refusal("invalid_request");
     }
     let edge = c_int::try_from(edge).unwrap_or(1);
     with_vips(|vips| vips.thumbnail(source, dest, edge))
@@ -98,9 +133,11 @@ fn refusal(code: &str) -> Value {
     json!({ "ok": false, "error_code": code })
 }
 
-/// libvips, loaded, initialised and with ImageMagick blocked.
+/// libvips, loaded, initialised and with ImageMagick blocked, and GObject when it could be
+/// loaded beside it.
 struct Vips {
     lib: Library,
+    gobject: Option<Library>,
 }
 
 impl Vips {
@@ -116,7 +153,11 @@ impl Vips {
             // GLib types; nothing else in this process uses GLib.
             .find_map(|name| unsafe { Library::new(name) }.ok())
             .ok_or("libvips_unavailable")?;
-        let vips = Self { lib };
+        // SAFETY: as above; GObject is already loaded as a dependency of libvips.
+        let gobject = GOBJECT_NAMES
+            .iter()
+            .find_map(|name| unsafe { Library::new(name) }.ok());
+        let vips = Self { lib, gobject };
         vips.init()?;
         vips.block_magick()?;
         Ok(vips)
@@ -130,6 +171,21 @@ impl Vips {
         // SAFETY: every caller names the C signature `T` the libvips 8 API documents for
         // `name`.
         unsafe { self.lib.get(name) }.map_err(|_| "libvips_unavailable")
+    }
+
+    /// `void g_object_unref(gpointer)`: from libvips where it re-exports it, otherwise from
+    /// GObject (as on Windows).
+    ///
+    /// # Errors
+    /// `libvips_unavailable` when neither library has it.
+    fn unref(&self) -> Result<Symbol<'_, unsafe extern "C" fn(*mut c_void)>, &'static str> {
+        let name = b"g_object_unref\0";
+        if let Ok(found) = self.symbol(name) {
+            return Ok(found);
+        }
+        let gobject = self.gobject.as_ref().ok_or("libvips_unavailable")?;
+        // SAFETY: `g_object_unref` has the GObject signature `void (gpointer)`.
+        unsafe { gobject.get(name) }.map_err(|_| "libvips_unavailable")
     }
 
     /// `int vips_init(const char *argv0)`, once per process.
@@ -188,7 +244,7 @@ impl Vips {
         let write = self.symbol::<Write>(b"vips_image_write_to_file\0")?;
         let width = self.symbol::<Size>(b"vips_image_get_width\0")?;
         let height = self.symbol::<Size>(b"vips_image_get_height\0")?;
-        let unref = self.symbol::<unsafe extern "C" fn(*mut c_void)>(b"g_object_unref\0")?;
+        let unref = self.unref()?;
         let source = CString::new(source).map_err(|_| "invalid_request")?;
         let dest = CString::new(dest).map_err(|_| "invalid_request")?;
         let mut image: *mut c_void = std::ptr::null_mut();
