@@ -379,7 +379,7 @@ impl NavigationService {
                 resume = Some(child.position.clone());
                 let nameable = child.node.to_handle().is_some();
                 if !nameable {
-                    tracing::info!(target: LOG_TARGET, "a folder too deep to name was left out");
+                    tracing::debug!(target: LOG_TARGET, "a folder too deep to name was left out");
                 }
                 if nameable && self.access.may_read(sweep.principal, &child.node) {
                     scan.children.push(child);

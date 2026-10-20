@@ -100,8 +100,9 @@ impl ApiEvent {
 /// The bus is process-wide and unscoped: every subscriber (each WebSocket session on
 /// `filesquid-server`, each desktop webview) receives every event. Publishers MUST NOT emit
 /// account-, permission- or collection-specific payloads unless the host forwards each
-/// client's events through an [`EventFilter`] ([`EventBus::subscription_filtered`]); the one
-/// such topic is [`topic::NAVIGATION_CHANGE`], which names collection handles. Both current
+/// client's events through an [`EventFilter`] ([`EventBus::subscription_filtered`]); such
+/// topics are [`topic::JOURNAL_ENTRY`] (actor and target IDs naming libraries and objects) and
+/// [`topic::NAVIGATION_CHANGE`] (collection handles). Both current
 /// principals read everything, so an unfiltered [`EventBus::subscription`] leaks nothing today;
 /// a host that adds a principal who reads less (API-F1.9) MUST open client subscriptions with a
 /// filter.
