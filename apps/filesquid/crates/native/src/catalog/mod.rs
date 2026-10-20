@@ -30,6 +30,7 @@ mod history;
 mod intent;
 mod outbox;
 mod project;
+mod provenance;
 mod reconcile;
 mod rows;
 mod schema;
@@ -37,6 +38,7 @@ mod write;
 
 pub use canonical::{library_ocfl_root, OCFL_ROOT_SUFFIX, WORK_DIR_SUFFIX};
 pub use intent::PendingIntent;
+pub use provenance::{CatalogRoots, LibraryBackfill, MAX_BACKFILL_RUNS};
 pub use reconcile::RECONCILE_OPERATION;
 
 use filesquid_api::canonical::{operation_kind, OperationRecord, SnapshotKey};
