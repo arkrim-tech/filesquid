@@ -15,10 +15,11 @@ use filesquid_core::LibraryId;
 use filesquid_metadata::import::ImportMethod;
 use filesquid_native::import::host::Build;
 use filesquid_native::import::job::{
-    backoff, checkpoint_next, import_checkpoint, import_source, list_files, reserve_for,
+    backoff, checkpoint_next, import_checkpoint, import_source, list_files, list_plan, reserve_for,
     run_import_job, submit_import, ImportContext, IMPORT_FILE_OPERATION, MAX_BACKOFF,
 };
 use filesquid_native::import::plans::{ImportPlan, SqliteImportPlans};
+use filesquid_native::import::worker::{ImportServices, ImportWorker};
 use filesquid_native::{open_fs_library, HostFiles};
 use filesquid_ocfl::storage::FsBackend;
 use std::path::{Path, PathBuf};
@@ -155,7 +156,8 @@ fn holiday_folder(dir: &Path) -> PathBuf {
 fn plan(root: &Path) -> ImportPlan {
     ImportPlan {
         library_id: LIBRARY.into(),
-        root: root.to_path_buf(),
+        collection_id: None,
+        sources: vec![root.to_path_buf()],
         method: ImportMethod::Folder,
     }
 }
@@ -178,7 +180,7 @@ fn a_folder_is_listed_in_one_stable_order_with_its_subfolders() {
         ]
     );
     let single = folder.join("a.jpg");
-    assert_eq!(list_files(&single).expect("file"), [single.clone()]);
+    assert_eq!(list_files(&single).expect("file"), std::slice::from_ref(&single));
     assert!(list_files(&dir.0.join("gone")).is_err());
 }
 
@@ -277,16 +279,90 @@ fn checkpoints_backoff_and_reserve_follow_their_rules() {
 }
 
 #[test]
-fn a_plan_is_kept_until_its_job_ends() {
+fn a_plan_survives_a_restart_and_one_operation_has_one_job() {
     let dir = TempDir::new("plans");
     let path = dir.0.join("filesquid.sqlite");
     let folder = holiday_folder(&dir.0);
+    let picked = ImportPlan {
+        collection_id: Some("collection-1".into()),
+        sources: vec![folder.join("a.jpg"), folder.join("b.png")],
+        method: ImportMethod::FilePicker,
+        ..plan(&folder)
+    };
     {
         let plans = SqliteImportPlans::open(&path).expect("open");
-        plans.save("job-1", &plan(&folder)).expect("save");
+        plans.save("job-1", "op-1", &picked).expect("save");
+        assert!(
+            plans.save("job-2", "op-1", &picked).is_err(),
+            "one job per operation"
+        );
     }
     let plans = SqliteImportPlans::open(&path).expect("reopen");
-    assert_eq!(plans.load("job-1").expect("load"), Some(plan(&folder)));
-    plans.remove("job-1").expect("remove");
-    assert_eq!(plans.load("job-1").expect("load"), None);
+    assert_eq!(plans.load("job-1").expect("load"), Some(picked));
+    assert_eq!(
+        plans.job_of_operation("op-1").expect("op"),
+        Some("job-1".into())
+    );
+    assert_eq!(plans.job_of_operation("op-2").expect("op"), None);
+    assert_eq!(plans.load("job-9").expect("load"), None);
+}
+
+#[tokio::test]
+async fn picked_files_are_imported_each_with_itself_as_its_root() {
+    let dir = TempDir::new("picked");
+    let rig = Rig::new(&dir.0).await;
+    let folder = holiday_folder(&dir.0);
+    let picked = ImportPlan {
+        sources: vec![folder.join("b.png"), folder.join("a.jpg")],
+        method: ImportMethod::FilePicker,
+        ..plan(&folder)
+    };
+    let listed = list_plan(&picked).expect("listed");
+    assert_eq!(listed.len(), 2);
+    assert_eq!(listed[0].path, folder.join("b.png"), "in the order picked");
+    assert_eq!(listed[0].import_root, listed[0].path);
+    let job = submit_import(&rig.jobs, &picked, "op-picked").expect("job");
+    let journal = rig.monitor.journal();
+    let run = run_import_job(&rig.context(&journal), &job.id, &picked)
+        .await
+        .expect("ran");
+    assert_eq!(run.imported.len(), 2);
+}
+
+#[tokio::test]
+async fn the_worker_runs_queued_jobs_from_their_plans_and_resumes_unfinished_ones() {
+    let dir = TempDir::new("worker");
+    let rig = Rig::new(&dir.0).await;
+    let folder = holiday_folder(&dir.0);
+    let plans = Arc::new(SqliteImportPlans::open(&dir.0.join("filesquid.sqlite")).expect("plans"));
+    let plan = plan(&folder);
+    let job = submit_import(&rig.jobs, &plan, "op-worker").expect("job");
+    plans.save(&job.id, "op-worker", &plan).expect("save");
+    let stop = Arc::new(AtomicBool::new(false));
+    let worker = ImportWorker::spawn(ImportServices {
+        jobs: rig.jobs.clone(),
+        files: rig.files.clone(),
+        plans,
+        journal: rig.monitor.journal(),
+        build: rig.build.clone(),
+        actor: "owner".into(),
+        staging_dir: rig.data.clone(),
+        stop: stop.clone(),
+        retry_unit: Duration::from_millis(1),
+    })
+    .expect("worker");
+    assert_eq!(
+        worker.resume_unfinished(&rig.jobs),
+        1,
+        "the pending job is queued"
+    );
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while rig.entries(IMPORT_FILE_OPERATION).len() < 3 && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    worker.wait(Duration::from_secs(10));
+    assert_eq!(rig.entries(IMPORT_FILE_OPERATION).len(), 3);
+    let done = rig.jobs.unfinished_of("import", 10).expect("jobs");
+    assert!(done.is_empty(), "the job completed");
 }

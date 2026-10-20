@@ -11,4 +11,5 @@ pub mod names;
 pub mod plans;
 pub mod time;
 pub mod volume;
+pub mod worker;
 pub mod xattr;

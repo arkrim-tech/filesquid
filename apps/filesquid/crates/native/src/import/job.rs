@@ -89,11 +89,16 @@ pub struct ImportContext<'a> {
 /// The first retry's wait; each later retry doubles it, up to [`MAX_BACKOFF`].
 pub const RETRY_UNIT: Duration = Duration::from_secs(1);
 
-/// The source identity of an import job: the library and a digest of the chosen root, so a
-/// job is never resumed against another folder. Pure.
+/// The source identity of an import job: the library and a digest of the picked sources, so
+/// a job is never resumed against other files. Pure.
 pub fn import_source(plan: &ImportPlan) -> String {
     use sha2::Digest as _;
-    let digest = sha2::Sha256::digest(plan.root.as_os_str().as_encoded_bytes());
+    let mut hasher = sha2::Sha256::new();
+    for source in &plan.sources {
+        hasher.update(source.as_os_str().as_encoded_bytes());
+        hasher.update([0u8]);
+    }
+    let digest = hasher.finalize();
     let hex: String = digest.iter().take(16).map(|b| format!("{b:02x}")).collect();
     format!("import:{}:{hex}", plan.library_id)
 }
@@ -112,6 +117,41 @@ pub fn submit_import(
         operation_id: operation_id.into(),
         source: import_source(plan),
     })
+}
+
+/// One file to import and the folder (or file) it was picked as part of.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Listed {
+    /// The file.
+    pub path: PathBuf,
+    /// The folder the owner picked, or the file itself when it was picked alone.
+    pub import_root: PathBuf,
+}
+
+/// Every file of `plan`'s sources in one stable order: the sources in the order picked, each
+/// a file or the files below a folder ([`list_files`]), at most [`MAX_IMPORT_FILES`] in all.
+/// Reads the filesystem.
+///
+/// # Errors
+/// A message (no path) when no source can be read.
+pub fn list_plan(plan: &ImportPlan) -> Result<Vec<Listed>, String> {
+    let mut listed = Vec::new();
+    let mut readable = false;
+    for source in &plan.sources {
+        let Ok(files) = list_files(source) else {
+            continue;
+        };
+        readable = true;
+        let room = MAX_IMPORT_FILES.saturating_sub(listed.len());
+        listed.extend(files.into_iter().take(room).map(|path| Listed {
+            path,
+            import_root: source.clone(),
+        }));
+    }
+    match readable {
+        true => Ok(listed),
+        false => Err("the picked sources are gone".to_string()),
+    }
 }
 
 /// The files of `root` in one stable order: `root` itself when it is a file, else every
@@ -231,7 +271,7 @@ pub async fn run_import_job(
     plan: &ImportPlan,
 ) -> Result<ImportRun, JobError> {
     let mut running = context.jobs.start(job_id, &import_source(plan))?;
-    let files = match list_files(&plan.root) {
+    let files = match list_plan(plan) {
         Ok(files) => files,
         Err(_) => {
             running.fail("source_missing")?;
@@ -246,8 +286,8 @@ pub async fn run_import_job(
     };
     let next = checkpoint_next(running.checkpoint_text());
     let total = Some(files.len() as u64);
-    for (index, path) in files.iter().enumerate().skip(next) {
-        match import_with_attempts(context, &running, plan, path).await {
+    for (index, listed) in files.iter().enumerate().skip(next) {
+        match import_with_attempts(context, &running, plan, listed).await {
             FileOutcome::Imported(view) => run.imported.push(view),
             FileOutcome::Quarantined(code) => run.quarantined.push(code),
             FileOutcome::Suspend => {
@@ -270,12 +310,13 @@ async fn import_with_attempts(
     context: &ImportContext<'_>,
     running: &RunningJob,
     plan: &ImportPlan,
-    path: &Path,
+    listed: &Listed,
 ) -> FileOutcome {
+    let path = listed.path.as_path();
     let request = FileImport {
         library_id: &plan.library_id,
         path,
-        import_root: &plan.root,
+        import_root: &listed.import_root,
         method: plan.method,
         job_id: Some(running.job().id.clone()),
         operation_id: Some(running.job().operation_id.clone()),
