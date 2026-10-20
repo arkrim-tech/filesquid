@@ -597,6 +597,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/history/backfill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start the PROV-O history backfill
+         * @description API-S-029. The desktop owner or a server administrator starts one backfill over every OCFL storage root the host serves, in the background, and the route answers 200 at once. Each run registers in the process registry (`prov.backfill`), checkpoints per object, stops at its cap or on cancel (the host's exit), skips versions that already have a record, and commits one provenance-only version per object. The request carries no body. A request while a backfill runs is refused 409 conflict. The request is journaled once as `history.backfill.request` (succeeded, or failed with its error code: `backfill_running`, `unavailable`); each run journals itself. Starting a job changes no library content or organisation, so there is no CommandEnvelope.
+         */
+        post: operations["startHistoryBackfill"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/navigation": {
         parameters: {
             query?: never;
@@ -1633,6 +1653,11 @@ export interface components {
             journaled: number;
             /** @description The credential's opaque principal, which the client stores with the events it keeps. */
             principal: string;
+        };
+        /** @description A history backfill that started in the background (API-S-029). Its runs appear in the process registry and the journal as `prov.backfill`. */
+        BackfillStarted: {
+            /** @enum {string} */
+            status: "started";
         };
     };
     responses: {
@@ -2984,6 +3009,39 @@ export interface operations {
             400: components["responses"]["InvalidRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    startHistoryBackfill: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The backfill started in the background. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackfillStarted"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description A history backfill is already running (`conflict`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
             500: components["responses"]["Internal"];
             503: components["responses"]["Unavailable"];
         };

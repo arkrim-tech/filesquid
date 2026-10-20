@@ -82,7 +82,7 @@ pub use routes::{route_actions, routed_paths, router, Liveness};
 use std::sync::{Arc, OnceLock};
 
 /// Version of the FileSquid API contract. Bumped when the contract changes.
-pub const API_VERSION: &str = "0.14.0";
+pub const API_VERSION: &str = "0.15.0";
 
 /// URL prefix shared by every API route.
 pub const API_PREFIX: &str = "/api/v1";
@@ -127,6 +127,9 @@ pub struct ApiState {
     /// The host's display-name lookup for journal pages, installed once at startup (without
     /// one, journal pages carry no names; API-S-031).
     journal_names: Arc<OnceLock<Arc<dyn admin::JournalNames>>>,
+    /// The host's history backfill launcher, installed once at startup (the backfill route
+    /// answers 503 until then; API-S-029).
+    history_backfill: Arc<OnceLock<Arc<dyn history::launch::BackfillLauncher>>>,
 }
 
 impl std::fmt::Debug for ApiState {
@@ -145,6 +148,10 @@ impl std::fmt::Debug for ApiState {
             .field(
                 "journal_names_installed",
                 &self.journal_names.get().is_some(),
+            )
+            .field(
+                "history_backfill_installed",
+                &self.history_backfill.get().is_some(),
             )
             .finish()
     }
@@ -186,6 +193,7 @@ impl ApiState {
             navigation: Arc::new(OnceLock::new()),
             client_events: Arc::new(client_events::RateLimiter::new(window_clock)),
             journal_names: Arc::new(OnceLock::new()),
+            history_backfill: Arc::new(OnceLock::new()),
         }
     }
 
@@ -281,6 +289,20 @@ impl ApiState {
     /// one was already installed.
     pub fn install_history(&self, source: Arc<dyn history::HistorySource>) -> bool {
         self.history.set(source).is_ok()
+    }
+
+    /// Install the host's history backfill launcher for the backfill route (API-S-029).
+    /// Returns false, keeping the first, if one was already installed.
+    pub fn install_history_backfill(
+        &self,
+        launcher: Arc<dyn history::launch::BackfillLauncher>,
+    ) -> bool {
+        self.history_backfill.set(launcher).is_ok()
+    }
+
+    /// The installed history backfill launcher, if any.
+    pub fn history_backfill(&self) -> Option<Arc<dyn history::launch::BackfillLauncher>> {
+        self.history_backfill.get().cloned()
     }
 
     /// The installed history source, if any.

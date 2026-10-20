@@ -36,6 +36,7 @@
 
 pub mod api_protocol;
 pub mod app_window;
+pub mod backfill;
 pub mod capability_policy;
 pub mod event_channel;
 pub mod ipc_gate;
@@ -50,12 +51,13 @@ pub mod test_fixture;
 pub use event_channel::EVENT_NAME;
 pub use stdout_log::LOGGING_OPERATION;
 
+use backfill::{BackfillTask, DesktopBackfill, BACKFILL_STOP_WAIT};
 use event_channel::{Forwarding, TauriSink, FORWARDER_HEARTBEAT};
 use filesquid_api::auth::{record_token_issue, Authoriser, LaunchToken, Principal};
-use filesquid_api::history::backfill::{Backfill, BACKFILL_OPERATION};
+use filesquid_api::history::backfill::Backfill;
 use filesquid_api::history::{HostFacts, OcflRootsHistory, ProvenanceContext};
 use filesquid_api::host::{HostIdentity, NotEnrolled};
-use filesquid_api::jobs::{JobError, Jobs};
+use filesquid_api::jobs::Jobs;
 use filesquid_api::journal::{JournalEntry, Outcome};
 use filesquid_api::journal_writer::JournalSender;
 use filesquid_api::local_library::{LocalLibraryService, RepairLedger};
@@ -78,9 +80,8 @@ use ipc_observer::TauriIpcObserver;
 use libraries::{DesktopLibraries, LibraryServing};
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
-use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 use tauri::{Manager, RunEvent};
 use tracing::Subscriber;
 use tracing_subscriber::filter::{filter_fn, EnvFilter, FilterExt};
@@ -98,7 +99,7 @@ struct DesktopMonitor {
     host: Arc<HostMonitor>,
     forwarder: Arc<ProcessHandle>,
     stop: Arc<AtomicBool>,
-    backfill: Mutex<Option<JoinHandle<()>>>,
+    backfill: Arc<DesktopBackfill>,
 }
 
 /// The journal sinks the host attaches once the journal opens: the journal layer, the Tauri
@@ -634,8 +635,9 @@ fn start_monitor(
     );
     let opened = Arc::new(OpenedRoots::new());
     install_history_source(&state, catalog.clone(), opened.clone()).inspect_err(|_| host.stop())?;
-    let backfill = prepare_backfill(app, &data_dir, &host, &installation, &catalog)
-        .inspect_err(|_| host.stop())?;
+    let (task, recovered) =
+        prepare_backfill(app, &data_dir, &host, &installation, &catalog, &opened)
+            .inspect_err(|_| host.stop())?;
     app.manage(DesktopMedia(media_workers(&host)));
     navigation::install_navigation(&state, catalog.clone(), &installation)
         .inspect_err(|_| host.stop())?;
@@ -647,19 +649,21 @@ fn start_monitor(
     let forwarder = Arc::new(event_channel::register_forwarder(host.monitor().registry()));
     let stop = Arc::new(AtomicBool::new(false));
     spawn_ticker(host.clone(), stop.clone());
-    let backfill = backfill.and_then(|task| spawn_backfill(task, stop.clone()));
+    let backfill = Arc::new(DesktopBackfill::new(task, stop.clone()));
+    install_backfill_route(&state, &backfill, recovered).inspect_err(|_| host.stop())?;
     app.manage(DesktopMonitor {
         host,
         forwarder,
         stop,
-        backfill: Mutex::new(backfill),
+        backfill,
     });
     Ok(())
 }
 
 /// Open the durable job store in `data_dir`, reconcile its jobs and keep it in Tauri's
-/// managed state, answering the history backfill task of this launch, or `None` when its
-/// jobs could not be reconciled. Performs database I/O.
+/// managed state, answering the history backfill task of this host over `catalog` and the
+/// folders `opened`, and whether the jobs were reconciled (only then does the launch run
+/// it). Performs database I/O.
 ///
 /// # Errors
 /// The job store could not be opened.
@@ -669,18 +673,39 @@ fn prepare_backfill(
     host: &HostMonitor,
     installation: &InstallationId,
     catalog: &Arc<SqliteCatalog>,
-) -> Result<Option<BackfillTask>, String> {
+    opened: &Arc<OpenedRoots>,
+) -> Result<(BackfillTask, bool), String> {
     let jobs = history_backfill::open_jobs(data_dir, host)?;
-    let backfill = history_backfill::recover_jobs(&jobs)
-        .ok()
-        .map(|_| BackfillTask {
-            jobs: jobs.clone(),
-            backfill: history_backfill(host, installation),
-            catalog: catalog.clone(),
-            source: history_backfill::backfill_source(installation),
-        });
+    let recovered = history_backfill::recover_jobs(&jobs).is_ok();
+    let task = BackfillTask {
+        jobs: jobs.clone(),
+        backfill: history_backfill(host, installation),
+        catalog: catalog.clone(),
+        source: history_backfill::backfill_source(installation),
+        opened: opened.clone(),
+    };
     app.manage(DesktopJobs(jobs));
-    Ok(backfill)
+    Ok((task, recovered))
+}
+
+/// Install `backfill` as the launcher of the backfill route (API-S-029) and, when the jobs
+/// were `recovered`, start this launch's run (DE-S-011): a run that cannot start is logged by
+/// the runner, and the launch goes on.
+///
+/// # Errors
+/// A backfill launcher is already installed.
+pub fn install_backfill_route(
+    state: &ApiState,
+    backfill: &Arc<DesktopBackfill>,
+    recovered: bool,
+) -> Result<(), String> {
+    if !state.install_history_backfill(backfill.clone()) {
+        return Err("a history backfill launcher was already installed".to_string());
+    }
+    if recovered {
+        let _ = backfill.start();
+    }
+    Ok(())
 }
 
 /// Start the OCFL validation, give the file service its PROV-O provenance, and install the
@@ -711,108 +736,6 @@ fn install_library_services(
     app.manage(DesktopValidation(validation));
     app.manage(DesktopLocations(locations));
     Ok(())
-}
-
-/// Longest the app's exit waits for a cancelled history backfill to end before the journal is
-/// flushed.
-const BACKFILL_STOP_WAIT: Duration = Duration::from_secs(10);
-
-/// The history backfill job one launch runs ([`history_backfill::run_backfill_job`](filesquid_native::workers::history_backfill::run_backfill_job)).
-struct BackfillTask {
-    jobs: Jobs,
-    backfill: Backfill,
-    catalog: Arc<SqliteCatalog>,
-    source: String,
-}
-
-/// Run the history backfill on its own thread, once per launch, as a durable job (API-S-029,
-/// DE-S-014): it resumes the job a quit suspended, skipping the libraries its checkpoint
-/// lists, and otherwise visits every library (versions that have a record are skipped).
-/// Setting `stop` (at app exit, the last window closing included) cancels it between objects
-/// and suspends the job with its checkpoint. Each run registers in the process registry and
-/// journals itself. Answers the thread, or `None` when it could not be started (logged as an
-/// error, which the journal layer journals).
-fn spawn_backfill(task: BackfillTask, stop: Arc<AtomicBool>) -> Option<JoinHandle<()>> {
-    let spawned = std::thread::Builder::new()
-        .name("filesquid-history-backfill".into())
-        .spawn(move || report_backfill(run_backfill_task(&task, &stop)));
-    spawned
-        .inspect_err(|err| {
-            tracing::error!(
-                operation = BACKFILL_OPERATION,
-                error_code = "thread_unavailable",
-                error = %err,
-                "the history backfill could not be started"
-            );
-        })
-        .ok()
-}
-
-/// Run `task` until it completes or `stop` is set. Filesystem, database and journal I/O.
-fn run_backfill_task(
-    task: &BackfillTask,
-    stop: &AtomicBool,
-) -> Result<history_backfill::BackfillJobRun, JobError> {
-    history_backfill::run_backfill_job(
-        &task.jobs,
-        &task.catalog,
-        &task.backfill,
-        &task.source,
-        stop,
-    )
-}
-
-/// Log a backfill job that could not run, and each library whose backfill could not run, as
-/// warnings with error codes only (the journal layer journals warnings; the job and each run
-/// that started journaled themselves).
-fn report_backfill(result: Result<history_backfill::BackfillJobRun, JobError>) {
-    let run = match result {
-        Ok(run) => run,
-        Err(err) => {
-            tracing::warn!(
-                operation = BACKFILL_OPERATION,
-                error_code = err.error_code(),
-                "the history backfill job could not run; the next launch retries"
-            );
-            return;
-        }
-    };
-    for library in run.ran.iter().filter(|library| library.error.is_some()) {
-        tracing::warn!(
-            operation = BACKFILL_OPERATION,
-            library_id = library.library_id.as_str(),
-            error_code = "unavailable",
-            "the history backfill could not run for a library; the next launch retries"
-        );
-    }
-}
-
-/// Wait, at most [`BACKFILL_STOP_WAIT`], for the cancelled backfill thread in `slot` to end.
-/// A thread still running then is logged and left to end with the process.
-fn wait_for_backfill(slot: &Mutex<Option<JoinHandle<()>>>) {
-    let handle = slot.lock().ok().and_then(|mut handle| handle.take());
-    let Some(handle) = handle else {
-        return;
-    };
-    let deadline = Instant::now() + BACKFILL_STOP_WAIT;
-    while !handle.is_finished() && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    if !handle.is_finished() {
-        tracing::warn!(
-            operation = BACKFILL_OPERATION,
-            error_code = "stop_timeout",
-            "the history backfill did not stop in time"
-        );
-        return;
-    }
-    if handle.join().is_err() {
-        tracing::error!(
-            operation = BACKFILL_OPERATION,
-            error_code = "panicked",
-            "the history backfill thread panicked"
-        );
-    }
 }
 
 /// Tick the monitor once per [`TICK`] until `stop` is set at app exit (bounded by the app's lifetime).
@@ -873,7 +796,7 @@ fn forward_events(app: &tauri::AppHandle) {
 fn stop_monitor(app: &tauri::AppHandle) {
     if let Some(monitor) = app.try_state::<DesktopMonitor>() {
         monitor.stop.store(true, Ordering::SeqCst);
-        wait_for_backfill(&monitor.backfill);
+        monitor.backfill.wait(BACKFILL_STOP_WAIT);
         monitor.forwarder.complete();
         monitor.host.stop();
     }

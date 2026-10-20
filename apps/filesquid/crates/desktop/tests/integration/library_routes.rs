@@ -9,7 +9,9 @@
 mod journal;
 
 use filesquid_api::auth::LaunchToken;
-use filesquid_api::journal::JournalEntry;
+use filesquid_api::history::backfill::BACKFILL_OPERATION;
+use filesquid_api::history::launch::BACKFILL_REQUEST_OPERATION;
+use filesquid_api::journal::{JournalEntry, Outcome};
 use filesquid_api::library::{
     CommandRequest, LibraryCommand, LibraryService, NEW_LIBRARY_REVISION,
 };
@@ -19,12 +21,14 @@ use filesquid_api::operation::{CommandEnvelope, ExpectedRevision, OperationId, O
 use filesquid_api::{ApiEvent, ApiState};
 use filesquid_core::{InstallationId, LibraryId, RepositoryId};
 use filesquid_desktop_lib::api_protocol::handle;
+use filesquid_desktop_lib::backfill::{BackfillTask, DesktopBackfill};
 use filesquid_desktop_lib::libraries::LibraryServing;
 use filesquid_desktop_lib::navigation::{install_navigation, owner_event_filter};
 use filesquid_desktop_lib::{
-    install_file_provenance, install_history_source, install_launch_token, install_library_routes,
-    open_host_monitor, open_library_catalog,
+    history_backfill, install_backfill_route, install_file_provenance, install_history_source,
+    install_launch_token, install_library_routes, open_host_monitor, open_library_catalog,
 };
+use filesquid_native::workers::history_backfill::{backfill_source, open_jobs};
 use filesquid_native::{
     install_file_service, HostFiles, HostLocations, HostMonitor, OpenedRoots, SqliteCatalog,
     SqliteJournal, SqliteRepairLedger, CATALOG_DIR, JOURNAL_FILE,
@@ -32,7 +36,9 @@ use filesquid_native::{
 use journal::block_on;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// The installation UUID of these tests.
 const INSTALLATION: &str = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
@@ -341,4 +347,44 @@ fn the_navigation_lists_the_installations_repository_and_its_libraries() {
         "installed once"
     );
     desktop.stop();
+}
+
+#[test]
+fn the_backfill_route_runs_over_the_folders_the_owner_opened() {
+    let dir = fresh_dir("backfill");
+    let (library, root) = donor_library(&dir.join("donor"));
+    let desktop = Desktop::launch(dir.join("data"));
+    let (status, _) = desktop.post("/api/v1/admin/history/backfill", json!({}));
+    assert_eq!(status, 503, "no launcher installed yet");
+    let location = desktop.register(&root);
+    let body = json!({ "location_id": location, "library_id": library });
+    assert_eq!(desktop.post("/api/v1/libraries/openings", body).0, 200);
+    let task = BackfillTask {
+        jobs: open_jobs(&desktop.dir, &desktop.host).expect("jobs"),
+        backfill: history_backfill(&desktop.host, &installation()),
+        catalog: desktop.catalog.clone(),
+        source: backfill_source(&installation()),
+        opened: desktop.opened.clone(),
+    };
+    let backfill = Arc::new(DesktopBackfill::new(task, Arc::new(AtomicBool::new(false))));
+    install_backfill_route(&desktop.state, &backfill, false).expect("installed");
+    assert!(!backfill.is_running(), "nothing runs until requested");
+    let (status, answer) = desktop.post("/api/v1/admin/history/backfill", json!({}));
+    assert_eq!(status, 200, "{answer}");
+    assert_eq!(answer["status"], "started");
+    backfill.wait(Duration::from_secs(30));
+    assert!(!backfill.is_running());
+    let (_, entries) = desktop.stop();
+    let requests = entries
+        .iter()
+        .filter(|e| e.operation == BACKFILL_REQUEST_OPERATION);
+    assert_eq!(requests.count(), 2, "the refusal and the start, once each");
+    let runs: Vec<_> = entries
+        .iter()
+        .filter(|e| e.operation == BACKFILL_OPERATION && e.outcome == Outcome::Started)
+        .collect();
+    assert!(
+        !runs.is_empty(),
+        "the opened folder's run registered and journaled"
+    );
 }

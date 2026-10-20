@@ -78,6 +78,10 @@ pub enum Action {
     RepairLibraries,
     /// Read the navigation tree (`GET /api/v1/navigation`, API-S-021).
     ReadNavigation,
+    /// Start the PROV-O history backfill over every storage root the host serves
+    /// (`POST /api/v1/admin/history/backfill`; API-S-029): the desktop owner or a server
+    /// administrator.
+    RunHistoryBackfill,
     /// Journal the UI's console warnings and errors (`POST /api/v1/client-events`,
     /// API-S-030).
     RecordClientEvents,
@@ -91,7 +95,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, in declaration order.
-    pub const ALL: [Action; 17] = [
+    pub const ALL: [Action; 18] = [
         Action::ReadHealth,
         Action::ReadContract,
         Action::SubscribeEvents,
@@ -107,6 +111,7 @@ impl Action {
         Action::ReadLibraries,
         Action::RepairLibraries,
         Action::ReadNavigation,
+        Action::RunHistoryBackfill,
         Action::RecordClientEvents,
         Action::Public,
     ];
@@ -129,6 +134,7 @@ impl Action {
             Action::ReadLibraries => "library.read",
             Action::RepairLibraries => "library.repair",
             Action::ReadNavigation => "navigation.read",
+            Action::RunHistoryBackfill => "history.backfill",
             Action::RecordClientEvents => "client_events.write",
             Action::Public => "public",
         }

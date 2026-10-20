@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "FileSquid API",
-    "version": "0.14.0",
+    "version": "0.15.0",
     "description": "The single FileSquid API served by every FileSquid host. See resources/architecture/030-filesquid-api-and-transports.md. Conventions: a command (mutation) sends a CommandEnvelope as the `envelope` member of its JSON request body (operation_id is the idempotency key, expected_revision the revision last read) and answers with a CommandOutcome; a query (list) takes the PageSize (`limit`, 1-1000) and Cursor (`cursor`) parameters; every failed request answers with an ApiError body (code, message, retryable). Router-wide fallbacks: any /api/v1/ path not in this contract answers 404 not_found, and a documented path called with a method it does not document answers 405 method_not_allowed; both carry the ApiError body. They are not listed per operation because no operation sends them. Authorisation is deny-by-default: every operation, including health, the contract and the event channel, requires the bearerAuth credential and is authorised before anything else runs, so a call without it answers 401 unauthorized and a call whose credential is not accepted or does not grant the operation answers 403 forbidden, before any 404 or 405; both carry the ApiError body with a DenialReason in `reason`. Each operation names the authorisation action it performs in x-filesquid-action. The one deliberate exception is GET /api/v1/health/live (x-filesquid-action public, security []), a liveness probe that answers only {\"status\":\"up\"} without a credential. The content route GET and HEAD /api/v1/content/{handle} (x-filesquid-action content.read, x-filesquid-credential content-handle, security []) is not public: its only credential is the content handle in its path, minted by POST /api/v1/content-handles for one file version (API-S-018); a Bearer token is not accepted there, and every unusable request under /api/v1/content/ (unknown, malformed, missing, expired, evicted or revoked handle, an extra path segment or another method) answers one identical 403 forbidden with reason invalid_credentials, never 401, 404 or 405. Paths marked x-filesquid-host-route are served by the hosts, not by the filesquid-api router."
   },
   "security": [
@@ -2173,6 +2173,48 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/history/backfill": {
+      "post": {
+        "operationId": "startHistoryBackfill",
+        "summary": "Start the PROV-O history backfill",
+        "description": "API-S-029. The desktop owner or a server administrator starts one backfill over every OCFL storage root the host serves, in the background, and the route answers 200 at once. Each run registers in the process registry (`prov.backfill`), checkpoints per object, stops at its cap or on cancel (the host's exit), skips versions that already have a record, and commits one provenance-only version per object. The request carries no body. A request while a backfill runs is refused 409 conflict. The request is journaled once as `history.backfill.request` (succeeded, or failed with its error code: `backfill_running`, `unavailable`); each run journals itself. Starting a job changes no library content or organisation, so there is no CommandEnvelope.",
+        "x-filesquid-action": "history.backfill",
+        "responses": {
+          "200": {
+            "description": "The backfill started in the background.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackfillStarted"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "description": "A history backfill is already running (`conflict`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           },
           "500": {
             "$ref": "#/components/responses/Internal"
@@ -5259,6 +5301,22 @@
           }
         },
         "additionalProperties": false
+      },
+      "BackfillStarted": {
+        "type": "object",
+        "description": "A history backfill that started in the background (API-S-029). Its runs appear in the process registry and the journal as `prov.backfill`.",
+        "required": [
+          "status"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "started"
+            ]
+          }
+        }
       }
     },
     "parameters": {
