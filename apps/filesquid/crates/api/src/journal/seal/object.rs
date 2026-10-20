@@ -351,7 +351,7 @@ pub async fn read_sealed_entries<B: StorageBackend>(
 ///
 /// # Errors
 /// Opening the object or listing its head: [`SealError::Invalid`] for an object that cannot
-/// be opened or holds more than [`MAX_SEGMENTS`] segments; [`SealError::Unavailable`] for
+/// be opened or holds more than one million segments; [`SealError::Unavailable`] for
 /// storage trouble.
 pub async fn visit_sealed_segments<B: StorageBackend>(
     backend: &B,
