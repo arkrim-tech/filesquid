@@ -7,12 +7,12 @@ use super::error::FileError;
 use super::routes::{body, files, query, read_answer, refuse};
 use super::statements::{
     FileRecordQuery, MetadataCommitView, RegisterNamespaceRequest, RemoveStatementRequest,
-    SetStatementRequest, TermQuery,
+    RenameRequest, SetStatementRequest, TermQuery,
 };
 use super::view::LibraryQuery;
 use super::{
     FACTS_OPERATION, METADATA_READ_OPERATION, METADATA_REMOVE_OPERATION, METADATA_SET_OPERATION,
-    NAMESPACES_OPERATION, NAMESPACE_OPERATION, TERMS_OPERATION,
+    NAMESPACES_OPERATION, NAMESPACE_OPERATION, RENAME_OPERATION, TERMS_OPERATION,
 };
 use crate::auth::{journal_entry, Action, Principal};
 use crate::journal::{JournalEntry, Outcome};
@@ -50,6 +50,7 @@ pub(crate) fn routes() -> Vec<Route> {
             Action::WriteFiles,
         ),
         ("/files/facts", get(facts), Action::ReadFiles),
+        ("/files/renames", post(rename), Action::WriteFiles),
     ]
 }
 
@@ -133,6 +134,17 @@ async fn register_namespace(
     }
     .await;
     edit_answer(&state, NAMESPACE_OPERATION, &principal, outcome).await
+}
+
+/// `POST /api/v1/files/renames`: change a file's display name only.
+async fn rename(
+    State(state): State<ApiState>,
+    Extension(principal): Extension<Principal>,
+    request: Result<Json<RenameRequest>, JsonRejection>,
+) -> Response {
+    let actor = principal.actor().to_string();
+    let outcome = async { files(&state)?.rename(body(request)?, actor).await }.await;
+    edit_answer(&state, RENAME_OPERATION, &principal, outcome).await
 }
 
 /// Answer a metadata edit: journal its version with opaque IDs only, or the refusal.
