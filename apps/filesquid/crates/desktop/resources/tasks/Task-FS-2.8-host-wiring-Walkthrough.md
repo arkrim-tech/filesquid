@@ -11,10 +11,10 @@ Branch: `feat/fs-2.8-host-wiring` (global [Task FS-2.8](../../../../../../resour
 
 ## What changed
 
-- `filesquid-api` (`history/source.rs`): the new `HistoryRoots` trait lets a host list the OCFL storage roots it serves for each read. The new `OcflRootsHistory` reads all of them as one history: one record cap and one object cap for all roots, at most `MAX_HISTORY_ROOTS` (256) roots. A root that cannot be opened is logged and left out: the index is then flagged `truncated`, and a lookup that found nothing answers `unavailable`, not `None`. `OcflHistory` keeps its single-root behaviour and now shares the reading code (`Reading`, `read_one`). No route module changed.
+- `filesquid-api` (`history/source.rs`): the new `HistoryRoots` trait lets a host list the OCFL storage roots it serves for each read. The new `OcflRootsHistory` reads all of them as one history: one record cap and one object cap for all roots, for the index and for a single-record lookup alike, at most `MAX_HISTORY_ROOTS` (256) roots. The host lists each root as opened or failed (`RootResult`), so one library that cannot be read does not hide the others. A root that cannot be opened is logged and left out: the index is then flagged `truncated`, and a lookup that found nothing answers `unavailable`, not `None`. `OcflHistory` keeps its single-root behaviour and now shares the reading code (`Reading`, `read_one`). No route module changed.
 - `filesquid-native` (`catalog/provenance.rs`, `desktop` feature):
   - `CatalogRoots` implements `HistoryRoots` over the OCFL storage roots of the libraries a `SqliteCatalog` serves (`<data dir>/libraries/<library-id>.ocfl/`). Each read lists the roots again, so a library created later is included.
-  - `SqliteCatalog::backfill_history` runs the API's `Backfill` over each library, one library at a time. It holds the catalog's lock and uses the library's own version reservations (`.work/leases`), so it never races a catalog commit. It repeats a run that reached its cap, at most `MAX_BACKFILL_RUNS` (100) runs per library, and stops when the cancel flag is set. When a run committed records, the catalog is reconciled with the new head at once. The provenance-only version changes no entity, and its journal entries keep their pre-allocated IDs, so the next launch has nothing to reconcile.
+  - `SqliteCatalog::backfill_history` runs the API's `Backfill` over each library, one library at a time. It holds the catalog's lock and uses the library's own version reservations (`.work/leases`), so it never races a catalog commit. It repeats a run that reached its cap, at most `MAX_BACKFILL_RUNS` (100) runs per library, and stops when the cancel flag is set. When a run committed records, the catalog tries to reconcile with the new head straight away. The provenance-only version changes no entity, and its journal entries keep their pre-allocated IDs, so they are stored once. If that reconcile fails, it is logged as a warning (which the journal layer journals) and the next open reconciles instead.
 - `filesquid-desktop` (`lib.rs`):
   - `provenance_context` gives the installation UUID and `host_facts()`, used by the catalog, the repair service and the backfill.
   - `install_history_source` installs `OcflRootsHistory<CatalogRoots>` in `ApiState`, so the history routes stop answering `503`.
@@ -28,7 +28,7 @@ Branch: `feat/fs-2.8-host-wiring` (global [Task FS-2.8](../../../../../../resour
 | Requirement | Tests |
 |---|---|
 | API-S-029 History routes and backfill: routes from a real desktop library | desktop `integration_history_wiring::the_history_routes_answer_from_a_real_desktop_library` (503 before the source is installed, then `GET /api/v1/history`, `GET /api/v1/files/{id}/history` and `GET /api/v1/files/{id}/versions/v1/prov` through the `filesquid://` scheme handler with the per-launch token; installed once) |
-| API-S-029 several storage roots, caps, unreadable root | api `unit_history::a_history_over_several_storage_roots_indexes_and_finds_every_record`, `a_storage_root_that_cannot_be_opened_flags_the_history_incomplete`, `a_history_over_several_roots_keeps_one_record_cap` |
+| API-S-029 several storage roots, caps, unreadable root | api `unit_history::a_history_over_several_storage_roots_indexes_and_finds_every_record`, `a_storage_root_that_cannot_be_opened_flags_the_history_incomplete`, `a_history_over_several_roots_keeps_one_record_cap`, `a_root_the_host_could_not_open_leaves_the_others_readable`; desktop `integration_history_wiring::one_unreadable_library_leaves_the_others_history_served` (Cubic round 1) |
 | API-S-028 PROV-O record in the same commit: repair follow-up under the run ID | desktop `integration_history_wiring::a_repair_commits_its_provenance_follow_up_under_the_repair_run_id` (a W010 snapshot head in a desktop library, repaired by the desktop-built service; record at `v3` names the run ID, `GET /api/v1/history?operation=<run>` answers one `repair` entry, one `ocfl.commit` entry carries the run ID) |
 | API-S-029 backfill: registered, journaled, resumable, catalog still serves | desktop `integration_history_wiring::the_backfill_fills_the_history_of_versions_committed_without_records` (library committed without records; one run reconstructs `v1` in a `backfill` version `v2`; the second run commits nothing; both runs `Completed` in the registry; two `prov.backfill` `started`/`succeeded` pairs; one `ocfl.commit` under the run ID; a later catalog command succeeds) |
 | API-S-029 backfill cancel | desktop `integration_history_wiring::a_cancelled_backfill_commits_nothing_and_leaves_the_rest_for_the_next_launch` |
@@ -70,12 +70,13 @@ None.
 
 ```text
 $ cargo test -p filesquid-desktop --test integration_history_wiring --locked
-running 4 tests
+running 5 tests
+test one_unreadable_library_leaves_the_others_history_served ... ok
 test the_history_routes_answer_from_a_real_desktop_library ... ok
 test a_cancelled_backfill_commits_nothing_and_leaves_the_rest_for_the_next_launch ... ok
 test a_repair_commits_its_provenance_follow_up_under_the_repair_run_id ... ok
 test the_backfill_fills_the_history_of_versions_committed_without_records ... ok
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
 $ cargo test -p filesquid-desktop --test integration_library_catalog --locked
 running 5 tests
 test a_catalog_directory_that_cannot_be_opened_is_journaled_without_its_path ... ok
@@ -85,7 +86,8 @@ test the_host_keeps_one_catalog_file_per_library_and_journals_its_commits ... ok
 test a_catalog_commit_carries_its_history_in_the_same_version ... ok
 test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
 $ cargo test -p filesquid-api --test unit_history --locked
-running 30 tests
+running 31 tests
+test a_root_the_host_could_not_open_leaves_the_others_readable ... ok
 test a_history_entry_carries_the_label_and_marks_reconstruction ... ok
 test a_file_history_lists_its_object_only ... ok
 test a_commit_writes_its_record_and_journal_entries_in_the_same_version ... ok
@@ -116,7 +118,7 @@ test the_export_is_a_json_ld_array_and_can_be_redacted ... ok
 test the_version_user_names_the_installation_and_never_a_person ... ok
 test the_operations_own_entries_ride_the_version_with_their_ids ... ok
 test the_history_lists_everything_or_one_filter_in_cursor_pages ... ok
-test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
 $ cargo test -p filesquid-api --test unit_history_jobs --locked
 running 11 tests
 test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s

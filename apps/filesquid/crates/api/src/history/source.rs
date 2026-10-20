@@ -284,9 +284,14 @@ impl<B: StorageBackend + Send + Sync + 'static> HistorySource for OcflHistory<B>
     }
 
     fn record(&self, object_id: &str, version: &str) -> Result<Option<Vec<u8>>, HistoryError> {
-        complete_immediately(read_one(&self.backend, object_id, version)).map_err(unavailable)?
+        let mut objects = MAX_HISTORY_OBJECTS;
+        let found = read_one(&self.backend, object_id, version, &mut objects);
+        complete_immediately(found).map_err(unavailable)?
     }
 }
+
+/// One storage root a [`HistoryRoots`] lists: its backend, or why it could not be opened.
+pub type RootResult<B> = Result<Arc<B>, HistoryError>;
 
 /// Most storage roots one [`OcflRootsHistory`] reads.
 pub const MAX_HISTORY_ROOTS: usize = 256;
@@ -297,13 +302,14 @@ pub trait HistoryRoots: Send + Sync + 'static {
     /// The backend of one storage root; its futures must never wait.
     type Backend: StorageBackend + Send + Sync + 'static;
 
-    /// The storage roots served now. Past [`MAX_HISTORY_ROOTS`] the rest are left out and
-    /// the answers flagged incomplete.
+    /// The storage roots served now, each opened or the reason it could not be: a root that
+    /// failed is left out and the answers flagged incomplete, while the others are still
+    /// read. Past [`MAX_HISTORY_ROOTS`] the rest are left out the same way.
     ///
     /// # Errors
     ///
     /// [`HistoryError`] when the host cannot list its storage roots now.
-    fn roots(&self) -> Result<Vec<Arc<Self::Backend>>, HistoryError>;
+    fn roots(&self) -> Result<Vec<RootResult<Self::Backend>>, HistoryError>;
 }
 
 /// The records of every object of every storage root a host serves, as one history: what a
@@ -338,7 +344,11 @@ impl<R: HistoryRoots> OcflRootsHistory<R> {
         let roots = self.roots.roots()?;
         let mut reading = Reading::new(self.max_records);
         reading.skipped = roots.len() > MAX_HISTORY_ROOTS;
-        for backend in roots.iter().take(MAX_HISTORY_ROOTS) {
+        for listed in roots.iter().take(MAX_HISTORY_ROOTS) {
+            let Ok(backend) = listed else {
+                reading.skipped = true;
+                continue;
+            };
             match StorageRoot::open(backend.as_ref()).await {
                 Ok(storage) => reading.root(&storage).await,
                 Err(err) => {
@@ -353,8 +363,10 @@ impl<R: HistoryRoots> OcflRootsHistory<R> {
         Ok(reading.finish())
     }
 
-    /// Find the record of `version` of `object_id` in the listed roots (storage I/O). When
-    /// no root holds it but one could not be read, it may be there: unavailable, not `None`.
+    /// Find the record of `version` of `object_id` in the listed roots (storage I/O),
+    /// opening at most [`MAX_HISTORY_OBJECTS`] objects across all of them. When no root
+    /// holds it but one could not be read, or the object cap left objects unopened, it may be
+    /// there: unavailable, not `None`.
     async fn read_any(
         &self,
         object_id: &str,
@@ -362,8 +374,13 @@ impl<R: HistoryRoots> OcflRootsHistory<R> {
     ) -> Result<Option<Vec<u8>>, HistoryError> {
         let roots = self.roots.roots()?;
         let mut skipped = roots.len() > MAX_HISTORY_ROOTS;
-        for backend in roots.iter().take(MAX_HISTORY_ROOTS) {
-            match read_one(backend.as_ref(), object_id, version).await {
+        let mut objects = MAX_HISTORY_OBJECTS;
+        for listed in roots.iter().take(MAX_HISTORY_ROOTS) {
+            let Ok(backend) = listed else {
+                skipped = true;
+                continue;
+            };
+            match read_one(backend.as_ref(), object_id, version, &mut objects).await {
                 Ok(Some(found)) => return Ok(Some(found)),
                 Ok(None) => {}
                 Err(HistoryError::Unavailable) => skipped = true,
@@ -440,21 +457,25 @@ impl Reading {
 }
 
 /// Read the stored record of `version` of `object_id` from the storage root on `backend`
-/// (storage I/O). When no object matched but some could not be opened (or lie past
-/// [`MAX_HISTORY_OBJECTS`]), the target may be among them, so the answer is
-/// [`HistoryError::Unavailable`], not `None`.
+/// (storage I/O), opening at most `objects` objects and taking those it visits off that
+/// shared budget. When no object matched but some could not be opened (or lie past the
+/// budget), the target may be among them, so the answer is [`HistoryError::Unavailable`],
+/// not `None`.
 async fn read_one<B: StorageBackend>(
     backend: &B,
     object_id: &str,
     version: &str,
+    objects: &mut usize,
 ) -> Result<Option<Vec<u8>>, HistoryError> {
     let Ok(version) = VersionNum::parse(version) else {
         return Ok(None);
     };
     let storage = StorageRoot::open(backend).await.map_err(unavailable)?;
     let roots = storage.objects();
-    let mut skipped = roots.len() > MAX_HISTORY_OBJECTS;
-    for root in roots.iter().take(MAX_HISTORY_OBJECTS) {
+    let mut skipped = roots.len() > *objects;
+    let take = roots.len().min(*objects);
+    *objects -= take;
+    for root in roots.iter().take(take) {
         let Some(object) = open_object(&storage, root).await else {
             skipped = true;
             continue;

@@ -6,15 +6,15 @@
 //!   [`OcflRootsHistory`](filesquid_api::history::OcflRootsHistory) for the history routes.
 //! - [`SqliteCatalog::backfill_history`]: the API's history [`Backfill`] job over every
 //!   library, run under the catalog's lock and the library's own version reservations, so it
-//!   never races a catalog commit. A run that committed records brings the catalog up to the
-//!   new snapshot head at once (the provenance-only version changes no entity), so the next
-//!   launch has nothing to reconcile. The job is resumable by rescanning: a version that has
+//!   never races a catalog commit. After a run that committed records the catalog tries to
+//!   reconcile with the new snapshot head straight away (the provenance-only version changes
+//!   no entity); if that fails it is logged as a warning and the next open reconciles. The job is resumable by rescanning: a version that has
 //!   a record is skipped, and a second call commits nothing.
 
 use super::LOG_TARGET;
 use super::{canonical, error_code, reconcile, reconcile_library, OpenLibrary, SqliteCatalog};
 use filesquid_api::history::backfill::{Backfill, BackfillError, BackfillReport};
-use filesquid_api::history::{HistoryError, HistoryRoots};
+use filesquid_api::history::{HistoryError, HistoryRoots, RootResult};
 use filesquid_api::library::CatalogError;
 use filesquid_core::LibraryId;
 use filesquid_ocfl::storage::FsBackend;
@@ -33,20 +33,29 @@ pub struct CatalogRoots(pub Arc<SqliteCatalog>);
 impl HistoryRoots for CatalogRoots {
     type Backend = FsBackend;
 
-    /// A reader of each served library's storage root (filesystem I/O). A failure is logged
-    /// on stdout with its code only and answered as unavailable.
-    fn roots(&self) -> Result<Vec<Arc<FsBackend>>, HistoryError> {
-        let readers = self.0.history_roots().map_err(|err| {
-            tracing::warn!(
-                target: LOG_TARGET,
-                operation = "library.history.roots",
-                error_code = error_code(&err),
-                "the libraries' storage roots could not be listed for the history"
-            );
-            HistoryError::Unavailable
-        })?;
-        Ok(readers.into_iter().map(Arc::new).collect())
+    /// A reader of each served library's storage root (filesystem I/O). A library whose
+    /// root cannot be opened is answered as unavailable on its own, so the others are still
+    /// read; every failure is logged as a warning with its code only.
+    fn roots(&self) -> Result<Vec<RootResult<FsBackend>>, HistoryError> {
+        let readers = self.0.history_roots().map_err(roots_unavailable)?;
+        let roots = readers
+            .into_iter()
+            .map(|reader| reader.map(Arc::new).map_err(roots_unavailable))
+            .collect();
+        Ok(roots)
     }
+}
+
+/// A failure to list or open the libraries' storage roots, logged as a warning with its code
+/// only (no path), as the history's unavailable answer.
+fn roots_unavailable(err: CatalogError) -> HistoryError {
+    tracing::warn!(
+        target: LOG_TARGET,
+        operation = "library.history.roots",
+        error_code = error_code(&err),
+        "a library's storage root could not be opened for the history"
+    );
+    HistoryError::Unavailable
 }
 
 /// What the backfill did for one library.
@@ -62,16 +71,19 @@ pub struct LibraryBackfill {
 
 impl SqliteCatalog {
     /// A reader of the OCFL storage root of every library this catalog serves (at most
-    /// [`super::MAX_LIBRARIES`]). Filesystem I/O; no path leaves this crate.
+    /// [`super::MAX_LIBRARIES`]), each opened or the reason it could not be, so one library
+    /// that cannot be read does not hide the others. Filesystem I/O; no path leaves this
+    /// crate.
     ///
     /// # Errors
-    /// [`CatalogError`] when the lock is poisoned or a backend cannot be opened.
-    pub fn history_roots(&self) -> Result<Vec<FsBackend>, CatalogError> {
+    /// [`CatalogError`] when the lock is poisoned.
+    pub fn history_roots(&self) -> Result<Vec<Result<FsBackend, CatalogError>>, CatalogError> {
         let libraries = self.lock()?;
-        libraries
+        let readers = libraries
             .values()
             .map(|library| canonical::history_reader(&self.root, &library.id))
-            .collect()
+            .collect();
+        Ok(readers)
     }
 
     /// Run `backfill` over every library this catalog serves, one library at a time under

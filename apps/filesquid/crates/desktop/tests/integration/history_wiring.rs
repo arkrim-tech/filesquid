@@ -68,8 +68,13 @@ fn envelope(op: &str, revision: &str, scope: &str) -> CommandEnvelope {
 
 /// Create a library through the API's library service and answer its ID and revision.
 fn create_library(service: &LibraryService) -> (String, String) {
+    create_library_as(service, "op-create")
+}
+
+/// Create a library as operation `op` and answer its ID and revision.
+fn create_library_as(service: &LibraryService, op: &str) -> (String, String) {
     let request = CommandRequest {
-        envelope: envelope("op-create", NEW_LIBRARY_REVISION, "library"),
+        envelope: envelope(op, NEW_LIBRARY_REVISION, "library"),
         command: LibraryCommand::CreateLibrary {
             repository_id: RepositoryId::new("repo-1").expect("repo"),
             name: "Family archive".into(),
@@ -392,6 +397,44 @@ fn a_cancelled_backfill_commits_nothing_and_leaves_the_rest_for_the_next_launch(
         1,
         "the next launch fills it"
     );
+    let (dir, _) = desktop.stop();
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+/// Cubic round 1: a library whose storage root cannot be opened is left out and flags the
+/// answers; the other libraries' history is still served.
+#[test]
+fn one_unreadable_library_leaves_the_others_history_served() {
+    let desktop = Desktop::launch("unreadable");
+    let service = desktop.library_service();
+    let (readable, _) = create_library_as(&service, "op-readable");
+    let (broken, _) = create_library_as(&service, "op-broken");
+    let scratch = desktop
+        .dir
+        .join(CATALOG_DIR)
+        .join(format!("{broken}.work"))
+        .join("root-scratch");
+    std::fs::remove_dir_all(&scratch).expect("scratch");
+    std::fs::write(&scratch, b"not a directory").expect("block");
+    install_history_source(&desktop.state, desktop.catalog.clone()).expect("installed");
+    let (status, body) = desktop.get("/api/v1/history");
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
+    let page = json(&body);
+    let items = page["items"].as_array().expect("items");
+    assert_eq!(items.len(), 1, "{page}");
+    assert_eq!(
+        items[0]["version"]["object_id"],
+        format!("urn:uuid:{readable}").as_str()
+    );
+    assert_eq!(page["truncated"], true, "a library was left out");
+    let (status, _) = desktop.get(&format!("/api/v1/files/{readable}/versions/v1/prov"));
+    assert_eq!(status, 200);
+    let text = String::from_utf8_lossy(&body).to_string();
+    assert!(
+        !text.contains(desktop.dir.to_string_lossy().as_ref()),
+        "no host path"
+    );
+    drop(service);
     let (dir, _) = desktop.stop();
     std::fs::remove_dir_all(dir).expect("cleanup");
 }

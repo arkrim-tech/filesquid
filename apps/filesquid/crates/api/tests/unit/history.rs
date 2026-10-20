@@ -11,8 +11,8 @@ use filesquid_api::auth::Authoriser;
 use filesquid_api::history::{
     commit_meta, entry_of, journal_path, redact_record, version_user, CommitOperation,
     CommitRecorder, HistoryError, HistoryRoots, HistorySnapshot, HistorySource, MemoryHistory,
-    OcflHistory, OcflRootsHistory, ProvenanceContext, Redactor, INSTALLATION_USER_NAME, JSON_LD,
-    PROV_RECORD_OPERATION, REDACTED_INSTALLATION, TRUNCATED_HEADER,
+    OcflHistory, OcflRootsHistory, ProvenanceContext, Redactor, RootResult, INSTALLATION_USER_NAME,
+    JSON_LD, PROV_RECORD_OPERATION, REDACTED_INSTALLATION, TRUNCATED_HEADER,
 };
 use filesquid_api::journal::{JournalEntry, Level, Outcome, REDACTED};
 use filesquid_api::{router, ApiState};
@@ -626,8 +626,8 @@ struct FixedRoots(Vec<Arc<MemoryBackend>>);
 impl HistoryRoots for FixedRoots {
     type Backend = MemoryBackend;
 
-    fn roots(&self) -> Result<Vec<Arc<MemoryBackend>>, HistoryError> {
-        Ok(self.0.clone())
+    fn roots(&self) -> Result<Vec<RootResult<MemoryBackend>>, HistoryError> {
+        Ok(self.0.iter().cloned().map(Ok).collect())
     }
 }
 
@@ -669,6 +669,31 @@ fn a_storage_root_that_cannot_be_opened_flags_the_history_incomplete() {
         history.record("urn:uuid:other", "v1"),
         Err(HistoryError::Unavailable),
         "the record may be in the unreadable root"
+    );
+}
+
+/// A host whose first storage root could not be opened.
+struct OneFailedRoot(Arc<MemoryBackend>);
+
+impl HistoryRoots for OneFailedRoot {
+    type Backend = MemoryBackend;
+
+    fn roots(&self) -> Result<Vec<RootResult<MemoryBackend>>, HistoryError> {
+        Ok(vec![Err(HistoryError::Unavailable), Ok(self.0.clone())])
+    }
+}
+
+/// Cubic round 1: a root the host could not open leaves the other roots readable.
+#[test]
+fn a_root_the_host_could_not_open_leaves_the_others_readable() {
+    let history = OcflRootsHistory::new(OneFailedRoot(recorded_root(OBJECT_ID, "op-a")));
+    let snapshot = history.index().expect("index");
+    assert_eq!(snapshot.index.len(), 1);
+    assert!(snapshot.truncated);
+    assert!(history.record(OBJECT_ID, "v1").unwrap().is_some());
+    assert_eq!(
+        history.record("urn:uuid:other", "v1"),
+        Err(HistoryError::Unavailable)
     );
 }
 

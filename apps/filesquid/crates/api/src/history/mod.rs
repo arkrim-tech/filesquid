@@ -40,7 +40,8 @@ pub use redact::{redact_record, RedactError, Redactor, REDACTED_INSTALLATION};
 pub use routes::{HistoryPage, JSON_LD, MAX_EXPORT_BYTES, TRUNCATED_HEADER};
 pub use source::{
     entry_of, HistoryError, HistoryRoots, HistorySnapshot, HistorySource, MemoryHistory,
-    OcflHistory, OcflRootsHistory, MAX_HISTORY_OBJECTS, MAX_HISTORY_RECORDS, MAX_HISTORY_ROOTS,
+    OcflHistory, OcflRootsHistory, RootResult, MAX_HISTORY_OBJECTS, MAX_HISTORY_RECORDS,
+    MAX_HISTORY_ROOTS,
 };
 
 /// Journal operation of a provenance record that could not be written, or was not written
