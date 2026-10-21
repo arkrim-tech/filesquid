@@ -270,7 +270,7 @@ fn a_listing_is_newest_first_filtered_and_marked_truncated() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Cubic rounds 1 and 2 (API-S-036 caps): the update counts, in its own transaction, the
+/// Cubic rounds 1 and 2 (API-S-037 caps): the update counts, in its own transaction, the
 /// other running jobs of the named kinds under a live lease, and a second store over the same
 /// database sees the leases the first one wrote.
 #[test]

@@ -94,7 +94,7 @@ pub struct Job {
     pub updated_ms: i64,
     /// Why a failed job failed.
     pub error_code: Option<String>,
-    /// The control asked of the job and not yet carried out (API-S-036): a pending job under
+    /// The control asked of the job and not yet carried out (API-S-037): a pending job under
     /// [`JobControl::Pause`] is paused; a running job's worker sees the request at its next
     /// checkpoint or renewal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -108,7 +108,7 @@ impl Job {
     }
 }
 
-/// A control asked of a job through the job routes (API-S-036).
+/// A control asked of a job through the job routes (API-S-037).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum JobControl {

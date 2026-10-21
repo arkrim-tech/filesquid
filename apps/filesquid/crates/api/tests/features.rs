@@ -14,7 +14,7 @@
 //! the metadata property routes of API-S-035; the display and download names of API-S-027;
 //! the view operation, copy and storage use per collection of API-S-011;
 //! the sealing service and journal rebuild of API-S-032; and the job routes and job events
-//! of API-S-036).
+//! of API-S-037).
 //!
 //! Scenarios that need domain operations not built yet (import, journal-linked renames, the metadata writes
 //! beyond the API-S-035 routes, such as the inspector's EXIF edits, C2PA scans, sync) or the

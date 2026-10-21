@@ -67,7 +67,7 @@ impl Jobs {
     }
 
     /// Publish one `job.update` event on `events` for every stored change of a job
-    /// (API-S-036).
+    /// (API-S-037).
     #[must_use]
     pub fn with_events(mut self, events: EventBus) -> Self {
         self.events = Some(events);
@@ -460,7 +460,7 @@ impl RunningJob {
     /// The control asked of the job (a pause or a cancel through the job routes) as the
     /// last checkpoint or renewal read it: a worker that sees one suspends
     /// ([`Self::suspend`]), which keeps a paused job pending and cancels a job asked to stop
-    /// (API-S-036).
+    /// (API-S-037).
     pub fn requested(&self) -> Option<JobControl> {
         *self
             .requested
@@ -576,7 +576,7 @@ impl RunningJob {
     }
 
     /// Suspend the run if a pause or cancel is still asked of it, checked in the same store
-    /// update, so a resume that cleared the pause keeps the run going (API-S-036). A worker
+    /// update, so a resume that cleared the pause keeps the run going (API-S-037). A worker
     /// calls it where it would stop for [`requested`](Self::requested) (store I/O).
     ///
     /// # Errors

@@ -88,10 +88,10 @@ pub enum Action {
     /// API-S-030).
     RecordClientEvents,
     /// Read durable jobs: their list and one job (`GET /api/v1/jobs`, `/jobs/{job}`;
-    /// API-S-036).
+    /// API-S-037).
     ReadJobs,
     /// Pause, resume and cancel durable jobs (`POST /api/v1/jobs/{job}/pause`, `/resume`,
-    /// `/cancel`; API-S-036).
+    /// `/cancel`; API-S-037).
     ManageJobs,
     /// Deliberately public, unauthenticated: only the liveness probe
     /// (`GET /api/v1/health/live`), which says that the process is up and nothing else. The

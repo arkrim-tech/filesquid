@@ -1,4 +1,4 @@
-//! Worker caps (API-S-036; CORE-S-006, ADR 007): a host may classify a job kind as a transfer
+//! Worker caps (API-S-037; CORE-S-006, ADR 007): a host may classify a job kind as a transfer
 //! or as CPU-heavy work, and no more jobs of a class run at once than its cap allows.
 
 use std::collections::BTreeMap;

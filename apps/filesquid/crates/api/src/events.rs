@@ -50,7 +50,7 @@ pub mod topic {
     /// that subscriber may read.
     pub const NAVIGATION_CHANGE: &str = "navigation.change";
     /// A durable job changed (submitted, started, checkpointed, controlled, suspended,
-    /// finished or released at recovery); payload `JobView` (API-S-036).
+    /// finished or released at recovery); payload `JobView` (API-S-037).
     pub const JOB_UPDATE: &str = "job.update";
     /// Every documented topic, in contract order.
     pub const ALL: [&str; 7] = [

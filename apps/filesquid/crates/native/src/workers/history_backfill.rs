@@ -109,7 +109,7 @@ pub struct BackfillJobRun {
     pub job_id: String,
     /// Where the job stands now: completed; pending (suspended at quit, at a pause request,
     /// or after a library that could not be backfilled to its end, to resume at the next
-    /// launch or when resumed); or cancelled (a cancel request, API-S-036).
+    /// launch or when resumed); or cancelled (a cancel request, API-S-037).
     pub state: JobState,
     /// The libraries this run visited, in order.
     pub ran: Vec<LibraryBackfill>,
@@ -149,7 +149,7 @@ pub fn run_backfill_job(
 }
 
 /// Whether the run must stop: the host is quitting (`stop`), or the job routes asked the job
-/// to pause or cancel (seen at the last checkpoint or renewal, API-S-036). The run then
+/// to pause or cancel (seen at the last checkpoint or renewal, API-S-037). The run then
 /// checkpoints and suspends, which keeps a paused job pending and cancels the other.
 fn halted(stop: &AtomicBool, running: &RunningJob) -> bool {
     stop.load(Ordering::SeqCst) || running.requested().is_some()

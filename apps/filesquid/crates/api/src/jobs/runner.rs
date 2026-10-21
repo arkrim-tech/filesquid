@@ -1,4 +1,4 @@
-//! [`JobRunner`]: how a host hands a resumed job back to the worker of its kind (API-S-036).
+//! [`JobRunner`]: how a host hands a resumed job back to the worker of its kind (API-S-037).
 
 use super::model::{Job, JobError};
 

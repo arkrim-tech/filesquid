@@ -1,4 +1,4 @@
-//! Task API-F1.6: the job routes (API-S-036; NFR-003, ADR 007) through the router on the
+//! Task API-F1.6: the job routes (API-S-037; NFR-003, ADR 007) through the router on the
 //! desktop owner's credential. A worker the host's runner starts is paused through
 //! `POST /jobs/{job}/pause`, suspends at its next checkpoint, and `POST /jobs/{job}/resume`
 //! runs it again from that checkpoint: every unit of work is done exactly once.

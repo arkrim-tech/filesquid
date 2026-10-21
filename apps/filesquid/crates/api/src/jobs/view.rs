@@ -1,4 +1,4 @@
-//! [`JobView`]: what the job routes and the `job.update` event show of a job (API-S-036):
+//! [`JobView`]: what the job routes and the `job.update` event show of a job (API-S-037):
 //! never its source identity, checkpoint, lease holder or fencing number.
 
 use super::model::{Job, JobControl, JobState};

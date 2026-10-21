@@ -1,4 +1,4 @@
-//! Step definitions for `job_routes_NFR-003.feature` (Task API-F1.6; API-S-036): a desktop
+//! Step definitions for `job_routes_NFR-003.feature` (Task API-F1.6; API-S-037): a desktop
 //! owner's router with a job service over the in-memory store, controls sent through the job
 //! routes, and a counting worker driven step by step (its runner, for a resumed job, runs the
 //! rest of the job at once).

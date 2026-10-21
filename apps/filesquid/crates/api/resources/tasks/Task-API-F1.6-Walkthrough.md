@@ -1,8 +1,8 @@
 # Task API-F1.6 Walkthrough: Job and event routes
 
-Branch: `feat/api-f1.6-job-event-routes` (global [Task FS-1.4](../../../../../../resources/implementation-plan.md#task-fs-1.4); [ADR 007](../../../../../../resources/architecture/007-durable-jobs-and-interactive-performance.md), [ADR 030](../../../../../../resources/architecture/030-filesquid-api-and-transports.md)). API contract `0.22.0`.
+Branch: `feat/api-f1.6-job-event-routes` (global [Task FS-1.4](../../../../../../resources/implementation-plan.md#task-fs-1.4); [ADR 007](../../../../../../resources/architecture/007-durable-jobs-and-interactive-performance.md), [ADR 030](../../../../../../resources/architecture/030-filesquid-api-and-transports.md)). API contract `0.23.0`.
 
-## API-S-036: Job routes and job events
+## API-S-037: Job routes and job events
 
 Also PRD [NFR-003](../../../../../../resources/prd.md#nfr-003-bounded-processing-and-migration-endurance) and [SRS-NFR-003](../../../../../../resources/srs.md#srs-nfr-003-bounded-processing-and-migration-endurance) Bounded processing and migration endurance, [F-056](../../../../../../resources/prd.md#f-056-single-filesquid-api) and [SRS-F-056](../../../../../../resources/srs.md#srs-f-056-single-filesquid-api) Single FileSquid API, [CORE-S-006](../../../core/resources/srs.md) Job checkpoint protocol, and API-S-033 Durable jobs (DE-0.4's `Jobs` and `JobStore`, reused here).
 
@@ -16,9 +16,9 @@ Also PRD [NFR-003](../../../../../../resources/prd.md#nfr-003-bounded-processing
 - **Routes** (`jobs::routes`): `GET /api/v1/jobs`, `GET /api/v1/jobs/{job}` (`jobs.read`), and `POST /api/v1/jobs/{job}/pause`, `/resume`, `/cancel` (`jobs.manage`). They answer `JobView`, `JobPage` and `JobControlAnswer`. Errors are typed: 404 `not_found`, 409 `conflict`, 400 `invalid_request`, 503 `unavailable` before the host installs its job service. The store runs on the blocking pool.
 - **Events**: the new `job.update` topic carries the `JobView` for every stored change: submit, start, checkpoint, control, suspend, end and release at recovery. A lease renewal publishes nothing. The view carries no source identity, checkpoint, lease holder or fence.
 - **Journal**: `job.paused`, `job.cancel_requested` and `job.cancelled` once per change (a repeated control that changes nothing is not journaled), `job.resumed` for every resume (it hands the job to its runner), and `job.refused` with the error code. A control's entry names the job ID and the job's operation ID. A refusal of an unknown job names no operation ID, and a malformed filter names neither, as no job is concerned (API-S-033's exception).
-- **Not a command envelope**: the control routes take no body and answer the job view. A control names the state it asks for, so a repeat changes nothing. API-S-036 exempts them from API-S-002's envelope rule, as API-S-034 does for its route.
+- **Not a command envelope**: the control routes take no body and answer the job view. A control names the state it asks for, so a repeat changes nothing. API-S-037 exempts them from API-S-002's envelope rule, as API-S-034 does for its route.
 - **Persistence** (`filesquid-native`): `SqliteJobs` gains a `control` column, migrated into an existing table on open, and a `jobs_newest` index.
-- **Contract**: 0.22.0, with `schema.d.ts` regenerated. ADR 030 records the `job.update` topic.
+- **Contract**: 0.23.0, with `schema.d.ts` regenerated. ADR 030 records the `job.update` topic.
 
 ## Review round 1 (Cubic)
 
@@ -45,14 +45,14 @@ Also PRD [NFR-003](../../../../../../resources/prd.md#nfr-003-bounded-processing
 
 | Requirement | Tests |
 |---|---|
-| API-S-036 an interrupted job resumes without repeating completed work | `integration_job_routes::an_interrupted_job_resumes_without_repeating_completed_work`; `integration_durable_jobs::a_paused_backfill_job_waits_until_it_is_resumed` (desktop); BDD "An interrupted job resumes without repeating completed work" |
-| API-S-036 pause of a pending and a running job | `a_paused_pending_job_does_not_start_until_it_is_resumed`, `a_running_job_sees_a_pause_at_its_next_checkpoint_and_stays_paused`, `a_renewal_also_brings_the_request_to_the_worker`; BDD "A paused job that waits does not start until it is resumed" |
-| API-S-036 cancel, including recovery under a cancel request | `cancelling_a_pending_job_finishes_it`, `a_running_job_under_a_cancel_request_is_cancelled_when_it_suspends`, `a_crashed_run_under_a_cancel_request_is_cancelled_at_recovery` |
-| API-S-036 refusals, idempotence and journal | `controls_that_do_not_apply_are_refused_and_journaled`, `the_same_control_twice_changes_nothing_the_second_time`, `the_routes_list_answer_and_refuse_jobs`; BDD "A finished job refuses every control" |
-| API-S-036 runner hand-off and no runner | `an_interrupted_job_resumes_without_repeating_completed_work` (`scheduled` true), `a_job_without_a_runner_stays_pending_for_the_next_launch` |
-| API-S-036 caps (CORE-S-006 defaults) | `a_classified_kind_is_held_to_its_cap`, `an_expired_lease_holds_no_slot`, `the_default_caps_are_the_core_ones`; BDD "A classified kind is held to its cap" |
-| API-S-036 listing | `listing_is_newest_first_filtered_and_bounded`; `unit_jobs::a_listing_is_newest_first_filtered_and_marked_truncated` (SQLite) |
-| API-S-036 job view and `job.update` events | `every_stored_change_publishes_one_job_update_and_a_renewal_none`, `the_job_view_carries_no_source_checkpoint_or_lease`; `unit_contract` (payload schema, publisher drift); BDD "Every stored change of a job is announced on the event channel" |
+| API-S-037 an interrupted job resumes without repeating completed work | `integration_job_routes::an_interrupted_job_resumes_without_repeating_completed_work`; `integration_durable_jobs::a_paused_backfill_job_waits_until_it_is_resumed` (desktop); BDD "An interrupted job resumes without repeating completed work" |
+| API-S-037 pause of a pending and a running job | `a_paused_pending_job_does_not_start_until_it_is_resumed`, `a_running_job_sees_a_pause_at_its_next_checkpoint_and_stays_paused`, `a_renewal_also_brings_the_request_to_the_worker`; BDD "A paused job that waits does not start until it is resumed" |
+| API-S-037 cancel, including recovery under a cancel request | `cancelling_a_pending_job_finishes_it`, `a_running_job_under_a_cancel_request_is_cancelled_when_it_suspends`, `a_crashed_run_under_a_cancel_request_is_cancelled_at_recovery` |
+| API-S-037 refusals, idempotence and journal | `controls_that_do_not_apply_are_refused_and_journaled`, `the_same_control_twice_changes_nothing_the_second_time`, `the_routes_list_answer_and_refuse_jobs`; BDD "A finished job refuses every control" |
+| API-S-037 runner hand-off and no runner | `an_interrupted_job_resumes_without_repeating_completed_work` (`scheduled` true), `a_job_without_a_runner_stays_pending_for_the_next_launch` |
+| API-S-037 caps (CORE-S-006 defaults) | `a_classified_kind_is_held_to_its_cap`, `an_expired_lease_holds_no_slot`, `the_default_caps_are_the_core_ones`; BDD "A classified kind is held to its cap" |
+| API-S-037 listing | `listing_is_newest_first_filtered_and_bounded`; `unit_jobs::a_listing_is_newest_first_filtered_and_marked_truncated` (SQLite) |
+| API-S-037 job view and `job.update` events | `every_stored_change_publishes_one_job_update_and_a_renewal_none`, `the_job_view_carries_no_source_checkpoint_or_lease`; `unit_contract` (payload schema, publisher drift); BDD "Every stored change of a job is announced on the event channel" |
 | API-S-004 deny by default | `the_job_routes_need_a_credential`; `unit_auth` action map (`jobs.read`, `jobs.manage`) |
 | Review round 1: caps, cancelled runs, resume race, events, filters | `the_cap_counts_a_live_lease_behind_many_waiting_jobs`, `a_full_class_refuses_a_paused_job_as_paused`, `a_crashed_run_asked_to_cancel_is_not_restarted`, `halting_checks_the_request_in_the_same_step`, `ends_and_recoveries_publish_a_job_update`; `the_routes_list_answer_and_refuse_jobs` (`limit` 0 and 1001, empty and 129-character `kind`); `unit_jobs::a_counted_update_sees_every_live_lease_of_the_kinds` (SQLite, two stores over one database); BDD "Every stored change of a job is announced on the event channel" (whole sequence, events kept) |
 | Persistence of the control | `unit_jobs::a_requested_control_survives_closing_the_store`, `a_store_made_before_controls_gains_the_column_and_keeps_its_jobs` |

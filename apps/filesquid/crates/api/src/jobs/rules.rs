@@ -16,7 +16,7 @@ pub const SOURCE_CHANGED: &str = "source_changed";
 /// # Errors
 /// [`JobError::Conflict`] (`job_finished`, `lease_held`, `job_paused` for a job held by a
 /// pause, or `cancel_requested` for a crashed run asked to cancel, which recovery cancels;
-/// API-S-036).
+/// API-S-037).
 pub fn start(
     job: Job,
     (holder, source): (&str, &str),
@@ -133,7 +133,7 @@ pub fn suspend(job: Job, lease: &Lease, now_ms: i64) -> Result<Job, JobError> {
 }
 
 /// Suspend the job under `lease` if a pause or cancel is still asked of it, in the same
-/// step as the check, so a resume in between keeps the run going (API-S-036); a job asked
+/// step as the check, so a resume in between keeps the run going (API-S-037); a job asked
 /// nothing is answered unchanged.
 ///
 /// # Errors
@@ -196,7 +196,7 @@ pub fn expire(job: Job, now_ms: i64) -> Job {
     release(job, now_ms)
 }
 
-/// Pause `job` (API-S-036): a pending job is held; a running job is asked to suspend at its
+/// Pause `job` (API-S-037): a pending job is held; a running job is asked to suspend at its
 /// next checkpoint. Pausing a job already paused changes nothing. Pure.
 ///
 /// # Errors

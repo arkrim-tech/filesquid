@@ -1,4 +1,4 @@
-//! The job routes (Task API-F1.6; API-S-036): one handler per route, each calling the
+//! The job routes (Task API-F1.6; API-S-037): one handler per route, each calling the
 //! installed [`Jobs`] service off the async runtime and answering JSON or the typed error.
 //! Every handler runs only after the router's guard has authorised its action (API-S-004):
 //!

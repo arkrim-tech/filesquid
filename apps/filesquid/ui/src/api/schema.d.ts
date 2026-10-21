@@ -677,6 +677,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import files or a folder the owner picks in the host's dialog
+         * @description API-S-036. The host shows its own native dialog for the source named (`files` or `folder`), and imports what the owner picks into the open library as one durable import job (kind `import`): each file's original and its metadata record with the facts the host's operating system provides are committed in one version of the file's own object, as an upload is (API-S-026, ADR 038). The body carries a CommandEnvelope whose scope is `library:<library_id>`; its operation ID is the idempotency key, so the same operation ID answers the same job instead of starting a second import. An import only adds new files, so the expected revision is not compared. The answer carries the command outcome API-S-002 requires: `pending` with the job (`import: started`), or `committed` with `import: cancelled` when the owner closed the dialog and no job was made. No path, file name or storage key crosses the API in the request, the answer, an error or the journal. A request that names a `collection_id` is refused 400 invalid_request (`collection_not_supported`) before any dialog, so no caller believes its files were filed. A request while a dialog is open is refused 409 conflict (`dialog_open`); a library that is not open answers 404 not_found; a host without an import dialog (filesquid-server) answers 503 unavailable. Each request is journaled once as `import.start`; each file as `import.file`.
+         */
+        post: operations["startImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/libraries/snapshot-copies": {
         parameters: {
             query?: never;
@@ -1130,7 +1150,7 @@ export interface paths {
         };
         /**
          * Durable jobs
-         * @description At most 100 durable jobs (limit, default and most 100; a larger limit answers 100), newest first, optionally of one kind and in one state, marked truncated when more match (API-S-036). There is no cursor: narrow the listing by kind and state to reach older jobs. A kind outside 1 to 128 characters, a limit outside 1 to 1000 or an unknown state is refused as invalid_request. A job is created by the route of its kind (for example POST /api/v1/imports). The views never carry a job's source identity, checkpoint, lease holder or fencing number. A filter that cannot be read is refused as invalid_request and journaled as job.refused.
+         * @description At most 100 durable jobs (limit, default and most 100; a larger limit answers 100), newest first, optionally of one kind and in one state, marked truncated when more match (API-S-037). There is no cursor: narrow the listing by kind and state to reach older jobs. A kind outside 1 to 128 characters, a limit outside 1 to 1000 or an unknown state is refused as invalid_request. A job is created by the route of its kind (for example POST /api/v1/imports). The views never carry a job's source identity, checkpoint, lease holder or fencing number. A filter that cannot be read is refused as invalid_request and journaled as job.refused.
          */
         get: operations["listJobs"];
         put?: never;
@@ -1150,7 +1170,7 @@ export interface paths {
         };
         /**
          * One durable job
-         * @description One job's view: its state, whether it is paused, the control asked of it, its progress, attempts and error code (API-S-036).
+         * @description One job's view: its state, whether it is paused, the control asked of it, its progress, attempts and error code (API-S-037).
          */
         get: operations["getJob"];
         put?: never;
@@ -1172,7 +1192,7 @@ export interface paths {
         put?: never;
         /**
          * Pause a job
-         * @description Pause the job: a pending job is held and does not start until it is resumed; a running job's worker suspends at its next checkpoint, keeping it, and the job then stays paused. Pausing a paused job changes nothing. Journaled as job.paused; a refusal as job.refused (API-S-036).
+         * @description Pause the job: a pending job is held and does not start until it is resumed; a running job's worker suspends at its next checkpoint, keeping it, and the job then stays paused. Pausing a paused job changes nothing. Journaled as job.paused; a refusal as job.refused (API-S-037).
          */
         post: operations["pauseJob"];
         delete?: never;
@@ -1192,7 +1212,7 @@ export interface paths {
         put?: never;
         /**
          * Resume a job
-         * @description Clear the pause of the job and hand a pending job to the worker the host installed for its kind, which resumes it from its checkpoint without repeating completed work (scheduled true); with no such worker the job stays pending for the next launch (scheduled false). Journaled as job.resumed; a refusal as job.refused (API-S-036).
+         * @description Clear the pause of the job and hand a pending job to the worker the host installed for its kind, which resumes it from its checkpoint without repeating completed work (scheduled true); with no such worker the job stays pending for the next launch (scheduled false). Journaled as job.resumed; a refusal as job.refused (API-S-037).
          */
         post: operations["resumeJob"];
         delete?: never;
@@ -1212,7 +1232,7 @@ export interface paths {
         put?: never;
         /**
          * Cancel a job
-         * @description Cancel the job: a pending job, or a running one whose lease has ended, is cancelled at once (job.cancelled); a running job's worker stops at its next checkpoint, after which the job is cancelled (job.cancel_requested). A run that suspends or whose lease expires under a cancel request is cancelled. A refusal is journaled as job.refused (API-S-036).
+         * @description Cancel the job: a pending job, or a running one whose lease has ended, is cancelled at once (job.cancelled); a running job's worker stops at its next checkpoint, after which the job is cancelled (job.cancel_requested). A run that suspends or whose lease expires under a cancel request is cancelled. A refusal is journaled as job.refused (API-S-037).
          */
         post: operations["cancelJob"];
         delete?: never;
@@ -2350,6 +2370,31 @@ export interface components {
             outcome: components["schemas"]["ChoiceOutcome"];
             location_id?: string;
         };
+        /**
+         * @description What the owner picks in the host's dialog.
+         * @enum {string}
+         */
+        ImportSource: "files" | "folder";
+        /**
+         * @description What became of an import request.
+         * @enum {string}
+         */
+        ImportOutcome: "started" | "cancelled";
+        ImportRequest: {
+            envelope: components["schemas"]["CommandEnvelope"];
+            library_id: string;
+            /** @description Reserved for filing the imported files into a collection. Not supported yet: a request that carries it is refused 400 invalid_request (journal code `collection_not_supported`) and no dialog is shown. */
+            collection_id?: string;
+            source: components["schemas"]["ImportSource"];
+        };
+        /** @description The answer of an import request: the command outcome (API-S-002) and what became of the request. */
+        ImportAnswer: {
+            /** @description `pending` for a started import (its job's work is durable and not yet complete; a repeated operation ID answers it again), `committed` for a cancelled one (nothing changed). */
+            outcome: components["schemas"]["CommandOutcome"];
+            import: components["schemas"]["ImportOutcome"];
+            /** @description The import job; absent when cancelled. */
+            job_id?: string;
+        };
         /** @description Copy one file at its head. */
         CopyRequest: {
             /** @description The library. */
@@ -2475,7 +2520,7 @@ export interface components {
          * @enum {string}
          */
         JobControl: "pause" | "cancel";
-        /** @description One durable job as the job routes and the job.update event show it (API-S-036): never its source identity, checkpoint, lease holder or fencing number. */
+        /** @description One durable job as the job routes and the job.update event show it (API-S-037): never its source identity, checkpoint, lease holder or fencing number. */
         JobView: {
             /** @description The job ID. */
             id: string;
@@ -4057,6 +4102,53 @@ export interface operations {
             409: components["responses"]["LibraryConflict"];
             500: components["responses"]["Internal"];
             503: components["responses"]["LibraryUnavailable"];
+        };
+    };
+    startImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportRequest"];
+            };
+        };
+        responses: {
+            /** @description The import job, or that the owner cancelled. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportAnswer"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description The library is not open on this host (`not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description A dialog is already open (`conflict`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            500: components["responses"]["Internal"];
+            503: components["responses"]["Unavailable"];
         };
     };
     copyLibrarySnapshot: {

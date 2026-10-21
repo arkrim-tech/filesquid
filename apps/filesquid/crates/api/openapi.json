@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "FileSquid API",
-    "version": "0.22.0",
+    "version": "0.23.0",
     "description": "The single FileSquid API served by every FileSquid host. See resources/architecture/030-filesquid-api-and-transports.md. Conventions: a command (mutation) sends a CommandEnvelope as the `envelope` member of its JSON request body (operation_id is the idempotency key, expected_revision the revision last read) and answers with a CommandOutcome; a query (list) takes the PageSize (`limit`, 1-1000) and Cursor (`cursor`) parameters; every failed request answers with an ApiError body (code, message, retryable). Router-wide fallbacks: any /api/v1/ path not in this contract answers 404 not_found, and a documented path called with a method it does not document answers 405 method_not_allowed; both carry the ApiError body. They are not listed per operation because no operation sends them. Authorisation is deny-by-default: every operation, including health, the contract and the event channel, requires the bearerAuth credential and is authorised before anything else runs, so a call without it answers 401 unauthorized and a call whose credential is not accepted or does not grant the operation answers 403 forbidden, before any 404 or 405; both carry the ApiError body with a DenialReason in `reason`. Each operation names the authorisation action it performs in x-filesquid-action. The one deliberate exception is GET /api/v1/health/live (x-filesquid-action public, security []), a liveness probe that answers only {\"status\":\"up\"} without a credential. The content route GET and HEAD /api/v1/content/{handle} (x-filesquid-action content.read, x-filesquid-credential content-handle, security []) is not public: its only credential is the content handle in its path, minted by POST /api/v1/content-handles for one file version (API-S-018); a Bearer token is not accepted there, and every unusable request under /api/v1/content/ (unknown, malformed, missing, expired, evicted or revoked handle, an extra path segment or another method) answers one identical 403 forbidden with reason invalid_credentials, never 401, 404 or 405. Paths marked x-filesquid-host-route are served by the hosts, not by the filesquid-api router."
   },
   "security": [
@@ -2491,6 +2491,71 @@
         }
       }
     },
+    "/api/v1/imports": {
+      "post": {
+        "operationId": "startImport",
+        "summary": "Import files or a folder the owner picks in the host's dialog",
+        "description": "API-S-036. The host shows its own native dialog for the source named (`files` or `folder`), and imports what the owner picks into the open library as one durable import job (kind `import`): each file's original and its metadata record with the facts the host's operating system provides are committed in one version of the file's own object, as an upload is (API-S-026, ADR 038). The body carries a CommandEnvelope whose scope is `library:<library_id>`; its operation ID is the idempotency key, so the same operation ID answers the same job instead of starting a second import. An import only adds new files, so the expected revision is not compared. The answer carries the command outcome API-S-002 requires: `pending` with the job (`import: started`), or `committed` with `import: cancelled` when the owner closed the dialog and no job was made. No path, file name or storage key crosses the API in the request, the answer, an error or the journal. A request that names a `collection_id` is refused 400 invalid_request (`collection_not_supported`) before any dialog, so no caller believes its files were filed. A request while a dialog is open is refused 409 conflict (`dialog_open`); a library that is not open answers 404 not_found; a host without an import dialog (filesquid-server) answers 503 unavailable. Each request is journaled once as `import.start`; each file as `import.file`.",
+        "x-filesquid-action": "files.write",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The import job, or that the owner cancelled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "The library is not open on this host (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A dialog is already open (`conflict`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
     "/api/v1/libraries/snapshot-copies": {
       "post": {
         "operationId": "copyLibrarySnapshot",
@@ -3671,7 +3736,7 @@
       "get": {
         "operationId": "listJobs",
         "summary": "Durable jobs",
-        "description": "At most 100 durable jobs (limit, default and most 100; a larger limit answers 100), newest first, optionally of one kind and in one state, marked truncated when more match (API-S-036). There is no cursor: narrow the listing by kind and state to reach older jobs. A kind outside 1 to 128 characters, a limit outside 1 to 1000 or an unknown state is refused as invalid_request. A job is created by the route of its kind (for example POST /api/v1/imports). The views never carry a job's source identity, checkpoint, lease holder or fencing number. A filter that cannot be read is refused as invalid_request and journaled as job.refused.",
+        "description": "At most 100 durable jobs (limit, default and most 100; a larger limit answers 100), newest first, optionally of one kind and in one state, marked truncated when more match (API-S-037). There is no cursor: narrow the listing by kind and state to reach older jobs. A kind outside 1 to 128 characters, a limit outside 1 to 1000 or an unknown state is refused as invalid_request. A job is created by the route of its kind (for example POST /api/v1/imports). The views never carry a job's source identity, checkpoint, lease holder or fencing number. A filter that cannot be read is refused as invalid_request and journaled as job.refused.",
         "x-filesquid-action": "jobs.read",
         "parameters": [
           {
@@ -3731,7 +3796,7 @@
       "get": {
         "operationId": "getJob",
         "summary": "One durable job",
-        "description": "One job's view: its state, whether it is paused, the control asked of it, its progress, attempts and error code (API-S-036).",
+        "description": "One job's view: its state, whether it is paused, the control asked of it, its progress, attempts and error code (API-S-037).",
         "x-filesquid-action": "jobs.read",
         "parameters": [
           {
@@ -3771,7 +3836,7 @@
       "post": {
         "operationId": "pauseJob",
         "summary": "Pause a job",
-        "description": "Pause the job: a pending job is held and does not start until it is resumed; a running job's worker suspends at its next checkpoint, keeping it, and the job then stays paused. Pausing a paused job changes nothing. Journaled as job.paused; a refusal as job.refused (API-S-036).",
+        "description": "Pause the job: a pending job is held and does not start until it is resumed; a running job's worker suspends at its next checkpoint, keeping it, and the job then stays paused. Pausing a paused job changes nothing. Journaled as job.paused; a refusal as job.refused (API-S-037).",
         "x-filesquid-action": "jobs.manage",
         "parameters": [
           {
@@ -3814,7 +3879,7 @@
       "post": {
         "operationId": "resumeJob",
         "summary": "Resume a job",
-        "description": "Clear the pause of the job and hand a pending job to the worker the host installed for its kind, which resumes it from its checkpoint without repeating completed work (scheduled true); with no such worker the job stays pending for the next launch (scheduled false). Journaled as job.resumed; a refusal as job.refused (API-S-036).",
+        "description": "Clear the pause of the job and hand a pending job to the worker the host installed for its kind, which resumes it from its checkpoint without repeating completed work (scheduled true); with no such worker the job stays pending for the next launch (scheduled false). Journaled as job.resumed; a refusal as job.refused (API-S-037).",
         "x-filesquid-action": "jobs.manage",
         "parameters": [
           {
@@ -3857,7 +3922,7 @@
       "post": {
         "operationId": "cancelJob",
         "summary": "Cancel a job",
-        "description": "Cancel the job: a pending job, or a running one whose lease has ended, is cancelled at once (job.cancelled); a running job's worker stops at its next checkpoint, after which the job is cancelled (job.cancel_requested). A run that suspends or whose lease expires under a cancel request is cancelled. A refusal is journaled as job.refused (API-S-036).",
+        "description": "Cancel the job: a pending job, or a running one whose lease has ended, is cancelled at once (job.cancelled); a running job's worker stops at its next checkpoint, after which the job is cancelled (job.cancel_requested). A run that suspends or whose lease expires under a cancel request is cancelled. A refusal is journaled as job.refused (API-S-037).",
         "x-filesquid-action": "jobs.manage",
         "parameters": [
           {
@@ -7306,6 +7371,71 @@
           }
         }
       },
+      "ImportSource": {
+        "type": "string",
+        "description": "What the owner picks in the host's dialog.",
+        "enum": [
+          "files",
+          "folder"
+        ]
+      },
+      "ImportOutcome": {
+        "type": "string",
+        "description": "What became of an import request.",
+        "enum": [
+          "started",
+          "cancelled"
+        ]
+      },
+      "ImportRequest": {
+        "type": "object",
+        "required": [
+          "envelope",
+          "library_id",
+          "source"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "envelope": {
+            "$ref": "#/components/schemas/CommandEnvelope"
+          },
+          "library_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "collection_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Reserved for filing the imported files into a collection. Not supported yet: a request that carries it is refused 400 invalid_request (journal code `collection_not_supported`) and no dialog is shown."
+          },
+          "source": {
+            "$ref": "#/components/schemas/ImportSource"
+          }
+        }
+      },
+      "ImportAnswer": {
+        "type": "object",
+        "description": "The answer of an import request: the command outcome (API-S-002) and what became of the request.",
+        "required": [
+          "outcome",
+          "import"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "outcome": {
+            "$ref": "#/components/schemas/CommandOutcome",
+            "description": "`pending` for a started import (its job's work is durable and not yet complete; a repeated operation ID answers it again), `committed` for a cancelled one (nothing changed)."
+          },
+          "import": {
+            "$ref": "#/components/schemas/ImportOutcome"
+          },
+          "job_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The import job; absent when cancelled."
+          }
+        }
+      },
       "CopyRequest": {
         "type": "object",
         "description": "Copy one file at its head.",
@@ -7610,7 +7740,7 @@
       },
       "JobView": {
         "type": "object",
-        "description": "One durable job as the job routes and the job.update event show it (API-S-036): never its source identity, checkpoint, lease holder or fencing number.",
+        "description": "One durable job as the job routes and the job.update event show it (API-S-037): never its source identity, checkpoint, lease holder or fencing number.",
         "required": [
           "id",
           "kind",

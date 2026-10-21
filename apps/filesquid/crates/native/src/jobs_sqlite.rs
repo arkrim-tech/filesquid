@@ -186,7 +186,7 @@ impl JobStore for SqliteJobs {
     }
 }
 
-/// Add the `control` column (API-S-036) to a `jobs` table created before it existed; a table
+/// Add the `control` column (API-S-037) to a `jobs` table created before it existed; a table
 /// without it, or none yet, is left to [`SCHEMA`]. Idempotent. Database I/O.
 fn add_control_column(conn: &Connection) -> Result<(), JobError> {
     let mut stmt = conn

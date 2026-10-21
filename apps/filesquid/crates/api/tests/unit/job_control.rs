@@ -1,4 +1,4 @@
-//! Task API-F1.6: controlling durable jobs (API-S-036; NFR-003, ADR 007, CORE-S-006). A job
+//! Task API-F1.6: controlling durable jobs (API-S-037; NFR-003, ADR 007, CORE-S-006). A job
 //! can be paused, resumed and cancelled whether it waits or runs, a worker sees the request at
 //! its next checkpoint, a classified kind is held to its cap, every stored change publishes one
 //! `job.update` event, and the job view never carries the source or the checkpoint.

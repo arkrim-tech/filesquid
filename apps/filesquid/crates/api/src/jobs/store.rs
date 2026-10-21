@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::sync::{Mutex, MutexGuard};
 
 /// The kinds whose live leases a counted start counts for a job: those that share its class
-/// (API-S-036 caps).
+/// (API-S-037 caps).
 pub type SlotKinds<'a> = &'a dyn Fn(&Job) -> Vec<String>;
 
 /// A host's job store. Every method is one atomic step; the rules are the caller's
@@ -51,7 +51,7 @@ pub trait JobStore: Send + Sync {
     fn unfinished_of(&self, kind: &str, limit: usize) -> Result<Vec<Job>, JobError>;
 
     /// [`JobStore::update`] that also passes `change` how many other jobs hold a slot of
-    /// the job's class (API-S-036 caps): the running jobs of the kinds `kinds` names for the
+    /// the job's class (API-S-037 caps): the running jobs of the kinds `kinds` names for the
     /// job whose lease has not ended at `now_ms`, counted in the same atomic step, so no
     /// other start, from this service or another one over the same store, takes a slot in
     /// between. A job for which `kinds` names none is passed 0 without a count.

@@ -1,6 +1,6 @@
 # NFR-003: Bounded processing and migration endurance
 # SRS-NFR-003: Bounded processing and migration endurance
-# API-S-036: Job routes and job events (ADR 007; CORE-S-006)
+# API-S-037: Job routes and job events (ADR 007; CORE-S-006)
 # Bound in tests/support/job_steps.rs (Task API-F1.6).
 Feature: Durable jobs are reported and controlled through the job routes
   As a library owner

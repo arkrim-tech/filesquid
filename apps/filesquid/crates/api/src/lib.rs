@@ -60,6 +60,7 @@ pub mod files;
 pub mod health;
 pub mod history;
 pub mod host;
+pub mod imports;
 pub mod jobs;
 pub mod journal;
 pub mod journal_writer;
@@ -83,7 +84,7 @@ pub use routes::{route_actions, routed_paths, router, Liveness};
 use std::sync::{Arc, OnceLock};
 
 /// Version of the FileSquid API contract. Bumped when the contract changes.
-pub const API_VERSION: &str = "0.22.0";
+pub const API_VERSION: &str = "0.23.0";
 
 /// URL prefix shared by every API route.
 pub const API_PREFIX: &str = "/api/v1";
@@ -138,10 +139,13 @@ pub struct ApiState {
     /// folder-choice route answers 503 until then; API-S-025).
     location_chooser: Arc<OnceLock<Arc<dyn local_library::choice::LocationChooser>>>,
     /// The host's durable job service for the job routes, installed once at startup (they
-    /// answer 503 until then; API-S-036).
+    /// answer 503 until then; API-S-037).
     jobs: Arc<OnceLock<Arc<jobs::Jobs>>>,
-    /// The host's worker for each job kind, to which a resumed job is handed (API-S-036).
+    /// The host's worker for each job kind, to which a resumed job is handed (API-S-037).
     job_runners: Arc<std::sync::Mutex<JobRunners>>,
+    /// The host's import dialog and job runner, installed once at startup (the import route
+    /// answers 503 until then).
+    import_starter: Arc<OnceLock<Arc<dyn imports::ImportStarter>>>,
 }
 
 /// The installed job runners, by job kind.
@@ -173,6 +177,10 @@ impl std::fmt::Debug for ApiState {
             .field(
                 "location_chooser_installed",
                 &self.location_chooser.get().is_some(),
+            )
+            .field(
+                "import_starter_installed",
+                &self.import_starter.get().is_some(),
             )
             .finish()
     }
@@ -219,10 +227,11 @@ impl ApiState {
             location_chooser: Arc::new(OnceLock::new()),
             jobs: Arc::new(OnceLock::new()),
             job_runners: Arc::new(std::sync::Mutex::new(JobRunners::new())),
+            import_starter: Arc::new(OnceLock::new()),
         }
     }
 
-    /// Install the host's job service for the job routes (API-S-036). Returns false, keeping
+    /// Install the host's job service for the job routes (API-S-037). Returns false, keeping
     /// the first, if one was already installed.
     pub fn install_jobs(&self, jobs: Arc<jobs::Jobs>) -> bool {
         self.jobs.set(jobs).is_ok()
@@ -234,7 +243,7 @@ impl ApiState {
     }
 
     /// Install `runner` as the worker of job `kind`, to which `POST /api/v1/jobs/{job}/resume`
-    /// hands a resumed job of that kind (API-S-036). Returns false, keeping the first, if the
+    /// hands a resumed job of that kind (API-S-037). Returns false, keeping the first, if the
     /// kind already has one.
     pub fn install_job_runner(&self, kind: &str, runner: Arc<dyn jobs::JobRunner>) -> bool {
         let mut runners = self
@@ -377,6 +386,17 @@ impl ApiState {
         chooser: Arc<dyn local_library::choice::LocationChooser>,
     ) -> bool {
         self.location_chooser.set(chooser).is_ok()
+    }
+
+    /// Install the host's import dialog and job runner for the import route. Returns false,
+    /// keeping the first, if one was already installed.
+    pub fn install_import_starter(&self, starter: Arc<dyn imports::ImportStarter>) -> bool {
+        self.import_starter.set(starter).is_ok()
+    }
+
+    /// The installed import starter, if any.
+    pub fn import_starter(&self) -> Option<Arc<dyn imports::ImportStarter>> {
+        self.import_starter.get().cloned()
     }
 
     /// The installed folder dialog, if any.
