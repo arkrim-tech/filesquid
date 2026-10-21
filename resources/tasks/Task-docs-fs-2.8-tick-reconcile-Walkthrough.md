@@ -28,7 +28,7 @@ Its only listed module row, UI-0.6, is ticked, but the global box needs more. Le
 
 ## Verification
 
-Raw CLI output (the hook's status lines from the last full run, 308 s, taken from its log; the full log is about 13,500 lines of cargo test output).
+Raw CLI output (the hook's status lines from the last scoped Rust run, 308 s; the FULL=1 run required by the scope is pending, taken from its log; the full log is about 13,500 lines of cargo test output).
 
 ```text
 $ python3 scripts/docs/update_mvp_progress.py
