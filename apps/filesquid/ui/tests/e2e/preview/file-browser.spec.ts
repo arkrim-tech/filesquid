@@ -367,7 +367,72 @@ test("an upload is one PUT of the client's facts that creates the file's own obj
   expect(errors).toEqual([]);
 });
 
-test("writes are single calls: new folder, rename, remove and Undo", async ({ page }) => {
+const FILE_ID = "5b1d2c3e-7a4f-4e8b-9c6d-0a1b2c3d4e5f";
+
+/** One file's own object (API-S-026): the original at `original/<file-uuid>.txt`. */
+function fileObject(): MemoryFileSource {
+  return new MemoryFileSource({
+    library_id: "lib",
+    object_id: `urn:uuid:${FILE_ID}`,
+    files: [{ path: `original/${FILE_ID}.txt`, displayName: "readme.txt", content: "hello" }],
+  });
+}
+
+/** Open the file browser on the file object's `original/` folder. */
+function openFileObject(page: Page): Promise<FilesApi> {
+  const hash = `#/files/lib/${encodeURIComponent(`urn:uuid:${FILE_ID}`)}/original`;
+  return open(page, fileObject(), hash);
+}
+
+test("a rename posts to the renames route, never to moves, and shows the new display name", async ({
+  page,
+}) => {
+  const errors = trackErrors(page);
+  const api = await openFileObject(page);
+  await expect(rowNames(page)).toHaveText(["readme.txt"]);
+  await page.getByRole("button", { name: "readme.txt" }).focus();
+  await page.getByRole("button", { name: label(labels, "fileRenameMove") }).click();
+  await expect(
+    page.getByRole("form", { name: fill("fileRenameOnlyTitle", { name: "readme.txt" }) }),
+  ).toBeVisible();
+  await expect(page.getByRole("textbox", { name: label(labels, "fileFieldFolder") })).toBeHidden();
+  await page.keyboard.type("holiday-notes.txt");
+  await page.keyboard.press("Enter");
+  await expect(page.locator("fs-file-browser .frame > .status")).toHaveText(
+    fill("fileRenamed", { name: "holiday-notes.txt", version: "v2" }),
+  );
+  await expect(rowNames(page)).toHaveText(["holiday-notes.txt"]);
+  expect(api.writes).toEqual([
+    `POST renames ${JSON.stringify({
+      library_id: "lib",
+      file_id: FILE_ID,
+      display_name: "holiday-notes.txt",
+    })}`,
+  ]);
+  expect(await deepText(page)).not.toContain(`${FILE_ID}.txt`);
+  expect(errors).toEqual([]);
+});
+
+test("a refused rename shows the label for its reason and keeps the display name", async ({
+  page,
+}) => {
+  const errors = trackErrors(page, /status of 409/);
+  await openFileObject(page);
+  await page.route(/\/api\/v1\/files\/renames$/, (route) =>
+    route.fulfill({ status: 409, json: { code: "conflict", message: "x", retryable: false } }),
+  );
+  await page.getByRole("button", { name: "readme.txt" }).focus();
+  await page.getByRole("button", { name: label(labels, "fileRenameMove") }).click();
+  await page.keyboard.type("other.txt");
+  await page.keyboard.press("Enter");
+  await expect(page.locator("fs-file-browser .frame > .alert")).toHaveText(
+    label(labels, "fileRenameConflict"),
+  );
+  await expect(rowNames(page)).toHaveText(["readme.txt"]);
+  expect(errors).toEqual([]);
+});
+
+test("writes are single calls: new folder, move, remove and Undo", async ({ page }) => {
   const errors = trackErrors(page);
   const api = await open(page);
   await page.getByRole("button", { name: label(labels, "fileNewFolder") }).click();

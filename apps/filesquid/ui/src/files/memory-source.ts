@@ -23,7 +23,8 @@ import type {
   UploadCommit,
   UploadFacts,
 } from "./model";
-import { MAX_UPLOAD_BYTES, isMediaType, lastSegment } from "./model";
+import { MAX_UPLOAD_BYTES, isControl, isMediaType, lastSegment } from "./model";
+import { fileIdOf, inOriginalFolder, isOriginalPath } from "./ops";
 import type { FileSource, SourceOptions } from "./source";
 
 /** One file of the fixture. */
@@ -123,6 +124,30 @@ const TYPES: Readonly<Record<string, string>> = {
 /** An `ApiError` with a contract code. */
 function refusal(status: number, code: "not_found" | "conflict" | "invalid_request"): ApiError {
   return new ApiError(status, ROUTE, { code });
+}
+
+/** Whether a display name is one the rename route takes: 1 to 1,024 bytes, no `/` or NUL. */
+function validDisplayName(name: string): boolean {
+  const bytes = new TextEncoder().encode(name).length;
+  return bytes > 0 && bytes <= MAX_UPLOAD_NAME_BYTES && !name.includes("/") && !name.includes("\0");
+}
+
+/**
+ * The display name as the API shows it (API-S-005): control characters removed, `/` and `\`
+ * replaced by `_`, surrounding spaces trimmed, at most 1,024 bytes kept, and `file` for a name
+ * left empty. A rename stores the name as sent; every listing and detail shows this form. Pure.
+ */
+function safeDisplayName(name: string): string {
+  const cleaned = Array.from(name, (ch) => (ch === "/" || ch === "\\" ? "_" : ch))
+    .filter((ch) => !isControl(ch))
+    .join("")
+    .trim();
+  let kept = "";
+  for (const ch of cleaned) {
+    if (new TextEncoder().encode(kept + ch).length > MAX_UPLOAD_NAME_BYTES) break;
+    kept += ch;
+  }
+  return kept.trim() === "" ? "file" : kept.trim();
 }
 
 /** The lowercase extension of a stored name, or null. */
@@ -230,7 +255,7 @@ export class MemoryFileSource implements FileSource {
       version: file.version,
       path: stored.path,
       name,
-      display_name: stored.displayName,
+      display_name: safeDisplayName(stored.displayName),
       digest: `fixture-${stored.bytes.byteLength}`,
       digest_algorithm: "sha512",
       size: stored.bytes.byteLength,
@@ -313,9 +338,41 @@ export class MemoryFileSource implements FileSource {
     };
   }
 
-  /** Move or rename one file or folder. */
+  /**
+   * Set the display name of the file this object holds (`POST /api/v1/files/renames`,
+   * API-S-027): one new version that changes only the display name. Refuses what the route
+   * refuses: an empty name, one over 1,024 bytes or with `/` or NUL (`invalid_request`); a file
+   * this object does not hold (`not_found`); the current name (`conflict`).
+   */
+  async rename(library: LibraryRef, fileId: string, displayName: string): Promise<FileCommit> {
+    this.check();
+    const held = this.holdsFile(fileId) && library.library_id === this.options.library_id;
+    if (!held) throw refusal(404, "not_found");
+    if (!validDisplayName(displayName)) throw refusal(400, "invalid_request");
+    return this.commit((files) => {
+      for (const file of [...files.values()].filter((f) => isOriginalPath(f.path, fileId))) {
+        files.set(file.path, { ...file, displayName });
+      }
+    });
+  }
+
+  /** True when this object is file `fileId`'s own object: it holds that file's stored original. */
+  private holdsFile(fileId: string): boolean {
+    const own = fileIdOf(this.options.object_id)?.toLowerCase() === fileId.toLowerCase();
+    return own && [...this.latest().files.keys()].some((path) => isOriginalPath(path, fileId));
+  }
+
+  /**
+   * Move one file or folder. As the API does, it refuses (`invalid_request`) a move from or to
+   * `original` or below it in a file's own object, which only a rename changes.
+   */
   async move(_object: ObjectRef, from: string, to: string): Promise<FileCommit> {
     this.check();
+    const id = fileIdOf(this.options.object_id);
+    const own = id !== undefined && this.holdsFile(id);
+    if (own && (inOriginalFolder(from) || inOriginalFolder(to))) {
+      throw refusal(400, "invalid_request");
+    }
     return this.commit((files, version, created) => {
       const moving = [...files.keys()].filter((path) => within(path, from));
       if (moving.length === 0) throw refusal(404, "not_found");
@@ -523,7 +580,7 @@ function fileEntry(file: Stored): FolderEntry {
   return {
     kind: "file",
     name,
-    display_name: file.displayName,
+    display_name: safeDisplayName(file.displayName),
     path: file.path,
     digest: `fixture-${file.bytes.byteLength}`,
     size: file.bytes.byteLength,
