@@ -90,6 +90,12 @@ fn journaled_owner_state() -> (ApiState, LaunchToken, Monitor, Arc<MemoryJournal
     state.install_preferences(Arc::new(
         filesquid_api::preferences::MemoryPreferenceStore::new(),
     ));
+    state.install_jobs(Arc::new(filesquid_api::jobs::Jobs::new(
+        Arc::new(filesquid_api::jobs::MemoryJobStore::new()),
+        monitor.journal(),
+        monitor.registry().clone(),
+        "launch-a",
+    )));
     state.install_navigation(Arc::new(filesquid_api::navigation::NavigationService::new(
         Arc::new(filesquid_api::library::MemoryCatalog::new()),
         Arc::new(filesquid_api::navigation::MemoryFolderIndex::new()),
@@ -143,10 +149,11 @@ fn plain_get_paths() -> Vec<String> {
                     | Action::RepairLibraries
                     | Action::RunHistoryBackfill
                     | Action::RecordClientEvents
+                    | Action::ManageJobs
             )
         })
         .map(|(path, _)| path)
-        .filter(|path| !path.contains("{entry}"))
+        .filter(|path| !path.contains("{entry}") && !path.contains("{job}"))
         .collect()
 }
 
@@ -380,6 +387,10 @@ fn every_routed_path_declares_its_action() {
             "/api/v1/navigation" => Action::ReadNavigation,
             "/api/v1/preferences" => Action::ManagePreferences,
             "/api/v1/client-events" => Action::RecordClientEvents,
+            "/api/v1/jobs" | "/api/v1/jobs/{job}" => Action::ReadJobs,
+            "/api/v1/jobs/{job}/pause"
+            | "/api/v1/jobs/{job}/resume"
+            | "/api/v1/jobs/{job}/cancel" => Action::ManageJobs,
             file if file.starts_with("/api/v1/files/") => Action::ReadHistory,
             other => panic!("{other} has no expected action in this test"),
         };
@@ -411,6 +422,8 @@ fn action_names_are_unique_dotted_identifiers() {
             "preferences.manage",
             "history.backfill",
             "client_events.write",
+            "jobs.read",
+            "jobs.manage",
             "public"
         ]
     );

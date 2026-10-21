@@ -47,6 +47,7 @@ fn route_table() -> Vec<Route> {
     table.extend(crate::history::routes::routes());
     table.extend(crate::history::launch::routes());
     table.extend(crate::local_library::routes::routes());
+    table.extend(crate::jobs::routes::routes());
     table.extend(crate::local_library::choice::routes());
     table.extend(crate::imports::routes());
     table.extend(crate::navigation::routes());
