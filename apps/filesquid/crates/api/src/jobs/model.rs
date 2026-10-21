@@ -94,6 +94,46 @@ pub struct Job {
     pub updated_ms: i64,
     /// Why a failed job failed.
     pub error_code: Option<String>,
+    /// The control asked of the job and not yet carried out (API-S-037): a pending job under
+    /// [`JobControl::Pause`] is paused; a running job's worker sees the request at its next
+    /// checkpoint or renewal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub control: Option<JobControl>,
+}
+
+impl Job {
+    /// Whether the job waits under a pause: pending, held until it is resumed.
+    pub fn is_paused(&self) -> bool {
+        self.state == JobState::Pending && self.control == Some(JobControl::Pause)
+    }
+}
+
+/// A control asked of a job through the job routes (API-S-037).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JobControl {
+    /// Hold the job: a pending job does not start; a running job suspends at its next
+    /// checkpoint and stays held.
+    Pause,
+    /// Stop the job: a running job stops at its next checkpoint and is cancelled.
+    Cancel,
+}
+
+impl JobControl {
+    /// Lowercase wire name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pause => "pause",
+            Self::Cancel => "cancel",
+        }
+    }
+
+    /// Parse a lowercase wire name.
+    pub fn parse(name: &str) -> Option<Self> {
+        [Self::Pause, Self::Cancel]
+            .into_iter()
+            .find(|control| control.as_str() == name)
+    }
 }
 
 /// An exclusive lease on a job: the proof a worker shows for every write.

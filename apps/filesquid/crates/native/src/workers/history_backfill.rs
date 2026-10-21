@@ -107,8 +107,9 @@ fn done_libraries(checkpoint: Option<&str>) -> Vec<String> {
 pub struct BackfillJobRun {
     /// The job.
     pub job_id: String,
-    /// Where the job stands now: completed, or pending (suspended at quit, or after a
-    /// library that could not be backfilled to its end, to resume at the next launch).
+    /// Where the job stands now: completed; pending (suspended at quit, at a pause request,
+    /// or after a library that could not be backfilled to its end, to resume at the next
+    /// launch or when resumed); or cancelled (a cancel request, API-S-037).
     pub state: JobState,
     /// The libraries this run visited, in order.
     pub ran: Vec<LibraryBackfill>,
@@ -117,7 +118,8 @@ pub struct BackfillJobRun {
 /// Run the history backfill as a durable job: resume the unfinished backfill job (or submit
 /// one), revalidate its `source`, then backfill every library its checkpoint does not list,
 /// renewing the lease while each library runs and checkpointing after each that finished.
-/// When `stop` is set (quit) the job writes its checkpoint and is suspended; a library that
+/// When `stop` is set (quit), or the job routes ask the job to pause or cancel, the job
+/// writes its checkpoint and is suspended (a cancel request ends it cancelled); a library that
 /// did not finish, or a failure while the run still holds its lease, suspends it too, so the
 /// next launch resumes it. Filesystem, database and journal I/O.
 ///
@@ -138,12 +140,19 @@ pub fn run_backfill_job(
         Ok(done) => done,
         Err(err) => return Err(suspend_after(running, err)),
     };
-    let complete = !stop.load(Ordering::SeqCst) && ran.iter().all(library_finished);
+    let complete = !halted(stop, &running) && ran.iter().all(library_finished);
     let state = match complete {
         true => running.complete().map(|()| JobState::Completed)?,
         false => checkpoint_and_suspend(running, &progress)?,
     };
     Ok(BackfillJobRun { job_id, state, ran })
+}
+
+/// Whether the run must stop: the host is quitting (`stop`), or the job routes asked the job
+/// to pause or cancel (seen at the last checkpoint or renewal, API-S-037). The run then
+/// checkpoints and suspends, which keeps a paused job pending and cancels the other.
+fn halted(stop: &AtomicBool, running: &RunningJob) -> bool {
+    stop.load(Ordering::SeqCst) || running.requested().is_some()
 }
 
 /// Suspend a run that failed with `err` while it may still hold its lease (a lost lease
@@ -167,14 +176,16 @@ struct Progress {
     total: u64,
 }
 
-/// Write the checkpoint of `progress` and suspend the job with it (checkpoint on quit).
+/// Write the checkpoint of `progress` and suspend the job with it (checkpoint on quit, or
+/// on a pause or cancel request), answering the state the suspension stored: pending, or
+/// cancelled under a cancel request.
 fn checkpoint_and_suspend(
     mut running: RunningJob,
     progress: &Progress,
 ) -> Result<JobState, JobError> {
     let text = backfill_checkpoint(&progress.done);
     running.checkpoint(&text, progress.done.len() as u64, Some(progress.total))?;
-    running.suspend().map(|()| JobState::Pending)
+    running.suspend()
 }
 
 /// Start the unfinished backfill job, found by kind whatever else waits, or a new one; a job
@@ -248,7 +259,8 @@ fn wait_unless_stopped(ms: i64, stop: &AtomicBool) {
     }
 }
 
-/// Backfill every library the job's checkpoint does not list, until `stop` is set,
+/// Backfill every library the job's checkpoint does not list, until `stop` is set or a
+/// pause or cancel is asked of the job,
 /// checkpointing after each library that finished; answer the libraries visited and the
 /// progress reached.
 ///
@@ -269,7 +281,7 @@ fn backfill_remaining(
     let total = libraries.len() as u64;
     let mut ran = Vec::new();
     for library in libraries {
-        if stop.load(Ordering::SeqCst) {
+        if halted(stop, running) {
             break;
         }
         if done.iter().any(|id| id == library.as_str()) {
@@ -292,7 +304,7 @@ fn backfill_remaining(
 
 /// Backfill `library` while a second thread renews the job's lease every third of its
 /// length, so a long library never outlives the lease; the library's run is cancelled when
-/// `stop` is set or the lease is lost.
+/// `stop` is set, a pause or cancel is asked of the job, or the lease is lost.
 ///
 /// # Errors
 /// The lease could not be renewed (the library's run was cancelled).
@@ -318,7 +330,8 @@ fn backfill_leased(
 }
 
 /// Renew `running`'s lease every third of `ttl_ms` until `finished` is set (the library's
-/// run ended), passing `stop` on to `cancel` and setting `cancel` when the lease is lost.
+/// run ended), passing `stop` and a pause or cancel request on to `cancel` and setting
+/// `cancel` when the lease is lost.
 ///
 /// # Errors
 /// The lease could not be renewed.
@@ -332,7 +345,7 @@ fn renew_while_running(
     let every = Duration::from_millis(u64::try_from((ttl_ms / 3).max(1)).unwrap_or(1));
     let mut renewed_at = Instant::now();
     while !finished.load(Ordering::SeqCst) {
-        if stop.load(Ordering::SeqCst) {
+        if halted(stop, running) {
             cancel.store(true, Ordering::SeqCst);
         }
         if renewed_at.elapsed() >= every {
