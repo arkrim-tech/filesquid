@@ -342,7 +342,7 @@ impl<B: StorageBackend, R, S> FileService<B, R, S> {
 
 /// Add each distinct content of `object` to `total`; false when [`MAX_SIZE_CONTENTS`] was
 /// reached first.
-async fn add_object_size<B: StorageBackend, R, S>(
+pub(super) async fn add_object_size<B: StorageBackend, R, S>(
     library: &Library<B, R, S>,
     object: &Object<'_, B>,
     total: &mut LibraryHistorySizeView,

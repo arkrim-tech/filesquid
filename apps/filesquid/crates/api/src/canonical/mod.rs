@@ -13,6 +13,7 @@
 //! sequence of ADR 005 around it: record intent, commit the snapshot version, then update its
 //! catalog from the published receipt, and reconcile from the snapshot after a crash.
 
+pub mod copy;
 pub mod entity;
 mod error;
 pub mod layout;
@@ -23,6 +24,7 @@ pub mod store;
 mod transform;
 pub mod upload;
 
+pub use copy::{copy_record, source_reference, CopyInput, SOURCE_TERM};
 pub use entity::{LibraryHead, SnapshotEntity, SnapshotFile, VirtualEntry, ENTITY_SCHEMA};
 pub use error::CanonicalError;
 pub use layout::{

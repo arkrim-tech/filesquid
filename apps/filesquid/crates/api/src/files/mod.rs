@@ -45,7 +45,12 @@
 //! ([`FileLibrary`]) into a [`FileService`]; this module does no storage I/O of its own
 //! (API-S-006).
 
+pub mod copy;
 mod download;
+pub mod drive;
+mod drive_facts;
+mod drive_routes;
+pub mod drive_scope;
 mod error;
 mod handle;
 pub mod labels;
@@ -63,6 +68,7 @@ mod versions;
 mod view;
 
 pub use download::{Download, DownloadStream};
+pub use drive_facts::{CollectionHistorySizeView, CollectionSizeQuery, FactsAnswer};
 pub use error::FileError;
 pub use handle::{FileFuture, FileOperations};
 pub use labels::{APP_DATA_FOLDER, LABELS_PATH, MAX_LABELS, PROVENANCE_FOLDER, RESERVED_FOLDERS};
@@ -119,6 +125,12 @@ pub const DOWNLOAD_OPERATION: &str = "files.download";
 pub const METADATA_READ_OPERATION: &str = "files.metadata.read";
 /// Journal operation of a rename (the display name only).
 pub const RENAME_OPERATION: &str = "files.rename";
+/// Journal operation of a copy (Task API-F2.2).
+pub const COPY_OPERATION: &str = "files.copy";
+/// Journal operation of a refused view (Task API-F2.2).
+pub const VIEW_OPERATION: &str = "files.view";
+/// Journal operation of a refused storage-use count of a collection (Task API-F2.2).
+pub const COLLECTION_HISTORY_SIZE_OPERATION: &str = "files.collection_history_size";
 /// Journal operation of a statement set.
 pub const METADATA_SET_OPERATION: &str = "files.metadata.set";
 /// Journal operation of a statement removal.
