@@ -4,7 +4,8 @@
 //! - **Free text** matches the display name and every `dcterms:` statement value, compared
 //!   after [`fold`]; a phrase matches as one run of text.
 //! - **Relevance** adds, for each free-text term that is not excluded, 3 when the display name
-//!   holds it, 2 when a `dcterms:title` does and 1 when another `dcterms:` value does.
+//!   holds it, 2 when a `dcterms:title` does and 1 when a `dcterms:` value other than the title
+//!   does; the three add up.
 //! - **Dates.** `before:` and `after:` compare the calendar date of the head version's
 //!   instant in the caller's zone. `createdbefore:` and `createdafter:` read the capture date
 //!   (`exif:DateTimeOriginal`, else `dcterms:created`): a value with a zone is an instant and
@@ -22,14 +23,23 @@ use time::{Date, OffsetDateTime, UtcOffset};
 /// The capture-date statements, in the order they are read.
 const CAPTURE_TERMS: [&str; 2] = ["exif:DateTimeOriginal", "dcterms:created"];
 
-/// Media types of `type:document` besides the office families.
-const DOCUMENT_TYPES: [&str; 3] = ["application/pdf", "application/msword", "application/rtf"];
+/// Media types of `type:document`: PDF, RTF and the legacy office formats.
+const DOCUMENT_TYPES: [&str; 5] = [
+    "application/pdf",
+    "application/rtf",
+    "application/msword",
+    "application/vnd.ms-excel",
+    "application/vnd.ms-powerpoint",
+];
 
-/// Media-type prefixes of the office document families of `type:document`.
-const DOCUMENT_PREFIXES: [&str; 3] = [
+/// Media-type prefixes of `type:document`: the OOXML and OpenDocument families and the
+/// macro-enabled variants of the legacy office formats (`application/vnd.ms-excel.sheet...`).
+const DOCUMENT_PREFIXES: [&str; 5] = [
     "application/vnd.openxmlformats-officedocument.",
     "application/vnd.oasis.opendocument.",
-    "application/vnd.ms-",
+    "application/vnd.ms-excel.",
+    "application/vnd.ms-powerpoint.",
+    "application/vnd.ms-word.",
 ];
 
 /// One file a search examines.
@@ -76,7 +86,7 @@ pub fn file_score(query: &Query, file: &SearchFile) -> i64 {
         .map(|text| {
             let in_name = name.contains(text);
             let in_title = dcterms(&file.facts, "title").any(|v| v.contains(text));
-            let elsewhere = dcterms(&file.facts, "").any(|v| v.contains(text));
+            let elsewhere = other_dcterms(&file.facts).any(|v| v.contains(text));
             3 * i64::from(in_name) + 2 * i64::from(in_title) + i64::from(elsewhere)
         })
         .sum()
@@ -143,6 +153,15 @@ fn dcterms<'a>(facts: &'a FileFacts, term: &'a str) -> impl Iterator<Item = Stri
                 .strip_prefix("dcterms:")
                 .is_some_and(|t| term.is_empty() || t == term)
         })
+        .map(|(_, value)| fold(value))
+}
+
+/// The folded values of every `dcterms:` statement of `facts` but `dcterms:title`.
+fn other_dcterms(facts: &FileFacts) -> impl Iterator<Item = String> + '_ {
+    facts
+        .statements
+        .iter()
+        .filter(|(curie, _)| curie.starts_with("dcterms:") && curie != "dcterms:title")
         .map(|(_, value)| fold(value))
 }
 
@@ -281,6 +300,26 @@ mod tests {
     }
 
     #[test]
+    fn documents_are_pdf_rtf_and_office_formats_only() {
+        for media in [
+            "application/pdf",
+            "application/vnd.ms-excel",
+            "application/vnd.ms-excel.sheet.macroEnabled.12",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.oasis.opendocument.text",
+        ] {
+            assert!(type_matches(TypeClass::Document, media), "{media}");
+        }
+        for media in [
+            "application/vnd.ms-fontobject",
+            "application/zip",
+            "text/plain",
+        ] {
+            assert!(!type_matches(TypeClass::Document, media), "{media}");
+        }
+    }
+
+    #[test]
     fn head_dates_use_the_callers_zone() {
         let late = file("a", &[], 1, 1_772_323_200_000 - 3_600_000);
         assert!(hit("after:2026-02-28", &late, UTC));
@@ -346,11 +385,7 @@ mod tests {
         let described = file("y.pdf", &[("dcterms:description", "a deck")], 1, 0);
         let query = parse("deck").expect("q");
         assert_eq!(file_score(&query, &named), 3);
-        assert_eq!(
-            file_score(&query, &titled),
-            3,
-            "title and any dcterms value"
-        );
+        assert_eq!(file_score(&query, &titled), 2, "the title alone");
         assert_eq!(file_score(&query, &described), 1);
         assert_eq!(folder_score(&parse("client").expect("q"), &folder), 3);
     }

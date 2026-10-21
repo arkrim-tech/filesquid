@@ -14,6 +14,7 @@ Feature: Search operation and operator grammar
     Then the results should be "img_0001.jpg"
 
   Scenario: Quoted phrases match exactly and a leading minus excludes
+    Given the further files "deck for client.txt" and "Client deck draft.pptx"
     When the owner searches for "\"Client deck\" -draft"
     Then the results should be "Client deck.pptx"
 

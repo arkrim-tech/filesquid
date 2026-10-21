@@ -106,6 +106,18 @@ async fn library(
     w.search.drive = Some(drive);
 }
 
+#[given(expr = "the further files {string} and {string}")]
+async fn further_files(w: &mut MonitorWorld, a: String, b: String) {
+    for name in [a, b] {
+        let id = w.search.upload(&name, "text/plain", b"z").await;
+        w.search
+            .drive
+            .as_ref()
+            .expect("a library")
+            .file_in_collection(&id);
+    }
+}
+
 #[given(expr = "a file {string} in a collection the owner may not read")]
 async fn secret_file(w: &mut MonitorWorld, name: String) {
     let id = w.search.upload(&name, "application/pdf", b"abc").await;

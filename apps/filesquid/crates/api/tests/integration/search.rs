@@ -222,13 +222,13 @@ async fn unknown_operators_are_refused_and_never_match_an_empty_filter() {
 async fn operators_this_host_cannot_answer_are_refused_as_unavailable() {
     let (rig, drive) = rig().await;
     library(&rig, &drive).await;
-    for query in [
-        "is:favorite",
-        "owner:ben",
-        "sharedwith:public",
-        "to:ben",
-        "from:ben",
-        "pendingowner:me",
+    for (query, operator) in [
+        ("is:favorite", "is:favorite"),
+        ("owner:ben", "owner:"),
+        ("sharedwith:public", "sharedwith"),
+        ("to:ben", "to"),
+        ("from:ben", "from"),
+        ("pendingowner:me", "pendingowner"),
     ] {
         let answer = search(&rig, query, "").await;
         assert_refused(&answer, 503, "unavailable");
@@ -236,7 +236,8 @@ async fn operators_this_host_cannot_answer_are_refused_as_unavailable() {
             .as_str()
             .expect("message")
             .to_string();
-        assert!(message.contains("not available on this host"), "{message}");
+        let named = format!("The search operator {operator} is not available on this host.");
+        assert_eq!(message, named, "{query}");
     }
 }
 
@@ -283,6 +284,40 @@ async fn results_are_filtered_by_permission_before_ranking() {
         404,
         "not_found",
     );
+}
+
+#[tokio::test]
+async fn an_unreadable_file_is_never_read_before_ranking() {
+    let (rig, drive) = rig_with(DriveCatalog::with_access(LIBRARY, Arc::new(NoSecret))).await;
+    let uri = upload_uri("Budget 2026 secret.pdf", 3, "media_type=application%2Fpdf");
+    let answer = rig.call(Method::PUT, &uri, &[], b"abc".to_vec()).await;
+    let secret = answer.json()["file_id"].as_str().expect("id").to_string();
+    drive.file_in_new_collection(&secret, SECRET, "Secret plans");
+    let before = rig.root.reads();
+    assert!(found(&rig, "budget", "").await.is_empty());
+    assert_eq!(
+        rig.root.reads(),
+        before,
+        "the only matching file is unreadable, so search reads no file object at all"
+    );
+}
+
+/// Reads nothing at all: not even the repository.
+struct Nothing;
+
+impl NavigationAccess for Nothing {
+    fn may_read(&self, _principal: &Principal, _node: &NodeRef) -> bool {
+        false
+    }
+}
+
+#[tokio::test]
+async fn a_caller_who_may_not_read_the_repository_cannot_search_it() {
+    let (rig, drive) = rig_with(DriveCatalog::with_access(LIBRARY, Arc::new(Nothing))).await;
+    let uri = upload_uri("budget.pdf", 3, "media_type=application%2Fpdf");
+    let answer = rig.call(Method::PUT, &uri, &[], b"abc".to_vec()).await;
+    drive.file_in_collection(answer.json()["file_id"].as_str().expect("id"));
+    assert_refused(&search(&rig, "budget", "").await, 404, "not_found");
 }
 
 #[tokio::test]
@@ -385,8 +420,34 @@ async fn a_node_limits_the_search_and_dates_follow_the_callers_zone() {
     let west = "&zone=-08:00";
     assert_eq!(
         found(&rig, "createdafter:2026-03-01", west).await,
+        ["img_0001.jpg"],
+        "a zoneless capture date compares by the calendar date it states"
+    );
+    describe(&rig, &photo, "dcterms:created", "2026-03-01T05:00:00Z").await;
+    assert_eq!(
+        found(&rig, "createdafter:2026-03-01", "").await,
+        ["img_0001.jpg"],
+        "in UTC the instant is on 1 March"
+    );
+    assert!(
+        found(&rig, "createdafter:2026-03-01", west)
+            .await
+            .is_empty(),
+        "at -08:00 the same instant is on 28 February"
+    );
+    assert_eq!(
+        found(&rig, "createdbefore:2026-03-01", west).await,
         ["img_0001.jpg"]
     );
+    let repository = NodeRef::Repository(
+        filesquid_core::RepositoryId::new(drive_catalog::REPOSITORY).expect("repository"),
+    )
+    .to_handle()
+    .expect("handle");
+    let page = search(&rig, "harbour", &format!("&node={repository}"))
+        .await
+        .json();
+    assert!(page["node"].is_null(), "the repository is answered as null");
     assert_refused(
         &search(&rig, "a", "&zone=PST").await,
         400,

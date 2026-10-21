@@ -420,6 +420,7 @@ pub fn page_rows(
     params: PageParams<'_>,
     mut candidates: Vec<Candidate>,
 ) -> Result<RowsPage, FileError> {
+    check_limit(Some(params.limit))?;
     let order = |a: &RowKey, b: &RowKey| compare(a, b, params.direction, params.folders);
     candidates.sort_by(|a, b| order(&a.key, &b.key));
     let scope = scope_digest(&candidates)?;

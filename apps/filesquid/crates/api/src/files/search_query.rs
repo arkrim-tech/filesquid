@@ -294,12 +294,12 @@ fn type_class(value: &str) -> Result<TypeClass, FileError> {
 
 /// The clause of `owner:`: `me` here; another user needs accounts this host does not keep.
 fn owner(value: &str) -> Result<Clause, FileError> {
-    match value {
+    match value.trim() {
         "me" => Ok(Clause::OwnerMe),
         "" => Err(FileError::invalid(
             "The search operator owner: needs a value.",
         )),
-        _ => Err(unavailable("owner")),
+        _ => Err(unavailable("owner:")),
     }
 }
 
@@ -441,6 +441,7 @@ mod tests {
             "size>10TB",
             "size>",
             "title:",
+            "owner:\"   \"",
             "\"\"",
         ] {
             assert_eq!(refused(query), ErrorCode::InvalidRequest, "{query}");

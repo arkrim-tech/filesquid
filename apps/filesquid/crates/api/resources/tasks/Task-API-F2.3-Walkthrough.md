@@ -6,9 +6,9 @@ Branch `feat/api-f2.3-search-operators`, module `filesquid-api` ([plan row](../p
 
 | SRS ID and title | Covered by |
 |---|---|
-| [API-S-012](../srs.md) Search operation and operator grammar | `integration_search` (10 tests), `search_operation_API-S-012.feature` (11 scenarios), `files::search*` unit tests (13), `unit_contract`, `unit_auth` |
+| [API-S-012](../srs.md) Search operation and operator grammar | `integration_search` (12 tests), `search_operation_API-S-012.feature` (11 scenarios), `files::search*` unit tests (14), `unit_contract`, `unit_auth` |
 | [SRS-F-063](../../../../../../resources/srs.md#srs-f-063-file-search-query-language-and-filter-chips) File search query language and filter chips | the grammar, the unknown-operator error, relevance as default with any view sort key, stable paging, declared case folding, date boundaries in the caller's zone without invented instants: `every_answered_operator_narrows_the_results`, `unknown_operators_are_refused_and_never_match_an_empty_filter`, `relevance_orders_by_default_and_any_view_key_replaces_it`, `nfc_and_case_folding_are_declared_and_diacritics_are_not_folded`, `folding_is_nfc_and_lower_case_without_diacritic_folding`, `capture_dates_without_a_zone_compare_by_calendar_date` |
-| [SRS-NFR-004](../../../../../../resources/srs.md#srs-nfr-004-security-and-privacy) Security and privacy | permission filtering before ranking: `results_are_filtered_by_permission_before_ranking` |
+| [SRS-NFR-004](../../../../../../resources/srs.md#srs-nfr-004-security-and-privacy) Security and privacy | permission filtering before ranking: `results_are_filtered_by_permission_before_ranking`, `an_unreadable_file_is_never_read_before_ranking`, `a_caller_who_may_not_read_the_repository_cannot_search_it` |
 | [API-S-011](../srs.md) View operation | results shaped and paged like the view, with the cursor conflict rule: `paging_is_stable_and_a_changed_result_set_refuses_the_cursor` |
 | [API-S-027](../srs.md) Display and download names | results name files by their display name |
 | [API-S-002](../srs.md) The versioned API contract owned by this crate | contract 0.22.0 with the grammar, bounds and refusals in the operation's description; regenerated `ui/src/api/schema.d.ts` |
@@ -25,14 +25,15 @@ Branch `feat/api-f2.3-search-operators`, module `filesquid-api` ([plan row](../p
   - Difference from SRS-F-063's "simple case fold": no ICU case-mapping crate is locked, so lower-casing uses std's full lower-case mapping. It differs from Unicode simple case folding only for a few characters: `İ` becomes `i` plus a combining dot, and characters whose fold differs from their lower case, such as `ſ` and Cherokee lower-case letters, are not folded.
 - **Matching** (`src/files/search_match.rs`, pure).
   - Free text reads the display name and every `dcterms:` value.
-  - Relevance is 3 per term in the name, 2 in a `dcterms:title`, 1 in another `dcterms:` value.
+  - Relevance adds, per term, 3 when the name holds it, 2 when a `dcterms:title` does and 1 when a `dcterms:` value other than the title does; the three add up.
   - `before:` and `after:` use the head version's date in the caller's `zone`.
   - `createdbefore:` and `createdafter:` read `exif:DateTimeOriginal`, else `dcterms:created`. A zoned value compares by its date in the caller's zone; a zoneless value compares by the calendar date it states, so no instant is invented.
   - Folder rows match by name, `type:folder` and `owner:me`.
 - **Scope** (`src/files/search_scope.rs`).
   - The repository (by default), a library, a collection or a virtual collection, read from the host catalog through the navigation service.
   - Every library, collection and file the caller may not read is left out before anything is read or ranked.
-  - Bounds: `MAX_SEARCH_LIBRARIES` (1,000) and `MAX_SEARCH_FILES` (10,000), with `complete: false` beyond them.
+  - Bounds: `MAX_SEARCH_LIBRARIES` (1,000) and `MAX_SEARCH_FILES` (10,000), with `complete: false` beyond them; one more catalog entry is read, never examined, only to learn that the scope is larger. The "by me" sort keys read at most `MAX_JOURNAL_PAGES` (20) journal pages per library.
+  - A caller who may not read the repository cannot search it.
 - **Operation** (`src/files/search.rs`, `drive_routes.rs`).
   - `GET /api/v1/files/search?q=&node=&sort=&direction=&folders=&zone=&cursor=&limit=`.
   - Sort is `relevance` (most relevant first) or any view sort key, with the same matches either way.
@@ -51,33 +52,36 @@ Branch `feat/api-f2.3-search-operators`, module `filesquid-api` ([plan row](../p
 
 ```text
 $ cargo test -p filesquid-api --locked --lib files::search
+test files::search_match::tests::documents_are_pdf_rtf_and_office_formats_only ... ok
 test files::search::tests::zones_are_fixed_offsets ... ok
-test files::search_match::tests::folders_match_by_name_and_type_and_relevance_ranks_names_first ... ok
-test files::search_match::tests::free_text_reads_the_name_and_dublin_core_values ... ok
 test files::search::tests::relevance_is_the_default_and_any_view_key_replaces_it ... ok
-test files::search_match::tests::head_dates_use_the_callers_zone ... ok
 test files::search_match::tests::capture_dates_without_a_zone_compare_by_calendar_date ... ok
+test files::search_match::tests::free_text_reads_the_name_and_dublin_core_values ... ok
+test files::search_match::tests::head_dates_use_the_callers_zone ... ok
+test files::search_match::tests::folders_match_by_name_and_type_and_relevance_ranks_names_first ... ok
 test files::search_match::tests::operators_read_their_statements_and_facts ... ok
 test files::search_query::tests::every_answered_operator_parses ... ok
-test files::search_query::tests::folding_is_nfc_and_lower_case_without_diacritic_folding ... ok
 test files::search_query::tests::operators_this_host_cannot_answer_are_unavailable ... ok
+test files::search_query::tests::folding_is_nfc_and_lower_case_without_diacritic_folding ... ok
 test files::search_query::tests::queries_are_bounded ... ok
 test files::search_query::tests::words_phrases_and_exclusions ... ok
 test files::search_query::tests::unknown_operators_and_bad_values_are_refused_and_never_ignored ... ok
-test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 57 filtered out; finished in 0.00s
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 57 filtered out; finished in 0.00s
 
 $ cargo test -p filesquid-api --locked --test integration_search
+test an_unreadable_file_is_never_read_before_ranking ... ok
+test a_caller_who_may_not_read_the_repository_cannot_search_it ... ok
 test nfc_and_case_folding_are_declared_and_diacritics_are_not_folded ... ok
-test a_node_limits_the_search_and_dates_follow_the_callers_zone ... ok
 test free_text_phrases_and_exclusions_read_names_and_dublin_core ... ok
 test operators_this_host_cannot_answer_are_refused_as_unavailable ... ok
+test a_node_limits_the_search_and_dates_follow_the_callers_zone ... ok
+test every_answered_operator_narrows_the_results ... ok
 test paging_is_stable_and_a_changed_result_set_refuses_the_cursor ... ok
 test relevance_orders_by_default_and_any_view_key_replaces_it ... ok
-test every_answered_operator_narrows_the_results ... ok
 test unknown_operators_are_refused_and_never_match_an_empty_filter ... ok
-test unfiled_files_and_folder_rows_are_searchable ... ok
 test results_are_filtered_by_permission_before_ranking ... ok
-test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.33s
+test unfiled_files_and_folder_rows_are_searchable ... ok
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.37s
 
 $ cargo test -p filesquid-api --locked --test unit_contract --test unit_auth
 test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
@@ -91,6 +95,7 @@ Feature: Search operation and operator grammar
    ✔  Then the results should be "img_0001.jpg"
   Scenario: Quoted phrases match exactly and a leading minus excludes
    ✔> Given a library whose files are "budget.pdf" titled "Budget 2026", "img_0001.jpg" described as "sunset over the harbour" and "Client deck.pptx"
+   ✔  Given the further files "deck for client.txt" and "Client deck draft.pptx"
    ✔  When the owner searches for "\"Client deck\" -draft"
    ✔  Then the results should be "Client deck.pptx"
   Scenario Outline: Operators narrow the result set
@@ -132,5 +137,5 @@ Feature: Search operation and operator grammar
    ✔  Then the results should be "budget.pdf"
 25 features
 362 scenarios (260 passed, 102 skipped)
-1253 steps (1151 passed, 102 skipped)
+1254 steps (1152 passed, 102 skipped)
 ```

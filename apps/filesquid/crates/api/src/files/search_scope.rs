@@ -6,7 +6,8 @@
 //! may not read, and every file whose home collection (or, when unfiled, library) the caller
 //! may not read, is left out here, before any file is read or ranked, so neither results nor
 //! scores reveal it. Every read is bounded: at most [`MAX_SEARCH_LIBRARIES`] libraries and
-//! [`MAX_SEARCH_FILES`] files in all (one more is read to learn that the scope is larger).
+//! [`MAX_SEARCH_FILES`] files in all; one more catalog entry is read, never examined, only to
+//! learn that the scope is larger. A caller who may not read the repository cannot search it.
 //! Reads the catalog, which may block; call it on a blocking thread.
 
 use super::drive::FolderRow;
@@ -77,11 +78,10 @@ pub fn search_scope(
     node: Option<&NodeRef>,
     deleted: bool,
 ) -> Result<SearchScope, FileError> {
-    if let Some(node) = node {
-        navigation
-            .check_readable(principal, node)
-            .map_err(file_error)?;
-    }
+    let repository = NodeRef::Repository(navigation.repository_id().clone());
+    navigation
+        .check_readable(principal, node.unwrap_or(&repository))
+        .map_err(file_error)?;
     let catalog = navigation.catalog().as_ref();
     let (targets, mut complete) = targets(navigation, principal, node, deleted)?;
     let visibility = match deleted {
@@ -96,7 +96,13 @@ pub fn search_scope(
             scope: target.scope,
             visibility,
         };
-        let entries = read_bounded(|after| catalog.files(&listing, after, MAX_PAGE), room)?;
+        let mut entries = read_bounded(|after| catalog.files(&listing, after, MAX_PAGE), room)?;
+        // An entry past the bound is read only to learn that the scope is larger: it is
+        // dropped here, never permission-checked or examined.
+        let over = entries.len() == room;
+        if over {
+            entries.pop();
+        }
         room = room.saturating_sub(entries.len());
         let files = readable_files(navigation, principal, &target.library_id, entries, deleted)?;
         let (folders, folders_complete) = match target.folders {
@@ -109,15 +115,10 @@ pub fn search_scope(
             files,
             folders,
         });
-        if room == 0 {
+        if over {
             complete = false;
             break;
         }
-    }
-    let examined: usize = scope.libraries.iter().map(|l| l.files.len()).sum();
-    if examined > MAX_SEARCH_FILES {
-        trim_files(&mut scope);
-        complete = false;
     }
     scope.complete = complete;
     Ok(scope)
@@ -235,13 +236,4 @@ fn collection_title(
     Ok(collection
         .filter(|c| c.library_id() == library_id)
         .map(|c| c.title().to_string()))
-}
-
-/// Keep the first [`MAX_SEARCH_FILES`] files of `scope`, in library order.
-fn trim_files(scope: &mut SearchScope) {
-    let mut room = MAX_SEARCH_FILES;
-    for library in &mut scope.libraries {
-        library.files.truncate(room);
-        room -= library.files.len();
-    }
 }

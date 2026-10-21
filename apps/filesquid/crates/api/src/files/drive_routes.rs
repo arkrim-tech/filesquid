@@ -204,7 +204,17 @@ async fn search_results(
         zone,
         owns_files: *principal == Principal::Owner,
     };
-    search_page(&request, &parsed, searcher, examined)
+    let mut page = search_page(&request, &parsed, searcher, examined)?;
+    let repository = request
+        .node
+        .as_deref()
+        .and_then(NodeRef::from_handle)
+        .is_some_and(|node| matches!(node, NodeRef::Repository(_)));
+    if repository {
+        // The repository is answered as `null` however it was named.
+        page.node = None;
+    }
+    Ok(page)
 }
 
 /// The scope and the caller's own times of a search, read on a blocking thread.
