@@ -1,0 +1,89 @@
+apps/filesquid/crates/api/Cargo.toml
+  s_0f2f75ceda32bb::t_8a12069b88a4b5 199-206
+apps/filesquid/crates/api/openapi.json
+  s_0f2f75ceda32bb::t_39787a0d424ccd 5,147-149,3734-3962,3991-3992,3994,7721-7848,7936-7946,8172-8201
+apps/filesquid/crates/api/resources/plan.md
+  s_0f2f75ceda32bb::t_3dcf4f5f785c22 65-67,70-71
+apps/filesquid/crates/api/resources/srs.md
+  s_0f2f75ceda32bb::t_d8af4cdeeb6380 48
+apps/filesquid/crates/api/resources/tasks/Task-API-F1.6-Walkthrough.md
+  s_0f2f75ceda32bb::t_2efc4508c90b88 1-191
+apps/filesquid/crates/api/src/auth/policy.rs
+  s_0f2f75ceda32bb::t_a6ccff16564d8e 90-95,106,125-126,151-152
+apps/filesquid/crates/api/src/events.rs
+  s_0f2f75ceda32bb::t_0dbdb5f4c648b4 52-54,56,63
+apps/filesquid/crates/api/src/jobs/mod.rs
+  s_0f2f75ceda32bb::t_a1d8f7a60c73fe 21-26,29,31,33,35,37-44,72-77
+apps/filesquid/crates/api/src/jobs/model.rs
+  s_0f2f75ceda32bb::t_411f5bc56a5f2f 97-136
+apps/filesquid/crates/api/src/jobs/routes.rs
+  s_0f2f75ceda32bb::t_0aea5103f15743 1-239
+apps/filesquid/crates/api/src/jobs/rules.rs
+  s_0f2f75ceda32bb::t_ddecad2d96e98e 4,17-19,32-37,125-126,130,132-157,161,182,190-192,196-267
+apps/filesquid/crates/api/src/jobs/runner.rs
+  s_0f2f75ceda32bb::t_b14dacf50f48d6 1-14
+apps/filesquid/crates/api/src/jobs/service.rs
+  s_0f2f75ceda32bb::t_a3bdd791f9ecbf 6,8-10,13-14,16,36-37,64-65,69-90,122-164,168-227,264-266,269-271,281-282,285-288,297-322,340,396,400-407,417-418,460-471,475-478,504,560-562,566,574-606,608,637
+apps/filesquid/crates/api/src/jobs/slots.rs
+  s_0f2f75ceda32bb::t_ce2213c362967d 1-81
+apps/filesquid/crates/api/src/jobs/store.rs
+  s_0f2f75ceda32bb::t_63132c4e69ac42 3,7-10,52-129,211-244
+apps/filesquid/crates/api/src/jobs/view.rs
+  s_0f2f75ceda32bb::t_a17311ea403e21 1-77
+apps/filesquid/crates/api/src/lib.rs
+  s_0f2f75ceda32bb::t_248952c6b80a0e 87,141-145,151-153,165,228-229,234-267
+apps/filesquid/crates/api/src/routes.rs
+  s_0f2f75ceda32bb::t_f6470816a4d1d8 50
+apps/filesquid/crates/api/tests/features.rs
+  s_0f2f75ceda32bb::t_f010bf5c7677a1 16-17,137-139,195
+apps/filesquid/crates/api/tests/features/job_routes_NFR-003.feature
+  s_0f2f75ceda32bb::t_b5d8d2f8e740f6 1-51
+apps/filesquid/crates/api/tests/integration/job_routes.rs
+  s_0f2f75ceda32bb::t_3393d69be99928 1-297
+apps/filesquid/crates/api/tests/support/job_steps.rs
+  s_0f2f75ceda32bb::t_a4ef32c7ff66a8 1-362
+apps/filesquid/crates/api/tests/support/jobs_contract.rs
+  s_0f2f75ceda32bb::t_cda7eaba3a7d62 1-142
+apps/filesquid/crates/api/tests/unit/auth.rs
+  s_0f2f75ceda32bb::t_94cc36df00ba15 93-98,152,156,390-393,425-426
+apps/filesquid/crates/api/tests/unit/contract.rs
+  s_0f2f75ceda32bb::t_5bca5b7b7f3003 21-23,88,299,396,725,1417
+apps/filesquid/crates/api/tests/unit/events.rs
+  s_0f2f75ceda32bb::t_e3d51aef71a0c9 79-80
+apps/filesquid/crates/api/tests/unit/job_control.rs
+  s_0f2f75ceda32bb::t_e7700f94f08b95 1-514
+apps/filesquid/crates/api/tests/unit/jobs.rs
+  s_0f2f75ceda32bb::t_1a196915c838e0 6-7,450-458
+apps/filesquid/crates/desktop/tests/integration/durable_jobs.rs
+  s_0f2f75ceda32bb::t_5f7454b3532dea 396-435
+apps/filesquid/crates/native/src/jobs_sqlite.rs
+  s_0f2f75ceda32bb::t_4eeab0d6b1c5fe 9-11,33-34,37-39,44,90,147-204,222-241,264,285,299-300,302-308,310-314,332
+apps/filesquid/crates/native/src/workers/history_backfill.rs
+  s_0f2f75ceda32bb::t_a0ffb1e4d39b2c 110-112,121-122,143,151-157,179-181,188,262-263,284,307,333-334,348
+apps/filesquid/crates/native/tests/unit/jobs.rs
+  s_0f2f75ceda32bb::t_6d967c567d0579 4,34,195-325
+apps/filesquid/ui/src/api/schema.d.ts
+  s_0f2f75ceda32bb::t_de53f746f6c8b0 1144-1243,1255,1258,2513-2566,2743-2769,2790-2791,4879-5025
+resources/architecture/030-filesquid-api-and-transports.md
+  s_0f2f75ceda32bb::t_28e48ab15d0db5 13,69,74-75
+resources/assets/mvp-progress.svg
+  s_0f2f75ceda32bb::t_bc1fd4544098a9 1,27,40,76
+resources/implementation-plan-checklist.md
+  s_0f2f75ceda32bb::t_0423347cea108c 4,6,10,45-47,137
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "684503776309fae19eb47ad01ec5c0dea5529a2d",
+  "prompts": {},
+  "sessions": {
+    "s_0f2f75ceda32bb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48733fde-c6f8-4cb6-b48b-ea8ab27e5924",
+        "model": "unknown"
+      },
+      "human_author": "Peter Van Garderen <vangarderen.peter@gmail.com>"
+    }
+  }
+}
