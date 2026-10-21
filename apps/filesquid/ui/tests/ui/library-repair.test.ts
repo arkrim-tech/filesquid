@@ -158,6 +158,18 @@ describe("<fs-library-repair> consent", () => {
     expect(rootOf(page).activeElement?.getAttribute("data-action")).toBe("review");
   });
 
+  it("a repair still running for another library does not block this library's offer", async () => {
+    const source = new FakeLibrarySource();
+    source.repaired = () => new Promise(() => undefined);
+    const { page } = await mount(source);
+    await click(page, '[data-action="review"]');
+    await click(page, '[data-action="confirm"]');
+    page.libraryId = "lib-2";
+    await settle();
+    await click(page, '[data-action="review"]');
+    expect(dialogOf(page)).not.toBeNull();
+  });
+
   it("Escape cancels like the Cancel button", async () => {
     const { page, source } = await mount();
     await click(page, '[data-action="review"]');

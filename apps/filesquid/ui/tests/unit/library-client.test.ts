@@ -167,6 +167,25 @@ describe("ClientLibrarySource", () => {
     await expect(setup(answer).source.repair(request)).rejects.toBeInstanceOf(TypeError);
   });
 
+  it("checks a rebuild's optional journal restore against the contract", async () => {
+    const journal = { restored: 2, already_present: 1, conflicting: 0, unreadable: 0 };
+    const sealed = { ...journal, last_sealed_at: "2026-10-20T12:00:00Z" };
+    for (const good of [journal, sealed]) {
+      const report = { ...REBUILD, journal: good };
+      await expect(setup(report).source.rebuild("a")).resolves.toEqual(report);
+    }
+    const extra = { ...REBUILD, objects: [{ ...REBUILD.objects[0], path: "/x" }], path: "/x" };
+    await expect(setup(extra).source.rebuild("a")).resolves.toStrictEqual({
+      objects: [REBUILD.objects[0]],
+      unreadable: REBUILD.unreadable,
+    });
+    const bad = [{ ...journal, restored: -1 }, { ...journal, conflicting: "0" }, null, []];
+    for (const value of [...bad, { ...journal, last_sealed_at: 5 }]) {
+      const report = { ...REBUILD, journal: value };
+      await expect(setup(report).source.rebuild("a")).rejects.toBeInstanceOf(TypeError);
+    }
+  });
+
   it("rejects malformed copy, rebuild, candidate and repair answers", async () => {
     await expect(setup({ objects: 1 }).source.copy("a", "b")).rejects.toBeInstanceOf(TypeError);
     await expect(setup({ objects: "x" }).source.rebuild("a")).rejects.toBeInstanceOf(TypeError);

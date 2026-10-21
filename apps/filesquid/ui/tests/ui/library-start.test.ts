@@ -159,6 +159,54 @@ describe("<fs-library-start>", () => {
     expect(navigated).toEqual(["#/library/lib-1"]);
   });
 
+  it("Retry after a failed open reuses the chosen folder and asks for none again", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const source = new FakeLibrarySource();
+    source.opened = apiError(503, "unavailable");
+    const { page, navigated } = await mount(source);
+    button(page, "open").click();
+    await settle();
+    expect(source.calls).toEqual(["choose:open", "open:loc-1"]);
+    source.opened = LIBRARY;
+    const states = rootOf(page).querySelector("fs-states") as FsStates;
+    states.dispatchEvent(new CustomEvent("fs-retry", { bubbles: true, composed: true }));
+    await settle();
+    expect(source.calls).toEqual(["choose:open", "open:loc-1", "open:loc-1"]);
+    expect(navigated).toEqual(["#/library/lib-1"]);
+  });
+
+  it("Retry after a failed rebuild of a recovered copy rebuilds the opened library only", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const source = new FakeLibrarySource();
+    source.rebuilt = apiError(503, "unavailable");
+    const { page, registry, navigated } = await mount(source);
+    button(page, "recover").click();
+    await settle();
+    expect(navigated).toEqual([]);
+    expect(registry.get("lib-1")).toEqual(LIBRARY);
+    source.rebuilt = REBUILD;
+    const states = rootOf(page).querySelector("fs-states") as FsStates;
+    states.dispatchEvent(new CustomEvent("fs-retry", { bubbles: true, composed: true }));
+    await settle();
+    expect(source.calls).toEqual(["choose:open", "open:loc-1", "rebuild:lib-1", "rebuild:lib-1"]);
+    expect(registry.lastRebuild("lib-1")).toEqual(REBUILD);
+    expect(navigated).toEqual(["#/library/lib-1"]);
+  });
+
+  it("a choice clicked after a failure starts afresh with a new folder", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const source = new FakeLibrarySource();
+    source.opened = apiError(503, "unavailable");
+    const { page, navigated } = await mount(source);
+    button(page, "open").click();
+    await settle();
+    source.opened = LIBRARY;
+    button(page, "open").click();
+    await settle();
+    expect(source.calls).toEqual(["choose:open", "open:loc-1", "choose:open", "open:loc-1"]);
+    expect(navigated).toEqual(["#/library/lib-1"]);
+  });
+
   it("words a refused create (409) as a message, writes nothing and offers the choices again", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const source = new FakeLibrarySource();

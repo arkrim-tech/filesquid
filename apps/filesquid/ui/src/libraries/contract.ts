@@ -1,19 +1,25 @@
 /**
  * Checks of the library routes' answers against the contract (UI-1.1, API-S-025, API-S-034): a
  * host that answers outside the contract is reported as a `TypeError` and never shown, as the
- * navigation source does. Each parser returns the value typed from the generated schema, so a
- * field the contract adds is a compile error here until the parser reads it. Pure.
+ * navigation source does. Each parser builds its result from the fields it checked, typed from
+ * the generated schema, so a required field the contract adds is a compile error here until the
+ * parser reads it, and a field outside the contract is never passed on. Pure.
  */
 import {
   MAX_LOCATION_ID_BYTES,
   MAX_REPAIR_OBJECTS,
+  type JournalRebuild,
   type LibraryView,
   type LocationChoice,
+  type ObjectFindings,
   type ObjectRepair,
   type RebuildReport,
+  type RebuiltObject,
   type RepairAnswer,
+  type RepairCandidate,
   type RepairCandidates,
   type SnapshotCopyReport,
+  type UnreadableObject,
 } from "./model";
 
 /** True for a non-null, non-array object. */
@@ -71,6 +77,29 @@ export function parseLibraryView(value: unknown): LibraryView {
   return { library_id: id, spec_version: version, objects };
 }
 
+/** One copied object whose validation found errors, or undefined when malformed. */
+function objectFindings(value: unknown): ObjectFindings | undefined {
+  if (!isRecord(value) || !isText(value.object_id) || !isTexts(value.error_codes)) return undefined;
+  return { object_id: value.object_id, error_codes: [...value.error_codes] };
+}
+
+/**
+ * Check every item of a list and build it again from its checked fields.
+ *
+ * @param items The list from the answer.
+ * @param read Builds one item, or answers undefined when it is malformed.
+ * @param what The route, for the error.
+ * @returns The rebuilt items.
+ * @throws TypeError when an item is malformed.
+ */
+function each<T>(items: unknown[], read: (item: unknown) => T | undefined, what: string): T[] {
+  return items.map((item) => {
+    const checked = read(item);
+    if (checked === undefined) throw breaks(what);
+    return checked;
+  });
+}
+
 /**
  * Check a snapshot copy's report.
  *
@@ -84,16 +113,7 @@ export function parseSnapshotCopyReport(value: unknown): SnapshotCopyReport {
   if (!isCount(objects) || !isCount(files) || !isCount(bytes) || !Array.isArray(invalid)) {
     throw breaks("snapshot copy");
   }
-  const ok = invalid.every(
-    (item) => isRecord(item) && isText(item.object_id) && isTexts(item.error_codes),
-  );
-  if (!ok) throw breaks("snapshot copy");
-  return {
-    objects,
-    files,
-    bytes,
-    invalid_objects: invalid as SnapshotCopyReport["invalid_objects"],
-  };
+  return { objects, files, bytes, invalid_objects: each(invalid, objectFindings, "snapshot copy") };
 }
 
 /** True for an array (possibly empty) of non-empty strings. */
@@ -101,45 +121,81 @@ function isTextList(value: unknown): value is string[] {
   return Array.isArray(value) && value.every(isText);
 }
 
-/** True when `value` is one object a rebuild read. */
-function isRebuiltObject(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    isText(value.object_id) &&
-    isText(value.head) &&
-    isCount(value.files) &&
-    isText(value.digest_algorithm) &&
-    isTextList(value.error_codes) &&
-    typeof value.missing_version_inventory === "boolean"
-  );
+/** One object a rebuild read, or undefined when malformed. */
+function rebuiltObject(value: unknown): RebuiltObject | undefined {
+  if (!isRecord(value)) return undefined;
+  const { object_id: id, head, files, digest_algorithm: algorithm, error_codes: codes } = value;
+  const missing = value.missing_version_inventory;
+  const ok = isText(id) && isText(head) && isCount(files) && isText(algorithm);
+  if (!ok || !isTextList(codes) || typeof missing !== "boolean") return undefined;
+  return {
+    object_id: id,
+    head,
+    files,
+    digest_algorithm: algorithm,
+    error_codes: [...codes],
+    missing_version_inventory: missing,
+  };
+}
+
+/** One object a rebuild could not open, or undefined when malformed. */
+function unreadableObject(value: unknown): UnreadableObject | undefined {
+  return isRecord(value) && isText(value.error_code) ? { error_code: value.error_code } : undefined;
+}
+
+/** What a rebuild restored of the journal, or undefined when malformed. */
+function journalRebuild(value: unknown): JournalRebuild | undefined {
+  if (!isRecord(value)) return undefined;
+  const { restored, already_present: present, conflicting, unreadable } = value;
+  const sealed = value.last_sealed_at;
+  if (!isCount(restored) || !isCount(present) || !isCount(conflicting)) return undefined;
+  if (!isCount(unreadable) || !isOptionalText(sealed)) return undefined;
+  const journal: JournalRebuild = {
+    restored,
+    already_present: present,
+    conflicting,
+    unreadable,
+  };
+  return sealed === undefined ? journal : { ...journal, last_sealed_at: sealed };
 }
 
 /**
  * Check a rebuild report.
  *
  * @param value The parsed JSON answer.
- * @returns The report.
- * @throws TypeError when an object or an unreadable entry is malformed.
+ * @returns The report, with its journal restore when the host made one.
+ * @throws TypeError when an object, an unreadable entry or the journal restore is malformed.
  */
 export function parseRebuildReport(value: unknown): RebuildReport {
   if (!isRecord(value) || !Array.isArray(value.objects) || !Array.isArray(value.unreadable)) {
     throw breaks("rebuild");
   }
-  const unreadable = value.unreadable.every((item) => isRecord(item) && isText(item.error_code));
-  if (!value.objects.every(isRebuiltObject) || !unreadable) throw breaks("rebuild");
-  return value as unknown as RebuildReport;
+  const report: RebuildReport = {
+    objects: each(value.objects, rebuiltObject, "rebuild"),
+    unreadable: each(value.unreadable, unreadableObject, "rebuild"),
+  };
+  if (value.journal === undefined) return report;
+  const journal = journalRebuild(value.journal);
+  if (journal === undefined) throw breaks("rebuild");
+  return { ...report, journal };
 }
 
-/** True when `value` is one repair candidate. */
-function isCandidate(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    isText(value.object_id) &&
-    isText(value.head) &&
-    isText(value.digest_algorithm) &&
-    typeof value.interrupted === "boolean" &&
-    typeof value.committable_after_repair === "boolean"
-  );
+/** One repair candidate, or undefined when malformed. */
+function candidate(value: unknown): RepairCandidate | undefined {
+  if (!isRecord(value)) return undefined;
+  const { object_id: id, head, digest_algorithm: algorithm, interrupted } = value;
+  const committable = value.committable_after_repair;
+  const ok = isText(id) && isText(head) && isText(algorithm);
+  if (!ok || typeof interrupted !== "boolean" || typeof committable !== "boolean") {
+    return undefined;
+  }
+  return {
+    object_id: id,
+    head,
+    digest_algorithm: algorithm,
+    interrupted,
+    committable_after_repair: committable,
+  };
 }
 
 /**
@@ -152,21 +208,36 @@ function isCandidate(value: unknown): boolean {
 export function parseRepairCandidates(value: unknown): RepairCandidates {
   if (!isRecord(value) || !Array.isArray(value.candidates)) throw breaks("repair candidates");
   const bounded = value.candidates.length <= MAX_REPAIR_OBJECTS;
-  if (!bounded || !value.candidates.every(isCandidate) || typeof value.truncated !== "boolean") {
-    throw breaks("repair candidates");
-  }
-  return value as unknown as RepairCandidates;
+  if (!bounded || typeof value.truncated !== "boolean") throw breaks("repair candidates");
+  return {
+    candidates: each(value.candidates, candidate, "repair candidates"),
+    truncated: value.truncated,
+  };
 }
 
-/** True when `value` is one object's repair outcome. */
-function isObjectRepair(value: unknown): value is ObjectRepair {
-  if (!isRecord(value)) return false;
-  const result = value.result === "repaired" || value.result === "refused";
-  const code = value.error_code === null || isText(value.error_code);
-  const version = value.version === null || isText(value.version);
-  return (
-    isText(value.object_id) && result && code && version && typeof value.retryable === "boolean"
-  );
+/** True for null or a non-empty string. */
+function isNullableText(value: unknown): value is string | null {
+  return value === null || isText(value);
+}
+
+/** True for an absent field or a non-empty string. */
+function isOptionalText(value: unknown): value is string | undefined {
+  return value === undefined || isText(value);
+}
+
+/** One object's repair outcome, or undefined when malformed. */
+function objectRepair(value: unknown): ObjectRepair | undefined {
+  if (!isRecord(value)) return undefined;
+  const { object_id: id, version, result, error_code: code, retryable } = value;
+  const { provenance_version: provenance, provenance_error_code: provenanceCode } = value;
+  const known = result === "repaired" || result === "refused";
+  const ok = isText(id) && known && isNullableText(version) && isNullableText(code);
+  const optional = isOptionalText(provenance) && isOptionalText(provenanceCode);
+  if (!ok || typeof retryable !== "boolean" || !optional) return undefined;
+  const outcome: ObjectRepair = { object_id: id, version, result, error_code: code, retryable };
+  if (provenance !== undefined) outcome.provenance_version = provenance;
+  if (provenanceCode !== undefined) outcome.provenance_error_code = provenanceCode;
+  return outcome;
 }
 
 /**
@@ -180,12 +251,10 @@ export function parseRepairAnswer(value: unknown): RepairAnswer {
   if (!isRecord(value) || !isText(value.library_id) || !isText(value.run_id)) {
     throw breaks("repair");
   }
-  if (!Array.isArray(value.objects) || !value.objects.every(isObjectRepair)) throw breaks("repair");
-  const optional = value.objects.every((item: Record<string, unknown>) =>
-    [item.provenance_version, item.provenance_error_code].every(
-      (field) => field === undefined || typeof field === "string",
-    ),
-  );
-  if (!optional) throw breaks("repair");
-  return value as unknown as RepairAnswer;
+  if (!Array.isArray(value.objects)) throw breaks("repair");
+  return {
+    library_id: value.library_id,
+    run_id: value.run_id,
+    objects: each(value.objects, objectRepair, "repair"),
+  };
 }

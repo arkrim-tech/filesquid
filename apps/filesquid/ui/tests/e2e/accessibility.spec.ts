@@ -232,6 +232,8 @@ test("reduced motion stops every transition", async ({ page }) => {
     const walk = (root: ShadowRoot) => {
       for (const el of root.querySelectorAll("*")) {
         const style = getComputedStyle(el);
+        // Fallback content of an assigned slot is not rendered and has no computed style.
+        if (style.transitionDuration === "") continue;
         const motion = `${style.transitionDuration} ${style.animationDuration}`;
         if (motion !== "0s 0s") found.push(`${el.tagName.toLowerCase()}: ${motion}`);
         if (el.shadowRoot) walk(el.shadowRoot);

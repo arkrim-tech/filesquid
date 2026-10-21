@@ -3,7 +3,8 @@
  * API-S-025; mockups `08-library-menu.svg`, `09-copy-library.svg`). It shows what the host says
  * about the library (its ID, the OCFL version its storage root declares, its object count) and
  * never a path; offers "Copy library to..." (a destination chosen with purpose
- * `copy_destination`, then the snapshot route) and "Rebuild catalog from files" (reads every
+ * `copy_destination`, then the snapshot route; Retry copies to the destination already chosen)
+ * and "Rebuild catalog from files" (reads every
  * object from its files, writes nothing); and says, with a link to the repair offer
  * `#/library/<id>/repair`, when files in some objects can be read but not changed (W010).
  * Later pages (such as the import UI) take the open library's ID from this route.
@@ -106,6 +107,8 @@ export class FsLibraryDetail extends HTMLElement {
   private generation = 0;
   private busy = false;
   private last?: "copy" | "rebuild";
+  /** The destination of the last copy, kept so Retry copies there without asking again. */
+  private destination?: string;
   private actions?: Feedback;
   private note?: Feedback;
   private repairSlot?: HTMLElement;
@@ -117,7 +120,7 @@ export class FsLibraryDetail extends HTMLElement {
     root.addEventListener(RETRY_EVENT, (event) => {
       event.stopPropagation();
       if (event.target === this.note?.states) void this.loadCandidates();
-      else if (this.last) void this.run(this.last);
+      else if (this.last) void this.run(this.last, true);
     });
   }
 
@@ -160,6 +163,8 @@ export class FsLibraryDetail extends HTMLElement {
     if (!this.shadowRoot || !options || id === undefined) return;
     this.generation += 1;
     this.busy = false;
+    this.last = undefined;
+    this.destination = undefined;
     const { labels, registry } = options;
     this.note = new Feedback(labels, "repair-note");
     this.actions = new Feedback(labels, "actions");
@@ -223,8 +228,8 @@ export class FsLibraryDetail extends HTMLElement {
     const { labels } = this.options as LibraryPageOptions;
     const copy = actionButton("copy", labels.libraryCopy);
     const rebuild = actionButton("rebuild", labels.libraryRebuild);
-    copy.addEventListener("click", () => void this.run("copy"));
-    rebuild.addEventListener("click", () => void this.run("rebuild"));
+    copy.addEventListener("click", () => void this.run("copy", false));
+    rebuild.addEventListener("click", () => void this.run("rebuild", false));
     const section = node("section");
     section.dataset.section = "actions";
     section.append(
@@ -277,11 +282,18 @@ export class FsLibraryDetail extends HTMLElement {
     return section;
   }
 
-  /** Run the copy or the rebuild; one at a time. */
-  private async run(which: "copy" | "rebuild"): Promise<void> {
+  /**
+   * Run the copy or the rebuild; one at a time. A retried copy goes to the destination already
+   * chosen, since a chosen folder stays registered; the Copy button always asks for a new one.
+   *
+   * @param which The action.
+   * @param retry True when Retry asked for it.
+   */
+  private async run(which: "copy" | "rebuild", retry: boolean): Promise<void> {
     const feedback = this.actions;
     if (!this.options || !feedback || this.busy) return;
     this.last = which;
+    if (!retry) this.destination = undefined;
     this.busy = true;
     this.setBusy(true);
     const generation = this.generation;
@@ -298,24 +310,38 @@ export class FsLibraryDetail extends HTMLElement {
     }
   }
 
-  /** Choose a destination, copy the snapshot there and report it. */
+  /** Choose a destination unless one is kept, copy the snapshot there and report it. */
   private async copy(feedback: Feedback, generation: number): Promise<void> {
     const { labels, source } = this.options as LibraryPageOptions;
     const id = this.library as string;
     this.showResult("copy", []);
-    feedback.note(labels.libraryChoosing);
-    const choice = await step("choose", () => source.chooseLocation("copy_destination"));
-    if (generation !== this.generation) return;
-    if (choice.outcome !== "chosen" || !choice.location_id) {
-      feedback.note(labels.libraryCancelled);
-      return;
-    }
+    this.destination ??= await this.chooseDestination(feedback, generation);
+    const destination = this.destination;
+    if (generation !== this.generation || destination === undefined) return;
     feedback.note(labels.libraryWorking);
-    const destination = choice.location_id;
     const report = await step("copy", () => source.copy(id, destination));
     if (generation !== this.generation) return;
     feedback.clear();
     this.showResult("copy", copyReport(report, labels));
+  }
+
+  /**
+   * Ask the host to let the owner choose the copy's destination. Network I/O through the source.
+   *
+   * @returns The destination's location ID, or undefined when the owner cancelled (said in the
+   *   feedback) or the page moved on.
+   */
+  private async chooseDestination(
+    feedback: Feedback,
+    generation: number,
+  ): Promise<string | undefined> {
+    const { labels, source } = this.options as LibraryPageOptions;
+    feedback.note(labels.libraryChoosing);
+    const choice = await step("choose", () => source.chooseLocation("copy_destination"));
+    if (generation !== this.generation) return undefined;
+    if (choice.outcome === "chosen" && choice.location_id) return choice.location_id;
+    feedback.note(labels.libraryCancelled);
+    return undefined;
   }
 
   /** Rebuild the catalog from files, report it and read the repair candidates again. */

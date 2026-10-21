@@ -31,7 +31,7 @@ test("ImageSquid brand, album vocabulary and FileSquid API health", async ({ pag
     "Monitor",
     "Settings",
   ]);
-  await expect(shell.locator('[role="status"]')).toHaveText("Archives API: ok (filesquid)");
+  await expect(shell.locator('p.api[role="status"]')).toHaveText("Archives API: ok (filesquid)");
   expect(errors).toEqual([]);
 });
 
@@ -123,7 +123,8 @@ test("ImageSquid reaches the FileSquid Monitor with its own vocabulary", async (
     "data-state",
     "running",
   );
-  await expect(page.locator('fs-app-shell [role="status"]')).toHaveText(
+  // The shell's own API status; the Monitor inside the shell has status regions of its own.
+  await expect(page.locator('fs-app-shell p.api[role="status"]')).toHaveText(
     "Archives API: ok (filesquid)",
   );
   expect(errors).toEqual([]);

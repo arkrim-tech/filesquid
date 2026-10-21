@@ -134,6 +134,7 @@ export class FsLibraryRepair extends HTMLElement {
     const id = this.library;
     if (!this.shadowRoot || !options || id === undefined) return;
     this.generation += 1;
+    this.busy = false;
     const { labels } = options;
     this.feedback = new Feedback(labels);
     this.listBox = node("div", "offer");
@@ -288,7 +289,7 @@ export class FsLibraryRepair extends HTMLElement {
     } catch (error) {
       if (generation === this.generation) this.fail(error);
     } finally {
-      this.busy = false;
+      if (generation === this.generation) this.busy = false;
     }
   }
 

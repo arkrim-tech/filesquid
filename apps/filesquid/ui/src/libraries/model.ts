@@ -19,6 +19,12 @@ export type SnapshotCopyReport = components["schemas"]["SnapshotCopyReport"];
 export type RebuildReport = components["schemas"]["RebuildReport"];
 /** One object a rebuild read. */
 export type RebuiltObject = components["schemas"]["RebuiltObject"];
+/** One object a rebuild could not open. */
+export type UnreadableObject = components["schemas"]["UnreadableObject"];
+/** What a rebuild restored of the library's journal. */
+export type JournalRebuild = components["schemas"]["JournalRebuild"];
+/** One copied object whose validation found errors. */
+export type ObjectFindings = components["schemas"]["ObjectFindings"];
 /** An object the UI may offer to repair. */
 export type RepairCandidate = components["schemas"]["RepairCandidate"];
 /** The repair-candidate query's answer. */

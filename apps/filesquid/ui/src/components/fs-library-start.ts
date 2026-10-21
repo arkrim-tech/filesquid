@@ -9,7 +9,9 @@
  * ever shown. Words come only from the label table, styling only from tokens.
  *
  * Recover opens the chosen copy and then rebuilds its catalog from the OCFL files alone; the
- * report waits in the registry for the library page. Nothing is repaired or adopted.
+ * report waits in the registry for the library page. Nothing is repaired or adopted. Retry
+ * resumes from the step that failed: a folder already chosen is not asked for again, and a
+ * library already opened is not opened again.
  */
 import { RETRY_EVENT } from "./fs-states";
 import { libraryFailure, type LibraryAction } from "../libraries/errors";
@@ -35,12 +37,22 @@ const FLOWS = [
   ["recover", "libraryRecoverTitle", "libraryRecoverHelp", "libraryRecover"],
 ] as const;
 
+/**
+ * How far a flow got: the folder chosen and the library created or opened, so Retry resumes
+ * from the step that failed instead of asking for the folder again.
+ */
+interface Progress {
+  readonly flow: Flow;
+  locationId?: string;
+  library?: LibraryView;
+}
+
 /** Custom element that shows the library start page. */
 export class FsLibraryStart extends HTMLElement {
   private options?: LibraryPageOptions;
   private feedback?: Feedback;
   private busy = false;
-  private last?: Flow;
+  private progress?: Progress;
   private generation = 0;
 
   constructor() {
@@ -48,7 +60,7 @@ export class FsLibraryStart extends HTMLElement {
     const root = this.attachShadow({ mode: "open" });
     root.addEventListener(RETRY_EVENT, (event) => {
       event.stopPropagation();
-      if (this.last) void this.run(this.last);
+      if (this.progress) void this.resume(this.progress);
     });
   }
 
@@ -115,31 +127,36 @@ export class FsLibraryStart extends HTMLElement {
   }
 
   /**
-   * Run one flow: choose a folder, then create, open or recover, then go to the library page.
-   * Side effects: network I/O through the source, registry writes and a navigation.
+   * Start a flow afresh from one of the three choices: nothing chosen or opened yet.
+   * Side effects: those of {@link FsLibraryStart.resume}.
    */
-  private async run(flow: Flow): Promise<void> {
+  private run(flow: Flow): Promise<void> {
+    return this.resume({ flow });
+  }
+
+  /**
+   * Run a flow from where `progress` stopped: choose a folder unless one was chosen, create or
+   * open the library unless that was done, rebuild a recovered copy, then go to the library
+   * page. Retry resumes from the failed step, so a folder already chosen is never asked for
+   * again (registering it twice would be refused as in use). Side effects: network I/O through
+   * the source, registry writes and a navigation.
+   */
+  private async resume(progress: Progress): Promise<void> {
     const options = this.options;
     const feedback = this.feedback;
     if (!options || !feedback || this.busy) return;
     const generation = this.generation;
-    this.last = flow;
+    this.progress = progress;
     this.setBusy(true);
-    feedback.note(options.labels.libraryChoosing);
     try {
-      const choice = await step("choose", () =>
-        options.source.chooseLocation(flow === "create" ? "create" : "open"),
-      );
-      if (generation !== this.generation) return;
-      if (choice.outcome !== "chosen" || !choice.location_id) {
-        feedback.note(options.labels.libraryCancelled);
-        return;
-      }
+      progress.locationId ??= await this.choose(progress.flow, feedback, generation);
+      if (generation !== this.generation || progress.locationId === undefined) return;
       feedback.note(options.labels.libraryWorking);
-      const view = await this.complete(flow, choice.location_id);
+      progress.library ??= await this.enter(progress.flow, progress.locationId);
+      if (progress.flow === "recover") await this.rebuild(progress.library);
       if (generation !== this.generation) return;
       feedback.clear();
-      (options.navigate ?? goTo)(libraryHref(view.library_id));
+      (options.navigate ?? goTo)(libraryHref(progress.library.library_id));
     } catch (error) {
       if (generation === this.generation) this.fail(error);
     } finally {
@@ -147,18 +164,43 @@ export class FsLibraryStart extends HTMLElement {
     }
   }
 
-  /** Create, open or recover on the chosen folder and remember the result. */
-  private async complete(flow: Flow, locationId: string): Promise<LibraryView> {
+  /**
+   * Ask the host to let the owner choose a folder. Network I/O through the source.
+   *
+   * @returns The chosen folder's location ID, or undefined when the owner cancelled (said in
+   *   the feedback) or the page moved on.
+   */
+  private async choose(
+    flow: Flow,
+    feedback: Feedback,
+    generation: number,
+  ): Promise<string | undefined> {
+    const { labels, source } = this.options as LibraryPageOptions;
+    feedback.note(labels.libraryChoosing);
+    const purpose = flow === "create" ? "create" : "open";
+    const choice = await step("choose", () => source.chooseLocation(purpose));
+    if (generation !== this.generation) return undefined;
+    if (choice.outcome === "chosen" && choice.location_id) return choice.location_id;
+    feedback.note(labels.libraryCancelled);
+    return undefined;
+  }
+
+  /** Create or open the library on the chosen folder and remember it. Network I/O. */
+  private async enter(flow: Flow, locationId: string): Promise<LibraryView> {
     const { source, registry } = this.options as LibraryPageOptions;
     const action = flow === "create" ? "create" : "open";
     const view = await step(action, () =>
       flow === "create" ? source.create(locationId) : source.open(locationId),
     );
     registry.remember(view);
-    if (flow !== "recover") return view;
+    return view;
+  }
+
+  /** Rebuild a recovered copy's catalog from its files and keep the report. Network I/O. */
+  private async rebuild(view: LibraryView): Promise<void> {
+    const { source, registry } = this.options as LibraryPageOptions;
     const report = await step("rebuild", () => source.rebuild(view.library_id));
     registry.rememberRebuild(view.library_id, report);
-    return view;
   }
 
   /** Show a failed step, and log it to the console. */

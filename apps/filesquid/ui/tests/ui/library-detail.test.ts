@@ -171,6 +171,40 @@ describe("<fs-library-detail>", () => {
     expect(action(page, "copy").hidden).toBe(false);
   });
 
+  it("copy: Retry after a failed copy reuses the chosen destination and asks for none again", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const source = new FakeLibrarySource();
+    source.copied = apiError(503, "unavailable");
+    const { page } = await mount(source);
+    action(page, "copy").click();
+    await settle();
+    source.copied = COPY_REPORT;
+    const states = rootOf(page).querySelector('[data-for="actions"] fs-states') as FsStates;
+    states.dispatchEvent(new CustomEvent("fs-retry", { bubbles: true, composed: true }));
+    await settle();
+    expect(source.calls).toEqual([
+      "candidates:lib-1",
+      "choose:copy_destination",
+      "copy:lib-1:loc-1",
+      "copy:lib-1:loc-1",
+    ]);
+    expect(states.hidden).toBe(true);
+    expect(text(page, '[data-result="copy"]')).toContain("2");
+  });
+
+  it("copy: the Copy button after a failure asks for a new destination", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const source = new FakeLibrarySource();
+    source.copied = apiError(503, "unavailable");
+    const { page } = await mount(source);
+    action(page, "copy").click();
+    await settle();
+    source.copied = COPY_REPORT;
+    action(page, "copy").click();
+    await settle();
+    expect(source.calls.filter((call) => call === "choose:copy_destination")).toHaveLength(2);
+  });
+
   it("copy: a refused destination is worded and writes nothing", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const source = new FakeLibrarySource();
