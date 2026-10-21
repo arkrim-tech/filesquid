@@ -1,0 +1,65 @@
+README.md
+  s_0f2f75ceda32bb::t_3fc1039a4f5203 12
+apps/filesquid/crates/api/resources/plan.md
+  s_0f2f75ceda32bb::t_d8fdbf80d35d6b 380-390
+apps/filesquid/crates/api/resources/srs.md
+  s_0f2f75ceda32bb::t_f34f040fcd6834 45,48-49
+apps/filesquid/crates/api/tests/features/folder_view_F-068.feature
+  s_0f2f75ceda32bb::t_fe12d883b89b78 1-104
+apps/filesquid/crates/core/resources/plan.md
+  s_0f2f75ceda32bb::t_33f631c349225c 103-113,169
+apps/filesquid/crates/core/resources/srs.md
+  s_0f2f75ceda32bb::t_53fbc59d27ff7a 22
+apps/filesquid/crates/desktop/resources/plan.md
+  s_0f2f75ceda32bb::t_2e5a0dd31e1fcb 435-481,495
+apps/filesquid/crates/desktop/resources/srs.md
+  s_0f2f75ceda32bb::t_3af48edefbc81d 28,31-33
+apps/filesquid/ui/resources/plan.md
+  s_0f2f75ceda32bb::t_e729d01a459b59 236-255
+apps/filesquid/ui/resources/srs.md
+  s_0f2f75ceda32bb::t_b676196b448fbe 35
+apps/filesquid/ui/tests/features/folder_view_F-068.feature
+  s_0f2f75ceda32bb::t_b32daf79534814 1-78
+resources/architecture/038-import-file-record.md
+  s_0f2f75ceda32bb::t_5eb2e6daae2251 84
+resources/architecture/040-prov-o-history.md
+  s_0f2f75ceda32bb::t_87635dafe32362 99
+resources/architecture/041-folder-view-of-a-library.md
+  s_0f2f75ceda32bb::t_339867d89b8239 1-82
+resources/architecture/README.md
+  s_0f2f75ceda32bb::t_7a551c43987b06 46,48-49
+resources/assets/mvp-progress.svg
+  s_0f2f75ceda32bb::t_4d4f36574bf59e 1,37,40-41,44-57,59-100
+resources/implementation-plan-checklist.md
+  s_0f2f75ceda32bb::t_4169d9a72912b9 4,6,11,23,28-29,33,47,49-51,60,194-200,206,212,214,217,220,222,225,228-233,238,244,246,248,250-251,260,264,270,274,276,282,285,288,290,296,302,304,306,311,314,316,320,323,325,329,334,337,340,349-350,353,355,358,360,362,366,370,372,374,377,379,381,383,385,388,390,394,396,402-404,406,409,411,415-416,421,424,429,432-433
+resources/implementation-plan.md
+  s_0f2f75ceda32bb::t_42b66937676064 3,434-442,444,446,517-525,557,1185,1189,1261-1262,1277-1278
+resources/prd.md
+  s_0f2f75ceda32bb::t_2da1b3622dd5ca 1400,1415-1435,1438,1712,1730,1789
+resources/product-vision.md
+  s_0f2f75ceda32bb::t_9d9a40538a9c2b 206,306
+resources/srs.md
+  s_0f2f75ceda32bb::t_7471fc64b703e1 1305,1325-1346,1624,1655
+scripts/docs/test_merge_mvp_progress.py
+  s_0f2f75ceda32bb::t_d97d709b25f342 80-88
+scripts/verify_changed_scope.sh
+  s_0f2f75ceda32bb::t_eb172512aea00a 26-32
+resources/tasks/Task-docs-finder-library-view-Walkthrough.md
+  s_0f2f75ceda32bb::t_e4f4fb73d03495 1-153
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "73c4a6e890574d82abcb4ad12f7b2a20f2e89579",
+  "prompts": {},
+  "sessions": {
+    "s_0f2f75ceda32bb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48733fde-c6f8-4cb6-b48b-ea8ab27e5924",
+        "model": "unknown"
+      },
+      "human_author": "Peter Van Garderen <vangarderen.peter@gmail.com>"
+    }
+  }
+}
