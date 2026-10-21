@@ -203,6 +203,8 @@ pub struct FileFacts {
     pub size: u64,
     /// When the head version was created, in Unix milliseconds.
     pub modified_ms: i64,
+    /// The record's statements as `(curie, value)`, for search.
+    pub statements: Vec<(String, String)>,
 }
 
 /// When the caller last changed and last opened one file, in Unix milliseconds.
@@ -354,24 +356,76 @@ pub fn matches_filter(candidate: &Candidate, filter: Option<&str>) -> bool {
     filter.is_none_or(|filter| candidate.key.name.to_lowercase().contains(filter))
 }
 
+/// What one paged answer is ordered and resumed by: the digest of its other parameters, the
+/// direction, the folder placement, the cursor and the page size.
+#[derive(Clone, Debug)]
+pub struct PageParams<'a> {
+    /// The digest of every parameter but the cursor and the limit ([`digest_parameters`]).
+    pub fingerprint: String,
+    /// The direction of the sort values.
+    pub direction: SortDirection,
+    /// Where folder rows go.
+    pub folders: FolderPlacement,
+    /// The cursor of the previous page.
+    pub cursor: Option<&'a str>,
+    /// Rows per page.
+    pub limit: usize,
+}
+
+/// The rows of one page and the cursor of the next.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RowsPage {
+    /// The rows, in order.
+    pub rows: Vec<ViewRow>,
+    /// The cursor of the next page, or `None` on the last page.
+    pub next_cursor: Option<String>,
+}
+
 /// One page of `candidates` for `request`, after its cursor.
 ///
 /// # Errors
-/// `invalid_request` for a cursor that is malformed or was made for other parameters.
+/// `invalid_request` for a limit out of bounds or a cursor that is malformed or was made for
+/// other parameters; `conflict` when the rows changed since the cursor was made.
 pub fn page(
     request: &ViewRequest,
-    mut candidates: Vec<Candidate>,
+    candidates: Vec<Candidate>,
     complete: bool,
 ) -> Result<ViewPage, FileError> {
-    let limit = check_limit(request.limit)?;
-    let fingerprint = fingerprint(request);
-    let order = |a: &RowKey, b: &RowKey| compare(a, b, request.direction, request.folders);
+    let params = PageParams {
+        fingerprint: fingerprint(request),
+        direction: request.direction,
+        folders: request.folders,
+        cursor: request.cursor.as_deref(),
+        limit: check_limit(request.limit)?,
+    };
+    let page = page_rows(params, candidates)?;
+    Ok(ViewPage {
+        node: request.node.clone(),
+        view: request.view,
+        sort: request.sort,
+        direction: request.direction,
+        folders: request.folders,
+        rows: page.rows,
+        next_cursor: page.next_cursor,
+        complete,
+    })
+}
+
+/// One page of `candidates` under `params`: sorted, after the cursor's row key, and the
+/// cursor of the next page.
+///
+/// # Errors
+/// As [`page`].
+pub fn page_rows(
+    params: PageParams<'_>,
+    mut candidates: Vec<Candidate>,
+) -> Result<RowsPage, FileError> {
+    let order = |a: &RowKey, b: &RowKey| compare(a, b, params.direction, params.folders);
     candidates.sort_by(|a, b| order(&a.key, &b.key));
     let scope = scope_digest(&candidates)?;
-    let after = request
+    let after = params
         .cursor
-        .as_deref()
-        .map(|cursor| decode_cursor(cursor, &fingerprint, &scope))
+        .map(|cursor| decode_cursor(cursor, &params.fingerprint, &scope))
         .transpose()?;
     let mut rest = candidates
         .into_iter()
@@ -381,9 +435,9 @@ pub fn page(
                 .is_some_and(|k| order(&c.key, k) != Ordering::Greater)
         })
         .peekable();
-    let mut rows = Vec::with_capacity(limit);
+    let mut rows = Vec::with_capacity(params.limit);
     let mut last = None;
-    while rows.len() < limit {
+    while rows.len() < params.limit {
         let Some(candidate) = rest.next() else {
             break;
         };
@@ -391,19 +445,16 @@ pub fn page(
         rows.push(candidate.row);
     }
     let next_cursor = match (rest.peek(), last) {
-        (Some(_), Some(key)) => Some(encode_cursor(key, fingerprint, scope)?),
+        (Some(_), Some(key)) => Some(encode_cursor(key, params.fingerprint, scope)?),
         _ => None,
     };
-    Ok(ViewPage {
-        node: request.node.clone(),
-        view: request.view,
-        sort: request.sort,
-        direction: request.direction,
-        folders: request.folders,
-        rows,
-        next_cursor,
-        complete,
-    })
+    Ok(RowsPage { rows, next_cursor })
+}
+
+/// `candidate` sorted by `score` instead of its sort key (search relevance).
+pub fn ranked(mut candidate: Candidate, score: i64) -> Candidate {
+    candidate.key.value = Some(SortValue::Number(score));
+    candidate
 }
 
 /// The order of two row keys: folders first when on top, then present values before missing
@@ -430,7 +481,7 @@ fn compare(a: &RowKey, b: &RowKey, direction: SortDirection, folders: FolderPlac
 
 /// The digest of every parameter but the cursor and the limit.
 fn fingerprint(request: &ViewRequest) -> String {
-    let text = format!(
+    digest_parameters(&format!(
         "{}\n{}\n{:?}\n{:?}\n{:?}\n{}",
         request.node,
         request.view.as_str(),
@@ -438,7 +489,11 @@ fn fingerprint(request: &ViewRequest) -> String {
         request.direction,
         request.folders,
         request.filter.as_deref().unwrap_or_default(),
-    );
+    ))
+}
+
+/// The digest of a request's parameters as `text`, for [`PageParams::fingerprint`].
+pub fn digest_parameters(text: &str) -> String {
     DigestAlgorithm::Sha256.digest_hex(text.as_bytes())
 }
 
@@ -515,6 +570,7 @@ mod tests {
             media_type: "image/jpeg".into(),
             size,
             modified_ms: ms,
+            statements: Vec::new(),
         };
         file_candidate(facts, MyTimes::default(), sort)
     }

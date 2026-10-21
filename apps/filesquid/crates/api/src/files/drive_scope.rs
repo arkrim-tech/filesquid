@@ -271,7 +271,7 @@ fn list_files(
 /// folder rows, at most [`MAX_VIEW_FOLDERS`], and whether that was all of them. Each listing
 /// is paged until the readable rows pass the bound or the listing ends, examining at most
 /// [`MAX_FOLDER_SCAN`] rows; stopping early for either bound reports the rows incomplete.
-fn folder_rows(
+pub(super) fn folder_rows(
     navigation: &NavigationService,
     principal: &Principal,
     library_id: &LibraryId,
@@ -348,7 +348,7 @@ fn collect_folders(
 }
 
 /// Up to `bound` items of a listing read page by page through `read`.
-fn read_bounded<T>(
+pub(super) fn read_bounded<T>(
     read: impl Fn(Option<&PageKey>) -> Result<Vec<Keyed<T>>, CatalogError>,
     bound: usize,
 ) -> Result<Vec<Keyed<T>>, FileError> {
@@ -367,7 +367,7 @@ fn read_bounded<T>(
 }
 
 /// The file error of a catalog failure.
-fn catalog_error(err: CatalogError) -> FileError {
+pub(super) fn catalog_error(err: CatalogError) -> FileError {
     match err {
         CatalogError::Unavailable(_) => {
             FileError::unavailable("the library catalog is unavailable")

@@ -16,7 +16,11 @@ use super::drive_facts::{CollectionHistorySizeView, CollectionSizeQuery};
 use super::drive_scope::{collection_files, my_times, view_scope, ViewScope};
 use super::error::FileError;
 use super::routes::{body, files, query, read_answer, refuse};
-use super::{COLLECTION_HISTORY_SIZE_OPERATION, COPY_OPERATION, VIEW_OPERATION};
+use super::search::{parse_zone, search_files, search_page, Examined, SearchPage, SearchRequest};
+use super::search_match::Searcher;
+use super::search_query::parse;
+use super::search_scope::{search_scope, SearchScope};
+use super::{COLLECTION_HISTORY_SIZE_OPERATION, COPY_OPERATION, SEARCH_OPERATION, VIEW_OPERATION};
 use crate::auth::{journal_entry, Action, Principal};
 use crate::journal::{JournalEntry, Outcome};
 use crate::navigation::{NavigationService, NodeRef};
@@ -36,6 +40,7 @@ pub(crate) fn routes() -> Vec<Route> {
     vec![
         ("/files/copies", post(copy), Action::WriteFiles),
         ("/files/view", get(view), Action::ReadFiles),
+        ("/files/search", get(search), Action::ReadFiles),
         (
             "/files/collection-history-size",
             get(collection_history_size),
@@ -143,6 +148,97 @@ async fn read_view_inputs(
     tokio::task::spawn_blocking(read)
         .await
         .map_err(|_| FileError::internal("the view task failed"))?
+}
+
+/// `GET /api/v1/files/search`: the files and folder rows of the caller's readable scope that
+/// match a query.
+async fn search(
+    State(state): State<ApiState>,
+    Extension(principal): Extension<Principal>,
+    request: Result<Query<SearchRequest>, QueryRejection>,
+) -> Response {
+    let outcome = search_results(&state, &principal, request).await;
+    read_answer(&state, SEARCH_OPERATION, &principal, outcome).await
+}
+
+/// The page a search request names. The query is parsed before anything is read, so an
+/// unknown or unavailable operator never reads a file.
+async fn search_results(
+    state: &ApiState,
+    principal: &Principal,
+    request: Result<Query<SearchRequest>, QueryRejection>,
+) -> Result<SearchPage, FileError> {
+    let request = query(request)?;
+    if request.q.trim().is_empty() {
+        return Err(FileError::invalid("A search needs a query."));
+    }
+    let parsed = parse(&request.q)?;
+    let zone = parse_zone(request.zone.as_deref())?;
+    check_limit(request.limit)?;
+    let files = files(state)?;
+    let (scope, mine) =
+        read_search_inputs(state, principal, &request, parsed.wants_deleted()).await?;
+    let mut examined = Examined {
+        mine,
+        complete: scope.complete,
+        ..Examined::default()
+    };
+    for library in scope.libraries {
+        let placed: HashMap<String, (Option<String>, bool)> = library
+            .files
+            .iter()
+            .map(|f| {
+                (
+                    f.file_id.as_str().to_string(),
+                    (f.collection.clone(), f.deleted),
+                )
+            })
+            .collect();
+        let ids = library.files.into_iter().map(|f| f.file_id).collect();
+        let facts = files.file_facts(library.library_id, ids).await?;
+        examined.complete &= facts.complete;
+        examined.files.extend(search_files(facts.facts, &placed));
+        examined.folders.extend(library.folders);
+    }
+    let searcher = Searcher {
+        zone,
+        owns_files: *principal == Principal::Owner,
+    };
+    search_page(&request, &parsed, searcher, examined)
+}
+
+/// The scope and the caller's own times of a search, read on a blocking thread.
+async fn read_search_inputs(
+    state: &ApiState,
+    principal: &Principal,
+    request: &SearchRequest,
+    deleted: bool,
+) -> Result<(SearchScope, HashMap<String, MyTimes>), FileError> {
+    let navigation = navigation(state)?;
+    let store = state.monitor().map(|monitor| monitor.store());
+    let node = request
+        .node
+        .as_deref()
+        .map(|handle| NodeRef::from_handle(handle).ok_or_else(FileError::not_found))
+        .transpose()?;
+    let principal = principal.clone();
+    let read = move || {
+        let scope = search_scope(&navigation, &principal, node.as_ref(), deleted)?;
+        let mut mine = HashMap::new();
+        if let Some(store) = store {
+            for library in &scope.libraries {
+                mine.extend(my_times(
+                    store.as_ref(),
+                    principal.actor(),
+                    &library.library_id,
+                )?);
+            }
+        }
+        Ok((scope, mine))
+    };
+    tokio::task::spawn_blocking(read)
+        .await
+        .map_err(|_| FileError::internal("the search task failed"))?
 }
 
 /// `GET /api/v1/files/collection-history-size`: the bytes the history of a collection's

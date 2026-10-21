@@ -191,6 +191,7 @@ pub fn sample(
                 .expect("handle");
             (format!("{path}?node={node}&sort=modified_by_me"), None)
         }
+        ("GET", "/api/v1/files/search") => (format!("{path}?q=a&sort=modified_by_me"), None),
         ("GET", "/api/v1/files/collection-history-size") => (
             format!("{path}?collection_id={}", crate::drive_catalog::COLLECTION),
             None,
@@ -550,6 +551,45 @@ fn drive_samples() -> Vec<(&'static str, Vec<Value>)> {
             ],
         ),
         ("CollectionHistorySize", vec![to_value(size)]),
+    ]
+    .into_iter()
+    .chain(search_samples(rows))
+    .collect()
+}
+
+/// Serialized samples of the search schemas (Task API-F2.3).
+fn search_samples(
+    rows: Vec<filesquid_api::files::drive::ViewRow>,
+) -> Vec<(&'static str, Vec<Value>)> {
+    use filesquid_api::files::search::{SearchPage, SearchSort};
+    use filesquid_api::preferences::{FolderPlacement, SortDirection};
+    let sorts = [
+        SearchSort::Relevance,
+        SearchSort::Name,
+        SearchSort::Size,
+        SearchSort::Modified,
+        SearchSort::ModifiedByMe,
+        SearchSort::OpenedByMe,
+    ];
+    let page = |node: Option<String>, next: Option<String>| SearchPage {
+        q: "deck type:document -draft".into(),
+        node,
+        sort: SearchSort::Relevance,
+        direction: SortDirection::Descending,
+        folders: FolderPlacement::OnTop,
+        rows: rows.clone(),
+        next_cursor: next,
+        complete: true,
+    };
+    vec![
+        ("SearchSort", sorts.map(to_value).to_vec()),
+        (
+            "SearchPage",
+            vec![
+                to_value(page(None, Some("v1.00".into()))),
+                to_value(page(Some("n1.abc".into()), None)),
+            ],
+        ),
     ]
 }
 

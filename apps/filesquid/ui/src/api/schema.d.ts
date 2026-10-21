@@ -1121,6 +1121,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/files/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search the files the caller may read
+         * @description The search operation: the files and folder rows of the caller's readable scope that match q, as rows like GET /api/v1/files/view (display names, API-S-027; collections and virtual collections as folder rows). Grammar (API-S-012, SRS-F-063): terms separated by white space; a term is a word, a quoted phrase ("Client deck") or an operator name:value whose value may be quoted; a leading - excludes what the term matches; operator names compare without case, and text containing a colon is quoted. Free text matches the display name and every dcterms: value. Operators: type: (image, video, audio, text, document, folder), in: (a collection's title), title: (dcterms:title), owner:me, creator: (dcterms:creator, whole value), tag: (dcterms:subject), is:deleted, is:unfiled, before: and after: (the head version's date in the caller's zone), createdbefore: and createdafter: (YYYY-MM-DD; the capture date from exif:DateTimeOriginal, else dcterms:created: a value with a zone is an instant compared by its date in the caller's zone, a value without one by the calendar date it states, so no instant is invented), source: (dcterms:source), size> and size< (an integer and an optional B, KB, MB or GB in powers of 1024). Comparison folds case by simple case folding (each character to its lower case); diacritics are not folded. An unknown operator (generator: among them, since this build has no c2pa module) is refused as invalid_request naming it, never matched as an empty filter. Operators of the grammar this host cannot answer, is:favorite, owner: naming another user and the filesquid-server operators sharedwith:, to:, from: and pendingowner:, are refused as unavailable (503) naming the operator, the disabled-module error of API-S-007. The scope (the repository by default, or a library, collection or virtual-collection node) is permission-filtered before anything is read or ranked (SRS-NFR-004): an unreadable library, collection or file is never examined. Relevance (the default order, most relevant first) adds for each free-text term 3 when the display name holds it, 2 when a dcterms:title does and 1 when another dcterms: value does; any view sort key may replace it without changing the matches. Paging and cursors follow GET /api/v1/files/view: the order is stable, a cursor of other parameters is refused (400) and a cursor of results that changed is refused as conflict (409). Bounds: q is at most 1,024 bytes (MAX_QUERY_BYTES) and 32 terms (MAX_QUERY_TERMS); one search examines at most 1,000 libraries (MAX_SEARCH_LIBRARIES) and 10,000 files (MAX_SEARCH_FILES), and complete is false when a bound left files out or a file could not be read; the caller's own times read at most 20 journal pages per library. There is no separate index: each search reads the catalog and the files' OCFL records, so its answer always follows canonical state. Content (full-text) search is not offered yet. A successful search is not journaled; a refusal is journaled once.
+         */
+        get: operations["searchFiles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2364,6 +2384,27 @@ export interface components {
             bytes: number;
             /** @description True when a bound stopped the count or a file could not be read, so the totals are lower bounds. */
             truncated: boolean;
+        };
+        /**
+         * @description What a search is ordered by: relevance, or a view sort key.
+         * @enum {string}
+         */
+        SearchSort: "relevance" | "name" | "size" | "modified" | "modified_by_me" | "opened_by_me";
+        /** @description One page of search results. */
+        SearchPage: {
+            /** @description The query. */
+            q: string;
+            /** @description The node searched, or null for the repository. */
+            node: string | null;
+            sort: components["schemas"]["SearchSort"];
+            direction: components["schemas"]["SortDirection"];
+            folders: components["schemas"]["FolderPlacement"];
+            /** @description The rows, in order. */
+            rows: components["schemas"]["ViewRow"][];
+            /** @description The cursor of the next page, or null on the last page. */
+            next_cursor: string | null;
+            /** @description False when a bound left files out or a file could not be read. */
+            complete: boolean;
         };
     };
     responses: {
@@ -4597,6 +4638,50 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    searchFiles: {
+        parameters: {
+            query: {
+                /** @description The query: free text and operators of the grammar above; at most 1,024 bytes and 32 terms. */
+                q: string;
+                /** @description The repository, library, collection or virtual-collection node handle searched; the repository when absent. */
+                node?: string;
+                /** @description The order; relevance when absent. */
+                sort?: components["schemas"]["SearchSort"];
+                /** @description The direction; descending for relevance and ascending for the other orders when absent. */
+                direction?: components["schemas"]["SortDirection"];
+                /** @description Where folder rows go; on_top when absent. */
+                folders?: components["schemas"]["FolderPlacement"];
+                /** @description The caller's zone for date boundaries: Z or a fixed offset from -14:00 to +14:00, such as -08:00; UTC when absent. */
+                zone?: string;
+                /** @description The next_cursor of the previous page of the same search. */
+                cursor?: string;
+                /** @description Page size for a query (1-1000). Each operation states its default; the activity journal defaults to 100. */
+                limit?: components["parameters"]["PageSize"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of results. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchPage"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             500: components["responses"]["Internal"];
             503: components["responses"]["FilesUnavailable"];
         };
