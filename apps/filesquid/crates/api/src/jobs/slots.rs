@@ -66,16 +66,16 @@ impl Slots {
         Some((class, cap))
     }
 
-    /// The kinds classified as `class`. Pure.
-    pub(super) fn kinds_of(&self, class: JobClass) -> impl Iterator<Item = &str> {
+    /// The kinds that share the class of `kind`, `kind` included; none for an unclassified
+    /// kind. Pure.
+    pub(super) fn kinds_sharing(&self, kind: &str) -> Vec<String> {
+        let Some(class) = self.classes.get(kind).copied() else {
+            return Vec::new();
+        };
         self.classes
             .iter()
-            .filter(move |(_, of)| **of == class)
-            .map(|(kind, _)| kind.as_str())
-    }
-
-    /// Whether any kind is classified.
-    pub(super) fn any(&self) -> bool {
-        !self.classes.is_empty()
+            .filter(|(_, of)| **of == class)
+            .map(|(kind, _)| kind.clone())
+            .collect()
     }
 }

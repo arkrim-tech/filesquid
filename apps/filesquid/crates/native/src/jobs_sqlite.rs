@@ -7,7 +7,7 @@
 //! The rules are the API's ([`filesquid_api::jobs::rules`]); this module only stores.
 
 use filesquid_api::jobs::{
-    same_id, Job, JobControl, JobError, JobFilter, JobList, JobState, JobStore,
+    same_id, Job, JobControl, JobError, JobFilter, JobList, JobState, JobStore, SlotKinds,
 };
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, Row, TransactionBehavior};
 use std::path::Path;
@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS jobs (
 CREATE INDEX IF NOT EXISTS jobs_unfinished ON jobs (state, created_ms, id);
 CREATE INDEX IF NOT EXISTS jobs_newest ON jobs (created_ms, id);
 CREATE INDEX IF NOT EXISTS jobs_kind_newest ON jobs (kind, created_ms, id);
+CREATE INDEX IF NOT EXISTS jobs_leased ON jobs (kind, state, lease_expires_ms);
 ";
 
 /// Columns of a job, in [`job`] and [`write`] order.
@@ -144,19 +145,25 @@ impl JobStore for SqliteJobs {
         self.oldest_open(Some(kind), limit)
     }
 
-    /// One query over the unfinished-jobs index; the running jobs of a kind are few.
-    fn leased_of(&self, kind: &str, now_ms: i64, limit: usize) -> Result<Vec<Job>, JobError> {
-        let conn = self.lock()?;
-        let sql = format!(
-            "SELECT {COLUMNS} FROM jobs WHERE state = 'running' AND kind = ?2 \
-             AND lease_expires_ms > ?3 LIMIT ?1"
-        );
-        let mut stmt = conn.prepare(&sql).map_err(sql_err)?;
-        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
-        let rows = stmt
-            .query_map(params![limit, kind, now_ms], job)
+    /// One `BEGIN IMMEDIATE` transaction holds the database's write lock from the read to the
+    /// write, so the count and the lease are one step for every connection; each kind is
+    /// counted through the `jobs_leased` index.
+    fn update_counting_leases(
+        &self,
+        id: &str,
+        (kinds, now_ms): (SlotKinds<'_>, i64),
+        change: &mut dyn FnMut(Job, usize) -> Result<Job, JobError>,
+    ) -> Result<Job, JobError> {
+        let mut conn = self.lock()?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sql_err)?;
-        rows.collect::<Result<Vec<Job>, _>>().map_err(sql_err)
+        let current = read(&tx, id)?.ok_or(JobError::NotFound)?;
+        let held = count_leased(&tx, &kinds(&current), id, now_ms)?;
+        let changed = same_id(id, change(current, held)?)?;
+        write(&tx, "INSERT OR REPLACE", &changed)?.map_err(sql_err)?;
+        tx.commit().map_err(sql_err)?;
+        Ok(changed)
     }
 
     /// One indexed query, newest first, reading one job past the limit to tell whether more
@@ -210,6 +217,26 @@ impl SqliteJobs {
         let rows = stmt.query_map(params![limit, kind], job).map_err(sql_err)?;
         rows.collect::<Result<Vec<Job>, _>>().map_err(sql_err)
     }
+}
+
+/// How many jobs other than `id` of `kinds` run under a lease that has not ended at
+/// `now_ms`. Database I/O.
+fn count_leased(
+    conn: &Connection,
+    kinds: &[String],
+    id: &str,
+    now_ms: i64,
+) -> Result<usize, JobError> {
+    let sql = "SELECT COUNT(*) FROM jobs WHERE kind = ?1 AND state = 'running' \
+               AND lease_expires_ms > ?2 AND id <> ?3";
+    let mut held = 0usize;
+    for kind in kinds {
+        let count: i64 = conn
+            .query_row(sql, params![kind, now_ms, id], |row| row.get(0))
+            .map_err(sql_err)?;
+        held = held.saturating_add(usize::try_from(count).unwrap_or(usize::MAX));
+    }
+    Ok(held)
 }
 
 /// The job `id`, if stored. Database I/O.

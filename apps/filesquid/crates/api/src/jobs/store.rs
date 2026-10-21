@@ -4,6 +4,10 @@ use super::model::{Job, JobError, JobState};
 use std::collections::BTreeMap;
 use std::sync::{Mutex, MutexGuard};
 
+/// The kinds whose live leases a counted start counts for a job: those that share its class
+/// (API-S-036 caps).
+pub type SlotKinds<'a> = &'a dyn Fn(&Job) -> Vec<String>;
+
 /// A host's job store. Every method is one atomic step; the rules are the caller's
 /// ([`super::rules`]), applied inside [`JobStore::update`].
 pub trait JobStore: Send + Sync {
@@ -46,12 +50,20 @@ pub trait JobStore: Send + Sync {
     /// A store failure.
     fn unfinished_of(&self, kind: &str, limit: usize) -> Result<Vec<Job>, JobError>;
 
-    /// At most `limit` running jobs of `kind` whose lease has not ended at `now_ms`: the jobs
-    /// that hold a slot of the kind's class (API-S-036), in any order.
+    /// [`JobStore::update`] that also passes `change` how many other jobs hold a slot of
+    /// the job's class (API-S-036 caps): the running jobs of the kinds `kinds` names for the
+    /// job whose lease has not ended at `now_ms`, counted in the same atomic step, so no
+    /// other start, from this service or another one over the same store, takes a slot in
+    /// between. A job for which `kinds` names none is passed 0 without a count.
     ///
     /// # Errors
-    /// A store failure.
-    fn leased_of(&self, kind: &str, now_ms: i64, limit: usize) -> Result<Vec<Job>, JobError>;
+    /// As [`JobStore::update`].
+    fn update_counting_leases(
+        &self,
+        id: &str,
+        counted: (SlotKinds<'_>, i64),
+        change: &mut dyn FnMut(Job, usize) -> Result<Job, JobError>,
+    ) -> Result<Job, JobError>;
 
     /// At most `filter.limit` jobs that `filter` accepts, finished ones included, newest
     /// first (by submission time, then ID, both descending), and whether more matched. The
@@ -197,12 +209,23 @@ impl JobStore for MemoryJobStore {
         self.oldest_open(limit, |job| job.kind == kind)
     }
 
-    fn leased_of(&self, kind: &str, now_ms: i64, limit: usize) -> Result<Vec<Job>, JobError> {
-        let jobs = self.lock()?;
-        let leased = jobs
+    fn update_counting_leases(
+        &self,
+        id: &str,
+        (kinds, now_ms): (SlotKinds<'_>, i64),
+        change: &mut dyn FnMut(Job, usize) -> Result<Job, JobError>,
+    ) -> Result<Job, JobError> {
+        let mut jobs = self.lock()?;
+        let current = jobs.get(id).cloned().ok_or(JobError::NotFound)?;
+        let counted = kinds(&current);
+        let held = jobs
             .values()
-            .filter(|job| job.kind == kind && super::rules::holds_slot(job, now_ms));
-        Ok(leased.take(limit).cloned().collect())
+            .filter(|job| job.id != id && counted.contains(&job.kind))
+            .filter(|job| super::rules::holds_slot(job, now_ms))
+            .count();
+        let changed = same_id(id, change(current, held)?)?;
+        jobs.insert(id.to_string(), changed.clone());
+        Ok(changed)
     }
 
     /// Only references are sorted; just the jobs answered are cloned.

@@ -244,8 +244,18 @@ async fn the_routes_list_answer_and_refuse_jobs() {
     let long = "k".repeat(129);
     let (status, _) = host.call("GET", &format!("/api/v1/jobs?kind={long}")).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    let (status, capped) = host.call("GET", "/api/v1/jobs?limit=1000").await;
+    for n in 0..101 {
+        let spec = JobSpec {
+            kind: "many".into(),
+            operation_id: format!("op-many-{n}"),
+            source: format!("many:{n}"),
+        };
+        host.jobs.submit(spec).expect("submit");
+    }
+    let (status, capped) = host.call("GET", "/api/v1/jobs?kind=many&limit=1000").await;
     assert_eq!(status, StatusCode::OK, "{capped}");
+    assert_eq!(capped["jobs"].as_array().map(Vec::len), Some(100));
+    assert_eq!(capped["truncated"], true);
 }
 
 #[tokio::test(flavor = "multi_thread")]

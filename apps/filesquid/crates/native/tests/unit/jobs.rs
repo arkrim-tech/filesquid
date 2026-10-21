@@ -270,10 +270,11 @@ fn a_listing_is_newest_first_filtered_and_marked_truncated() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Cubic round 1 (API-S-036 caps): only running jobs of the kind under a live lease hold a
-/// slot, and at most the limit is read.
+/// Cubic rounds 1 and 2 (API-S-036 caps): the update counts, in its own transaction, the
+/// other running jobs of the named kinds under a live lease, and a second store over the same
+/// database sees the leases the first one wrote.
 #[test]
-fn only_live_leases_of_the_kind_hold_a_slot() {
+fn a_counted_update_sees_every_live_lease_of_the_kinds() {
     let dir = dir("leased");
     let store = open(&dir);
     for (id, expires) in [("live-1", 100), ("live-2", 100), ("expired", 50)] {
@@ -288,17 +289,37 @@ fn only_live_leases_of_the_kind_hold_a_slot() {
             .expect("lease");
     }
     store.insert(&job("waiting", 2)).unwrap();
-    let mut leased: Vec<String> = store
-        .leased_of("prov.backfill", 60, 10)
-        .expect("leased")
-        .into_iter()
-        .map(|j| j.id)
-        .collect();
-    leased.sort();
-    assert_eq!(leased, ["live-1", "live-2"]);
+    let other = open(&dir);
+    let backfill = |_: &Job| vec!["prov.backfill".to_string()];
+    let none = |_: &Job| vec!["other".to_string()];
     assert_eq!(
-        store.leased_of("prov.backfill", 60, 1).expect("one").len(),
-        1
+        held(&other, "waiting", &backfill),
+        2,
+        "the expired lease holds no slot"
     );
-    assert!(store.leased_of("other", 60, 10).expect("other").is_empty());
+    assert_eq!(
+        held(&other, "live-1", &backfill),
+        1,
+        "a job does not count itself"
+    );
+    assert_eq!(
+        held(&other, "waiting", &none),
+        0,
+        "other kinds are not counted"
+    );
+    drop((store, other));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// What a counted update at time 60 passes for job `id` under `kinds`; the job is stored
+/// unchanged.
+fn held(store: &SqliteJobs, id: &str, kinds: &dyn Fn(&Job) -> Vec<String>) -> usize {
+    let mut seen = None;
+    store
+        .update_counting_leases(id, (kinds, 60), &mut |job, held| {
+            seen = Some(held);
+            Ok(job)
+        })
+        .expect("update");
+    seen.expect("counted")
 }

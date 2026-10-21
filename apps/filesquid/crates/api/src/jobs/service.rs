@@ -35,9 +35,6 @@ pub struct Jobs {
     ttl_ms: i64,
     events: Option<EventBus>,
     slots: Slots,
-    /// Serialises the starts of classified kinds, so two starts cannot both take the last
-    /// slot of a class between the count and the lease.
-    starting: Arc<Mutex<()>>,
 }
 
 impl std::fmt::Debug for Jobs {
@@ -66,7 +63,6 @@ impl Jobs {
             ttl_ms: JOB_LEASE_TTL_MS,
             events: None,
             slots: Slots::default(),
-            starting: Arc::new(Mutex::new(())),
         }
     }
 
@@ -285,10 +281,6 @@ impl Jobs {
     /// [`JobError::NotFound`], [`JobError::Conflict`] (`slots_full` when its class is at its
     /// cap), [`JobError::SourceChanged`] or a store failure; each is journaled.
     pub fn start(&self, id: &str, source: &str) -> Result<RunningJob, JobError> {
-        let _serialised = match self.slots.any() {
-            true => Some(self.starting.lock().unwrap_or_else(PoisonError::into_inner)),
-            false => None,
-        };
         let mut operation_id = None;
         let started = self
             .lease_job(id, source, &mut operation_id)
@@ -303,8 +295,9 @@ impl Jobs {
     }
 
     /// Apply [`rules::start`] to job `id` in one store update, refused `slots_full` when it
-    /// would take a lease while its class is at its cap; `operation_id` is set as soon as the
-    /// job is read, for the refusal's journal entry (store I/O).
+    /// would take a lease while its class is at its cap, the class's live leases counted in
+    /// the same atomic step; `operation_id` is set as soon as the job is read, for the
+    /// refusal's journal entry (store I/O).
     fn lease_job(
         &self,
         id: &str,
@@ -312,43 +305,19 @@ impl Jobs {
         operation_id: &mut Option<String>,
     ) -> Result<Job, JobError> {
         let now = (self.clock)();
-        let full = self.class_full(id, now, operation_id)?;
-        let (holder, ttl) = (self.holder.as_str(), self.ttl_ms);
-        self.store.update(id, &mut |job| {
-            *operation_id = Some(job.operation_id.clone());
-            let next = rules::start(job, (holder, source), now, ttl)?;
-            match full && next.state == JobState::Running {
-                true => Err(JobError::Conflict("slots_full")),
-                false => Ok(next),
-            }
-        })
-    }
-
-    /// Whether the class of job `id` already has as many other jobs under live leases at
-    /// `now` as its cap allows; false for an unclassified or unknown job. Reads at most the
-    /// cap plus one job per classified kind (store I/O).
-    fn class_full(
-        &self,
-        id: &str,
-        now: i64,
-        operation_id: &mut Option<String>,
-    ) -> Result<bool, JobError> {
-        if !self.slots.any() {
-            return Ok(false);
-        }
-        let Some(job) = self.store.get(id)? else {
-            return Ok(false);
-        };
-        *operation_id = Some(job.operation_id.clone());
-        let Some((class, cap)) = self.slots.class_of(&job.kind) else {
-            return Ok(false);
-        };
-        let mut held = 0;
-        for kind in self.slots.kinds_of(class) {
-            let leased = self.store.leased_of(kind, now, cap.saturating_add(1))?;
-            held += leased.iter().filter(|other| other.id != id).count();
-        }
-        Ok(held >= cap)
+        let (holder, ttl, slots) = (self.holder.as_str(), self.ttl_ms, &self.slots);
+        let kinds = |job: &Job| slots.kinds_sharing(&job.kind);
+        self.store
+            .update_counting_leases(id, (&kinds, now), &mut |job, held| {
+                *operation_id = Some(job.operation_id.clone());
+                let cap = slots.class_of(&job.kind).map(|(_, cap)| cap);
+                let next = rules::start(job, (holder, source), now, ttl)?;
+                let full = cap.is_some_and(|cap| held >= cap);
+                match full && next.state == JobState::Running {
+                    true => Err(JobError::Conflict("slots_full")),
+                    false => Ok(next),
+                }
+            })
     }
 
     /// Register the leased `job` as a process and journal its start.

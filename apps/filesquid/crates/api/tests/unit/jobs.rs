@@ -3,8 +3,8 @@
 //! over the in-memory reference store.
 
 use filesquid_api::jobs::{
-    rules, Job, JobError, JobSpec, JobState, JobStore, Jobs, Lease, MemoryJobStore, JOB_COMPLETED,
-    JOB_CREATED, JOB_FAILED, JOB_RECOVERED, JOB_REFUSED, JOB_STARTED, JOB_SUSPENDED,
+    rules, Job, JobError, JobSpec, JobState, JobStore, Jobs, Lease, MemoryJobStore, SlotKinds,
+    JOB_COMPLETED, JOB_CREATED, JOB_FAILED, JOB_RECOVERED, JOB_REFUSED, JOB_STARTED, JOB_SUSPENDED,
     MAX_CHECKPOINT_BYTES, MAX_RECOVERED_JOBS,
 };
 use filesquid_api::journal::{JournalEntry, JournalQuery, JournalStore, MemoryJournal, Outcome};
@@ -448,8 +448,13 @@ impl JobStore for RefusingStore {
         Ok(Vec::new())
     }
 
-    fn leased_of(&self, _kind: &str, _now_ms: i64, _limit: usize) -> Result<Vec<Job>, JobError> {
-        Ok(Vec::new())
+    fn update_counting_leases(
+        &self,
+        _id: &str,
+        _counted: (SlotKinds<'_>, i64),
+        _change: &mut dyn FnMut(Job, usize) -> Result<Job, JobError>,
+    ) -> Result<Job, JobError> {
+        Err(JobError::NotFound)
     }
 }
 
