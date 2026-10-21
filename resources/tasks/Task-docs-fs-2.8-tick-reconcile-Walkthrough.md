@@ -24,13 +24,63 @@ The checklist matches: PV-0.1 is ticked, the other five stay open. The test gaps
 
 ## Global Task 0.8 (not changed)
 
-Its only listed module row, UI-0.6, is ticked, but the global box needs more. Left to do by the global Description, none of it found on main: `resources/tasks/Task-0.8-Walkthrough.md` does not exist; the item-level F-040 capability register (supported, limited and unsupported rows for the Photos baseline and every F, NFR and TC ID, F-047 and F-048 pending, F-050 to F-060 against the phases) has no document (only architecture and PRD text describe it); the proposed quantitative budgets are recorded only as architecture text; the TC-004 statement of architecture versus scaffold reality; and the README section on the activity journal, Monitor dashboard and optional OTLP profile (the README mentions them only in passing). BE-0.6 moved to FS-3.10, and its F-040, NFR-002 and NFR-008 features live under `crates/server/tests/features/`. The owner decides whether the global box closes with those items or is narrowed.
+Its only listed module row, UI-0.6, is ticked, but the global box needs more. Left to do by the global Description, none of it found on main: `resources/tasks/Task-0.8-Walkthrough.md` does not exist; the item-level F-040 capability register (supported, limited and unsupported rows for the Photos baseline and every F, NFR and TC ID, F-047 and F-048 pending, F-050 to F-060 against the phases) has no document (only architecture and PRD text describe it); the proposed quantitative budgets are recorded only as architecture text; the TC-004 statement of architecture versus scaffold reality; and the optional OTLP profile, which the README does not mention (the journal and the Monitor page are documented in README paragraphs; the Description asks for them together with the OTLP profile in one place). BE-0.6 moved to FS-3.10, and its F-040, NFR-002 and NFR-008 features live under `crates/server/tests/features/`. The owner decides whether the global box closes with those items or is narrowed.
 
 ## Verification
 
+Raw CLI output (the hook's status lines from the last full run, 308 s, taken from its log; the full log is about 13,500 lines of cargo test output).
+
 ```text
 $ python3 scripts/docs/update_mvp_progress.py
+Wrote resources/implementation-plan-checklist.md
 $ bash scripts/pre-commit.sh
+✅ Branch Validation passed.
+✅ ./apps/filesquid/ui uniquely bound to 5173
+✅ ./apps/filesquid/ui uniquely bound to 4173
+✅ ./apps/imagesquid uniquely bound to 5174
+✅ ./apps/imagesquid uniquely bound to 4174
+✅ filesquid-server uniquely bound to 8083
+✅ Traceability Validation passed: 96 PRD requirements, 84 resolved SRS references.
+✅ Workspace Boundary validation passed.
+✅ Logging rule validation passed (no relevant staged files).
+✅ ./apps/filesquid is properly formatted.
+✅ ./apps/filesquid/ui is properly formatted.
+✅ ./apps/imagesquid is properly formatted.
+✅ Format validation passed.
+✅ ADR structure (ISO 42010) passed.
+✅ PRD allocation passed.
+✅ Plan traceability passed.
+✅ Relative links and anchors passed.
+✅ FileSquid and ImageSquid document boundary passed.
+✅ MVP queue and merge driver tests passed.
+✅ MVP progress bar passed.
+✅ Task cleanup passed.
+✅ Documentation validation passed.
+✅ Change scope validation passed (168 assertions).
+ℹ️  Test scope: rust:filesquid-api,filesquid-cli,filesquid-core,filesquid-desktop,filesquid-metadata,filesquid-native,filesquid-ocfl,filesquid-prov,filesquid-server
+ℹ️  Rust scope: filesquid-api filesquid-cli filesquid-core filesquid-desktop filesquid-metadata filesquid-native filesquid-ocfl filesquid-prov filesquid-server
+✅ Clippy (scoped) passed (1s).
+✅ Scoped tests passed (136s).
+✅ Module crate alone: filesquid-core passed (0s).
+✅ Module crate alone: filesquid-ocfl passed (23s).
+✅ Module crate alone: filesquid-metadata passed (0s).
+✅ Module crate alone: filesquid-prov passed (1s).
+✅ Module crate alone: filesquid-api passed (89s).
+✅ Module crate alone: filesquid-native passed (3s).
+✅ Clippy (filesquid-metadata, all features) passed (0s).
+✅ Tests (filesquid-metadata, all features) passed (5s).
+✅ wasm32 build (filesquid-metadata, default features off) passed (0s).
+✅ wasm32 build (filesquid-metadata, ocfl feature) passed (0s).
+✅ Clippy (filesquid-prov, all features) passed (0s).
+✅ Tests (filesquid-prov, all features) passed (1s).
+✅ wasm32 build (filesquid-prov) passed (1s).
+✅ wasm32 build (filesquid-prov, ocfl feature) passed (0s).
+✅ Rustdoc (scoped) passed (4s).
+✅ Clippy (desktop, test-instrumented) passed (0s).
+✅ Desktop tests (test-instrumented) passed (23s).
+ℹ️  Desktop packaged-window e2e skipped (set FILESQUID_DESKTOP_E2E=1 to run).
+✅ Lint and test validation passed (test scope: rust:filesquid-api,filesquid-cli,filesquid-core,filesquid-desktop,filesquid-metadata,filesquid-native,filesquid-ocfl,filesquid-prov,filesquid-server).
+✅ All Pre-Commit Hooks Passed! Test scope: rust:filesquid-api,filesquid-cli,filesquid-core,filesquid-desktop,filesquid-metadata,filesquid-native,filesquid-ocfl,filesquid-prov,filesquid-server (308s)
 ```
 
-The first hook run (before Cubic round 1) ended with "All Pre-Commit Hooks Passed! Test scope: rust:filesquid-api,filesquid-cli,filesquid-core,filesquid-desktop,filesquid-metadata,filesquid-native,filesquid-ocfl,filesquid-prov,filesquid-server". The scope was the nine Rust crates, not docs: the hook counts a change under `crates/<crate>/resources/` as a change to that crate (`scripts/verify_changed_scope.sh`). No code changed.
+The scope was the nine Rust crates, not docs: the hook counts a change under `crates/<crate>/resources/` as a change to that crate (`scripts/verify_changed_scope.sh`). No code changed.
