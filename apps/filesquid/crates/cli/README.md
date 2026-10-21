@@ -10,15 +10,18 @@ Modules today: `metadata` (from [`filesquid-metadata`](../metadata/README.md)). 
 
 FileSquid hosts link the module libraries and MUST NOT shell out to `fsquid` for canonical I/O.
 
+Every command is journaled ([ADR 036](../../../../resources/architecture/036-single-fsquid-cli.md) Decision 8, Task CLI-0.2). Before a command runs, `fsquid` opens `filesquid.sqlite` in `FILESQUID_DATA_DIR`, or else in the desktop app's data directory, through `filesquid-native`'s SQLite journal store in WAL mode, so it writes beside a running desktop app. A command that changes something or fails writes one redacted entry, `cli.<module>.<command>`, with its outcome, error code and the OCFL object identifier and version it committed; a command line that names no module command writes one failed `cli.route` entry; only a command that succeeds without changing anything writes none, and help needs no journal. A command changed something when the committed head of an OCFL object it names moved, when that head could not be read, or when it writes a file outside its objects (`export`). Exit codes: the module's own code, 2 for usage errors, 3 when the journal cannot be opened (one stdout line marked `"journal_unavailable": true`, and nothing runs), 4 when a command changed something or succeeded but its entry could not be written (the entry printed to stdout marked `"journal_write_failed": true`; a failed command that changed nothing keeps its own code). The root README's `## View logs` shows how to read the entries.
+
 Run Cargo from the workspace root:
 
 ```bash
 cd apps/filesquid
 cargo test -p filesquid-cli --locked
-cargo run -p filesquid-cli -- --help
+cargo run -p filesquid-cli --bin fsquid -- --help
 ```
 
 ## References
 
 - [Plan](./resources/plan.md)
 - [PRD F-050](../../../../resources/prd.md#f-050-filesquid-platform-and-distributions) and [SRS-F-050](../../../../resources/srs.md#srs-f-050-filesquid-platform-and-distributions)
+- [PRD F-061](../../../../resources/prd.md#f-061-activity-journal-and-live-health-monitoring), [SRS-F-061](../../../../resources/srs.md#srs-f-061-activity-journal-and-live-health-monitoring) and [API-S-031](../api/resources/srs.md) (the journaled commands)

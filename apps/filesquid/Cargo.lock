@@ -1367,7 +1367,10 @@ name = "filesquid-cli"
 version = "0.1.0"
 dependencies = [
  "cucumber",
+ "dirs",
+ "filesquid-api",
  "filesquid-metadata",
+ "filesquid-native",
  "serde_json",
  "tokio",
 ]

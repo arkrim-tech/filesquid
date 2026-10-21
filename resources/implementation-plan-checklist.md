@@ -1,9 +1,9 @@
 # Implementation Plan Checklist: FileSquid
 
 <!-- mvp-progress:start -->
-![MVP progress: 64% complete](./assets/mvp-progress.svg)
+![MVP progress: 65% complete](./assets/mvp-progress.svg)
 
-**MVP progress: 64%**, about 635 of 994 estimated hours. 17 of 28 tasks are done and 6 more are under way. Each segment of the bar is one task below, as wide as its estimated hours in the implementation plan; an open task fills by the share of its module rows that are ticked. Below the bar, In progress lists the open tasks being worked on (global tasks with at least one module row ticked, including those whose module rows are all ticked but whose own box is still open, and tasks with an open pull request); the count of tasks under way is the number of distinct open tasks listed there. Up next lists the next five new module tasks whose listed dependencies are done or in progress. Regenerate with `python3 scripts/docs/update_mvp_progress.py` after ticking boxes or opening a pull request; the check run by `scripts/verify_docs.sh` does not call GitHub and uses the pull requests recorded in the block. In a clone that registers the `mvp-progress` git merge driver (see the README), merging two pull requests that both redraw it merges their ticks and redraws it when it can, and otherwise leaves a conflict.
+**MVP progress: 65%**, about 643 of 994 estimated hours. 17 of 28 tasks are done and 6 more are under way. Each segment of the bar is one task below, as wide as its estimated hours in the implementation plan; an open task fills by the share of its module rows that are ticked. Below the bar, In progress lists the open tasks being worked on (global tasks with at least one module row ticked, including those whose module rows are all ticked but whose own box is still open, and tasks with an open pull request); the count of tasks under way is the number of distinct open tasks listed there. Up next lists the next five new module tasks whose listed dependencies are done or in progress. Regenerate with `python3 scripts/docs/update_mvp_progress.py` after ticking boxes or opening a pull request; the check run by `scripts/verify_docs.sh` does not call GitHub and uses the pull requests recorded in the block. In a clone that registers the `mvp-progress` git merge driver (see the README), merging two pull requests that both redraw it merges their ticks and redraws it when it can, and otherwise leaves a conflict.
 
 **In progress**
 
@@ -22,10 +22,9 @@
     - [UI-F2.8](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Drive-style views, sorting, selection and preferences
     - [UI-F2.9](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Global search bar and filter chips
     - [UI-F2.11](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Versions panel labels, download and history size
-- [Task FS-2.9](./implementation-plan.md#task-fs-2.9) Durable journal, Logs view and file panel tabs: 3 of 9 module rows ticked
+- [Task FS-2.9](./implementation-plan.md#task-fs-2.9) Durable journal, Logs view and file panel tabs: 4 of 9 module rows ticked
     - [IO-1.6](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f2-engine-warnings-with-object-references-global-task-fs-29) Copy-guard warnings name the object
     - [API-F2.12](../apps/filesquid/crates/api/resources/plan.md#phase-f2-prov-o-history-global-task-fs-28) Operation IDs on file-route commits
-    - [CLI-0.2](../apps/filesquid/crates/cli/resources/plan.md#phase-f2-journaled-commands-global-task-fs-29) Journal every `fsquid` command ([PR #113](https://github.com/arkrim-tech/filesquid/pull/113))
     - [DE-0.11](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Host journal sealing and journal rebuild
     - [UI-F2.15](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) File panel tabs: File info, Description and Provenance
     - [UI-F2.16](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Logs view and journal export
@@ -38,9 +37,9 @@
 - [IO-1.5](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f2-version-bound-files-for-prov-o-history-global-task-fs-28) Version-bound logical files in the change model (part of [Task FS-2.8](./implementation-plan.md#task-fs-2.8))
 - [PV-0.1](../apps/filesquid/crates/prov/resources/plan.md#phase-f2-prov-o-history-engine-global-task-fs-28) Crate, PROV-O model and profile `filesquid-prov/1` (part of [Task FS-2.8](./implementation-plan.md#task-fs-2.8))
 
-Generated 2026-10-20T23:37:55Z (RFC 3339, UTC) from the ticked boxes, the module plans and the open pull requests at that time.
-<!-- generated-at: 2026-10-20T23:37:55Z -->
-<!-- in-progress-prs: CLI-0.2=#113 -->
+Generated 2026-10-20T23:41:43Z (RFC 3339, UTC) from the ticked boxes, the module plans and the open pull requests at that time.
+<!-- generated-at: 2026-10-20T23:41:43Z -->
+<!-- in-progress-prs: none -->
 <!-- mvp-progress:end -->
 
 This is a short, ordered view of [implementation-plan.md](./implementation-plan.md). Each numbered item is a global task in the order the dev team expects to finish it, and the nested items are the module tasks it dispatches, taken from each module's `resources/plan.md`. Task codes link to the full task description. A box is ticked when the matching box is ticked in the source plan.
@@ -171,7 +170,7 @@ FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by ga
     - [x] [API-F2.10](../apps/filesquid/crates/api/resources/plan.md#phase-f2-prov-o-history-global-task-fs-28) Client events, journal query filters and journal export
     - [ ] [IO-1.6](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f2-engine-warnings-with-object-references-global-task-fs-29) Copy-guard warnings name the object
     - [ ] [API-F2.12](../apps/filesquid/crates/api/resources/plan.md#phase-f2-prov-o-history-global-task-fs-28) Operation IDs on file-route commits
-    - [ ] [CLI-0.2](../apps/filesquid/crates/cli/resources/plan.md#phase-f2-journaled-commands-global-task-fs-29) Journal every `fsquid` command
+    - [x] [CLI-0.2](../apps/filesquid/crates/cli/resources/plan.md#phase-f2-journaled-commands-global-task-fs-29) Journal every `fsquid` command
     - [x] [API-F2.11](../apps/filesquid/crates/api/resources/plan.md#phase-f2-prov-o-history-global-task-fs-28) Durable journal: per-commit entries and sealing service
     - [x] [CL-1.9](../apps/filesquid/crates/api/resources/plan.md#phases-f2-i1-and-f5-application-meaning-global-tasks-11-14-18) Journal rebuild in the rebuild-from-files command
     - [ ] [DE-0.11](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Host journal sealing and journal rebuild
