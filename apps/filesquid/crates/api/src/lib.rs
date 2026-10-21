@@ -60,6 +60,7 @@ pub mod files;
 pub mod health;
 pub mod history;
 pub mod host;
+pub mod imports;
 pub mod jobs;
 pub mod journal;
 pub mod journal_writer;
@@ -83,7 +84,7 @@ pub use routes::{route_actions, routed_paths, router, Liveness};
 use std::sync::{Arc, OnceLock};
 
 /// Version of the FileSquid API contract. Bumped when the contract changes.
-pub const API_VERSION: &str = "0.21.0";
+pub const API_VERSION: &str = "0.22.0";
 
 /// URL prefix shared by every API route.
 pub const API_PREFIX: &str = "/api/v1";
@@ -137,6 +138,9 @@ pub struct ApiState {
     /// The host's folder dialog for the library routes, installed once at startup (the
     /// folder-choice route answers 503 until then; API-S-025).
     location_chooser: Arc<OnceLock<Arc<dyn local_library::choice::LocationChooser>>>,
+    /// The host's import dialog and job runner, installed once at startup (the import route
+    /// answers 503 until then).
+    import_starter: Arc<OnceLock<Arc<dyn imports::ImportStarter>>>,
 }
 
 impl std::fmt::Debug for ApiState {
@@ -164,6 +168,10 @@ impl std::fmt::Debug for ApiState {
             .field(
                 "location_chooser_installed",
                 &self.location_chooser.get().is_some(),
+            )
+            .field(
+                "import_starter_installed",
+                &self.import_starter.get().is_some(),
             )
             .finish()
     }
@@ -208,6 +216,7 @@ impl ApiState {
             journal_names: Arc::new(OnceLock::new()),
             history_backfill: Arc::new(OnceLock::new()),
             location_chooser: Arc::new(OnceLock::new()),
+            import_starter: Arc::new(OnceLock::new()),
         }
     }
 
@@ -332,6 +341,17 @@ impl ApiState {
         chooser: Arc<dyn local_library::choice::LocationChooser>,
     ) -> bool {
         self.location_chooser.set(chooser).is_ok()
+    }
+
+    /// Install the host's import dialog and job runner for the import route. Returns false,
+    /// keeping the first, if one was already installed.
+    pub fn install_import_starter(&self, starter: Arc<dyn imports::ImportStarter>) -> bool {
+        self.import_starter.set(starter).is_ok()
+    }
+
+    /// The installed import starter, if any.
+    pub fn import_starter(&self) -> Option<Arc<dyn imports::ImportStarter>> {
+        self.import_starter.get().cloned()
     }
 
     /// The installed folder dialog, if any.
