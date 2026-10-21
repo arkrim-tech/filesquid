@@ -75,11 +75,29 @@ Feature: File browser
     Then the folder should be listed as pending until a file is added
     And no version should be committed
 
-  Scenario: Renaming or moving is one call that keeps the stored name unless the name changes
-    When I rename "readme.txt" to "notes-final.txt"
+  Scenario: Moving is one call that keeps the stored name unless the name changes
+    When I rename the folder "Drawings" to "Plans"
     Then one move call should be sent and the status should name the committed version
     When I move a file to the folder "Drawings" without changing its name
     Then the move should keep the stored name
+
+  Scenario: Renaming a file in an object that is not the file's own is a move
+    Given a file in a plain object is listed as "readme.txt"
+    When I rename "readme.txt" to "notes-final.txt"
+    Then one move call should be sent and no call to the renames route
+
+  Scenario: Renaming a file changes only its display name through the renames route
+    Given a file in its own object is listed as "readme.txt"
+    When I rename "readme.txt" to "holiday-notes.txt"
+    Then one call to the renames route should be sent and no move call
+    And the status should name the committed version and the listing should show "holiday-notes.txt"
+    And no folder field should be offered
+
+  Scenario: A refused rename shows the label for its reason and changes nothing
+    Given a file in its own object is listed as "readme.txt"
+    When the renames route refuses with a conflict
+    Then the alert should read the rename conflict label
+    And "readme.txt" should still be listed
 
   Scenario: Removing is reversible and there is no delete forever
     When I remove "readme.txt"

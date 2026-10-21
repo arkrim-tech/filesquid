@@ -11,6 +11,8 @@
  */
 import { formatLabel, type LabelTable } from "../theme/labels";
 import {
+  MAX_DISPLAY_NAME_BYTES,
+  MAX_NAME_BYTES,
   MAX_UPLOAD_BYTES,
   formatSize,
   joinPath,
@@ -29,6 +31,8 @@ import {
   MAX_UPLOAD_FILES,
   moveTarget,
   problemText,
+  renameFailureText,
+  renameFileId,
   uploadFiles,
   type UploadFailure,
   type UploadResult,
@@ -37,7 +41,7 @@ import type { FileSource } from "../files/source";
 import type { Frame } from "./file-browser-frame";
 
 /** What a write did, for the browser's `fs-files-change` event. */
-export type WriteOperation = "upload" | "create-folder" | "move" | "remove" | "restore";
+export type WriteOperation = "upload" | "create-folder" | "move" | "rename" | "remove" | "restore";
 
 /** What the controller needs from the browser. */
 export interface WritesHost {
@@ -53,6 +57,11 @@ export interface WritesHost {
   reload(): Promise<void>;
   /** A write committed `commit`; `changed` are the logical paths it touched. */
   committed(operation: WriteOperation, commit: FileCommit, changed: readonly string[]): void;
+  /**
+   * The name the listing of `location` shows for the row of `path`, or undefined when that
+   * listing is not the one shown and loaded now, or does not list the path.
+   */
+  nameOf(location: FileLocation, path: string): string | undefined;
   /** Remember a folder created in the client until a file is added beneath it. */
   pendFolder(path: string): void;
   /** Move focus to the row of `path` once it is listed again. */
@@ -298,13 +307,15 @@ export class FileWrites {
     const where = this.host.location();
     const folder =
       where.prefix === "" ? labels.fileRoot : (where.prefix.split("/").pop() ?? labels.fileRoot);
+    const only = rename && this.renameOnly(mode.row);
+    const renameTitle = only ? labels.fileRenameOnlyTitle : labels.fileRenameTitle;
     const title = rename
-      ? formatLabel(labels.fileRenameTitle, { name: mode.row.name })
+      ? formatLabel(renameTitle, { name: mode.row.name })
       : formatLabel(labels.fileNewFolderTitle, { folder });
     form.element.setAttribute("aria-label", title);
     this.setFieldLabel(rename ? labels.fileFieldName : labels.fileFolderName);
     form.submit.textContent = rename ? labels.fileSave : labels.fileCreate;
-    form.folderField.hidden = !rename;
+    form.folderField.hidden = !rename || only;
     form.name.value = rename ? mode.row.name : "";
     form.folder.value = rename ? parentPath(mode.row.path) : "";
     this.formError("");
@@ -339,13 +350,54 @@ export class FileWrites {
     const mode = this.mode;
     if (!mode || this.busy) return;
     const { form } = this.frame;
+    const moves = mode.kind === "rename" && !this.renameOnly(mode.row);
+    const displayName = mode.kind === "rename" && !moves;
+    const limit = displayName ? MAX_DISPLAY_NAME_BYTES : MAX_NAME_BYTES;
     const problem =
-      validateName(form.name.value) ??
-      (mode.kind === "rename" ? folderProblem(form.folder.value) : undefined);
-    if (problem) return this.formError(problemText(problem, this.host.labels));
+      validateName(form.name.value, limit) ??
+      (moves ? folderProblem(form.folder.value) : undefined);
+    if (problem) return this.formError(problemText(problem, this.host.labels, displayName));
     this.formError("");
     if (mode.kind === "folder") await this.createFolder(mode, form.name.value.trim());
-    else await this.move(mode, form.name.value, form.folder.value);
+    else if (moves) await this.move(mode, form.name.value, form.folder.value);
+    else await this.renameFile(mode, form.name.value);
+  }
+
+  /**
+   * Whether the row is renamed by the renames route: the stored original of a file's own
+   * object, which never moves and has no folder to choose (API-S-027).
+   */
+  private renameOnly(row: FileRow): boolean {
+    return renameFileId(row, this.host.location().object_id) !== undefined;
+  }
+
+  /**
+   * Set a file's display name with one call to the renames route. The name shown afterwards is
+   * the one the reloaded listing carries. A refusal is shown with the label for its reason.
+   * Focus returns to the opener only while the form that asked is still open.
+   */
+  private async renameFile(
+    mode: Extract<FormMode, { kind: "rename" }>,
+    name: string,
+  ): Promise<void> {
+    const row = mode.row;
+    const typed = name.trim();
+    const where = this.host.location();
+    const fileId = renameFileId(row, where.object_id);
+    if (fileId === undefined || typed === row.name) return this.close(true);
+    const commit = await this.run(
+      () => this.host.source.rename({ library_id: where.library_id }, fileId, typed),
+      renameFailureText,
+    );
+    if (!commit) return;
+    if (this.mode === mode) this.close(true);
+    this.host.committed("rename", commit, [row.path]);
+    await this.host.reload();
+    // Only the listing of the place the rename was asked in, once loaded, names the file.
+    const shown = this.host.nameOf(where, row.path) ?? typed;
+    this.showStatus(
+      formatLabel(this.host.labels.fileRenamed, { name: shown, version: commit.version }),
+    );
   }
 
   /**
@@ -392,15 +444,19 @@ export class FileWrites {
 
   /**
    * Run one API call with the controller marked busy. A rejection is shown in the alert region
-   * and logged by kind only; nothing else changes.
+   * (worded by `words`, the generic failure text by default) and logged by kind only; nothing
+   * else changes.
    */
-  private async run<T>(call: () => Promise<T>): Promise<T | undefined> {
+  private async run<T>(
+    call: () => Promise<T>,
+    words: (error: unknown, labels: LabelTable) => string = failureText,
+  ): Promise<T | undefined> {
     this.setBusy(true);
     try {
       return await call();
     } catch (error) {
       console.warn("FileSquid file action failed", errorKind(error));
-      this.showAlert([failureText(error, this.host.labels)], []);
+      this.showAlert([words(error, this.host.labels)], []);
       return undefined;
     } finally {
       this.setBusy(false);

@@ -36,6 +36,29 @@ export function fixture(files: readonly MemoryFile[] = FILES): MemoryFileSource 
   return new MemoryFileSource({ library_id: "lib", object_id: "obj", files });
 }
 
+/** The file whose own object the file-object fixture is (API-S-026). */
+export const FILE_ID = "5b1d2c3e-7a4f-4e8b-9c6d-0a1b2c3d4e5f";
+
+/** Where the file-object fixture's original is listed: `original/` of `urn:uuid:<file-id>`. */
+export const FILE_LOCATION: FileLocation = {
+  library_id: "lib",
+  object_id: `urn:uuid:${FILE_ID}`,
+  prefix: "original",
+};
+
+/**
+ * A source over one file's own object as the API stores it (API-S-026): the original at
+ * `original/<file-uuid>.txt`, a display name apart from the stored name. A rename of this file
+ * goes through the renames route; a move of its original is refused.
+ */
+export function fileObjectFixture(): MemoryFileSource {
+  return new MemoryFileSource({
+    library_id: "lib",
+    object_id: `urn:uuid:${FILE_ID}`,
+    files: [{ path: `original/${FILE_ID}.txt`, displayName: "readme.txt", content: "hello" }],
+  });
+}
+
 /** Let queued promise callbacks and timers run. */
 export const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
