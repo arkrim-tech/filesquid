@@ -40,7 +40,7 @@ Feature: Durable jobs are reported and controlled through the job routes
   Scenario: Every stored change of a job is announced on the event channel
     Given a counting job of 6 units that waits
     When I pause the job through the job routes
-    Then a "job.update" event should show the job paused
+    Then its "job.update" events should show it waiting, then paused
     And no event should carry the job's source
 
   # Error case

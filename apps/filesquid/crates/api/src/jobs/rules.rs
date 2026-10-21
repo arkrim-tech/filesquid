@@ -14,8 +14,9 @@ pub const SOURCE_CHANGED: &str = "source_changed";
 /// count raised.
 ///
 /// # Errors
-/// [`JobError::Conflict`] (`job_finished`, `lease_held`, or `job_paused` for a job held by a
-/// pause, API-S-036).
+/// [`JobError::Conflict`] (`job_finished`, `lease_held`, `job_paused` for a job held by a
+/// pause, or `cancel_requested` for a crashed run asked to cancel, which recovery cancels;
+/// API-S-036).
 pub fn start(
     job: Job,
     (holder, source): (&str, &str),
@@ -27,6 +28,9 @@ pub fn start(
     }
     if lease_live(&job, now_ms) {
         return Err(JobError::Conflict("lease_held"));
+    }
+    if job.control == Some(JobControl::Cancel) {
+        return Err(JobError::Conflict("cancel_requested"));
     }
     if job.control == Some(JobControl::Pause) {
         return Err(JobError::Conflict("job_paused"));
@@ -128,6 +132,20 @@ pub fn suspend(job: Job, lease: &Lease, now_ms: i64) -> Result<Job, JobError> {
     Ok(release(job, now_ms))
 }
 
+/// Suspend the job under `lease` if a pause or cancel is still asked of it, in the same
+/// step as the check, so a resume in between keeps the run going (API-S-036); a job asked
+/// nothing is answered unchanged.
+///
+/// # Errors
+/// [`JobError::Fenced`] when the lease is no longer the job's.
+pub fn halt(job: Job, lease: &Lease, now_ms: i64) -> Result<Job, JobError> {
+    check_lease(&job, lease, now_ms)?;
+    match job.control {
+        Some(_) => Ok(release(job, now_ms)),
+        None => Ok(job),
+    }
+}
+
 /// The job pending again without a lease, or cancelled when a cancel was asked of it.
 fn release(mut job: Job, now_ms: i64) -> Job {
     job.state = match job.control {
@@ -211,8 +229,9 @@ pub fn resume(mut job: Job, now_ms: i64) -> Result<Job, JobError> {
     Ok(job)
 }
 
-/// Cancel `job`: a pending job is cancelled at once; a running job is asked to stop at its
-/// next checkpoint. Cancelling a job already asked to stop changes nothing. Pure.
+/// Cancel `job`: a pending job, and a running one whose lease has ended (its run crashed),
+/// is cancelled at once; a running job is asked to stop at its next checkpoint. Cancelling
+/// a job already asked to stop changes nothing. Pure.
 ///
 /// # Errors
 /// [`JobError::Conflict`] (`job_finished`).
@@ -220,11 +239,9 @@ pub fn cancel(mut job: Job, now_ms: i64) -> Result<Job, JobError> {
     if job.state.is_finished() {
         return Err(JobError::Conflict("job_finished"));
     }
-    if job.state == JobState::Pending {
-        job.state = JobState::Cancelled;
-        job.control = None;
-        job.updated_ms = now_ms;
-        return Ok(job);
+    if !lease_live(&job, now_ms) {
+        job.control = Some(JobControl::Cancel);
+        return Ok(release(job, now_ms));
     }
     if job.control != Some(JobControl::Cancel) {
         job.control = Some(JobControl::Cancel);

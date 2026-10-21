@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS jobs (
 );
 CREATE INDEX IF NOT EXISTS jobs_unfinished ON jobs (state, created_ms, id);
 CREATE INDEX IF NOT EXISTS jobs_newest ON jobs (created_ms, id);
+CREATE INDEX IF NOT EXISTS jobs_kind_newest ON jobs (kind, created_ms, id);
 ";
 
 /// Columns of a job, in [`job`] and [`write`] order.
@@ -143,12 +144,28 @@ impl JobStore for SqliteJobs {
         self.oldest_open(Some(kind), limit)
     }
 
+    /// One query over the unfinished-jobs index; the running jobs of a kind are few.
+    fn leased_of(&self, kind: &str, now_ms: i64, limit: usize) -> Result<Vec<Job>, JobError> {
+        let conn = self.lock()?;
+        let sql = format!(
+            "SELECT {COLUMNS} FROM jobs WHERE state = 'running' AND kind = ?2 \
+             AND lease_expires_ms > ?3 LIMIT ?1"
+        );
+        let mut stmt = conn.prepare(&sql).map_err(sql_err)?;
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let rows = stmt
+            .query_map(params![limit, kind, now_ms], job)
+            .map_err(sql_err)?;
+        rows.collect::<Result<Vec<Job>, _>>().map_err(sql_err)
+    }
+
     /// One indexed query, newest first, reading one job past the limit to tell whether more
     /// matched.
     fn list(&self, filter: &JobFilter) -> Result<JobList, JobError> {
         let conn = self.lock()?;
         let sql = format!(
-            "SELECT {COLUMNS} FROM jobs WHERE (?2 IS NULL OR kind = ?2)              AND (?3 IS NULL OR state = ?3) ORDER BY created_ms DESC, id DESC LIMIT ?1"
+            "SELECT {COLUMNS} FROM jobs WHERE (?2 IS NULL OR kind = ?2) \
+             AND (?3 IS NULL OR state = ?3) ORDER BY created_ms DESC, id DESC LIMIT ?1"
         );
         let mut stmt = conn.prepare(&sql).map_err(sql_err)?;
         let limit = filter.effective_limit();

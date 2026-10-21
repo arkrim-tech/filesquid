@@ -6,7 +6,7 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use filesquid_api::auth::{Authoriser, LaunchToken};
-use filesquid_api::jobs::{Job, JobControl, JobError, JobRunner, JobSpec, Jobs, MemoryJobStore};
+use filesquid_api::jobs::{Halt, Job, JobError, JobRunner, JobSpec, Jobs, MemoryJobStore};
 use filesquid_api::journal::MemoryJournal;
 use filesquid_api::monitor::{Monitor, MonitorConfig, StaticHostChecks};
 use filesquid_api::{router, ApiState};
@@ -31,7 +31,7 @@ type Done = Arc<Mutex<Vec<u64>>>;
 
 /// A runner that does units `next..=UNITS` on a thread, checkpointing after each. After
 /// [`PAUSE_AFTER`] in the first run it waits until the test has asked for a pause, and it
-/// stops at the first checkpoint that brings a request.
+/// halts at the first checkpoint that brings a request still standing.
 struct CountRunner {
     jobs: Mutex<Option<Jobs>>,
     done: Done,
@@ -68,10 +68,14 @@ impl JobRunner for CountRunner {
                         gate.recv().expect("the test asked for a pause");
                     }
                 }
-                if unit > PAUSE_AFTER && running.requested() == Some(JobControl::Pause) {
-                    running.suspend().expect("suspend");
-                    finished.send(()).expect("report");
-                    return;
+                if unit > PAUSE_AFTER && running.requested().is_some() {
+                    match running.halt_if_requested().expect("halt") {
+                        Halt::Halted(_) => {
+                            finished.send(()).expect("report");
+                            return;
+                        }
+                        Halt::Continued(kept) => running = *kept,
+                    }
                 }
             }
             running.complete().expect("complete");
@@ -233,8 +237,15 @@ async fn the_routes_list_answer_and_refuse_jobs() {
         .await;
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(refused["code"], "conflict");
-    let (status, bad) = host.call("GET", "/api/v1/jobs?state=sleeping").await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+    for query in ["state=sleeping", "limit=0", "limit=1001", "kind="] {
+        let (status, bad) = host.call("GET", &format!("/api/v1/jobs?{query}")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{query}: {bad}");
+    }
+    let long = "k".repeat(129);
+    let (status, _) = host.call("GET", &format!("/api/v1/jobs?kind={long}")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, capped) = host.call("GET", "/api/v1/jobs?limit=1000").await;
+    assert_eq!(status, StatusCode::OK, "{capped}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

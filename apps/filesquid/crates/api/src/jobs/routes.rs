@@ -46,7 +46,7 @@ pub struct JobsQuery {
     kind: Option<String>,
     /// Only jobs in this state (`pending`, `running`, `completed`, `failed`, `cancelled`).
     state: Option<String>,
-    /// At most this many jobs (1 to 100, default 100).
+    /// At most this many jobs (1 to 1000, default 100; a limit above 100 answers 100).
     limit: Option<usize>,
 }
 
@@ -158,17 +158,33 @@ fn installed(state: &ApiState) -> Result<Arc<Jobs>, ApiError> {
     })
 }
 
-/// The filter of `query`, or `Err` for an unknown state. Pure.
+/// Longest `kind` a filter may name, as the contract's `kind` parameter.
+const MAX_KIND_CHARS: usize = 128;
+
+/// Largest `limit` the contract's `PageSize` accepts; a limit above [`MAX_LISTED_JOBS`]
+/// answers that many.
+const MAX_PAGE_SIZE: usize = 1000;
+
+/// The filter of `query`, or `Err` for an unknown state, a `kind` outside 1 to 128
+/// characters or a `limit` outside 1 to 1000. Pure.
 fn filter_of(query: JobsQuery) -> Result<JobFilter, ()> {
     let state = match query.state.as_deref() {
         Some(name) => Some(JobState::parse(name).ok_or(())?),
         None => None,
     };
-    Ok(JobFilter {
-        kind: query.kind,
-        state,
-        limit: query.limit.unwrap_or(MAX_LISTED_JOBS),
-    })
+    let kind_ok = query
+        .kind
+        .as_deref()
+        .is_none_or(|kind| (1..=MAX_KIND_CHARS).contains(&kind.chars().count()));
+    let limit = query.limit.unwrap_or(MAX_LISTED_JOBS);
+    match kind_ok && (1..=MAX_PAGE_SIZE).contains(&limit) {
+        true => Ok(JobFilter {
+            kind: query.kind,
+            state,
+            limit,
+        }),
+        false => Err(()),
+    }
 }
 
 /// Journal a query the list route cannot read, once, and answer its refusal.

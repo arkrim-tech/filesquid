@@ -1130,7 +1130,7 @@ export interface paths {
         };
         /**
          * Durable jobs
-         * @description At most 100 durable jobs (limit, default and most 100; a larger limit answers 100), newest first, optionally of one kind and in one state, marked truncated when more match (API-S-036). A job is created by the route of its kind (for example POST /api/v1/imports). The views never carry a job's source identity, checkpoint, lease holder or fencing number. A filter that cannot be read is refused as invalid_request and journaled as job.refused.
+         * @description At most 100 durable jobs (limit, default and most 100; a larger limit answers 100), newest first, optionally of one kind and in one state, marked truncated when more match (API-S-036). There is no cursor: narrow the listing by kind and state to reach older jobs. A kind outside 1 to 128 characters, a limit outside 1 to 1000 or an unknown state is refused as invalid_request. A job is created by the route of its kind (for example POST /api/v1/imports). The views never carry a job's source identity, checkpoint, lease holder or fencing number. A filter that cannot be read is refused as invalid_request and journaled as job.refused.
          */
         get: operations["listJobs"];
         put?: never;
@@ -1212,7 +1212,7 @@ export interface paths {
         put?: never;
         /**
          * Cancel a job
-         * @description Cancel the job: a pending job is cancelled at once (job.cancelled); a running job's worker stops at its next checkpoint, after which the job is cancelled (job.cancel_requested). A run that suspends or whose lease expires under a cancel request is cancelled. A refusal is journaled as job.refused (API-S-036).
+         * @description Cancel the job: a pending job, or a running one whose lease has ended, is cancelled at once (job.cancelled); a running job's worker stops at its next checkpoint, after which the job is cancelled (job.cancel_requested). A run that suspends or whose lease expires under a cancel request is cancelled. A refusal is journaled as job.refused (API-S-036).
          */
         post: operations["cancelJob"];
         delete?: never;

@@ -269,3 +269,36 @@ fn a_listing_is_newest_first_filtered_and_marked_truncated() {
     assert!(!finished.truncated);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Cubic round 1 (API-S-036 caps): only running jobs of the kind under a live lease hold a
+/// slot, and at most the limit is read.
+#[test]
+fn only_live_leases_of_the_kind_hold_a_slot() {
+    let dir = dir("leased");
+    let store = open(&dir);
+    for (id, expires) in [("live-1", 100), ("live-2", 100), ("expired", 50)] {
+        store.insert(&job(id, 1)).unwrap();
+        store
+            .update(id, &mut |mut job| {
+                job.state = JobState::Running;
+                job.holder = Some("launch-1".into());
+                job.lease_expires_ms = Some(expires);
+                Ok(job)
+            })
+            .expect("lease");
+    }
+    store.insert(&job("waiting", 2)).unwrap();
+    let mut leased: Vec<String> = store
+        .leased_of("prov.backfill", 60, 10)
+        .expect("leased")
+        .into_iter()
+        .map(|j| j.id)
+        .collect();
+    leased.sort();
+    assert_eq!(leased, ["live-1", "live-2"]);
+    assert_eq!(
+        store.leased_of("prov.backfill", 60, 1).expect("one").len(),
+        1
+    );
+    assert!(store.leased_of("other", 60, 10).expect("other").is_empty());
+}

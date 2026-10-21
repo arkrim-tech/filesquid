@@ -5,8 +5,9 @@
 
 use filesquid_api::events::topic;
 use filesquid_api::jobs::{
-    Job, JobClass, JobControl, JobError, JobFilter, JobLimits, JobSpec, JobState, JobView, Jobs,
-    MemoryJobStore, JOB_CANCELLED, JOB_CANCEL_REQUESTED, JOB_PAUSED, JOB_REFUSED, JOB_RESUMED,
+    Halt, Job, JobClass, JobControl, JobError, JobFilter, JobLimits, JobSpec, JobState, JobView,
+    Jobs, MemoryJobStore, JOB_CANCELLED, JOB_CANCEL_REQUESTED, JOB_PAUSED, JOB_REFUSED,
+    JOB_RESUMED,
 };
 use filesquid_api::journal::{JournalEntry, JournalQuery, JournalStore, MemoryJournal};
 use filesquid_api::journal_writer::{JournalWriter, WriterConfig};
@@ -380,4 +381,134 @@ fn the_job_view_carries_no_source_checkpoint_or_lease() {
     assert_eq!(view.done, 1);
     assert_eq!(view.total, Some(3));
     assert!(view.created.ends_with('Z'));
+}
+
+/// The `job.update` states received so far on `feed`.
+fn update_states(
+    feed: &mut tokio::sync::broadcast::Receiver<filesquid_api::ApiEvent>,
+) -> Vec<String> {
+    let mut states = Vec::new();
+    while let Ok(event) = feed.try_recv() {
+        if event.topic == topic::JOB_UPDATE {
+            states.push(event.data["state"].as_str().unwrap_or_default().to_string());
+        }
+    }
+    states
+}
+
+/// Cubic round 1: a cancel, a completion and a recovery publish too.
+#[test]
+fn ends_and_recoveries_publish_a_job_update() {
+    let rig = Rig::new();
+    let jobs = rig.jobs();
+    let mut feed = rig.events.subscribe();
+    let waiting = submit(&jobs, "op-1");
+    jobs.cancel(&waiting.id).expect("cancel");
+    let done = submit(&jobs, "op-2");
+    jobs.start(&done.id, &done.source)
+        .expect("start")
+        .complete()
+        .expect("complete");
+    let crashed = submit(&jobs, "op-3");
+    drop(jobs.start(&crashed.id, &crashed.source).expect("start"));
+    rig.advance(TTL_MS + 1);
+    jobs.recover().expect("recover");
+    assert_eq!(
+        update_states(&mut feed),
+        [
+            "pending",
+            "cancelled",
+            "pending",
+            "running",
+            "completed",
+            "pending",
+            "running",
+            "pending"
+        ],
+        "submit and cancel; submit, start and complete; submit, start and release"
+    );
+}
+
+/// Cubic round 1: the cap counts every live lease of the class, however many other jobs wait.
+#[test]
+fn the_cap_counts_a_live_lease_behind_many_waiting_jobs() {
+    let rig = Rig::new();
+    let jobs = rig
+        .jobs()
+        .with_class("transfer", JobClass::Transfer)
+        .with_limits(JobLimits {
+            transfers: 1,
+            cpu_heavy: 2,
+        });
+    for n in 0..1_001 {
+        submit(&jobs, &format!("op-wait-{n}"));
+    }
+    rig.advance(1);
+    let first = jobs.submit(spec("transfer", "op-t1")).expect("submit");
+    let second = jobs.submit(spec("transfer", "op-t2")).expect("submit");
+    let _running = jobs.start(&first.id, &first.source).expect("first");
+    let refused = jobs.start(&second.id, &second.source).expect_err("full");
+    assert_eq!(refused, JobError::Conflict("slots_full"));
+}
+
+/// Cubic round 1: a job that could not start anyway is refused for its own reason, not the cap.
+#[test]
+fn a_full_class_refuses_a_paused_job_as_paused() {
+    let rig = Rig::new();
+    let jobs = rig
+        .jobs()
+        .with_class("import", JobClass::Transfer)
+        .with_limits(JobLimits {
+            transfers: 1,
+            cpu_heavy: 2,
+        });
+    let first = submit(&jobs, "op-1");
+    let second = submit(&jobs, "op-2");
+    let _running = jobs.start(&first.id, &first.source).expect("first");
+    jobs.pause(&second.id).expect("pause");
+    let refused = jobs.start(&second.id, &second.source).expect_err("paused");
+    assert_eq!(refused, JobError::Conflict("job_paused"));
+}
+
+/// Cubic round 1: a crashed run asked to cancel is never started again, and cancelling it
+/// again ends it at once.
+#[test]
+fn a_crashed_run_asked_to_cancel_is_not_restarted() {
+    let rig = Rig::new();
+    let jobs = rig.jobs();
+    let job = submit(&jobs, "op-1");
+    drop(jobs.start(&job.id, &job.source).expect("start"));
+    jobs.cancel(&job.id).expect("cancel requested");
+    rig.advance(TTL_MS + 1);
+    let refused = jobs.start(&job.id, &job.source).expect_err("cancelling");
+    assert_eq!(refused, JobError::Conflict("cancel_requested"));
+    let crashed = submit(&jobs, "op-2");
+    drop(jobs.start(&crashed.id, &crashed.source).expect("start"));
+    rig.advance(TTL_MS + 1);
+    let cancelled = jobs.cancel(&crashed.id).expect("cancel");
+    assert_eq!(cancelled.state, JobState::Cancelled);
+}
+
+/// Cubic round 1: a resume that clears the pause before the worker halts keeps the run going;
+/// a pause still asked suspends it.
+#[test]
+fn halting_checks_the_request_in_the_same_step() {
+    let rig = Rig::new();
+    let jobs = rig.jobs();
+    let job = submit(&jobs, "op-1");
+    let mut running = jobs.start(&job.id, &job.source).expect("start");
+    jobs.pause(&job.id).expect("pause");
+    running
+        .checkpoint("next=2", 1, Some(2))
+        .expect("checkpoint");
+    assert_eq!(running.requested(), Some(JobControl::Pause));
+    jobs.resume(&job.id).expect("resume");
+    let Halt::Continued(running) = running.halt_if_requested().expect("halt") else {
+        panic!("a resumed run keeps going");
+    };
+    assert_eq!(running.requested(), None);
+    jobs.pause(&job.id).expect("pause again");
+    let halted = running.halt_if_requested().expect("halt");
+    assert!(matches!(halted, Halt::Halted(JobState::Pending)));
+    assert!(jobs.job(&job.id).expect("job").is_paused());
 }

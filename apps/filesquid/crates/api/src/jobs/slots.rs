@@ -1,8 +1,6 @@
 //! Worker caps (API-S-036; CORE-S-006, ADR 007): a host may classify a job kind as a transfer
 //! or as CPU-heavy work, and no more jobs of a class run at once than its cap allows.
 
-use super::model::Job;
-use super::rules;
 use std::collections::BTreeMap;
 
 /// The class of work a job kind does, each with its own cap.
@@ -61,19 +59,19 @@ impl Slots {
         self.limits = limits;
     }
 
-    /// Whether job `id` of `kind` may start beside the `open` jobs at `now_ms`: true for an
-    /// unclassified kind, else while fewer jobs of its class hold a live lease than its cap.
-    /// Pure.
-    pub(super) fn admits(&self, (id, kind): (&str, &str), open: &[Job], now_ms: i64) -> bool {
-        let Some(class) = self.classes.get(kind).copied() else {
-            return true;
-        };
-        let running = open
+    /// The class of `kind` and its cap, if the kind is classified. Pure.
+    pub(super) fn class_of(&self, kind: &str) -> Option<(JobClass, usize)> {
+        let class = self.classes.get(kind).copied()?;
+        let cap = usize::try_from(self.limits.of(class)).unwrap_or(usize::MAX);
+        Some((class, cap))
+    }
+
+    /// The kinds classified as `class`. Pure.
+    pub(super) fn kinds_of(&self, class: JobClass) -> impl Iterator<Item = &str> {
+        self.classes
             .iter()
-            .filter(|job| job.id != id && self.classes.get(&job.kind) == Some(&class))
-            .filter(|job| rules::holds_slot(job, now_ms))
-            .count();
-        (running as u64) < u64::from(self.limits.of(class))
+            .filter(move |(_, of)| **of == class)
+            .map(|(kind, _)| kind.as_str())
     }
 
     /// Whether any kind is classified.

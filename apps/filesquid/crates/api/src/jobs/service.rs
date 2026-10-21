@@ -289,22 +289,10 @@ impl Jobs {
             true => Some(self.starting.lock().unwrap_or_else(PoisonError::into_inner)),
             false => None,
         };
-        let now = (self.clock)();
-        let open = match self.slots.any() {
-            true => self.store.unfinished(MAX_RECOVERED_JOBS)?,
-            false => Vec::new(),
-        };
-        let (holder, ttl, slots) = (self.holder.as_str(), self.ttl_ms, &self.slots);
         let mut operation_id = None;
-        let updated = self.store.update(id, &mut |job| {
-            operation_id = Some(job.operation_id.clone());
-            if !slots.admits((&job.id, &job.kind), &open, now) {
-                return Err(JobError::Conflict("slots_full"));
-            }
-            rules::start(job, (holder, source), now, ttl)
-        });
-        let started =
-            updated.inspect_err(|err| self.journal_refusal(id, operation_id.as_deref(), err))?;
+        let started = self
+            .lease_job(id, source, &mut operation_id)
+            .inspect_err(|err| self.journal_refusal(id, operation_id.as_deref(), err))?;
         self.publish(&started);
         if started.state == JobState::Failed {
             self.journal_job(&started, JOB_FAILED, Outcome::Failed, Some(SOURCE_CHANGED));
@@ -312,6 +300,55 @@ impl Jobs {
         }
         let lease = rules::lease_of(&started)?;
         Ok(self.run(started, lease))
+    }
+
+    /// Apply [`rules::start`] to job `id` in one store update, refused `slots_full` when it
+    /// would take a lease while its class is at its cap; `operation_id` is set as soon as the
+    /// job is read, for the refusal's journal entry (store I/O).
+    fn lease_job(
+        &self,
+        id: &str,
+        source: &str,
+        operation_id: &mut Option<String>,
+    ) -> Result<Job, JobError> {
+        let now = (self.clock)();
+        let full = self.class_full(id, now, operation_id)?;
+        let (holder, ttl) = (self.holder.as_str(), self.ttl_ms);
+        self.store.update(id, &mut |job| {
+            *operation_id = Some(job.operation_id.clone());
+            let next = rules::start(job, (holder, source), now, ttl)?;
+            match full && next.state == JobState::Running {
+                true => Err(JobError::Conflict("slots_full")),
+                false => Ok(next),
+            }
+        })
+    }
+
+    /// Whether the class of job `id` already has as many other jobs under live leases at
+    /// `now` as its cap allows; false for an unclassified or unknown job. Reads at most the
+    /// cap plus one job per classified kind (store I/O).
+    fn class_full(
+        &self,
+        id: &str,
+        now: i64,
+        operation_id: &mut Option<String>,
+    ) -> Result<bool, JobError> {
+        if !self.slots.any() {
+            return Ok(false);
+        }
+        let Some(job) = self.store.get(id)? else {
+            return Ok(false);
+        };
+        *operation_id = Some(job.operation_id.clone());
+        let Some((class, cap)) = self.slots.class_of(&job.kind) else {
+            return Ok(false);
+        };
+        let mut held = 0;
+        for kind in self.slots.kinds_of(class) {
+            let leased = self.store.leased_of(kind, now, cap.saturating_add(1))?;
+            held += leased.iter().filter(|other| other.id != id).count();
+        }
+        Ok(held >= cap)
     }
 
     /// Register the leased `job` as a process and journal its start.
@@ -389,6 +426,14 @@ fn new_job(id: String, spec: JobSpec, now: i64) -> Job {
         error_code: None,
         control: None,
     }
+}
+
+/// How [`RunningJob::halt_if_requested`] left a run.
+pub enum Halt {
+    /// The run gave its lease back; the job is now in this state (pending or cancelled).
+    Halted(JobState),
+    /// Nothing is asked of the job any more (it was resumed); the run keeps its lease.
+    Continued(Box<RunningJob>),
 }
 
 /// One leased run of a job. End it through [`complete`](Self::complete),
@@ -544,12 +589,12 @@ impl RunningJob {
     }
 
     /// Give the lease back at quit or at a pause, keeping the checkpoint for the next run, and
-    /// journal `job.suspended`; a job asked to stop is cancelled instead (`job.cancelled`)
-    /// (store I/O).
+    /// journal `job.suspended`; a job asked to stop is cancelled instead (`job.cancelled`).
+    /// Answers the state stored: pending, or cancelled (store I/O).
     ///
     /// # Errors
     /// [`JobError::Fenced`] or a store failure, journaled.
-    pub fn suspend(self) -> Result<(), JobError> {
+    pub fn suspend(self) -> Result<JobState, JobError> {
         let now = (self.jobs.clock)();
         let lease = self.lease();
         let stored = self
@@ -557,14 +602,42 @@ impl RunningJob {
             .store
             .update(&self.job.id, &mut |job| rules::suspend(job, &lease, now))
             .inspect_err(|err| self.refused(err))?;
+        self.released(&stored);
+        Ok(stored.state)
+    }
+
+    /// Suspend the run if a pause or cancel is still asked of it, checked in the same store
+    /// update, so a resume that cleared the pause keeps the run going (API-S-036). A worker
+    /// calls it where it would stop for [`requested`](Self::requested) (store I/O).
+    ///
+    /// # Errors
+    /// [`JobError::Fenced`] or a store failure, journaled.
+    pub fn halt_if_requested(self) -> Result<Halt, JobError> {
+        let now = (self.jobs.clock)();
+        let lease = self.lease();
+        let stored = self
+            .jobs
+            .store
+            .update(&self.job.id, &mut |job| rules::halt(job, &lease, now))
+            .inspect_err(|err| self.refused(err))?;
+        if stored.state == JobState::Running {
+            self.keep(&stored)?;
+            return Ok(Halt::Continued(Box::new(self)));
+        }
+        self.released(&stored);
+        Ok(Halt::Halted(stored.state))
+    }
+
+    /// Journal and announce the run's end at `stored` (pending or cancelled), and end its
+    /// process.
+    fn released(&self, stored: &Job) {
         let entry = match stored.state {
-            JobState::Cancelled => self.jobs.entry(&stored, JOB_CANCELLED, Outcome::Cancelled),
-            _ => self.jobs.entry(&stored, JOB_SUSPENDED, Outcome::Info),
+            JobState::Cancelled => self.jobs.entry(stored, JOB_CANCELLED, Outcome::Cancelled),
+            _ => self.jobs.entry(stored, JOB_SUSPENDED, Outcome::Info),
         };
         self.jobs.journal.send(entry.process(self.handle.id()));
-        self.jobs.publish(&stored);
+        self.jobs.publish(stored);
         self.handle.cancel();
-        Ok(())
     }
 
     /// Store the job's end as `state` with `error_code` and journal it (an error-level

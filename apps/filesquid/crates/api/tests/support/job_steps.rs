@@ -10,7 +10,7 @@ use cucumber::{given, then, when};
 use filesquid_api::auth::{Authoriser, LaunchToken};
 use filesquid_api::events::topic;
 use filesquid_api::jobs::{
-    Job, JobClass, JobControl, JobError, JobLimits, JobRunner, JobSpec, JobState, Jobs,
+    Halt, Job, JobClass, JobControl, JobError, JobLimits, JobRunner, JobSpec, JobState, Jobs,
     MemoryJobStore, RunningJob,
 };
 use filesquid_api::journal::MemoryJournal;
@@ -70,6 +70,7 @@ pub struct JobWorld {
     capped: Option<Jobs>,
     transfers: Vec<Job>,
     events: Option<tokio::sync::broadcast::Receiver<ApiEvent>>,
+    seen: Vec<ApiEvent>,
     refused: Option<JobError>,
 }
 
@@ -215,7 +216,8 @@ fn next_checkpoint(w: &mut MonitorWorld) {
     let unit = next_unit_after(&world.done);
     work(&mut running, &world.done, unit, total).expect("work");
     assert_eq!(running.requested(), Some(JobControl::Pause));
-    running.suspend().expect("suspend");
+    let halted = running.halt_if_requested().expect("halt");
+    assert!(matches!(halted, Halt::Halted(JobState::Pending)));
 }
 
 /// The unit after the last one done. Pure.
@@ -311,35 +313,43 @@ fn second_waits(w: &mut MonitorWorld) {
     );
 }
 
-#[then(expr = "a {string} event should show the job paused")]
-fn event_paused(w: &mut MonitorWorld, name: String) {
+#[then(expr = "its {string} events should show it waiting, then paused")]
+fn events_waiting_then_paused(w: &mut MonitorWorld, name: String) {
     assert_eq!(name, topic::JOB_UPDATE);
     let id = w.jobs.job_id();
-    let events = drain(&mut w.jobs);
-    let paused = events
+    let updates: Vec<(String, bool)> = received(&mut w.jobs)
         .iter()
         .filter(|e| e.topic == topic::JOB_UPDATE && e.data["id"] == id.as_str())
-        .any(|e| e.data["paused"] == true);
-    assert!(paused, "{events:?}");
+        .map(|e| {
+            let state = e.data["state"].as_str().unwrap_or_default().to_string();
+            (state, e.data["paused"] == true)
+        })
+        .collect();
+    let expected = [
+        ("pending".to_string(), false),
+        ("pending".to_string(), true),
+    ];
+    assert_eq!(updates, expected, "submission, then pause");
 }
 
 #[then("no event should carry the job's source")]
 fn no_source(w: &mut MonitorWorld) {
     let source = w.jobs.stored().source;
-    let events = drain(&mut w.jobs);
+    let events = received(&mut w.jobs);
+    assert!(!events.is_empty(), "the scenario received events");
     for event in events {
         assert!(!event.data.to_string().contains(&source), "{event:?}");
     }
 }
 
-/// Every event received so far, kept for later steps of the scenario.
-fn drain(world: &mut JobWorld) -> Vec<ApiEvent> {
+/// Every event received so far in the scenario: new ones are taken from the feed and kept,
+/// so a later step sees the same events.
+fn received(world: &mut JobWorld) -> Vec<ApiEvent> {
     let feed = world.events.as_mut().expect("subscribed");
-    let mut seen = Vec::new();
     while let Ok(event) = feed.try_recv() {
-        seen.push(event);
+        world.seen.push(event);
     }
-    seen
+    world.seen.clone()
 }
 
 #[then("pausing, resuming and cancelling it again should each be refused as a conflict")]

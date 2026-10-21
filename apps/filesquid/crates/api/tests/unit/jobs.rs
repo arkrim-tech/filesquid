@@ -447,6 +447,10 @@ impl JobStore for RefusingStore {
     fn unfinished_of(&self, _kind: &str, _limit: usize) -> Result<Vec<Job>, JobError> {
         Ok(Vec::new())
     }
+
+    fn leased_of(&self, _kind: &str, _now_ms: i64, _limit: usize) -> Result<Vec<Job>, JobError> {
+        Ok(Vec::new())
+    }
 }
 
 /// Cubic round 1: a submission the store refuses is journaled.

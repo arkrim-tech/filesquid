@@ -45,6 +45,14 @@ pub trait JobStore: Send + Sync {
     /// # Errors
     /// A store failure.
     fn unfinished_of(&self, kind: &str, limit: usize) -> Result<Vec<Job>, JobError>;
+
+    /// At most `limit` running jobs of `kind` whose lease has not ended at `now_ms`: the jobs
+    /// that hold a slot of the kind's class (API-S-036), in any order.
+    ///
+    /// # Errors
+    /// A store failure.
+    fn leased_of(&self, kind: &str, now_ms: i64, limit: usize) -> Result<Vec<Job>, JobError>;
+
     /// At most `filter.limit` jobs that `filter` accepts, finished ones included, newest
     /// first (by submission time, then ID, both descending), and whether more matched. The
     /// default lists the unfinished jobs only (at most [`super::MAX_RECOVERED_JOBS`] read): a
@@ -189,9 +197,23 @@ impl JobStore for MemoryJobStore {
         self.oldest_open(limit, |job| job.kind == kind)
     }
 
+    fn leased_of(&self, kind: &str, now_ms: i64, limit: usize) -> Result<Vec<Job>, JobError> {
+        let jobs = self.lock()?;
+        let leased = jobs
+            .values()
+            .filter(|job| job.kind == kind && super::rules::holds_slot(job, now_ms));
+        Ok(leased.take(limit).cloned().collect())
+    }
+
+    /// Only references are sorted; just the jobs answered are cloned.
     fn list(&self, filter: &JobFilter) -> Result<JobList, JobError> {
         let jobs = self.lock()?;
-        let matching = jobs.values().filter(|job| filter.accepts(job)).cloned();
-        Ok(JobList::newest(matching, filter.limit))
+        let mut matching: Vec<&Job> = jobs.values().filter(|job| filter.accepts(job)).collect();
+        matching.sort_by(|a, b| (b.created_ms, &b.id).cmp(&(a.created_ms, &a.id)));
+        let limit = filter.effective_limit();
+        Ok(JobList {
+            truncated: matching.len() > limit,
+            jobs: matching.into_iter().take(limit).cloned().collect(),
+        })
     }
 }
