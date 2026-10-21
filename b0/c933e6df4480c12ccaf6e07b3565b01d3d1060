@@ -1,0 +1,61 @@
+apps/filesquid/crates/native/src/catalog/mod.rs
+  s_dcf717d9a156f9::t_d307ea3fdd05ea 784-786,792-793,797,804
+apps/filesquid/crates/native/src/catalog/schema.rs
+  s_dcf717d9a156f9::t_a31fb8dec1d755 11,146-148
+apps/filesquid/crates/native/src/findings_sqlite.rs
+  s_dcf717d9a156f9::t_d930c3132cc875 85-88,93
+apps/filesquid/crates/native/src/import/plans.rs
+  s_dcf717d9a156f9::t_12d1a0e653a608 136-139,144
+apps/filesquid/crates/native/src/import/volume.rs
+  s_dcf717d9a156f9::t_930bed71a1e94b 39-41
+apps/filesquid/crates/native/src/jobs_sqlite.rs
+  s_dcf717d9a156f9::t_3f6bd367dc4d10 73-76,81
+apps/filesquid/crates/native/src/owner_only.rs
+  s_dcf717d9a156f9::t_60e18054ba661d 1-2,5-26
+apps/filesquid/crates/native/src/preferences_sqlite.rs
+  s_dcf717d9a156f9::t_010c144d3ec013 56-58
+apps/filesquid/crates/native/src/repair_ledger.rs
+  s_dcf717d9a156f9::t_34f70176324d28 73-74
+apps/filesquid/crates/native/tests/unit/catalog.rs
+  s_dcf717d9a156f9::t_672f93e99b10c2 916-935
+apps/filesquid/crates/native/tests/unit/import_facts.rs
+  s_dcf717d9a156f9::t_23e52556143547 7
+apps/filesquid/crates/native/tests/unit/library_host.rs
+  s_dcf717d9a156f9::t_66b31a7d7720d5 8-12,274-293
+apps/filesquid/crates/ocfl/tests/integration/fs_conformance.rs
+  s_dcf717d9a156f9::t_9c54d5a4a42ffa 464-465,472
+apps/filesquid/ui/tests/unit/test-scripts.test.ts
+  s_0f2f75ceda32bb::t_5334711d7ffe4b 8-16,74-93
+apps/imagesquid/tests/unit/test-scripts.test.ts
+  s_0f2f75ceda32bb::t_1b001ff55e3eae 8-16,74-93
+scripts/docs/test_merge_mvp_progress.py
+  s_dcf717d9a156f9::t_e5948bb5f77196 80-88
+scripts/verify_changed_scope.sh
+  s_dcf717d9a156f9::t_8393445863f74a 26-32
+apps/filesquid/crates/desktop/resources/tasks/Task-fix-macos-hook-failures-Walkthrough.md
+  s_dcf717d9a156f9::t_c1e1a04d577085 1-129
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b0c933e6df4480c12ccaf6e07b3565b01d3d1060",
+  "prompts": {},
+  "sessions": {
+    "s_0f2f75ceda32bb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48733fde-c6f8-4cb6-b48b-ea8ab27e5924",
+        "model": "unknown"
+      },
+      "human_author": "Peter Van Garderen <vangarderen.peter@gmail.com>"
+    },
+    "s_dcf717d9a156f9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2251ab95-144c-46df-aac4-df18bc4fc05b",
+        "model": "unknown"
+      },
+      "human_author": "Peter Van Garderen <vangarderen.peter@gmail.com>"
+    }
+  }
+}
