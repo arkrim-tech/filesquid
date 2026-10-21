@@ -344,12 +344,27 @@ async fn paging_is_stable_and_a_changed_result_set_refuses_the_cursor() {
 }
 
 #[tokio::test]
-async fn case_folding_is_declared_and_diacritics_are_not_folded() {
+async fn nfc_and_case_folding_are_declared_and_diacritics_are_not_folded() {
     let (rig, drive) = rig().await;
     let cafe = add(&rig, &drive, "notes.txt", "text/plain", b"c").await;
     describe(&rig, &cafe, "dcterms:title", "Café Résumé").await;
     assert_eq!(found(&rig, "CAFÉ RÉSUMÉ", "").await, ["notes.txt"]);
     assert!(found(&rig, "cafe resume", "").await.is_empty());
+    rig.clock.advance(60_000);
+    let decomposed = "Re\u{301}sume\u{301}.txt";
+    let uri = upload_uri(
+        decomposed,
+        1,
+        "name_normalization=nfd&media_type=text%2Fplain",
+    );
+    let answer = rig.call(Method::PUT, &uri, &[], b"r".to_vec()).await;
+    assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
+    drive.file_in_collection(answer.json()["file_id"].as_str().expect("id"));
+    assert_eq!(
+        found(&rig, "R\u{c9}SUM\u{c9}", "").await,
+        [decomposed, "notes.txt"],
+        "an NFD name matches an NFC query, as the NFC title does"
+    );
 }
 
 #[tokio::test]

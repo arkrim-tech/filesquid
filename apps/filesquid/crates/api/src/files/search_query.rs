@@ -5,7 +5,8 @@
 //! white space. A term is a word, a quoted phrase (`"Client deck"`), or an operator `name:value`
 //! whose value may be quoted (`creator:"Ana Example"`); `size>` and `size<` take their value
 //! without a colon. A leading `-` excludes what the term matches. Operator names are compared
-//! without case. Text containing a colon that is not an operator is quoted.
+//! without case. Text containing a colon that is not an operator is quoted. Every value and
+//! every name compared is first passed through [`fold`]: NFC and lower case.
 //!
 //! - **Answered here:** `type:` (`image`, `video`, `audio`, `text`, `document`, `folder`),
 //!   `in:` (a collection's title), `title:`, `owner:me`, `creator:`, `tag:`, `is:deleted`,
@@ -21,6 +22,7 @@
 
 use super::error::FileError;
 use crate::ErrorCode;
+use icu_normalizer::ComposingNormalizerBorrowed;
 use time::Date;
 
 /// Longest query, in bytes.
@@ -121,9 +123,17 @@ impl Query {
     }
 }
 
-/// `text` as search compares it: simple case folding of every character.
+/// `text` as search compares it: Unicode NFC, then each character mapped to its lower case
+/// (std's full lower-case mapping, which differs from simple case folding only for a few
+/// characters, such as `İ`), then NFC again, since a lower-case mapping can decompose.
 pub fn fold(text: &str) -> String {
-    text.chars().flat_map(char::to_lowercase).collect()
+    let nfc = ComposingNormalizerBorrowed::new_nfc();
+    let lower: String = nfc
+        .normalize(text)
+        .chars()
+        .flat_map(char::to_lowercase)
+        .collect();
+    nfc.normalize(&lower).into_owned()
 }
 
 /// Parse `query`.
@@ -463,8 +473,14 @@ mod tests {
     }
 
     #[test]
-    fn folding_is_simple_case_folding() {
+    fn folding_is_nfc_and_lower_case_without_diacritic_folding() {
         assert_eq!(fold("CAFÉ RÉSUMÉ"), "café résumé");
+        assert_eq!(
+            fold("Cafe\u{301}"),
+            "caf\u{e9}",
+            "a decomposed name matches its composed form"
+        );
+        assert_eq!(fold("CAF\u{c9}"), fold("Cafe\u{301}"));
         assert_ne!(fold("Café"), "cafe", "no diacritic folding");
     }
 }

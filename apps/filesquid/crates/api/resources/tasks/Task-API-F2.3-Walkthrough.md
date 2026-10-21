@@ -7,7 +7,7 @@ Branch `feat/api-f2.3-search-operators`, module `filesquid-api` ([plan row](../p
 | SRS ID and title | Covered by |
 |---|---|
 | [API-S-012](../srs.md) Search operation and operator grammar | `integration_search` (10 tests), `search_operation_API-S-012.feature` (11 scenarios), `files::search*` unit tests (13), `unit_contract`, `unit_auth` |
-| [SRS-F-063](../../../../../../resources/srs.md#srs-f-063-file-search-query-language-and-filter-chips) File search query language and filter chips | the grammar, the unknown-operator error, relevance as default with any view sort key, stable paging, declared case folding, date boundaries in the caller's zone without invented instants: `every_answered_operator_narrows_the_results`, `unknown_operators_are_refused_and_never_match_an_empty_filter`, `relevance_orders_by_default_and_any_view_key_replaces_it`, `case_folding_is_declared_and_diacritics_are_not_folded`, `capture_dates_without_a_zone_compare_by_calendar_date` |
+| [SRS-F-063](../../../../../../resources/srs.md#srs-f-063-file-search-query-language-and-filter-chips) File search query language and filter chips | the grammar, the unknown-operator error, relevance as default with any view sort key, stable paging, declared case folding, date boundaries in the caller's zone without invented instants: `every_answered_operator_narrows_the_results`, `unknown_operators_are_refused_and_never_match_an_empty_filter`, `relevance_orders_by_default_and_any_view_key_replaces_it`, `nfc_and_case_folding_are_declared_and_diacritics_are_not_folded`, `folding_is_nfc_and_lower_case_without_diacritic_folding`, `capture_dates_without_a_zone_compare_by_calendar_date` |
 | [SRS-NFR-004](../../../../../../resources/srs.md#srs-nfr-004-security-and-privacy) Security and privacy | permission filtering before ranking: `results_are_filtered_by_permission_before_ranking` |
 | [API-S-011](../srs.md) View operation | results shaped and paged like the view, with the cursor conflict rule: `paging_is_stable_and_a_changed_result_set_refuses_the_cursor` |
 | [API-S-027](../srs.md) Display and download names | results name files by their display name |
@@ -21,7 +21,8 @@ Branch `feat/api-f2.3-search-operators`, module `filesquid-api` ([plan row](../p
   - Answered operators: `type:` (image, video, audio, text, document, folder), `in:`, `title:`, `owner:me`, `creator:`, `tag:`, `is:deleted`, `is:unfiled`, `before:`, `after:`, `createdbefore:`, `createdafter:`, `source:`, `size>` and `size<` (B, KB, MB, GB in powers of 1024).
   - An unknown operator is `invalid_request` naming it; `generator:` is unknown, since this build has no `c2pa` module.
   - An operator of the grammar this host cannot answer is `unavailable` naming it: `is:favorite`, `owner:` naming another user, `sharedwith:`, `to:`, `from:` and `pendingowner:`.
-  - Comparison uses simple case folding; diacritics are not folded.
+  - Comparison normalises to Unicode NFC with `icu_normalizer` (2.3.0, already in the lockfile through the URL crates; only the dependency edge was added to `Cargo.lock`), maps each character to its lower case, and normalises to NFC again. Diacritics are not folded.
+  - Difference from SRS-F-063's "simple case fold": no ICU case-mapping crate is locked, so lower-casing uses std's full lower-case mapping. It differs from Unicode simple case folding only for a few characters: `İ` becomes `i` plus a combining dot, and characters whose fold differs from their lower case, such as `ſ` and Cherokee lower-case letters, are not folded.
 - **Matching** (`src/files/search_match.rs`, pure).
   - Free text reads the display name and every `dcterms:` value.
   - Relevance is 3 per term in the name, 2 in a `dcterms:title`, 1 in another `dcterms:` value.
@@ -42,7 +43,6 @@ Branch `feat/api-f2.3-search-operators`, module `filesquid-api` ([plan row](../p
 ## Remaining (box unticked)
 
 - The server operators `sharedwith:`, `to:`, `from:` and `pendingowner:` (after SV-F1.4), `is:favorite` (no favorites yet) and `owner:` naming another user (no accounts). Until then they are refused as `unavailable`.
-- NFC normalisation of names and queries. Until the owner decides on a normalisation crate, comparison uses simple case folding only.
 - Full-text content search of PDF and plain text, with its capability register entry.
 - BYO-AI natural-language questions, and search suggestions.
 - The multi-user scenarios of `file_search_query_language_F-063.feature`, which need `filesquid-server` users.
@@ -53,13 +53,13 @@ Branch `feat/api-f2.3-search-operators`, module `filesquid-api` ([plan row](../p
 $ cargo test -p filesquid-api --locked --lib files::search
 test files::search::tests::zones_are_fixed_offsets ... ok
 test files::search_match::tests::folders_match_by_name_and_type_and_relevance_ranks_names_first ... ok
-test files::search_match::tests::capture_dates_without_a_zone_compare_by_calendar_date ... ok
-test files::search::tests::relevance_is_the_default_and_any_view_key_replaces_it ... ok
 test files::search_match::tests::free_text_reads_the_name_and_dublin_core_values ... ok
-test files::search_query::tests::folding_is_simple_case_folding ... ok
+test files::search::tests::relevance_is_the_default_and_any_view_key_replaces_it ... ok
+test files::search_match::tests::head_dates_use_the_callers_zone ... ok
+test files::search_match::tests::capture_dates_without_a_zone_compare_by_calendar_date ... ok
 test files::search_match::tests::operators_read_their_statements_and_facts ... ok
 test files::search_query::tests::every_answered_operator_parses ... ok
-test files::search_match::tests::head_dates_use_the_callers_zone ... ok
+test files::search_query::tests::folding_is_nfc_and_lower_case_without_diacritic_folding ... ok
 test files::search_query::tests::operators_this_host_cannot_answer_are_unavailable ... ok
 test files::search_query::tests::queries_are_bounded ... ok
 test files::search_query::tests::words_phrases_and_exclusions ... ok
@@ -67,17 +67,17 @@ test files::search_query::tests::unknown_operators_and_bad_values_are_refused_an
 test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 57 filtered out; finished in 0.00s
 
 $ cargo test -p filesquid-api --locked --test integration_search
-test case_folding_is_declared_and_diacritics_are_not_folded ... ok
+test nfc_and_case_folding_are_declared_and_diacritics_are_not_folded ... ok
+test a_node_limits_the_search_and_dates_follow_the_callers_zone ... ok
 test free_text_phrases_and_exclusions_read_names_and_dublin_core ... ok
 test operators_this_host_cannot_answer_are_refused_as_unavailable ... ok
-test a_node_limits_the_search_and_dates_follow_the_callers_zone ... ok
-test every_answered_operator_narrows_the_results ... ok
-test relevance_orders_by_default_and_any_view_key_replaces_it ... ok
 test paging_is_stable_and_a_changed_result_set_refuses_the_cursor ... ok
+test relevance_orders_by_default_and_any_view_key_replaces_it ... ok
+test every_answered_operator_narrows_the_results ... ok
+test unknown_operators_are_refused_and_never_match_an_empty_filter ... ok
 test unfiled_files_and_folder_rows_are_searchable ... ok
 test results_are_filtered_by_permission_before_ranking ... ok
-test unknown_operators_are_refused_and_never_match_an_empty_filter ... ok
-test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.33s
 
 $ cargo test -p filesquid-api --locked --test unit_contract --test unit_auth
 test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
