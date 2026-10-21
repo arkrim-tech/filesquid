@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "FileSquid API",
-    "version": "0.20.0",
+    "version": "0.21.0",
     "description": "The single FileSquid API served by every FileSquid host. See resources/architecture/030-filesquid-api-and-transports.md. Conventions: a command (mutation) sends a CommandEnvelope as the `envelope` member of its JSON request body (operation_id is the idempotency key, expected_revision the revision last read) and answers with a CommandOutcome; a query (list) takes the PageSize (`limit`, 1-1000) and Cursor (`cursor`) parameters; every failed request answers with an ApiError body (code, message, retryable). Router-wide fallbacks: any /api/v1/ path not in this contract answers 404 not_found, and a documented path called with a method it does not document answers 405 method_not_allowed; both carry the ApiError body. They are not listed per operation because no operation sends them. Authorisation is deny-by-default: every operation, including health, the contract and the event channel, requires the bearerAuth credential and is authorised before anything else runs, so a call without it answers 401 unauthorized and a call whose credential is not accepted or does not grant the operation answers 403 forbidden, before any 404 or 405; both carry the ApiError body with a DenialReason in `reason`. Each operation names the authorisation action it performs in x-filesquid-action. The one deliberate exception is GET /api/v1/health/live (x-filesquid-action public, security []), a liveness probe that answers only {\"status\":\"up\"} without a credential. The content route GET and HEAD /api/v1/content/{handle} (x-filesquid-action content.read, x-filesquid-credential content-handle, security []) is not public: its only credential is the content handle in its path, minted by POST /api/v1/content-handles for one file version (API-S-018); a Bearer token is not accepted there, and every unusable request under /api/v1/content/ (unknown, malformed, missing, expired, evicted or revoked handle, an extra path segment or another method) answers one identical 403 forbidden with reason invalid_credentials, never 401, 404 or 405. Paths marked x-filesquid-host-route are served by the hosts, not by the filesquid-api router."
   },
   "security": [
@@ -1023,7 +1023,7 @@
       "get": {
         "operationId": "downloadFile",
         "summary": "Download one whole file version, streamed",
-        "description": "The whole file of any size as an attachment, streamed from ranged reads of at most 8 MiB so the host never holds the file in memory (NFR-003). A missing file is refused before the answer starts; a storage failure after it started ends the stream early and is journaled once. Through the desktop scheme every answer is capped at 16 MiB (DE-S-005), so the desktop UI saves larger files with ranged reads of GET /api/v1/files/content. A successful read is not journaled, a refusal is journaled once (API-S-017).",
+        "description": "The whole file of any size as an attachment, streamed from ranged reads of at most 8 MiB so the host never holds the file in memory (NFR-003). A missing file is refused before the answer starts; a storage failure after it started ends the stream early and is journaled once. Through the desktop scheme every answer is capped at 16 MiB (DE-S-005), so the desktop UI saves larger files with ranged reads of GET /api/v1/files/content. A successful read is not journaled, a refusal is journaled once (API-S-017). A download that starts is journaled as `file.download` (journal-only, no PROV-O record) with the caller, library, object and version (API-S-028).",
         "x-filesquid-action": "files.read",
         "parameters": [
           {
@@ -3448,6 +3448,218 @@
           },
           "503": {
             "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/files/copies": {
+      "post": {
+        "operationId": "copyFile",
+        "summary": "Copy a file into a new file",
+        "description": "Copy the file `file_id` at its head into a new file (API-S-011, SRS-F-062): a new FileId and stored name `original/<new-uuid>.<ext>` in the new file's own object `files/<new-id>`, published as its version v1. The copy keeps the display name, the original name, the media type and every statement; its one import entry is the source's latest entry rebound to the copy, and its record names the source as the asserted statement `dcterms:source` = `urn:uuid:<source-id>@vN`. The source never changes, and the copy gets no second home collection for the same bytes: it is a new file. A source over 67,108,864 bytes is refused (400) until a streamed copy exists. The copy is journaled as `files.copy` with opaque IDs only; a refusal is journaled once.",
+        "x-filesquid-action": "files.write",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CopyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The copy and its first version.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileCopy"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/files/view": {
+      "get": {
+        "operationId": "getFileView",
+        "summary": "One page of a view of a node",
+        "description": "The view operation (API-S-011, SRS-F-062): one page of the files of a library, collection or virtual-collection node, in a stable order. A library node's `all` view shows its collections and virtual collections as folder rows beside its unfiled files; a collection node shows its files, a virtual-collection node its members, and the `deleted` view the node's recoverably deleted files with no folder rows. The views home, personal, recent, favorites, shares and tags are not available yet (400). Each page sorts the whole scope again (at most 10,000 files, MAX_VIEW_FILES, and 1,000 folder rows; `complete` is false beyond that or when a file could not be read) and starts after the cursor's row, so rows never repeat. A missing value (a folder's size, a file the caller never opened) sorts after every value in both directions; ties break by name, then identifier. `modified_by_me` and `opened_by_me` come only from the caller's own succeeded journal entries (changes; content-handle mints and single-file downloads). A cursor made for other parameters is refused (400); a cursor of a view whose rows or their order changed since it was made is refused as conflict (409), so a row never repeats or is skipped, and the client starts again without a cursor. An unknown, malformed or unreadable node is 404; a node of another kind is 400. A successful read is not journaled; a refusal is journaled once.",
+        "x-filesquid-action": "files.read",
+        "parameters": [
+          {
+            "name": "node",
+            "in": "query",
+            "required": true,
+            "description": "A library, collection or virtual-collection node handle, as the navigation listing gave it.",
+            "schema": {
+              "type": "string",
+              "maxLength": 512
+            }
+          },
+          {
+            "name": "view",
+            "in": "query",
+            "required": false,
+            "description": "The view; all when absent.",
+            "schema": {
+              "$ref": "#/components/schemas/ViewKind"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "The sort key; name when absent.",
+            "schema": {
+              "$ref": "#/components/schemas/SortKey"
+            }
+          },
+          {
+            "name": "direction",
+            "in": "query",
+            "required": false,
+            "description": "The direction; ascending when absent.",
+            "schema": {
+              "$ref": "#/components/schemas/SortDirection"
+            }
+          },
+          {
+            "name": "folders",
+            "in": "query",
+            "required": false,
+            "description": "Where folder rows go; on_top when absent.",
+            "schema": {
+              "$ref": "#/components/schemas/FolderPlacement"
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "description": "Only rows whose name contains this text, compared without case; at most 256 bytes.",
+            "schema": {
+              "type": "string",
+              "maxLength": 256
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "The next_cursor of the previous page of the same view.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
+            }
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of the view.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ViewPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/files/collection-history-size": {
+      "get": {
+        "operationId": "getCollectionHistorySize",
+        "summary": "The bytes a collection's history keeps",
+        "description": "Storage use per collection (API-S-011, SRS-F-062): each distinct content of each file whose home is the collection counted once, hidden and deleted files included, within 10,000 files and 100,000 contents (`truncated` says when a bound stopped the count or a file could not be read). An unknown or unreadable collection is 404. A successful read is not journaled; a refusal is journaled once.",
+        "x-filesquid-action": "files.read",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "query",
+            "required": true,
+            "description": "The collection.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The collection's history size.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionHistorySize"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/FilesUnavailable"
           }
         }
       }
@@ -6858,6 +7070,289 @@
           "location_id": {
             "type": "string",
             "maxLength": 128
+          }
+        }
+      },
+      "CopyRequest": {
+        "type": "object",
+        "description": "Copy one file at its head.",
+        "required": [
+          "library_id",
+          "file_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library."
+          },
+          "file_id": {
+            "type": "string",
+            "description": "The file to copy."
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "Optional version message of the copy's first version."
+          }
+        }
+      },
+      "FileCopy": {
+        "type": "object",
+        "description": "The copy a copy request made.",
+        "required": [
+          "library_id",
+          "file_id",
+          "object_id",
+          "version",
+          "created",
+          "source"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library."
+          },
+          "file_id": {
+            "type": "string",
+            "description": "The new file."
+          },
+          "object_id": {
+            "type": "string",
+            "description": "The new file's object, `urn:uuid:<file-id>`."
+          },
+          "version": {
+            "type": "string",
+            "description": "The new file's first version."
+          },
+          "created": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When that version was created."
+          },
+          "source": {
+            "type": "string",
+            "description": "The source's object version, `urn:uuid:<file-id>@vN`: the copy's `dcterms:source`."
+          }
+        }
+      },
+      "ViewKind": {
+        "type": "string",
+        "enum": [
+          "home",
+          "all",
+          "personal",
+          "recent",
+          "favorites",
+          "shares",
+          "tags",
+          "deleted"
+        ],
+        "description": "Which files a view shows; only all and deleted are available yet."
+      },
+      "ViewFolderKind": {
+        "type": "string",
+        "enum": [
+          "collection",
+          "virtual_collection"
+        ],
+        "description": "The kind of node a folder row opens."
+      },
+      "ViewFolderRow": {
+        "type": "object",
+        "description": "A folder row: a collection or virtual collection the view can open.",
+        "required": [
+          "kind",
+          "node",
+          "node_kind",
+          "name"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "folder",
+            "description": "A folder row."
+          },
+          "node": {
+            "type": "string",
+            "description": "The node's opaque handle."
+          },
+          "node_kind": {
+            "$ref": "#/components/schemas/ViewFolderKind"
+          },
+          "name": {
+            "type": "string",
+            "description": "Its name."
+          }
+        }
+      },
+      "ViewFileRow": {
+        "type": "object",
+        "description": "A file row.",
+        "required": [
+          "kind",
+          "file_id",
+          "object_id",
+          "display_name",
+          "media_type",
+          "size",
+          "modified",
+          "modified_by_me",
+          "opened_by_me"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "file",
+            "description": "A file row."
+          },
+          "file_id": {
+            "type": "string",
+            "description": "The file."
+          },
+          "object_id": {
+            "type": "string",
+            "description": "Its object, `urn:uuid:<file-id>`."
+          },
+          "display_name": {
+            "type": "string",
+            "description": "The name users see (API-S-027)."
+          },
+          "media_type": {
+            "type": "string",
+            "description": "The media type of the original."
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The original's size at the head, in bytes."
+          },
+          "modified": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the head version was created."
+          },
+          "modified_by_me": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the caller last changed it, from the caller's own journal entries only; null when never."
+          },
+          "opened_by_me": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the caller last opened it, from the caller's own journal entries only; null when never."
+          }
+        }
+      },
+      "ViewRow": {
+        "description": "One row of a view.",
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/ViewFolderRow"
+          },
+          {
+            "$ref": "#/components/schemas/ViewFileRow"
+          }
+        ]
+      },
+      "ViewPage": {
+        "type": "object",
+        "description": "One page of a view.",
+        "required": [
+          "node",
+          "view",
+          "sort",
+          "direction",
+          "folders",
+          "rows",
+          "next_cursor",
+          "complete"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "node": {
+            "type": "string",
+            "description": "The node."
+          },
+          "view": {
+            "$ref": "#/components/schemas/ViewKind"
+          },
+          "sort": {
+            "$ref": "#/components/schemas/SortKey"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/SortDirection"
+          },
+          "folders": {
+            "$ref": "#/components/schemas/FolderPlacement"
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ViewRow"
+            },
+            "description": "The rows, in order."
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The cursor of the next page, or null on the last page."
+          },
+          "complete": {
+            "type": "boolean",
+            "description": "False when the scope held more than 10,000 files or 1,000 folder rows, or a file could not be read."
+          }
+        }
+      },
+      "CollectionHistorySize": {
+        "type": "object",
+        "description": "The bytes the history of a collection's files keeps.",
+        "required": [
+          "library_id",
+          "collection_id",
+          "files",
+          "contents",
+          "bytes",
+          "truncated"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library."
+          },
+          "collection_id": {
+            "type": "string",
+            "description": "The collection."
+          },
+          "files": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The files whose home is the collection, hidden and deleted ones included."
+          },
+          "contents": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The distinct contents counted."
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Their bytes, each content of a file counted once."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "True when a bound stopped the count or a file could not be read, so the totals are lower bounds."
           }
         }
       }

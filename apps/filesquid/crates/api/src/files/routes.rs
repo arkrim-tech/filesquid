@@ -69,6 +69,7 @@ pub(crate) fn routes() -> Vec<Route> {
     ]
     .into_iter()
     .chain(super::metadata_routes::routes())
+    .chain(super::drive_routes::routes())
     .collect()
 }
 
@@ -136,7 +137,12 @@ async fn download(
     Extension(principal): Extension<Principal>,
     request: Result<Query<FileQuery>, QueryRejection>,
 ) -> Response {
-    let outcome = async { files(&state)?.download(query(request)?).await }.await;
+    let request = match query(request) {
+        Ok(request) => request,
+        Err(err) => return refuse(&state, DOWNLOAD_OPERATION, principal.actor(), err).await,
+    };
+    let request_ids = (request.library_id.clone(), request.object_id.clone());
+    let outcome = async { files(&state)?.download(request).await }.await;
     let download = match outcome {
         Ok(download) => download,
         Err(err) => return refuse(&state, DOWNLOAD_OPERATION, principal.actor(), err).await,
@@ -146,6 +152,7 @@ async fn download(
         &download.file_name,
         &download.id_name,
     );
+    journal_download(&state, &principal, &request_ids, &download.version).await;
     let body = Body::from_stream(journaled_stream(state, principal, download.body));
     let mut response = (StatusCode::OK, body).into_response();
     let headers = response.headers_mut();
@@ -161,6 +168,25 @@ async fn download(
         headers.insert(CONTENT_DISPOSITION, value);
     }
     response
+}
+
+/// Journal one started single-file download as `file.download` (API-S-028): the caller, the
+/// library, the object and the version, never the name. Journal-only: it stages no record.
+async fn journal_download(
+    state: &ApiState,
+    principal: &Principal,
+    (library_id, object_id): &(String, String),
+    version: &str,
+) {
+    let entry = JournalEntry::new(
+        super::drive_scope::FILE_DOWNLOAD_OPERATION,
+        Outcome::Succeeded,
+    )
+    .actor(principal.actor())
+    .target(library_id.as_str())
+    .target(object_id.as_str())
+    .target(version);
+    journal_entry(state, entry).await;
 }
 
 /// `body`, journaling the error that ends it early once as [`DOWNLOAD_OPERATION`] before

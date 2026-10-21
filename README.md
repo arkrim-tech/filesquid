@@ -321,6 +321,14 @@ cd apps/filesquid
 cargo test -p filesquid-api --locked --test integration_drive --test features
 ```
 
+Part 2 (API-S-011: copy with a new FileId and `dcterms:source`, the view operation by library, collection and virtual-collection node with its sort keys, folder placement, filter and stable cursor paging, the caller-only "modified by me" and "opened by me" keys, and storage use per collection) is tested the same way against a seeded in-memory library catalog; the ordering and cursor logic has unit tests in the library:
+
+```sh
+cd apps/filesquid
+cargo test -p filesquid-api --locked --lib files::drive
+cargo test -p filesquid-api --locked --test integration_drive_views --test unit_canonical --test features
+```
+
 The metadata property routes and the upload's file record of API-F1.4 (API-S-035, API-S-026: one `filesquid-metadata` record codec, an upload that creates the file's own OCFL object with its original and record, statement edits, namespace registration, term placement and the read-only facts projection) are tested through the router against real OCFL storage roots in the system temporary directory, which each test removes; the canonical record codec has its own unit tests:
 
 ```sh

@@ -318,7 +318,7 @@ export interface paths {
         };
         /**
          * Download one whole file version, streamed
-         * @description The whole file of any size as an attachment, streamed from ranged reads of at most 8 MiB so the host never holds the file in memory (NFR-003). A missing file is refused before the answer starts; a storage failure after it started ends the stream early and is journaled once. Through the desktop scheme every answer is capped at 16 MiB (DE-S-005), so the desktop UI saves larger files with ranged reads of GET /api/v1/files/content. A successful read is not journaled, a refusal is journaled once (API-S-017).
+         * @description The whole file of any size as an attachment, streamed from ranged reads of at most 8 MiB so the host never holds the file in memory (NFR-003). A missing file is refused before the answer starts; a storage failure after it started ends the stream early and is journaled once. Through the desktop scheme every answer is capped at 16 MiB (DE-S-005), so the desktop UI saves larger files with ranged reads of GET /api/v1/files/content. A successful read is not journaled, a refusal is journaled once (API-S-017). A download that starts is journaled as `file.download` (journal-only, no PROV-O record) with the caller, library, object and version (API-S-028).
          */
         get: operations["downloadFile"];
         put?: never;
@@ -1055,6 +1055,66 @@ export interface paths {
          * @description API-S-025. The host shows its own native folder dialog for the purpose named (an empty folder for a new library, a folder that holds a library, or an empty folder for a snapshot copy), registers the folder the owner picks under an opaque location ID, and answers that ID, or that the owner cancelled. The folder never crosses the API as a path, title or storage key (API-S-005); the UI names the ID in the create, open and snapshot-copy routes. One dialog is open at a time: a request while one is open is refused 409 conflict (`dialog_open`), as is a picked folder the host cannot register (`location_refused`). A host without a dialog (filesquid-server) answers 503 unavailable. Each request is journaled once as `library.location.choose`: succeeded with the location ID, cancelled, or failed with its error code.
          */
         post: operations["chooseLibraryLocation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/copies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Copy a file into a new file
+         * @description Copy the file `file_id` at its head into a new file (API-S-011, SRS-F-062): a new FileId and stored name `original/<new-uuid>.<ext>` in the new file's own object `files/<new-id>`, published as its version v1. The copy keeps the display name, the original name, the media type and every statement; its one import entry is the source's latest entry rebound to the copy, and its record names the source as the asserted statement `dcterms:source` = `urn:uuid:<source-id>@vN`. The source never changes, and the copy gets no second home collection for the same bytes: it is a new file. A source over 67,108,864 bytes is refused (400) until a streamed copy exists. The copy is journaled as `files.copy` with opaque IDs only; a refusal is journaled once.
+         */
+        post: operations["copyFile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/view": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One page of a view of a node
+         * @description The view operation (API-S-011, SRS-F-062): one page of the files of a library, collection or virtual-collection node, in a stable order. A library node's `all` view shows its collections and virtual collections as folder rows beside its unfiled files; a collection node shows its files, a virtual-collection node its members, and the `deleted` view the node's recoverably deleted files with no folder rows. The views home, personal, recent, favorites, shares and tags are not available yet (400). Each page sorts the whole scope again (at most 10,000 files, MAX_VIEW_FILES, and 1,000 folder rows; `complete` is false beyond that or when a file could not be read) and starts after the cursor's row, so rows never repeat. A missing value (a folder's size, a file the caller never opened) sorts after every value in both directions; ties break by name, then identifier. `modified_by_me` and `opened_by_me` come only from the caller's own succeeded journal entries (changes; content-handle mints and single-file downloads). A cursor made for other parameters is refused (400); a cursor of a view whose rows or their order changed since it was made is refused as conflict (409), so a row never repeats or is skipped, and the client starts again without a cursor. An unknown, malformed or unreadable node is 404; a node of another kind is 400. A successful read is not journaled; a refusal is journaled once.
+         */
+        get: operations["getFileView"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/collection-history-size": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The bytes a collection's history keeps
+         * @description Storage use per collection (API-S-011, SRS-F-062): each distinct content of each file whose home is the collection counted once, hidden and deleted files included, within 10,000 files and 100,000 contents (`truncated` says when a bound stopped the count or a file could not be read). An unknown or unreadable collection is 404. A successful read is not journaled; a refusal is journaled once.
+         */
+        get: operations["getCollectionHistorySize"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2189,6 +2249,121 @@ export interface components {
         LocationChoice: {
             outcome: components["schemas"]["ChoiceOutcome"];
             location_id?: string;
+        };
+        /** @description Copy one file at its head. */
+        CopyRequest: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The file to copy. */
+            file_id: string;
+            /** @description Optional version message of the copy's first version. */
+            message?: string;
+        };
+        /** @description The copy a copy request made. */
+        FileCopy: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The new file. */
+            file_id: string;
+            /** @description The new file's object, `urn:uuid:<file-id>`. */
+            object_id: string;
+            /** @description The new file's first version. */
+            version: string;
+            /**
+             * Format: date-time
+             * @description When that version was created.
+             */
+            created: string;
+            /** @description The source's object version, `urn:uuid:<file-id>@vN`: the copy's `dcterms:source`. */
+            source: string;
+        };
+        /**
+         * @description Which files a view shows; only all and deleted are available yet.
+         * @enum {string}
+         */
+        ViewKind: "home" | "all" | "personal" | "recent" | "favorites" | "shares" | "tags" | "deleted";
+        /**
+         * @description The kind of node a folder row opens.
+         * @enum {string}
+         */
+        ViewFolderKind: "collection" | "virtual_collection";
+        /** @description A folder row: a collection or virtual collection the view can open. */
+        ViewFolderRow: {
+            /**
+             * @description A folder row.
+             * @constant
+             */
+            kind: "folder";
+            /** @description The node's opaque handle. */
+            node: string;
+            node_kind: components["schemas"]["ViewFolderKind"];
+            /** @description Its name. */
+            name: string;
+        };
+        /** @description A file row. */
+        ViewFileRow: {
+            /**
+             * @description A file row.
+             * @constant
+             */
+            kind: "file";
+            /** @description The file. */
+            file_id: string;
+            /** @description Its object, `urn:uuid:<file-id>`. */
+            object_id: string;
+            /** @description The name users see (API-S-027). */
+            display_name: string;
+            /** @description The media type of the original. */
+            media_type: string;
+            /** @description The original's size at the head, in bytes. */
+            size: number;
+            /**
+             * Format: date-time
+             * @description When the head version was created.
+             */
+            modified: string;
+            /**
+             * Format: date-time
+             * @description When the caller last changed it, from the caller's own journal entries only; null when never.
+             */
+            modified_by_me: string | null;
+            /**
+             * Format: date-time
+             * @description When the caller last opened it, from the caller's own journal entries only; null when never.
+             */
+            opened_by_me: string | null;
+        };
+        /** @description One row of a view. */
+        ViewRow: components["schemas"]["ViewFolderRow"] | components["schemas"]["ViewFileRow"];
+        /** @description One page of a view. */
+        ViewPage: {
+            /** @description The node. */
+            node: string;
+            view: components["schemas"]["ViewKind"];
+            sort: components["schemas"]["SortKey"];
+            direction: components["schemas"]["SortDirection"];
+            folders: components["schemas"]["FolderPlacement"];
+            /** @description The rows, in order. */
+            rows: components["schemas"]["ViewRow"][];
+            /** @description The cursor of the next page, or null on the last page. */
+            next_cursor: string | null;
+            /** @description False when the scope held more than 10,000 files or 1,000 folder rows, or a file could not be read. */
+            complete: boolean;
+        };
+        /** @description The bytes the history of a collection's files keeps. */
+        CollectionHistorySize: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The collection. */
+            collection_id: string;
+            /** @description The files whose home is the collection, hidden and deleted ones included. */
+            files: number;
+            /** @description The distinct contents counted. */
+            contents: number;
+            /** @description Their bytes, each content of a file counted once. */
+            bytes: number;
+            /** @description True when a bound stopped the count or a file could not be read, so the totals are lower bounds. */
+            truncated: boolean;
         };
     };
     responses: {
@@ -4320,6 +4495,110 @@ export interface operations {
             };
             500: components["responses"]["Internal"];
             503: components["responses"]["Unavailable"];
+        };
+    };
+    copyFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CopyRequest"];
+            };
+        };
+        responses: {
+            /** @description The copy and its first version. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileCopy"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    getFileView: {
+        parameters: {
+            query: {
+                /** @description A library, collection or virtual-collection node handle, as the navigation listing gave it. */
+                node: string;
+                /** @description The view; all when absent. */
+                view?: components["schemas"]["ViewKind"];
+                /** @description The sort key; name when absent. */
+                sort?: components["schemas"]["SortKey"];
+                /** @description The direction; ascending when absent. */
+                direction?: components["schemas"]["SortDirection"];
+                /** @description Where folder rows go; on_top when absent. */
+                folders?: components["schemas"]["FolderPlacement"];
+                /** @description Only rows whose name contains this text, compared without case; at most 256 bytes. */
+                filter?: string;
+                /** @description The next_cursor of the previous page of the same view. */
+                cursor?: string;
+                /** @description Page size for a query (1-1000). Each operation states its default; the activity journal defaults to 100. */
+                limit?: components["parameters"]["PageSize"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of the view. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ViewPage"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    getCollectionHistorySize: {
+        parameters: {
+            query: {
+                /** @description The collection. */
+                collection_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The collection's history size. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CollectionHistorySize"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["FilesUnavailable"];
         };
     };
 }
