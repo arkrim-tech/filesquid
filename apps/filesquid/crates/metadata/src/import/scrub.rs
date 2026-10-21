@@ -2,17 +2,28 @@
 //! Decision 6; the outgoing disclosure policy of F-046).
 //!
 //! Paths, account and host names, numeric IDs, origin URLs, quarantine
-//! agents and Finder comments are identity and location fields: exports and
-//! shares scrub them by default, and the owner's own library keeps them.
-//! [`ImportEntry::scrubbed`] returns a copy with the chosen classes
-//! withheld; each removed fact is listed as unavailable with the reason
-//! [`Reason::WithheldByPolicy`]. The original file name is not an identity
-//! class here (ADR 038 Decision 6 lists the classes); the outgoing filename
-//! policy of C-033 and API-S-027 governs the names of shared files.
+//! agents, Finder comments and the original file name are identity and
+//! location fields: exports and shares scrub them by default, and the
+//! owner's own library keeps them. [`ImportEntry::scrubbed`] returns a copy
+//! of one entry with the chosen classes withheld, and
+//! [`FileRecord::scrubbed`](crate::file_record::FileRecord::scrubbed) the
+//! outgoing copy of a whole record; each removed fact is listed as
+//! unavailable with the reason [`Reason::WithheldByPolicy`].
+//!
+//! [`IdentityClass::OriginalName`] (owner decision 2026-10-20, ADR 038
+//! Decision 6 as amended) covers the original file name wherever the record
+//! holds it: each entry's source file name here, and the header's original
+//! name and display name in the record. Like every class it is scrubbed by
+//! default ([`IdentityClass::ALL`]); a caller whose saved outgoing policy
+//! selects **Use original filename** (C-033) leaves it out of the classes,
+//! so the name inside a shared record follows the shared file's own name.
+//! The outgoing copy goes only into exports and shares: the `ocfl` store
+//! refuses to save it.
 
 use super::attributes::{AttrValue, Attribute, Attributes};
 use super::{Host, ImportEntry, SourceFile, SourceVolume};
 use crate::fact::{Fact, Reason};
+use crate::raw::Raw;
 
 /// A class of identity or location fields.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,11 +42,15 @@ pub enum IdentityClass {
     QuarantineAgent,
     /// The Finder comment (`com.apple.metadata:kMDItemFinderComment`).
     FinderComment,
+    /// The original file name: each entry's source file name and, in a
+    /// whole record, the header's original name and display name. Kept only
+    /// when the saved outgoing policy selects **Use original filename**.
+    OriginalName,
 }
 
 impl IdentityClass {
-    /// Every class: what an export scrubs by default.
-    pub const ALL: [IdentityClass; 7] = [
+    /// Every class: what an export, share or publication scrubs by default.
+    pub const ALL: [IdentityClass; 8] = [
         IdentityClass::Path,
         IdentityClass::Account,
         IdentityClass::Host,
@@ -43,6 +58,7 @@ impl IdentityClass {
         IdentityClass::OriginUrl,
         IdentityClass::QuarantineAgent,
         IdentityClass::FinderComment,
+        IdentityClass::OriginalName,
     ];
 
     /// The extended attribute this class withholds, if it is an attribute class.
@@ -97,6 +113,7 @@ fn scrub_source(source: &mut SourceFile, class: IdentityClass) {
             source.owner_id = withheld();
             source.group_id = withheld();
         }
+        IdentityClass::OriginalName => source.original_name = Raw::from_bytes(b""),
         _ => {}
     }
 }

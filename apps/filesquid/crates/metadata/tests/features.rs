@@ -129,6 +129,8 @@ struct MetadataWorld {
     registry_scene: Option<ImportScene>,
     /// Exit code of the last CLI `validate`.
     cli_code: Option<i32>,
+    /// The outgoing (scrubbed) copy of a file record.
+    outgoing: Option<FileRecord>,
 }
 
 /// The in-memory OCFL object of an import record scenario.
@@ -1181,6 +1183,7 @@ fn header_facts_recorded(world: &mut MetadataWorld) {
 fn second_entry() -> ImportEntry {
     let mut again = import_rig::entry();
     again.acquisition.job_id = Fact::value("job-2".to_string());
+    again.acquisition.object_version = "v2".to_string();
     again
 }
 
@@ -1307,6 +1310,188 @@ fn statements_kept_header(world: &mut MetadataWorld) {
     );
     assert_eq!(record.original_name().as_bytes(), b"Holiday 2023.JPG");
     assert_eq!(record.imports().len(), 1);
+}
+
+// MD-0.10: the cited-version check (MD-S-008, ADR 038 Decision 10) and the
+// `OriginalName` identity class (MD-S-013, ADR 038 Decision 6).
+
+/// Another writer's version: one unrelated file.
+const OTHER_WRITER_FILE: &str = "unrelated.txt";
+
+/// A clock that, the first time the store asks it for the time (after the
+/// edit's preflight checks, before its commit), has another writer commit a
+/// version, so the commit has to rebase.
+struct MoveHeadOnFirstTick<'r> {
+    /// The scenario's storage, leases and staging.
+    rig: &'r rig::Rig<MemoryBackend>,
+    /// Whether the other writer has committed.
+    fired: std::sync::atomic::AtomicBool,
+}
+
+impl filesquid_ocfl::write::Clock for MoveHeadOnFirstTick<'_> {
+    fn now_millis(&self) -> Option<u64> {
+        if !self.fired.swap(true, Ordering::SeqCst) {
+            self.rig
+                .seed(import_rig::OBJECT, &[(OTHER_WRITER_FILE, b"other writer")]);
+        }
+        filesquid_ocfl::write::Clock::now_millis(&SystemClock)
+    }
+}
+
+/// A re-import entry citing `version`.
+fn entry_citing(version: &str) -> ImportEntry {
+    let mut entry = second_entry();
+    entry.acquisition.object_version = version.to_string();
+    entry
+}
+
+#[when("another writer commits a version before I import the same file again citing v2")]
+fn other_writer_then_reimport(world: &mut MetadataWorld) {
+    let rig = scene(world);
+    rig.seed(import_rig::OBJECT, &[(OTHER_WRITER_FILE, b"other writer")]);
+    let before = rig.versions(import_rig::OBJECT);
+    let options = filesquid_metadata::store::ocfl::CommitOptions::default();
+    let result = ready(rig.store().append_import_with(
+        &record_file(),
+        entry_citing("v2"),
+        &options,
+    ));
+    world.versions_before_save = before;
+    world.commit_outcome = Some(result.map(|receipt| receipt.map(|r| r.version)));
+}
+
+#[then("the re-import should be refused as a retryable conflict")]
+fn reimport_conflict(world: &mut MetadataWorld) {
+    let outcome = world.commit_outcome.take().expect("a re-import");
+    assert!(
+        matches!(&outcome, Err(StoreError::Conflict { reason }) if reason.contains("v2") && reason.contains("v3")),
+        "{outcome:?}"
+    );
+}
+
+#[then("the object should hold only the other writer's new version")]
+fn only_other_writers_version(world: &mut MetadataWorld) {
+    assert_eq!(world.versions_before_save, ["v1", "v2"]);
+    assert_eq!(scene(world).versions(import_rig::OBJECT), ["v1", "v2"]);
+    assert_eq!(head_record(world).imports().len(), 1);
+}
+
+#[then("a retry citing v3 should append the entry in v3")]
+fn retry_citing_v3(world: &mut MetadataWorld) {
+    let options = filesquid_metadata::store::ocfl::CommitOptions::default();
+    let receipt = ready(scene(world).store().append_import_with(
+        &record_file(),
+        entry_citing("v3"),
+        &options,
+    ))
+    .expect("retry")
+    .expect("a version");
+    assert_eq!(receipt.version.to_string(), "v3");
+    assert_eq!(head_record(world).imports().len(), 2);
+}
+
+#[when("another writer commits a version while I set dcterms:title Harbour on the file's record")]
+fn racing_statements_edit(world: &mut MetadataWorld) {
+    let rig = scene(world);
+    let store = filesquid_metadata::store::ocfl::OcflStore {
+        clock: MoveHeadOnFirstTick {
+            rig,
+            fired: std::sync::atomic::AtomicBool::new(false),
+        },
+        storage: &rig.storage,
+        reservations: &rig.leases,
+        staging: &rig.staging,
+        staging_prefix: "metadata-changes".to_string(),
+        holder: "metadata-test".to_string(),
+        object_root: rig::object_root as fn(&str) -> String,
+    };
+    let mut statements = Record::default();
+    statements
+        .set(MetadataNamespace::Dcterms, "title", "Harbour")
+        .expect("title");
+    let result = ready(store.commit_record(&record_file(), &statements));
+    world.commit_outcome = Some(result);
+}
+
+#[then("the edit should be published as v3 on top of the other writer's version")]
+fn edit_rebased(world: &mut MetadataWorld) {
+    let outcome = world.commit_outcome.take().expect("an edit");
+    assert_eq!(
+        outcome.expect("rebased").map(|v| v.to_string()).as_deref(),
+        Some("v3")
+    );
+    let record = head_record(world);
+    assert_eq!(
+        record.statements().get("dcterms:title").unwrap().value,
+        "Harbour"
+    );
+    let rig = scene(world);
+    let object = ready(Object::open(
+        &rig.storage,
+        &rig::object_root(import_rig::OBJECT),
+    ))
+    .expect("open");
+    let state = object.state(object.head()).expect("state");
+    assert!(state.get(OTHER_WRITER_FILE).is_some());
+}
+
+#[when("I make the outgoing copy of its record with every identity class")]
+fn outgoing_every_class(world: &mut MetadataWorld) {
+    world.outgoing = Some(head_record(world).scrubbed(&IdentityClass::ALL));
+}
+
+#[when("I make the outgoing copy of its record with every identity class except the original name")]
+fn outgoing_keeps_name(world: &mut MetadataWorld) {
+    let classes: Vec<IdentityClass> = IdentityClass::ALL
+        .into_iter()
+        .filter(|class| *class != IdentityClass::OriginalName)
+        .collect();
+    world.outgoing = Some(head_record(world).scrubbed(&classes));
+}
+
+#[then("its original name, display name and every source name should be withheld by policy")]
+fn names_withheld(world: &mut MetadataWorld) {
+    let outgoing = world.outgoing.as_ref().expect("an outgoing copy");
+    let text = outgoing.to_markdown();
+    let withheld = r#"{"unavailable":"withheld_by_policy"}"#;
+    assert!(
+        text.contains(&format!("original_name: {withheld}")),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!("display_name: {withheld}")),
+        "{text}"
+    );
+    assert!(!text.contains("Holiday 2023"), "{text}");
+    for entry in outgoing.imports() {
+        assert!(entry.source.name_withheld());
+    }
+    assert!(text.contains(&format!(r#""original_name":{withheld}"#)));
+}
+
+#[then("the store should refuse to save that copy")]
+fn store_refuses_copy(world: &mut MetadataWorld) {
+    let outgoing = world.outgoing.take().expect("an outgoing copy");
+    save_whole_record(world, &outgoing);
+    assert_eq!(world.refusal.take(), Some(RecordError::NamesWithheld));
+    assert_eq!(
+        scene(world).versions(import_rig::OBJECT),
+        world.versions_before_save
+    );
+}
+
+#[then("its original name, display name and source name should be Holiday 2023.JPG")]
+fn names_kept(world: &mut MetadataWorld) {
+    let outgoing = world.outgoing.take().expect("an outgoing copy");
+    assert!(!outgoing.names_withheld());
+    assert_eq!(outgoing.original_name().as_bytes(), b"Holiday 2023.JPG");
+    assert_eq!(outgoing.display_name(), "Holiday 2023.JPG");
+    let source = &outgoing.imports()[0].source.original_name;
+    assert_eq!(source.as_bytes(), b"Holiday 2023.JPG");
+    assert!(matches!(
+        outgoing.imports()[0].host.host_name,
+        Fact::Unavailable(_)
+    ));
 }
 
 #[when("I import a file whose reported size differs from the verified size")]

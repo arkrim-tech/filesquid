@@ -205,7 +205,13 @@ pub struct Acquisition {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SourceFile {
-    /// The file name exactly as reported.
+    /// The file name exactly as reported. Empty only in an outgoing copy
+    /// scrubbed of
+    /// [`IdentityClass::OriginalName`](scrub::IdentityClass::OriginalName)
+    /// ([`SourceFile::name_withheld`]), where it is written as
+    /// `{"unavailable":"withheld_by_policy"}`; a reported name is never
+    /// empty, so the empty name is that mark and nothing else.
+    #[serde(with = "source_name")]
     pub original_name: Raw,
     /// The normalisation form of that name.
     pub name_normalization: NameForm,
@@ -253,6 +259,52 @@ pub struct SourceFile {
     pub os_content_type: Fact<ContentType>,
     /// The file name extension; `None` when the name has none.
     pub extension: Option<String>,
+}
+
+impl SourceFile {
+    /// Whether the source file name is withheld by policy: an outgoing copy
+    /// scrubbed of
+    /// [`IdentityClass::OriginalName`](scrub::IdentityClass::OriginalName).
+    pub fn name_withheld(&self) -> bool {
+        self.original_name.as_bytes().is_empty()
+    }
+}
+
+/// The serde form of [`SourceFile::original_name`]: the name as a [`Raw`],
+/// or, when it is withheld (empty), the unavailable fact
+/// `{"unavailable":"withheld_by_policy"}`. Reading refuses an empty name
+/// and any other unavailable reason, so a reported name is never mistaken
+/// for a withheld one.
+mod source_name {
+    use serde::de::Error as _;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    use crate::fact::{Fact, Reason};
+    use crate::raw::Raw;
+
+    /// Write `name`, or the withheld mark for an empty name.
+    pub(super) fn serialize<S: Serializer>(name: &Raw, serializer: S) -> Result<S::Ok, S::Error> {
+        if name.as_bytes().is_empty() {
+            return Fact::<()>::unavailable(Reason::WithheldByPolicy).serialize(serializer);
+        }
+        name.serialize(serializer)
+    }
+
+    /// Read a name, or the withheld mark as an empty name.
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Raw, D::Error> {
+        match Fact::<Raw>::deserialize(deserializer)? {
+            Fact::Value(name) if name.as_bytes().is_empty() => {
+                Err(D::Error::custom("the source file name is empty"))
+            }
+            Fact::Value(name) => Ok(name),
+            Fact::Unavailable(u) if u.unavailable == Reason::WithheldByPolicy => {
+                Ok(Raw::from_bytes(b""))
+            }
+            Fact::Unavailable(_) => Err(D::Error::custom(
+                "the source file name is known or withheld by policy",
+            )),
+        }
+    }
 }
 
 /// The volume the file came from.
