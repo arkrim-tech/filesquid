@@ -201,9 +201,10 @@ describe("<fs-library-start>", () => {
     button(page, "open").click();
     await settle();
     source.opened = LIBRARY;
+    source.choice = { outcome: "chosen", location_id: "loc-2" };
     button(page, "open").click();
     await settle();
-    expect(source.calls).toEqual(["choose:open", "open:loc-1", "choose:open", "open:loc-1"]);
+    expect(source.calls).toEqual(["choose:open", "open:loc-1", "choose:open", "open:loc-2"]);
     expect(navigated).toEqual(["#/library/lib-1"]);
   });
 

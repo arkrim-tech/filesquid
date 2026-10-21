@@ -170,6 +170,21 @@ describe("<fs-library-repair> consent", () => {
     expect(dialogOf(page)).not.toBeNull();
   });
 
+  it("a repair still running for this library cannot be sent again after leaving and returning", async () => {
+    const source = new FakeLibrarySource();
+    source.repaired = () => new Promise(() => undefined);
+    const { page } = await mount(source);
+    await click(page, '[data-action="review"]');
+    await click(page, '[data-action="confirm"]');
+    page.libraryId = "lib-2";
+    await settle();
+    page.libraryId = "lib-1";
+    await settle();
+    await click(page, '[data-action="review"]');
+    expect(dialogOf(page)).toBeNull();
+    expect(source.repairs).toHaveLength(1);
+  });
+
   it("Escape cancels like the Cancel button", async () => {
     const { page, source } = await mount();
     await click(page, '[data-action="review"]');

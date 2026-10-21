@@ -81,7 +81,8 @@ export class FsLibraryRepair extends HTMLElement {
   private options?: RepairPageOptions;
   private library?: string;
   private generation = 0;
-  private busy = false;
+  /** Libraries whose repair request is still in flight; one request per library at a time. */
+  private readonly running = new Set<string>();
   private feedback?: Feedback;
   private listBox?: HTMLElement;
   private resultsBox?: HTMLElement;
@@ -134,7 +135,6 @@ export class FsLibraryRepair extends HTMLElement {
     const id = this.library;
     if (!this.shadowRoot || !options || id === undefined) return;
     this.generation += 1;
-    this.busy = false;
     const { labels } = options;
     this.feedback = new Feedback(labels);
     this.listBox = node("div", "offer");
@@ -213,7 +213,11 @@ export class FsLibraryRepair extends HTMLElement {
   /** Open the consent dialog over the page and move focus into it, to Cancel. */
   private openDialog(opener: HTMLButtonElement): void {
     const { labels } = this.options as RepairPageOptions;
-    if (this.busy || this.shadowRoot?.querySelector('[role="dialog"]')) return;
+    if (this.shadowRoot?.querySelector('[role="dialog"]')) return;
+    if (this.running.has(this.library as string)) {
+      this.feedback?.note(labels.libraryWorking);
+      return;
+    }
     this.opener = opener;
     const count = String(this.candidates.length);
     const title = node("h3", undefined, formatLabel(labels.repairDialogTitle, { count }));
@@ -273,10 +277,11 @@ export class FsLibraryRepair extends HTMLElement {
   private async confirm(): Promise<void> {
     const options = this.options as RepairPageOptions;
     const feedback = this.feedback as Feedback;
-    const request = consentRequest(this.library as string, this.candidates);
+    const library = this.library as string;
+    const request = consentRequest(library, this.candidates);
     this.closeDialog(this.opener);
-    if (!request || this.busy) return;
-    this.busy = true;
+    if (!request || this.running.has(library)) return;
+    this.running.add(library);
     const generation = this.generation;
     feedback.note(options.labels.libraryWorking);
     try {
@@ -289,7 +294,7 @@ export class FsLibraryRepair extends HTMLElement {
     } catch (error) {
       if (generation === this.generation) this.fail(error);
     } finally {
-      if (generation === this.generation) this.busy = false;
+      this.running.delete(library);
     }
   }
 

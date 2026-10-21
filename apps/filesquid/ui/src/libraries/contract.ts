@@ -77,6 +77,15 @@ export function parseLibraryView(value: unknown): LibraryView {
   return { library_id: id, spec_version: version, objects };
 }
 
+/** An RFC 3339 date-time: full date, `T`, full time with optional fraction, `Z` or an offset. */
+const RFC3339 = /^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+-]\d{2}:\d{2})$/;
+
+/** True for an absent field or an RFC 3339 date-time that names a real instant. */
+function isOptionalDateTime(value: unknown): value is string | undefined {
+  if (value === undefined) return true;
+  return typeof value === "string" && RFC3339.test(value) && !Number.isNaN(Date.parse(value));
+}
+
 /** One copied object whose validation found errors, or undefined when malformed. */
 function objectFindings(value: unknown): ObjectFindings | undefined {
   if (!isRecord(value) || !isText(value.object_id) || !isTexts(value.error_codes)) return undefined;
@@ -149,7 +158,7 @@ function journalRebuild(value: unknown): JournalRebuild | undefined {
   const { restored, already_present: present, conflicting, unreadable } = value;
   const sealed = value.last_sealed_at;
   if (!isCount(restored) || !isCount(present) || !isCount(conflicting)) return undefined;
-  if (!isCount(unreadable) || !isOptionalText(sealed)) return undefined;
+  if (!isCount(unreadable) || !isOptionalDateTime(sealed)) return undefined;
   const journal: JournalRebuild = {
     restored,
     already_present: present,

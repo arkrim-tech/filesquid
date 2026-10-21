@@ -60,13 +60,27 @@ Feature: Independent local library and ownership
     And the create, open and recover choices should still be offered
     And Retry should ask for the folder again
 
-  Scenario: Retry after a failed step keeps the folder already chosen
-    Given I picked a folder and the host answered "503 unavailable" to opening it
+  Scenario: Retry after a failed open keeps the folder already chosen
+    Given I chose "Open library" and picked a folder
+    And the host answered "503 unavailable" to opening it
     When I choose Retry
     Then the open route should receive the same location ID again
     And I should not be asked for a folder again
-    And after a failed rebuild of a recovered copy, Retry should rebuild the opened library only
-    And after a failed copy, Retry should copy to the destination already chosen
+
+  Scenario: Retry after a failed rebuild of a recovered copy rebuilds only
+    Given I chose "Recover" and picked a copied OCFL storage root
+    And the copy was opened but the host answered "503 unavailable" to rebuilding it
+    When I choose Retry
+    Then the rebuild route should receive the opened library again
+    And the copy should not be opened again and I should not be asked for a folder again
+
+  Scenario: Retry after a failed copy copies to the destination already chosen
+    Given I am on a library's page
+    And I chose "Copy library to…" and picked an empty folder
+    And the host answered "503 unavailable" to the snapshot copy
+    When I choose Retry
+    Then the snapshot route should receive the same destination location ID again
+    And I should not be asked for a destination again
 
   Scenario: Copying a library asks for a destination and reports the copy
     Given I am on a library's page

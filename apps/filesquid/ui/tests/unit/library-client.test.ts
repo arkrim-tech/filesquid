@@ -180,7 +180,9 @@ describe("ClientLibrarySource", () => {
       unreadable: REBUILD.unreadable,
     });
     const bad = [{ ...journal, restored: -1 }, { ...journal, conflicting: "0" }, null, []];
-    for (const value of [...bad, { ...journal, last_sealed_at: 5 }]) {
+    const dates = ["yesterday", "2026-10-20", "2026-13-40T99:00:00Z", "2026-10-20T12:00:00"];
+    const undated = dates.map((last_sealed_at) => ({ ...journal, last_sealed_at }));
+    for (const value of [...bad, ...undated, { ...journal, last_sealed_at: 5 }]) {
       const report = { ...REBUILD, journal: value };
       await expect(setup(report).source.rebuild("a")).rejects.toBeInstanceOf(TypeError);
     }
