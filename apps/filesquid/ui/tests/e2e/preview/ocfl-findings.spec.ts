@@ -228,9 +228,10 @@ test("(3) a W010 warning is listed apart from errors and health stays ok", async
   expect(await cells(page, "errors")).toEqual([[label(labels, "findingsNoErrors")]]);
   expect((await cells(page, "warnings")).map((row) => row[3])).toEqual(["W010"]);
   const note = findingsEl(page).locator('[data-note="read-only"]');
-  await expect(note).toHaveText(
-    label(labels, "findingsReadOnly").replace("{count}", "1").replace("{name}", LIB),
-  );
+  // The app wires `repairHref` (UI-1.1), so the note ends with the link to the repair offer.
+  const said = label(labels, "findingsReadOnly").replace("{count}", "1").replace("{name}", LIB);
+  await expect(note).toHaveText(`${said} ${label(labels, "findingsRepair")}`);
+  await expect(note.locator("a")).toHaveAttribute("href", `#/library/${LIB}/repair`);
   expect(errors).toEqual([]);
 });
 

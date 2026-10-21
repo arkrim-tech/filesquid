@@ -1,10 +1,12 @@
 //! File operation routes (Task API-F1.3; API-S-004, API-S-005, API-S-008, API-S-018,
 //! OCFL-S-012): browse and edit the OCFL objects of an open library like a drive.
 //!
-//! Every route takes the library and the OCFL object by identifier; the file and folder
+//! The object routes take the library and the OCFL object by identifier; the file and folder
 //! routes also take a file or folder by its logical path, while the object-versions route is
-//! object-level and takes none. Every answer carries storage facts only, never a filesystem path, storage key or
-//! OCFL content path (API-S-005):
+//! object-level and takes none. The metadata routes and copy take a file by its FileId, the
+//! view by navigation node and storage use per collection by collection ID. Every answer
+//! carries storage facts only, never a filesystem path, storage key or OCFL content path
+//! (API-S-005):
 //!
 //! - **Reads** (action `files.read`): a folder listing by logical-path prefix with an opaque
 //!   cursor and 1 to 1,000 entries per page ([`DEFAULT_PAGE`] by default), file details,
@@ -26,6 +28,12 @@
 //!   object `files/<file-id>` with its original and metadata record, or a new version of it
 //!   (Task API-F1.4, API-S-026). Creating a folder writes nothing: OCFL stores no empty folder, so a new
 //!   folder stays pending in the client until a file is added beneath it.
+//! - **Drive** (Task API-F2.2 part 2, API-S-011; [`drive`]): the view operation
+//!   (`GET /files/view`, `files.read`) of a library, collection or virtual-collection node
+//!   with stable cursor paging; storage use per collection
+//!   (`GET /files/collection-history-size`, `files.read`); and copy
+//!   (`POST /files/copies`, `files.write`), a new file object with a new FileId whose record
+//!   names its source.
 //! - **Metadata properties** (Task API-F1.4, API-S-035; [`statements`]): reads of a file's
 //!   statements, of the add order of a bare term name, of the library's namespace registry and
 //!   of the read-only import-record projection take `files.read`; setting or removing a
@@ -45,7 +53,12 @@
 //! ([`FileLibrary`]) into a [`FileService`]; this module does no storage I/O of its own
 //! (API-S-006).
 
+pub mod copy;
 mod download;
+pub mod drive;
+mod drive_facts;
+mod drive_routes;
+pub mod drive_scope;
 mod error;
 mod handle;
 mod import;
@@ -64,6 +77,7 @@ mod versions;
 mod view;
 
 pub use download::{Download, DownloadStream};
+pub use drive_facts::{CollectionHistorySizeView, CollectionSizeQuery, FactsAnswer};
 pub use error::FileError;
 pub use handle::{FileFuture, FileOperations};
 pub use import::SourceImport;
@@ -121,6 +135,12 @@ pub const DOWNLOAD_OPERATION: &str = "files.download";
 pub const METADATA_READ_OPERATION: &str = "files.metadata.read";
 /// Journal operation of a rename (the display name only).
 pub const RENAME_OPERATION: &str = "files.rename";
+/// Journal operation of a copy (Task API-F2.2).
+pub const COPY_OPERATION: &str = "files.copy";
+/// Journal operation of a refused view (Task API-F2.2).
+pub const VIEW_OPERATION: &str = "files.view";
+/// Journal operation of a refused storage-use count of a collection (Task API-F2.2).
+pub const COLLECTION_HISTORY_SIZE_OPERATION: &str = "files.collection_history_size";
 /// Journal operation of a statement set.
 pub const METADATA_SET_OPERATION: &str = "files.metadata.set";
 /// Journal operation of a statement removal.

@@ -7,6 +7,9 @@ import { FsBreadcrumb } from "./components/fs-breadcrumb";
 import { FsFileBrowser } from "./components/fs-file-browser";
 import { FsFilePreview } from "./components/fs-file-preview";
 import { FsHostIndicator } from "./components/fs-host-indicator";
+import { FsLibraryDetail } from "./components/fs-library-detail";
+import { FsLibraryRepair } from "./components/fs-library-repair";
+import { FsLibraryStart } from "./components/fs-library-start";
 import { FsMonitor } from "./components/fs-monitor";
 import { FsNavTree } from "./components/fs-nav-tree";
 import { FsOcflFindings } from "./components/fs-ocfl-findings";
@@ -129,6 +132,23 @@ export {
 export { FsNavigationView, type NavigationViewOptions } from "./components/fs-navigation-view";
 export { HOST_STATEMENT_STYLE, buildHostStatement } from "./components/host-statement";
 export { FsSettings, type SettingsOptions } from "./components/fs-settings";
+export { FsLibraryStart } from "./components/fs-library-start";
+export { FsLibraryDetail } from "./components/fs-library-detail";
+export { FsLibraryRepair, type RepairPageOptions } from "./components/fs-library-repair";
+export type { LibraryPageOptions } from "./components/library-parts";
+export { bindLibraryRoute } from "./app/library-route";
+export * from "./libraries/model";
+export { ClientLibrarySource, type LibraryClient } from "./libraries/client-source";
+export {
+  parseLibraryView,
+  parseLocationChoice,
+  parseRebuildReport,
+  parseRepairAnswer,
+  parseRepairCandidates,
+  parseSnapshotCopyReport,
+} from "./libraries/contract";
+export { libraryFailure, type Failure, type LibraryAction } from "./libraries/errors";
+export { LibraryRegistry } from "./libraries/registry";
 export { deviceStorage, type DeviceStorage } from "./app/device-storage";
 export type { MonitorClient, MonitorOptions, TokenStore } from "./components/fs-monitor";
 export * from "./api/client";
@@ -215,6 +235,15 @@ export function defineElements(): void {
     customElements.define("fs-host-indicator", FsHostIndicator);
   }
   if (!customElements.get("fs-settings")) customElements.define("fs-settings", FsSettings);
+  if (!customElements.get("fs-library-start")) {
+    customElements.define("fs-library-start", FsLibraryStart);
+  }
+  if (!customElements.get("fs-library-detail")) {
+    customElements.define("fs-library-detail", FsLibraryDetail);
+  }
+  if (!customElements.get("fs-library-repair")) {
+    customElements.define("fs-library-repair", FsLibraryRepair);
+  }
   if (!customElements.get("fs-app-shell")) customElements.define("fs-app-shell", FsAppShell);
   if (!customElements.get("fs-ocfl-findings")) {
     customElements.define("fs-ocfl-findings", FsOcflFindings);

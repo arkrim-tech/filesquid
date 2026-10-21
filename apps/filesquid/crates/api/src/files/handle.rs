@@ -2,7 +2,9 @@
 //! [`crate::ApiState`] with [`crate::ApiState::install_files`] for the file routes and the
 //! content route.
 
+use super::copy::{CopyRequest, CopyView};
 use super::download::Download;
+use super::drive_facts::{CollectionHistorySizeView, FactsAnswer};
 use super::error::FileError;
 use super::nodes::ScopeObject;
 use super::service::{ContentAnswer, ContentRequest, FileService};
@@ -21,6 +23,7 @@ use super::view::{
 use crate::content::ContentTarget;
 use crate::navigation::FolderScope;
 use axum::body::Bytes;
+use filesquid_core::FileId;
 use filesquid_ocfl::storage::StorageBackend;
 use filesquid_ocfl::write::VersionReservations;
 use std::future::Future;
@@ -97,6 +100,9 @@ pub trait FileOperations: Send + Sync {
     /// Rename a file (its display name only) by `actor`.
     fn rename(&self, request: RenameRequest, actor: String) -> FileFuture<'_, MetadataCommitView>;
 
+    /// Copy a file at its head into a new file by `actor`.
+    fn copy(&self, request: CopyRequest, actor: String) -> FileFuture<'_, CopyView>;
+
     /// Remove one statement by `actor`.
     fn remove_statement(
         &self,
@@ -116,6 +122,17 @@ pub trait FileOperations: Send + Sync {
 
     /// The bytes a library's history keeps.
     fn library_history_size(&self, query: LibraryQuery) -> FileFuture<'_, LibraryHistorySizeView>;
+
+    /// What each of `files` of `library_id` is at its head, for the view operation.
+    fn file_facts(&self, library_id: String, files: Vec<FileId>) -> FileFuture<'_, FactsAnswer>;
+
+    /// The bytes the history of `files`, the files of `collection_id`, keeps.
+    fn files_history_size(
+        &self,
+        library_id: String,
+        collection_id: String,
+        files: Vec<FileId>,
+    ) -> FileFuture<'_, CollectionHistorySizeView>;
 }
 
 impl<B, R, S> FileOperations for FileService<B, R, S>
@@ -217,6 +234,10 @@ where
         Box::pin(async move { FileService::rename(self, request, &actor).await })
     }
 
+    fn copy(&self, request: CopyRequest, actor: String) -> FileFuture<'_, CopyView> {
+        Box::pin(async move { FileService::copy(self, request, &actor).await })
+    }
+
     fn remove_statement(
         &self,
         request: RemoveStatementRequest,
@@ -235,5 +256,20 @@ where
 
     fn library_history_size(&self, query: LibraryQuery) -> FileFuture<'_, LibraryHistorySizeView> {
         Box::pin(self.library_history_size(query))
+    }
+
+    fn file_facts(&self, library_id: String, files: Vec<FileId>) -> FileFuture<'_, FactsAnswer> {
+        Box::pin(async move { FileService::file_facts(self, &library_id, files).await })
+    }
+
+    fn files_history_size(
+        &self,
+        library_id: String,
+        collection_id: String,
+        files: Vec<FileId>,
+    ) -> FileFuture<'_, CollectionHistorySizeView> {
+        Box::pin(async move {
+            FileService::files_history_size(self, &library_id, &collection_id, files).await
+        })
     }
 }

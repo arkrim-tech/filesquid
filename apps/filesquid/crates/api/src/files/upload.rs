@@ -186,7 +186,7 @@ pub(super) fn parse_file_id(id: &str) -> Result<FileId, FileError> {
 }
 
 /// A new file identifier (UUID v4, ADR 021).
-fn mint_file_id() -> Result<FileId, FileError> {
+pub(super) fn mint_file_id() -> Result<FileId, FileError> {
     let id = crate::library::mint_uuid_v4()
         .map_err(|_| FileError::unavailable("the random source is unavailable"))?;
     FileId::new(&id).map_err(|_| FileError::internal("a minted file identifier was refused"))

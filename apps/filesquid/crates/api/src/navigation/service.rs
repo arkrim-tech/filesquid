@@ -112,6 +112,11 @@ impl NavigationService {
         self.resolve(principal, node).map(|_| ())
     }
 
+    /// The catalog this service reads, for the view operation's file listing (API-S-011).
+    pub(crate) fn catalog(&self) -> &Arc<dyn LibraryCatalog> {
+        &self.catalog
+    }
+
     /// Whether `principal` may read `node` (not its ancestors).
     pub(crate) fn may_read(&self, principal: &Principal, node: &NodeRef) -> bool {
         self.access.may_read(principal, node)
