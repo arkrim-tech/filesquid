@@ -87,6 +87,12 @@ pub enum Action {
     /// Journal the UI's console warnings and errors (`POST /api/v1/client-events`,
     /// API-S-030).
     RecordClientEvents,
+    /// Read durable jobs: their list and one job (`GET /api/v1/jobs`, `/jobs/{job}`;
+    /// API-S-036).
+    ReadJobs,
+    /// Pause, resume and cancel durable jobs (`POST /api/v1/jobs/{job}/pause`, `/resume`,
+    /// `/cancel`; API-S-036).
+    ManageJobs,
     /// Deliberately public, unauthenticated: only the liveness probe
     /// (`GET /api/v1/health/live`), which says that the process is up and nothing else. The
     /// router leaves the route-table entry with this action unguarded; the guard itself
@@ -97,7 +103,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, in declaration order.
-    pub const ALL: [Action; 19] = [
+    pub const ALL: [Action; 21] = [
         Action::ReadHealth,
         Action::ReadContract,
         Action::SubscribeEvents,
@@ -116,6 +122,8 @@ impl Action {
         Action::ManagePreferences,
         Action::RunHistoryBackfill,
         Action::RecordClientEvents,
+        Action::ReadJobs,
+        Action::ManageJobs,
         Action::Public,
     ];
 
@@ -140,6 +148,8 @@ impl Action {
             Action::ManagePreferences => "preferences.manage",
             Action::RunHistoryBackfill => "history.backfill",
             Action::RecordClientEvents => "client_events.write",
+            Action::ReadJobs => "jobs.read",
+            Action::ManageJobs => "jobs.manage",
             Action::Public => "public",
         }
     }

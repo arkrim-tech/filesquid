@@ -3,14 +3,17 @@
 //! journal queue with the job ID, the operation ID (absent only for an unknown job ID) and
 //! an error code only; a running job is a process in the registry.
 
-use super::model::{Job, JobError, JobSpec, JobState, Lease};
+use super::model::{Job, JobControl, JobError, JobSpec, JobState, Lease};
 use super::rules::SOURCE_CHANGED;
-use super::store::JobStore;
+use super::slots::{JobClass, JobLimits, Slots};
+use super::store::{JobFilter, JobList, JobStore};
+use super::view::JobView;
 use super::{rules, JOB_LEASE_TTL_MS, MAX_RECOVERED_JOBS};
 use super::{
-    JOB_CANCELLED, JOB_COMPLETED, JOB_CREATED, JOB_FAILED, JOB_RECOVERED, JOB_REFUSED, JOB_STARTED,
-    JOB_SUSPENDED,
+    JOB_CANCELLED, JOB_CANCEL_REQUESTED, JOB_COMPLETED, JOB_CREATED, JOB_FAILED, JOB_PAUSED,
+    JOB_RECOVERED, JOB_REFUSED, JOB_RESUMED, JOB_STARTED, JOB_SUSPENDED,
 };
+use crate::events::{topic, ApiEvent, EventBus};
 use crate::journal::{now_ms, JournalEntry, Level, Outcome};
 use crate::journal_writer::JournalSender;
 use crate::library::mint_uuid_v4;
@@ -30,6 +33,11 @@ pub struct Jobs {
     holder: String,
     clock: Clock,
     ttl_ms: i64,
+    events: Option<EventBus>,
+    slots: Slots,
+    /// Serialises the starts of classified kinds, so two starts cannot both take the last
+    /// slot of a class between the count and the lease.
+    starting: Arc<Mutex<()>>,
 }
 
 impl std::fmt::Debug for Jobs {
@@ -56,7 +64,32 @@ impl Jobs {
             holder: holder.into(),
             clock: Arc::new(now_ms),
             ttl_ms: JOB_LEASE_TTL_MS,
+            events: None,
+            slots: Slots::default(),
+            starting: Arc::new(Mutex::new(())),
         }
+    }
+
+    /// Publish one `job.update` event on `events` for every stored change of a job
+    /// (API-S-036).
+    #[must_use]
+    pub fn with_events(mut self, events: EventBus) -> Self {
+        self.events = Some(events);
+        self
+    }
+
+    /// Hold jobs of `kind` to the cap of `class` ([`Self::with_limits`]).
+    #[must_use]
+    pub fn with_class(mut self, kind: &str, class: JobClass) -> Self {
+        self.slots.classify(kind, class);
+        self
+    }
+
+    /// Use `limits` as the caps of the classes (default [`JobLimits::default`]).
+    #[must_use]
+    pub fn with_limits(mut self, limits: JobLimits) -> Self {
+        self.slots.limit(limits);
+        self
     }
 
     /// Use `clock` (Unix ms, UTC) for leases and journal times.
@@ -90,7 +123,110 @@ impl Jobs {
             .insert(&job)
             .inspect_err(|err| self.journal_refusal(&job.id, Some(&job.operation_id), err))?;
         self.journal_job(&job, JOB_CREATED, Outcome::Succeeded, None);
+        self.publish(&job);
         Ok(job)
+    }
+
+    /// The job `id` (store I/O).
+    ///
+    /// # Errors
+    /// [`JobError::NotFound`] or a store failure.
+    pub fn job(&self, id: &str) -> Result<Job, JobError> {
+        self.store.get(id)?.ok_or(JobError::NotFound)
+    }
+
+    /// The jobs `filter` accepts, newest first, at most its limit (store I/O).
+    ///
+    /// # Errors
+    /// A store failure.
+    pub fn list(&self, filter: &JobFilter) -> Result<JobList, JobError> {
+        self.store.list(filter)
+    }
+
+    /// Pause job `id`: a pending job is held, a running job is asked to suspend at its next
+    /// checkpoint; journaled as `job.paused` when it changed (store I/O).
+    ///
+    /// # Errors
+    /// [`JobError::NotFound`], [`JobError::Conflict`] (`job_finished`, `cancel_requested`) or
+    /// a store failure; each is journaled.
+    pub fn pause(&self, id: &str) -> Result<Job, JobError> {
+        let (job, changed) = self.control(id, rules::pause)?;
+        if changed {
+            self.journal_job(&job, JOB_PAUSED, Outcome::Info, None);
+        }
+        Ok(job)
+    }
+
+    /// Resume job `id`: clear the pause asked of it so it may start again; journaled as
+    /// `job.resumed` (store I/O). Handing it to its worker is the caller's.
+    ///
+    /// # Errors
+    /// [`JobError::NotFound`], [`JobError::Conflict`] (`job_finished`, `cancel_requested`,
+    /// `job_running`) or a store failure; each is journaled.
+    pub fn resume(&self, id: &str) -> Result<Job, JobError> {
+        let (job, _) = self.control(id, rules::resume)?;
+        self.journal_job(&job, JOB_RESUMED, Outcome::Resumed, None);
+        Ok(job)
+    }
+
+    /// Cancel job `id`: a pending job is cancelled at once (`job.cancelled`), a running job
+    /// is asked to stop at its next checkpoint (`job.cancel_requested`) (store I/O).
+    ///
+    /// # Errors
+    /// [`JobError::NotFound`], [`JobError::Conflict`] (`job_finished`) or a store failure;
+    /// each is journaled.
+    pub fn cancel(&self, id: &str) -> Result<Job, JobError> {
+        let (job, changed) = self.control(id, rules::cancel)?;
+        match (changed, job.state) {
+            (false, _) => {}
+            (true, JobState::Cancelled) => {
+                self.journal_job(&job, JOB_CANCELLED, Outcome::Cancelled, None);
+            }
+            (true, _) => self.journal_job(&job, JOB_CANCEL_REQUESTED, Outcome::Info, None),
+        }
+        Ok(job)
+    }
+
+    /// Apply the control `rule` to job `id` atomically and publish the job when it changed;
+    /// answer the job and whether it changed. A refusal is journaled.
+    fn control(
+        &self,
+        id: &str,
+        rule: fn(Job, i64) -> Result<Job, JobError>,
+    ) -> Result<(Job, bool), JobError> {
+        let now = (self.clock)();
+        let (mut operation_id, mut changed) = (None, false);
+        let stored = self
+            .store
+            .update(id, &mut |job| {
+                operation_id = Some(job.operation_id.clone());
+                let next = rule(job.clone(), now)?;
+                changed = next != job;
+                Ok(next)
+            })
+            .inspect_err(|err| self.journal_refusal(id, operation_id.as_deref(), err))?;
+        if changed {
+            self.publish(&stored);
+        }
+        Ok((stored, changed))
+    }
+
+    /// Journal `entry`, timed by the service's clock: a refusal a job route makes itself.
+    pub(crate) fn journal_entry(&self, entry: JournalEntry) {
+        self.journal.send(entry.at_ms((self.clock)()));
+    }
+
+    /// Publish `job` as one `job.update` event, when the service has an event bus.
+    fn publish(&self, job: &Job) {
+        let Some(events) = &self.events else {
+            return;
+        };
+        match serde_json::to_value(JobView::of(job)) {
+            Ok(data) => {
+                events.publish(ApiEvent::new(topic::JOB_UPDATE, data));
+            }
+            Err(err) => tracing::warn!(error = %err, "a job view could not be encoded"),
+        }
     }
 
     /// The unfinished jobs of `kind`, at most `limit`, oldest first: how a host finds its own
@@ -129,8 +265,13 @@ impl Jobs {
             released = expired != current;
             Ok(expired)
         })?;
-        if released {
+        if released && stored.state == JobState::Cancelled {
+            self.journal_job(&stored, JOB_CANCELLED, Outcome::Cancelled, None);
+        } else if released {
             self.journal_job(&stored, JOB_RECOVERED, Outcome::Resumed, None);
+        }
+        if released {
+            self.publish(&stored);
         }
         Ok(stored)
     }
@@ -141,18 +282,30 @@ impl Jobs {
     /// I/O).
     ///
     /// # Errors
-    /// [`JobError::NotFound`], [`JobError::Conflict`], [`JobError::SourceChanged`] or a
-    /// store failure; each is journaled.
+    /// [`JobError::NotFound`], [`JobError::Conflict`] (`slots_full` when its class is at its
+    /// cap), [`JobError::SourceChanged`] or a store failure; each is journaled.
     pub fn start(&self, id: &str, source: &str) -> Result<RunningJob, JobError> {
+        let _serialised = match self.slots.any() {
+            true => Some(self.starting.lock().unwrap_or_else(PoisonError::into_inner)),
+            false => None,
+        };
         let now = (self.clock)();
-        let (holder, ttl) = (self.holder.as_str(), self.ttl_ms);
+        let open = match self.slots.any() {
+            true => self.store.unfinished(MAX_RECOVERED_JOBS)?,
+            false => Vec::new(),
+        };
+        let (holder, ttl, slots) = (self.holder.as_str(), self.ttl_ms, &self.slots);
         let mut operation_id = None;
         let updated = self.store.update(id, &mut |job| {
             operation_id = Some(job.operation_id.clone());
+            if !slots.admits((&job.id, &job.kind), &open, now) {
+                return Err(JobError::Conflict("slots_full"));
+            }
             rules::start(job, (holder, source), now, ttl)
         });
         let started =
             updated.inspect_err(|err| self.journal_refusal(id, operation_id.as_deref(), err))?;
+        self.publish(&started);
         if started.state == JobState::Failed {
             self.journal_job(&started, JOB_FAILED, Outcome::Failed, Some(SOURCE_CHANGED));
             return Err(JobError::SourceChanged);
@@ -178,6 +331,7 @@ impl Jobs {
         self.journal.send(entry);
         RunningJob {
             jobs: self.clone(),
+            requested: Mutex::new(job.control),
             job,
             lease: Mutex::new(lease),
             handle,
@@ -233,6 +387,7 @@ fn new_job(id: String, spec: JobSpec, now: i64) -> Job {
         created_ms: now,
         updated_ms: now,
         error_code: None,
+        control: None,
     }
 }
 
@@ -245,6 +400,8 @@ pub struct RunningJob {
     jobs: Jobs,
     job: Job,
     lease: Mutex<Lease>,
+    /// The control asked of the job, as the last checkpoint or renewal read it.
+    requested: Mutex<Option<JobControl>>,
     handle: ProcessHandle,
 }
 
@@ -286,10 +443,25 @@ impl RunningJob {
             .clone()
     }
 
-    /// Keep the renewed lease the store answered.
+    /// The control asked of the job (a pause or a cancel through the job routes) as the
+    /// last checkpoint or renewal read it: a worker that sees one suspends
+    /// ([`Self::suspend`]), which keeps a paused job pending and cancels a job asked to stop
+    /// (API-S-036).
+    pub fn requested(&self) -> Option<JobControl> {
+        *self
+            .requested
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Keep the renewed lease and the control the store answered.
     fn keep(&self, stored: &Job) -> Result<(), JobError> {
         let lease = rules::lease_of(stored)?;
         *self.lease.lock().unwrap_or_else(PoisonError::into_inner) = lease;
+        *self
+            .requested
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = stored.control;
         Ok(())
     }
 
@@ -315,6 +487,7 @@ impl RunningJob {
             })
             .inspect_err(|err| self.refused(err))?;
         self.keep(&stored)?;
+        self.jobs.publish(&stored);
         match total {
             Some(total) => self.handle.progress(done, total),
             None => self.handle.heartbeat(),
@@ -370,8 +543,9 @@ impl RunningJob {
         Ok(())
     }
 
-    /// Give the lease back at quit, keeping the checkpoint for the next launch, and journal
-    /// `job.suspended` (store I/O).
+    /// Give the lease back at quit or at a pause, keeping the checkpoint for the next run, and
+    /// journal `job.suspended`; a job asked to stop is cancelled instead (`job.cancelled`)
+    /// (store I/O).
     ///
     /// # Errors
     /// [`JobError::Fenced`] or a store failure, journaled.
@@ -383,8 +557,12 @@ impl RunningJob {
             .store
             .update(&self.job.id, &mut |job| rules::suspend(job, &lease, now))
             .inspect_err(|err| self.refused(err))?;
-        let entry = self.jobs.entry(&stored, JOB_SUSPENDED, Outcome::Info);
+        let entry = match stored.state {
+            JobState::Cancelled => self.jobs.entry(&stored, JOB_CANCELLED, Outcome::Cancelled),
+            _ => self.jobs.entry(&stored, JOB_SUSPENDED, Outcome::Info),
+        };
         self.jobs.journal.send(entry.process(self.handle.id()));
+        self.jobs.publish(&stored);
         self.handle.cancel();
         Ok(())
     }
@@ -414,6 +592,7 @@ impl RunningJob {
             Some(code) => entry.error_code(code).level(Level::Error),
             None => entry,
         });
+        self.jobs.publish(&stored);
         Ok(())
     }
 

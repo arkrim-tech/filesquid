@@ -393,3 +393,43 @@ fn an_unreadable_checkpoint_visits_every_library_again() {
     }
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
+
+#[test]
+fn a_paused_backfill_job_waits_until_it_is_resumed() {
+    let dir = data_dir("paused");
+    libraries_without_history(&dir, &["op-a"]);
+    let launch = Launch::open(&dir);
+    let backfill = history_backfill(&launch.host, &installation());
+    let source = backfill_source(&installation());
+    let quit = run_backfill_job(
+        &launch.jobs,
+        &launch.catalog,
+        &backfill,
+        &source,
+        &AtomicBool::new(true),
+    )
+    .expect("suspended at quit");
+    launch.jobs.pause(&quit.job_id).expect("pause");
+    let held = run_backfill_job(
+        &launch.jobs,
+        &launch.catalog,
+        &backfill,
+        &source,
+        &AtomicBool::new(false),
+    )
+    .expect_err("a paused job does not start");
+    assert_eq!(held, filesquid_api::jobs::JobError::Conflict("job_paused"));
+    launch.jobs.resume(&quit.job_id).expect("resume");
+    let run = run_backfill_job(
+        &launch.jobs,
+        &launch.catalog,
+        &backfill,
+        &source,
+        &AtomicBool::new(false),
+    )
+    .expect("ran");
+    assert_eq!(run.job_id, quit.job_id, "the same job resumed");
+    assert_eq!(run.state, JobState::Completed);
+    launch.stop();
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}

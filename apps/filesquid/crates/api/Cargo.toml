@@ -189,6 +189,14 @@ name = "unit_jobs"
 path = "tests/unit/jobs.rs"
 
 [[test]]
+name = "unit_job_control"
+path = "tests/unit/job_control.rs"
+
+[[test]]
+name = "integration_job_routes"
+path = "tests/integration/job_routes.rs"
+
+[[test]]
 name = "integration_navigation"
 path = "tests/integration/navigation.rs"
 

@@ -1,7 +1,7 @@
 //! The pure transitions of a job (API-S-033; ADR 007). A store applies each one inside one
 //! atomic read-modify-write, so every host enforces the same lease and fencing rules.
 
-use super::model::{Job, JobError, JobState, Lease};
+use super::model::{Job, JobControl, JobError, JobState, Lease};
 use super::MAX_CHECKPOINT_BYTES;
 
 /// Error code of a job whose source changed since it was submitted.
@@ -14,7 +14,8 @@ pub const SOURCE_CHANGED: &str = "source_changed";
 /// count raised.
 ///
 /// # Errors
-/// [`JobError::Conflict`] (`job_finished` or `lease_held`).
+/// [`JobError::Conflict`] (`job_finished`, `lease_held`, or `job_paused` for a job held by a
+/// pause, API-S-036).
 pub fn start(
     job: Job,
     (holder, source): (&str, &str),
@@ -26,6 +27,9 @@ pub fn start(
     }
     if lease_live(&job, now_ms) {
         return Err(JobError::Conflict("lease_held"));
+    }
+    if job.control == Some(JobControl::Pause) {
+        return Err(JobError::Conflict("job_paused"));
     }
     match job.source == source {
         true => Ok(acquire(job, holder, now_ms, ttl_ms)),
@@ -114,17 +118,29 @@ fn extended(job: &Job, now_ms: i64, ttl_ms: i64) -> i64 {
     job.lease_expires_ms.map_or(renewed, |end| end.max(renewed))
 }
 
-/// Give the lease back at quit: the job is pending again with its checkpoint kept.
+/// Give the lease back at quit: the job is pending again with its checkpoint (and a pause
+/// asked of it) kept; a job under a cancel request is cancelled instead.
 ///
 /// # Errors
 /// [`JobError::Fenced`] when the lease is no longer the job's.
-pub fn suspend(mut job: Job, lease: &Lease, now_ms: i64) -> Result<Job, JobError> {
+pub fn suspend(job: Job, lease: &Lease, now_ms: i64) -> Result<Job, JobError> {
     check_lease(&job, lease, now_ms)?;
-    job.state = JobState::Pending;
+    Ok(release(job, now_ms))
+}
+
+/// The job pending again without a lease, or cancelled when a cancel was asked of it.
+fn release(mut job: Job, now_ms: i64) -> Job {
+    job.state = match job.control {
+        Some(JobControl::Cancel) => JobState::Cancelled,
+        _ => JobState::Pending,
+    };
+    if job.state == JobState::Cancelled {
+        job.control = None;
+    }
     job.holder = None;
     job.lease_expires_ms = None;
     job.updated_ms = now_ms;
-    Ok(job)
+    job
 }
 
 /// Finish the job under `lease` as `state`, a finished state (completed, failed or
@@ -145,6 +161,7 @@ pub fn finish(
     check_lease(&job, lease, now_ms)?;
     job.state = state;
     job.error_code = error_code.map(str::to_string);
+    job.control = None;
     job.holder = None;
     job.lease_expires_ms = None;
     job.updated_ms = now_ms;
@@ -152,16 +169,85 @@ pub fn finish(
 }
 
 /// Release the expired lease of a run that crashed: the job is pending again with its
-/// checkpoint. Any other job is answered unchanged. Pure.
-pub fn expire(mut job: Job, now_ms: i64) -> Job {
+/// checkpoint, or cancelled when a cancel was asked of it. Any other job is answered
+/// unchanged. Pure.
+pub fn expire(job: Job, now_ms: i64) -> Job {
     if job.state != JobState::Running || lease_live(&job, now_ms) {
         return job;
     }
-    job.state = JobState::Pending;
-    job.holder = None;
-    job.lease_expires_ms = None;
-    job.updated_ms = now_ms;
-    job
+    release(job, now_ms)
+}
+
+/// Pause `job` (API-S-036): a pending job is held; a running job is asked to suspend at its
+/// next checkpoint. Pausing a job already paused changes nothing. Pure.
+///
+/// # Errors
+/// [`JobError::Conflict`]: `job_finished`, or `cancel_requested` for a job being cancelled.
+pub fn pause(mut job: Job, now_ms: i64) -> Result<Job, JobError> {
+    refuse_finished_or_cancelling(&job)?;
+    if job.control != Some(JobControl::Pause) {
+        job.control = Some(JobControl::Pause);
+        job.updated_ms = now_ms;
+    }
+    Ok(job)
+}
+
+/// Resume `job`: clear the pause asked of it, so it may start again. A pending job without a
+/// pause (one suspended at quit) is answered unchanged, ready to be handed to its runner.
+/// Pure.
+///
+/// # Errors
+/// [`JobError::Conflict`]: `job_finished`, `cancel_requested`, or `job_running` for a running
+/// job that was not asked to pause.
+pub fn resume(mut job: Job, now_ms: i64) -> Result<Job, JobError> {
+    refuse_finished_or_cancelling(&job)?;
+    if job.state == JobState::Running && job.control.is_none() {
+        return Err(JobError::Conflict("job_running"));
+    }
+    if job.control.is_some() {
+        job.control = None;
+        job.updated_ms = now_ms;
+    }
+    Ok(job)
+}
+
+/// Cancel `job`: a pending job is cancelled at once; a running job is asked to stop at its
+/// next checkpoint. Cancelling a job already asked to stop changes nothing. Pure.
+///
+/// # Errors
+/// [`JobError::Conflict`] (`job_finished`).
+pub fn cancel(mut job: Job, now_ms: i64) -> Result<Job, JobError> {
+    if job.state.is_finished() {
+        return Err(JobError::Conflict("job_finished"));
+    }
+    if job.state == JobState::Pending {
+        job.state = JobState::Cancelled;
+        job.control = None;
+        job.updated_ms = now_ms;
+        return Ok(job);
+    }
+    if job.control != Some(JobControl::Cancel) {
+        job.control = Some(JobControl::Cancel);
+        job.updated_ms = now_ms;
+    }
+    Ok(job)
+}
+
+/// Refuse a control on a finished job or one already asked to stop.
+fn refuse_finished_or_cancelling(job: &Job) -> Result<(), JobError> {
+    if job.state.is_finished() {
+        return Err(JobError::Conflict("job_finished"));
+    }
+    match job.control == Some(JobControl::Cancel) {
+        true => Err(JobError::Conflict("cancel_requested")),
+        false => Ok(()),
+    }
+}
+
+/// Whether `job` runs under a lease that has not ended at `now_ms`: what holds one of its
+/// class's slots. Pure.
+pub fn holds_slot(job: &Job, now_ms: i64) -> bool {
+    lease_live(job, now_ms)
 }
 
 /// Whether `job` is running under a lease that has not ended at `now_ms`.

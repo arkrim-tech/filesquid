@@ -16,7 +16,7 @@
 use crate::{HostMonitor, LibraryBackfill, SqliteCatalog, SqliteJobs, JOURNAL_FILE};
 use filesquid_api::history::backfill::BackfillReport;
 use filesquid_api::history::backfill::{Backfill, BACKFILL_OPERATION};
-use filesquid_api::jobs::{Job, JobError, JobSpec, JobState, Jobs, RunningJob};
+use filesquid_api::jobs::{Job, JobControl, JobError, JobSpec, JobState, Jobs, RunningJob};
 use filesquid_api::library::mint_uuid_v4;
 use filesquid_core::{InstallationId, LibraryId};
 use std::path::Path;
@@ -138,12 +138,19 @@ pub fn run_backfill_job(
         Ok(done) => done,
         Err(err) => return Err(suspend_after(running, err)),
     };
-    let complete = !stop.load(Ordering::SeqCst) && ran.iter().all(library_finished);
+    let complete = !halted(stop, &running) && ran.iter().all(library_finished);
     let state = match complete {
         true => running.complete().map(|()| JobState::Completed)?,
         false => checkpoint_and_suspend(running, &progress)?,
     };
     Ok(BackfillJobRun { job_id, state, ran })
+}
+
+/// Whether the run must stop: the host is quitting (`stop`), or the job routes asked the job
+/// to pause or cancel (seen at the last checkpoint or renewal, API-S-036). The run then
+/// checkpoints and suspends, which keeps a paused job pending and cancels the other.
+fn halted(stop: &AtomicBool, running: &RunningJob) -> bool {
+    stop.load(Ordering::SeqCst) || running.requested().is_some()
 }
 
 /// Suspend a run that failed with `err` while it may still hold its lease (a lost lease
@@ -174,7 +181,11 @@ fn checkpoint_and_suspend(
 ) -> Result<JobState, JobError> {
     let text = backfill_checkpoint(&progress.done);
     running.checkpoint(&text, progress.done.len() as u64, Some(progress.total))?;
-    running.suspend().map(|()| JobState::Pending)
+    let state = match running.requested() {
+        Some(JobControl::Cancel) => JobState::Cancelled,
+        _ => JobState::Pending,
+    };
+    running.suspend().map(|()| state)
 }
 
 /// Start the unfinished backfill job, found by kind whatever else waits, or a new one; a job
@@ -269,7 +280,7 @@ fn backfill_remaining(
     let total = libraries.len() as u64;
     let mut ran = Vec::new();
     for library in libraries {
-        if stop.load(Ordering::SeqCst) {
+        if halted(stop, running) {
             break;
         }
         if done.iter().any(|id| id == library.as_str()) {
@@ -332,7 +343,7 @@ fn renew_while_running(
     let every = Duration::from_millis(u64::try_from((ttl_ms / 3).max(1)).unwrap_or(1));
     let mut renewed_at = Instant::now();
     while !finished.load(Ordering::SeqCst) {
-        if stop.load(Ordering::SeqCst) {
+        if halted(stop, running) {
             cancel.store(true, Ordering::SeqCst);
         }
         if renewed_at.elapsed() >= every {

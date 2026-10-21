@@ -12,8 +12,8 @@
 //! history size of API-S-014; the client events, journal query and export of API-S-030
 //! and API-S-031; the preferences, whole-file download and drive listings of API-S-011;
 //! the metadata property routes of API-S-035; the display and download names of API-S-027;
-//! and the sealing service and journal rebuild of
-//! API-S-032).
+//! the sealing service and journal rebuild of API-S-032; and the job routes and job events
+//! of API-S-036).
 //!
 //! Scenarios that need domain operations not built yet (import, journal-linked renames, the metadata writes
 //! beyond the API-S-035 routes, such as the inspector's EXIF edits, C2PA scans, sync) or the
@@ -129,6 +129,9 @@ mod names_steps;
 #[path = "support/seal_steps.rs"]
 mod seal_steps;
 
+#[path = "support/job_steps.rs"]
+mod job_steps;
+
 /// Administrator token accepted by [`admin_state`].
 const ADMIN_TOKEN: &str = "admin";
 
@@ -183,6 +186,7 @@ struct MonitorWorld {
     names: names_steps::NamesWorld,
     journal: journal_steps::JournalWorld,
     seal: seal_steps::SealWorld,
+    jobs: job_steps::JobWorld,
 }
 
 impl std::fmt::Debug for MonitorWorld {

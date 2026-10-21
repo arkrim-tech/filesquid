@@ -1,6 +1,6 @@
 //! [`JobStore`]: where a host keeps its jobs, and the in-memory reference store.
 
-use super::model::{Job, JobError};
+use super::model::{Job, JobError, JobState};
 use std::collections::BTreeMap;
 use std::sync::{Mutex, MutexGuard};
 
@@ -45,6 +45,68 @@ pub trait JobStore: Send + Sync {
     /// # Errors
     /// A store failure.
     fn unfinished_of(&self, kind: &str, limit: usize) -> Result<Vec<Job>, JobError>;
+    /// At most `filter.limit` jobs that `filter` accepts, finished ones included, newest
+    /// first (by submission time, then ID, both descending), and whether more matched. The
+    /// default lists the unfinished jobs only (at most [`super::MAX_RECOVERED_JOBS`] read): a
+    /// store that keeps finished jobs MUST override it (both stores of FileSquid do).
+    ///
+    /// # Errors
+    /// A store failure.
+    fn list(&self, filter: &JobFilter) -> Result<JobList, JobError> {
+        let open = self.unfinished(super::MAX_RECOVERED_JOBS)?;
+        Ok(JobList::newest(
+            open.into_iter().filter(|j| filter.accepts(j)),
+            filter.limit,
+        ))
+    }
+}
+
+/// Which jobs [`JobStore::list`] answers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JobFilter {
+    /// Only jobs of this kind.
+    pub kind: Option<String>,
+    /// Only jobs in this state.
+    pub state: Option<JobState>,
+    /// At most this many jobs (1 to [`MAX_LISTED_JOBS`]; larger values are capped).
+    pub limit: usize,
+}
+
+/// Most jobs one listing answers.
+pub const MAX_LISTED_JOBS: usize = 100;
+
+impl JobFilter {
+    /// Whether `job` is one this filter accepts. Pure.
+    pub fn accepts(&self, job: &Job) -> bool {
+        self.kind.as_deref().is_none_or(|kind| job.kind == kind)
+            && self.state.is_none_or(|state| job.state == state)
+    }
+
+    /// The limit, between 1 and [`MAX_LISTED_JOBS`]. Pure.
+    pub fn effective_limit(&self) -> usize {
+        self.limit.clamp(1, MAX_LISTED_JOBS)
+    }
+}
+
+/// One listing of jobs.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct JobList {
+    /// The jobs, newest first.
+    pub jobs: Vec<Job>,
+    /// Whether more jobs matched than were answered.
+    pub truncated: bool,
+}
+
+impl JobList {
+    /// The newest `limit` (capped as [`JobFilter::effective_limit`]) of `jobs`. Pure.
+    pub fn newest(jobs: impl Iterator<Item = Job>, limit: usize) -> Self {
+        let limit = limit.clamp(1, MAX_LISTED_JOBS);
+        let mut jobs: Vec<Job> = jobs.collect();
+        jobs.sort_by(|a, b| (b.created_ms, &b.id).cmp(&(a.created_ms, &a.id)));
+        let truncated = jobs.len() > limit;
+        jobs.truncate(limit);
+        Self { jobs, truncated }
+    }
 }
 
 /// Refuse a change that gave the job another ID. Pure.
@@ -125,5 +187,11 @@ impl JobStore for MemoryJobStore {
 
     fn unfinished_of(&self, kind: &str, limit: usize) -> Result<Vec<Job>, JobError> {
         self.oldest_open(limit, |job| job.kind == kind)
+    }
+
+    fn list(&self, filter: &JobFilter) -> Result<JobList, JobError> {
+        let jobs = self.lock()?;
+        let matching = jobs.values().filter(|job| filter.accepts(job)).cloned();
+        Ok(JobList::newest(matching, filter.limit))
     }
 }

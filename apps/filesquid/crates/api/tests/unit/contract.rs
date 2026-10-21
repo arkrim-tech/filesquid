@@ -15,6 +15,9 @@ mod history_fixture;
 #[path = "../support/library_contract.rs"]
 mod library_contract;
 
+#[path = "../support/jobs_contract.rs"]
+mod jobs_contract;
+
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use filesquid_api::auth::{
@@ -79,7 +82,7 @@ fn contract_is_openapi_3_1_with_the_crate_api_version() {
     let doc = contract();
     assert_eq!(doc["openapi"], "3.1.0");
     assert_eq!(doc["info"]["version"], API_VERSION);
-    assert_eq!(API_VERSION, "0.20.0");
+    assert_eq!(API_VERSION, "0.21.0");
 }
 
 #[test]
@@ -290,6 +293,7 @@ async fn owner_state() -> (ApiState, Monitor) {
         filesquid_api::preferences::MemoryPreferenceStore::new(),
     ));
     state.install_history_backfill(Arc::new(StartingLauncher));
+    jobs_contract::install(&state, &monitor);
     (state, monitor)
 }
 
@@ -391,7 +395,7 @@ async fn every_documented_operation_answers_a_documented_status_and_body() {
     let (ready, monitor) = owner_state().await;
     let mut checked_ok = 0;
     for (method, path, op) in &operations {
-        let path = &concrete(path);
+        let path = &jobs_contract::concrete_job(&concrete(path));
         let (status, body) = call(&ApiState::new(), method, path).await;
         let expected = match op[ACTION].as_str() {
             Some("public") => StatusCode::OK,
@@ -720,6 +724,7 @@ fn samples() -> Vec<(&'static str, Vec<Value>)> {
     all.extend(files_contract::samples());
     all.extend(library_contract::samples());
     all.extend(client_event_samples());
+    all.extend(jobs_contract::samples());
     all
 }
 
@@ -1411,6 +1416,7 @@ async fn events_from_every_publisher() -> Vec<ApiEvent> {
     events.extend(slow.next().await);
     events.extend(host_change_event().await);
     events.extend(navigation_change_event().await);
+    events.extend(jobs_contract::job_update_event().await);
     events
 }
 
