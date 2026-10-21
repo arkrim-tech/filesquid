@@ -35,10 +35,15 @@ Also PRD [NFR-003](../../../../../../resources/prd.md#nfr-003-bounded-processing
 - **Caps:** the count was a read separate from the lease, so two services over one store could both take the last slot. `JobStore::update_counting_leases` now counts inside the store's atomic update, which replaces `leased_of` and the service-local start lock.
 - **Tests:** the listing test now submits 101 jobs and checks the 100-job answer and `truncated`. The SQLite counting test removes its directory.
 
+## Review round 3 (Cubic) and the merge of DE-1.2
+
+- **Merge of DE-1.2:** DE-1.2 (#115) took API-S-036 (Import route) and contract 0.22.0 on main, so this row is now **API-S-037** and the contract **0.23.0**.
+- **Memory store:** it no longer scans the store when no kind is counted.
+
 ## Not delivered in this task, and why
 
 - **No generic start route.** A job is created by the route of its kind, whose answer names the job. For example, DE-1.2's `POST /api/v1/imports` ([PR #115](https://github.com/arkrim-tech/filesquid/pull/115)) creates import jobs. The job routes report and control every job, and `resume` hands work back to the kind's runner. Starting a job without its kind's input has no meaning.
-- **Import jobs.** DE-1.2's `ImportWorker` (not on main yet) has only a global stop flag. To be pausable and cancellable it has to read `RunningJob::requested()` at its checkpoints and halt through `RunningJob::halt_if_requested()`, and register an `import` runner with `install_job_runner`. That is DE-1.2's lane. With no runner, a resumed import stays pending until the next launch.
+- **Import jobs.** DE-1.2's `ImportWorker` (merged in #115) has only a global stop flag. To be pausable and cancellable it has to read `RunningJob::requested()` at its checkpoints and halt through `RunningJob::halt_if_requested()`, and register an `import` runner with `install_job_runner`. That is DE-1.2's lane. With no runner, a resumed import stays pending until the next launch.
 - **Host wiring.** The desktop does not install `Jobs`, its runners or the kind classes into `ApiState` yet (DE lane). Until it does, the routes answer 503 `unavailable` there.
 
 ## SRS traceability

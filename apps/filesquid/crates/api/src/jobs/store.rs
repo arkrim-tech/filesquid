@@ -218,11 +218,14 @@ impl JobStore for MemoryJobStore {
         let mut jobs = self.lock()?;
         let current = jobs.get(id).cloned().ok_or(JobError::NotFound)?;
         let counted = kinds(&current);
-        let held = jobs
-            .values()
-            .filter(|job| job.id != id && counted.contains(&job.kind))
-            .filter(|job| super::rules::holds_slot(job, now_ms))
-            .count();
+        let held = match counted.is_empty() {
+            true => 0,
+            false => jobs
+                .values()
+                .filter(|job| job.id != id && counted.contains(&job.kind))
+                .filter(|job| super::rules::holds_slot(job, now_ms))
+                .count(),
+        };
         let changed = same_id(id, change(current, held)?)?;
         jobs.insert(id.to_string(), changed.clone());
         Ok(changed)
