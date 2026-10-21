@@ -216,6 +216,13 @@ async function routeWrites(page: Page, api: FilesApi): Promise<void> {
     });
   await post("folders", (b) => api.source.createFolder(object, String(b.path)));
   await post("moves", (b) => api.source.move(object, String(b.from), String(b.to)));
+  await post("renames", (b) =>
+    api.source.rename(
+      { library_id: String(b.library_id) },
+      String(b.file_id),
+      String(b.display_name),
+    ),
+  );
   await post("removals", (b) => api.source.remove(object, String(b.path)));
   await post("restorations", (b) =>
     api.source.restore(object, String(b.version), b.paths as string[]),

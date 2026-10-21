@@ -251,6 +251,7 @@ export class FsFileBrowser extends HTMLElement {
       reload: () => this.reload(),
       committed: (operation: WriteOperation, commit: FileCommit, changed: readonly string[]) =>
         this.onCommitted(operation, commit, changed),
+      nameOf: (path: string) => this.rowOfPath(path)?.name,
       pendFolder: (path: string) => void this.pending.add(path),
       focusPath: (path: string) => this.list?.focusRow(path),
     };

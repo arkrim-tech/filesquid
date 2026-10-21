@@ -9,12 +9,15 @@ import { ApiError } from "../../src/api/client";
 import type { FsFileBrowser } from "../../src/index";
 import { MAX_UPLOAD_BYTES, type FileCommit, type FolderAnswer } from "../../src/files/model";
 import {
+  FILE_ID,
+  FILE_LOCATION,
   LOCATION,
   STORED_NAMES,
   all,
   click,
   control,
   deepText,
+  fileObjectFixture,
   fixture,
   idle,
   mount,
@@ -314,8 +317,53 @@ describe("new folder", () => {
   });
 });
 
+describe("rename through the renames route (API-S-027)", () => {
+  /** Open the rename form on the one file of the file-object fixture. */
+  async function openRename() {
+    const source = fileObjectFixture();
+    const rename = vi.spyOn(source, "rename");
+    const move = vi.spyOn(source, "move");
+    const browser = await mount(source, { location: FILE_LOCATION });
+    control(browser, "readme.txt").focus();
+    await click(one(browser, "button.rename"));
+    return { source, rename, move, browser };
+  }
+
+  it("renames with one rename call, never a move, and shows the new display name", async () => {
+    const { rename, move, browser } = await openRename();
+    const form = one(browser, "form.name-form");
+    expect(form.getAttribute("aria-label")).toBe("Rename readme.txt");
+    expect(one<HTMLInputElement>(browser, "input[name=folder]").closest("label")?.hidden).toBe(
+      true,
+    );
+    await submit(browser, { name: "notes-final.txt" });
+    expect(rename).toHaveBeenCalledTimes(1);
+    expect(rename).toHaveBeenCalledWith({ library_id: "lib" }, FILE_ID, "notes-final.txt");
+    expect(move).not.toHaveBeenCalled();
+    expect(status(browser)).toBe("notes-final.txt renamed. Version v2 committed.");
+    expect(names(browser)).toEqual(["notes-final.txt"]);
+    expect(deepText(rootOf(browser))).not.toContain(`${FILE_ID}.txt`);
+  });
+
+  it.each([
+    [400, "invalid_request", labels.fileRenameInvalid],
+    [404, "not_found", labels.fileRenameNotFound],
+    [409, "conflict", labels.fileRenameConflict],
+    [503, "unavailable", labels.fileRenameUnavailable],
+  ] as const)("shows the label for a %s refusal and changes nothing", async (code, error, text) => {
+    const { source, browser } = await openRename();
+    vi.spyOn(source, "rename").mockRejectedValue(
+      new ApiError(code, "/api/v1/files/renames", { code: error }),
+    );
+    await submit(browser, { name: "other.txt" });
+    expect(alert(browser)).toBe(text);
+    expect(names(browser)).toEqual(["readme.txt"]);
+    expect(source.head).toBe("v1");
+  });
+});
+
 describe("rename or move", () => {
-  it("renames a file in place with one move that keeps its folder", async () => {
+  it("moves a file in a plain object in place with one move that keeps its folder", async () => {
     const source = fixture();
     const move = vi.spyOn(source, "move");
     const browser = await mount(source);

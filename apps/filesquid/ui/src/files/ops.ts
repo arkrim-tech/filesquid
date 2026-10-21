@@ -198,6 +198,66 @@ export function failureText(error: unknown, labels: LabelTable): string {
   return labels.fileActionFailed;
 }
 
+/** A UUID in its canonical hex form. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The folder of a file object that holds the stored original (API-S-026). */
+const ORIGINAL_FOLDER = "original/";
+
+/**
+ * The file a file object holds, from the object's identifier `urn:uuid:<file-id>` (API-S-026).
+ * Pure.
+ *
+ * @param objectId The OCFL object identifier shown.
+ * @returns The file's id, or undefined when the object is not named by a UUID.
+ */
+export function fileIdOf(objectId: string): string | undefined {
+  const id = objectId.startsWith("urn:uuid:") ? objectId.slice("urn:uuid:".length) : "";
+  return UUID.test(id) ? id : undefined;
+}
+
+/**
+ * The file to rename through `POST /api/v1/files/renames` for a row, when the row is the stored
+ * original of a file's own object. Such an original never moves (API-S-008), so a rename of it
+ * changes only the display name (API-S-027). Any other row (a folder, or a path in an object
+ * that is not a file's own) is renamed or moved with the moves route. Pure.
+ *
+ * @param row The file or folder.
+ * @param objectId The OCFL object identifier shown.
+ * @returns The file's id, or undefined when the row is renamed by a move.
+ */
+export function renameFileId(row: FileRow, objectId: string): string | undefined {
+  if (row.kind !== "file" || !row.path.startsWith(ORIGINAL_FOLDER)) return undefined;
+  return fileIdOf(objectId);
+}
+
+/**
+ * The words for a failed rename: the denial's label for an authorisation denial, otherwise the
+ * label for the route's refusal (`invalid_request`, `not_found`, `conflict`, `unavailable`),
+ * otherwise the generic failure label. Pure.
+ *
+ * @param error What the call rejected with.
+ * @param labels The active label table.
+ * @returns The text to show.
+ */
+export function renameFailureText(error: unknown, labels: LabelTable): string {
+  const denial = denialLabel(error, labels);
+  if (denial) return denial.text;
+  if (!(error instanceof ApiError)) return labels.fileActionFailed;
+  switch (error.code) {
+    case "invalid_request":
+      return labels.fileRenameInvalid;
+    case "not_found":
+      return labels.fileRenameNotFound;
+    case "conflict":
+      return labels.fileRenameConflict;
+    case "unavailable":
+      return labels.fileRenameUnavailable;
+    default:
+      return labels.fileActionFailed;
+  }
+}
+
 /** The label for a name problem. */
 export function problemText(problem: NameProblem, labels: LabelTable): string {
   switch (problem) {

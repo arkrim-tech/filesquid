@@ -8,9 +8,12 @@ import { ApiError } from "../../src/api/client";
 import {
   MAX_UPLOAD_FILES,
   failureText,
+  fileIdOf,
   folderProblem,
   moveTarget,
   problemText,
+  renameFailureText,
+  renameFileId,
   nameNormalization,
   reportedMediaType,
   reportedModified,
@@ -255,5 +258,43 @@ describe("failureText", () => {
       labels.fileActionFailed,
     );
     expect(failureText(new Error("boom"), labels)).toBe(labels.fileActionFailed);
+  });
+});
+
+describe("renaming a file (API-S-027)", () => {
+  const ID = "5b1d2c3e-7a4f-4e8b-9c6d-0a1b2c3d4e5f";
+  const row = (path: string, kind: "file" | "folder" = "file"): FileRow => ({
+    key: path,
+    kind,
+    name: "readme.txt",
+    path,
+    pending: false,
+    typeHint: "txt",
+  });
+
+  it("fileIdOf reads the file's id from its own object's identifier", () => {
+    expect(fileIdOf(`urn:uuid:${ID}`)).toBe(ID);
+    expect(fileIdOf("obj")).toBeUndefined();
+    expect(fileIdOf("urn:uuid:not-a-uuid")).toBeUndefined();
+  });
+
+  it("renameFileId answers only for a file's original in its own object", () => {
+    const object = `urn:uuid:${ID}`;
+    expect(renameFileId(row(`original/${ID}.txt`), object)).toBe(ID);
+    expect(renameFileId(row("original", "folder"), object)).toBeUndefined();
+    expect(renameFileId(row("Docs/a.txt"), object)).toBeUndefined();
+    expect(renameFileId(row(`original/${ID}.txt`), "obj")).toBeUndefined();
+  });
+
+  it("renameFailureText words each refusal of the route from the label table", () => {
+    const refuse = (status: number, code: string) =>
+      renameFailureText(new ApiError(status, "/x", { code: code as never }), labels);
+    expect(refuse(400, "invalid_request")).toBe(labels.fileRenameInvalid);
+    expect(refuse(404, "not_found")).toBe(labels.fileRenameNotFound);
+    expect(refuse(409, "conflict")).toBe(labels.fileRenameConflict);
+    expect(refuse(503, "unavailable")).toBe(labels.fileRenameUnavailable);
+    expect(refuse(500, "internal")).toBe(labels.fileActionFailed);
+    const denied = new ApiError(403, "/x", { code: "forbidden", reason: "not_permitted" });
+    expect(renameFailureText(denied, labels)).toBe(labels.authNotPermitted);
   });
 });

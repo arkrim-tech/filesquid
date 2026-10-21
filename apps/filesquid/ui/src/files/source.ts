@@ -19,6 +19,8 @@ import type {
   FolderPage,
   LibraryRef,
   ObjectRef,
+  RenameCommit,
+  RenameRequest,
   UploadCommit,
   UploadFacts,
 } from "./model";
@@ -57,8 +59,15 @@ export interface FileSource {
   ): Promise<UploadCommit>;
   /** Create a folder; it stays pending until a file is added beneath it. Writes nothing. */
   createFolder(object: ObjectRef, path: string, options?: SourceOptions): Promise<FolderAnswer>;
-  /** Move or rename one file or folder; commits one version. Writes. */
+  /** Move one file or folder, or rename a folder; commits one version. Writes. */
   move(object: ObjectRef, from: string, to: string, options?: SourceOptions): Promise<FileCommit>;
+  /** Set a file's display name and nothing else; commits one version of its record. Writes. */
+  rename(
+    library: LibraryRef,
+    fileId: string,
+    displayName: string,
+    options?: SourceOptions,
+  ): Promise<RenameCommit>;
   /** Remove one file or folder (its bytes stay in history); commits one version. Writes. */
   remove(object: ObjectRef, path: string, options?: SourceOptions): Promise<FileCommit>;
   /** Restore files or folders from an earlier version; commits one version. Writes. */
@@ -261,8 +270,37 @@ export class ClientFileSource implements FileSource {
   }
 
   /**
-   * Move or rename one file or folder with `POST /api/v1/files/moves`. Network I/O; commits a
-   * version.
+   * Set a file's display name with `POST /api/v1/files/renames` (API-S-027). Network I/O;
+   * commits one version of the file's metadata record. The stored name, the logical path and
+   * the bytes stay.
+   *
+   * @param library The library.
+   * @param fileId The file (the UUID of its own object).
+   * @param displayName The new display name (1 to 1,024 bytes, no `/` or NUL).
+   * @param options Abort signal.
+   * @returns The version published.
+   * @throws ApiError when the API refuses: `invalid_request` for a name it cannot take,
+   *   `not_found` for an unknown file, `conflict` for the current name or a record another
+   *   writer changed first, `unavailable` when storage is not reachable.
+   */
+  rename(
+    library: LibraryRef,
+    fileId: string,
+    displayName: string,
+    options: SourceOptions = {},
+  ): Promise<RenameCommit> {
+    const body: RenameRequest = {
+      library_id: library.library_id,
+      file_id: fileId,
+      display_name: displayName,
+    };
+    return this.post<RenameCommit>("renames", body, options);
+  }
+
+  /**
+   * Move one file or folder with `POST /api/v1/files/moves`. A file object's stored original
+   * never moves: the API refuses that with 400 and points to {@link ClientFileSource.rename}.
+   * Network I/O; commits a version.
    *
    * @param object The library and object.
    * @param from The file or folder to move.

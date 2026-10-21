@@ -24,6 +24,7 @@ import type {
   UploadFacts,
 } from "./model";
 import { MAX_UPLOAD_BYTES, isMediaType, lastSegment } from "./model";
+import { fileIdOf } from "./ops";
 import type { FileSource, SourceOptions } from "./source";
 
 /** One file of the fixture. */
@@ -123,6 +124,15 @@ const TYPES: Readonly<Record<string, string>> = {
 /** An `ApiError` with a contract code. */
 function refusal(status: number, code: "not_found" | "conflict" | "invalid_request"): ApiError {
   return new ApiError(status, ROUTE, { code });
+}
+
+/** The folder of a file object that holds the stored original (API-S-026). */
+const ORIGINAL = "original/";
+
+/** Whether a display name is one the rename route takes: 1 to 1,024 bytes, no `/` or NUL. */
+function validDisplayName(name: string): boolean {
+  const bytes = new TextEncoder().encode(name).length;
+  return bytes > 0 && bytes <= MAX_UPLOAD_NAME_BYTES && !name.includes("/") && !name.includes("\0");
 }
 
 /** The lowercase extension of a stored name, or null. */
@@ -313,12 +323,36 @@ export class MemoryFileSource implements FileSource {
     };
   }
 
-  /** Move or rename one file or folder. */
+  /**
+   * Set the display name of the file this object holds (`POST /api/v1/files/renames`,
+   * API-S-027): one new version that changes only the display name. Refuses what the route
+   * refuses: an empty name, one over 1,024 bytes or with `/` or NUL (`invalid_request`); a file
+   * this object does not hold (`not_found`); the current name (`conflict`).
+   */
+  async rename(library: LibraryRef, fileId: string, displayName: string): Promise<FileCommit> {
+    this.check();
+    const held = fileIdOf(this.options.object_id) === fileId;
+    if (!held || library.library_id !== this.options.library_id) throw refusal(404, "not_found");
+    if (!validDisplayName(displayName)) throw refusal(400, "invalid_request");
+    return this.commit((files) => {
+      const originals = [...files.values()].filter((file) => file.path.startsWith(ORIGINAL));
+      if (originals.length === 0) throw refusal(404, "not_found");
+      for (const file of originals) files.set(file.path, { ...file, displayName });
+    });
+  }
+
+  /**
+   * Move one file or folder. As the API does, it refuses (`invalid_request`) a move of the
+   * stored original of a file's own object, which only a rename changes.
+   */
   async move(_object: ObjectRef, from: string, to: string): Promise<FileCommit> {
     this.check();
     return this.commit((files, version, created) => {
       const moving = [...files.keys()].filter((path) => within(path, from));
       if (moving.length === 0) throw refusal(404, "not_found");
+      const fileObject = fileIdOf(this.options.object_id) !== undefined;
+      if (fileObject && moving.some((path) => path.startsWith(ORIGINAL)))
+        throw refusal(400, "invalid_request");
       for (const path of moving) {
         const entry = files.get(path) as Stored;
         files.delete(path);

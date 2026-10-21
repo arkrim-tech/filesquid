@@ -19,6 +19,10 @@ export type FolderPage = components["schemas"]["FolderPage"];
 export type FileDetails = components["schemas"]["FileDetails"];
 /** The one OCFL version a write published. */
 export type FileCommit = components["schemas"]["FileCommit"];
+/** The body of `POST /api/v1/files/renames`, generated from the API contract (API-S-027). */
+export type RenameRequest = components["schemas"]["RenameRequest"];
+/** The one version of a file's metadata record that a rename published. */
+export type RenameCommit = components["schemas"]["MetadataCommit"];
 /** The answer to creating a folder. */
 export type FolderAnswer = components["schemas"]["FolderAnswer"];
 /** The version an upload published in the file's own object (API-S-026). */

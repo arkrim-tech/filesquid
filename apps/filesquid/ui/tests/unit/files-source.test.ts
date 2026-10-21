@@ -291,6 +291,37 @@ describe("ClientFileSource", () => {
     ]);
   });
 
+  it("rename is one JSON POST to the renames route with the contract's body", async () => {
+    const { client, seen } = clientWith(() => json(200, COMMIT));
+    const commit = await new ClientFileSource(client).rename(
+      { library_id: "lib-1" },
+      "5b1d2c3e-7a4f-4e8b-9c6d-0a1b2c3d4e5f",
+      "Holiday photo.png",
+    );
+    expect(commit).toEqual(COMMIT);
+    expect(seen).toHaveLength(1);
+    const [call] = seen as [Seen];
+    expect(new URL(call.url).pathname).toBe("/api/v1/files/renames");
+    expect(call.init.method).toBe("POST");
+    expect(JSON.parse(String(call.init.body))).toEqual({
+      library_id: "lib-1",
+      file_id: "5b1d2c3e-7a4f-4e8b-9c6d-0a1b2c3d4e5f",
+      display_name: "Holiday photo.png",
+    });
+  });
+
+  it.each([
+    [400, "invalid_request"],
+    [404, "not_found"],
+    [409, "conflict"],
+    [503, "unavailable"],
+  ])("rename rejects with the route's %s refusal (%s)", async (status, code) => {
+    const { client } = clientWith(() => json(status, { code, message: "x", retryable: false }));
+    await expect(
+      new ClientFileSource(client).rename({ library_id: "lib-1" }, "f", "n"),
+    ).rejects.toMatchObject({ status, code });
+  });
+
   it.each([
     [
       "createFolder",

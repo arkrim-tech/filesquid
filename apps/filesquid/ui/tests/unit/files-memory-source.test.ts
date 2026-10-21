@@ -235,6 +235,52 @@ describe("MemoryFileSource writes", () => {
     expect(s.head).toBe("v1");
   });
 
+  describe("rename (API-S-027)", () => {
+    const FILE_ID = "5b1d2c3e-7a4f-4e8b-9c6d-0a1b2c3d4e5f";
+    const WHERE: FileLocation = {
+      library_id: "lib",
+      object_id: `urn:uuid:${FILE_ID}`,
+      prefix: "original",
+    };
+    /** One file's own object, as the API stores it. */
+    const fileObject = () =>
+      new MemoryFileSource({
+        library_id: "lib",
+        object_id: `urn:uuid:${FILE_ID}`,
+        files: [{ path: `original/${FILE_ID}.txt`, displayName: "readme.txt", content: "hi" }],
+      });
+
+    it("changes only the display name, as a new version", async () => {
+      const s = fileObject();
+      const commit = await s.rename({ library_id: "lib" }, FILE_ID, "notes.txt");
+      expect(commit).toMatchObject({ object_id: WHERE.object_id, version: "v2" });
+      const entry = (await s.list(WHERE)).entries[0];
+      expect(entry).toMatchObject({ name: `${FILE_ID}.txt`, display_name: "notes.txt" });
+      expect(entry).toMatchObject({ path: `original/${FILE_ID}.txt` });
+    });
+
+    it("refuses a bad name (400), the current name (409) and an unknown file (404)", async () => {
+      const s = fileObject();
+      const rename = (id: string, name: string) => s.rename({ library_id: "lib" }, id, name);
+      for (const bad of ["", "a/b", "a\0b", "x".repeat(1025)]) {
+        await expect(rename(FILE_ID, bad)).rejects.toMatchObject({ code: "invalid_request" });
+      }
+      await expect(rename(FILE_ID, "readme.txt")).rejects.toMatchObject({ code: "conflict" });
+      await expect(rename("ffffffff-ffff-4fff-8fff-ffffffffffff", "n")).rejects.toMatchObject({
+        code: "not_found",
+      });
+      expect(s.head).toBe("v1");
+    });
+
+    it("refuses a move of a file object's original with 400 (the route to use is renames)", async () => {
+      const s = fileObject();
+      await expect(
+        s.move(WHERE, `original/${FILE_ID}.txt`, `original/other.txt`),
+      ).rejects.toMatchObject({ code: "invalid_request", status: 400 });
+      expect(s.head).toBe("v1");
+    });
+  });
+
   it("removes keep history and restore brings a file back as a new version", async () => {
     const s = source();
     const removed = await s.remove(LOCATION, "Docs/a.txt");
