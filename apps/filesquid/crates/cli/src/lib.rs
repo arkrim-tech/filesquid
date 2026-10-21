@@ -8,9 +8,15 @@
 //!
 //! Each module keeps its command logic in its own library; this crate only
 //! routes arguments. [`resolve`] is pure; [`run`] dispatches and performs the
-//! module's I/O.
+//! module's I/O. [`journal`] journals every command that changes state or fails
+//! (Task CLI-0.2, ADR 036 Decision 8); the `fsquid` binary runs every command
+//! through it.
 //!
 //! [ADR 036]: ../../../../resources/architecture/036-single-fsquid-cli.md
+
+use std::path::PathBuf;
+
+pub mod journal;
 
 /// One module's commands as seen by `fsquid`.
 #[derive(Debug)]
@@ -23,6 +29,11 @@ pub struct Module {
     pub usage: &'static str,
     /// Runs a command; arguments start with the command name. Returns an exit code.
     pub run: fn(&[String]) -> Result<i32, String>,
+    /// The OCFL object directories a command's arguments name (command first): the
+    /// objects whose committed heads tell whether it changed state. Pure.
+    pub objects: fn(&[String]) -> Vec<PathBuf>,
+    /// Commands that write a file outside the module's objects whenever they succeed.
+    pub file_writers: &'static [&'static str],
 }
 
 /// Every module `fsquid` routes to. OCFL and C2PA register here when their commands ship.
@@ -31,7 +42,26 @@ pub const MODULES: &[Module] = &[Module {
     commands: filesquid_metadata::cli::COMMANDS,
     usage: filesquid_metadata::cli::USAGE,
     run: filesquid_metadata::cli::run,
+    objects: metadata_objects,
+    file_writers: &["export"],
 }];
+
+/// The metadata flags that name an OCFL object directory.
+const METADATA_OBJECT_FLAGS: [&str; 2] = ["--object", "--registry"];
+
+/// The object directories a metadata command names: `--object` (default `.`) and
+/// `--registry` when given and not the same path. Pure.
+fn metadata_objects(args: &[String]) -> Vec<PathBuf> {
+    let named = |flag: &str| {
+        args.windows(2)
+            .find(|pair| pair[0] == flag)
+            .map(|pair| PathBuf::from(&pair[1]))
+    };
+    let object = named(METADATA_OBJECT_FLAGS[0]).unwrap_or_else(|| PathBuf::from("."));
+    let mut dirs = vec![object];
+    dirs.extend(named(METADATA_OBJECT_FLAGS[1]).filter(|registry| !dirs.contains(registry)));
+    dirs
+}
 
 /// Commands that always need their module group, even when only one module defines them.
 pub const QUALIFIED_ONLY: &[&str] = &["validate"];
@@ -152,7 +182,7 @@ pub fn usage() -> String {
 }
 
 /// Explain that `command` needs one of `modules` as its group.
-fn needs_module_message(command: &str, modules: &[&str]) -> String {
+pub(crate) fn needs_module_message(command: &str, modules: &[&str]) -> String {
     let forms: Vec<String> = modules
         .iter()
         .map(|m| format!("fsquid {m} {command}"))

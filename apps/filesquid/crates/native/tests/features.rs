@@ -417,12 +417,13 @@ fn feature_sets<'a>(
         .collect()
 }
 
-#[then(expr = "no package other than {string} and {string} should link {string}")]
-fn only_two_link(w: &mut NativeWorld, first: String, second: String, dep: String) {
+#[then(expr = "no package other than {string}, {string} and {string} should link {string}")]
+fn only_three_link(w: &mut NativeWorld, first: String, second: String, third: String, dep: String) {
+    let allowed = [first, second, third];
     let others: Vec<&String> = w
         .links
         .iter()
-        .filter(|(p, d, _)| *d == dep && *p != first && *p != second)
+        .filter(|(p, d, _)| *d == dep && !allowed.contains(p))
         .map(|(p, _, _)| p)
         .collect();
     assert!(others.is_empty(), "{others:?}");
