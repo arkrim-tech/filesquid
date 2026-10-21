@@ -129,6 +129,7 @@ Cargo commands run from `apps/filesquid/` with `-p filesquid-ocfl` (`cargo test 
 ## Phase F2: Version-bound files for PROV-O history (global Task FS-2.8)
 
 - [ ] **Task IO-1.5: Version-bound logical files in the change model**
+  - **Status:** Open: the Description is delivered in PR #86 ([Walkthrough](./tasks/Task-IO-1.5-Walkthrough.md)); the Agent Prompt's test that the OCFL-S-018 write order holds on `FsBackend` as well as `MemoryBackend` is missing for bound files (`tests/integration/bound_files.rs` and the BDD steps use `MemoryBackend` only).
   - **Description:** Let a commit, revert or reinstate carry a caller-supplied function that returns the bytes of named logical files from the reserved version name and the `created` time the inventory will carry ([OCFL-S-024](./srs.md)). Call it after the `vN` reservation and before any `vN` byte is written, call it again after a rebase with the new version name, digest and write its output like any staged file, and publish nothing when it fails. Pass `VersionMeta` `user` and `message` through unchanged. Generic: the engine knows nothing about PROV-O.
   - **Estimated Time:** 6 hours
   - **Dependencies:** Task IO-0.10, Task IO-0.6

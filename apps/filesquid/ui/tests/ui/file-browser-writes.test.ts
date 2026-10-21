@@ -6,15 +6,19 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../src/api/client";
+import { MemoryFileSource } from "../../src/files/memory-source";
 import type { FsFileBrowser } from "../../src/index";
 import { MAX_UPLOAD_BYTES, type FileCommit, type FolderAnswer } from "../../src/files/model";
 import {
+  FILE_ID,
+  FILE_LOCATION,
   LOCATION,
   STORED_NAMES,
   all,
   click,
   control,
   deepText,
+  fileObjectFixture,
   fixture,
   idle,
   mount,
@@ -314,8 +318,106 @@ describe("new folder", () => {
   });
 });
 
+describe("rename through the renames route (API-S-027)", () => {
+  /** Open the rename form on the one file of the file-object fixture. */
+  async function openRename() {
+    const source = fileObjectFixture();
+    const rename = vi.spyOn(source, "rename");
+    const move = vi.spyOn(source, "move");
+    const browser = await mount(source, { location: FILE_LOCATION });
+    control(browser, "readme.txt").focus();
+    await click(one(browser, "button.rename"));
+    return { source, rename, move, browser };
+  }
+
+  it("renames with one rename call, never a move, and shows the new display name", async () => {
+    const { rename, move, browser } = await openRename();
+    const form = one(browser, "form.name-form");
+    expect(form.getAttribute("aria-label")).toBe("Rename readme.txt");
+    expect(one<HTMLInputElement>(browser, "input[name=folder]").closest("label")?.hidden).toBe(
+      true,
+    );
+    await submit(browser, { name: "notes-final.txt" });
+    expect(rename).toHaveBeenCalledTimes(1);
+    expect(rename).toHaveBeenCalledWith({ library_id: "lib" }, FILE_ID, "notes-final.txt");
+    expect(move).not.toHaveBeenCalled();
+    expect(status(browser)).toBe("notes-final.txt renamed. Version v2 committed.");
+    expect(names(browser)).toEqual(["notes-final.txt"]);
+    expect(deepText(rootOf(browser))).not.toContain(`${FILE_ID}.txt`);
+  });
+
+  it("shows the display name the reloaded listing returns, not the one typed", async () => {
+    const { source, browser } = await openRename();
+    const real = MemoryFileSource.prototype.rename.bind(source);
+    vi.spyOn(source, "rename").mockImplementation((library, id) =>
+      real(library, id, "Canonical name.txt"),
+    );
+    await submit(browser, { name: "typed.txt" });
+    expect(status(browser)).toBe("Canonical name.txt renamed. Version v2 committed.");
+    expect(names(browser)).toEqual(["Canonical name.txt"]);
+  });
+
+  it("keeps the typed name in the status when the listing could not be read again", async () => {
+    const { source, browser } = await openRename();
+    const real = MemoryFileSource.prototype.rename.bind(source);
+    vi.spyOn(source, "rename").mockImplementation(async (library, id) => {
+      const commit = await real(library, id, "Canonical name.txt");
+      source.failure = new Error("offline");
+      return commit;
+    });
+    await submit(browser, { name: "typed.txt" });
+    expect(status(browser)).toBe("typed.txt renamed. Version v2 committed.");
+  });
+
+  it("takes a display name of up to 1,024 bytes and refuses a longer one before the call", async () => {
+    const { rename, browser } = await openRename();
+    await submit(browser, { name: "x".repeat(1025) });
+    expect(one(browser, ".form-error").textContent).toBe(labels.fileDisplayNameTooLong);
+    expect(rename).not.toHaveBeenCalled();
+    const long = `${"é".repeat(300)}.txt`;
+    await submit(browser, { name: long });
+    expect(rename).toHaveBeenCalledWith({ library_id: "lib" }, FILE_ID, long);
+  });
+
+  it("renames a file in a UUID-named object that is not its own with a move", async () => {
+    const other = "0e1d2c3b-4a59-4687-8695-a4b3c2d1e0f9";
+    const source = new MemoryFileSource({
+      library_id: "lib",
+      object_id: `urn:uuid:${FILE_ID}`,
+      files: [{ path: `original/${other}.txt`, displayName: "readme.txt", content: "x" }],
+    });
+    const move = vi.spyOn(source, "move");
+    const rename = vi.spyOn(source, "rename");
+    const browser = await mount(source, { location: FILE_LOCATION });
+    control(browser, "readme.txt").focus();
+    await click(one(browser, "button.rename"));
+    expect(one(browser, "form.name-form").getAttribute("aria-label")).toBe(
+      "Rename or move readme.txt",
+    );
+    await submit(browser, { name: "notes.txt" });
+    expect(rename).not.toHaveBeenCalled();
+    expect(move).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [400, "invalid_request", labels.fileRenameInvalid],
+    [404, "not_found", labels.fileRenameNotFound],
+    [409, "conflict", labels.fileRenameConflict],
+    [503, "unavailable", labels.fileRenameUnavailable],
+  ] as const)("shows the label for a %s refusal and changes nothing", async (code, error, text) => {
+    const { source, browser } = await openRename();
+    vi.spyOn(source, "rename").mockRejectedValue(
+      new ApiError(code, "/api/v1/files/renames", { code: error }),
+    );
+    await submit(browser, { name: "other.txt" });
+    expect(alert(browser)).toBe(text);
+    expect(names(browser)).toEqual(["readme.txt"]);
+    expect(source.head).toBe("v1");
+  });
+});
+
 describe("rename or move", () => {
-  it("renames a file in place with one move that keeps its folder", async () => {
+  it("moves a file in a plain object in place with one move that keeps its folder", async () => {
     const source = fixture();
     const move = vi.spyOn(source, "move");
     const browser = await mount(source);
