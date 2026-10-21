@@ -1,14 +1,12 @@
 # Implementation Plan Checklist: FileSquid
 
 <!-- mvp-progress:start -->
-![MVP progress: 67% complete](./assets/mvp-progress.svg)
+![MVP progress: 69% complete](./assets/mvp-progress.svg)
 
-**MVP progress: 67%**, about 679 of 1006 estimated hours. 17 of 28 tasks are done and 8 more are under way. Each segment of the bar is one task below, as wide as its estimated hours in the implementation plan; an open task fills by the share of its module rows that are ticked. Below the bar, In progress lists the open tasks being worked on (global tasks with at least one module row ticked, including those whose module rows are all ticked but whose own box is still open, and tasks with an open pull request); the count of tasks under way is the number of distinct open tasks listed there. Up next lists the next five new module tasks whose listed dependencies are done or in progress. Regenerate with `python3 scripts/docs/update_mvp_progress.py` after ticking boxes or opening a pull request; the check run by `scripts/verify_docs.sh` does not call GitHub and uses the pull requests recorded in the block. In a clone that registers the `mvp-progress` git merge driver (see the README), merging two pull requests that both redraw it merges their ticks and redraws it when it can, and otherwise leaves a conflict.
+**MVP progress: 69%**, about 690 of 1006 estimated hours. 18 of 28 tasks are done and 7 more are under way. Each segment of the bar is one task below, as wide as its estimated hours in the implementation plan; an open task fills by the share of its module rows that are ticked. Below the bar, In progress lists the open tasks being worked on (global tasks with at least one module row ticked, including those whose module rows are all ticked but whose own box is still open, and tasks with an open pull request); the count of tasks under way is the number of distinct open tasks listed there. Up next lists the next five new module tasks whose listed dependencies are done or in progress. Regenerate with `python3 scripts/docs/update_mvp_progress.py` after ticking boxes or opening a pull request; the check run by `scripts/verify_docs.sh` does not call GitHub and uses the pull requests recorded in the block. In a clone that registers the `mvp-progress` git merge driver (see the README), merging two pull requests that both redraw it merges their ticks and redraws it when it can, and otherwise leaves a conflict.
 
 **In progress**
 
-- [Task FS-1.3](./implementation-plan.md#task-fs-1.3) Metadata properties and the import record through the API: 5 of 6 module rows ticked
-    - [MD-0.10](../apps/filesquid/crates/metadata/resources/plan.md#phase-f1-persist-through-ocfl-and-namespace-registry-global-task-fs-13) Cited-version check for import commits and the `OriginalName` scrub class
 - [Task FS-1.4](./implementation-plan.md#task-fs-1.4) Jobs, events and the authorisation layer: 2 of 2 module rows ticked
 - [Task 0.8](./implementation-plan.md#task-0.8) Test reporting, capability register, and foundation evidence: 1 of 1 module rows ticked
 - [Task FS-2.2](./implementation-plan.md#task-fs-2.2) Drive-style browser and sidebar panels: 1 of 3 module rows ticked
@@ -44,8 +42,8 @@
 - [DE-F3.1](../apps/filesquid/crates/desktop/resources/plan.md#phase-f3-installers-and-performance-global-tasks-fs-31-fs-34-and-after-the-mvp-fs-311) macOS early-access DMG and the FileSquid overlay (part of [Task FS-3.1](./implementation-plan.md#task-fs-3.1))
 - [UI-F3.1](../apps/filesquid/ui/resources/plan.md#phase-f3-mvp-performance-global-task-fs-34) Production-build browsing performance (part of [Task FS-3.4](./implementation-plan.md#task-fs-3.4))
 
-Generated 2026-10-21T01:38:45Z (RFC 3339, UTC) from the ticked boxes, the module plans and the open pull requests at that time.
-<!-- generated-at: 2026-10-21T01:38:45Z -->
+Generated 2026-10-21T20:35:25Z (RFC 3339, UTC) from the ticked boxes, the module plans and the open pull requests at that time.
+<!-- generated-at: 2026-10-21T20:35:25Z -->
 <!-- in-progress-prs: API-F2.3=#120 -->
 <!-- mvp-progress:end -->
 
@@ -55,7 +53,7 @@ Order follows the **Dependencies** fields and the [release sequence](./implement
 
 ## MVP
 
-FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by gate Task FS-3.9 (17 of 28 done). PROV-O history (Task FS-2.8) and the durable journal with the Logs view and file panel tabs (Task FS-2.9) are in the MVP and do not depend on the `c2pa` module ([ADR 040](./architecture/040-prov-o-history.md)). C2PA is not in the MVP ([ADR 037](./architecture/037-c2pa-in-release-2.md)).
+FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by gate Task FS-3.9 (18 of 28 done). PROV-O history (Task FS-2.8) and the durable journal with the Logs view and file panel tabs (Task FS-2.9) are in the MVP and do not depend on the `c2pa` module ([ADR 040](./architecture/040-prov-o-history.md)). C2PA is not in the MVP ([ADR 037](./architecture/037-c2pa-in-release-2.md)).
 
 1. [x] [Task FS-0.0](./implementation-plan.md#task-fs-0.0) FileSquid product switch
     - [x] [API-F0.1](../apps/filesquid/crates/api/resources/plan.md#phase-f0-crate-health-route-and-transport-spike-global-task-fs-00) Health router, contract seed and transport spike S1
@@ -128,11 +126,11 @@ FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by ga
     - [x] [DE-0.6](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Stdout JSON logging
     - [x] [DE-0.8](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Native-processing library boundary (`filesquid-native`)
     - [x] [DE-0.9](../apps/filesquid/crates/desktop/resources/plan.md#phase-f0-catalog-jobs-ocfl-coordinator-global-task-05) Journal every refusal in the desktop shell
-17. [ ] [Task FS-1.3](./implementation-plan.md#task-fs-1.3) Metadata properties and the import record through the API
+17. [x] [Task FS-1.3](./implementation-plan.md#task-fs-1.3) Metadata properties and the import record through the API
     - [x] [MD-0.2](../apps/filesquid/crates/metadata/resources/plan.md#phase-f1-persist-through-ocfl-and-namespace-registry-global-task-fs-13) Commit statements through filesquid-ocfl
     - [x] [MD-0.7](../apps/filesquid/crates/metadata/resources/plan.md#phase-f1-persist-through-ocfl-and-namespace-registry-global-task-fs-13) Namespace registry and extension statements
     - [x] [MD-0.8](../apps/filesquid/crates/metadata/resources/plan.md#phase-f1-persist-through-ocfl-and-namespace-registry-global-task-fs-13) Import record
-    - [ ] [MD-0.10](../apps/filesquid/crates/metadata/resources/plan.md#phase-f1-persist-through-ocfl-and-namespace-registry-global-task-fs-13) Cited-version check for import commits and the `OriginalName` scrub class
+    - [x] [MD-0.10](../apps/filesquid/crates/metadata/resources/plan.md#phase-f1-persist-through-ocfl-and-namespace-registry-global-task-fs-13) Cited-version check for import commits and the `OriginalName` scrub class
     - [x] [API-F1.4](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-api-f19-in-fs-310-and-api-f15-in-fs-c1) Metadata property routes
     - [x] [API-F1.13](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-api-f19-in-fs-310-and-api-f15-in-fs-c1) Display names and download names
 18. [ ] [Task FS-1.4](./implementation-plan.md#task-fs-1.4) Jobs, events and the authorisation layer

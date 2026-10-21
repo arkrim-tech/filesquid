@@ -32,10 +32,20 @@
 //!
 //! [`FileRecord::check_extends`] is the append-only rule: a record may only
 //! add import entries, change statements and the display name.
+//!
+//! [`FileRecord::scrubbed`] is the outgoing copy for exports and shares
+//! (MD-S-013, ADR 038 Decision 6): the chosen identity classes are withheld
+//! in every import entry and, for
+//! [`IdentityClass::OriginalName`], the header's two names are written as
+//! the unavailable fact `{"unavailable":"withheld_by_policy"}`. Such a copy
+//! reads back, but the `ocfl` store refuses to save it
+//! ([`RecordError::NamesWithheld`]).
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::fact::{Fact, Reason};
+use crate::import::scrub::IdentityClass;
 use crate::import::{ByteStorage, ImportEntry, ImportError, ImportMethod, NameForm, SCHEMA};
 use crate::markdown;
 use crate::raw::Raw;
@@ -122,6 +132,11 @@ pub enum RecordError {
     /// verified.
     #[error("the staged content differs from the entry's cited SHA-256")]
     ContentDigestMismatch,
+    /// The record is an outgoing copy whose original file name is withheld
+    /// by policy ([`FileRecord::scrubbed`]): it goes into exports and shares
+    /// only, never back into the library.
+    #[error("an outgoing copy with the original file name withheld cannot be saved")]
+    NamesWithheld,
 }
 
 /// The file name extension: what follows the last dot, unless the dot starts
@@ -202,6 +217,9 @@ pub struct FileRecord {
     imports: Vec<ImportEntry>,
     /// The descriptive statements and the Markdown body.
     statements: Record,
+    /// Whether this is an outgoing copy with the header's names withheld by
+    /// policy; `original_name` and `display_name` are then empty.
+    names_withheld: bool,
 }
 
 /// The read-only projection of a record for the metadata routes (API-S-027).
@@ -273,14 +291,46 @@ impl FileRecord {
             media_type,
             imports: vec![first_import],
             statements: Record::default(),
+            names_withheld: false,
         };
         record.validate()?;
         Ok(record)
     }
 
-    /// The owner's exact original file name.
+    /// The owner's exact original file name; empty in an outgoing copy whose
+    /// names are withheld ([`names_withheld`](Self::names_withheld)).
     pub fn original_name(&self) -> &Raw {
         &self.original_name
+    }
+
+    /// Whether this is an outgoing copy with the original file name withheld
+    /// by policy: in the header, or as any entry's source file name. The
+    /// `ocfl` store refuses to save such a record.
+    pub fn names_withheld(&self) -> bool {
+        self.names_withheld
+            || self
+                .imports
+                .iter()
+                .any(|entry| entry.source.name_withheld())
+    }
+
+    /// The outgoing copy of the record for an export or share (MD-S-013):
+    /// every import entry scrubbed of `classes`
+    /// ([`ImportEntry::scrubbed`]) and, when `classes` holds
+    /// [`IdentityClass::OriginalName`], the header's original name and
+    /// display name withheld by policy. The extension, format, media type
+    /// and statements stay. The copy renders and reads back, but the store
+    /// refuses to save it.
+    #[must_use]
+    pub fn scrubbed(&self, classes: &[IdentityClass]) -> FileRecord {
+        let mut copy = self.clone();
+        copy.imports = self.imports.iter().map(|e| e.scrubbed(classes)).collect();
+        if classes.contains(&IdentityClass::OriginalName) {
+            copy.original_name = Raw::from_bytes(b"");
+            copy.display_name = String::new();
+            copy.names_withheld = true;
+        }
+        copy
     }
 
     /// The normalisation form of the original name.
@@ -288,7 +338,8 @@ impl FileRecord {
         self.name_normalization
     }
 
-    /// The name shown everywhere (the original name until a rename).
+    /// The name shown everywhere (the original name until a rename); empty
+    /// in an outgoing copy whose names are withheld.
     pub fn display_name(&self) -> &str {
         &self.display_name
     }
@@ -337,8 +388,12 @@ impl FileRecord {
     /// # Errors
     ///
     /// [`RecordError::InvalidDisplayName`] for an empty name, one over 1,024
-    /// bytes, or one with `/` or NUL.
+    /// bytes, or one with `/` or NUL; [`RecordError::NamesWithheld`] for an
+    /// outgoing copy whose names are withheld.
     pub fn set_display_name(&mut self, name: &str) -> Result<(), RecordError> {
+        if self.names_withheld {
+            return Err(RecordError::NamesWithheld);
+        }
         if !valid_name(name.as_bytes()) {
             return Err(RecordError::InvalidDisplayName);
         }
@@ -350,37 +405,47 @@ impl FileRecord {
     ///
     /// # Errors
     ///
-    /// [`RecordError::Import`] when the entry is invalid; nothing is added.
+    /// [`RecordError::Import`] when the entry is invalid;
+    /// [`RecordError::NamesWithheld`] when the entry's source name is
+    /// withheld and the record's names are not, or the other way round (a
+    /// record is scrubbed of `OriginalName` whole or not at all). Nothing is
+    /// added.
     pub fn append_import(&mut self, entry: ImportEntry) -> Result<(), RecordError> {
         entry.validate()?;
+        if entry.source.name_withheld() != self.names_withheld {
+            return Err(RecordError::NamesWithheld);
+        }
         self.imports.push(entry);
         Ok(())
     }
 
     /// Check the record's own rules: names, an extension that is the
     /// original name's, format, media type, at least one import entry, and
-    /// every entry.
+    /// every entry. The original name is withheld in the header and every
+    /// entry, or nowhere. In an outgoing copy whose names are withheld, the name
+    /// rules and the extension's match with the name are not checked.
     ///
     /// # Errors
     ///
     /// The first rule that fails, as a [`RecordError`].
     pub fn validate(&self) -> Result<(), RecordError> {
-        if !valid_name(self.original_name.as_bytes()) {
-            return Err(RecordError::InvalidName);
+        if !self.names_withheld {
+            self.validate_names()?;
         }
-        if !valid_name(self.display_name.as_bytes()) {
-            return Err(RecordError::InvalidDisplayName);
+        let mixed = self
+            .imports
+            .iter()
+            .any(|e| e.source.name_withheld() != self.names_withheld);
+        if mixed {
+            return Err(RecordError::Malformed(
+                "the original name is withheld in only part of the record",
+            ));
         }
         if self
             .extension
             .as_deref()
             .is_some_and(|e| !valid_extension(e))
         {
-            return Err(RecordError::InvalidExtension);
-        }
-        let named = extension_of_bytes(self.original_name.as_bytes())
-            .and_then(|e| std::str::from_utf8(e).ok());
-        if self.extension.as_deref() != named {
             return Err(RecordError::InvalidExtension);
         }
         if self.format.as_deref().is_some_and(|f| !valid_format(f)) {
@@ -397,6 +462,23 @@ impl FileRecord {
             return Err(RecordError::NoImport);
         }
         self.imports.iter().try_for_each(|e| Ok(e.validate()?))
+    }
+
+    /// The name rules: valid original and display names, and an extension
+    /// that is the original name's.
+    fn validate_names(&self) -> Result<(), RecordError> {
+        if !valid_name(self.original_name.as_bytes()) {
+            return Err(RecordError::InvalidName);
+        }
+        if !valid_name(self.display_name.as_bytes()) {
+            return Err(RecordError::InvalidDisplayName);
+        }
+        let named = extension_of_bytes(self.original_name.as_bytes())
+            .and_then(|e| std::str::from_utf8(e).ok());
+        if self.extension.as_deref() != named {
+            return Err(RecordError::InvalidExtension);
+        }
+        Ok(())
     }
 
     /// The append-only rule (ADR 038 Decision 5): this record, saved over
@@ -491,17 +573,31 @@ impl FileRecord {
             media_type: header.media_type,
             imports: read_imports(front)?,
             statements: markdown::from_markdown(text),
+            names_withheld: header.names_withheld,
         };
         record.validate()?;
         Ok(record)
     }
 
-    /// The schema and header lines.
+    /// The schema and header lines. The names are withheld whenever any
+    /// copy of the original name is ([`names_withheld`](Self::names_withheld)),
+    /// so a record holding a scrubbed entry never writes the names in its
+    /// header.
     fn header(&self) -> String {
         let mut out = format!("schema: {SCHEMA}\n");
-        push_json(&mut out, "original_name", &self.original_name);
+        let withheld = Fact::<()>::unavailable(Reason::WithheldByPolicy);
+        let names_withheld = self.names_withheld();
+        if names_withheld {
+            push_json(&mut out, "original_name", &withheld);
+        } else {
+            push_json(&mut out, "original_name", &self.original_name);
+        }
         push_json(&mut out, "name_normalization", &self.name_normalization);
-        push_json(&mut out, "display_name", &self.display_name);
+        if names_withheld {
+            push_json(&mut out, "display_name", &withheld);
+        } else {
+            push_json(&mut out, "display_name", &self.display_name);
+        }
         push_json(&mut out, "extension", &self.extension);
         push_json(&mut out, "format", &self.format);
         push_json(&mut out, "media_type", &self.media_type);
@@ -568,6 +664,8 @@ struct Header {
     format: Option<String>,
     /// `media_type`.
     media_type: Option<String>,
+    /// Whether `original_name` and `display_name` are withheld by policy.
+    names_withheld: bool,
 }
 
 impl Header {
@@ -583,15 +681,41 @@ impl Header {
             let line = lines.iter().find_map(|l| l.strip_prefix(prefix.as_str()));
             line.ok_or(RecordError::MissingField(key))
         };
+        let (original_name, display_name, names_withheld) = read_names(
+            parse(value(HEADER_KEYS[0])?)?,
+            parse(value(HEADER_KEYS[2])?)?,
+        )?;
         Ok(Self {
-            original_name: parse(value(HEADER_KEYS[0])?)?,
+            original_name,
             name_normalization: parse(value(HEADER_KEYS[1])?)?,
-            display_name: parse(value(HEADER_KEYS[2])?)?,
+            display_name,
             extension: parse(value(HEADER_KEYS[3])?)?,
             format: parse(value(HEADER_KEYS[4])?)?,
             media_type: parse(value(HEADER_KEYS[5])?)?,
+            names_withheld,
         })
     }
+}
+
+/// The header's two names: both known, or both withheld by policy (an
+/// outgoing copy, [`FileRecord::scrubbed`]); anything else is malformed.
+fn read_names(
+    original: Fact<Raw>,
+    display: Fact<String>,
+) -> Result<(Raw, String, bool), RecordError> {
+    let withheld = withheld_by_policy(&original) && withheld_by_policy(&display);
+    match (original, display) {
+        (Fact::Value(original), Fact::Value(display)) => Ok((original, display, false)),
+        _ if withheld => Ok((Raw::from_bytes(b""), String::new(), true)),
+        _ => Err(RecordError::Malformed(
+            "the original and display names must be known or both withheld by policy",
+        )),
+    }
+}
+
+/// Whether `fact` is listed as withheld by the outgoing disclosure policy.
+fn withheld_by_policy<T>(fact: &Fact<T>) -> bool {
+    matches!(fact, Fact::Unavailable(u) if u.unavailable == Reason::WithheldByPolicy)
 }
 
 /// Parse one header value.
