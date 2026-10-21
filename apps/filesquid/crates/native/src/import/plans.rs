@@ -133,13 +133,15 @@ impl SqliteImportPlans {
     /// # Errors
     /// The database or its tables could not be opened.
     pub fn open(path: &Path) -> Result<Self, String> {
-        crate::owner_only::create_owner_only(path)
-            .map_err(|err| format!("the import plans could not be opened ({})", err.kind()))?;
+        let unopened =
+            |err: std::io::Error| format!("the import plans could not be opened ({})", err.kind());
+        let path = crate::owner_only::resolve_folders(path).map_err(unopened)?;
+        crate::owner_only::create_owner_only(&path).map_err(unopened)?;
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_NO_MUTEX
             | OpenFlags::SQLITE_OPEN_NOFOLLOW;
-        let conn = Connection::open_with_flags(path, flags).map_err(failed)?;
+        let conn = Connection::open_with_flags(&path, flags).map_err(failed)?;
         conn.busy_timeout(std::time::Duration::from_secs(5))
             .map_err(failed)?;
         conn.pragma_update(None, "foreign_keys", "ON")

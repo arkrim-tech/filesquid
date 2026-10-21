@@ -70,7 +70,8 @@ impl SqliteRepairLedger {
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_NO_MUTEX
             | OpenFlags::SQLITE_OPEN_NOFOLLOW;
-        let conn = Connection::open_with_flags(path, flags).map_err(classify)?;
+        let path = crate::owner_only::resolve_folders(path).map_err(failed)?;
+        let conn = Connection::open_with_flags(&path, flags).map_err(classify)?;
         conn.busy_timeout(std::time::Duration::from_secs(5))
             .map_err(classify)?;
         conn.execute_batch(SCHEMA).map_err(classify)?;

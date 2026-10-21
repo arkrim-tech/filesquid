@@ -5,7 +5,15 @@
  * fails (driven here with a stub CLI, so no browser starts).
  */
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -63,12 +71,26 @@ describe("clean-results.mjs", () => {
     expect(String(result.stderr)).toContain("clean-results: no path given");
   });
 
-  it("fails and names the path when a removal fails", () => {
-    writeFileSync(join(dir, "afile"), "x");
-    const result = clean("afile/child");
-    expect(result.status).toBe(1);
-    expect(String(result.stderr)).toContain("clean-results: afile/child:");
-  });
+  // A file in a read-only folder cannot be removed on Unix. A path under a file is no
+  // failure everywhere: Node on macOS treats that ENOTDIR as a path that does not exist.
+  // Windows does not honour a read-only folder, and root ignores the mode.
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "fails and names the path when a removal fails",
+    () => {
+      const locked = join(dir, "locked");
+      mkdirSync(locked);
+      writeFileSync(join(locked, "child"), "x");
+      chmodSync(locked, 0o555);
+      try {
+        const result = clean("locked/child");
+        expect(result.status).toBe(1);
+        expect(String(result.stderr)).toContain("clean-results: locked/child:");
+        expect(existsSync(join(locked, "child"))).toBe(true);
+      } finally {
+        chmodSync(locked, 0o755);
+      }
+    },
+  );
 
   it("is a valid ES module that Node can parse", () => {
     expect(() => execFileSync(process.execPath, ["--check", CLEANER])).not.toThrow();

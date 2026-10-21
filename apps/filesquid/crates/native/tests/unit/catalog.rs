@@ -913,6 +913,26 @@ fn a_catalog_file_that_is_a_symbolic_link_is_not_followed() {
     std::fs::remove_dir_all(outside).expect("cleanup");
 }
 
+/// A folder above the catalog files may be a symbolic link (macOS's `/var` is one for
+/// `/private/var`): only a link at a catalog file itself is refused.
+#[cfg(unix)]
+#[test]
+fn a_catalog_reached_through_a_linked_folder_opens_and_commits() {
+    let outside = temp_root("linked-folder");
+    let real = outside.join("real");
+    std::fs::create_dir_all(&real).expect("real folder");
+    let link = outside.join("link");
+    std::os::unix::fs::symlink(&real, &link).expect("link");
+    let fx = Fixture::over(link, Arc::new(MemoryJournal::new("desktop")));
+    let lib = fx.create_library("Family archive");
+    assert!(
+        catalog_file(&real, &lib).exists(),
+        "the catalog file is in the real folder"
+    );
+    drop(fx);
+    std::fs::remove_dir_all(outside).expect("cleanup");
+}
+
 #[test]
 fn a_renamed_catalog_file_is_not_served_under_another_library() {
     let fx = Fixture::new("renamed");

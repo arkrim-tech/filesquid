@@ -53,8 +53,9 @@ impl SqlitePreferences {
     ///
     /// The database or its table could not be opened.
     pub fn open(path: &Path) -> Result<Self, PreferenceStoreError> {
-        crate::owner_only::create_owner_only(path).map_err(unavailable)?;
-        let conn = Connection::open_with_flags(path, open_flags()).map_err(unavailable)?;
+        let path = crate::owner_only::resolve_folders(path).map_err(unavailable)?;
+        crate::owner_only::create_owner_only(&path).map_err(unavailable)?;
+        let conn = Connection::open_with_flags(&path, open_flags()).map_err(unavailable)?;
         conn.busy_timeout(std::time::Duration::from_secs(5))
             .map_err(unavailable)?;
         conn.execute_batch(SCHEMA).map_err(unavailable)?;

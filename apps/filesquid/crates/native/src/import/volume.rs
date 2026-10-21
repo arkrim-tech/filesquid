@@ -36,7 +36,9 @@ pub fn is_network_type(fs_type: &str) -> bool {
     NETWORK_TYPES.contains(&fs_type)
 }
 
-/// Most mount table lines read (AGENTS.md section 22).
+/// Most mount table lines read (AGENTS.md section 22). Only the Linux mount table reader
+/// uses it.
+#[cfg(target_os = "linux")]
 const MAX_MOUNTS: usize = 4_096;
 
 /// The facts of the volume holding `path`. Reads the mount table.
