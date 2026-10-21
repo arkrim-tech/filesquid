@@ -8,7 +8,7 @@ Branch: `docs/fs-2.8-tick-implemented-rows`. Scope: documentation only (plan and
 
 ## Rows
 
-A row is ticked only when its Description is delivered, its listed dependencies are ticked and the tests its Agent Prompt requires exist. Rust tests were not added or run here (docs scope), so a missing test keeps a row open with a Status note.
+A row is ticked only when its Description is delivered, its listed dependencies are ticked and the tests its Agent Prompt requires exist. No Rust tests were added for this documentation change (the pre-commit hook still ran the existing ones, see Verification), so a missing test keeps a row open with a Status note.
 
 | Row | Result | Evidence |
 |---|---|---|
