@@ -298,8 +298,9 @@ export class ClientFileSource implements FileSource {
   }
 
   /**
-   * Move one file or folder with `POST /api/v1/files/moves`. A file object's stored original
-   * never moves: the API refuses that with 400 and points to {@link ClientFileSource.rename}.
+   * Move one file or folder with `POST /api/v1/files/moves`. Nothing moves from or to
+   * `original` or below it in a file's own object: the API refuses that with 400 and points to
+   * {@link ClientFileSource.rename}.
    * Network I/O; commits a version.
    *
    * @param object The library and object.

@@ -81,6 +81,11 @@ Feature: File browser
     When I move a file to the folder "Drawings" without changing its name
     Then the move should keep the stored name
 
+  Scenario: Renaming a file in an object that is not the file's own is a move
+    Given a file in a plain object is listed as "readme.txt"
+    When I rename "readme.txt" to "notes-final.txt"
+    Then one move call should be sent and no call to the renames route
+
   Scenario: Renaming a file changes only its display name through the renames route
     Given a file in its own object is listed as "readme.txt"
     When I rename "readme.txt" to "holiday-notes.txt"

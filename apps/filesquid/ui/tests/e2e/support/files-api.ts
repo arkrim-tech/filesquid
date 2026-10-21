@@ -1,7 +1,7 @@
 /**
  * A fake of the file routes for the production-build Playwright tests (UI-F2.2): the page is the
  * real built UI, the routes (`files/listing`, `details`, `content`, `upload`, `folders`,
- * `moves`, `removals`, `restorations`, `content-handles` and `content/<handle>`) are answered
+ * `moves`, `renames`, `removals`, `restorations`, `content-handles` and `content/<handle>`) are answered
  * here from a `MemoryFileSource`, which answers as the API does. It records what the browser
  * sent (ranges, handle mints, content requests and their headers) so a test can assert on the
  * wire, and can refuse the next content requests to exercise the single re-mint.

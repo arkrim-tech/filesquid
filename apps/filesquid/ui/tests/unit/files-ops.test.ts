@@ -10,6 +10,8 @@ import {
   failureText,
   fileIdOf,
   folderProblem,
+  inOriginalFolder,
+  isOriginalPath,
   moveTarget,
   problemText,
   renameFailureText,
@@ -21,7 +23,12 @@ import {
   uploadFiles,
   uploadName,
 } from "../../src/files/ops";
-import { MAX_UPLOAD_BYTES, type FileRow } from "../../src/files/model";
+import {
+  MAX_DISPLAY_NAME_BYTES,
+  MAX_UPLOAD_BYTES,
+  validateName,
+  type FileRow,
+} from "../../src/files/model";
 import { MemoryFileSource } from "../../src/files/memory-source";
 import labels from "../../src/theme/labels.en.json";
 
@@ -281,9 +288,43 @@ describe("renaming a file (API-S-027)", () => {
   it("renameFileId answers only for a file's original in its own object", () => {
     const object = `urn:uuid:${ID}`;
     expect(renameFileId(row(`original/${ID}.txt`), object)).toBe(ID);
+    expect(renameFileId(row(`original/${ID}`), object)).toBe(ID);
     expect(renameFileId(row("original", "folder"), object)).toBeUndefined();
     expect(renameFileId(row("Docs/a.txt"), object)).toBeUndefined();
     expect(renameFileId(row(`original/${ID}.txt`), "obj")).toBeUndefined();
+  });
+
+  it("renameFileId leaves a file in another UUID-named object to the moves route", () => {
+    const other = "0e1d2c3b-4a59-4687-8695-a4b3c2d1e0f9";
+    const collection = `urn:uuid:${ID}`;
+    expect(renameFileId(row(`original/${other}.txt`), collection)).toBeUndefined();
+    expect(renameFileId(row("original/notes.txt"), collection)).toBeUndefined();
+    expect(renameFileId(row(`original/${ID}.${"x".repeat(17)}`), collection)).toBeUndefined();
+    expect(renameFileId(row(`original/${ID}.t/xt`), collection)).toBeUndefined();
+  });
+
+  it("isOriginalPath takes the id's own name with an extension of 1 to 16 letters or digits", () => {
+    expect(isOriginalPath(`original/${ID.toUpperCase()}.TXT`, ID)).toBe(true);
+    expect(isOriginalPath(`original/${ID}.${"a1".repeat(8)}`, ID)).toBe(true);
+    expect(isOriginalPath(`original/${ID}.`, ID)).toBe(false);
+    expect(isOriginalPath(`original/${ID}.tar.gz`, ID)).toBe(false);
+    expect(isOriginalPath(`${ID}.txt`, ID)).toBe(false);
+  });
+
+  it("inOriginalFolder is true for original and anything below it", () => {
+    expect(inOriginalFolder("original")).toBe(true);
+    expect(inOriginalFolder("original/a.txt")).toBe(true);
+    expect(inOriginalFolder("originals/a.txt")).toBe(false);
+    expect(inOriginalFolder("Docs/original/a.txt")).toBe(false);
+  });
+
+  it("a display name may have 1,024 bytes where a file name has 255", () => {
+    const name = "é".repeat(300);
+    expect(validateName(name)).toBe("long");
+    expect(validateName(name, MAX_DISPLAY_NAME_BYTES)).toBeUndefined();
+    expect(validateName("é".repeat(513), MAX_DISPLAY_NAME_BYTES)).toBe("long");
+    expect(problemText("long", labels)).toBe(labels.fileNameTooLong);
+    expect(problemText("long", labels, true)).toBe(labels.fileDisplayNameTooLong);
   });
 
   it("renameFailureText words each refusal of the route from the label table", () => {

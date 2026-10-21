@@ -227,8 +227,38 @@ export function fileIdOf(objectId: string): string | undefined {
  * @returns The file's id, or undefined when the row is renamed by a move.
  */
 export function renameFileId(row: FileRow, objectId: string): string | undefined {
-  if (row.kind !== "file" || !row.path.startsWith(ORIGINAL_FOLDER)) return undefined;
-  return fileIdOf(objectId);
+  const id = fileIdOf(objectId);
+  if (row.kind !== "file" || id === undefined) return undefined;
+  return isOriginalPath(row.path, id) ? id : undefined;
+}
+
+/**
+ * Whether `path` is the stored original of file `fileId`: `original/<file-id>`, then a dot and
+ * 1 to 16 ASCII letters or digits when the file has an extension (API-S-026). A collection
+ * snapshot is named `urn:uuid:` too, so the object's identifier alone does not say it holds a
+ * file's original. Pure.
+ *
+ * @param path A logical path.
+ * @param fileId The file's id.
+ * @returns True for that file's stored original.
+ */
+export function isOriginalPath(path: string, fileId: string): boolean {
+  const stored = path.startsWith(ORIGINAL_FOLDER) ? path.slice(ORIGINAL_FOLDER.length) : "";
+  const id = fileId.toLowerCase();
+  const name = stored.toLowerCase();
+  if (name === id) return true;
+  return name.startsWith(`${id}.`) && /^[a-z0-9]{1,16}$/.test(name.slice(id.length + 1));
+}
+
+/**
+ * Whether `path` is the reserved `original` folder of a file object or lies below it. The API
+ * refuses a move whose source or destination is. Pure.
+ *
+ * @param path A logical path.
+ * @returns True for `original` and anything below it.
+ */
+export function inOriginalFolder(path: string): boolean {
+  return path === "original" || path.startsWith(ORIGINAL_FOLDER);
 }
 
 /**
@@ -258,13 +288,21 @@ export function renameFailureText(error: unknown, labels: LabelTable): string {
   }
 }
 
-/** The label for a name problem. */
-export function problemText(problem: NameProblem, labels: LabelTable): string {
+/**
+ * The label for a name problem. Pure.
+ *
+ * @param problem What is wrong with the name.
+ * @param labels The active label table.
+ * @param displayName True for a display name (the renames route's 1,024-byte limit) rather
+ *   than a file or folder name (255 bytes).
+ * @returns The text to show.
+ */
+export function problemText(problem: NameProblem, labels: LabelTable, displayName = false): string {
   switch (problem) {
     case "empty":
       return labels.fileNameEmpty;
     case "long":
-      return labels.fileNameTooLong;
+      return displayName ? labels.fileDisplayNameTooLong : labels.fileNameTooLong;
     default:
       return labels.fileNameInvalid;
   }

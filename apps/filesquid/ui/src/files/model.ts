@@ -139,6 +139,8 @@ export const PAGE_SIZE = 200;
 export const MAX_LISTING_PAGES = 500;
 /** Longest file or folder name, in UTF-8 bytes. */
 export const MAX_NAME_BYTES = 255;
+/** Longest display name the renames route takes, in UTF-8 bytes (API-S-027). */
+export const MAX_DISPLAY_NAME_BYTES = 1024;
 /** Rows kept in the DOM above and below the visible ones. */
 export const OVERSCAN_ROWS = 5;
 /** Height of a list row, in rem (so the window follows the text size). */
@@ -284,15 +286,17 @@ export function isControl(character: string): boolean {
  * authority; this only spares a round trip for an obviously unusable name. Pure.
  *
  * @param raw The name as typed.
+ * @param limit Most UTF-8 bytes the name may have; {@link MAX_NAME_BYTES} for a file or
+ *   folder name, {@link MAX_DISPLAY_NAME_BYTES} for a display name.
  * @returns The problem, or undefined when the name is usable.
  */
-export function validateName(raw: string): NameProblem | undefined {
+export function validateName(raw: string, limit: number = MAX_NAME_BYTES): NameProblem | undefined {
   const name = raw.trim();
   if (name === "") return "empty";
   if (Array.from(name).some(isControl)) return "control";
   if (name.includes("/") || name.includes("\\")) return "separator";
   if (name === "." || name === "..") return "reserved";
-  if (new TextEncoder().encode(name).length > MAX_NAME_BYTES) return "long";
+  if (new TextEncoder().encode(name).length > limit) return "long";
   return undefined;
 }
 

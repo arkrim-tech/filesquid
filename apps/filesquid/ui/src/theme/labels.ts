@@ -202,6 +202,7 @@ export const REQUIRED_LABEL_KEYS = [
   "fileNameInvalid",
   "fileNameTooLong",
   "fileConflict",
+  "fileDisplayNameTooLong",
   "fileRenameInvalid",
   "fileRenameNotFound",
   "fileRenameConflict",

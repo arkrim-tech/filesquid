@@ -7,13 +7,13 @@ A fix, not a plan row; no plan box is ticked. Since PR #111 (API-F1.13, contract
 ## Changes
 
 - **`FileSource.rename(library, fileId, displayName)`** ([`source.ts`](../../src/files/source.ts)): `ClientFileSource` sends one `POST /api/v1/files/renames` with the body typed by the generated `RenameRequest` and answers the generated `MetadataCommit` ([`model.ts`](../../src/files/model.ts) re-exports both from [`schema.d.ts`](../../src/api/schema.d.ts)). No route shape is hand-written. `move` stays for real moves (a folder's rename, a file in an object that is not a file's own).
-- **Which route** ([`ops.ts`](../../src/files/ops.ts)): `fileIdOf(objectId)` reads the file id from `urn:uuid:<file-id>`; `renameFileId(row, objectId)` answers it only for a file row whose path is under `original/` in such an object. Everything else keeps the moves route.
-- **Refusals** (`renameFailureText`): the route's codes, read from `openapi.json` (400 `invalid_request`, 404 `not_found`, 409 `conflict`, 503 `unavailable`; 401 and 403 are the denial labels), each have a label in the active table: `fileRenameInvalid`, `fileRenameNotFound`, `fileRenameConflict`, `fileRenameUnavailable`. Success is `fileRenamed`; the form title is `fileRenameOnlyTitle`. The keys are required keys ([`labels.ts`](../../src/theme/labels.ts)) and are in both [FileSquid](../../src/theme/labels.en.json) and ImageSquid (its own label table) tables.
-- **Browser** ([`file-browser-writes.ts`](../../src/components/file-browser-writes.ts)): for such a row the form is titled "Rename ...", offers no folder field (the original never moves), and Save makes one rename call. The answer (`MetadataCommit`) carries a version and no name, so the listing is reloaded and the status shows the display name the listing returns; `fs-files-change` announces operation `rename`. A failed call shows its label and changes nothing.
-- **`MemoryFileSource`** ([`memory-source.ts`](../../src/files/memory-source.ts)) answers as the routes now do: `rename` changes only the display name in a new version (400 for an empty name, one over 1,024 bytes or with `/` or NUL; 404 for a file the object does not hold; 409 for the current name), and `move` refuses a move of a file object's `original/` with 400.
+- **Which route** ([`ops.ts`](../../src/files/ops.ts)): `fileIdOf(objectId)` reads the file id from `urn:uuid:<file-id>`; `renameFileId(row, objectId)` answers it only for a file row whose path is that file's own stored original, `original/<file-id>` with an optional dot and 1 to 16 ASCII letters or digits (`isOriginalPath`), in such an object. A collection snapshot is named `urn:uuid:` too, so a path alone under `original/` does not qualify. Everything else keeps the moves route.
+- **Refusals** (`renameFailureText`): the route's codes, read from `openapi.json` (400 `invalid_request`, 404 `not_found`, 409 `conflict`, 503 `unavailable`; 401 and 403 are the denial labels), each have a label in the active table: `fileRenameInvalid`, `fileRenameNotFound`, `fileRenameConflict`, `fileRenameUnavailable`. Success is `fileRenamed`; the form title is `fileRenameOnlyTitle`; `fileDisplayNameTooLong` words the 1,024-byte limit. These seven new keys are required keys ([`labels.ts`](../../src/theme/labels.ts)) and are in the [FileSquid table](../../src/theme/labels.en.json) and in ImageSquid's own table.
+- **Browser** ([`file-browser-writes.ts`](../../src/components/file-browser-writes.ts)): for such a row the form is titled "Rename ...", offers no folder field (the original never moves), checks the name against the route's limit of 1,024 bytes (`MAX_DISPLAY_NAME_BYTES`; a file or folder name keeps 255) and Save makes one rename call. The answer (`MetadataCommit`) carries a version and no name, so the listing is reloaded and the status shows the display name that listing returns, but only when the listing of the place the rename was asked in has loaded; otherwise it keeps the name typed. `fs-files-change` announces operation `rename`. A failed call shows its label and changes nothing.
+- **`MemoryFileSource`** ([`memory-source.ts`](../../src/files/memory-source.ts)) answers as the routes now do: `rename` changes only the display name in a new version (400 for an empty name, one over 1,024 bytes or with `/` or NUL; 404 for a file the object does not hold; 409 for the current name), every listing and detail shows the API-S-005 safe form of a stored name, and `move` refuses a move from or to `original` or below it in a file's own object with 400 (an object counts as the file's own only when it holds that file's `original/<file-id>`).
 - **Fixtures and mocks**: [`file-browser-fakes.ts`](../../tests/support/file-browser-fakes.ts) gains `fileObjectFixture()`; the Playwright fake ([`files-api.ts`](../../tests/e2e/support/files-api.ts)) answers `renames` from the source.
-- **ImageSquid** (`apps/imagesquid`): it makes no file-route call (no source, no `move`, no `rename`; it consumes `@filesquid/ui` by `file:../filesquid/ui`), so no code changed. Its label table gains the five new keys, because the keys are required of every distribution; its tests and preview e2e pass.
-- **Docs**: [README](../../README.md) writes list, [feature](../../tests/features/file_browser_UI-S-002.feature) (the old rename scenario now covers moves; two new scenarios cover the rename and its refusal).
+- **ImageSquid** (`apps/imagesquid`): it makes no file-route call (no source, no `move`, no `rename`; it consumes `@filesquid/ui` by `file:../filesquid/ui`), so no code changed. Its label table gains the seven new keys, because the keys are required of every distribution; its tests and preview e2e pass.
+- **Docs**: [README](../../README.md) writes list, [feature](../../tests/features/file_browser_UI-S-002.feature) (the old rename scenario now covers moves; scenarios cover a file renamed by a move in a plain object, a rename through the renames route, and its refusal).
 
 ## SRS check
 
@@ -46,41 +46,47 @@ TypeError: (intermediate value).rename is not a function
 ### FileSquid UI: `npx vitest run` (`npm test`)
 
 ```text
- ✓ tests/ui/file-browser.test.ts (37 tests) 1238ms
- ✓ tests/ui/file-browser-writes.test.ts (41 tests) 1278ms
- ✓ tests/unit/files-source.test.ts (31 tests) 42ms
- ✓ tests/unit/files-memory-source.test.ts (32 tests) 46ms
- ✓ tests/unit/files-ops.test.ts (50 tests) 132ms
+ ✓ tests/ui/file-browser-writes.test.ts (45 tests) 1661ms
+ ✓ tests/ui/file-browser.test.ts (37 tests) 1724ms
+ ✓ tests/unit/files-source.test.ts (31 tests) 58ms
+ ✓ tests/unit/files-memory-source.test.ts (34 tests) 59ms
+ ✓ tests/unit/files-ops.test.ts (54 tests) 202ms
  Test Files  56 passed (56)
-      Tests  1230 passed (1230)
+      Tests  1240 passed (1240)
 ```
 
-### FileSquid UI: Playwright against `npm run build` and `vite preview` (`FILESQUID_E2E=1 npm run test:e2e`)
+### FileSquid UI: Playwright, both suites (`FILESQUID_E2E=1 npm run test:e2e`)
+
+Server-backed suite (`playwright.config.ts`):
 
 ```text
-  42 passed (52.1s)
-  ✓   2 [chromium] › tests/e2e/preview/file-browser.spec.ts:96:1 › the browser is a defined element and lists display names in the list layout from the label table (341ms)
-  ✓   4 [chromium] › tests/e2e/preview/file-browser.spec.ts:140:1 › a file row shows size, type hint, modified date and version (234ms)
-  ✓   6 [chromium] › tests/e2e/preview/file-browser.spec.ts:152:1 › computed token values are exact in the browser in light and dark (314ms)
-  ✓   9 [chromium] › tests/e2e/preview/file-browser.spec.ts:175:1 › opening a folder updates the breadcrumb and the address, and Back returns (377ms)
-  ✓  12 [chromium] › tests/e2e/preview/file-browser.spec.ts:196:1 › an image previews through a content handle that is used only as the media src (329ms)
-  ✓  15 [chromium] › tests/e2e/preview/file-browser.spec.ts:231:1 › a handle that fails is replaced once; a second failure shows the error and mints no third (301ms)
-  ✓  16 [chromium] › tests/e2e/preview/file-browser.spec.ts:247:1 › a video resumes at the same position and paused state after one new handle (302ms)
-  ✓  17 [chromium] › tests/e2e/preview/file-browser.spec.ts:283:1 › audio plays natively and is named by the display name (269ms)
-  ✓  18 [chromium] › tests/e2e/preview/file-browser.spec.ts:296:1 › text previews through one ranged read of the first 64 KiB and says it is cut (299ms)
-  ✓  19 [chromium] › tests/e2e/preview/host-indicator.spec.ts:234:1 › a failed read shows the error state and never a guessed host, then Retry recovers (323ms)
-  ✓  20 [chromium] › tests/e2e/preview/file-browser.spec.ts:312:1 › a format it cannot show says so and shows no viewer (237ms)
-  ✓  22 [chromium] › tests/e2e/preview/file-browser.spec.ts:325:1 › the viewer steps through files, closes with Escape and returns focus to the row (307ms)
-  ✓  25 [chromium] › tests/e2e/preview/file-browser.spec.ts:338:1 › an upload is one PUT of the client's facts that creates the file's own object (204ms)
-  ✓  26 [chromium] › tests/e2e/preview/file-browser.spec.ts:387:1 › a rename posts to the renames route, never to moves, and shows the new display name (351ms)
-  ✓  28 [chromium] › tests/e2e/preview/file-browser.spec.ts:416:1 › a refused rename shows the label for its reason and keeps the display name (251ms)
-  ✓  29 [chromium] › tests/e2e/preview/file-browser.spec.ts:435:1 › writes are single calls: new folder, move, remove and Undo (514ms)
-  ✓  33 [chromium] › tests/e2e/preview/file-browser.spec.ts:482:1 › a refused write shows the label for its reason and changes nothing (299ms)
-  ✓  35 [chromium] › tests/e2e/preview/file-browser.spec.ts:497:1 › a long folder is virtualised, pages in on demand and stays keyboard reachable (354ms)
-  ✓  37 [chromium] › tests/e2e/preview/file-browser.spec.ts:537:1 › the layout does not scroll sideways at 320 px, at 200 % text size, or both, in list and grid (284ms)
-  ✓  39 [chromium] › tests/e2e/preview/file-browser.spec.ts:554:1 › motion stops under reduced motion and focus is the 2px primary ring (273ms)
-  ✓  41 [chromium] › tests/e2e/preview/file-browser.spec.ts:579:1 › a failed listing shows the error state with Try again, and retrying loads it (310ms)
-  64 passed (16.7s)
+  42 passed (31.1s)
+```
+
+Production build served by `vite preview` (`playwright.preview.config.ts`):
+
+```text
+  ✓   1 [chromium] › tests/e2e/preview/file-browser.spec.ts:96:1 › the browser is a defined element and lists display names in the list layout from the label table (392ms)
+  ✓   4 [chromium] › tests/e2e/preview/file-browser.spec.ts:140:1 › a file row shows size, type hint, modified date and version (254ms)
+  ✓   6 [chromium] › tests/e2e/preview/file-browser.spec.ts:152:1 › computed token values are exact in the browser in light and dark (349ms)
+  ✓   8 [chromium] › tests/e2e/preview/file-browser.spec.ts:175:1 › opening a folder updates the breadcrumb and the address, and Back returns (459ms)
+  ✓  12 [chromium] › tests/e2e/preview/file-browser.spec.ts:196:1 › an image previews through a content handle that is used only as the media src (412ms)
+  ✓  14 [chromium] › tests/e2e/preview/file-browser.spec.ts:231:1 › a handle that fails is replaced once; a second failure shows the error and mints no third (307ms)
+  ✓  16 [chromium] › tests/e2e/preview/file-browser.spec.ts:247:1 › a video resumes at the same position and paused state after one new handle (400ms)
+  ✓  17 [chromium] › tests/e2e/preview/file-browser.spec.ts:283:1 › audio plays natively and is named by the display name (297ms)
+  ✓  18 [chromium] › tests/e2e/preview/file-browser.spec.ts:296:1 › text previews through one ranged read of the first 64 KiB and says it is cut (349ms)
+  ✓  20 [chromium] › tests/e2e/preview/file-browser.spec.ts:312:1 › a format it cannot show says so and shows no viewer (282ms)
+  ✓  23 [chromium] › tests/e2e/preview/file-browser.spec.ts:325:1 › the viewer steps through files, closes with Escape and returns focus to the row (353ms)
+  ✓  25 [chromium] › tests/e2e/preview/file-browser.spec.ts:338:1 › an upload is one PUT of the client's facts that creates the file's own object (307ms)
+  ✓  27 [chromium] › tests/e2e/preview/file-browser.spec.ts:387:1 › a rename posts to the renames route, never to moves, and shows the new display name (380ms)
+  ✓  28 [chromium] › tests/e2e/preview/file-browser.spec.ts:416:1 › a refused rename shows the label for its reason and keeps the display name (273ms)
+  ✓  30 [chromium] › tests/e2e/preview/file-browser.spec.ts:435:1 › writes are single calls: new folder, move, remove and Undo (640ms)
+  ✓  33 [chromium] › tests/e2e/preview/file-browser.spec.ts:482:1 › a refused write shows the label for its reason and changes nothing (312ms)
+  ✓  35 [chromium] › tests/e2e/preview/file-browser.spec.ts:497:1 › a long folder is virtualised, pages in on demand and stays keyboard reachable (482ms)
+  ✓  38 [chromium] › tests/e2e/preview/file-browser.spec.ts:537:1 › the layout does not scroll sideways at 320 px, at 200 % text size, or both, in list and grid (333ms)
+  ✓  40 [chromium] › tests/e2e/preview/file-browser.spec.ts:554:1 › motion stops under reduced motion and focus is the 2px primary ring (301ms)
+  ✓  42 [chromium] › tests/e2e/preview/file-browser.spec.ts:579:1 › a failed listing shows the error state with Try again, and retrying loads it (297ms)
+  64 passed (18.4s)
 ```
 
 ### ImageSquid: `npm test` and `FILESQUID_E2E=1 npm run test:e2e`
@@ -88,8 +94,8 @@ TypeError: (intermediate value).rename is not a function
 ```text
  Test Files  4 passed (4)
       Tests  37 passed (37)
-  9 passed (7.5s)
-  5 passed (5.6s)
+server-backed suite:   9 passed (9.3s)
+production-build suite:   5 passed (6.7s)
 ```
 
 ### Format, lint, types
@@ -100,8 +106,8 @@ TypeError: (intermediate value).rename is not a function
 
 ```text
 ℹ️  Test scope: npm:apps/filesquid/ui,apps/imagesquid
-✅ Vitest passed (21s).
-✅ Vitest passed (3s).
+✅ Vitest passed (24s).
+✅ Vitest passed (2s).
 ✅ Lint and test validation passed (test scope: npm:apps/filesquid/ui,apps/imagesquid).
-✅ All Pre-Commit Hooks Passed! Test scope: npm:apps/filesquid/ui,apps/imagesquid (53s)
+✅ All Pre-Commit Hooks Passed! Test scope: npm:apps/filesquid/ui,apps/imagesquid (59s)
 ```

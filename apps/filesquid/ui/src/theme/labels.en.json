@@ -196,6 +196,7 @@
   "fileNameInvalid": "A name cannot contain / or \\, control characters, and cannot be . or ..",
   "fileNameTooLong": "A name can be at most 255 bytes.",
   "fileConflict": "The files changed or another change is in progress. Reload and try again.",
+  "fileDisplayNameTooLong": "A name can be at most 1,024 bytes.",
   "fileRenameInvalid": "That name cannot be used. It must be 1 to 1,024 bytes and cannot contain / or a null character.",
   "fileRenameNotFound": "That file is no longer available. Reload the list.",
   "fileRenameConflict": "That is already the name, or the file changed meanwhile. Reload and try again.",

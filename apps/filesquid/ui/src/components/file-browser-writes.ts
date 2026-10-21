@@ -11,6 +11,8 @@
  */
 import { formatLabel, type LabelTable } from "../theme/labels";
 import {
+  MAX_DISPLAY_NAME_BYTES,
+  MAX_NAME_BYTES,
   MAX_UPLOAD_BYTES,
   formatSize,
   joinPath,
@@ -55,8 +57,11 @@ export interface WritesHost {
   reload(): Promise<void>;
   /** A write committed `commit`; `changed` are the logical paths it touched. */
   committed(operation: WriteOperation, commit: FileCommit, changed: readonly string[]): void;
-  /** The name the listing shows for the row of `path` now, or undefined when it is not listed. */
-  nameOf(path: string): string | undefined;
+  /**
+   * The name the listing of `location` shows for the row of `path`, or undefined when that
+   * listing is not the one shown and loaded now, or does not list the path.
+   */
+  nameOf(location: FileLocation, path: string): string | undefined;
   /** Remember a folder created in the client until a file is added beneath it. */
   pendFolder(path: string): void;
   /** Move focus to the row of `path` once it is listed again. */
@@ -346,9 +351,12 @@ export class FileWrites {
     if (!mode || this.busy) return;
     const { form } = this.frame;
     const moves = mode.kind === "rename" && !this.renameOnly(mode.row);
+    const displayName = mode.kind === "rename" && !moves;
+    const limit = displayName ? MAX_DISPLAY_NAME_BYTES : MAX_NAME_BYTES;
     const problem =
-      validateName(form.name.value) ?? (moves ? folderProblem(form.folder.value) : undefined);
-    if (problem) return this.formError(problemText(problem, this.host.labels));
+      validateName(form.name.value, limit) ??
+      (moves ? folderProblem(form.folder.value) : undefined);
+    if (problem) return this.formError(problemText(problem, this.host.labels, displayName));
     this.formError("");
     if (mode.kind === "folder") await this.createFolder(mode, form.name.value.trim());
     else if (moves) await this.move(mode, form.name.value, form.folder.value);
@@ -385,7 +393,8 @@ export class FileWrites {
     if (this.mode === mode) this.close(true);
     this.host.committed("rename", commit, [row.path]);
     await this.host.reload();
-    const shown = this.host.nameOf(row.path) ?? typed;
+    // Only the listing of the place the rename was asked in, once loaded, names the file.
+    const shown = this.host.nameOf(where, row.path) ?? typed;
     this.showStatus(
       formatLabel(this.host.labels.fileRenamed, { name: shown, version: commit.version }),
     );

@@ -316,10 +316,11 @@ describe("ClientFileSource", () => {
     [409, "conflict"],
     [503, "unavailable"],
   ])("rename rejects with the route's %s refusal (%s)", async (status, code) => {
-    const { client } = clientWith(() => json(status, { code, message: "x", retryable: false }));
+    const retryable = status === 503; // only `unavailable` is retryable (the contract)
+    const { client } = clientWith(() => json(status, { code, message: "x", retryable }));
     await expect(
       new ClientFileSource(client).rename({ library_id: "lib-1" }, "f", "n"),
-    ).rejects.toMatchObject({ status, code });
+    ).rejects.toMatchObject({ status, code, retryable });
   });
 
   it.each([
