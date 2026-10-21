@@ -4,12 +4,12 @@
 
 use filesquid_api::canonical::original::original_path_for;
 use filesquid_api::canonical::{
-    commit_file_original, commit_snapshot, create_storage_root, file_object_id, file_object_root,
-    new_upload_record, operation_message, outgoing_name, parse_operation_message,
-    read_file_original, read_snapshot, reupload_record, snapshot_object_id, touched,
-    CanonicalError, FileOriginal, LibraryHead, OperationRecord, OutgoingNames, OwnerReadable,
-    SnapshotDelta, SnapshotEntity, SnapshotFile, SnapshotKey, UploadInput, VirtualEntry,
-    SNAPSHOT_ROOT,
+    commit_file_original, commit_snapshot, copy_record, create_storage_root, file_object_id,
+    file_object_root, new_upload_record, operation_message, outgoing_name, parse_operation_message,
+    read_file_original, read_snapshot, reupload_record, snapshot_object_id, source_reference,
+    touched, CanonicalError, CopyInput, FileOriginal, LibraryHead, OperationRecord, OutgoingNames,
+    OwnerReadable, SnapshotDelta, SnapshotEntity, SnapshotFile, SnapshotKey, UploadInput,
+    VirtualEntry, SNAPSHOT_ROOT,
 };
 use filesquid_api::library::{CatalogChange, CatalogError, FileState, LibraryRecord};
 use filesquid_core::{
@@ -942,4 +942,40 @@ fn a_sharing_name_drops_an_extension_the_stored_name_does_not_keep() {
     let record = first_record(&file, "notes.tar-gz~", "application/octet-stream", JPEG).unwrap();
     let shared = outgoing_name(&file, &record, OutgoingNames::FileId).unwrap();
     assert_eq!(shared, FILE);
+}
+
+#[test]
+fn a_copy_record_keeps_what_the_owner_sees_and_is_bound_to_the_new_object() {
+    let source = FileId::new(FILE).unwrap();
+    let mut record = first_record(&source, "Été.JPEG", "image/jpeg", JPEG).unwrap();
+    record.set_display_name("Harbour.JPEG").unwrap();
+    let copy = FileId::new("0b6f6a58-5c1d-4b5e-9f3e-2a7d8c9e0f19").unwrap();
+    let input = CopyInput {
+        source: &record,
+        started: "2026-10-20T00:00:00Z",
+        finished: "2026-10-20T00:00:01Z",
+    };
+    let copied = copy_record(&copy, &input, JPEG).unwrap();
+    assert_eq!(copied.display_name(), "Harbour.JPEG");
+    assert_eq!(copied.original_name(), record.original_name());
+    assert_eq!(copied.media_type(), Some("image/jpeg"));
+    assert_eq!(copied.imports().len(), 1);
+    let acquisition = &copied.imports()[0].acquisition;
+    assert_eq!(acquisition.object_id, format!("urn:uuid:{}", copy.as_str()));
+    assert_eq!(acquisition.object_version, "v1");
+    assert_eq!(
+        acquisition.logical_path.as_deref(),
+        Some(format!("original/{}.JPEG", copy.as_str()).as_str())
+    );
+    assert_eq!(acquisition.size, JPEG.len() as u64);
+    assert_eq!(acquisition.recorded_at, "2026-10-20T00:00:01Z");
+    assert_eq!(
+        copied.imports()[0].source,
+        record.imports()[0].source,
+        "the source facts stay as the source's import recorded them"
+    );
+    assert_eq!(
+        source_reference(&source, "v3"),
+        format!("urn:uuid:{FILE}@v3")
+    );
 }

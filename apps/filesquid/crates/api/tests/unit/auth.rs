@@ -353,6 +353,8 @@ fn every_routed_path_declares_its_action() {
             | "/api/v1/files/metadata/terms"
             | "/api/v1/files/metadata/namespaces"
             | "/api/v1/files/facts"
+            | "/api/v1/files/view"
+            | "/api/v1/files/collection-history-size"
             | "/api/v1/content-handles" => Action::ReadFiles,
             "/api/v1/files/upload"
             | "/api/v1/files/folders"
@@ -363,6 +365,7 @@ fn every_routed_path_declares_its_action() {
             | "/api/v1/files/metadata/statements"
             | "/api/v1/files/metadata/removals"
             | "/api/v1/files/renames"
+            | "/api/v1/files/copies"
             | "/api/v1/files/metadata/registrations" => Action::WriteFiles,
             "/api/v1/content/{handle}" => Action::ReadContent,
             "/api/v1/history" => Action::ReadHistory,

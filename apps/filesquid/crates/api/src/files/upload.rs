@@ -178,7 +178,7 @@ async fn next_version<B: StorageBackend>(backend: &B, root: &str) -> Result<Stri
 }
 
 /// The file identifier `id` names.
-fn parse_file_id(id: &str) -> Result<FileId, FileError> {
+pub(super) fn parse_file_id(id: &str) -> Result<FileId, FileError> {
     match crate::library::is_uuid_v4(id) {
         true => FileId::new(id).map_err(|_| FileError::invalid("A file_id is a UUID v4.")),
         false => Err(FileError::invalid("A file_id is a UUID v4.")),
@@ -186,14 +186,14 @@ fn parse_file_id(id: &str) -> Result<FileId, FileError> {
 }
 
 /// A new file identifier (UUID v4, ADR 021).
-fn mint_file_id() -> Result<FileId, FileError> {
+pub(super) fn mint_file_id() -> Result<FileId, FileError> {
     let id = crate::library::mint_uuid_v4()
         .map_err(|_| FileError::unavailable("the random source is unavailable"))?;
     FileId::new(&id).map_err(|_| FileError::internal("a minted file identifier was refused"))
 }
 
 /// The file error of a canonical refusal or failure.
-fn canonical_error(err: CanonicalError) -> FileError {
+pub(super) fn canonical_error(err: CanonicalError) -> FileError {
     match err {
         CanonicalError::Encode(reason) | CanonicalError::InvalidIdentifier(reason) => {
             FileError::invalid(format!("The upload was refused: {reason}."))
