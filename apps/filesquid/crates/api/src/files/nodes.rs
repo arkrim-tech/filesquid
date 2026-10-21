@@ -108,7 +108,7 @@ fn both_forms() -> FileError {
 }
 
 /// The file error of a navigation refusal, keeping its code.
-fn file_error(err: NavigationError) -> FileError {
+pub(super) fn file_error(err: NavigationError) -> FileError {
     match err.api_code() {
         ErrorCode::NotFound => FileError::not_found(),
         ErrorCode::Unavailable => FileError::unavailable("the navigation service is unavailable"),

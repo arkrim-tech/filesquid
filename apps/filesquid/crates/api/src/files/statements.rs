@@ -285,7 +285,7 @@ fn parse_library_id(id: &str) -> Result<LibraryId, FileError> {
 }
 
 /// The file error of a metadata-module refusal.
-fn metadata_error(err: MetadataError) -> FileError {
+pub(super) fn metadata_error(err: MetadataError) -> FileError {
     FileError::invalid(format!("The statement was refused: {err}."))
 }
 
@@ -389,7 +389,7 @@ where
     }
 
     /// The registry of `library_id`, empty when none was saved.
-    async fn registry(&self, library_id: &str) -> Result<NamespaceRegistry, FileError> {
+    pub(super) async fn registry(&self, library_id: &str) -> Result<NamespaceRegistry, FileError> {
         let library = self.library(library_id)?;
         let reference = registry_ref(library_id)?;
         let store = store_of(&library, library_id, self.clock())?;

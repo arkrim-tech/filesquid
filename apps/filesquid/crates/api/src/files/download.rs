@@ -33,6 +33,8 @@ pub struct Download {
     /// The stored name, the ASCII fallback of a display name without an ASCII letter or
     /// digit (API-S-027).
     pub id_name: String,
+    /// The version downloaded (`v1`, `v2`, ...).
+    pub version: String,
     /// The bytes, in pieces of at most [`MAX_RANGE_BYTES`].
     pub body: DownloadStream,
 }
@@ -106,6 +108,7 @@ where
             media_type,
             file_name,
             id_name: super::names::stored_name(&query.path).to_string(),
+            version: version_name,
             body: Box::pin(stream::try_unfold(cursor, next_piece)),
         })
     }
