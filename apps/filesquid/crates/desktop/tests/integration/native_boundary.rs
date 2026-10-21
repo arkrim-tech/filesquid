@@ -11,10 +11,13 @@ use std::process::Command;
 /// Crates that would give the host a SQLite driver of its own.
 const SQLITE_CRATES: [&str; 3] = ["rusqlite", "libsqlite3-sys", "sqlx"];
 
-/// Packages allowed to link `filesquid-native`, with the features each may enable.
-const NATIVE_LINKERS: [(&str, &[&str]); 2] = [
+/// Packages allowed to link `filesquid-native`, with the features each may enable: the two
+/// hosts, and the `fsquid` CLI for its SQLite journal (default features only, ADR 036
+/// Decision 8).
+const NATIVE_LINKERS: [(&str, &[&str]); 3] = [
     ("filesquid-desktop", &["desktop"]),
     ("filesquid-server", &[]),
+    ("filesquid-cli", &[]),
 ];
 
 /// Calls that open storage directly or drive a worker loop: native processing that belongs
@@ -168,7 +171,7 @@ fn desktop_source_violations(src: &Path) -> Vec<String> {
 }
 
 #[test]
-fn only_the_hosts_link_filesquid_native_and_the_desktop_has_no_sqlite_driver() {
+fn only_the_hosts_and_the_cli_link_filesquid_native_and_the_desktop_has_no_sqlite_driver() {
     let deps = workspace_dependencies();
     let desktop = deps.get("filesquid-desktop").expect("desktop package");
     assert!(
@@ -179,6 +182,19 @@ fn only_the_hosts_link_filesquid_native_and_the_desktop_has_no_sqlite_driver() {
     );
     let found = link_violations(&deps);
     assert!(found.is_empty(), "{found:?}");
+}
+
+#[test]
+fn the_cli_links_filesquid_native_with_default_features_only() {
+    let deps = workspace_dependencies();
+    let cli = deps.get("filesquid-cli").expect("cli package");
+    let native: Vec<&Vec<String>> = cli
+        .iter()
+        .filter(|(name, _)| name == "filesquid-native")
+        .map(|(_, features)| features)
+        .collect();
+    assert!(!native.is_empty(), "the CLI links filesquid-native");
+    assert!(native.iter().all(|f| f.is_empty()), "{native:?}");
 }
 
 #[test]
@@ -196,10 +212,17 @@ fn the_linking_rules_reject_a_sqlite_driver_in_a_host_and_native_in_the_api() {
             "filesquid-server".to_string(),
             vec![("filesquid-native".to_string(), vec!["desktop".to_string()])],
         ),
+        (
+            "filesquid-cli".to_string(),
+            vec![
+                ("filesquid-native".to_string(), vec!["desktop".to_string()]),
+                ("rusqlite".to_string(), vec![]),
+            ],
+        ),
     ]);
     assert_eq!(
         link_violations(&deps).len(),
-        3,
+        5,
         "{:?}",
         link_violations(&deps)
     );
