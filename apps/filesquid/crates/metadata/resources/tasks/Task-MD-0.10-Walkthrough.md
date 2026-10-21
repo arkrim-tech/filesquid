@@ -4,7 +4,11 @@ Branch: `feat/md-0.10-cited-version-original-name-scrub` (completes global Task 
 
 ## MD-S-008: Canonical metadata is `metadata.md` (the approved exception for import commits)
 
+Inside the commit, the store checks that the `object_version` each new import entry cites is the version being committed. An import commit whose base head has moved is not rebased: it fails as a retryable conflict that publishes nothing. Statement edits still rebase.
+
 ## MD-S-013: Import record (the `OriginalName` identity class)
+
+`OriginalName` is the original file name wherever the record holds it: the header's original name, the display name and each import entry's source file name. It is scrubbed by default from shares and publications, kept only when the saved outgoing policy selects **Use original filename**, and the store refuses to save a record whose original name is withheld.
 
 ## What changed
 
@@ -14,6 +18,12 @@ Branch: `feat/md-0.10-cited-version-original-name-scrub` (completes global Task 
 - `file_record::FileRecord::scrubbed(&[IdentityClass])`: the outgoing copy of the whole record. Every import entry is scrubbed of the classes; with `OriginalName` the header's `original_name` and `display_name` are written as `{"unavailable":"withheld_by_policy"}`. Extension, format, media type and statements stay. The copy renders and reads back (`from_markdown` accepts both names withheld by policy; one name withheld, or a name unavailable for another reason, is `Malformed`). `names_withheld()` reports a header or any entry source name withheld; `set_display_name` on such a copy is `RecordError::NamesWithheld`.
 - The `ocfl` store refuses to save a record whose names are withheld (`StoreError::Record(RecordError::NamesWithheld)`, nothing published) in `commit_file_record_with`, `commit_import_with`, `append_import_with` and a statements-only save over such a record.
 - Signatures of `commit_import_with`, `append_import_with`, `commit_file_record_with` and every `FileRecord` accessor are unchanged.
+
+## Cubic round 1 changes
+
+- P2: a record could hold a scrubbed entry beside a header with its names. A record is now scrubbed of `OriginalName` whole or not at all. `FileRecord::append_import` refuses an entry whose source name is withheld when the record's names are not, and the other way round (`RecordError::NamesWithheld`). `validate` (so `from_markdown` too) refuses a record withheld in only part (`Malformed`). The header follows `names_withheld()`. Test: `the_original_name_is_withheld_in_the_whole_record_or_nowhere`.
+- P3: the two requirement headings now carry their requirement text.
+- P3 (empty source name in `ImportEntry::validate`): not changed, answered on the thread. A scrubbed entry has the empty name and must stay valid. A known name is never empty: reading refuses an empty name, and the store refuses to save a withheld one.
 
 ## Interface notes for other lanes
 
@@ -29,7 +39,7 @@ Branch: `feat/md-0.10-cited-version-original-name-scrub` (completes global Task 
 | MD-S-008 Canonical metadata is `metadata.md`: an import commit that would rebase is a retryable conflict that publishes nothing | `an_import_commit_that_would_rebase_is_a_retryable_conflict_that_publishes_nothing`, `a_re_import_that_would_rebase_is_a_retryable_conflict_that_publishes_nothing` (each retries citing `v3` and publishes it); BDD *An import commit checks the version its entry cites* |
 | MD-S-008 Canonical metadata is `metadata.md`: statement edits still rebase | `a_statements_edit_still_rebases_over_a_moved_head`; BDD *A statements edit still rebases over another writer's version* |
 | MD-S-013 Import record: `OriginalName` is an identity class, scrubbed by default | `every_class_includes_the_original_name`, `an_entry_scrub_withholds_the_source_name` |
-| MD-S-013 Import record: the header's original name and display name and every entry's source name are withheld as `withheld_by_policy` | `a_record_scrub_withholds_the_header_names_and_every_source_name`, `a_renamed_display_name_is_withheld_too`, `a_record_scrub_applies_the_other_classes_to_every_entry`, `a_scrubbed_record_reads_back_as_scrubbed`, `a_record_with_only_one_header_name_withheld_is_malformed`, `a_header_name_unavailable_for_another_reason_is_malformed`, `a_source_name_is_known_and_never_empty_or_unavailable_for_another_reason`; BDD *The original file name is withheld from an outgoing copy by default* |
+| MD-S-013 Import record: the header's original name and display name and every entry's source name are withheld as `withheld_by_policy` | `a_record_scrub_withholds_the_header_names_and_every_source_name`, `a_renamed_display_name_is_withheld_too`, `a_record_scrub_applies_the_other_classes_to_every_entry`, `a_scrubbed_record_reads_back_as_scrubbed`, `a_record_with_only_one_header_name_withheld_is_malformed`, `a_header_name_unavailable_for_another_reason_is_malformed`, `a_source_name_is_known_and_never_empty_or_unavailable_for_another_reason`, `the_original_name_is_withheld_in_the_whole_record_or_nowhere`; BDD *The original file name is withheld from an outgoing copy by default* |
 | MD-S-013 Import record: the store refuses to save a scrubbed record | `the_store_refuses_to_save_a_scrubbed_record`, `the_store_refuses_to_import_a_scrubbed_record`, `the_store_refuses_to_append_an_entry_whose_source_name_is_withheld`, `a_scrubbed_record_cannot_be_renamed`; BDD *The original file name is withheld from an outgoing copy by default* |
 | MD-S-013 Import record: **Use original filename** keeps the names | `a_scrub_without_the_original_name_keeps_every_name`; BDD *Use original filename keeps the names in the outgoing copy* |
 | MD-S-013 Import record: no filesystem reads, `wasm32` build | existing BDD *The import record builds for the browser without filesystem access* and the `wasm32` build checks, still passing |
@@ -42,7 +52,7 @@ None.
 
 ## Test output
 
-All outputs below are from real runs; absolute paths are replaced with `<repo>`, the shared Cargo target with `<target>` and the scratch directory with `<tmp>`; `Compiling` lines are left out. Summary of the green run: lib 3, cli 31, csv 10, extract 13, file_record_store 34, file_ref 3, import_record 70, isolation 4, json 19, markdown 3, namespace 47, namespace_store 6, register 10, sidecar 8, store 28 passed, 0 failed. BDD: 59 scenarios (58 passed, 1 skipped), 181 steps (180 passed, 1 skipped); the skipped step is the existing UI-only "Metadata panel" scenario, skipped before this task too. `cargo clippy -p filesquid-metadata --all-targets --all-features --locked -- -D warnings`, `cargo clippy -p filesquid-api -p filesquid-native --all-targets --locked -- -D warnings` and `RUSTDOCFLAGS="-D warnings" cargo doc -p filesquid-metadata --no-deps --all-features --locked` exit 0.
+All outputs below are from real runs; absolute paths are replaced with `<repo>`, the shared Cargo target with `<target>` and the scratch directory with `<tmp>`; `Compiling` lines are left out. Summary of the green run: lib 3, cli 31, csv 10, extract 13, file_record_store 34, file_ref 3, import_record 71 (70 in the pasted run below, which predates the Cubic round 1 test), isolation 4, json 19, markdown 3, namespace 47, namespace_store 6, register 10, sidecar 8, store 28 passed, 0 failed. BDD: 59 scenarios (58 passed, 1 skipped), 181 steps (180 passed, 1 skipped); the skipped step is the existing UI-only "Metadata panel" scenario, skipped before this task too. `cargo clippy -p filesquid-metadata --all-targets --all-features --locked -- -D warnings`, `cargo clippy -p filesquid-api -p filesquid-native --all-targets --locked -- -D warnings` and `RUSTDOCFLAGS="-D warnings" cargo doc -p filesquid-metadata --no-deps --all-features --locked` exit 0.
 
 ### Red: the cited-version tests before the check (scrub already implemented)
 

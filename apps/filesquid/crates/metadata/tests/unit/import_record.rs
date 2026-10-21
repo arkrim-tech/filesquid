@@ -1226,6 +1226,38 @@ mod original_name_class {
     }
 
     #[test]
+    fn the_original_name_is_withheld_in_the_whole_record_or_nowhere() {
+        let mut again = entry().scrubbed(&[IdentityClass::OriginalName]);
+        again.acquisition.object_version = "v2".to_string();
+        let mut named = record();
+        assert_eq!(
+            named.append_import(again.clone()),
+            Err(RecordError::NamesWithheld)
+        );
+        assert_eq!(named, record(), "nothing was added");
+
+        let mut scrubbed = record().scrubbed(&[IdentityClass::OriginalName]);
+        let mut known = entry();
+        known.acquisition.object_version = "v2".to_string();
+        assert_eq!(
+            scrubbed.append_import(known),
+            Err(RecordError::NamesWithheld)
+        );
+        scrubbed.append_import(again).expect("a scrubbed entry");
+
+        let text = record().to_markdown();
+        let mixed = text.replacen(
+            r#""original_name":"Holiday 2023.JPG""#,
+            &format!(r#""original_name":{WITHHELD}"#),
+            1,
+        );
+        assert!(matches!(
+            FileRecord::from_markdown(&mixed),
+            Err(RecordError::Malformed(_))
+        ));
+    }
+
+    #[test]
     fn a_scrubbed_record_cannot_be_renamed() {
         let mut scrubbed = record().scrubbed(&[IdentityClass::OriginalName]);
         assert_eq!(

@@ -405,16 +405,24 @@ impl FileRecord {
     ///
     /// # Errors
     ///
-    /// [`RecordError::Import`] when the entry is invalid; nothing is added.
+    /// [`RecordError::Import`] when the entry is invalid;
+    /// [`RecordError::NamesWithheld`] when the entry's source name is
+    /// withheld and the record's names are not, or the other way round (a
+    /// record is scrubbed of `OriginalName` whole or not at all). Nothing is
+    /// added.
     pub fn append_import(&mut self, entry: ImportEntry) -> Result<(), RecordError> {
         entry.validate()?;
+        if entry.source.name_withheld() != self.names_withheld {
+            return Err(RecordError::NamesWithheld);
+        }
         self.imports.push(entry);
         Ok(())
     }
 
     /// Check the record's own rules: names, an extension that is the
     /// original name's, format, media type, at least one import entry, and
-    /// every entry. In an outgoing copy whose names are withheld, the name
+    /// every entry. The original name is withheld in the header and every
+    /// entry, or nowhere. In an outgoing copy whose names are withheld, the name
     /// rules and the extension's match with the name are not checked.
     ///
     /// # Errors
@@ -423,6 +431,15 @@ impl FileRecord {
     pub fn validate(&self) -> Result<(), RecordError> {
         if !self.names_withheld {
             self.validate_names()?;
+        }
+        let mixed = self
+            .imports
+            .iter()
+            .any(|e| e.source.name_withheld() != self.names_withheld);
+        if mixed {
+            return Err(RecordError::Malformed(
+                "the original name is withheld in only part of the record",
+            ));
         }
         if self
             .extension
@@ -562,17 +579,21 @@ impl FileRecord {
         Ok(record)
     }
 
-    /// The schema and header lines.
+    /// The schema and header lines. The names are withheld whenever any
+    /// copy of the original name is ([`names_withheld`](Self::names_withheld)),
+    /// so a record holding a scrubbed entry never writes the names in its
+    /// header.
     fn header(&self) -> String {
         let mut out = format!("schema: {SCHEMA}\n");
         let withheld = Fact::<()>::unavailable(Reason::WithheldByPolicy);
-        if self.names_withheld {
+        let names_withheld = self.names_withheld();
+        if names_withheld {
             push_json(&mut out, "original_name", &withheld);
         } else {
             push_json(&mut out, "original_name", &self.original_name);
         }
         push_json(&mut out, "name_normalization", &self.name_normalization);
-        if self.names_withheld {
+        if names_withheld {
             push_json(&mut out, "display_name", &withheld);
         } else {
             push_json(&mut out, "display_name", &self.display_name);
