@@ -3507,7 +3507,7 @@
       "get": {
         "operationId": "getFileView",
         "summary": "One page of a view of a node",
-        "description": "The view operation (API-S-011, SRS-F-062): one page of the files of a library, collection or virtual-collection node, in a stable order. A library node's `all` view shows its collections and virtual collections as folder rows beside its unfiled files; a collection node shows its files, a virtual-collection node its members, and the `deleted` view the node's recoverably deleted files with no folder rows. The views home, personal, recent, favorites, shares and tags are not available yet (400). Each page sorts the whole scope again (at most 10,000 files; `complete` is false beyond that or when a file could not be read) and starts after the cursor's row, so rows never repeat. A missing value (a folder's size, a file the caller never opened) sorts after every value in both directions; ties break by name, then identifier. `modified_by_me` and `opened_by_me` come only from the caller's own succeeded journal entries (changes; content-handle mints and single-file downloads). A cursor made for other parameters is refused (400). An unknown, malformed or unreadable node is 404; a node of another kind is 400. A successful read is not journaled; a refusal is journaled once.",
+        "description": "The view operation (API-S-011, SRS-F-062): one page of the files of a library, collection or virtual-collection node, in a stable order. A library node's `all` view shows its collections and virtual collections as folder rows beside its unfiled files; a collection node shows its files, a virtual-collection node its members, and the `deleted` view the node's recoverably deleted files with no folder rows. The views home, personal, recent, favorites, shares and tags are not available yet (400). Each page sorts the whole scope again (at most 10,000 files, MAX_VIEW_FILES, and 1,000 folder rows; `complete` is false beyond that or when a file could not be read) and starts after the cursor's row, so rows never repeat. A missing value (a folder's size, a file the caller never opened) sorts after every value in both directions; ties break by name, then identifier. `modified_by_me` and `opened_by_me` come only from the caller's own succeeded journal entries (changes; content-handle mints and single-file downloads). A cursor made for other parameters is refused (400); a cursor of a view whose rows or their order changed since it was made is refused as conflict (409), so a row never repeats or is skipped, and the client starts again without a cursor. An unknown, malformed or unreadable node is 404; a node of another kind is 400. A successful read is not journaled; a refusal is journaled once.",
         "x-filesquid-action": "files.read",
         "parameters": [
           {
@@ -3602,6 +3602,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
           },
           "500": {
             "$ref": "#/components/responses/Internal"

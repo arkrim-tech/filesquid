@@ -26,6 +26,12 @@ pub const REPOSITORY: &str = "repository";
 /// The seeded collection.
 pub const COLLECTION: &str = "2c0d1e2f-3a4b-4c5d-8e6f-7a8b9c0d1e2f";
 
+/// The seeded collection's title.
+pub const COLLECTION_TITLE: &str = "Holidays";
+
+/// The seeded virtual collection's title.
+pub const VIRTUAL_TITLE: &str = "Favourites";
+
 /// The seeded virtual collection.
 pub const VIRTUAL: &str = "3d1e2f3a-4b5c-4d6e-9f7a-8b9c0d1e2f3a";
 
@@ -50,10 +56,10 @@ impl DriveCatalog {
             library: Library::new(library_id.clone(), repository.clone()),
             name: "Family archive".into(),
         };
-        let collection =
-            Collection::new(collection_id(), library_id.clone(), "Holidays").expect("collection");
+        let collection = Collection::new(collection_id(), library_id.clone(), COLLECTION_TITLE)
+            .expect("collection");
         let virtual_collection =
-            VirtualCollection::new(virtual_id(), library_id.clone(), "Favourites")
+            VirtualCollection::new(virtual_id(), library_id.clone(), VIRTUAL_TITLE)
                 .expect("virtual collection");
         let changes = vec![
             CatalogChange::CreateLibrary(record),

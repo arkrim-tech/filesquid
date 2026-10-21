@@ -212,7 +212,7 @@ async fn a_collection_view_sorts_by_each_key_in_both_directions() {
 }
 
 #[tokio::test]
-async fn paging_is_stable_with_a_cursor_and_a_cursor_of_another_view_is_refused() {
+async fn paging_is_stable_and_a_cursor_of_another_or_a_changed_view_is_refused() {
     let (rig, drive) = rig().await;
     three_in_collection(&rig, &drive).await;
     let node = drive.collection_node();
@@ -224,6 +224,15 @@ async fn paging_is_stable_with_a_cursor_and_a_cursor_of_another_view_is_refused(
     assert_error(&other, 400, "invalid_request");
     let forged = view(&rig, &node, "&cursor=v1.7b7d").await;
     assert_error(&forged, 400, "invalid_request");
+    let first = view(&rig, &node, "&limit=1&sort=name").await.json();
+    let cursor = first["next_cursor"].as_str().expect("cursor").to_string();
+    let rename = json!({ "library_id": LIBRARY, "file_id": first["rows"][0]["file_id"], "display_name": "zz.jpg" });
+    assert_eq!(
+        rig.post("/api/v1/files/renames", rename).await.status,
+        StatusCode::OK
+    );
+    let changed = view(&rig, &node, &format!("&limit=1&sort=name&cursor={cursor}")).await;
+    assert_error(&changed, 409, "conflict");
 }
 
 #[tokio::test]
@@ -414,6 +423,38 @@ async fn a_download_is_journaled_with_opaque_ids_only() {
     }
 }
 
+/// The bytes every version directory of the objects of `files` stores as content, read
+/// from the storage root on disk: each stored content once, as OCFL deduplicates within an
+/// object.
+fn stored_content_bytes(rig: &FilesRig, files: &[String]) -> u64 {
+    let mut total = 0;
+    for file in files {
+        let object = rig.dir.join("root").join("files").join(file);
+        assert!(object.is_dir(), "{object:?}");
+        for version in std::fs::read_dir(&object).expect("object") {
+            let content = version.expect("entry").path().join("content");
+            total += tree_bytes(&content);
+        }
+    }
+    total
+}
+
+/// The bytes of every file below `dir` (0 when it does not exist).
+fn tree_bytes(dir: &std::path::Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut total = 0;
+    for entry in entries {
+        let path = entry.expect("entry").path();
+        total += match path.is_dir() {
+            true => tree_bytes(&path),
+            false => std::fs::metadata(&path).expect("metadata").len(),
+        };
+    }
+    total
+}
+
 /// Journal a later opening and change of `file` by another actor.
 fn another_user_touches(rig: &FilesRig, file: &str) {
     let object = format!("urn:uuid:{file}");
@@ -435,6 +476,11 @@ fn another_user_touches(rig: &FilesRig, file: &str) {
 async fn storage_use_per_collection_counts_its_files_history_once() {
     let (rig, drive) = rig().await;
     let ids = three_in_collection(&rig, &drive).await;
+    let rename = json!({ "library_id": LIBRARY, "file_id": ids[0], "display_name": "beta 2.jpg" });
+    assert_eq!(
+        rig.post("/api/v1/files/renames", rename).await.status,
+        StatusCode::OK
+    );
     drive.delete(&ids[2]);
     let loose = upload(&rig, "outside.bin", &[0u8; 1000]).await;
     drive.unfiled_file(&loose);
@@ -446,18 +492,14 @@ async fn storage_use_per_collection_counts_its_files_history_once() {
     assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
     let size = answer.json();
     assert_eq!(size["files"], 3, "deleted files still hold bytes");
-    assert_eq!(size["contents"], 6, "each original and its record");
-    let bytes = size["bytes"].as_u64().expect("bytes");
-    let library = rig
-        .get(&format!(
-            "/api/v1/files/library-history-size?library_id={LIBRARY}"
-        ))
-        .await
-        .json();
-    let all = library["bytes"].as_u64().expect("library bytes");
-    assert!(
-        bytes > 15 && all - bytes > 1000,
-        "only the collection's files: {bytes} of {all}"
+    assert_eq!(
+        size["contents"], 7,
+        "each original once, its first record and the renamed record"
+    );
+    assert_eq!(
+        size["bytes"].as_u64().expect("bytes"),
+        stored_content_bytes(&rig, &ids),
+        "exactly the bytes the collection's objects store"
     );
     assert_eq!(size["truncated"], false);
     let unknown = rig

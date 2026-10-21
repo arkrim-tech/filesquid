@@ -161,7 +161,7 @@ async fn head_facts<B: StorageBackend, R, S>(
     let display_name = safe_display_name(described.display_name());
     let media_type = described
         .media_type()
-        .unwrap_or_else(|| media::media_type(&display_name).to_string());
+        .unwrap_or_else(|| media::media_type(&described.original_path).to_string());
     Ok(Some(FileFacts {
         file_id: file_id.as_str().to_string(),
         object_id: file_object_id(file_id),

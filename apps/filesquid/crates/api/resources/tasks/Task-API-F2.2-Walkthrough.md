@@ -314,17 +314,17 @@ None. The tests use real filesystem OCFL roots under the system temporary direct
 
 # Part 2: copy, the view operation and storage use per collection
 
-Branch `feat/api-f2.2-copy-view-listing`, contract 0.21.0. The owner's decision of 2026-10-20 holds: `filesquid-metadata`'s `FileRecord` is the only record codec. Holistic UI check: the file browser of UI-F2.8 can now list a node with `GET /api/v1/files/view`, copy with `POST /api/v1/files/copies` and show storage use per collection. This PR only regenerates `schema.d.ts`.
+Branch `feat/api-f2.2-copy-view-listing`, contract 0.21.0. The owner's decision of 2026-10-20 holds: `filesquid-metadata`'s `FileRecord` is the only record codec. Holistic UI check: the file browser of UI-F2.8 can now list a node with `GET /api/v1/files/view`, copy with `POST /api/v1/files/copies` and show storage use per collection. On the UI side this PR only regenerates `schema.d.ts`; the routes, their tests and the documentation are in the API crate.
 
 ## SRS mapping (part 2)
 
 | SRS ID and title | Covered by |
 |---|---|
 | [API-S-011](../srs.md) View operation, per-user UI preferences, storage use, copy, move and ZIP download (part 2: copy, view operation, storage use per collection) | `integration_drive_views` (11 tests), `view_copy_and_storage_use_API-S-011.feature` (7 scenarios), `files::drive` unit tests, `unit_contract`, `unit_auth` |
-| [SRS-F-062](../../../../../../resources/srs.md#srs-f-062-drive-style-views-sorting-selection-and-layout-preferences) Drive-style views, sorting, selection and layout preferences | the sort keys in both directions, folder placement, the view-local filter, stable cursor paging, `modified_by_me` and `opened_by_me` from the caller's own events only, copy with a new FileId and stored name: `by_me_keys_follow_only_the_callers_own_changes_and_openings`, `paging_is_stable_with_a_cursor_and_a_cursor_of_another_view_is_refused` |
+| [SRS-F-062](../../../../../../resources/srs.md#srs-f-062-drive-style-views-sorting-selection-and-layout-preferences) Drive-style views, sorting, selection and layout preferences | the sort keys in both directions, folder placement, the view-local filter, stable cursor paging, `modified_by_me` and `opened_by_me` from the caller's own events only, copy with a new FileId and stored name: `by_me_keys_follow_only_the_callers_own_changes_and_openings`, `paging_is_stable_and_a_cursor_of_another_or_a_changed_view_is_refused` |
 | [API-S-026](../srs.md) The FileSquid OCFL application profile | the copy's object `files/<new-id>` with `original/<new-uuid>.<ext>` and a record bound to it: `a_copy_record_keeps_what_the_owner_sees_and_is_bound_to_the_new_object` |
 | [API-S-027](../srs.md) Display and download names | view rows and copies carry the display name, never the stored name |
-| [API-S-028](../srs.md) PROV-O record per commit and journal linkage | successful single-file downloads journaled as `file.download` with opaque IDs only: `a_download_is_journaled_with_opaque_ids_only` |
+| [API-S-028](../srs.md) PROV-O record per commit and journal linkage | started single-file downloads journaled as `file.download` with opaque IDs only: `a_download_is_journaled_with_opaque_ids_only` |
 | [API-S-002](../srs.md) The versioned API contract owned by this crate | contract 0.21.0, regenerated `ui/src/api/schema.d.ts` |
 
 ## What changed (part 2)
@@ -340,9 +340,9 @@ Branch `feat/api-f2.2-copy-view-listing`, contract 0.21.0. The owner's decision 
   - Files come from the host's `LibraryCatalog` through the navigation service, at most 10,000 per view.
   - A library's `all` view lists its unfiled files and shows its collections and virtual collections as folder rows.
   - Each file row is read from its own object and record: display name, media type, size, and the head's created time as `modified`.
-  - Every page sorts the scope again and starts after the cursor's row key. The cursor carries a digest of the other parameters, so another view's cursor is refused.
+  - Every page sorts the scope again and starts after the cursor's row key. The cursor carries a digest of the other parameters, so another view's cursor is refused (400), and a digest of every row key, so a view whose rows or order changed between pages refuses it as `conflict` (409) instead of repeating or skipping a row.
   - `modified_by_me` and `opened_by_me` come from at most 20 pages of the caller's own succeeded journal entries. Changes are uploads, moves, removals, restores, renames, statement edits and copies; openings are content-handle mints and downloads.
-- **Downloads are journaled**: a started `GET /api/v1/files/download` is journaled as `file.download` (journal-only) with the caller, library, object and version (API-S-028).
+- **Downloads are journaled**: once `GET /api/v1/files/download` starts its answer, it is journaled as `file.download` (journal-only) with the caller, library, object and version (API-S-028). A refused download, and a failure after the answer started, stay journaled once as `files.download` with the error code, as in part 1.
 - **Storage use per collection**: `GET /api/v1/files/collection-history-size?collection_id=` counts each distinct content of each file whose home is the collection once, hidden and deleted files included, within 10,000 files and 100,000 contents.
 
 ## Remaining (box unticked)
@@ -358,9 +358,9 @@ Branch `feat/api-f2.2-copy-view-listing`, contract 0.21.0. The owner's decision 
 ```text
 $ cargo test -p filesquid-api --locked --lib files::drive
 test files::drive::tests::filters_limits_and_views_are_bounded ... ok
-test files::drive::tests::a_row_added_between_pages_never_makes_another_repeat ... ok
-test files::drive::tests::a_cursor_for_other_parameters_or_a_forged_one_is_refused ... ok
+test files::drive::tests::a_view_that_changed_between_pages_refuses_its_cursor ... ok
 test files::drive::tests::folders_on_top_stay_on_top_in_both_directions_and_mixed_interleaves ... ok
+test files::drive::tests::a_cursor_for_other_parameters_or_a_forged_one_is_refused ... ok
 test files::drive_scope::tests::only_changes_and_openings_count_and_the_latest_wins ... ok
 test files::drive::tests::missing_values_sort_last_and_ties_break_by_name_then_id ... ok
 test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 51 filtered out; finished in 0.00s
@@ -368,16 +368,16 @@ test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 51 filtered out; fin
 $ cargo test -p filesquid-api --locked --test integration_drive_views
 test a_copy_of_an_unknown_or_malformed_file_publishes_nothing ... ok
 test a_download_is_journaled_with_opaque_ids_only ... ok
-test a_copy_is_a_new_file_that_keeps_the_display_name_and_names_its_source ... ok
 test a_collection_view_sorts_by_each_key_in_both_directions ... ok
-test a_virtual_collection_lists_its_members_and_the_filter_narrows_any_view ... ok
+test a_copy_is_a_new_file_that_keeps_the_display_name_and_names_its_source ... ok
 test a_library_view_shows_its_collections_as_folders_beside_its_unfiled_files ... ok
+test a_virtual_collection_lists_its_members_and_the_filter_narrows_any_view ... ok
 test by_me_keys_follow_only_the_callers_own_changes_and_openings ... ok
-test paging_is_stable_with_a_cursor_and_a_cursor_of_another_view_is_refused ... ok
 test unknown_and_foreign_nodes_are_refused ... ok
 test storage_use_per_collection_counts_its_files_history_once ... ok
 test the_deleted_view_lists_only_deleted_files_and_other_views_wait ... ok
-test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+test paging_is_stable_and_a_cursor_of_another_or_a_changed_view_is_refused ... ok
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
 
 $ cargo test -p filesquid-api --locked --test unit_canonical (the copy test and summary)
 test a_copy_record_keeps_what_the_owner_sees_and_is_bound_to_the_new_object ... ok

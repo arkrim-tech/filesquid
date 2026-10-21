@@ -3,7 +3,7 @@
 //! storage use per collection, through the router over a real OCFL storage root on the local
 //! filesystem and a seeded library catalog.
 
-use crate::drive_catalog::{DriveCatalog, COLLECTION};
+use crate::drive_catalog::{DriveCatalog, COLLECTION, COLLECTION_TITLE, VIRTUAL_TITLE};
 use crate::files_fixture::{encode, upload_uri, Answer, FilesRig, LIBRARY};
 use crate::MonitorWorld;
 use axum::http::Method;
@@ -96,7 +96,12 @@ fn row_names(page: &Value) -> Vec<String> {
 }
 
 #[given(expr = "a library with the collection {string} and the virtual collection {string}")]
-async fn library(w: &mut MonitorWorld, _collection: String, _virtual: String) {
+async fn library(w: &mut MonitorWorld, collection: String, virtual_collection: String) {
+    assert_eq!(
+        (collection.as_str(), virtual_collection.as_str()),
+        (COLLECTION_TITLE, VIRTUAL_TITLE),
+        "the seeded catalog names its collections so"
+    );
     let rig = FilesRig::new().await;
     let drive = DriveCatalog::new(LIBRARY);
     assert!(rig.state.install_navigation(drive.navigation.clone()));
@@ -116,8 +121,9 @@ async fn files_in_collection(
     b_len: usize,
     c: String,
     c_len: usize,
-    _collection: String,
+    collection: String,
 ) {
+    assert_eq!(collection, COLLECTION_TITLE, "the seeded collection");
     for (name, len) in [(a, a_len), (b, b_len), (c, c_len)] {
         let id = w.view.upload(&name, &vec![7u8; len]).await;
         w.view.drive().file_in_collection(&id);
@@ -131,7 +137,11 @@ async fn unfiled(w: &mut MonitorWorld, name: String) {
 }
 
 #[given(expr = "{string} and {string} are in {string}")]
-async fn in_virtual(w: &mut MonitorWorld, a: String, b: String, _virtual: String) {
+async fn in_virtual(w: &mut MonitorWorld, a: String, b: String, virtual_collection: String) {
+    assert_eq!(
+        virtual_collection, VIRTUAL_TITLE,
+        "the seeded virtual collection"
+    );
     for name in [a, b] {
         let id = w.view.id(&name);
         w.view.drive().add_to_virtual(&id);
@@ -177,7 +187,8 @@ async fn copies(w: &mut MonitorWorld, name: String) {
 }
 
 #[when(expr = "the owner pages through {string} by {string} {string} one row at a time")]
-async fn pages_collection(w: &mut MonitorWorld, _collection: String, sort: String, dir: String) {
+async fn pages_collection(w: &mut MonitorWorld, collection: String, sort: String, dir: String) {
+    assert_eq!(collection, COLLECTION_TITLE, "the seeded collection");
     let node = w.view.drive().collection_node();
     w.view.page_through(&node, &sort, &dir).await;
 }
@@ -197,7 +208,8 @@ async fn pages_virtual(w: &mut MonitorWorld, sort: String, direction: String) {
 }
 
 #[when(expr = "the owner asks for the storage use of {string}")]
-async fn storage_use(w: &mut MonitorWorld, _collection: String) {
+async fn storage_use(w: &mut MonitorWorld, collection: String) {
+    assert_eq!(collection, COLLECTION_TITLE, "the seeded collection");
     let uri = format!("/api/v1/files/collection-history-size?collection_id={COLLECTION}");
     w.view.answer = Some(w.view.rig().get(&uri).await);
 }

@@ -10,8 +10,10 @@
 //! node shows its files, a virtual-collection node its members, and a `deleted` view the
 //! recoverably deleted files of the node with no folder rows.
 //!
-//! Every page sorts the whole scope again and starts after the cursor's row key, so the order
-//! is stable across pages and a row never repeats. The key ends with the row's identifier, so
+//! Every page sorts the whole scope again and starts after the cursor's row key. The cursor
+//! also carries a digest of every row key of the scope, so when the rows or their order
+//! changed between pages the cursor is refused as `conflict` instead of letting a row repeat
+//! or be skipped, and the client starts again. The key ends with the row's identifier, so
 //! no two rows tie. A missing value (a folder's size, a file the caller never opened) sorts
 //! after every present value in both directions, and folders on top stay on top in both. The
 //! cursor carries the last row's key and a digest of the request's other parameters, so a
@@ -251,6 +253,8 @@ struct CursorBody {
     k: RowKey,
     /// The parameter digest.
     p: String,
+    /// The digest of every row key of the scope, in order, when the cursor was made.
+    s: String,
 }
 
 /// The folder row `folder` as a candidate under `sort`.
@@ -361,13 +365,14 @@ pub fn page(
 ) -> Result<ViewPage, FileError> {
     let limit = check_limit(request.limit)?;
     let fingerprint = fingerprint(request);
+    let order = |a: &RowKey, b: &RowKey| compare(a, b, request.direction, request.folders);
+    candidates.sort_by(|a, b| order(&a.key, &b.key));
+    let scope = scope_digest(&candidates)?;
     let after = request
         .cursor
         .as_deref()
-        .map(|cursor| decode_cursor(cursor, &fingerprint))
+        .map(|cursor| decode_cursor(cursor, &fingerprint, &scope))
         .transpose()?;
-    let order = |a: &RowKey, b: &RowKey| compare(a, b, request.direction, request.folders);
-    candidates.sort_by(|a, b| order(&a.key, &b.key));
     let mut rest = candidates
         .into_iter()
         .skip_while(|c| {
@@ -386,7 +391,7 @@ pub fn page(
         rows.push(candidate.row);
     }
     let next_cursor = match (rest.peek(), last) {
-        (Some(_), Some(key)) => Some(encode_cursor(key, fingerprint)?),
+        (Some(_), Some(key)) => Some(encode_cursor(key, fingerprint, scope)?),
         _ => None,
     };
     Ok(ViewPage {
@@ -438,10 +443,11 @@ fn fingerprint(request: &ViewRequest) -> String {
 }
 
 /// The cursor after `key` for the parameters `fingerprint`.
-fn encode_cursor(key: RowKey, fingerprint: String) -> Result<String, FileError> {
+fn encode_cursor(key: RowKey, fingerprint: String, scope: String) -> Result<String, FileError> {
     let body = CursorBody {
         k: key,
         p: fingerprint,
+        s: scope,
     };
     let json = serde_json::to_vec(&body)
         .map_err(|_| FileError::internal("a view cursor could not be encoded"))?;
@@ -449,8 +455,14 @@ fn encode_cursor(key: RowKey, fingerprint: String) -> Result<String, FileError> 
     Ok(format!("{CURSOR_PREFIX}{hex}"))
 }
 
-/// The row key `cursor` carries, when it was made for the parameters `fingerprint`.
-fn decode_cursor(cursor: &str, fingerprint: &str) -> Result<RowKey, FileError> {
+/// The row key `cursor` carries, when it was made for the parameters `fingerprint` over the
+/// same rows (`scope`).
+///
+/// # Errors
+/// `invalid_request` for a cursor that is malformed or was made for other parameters;
+/// `conflict` when the view's rows or their order changed since the cursor was made, so a
+/// row could otherwise repeat or be skipped.
+fn decode_cursor(cursor: &str, fingerprint: &str, scope: &str) -> Result<RowKey, FileError> {
     let refused = || FileError::invalid("The cursor is not one this view answered.");
     if cursor.len() > MAX_CURSOR_BYTES {
         return Err(refused());
@@ -458,12 +470,25 @@ fn decode_cursor(cursor: &str, fingerprint: &str) -> Result<RowKey, FileError> {
     let hex = cursor.strip_prefix(CURSOR_PREFIX).ok_or_else(refused)?;
     let bytes = decode_hex(hex).ok_or_else(refused)?;
     let body: CursorBody = serde_json::from_slice(&bytes).map_err(|_| refused())?;
-    match body.p == fingerprint {
-        true => Ok(body.k),
-        false => Err(FileError::invalid(
+    if body.p != fingerprint {
+        return Err(FileError::invalid(
             "The cursor belongs to a view with other parameters.",
+        ));
+    }
+    match body.s == scope {
+        true => Ok(body.k),
+        false => Err(FileError::conflict(
+            "The view changed since its first page; start again without a cursor.",
         )),
     }
+}
+
+/// The digest of the row keys of `sorted`, in order.
+fn scope_digest(sorted: &[Candidate]) -> Result<String, FileError> {
+    let keys: Vec<&RowKey> = sorted.iter().map(|c| &c.key).collect();
+    let json = serde_json::to_vec(&keys)
+        .map_err(|_| FileError::internal("a view's rows could not be digested"))?;
+    Ok(DigestAlgorithm::Sha256.digest_hex(&json))
 }
 
 /// The bytes of lowercase or uppercase hex `text`, or `None`.
@@ -641,29 +666,29 @@ mod tests {
     }
 
     #[test]
-    fn a_row_added_between_pages_never_makes_another_repeat() {
+    fn a_view_that_changed_between_pages_refuses_its_cursor() {
         let first = request(
             SortKey::Name,
             SortDirection::Ascending,
             FolderPlacement::OnTop,
         );
-        let before = vec![
-            file("1", "a", 1, 1, SortKey::Name),
-            file("2", "c", 1, 1, SortKey::Name),
-            file("3", "e", 1, 1, SortKey::Name),
-        ];
-        let one = page(&first, before, true).expect("page");
+        let before = || {
+            vec![
+                file("1", "a", 1, 1, SortKey::Name),
+                file("2", "c", 1, 1, SortKey::Name),
+                file("3", "e", 1, 1, SortKey::Name),
+            ]
+        };
+        let one = page(&first, before(), true).expect("page");
         let mut next = first.clone();
         next.cursor = one.next_cursor.clone();
-        let after = vec![
-            file("1", "a", 1, 1, SortKey::Name),
-            file("4", "b", 1, 1, SortKey::Name),
-            file("2", "c", 1, 1, SortKey::Name),
-            file("3", "e", 1, 1, SortKey::Name),
-        ];
-        let two = page(&next, after, true).expect("page");
+        let two = page(&next, before(), true).expect("same rows");
         assert_eq!(names(&one), ["a", "c"]);
         assert_eq!(names(&two), ["e"]);
+        let mut renamed = before();
+        renamed[0] = file("1", "z", 1, 1, SortKey::Name);
+        let err = page(&next, renamed, true).expect_err("the order changed");
+        assert_eq!(err.code(), crate::ErrorCode::Conflict);
     }
 
     #[test]

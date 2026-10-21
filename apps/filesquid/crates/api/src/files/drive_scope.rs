@@ -28,6 +28,9 @@ use std::collections::HashMap;
 /// Most folder rows (collections and virtual collections) one library view shows.
 pub const MAX_VIEW_FOLDERS: usize = 1_000;
 
+/// Most collection and virtual-collection rows one library view examines for its folder rows.
+pub const MAX_FOLDER_SCAN: usize = 50_000;
+
 /// Most journal pages read for the caller's own times.
 pub const MAX_JOURNAL_PAGES: usize = 20;
 
@@ -265,55 +268,83 @@ fn list_files(
 }
 
 /// The collections and virtual collections of `library_id` that `principal` may read, as
-/// folder rows, at most [`MAX_VIEW_FOLDERS`], and whether that was all of them.
+/// folder rows, at most [`MAX_VIEW_FOLDERS`], and whether that was all of them. Each listing
+/// is paged until the readable rows pass the bound or the listing ends, examining at most
+/// [`MAX_FOLDER_SCAN`] rows; stopping early for either bound reports the rows incomplete.
 fn folder_rows(
     navigation: &NavigationService,
     principal: &Principal,
     library_id: &LibraryId,
 ) -> Result<(Vec<FolderRow>, bool), FileError> {
     let catalog = navigation.catalog().as_ref();
-    let bound = MAX_VIEW_FOLDERS + 1;
-    let collections = read_bounded(
-        |after| catalog.collections(library_id, after, MAX_PAGE),
-        bound,
-    )?;
-    let virtuals = read_bounded(
-        |after| catalog.virtual_collections(library_id, after, MAX_PAGE),
-        bound,
-    )?;
-    let nodes = collections
-        .into_iter()
-        .map(|c| {
-            let node = NodeRef::Collection(c.item.id().clone());
-            (node, FolderKind::Collection, c.item.title().to_string())
-        })
-        .chain(virtuals.into_iter().map(|v| {
-            let node = NodeRef::VirtualCollection(v.item.id().clone());
-            (
-                node,
-                FolderKind::VirtualCollection,
-                v.item.title().to_string(),
-            )
-        }));
     let mut rows = Vec::new();
-    let mut complete = true;
-    for (node, node_kind, name) in nodes {
-        if !navigation.may_read(principal, &node) {
-            continue;
+    let collections = |after: Option<&PageKey>| {
+        let page = catalog.collections(library_id, after, MAX_PAGE)?;
+        Ok(page
+            .into_iter()
+            .map(|c| {
+                let node = NodeRef::Collection(c.item.id().clone());
+                let row = (node, FolderKind::Collection, c.item.title().to_string());
+                (c.key, row)
+            })
+            .collect())
+    };
+    let virtuals = |after: Option<&PageKey>| {
+        let page = catalog.virtual_collections(library_id, after, MAX_PAGE)?;
+        Ok(page
+            .into_iter()
+            .map(|v| {
+                let node = NodeRef::VirtualCollection(v.item.id().clone());
+                let row = (
+                    node,
+                    FolderKind::VirtualCollection,
+                    v.item.title().to_string(),
+                );
+                (v.key, row)
+            })
+            .collect())
+    };
+    let readable = |node: &NodeRef| navigation.may_read(principal, node);
+    let complete_collections = collect_folders(collections, readable, &mut rows)?;
+    let complete_virtuals = complete_collections && collect_folders(virtuals, readable, &mut rows)?;
+    let complete = complete_virtuals && rows.len() <= MAX_VIEW_FOLDERS;
+    rows.truncate(MAX_VIEW_FOLDERS);
+    Ok((rows, complete))
+}
+
+/// One candidate folder row: its node, kind and name.
+type FolderNode = (NodeRef, FolderKind, String);
+
+/// Add the readable rows of one listing read through `read` to `rows`, until `rows` passes
+/// [`MAX_VIEW_FOLDERS`] or the listing ends; false when a bound stopped it first.
+fn collect_folders(
+    read: impl Fn(Option<&PageKey>) -> Result<Vec<(PageKey, FolderNode)>, CatalogError>,
+    readable: impl Fn(&NodeRef) -> bool,
+    rows: &mut Vec<FolderRow>,
+) -> Result<bool, FileError> {
+    let mut after: Option<PageKey> = None;
+    for _ in 0..MAX_FOLDER_SCAN / MAX_PAGE {
+        let page = read(after.as_ref()).map_err(catalog_error)?;
+        let full = page.len() == MAX_PAGE;
+        for (key, (node, node_kind, name)) in page {
+            after = Some(key);
+            let handle = readable(&node).then(|| node.to_handle()).flatten();
+            if let Some(handle) = handle {
+                rows.push(FolderRow {
+                    node: handle,
+                    node_kind,
+                    name,
+                });
+            }
         }
-        if rows.len() == MAX_VIEW_FOLDERS {
-            complete = false;
-            break;
+        if rows.len() > MAX_VIEW_FOLDERS {
+            return Ok(false);
         }
-        if let Some(handle) = navigation.handle_of(&node) {
-            rows.push(FolderRow {
-                node: handle,
-                node_kind,
-                name,
-            });
+        if !full {
+            return Ok(true);
         }
     }
-    Ok((rows, complete))
+    Ok(false)
 }
 
 /// Up to `bound` items of a listing read page by page through `read`.
