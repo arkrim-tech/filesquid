@@ -23,12 +23,12 @@ use filesquid_ocfl::storage::StorageBackend;
 use filesquid_ocfl::write::VersionReservations;
 
 /// The file an upload writes: its identifier and object, and its record at the head, if any.
-pub(super) struct Target {
-    pub(super) file_id: FileId,
-    pub(super) root: String,
-    pub(super) object_id: String,
-    pub(super) previous: Option<FileRecord>,
-    pub(super) next_version: String,
+struct Target {
+    file_id: FileId,
+    root: String,
+    object_id: String,
+    previous: Option<FileRecord>,
+    next_version: String,
 }
 
 impl<B, R, S> FileService<B, R, S>
@@ -122,7 +122,7 @@ fn name_form(query: &UploadQuery) -> Result<NameForm, FileError> {
 
 /// The file an upload writes: a new file, or the existing file `file_id` with its record and
 /// the version the upload will publish.
-pub(super) async fn upload_target<B: StorageBackend>(
+async fn upload_target<B: StorageBackend>(
     backend: &B,
     file_id: Option<&str>,
 ) -> Result<Target, FileError> {
@@ -178,7 +178,7 @@ async fn next_version<B: StorageBackend>(backend: &B, root: &str) -> Result<Stri
 }
 
 /// The file identifier `id` names.
-fn parse_file_id(id: &str) -> Result<FileId, FileError> {
+pub(super) fn parse_file_id(id: &str) -> Result<FileId, FileError> {
     match crate::library::is_uuid_v4(id) {
         true => FileId::new(id).map_err(|_| FileError::invalid("A file_id is a UUID v4.")),
         false => Err(FileError::invalid("A file_id is a UUID v4.")),

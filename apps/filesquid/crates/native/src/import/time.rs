@@ -4,22 +4,30 @@
 use filesquid_ocfl::write::rfc3339_utc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// `time` as `YYYY-MM-DDTHH:MM:SS.nnnnnnnnnZ`, or `None` for a time before 1970 (which the
-/// record cannot state as a valid fact). Pure.
+/// The last second RFC 3339 can state with a four-digit year (9999-12-31T23:59:59Z).
+const MAX_SECONDS: u64 = 253_402_300_799;
+
+/// `time` as `YYYY-MM-DDTHH:MM:SS.nnnnnnnnnZ`, or `None` for a time before 1970 or after
+/// 9999 (which the record cannot state as a valid fact). Pure.
 pub fn rfc3339_nanos(time: SystemTime) -> Option<String> {
     let since = time.duration_since(UNIX_EPOCH).ok()?;
-    Some(at_nanos(since.as_secs(), since.subsec_nanos()))
+    at_nanos(since.as_secs(), since.subsec_nanos())
 }
 
 /// `seconds` and `nanos` after the Unix epoch as an RFC 3339 UTC timestamp with nine
-/// fraction digits. Pure.
-pub fn at_nanos(seconds: u64, nanos: u32) -> String {
-    let whole = rfc3339_utc(seconds.saturating_mul(1_000));
-    let stem = whole.strip_suffix('Z').unwrap_or(&whole);
-    format!("{stem}.{nanos:09}Z")
+/// fraction digits, or `None` when `nanos` is not below one second or the time is after
+/// the year 9999. Pure.
+pub fn at_nanos(seconds: u64, nanos: u32) -> Option<String> {
+    if nanos >= 1_000_000_000 || seconds > MAX_SECONDS {
+        return None;
+    }
+    let whole = rfc3339_utc(seconds * 1_000);
+    let stem = whole.strip_suffix('Z')?;
+    Some(format!("{stem}.{nanos:09}Z"))
 }
 
-/// The current time at native precision. Reads the system clock.
-pub fn now() -> String {
-    rfc3339_nanos(SystemTime::now()).unwrap_or_else(|| at_nanos(0, 0))
+/// The current time at native precision, or `None` when the system clock is before 1970 or
+/// after 9999, so no import records a time the clock did not give. Reads the system clock.
+pub fn now() -> Option<String> {
+    rfc3339_nanos(SystemTime::now())
 }

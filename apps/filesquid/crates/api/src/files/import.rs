@@ -4,18 +4,27 @@
 //! with an import entry built from every fact the host's operating system provided about the
 //! source, gathered before the host read its bytes.
 //!
-//! The host supplies the facts ([`SourceImport`]) and the bytes it read; this module adds what
-//! only the commit knows (the file's identifier, object, version, logical path, SHA-256 and
-//! verified size) and refuses a source whose reported size is not the size of the bytes read,
-//! so a file that changed while it was read is never recorded as verified.
+//! The host supplies the facts ([`SourceImport`]), the new file's identifier and the bytes it
+//! read; this module adds what only the commit knows (the object, version, logical path,
+//! SHA-256 and verified size) and refuses a source whose reported size is not the size of the
+//! bytes read, so a file that changed while it was read is never recorded as verified.
+//!
+//! An import always creates a new file object, under the identifier the host minted when it
+//! planned the import. Repeating the import of the same job (a run that crashed between the
+//! commit and its checkpoint) answers the object that job already committed instead of
+//! creating a second one; an object of another job or an upload under that identifier is a
+//! conflict.
 
 use super::error::FileError;
 use super::media;
 use super::service::{change_model, FileService};
-use super::upload::{canonical_error, upload_target};
+use super::upload::{canonical_error, parse_file_id};
 use super::view::UploadView;
-use crate::canonical::original::{original_path_for, original_path_of};
-use crate::canonical::{commit_file_original, OwnerReadable};
+use crate::canonical::original::original_path_for;
+use crate::canonical::{
+    commit_file_original, file_object_id, file_object_root, read_file_original, OwnerReadable,
+};
+use filesquid_core::FileId;
 use filesquid_metadata::fact::Fact;
 use filesquid_metadata::file_record::FileRecord;
 use filesquid_metadata::import::attributes::Attributes;
@@ -31,8 +40,9 @@ use filesquid_ocfl::DigestAlgorithm;
 pub struct SourceImport {
     /// The library to import into.
     pub library_id: String,
-    /// The existing file whose new content this is (a re-import), or `None` for a new file.
-    pub file_id: Option<String>,
+    /// The new file's identifier (a UUID v4 the host minted when it planned the import), so
+    /// a repeated import of the same job finds the object it already committed.
+    pub file_id: String,
     /// How the file reached FileSquid.
     pub method: ImportMethod,
     /// The import job, when one runs the import.
@@ -67,13 +77,15 @@ where
     S: StorageBackend,
 {
     /// Commit one import of `bytes`, read by the host from the source `import` describes, by
-    /// `actor`: a new file object, or a new version of the object of `import.file_id`.
+    /// `actor`, as the new file object of `import.file_id`; when that object already holds
+    /// an import of the same job, answer it without writing.
     ///
     /// # Errors
     /// `invalid_request` with `size_mismatch` in its message when the bytes are not the
-    /// size the source reported, or for a record the metadata module refuses; `not_found`
-    /// for an unknown library or file; `conflict` when another writer moved the head; a
-    /// storage failure otherwise. Nothing is published on any error.
+    /// size the source reported, for a malformed file ID or for a record the metadata module
+    /// refuses; `not_found` for an unknown library; `conflict` when the object already exists
+    /// and holds no import of this job; a storage failure otherwise. Nothing is published on
+    /// any error.
     pub async fn import_original(
         &self,
         import: SourceImport,
@@ -85,47 +97,73 @@ where
         let library = self.library(&import.library_id)?;
         let _writing = library.writes.lock().await;
         let backend = library.files.backend.as_ref();
-        let target = upload_target(backend, import.file_id.as_deref()).await?;
-        let path = match &target.previous {
-            Some(previous) => original_path_of(&target.file_id, previous),
-            None => original_path_for(&target.file_id, stored_extension(&import.source)),
+        let file_id = parse_file_id(&import.file_id)?;
+        let existing = read_file_original(backend, &OwnerReadable, &file_id)
+            .await
+            .map_err(canonical_error)?;
+        if let Some(original) = existing {
+            return replayed(&import, &original.record);
         }
-        .map_err(canonical_error)?;
+        let root = file_object_root(&file_id).map_err(canonical_error)?;
         let citation = Citation {
-            object_id: target.object_id.clone(),
-            version: target.next_version.clone(),
-            path,
+            object_id: file_object_id(&file_id),
+            version: "v1".to_string(),
+            path: original_path_for(&file_id, import.source.extension.as_deref())
+                .map_err(canonical_error)?,
             sha256: DigestAlgorithm::Sha256.digest_hex(bytes),
             size: bytes.len() as u64,
         };
         let library_id = import.library_id.clone();
         let entry = import_entry(import, &citation, &self.created());
-        let record = import_record(target.previous.as_ref(), entry)?;
-        let staging = library.staging(&target.object_id)?;
-        let model = change_model(&library, &target.root, &target.object_id, staging);
-        let committed = commit_file_original(
-            &model,
-            &OwnerReadable,
-            &target.file_id,
-            &record,
-            target.previous.as_ref(),
-            bytes,
-            meta,
-        )
-        .await
-        .map_err(canonical_error)?;
+        let record = import_record(entry)?;
+        let staging = library.staging(&citation.object_id)?;
+        let model = change_model(&library, &root, &citation.object_id, staging);
+        let committed =
+            commit_file_original(&model, &OwnerReadable, &file_id, &record, None, bytes, meta)
+                .await
+                .map_err(canonical_error)?;
         let receipt = committed.ok_or_else(|| {
             FileError::conflict("The import would change nothing, so no version was made.")
         })?;
-        library.remember(&target.object_id, &target.root);
-        Ok(UploadView {
-            library_id,
-            file_id: target.file_id.as_str().to_string(),
-            object_id: receipt.object_id,
-            version: receipt.version.to_string(),
-            created: receipt.created,
-        })
+        library.remember(&citation.object_id, &root);
+        Ok(view_of(library_id, &file_id, receipt))
     }
+}
+
+/// The answer of a committed import. Pure.
+fn view_of(
+    library_id: String,
+    file_id: &FileId,
+    receipt: filesquid_ocfl::write::CommitReceipt,
+) -> UploadView {
+    UploadView {
+        library_id,
+        file_id: file_id.as_str().to_string(),
+        object_id: receipt.object_id,
+        version: receipt.version.to_string(),
+        created: receipt.created,
+    }
+}
+
+/// The answer of an import whose object already exists: the version its import entry of
+/// `import`'s job cites, or a conflict when no entry of that job is in `record`. Pure.
+fn replayed(import: &SourceImport, record: &FileRecord) -> Result<UploadView, FileError> {
+    let job = import
+        .job_id
+        .clone()
+        .ok_or_else(|| FileError::conflict("That file already exists."))?;
+    let entry = record
+        .imports()
+        .iter()
+        .find(|entry| entry.acquisition.job_id == Fact::value(job.clone()))
+        .ok_or_else(|| FileError::conflict("That file already exists."))?;
+    Ok(UploadView {
+        library_id: import.library_id.clone(),
+        file_id: import.file_id.clone(),
+        object_id: entry.acquisition.object_id.clone(),
+        version: entry.acquisition.object_version.clone(),
+        created: entry.acquisition.recorded_at.clone(),
+    })
 }
 
 /// Refuse bytes whose size is not the size the source reported (MD-S-013: the import fails
@@ -137,15 +175,6 @@ fn check_size(source: &SourceFile, bytes: &[u8]) -> Result<(), FileError> {
         )),
         _ => Ok(()),
     }
-}
-
-/// The extension the stored original keeps: the source's, when it is 1 to 16 ASCII letters
-/// or digits. Pure.
-fn stored_extension(source: &SourceFile) -> Option<&str> {
-    let extension = source.extension.as_deref()?;
-    let plain =
-        (1..=16).contains(&extension.len()) && extension.bytes().all(|b| b.is_ascii_alphanumeric());
-    plain.then_some(extension)
 }
 
 /// The import entry of `import` citing `citation`, recorded at `now`. Pure.
@@ -181,23 +210,14 @@ fn import_entry(import: SourceImport, citation: &Citation, now: &str) -> ImportE
     }
 }
 
-/// The record an import commits: the first record of a new file, or the previous record with
-/// one more import entry.
+/// The first record of the new file an import creates.
 ///
 /// # Errors
 /// `invalid_request` for an entry or record the metadata module refuses.
-fn import_record(
-    previous: Option<&FileRecord>,
-    entry: ImportEntry,
-) -> Result<FileRecord, FileError> {
+fn import_record(entry: ImportEntry) -> Result<FileRecord, FileError> {
     let refuse = |err: filesquid_metadata::file_record::RecordError| {
         FileError::invalid(format!("The import was refused: {err}."))
     };
-    if let Some(previous) = previous {
-        let mut next = previous.clone();
-        next.append_import(entry).map_err(refuse)?;
-        return Ok(next);
-    }
     let source = &entry.source;
     let name = String::from_utf8_lossy(source.original_name.as_bytes()).into_owned();
     FileRecord::new(

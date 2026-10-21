@@ -37,6 +37,8 @@ pub enum SourceError {
     NotAFile,
     /// It has no file name.
     NoName,
+    /// Its metadata could not be read for another reason; a retry may succeed.
+    Unreadable,
 }
 
 impl SourceError {
@@ -47,16 +49,34 @@ impl SourceError {
             SourceError::PermissionDenied => "permission_denied",
             SourceError::NotAFile => "not_a_file",
             SourceError::NoName => "invalid_name",
+            SourceError::Unreadable => "source_unreadable",
         }
     }
 }
+
+/// Why the date added and the ACL are unavailable: macOS keeps them, but reading them needs
+/// macOS frameworks beyond libc, which this build does not link (DE-S-019).
+#[cfg(target_os = "macos")]
+const NOT_READ: &str = "kept by macOS; not read by this build (libc only)";
+
+/// Why the date added and the ACL are unavailable on other platforms.
+#[cfg(not(target_os = "macos"))]
+const NOT_READ: &str = "not provided by this platform";
+
+/// Why the content type is unavailable on macOS: its UTI and MIME type need macOS frameworks.
+#[cfg(target_os = "macos")]
+const NO_CONTENT_TYPE: &str = "UTI and MIME kept by macOS; not read by this build (libc only)";
+
+/// Why the content type is unavailable on other platforms.
+#[cfg(not(target_os = "macos"))]
+const NO_CONTENT_TYPE: &str = "the operating system reports no content type here";
 
 /// Map a metadata read failure to a [`SourceError`].
 fn source_error(err: &io::Error) -> SourceError {
     match err.kind() {
         io::ErrorKind::NotFound => SourceError::Missing,
         io::ErrorKind::PermissionDenied => SourceError::PermissionDenied,
-        _ => SourceError::Missing,
+        _ => SourceError::Unreadable,
     }
 }
 
@@ -89,22 +109,16 @@ pub fn gather_source(path: &Path, import_root: &Path) -> Result<GatheredSource, 
         status_changed_time: unix::changed_time(&meta),
         accessed_time: time_fact(meta.accessed()),
         accessed_after_read: false,
-        date_added_time: Fact::unavailable_because(
-            Reason::NotSupportedBySource,
-            "not read on this platform",
-        ),
+        date_added_time: Fact::unavailable_because(Reason::NotSupportedBySource, NOT_READ),
         owner_name: unix::owner_name(&meta),
         owner_id: unix::owner_id(&meta),
         group_name: unix::group_name(&meta),
         group_id: unix::group_id(&meta),
         posix_mode: unix::mode(&meta),
-        acl: Fact::unavailable_because(Reason::NotSupportedBySource, "not read on this platform"),
+        acl: Fact::unavailable_because(Reason::NotSupportedBySource, NOT_READ),
         flags: unix::flags(&meta),
         link: link_fact(path, &link),
-        os_content_type: Fact::unavailable_because(
-            Reason::NotSupportedBySource,
-            "the operating system reports no content type here",
-        ),
+        os_content_type: Fact::unavailable_because(Reason::NotSupportedBySource, NO_CONTENT_TYPE),
     };
     Ok(GatheredSource {
         volume: super::volume::gather_volume(path),
@@ -145,7 +159,10 @@ fn link_fact(path: &Path, link: &std::fs::Metadata) -> Fact<Link> {
         Ok(target) => Fact::value(Link::Symlink {
             target: raw_path(&target),
         }),
-        Err(_) => Fact::unavailable_because(Reason::PermissionDenied, "link target unreadable"),
+        Err(err) if err.kind() == io::ErrorKind::PermissionDenied => {
+            Fact::unavailable_because(Reason::PermissionDenied, "link target unreadable")
+        }
+        Err(_) => Fact::unavailable_because(Reason::NotSupportedBySource, "link target unreadable"),
     }
 }
 
@@ -160,12 +177,16 @@ mod unix {
 
     /// The status-changed time.
     pub fn changed_time(meta: &std::fs::Metadata) -> Fact<String> {
-        match (
+        let stated = match (
             u64::try_from(meta.ctime()),
             u32::try_from(meta.ctime_nsec()),
         ) {
-            (Ok(seconds), Ok(nanos)) => Fact::value(at_nanos(seconds, nanos)),
-            _ => Fact::unavailable_because(Reason::NotSupportedBySource, "before 1970"),
+            (Ok(seconds), Ok(nanos)) => at_nanos(seconds, nanos),
+            _ => None,
+        };
+        match stated {
+            Some(time) => Fact::value(time),
+            None => Fact::unavailable_because(Reason::NotSupportedBySource, "outside 1970-9999"),
         }
     }
 

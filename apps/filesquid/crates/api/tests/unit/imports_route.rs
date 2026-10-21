@@ -7,8 +7,8 @@ use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use filesquid_api::auth::{Authoriser, LaunchToken};
 use filesquid_api::imports::{
-    ImportAnswer, ImportOutcome, ImportRequest, ImportStartError, ImportStarter,
-    COLLECTION_NOT_SUPPORTED, IMPORT_START_OPERATION,
+    ImportAnswer, ImportRequest, ImportStartError, ImportStarter, COLLECTION_NOT_SUPPORTED,
+    IMPORT_START_OPERATION,
 };
 use filesquid_api::journal::{JournalEntry, JournalQuery, MemoryJournal, Outcome};
 use filesquid_api::monitor::{Monitor, MonitorConfig, StaticHostChecks};
@@ -44,13 +44,10 @@ impl ImportStarter for ScriptedStarter {
     ) -> Result<ImportAnswer, ImportStartError> {
         self.asked.lock().expect("asked").push(request.clone());
         let job = self.answer.clone()?;
-        Ok(ImportAnswer {
-            operation_id: request.envelope.operation_id().as_str().to_string(),
-            outcome: match job {
-                Some(_) => ImportOutcome::Started,
-                None => ImportOutcome::Cancelled,
-            },
-            job_id: job.map(str::to_string),
+        let operation = request.envelope.operation_id();
+        Ok(match job {
+            Some(job) => ImportAnswer::started(operation, job.to_string()),
+            None => ImportAnswer::cancelled(operation),
         })
     }
 }
@@ -137,7 +134,11 @@ async fn a_started_import_answers_its_job_and_journals_it_once() {
     assert_eq!(status, StatusCode::OK, "{answer}");
     assert_eq!(
         answer,
-        json!({ "operation_id": "op-1", "outcome": "started", "job_id": "job-1" })
+        json!({
+            "outcome": { "operation_id": "op-1", "kind": "pending", "error": null },
+            "import": "started",
+            "job_id": "job-1"
+        })
     );
     assert_eq!(starter.asked.lock().expect("asked")[0].library_id, LIBRARY);
     let entries = host.starts();
@@ -156,7 +157,10 @@ async fn a_cancelled_dialog_answers_cancelled_without_a_job() {
     assert_eq!(status, StatusCode::OK, "{answer}");
     assert_eq!(
         answer,
-        json!({ "operation_id": "op-1", "outcome": "cancelled" })
+        json!({
+            "outcome": { "operation_id": "op-1", "kind": "committed", "error": null },
+            "import": "cancelled"
+        })
     );
     assert_eq!(host.starts()[0].outcome, Outcome::Cancelled);
 }
@@ -203,6 +207,14 @@ async fn a_wrong_scope_no_starter_or_no_token_asks_nothing() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     let (status, _) = host.post(json!({ "path": "/home/someone" }), true).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+    let mut newer = body(&format!("library:{LIBRARY}"));
+    newer["envelope"]["schema_version"] = json!(2);
+    let (status, _) = host.post(newer, true).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "another schema version");
+    let mut unnamed = body("library:");
+    unnamed["library_id"] = json!("");
+    let (status, _) = host.post(unnamed, true).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "no library");
     let (status, _) = host.post(body(&format!("library:{LIBRARY}")), false).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert!(starter.asked.lock().expect("asked").is_empty());
@@ -211,7 +223,16 @@ async fn a_wrong_scope_no_starter_or_no_token_asks_nothing() {
         .into_iter()
         .map(|e| e.error_code.unwrap_or_default())
         .collect();
-    assert_eq!(codes, ["unavailable", "invalid_request", "invalid_request"]);
+    assert_eq!(
+        codes,
+        [
+            "unavailable",
+            "invalid_request",
+            "invalid_request",
+            "invalid_request",
+            "invalid_request"
+        ]
+    );
     assert!(!format!("{:?}", host.starts()).contains("someone"));
 }
 

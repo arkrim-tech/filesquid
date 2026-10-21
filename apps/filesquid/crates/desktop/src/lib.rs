@@ -737,7 +737,7 @@ pub fn import_build() -> filesquid_native::import::host::Build {
 }
 
 /// Open the import plans in `data_dir`, start the native import worker (setting `stop`
-/// suspends it), queue the unfinished import jobs when the jobs were `recovered`, and install
+/// suspends it; it runs the unfinished import jobs when the job store was `recovered`), and install
 /// the import route with the native `rfd` dialog (Task DE-1.2). Starts a thread; database
 /// I/O.
 ///
@@ -764,10 +764,8 @@ fn start_imports(
         staging_dir: data_dir.to_path_buf(),
         stop: stop.clone(),
         retry_unit: filesquid_native::import::job::RETRY_UNIT,
+        recover: recovered,
     })?);
-    if recovered {
-        worker.resume_unfinished(&jobs);
-    }
     let starting = imports::ImportStarting {
         files,
         jobs,

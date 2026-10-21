@@ -27,11 +27,15 @@ pub fn read_attributes(path: &Path) -> Fact<Attributes> {
 }
 
 /// Read one attribute within the collector's remaining budget and add it, decoding the
-/// ones FileSquid knows. An attribute that vanished between the listing and the read is
-/// recorded with no value read.
+/// ones FileSquid knows. An attribute whose size cannot be read (it vanished between the
+/// listing and the read, or the read failed) is left out rather than recorded as empty; the
+/// listing's count of names then marks the entry truncated. One whose size was read but
+/// whose value was not is recorded with no value read, which marks it incomplete.
 fn add_one(path: &Path, name: &[u8], collector: &mut AttributeCollector) {
     let budget = usize::try_from(collector.read_budget()).unwrap_or(usize::MAX);
-    let (size, value) = sys::get(path, name, budget).unwrap_or((0, Vec::new()));
+    let Some((size, value)) = sys::get(path, name, budget) else {
+        return;
+    };
     if collector.add(name, size, &value).is_err() {
         return;
     }
@@ -46,8 +50,66 @@ fn add_one(path: &Path, name: &[u8], collector: &mut AttributeCollector) {
 pub fn decode(name: &[u8], value: &[u8]) -> BTreeMap<String, Vec<String>> {
     match name {
         b"com.apple.quarantine" => decode_quarantine(value),
+        b"com.apple.metadata:kMDItemWhereFroms" => decode_strings("origin_urls", value),
+        b"com.apple.metadata:kMDItemFinderComment" => decode_strings("comment", value),
+        b"com.apple.metadata:_kMDItemUserTags" => decode_tags(value),
+        b"com.apple.FinderInfo" => decode_finder_info(value),
         _ => BTreeMap::new(),
     }
+}
+
+/// The strings of a property list (binary or XML) that is one string or an array of them,
+/// under `key`; empty for any other value. Pure.
+fn decode_strings(key: &str, value: &[u8]) -> BTreeMap<String, Vec<String>> {
+    let strings = plist_strings(value);
+    let mut decoded = BTreeMap::new();
+    if !strings.is_empty() {
+        decoded.insert(key.to_string(), strings);
+    }
+    decoded
+}
+
+/// The strings of a property list that is one string or an array of strings. Pure.
+fn plist_strings(value: &[u8]) -> Vec<String> {
+    match plist::Value::from_reader(std::io::Cursor::new(value)) {
+        Ok(plist::Value::String(text)) => vec![text],
+        Ok(plist::Value::Array(items)) => items
+            .into_iter()
+            .filter_map(|item| item.into_string())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Finder tags: each `name` or `name\ncolour-number` of the `_kMDItemUserTags` array, as
+/// `tags` (the names) and `tag_colors` (the colour numbers, `0` when none). Pure.
+fn decode_tags(value: &[u8]) -> BTreeMap<String, Vec<String>> {
+    let (names, colors): (Vec<String>, Vec<String>) = plist_strings(value)
+        .into_iter()
+        .map(|tag| match tag.split_once('\n') {
+            Some((name, color)) => (name.to_string(), color.to_string()),
+            None => (tag, "0".to_string()),
+        })
+        .unzip();
+    let mut decoded = BTreeMap::new();
+    if !names.is_empty() {
+        decoded.insert("tags".to_string(), names);
+        decoded.insert("tag_colors".to_string(), colors);
+    }
+    decoded
+}
+
+/// The Finder colour label (0 to 7, 0 for none) of a 32-byte `com.apple.FinderInfo`: bits
+/// 1 to 3 of its `fdFlags` low byte (byte 9). Pure.
+fn decode_finder_info(value: &[u8]) -> BTreeMap<String, Vec<String>> {
+    let mut decoded = BTreeMap::new();
+    if let (32, Some(flags)) = (value.len(), value.get(9)) {
+        decoded.insert(
+            "color_label".to_string(),
+            vec![((flags >> 1) & 7).to_string()],
+        );
+    }
+    decoded
 }
 
 /// `com.apple.quarantine` = `flags;hex-time;agent;event-id`: the agent, the time (seconds
@@ -59,8 +121,9 @@ fn decode_quarantine(value: &[u8]) -> BTreeMap<String, Vec<String>> {
     if let Some(time) = parts
         .get(1)
         .and_then(|hex| u64::from_str_radix(hex, 16).ok())
+        .and_then(|seconds| super::time::at_nanos(seconds, 0))
     {
-        decoded.insert("time".into(), vec![super::time::at_nanos(time, 0)]);
+        decoded.insert("time".into(), vec![time]);
     }
     for (key, index) in [("agent", 2), ("event_id", 3)] {
         if let Some(part) = parts.get(index).filter(|p| !p.is_empty()) {

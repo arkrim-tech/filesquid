@@ -91,7 +91,8 @@ async fn import_unopened(world: &mut DesktopWorld) {
 fn answer_started(world: &mut DesktopWorld) {
     let (status, answer) = last_answer(world);
     assert_eq!(status, 200, "{answer}");
-    assert_eq!(answer["outcome"], "started");
+    assert_eq!(answer["import"], "started");
+    assert_eq!(answer["outcome"]["kind"], "pending");
     assert!(answer["job_id"].is_string(), "{answer}");
 }
 
@@ -99,7 +100,8 @@ fn answer_started(world: &mut DesktopWorld) {
 fn answer_cancelled(world: &mut DesktopWorld) {
     let (status, answer) = last_answer(world);
     assert_eq!(status, 200, "{answer}");
-    assert_eq!(answer["outcome"], "cancelled");
+    assert_eq!(answer["import"], "cancelled");
+    assert_eq!(answer["outcome"]["kind"], "committed");
     assert!(answer.get("job_id").is_none(), "{answer}");
 }
 
@@ -109,6 +111,11 @@ fn same_job(world: &mut DesktopWorld) {
     assert_eq!(answers.len(), 2);
     assert!(answers[0].1["job_id"].is_string());
     assert_eq!(answers[0].1["job_id"], answers[1].1["job_id"]);
+}
+
+#[then("the dialog should not have been shown")]
+fn never_shown(world: &mut DesktopWorld) {
+    assert_eq!(rig(world).dialog.shown(), 0);
 }
 
 #[then("the dialog should have been shown once")]

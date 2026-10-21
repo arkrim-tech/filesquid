@@ -24,6 +24,9 @@ pub const MAX_IN_MEMORY_BYTES: u64 = 512 * 1024 * 1024;
 pub struct FileImport<'a> {
     /// The library to import into.
     pub library_id: &'a str,
+    /// The new file's identifier (a UUID v4 minted when the import was planned), so a
+    /// repeated import of the same job answers the object it already committed.
+    pub file_id: &'a str,
     /// The source file.
     pub path: &'a Path,
     /// The folder the owner chose, or the file itself for a single file.
@@ -47,6 +50,8 @@ pub enum ImportFailure {
     Source(SourceError),
     /// The file is above [`MAX_IN_MEMORY_BYTES`].
     TooLarge,
+    /// The system clock is before 1970 or after 9999, so no start time can be recorded.
+    Clock,
     /// Reading the bytes failed; a retry may succeed.
     Read,
     /// The API refused or could not commit the import.
@@ -64,6 +69,7 @@ impl ImportFailure {
         match self {
             ImportFailure::Source(err) => err.error_code(),
             ImportFailure::TooLarge => "too_large_for_this_build",
+            ImportFailure::Clock => "clock_unavailable",
             ImportFailure::Read => "read_failed",
             ImportFailure::Commit { code, .. } => code,
         }
@@ -72,9 +78,10 @@ impl ImportFailure {
     /// Whether the same import may succeed if tried again.
     pub fn retryable(&self) -> bool {
         match self {
-            ImportFailure::Source(SourceError::PermissionDenied) => true,
+            ImportFailure::Source(SourceError::PermissionDenied | SourceError::Unreadable) => true,
             ImportFailure::Source(_) => false,
             ImportFailure::TooLarge => true,
+            ImportFailure::Clock => false,
             ImportFailure::Read => true,
             ImportFailure::Commit { retryable, .. } => *retryable,
         }
@@ -100,8 +107,8 @@ fn commit_failure(err: FileError) -> ImportFailure {
     }
 }
 
-/// Import the file `request` names into `files`: facts first, then one read of its bytes,
-/// then the API's commit. Reads the filesystem and writes the library's storage root.
+/// Import the file `request` names into `files`: the source's and the host's facts first,
+/// then one read of its bytes, then the API's commit. Reads the filesystem and writes the library's storage root.
 ///
 /// # Errors
 /// [`ImportFailure`]; nothing is published on any error.
@@ -109,13 +116,14 @@ pub async fn import_file(
     files: &HostFiles,
     request: &FileImport<'_>,
 ) -> Result<UploadView, ImportFailure> {
-    let started_at = now();
+    let started_at = now().ok_or(ImportFailure::Clock)?;
     let gathered =
         gather_source(request.path, request.import_root).map_err(ImportFailure::Source)?;
+    let host = gather_host(request.build);
     let bytes = read_bounded(request.path)?;
     let import = SourceImport {
         library_id: request.library_id.to_string(),
-        file_id: None,
+        file_id: request.file_id.to_string(),
         method: request.method,
         job_id: request.job_id.clone(),
         operation_id: request.operation_id.clone(),
@@ -123,7 +131,7 @@ pub async fn import_file(
         source: gathered.file,
         volume: gathered.volume,
         attributes: gathered.attributes,
-        host: gather_host(request.build),
+        host,
     };
     files
         .import_original(import, &bytes, request.actor)

@@ -25,7 +25,11 @@ fn a_picked_folder_is_imported_as_one_job_and_a_repeat_answers_the_same_job() {
     let rig = block_on(ImportRig::launch(dir, Some(vec![folder])));
     let (status, answer) = block_on(rig.import(LIBRARY, "op-import-1", "folder"));
     assert_eq!(status, 200, "{answer}");
-    assert_eq!(answer["outcome"], "started");
+    assert_eq!(answer["import"], "started");
+    assert_eq!(
+        answer["outcome"]["kind"], "pending",
+        "the job's work is durable, not done"
+    );
     let job = answer["job_id"].as_str().expect("job").to_string();
     let (status, again) = block_on(rig.import(LIBRARY, "op-import-1", "folder"));
     assert_eq!(status, 200, "{again}");
@@ -53,10 +57,18 @@ fn a_cancelled_dialog_or_an_unopened_library_makes_no_job() {
     assert_eq!(status, 200, "{answer}");
     assert_eq!(
         answer,
-        json!({ "operation_id": "op-cancel", "outcome": "cancelled" })
+        json!({
+            "outcome": { "operation_id": "op-cancel", "kind": "committed", "error": null },
+            "import": "cancelled"
+        })
     );
     let (status, _) = block_on(rig.import(UNOPENED_LIBRARY, "op-other", "files"));
     assert_eq!(status, 404, "that library is not open");
+    assert_eq!(
+        rig.dialog.shown(),
+        1,
+        "no dialog for the library that is not open"
+    );
     rig.stop_worker();
     let starts = rig
         .journal()
@@ -80,7 +92,7 @@ fn a_job_the_stopped_worker_could_not_take_runs_at_the_next_launch() {
     assert_eq!(rig.wait_for_files(2), 2, "the kept job ran at the launch");
     let (status, again) = block_on(rig.import(LIBRARY, "op-later", "folder"));
     assert_eq!(status, 200, "{again}");
-    assert_eq!(again["outcome"], "started", "the operation names its job");
+    assert_eq!(again["import"], "started", "the operation names its job");
     assert_eq!(rig.dialog.shown(), 1, "no second dialog");
     rig.stop_worker();
     assert_eq!(rig.file_objects(), 2);

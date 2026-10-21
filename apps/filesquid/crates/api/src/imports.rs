@@ -27,7 +27,7 @@ use axum::extract::State;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Extension, Json};
-use filesquid_core::CommandEnvelope;
+use filesquid_core::{CommandEnvelope, CommandOutcome, CommandOutcomeKind, OperationId};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -65,7 +65,7 @@ pub struct ImportRequest {
     pub source: ImportSource,
 }
 
-/// How an import request ended.
+/// What became of an import request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ImportOutcome {
@@ -75,16 +75,39 @@ pub enum ImportOutcome {
     Cancelled,
 }
 
-/// The answer of an import request.
+/// The answer of an import request: the command outcome API-S-002 requires, and what
+/// became of the request.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportAnswer {
-    /// The request's operation ID.
-    pub operation_id: String,
+    /// `pending` for a started import (the job's work is durable and not yet complete; a
+    /// repeated operation ID answers it again), `committed` for a cancelled one (nothing
+    /// changed, as a library command that changes nothing answers).
+    pub outcome: CommandOutcome,
     /// Started or cancelled.
-    pub outcome: ImportOutcome,
+    pub import: ImportOutcome,
     /// The import job; absent when cancelled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub job_id: Option<String>,
+}
+
+impl ImportAnswer {
+    /// The answer naming the import job `job_id` of `operation_id`. Pure.
+    pub fn started(operation_id: &OperationId, job_id: String) -> Self {
+        Self {
+            outcome: CommandOutcome::new(operation_id.clone(), CommandOutcomeKind::Pending),
+            import: ImportOutcome::Started,
+            job_id: Some(job_id),
+        }
+    }
+
+    /// The answer of `operation_id` whose dialog the owner closed. Pure.
+    pub fn cancelled(operation_id: &OperationId) -> Self {
+        Self {
+            outcome: CommandOutcome::new(operation_id.clone(), CommandOutcomeKind::Committed),
+            import: ImportOutcome::Cancelled,
+            job_id: None,
+        }
+    }
 }
 
 /// Why a host did not start an import.
@@ -150,9 +173,12 @@ async fn start(
     }
 }
 
-/// Whether the envelope's scope names the request's library. Pure.
+/// Whether the request is well formed: the protocol's schema version, a library ID, and an
+/// envelope scope naming that library. Pure.
 fn scoped(request: &ImportRequest) -> bool {
-    request.envelope.scope().as_str() == format!("library:{}", request.library_id)
+    request.envelope.schema_version() == filesquid_core::PROTOCOL_SCHEMA_VERSION
+        && !request.library_id.is_empty()
+        && request.envelope.scope().as_str() == format!("library:{}", request.library_id)
 }
 
 /// Run the host's starter off the async executor; a panicked starter is unavailable.
@@ -173,7 +199,7 @@ async fn answer_started(state: &ApiState, actor: &str, answer: ImportAnswer) -> 
     };
     let entry = entry
         .actor(actor)
-        .operation_id(answer.operation_id.as_str());
+        .operation_id(answer.outcome.operation_id().as_str());
     journal_entry(state, entry).await;
     Json(answer).into_response()
 }
@@ -185,8 +211,8 @@ async fn refuse_invalid(state: &ApiState, actor: &str) -> Response {
         .actor(actor)
         .error_code("invalid_request");
     journal_entry(state, entry).await;
-    let message = "The request names unknown, missing or malformed fields, or its envelope's \
-                   scope is not library:<library_id>.";
+    let message = "The request names unknown, missing or malformed fields, its envelope is not \
+                   schema version 1, or its scope is not library:<library_id>.";
     ApiError::new(ErrorCode::InvalidRequest, message).into_response()
 }
 

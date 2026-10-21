@@ -8,8 +8,9 @@ use filesquid_metadata::import::{SourceVolume, VolumeKind};
 use filesquid_metadata::raw::Raw;
 use std::path::Path;
 
-/// Filesystem types of network storage.
-const NETWORK_TYPES: [&str; 8] = [
+/// Filesystem types of network storage (Linux `mountinfo` names, FUSE ones with their
+/// `fuse.` prefix).
+const NETWORK_TYPES: [&str; 18] = [
     "nfs",
     "nfs4",
     "cifs",
@@ -17,8 +18,23 @@ const NETWORK_TYPES: [&str; 8] = [
     "smbfs",
     "afpfs",
     "9p",
+    "ceph",
+    "fuse.ceph",
+    "glusterfs",
+    "fuse.glusterfs",
     "fuse.sshfs",
+    "fuse.davfs",
+    "davfs",
+    "afs",
+    "lustre",
+    "gpfs",
+    "ncpfs",
 ];
+
+/// Whether a filesystem type is network storage. Pure.
+pub fn is_network_type(fs_type: &str) -> bool {
+    NETWORK_TYPES.contains(&fs_type)
+}
 
 /// Most mount table lines read (AGENTS.md section 22).
 const MAX_MOUNTS: usize = 4_096;
@@ -27,9 +43,7 @@ const MAX_MOUNTS: usize = 4_096;
 pub fn gather_volume(path: &Path) -> SourceVolume {
     let mount = find_mount(path);
     let kind = match &mount {
-        Some(found) if NETWORK_TYPES.contains(&found.fs_type.as_str()) => {
-            Fact::value(VolumeKind::Network)
-        }
+        Some(found) if is_network_type(&found.fs_type) => Fact::value(VolumeKind::Network),
         _ => unavailable("local and removable storage are not told apart here"),
     };
     SourceVolume {
@@ -61,22 +75,40 @@ pub struct Mount {
     pub fs_type: String,
 }
 
-/// The mount holding `path`: the mount table entry with `path`'s device. Reads
-/// `/proc/self/mountinfo` (Linux).
+/// The mount holding `path`: of the mount table entries with `path`'s device, the one with
+/// the deepest mount point above `path`'s canonical form (one device can be mounted at
+/// several points). Reads `/proc/self/mountinfo` (Linux).
 #[cfg(target_os = "linux")]
 fn find_mount(path: &Path) -> Option<Mount> {
     use std::os::unix::fs::MetadataExt;
     let device = std::fs::metadata(path).ok()?.dev();
     let (major, minor) = (libc::major(device), libc::minor(device));
+    let canonical = std::fs::canonicalize(path).ok()?;
     let table = std::fs::read_to_string("/proc/self/mountinfo").ok()?;
     let wanted = format!("{major}:{minor}");
-    table
+    let mounts = table
         .lines()
         .take(MAX_MOUNTS)
         .filter_map(parse_mountinfo)
         .filter(|(dev, _)| *dev == wanted)
-        .map(|(_, mount)| mount)
-        .last()
+        .map(|(_, mount)| mount);
+    deepest_mount(mounts, canonical.as_os_str().as_encoded_bytes())
+}
+
+/// Of `mounts`, the one whose point is the longest whole-segment prefix of `path`. Pure.
+pub fn deepest_mount(mounts: impl Iterator<Item = Mount>, path: &[u8]) -> Option<Mount> {
+    mounts
+        .filter(|mount| holds(&mount.point, path))
+        .max_by_key(|mount| mount.point.len())
+}
+
+/// Whether the mount point `point` is `path` or a folder above it. Pure.
+fn holds(point: &[u8], path: &[u8]) -> bool {
+    let point = match point {
+        b"/" => &b""[..],
+        other => other,
+    };
+    path.starts_with(point) && matches!(path.get(point.len()), None | Some(b'/'))
 }
 
 /// No mount table is read on this platform.

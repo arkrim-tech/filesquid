@@ -1,16 +1,19 @@
 //! The import worker of the desktop (Task DE-1.2; NFR-003, DE-S-014, DE-S-015): one thread
-//! that runs import jobs one at a time, in the order they were queued, each from its plan.
-//! The queue holds at most [`MAX_QUEUED_IMPORTS`] jobs; a full queue refuses another. Setting
-//! the stop flag (quit) suspends the running job with its checkpoint and ends the thread; the
-//! next launch queues every unfinished import job again ([`ImportWorker::resume_unfinished`]).
+//! that runs import jobs one at a time, each from its plan: first the jobs the import route
+//! queued, in the order queued (at most [`MAX_QUEUED_IMPORTS`] waiting; a full queue refuses
+//! another), and, whenever none is queued, the unfinished jobs a quit or a crash left, paged
+//! from the plans [`RECOVERY_PAGE`] at a time until every one was tried once this launch.
+//! Setting the stop flag (quit) suspends the running job with its checkpoint and ends the
+//! thread; the next launch tries every unfinished job again.
 
 use super::host::Build;
-use super::job::{run_import_job, ImportContext, IMPORT_KIND};
+use super::job::{run_import_job, ImportContext};
 use super::plans::SqliteImportPlans;
 use crate::HostFiles;
-use filesquid_api::jobs::Jobs;
+use filesquid_api::jobs::{JobError, Jobs};
 use filesquid_api::journal::{JournalEntry, Level, Outcome};
 use filesquid_api::journal_writer::JournalSender;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender, TrySendError};
@@ -20,6 +23,15 @@ use std::time::{Duration, Instant};
 
 /// Most import jobs waiting at once.
 pub const MAX_QUEUED_IMPORTS: usize = 64;
+
+/// Unfinished jobs read from the plans at a time.
+pub const RECOVERY_PAGE: usize = 64;
+
+/// Failed reads of the plans after which this launch stops looking for unfinished jobs.
+const MAX_RECOVERY_FAILURES: u32 = 5;
+
+/// Most job IDs remembered as run this launch, so recovery does not run a queued job again.
+const MAX_RUN_IDS: usize = 100_000;
 
 /// Journal operation of an import job that could not run.
 pub const IMPORT_JOB_OPERATION: &str = "import.job";
@@ -47,11 +59,14 @@ pub struct ImportServices {
     pub stop: Arc<AtomicBool>,
     /// The first retry's wait.
     pub retry_unit: Duration,
+    /// Whether to run the unfinished jobs a quit or a crash left: true once the launch
+    /// released the leases of crashed runs, so none is refused as still leased.
+    pub recover: bool,
 }
 
 /// The import worker: its queue and its thread.
 pub struct ImportWorker {
-    sender: SyncSender<String>,
+    sender: SyncSender<Queued>,
     thread: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -61,16 +76,27 @@ impl std::fmt::Debug for ImportWorker {
     }
 }
 
+/// A job the import route queued: its ID and its source identity, so a job whose plan is
+/// missing can still be failed.
+struct Queued {
+    id: String,
+    source: String,
+}
+
 impl ImportWorker {
-    /// Start the worker thread over `services`. Starts a thread.
+    /// Start the worker thread over `services`, with its own current-thread runtime. Starts a
+    /// thread; the thread looks for unfinished jobs as soon as it is idle.
     ///
     /// # Errors
-    /// No thread could be started.
+    /// No runtime or no thread could be started; no job is queued then.
     pub fn spawn(services: ImportServices) -> Result<Self, String> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .map_err(|err| format!("the import worker's runtime could not be built: {err}"))?;
         let (sender, receiver) = sync_channel(MAX_QUEUED_IMPORTS);
         let thread = std::thread::Builder::new()
             .name("filesquid-import".into())
-            .spawn(move || worker_loop(&services, &receiver))
+            .spawn(move || worker_loop(&services, &runtime, &receiver))
             .map_err(|err| format!("the import worker could not be started: {err}"))?;
         Ok(Self {
             sender,
@@ -78,28 +104,20 @@ impl ImportWorker {
         })
     }
 
-    /// Queue the import job `job_id`.
+    /// Queue the import job `job_id`, whose source identity is `source`.
     ///
     /// # Errors
     /// `queue_full` when [`MAX_QUEUED_IMPORTS`] jobs wait; `unavailable` when the worker ended.
-    pub fn enqueue(&self, job_id: &str) -> Result<(), &'static str> {
-        match self.sender.try_send(job_id.to_string()) {
+    pub fn enqueue(&self, job_id: &str, source: &str) -> Result<(), &'static str> {
+        let queued = Queued {
+            id: job_id.to_string(),
+            source: source.to_string(),
+        };
+        match self.sender.try_send(queued) {
             Ok(()) => Ok(()),
             Err(TrySendError::Full(_)) => Err("queue_full"),
             Err(TrySendError::Disconnected(_)) => Err("unavailable"),
         }
-    }
-
-    /// Queue every unfinished import job of `jobs` (a launch after a quit or a crash), at most
-    /// [`MAX_QUEUED_IMPORTS`]. Answers how many were queued. Reads the job store.
-    pub fn resume_unfinished(&self, jobs: &Jobs) -> usize {
-        let unfinished = jobs
-            .unfinished_of(IMPORT_KIND, MAX_QUEUED_IMPORTS)
-            .unwrap_or_default();
-        unfinished
-            .iter()
-            .filter(|job| self.enqueue(&job.id).is_ok())
-            .count()
     }
 
     /// Wait, at most `limit`, for the thread to end after the stop flag was set. A thread
@@ -123,35 +141,99 @@ impl ImportWorker {
     }
 }
 
-/// Run queued jobs until the stop flag is set or the queue closes.
-fn worker_loop(services: &ImportServices, receiver: &Receiver<String>) {
-    let runtime = match tokio::runtime::Builder::new_current_thread().build() {
-        Ok(runtime) => runtime,
-        Err(_) => {
-            journal_failure(services, None, "runtime_unavailable");
-            return;
+/// The recovery of one launch: where the paging stands, how often it failed, and the jobs
+/// already run.
+#[derive(Default)]
+struct Recovery {
+    after: Option<String>,
+    done: bool,
+    failures: u32,
+    ran: HashSet<String>,
+}
+
+impl Recovery {
+    /// Remember that `job_id` ran this launch (up to [`MAX_RUN_IDS`]).
+    fn note_ran(&mut self, job_id: &str) {
+        if self.ran.len() < MAX_RUN_IDS {
+            self.ran.insert(job_id.to_string());
         }
+    }
+}
+
+/// Run queued jobs, and unfinished ones whenever none is queued, until the stop flag is set
+/// or the queue closes.
+fn worker_loop(
+    services: &ImportServices,
+    runtime: &tokio::runtime::Runtime,
+    receiver: &Receiver<Queued>,
+) {
+    let mut recovery = Recovery {
+        done: !services.recover,
+        ..Recovery::default()
     };
     while !services.stop.load(Ordering::SeqCst) {
         match receiver.recv_timeout(POLL) {
-            Ok(job_id) => run_one(services, &runtime, &job_id),
-            Err(RecvTimeoutError::Timeout) => continue,
+            Ok(queued) => {
+                recovery.note_ran(&queued.id);
+                run_one(services, runtime, &queued.id, Some(&queued.source));
+            }
+            Err(RecvTimeoutError::Timeout) => recover_page(services, runtime, &mut recovery),
             Err(RecvTimeoutError::Disconnected) => return,
         }
     }
 }
 
-/// Run the job `job_id` from its plan; a job without a plan, or one that cannot run, is
-/// journaled with its code only.
-fn run_one(services: &ImportServices, runtime: &tokio::runtime::Runtime, job_id: &str) {
+/// Run the next page of unfinished jobs not run yet this launch; a failed read of the plans
+/// is journaled, and after [`MAX_RECOVERY_FAILURES`] this launch stops looking.
+fn recover_page(
+    services: &ImportServices,
+    runtime: &tokio::runtime::Runtime,
+    recovery: &mut Recovery,
+) {
+    if recovery.done {
+        return;
+    }
+    let page = match services
+        .plans
+        .unfinished_after(recovery.after.as_deref(), RECOVERY_PAGE)
+    {
+        Ok(page) => page,
+        Err(_) => {
+            recovery.failures += 1;
+            recovery.done = recovery.failures >= MAX_RECOVERY_FAILURES;
+            return journal_failure(services, None, "recovery_unavailable");
+        }
+    };
+    recovery.done = page.is_empty();
+    recovery.after = page.last().cloned().or(recovery.after.take());
+    for job_id in page {
+        if services.stop.load(Ordering::SeqCst) {
+            return;
+        }
+        if !recovery.ran.contains(&job_id) {
+            recovery.note_ran(&job_id);
+            run_one(services, runtime, &job_id, None);
+        }
+    }
+}
+
+/// Run the job `job_id` from its plan; a job without a plan is failed (when its `source`
+/// is known) and journaled, and a job that cannot run is journaled with its code only.
+fn run_one(
+    services: &ImportServices,
+    runtime: &tokio::runtime::Runtime,
+    job_id: &str,
+    source: Option<&str>,
+) {
     let plan = match services.plans.load(job_id) {
         Ok(Some(plan)) => plan,
-        Ok(None) => return journal_failure(services, Some(job_id), "plan_missing"),
+        Ok(None) => return fail_without_plan(services, job_id, source),
         Err(_) => return journal_failure(services, Some(job_id), "unavailable"),
     };
     let context = ImportContext {
         jobs: &services.jobs,
         files: &services.files,
+        plans: &services.plans,
         journal: &services.journal,
         build: &services.build,
         actor: &services.actor,
@@ -159,9 +241,35 @@ fn run_one(services: &ImportServices, runtime: &tokio::runtime::Runtime, job_id:
         stop: &services.stop,
         retry_unit: services.retry_unit,
     };
-    if let Err(err) = runtime.block_on(run_import_job(&context, job_id, &plan)) {
-        journal_failure(services, Some(job_id), err.error_code());
+    let Err(err) = runtime.block_on(run_import_job(&context, job_id, &plan)) else {
+        return;
+    };
+    journal_failure(services, Some(job_id), err.error_code());
+    let finished = matches!(
+        err,
+        JobError::NotFound | JobError::SourceChanged | JobError::Conflict("job_finished")
+    );
+    if finished && services.plans.finish(job_id).is_err() {
+        journal_failure(services, Some(job_id), "unavailable");
     }
+}
+
+/// Fail the job `job_id`, whose plan is missing, so it is not tried at every launch: start it
+/// against its `source` and fail it with `plan_missing`; journal the failure either way.
+fn fail_without_plan(services: &ImportServices, job_id: &str, source: Option<&str>) {
+    let failed = source
+        .ok_or(JobError::NotFound)
+        .and_then(|source| services.jobs.start(job_id, source))
+        .and_then(|running| running.fail("plan_missing"));
+    if failed.is_err() {
+        tracing::warn!(
+            operation = IMPORT_JOB_OPERATION,
+            job_id,
+            error_code = "plan_missing",
+            "an import job without a plan could not be failed"
+        );
+    }
+    journal_failure(services, Some(job_id), "plan_missing");
 }
 
 /// Journal an import job that could not run.

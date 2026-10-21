@@ -123,7 +123,7 @@ impl ImportRig {
             picked,
             shown: Mutex::new(0),
         });
-        let launch = start(&dir, &dialog, false, true).await;
+        let launch = start(&dir, &dialog, true).await;
         Self {
             dir,
             dialog,
@@ -139,7 +139,7 @@ impl ImportRig {
     /// directory, as a new process would, resuming every unfinished import job.
     pub async fn relaunch(&mut self) {
         self.shut_down();
-        let launch = start(&self.dir, &self.dialog, true, false).await;
+        let launch = start(&self.dir, &self.dialog, false).await;
         self.state = launch.state;
         self.token = launch.token;
         self.host = Some(launch.host);
@@ -259,9 +259,9 @@ async fn create_root(dir: &Path, host: &HostMonitor) {
 }
 
 /// Launch the import route over `<dir>/data`: the token, the file service with [`LIBRARY`]
-/// open at `<dir>/root` (created first when `create`), the jobs, the plans, the worker (queuing
-/// every unfinished import job when `resume`) and the route with `dialog`.
-async fn start(dir: &Path, dialog: &Arc<ScriptedDialog>, resume: bool, create: bool) -> Launch {
+/// open at `<dir>/root` (created first when `create`), the jobs, the plans, the worker (which
+/// runs every unfinished import job when idle) and the route with `dialog`.
+async fn start(dir: &Path, dialog: &Arc<ScriptedDialog>, create: bool) -> Launch {
     let state = ApiState::new();
     let token = install_launch_token(&state).expect("token");
     let files = install_file_service(&state).expect("files");
@@ -285,12 +285,10 @@ async fn start(dir: &Path, dialog: &Arc<ScriptedDialog>, resume: bool, create: b
             staging_dir: data.clone(),
             stop: stop.clone(),
             retry_unit: Duration::from_millis(1),
+            recover: true,
         })
         .expect("worker"),
     );
-    if resume {
-        worker.resume_unfinished(&jobs);
-    }
     let starting = ImportStarting {
         files,
         jobs,

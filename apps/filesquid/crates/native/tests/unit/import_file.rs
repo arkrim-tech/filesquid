@@ -96,10 +96,14 @@ fn source(dir: &Path, name: &str, bytes: &[u8]) -> PathBuf {
     path
 }
 
+/// The identifier of the file each test creates.
+const FILE_ID: &str = "0b1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e";
+
 /// The import of `path` from its folder.
 fn request<'a>(path: &'a Path, build: &'a Build) -> FileImport<'a> {
     FileImport {
         library_id: LIBRARY,
+        file_id: FILE_ID,
         path,
         import_root: path.parent().expect("folder"),
         method: ImportMethod::Folder,
@@ -120,6 +124,7 @@ async fn an_import_stores_the_original_under_its_uuid_with_its_record_in_one_ver
         .await
         .expect("imported");
     assert_eq!(view.version, "v1");
+    assert_eq!(view.file_id, FILE_ID, "the identifier the plan minted");
     assert_eq!(view.object_id, format!("urn:uuid:{}", view.file_id));
     let file_id = FileId::new(&view.file_id).expect("id");
     let original = read_file_original(&backend, &OwnerReadable, &file_id)
@@ -137,6 +142,11 @@ async fn an_import_stores_the_original_under_its_uuid_with_its_record_in_one_ver
     assert_eq!(entry.acquisition.method, ImportMethod::Folder);
     assert_eq!(entry.acquisition.storage, ByteStorage::Copied);
     assert_eq!(entry.acquisition.object_version, "v1");
+    assert_eq!(entry.acquisition.object_id, view.object_id);
+    assert_eq!(
+        entry.acquisition.logical_path.as_deref(),
+        Some(format!("original/{FILE_ID}.JPG").as_str())
+    );
     assert_eq!(entry.acquisition.size, 10);
     assert_eq!(entry.acquisition.job_id, Fact::value("job-1".to_string()));
     assert_eq!(entry.source.verified_size, 10);
@@ -160,7 +170,7 @@ async fn a_size_that_is_not_the_size_read_is_refused_and_nothing_is_published() 
     gathered.file.reported_size = Fact::value(99);
     let import = SourceImport {
         library_id: LIBRARY.into(),
-        file_id: None,
+        file_id: FILE_ID.into(),
         method: ImportMethod::FilePicker,
         job_id: None,
         operation_id: None,

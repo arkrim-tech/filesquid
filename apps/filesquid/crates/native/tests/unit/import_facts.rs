@@ -10,7 +10,7 @@ use filesquid_native::import::facts::{gather_source, SourceError};
 use filesquid_native::import::host::{gather_host, Build};
 use filesquid_native::import::names::name_form;
 use filesquid_native::import::time::at_nanos;
-use filesquid_native::import::volume::parse_mountinfo;
+use filesquid_native::import::volume::{deepest_mount, is_network_type, parse_mountinfo, Mount};
 use filesquid_native::import::xattr::decode;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -177,11 +177,12 @@ fn a_large_attribute_is_kept_by_size_and_digest() {
         .find(|a| a.name.as_bytes() == b"user.big");
     let big = big.expect("big");
     assert_eq!(big.size, 70 * 1024);
-    assert!(
-        matches!(big.value, AttrValue::Digest { .. }),
-        "{:?}",
-        big.value
-    );
+    use sha2::Digest as _;
+    let expected: String = sha2::Sha256::digest(vec![7u8; 70 * 1024])
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    assert_eq!(big.value, AttrValue::Digest { sha256: expected });
 }
 
 #[test]
@@ -224,8 +225,50 @@ fn the_quarantine_attribute_is_decoded() {
         decoded["event_id"],
         ["9F3E2A7D-8C9E-4F11-0B6F-6A585C1D4B5E"]
     );
-    assert_eq!(decoded["time"], [at_nanos(0x6712_f3a0, 0)]);
+    assert_eq!(
+        decoded["time"],
+        [at_nanos(0x6712_f3a0, 0).expect("in range")]
+    );
     assert!(decode(b"user.other", b"x").is_empty());
+}
+
+/// A property list of `body` in its XML form (the attributes are binary on disk; the
+/// reader accepts both).
+fn plist(body: &str) -> Vec<u8> {
+    format!(r#"<?xml version="1.0" encoding="UTF-8"?><plist version="1.0">{body}</plist>"#)
+        .into_bytes()
+}
+
+#[test]
+fn where_from_tags_comment_and_colour_label_are_decoded() {
+    let urls = plist("<array><string>https://example.org/a.jpg</string><string>https://example.org/</string></array>");
+    let decoded = decode(b"com.apple.metadata:kMDItemWhereFroms", &urls);
+    assert_eq!(
+        decoded["origin_urls"],
+        ["https://example.org/a.jpg", "https://example.org/"]
+    );
+    let tags = plist("<array><string>Holiday\n6</string><string>Family</string></array>");
+    let decoded = decode(b"com.apple.metadata:_kMDItemUserTags", &tags);
+    assert_eq!(decoded["tags"], ["Holiday", "Family"]);
+    assert_eq!(decoded["tag_colors"], ["6", "0"]);
+    let comment = plist("<string>From the beach</string>");
+    let decoded = decode(b"com.apple.metadata:kMDItemFinderComment", &comment);
+    assert_eq!(decoded["comment"], ["From the beach"]);
+    let mut info = [0u8; 32];
+    info[9] = 2 << 1;
+    let decoded = decode(b"com.apple.FinderInfo", &info);
+    assert_eq!(decoded["color_label"], ["2"]);
+    assert!(decode(b"com.apple.metadata:kMDItemWhereFroms", b"not a plist").is_empty());
+}
+
+#[test]
+fn times_outside_what_rfc_3339_states_are_refused() {
+    assert_eq!(
+        at_nanos(0, 5).as_deref(),
+        Some("1970-01-01T00:00:00.000000005Z")
+    );
+    assert_eq!(at_nanos(0, 1_000_000_000), None, "a whole second of nanos");
+    assert_eq!(at_nanos(253_402_300_800, 0), None, "after the year 9999");
 }
 
 #[test]
@@ -235,6 +278,32 @@ fn the_mount_table_gives_device_point_and_type() {
     assert_eq!(device, "98:0");
     assert_eq!(mount.point, b"/mnt/My Drive");
     assert_eq!(mount.fs_type, "ext4");
+}
+
+#[test]
+fn the_deepest_mount_above_the_file_is_chosen_and_network_types_are_known() {
+    let mount = |point: &str| Mount {
+        point: point.as_bytes().to_vec(),
+        fs_type: "ext4".into(),
+    };
+    let mounts = [
+        mount("/"),
+        mount("/srv/data"),
+        mount("/srv/database"),
+        mount("/home"),
+    ];
+    let found = deepest_mount(mounts.iter().cloned(), b"/srv/data/photos/a.jpg");
+    assert_eq!(found.map(|m| m.point), Some(b"/srv/data".to_vec()));
+    let found = deepest_mount(mounts.iter().cloned(), b"/srv/datapile/a.jpg");
+    assert_eq!(
+        found.map(|m| m.point),
+        Some(b"/".to_vec()),
+        "a whole segment only"
+    );
+    for network in ["nfs4", "cifs", "ceph", "fuse.sshfs", "davfs", "glusterfs"] {
+        assert!(is_network_type(network), "{network}");
+    }
+    assert!(!is_network_type("ext4"));
 }
 
 #[test]
@@ -259,6 +328,7 @@ fn the_host_names_this_build_and_its_system() {
     };
     let host = gather_host(&build);
     assert_eq!(host.filesquid_version, "0.1.0");
+    assert_eq!(host.filesquid_build, "test");
     assert_eq!(host.distribution, "filesquid");
     assert_eq!(
         host.architecture,

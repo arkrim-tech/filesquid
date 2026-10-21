@@ -336,17 +336,18 @@ cargo test -p filesquid-api --locked --lib files::names
 cargo test -p filesquid-api --locked --test integration_names --test unit_canonical --test features
 ```
 
-File and folder import on the desktop (Task DE-1.2, API-S-036, DE-S-019): `POST /api/v1/imports` takes a command envelope whose operation ID is the idempotency key. The owner picks files or a folder in the system's own dialog, shown by the Rust host. One durable import job then runs on a native worker thread, with these limits:
+File and folder import on the desktop (Task DE-1.2, API-S-036, DE-S-019): `POST /api/v1/imports` takes a command envelope whose operation ID is the idempotency key, and answers a command outcome: `pending` with the started job, or `committed` with `import: cancelled` when the owner closes the dialog. The owner picks files or a folder in the system's own dialog, shown by the Rust host. One durable import job then runs on a native worker thread:
 
-- each file gets at most 5 attempts;
-- the 10 GiB staging cap and the free-space reserve apply;
-- a quit suspends the job, and the next launch resumes it from its checkpoint.
+- the first run lists the picked sources once and keeps that listing as the job's manifest, each file with the identifier of its new file object; a resumed run continues the same manifest, and a file committed just before a crash is answered, not imported twice;
+- an entry that cannot be listed is kept with its code and quarantined; a selection of more than 100,000 entries fails the job (`too_many_files`);
+- each file gets at most 5 attempts; the 10 GiB staging cap and the free-space reserve apply;
+- a quit suspends the job, and the next launch runs every unfinished import job from its checkpoint.
 
-Each file is committed as its own OCFL object with its import record. The record's operating-system facts (times, owner, mode, extended attributes, volume, host and the name's Unicode form) are gathered before the file is read; a fact the platform lacks is recorded as unavailable with a reason. Until the streamed stage of the OCFL module lands, a file above 512 MiB is refused as `too_large_for_this_build`. The API route and its contract are tested in `filesquid-api` (`unit_imports_route`). The fact gathering, the one-file commit and the job (resume, attempts, quarantine and the worker) are tested in `filesquid-native` against files and OCFL storage roots in the system temporary directory. The desktop wiring is tested through the `filesquid://` scheme with a scripted dialog (`integration_imports`, and `desktop_imports_F-002.feature` in the desktop's `features`, which needs the `test-webdriver` feature):
+Each file is committed as its own OCFL object with its import record. The record's operating-system facts (times, owner, mode, extended attributes with the known macOS ones decoded, volume, host and the name's Unicode form) are gathered before the file is read; a fact this build cannot read is recorded as unavailable with a reason. Until the streamed stage of the OCFL module lands, a file above 512 MiB is refused as `too_large_for_this_build`. The API route is tested in `filesquid-api` (`unit_imports_route`), and its schemas and contract version by `unit_contract`. The fact gathering, the one-file commit and the job (manifest, resume, replay, attempts, quarantine and the worker's recovery) are tested in `filesquid-native` against files and OCFL storage roots in the system temporary directory. The desktop wiring is tested through the `filesquid://` scheme with a scripted dialog (`integration_imports`, and `desktop_imports_F-002.feature` in the desktop's `features`, which needs the `test-webdriver` feature):
 
 ```sh
 cd apps/filesquid
-cargo test -p filesquid-api --locked --test unit_imports_route
+cargo test -p filesquid-api --locked --test unit_imports_route --test unit_contract
 cargo test -p filesquid-native --features desktop --locked --test unit_import_facts --test unit_import_file --test unit_import_job
 cargo test -p filesquid-desktop --locked --test integration_imports
 cargo test -p filesquid-desktop --features test-webdriver --locked --test features

@@ -1237,7 +1237,7 @@ Estimated developer hours per phase (numeric `Estimated Time` values only; super
 |---|---|
 | Phase F0: FileSquid foundation | 266 |
 | Phase F1: FileSquid API | 168 |
-| Phase F2: FileSquid default UI | 508 |
+| Phase F2: FileSquid default UI | 520 |
 | Phase F3: FileSquid MVP (macOS desktop) | 52 |
 | Phase F3R: FileSquid release 1 (post-MVP) | 348 |
 | Phase F4: Encrypted backup and sync (`*.filesquid.tech`) | 260 |

@@ -106,11 +106,10 @@ impl ImportStarter for StartingImports {
         _actor: &str,
         request: &ImportRequest,
     ) -> Result<ImportAnswer, ImportStartError> {
-        Ok(ImportAnswer {
-            operation_id: request.envelope.operation_id().as_str().to_string(),
-            outcome: ImportOutcome::Started,
-            job_id: Some("job-1".to_string()),
-        })
+        Ok(ImportAnswer::started(
+            request.envelope.operation_id(),
+            "job-1".to_string(),
+        ))
     }
 }
 
@@ -313,16 +312,13 @@ pub fn samples() -> Vec<(&'static str, Vec<Value>)> {
         (
             "ImportAnswer",
             vec![
-                to_value(ImportAnswer {
-                    operation_id: "op-import".into(),
-                    outcome: ImportOutcome::Started,
-                    job_id: Some("job-1".into()),
-                }),
-                to_value(ImportAnswer {
-                    operation_id: "op-import".into(),
-                    outcome: ImportOutcome::Cancelled,
-                    job_id: None,
-                }),
+                to_value(ImportAnswer::started(
+                    import_request().envelope.operation_id(),
+                    "job-1".into(),
+                )),
+                to_value(ImportAnswer::cancelled(
+                    import_request().envelope.operation_id(),
+                )),
             ],
         ),
         (

@@ -3,12 +3,15 @@
 //!
 //! A request whose operation ID already started a job answers that job. Otherwise the owner
 //! picks files or a folder in a native dialog the host shows from Rust ([`RfdSources`], the
-//! `rfd` crate, so the webview keeps no dialog permission, DE-S-002), the host keeps the plan
-//! in its operational store, submits one durable import job and queues it on the native import
-//! worker. Only opaque IDs leave the host; the picked paths never do (DE-S-006).
+//! `rfd` crate, so the webview keeps no dialog permission, DE-S-002), the host submits one
+//! durable import job, keeps its plan in its operational store (a job whose plan cannot be
+//! kept is failed at once, so none is left without one) and queues it on the native import
+//! worker. The check for an existing job and the submission run under one lock, so two
+//! requests can never make two jobs for one operation ID. Only opaque IDs leave the host;
+//! the picked paths never do (DE-S-006).
 
 use filesquid_api::imports::{
-    ImportAnswer, ImportOutcome, ImportRequest, ImportSource, ImportStartError, ImportStarter,
+    ImportAnswer, ImportRequest, ImportSource, ImportStartError, ImportStarter,
 };
 use filesquid_api::jobs::Jobs;
 use filesquid_core::LibraryId;
@@ -19,7 +22,7 @@ use filesquid_native::import::worker::ImportWorker;
 use filesquid_native::HostFiles;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tauri::Manager;
 
 /// A native dialog in which the owner picks what to import.
@@ -91,10 +94,11 @@ pub struct ImportStarting {
     pub dialog: Box<dyn SourceDialog>,
 }
 
-/// The desktop's import starter: one dialog at a time.
+/// The desktop's import starter: one dialog at a time, one start at a time.
 pub struct DesktopImports {
     starting: ImportStarting,
     open: AtomicBool,
+    starts: Mutex<()>,
 }
 
 impl std::fmt::Debug for DesktopImports {
@@ -109,6 +113,7 @@ impl DesktopImports {
         Self {
             starting,
             open: AtomicBool::new(false),
+            starts: Mutex::new(()),
         }
     }
 
@@ -122,33 +127,49 @@ impl DesktopImports {
         picked
     }
 
-    /// Submit and queue the job of `plan` for `operation_id`. Writes the job store and the
-    /// plans.
+    /// Submit and queue the job of `plan` for `operation_id`; a job whose plan cannot be
+    /// kept is failed. Writes the job store and the plans.
     fn submit(&self, operation_id: &str, plan: &ImportPlan) -> Result<String, ImportStartError> {
         let job = submit_import(&self.starting.jobs, plan, operation_id)
             .map_err(|_| ImportStartError::Unavailable)?;
-        self.starting
+        if self
+            .starting
             .plans
             .save(&job.id, operation_id, plan)
-            .map_err(|_| ImportStartError::Unavailable)?;
-        self.starting.worker.enqueue(&job.id).map_err(|code| {
-            tracing::warn!(
-                operation = filesquid_api::imports::IMPORT_START_OPERATION,
-                error_code = code,
-                "the import job waits for the next launch"
-            );
-            ImportStartError::Unavailable
-        })?;
+            .is_err()
+        {
+            self.fail_unplanned(&job.id, &job.source);
+            return Err(ImportStartError::Unavailable);
+        }
+        self.starting
+            .worker
+            .enqueue(&job.id, &job.source)
+            .map_err(|code| {
+                tracing::warn!(
+                    operation = filesquid_api::imports::IMPORT_START_OPERATION,
+                    error_code = code,
+                    "the import job waits for the next launch"
+                );
+                ImportStartError::Unavailable
+            })?;
         Ok(job.id)
     }
-}
 
-/// The answer naming `job_id` for `operation_id`. Pure.
-fn started(operation_id: &str, job_id: String) -> ImportAnswer {
-    ImportAnswer {
-        operation_id: operation_id.to_string(),
-        outcome: ImportOutcome::Started,
-        job_id: Some(job_id),
+    /// Fail the job `job_id` (source identity `source`) whose plan could not be kept, logging
+    /// a failure to do so.
+    fn fail_unplanned(&self, job_id: &str, source: &str) {
+        let failed = self
+            .starting
+            .jobs
+            .start(job_id, source)
+            .and_then(|running| running.fail("plan_unsaved"));
+        if failed.is_err() {
+            tracing::warn!(
+                operation = filesquid_api::imports::IMPORT_START_OPERATION,
+                error_code = "plan_unsaved",
+                "an import job whose plan could not be kept was left pending"
+            );
+        }
     }
 }
 
@@ -160,16 +181,44 @@ fn method_of(source: ImportSource) -> ImportMethod {
     }
 }
 
+impl DesktopImports {
+    /// The job `operation_id` already started, if any. Reads the plans.
+    fn known_job(&self, operation_id: &str) -> Result<Option<String>, ImportStartError> {
+        self.starting
+            .plans
+            .job_of_operation(operation_id)
+            .map_err(|_| ImportStartError::Unavailable)
+    }
+
+    /// The job of `operation_id`: the one already started, or a new one for `plan`, decided
+    /// under the start lock so two requests never make two jobs. Writes the job store and
+    /// the plans.
+    fn start_once(
+        &self,
+        operation_id: &str,
+        plan: &ImportPlan,
+    ) -> Result<String, ImportStartError> {
+        let _one_start = self
+            .starts
+            .lock()
+            .map_err(|_| ImportStartError::Unavailable)?;
+        match self.known_job(operation_id)? {
+            Some(job_id) => Ok(job_id),
+            None => self.submit(operation_id, plan),
+        }
+    }
+}
+
 impl ImportStarter for DesktopImports {
     fn start(
         &self,
         _actor: &str,
         request: &ImportRequest,
     ) -> Result<ImportAnswer, ImportStartError> {
-        let operation_id = request.envelope.operation_id().as_str();
-        let known = self.starting.plans.job_of_operation(operation_id);
-        if let Some(job_id) = known.map_err(|_| ImportStartError::Unavailable)? {
-            return Ok(started(operation_id, job_id));
+        let operation = request.envelope.operation_id();
+        let operation_id = operation.as_str();
+        if let Some(job_id) = self.known_job(operation_id)? {
+            return Ok(ImportAnswer::started(operation, job_id));
         }
         let library =
             LibraryId::new(&request.library_id).map_err(|_| ImportStartError::LibraryNotFound)?;
@@ -177,19 +226,14 @@ impl ImportStarter for DesktopImports {
             return Err(ImportStartError::LibraryNotFound);
         }
         let Some(sources) = self.pick(request.source)? else {
-            return Ok(ImportAnswer {
-                operation_id: operation_id.to_string(),
-                outcome: ImportOutcome::Cancelled,
-                job_id: None,
-            });
+            return Ok(ImportAnswer::cancelled(operation));
         };
         let plan = ImportPlan {
             library_id: request.library_id.clone(),
-            collection_id: request.collection_id.clone(),
             sources,
             method: method_of(request.source),
         };
-        self.submit(operation_id, &plan)
-            .map(|job_id| started(operation_id, job_id))
+        self.start_once(operation_id, &plan)
+            .map(|job_id| ImportAnswer::started(operation, job_id))
     }
 }

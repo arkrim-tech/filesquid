@@ -688,7 +688,7 @@ export interface paths {
         put?: never;
         /**
          * Import files or a folder the owner picks in the host's dialog
-         * @description API-S-036. The host shows its own native dialog for the source named (`files` or `folder`), and imports what the owner picks into the open library as one durable import job (kind `import`): each file's original and its metadata record with the facts the host's operating system provides are committed in one version of the file's own object, as an upload is (API-S-026, ADR 038). The body carries a CommandEnvelope whose scope is `library:<library_id>`; its operation ID is the idempotency key, so the same operation ID answers the same job instead of starting a second import. An import only adds new files, so the expected revision is not compared. The answer is the job, or `cancelled` when the owner closed the dialog (no job). No path, file name or storage key crosses the API in the request, the answer, an error or the journal. A request that names a `collection_id` is refused 400 invalid_request (`collection_not_supported`) before any dialog, so no caller believes its files were filed. A request while a dialog is open is refused 409 conflict (`dialog_open`); a library that is not open answers 404 not_found; a host without an import dialog (filesquid-server) answers 503 unavailable. Each request is journaled once as `import.start`; each file as `import.file`.
+         * @description API-S-036. The host shows its own native dialog for the source named (`files` or `folder`), and imports what the owner picks into the open library as one durable import job (kind `import`): each file's original and its metadata record with the facts the host's operating system provides are committed in one version of the file's own object, as an upload is (API-S-026, ADR 038). The body carries a CommandEnvelope whose scope is `library:<library_id>`; its operation ID is the idempotency key, so the same operation ID answers the same job instead of starting a second import. An import only adds new files, so the expected revision is not compared. The answer carries the command outcome API-S-002 requires: `pending` with the job (`import: started`), or `committed` with `import: cancelled` when the owner closed the dialog and no job was made. No path, file name or storage key crosses the API in the request, the answer, an error or the journal. A request that names a `collection_id` is refused 400 invalid_request (`collection_not_supported`) before any dialog, so no caller believes its files were filed. A request while a dialog is open is refused 409 conflict (`dialog_open`); a library that is not open answers 404 not_found; a host without an import dialog (filesquid-server) answers 503 unavailable. Each request is journaled once as `import.start`; each file as `import.file`.
          */
         post: operations["startImport"];
         delete?: never;
@@ -2216,7 +2216,7 @@ export interface components {
          */
         ImportSource: "files" | "folder";
         /**
-         * @description How an import request ended.
+         * @description What became of an import request.
          * @enum {string}
          */
         ImportOutcome: "started" | "cancelled";
@@ -2227,9 +2227,11 @@ export interface components {
             collection_id?: string;
             source: components["schemas"]["ImportSource"];
         };
+        /** @description The answer of an import request: the command outcome (API-S-002) and what became of the request. */
         ImportAnswer: {
-            operation_id: string;
-            outcome: components["schemas"]["ImportOutcome"];
+            /** @description `pending` for a started import (its job's work is durable and not yet complete; a repeated operation ID answers it again), `committed` for a cancelled one (nothing changed). */
+            outcome: components["schemas"]["CommandOutcome"];
+            import: components["schemas"]["ImportOutcome"];
             /** @description The import job; absent when cancelled. */
             job_id?: string;
         };

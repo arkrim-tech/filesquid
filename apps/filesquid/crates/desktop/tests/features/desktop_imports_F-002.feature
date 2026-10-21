@@ -39,6 +39,7 @@ Feature: Desktop file and folder import
     Given the owner will pick a folder of 2 files
     When the app asks to import into a library that is not open
     Then the import should be refused as not found
+    And the dialog should not have been shown
     And the journal should record one import request without any path
 
   # Owner interaction

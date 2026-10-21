@@ -445,5 +445,5 @@ Logs: stdout JSON ([DE-S-003](./srs.md)). Default: checkpoint-on-quit. `bundle.a
 
 ## Summary Timeline
 
-- **Total Estimated Time:** 576 hours (568 hours unchecked plus 8 hours for completed DE-F0.1; excluding superseded DE-D.1; DE-1.7, 12 hours, added 2026-10-20)
+- **Total Estimated Time:** 598 hours, the sum of every task's Estimated Time: 484 hours unchecked and 114 hours for the completed tasks (DE-F0.1, DE-F1.1, DE-0.1 to DE-0.6, DE-0.8, DE-0.9, DE-1.1 and DE-1.2); superseded DE-D.1 excluded. DE-1.7 (12 hours) was added 2026-10-20; the earlier figure of 564 hours had not followed later task changes.
 - **Critical Path:** custom URI scheme and transport → capabilities (WebdriverIO) → SQLite I/O → OCFL reconcile → jobs/workers → import/gallery → organize/export/C2PA → M-A → F-041 recorder → recipes → keys/vectors → hosted OCFL → installers and overlays → C-7 publication → Article 50 after hosted-protection readiness → performance
