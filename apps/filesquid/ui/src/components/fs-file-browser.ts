@@ -110,6 +110,8 @@ export class FsFileBrowser extends HTMLElement {
   private cursor: string | null = null;
   private pages = 0;
   private head = "";
+  /** The location whose listing is loaded and shown now; undefined while loading or failed. */
+  private listed?: FileLocation;
   private loadingMore = false;
   private generation = 0;
   private abort?: AbortController;
@@ -202,13 +204,21 @@ export class FsFileBrowser extends HTMLElement {
   }
 
   /** True when `location` is the one already shown. */
-  private sameLocation(location: FileLocation): boolean {
-    const now = this.where;
+  private sameLocation(location: FileLocation, now: FileLocation = this.where): boolean {
     return (
       now.library_id === location.library_id &&
       now.object_id === location.object_id &&
       now.prefix === location.prefix
     );
+  }
+
+  /** The name the loaded listing of `location` shows for `path`, if it is the one shown. */
+  private nameOf(location: FileLocation, path: string): string | undefined {
+    const loaded = this.listed;
+    if (!loaded || !this.sameLocation(location, loaded) || !this.sameLocation(location)) {
+      return undefined;
+    }
+    return this.rowOfPath(path)?.name;
   }
 
   /** Build the frame, the listing and the write controller. */
@@ -251,6 +261,7 @@ export class FsFileBrowser extends HTMLElement {
       reload: () => this.reload(),
       committed: (operation: WriteOperation, commit: FileCommit, changed: readonly string[]) =>
         this.onCommitted(operation, commit, changed),
+      nameOf: (location: FileLocation, path: string) => this.nameOf(location, path),
       pendFolder: (path: string) => void this.pending.add(path),
       focusPath: (path: string) => this.list?.focusRow(path),
     };
@@ -306,15 +317,18 @@ export class FsFileBrowser extends HTMLElement {
     this.abort = abort;
     const generation = ++this.generation;
     const hadFocus = this.list?.hasFocus() ?? false;
+    this.listed = undefined;
     if (this.rows.length === 0 || extent === 0) this.showState({ kind: "loading" });
     this.updateCrumbs();
     try {
-      const read = await this.readPages(this.where, extent, abort.signal);
+      const where = this.where;
+      const read = await this.readPages(where, extent, abort.signal);
       if (generation !== this.generation) return;
       this.entries = read.entries;
       this.cursor = read.cursor;
       this.pages = read.pages;
       this.head = read.head;
+      this.listed = where;
       this.afterLoad(hadFocus);
     } catch (error) {
       if (generation !== this.generation || abort.signal.aborted) return;

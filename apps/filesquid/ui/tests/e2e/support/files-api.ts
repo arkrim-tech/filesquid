@@ -1,7 +1,7 @@
 /**
  * A fake of the file routes for the production-build Playwright tests (UI-F2.2): the page is the
  * real built UI, the routes (`files/listing`, `details`, `content`, `upload`, `folders`,
- * `moves`, `removals`, `restorations`, `content-handles` and `content/<handle>`) are answered
+ * `moves`, `renames`, `removals`, `restorations`, `content-handles` and `content/<handle>`) are answered
  * here from a `MemoryFileSource`, which answers as the API does. It records what the browser
  * sent (ranges, handle mints, content requests and their headers) so a test can assert on the
  * wire, and can refuse the next content requests to exercise the single re-mint.
@@ -216,6 +216,13 @@ async function routeWrites(page: Page, api: FilesApi): Promise<void> {
     });
   await post("folders", (b) => api.source.createFolder(object, String(b.path)));
   await post("moves", (b) => api.source.move(object, String(b.from), String(b.to)));
+  await post("renames", (b) =>
+    api.source.rename(
+      { library_id: String(b.library_id) },
+      String(b.file_id),
+      String(b.display_name),
+    ),
+  );
   await post("removals", (b) => api.source.remove(object, String(b.path)));
   await post("restorations", (b) =>
     api.source.restore(object, String(b.version), b.paths as string[]),

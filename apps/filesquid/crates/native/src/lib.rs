@@ -45,6 +45,8 @@ pub mod files;
 pub mod findings_sqlite;
 pub mod host_checks;
 pub mod host_monitor;
+#[cfg(feature = "desktop")]
+pub mod import;
 pub mod installation;
 pub mod jobs_sqlite;
 pub mod journal_sqlite;

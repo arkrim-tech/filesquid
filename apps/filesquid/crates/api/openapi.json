@@ -2488,6 +2488,71 @@
         }
       }
     },
+    "/api/v1/imports": {
+      "post": {
+        "operationId": "startImport",
+        "summary": "Import files or a folder the owner picks in the host's dialog",
+        "description": "API-S-036. The host shows its own native dialog for the source named (`files` or `folder`), and imports what the owner picks into the open library as one durable import job (kind `import`): each file's original and its metadata record with the facts the host's operating system provides are committed in one version of the file's own object, as an upload is (API-S-026, ADR 038). The body carries a CommandEnvelope whose scope is `library:<library_id>`; its operation ID is the idempotency key, so the same operation ID answers the same job instead of starting a second import. An import only adds new files, so the expected revision is not compared. The answer carries the command outcome API-S-002 requires: `pending` with the job (`import: started`), or `committed` with `import: cancelled` when the owner closed the dialog and no job was made. No path, file name or storage key crosses the API in the request, the answer, an error or the journal. A request that names a `collection_id` is refused 400 invalid_request (`collection_not_supported`) before any dialog, so no caller believes its files were filed. A request while a dialog is open is refused 409 conflict (`dialog_open`); a library that is not open answers 404 not_found; a host without an import dialog (filesquid-server) answers 503 unavailable. Each request is journaled once as `import.start`; each file as `import.file`.",
+        "x-filesquid-action": "files.write",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The import job, or that the owner cancelled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "The library is not open on this host (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A dialog is already open (`conflict`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
     "/api/v1/libraries/snapshot-copies": {
       "post": {
         "operationId": "copyLibrarySnapshot",
@@ -7184,6 +7249,71 @@
           "location_id": {
             "type": "string",
             "maxLength": 128
+          }
+        }
+      },
+      "ImportSource": {
+        "type": "string",
+        "description": "What the owner picks in the host's dialog.",
+        "enum": [
+          "files",
+          "folder"
+        ]
+      },
+      "ImportOutcome": {
+        "type": "string",
+        "description": "What became of an import request.",
+        "enum": [
+          "started",
+          "cancelled"
+        ]
+      },
+      "ImportRequest": {
+        "type": "object",
+        "required": [
+          "envelope",
+          "library_id",
+          "source"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "envelope": {
+            "$ref": "#/components/schemas/CommandEnvelope"
+          },
+          "library_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "collection_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Reserved for filing the imported files into a collection. Not supported yet: a request that carries it is refused 400 invalid_request (journal code `collection_not_supported`) and no dialog is shown."
+          },
+          "source": {
+            "$ref": "#/components/schemas/ImportSource"
+          }
+        }
+      },
+      "ImportAnswer": {
+        "type": "object",
+        "description": "The answer of an import request: the command outcome (API-S-002) and what became of the request.",
+        "required": [
+          "outcome",
+          "import"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "outcome": {
+            "$ref": "#/components/schemas/CommandOutcome",
+            "description": "`pending` for a started import (its job's work is durable and not yet complete; a repeated operation ID answers it again), `committed` for a cancelled one (nothing changed)."
+          },
+          "import": {
+            "$ref": "#/components/schemas/ImportOutcome"
+          },
+          "job_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The import job; absent when cancelled."
           }
         }
       },

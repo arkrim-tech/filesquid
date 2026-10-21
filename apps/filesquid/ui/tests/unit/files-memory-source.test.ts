@@ -235,6 +235,93 @@ describe("MemoryFileSource writes", () => {
     expect(s.head).toBe("v1");
   });
 
+  describe("rename (API-S-027)", () => {
+    const FILE_ID = "5b1d2c3e-7a4f-4e8b-9c6d-0a1b2c3d4e5f";
+    const WHERE: FileLocation = {
+      library_id: "lib",
+      object_id: `urn:uuid:${FILE_ID}`,
+      prefix: "original",
+    };
+    /** One file's own object, as the API stores it. */
+    const fileObject = () =>
+      new MemoryFileSource({
+        library_id: "lib",
+        object_id: `urn:uuid:${FILE_ID}`,
+        files: [{ path: `original/${FILE_ID}.txt`, displayName: "readme.txt", content: "hi" }],
+      });
+
+    it("changes only the display name, as a new version", async () => {
+      const s = fileObject();
+      const commit = await s.rename({ library_id: "lib" }, FILE_ID, "notes.txt");
+      expect(commit).toMatchObject({ object_id: WHERE.object_id, version: "v2" });
+      const entry = (await s.list(WHERE)).entries[0];
+      expect(entry).toMatchObject({ name: `${FILE_ID}.txt`, display_name: "notes.txt" });
+      expect(entry).toMatchObject({ path: `original/${FILE_ID}.txt` });
+    });
+
+    it("refuses a bad name (400), the current name (409) and an unknown file (404)", async () => {
+      const s = fileObject();
+      const rename = (id: string, name: string) => s.rename({ library_id: "lib" }, id, name);
+      for (const bad of ["", "a/b", "a\0b", "x".repeat(1025)]) {
+        await expect(rename(FILE_ID, bad)).rejects.toMatchObject({
+          code: "invalid_request",
+          status: 400,
+        });
+      }
+      await expect(rename(FILE_ID, "readme.txt")).rejects.toMatchObject({
+        code: "conflict",
+        status: 409,
+      });
+      await expect(rename("ffffffff-ffff-4fff-8fff-ffffffffffff", "n")).rejects.toMatchObject({
+        code: "not_found",
+        status: 404,
+      });
+      expect(s.head).toBe("v1");
+    });
+
+    it("shows the safe form of a stored name, as the API does (API-S-005)", async () => {
+      const s = fileObject();
+      await s.rename({ library_id: "lib" }, FILE_ID, "  a\\b\u0007c.txt ");
+      const entry = (await s.list(WHERE)).entries[0];
+      expect(entry).toMatchObject({ display_name: "a_bc.txt" });
+      const ref = { ...WHERE, version: "v2", path: `original/${FILE_ID}.txt`, display_name: "" };
+      expect((await s.details(ref)).display_name).toBe("a_bc.txt");
+      await s.rename({ library_id: "lib" }, FILE_ID, "   ");
+      expect((await s.list(WHERE)).entries[0]).toMatchObject({ display_name: "file" });
+    });
+
+    it("refuses a move from or to original, or below it, with 400 (use renames)", async () => {
+      const s = fileObject();
+      const original = `original/${FILE_ID}.txt`;
+      for (const [from, to] of [
+        [original, "original/other.txt"],
+        [original, "elsewhere.txt"],
+        ["original", "moved"],
+        ["elsewhere.txt", "original/in.txt"],
+      ] as const) {
+        await expect(s.move(WHERE, from, to)).rejects.toMatchObject({
+          code: "invalid_request",
+          status: 400,
+        });
+      }
+      expect(s.head).toBe("v1");
+    });
+
+    it("does not treat another UUID-named object as a file object", async () => {
+      const collection = new MemoryFileSource({
+        library_id: "lib",
+        object_id: `urn:uuid:${FILE_ID}`,
+        files: [{ path: "original/notes.txt", content: "n" }],
+      });
+      await expect(
+        collection.move(WHERE, "original/notes.txt", "original/b.txt"),
+      ).resolves.toMatchObject({ version: "v2" });
+      await expect(
+        collection.rename({ library_id: "lib" }, FILE_ID, "x.txt"),
+      ).rejects.toMatchObject({ code: "not_found" });
+    });
+  });
+
   it("removes keep history and restore brings a file back as a new version", async () => {
     const s = source();
     const removed = await s.remove(LOCATION, "Docs/a.txt");

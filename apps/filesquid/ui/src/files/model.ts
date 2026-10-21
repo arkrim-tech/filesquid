@@ -19,6 +19,10 @@ export type FolderPage = components["schemas"]["FolderPage"];
 export type FileDetails = components["schemas"]["FileDetails"];
 /** The one OCFL version a write published. */
 export type FileCommit = components["schemas"]["FileCommit"];
+/** The body of `POST /api/v1/files/renames`, generated from the API contract (API-S-027). */
+export type RenameRequest = components["schemas"]["RenameRequest"];
+/** The one version of a file's metadata record that a rename published. */
+export type RenameCommit = components["schemas"]["MetadataCommit"];
 /** The answer to creating a folder. */
 export type FolderAnswer = components["schemas"]["FolderAnswer"];
 /** The version an upload published in the file's own object (API-S-026). */
@@ -135,6 +139,8 @@ export const PAGE_SIZE = 200;
 export const MAX_LISTING_PAGES = 500;
 /** Longest file or folder name, in UTF-8 bytes. */
 export const MAX_NAME_BYTES = 255;
+/** Longest display name the renames route takes, in UTF-8 bytes (API-S-027). */
+export const MAX_DISPLAY_NAME_BYTES = 1024;
 /** Rows kept in the DOM above and below the visible ones. */
 export const OVERSCAN_ROWS = 5;
 /** Height of a list row, in rem (so the window follows the text size). */
@@ -280,15 +286,17 @@ export function isControl(character: string): boolean {
  * authority; this only spares a round trip for an obviously unusable name. Pure.
  *
  * @param raw The name as typed.
+ * @param limit Most UTF-8 bytes the name may have; {@link MAX_NAME_BYTES} for a file or
+ *   folder name, {@link MAX_DISPLAY_NAME_BYTES} for a display name.
  * @returns The problem, or undefined when the name is usable.
  */
-export function validateName(raw: string): NameProblem | undefined {
+export function validateName(raw: string, limit: number = MAX_NAME_BYTES): NameProblem | undefined {
   const name = raw.trim();
   if (name === "") return "empty";
   if (Array.from(name).some(isControl)) return "control";
   if (name.includes("/") || name.includes("\\")) return "separator";
   if (name === "." || name === "..") return "reserved";
-  if (new TextEncoder().encode(name).length > MAX_NAME_BYTES) return "long";
+  if (new TextEncoder().encode(name).length > limit) return "long";
   return undefined;
 }
 

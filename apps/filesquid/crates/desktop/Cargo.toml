@@ -88,6 +88,10 @@ name = "integration_history_wiring"
 path = "tests/integration/history_wiring.rs"
 
 [[test]]
+name = "integration_imports"
+path = "tests/integration/imports.rs"
+
+[[test]]
 name = "integration_library_routes"
 path = "tests/integration/library_routes.rs"
 
