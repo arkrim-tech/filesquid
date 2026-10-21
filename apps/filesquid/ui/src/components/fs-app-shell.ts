@@ -11,7 +11,7 @@
  *
  * Navigation (UI-F2.1a): the `nav` landmark has a `navigation` named slot for the distribution's
  * navigation tree (`<fs-nav-tree slot="navigation">`); until one is slotted it shows the
- * vocabulary of the main destinations as a static list. The Monitor and Settings links follow the slot.
+ * vocabulary of the main destinations as a static list. The library, Monitor and Settings links follow the slot.
  *
  * Host privacy (UI-F2.1b, UI-S-004, UI-S-018): the header carries `<fs-host-indicator>`, a
  * compact badge whose popover says who can read files on the host, so the host is visible on
@@ -24,6 +24,7 @@ import type { LabelTable } from "../theme/labels";
 import type { ThemeStore } from "../theme/theme-store";
 import type { HealthStatus } from "../api/client";
 import { MONITOR_ROUTE, SETTINGS_ROUTE } from "../app/routes";
+import { LIBRARY_ROUTE } from "../libraries/model";
 import { denialLabel } from "./denial";
 import type { FsThemeControl } from "./fs-theme-control";
 import { A11Y_STYLE, releaseDocumentA11yStyle, retainDocumentA11yStyle } from "./a11y-style";
@@ -169,7 +170,11 @@ export class FsAppShell extends HTMLElement {
     root.querySelector("ul.destinations")?.replaceChildren(...items.map((text) => li(text)));
     root
       .querySelector("ul.tools")
-      ?.replaceChildren(li(labels.monitor, MONITOR_ROUTE), li(labels.settings, SETTINGS_ROUTE));
+      ?.replaceChildren(
+        li(labels.libraryNavLink, LIBRARY_ROUTE),
+        li(labels.monitor, MONITOR_ROUTE),
+        li(labels.settings, SETTINGS_ROUTE),
+      );
     recoverFocus(root, hadFocus, () => root.querySelector("main"));
     void this.loadHealth();
   }

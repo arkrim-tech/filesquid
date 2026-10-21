@@ -12,6 +12,7 @@
 //! history size of API-S-014; the client events, journal query and export of API-S-030
 //! and API-S-031; the preferences, whole-file download and drive listings of API-S-011;
 //! the metadata property routes of API-S-035; the display and download names of API-S-027;
+//! the view operation, copy and storage use per collection of API-S-011;
 //! the sealing service and journal rebuild of API-S-032; and the job routes and job events
 //! of API-S-036).
 //!
@@ -119,12 +120,16 @@ mod drive_fixture;
 #[path = "support/drive_steps.rs"]
 mod drive_steps;
 
+#[path = "support/drive_catalog.rs"]
+mod drive_catalog;
 #[path = "support/journal_steps.rs"]
 mod journal_steps;
 #[path = "support/metadata_steps.rs"]
 mod metadata_steps;
 #[path = "support/names_steps.rs"]
 mod names_steps;
+#[path = "support/view_steps.rs"]
+mod view_steps;
 
 #[path = "support/seal_steps.rs"]
 mod seal_steps;
@@ -184,6 +189,7 @@ struct MonitorWorld {
     drive: drive_steps::DriveWorld,
     metadata: metadata_steps::MetadataWorld,
     names: names_steps::NamesWorld,
+    view: view_steps::ViewWorld,
     journal: journal_steps::JournalWorld,
     seal: seal_steps::SealWorld,
     jobs: job_steps::JobWorld,

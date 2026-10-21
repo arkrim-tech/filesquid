@@ -1,6 +1,6 @@
 # Task API-F1.6 Walkthrough: Job and event routes
 
-Branch: `feat/api-f1.6-job-event-routes` (global [Task FS-1.4](../../../../../../resources/implementation-plan.md#task-fs-1.4); [ADR 007](../../../../../../resources/architecture/007-durable-jobs-and-interactive-performance.md), [ADR 030](../../../../../../resources/architecture/030-filesquid-api-and-transports.md)). API contract `0.21.0`.
+Branch: `feat/api-f1.6-job-event-routes` (global [Task FS-1.4](../../../../../../resources/implementation-plan.md#task-fs-1.4); [ADR 007](../../../../../../resources/architecture/007-durable-jobs-and-interactive-performance.md), [ADR 030](../../../../../../resources/architecture/030-filesquid-api-and-transports.md)). API contract `0.22.0`.
 
 ## API-S-036: Job routes and job events
 
@@ -17,7 +17,7 @@ Also PRD [NFR-003](../../../../../../resources/prd.md#nfr-003-bounded-processing
 - **Events**: the new `job.update` topic carries the `JobView` for every stored change: submit, start, checkpoint, control, suspend, end and release at recovery. A lease renewal publishes nothing. The view carries no source identity, checkpoint, lease holder or fence.
 - **Journal**: `job.paused`, `job.resumed`, `job.cancel_requested`, `job.cancelled`, and `job.refused` with the rule's error code. Each names the job ID and operation ID.
 - **Persistence** (`filesquid-native`): `SqliteJobs` gains a `control` column, migrated into an existing table on open, and a `jobs_newest` index.
-- **Contract**: 0.21.0, with `schema.d.ts` regenerated. ADR 030 records the `job.update` topic.
+- **Contract**: 0.22.0, with `schema.d.ts` regenerated. ADR 030 records the `job.update` topic.
 
 ## Not delivered in this task, and why
 

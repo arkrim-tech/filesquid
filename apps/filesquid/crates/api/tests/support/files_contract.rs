@@ -184,6 +184,18 @@ pub fn sample(
     let plain = |rest: &str| (format!("{path}?{}", query(rest)), None);
     match (method.as_str(), path) {
         ("GET", "/api/v1/files/listing") | ("GET", "/api/v1/files/versions") => plain(""),
+        ("GET", "/api/v1/files/view") => {
+            let library = filesquid_core::LibraryId::new(LIBRARY).expect("library");
+            let node = filesquid_api::navigation::NodeRef::Library(library)
+                .to_handle()
+                .expect("handle");
+            (format!("{path}?node={node}&sort=modified_by_me"), None)
+        }
+        ("GET", "/api/v1/files/collection-history-size") => (
+            format!("{path}?collection_id={}", crate::drive_catalog::COLLECTION),
+            None,
+        ),
+        ("POST", "/api/v1/files/copies") => (path.into(), file_body(json!({}))),
         ("GET" | "HEAD", "/api/v1/files/content")
         | ("GET", "/api/v1/files/download")
         | ("GET", "/api/v1/files/details")
@@ -444,7 +456,101 @@ pub fn samples() -> Vec<(&'static str, Vec<Value>)> {
     all.extend(answer_samples());
     all.extend(request_samples());
     all.extend(metadata_samples());
+    all.extend(drive_samples());
     all
+}
+
+/// Serialized samples of the copy, view and collection storage-use schemas (Task API-F2.2).
+fn drive_samples() -> Vec<(&'static str, Vec<Value>)> {
+    use filesquid_api::files::copy::{CopyRequest, CopyView};
+    use filesquid_api::files::drive::{
+        FileRow, FolderKind, FolderRow, ViewKind, ViewPage, ViewRow,
+    };
+    use filesquid_api::files::CollectionHistorySizeView;
+    use filesquid_api::preferences::{FolderPlacement, SortDirection, SortKey};
+    let request = CopyRequest {
+        library_id: LIBRARY.into(),
+        file_id: FILE.into(),
+        message: Some("Copy for the album".into()),
+    };
+    let copy = CopyView {
+        library_id: LIBRARY.into(),
+        file_id: "0b6f6a58-5c1d-4b5e-9f3e-2a7d8c9e0f19".into(),
+        object_id: "urn:uuid:0b6f6a58-5c1d-4b5e-9f3e-2a7d8c9e0f19".into(),
+        version: "v1".into(),
+        created: "2026-10-20T00:00:00Z".into(),
+        source: format!("urn:uuid:{FILE}@v2"),
+    };
+    let folder = FolderRow {
+        node: "n1.abc".into(),
+        node_kind: FolderKind::Collection,
+        name: "Holidays".into(),
+    };
+    let file = |mine: Option<String>| FileRow {
+        file_id: FILE.into(),
+        object_id: format!("urn:uuid:{FILE}"),
+        display_name: "Été à Nice.jpg".into(),
+        media_type: "image/jpeg".into(),
+        size: 5,
+        modified: "2026-10-20T00:00:00.000Z".into(),
+        modified_by_me: mine.clone(),
+        opened_by_me: mine,
+    };
+    let rows = vec![
+        ViewRow::Folder(folder.clone()),
+        ViewRow::File(file(Some("2026-10-20T01:00:00.000Z".into()))),
+        ViewRow::File(file(None)),
+    ];
+    let page = |next: Option<String>, complete| ViewPage {
+        node: "n1.abc".into(),
+        view: ViewKind::All,
+        sort: SortKey::ModifiedByMe,
+        direction: SortDirection::Descending,
+        folders: FolderPlacement::Mixed,
+        rows: rows.clone(),
+        next_cursor: next,
+        complete,
+    };
+    let size = CollectionHistorySizeView {
+        library_id: LIBRARY.into(),
+        collection_id: "2c0d1e2f-3a4b-4c5d-8e6f-7a8b9c0d1e2f".into(),
+        files: 2,
+        contents: 3,
+        bytes: 42,
+        truncated: false,
+    };
+    let kinds = [
+        ViewKind::Home,
+        ViewKind::All,
+        ViewKind::Personal,
+        ViewKind::Recent,
+        ViewKind::Favorites,
+        ViewKind::Shares,
+        ViewKind::Tags,
+        ViewKind::Deleted,
+    ];
+    vec![
+        ("CopyRequest", vec![to_value(request)]),
+        ("FileCopy", vec![to_value(copy)]),
+        ("ViewKind", kinds.map(to_value).to_vec()),
+        (
+            "ViewFolderKind",
+            [FolderKind::Collection, FolderKind::VirtualCollection]
+                .map(to_value)
+                .to_vec(),
+        ),
+        ("ViewFolderRow", vec![to_value(ViewRow::Folder(folder))]),
+        ("ViewFileRow", rows[1..].iter().map(to_value).collect()),
+        ("ViewRow", rows.iter().map(to_value).collect()),
+        (
+            "ViewPage",
+            vec![
+                to_value(page(Some("v1.00".into()), true)),
+                to_value(page(None, false)),
+            ],
+        ),
+        ("CollectionHistorySize", vec![to_value(size)]),
+    ]
 }
 
 /// Serialized samples of the write and content-handle answers.

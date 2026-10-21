@@ -64,6 +64,7 @@ describe("<fs-app-shell>", () => {
       "Collections",
       "Virtual collections",
       "Virtual exhibits",
+      "Create or open a library",
       "Monitor",
       "Settings",
     ]);

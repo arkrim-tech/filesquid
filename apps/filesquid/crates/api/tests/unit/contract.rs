@@ -9,6 +9,9 @@ mod schema_check;
 #[path = "../support/files_contract.rs"]
 mod files_contract;
 
+#[path = "../support/drive_catalog.rs"]
+mod drive_catalog;
+
 #[path = "../support/history_fixture.rs"]
 mod history_fixture;
 
@@ -82,7 +85,7 @@ fn contract_is_openapi_3_1_with_the_crate_api_version() {
     let doc = contract();
     assert_eq!(doc["openapi"], "3.1.0");
     assert_eq!(doc["info"]["version"], API_VERSION);
-    assert_eq!(API_VERSION, "0.21.0");
+    assert_eq!(API_VERSION, "0.22.0");
 }
 
 #[test]
@@ -288,7 +291,7 @@ async fn owner_state() -> (ApiState, Monitor) {
     state.install_validation(Arc::new(validation));
     install_sample_history(&state);
     library_contract::install(&state, &monitor).await;
-    state.install_navigation(Arc::new(navigation_service()));
+    state.install_navigation(navigation_service());
     state.install_preferences(Arc::new(
         filesquid_api::preferences::MemoryPreferenceStore::new(),
     ));
@@ -306,18 +309,13 @@ impl filesquid_api::history::launch::BackfillLauncher for StartingLauncher {
     }
 }
 
-/// A navigation service over an empty catalog: the repository level answers 200.
-fn navigation_service() -> filesquid_api::navigation::NavigationService {
-    use filesquid_api::navigation::{HostAccess, MemoryFolderIndex, RepositoryInfo};
-    filesquid_api::navigation::NavigationService::new(
-        Arc::new(filesquid_api::library::MemoryCatalog::new()),
-        Arc::new(MemoryFolderIndex::new()),
-        Arc::new(HostAccess),
-        RepositoryInfo::new(
-            filesquid_core::RepositoryId::new("repository").expect("id"),
-            None,
-        ),
-    )
+/// A navigation service over a catalog holding the sample library, one collection and one
+/// virtual collection, with the sample file in both: every node route answers 200.
+fn navigation_service() -> Arc<filesquid_api::navigation::NavigationService> {
+    let drive = drive_catalog::DriveCatalog::new(files_contract::LIBRARY);
+    drive.file_in_collection(files_contract::FILE);
+    drive.add_to_virtual(files_contract::FILE);
+    drive.navigation
 }
 
 /// Send one request carrying [`TOKEN`] through the router, with the sample query and body of

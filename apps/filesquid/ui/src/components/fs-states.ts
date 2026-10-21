@@ -2,7 +2,7 @@
  * `<fs-states>`: what a view shows instead of its content (UI-F2.1a). Six distinct states,
  * each worded only from the active label table: loading and empty in a polite `role="status"`
  * region, error, offline, permission denied and unavailable (UI-F2.1b, an HTTP 503) in a
- * `role="alert"` region. Error, offline and unavailable offer Retry, which dispatches a bubbling, composed `fs-retry` event (ADR 031 Decision 6:
+ * `role="alert"` region. Unavailable also shows its reason when the view gives one. Error, offline and unavailable offer Retry, which dispatches a bubbling, composed `fs-retry` event (ADR 031 Decision 6:
  * changes flow up as events); the view that owns the data decides what to reload.
  *
  * Accessibility (UI-S-016): both live regions exist from the first render and are updated in
@@ -138,11 +138,12 @@ function alertContent(state: ViewState, labels: LabelTable, retry: () => void): 
     return detail ? [title, paragraph("detail", detail)] : [title];
   }
   const title = paragraph("title", alertTitle(state, labels));
+  const reason = state.kind === "unavailable" ? state.reason : undefined;
   const button = document.createElement("button");
   button.type = "button";
   button.textContent = labels.stateRetry;
   button.addEventListener("click", retry);
-  return [title, button];
+  return reason ? [title, paragraph("detail", reason), button] : [title, button];
 }
 
 /** A `<p>` with a class and text. */

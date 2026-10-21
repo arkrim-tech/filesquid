@@ -157,6 +157,10 @@ name = "integration_names"
 path = "tests/integration/names.rs"
 
 [[test]]
+name = "integration_drive_views"
+path = "tests/integration/drive_views.rs"
+
+[[test]]
 name = "integration_drive"
 path = "tests/integration/drive.rs"
 
