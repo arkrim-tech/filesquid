@@ -1,6 +1,6 @@
 # Task DE-1.2 Walkthrough: File and folder import
 
-Branch: `feat/de-1.2-file-folder-import` (part of global [Task 1.2](../../../../../../resources/implementation-plan.md#task-1.2)). API contract `0.21.0` (one above `0.20.0` of API-F1.13, PR #111).
+Branch: `feat/de-1.2-file-folder-import` (part of global [Task 1.2](../../../../../../resources/implementation-plan.md#task-1.2)). API contract `0.22.0` (one above `0.21.0` of API-F2.2 part 2, PR #117).
 
 ## What changed
 
@@ -18,7 +18,7 @@ Branch: `feat/de-1.2-file-folder-import` (part of global [Task 1.2](../../../../
     - refuses bytes whose length is not the stated size (`size_mismatch`).
 
     An import only ever creates version v1 of a new object, so the version its entry cites is the one committed.
-  - `openapi.json` is 0.21.0, with schemas `ImportRequest`, `ImportAnswer`, `ImportSource` and `ImportOutcome`. `ui/src/api/schema.d.ts` was regenerated.
+  - `openapi.json` is 0.22.0, with schemas `ImportRequest`, `ImportAnswer`, `ImportSource` and `ImportOutcome`. `ui/src/api/schema.d.ts` was regenerated.
 - **`filesquid-native`** (`desktop` feature; [`import/`](../../../native/src/import/mod.rs)):
   - `facts`, `xattr`, `volume`, `host`, `names` and `time` gather the import-record facts before the file is read, using `libc` and crates already in the lockfile only:
     - stat facts and times in nanoseconds (a time outside 1970 to 9999 is unavailable, never misformatted);
@@ -241,7 +241,7 @@ Feature: Desktop file and folder import
 174 steps (174 passed)
 ```
 
-The contract tests (`unit_contract`) check version 0.21.0 and the import schemas' samples. The authorisation table (`unit_auth`, `/api/v1/imports` under `files.write`) also passes. The full pre-commit run is recorded in the pull request.
+The contract tests (`unit_contract`) check version 0.22.0 and the import schemas' samples. The authorisation table (`unit_auth`, `/api/v1/imports` under `files.write`) also passes. The full pre-commit run is recorded in the pull request.
 
 ## SRS mapping
 
