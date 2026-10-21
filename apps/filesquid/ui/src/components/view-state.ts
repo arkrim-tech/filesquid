@@ -2,7 +2,7 @@
  * The non-content states a view can be in (UI-F2.1a): empty, loading, error, offline,
  * permission denied and unavailable (UI-F2.1b: the host answered 503, because it has not
  * installed or started the service yet, or because storage cannot be read or reached right
- * now), each shown distinctly by `<fs-states>`, and the rule that turns a failed load into one
+ * now; a view may add the reason it knows), each shown distinctly by `<fs-states>`, and the rule that turns a failed load into one
  * of the four failure states. Pure.
  */
 import { ApiError, type DenialReason } from "../api/client";
@@ -17,7 +17,7 @@ export type ViewState =
   | { readonly kind: "error" }
   | { readonly kind: "offline" }
   | { readonly kind: "denied"; readonly reason?: DenialReason }
-  | { readonly kind: "unavailable" };
+  | { readonly kind: "unavailable"; readonly reason?: string };
 
 /** One of the state kinds. */
 export type ViewStateKind = ViewState["kind"];

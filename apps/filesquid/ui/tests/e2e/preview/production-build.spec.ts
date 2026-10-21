@@ -87,6 +87,7 @@ test("navigation, API status and theme legend words come from the active label t
     ["collections", "virtualCollections", "folders"].map((key) => label(labels, key)),
   );
   await expect(shell.locator("nav > ul.tools li")).toHaveText([
+    label(labels, "libraryNavLink"),
     label(labels, "monitor"),
     label(labels, "settings"),
   ]);

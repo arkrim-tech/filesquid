@@ -41,6 +41,11 @@ describe("<fs-states>", () => {
     [{ kind: "error" }, "alert", `${labels.stateError} ${labels.stateRetry}`],
     [{ kind: "offline" }, "alert", `${labels.stateOffline} ${labels.stateRetry}`],
     [{ kind: "unavailable" }, "alert", `${labels.stateUnavailable} ${labels.stateRetry}`],
+    [
+      { kind: "unavailable", reason: labels.libraryChooserUnavailable },
+      "alert",
+      `${labels.stateUnavailable} ${labels.libraryChooserUnavailable} ${labels.stateRetry}`,
+    ],
     [{ kind: "denied" }, "alert", labels.stateDenied],
     [
       { kind: "denied", reason: "not_permitted" },

@@ -26,6 +26,9 @@ const ELEMENTS = [
   "fs-breadcrumb",
   "fs-host-indicator",
   "fs-monitor",
+  "fs-library-start",
+  "fs-library-detail",
+  "fs-library-repair",
 ];
 
 test.beforeEach(async ({ page }) => {
@@ -80,6 +83,7 @@ test("navigation, API status and theme legend words come from the active label t
       "collections",
       "virtualCollections",
       "virtualExhibits",
+      "libraryNavLink",
       "monitor",
       "settings",
     ].map((key) => label(labels, key)),
@@ -117,5 +121,37 @@ test("a refused health call shows the unavailable alert", async ({ page }) => {
   await expect(page.locator('fs-app-shell [role="alert"]')).toContainText(
     label(labels, "apiUnavailable"),
   );
+  expect(errors).toEqual([]);
+});
+
+test("the library flow runs in ImageSquid with its own label table (UI-1.1)", async ({ page }) => {
+  const errors = trackErrors(page);
+  const sent: string[] = [];
+  await page.route("**/api/v1/libraries/**", (route) => {
+    const url = new URL(route.request().url());
+    sent.push(`${route.request().method()} ${url.pathname}`);
+    if (url.pathname.endsWith("/location-choices")) {
+      return route.fulfill({ json: { outcome: "chosen", location_id: "loc-1" } });
+    }
+    if (url.pathname.endsWith("/repair-candidates")) {
+      return route.fulfill({ json: { candidates: [], truncated: false } });
+    }
+    return route.fulfill({ json: { library_id: "lib-1", spec_version: "1.1", objects: 4 } });
+  });
+  await page.goto("/#/library");
+  const start = page.locator("fs-library-start");
+  await expect(start.locator("h2")).toHaveText(label(labels, "libraries"));
+  await expect(start.locator("section[data-flow] button")).toHaveText([
+    label(labels, "libraryCreate"),
+    label(labels, "libraryOpen"),
+    label(labels, "libraryRecover"),
+  ]);
+  await start.locator('button[data-action="open"]').click();
+  await expect(page).toHaveURL(/#\/library\/lib-1$/);
+  await expect(page.locator("fs-library-detail h2")).toHaveText(label(labels, "library"));
+  expect(sent.slice(0, 2)).toEqual([
+    "POST /api/v1/libraries/location-choices",
+    "POST /api/v1/libraries/openings",
+  ]);
   expect(errors).toEqual([]);
 });
