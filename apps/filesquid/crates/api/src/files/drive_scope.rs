@@ -135,7 +135,7 @@ pub fn collection_files(
             visibility,
         };
         let room = MAX_SIZE_OBJECTS + 1 - files.len();
-        let read = |after: Option<&PageKey>| catalog.files(&listing, after, MAX_PAGE);
+        let read = |after: Option<&PageKey>, limit| catalog.files(&listing, after, limit);
         let entries = read_bounded(read, room)?;
         files.extend(
             entries
@@ -256,7 +256,7 @@ fn list_files(
     catalog: &dyn LibraryCatalog,
     listing: &FileListing,
 ) -> Result<(Vec<FileId>, bool), FileError> {
-    let read = |after: Option<&PageKey>| catalog.files(listing, after, MAX_PAGE);
+    let read = |after: Option<&PageKey>, limit| catalog.files(listing, after, limit);
     let entries = read_bounded(read, MAX_VIEW_FILES + 1)?;
     let complete = entries.len() <= MAX_VIEW_FILES;
     let files = entries
@@ -347,18 +347,24 @@ fn collect_folders(
     Ok(false)
 }
 
-/// Up to `bound` items of a listing read page by page through `read`.
+/// Up to `bound` items of a listing read page by page through `read`, which takes the
+/// position to start after and the most items to answer: each page asks for no more than
+/// the items still within `bound`, at most [`MAX_PAGE`].
 pub(super) fn read_bounded<T>(
-    read: impl Fn(Option<&PageKey>) -> Result<Vec<Keyed<T>>, CatalogError>,
+    read: impl Fn(Option<&PageKey>, usize) -> Result<Vec<Keyed<T>>, CatalogError>,
     bound: usize,
 ) -> Result<Vec<Keyed<T>>, FileError> {
     let mut items: Vec<Keyed<T>> = Vec::new();
     for _ in 0..=bound / MAX_PAGE {
+        let wanted = bound.saturating_sub(items.len()).min(MAX_PAGE);
+        if wanted == 0 {
+            break;
+        }
         let after = items.last().map(|keyed| keyed.key.clone());
-        let page = read(after.as_ref()).map_err(catalog_error)?;
-        let full = page.len() == MAX_PAGE;
+        let page = read(after.as_ref(), wanted).map_err(catalog_error)?;
+        let full = page.len() >= wanted;
         items.extend(page);
-        if !full || items.len() >= bound {
+        if !full {
             break;
         }
     }
@@ -381,6 +387,31 @@ pub(super) fn catalog_error(err: CatalogError) -> FileError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_page_asks_only_for_what_the_bound_leaves() {
+        let asked = std::cell::RefCell::new(Vec::new());
+        let read = |after: Option<&PageKey>, limit: usize| {
+            asked.borrow_mut().push(limit);
+            let start = after.map_or(0, |key| key.order + 1);
+            Ok((start..start + limit as i64)
+                .map(|order| Keyed {
+                    key: PageKey {
+                        order,
+                        id: order.to_string(),
+                    },
+                    item: (),
+                })
+                .collect())
+        };
+        let items = read_bounded(read, MAX_PAGE + 1).expect("items");
+        assert_eq!(items.len(), MAX_PAGE + 1);
+        assert_eq!(
+            *asked.borrow(),
+            [MAX_PAGE, 1],
+            "the last page asks for one entry"
+        );
+    }
 
     #[test]
     fn only_changes_and_openings_count_and_the_latest_wins() {

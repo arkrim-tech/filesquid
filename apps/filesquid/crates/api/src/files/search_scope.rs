@@ -15,7 +15,6 @@ use super::drive_scope::{catalog_error, folder_rows, read_bounded};
 use super::error::FileError;
 use super::nodes::file_error;
 use crate::auth::Principal;
-use crate::journal::MAX_PAGE;
 use crate::library::{FileEntry, FileListing, FileScope, Keyed, LibraryCatalog, VisibilityFilter};
 use crate::navigation::{NavigationService, NodeRef};
 use filesquid_core::{CollectionId, FileId, LibraryId};
@@ -96,7 +95,7 @@ pub fn search_scope(
             scope: target.scope,
             visibility,
         };
-        let mut entries = read_bounded(|after| catalog.files(&listing, after, MAX_PAGE), room)?;
+        let mut entries = read_bounded(|after, limit| catalog.files(&listing, after, limit), room)?;
         // An entry past the bound is read only to learn that the scope is larger: it is
         // dropped here, never permission-checked or examined.
         let over = entries.len() == room;
@@ -141,7 +140,7 @@ fn targets(
     match node {
         None | Some(NodeRef::Repository(_)) => {
             let repository = navigation.repository_id();
-            let read = |after: Option<&_>| catalog.libraries(repository, after, MAX_PAGE);
+            let read = |after: Option<&_>, limit| catalog.libraries(repository, after, limit);
             let libraries = read_bounded(read, MAX_SEARCH_LIBRARIES + 1)?;
             let complete = libraries.len() <= MAX_SEARCH_LIBRARIES;
             let targets = libraries
