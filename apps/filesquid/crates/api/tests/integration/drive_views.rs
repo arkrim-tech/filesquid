@@ -380,6 +380,40 @@ async fn by_me_keys_follow_only_the_callers_own_changes_and_openings() {
     assert_eq!(downloads[0].outcome, Outcome::Succeeded);
 }
 
+#[tokio::test]
+async fn a_download_is_journaled_with_opaque_ids_only() {
+    let (rig, _drive) = rig().await;
+    let file = upload(&rig, "Secret holiday.jpg", b"jpeg").await;
+    let path = encode(&format!("original/{file}.jpg"));
+    let download = rig
+        .get(&format!(
+            "/api/v1/files/download?library_id={LIBRARY}&object_id={}&path={path}",
+            encode(&format!("urn:uuid:{file}"))
+        ))
+        .await;
+    assert_eq!(download.status, StatusCode::OK);
+    let entries = rig.journaled("file.download");
+    assert_eq!(entries.len(), 1);
+    let entry = &entries[0];
+    assert_eq!(entry.outcome, Outcome::Succeeded);
+    assert_eq!(
+        entry.target_ids,
+        [
+            LIBRARY.to_string(),
+            format!("urn:uuid:{file}"),
+            "v1".to_string()
+        ]
+    );
+    assert!(entry
+        .target_ids
+        .iter()
+        .all(|id| filesquid_api::journal::is_opaque(id)));
+    let text = serde_json::to_string(entry).expect("json");
+    for leak in ["Secret", "holiday", "original/", ".jpg"] {
+        assert!(!text.contains(leak), "{leak} in {text}");
+    }
+}
+
 /// Journal a later opening and change of `file` by another actor.
 fn another_user_touches(rig: &FilesRig, file: &str) {
     let object = format!("urn:uuid:{file}");

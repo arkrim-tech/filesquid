@@ -320,11 +320,11 @@ Branch `feat/api-f2.2-copy-view-listing`, contract 0.21.0. The owner's decision 
 
 | SRS ID and title | Covered by |
 |---|---|
-| [API-S-011](../srs.md) View operation, per-user UI preferences, storage use, copy, move and ZIP download (part 2: copy, view operation, storage use per collection) | `integration_drive_views` (10 tests), `view_copy_and_storage_use_API-S-011.feature` (7 scenarios), `files::drive` unit tests, `unit_contract`, `unit_auth` |
+| [API-S-011](../srs.md) View operation, per-user UI preferences, storage use, copy, move and ZIP download (part 2: copy, view operation, storage use per collection) | `integration_drive_views` (11 tests), `view_copy_and_storage_use_API-S-011.feature` (7 scenarios), `files::drive` unit tests, `unit_contract`, `unit_auth` |
 | [SRS-F-062](../../../../../../resources/srs.md#srs-f-062-drive-style-views-sorting-selection-and-layout-preferences) Drive-style views, sorting, selection and layout preferences | the sort keys in both directions, folder placement, the view-local filter, stable cursor paging, `modified_by_me` and `opened_by_me` from the caller's own events only, copy with a new FileId and stored name: `by_me_keys_follow_only_the_callers_own_changes_and_openings`, `paging_is_stable_with_a_cursor_and_a_cursor_of_another_view_is_refused` |
 | [API-S-026](../srs.md) The FileSquid OCFL application profile | the copy's object `files/<new-id>` with `original/<new-uuid>.<ext>` and a record bound to it: `a_copy_record_keeps_what_the_owner_sees_and_is_bound_to_the_new_object` |
 | [API-S-027](../srs.md) Display and download names | view rows and copies carry the display name, never the stored name |
-| [API-S-028](../srs.md) PROV-O record per commit and journal linkage | successful single-file downloads journaled as `file.download` |
+| [API-S-028](../srs.md) PROV-O record per commit and journal linkage | successful single-file downloads journaled as `file.download` with opaque IDs only: `a_download_is_journaled_with_opaque_ids_only` |
 | [API-S-002](../srs.md) The versioned API contract owned by this crate | contract 0.21.0, regenerated `ui/src/api/schema.d.ts` |
 
 ## What changed (part 2)
@@ -367,16 +367,17 @@ test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 51 filtered out; fin
 
 $ cargo test -p filesquid-api --locked --test integration_drive_views
 test a_copy_of_an_unknown_or_malformed_file_publishes_nothing ... ok
-test a_virtual_collection_lists_its_members_and_the_filter_narrows_any_view ... ok
-test a_library_view_shows_its_collections_as_folders_beside_its_unfiled_files ... ok
+test a_download_is_journaled_with_opaque_ids_only ... ok
 test a_copy_is_a_new_file_that_keeps_the_display_name_and_names_its_source ... ok
 test a_collection_view_sorts_by_each_key_in_both_directions ... ok
-test the_deleted_view_lists_only_deleted_files_and_other_views_wait ... ok
-test storage_use_per_collection_counts_its_files_history_once ... ok
+test a_virtual_collection_lists_its_members_and_the_filter_narrows_any_view ... ok
+test a_library_view_shows_its_collections_as_folders_beside_its_unfiled_files ... ok
 test by_me_keys_follow_only_the_callers_own_changes_and_openings ... ok
 test paging_is_stable_with_a_cursor_and_a_cursor_of_another_view_is_refused ... ok
 test unknown_and_foreign_nodes_are_refused ... ok
-test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+test storage_use_per_collection_counts_its_files_history_once ... ok
+test the_deleted_view_lists_only_deleted_files_and_other_views_wait ... ok
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
 
 $ cargo test -p filesquid-api --locked --test unit_canonical (the copy test and summary)
 test a_copy_record_keeps_what_the_owner_sees_and_is_bound_to_the_new_object ... ok
