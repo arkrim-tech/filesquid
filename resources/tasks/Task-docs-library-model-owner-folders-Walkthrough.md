@@ -117,10 +117,11 @@ Branch: `docs/library-model-owner-folders`. Documentation only; no code, contrac
 The owner's words do not settle these, so nothing was decided for them. ADR 041 lists them, and API-F2.15, DE-1.7 and UI-F2.17 are told not to decide them:
 
 1. **Restore:** where does a restored file go once its original collection no longer exists? Under "Must choose" the likely answer is that the owner picks a destination, but that is not decided.
-2. **Retention scope:** is the 30-day retention configurable per library or per installation?
+2. **Retention scope:** the owner called 30 days the "default". At what scope can it be changed: per library or per installation?
 3. **Single files:** does deleting a single file, not a whole collection, use the same Recently deleted area and the same 30 days? (The existing recoverable deletion of a file already defaults to 30 days and is listed in the deleted view.)
 4. **"Expunged for good":** what does it mean for the OCFL object and its version history? Removing the object directory is an OCFL-level purge that also removes the history PRD F-065 keeps.
-5. **Physical folder:** is Recently deleted only a reserved navigation entry over the deleted state (no bytes move, as recorded), or must it also be a physical folder in the library's storage root?
+5. **Physical folder:** ADR 041 Decision 8 says files MUST move into Recently deleted. Is that area only a reserved navigation entry over the deleted state, or must it also be a physical folder in the library's storage root?
+6. **Same logical path (from Cubic review):** when an upload, import, copy or move would give a second file the same logical path in one collection, is it refused, renamed or stored beside the first? API-F2.14 waits for the owner on that part.
 
 ### Checked, no conflict: C-056 and UI-1.1
 
@@ -131,7 +132,7 @@ The two suspected contradictions were checked and do not conflict:
 
 ## Verification
 
-The change scope is not `docs`: the hook counts a change under `crates/<crate>/resources/` as a change to that crate, so the head commit needs the full suite. Run from the repository root on the complete tree (environment: `CARGO_TARGET_DIR` shared target, `CARGO_INCREMENTAL=0`, `CARGO_PROFILE_DEV_DEBUG=0`, a private `TMPDIR`):
+The change scope is not `docs`: the hook classifies changes under `crates/<crate>/resources/` as that crate's `rust:` scope, and the head-commit runs forced the full suite with `FULL=1`. Run from the repository root on the complete tree (environment: `CARGO_TARGET_DIR` shared target, `CARGO_INCREMENTAL=0`, `CARGO_PROFILE_DEV_DEBUG=0`, a private `TMPDIR`):
 
 ```text
 $ FULL=1 bash scripts/pre-commit.sh
