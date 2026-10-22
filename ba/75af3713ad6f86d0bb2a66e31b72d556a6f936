@@ -1,0 +1,27 @@
+apps/filesquid/crates/ocfl/README.md
+  s_2abcc504adb937::t_70b8fb354c9d0d 39
+apps/filesquid/crates/ocfl/src/storage/fs/uploads.rs
+  s_2abcc504adb937::t_54983f27ef8955 14-19,28,46-52,112,211-237,239-242,257-355
+scripts/docs/test_merge_mvp_progress.py
+  s_2abcc504adb937::t_13e6522bd24e2b 80-88
+scripts/verify_changed_scope.sh
+  s_2abcc504adb937::t_8dd2019a0b6cef 26-32
+apps/filesquid/crates/ocfl/resources/tasks/Task-IO-fs-abort-upload-race-Walkthrough.md
+  s_2abcc504adb937::t_dc74ae18e362ad 1-81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ba75af3713ad6f86d0bb2a66e31b72d556a6f936",
+  "prompts": {},
+  "sessions": {
+    "s_2abcc504adb937": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "afae853c-7f51-4834-affa-ab2a6370b99e",
+        "model": "unknown"
+      },
+      "human_author": "Peter Van Garderen <vangarderen.peter@gmail.com>"
+    }
+  }
+}
