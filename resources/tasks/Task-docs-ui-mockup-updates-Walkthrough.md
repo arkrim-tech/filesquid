@@ -130,7 +130,7 @@ Render check in headless Chromium at 1440 × 900 (text boxes leaving the canvas;
 console errors: 0
 ```
 
-Pre-commit hook (`bash scripts/pre-commit.sh`), complete raw output (docs scope, so no Cargo or npm step runs; absolute paths shown as `<repo>`):
+Pre-commit hook (`bash scripts/pre-commit.sh`), complete raw output (docs scope, so the Cargo and lint/test steps are skipped while the Prettier formatting check still runs; absolute paths shown as `<repo>`):
 
 ```text
 changed_scope: docs (only documentation or always-run checker scripts outside the crates and npm packages changed)
