@@ -17,7 +17,7 @@ The owner answered every question of this README on 2026-10-22. The answers, ver
 | 1 | "yes, make v3 the active suite in that PR" | v3 is the active suite |
 | 2 | "keen the navigation tree in sections by kind. Recently deleted is one of those (at the bottom)" | Every sidebar is the sectioned tree of [55](./55-navigation-tree-built.svg): Pinned, Collections (each library a parent), Virtual collections, then Recently deleted as the last section. The tree of libraries is retired. |
 | 3 | "There is only one trash. Not a separate trash per library" | One Recently deleted for all libraries: [16](./16-deleted-files.svg), [16 dark](./16-deleted-files-dark.svg) and [47](./47-restore-untitled-collection.svg) list each file's library, and its days left follow that library's retention. |
-| 4 | "The first collection should be created automatically upon install or first use if it doesnt already exists. Prompt the user for a name and location." | New [57](./57-first-use-library.svg): on first use FileSquid asks for a name and a folder location, creates the library there and its first collection. Reading the name and location as the library's is the orchestrator's reading, owner to confirm. |
+| 4 | "The first collection should be created automatically upon install or first use if it doesnt already exists. Prompt the user for a name and location." | New [57](./57-first-use-library.svg): on first use FileSquid asks for a name and a folder location, creates the library there and its first collection. The name and location are the library's (owner confirmation 2026-10-22, verbatim: "1. confirmed"). |
 | 5 | "Keep the review" | [18](./18-import-review.svg) stays; the upload route gains a review step before the job starts. |
 | 6 | "Yes, report progress per file" | [19](./19-import-progress.svg) shows each file with its status, error code, destination and Retry. |
 | 7 | "Settings -> Appaerance" | The theme control lives in Settings, Appearance ([32](./32-settings.svg)); the header has none. |
@@ -91,7 +91,7 @@ Status after the owner's answers: **redrawn** (content changed for an answer), *
 |---|---|---|---|
 | First run: create, open or recover a library, recent libraries with free space; ADR 032 desktop statement | [01](./01-welcome.svg) | [UI-1.1](../../../apps/filesquid/ui/resources/plan.md) (built, [#114](https://github.com/arkrim-tech/filesquid/pull/114)); UI-1.3; owner answer 10 | redrawn |
 | Create a library through the native folder dialog (location-choices, purpose `create`); waiting state | [02](./02-create-library.svg) | UI-1.1; API-S-034; DE-S-017; owner decision 2026-10-20 ("go with A with rfd") | redrawn |
-| First use: name and folder for the first library, first collection created automatically | [57](./57-first-use-library.svg) | UI-1.3; owner answer 4 (orchestrator's reading, owner to confirm) | new |
+| First use: name and folder for the first library, first collection created automatically | [57](./57-first-use-library.svg) | UI-1.3; owner answer 4 (reading confirmed: "1. confirmed") | new |
 | Location-choice answers: cancelled, unavailable with reason and Try again, refused, failed step whose Try again keeps the chosen folder | [03](./03-open-library.svg) | UI-1.1 constraint gates 3, 4, 6 and "Retry resumes from the failed step"; API-S-034 | updated |
 | Recover from a copy: the rebuild as a durable job with progress, Pause and Cancel, errors so far | [04](./04-recover-library.svg) | UI-1.3; API-S-025; owner answer 9 | redrawn |
 | Library menu: About this library, Copy, Rebuild, Create or open a library | [08](./08-library-menu.svg) | UI-1.1 routes; `libraryFactsTitle`, `libraryCopy`, `libraryRebuild`, `libraryNavLink` | updated |
@@ -199,7 +199,7 @@ All closed on 2026-10-22; the answers are under [Owner answers of 2026-10-22](#o
 1. **Active suite.** Closed: "yes, make v3 the active suite in that PR".
 2. **Navigation tree.** Closed: "keen the navigation tree in sections by kind. Recently deleted is one of those (at the bottom)".
 3. **Deleted files view.** Closed: "There is only one trash. Not a separate trash per library".
-4. **First collection.** Closed: "The first collection should be created automatically upon install or first use if it doesnt already exists. Prompt the user for a name and location." Reading "name and location" as the new library's name and folder is the orchestrator's reading, owner to confirm.
+4. **First collection.** Closed: "The first collection should be created automatically upon install or first use if it doesnt already exists. Prompt the user for a name and location." "Name and location" are the new library's name and folder (owner confirmation 2026-10-22, verbatim: "1. confirmed").
 5. **Import review.** Closed: "Keep the review".
 6. **Job rows.** Closed: "Yes, report progress per file".
 7. **Theme control.** Closed: "Settings -> Appaerance".
@@ -217,5 +217,5 @@ All closed on 2026-10-22; the answers are under [Owner answers of 2026-10-22](#o
 
 - Product name, labels and colours come from the default label table and tokens. Sample names and data are not real records.
 - Dates in v3 assume today is 22 Oct 2026, the 30-day default retention and a 90-day period for Studio work.
-- The ADR 041 readings the owner has not ruled on (one "untitled collection" per gone collection and restore command; retention bounds of 1 to 3,650 days; a deleted file's path counting as taken) are drawn as ADR 041 records them. ADR 041 Decision 8 still describes Recently deleted as a node of each library; owner answer 3 replaces that with one Trash, recorded as a Conflict Artifact in the [walkthrough](../../tasks/Task-docs-v3-mockup-requirements-sync-Walkthrough.md).
-- The first collection's title on first use ("untitled collection", [57](./57-first-use-library.svg)) follows ADR 041 Decision 9's naming; owner to confirm with answer 4's reading.
+- The ADR 041 readings the owner has not ruled on (one "untitled collection" per gone collection and restore command; retention bounds of 1 to 3,650 days; a deleted file's path counting as taken) are drawn as ADR 041 records them. ADR 041 Decision 8 still describes Recently deleted as a node of each library; owner answer 3 replaces that with one Trash, recorded as a Conflict Artifact in the [walkthrough](../../tasks/Task-docs-v3-mockup-requirements-sync-Walkthrough.md); the owner approved that approach on 2026-10-22, verbatim: "3. yes". Where a guide colour fails a contrast requirement, the mockups follow the guide and the conflict is recorded the same way (approved, verbatim: "2. sounds good").
+- The first collection's title on first use ("untitled collection", [57](./57-first-use-library.svg)) follows ADR 041 Decision 9's naming; the owner confirmed answer 4's reading ("1. confirmed").

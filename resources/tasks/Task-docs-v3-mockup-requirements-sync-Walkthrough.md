@@ -36,9 +36,20 @@ The answers to the v3 README's "Questions for the owner", 2026-10-22, verbatim a
 
 Every question is closed in the [v3 README](../ui-mockups/v3/README.md#questions-for-the-owner), and each SRS, PRD and plan row an answer changed quotes it.
 
-**Readings the owner should confirm.**
+**Owner confirmations of 2026-10-22.** The owner answered the orchestrator's three checks, verbatim:
 
-- **Answer 4.** "a name and location" is read as the new library's name and folder, because a location belongs to a library ([ADR 041](../architecture/041-owner-folder-libraries-and-home-collections.md) Decision 1). On first use FileSquid asks for both, creates the library there and creates its first collection, titled "untitled collection" after ADR 041 Decision 9's naming ([57](../ui-mockups/v3/57-first-use-library.svg), UI-S-034). UI-S-034 and the first-use part of UI-1.3 are blocked until the owner confirms this reading.
+> "1. confirmed
+> 2. sounds good
+> 3. yes"
+
+- **Check 1, answer 4: confirmed.** On first use, with no library and no collection, FileSquid prompts for a name and a folder location, creates the library there and creates its first collection automatically. UI-S-034 and the first-use part of UI-1.3 are unblocked.
+- **Check 2, answer 15: approach approved.** The mockups and UI-S-024 follow the guide's colour values; where a guide value fails a contrast requirement already in the SRS or PRD, CA-1 records the colour pairs and ratios, and both requirements stay unchanged.
+- **Check 3, answer 3: approach approved.** There is one Trash across all libraries; ADR 041's wording of a Trash per library is recorded as CA-3, and ADR 041 is not edited in this PR.
+
+**How answer 4 is applied.** "a name and location" are the new library's name and folder, because a location belongs to a library ([ADR 041](../architecture/041-owner-folder-libraries-and-home-collections.md) Decision 1). On first use FileSquid asks for both, creates the library there and creates its first collection, titled "untitled collection" after ADR 041 Decision 9's naming ([57](../ui-mockups/v3/57-first-use-library.svg), UI-S-034). The owner confirmed this reading ("1. confirmed"), so nothing is blocked.
+
+**Reading the owner should confirm.**
+
 - **Answer 12.** It names "API info". The host badge stays in the header, because it names the host, not the API, and PRD F-057 requires the UI to make the connected host obvious; the API status moves to Settings, About.
 
 ## Gap analysis
@@ -62,7 +73,7 @@ Classes: **(a)** SRS missing a requirement the mockup shows; **(b)** SRS contrad
 | 07 | Library with no collection; Upload files and Upload folder… disabled with the reason | UI-S-002 | (a) | UI-S-028 |
 | 07, 10, 15, 17, 18, 19, 22 to 24, 31, 35, 38, 39, 52 | Upload and Download wording (answer 8) | Import and Export wording | (a), (b) | strings renamed (list below) |
 | 01, 02 | Recent libraries with free space (answer 10) | not drawn; no API | (a), API gap | UI-S-027; API-S-038 |
-| 57 (new) | First use: library name and folder, first collection created (answer 4) | no UI control for the first collection | (a), reading to confirm | UI-S-034 (blocked); SRS-F-001; PRD F-001 |
+| 57 (new) | First use: library name and folder, first collection created (answer 4) | no UI control for the first collection | (a), reading confirmed | UI-S-034; SRS-F-001; PRD F-001 |
 | 03 | Folder-choice answers | UI-1.1 | (a) | UI-S-027 |
 | 04 | Rebuild as a durable job (answer 9) | API-S-025 synchronous | (a), (b) | UI-S-027; API-S-025; API-F2.17 |
 | 08 | Library menu | UI-1.1 | (a) | UI-S-027 |
@@ -89,6 +100,8 @@ Classes: **(a)** SRS missing a requirement the mockup shows; **(b)** SRS contrad
 
 ### CA-1: The guide's colours fall below WCAG 2.2 AA (answer 15)
 
+Approach approved by the owner on 2026-10-22, verbatim: "2. sounds good": follow the guide's colour values, record each failing pair here, and keep both requirements unchanged.
+
 1. **Conflict Description:** The owner answered "No follow the guide in all cases". The guide's light colours fail the contrast the SRS and PRD require: white on `#16AC49` 2.99:1; `#E53935` on white 4.23:1; active text `#0f8a39` on `#F0FAF4` 4.18:1; muted `#777777` on white 4.48:1 and `#6A6A6A` on `#141414` 3.41:1; placeholder `#999999` on white 2.85:1; white text on the red (`#FD1E23`) and blue (`#007AF9`) file-type badges below 4.5:1.
 2. **PRD/SRS Reference:** [PRD NFR-006](../prd.md#nfr-006-accessibility-and-usability): "Web interfaces MUST target WCAG 2.2 AA". [UI-S-015](../../apps/filesquid/ui/resources/srs.md): "its token test MUST fail when any of `on-surface`, `on-surface-variant` …, `primary` (on `surface`), `on-primary` (on `primary`), `on-primary-container` (on `primary-container`) or `error` … is below 4.5:1 in either theme". [SRS-UI-007](../srs.md#srs-ui-007-light-and-dark-themes): "Contrast of primary actions and body text on their surfaces MUST meet WCAG 2.2 AA in both themes".
 3. **ADR Reference:** [ADR 031](../architecture/031-vanilla-typescript-ui-and-white-label-theming.md) Decision 3: "Components are styled only through CSS custom properties, with a light and a dark set." The token values carry the choice.
@@ -100,6 +113,8 @@ Classes: **(a)** SRS missing a requirement the mockup shows; **(b)** SRS contrad
 The tree of libraries drawn in v3 contradicted PRD F-004's sections. The owner answered "keen the navigation tree in sections by kind. Recently deleted is one of those (at the bottom)"; every sidebar is redrawn as the sectioned tree, and UI-S-017, UI-S-025 and PRD F-004 say so. Nothing remains open.
 
 ### CA-3: One Trash for every library versus ADR 041 Decision 8 (answer 3)
+
+Approach approved by the owner on 2026-10-22, verbatim: "3. yes": one Trash across all libraries, the ADR 041 wording recorded here, and ADR 041 not edited in this PR.
 
 1. **Conflict Description:** The owner answered "There is only one trash. Not a separate trash per library". ADR 041 Decision 8 makes Recently deleted "a reserved navigation filter of each library" shown "as a reserved node of each library".
 2. **PRD/SRS Reference:** updated here to one Trash: [UI-S-002](../../apps/filesquid/ui/resources/srs.md), [UI-S-006](../../apps/filesquid/ui/resources/srs.md), [UI-S-017](../../apps/filesquid/ui/resources/srs.md), [SRS-F-004](../srs.md#srs-f-004-collections-folders-and-navigation), [SRS-F-008](../srs.md#srs-f-008-deletion-hidden-files-and-duplicate-review), [PRD F-004](../prd.md#f-004-collections-folders-and-navigation), [PRD F-062](../prd.md#f-062-drive-style-views-sorting-selection-and-layout-preferences); [API-S-021](../../apps/filesquid/crates/api/resources/srs.md) records the target and keeps the per-library node until this artifact is resolved.
