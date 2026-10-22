@@ -11,8 +11,12 @@
 //!   recreates a directory, so a late part cannot reopen an upload.
 //! - Completing or aborting first renames the directory to `<id>.closed` (an
 //!   atomic step), which closes the upload for every other caller, then
-//!   assembles or discards the parts. If assembling or removing fails, the
-//!   directory is renamed back so the caller can retry or abort.
+//!   assembles or discards the parts. If assembling fails, the directory is
+//!   renamed back so the caller can retry or abort. An abort never renames it
+//!   back: a part write that was already inside the directory when it closed
+//!   can add a temporary file during the removal, so a "directory not empty"
+//!   failure is retried a bounded number of times, and a closed directory
+//!   that still cannot be removed is left behind, closed, with an error.
 //! - The staging, uploads, per-root and upload directories are checked
 //!   without following links on every operation, and the key record and the
 //!   parts are opened as regular files only, without following links and
@@ -21,6 +25,7 @@
 use std::fs;
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use super::super::error::StorageError;
 use super::super::key::StorageKey;
@@ -37,6 +42,13 @@ const UPLOAD_KEY_FILE: &str = "key";
 
 /// Suffix of a closed upload directory; such names are never valid IDs.
 const CLOSED_SUFFIX: &str = ".closed";
+
+/// Attempts to remove an aborted upload's directory while part writes that
+/// were already inside it when it closed keep adding temporary files.
+const DISCARD_ATTEMPTS: u32 = 5;
+
+/// Pause before each retried removal, multiplied by the attempt number.
+const DISCARD_BACKOFF: Duration = Duration::from_millis(5);
 
 /// The per-root uploads directory: `staging/uploads/<sha256 of root>`.
 pub(super) fn uploads_path(staging: &Path, root: &Path) -> PathBuf {
@@ -97,7 +109,7 @@ impl FsBackend {
         Ok(closed)
     }
 
-    /// Reopen a closed upload after a failed completion or removal. A
+    /// Reopen a closed upload after a failed completion. A
     /// failure is logged and the upload stays closed; the caller still gets
     /// the original error.
     fn reopen_upload_logged(&self, upload: &UploadId, closed: &Path) {
@@ -196,11 +208,38 @@ impl FsBackend {
     /// Blocking body of [`StorageBackend::abort_multipart`](super::super::StorageBackend::abort_multipart).
     pub(super) fn abort_multipart_blocking(&self, upload: &UploadId) -> Result<(), StorageError> {
         let closed = self.close_upload(upload)?;
-        if let Err(err) = fs::remove_dir_all(&closed) {
-            self.reopen_upload_logged(upload, &closed);
-            return Err(io_error(&closed.display().to_string(), err));
+        self.discard_closed(upload, &closed, |dir: &Path| fs::remove_dir_all(dir))
+    }
+
+    /// Delete the closed directory of an aborted upload with `remove`.
+    ///
+    /// A part write whose path lookup reached the directory just before
+    /// [`close_upload`](Self::close_upload) renamed it can still create its
+    /// temporary file inside, so `remove` fails with "directory not empty";
+    /// such a failure is retried up to [`DISCARD_ATTEMPTS`] times. The
+    /// directory is never renamed back: the abort has closed the upload, and
+    /// reopening it would bring an aborted upload back. When every attempt
+    /// fails, the `<id>.closed` directory is left behind (it is never a valid
+    /// upload) and the last error is returned.
+    fn discard_closed(
+        &self,
+        upload: &UploadId,
+        closed: &Path,
+        mut remove: impl FnMut(&Path) -> std::io::Result<()>,
+    ) -> Result<(), StorageError> {
+        let mut outcome = remove(closed);
+        for attempt in 1..DISCARD_ATTEMPTS {
+            let busy = matches!(&outcome, Err(e) if e.kind() == ErrorKind::DirectoryNotEmpty);
+            if !busy {
+                break;
+            }
+            std::thread::sleep(DISCARD_BACKOFF * attempt);
+            outcome = remove(closed);
         }
-        Ok(())
+        outcome.map_err(|err| {
+            tracing::warn!(upload = upload.as_str(), error = %err, "could not remove aborted multipart staging");
+            io_error(&closed.display().to_string(), err)
+        })
     }
 }
 
@@ -214,4 +253,103 @@ fn write_key_record(dir: &Path, key: &StorageKey) -> Result<(), StorageError> {
     file.write_all(key.as_str().as_bytes())
         .and_then(|()| file.sync_all())
         .map_err(|e| io_error(&what, e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A scratch directory under the system temporary directory, removed on
+    /// drop.
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(label: &str) -> Self {
+            let dir = std::env::temp_dir()
+                .join(format!("ocfl-fs-uploads-{label}-{}", std::process::id()));
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(&dir).expect("scratch");
+            Self(dir)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// The names left in the per-root uploads directory.
+    fn staged(backend: &FsBackend) -> Vec<String> {
+        fs::read_dir(&backend.uploads)
+            .expect("uploads dir")
+            .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// A remover that plays the race: on its first call a part write that
+    /// looked up the upload directory before the abort renamed it creates
+    /// its temporary file after the contents were removed, so the real
+    /// `remove_dir` fails with "directory not empty". Later calls remove
+    /// everything.
+    fn racing_remover() -> impl FnMut(&Path) -> std::io::Result<()> {
+        let mut calls = 0;
+        move |dir: &Path| {
+            calls += 1;
+            if calls > 1 {
+                return fs::remove_dir_all(dir);
+            }
+            for entry in fs::read_dir(dir)? {
+                fs::remove_file(entry?.path())?;
+            }
+            fs::write(dir.join(".ocfl-tmp-late-part"), b"x")?;
+            fs::remove_dir(dir)
+        }
+    }
+
+    #[test]
+    fn a_part_racing_an_abort_never_brings_the_upload_back() {
+        let scratch = Scratch::new("abort-race");
+        let backend =
+            FsBackend::new(scratch.0.join("root"), scratch.0.join("staging")).expect("backend");
+        let key = StorageKey::new("objects/a/race.bin").expect("key");
+        let upload = backend.create_multipart_blocking(&key).expect("create");
+        backend
+            .upload_part_blocking(&upload, 1, b"x")
+            .expect("part");
+        let closed = backend.close_upload(&upload).expect("close");
+        let _ = backend.discard_closed(&upload, &closed, racing_remover());
+        let left = staged(&backend);
+        assert!(left.is_empty(), "an aborted upload came back: {left:?}");
+        let late = backend.upload_part_blocking(&upload, 2, b"y");
+        assert!(
+            matches!(late, Err(StorageError::UnknownUpload { .. })),
+            "{late:?}"
+        );
+    }
+
+    #[test]
+    fn an_abort_that_cannot_remove_its_directory_stops_and_stays_closed() {
+        let scratch = Scratch::new("abort-cap");
+        let backend =
+            FsBackend::new(scratch.0.join("root"), scratch.0.join("staging")).expect("backend");
+        let key = StorageKey::new("objects/a/cap.bin").expect("key");
+        let upload = backend.create_multipart_blocking(&key).expect("create");
+        let closed = backend.close_upload(&upload).expect("close");
+        let mut calls = 0;
+        let always_busy = |_: &Path| {
+            calls += 1;
+            Err(std::io::Error::from(ErrorKind::DirectoryNotEmpty))
+        };
+        let result = backend.discard_closed(&upload, &closed, always_busy);
+        assert!(result.is_err(), "{result:?}");
+        assert_eq!(calls, DISCARD_ATTEMPTS);
+        let closed_name = format!("{}{CLOSED_SUFFIX}", upload.as_str());
+        assert_eq!(staged(&backend), vec![closed_name]);
+        let late = backend.upload_part_blocking(&upload, 1, b"y");
+        assert!(
+            matches!(late, Err(StorageError::UnknownUpload { .. })),
+            "{late:?}"
+        );
+    }
 }
