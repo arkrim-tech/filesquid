@@ -663,6 +663,23 @@ fn a_consistent_backup_holds_the_committed_library_and_is_journaled() {
     assert_eq!(ops, ["succeeded", "failed"]);
 }
 
+/// A link where the backup file belongs is refused, never followed.
+#[cfg(unix)]
+#[test]
+fn a_backup_destination_that_is_a_symbolic_link_is_not_followed() {
+    let fx = Fixture::new("backup-link");
+    let lib = fx.create_library("Family archive");
+    let outside = temp_root("backup-link-target");
+    let target = outside.join("elsewhere.sqlite");
+    let dest_dir = temp_root("backup-link-dest");
+    let dest = catalog_file(&dest_dir, &lib);
+    std::os::unix::fs::symlink(&target, &dest).expect("link");
+    assert!(fx.catalog.backup(&lib, &dest).is_err());
+    assert!(!target.exists(), "the link target must not be created");
+    std::fs::remove_dir_all(outside).expect("cleanup");
+    std::fs::remove_dir_all(dest_dir).expect("cleanup");
+}
+
 #[test]
 fn removing_a_catalog_file_loses_only_the_rebuildable_index() {
     let fx = Fixture::new("rebuild");

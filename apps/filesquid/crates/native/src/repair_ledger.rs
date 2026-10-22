@@ -65,12 +65,12 @@ impl SqliteRepairLedger {
     /// The journal or the ledger tables could not be opened.
     pub fn open(path: &Path, host: impl Into<String>) -> Result<Self, LedgerError> {
         let host = host.into();
-        drop(SqliteJournal::open(path, host.clone()).map_err(failed)?);
+        let path = crate::owner_only::resolve_folders(path).map_err(failed)?;
+        drop(SqliteJournal::open(&path, host.clone()).map_err(failed)?);
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_NO_MUTEX
             | OpenFlags::SQLITE_OPEN_NOFOLLOW;
-        let path = crate::owner_only::resolve_folders(path).map_err(failed)?;
         let conn = Connection::open_with_flags(&path, flags).map_err(classify)?;
         conn.busy_timeout(std::time::Duration::from_secs(5))
             .map_err(classify)?;

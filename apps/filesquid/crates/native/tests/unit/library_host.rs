@@ -272,6 +272,14 @@ fn the_stores_refuse_a_symbolic_link_in_place_of_the_operational_store() {
     std::os::unix::fs::symlink(&real, &link).expect("link");
     assert!(SqliteRepairLedger::open(&link, "desktop").is_err());
     assert!(SqlitePreferences::open(&link).is_err());
+    assert!(SqliteJobs::open(&link).is_err());
+    assert!(SqliteFindings::open(&link).is_err());
+    assert!(SqliteImportPlans::open(&link).is_err());
+    assert_eq!(
+        std::fs::metadata(&real).expect("target").len(),
+        0,
+        "never written"
+    );
 }
 
 /// A folder above the operational store may be a symbolic link (macOS's `/var` is one for

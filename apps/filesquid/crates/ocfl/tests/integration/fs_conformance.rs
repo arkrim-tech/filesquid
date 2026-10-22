@@ -460,9 +460,10 @@ async fn fs_prefix_listing_skips_unrelated_subtrees() {
 
 /// A directory whose name is only a leading part of the prefix's last
 /// segment (`0=oc` for `0=ocfl_`) cannot hold a matching key, so it is not
-/// entered at all: an entry inside it that the walk would refuse (a name
-/// with a backslash, which no key may hold) does not fail the listing. The
-/// name is one every Unix filesystem stores; APFS refuses a non-UTF-8 one.
+/// entered at all: an entry inside it that the listing would refuse (a name
+/// with a backslash, which key validation rejects when the listing builds its
+/// `StorageKey`s) does not fail the listing. The name is one every Unix
+/// filesystem stores; APFS refuses a non-UTF-8 one.
 #[cfg(unix)]
 #[tokio::test]
 async fn fs_prefix_listing_skips_a_partial_name_sibling() {
