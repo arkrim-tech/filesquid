@@ -112,9 +112,9 @@ Branch: `docs/library-model-owner-folders`. Documentation only; no code, contrac
    Artifacts to update: API-S-019, API-S-021, PRD F-004, F-006 and F-063, SRS-F-004, SRS-F-006 and SRS-F-063, API-F2.3 (search grammar) and CL-1.4 in the api plan, the UI-S-006 views, and ADR 041.
 5. **Impact Assessment:** if the conflict is left open, a deleted collection leaves files that break the "exactly one home collection" rule. The rebuilt index and the navigation listing then disagree about where those files live, and DE-1.7 and API-F2.14 cannot test one invariant for every file.
 
-### Open questions for the owner (Recently deleted)
+### Open questions for the owner (Recently deleted and logical paths)
 
-The owner's words do not settle these, so nothing was decided for them. ADR 041 lists them, and API-F2.15, DE-1.7 and UI-F2.17 are told not to decide them:
+The owner's words do not settle these, so nothing was decided for them. ADR 041 lists them. API-F2.15, DE-1.7 and UI-F2.17 are told not to decide questions 1 to 5, and API-F2.14 and DE-1.7 are told to wait for the owner on question 6:
 
 1. **Restore:** where does a restored file go once its original collection no longer exists? Under "Must choose" the likely answer is that the owner picks a destination, but that is not decided.
 2. **Retention scope:** the owner called 30 days the "default". At what scope can it be changed: per library or per installation?
