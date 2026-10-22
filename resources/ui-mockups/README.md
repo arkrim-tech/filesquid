@@ -11,6 +11,8 @@ These files are hard look-and-feel requirements for the surfaces they show. Outc
 
 **Active suite:** none yet. When you add one, name it here. Only the active suite named in a folder's README is a requirement source; archived suites MUST NOT be read as requirements.
 
+**Drafts:** [v3](./v3/README.md) is the current draft of the FileSquid MVP screens and builds on [v2](./v2/README.md). Neither is the active suite.
+
 ## What goes here
 
 - Wireframes and mid- or high-fidelity mockups (PNG, SVG, PDF, or HTML)
