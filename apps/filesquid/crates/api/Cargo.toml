@@ -23,6 +23,9 @@ filesquid-prov = { path = "../prov", features = ["ocfl"] }
 # Streams of the whole-file download (API-S-011).
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 getrandom = "0.4"
+# NFC normalisation of search queries and names (API-S-012, SRS-F-063): already in the lockfile
+# through the URL crates, pinned to that version so no new crate enters the build.
+icu_normalizer = { version = "=2.3.0", default-features = false, features = ["compiled_data"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"
@@ -159,6 +162,10 @@ path = "tests/integration/names.rs"
 [[test]]
 name = "integration_drive_views"
 path = "tests/integration/drive_views.rs"
+
+[[test]]
+name = "integration_search"
+path = "tests/integration/search.rs"
 
 [[test]]
 name = "integration_drive"

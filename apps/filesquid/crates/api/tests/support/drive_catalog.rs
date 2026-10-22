@@ -11,7 +11,7 @@ use filesquid_api::library::{
     MemoryCatalog, NEW_LIBRARY_REVISION,
 };
 use filesquid_api::navigation::{
-    HostAccess, MemoryFolderIndex, NavigationService, NodeRef, RepositoryInfo,
+    HostAccess, MemoryFolderIndex, NavigationAccess, NavigationService, NodeRef, RepositoryInfo,
 };
 use filesquid_api::operation::{ExpectedRevision, OperationId};
 use filesquid_core::{
@@ -47,8 +47,13 @@ pub struct DriveCatalog {
 }
 
 impl DriveCatalog {
-    /// Seed the catalog for `library`.
+    /// Seed the catalog for `library`, readable to the host's principals.
     pub fn new(library: &str) -> Self {
+        Self::with_access(library, Arc::new(HostAccess))
+    }
+
+    /// Seed the catalog for `library`, readable as `access` decides.
+    pub fn with_access(library: &str, access: Arc<dyn NavigationAccess>) -> Self {
         let catalog = Arc::new(MemoryCatalog::new());
         let library_id = LibraryId::new(library).expect("library id");
         let repository = RepositoryId::new(REPOSITORY).expect("repository");
@@ -70,7 +75,7 @@ impl DriveCatalog {
         let navigation = Arc::new(NavigationService::new(
             catalog.clone(),
             Arc::new(MemoryFolderIndex::new()),
-            Arc::new(HostAccess),
+            access,
             RepositoryInfo::new(repository, None),
         ));
         Self {
@@ -84,6 +89,20 @@ impl DriveCatalog {
     /// Place `file` in [`COLLECTION`].
     pub fn file_in_collection(&self, file: &str) {
         self.insert(file, collection_id());
+    }
+
+    /// Place `file` in collection `collection` of the library, creating it titled `title`.
+    pub fn file_in_new_collection(&self, file: &str, collection: &str, title: &str) {
+        let id = CollectionId::new(collection).expect("collection id");
+        let record = Collection::new(id.clone(), self.library.clone(), title).expect("collection");
+        let revision = self.revision();
+        commit(
+            &self.catalog,
+            &self.library,
+            &revision,
+            vec![CatalogChange::PutCollection(record)],
+        );
+        self.insert(file, id);
     }
 
     /// Place `file` in no existing collection (an unfiled file).

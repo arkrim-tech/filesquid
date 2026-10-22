@@ -361,6 +361,7 @@ fn every_routed_path_declares_its_action() {
             | "/api/v1/files/metadata/namespaces"
             | "/api/v1/files/facts"
             | "/api/v1/files/view"
+            | "/api/v1/files/search"
             | "/api/v1/files/collection-history-size"
             | "/api/v1/content-handles" => Action::ReadFiles,
             "/api/v1/files/upload"
