@@ -71,6 +71,7 @@ Functional requirements apply to FileSquid. Each block names its delivery: the *
 
 The system MUST implement [PRD F-001](./prd.md#f-001-independent-local-library-and-ownership) with the acceptance criteria stated there. UI copy MUST come from the active distribution's label table: the FileSquid default UI MUST use the internal names, and the ImageSquid distribution MUST use repo, library, album, gallery and exhibit. The item type in data and APIs MUST be **file**.
 - The API MUST expose versioned routes to create a library on an owner-chosen OCFL storage root, open it, copy a completed snapshot and rebuild the catalog from files, with opaque identifiers and no filesystem paths in answers, and with every refused call journaled ([API-S-025](../apps/filesquid/crates/api/resources/srs.md)). A folder MUST reach those routes only as an opaque location ID; on the desktop the owner chooses it in a native folder dialog that the host shows when the UI calls the location-choices route, and the webview never receives its path ([API-S-034](../apps/filesquid/crates/api/resources/srs.md), [DE-S-017](../apps/filesquid/crates/desktop/resources/srs.md)).
+- **Owner-chosen folders only.** Every library MUST live in a folder the owner chooses, which holds only its OCFL storage root; the host's data directory MUST hold only each library's rebuildable catalog index, keyed by the library's UUID, never its files, and opening a moved or copied library folder MUST rebuild that index from the folder ([DE-S-009](../apps/filesquid/crates/desktop/resources/srs.md), [DE-S-018](../apps/filesquid/crates/desktop/resources/srs.md), [ADR 041](./architecture/041-owner-folder-libraries-and-home-collections.md)).
 - **Original names without FileSquid.** An app-closed copy of a library MUST let ordinary tools map every stored original `<file-uuid>.<ext>` to the owner's original file name through the `<file-uuid>.metadata.md` beside it ([MD-S-008](../apps/filesquid/crates/metadata/resources/srs.md)).
 
 **Delivered by:** FileSquid platform. Every distribution presents it through its own views and label table.
@@ -78,7 +79,7 @@ The system MUST implement [PRD F-001](./prd.md#f-001-independent-local-library-a
 **Source**
 - [F-001](./prd.md#f-001-independent-local-library-and-ownership)
 - [architecture.md](./architecture.md#41-data-architecture)
-- [ADR 005](./architecture/005-sqlite-local-postgres-hosted.md), [ADR 010](./architecture/010-ocfl-1-1-dual-profile.md), [ADR 016](./architecture/016-rust-ocfl-library.md), [ADR 021](./architecture/021-uuid-v4-identifiers.md)
+- [ADR 005](./architecture/005-sqlite-local-postgres-hosted.md), [ADR 010](./architecture/010-ocfl-1-1-dual-profile.md), [ADR 016](./architecture/016-rust-ocfl-library.md), [ADR 021](./architecture/021-uuid-v4-identifiers.md), [ADR 041](./architecture/041-owner-folder-libraries-and-home-collections.md)
 
 **Tests**
 - [`independent_local_library_and_ownership_F-001.feature`](../apps/filesquid/ui/tests/features/independent_local_library_and_ownership_F-001.feature)
@@ -92,13 +93,14 @@ The system MUST implement [PRD F-002](./prd.md#f-002-safe-file-folder-and-device
 - **Metadata record.** In the same OCFL version and the same directory the import MUST commit `<file-uuid>.metadata.md`, the file's only metadata record: the exact original file name with its Unicode normalisation form, the display name (initially the original name), the extension, the format and MIME type, the append-only `import` section of ADR 038 facts and the extracted `dcterms:` / `schema:` statements ([MD-S-008](../apps/filesquid/crates/metadata/resources/srs.md), [MD-S-013](../apps/filesquid/crates/metadata/resources/srs.md)). There is no separate `file-record.md`.
 - **Tracked and described, no C2PA.** Import completion MUST require the verified content, its metadata record and the import's PROV-O record in that version ([SRS-F-067](#srs-f-067-prov-o-history-of-every-version-and-change)); no import step MAY require the `c2pa` module.
 - **Rename.** A rename MUST change only the display name, committed as a new version of the metadata record; it MUST NOT rename the stored original or change the recorded original file name.
+- **Destination.** Every import and upload MUST name a destination collection (and MAY name a folder inside it) and MUST register each file there as its home collection; a request without one MUST be refused before any dialog or staged byte, with no default collection and no top-level upload ([API-S-036](../apps/filesquid/crates/api/resources/srs.md), [UI-S-002](../apps/filesquid/ui/resources/srs.md), [ADR 041](./architecture/041-owner-folder-libraries-and-home-collections.md)).
 
 **Delivered by:** FileSquid platform. Every distribution presents it through its own views and label table.
 
 **Source**
 - [F-002](./prd.md#f-002-safe-file-folder-and-device-import)
 - [architecture.md](./architecture.md#32-frontend-architecture)
-- [ADR 006](./architecture/006-libvips-native-stills-not-imagemagick.md), [ADR 011](./architecture/011-native-media-adapters-and-ffmpeg-license.md)
+- [ADR 006](./architecture/006-libvips-native-stills-not-imagemagick.md), [ADR 011](./architecture/011-native-media-adapters-and-ffmpeg-license.md), [ADR 041](./architecture/041-owner-folder-libraries-and-home-collections.md)
 
 **Tests**
 - [`safe_file_folder_and_device_import_F-002.feature`](../apps/filesquid/ui/tests/features/safe_file_folder_and_device_import_F-002.feature)
@@ -122,13 +124,14 @@ The system MUST implement [PRD F-003](./prd.md#f-003-browsing-selection-and-view
 The system MUST implement [PRD F-004](./prd.md#f-004-collections-folders-and-navigation) with the acceptance criteria stated there. UI copy MUST come from the active distribution's label table: the FileSquid default UI MUST use the internal names, and the ImageSquid distribution MUST use repo, library, album, gallery and exhibit. The item type in data and APIs MUST be **file**.
 - The API MUST expose a navigation listing that answers one level of the navigation tree (the host's repository, its libraries, their collections and virtual collections, and the folders implied by committed logical paths) with opaque node handles and the ancestors a breadcrumb needs, filtered by the caller's permissions before paging ([API-S-021](../apps/filesquid/crates/api/resources/srs.md)).
 - The default UI's pinned destinations, section order and collapse state MUST persist across restarts: in the API's per-user UI preferences on a host that serves them, otherwise on the device in Web Storage as a versioned value of opaque node handles, node kinds, section order and collapse state, without names, titles, paths, tokens or content handles ([UI-S-017](../apps/filesquid/ui/resources/srs.md)).
+- **Home collection.** Every file MUST have exactly one home collection. Uploads, imports, copies and moves MUST name their destination and MUST register the file with its home collection and logical path in the collection snapshot, from which the catalog index is rebuilt ([API-S-011](../apps/filesquid/crates/api/resources/srs.md), [API-S-026](../apps/filesquid/crates/api/resources/srs.md), [ADR 041](./architecture/041-owner-folder-libraries-and-home-collections.md)).
 
 **Delivered by:** FileSquid platform. Every distribution presents it through its own views and label table.
 
 **Source**
 - [F-004](./prd.md#f-004-collections-folders-and-navigation)
 - [architecture.md](./architecture.md#32-frontend-architecture)
-- [ADR 001](./architecture/001-shared-rust-core-with-tauri-and-axum-hosts.md)
+- [ADR 001](./architecture/001-shared-rust-core-with-tauri-and-axum-hosts.md), [ADR 041](./architecture/041-owner-folder-libraries-and-home-collections.md)
 
 **Tests**
 - [`albums_folders_and_navigation_F-004.feature`](../apps/filesquid/ui/tests/features/albums_folders_and_navigation_F-004.feature)
