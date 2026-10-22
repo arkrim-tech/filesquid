@@ -63,8 +63,8 @@ Feature: Light and dark themes and official branding
   Scenario Outline: Text pairs meet WCAG 2.2 AA except the owner's listed design-guide pairs
     Given the <distribution> distribution is active in the <theme> theme
     When I measure the contrast of each text colour on its surface
-    Then every pair not in the owner's exempt list should reach at least 4.5 to 1
-    And every exempt pair should use exactly its listed design-guide colours
+    Then every pair not in FileSquid's exempt list (all pairs for ImageSquid) should reach at least 4.5 to 1
+    And every FileSquid exempt pair should use exactly its listed design-guide colours
     And the focus ring should reach at least 3 to 1 on every surface
 
     Examples:

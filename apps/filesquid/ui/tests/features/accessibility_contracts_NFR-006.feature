@@ -87,8 +87,8 @@ Feature: Accessibility contracts in the shell
     Then focus should be on the token field again
     And the reason should be announced as an alert
 
-  Scenario: A distribution whose primary colour fails 3:1 is rejected
-    Given a distribution's primary colour is below 3:1 on its sidebar colour
+  Scenario: A distribution whose focus-ring colour fails 3:1 is rejected
+    Given a distribution's "--fs-focus-ring" colour is below 3:1 on its sidebar colour
     When its token test runs
     Then the test should fail and name the focus pair and theme
 

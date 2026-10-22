@@ -47,9 +47,10 @@ Feature: The default UI matches the active mockup suite
       | dark  | #f5f5f5 | #e0e0e0 | #6a6a6a | #0d2b18 | #4aca74 |
 
   Scenario: The tree is in sections by kind with one Recently deleted last
+    Given the navigation tree of 55-navigation-tree-built.svg
     When I open the sidebar
-    Then the sections should be "PINNED", "COLLECTIONS" and "VIRTUAL COLLECTIONS" in that order
-    And the last row of the tree should be the one "Recently deleted" entry for every library
+    Then the sections should be "PINNED", "COLLECTIONS", "VIRTUAL COLLECTIONS" and "FOLDERS" in that order
+    And the last row of the tree should be the single "Recently deleted" entry for all libraries
     And there should be no separate "Deleted files" item
 
   Scenario: Buttons follow the design guide

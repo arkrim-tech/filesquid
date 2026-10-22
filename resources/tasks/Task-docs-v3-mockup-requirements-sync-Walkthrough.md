@@ -1,6 +1,50 @@
 # Task docs-v3-mockup-requirements-sync: Walkthrough
 
-## UI-S-024 to UI-S-034: the composition of the active v3 mockup suite
+## UI-S-024 Visual constants of the active mockup suite
+
+The default distribution renders every v3 surface with the guide's colour roles, type scale, 8 px spacing scale, radii, controls and icons, each through a design token.
+
+## UI-S-025 Shell composition
+
+The 240 px sidebar with the sectioned tree and one Recently deleted last, the 60 px header without a theme control or API status, the 40 px footer and the 320 px file panel region.
+
+## UI-S-026 Browser views, menus and dialogs
+
+The list and grid views, sort, selection, the New and item menus, rename and its refusals, and the view states, as the v3 mockups draw them.
+
+## UI-S-027 Library lifecycle screens
+
+Welcome with recent libraries and their free space, create, open, recover with the rebuild as a job, copy, the library page with its facts, and repair.
+
+## UI-S-028 Destination, drop target, import and jobs
+
+The destination chooser, the drop target, the Upload review step and per-file progress with retry.
+
+## UI-S-029 Recently deleted, collection deletion, restore, duplicate names, write refusals and their settings
+
+One Recently deleted list across libraries with each file's library, Delete now with its confirmation, restore into an untitled collection, numbered names and the retention settings.
+
+## UI-S-030 Search composition
+
+The search field, operator suggestions, filter chips, results and their empty and error states.
+
+## UI-S-031 Preview and file panel composition
+
+The image, video and unsupported previews and the file panel's tabs and states.
+
+## UI-S-032 Monitor and Logs composition
+
+The Monitor with its health words and OCFL validation section, and the Logs view with its export, shown as Download.
+
+## UI-S-033 Settings page composition
+
+Settings with Appearance (the theme control), About with the API status, and 22 px section headings.
+
+## UI-S-034 First use
+
+On first use FileSquid asks for the library's name and folder, creates the library there and creates its first collection.
+
+## Summary
 
 Documentation and design task. Output: v3 made the active mockup suite; the suite redrawn for the owner's 16 answers (two new screens, 57 and 58); eleven new UI SRS rows (UI-S-024 Visual constants of the active mockup suite, UI-S-025 Shell composition, UI-S-026 Browser views, menus and dialogs, UI-S-027 Library lifecycle screens, UI-S-028 Destination, drop target, import and jobs, UI-S-029 Recently deleted, collection deletion, restore, duplicate names, write refusals and their settings, UI-S-030 Search composition, UI-S-031 Preview and file panel composition, UI-S-032 Monitor and Logs composition, UI-S-033 Settings page composition, UI-S-034 First use); one new API SRS row (API-S-038 Library facts); cascades into UI-S-002, UI-S-004, UI-S-006, UI-S-007, UI-S-009, UI-S-015, UI-S-017, UI-S-021, UI-S-022, API-S-021, API-S-025, API-S-036, API-S-037, SRS-UI-007, SRS-F-001, SRS-F-002, SRS-F-004, SRS-F-008, SRS-F-009, SRS-F-055, SRS-F-062 and the SRS mockup coverage section; PRD F-001, F-002, F-004, F-009, F-055 and F-062; every UI plan prompt that builds a v3 surface; new plan rows UI-1.3, UI-F2.18, API-F2.16, API-F2.17, API-F2.18 and DE-1.8.
 
@@ -100,15 +144,15 @@ Classes: **(a)** SRS missing a requirement the mockup shows; **(b)** SRS contrad
 
 ### CA-1: The guide's colours fall below WCAG 2.2 AA (answer 15)
 
-**Status: resolved** by the owner on 2026-10-22, verbatim: "a", which is option (a) below: keep the guide's values and amend NFR-006, SRS-UI-007 and UI-S-015 to accept them. Applied in this PR: PRD NFR-006 and SRS-UI-007 name the exempt pairs with their measured ratios, and only those (light: `--fs-on-primary` `#ffffff` on `--fs-primary` `#16ac49`, 2.99:1; `--fs-primary` `#16ac49` as text (links, ghost buttons) on `#ffffff` (`--fs-surface`, `--fs-surface-card`, `--fs-surface-overlay`), 2.99:1; `--fs-on-primary-container` `#0f8a39` on `--fs-primary-container` `#f0faf4`, 4.18:1; `--fs-error` `#e53935` on `#ffffff` (the same three surfaces), 4.23:1, and on `#f5f5f5` (`--fs-surface-container`, `--fs-surface-raised`), 3.88:1; `--fs-on-surface-muted` `#777777` on `#ffffff` (the same three surfaces), 4.48:1; `--fs-on-surface-placeholder` `#999999` on `#ffffff` (the same three surfaces), 2.85:1; dark: `--fs-on-primary` `#ffffff` on `--fs-primary` `#16ac49`, 2.99:1; `--fs-on-surface-muted` and `--fs-on-surface-placeholder` `#6a6a6a` on `--fs-surface` `#141414`, 3.41:1, and on `--fs-surface-card` `#1c1c1c`, 3.15:1; both themes: `#ffffff` text on `--fs-badge-document` `#fd1e23`, 3.90:1, and on `--fs-badge-media` `#007af9`, 4.08:1); UI-S-015's token test accepts a listed pair only at exactly its listed values and fails every other pair below 4.5:1; UI-S-016 keeps the focus ring at 3:1 with no exception, drawn in `--fs-focus-ring` (`#0f8a39` light, 4.45:1 on `#ffffff`, 4.09:1 on `#f5f5f5`, 4.18:1 on `#f0faf4`; `#16ac49` dark, at least 4.68:1 on every dark surface); UI-S-024, the UI plan prompts (UI-F2.18 changes the tokens and the token test) and the feature files follow. Every other accessibility requirement stays. **Open for the owner, not decided here:** the guide's component borders `--fs-outline-strong` `#cccccc` on `#ffffff` (1.61:1) and `#333333` on `#1c1c1c` (1.35:1) are below the 3:1 non-text contrast WCAG 2.2 AA (success criterion 1.4.11) asks of input and checkbox boundaries; decision "a" names text pairs only, so these borders stay under NFR-006's AA target, and no token test checks them yet.
+**Status: resolved** by the owner on 2026-10-22, verbatim: "a", which is option (a) below: keep the guide's values and amend NFR-006, SRS-UI-007 and UI-S-015 to accept them. Applied in this PR: PRD NFR-006 and SRS-UI-007 name the exempt pairs with their measured ratios, and only those (light: `--fs-on-primary` `#ffffff` on `--fs-primary` `#16ac49`, 2.99:1; `--fs-primary` `#16ac49` as text (links, ghost buttons) on `#ffffff` (`--fs-surface`, `--fs-surface-card`, `--fs-surface-overlay`), 2.99:1; `--fs-on-primary-container` `#0f8a39` on `--fs-primary-container` `#f0faf4`, 4.18:1; `--fs-error` `#e53935` on `#ffffff` (the same three surfaces), 4.23:1, and on `#f5f5f5` (`--fs-surface-container`, `--fs-surface-raised`), 3.88:1; `--fs-on-surface-muted` `#777777` on `#ffffff` (the same three surfaces), 4.48:1; `--fs-on-surface-placeholder` `#999999` on `#ffffff` (the same three surfaces), 2.85:1; dark: `--fs-on-primary` `#ffffff` on `--fs-primary` `#16ac49`, 2.99:1; `--fs-on-surface-muted` and `--fs-on-surface-placeholder` `#6a6a6a` on `--fs-surface` `#141414`, 3.41:1, and on `--fs-surface-card` `#1c1c1c`, 3.15:1; both themes: `#ffffff` text on `--fs-badge-document` `#fd1e23`, 3.90:1, and on `--fs-badge-media` `#007af9`, 4.08:1); UI-S-015's token test accepts a listed pair only at exactly its listed values and fails every other pair below 4.5:1; UI-S-016 keeps the focus ring at 3:1 with no exception, drawn in `--fs-focus-ring` (`#0f8a39` light, 4.45:1 on `#ffffff`, 4.09:1 on `#f5f5f5`, 4.18:1 on `#f0faf4`; `#16ac49` dark, at least 4.68:1 on every dark surface); UI-S-024, the UI plan prompts (UI-F2.18 changes the tokens and the token test) and the feature files follow. Every other accessibility requirement stays. The guide's input and checkbox borders, which decision "a" does not name, are recorded as CA-4 for the owner.
 
 Approach approved by the owner on 2026-10-22, verbatim: "2. sounds good": follow the guide's colour values, record each failing pair here, and keep both requirements unchanged.
 
 1. **Conflict Description:** The owner answered "No follow the guide in all cases". The guide's light colours fail the contrast the SRS and PRD require: white on `#16AC49` 2.99:1; `#E53935` on white 4.23:1; active text `#0f8a39` on `#F0FAF4` 4.18:1; muted `#777777` on white 4.48:1 and `#6A6A6A` on `#141414` 3.41:1; placeholder `#999999` on white 2.85:1; white text on the red (`#FD1E23`) and blue (`#007AF9`) file-type badges below 4.5:1.
 2. **PRD/SRS Reference:** [PRD NFR-006](../prd.md#nfr-006-accessibility-and-usability): "Web interfaces MUST target WCAG 2.2 AA". [UI-S-015](../../apps/filesquid/ui/resources/srs.md): "its token test MUST fail when any of `on-surface`, `on-surface-variant` …, `primary` (on `surface`), `on-primary` (on `primary`), `on-primary-container` (on `primary-container`) or `error` … is below 4.5:1 in either theme". [SRS-UI-007](../srs.md#srs-ui-007-light-and-dark-themes): "Contrast of primary actions and body text on their surfaces MUST meet WCAG 2.2 AA in both themes".
 3. **ADR Reference:** [ADR 031](../architecture/031-vanilla-typescript-ui-and-white-label-theming.md) Decision 3: "Components are styled only through CSS custom properties, with a light and a dark set." The token values carry the choice.
-4. **Recommended Resolution:** the owner chooses one: (a) keep the guide's values and amend NFR-006, SRS-UI-007 and UI-S-015 to accept them; (b) keep WCAG 2.2 AA and use the built values (`#0b7a32` primary, `#c62828` error, `#0b7a32` active text, darker muted and placeholder values) in the product while the mockups keep the guide's; (c) amend the guide. Until then UI-S-015's values and contrast test stand, and UI-F2.18 MUST NOT change those tokens. Artifacts to update: PRD NFR-006, SRS-UI-007, UI-S-015, UI-S-024, [`tokens.css`](../../apps/filesquid/ui/src/theme/tokens.css) and the ImageSquid tokens, the guide if (c).
-5. **Impact Assessment:** Unresolved, UI-F2.18 cannot apply the guide's values without failing the contrast test the hook runs, and an accessibility audit (RC-005) fails if the test is weakened silently.
+4. **Recommended Resolution (as recorded before the decision):** the owner chooses one: (a) keep the guide's values and amend NFR-006, SRS-UI-007 and UI-S-015 to accept them; (b) keep WCAG 2.2 AA and use the built values (`#0b7a32` primary, `#c62828` error, `#0b7a32` active text, darker muted and placeholder values) in the product while the mockups keep the guide's; (c) amend the guide. The owner chose (a), verbatim: "a"; this PR applies it (see **Status** above), so the hold that applied until the decision is lifted and UI-F2.18 sets the guide's values. Artifacts updated: PRD NFR-006, SRS-UI-007, UI-S-015, UI-S-024, [`tokens.css`](../../apps/filesquid/ui/src/theme/tokens.css) and the ImageSquid tokens, the guide if (c).
+5. **Impact Assessment:** Resolved. UI-F2.18 applies the guide's values and changes the token test so it accepts only the listed pairs at their listed values; an accessibility audit (RC-005) reads the exception in NFR-006 and SRS-UI-007, so nothing is weakened silently.
 
 ### CA-2: Sidebar tree (closed by answer 2)
 
@@ -123,6 +167,14 @@ Approach approved by the owner on 2026-10-22, verbatim: "3. yes": one Trash acro
 3. **ADR Reference:** [ADR 041](../architecture/041-owner-folder-libraries-and-home-collections.md) Decision 8: "Recently deleted (Trash) is a reserved navigation filter of each library over its files in the deleted state … The navigation listing shows it as a reserved node of each library ([API-S-021])." Retention stays per library (Decision 10), which one Trash keeps: each file's purge time follows its library's period.
 4. **Recommended Resolution:** amend ADR 041 Decision 8 (an owner-approved ADR change, not made here): one Recently deleted filter for the repository, the last node of the navigation tree, listing the deleted files of every library the caller may read, each with its library; then API-S-021 drops the per-library node and API-F2.15 builds the one node. Artifacts to update: ADR 041, API-S-019 and API-S-021, API-F2.15.
 5. **Impact Assessment:** Unresolved, API-F2.15 would build one node per library while the UI and mockups show one Trash, and the default UI could not list a Trash across libraries.
+
+### CA-4: The guide's component borders fall below WCAG 2.2 non-text contrast (open)
+
+1. **Conflict Description:** UI-S-024 gives inputs, tables, checkboxes, secondary buttons, menus and dialogs the guide's `--fs-outline-strong` border: `#cccccc` on `#ffffff` is 1.61:1 in light; `#333333` on `#1c1c1c` is 1.35:1 and on `#141414` 1.46:1 in dark. WCAG 2.2 success criterion 1.4.11 asks 3:1 of the boundary that identifies an input or a checkbox. The owner's decision "a" on CA-1 exempts the listed text pairs only, and SRS-UI-007 keeps every other AA criterion.
+2. **PRD/SRS Reference:** [PRD NFR-006](../prd.md#nfr-006-accessibility-and-usability): "Every other colour pair and every other distribution MUST meet AA, focus indicators MUST reach 3:1 with no exception, and every other AA criterion stays required." [SRS-UI-007](../srs.md#srs-ui-007-light-and-dark-themes): "Every other WCAG 2.2 AA criterion, the labels, keyboard operation and the other contracts of NFR-006 stay required." [UI-S-024](../../apps/filesquid/ui/resources/srs.md) **Colour roles** `--fs-outline-strong` and **Controls**.
+3. **ADR Reference:** [ADR 031](../architecture/031-vanilla-typescript-ui-and-white-label-theming.md) Decision 3: "Components are styled only through CSS custom properties, with a light and a dark set." The token value carries the choice.
+4. **Recommended Resolution:** the owner chooses one: (a) extend the CA-1 exception to these border pairs at their guide values, naming them in NFR-006, SRS-UI-007 and UI-S-015; (b) keep 1.4.11 and give inputs and checkboxes a border token of at least 3:1 (for example `#949494` on `#ffffff`, 3.03:1, and `#6a6a6a` on `#1c1c1c`, 3.15:1), the mockups keeping the guide's lighter border elsewhere; (c) identify inputs and checkboxes some other way that meets 1.4.11. Artifacts to update: PRD NFR-006, SRS-UI-007, UI-S-015, UI-S-024, UI-F2.18 and the token files.
+5. **Impact Assessment:** Unresolved, UI-F2.18 would ship input and checkbox borders below the 3:1 that NFR-006 still requires. Nothing in this PR weakens that requirement; UI-S-024 and UI-F2.18 point at this artifact, and UI-F2.18 MUST NOT apply the guide's `--fs-outline-strong` to input and checkbox boundaries until the owner resolves it.
 
 ## Mockups redrawn
 
@@ -184,12 +236,12 @@ User-facing strings only; API routes, operation kinds (`import.item`, `job.start
 - **Mockups → SRS:** the active v3 suite and the owner's answers into the UI SRS (UI-S-024 to UI-S-034 and nine existing rows), the API SRS (API-S-021, API-S-025, API-S-036, API-S-037, API-S-038) and the product SRS (SRS-UI-007, SRS-F-001, SRS-F-002, SRS-F-004, SRS-F-008, SRS-F-009, SRS-F-055, SRS-F-062, Mockup coverage).
 - **SRS → PRD:** F-001 (first use), F-002 (review, per-file progress), F-004 (sections, one Trash), F-009 (rebuild job, library facts), F-055 (mockups, Upload/Download, API information only in Settings), F-062 (one Recently deleted). The root README's "About this project" needs no change.
 - **SRS → plans:** the UI, API and desktop plan rows listed above, global Tasks 1.2 and FS-2.5, the checklist and the progress bar.
-- **ADRs:** none changed. ADR 041 Decision 8 conflicts with answer 3 (CA-3); CA-1 (answer 15 versus NFR-006 and UI-S-015) is resolved by the owner's decision "a": PRD NFR-006, SRS-UI-007, UI-S-015, UI-S-016 and UI-S-024 accept only the listed guide pairs at their measured ratios, the focus ring moves to `--fs-focus-ring` at 3:1, UI-F2.18 sets the guide's values and changes the token test (20 to 22 h), and the theme-token, fidelity and accessibility feature files follow.
+- **ADRs:** none changed. CA-4 (the guide's input and checkbox borders versus WCAG 2.2 success criterion 1.4.11) is open for the owner. ADR 041 Decision 8 conflicts with answer 3 (CA-3); CA-1 (answer 15 versus NFR-006 and UI-S-015) is resolved by the owner's decision "a": PRD NFR-006, SRS-UI-007, UI-S-015, UI-S-016 and UI-S-024 accept only the listed guide pairs at their measured ratios, the focus ring moves to `--fs-focus-ring` at 3:1, UI-F2.18 sets the guide's values and changes the token test (20 to 22 h), and the theme-token, fidelity and accessibility feature files follow.
 - **For the platform engineer:** the upload review plan and confirm route (API-S-036 **Review**), per-file job items and retries (API-S-037), the rebuild as a `library.rebuild` job (API-S-025), library names, free bytes and recent libraries (API-S-038), the deleted view's deletion cause and home collection title and one Recently deleted node across libraries once CA-3 is resolved (API-F2.15), and their desktop host side (DE-1.8).
 
 ## Verification
 
-Mockups: every file parses as XML, and a headless Chromium render at 1440 × 900 (a scratch script, not committed) reports no text off the canvas and no console error. Its button check reports seven texts whose centre falls inside a button's box: each lies under a menu or dialog (10, 25, 27, 39, 57, 58) or is a count badge (19), not a label of that button; the screenshots were checked by eye.
+Mockups: every file parses as XML, and a headless Chromium render at 1440 × 900 (a scratch script, not committed) reports no text off the canvas and no console error. Its button check reports eight texts in seven files whose centre falls inside a button's box: each lies under a menu or dialog (10, 25, 27, 39, 57, 58) or is a count badge (19), not a label of that button; the screenshots were checked by eye.
 
 ```text
 $ cd resources/ui-mockups/v3 && xmllint --noout *.svg && echo ALL_OK
