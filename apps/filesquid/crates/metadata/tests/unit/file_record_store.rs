@@ -68,10 +68,13 @@ fn read(rig: &Rig<MemoryBackend>) -> FileRecord {
         .expect("a record")
 }
 
-/// A different import of the same file.
+/// A different import of the same file, citing `v2`, the version it is
+/// committed as after the first import (MD-0.10: the cited version is the
+/// version being committed).
 fn second_entry() -> filesquid_metadata::import::ImportEntry {
     let mut again = entry();
     again.acquisition.job_id = Fact::value("job-2".to_string());
+    again.acquisition.object_version = "v2".to_string();
     again
 }
 
@@ -628,4 +631,265 @@ fn a_re_import_still_commits_the_callers_bound_files() {
     let state = object.state(object.head()).unwrap();
     assert!(state.get("prov.ttl").is_some());
     assert_eq!(read(&rig).imports().len(), 2);
+}
+
+/// MD-0.10: the cited-version check of import commits (MD-S-008, ADR 038
+/// Decision 10) and the store's refusal of a scrubbed record (MD-S-013,
+/// ADR 038 Decision 6).
+mod cited_version_and_scrub {
+    use super::*;
+    use filesquid_metadata::import::scrub::IdentityClass;
+    use rig::Leases;
+
+    /// A clock that, the first time the store asks it for the time (after
+    /// the preflight checks, before the commit), has another writer commit
+    /// an unrelated file, so the head moves and the commit would rebase.
+    struct MoveHeadOnFirstTick<'r> {
+        rig: &'r Rig<MemoryBackend>,
+        fired: AtomicBool,
+    }
+
+    impl Clock for MoveHeadOnFirstTick<'_> {
+        fn now_millis(&self) -> Option<u64> {
+            if !self.fired.swap(true, Ordering::SeqCst) {
+                self.rig.seed(OBJECT, &[("unrelated.txt", b"other writer")]);
+            }
+            SystemClock.now_millis()
+        }
+    }
+
+    /// The store type of these tests, over any clock.
+    type ClockedStore<'r, C> =
+        OcflStore<'r, MemoryBackend, Leases, MemoryBackend, C, fn(&str) -> String>;
+
+    /// A store over `rig` whose clock moves the head once.
+    fn racing_store(rig: &Rig<MemoryBackend>) -> ClockedStore<'_, MoveHeadOnFirstTick<'_>> {
+        OcflStore {
+            clock: MoveHeadOnFirstTick {
+                rig,
+                fired: AtomicBool::new(false),
+            },
+            storage: &rig.storage,
+            reservations: &rig.leases,
+            staging: &rig.staging,
+            staging_prefix: "metadata-changes".to_string(),
+            holder: "metadata-test".to_string(),
+            object_root: object_root as fn(&str) -> String,
+        }
+    }
+
+    /// The standard record whose only entry cites `version`.
+    fn record_citing(version: &str) -> FileRecord {
+        let mut first = entry();
+        first.acquisition.object_version = version.to_string();
+        FileRecord::new(
+            Raw::from_bytes(b"Holiday 2023.JPG"),
+            NameForm::Nfc,
+            Some("JPG".to_string()),
+            None,
+            Some("image/jpeg".to_string()),
+            first,
+        )
+        .unwrap()
+    }
+
+    /// Stage the original's bytes for an import through `store`.
+    fn stage_original<C: Clock>(store: &ClockedStore<'_, C>) {
+        let model = store.change_model(OBJECT).unwrap();
+        ready(model.reset()).unwrap();
+        ready(model.stage_bytes(STORED, b"pixels")).unwrap();
+    }
+
+    /// The versions of the object, or none when it was never created.
+    fn versions(rig: &Rig<MemoryBackend>) -> Vec<String> {
+        if !rig.storage_has_object(OBJECT) {
+            return Vec::new();
+        }
+        rig.versions(OBJECT)
+    }
+
+    #[test]
+    fn an_import_commit_whose_cited_version_matches_publishes_it() {
+        let rig = Rig::memory();
+        rig.seed(OBJECT, &[("unrelated.txt", b"first")]);
+        let store = rig.store();
+        stage_original(&store);
+        let receipt = ready(store.commit_import_with(
+            &file(),
+            &record_citing("v2"),
+            &CommitOptions::default(),
+        ))
+        .expect("import")
+        .expect("a version");
+        assert_eq!(receipt.version.to_string(), "v2");
+        assert_eq!(read(&rig).imports()[0].acquisition.object_version, "v2");
+    }
+
+    #[test]
+    fn an_import_commit_citing_another_version_is_a_conflict() {
+        let rig = Rig::memory();
+        let store = rig.store();
+        stage_original(&store);
+        let result = ready(store.commit_import_with(
+            &file(),
+            &record_citing("v2"),
+            &CommitOptions::default(),
+        ));
+        assert!(
+            matches!(&result, Err(StoreError::Conflict { reason }) if reason.contains("v2") && reason.contains("v1")),
+            "{result:?}"
+        );
+        assert_eq!(versions(&rig), Vec::<String>::new(), "nothing published");
+    }
+
+    #[test]
+    fn an_import_commit_that_would_rebase_is_a_retryable_conflict_that_publishes_nothing() {
+        let rig = Rig::memory();
+        rig.seed(OBJECT, &[("unrelated.txt", b"first")]);
+        let store = racing_store(&rig);
+        stage_original(&store);
+        let result = ready(store.commit_import_with(
+            &file(),
+            &record_citing("v2"),
+            &CommitOptions::default(),
+        ));
+        assert!(
+            matches!(&result, Err(StoreError::Conflict { .. })),
+            "{result:?}"
+        );
+        assert_eq!(rig.versions(OBJECT), ["v1", "v2"], "nothing published");
+        let missing = ready(store.read_file_record(&file())).expect("read");
+        assert_eq!(missing, None, "no record was committed");
+
+        let retry = ready(store.commit_import_with(
+            &file(),
+            &record_citing("v3"),
+            &CommitOptions::default(),
+        ))
+        .expect("the retry with the new version")
+        .expect("a version");
+        assert_eq!(retry.version.to_string(), "v3");
+        let object = ready(filesquid_ocfl::read::Object::open(
+            &rig.storage,
+            &object_root(OBJECT),
+        ))
+        .unwrap();
+        let state = object.state(object.head()).unwrap();
+        assert!(state.get(STORED).is_some(), "the staged content was kept");
+        assert!(state.get("unrelated.txt").is_some());
+    }
+
+    #[test]
+    fn a_re_import_that_would_rebase_is_a_retryable_conflict_that_publishes_nothing() {
+        let rig = Rig::memory();
+        import(&rig, &record());
+        let store = racing_store(&rig);
+        let result =
+            ready(store.append_import_with(&file(), second_entry(), &CommitOptions::default()));
+        assert!(
+            matches!(&result, Err(StoreError::Conflict { .. })),
+            "{result:?}"
+        );
+        assert_eq!(rig.versions(OBJECT), ["v1", "v2"]);
+        assert_eq!(read(&rig).imports().len(), 1);
+
+        let mut again = second_entry();
+        again.acquisition.object_version = "v3".to_string();
+        let retry = ready(store.append_import_with(&file(), again, &CommitOptions::default()))
+            .expect("retry")
+            .expect("a version");
+        assert_eq!(retry.version.to_string(), "v3");
+        assert_eq!(read(&rig).imports().len(), 2);
+    }
+
+    #[test]
+    fn a_re_import_citing_an_earlier_version_is_a_conflict() {
+        let rig = Rig::memory();
+        import(&rig, &record());
+        let mut stale = second_entry();
+        stale.acquisition.object_version = "v1".to_string();
+        let result = ready(rig.store().append_import_with(
+            &file(),
+            stale,
+            &CommitOptions::default(),
+        ));
+        assert!(
+            matches!(&result, Err(StoreError::Conflict { .. })),
+            "{result:?}"
+        );
+        assert_eq!(rig.versions(OBJECT), ["v1"]);
+    }
+
+    #[test]
+    fn a_statements_edit_still_rebases_over_a_moved_head() {
+        let rig = Rig::memory();
+        import(&rig, &record());
+        let store = racing_store(&rig);
+        let mut statements = Record::default();
+        statements
+            .set(MetadataNamespace::Dcterms, "title", "Harbour")
+            .unwrap();
+        let receipt =
+            ready(store.commit_record_with(&file(), &statements, &CommitOptions::default()))
+                .expect("the edit rebases")
+                .expect("a version");
+        assert_eq!(receipt.version.to_string(), "v3");
+        let now = read(&rig);
+        assert_eq!(
+            now.statements().get("dcterms:title").unwrap().value,
+            "Harbour"
+        );
+        assert_eq!(now.imports(), record().imports());
+    }
+
+    #[test]
+    fn the_store_refuses_to_save_a_scrubbed_record() {
+        let rig = Rig::memory();
+        import(&rig, &record());
+        let scrubbed = read(&rig).scrubbed(&IdentityClass::ALL);
+        assert!(scrubbed.names_withheld());
+        let result = ready(rig.store().commit_file_record_with(
+            &file(),
+            &scrubbed,
+            &CommitOptions::default(),
+        ));
+        assert!(
+            matches!(result, Err(StoreError::Record(RecordError::NamesWithheld))),
+            "{result:?}"
+        );
+        assert_eq!(rig.versions(OBJECT), ["v1"]);
+        assert_eq!(read(&rig), record());
+    }
+
+    #[test]
+    fn the_store_refuses_to_import_a_scrubbed_record() {
+        let rig = Rig::memory();
+        let store = rig.store();
+        stage_original(&store);
+        let scrubbed = record().scrubbed(&[IdentityClass::OriginalName]);
+        let result = ready(store.commit_import_with(&file(), &scrubbed, &CommitOptions::default()));
+        assert!(
+            matches!(result, Err(StoreError::Record(RecordError::NamesWithheld))),
+            "{result:?}"
+        );
+        assert_eq!(versions(&rig), Vec::<String>::new());
+    }
+
+    #[test]
+    fn the_store_refuses_to_append_an_entry_whose_source_name_is_withheld() {
+        let rig = Rig::memory();
+        import(&rig, &record());
+        let withheld = second_entry().scrubbed(&[IdentityClass::OriginalName]);
+        assert!(withheld.source.name_withheld());
+        let result = ready(rig.store().append_import_with(
+            &file(),
+            withheld,
+            &CommitOptions::default(),
+        ));
+        assert!(
+            matches!(result, Err(StoreError::Record(RecordError::NamesWithheld))),
+            "{result:?}"
+        );
+        assert_eq!(rig.versions(OBJECT), ["v1"]);
+    }
 }

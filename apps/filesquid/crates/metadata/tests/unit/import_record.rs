@@ -1092,3 +1092,211 @@ mod review_fixes_three {
         );
     }
 }
+
+/// MD-0.10: the `OriginalName` identity class (MD-S-013, ADR 038 Decision 6).
+mod original_name_class {
+    use super::*;
+
+    /// The unavailable fact a withheld name is written as.
+    const WITHHELD: &str = r#"{"unavailable":"withheld_by_policy"}"#;
+
+    /// The standard record with a second entry from a full set of facts.
+    fn two_entry_record() -> FileRecord {
+        let mut record = record();
+        let mut again = rig::rich_entry();
+        again.acquisition.object_version = "v2".to_string();
+        record.append_import(again).unwrap();
+        record
+    }
+
+    /// Whether `fact` is withheld by policy.
+    fn is_withheld<T>(fact: &Fact<T>) -> bool {
+        matches!(fact, Fact::Unavailable(u) if u.unavailable == Reason::WithheldByPolicy)
+    }
+
+    #[test]
+    fn every_class_includes_the_original_name() {
+        assert!(IdentityClass::ALL.contains(&IdentityClass::OriginalName));
+        assert_eq!(IdentityClass::ALL.len(), 8);
+    }
+
+    #[test]
+    fn an_entry_scrub_withholds_the_source_name() {
+        let scrubbed = entry().scrubbed(&[IdentityClass::OriginalName]);
+        assert!(scrubbed.source.name_withheld());
+        assert_eq!(scrubbed.source.absolute_path, entry().source.absolute_path);
+        assert_eq!(scrubbed.validate(), Ok(()));
+        let json = serde_json::to_string(&scrubbed).unwrap();
+        assert!(!json.contains("Holiday 2023"), "{json}");
+    }
+
+    #[test]
+    fn a_record_scrub_withholds_the_header_names_and_every_source_name() {
+        let scrubbed = two_entry_record().scrubbed(&[IdentityClass::OriginalName]);
+        assert!(scrubbed.names_withheld());
+        for entry in scrubbed.imports() {
+            assert!(entry.source.name_withheld());
+            let json = serde_json::to_string(&entry.source).unwrap();
+            assert!(
+                json.contains(&format!(r#""original_name":{WITHHELD}"#)),
+                "{json}"
+            );
+        }
+        let text = scrubbed.to_markdown();
+        let head: Vec<&str> = text.lines().take(6).collect();
+        assert_eq!(head[2], format!("original_name: {WITHHELD}"));
+        assert_eq!(head[4], format!("display_name: {WITHHELD}"));
+        assert_eq!(head[5], r#"extension: "JPG""#);
+        // The paths still name the file: they are the `Path` class.
+        assert!(
+            !text.contains(r#""original_name":"Holiday 2023.JPG""#),
+            "{text}"
+        );
+        assert!(text.contains(r#""relative_path":"Holiday 2023.JPG""#));
+    }
+
+    #[test]
+    fn a_renamed_display_name_is_withheld_too() {
+        let mut record = record();
+        record.set_display_name("Harbour at dawn.JPG").unwrap();
+        let text = record
+            .scrubbed(&[IdentityClass::OriginalName])
+            .to_markdown();
+        assert!(!text.contains("Harbour at dawn"), "{text}");
+        assert!(!text.contains("Holiday 2023"), "{text}");
+    }
+
+    #[test]
+    fn a_record_scrub_applies_the_other_classes_to_every_entry() {
+        let scrubbed = two_entry_record().scrubbed(&IdentityClass::ALL);
+        let rich = &scrubbed.imports()[1];
+        assert!(is_withheld(&rich.source.absolute_path));
+        assert!(is_withheld(&rich.host.host_name));
+        let text = scrubbed.to_markdown();
+        for secret in ["/Users/pieter", "studio.local", "Holiday 2023", "pieter"] {
+            assert!(!text.contains(secret), "{secret} left: {text}");
+        }
+        assert_eq!(scrubbed.statements(), two_entry_record().statements());
+    }
+
+    #[test]
+    fn a_scrubbed_record_reads_back_as_scrubbed() {
+        let scrubbed = two_entry_record().scrubbed(&IdentityClass::ALL);
+        let back = FileRecord::from_markdown(&scrubbed.to_markdown()).expect("read back");
+        assert_eq!(back, scrubbed);
+        assert!(back.names_withheld());
+    }
+
+    #[test]
+    fn a_scrub_without_the_original_name_keeps_every_name() {
+        let record = two_entry_record();
+        let others: Vec<IdentityClass> = IdentityClass::ALL
+            .into_iter()
+            .filter(|c| *c != IdentityClass::OriginalName)
+            .collect();
+        let scrubbed = record.scrubbed(&others);
+        assert!(!scrubbed.names_withheld());
+        assert_eq!(scrubbed.original_name(), record.original_name());
+        assert_eq!(scrubbed.display_name(), record.display_name());
+        for (kept, base) in scrubbed.imports().iter().zip(record.imports()) {
+            assert_eq!(kept.source.original_name, base.source.original_name);
+        }
+        let text = scrubbed.to_markdown();
+        assert!(text.contains(r#"original_name: "Holiday 2023.JPG""#));
+        assert!(text.contains(r#"display_name: "Holiday 2023.JPG""#));
+    }
+
+    #[test]
+    fn a_source_name_is_known_and_never_empty_or_unavailable_for_another_reason() {
+        let json = serde_json::to_string(&entry()).unwrap();
+        let named = r#""original_name":"Holiday 2023.JPG""#;
+        assert!(json.contains(named));
+        let empty = json.replace(named, r#""original_name":"""#);
+        assert!(serde_json::from_str::<filesquid_metadata::import::ImportEntry>(&empty).is_err());
+        let other = json.replace(
+            named,
+            r#""original_name":{"unavailable":"not_supported_by_source"}"#,
+        );
+        assert!(serde_json::from_str::<filesquid_metadata::import::ImportEntry>(&other).is_err());
+        let withheld = json.replace(named, &format!(r#""original_name":{WITHHELD}"#));
+        let back: filesquid_metadata::import::ImportEntry =
+            serde_json::from_str(&withheld).unwrap();
+        assert!(back.source.name_withheld());
+        assert!(!entry().source.name_withheld());
+    }
+
+    #[test]
+    fn the_original_name_is_withheld_in_the_whole_record_or_nowhere() {
+        let mut again = entry().scrubbed(&[IdentityClass::OriginalName]);
+        again.acquisition.object_version = "v2".to_string();
+        let mut named = record();
+        assert_eq!(
+            named.append_import(again.clone()),
+            Err(RecordError::NamesWithheld)
+        );
+        assert_eq!(named, record(), "nothing was added");
+
+        let mut scrubbed = record().scrubbed(&[IdentityClass::OriginalName]);
+        let mut known = entry();
+        known.acquisition.object_version = "v2".to_string();
+        assert_eq!(
+            scrubbed.append_import(known),
+            Err(RecordError::NamesWithheld)
+        );
+        scrubbed.append_import(again).expect("a scrubbed entry");
+
+        let text = record().to_markdown();
+        let mixed = text.replacen(
+            r#""original_name":"Holiday 2023.JPG""#,
+            &format!(r#""original_name":{WITHHELD}"#),
+            1,
+        );
+        assert!(matches!(
+            FileRecord::from_markdown(&mixed),
+            Err(RecordError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn a_scrubbed_record_cannot_be_renamed() {
+        let mut scrubbed = record().scrubbed(&[IdentityClass::OriginalName]);
+        assert_eq!(
+            scrubbed.set_display_name("Other.JPG"),
+            Err(RecordError::NamesWithheld)
+        );
+    }
+
+    #[test]
+    fn a_record_with_only_one_header_name_withheld_is_malformed() {
+        let text = record().to_markdown().replacen(
+            r#"original_name: "Holiday 2023.JPG""#,
+            &format!("original_name: {WITHHELD}"),
+            1,
+        );
+        assert!(matches!(
+            FileRecord::from_markdown(&text),
+            Err(RecordError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn a_header_name_unavailable_for_another_reason_is_malformed() {
+        let other = r#"{"unavailable":"not_supported_by_source"}"#;
+        let text = record()
+            .to_markdown()
+            .replacen(
+                r#"original_name: "Holiday 2023.JPG""#,
+                &format!("original_name: {other}"),
+                1,
+            )
+            .replacen(
+                r#"display_name: "Holiday 2023.JPG""#,
+                &format!("display_name: {other}"),
+                1,
+            );
+        assert!(matches!(
+            FileRecord::from_markdown(&text),
+            Err(RecordError::Malformed(_))
+        ));
+    }
+}

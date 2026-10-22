@@ -84,7 +84,7 @@ pub use routes::{route_actions, routed_paths, router, Liveness};
 use std::sync::{Arc, OnceLock};
 
 /// Version of the FileSquid API contract. Bumped when the contract changes.
-pub const API_VERSION: &str = "0.22.0";
+pub const API_VERSION: &str = "0.23.0";
 
 /// URL prefix shared by every API route.
 pub const API_PREFIX: &str = "/api/v1";
@@ -138,10 +138,18 @@ pub struct ApiState {
     /// The host's folder dialog for the library routes, installed once at startup (the
     /// folder-choice route answers 503 until then; API-S-025).
     location_chooser: Arc<OnceLock<Arc<dyn local_library::choice::LocationChooser>>>,
+    /// The host's durable job service for the job routes, installed once at startup (they
+    /// answer 503 until then; API-S-037).
+    jobs: Arc<OnceLock<Arc<jobs::Jobs>>>,
+    /// The host's worker for each job kind, to which a resumed job is handed (API-S-037).
+    job_runners: Arc<std::sync::Mutex<JobRunners>>,
     /// The host's import dialog and job runner, installed once at startup (the import route
     /// answers 503 until then).
     import_starter: Arc<OnceLock<Arc<dyn imports::ImportStarter>>>,
 }
+
+/// The installed job runners, by job kind.
+type JobRunners = std::collections::BTreeMap<String, Arc<dyn jobs::JobRunner>>;
 
 impl std::fmt::Debug for ApiState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -154,6 +162,7 @@ impl std::fmt::Debug for ApiState {
             .field("validation_installed", &self.validation.get().is_some())
             .field("history_installed", &self.history.get().is_some())
             .field("libraries_installed", &self.libraries.get().is_some())
+            .field("jobs_installed", &self.jobs.get().is_some())
             .field("navigation_installed", &self.navigation.get().is_some())
             .field("preferences_installed", &self.preferences.get().is_some())
             .field("client_events", &self.client_events)
@@ -216,8 +225,44 @@ impl ApiState {
             journal_names: Arc::new(OnceLock::new()),
             history_backfill: Arc::new(OnceLock::new()),
             location_chooser: Arc::new(OnceLock::new()),
+            jobs: Arc::new(OnceLock::new()),
+            job_runners: Arc::new(std::sync::Mutex::new(JobRunners::new())),
             import_starter: Arc::new(OnceLock::new()),
         }
+    }
+
+    /// Install the host's job service for the job routes (API-S-037). Returns false, keeping
+    /// the first, if one was already installed.
+    pub fn install_jobs(&self, jobs: Arc<jobs::Jobs>) -> bool {
+        self.jobs.set(jobs).is_ok()
+    }
+
+    /// The installed job service, if any.
+    pub fn jobs(&self) -> Option<Arc<jobs::Jobs>> {
+        self.jobs.get().cloned()
+    }
+
+    /// Install `runner` as the worker of job `kind`, to which `POST /api/v1/jobs/{job}/resume`
+    /// hands a resumed job of that kind (API-S-037). Returns false, keeping the first, if the
+    /// kind already has one.
+    pub fn install_job_runner(&self, kind: &str, runner: Arc<dyn jobs::JobRunner>) -> bool {
+        let mut runners = self
+            .job_runners
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match runners.contains_key(kind) {
+            true => false,
+            false => runners.insert(kind.to_string(), runner).is_none(),
+        }
+    }
+
+    /// The installed worker of job `kind`, if any.
+    pub fn job_runner(&self, kind: &str) -> Option<Arc<dyn jobs::JobRunner>> {
+        self.job_runners
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(kind)
+            .cloned()
     }
 
     /// The rate bound of the client-events route.

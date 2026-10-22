@@ -6,7 +6,9 @@
 //! job's end is stored whole or not at all, and no second writer sees the job in between.
 //! The rules are the API's ([`filesquid_api::jobs::rules`]); this module only stores.
 
-use filesquid_api::jobs::{same_id, Job, JobError, JobState, JobStore};
+use filesquid_api::jobs::{
+    same_id, Job, JobControl, JobError, JobFilter, JobList, JobState, JobStore, SlotKinds,
+};
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, Row, TransactionBehavior};
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
@@ -28,14 +30,18 @@ CREATE TABLE IF NOT EXISTS jobs (
     lease_expires_ms INTEGER,
     created_ms INTEGER NOT NULL,
     updated_ms INTEGER NOT NULL,
-    error_code TEXT
+    error_code TEXT,
+    control TEXT
 );
 CREATE INDEX IF NOT EXISTS jobs_unfinished ON jobs (state, created_ms, id);
+CREATE INDEX IF NOT EXISTS jobs_newest ON jobs (created_ms, id);
+CREATE INDEX IF NOT EXISTS jobs_kind_newest ON jobs (kind, created_ms, id);
+CREATE INDEX IF NOT EXISTS jobs_leased ON jobs (kind, state, lease_expires_ms);
 ";
 
 /// Columns of a job, in [`job`] and [`write`] order.
 const COLUMNS: &str = "id, kind, operation_id, source, state, checkpoint, done, total, \
-    attempts, fence, holder, lease_expires_ms, created_ms, updated_ms, error_code";
+    attempts, fence, holder, lease_expires_ms, created_ms, updated_ms, error_code, control";
 
 /// The job store backed by SQLite.
 pub struct SqliteJobs {
@@ -83,6 +89,7 @@ impl SqliteJobs {
             .map_err(sql_err)?;
         conn.busy_timeout(std::time::Duration::from_secs(5))
             .map_err(sql_err)?;
+        add_control_column(&conn)?;
         conn.execute_batch(SCHEMA).map_err(sql_err)?;
         Ok(Self {
             conn: Mutex::new(conn),
@@ -139,6 +146,64 @@ impl JobStore for SqliteJobs {
     fn unfinished_of(&self, kind: &str, limit: usize) -> Result<Vec<Job>, JobError> {
         self.oldest_open(Some(kind), limit)
     }
+
+    /// One `BEGIN IMMEDIATE` transaction holds the database's write lock from the read to the
+    /// write, so the count and the lease are one step for every connection; each kind is
+    /// counted through the `jobs_leased` index.
+    fn update_counting_leases(
+        &self,
+        id: &str,
+        (kinds, now_ms): (SlotKinds<'_>, i64),
+        change: &mut dyn FnMut(Job, usize) -> Result<Job, JobError>,
+    ) -> Result<Job, JobError> {
+        let mut conn = self.lock()?;
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_err)?;
+        let current = read(&tx, id)?.ok_or(JobError::NotFound)?;
+        let held = count_leased(&tx, &kinds(&current), id, now_ms)?;
+        let changed = same_id(id, change(current, held)?)?;
+        write(&tx, "INSERT OR REPLACE", &changed)?.map_err(sql_err)?;
+        tx.commit().map_err(sql_err)?;
+        Ok(changed)
+    }
+
+    /// One indexed query, newest first, reading one job past the limit to tell whether more
+    /// matched.
+    fn list(&self, filter: &JobFilter) -> Result<JobList, JobError> {
+        let conn = self.lock()?;
+        let sql = format!(
+            "SELECT {COLUMNS} FROM jobs WHERE (?2 IS NULL OR kind = ?2) \
+             AND (?3 IS NULL OR state = ?3) ORDER BY created_ms DESC, id DESC LIMIT ?1"
+        );
+        let mut stmt = conn.prepare(&sql).map_err(sql_err)?;
+        let limit = filter.effective_limit();
+        let fetch = i64::try_from(limit + 1).unwrap_or(i64::MAX);
+        let state = filter.state.map(JobState::as_str);
+        let rows = stmt
+            .query_map(params![fetch, filter.kind, state], job)
+            .map_err(sql_err)?;
+        let jobs = rows.collect::<Result<Vec<Job>, _>>().map_err(sql_err)?;
+        Ok(JobList::newest(jobs.into_iter(), limit))
+    }
+}
+
+/// Add the `control` column (API-S-037) to a `jobs` table created before it existed; a table
+/// without it, or none yet, is left to [`SCHEMA`]. Idempotent. Database I/O.
+fn add_control_column(conn: &Connection) -> Result<(), JobError> {
+    let mut stmt = conn
+        .prepare("SELECT name FROM pragma_table_info('jobs')")
+        .map_err(sql_err)?;
+    let columns = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(sql_err)?
+        .collect::<Result<Vec<String>, _>>()
+        .map_err(sql_err)?;
+    if columns.is_empty() || columns.iter().any(|name| name == "control") {
+        return Ok(());
+    }
+    conn.execute_batch("ALTER TABLE jobs ADD COLUMN control TEXT")
+        .map_err(sql_err)
 }
 
 impl SqliteJobs {
@@ -154,6 +219,26 @@ impl SqliteJobs {
         let rows = stmt.query_map(params![limit, kind], job).map_err(sql_err)?;
         rows.collect::<Result<Vec<Job>, _>>().map_err(sql_err)
     }
+}
+
+/// How many jobs other than `id` of `kinds` run under a lease that has not ended at
+/// `now_ms`. Database I/O.
+fn count_leased(
+    conn: &Connection,
+    kinds: &[String],
+    id: &str,
+    now_ms: i64,
+) -> Result<usize, JobError> {
+    let sql = "SELECT COUNT(*) FROM jobs WHERE kind = ?1 AND state = 'running' \
+               AND lease_expires_ms > ?2 AND id <> ?3";
+    let mut held = 0usize;
+    for kind in kinds {
+        let count: i64 = conn
+            .query_row(sql, params![kind, now_ms, id], |row| row.get(0))
+            .map_err(sql_err)?;
+        held = held.saturating_add(usize::try_from(count).unwrap_or(usize::MAX));
+    }
+    Ok(held)
 }
 
 /// The job `id`, if stored. Database I/O.
@@ -178,7 +263,7 @@ fn write(
     let total = job.total.map(to_i64).transpose()?;
     let sql = format!(
         "{verb} INTO jobs ({COLUMNS}) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)"
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)"
     );
     Ok(conn
         .execute(
@@ -199,6 +284,7 @@ fn write(
                 job.created_ms,
                 job.updated_ms,
                 job.error_code,
+                job.control.map(JobControl::as_str),
             ],
         )
         .map(drop))
@@ -212,12 +298,22 @@ fn to_i64(value: u64) -> Result<i64, JobError> {
     i64::try_from(value).map_err(|_| JobError::Failed("a job count is out of range".into()))
 }
 
-/// A job from a row in [`COLUMNS`] order; an unknown state is a conversion failure.
+/// A job from a row in [`COLUMNS`] order; an unknown state or control is a conversion
+/// failure.
 fn job(row: &Row<'_>) -> rusqlite::Result<Job> {
+    let unknown = |column: usize, name: &str| {
+        rusqlite::Error::FromSqlConversionFailure(
+            column,
+            rusqlite::types::Type::Text,
+            name.to_string().into(),
+        )
+    };
     let state: String = row.get(4)?;
-    let state = JobState::parse(&state).ok_or_else(|| {
-        rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, "state".into())
-    })?;
+    let state = JobState::parse(&state).ok_or_else(|| unknown(4, "state"))?;
+    let control = match row.get::<_, Option<String>>(15)? {
+        Some(name) => Some(JobControl::parse(&name).ok_or_else(|| unknown(15, "control"))?),
+        None => None,
+    };
     let unsigned = |value: i64| u64::try_from(value).unwrap_or_default();
     Ok(Job {
         id: row.get(0)?,
@@ -235,5 +331,6 @@ fn job(row: &Row<'_>) -> rusqlite::Result<Job> {
         created_ms: row.get(12)?,
         updated_ms: row.get(13)?,
         error_code: row.get(14)?,
+        control,
     })
 }

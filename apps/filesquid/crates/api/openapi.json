@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "FileSquid API",
-    "version": "0.22.0",
+    "version": "0.23.0",
     "description": "The single FileSquid API served by every FileSquid host. See resources/architecture/030-filesquid-api-and-transports.md. Conventions: a command (mutation) sends a CommandEnvelope as the `envelope` member of its JSON request body (operation_id is the idempotency key, expected_revision the revision last read) and answers with a CommandOutcome; a query (list) takes the PageSize (`limit`, 1-1000) and Cursor (`cursor`) parameters; every failed request answers with an ApiError body (code, message, retryable). Router-wide fallbacks: any /api/v1/ path not in this contract answers 404 not_found, and a documented path called with a method it does not document answers 405 method_not_allowed; both carry the ApiError body. They are not listed per operation because no operation sends them. Authorisation is deny-by-default: every operation, including health, the contract and the event channel, requires the bearerAuth credential and is authorised before anything else runs, so a call without it answers 401 unauthorized and a call whose credential is not accepted or does not grant the operation answers 403 forbidden, before any 404 or 405; both carry the ApiError body with a DenialReason in `reason`. Each operation names the authorisation action it performs in x-filesquid-action. The one deliberate exception is GET /api/v1/health/live (x-filesquid-action public, security []), a liveness probe that answers only {\"status\":\"up\"} without a credential. The content route GET and HEAD /api/v1/content/{handle} (x-filesquid-action content.read, x-filesquid-credential content-handle, security []) is not public: its only credential is the content handle in its path, minted by POST /api/v1/content-handles for one file version (API-S-018); a Bearer token is not accepted there, and every unusable request under /api/v1/content/ (unknown, malformed, missing, expired, evicted or revoked handle, an extra path segment or another method) answers one identical 403 forbidden with reason invalid_credentials, never 401, 404 or 405. Paths marked x-filesquid-host-route are served by the hosts, not by the filesquid-api router."
   },
   "security": [
@@ -144,6 +144,9 @@
         },
         "navigation.change": {
           "$ref": "#/components/schemas/NavigationChange"
+        },
+        "job.update": {
+          "$ref": "#/components/schemas/JobView"
         }
       }
     },
@@ -3728,6 +3731,235 @@
           }
         }
       }
+    },
+    "/api/v1/jobs": {
+      "get": {
+        "operationId": "listJobs",
+        "summary": "Durable jobs",
+        "description": "At most 100 durable jobs (limit, default and most 100; a larger limit answers 100), newest first, optionally of one kind and in one state, marked truncated when more match (API-S-037). There is no cursor: narrow the listing by kind and state to reach older jobs. A kind outside 1 to 128 characters, a limit outside 1 to 1000 or an unknown state is refused as invalid_request. A job is created by the route of its kind (for example POST /api/v1/imports). The views never carry a job's source identity, checkpoint, lease holder or fencing number. A filter that cannot be read is refused as invalid_request and journaled as job.refused.",
+        "x-filesquid-action": "jobs.read",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "description": "Only jobs of this kind.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "description": "Only jobs in this state.",
+            "schema": {
+              "$ref": "#/components/schemas/JobState"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The jobs, newest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/JobsUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{job}": {
+      "get": {
+        "operationId": "getJob",
+        "summary": "One durable job",
+        "description": "One job's view: its state, whether it is paused, the control asked of it, its progress, attempts and error code (API-S-037).",
+        "x-filesquid-action": "jobs.read",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/JobId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The job.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobView"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/JobNotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/JobsUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{job}/pause": {
+      "post": {
+        "operationId": "pauseJob",
+        "summary": "Pause a job",
+        "description": "Pause the job: a pending job is held and does not start until it is resumed; a running job's worker suspends at its next checkpoint, keeping it, and the job then stays paused. Pausing a paused job changes nothing. Journaled as job.paused; a refusal as job.refused (API-S-037).",
+        "x-filesquid-action": "jobs.manage",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/JobId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The job after the control.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobControlAnswer"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/JobNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/JobConflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/JobsUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{job}/resume": {
+      "post": {
+        "operationId": "resumeJob",
+        "summary": "Resume a job",
+        "description": "Clear the pause of the job and hand a pending job to the worker the host installed for its kind, which resumes it from its checkpoint without repeating completed work (scheduled true); with no such worker the job stays pending for the next launch (scheduled false). Journaled as job.resumed; a refusal as job.refused (API-S-037).",
+        "x-filesquid-action": "jobs.manage",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/JobId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The job after the control.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobControlAnswer"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/JobNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/JobConflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/JobsUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{job}/cancel": {
+      "post": {
+        "operationId": "cancelJob",
+        "summary": "Cancel a job",
+        "description": "Cancel the job: a pending job, or a running one whose lease has ended, is cancelled at once (job.cancelled); a running job's worker stops at its next checkpoint, after which the job is cancelled (job.cancel_requested). A run that suspends or whose lease expires under a cancel request is cancelled. A refusal is journaled as job.refused (API-S-037).",
+        "x-filesquid-action": "jobs.manage",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/JobId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The job after the control.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobControlAnswer"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/JobNotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/JobConflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/JobsUnavailable"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3756,9 +3988,10 @@
           "health.change",
           "events.resync",
           "host.change",
-          "navigation.change"
+          "navigation.change",
+          "job.update"
         ],
-        "description": "Documented event topics: process.update (a process or job changed), journal.entry (an activity journal entry was written), health.change (the health status changed), events.resync (events were missed; reread state), host.change (a host descriptor field changed; the payload is the whole new HostDescriptor; reread GET /api/v1/host after events.resync or a reconnect), navigation.change (children of navigation nodes changed; the payload is a NavigationChange; read the named parents' levels of GET /api/v1/navigation again, or the whole visible tree on all, events.resync or a reconnect)."
+        "description": "Documented event topics: process.update (a process or job changed), journal.entry (an activity journal entry was written), health.change (the health status changed), events.resync (events were missed; reread state), host.change (a host descriptor field changed; the payload is the whole new HostDescriptor; reread GET /api/v1/host after events.resync or a reconnect), navigation.change (children of navigation nodes changed; the payload is a NavigationChange; read the named parents' levels of GET /api/v1/navigation again, or the whole visible tree on all, events.resync or a reconnect), job.update (a durable job changed; the payload is its JobView; reread GET /api/v1/jobs after events.resync or a reconnect)."
       },
       "EventResync": {
         "type": "object",
@@ -7485,6 +7718,134 @@
             "description": "True when a bound stopped the count or a file could not be read, so the totals are lower bounds."
           }
         }
+      },
+      "JobState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "running",
+          "completed",
+          "failed",
+          "cancelled"
+        ],
+        "description": "Where a durable job stands; completed, failed and cancelled are final."
+      },
+      "JobControl": {
+        "type": "string",
+        "enum": [
+          "pause",
+          "cancel"
+        ],
+        "description": "A control asked of a job and not yet carried out."
+      },
+      "JobView": {
+        "type": "object",
+        "description": "One durable job as the job routes and the job.update event show it (API-S-037): never its source identity, checkpoint, lease holder or fencing number.",
+        "required": [
+          "id",
+          "kind",
+          "operation_id",
+          "state",
+          "paused",
+          "done",
+          "attempts",
+          "created",
+          "updated"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The job ID."
+          },
+          "kind": {
+            "type": "string",
+            "description": "The kind of work, for example import."
+          },
+          "operation_id": {
+            "type": "string",
+            "description": "The job's operation ID."
+          },
+          "state": {
+            "$ref": "#/components/schemas/JobState"
+          },
+          "paused": {
+            "type": "boolean",
+            "description": "Whether the job waits under a pause."
+          },
+          "control": {
+            "$ref": "#/components/schemas/JobControl"
+          },
+          "done": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Units done at the last checkpoint."
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Units in all, when known."
+          },
+          "attempts": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "How many times a worker took the job."
+          },
+          "error_code": {
+            "type": "string",
+            "description": "Why the job failed, when it did."
+          },
+          "created": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the job was submitted (RFC 3339, UTC)."
+          },
+          "updated": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the job last changed (RFC 3339, UTC)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "JobPage": {
+        "type": "object",
+        "description": "One listing of durable jobs.",
+        "required": [
+          "jobs",
+          "truncated"
+        ],
+        "properties": {
+          "jobs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JobView"
+            },
+            "description": "The jobs, newest first."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "Whether more jobs matched than were answered."
+          }
+        },
+        "additionalProperties": false
+      },
+      "JobControlAnswer": {
+        "type": "object",
+        "description": "The answer of a job control route.",
+        "required": [
+          "job",
+          "scheduled"
+        ],
+        "properties": {
+          "job": {
+            "$ref": "#/components/schemas/JobView"
+          },
+          "scheduled": {
+            "type": "boolean",
+            "description": "Whether the job was handed to its kind's worker to run now (resume only); false leaves a pending job for the next launch."
+          }
+        },
+        "additionalProperties": false
       }
     },
     "parameters": {
@@ -7571,6 +7932,17 @@
         "description": "The file (UUID v4).",
         "schema": {
           "type": "string"
+        }
+      },
+      "JobId": {
+        "name": "job",
+        "in": "path",
+        "required": true,
+        "description": "A job ID as a job route or a job-starting route answered it.",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
         }
       }
     },
@@ -7790,6 +8162,36 @@
       },
       "PreferencesUnavailable": {
         "description": "The host keeps no preferences yet, or their store cannot be reached (unavailable; retryable).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "JobNotFound": {
+        "description": "No job has this ID (not_found).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "JobConflict": {
+        "description": "The job cannot take this control now (conflict): it has finished (job_finished), it is being cancelled (cancel_requested), or it is running and was not paused (job_running); the journaled refusal names the rule. Nothing changed.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "JobsUnavailable": {
+        "description": "The host runs no durable jobs yet, or its job store is not reachable (unavailable, retryable).",
         "content": {
           "application/json": {
             "schema": {
