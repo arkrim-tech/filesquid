@@ -14,8 +14,8 @@
 //! the metadata property routes of API-S-035; the display and download names of API-S-027;
 //! the view operation, copy and storage use per collection of API-S-011; the search
 //! operation and operator grammar of API-S-012;
-//! and the sealing service and journal rebuild of
-//! API-S-032).
+//! the sealing service and journal rebuild of API-S-032; and the job routes and job events
+//! of API-S-037).
 //!
 //! Scenarios that need domain operations not built yet (import, journal-linked renames, the metadata writes
 //! beyond the API-S-035 routes, such as the inspector's EXIF edits, C2PA scans, sync) or the
@@ -137,6 +137,9 @@ mod view_steps;
 #[path = "support/seal_steps.rs"]
 mod seal_steps;
 
+#[path = "support/job_steps.rs"]
+mod job_steps;
+
 /// Administrator token accepted by [`admin_state`].
 const ADMIN_TOKEN: &str = "admin";
 
@@ -193,6 +196,7 @@ struct MonitorWorld {
     search: search_steps::SearchWorld,
     journal: journal_steps::JournalWorld,
     seal: seal_steps::SealWorld,
+    jobs: job_steps::JobWorld,
 }
 
 impl std::fmt::Debug for MonitorWorld {

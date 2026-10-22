@@ -1,6 +1,6 @@
 # Task API-F2.3 Walkthrough: Search operation and operator grammar
 
-Branch `feat/api-f2.3-search-operators`, module `filesquid-api` ([plan row](../plan.md)), part of global Task FS-2.5. Contract 0.23.0. The plan box stays unticked: the server operators wait on SV-F1.4, and the remaining items are listed below and in the plan row's status line. Holistic UI check: the global search bar of UI-S-007 can call `GET /api/v1/files/search` and tell an unknown operator (`invalid_request`) from one this host cannot answer (`unavailable`). On the UI side this PR only regenerates `schema.d.ts`.
+Branch `feat/api-f2.3-search-operators`, module `filesquid-api` ([plan row](../plan.md)), part of global Task FS-2.5. Contract 0.24.0. The plan box stays unticked: the server operators wait on SV-F1.4, and the remaining items are listed below and in the plan row's status line. Holistic UI check: the global search bar of UI-S-007 can call `GET /api/v1/files/search` and tell an unknown operator (`invalid_request`) from one this host cannot answer (`unavailable`). On the UI side this PR only regenerates `schema.d.ts`.
 
 ## SRS mapping
 
@@ -11,7 +11,7 @@ Branch `feat/api-f2.3-search-operators`, module `filesquid-api` ([plan row](../p
 | [SRS-NFR-004](../../../../../../resources/srs.md#srs-nfr-004-security-and-privacy) Security and privacy | permission filtering before ranking: `results_are_filtered_by_permission_before_ranking`, `an_unreadable_file_is_never_read_before_ranking`, `a_caller_who_may_not_read_the_repository_cannot_search_it` |
 | [API-S-011](../srs.md) View operation | results shaped and paged like the view, with the cursor conflict rule: `paging_is_stable_and_a_changed_result_set_refuses_the_cursor` |
 | [API-S-027](../srs.md) Display and download names | results name files by their display name |
-| [API-S-002](../srs.md) The versioned API contract owned by this crate | contract 0.23.0 with the grammar, bounds and refusals in the operation's description; regenerated `ui/src/api/schema.d.ts` |
+| [API-S-002](../srs.md) The versioned API contract owned by this crate | contract 0.24.0 with the grammar, bounds and refusals in the operation's description; regenerated `ui/src/api/schema.d.ts` |
 
 ## What changed
 

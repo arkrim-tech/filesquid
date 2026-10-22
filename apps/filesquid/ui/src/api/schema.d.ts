@@ -1161,6 +1161,106 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Durable jobs
+         * @description At most 100 durable jobs (limit, default and most 100; a larger limit answers 100), newest first, optionally of one kind and in one state, marked truncated when more match (API-S-037). There is no cursor: narrow the listing by kind and state to reach older jobs. A kind outside 1 to 128 characters, a limit outside 1 to 1000 or an unknown state is refused as invalid_request. A job is created by the route of its kind (for example POST /api/v1/imports). The views never carry a job's source identity, checkpoint, lease holder or fencing number. A filter that cannot be read is refused as invalid_request and journaled as job.refused.
+         */
+        get: operations["listJobs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/jobs/{job}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One durable job
+         * @description One job's view: its state, whether it is paused, the control asked of it, its progress, attempts and error code (API-S-037).
+         */
+        get: operations["getJob"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/jobs/{job}/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pause a job
+         * @description Pause the job: a pending job is held and does not start until it is resumed; a running job's worker suspends at its next checkpoint, keeping it, and the job then stays paused. Pausing a paused job changes nothing. Journaled as job.paused; a refusal as job.refused (API-S-037).
+         */
+        post: operations["pauseJob"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/jobs/{job}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume a job
+         * @description Clear the pause of the job and hand a pending job to the worker the host installed for its kind, which resumes it from its checkpoint without repeating completed work (scheduled true); with no such worker the job stays pending for the next launch (scheduled false). Journaled as job.resumed; a refusal as job.refused (API-S-037).
+         */
+        post: operations["resumeJob"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/jobs/{job}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel a job
+         * @description Cancel the job: a pending job, or a running one whose lease has ended, is cancelled at once (job.cancelled); a running job's worker stops at its next checkpoint, after which the job is cancelled (job.cancel_requested). A run that suspends or whose lease expires under a cancel request is cancelled. A refusal is journaled as job.refused (API-S-037).
+         */
+        post: operations["cancelJob"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1172,10 +1272,10 @@ export interface components {
             data: unknown;
         };
         /**
-         * @description Documented event topics: process.update (a process or job changed), journal.entry (an activity journal entry was written), health.change (the health status changed), events.resync (events were missed; reread state), host.change (a host descriptor field changed; the payload is the whole new HostDescriptor; reread GET /api/v1/host after events.resync or a reconnect), navigation.change (children of navigation nodes changed; the payload is a NavigationChange; read the named parents' levels of GET /api/v1/navigation again, or the whole visible tree on all, events.resync or a reconnect).
+         * @description Documented event topics: process.update (a process or job changed), journal.entry (an activity journal entry was written), health.change (the health status changed), events.resync (events were missed; reread state), host.change (a host descriptor field changed; the payload is the whole new HostDescriptor; reread GET /api/v1/host after events.resync or a reconnect), navigation.change (children of navigation nodes changed; the payload is a NavigationChange; read the named parents' levels of GET /api/v1/navigation again, or the whole visible tree on all, events.resync or a reconnect), job.update (a durable job changed; the payload is its JobView; reread GET /api/v1/jobs after events.resync or a reconnect).
          * @enum {string}
          */
-        EventTopic: "process.update" | "journal.entry" | "health.change" | "events.resync" | "host.change" | "navigation.change";
+        EventTopic: "process.update" | "journal.entry" | "health.change" | "events.resync" | "host.change" | "navigation.change" | "job.update";
         /** @description Payload of events.resync: the subscriber missed events and MUST reread the state it shows. */
         EventResync: {
             /** @description How many events this subscriber did not receive. */
@@ -2451,6 +2551,60 @@ export interface components {
             /** @description False when a bound left files out or a file could not be read. */
             complete: boolean;
         };
+        /**
+         * @description Where a durable job stands; completed, failed and cancelled are final.
+         * @enum {string}
+         */
+        JobState: "pending" | "running" | "completed" | "failed" | "cancelled";
+        /**
+         * @description A control asked of a job and not yet carried out.
+         * @enum {string}
+         */
+        JobControl: "pause" | "cancel";
+        /** @description One durable job as the job routes and the job.update event show it (API-S-037): never its source identity, checkpoint, lease holder or fencing number. */
+        JobView: {
+            /** @description The job ID. */
+            id: string;
+            /** @description The kind of work, for example import. */
+            kind: string;
+            /** @description The job's operation ID. */
+            operation_id: string;
+            state: components["schemas"]["JobState"];
+            /** @description Whether the job waits under a pause. */
+            paused: boolean;
+            control?: components["schemas"]["JobControl"];
+            /** @description Units done at the last checkpoint. */
+            done: number;
+            /** @description Units in all, when known. */
+            total?: number;
+            /** @description How many times a worker took the job. */
+            attempts: number;
+            /** @description Why the job failed, when it did. */
+            error_code?: string;
+            /**
+             * Format: date-time
+             * @description When the job was submitted (RFC 3339, UTC).
+             */
+            created: string;
+            /**
+             * Format: date-time
+             * @description When the job last changed (RFC 3339, UTC).
+             */
+            updated: string;
+        };
+        /** @description One listing of durable jobs. */
+        JobPage: {
+            /** @description The jobs, newest first. */
+            jobs: components["schemas"]["JobView"][];
+            /** @description Whether more jobs matched than were answered. */
+            truncated: boolean;
+        };
+        /** @description The answer of a job control route. */
+        JobControlAnswer: {
+            job: components["schemas"]["JobView"];
+            /** @description Whether the job was handed to its kind's worker to run now (resume only); false leaves a pending job for the next launch. */
+            scheduled: boolean;
+        };
     };
     responses: {
         /** @description Invalid or malformed request (invalid_request). */
@@ -2627,6 +2781,33 @@ export interface components {
                 "application/json": components["schemas"]["ApiError"];
             };
         };
+        /** @description No job has this ID (not_found). */
+        JobNotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description The job cannot take this control now (conflict): it has finished (job_finished), it is being cancelled (cancel_requested), or it is running and was not paused (job_running); the journaled refusal names the rule. Nothing changed. */
+        JobConflict: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description The host runs no durable jobs yet, or its job store is not reachable (unavailable, retryable). */
+        JobsUnavailable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
     };
     parameters: {
         /** @description Page size for a query (1-1000). Each operation states its default; the activity journal defaults to 100. */
@@ -2647,6 +2828,8 @@ export interface components {
         NavigationNode: string;
         /** @description The file (UUID v4). */
         FileId: string;
+        /** @description A job ID as a job route or a job-starting route answered it. */
+        JobId: string;
     };
     requestBodies: never;
     headers: never;
@@ -4776,6 +4959,153 @@ export interface operations {
             409: components["responses"]["Conflict"];
             500: components["responses"]["Internal"];
             503: components["responses"]["FilesUnavailable"];
+        };
+    };
+    listJobs: {
+        parameters: {
+            query?: {
+                /** @description Only jobs of this kind. */
+                kind?: string;
+                /** @description Only jobs in this state. */
+                state?: components["schemas"]["JobState"];
+                /** @description Page size for a query (1-1000). Each operation states its default; the activity journal defaults to 100. */
+                limit?: components["parameters"]["PageSize"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The jobs, newest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobPage"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["JobsUnavailable"];
+        };
+    };
+    getJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A job ID as a job route or a job-starting route answered it. */
+                job: components["parameters"]["JobId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The job. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobView"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["JobNotFound"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["JobsUnavailable"];
+        };
+    };
+    pauseJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A job ID as a job route or a job-starting route answered it. */
+                job: components["parameters"]["JobId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The job after the control. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobControlAnswer"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["JobNotFound"];
+            409: components["responses"]["JobConflict"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["JobsUnavailable"];
+        };
+    };
+    resumeJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A job ID as a job route or a job-starting route answered it. */
+                job: components["parameters"]["JobId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The job after the control. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobControlAnswer"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["JobNotFound"];
+            409: components["responses"]["JobConflict"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["JobsUnavailable"];
+        };
+    };
+    cancelJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A job ID as a job route or a job-starting route answered it. */
+                job: components["parameters"]["JobId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The job after the control. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobControlAnswer"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["JobNotFound"];
+            409: components["responses"]["JobConflict"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["JobsUnavailable"];
         };
     };
 }
