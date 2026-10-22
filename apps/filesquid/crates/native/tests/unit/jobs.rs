@@ -1,7 +1,7 @@
 //! Task DE-0.4: the SQLite job store in the host's operational database (API-S-033,
 //! DE-S-014; NFR-003, ADR 007). Runs against SQLite files on disk.
 
-use filesquid_api::jobs::{Job, JobError, JobState, JobStore};
+use filesquid_api::jobs::{Job, JobControl, JobError, JobFilter, JobState, JobStore};
 use filesquid_native::{SqliteJobs, JOURNAL_FILE};
 use std::path::{Path, PathBuf};
 
@@ -31,6 +31,7 @@ fn job(id: &str, created_ms: i64) -> Job {
         created_ms,
         updated_ms: created_ms,
         error_code: None,
+        control: None,
     }
 }
 
@@ -190,4 +191,135 @@ fn an_update_that_changes_the_id_stores_nothing() {
     assert_eq!(store.get("j2").unwrap(), None);
     assert_eq!(store.get("j1").unwrap(), Some(job("j1", 10)));
     std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+#[test]
+fn a_requested_control_survives_closing_the_store() {
+    let dir = dir("control");
+    let store = open(&dir);
+    store.insert(&job("j1", 10)).unwrap();
+    store
+        .update("j1", &mut |mut job| {
+            job.control = Some(JobControl::Pause);
+            Ok(job)
+        })
+        .expect("updated");
+    drop(store);
+    let reopened = open(&dir).get("j1").expect("read").expect("job");
+    assert_eq!(reopened.control, Some(JobControl::Pause));
+    assert!(reopened.is_paused());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_store_made_before_controls_gains_the_column_and_keeps_its_jobs() {
+    let dir = dir("migrate");
+    let path = dir.join(JOURNAL_FILE);
+    let conn = rusqlite::Connection::open(&path).expect("sqlite");
+    conn.execute_batch(
+        "CREATE TABLE jobs (id TEXT PRIMARY KEY, kind TEXT NOT NULL, operation_id TEXT NOT NULL, \
+         source TEXT NOT NULL, state TEXT NOT NULL, checkpoint TEXT, done INTEGER NOT NULL, \
+         total INTEGER, attempts INTEGER NOT NULL, fence INTEGER NOT NULL, holder TEXT, \
+         lease_expires_ms INTEGER, created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL, \
+         error_code TEXT); \
+         INSERT INTO jobs VALUES ('old', 'prov.backfill', 'op-1', 'installation:a', 'pending', \
+         NULL, 0, NULL, 0, 0, NULL, NULL, 5, 5, NULL);",
+    )
+    .expect("old schema");
+    drop(conn);
+    let store = open(&dir);
+    let old = store.get("old").expect("read").expect("kept");
+    assert_eq!(old.control, None);
+    drop(store);
+    open(&dir);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_listing_is_newest_first_filtered_and_marked_truncated() {
+    let dir = dir("list");
+    let store = open(&dir);
+    for (id, created) in [("a", 1), ("b", 2), ("c", 3)] {
+        store.insert(&job(id, created)).unwrap();
+    }
+    store
+        .update("a", &mut |mut job| {
+            job.state = JobState::Completed;
+            Ok(job)
+        })
+        .expect("finish");
+    let newest = store
+        .list(&JobFilter {
+            kind: Some("prov.backfill".into()),
+            state: None,
+            limit: 2,
+        })
+        .expect("list");
+    let ids: Vec<&str> = newest.jobs.iter().map(|j| j.id.as_str()).collect();
+    assert_eq!(ids, ["c", "b"]);
+    assert!(newest.truncated);
+    let finished = store
+        .list(&JobFilter {
+            kind: None,
+            state: Some(JobState::Completed),
+            limit: 100,
+        })
+        .expect("list");
+    assert_eq!(finished.jobs.len(), 1, "finished jobs are listed too");
+    assert!(!finished.truncated);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Cubic rounds 1 and 2 (API-S-037 caps): the update counts, in its own transaction, the
+/// other running jobs of the named kinds under a live lease, and a second store over the same
+/// database sees the leases the first one wrote.
+#[test]
+fn a_counted_update_sees_every_live_lease_of_the_kinds() {
+    let dir = dir("leased");
+    let store = open(&dir);
+    for (id, expires) in [("live-1", 100), ("live-2", 100), ("expired", 50)] {
+        store.insert(&job(id, 1)).unwrap();
+        store
+            .update(id, &mut |mut job| {
+                job.state = JobState::Running;
+                job.holder = Some("launch-1".into());
+                job.lease_expires_ms = Some(expires);
+                Ok(job)
+            })
+            .expect("lease");
+    }
+    store.insert(&job("waiting", 2)).unwrap();
+    let other = open(&dir);
+    let backfill = |_: &Job| vec!["prov.backfill".to_string()];
+    let none = |_: &Job| vec!["other".to_string()];
+    assert_eq!(
+        held(&other, "waiting", &backfill),
+        2,
+        "the expired lease holds no slot"
+    );
+    assert_eq!(
+        held(&other, "live-1", &backfill),
+        1,
+        "a job does not count itself"
+    );
+    assert_eq!(
+        held(&other, "waiting", &none),
+        0,
+        "other kinds are not counted"
+    );
+    drop((store, other));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// What a counted update at time 60 passes for job `id` under `kinds`; the job is stored
+/// unchanged.
+fn held(store: &SqliteJobs, id: &str, kinds: &dyn Fn(&Job) -> Vec<String>) -> usize {
+    let mut seen = None;
+    store
+        .update_counting_leases(id, (kinds, 60), &mut |job, held| {
+            seen = Some(held);
+            Ok(job)
+        })
+        .expect("update");
+    seen.expect("counted")
 }

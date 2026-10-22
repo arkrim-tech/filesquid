@@ -229,9 +229,20 @@ where
     /// refusals and errors are those of
     /// [`commit_file_record_with`](Self::commit_file_record_with).
     ///
+    /// Inside the commit, after the version is reserved and again after any
+    /// rebase, every new entry's cited `object_version` must be the version
+    /// being committed (MD-S-008, ADR 038 Decision 10). An import commit
+    /// whose base head moved would publish a later version, so it is not
+    /// rebased: it fails as a retryable [`StoreError::Conflict`] that
+    /// publishes nothing, and the caller retries citing the new version.
+    ///
     /// # Errors
     ///
-    /// As [`commit_file_record_with`](Self::commit_file_record_with).
+    /// As [`commit_file_record_with`](Self::commit_file_record_with), and
+    /// [`StoreError::Conflict`] when an entry cites another version than the
+    /// one being committed or the cited content changed;
+    /// [`StoreError::Record`] with [`RecordError::NamesWithheld`] for an
+    /// outgoing copy ([`FileRecord::scrubbed`]).
     pub async fn commit_import_with(
         &self,
         file: &FileRef,
@@ -312,13 +323,19 @@ where
     }
 
     /// Append the entry of a re-import to the file's record in a new
-    /// version; earlier entries stay exactly as they are.
+    /// version; earlier entries stay exactly as they are. The entry must
+    /// cite the version it is published as; a re-import that would rebase
+    /// is a retryable conflict, as for
+    /// [`commit_import_with`](Self::commit_import_with).
     ///
     /// # Errors
     ///
     /// [`StoreError::Record`] with [`RecordError::NoFileRecord`] when the
-    /// file has no record, [`RecordError::Import`] for an invalid entry, or
-    /// as [`commit_file_record_with`](Self::commit_file_record_with).
+    /// file has no record, [`RecordError::Import`] for an invalid entry,
+    /// [`RecordError::NamesWithheld`] for an entry whose source name is
+    /// withheld; [`StoreError::Conflict`] when the entry cites another
+    /// version than the one being committed or the cited content changed;
+    /// or as [`commit_file_record_with`](Self::commit_file_record_with).
     pub async fn append_import_with(
         &self,
         file: &FileRef,
@@ -622,22 +639,27 @@ fn statements_bytes(
         };
     };
     match FileRecord::from_markdown(text) {
-        Ok(existing) => Ok(existing
-            .with_statements(record.clone())
-            .to_markdown()
-            .into_bytes()),
+        Ok(existing) => {
+            refuse_withheld(&existing)?;
+            Ok(existing
+                .with_statements(record.clone())
+                .to_markdown()
+                .into_bytes())
+        }
         Err(RecordError::UnsupportedSchema) if file.record_path().is_none() => plain(),
         Err(err) => Err(err.into()),
     }
 }
 
-/// The bytes of a save of the whole file record `next` over `base`: valid,
-/// extending `base` append-only, and with every new entry citing `file`.
+/// The bytes of a save of the whole file record `next` over `base`: not an
+/// outgoing copy with its names withheld, valid, extending `base`
+/// append-only, and with every new entry citing `file`.
 fn file_record_bytes(
     file: &FileRef,
     base: Option<&FileRecord>,
     next: &FileRecord,
 ) -> Result<Vec<u8>, StoreError> {
+    refuse_withheld(next)?;
     next.validate()?;
     let first_new = base.map_or(0, |base| base.imports().len());
     if let Some(base) = base {
@@ -650,6 +672,16 @@ fn file_record_bytes(
         record_path(file),
     )?;
     Ok(next.to_markdown().into_bytes())
+}
+
+/// Refuse an outgoing copy whose original file name is withheld by policy
+/// (MD-S-013): it goes into exports and shares, never into the library.
+fn refuse_withheld(record: &FileRecord) -> Result<(), StoreError> {
+    if record.names_withheld() {
+        tracing::warn!("refused to save an outgoing copy with the original file name withheld");
+        return Err(RecordError::NamesWithheld.into());
+    }
+    Ok(())
 }
 
 /// The digest staged at `path` by the change set, when it stages content there.

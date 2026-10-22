@@ -89,6 +89,29 @@ Feature: Reusable filesquid-metadata engine
     And I set dcterms:title Harbour on the file's record
     Then the record should hold dcterms title Harbour and still hold its original name and import entry
 
+  Scenario: An import commit checks the version its entry cites
+    When I import a file named "Holiday 2023.JPG" into an OCFL object
+    And another writer commits a version before I import the same file again citing v2
+    Then the re-import should be refused as a retryable conflict
+    And the object should hold only the other writer's new version
+    And a retry citing v3 should append the entry in v3
+
+  Scenario: A statements edit still rebases over another writer's version
+    When I import a file named "Holiday 2023.JPG" into an OCFL object
+    And another writer commits a version while I set dcterms:title Harbour on the file's record
+    Then the edit should be published as v3 on top of the other writer's version
+
+  Scenario: The original file name is withheld from an outgoing copy by default
+    When I import a file named "Holiday 2023.JPG" into an OCFL object
+    And I make the outgoing copy of its record with every identity class
+    Then its original name, display name and every source name should be withheld by policy
+    And the store should refuse to save that copy
+
+  Scenario: Use original filename keeps the names in the outgoing copy
+    When I import a file named "Holiday 2023.JPG" into an OCFL object
+    And I make the outgoing copy of its record with every identity class except the original name
+    Then its original name, display name and source name should be Holiday 2023.JPG
+
   Scenario: A source size that differs from the verified size fails the import
     When I import a file whose reported size differs from the verified size
     Then the import should be rejected for the size mismatch

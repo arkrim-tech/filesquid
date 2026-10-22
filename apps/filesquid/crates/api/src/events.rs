@@ -49,14 +49,18 @@ pub mod topic {
     /// changed parents, or `all`). A host forwards it per subscriber, reduced to the handles
     /// that subscriber may read.
     pub const NAVIGATION_CHANGE: &str = "navigation.change";
+    /// A durable job changed (submitted, started, checkpointed, controlled, suspended,
+    /// finished or released at recovery); payload `JobView` (API-S-037).
+    pub const JOB_UPDATE: &str = "job.update";
     /// Every documented topic, in contract order.
-    pub const ALL: [&str; 6] = [
+    pub const ALL: [&str; 7] = [
         PROCESS_UPDATE,
         JOURNAL_ENTRY,
         HEALTH_CHANGE,
         RESYNC,
         HOST_CHANGE,
         NAVIGATION_CHANGE,
+        JOB_UPDATE,
     ];
 }
 

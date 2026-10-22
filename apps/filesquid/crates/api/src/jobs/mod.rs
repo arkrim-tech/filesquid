@@ -18,15 +18,30 @@
 //!   an error code only, never the source identity or the checkpoint. [`Jobs::recover`] is
 //!   the bounded launch-time reconciliation: it reads at most [`MAX_RECOVERED_JOBS`] jobs,
 //!   never the media they cover.
+//! - Control and caps (API-S-037): [`Jobs::pause`], [`Jobs::resume`] and [`Jobs::cancel`]
+//!   change a job in one atomic step, and a running worker sees the request through
+//!   [`RunningJob::requested`] at its next checkpoint or renewal; a kind classified as a
+//!   [`JobClass`] is held to its cap ([`JobLimits`]); every stored change publishes one
+//!   `job.update` event carrying the [`JobView`]. The job routes (`routes`) report and
+//!   control jobs, and hand a resumed job to the host's [`JobRunner`] for its kind.
 
 mod model;
+pub(crate) mod routes;
 pub mod rules;
+mod runner;
 mod service;
+mod slots;
 mod store;
+mod view;
 
-pub use model::{Job, JobError, JobSpec, JobState, Lease};
-pub use service::{Jobs, RunningJob};
-pub use store::{same_id, JobStore, MemoryJobStore};
+pub use model::{Job, JobControl, JobError, JobSpec, JobState, Lease};
+pub use runner::JobRunner;
+pub use service::{Halt, Jobs, RunningJob};
+pub use slots::{JobClass, JobLimits};
+pub use store::{
+    same_id, JobFilter, JobList, JobStore, MemoryJobStore, SlotKinds, MAX_LISTED_JOBS,
+};
+pub use view::{JobControlAnswer, JobPage, JobView};
 
 /// Default lease length: a worker that neither checkpoints nor finishes within it loses the
 /// job to the next one that starts it.
@@ -54,3 +69,9 @@ pub const JOB_CANCELLED: &str = "job.cancelled";
 pub const JOB_RECOVERED: &str = "job.recovered";
 /// Journal operation of a refused job call (a held lease, a fenced write, a finished job).
 pub const JOB_REFUSED: &str = "job.refused";
+/// Journal operation of a pause asked of a job (API-S-037).
+pub const JOB_PAUSED: &str = "job.paused";
+/// Journal operation of a resumed job (API-S-037).
+pub const JOB_RESUMED: &str = "job.resumed";
+/// Journal operation of a cancel asked of a running job (API-S-037).
+pub const JOB_CANCEL_REQUESTED: &str = "job.cancel_requested";
