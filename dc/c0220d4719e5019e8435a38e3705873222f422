@@ -1,0 +1,27 @@
+apps/filesquid/crates/desktop/resources/tasks/Task-fix-macos-hook-failures-Walkthrough.md
+  s_dcf717d9a156f9::t_ffae749e4d1a71 30-31,34,124,126-128
+apps/filesquid/crates/native/src/repair_ledger.rs
+  s_dcf717d9a156f9::t_ffdab8b05ad892 68-69
+apps/filesquid/crates/native/tests/unit/catalog.rs
+  s_dcf717d9a156f9::t_43a1ef97020f38 666-682
+apps/filesquid/crates/native/tests/unit/library_host.rs
+  s_dcf717d9a156f9::t_ea721f7d48fb52 275-282
+apps/filesquid/crates/ocfl/tests/integration/fs_conformance.rs
+  s_dcf717d9a156f9::t_16599b8a65f41b 463-466
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dcc0220d4719e5019e8435a38e3705873222f422",
+  "prompts": {},
+  "sessions": {
+    "s_dcf717d9a156f9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2251ab95-144c-46df-aac4-df18bc4fc05b",
+        "model": "unknown"
+      },
+      "human_author": "Peter Van Garderen <vangarderen.peter@gmail.com>"
+    }
+  }
+}
