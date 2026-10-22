@@ -77,8 +77,15 @@ REGENERATE = (
 
 
 def isolated_env() -> dict:
-    """Return an environment where git ignores the global and system config."""
-    return dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1", GIT_TERMINAL_PROMPT="0")
+    """Return an environment where git ignores the global and system config.
+
+    Every inherited `GIT_*` variable is dropped first. Inside a git hook, git exports
+    `GIT_DIR` and `GIT_INDEX_FILE` (absolute paths in a linked worktree); inherited,
+    they would point the throwaway repository's commands at the real repository's
+    config and index.
+    """
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    return dict(env, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1", GIT_TERMINAL_PROMPT="0")
 
 
 class Repo:
