@@ -11,6 +11,17 @@ Branch: `docs/library-model-owner-folders`. Documentation only; no code, contrac
 - Then: "Put it in the MVP roadmap".
 - On Conflict 1 below (deleting a collection that still holds files), later the same day: "RE: deletion question in #124, when users delete a collection that still holds files, those files go into a "Recently deleted" top-level directory within their library. That directory has a default 30 day retention period before files inside are expunged for good."
 
+## Owner answers to the open questions (2026-10-22, verbatim)
+
+- Question 1, restore: "Into its original OCFL object and relative filepath inside FileSquid. If its original collection is gone create a new one "untitled collection" and put the restored file inside. If the name "untitled collection" is already taken then just add numberical increments as name suffix, eg "untitled collection 2, untitled collection 3, etc)"
+- Question 2, retention scope: "The 30 days defaut retention policy for any files moved to the "Recently deleted" trashcan applies across the whole installation and be configured per library"
+- Question 4, expunge, first answer: "Okay, keep the version history by default but provide an admin config option to delete the version history as well"
+- Question 5, Recently deleted: ""Recently deleted" aka Trash can will be a navigation filter over collection items with the deleted state. They are not moved. They are completely deleted from library and filesystem after recently deleted retention period expires."
+- Questions 4 and 5, expiry settings, final answer: "Okay, if the "delete all version history" setting is enabled then the OCFL and any index entries are deleted when the retention period expires, along with the files and metadata, etc.. If the "keep version history" setting is enabled then keep those source OCFL objects in the library, with only version history, no other content."
+- Question 6, duplicate paths: "Filesquid should simply add an incremental number to the new file path so its sits next to conflicting filepath. Eg if filepathX/directoryY already exists and the user wants to create a new directory for a new import at the pre-existing filepathX/directoryY then FileSquid would name the new directory filepathX/directoryY-1, and then filepathX/directoryY-2 and so on."
+
+Question 5's answer replaces the earlier wording that files "go into a "Recently deleted" top-level directory": Recently deleted (Trash) is a navigation filter over files in the deleted state, nothing is moved, and every file has exactly one home collection, with deletion as a state.
+
 "Option A" means one library model: every library has collections, folders and virtual collections ([PRD F-004](../prd.md#f-004-collections-folders-and-navigation): "A file's bytes MUST live in exactly one collection"); every file has exactly one home collection; uploads, imports and copies are registered in their home collection, so a file uploaded into a folder appears in that folder at once and "Drop to upload into {folder}" stays accurate; the OCFL collection snapshot inside the library folder is the source of truth, and the per-library SQLite catalog in the app's data directory is a rebuildable index that is rebuilt when a moved or copied library folder is opened.
 
 ## What changed
@@ -30,7 +41,7 @@ Branch: `docs/library-model-owner-folders`. Documentation only; no code, contrac
 - Product SRS: bullets added to SRS-F-001 (owner-chosen folders only), SRS-F-002 (destination) and SRS-F-004 (home collection), each citing ADR 041.
 - PRD F-002 and F-004 were checked and not changed: they already agree (F-004 "A file's bytes MUST live in exactly one collection"; F-002 import review shows a "destination album/new-album choice"). PRD unchanged, so the README "About this project" section needs no update.
 
-**Recently deleted (owner decision on Conflict 1, second commit).** Existing rules were searched first: [PRD F-008](../prd.md#f-008-deletion-hidden-files-and-duplicate-review) already has a recoverable deletion that defaults to 30 days and a "Recently Deleted" view; [API-S-019](../../apps/filesquid/crates/api/resources/srs.md) already has `deleted_at`, `purge_after` (30 days by default), the deleted view and confirmed permanent deletion; ADR 040, CO-0.11 and SRS-F-067 already list `delete` and `purge` as operations with PROV-O activities; [PRD F-065](../prd.md#f-065-file-version-history-and-retention) keeps whole-object deletion as an explicit, journaled action under F-008. The collection-deletion path was aligned with that recoverable deletion, so there is no second trash:
+**Recently deleted (owner decision on Conflict 1, second commit).** This part describes the first wording, in which files moved into a Recently deleted area; the owner's later answers replaced it with deletion as a state and a filter (see the fourth content commit below). Existing rules were searched first: [PRD F-008](../prd.md#f-008-deletion-hidden-files-and-duplicate-review) already has a recoverable deletion that defaults to 30 days and a "Recently Deleted" view; [API-S-019](../../apps/filesquid/crates/api/resources/srs.md) already has `deleted_at`, `purge_after` (30 days by default), the deleted view and confirmed permanent deletion; ADR 040, CO-0.11 and SRS-F-067 already list `delete` and `purge` as operations with PROV-O activities; [PRD F-065](../prd.md#f-065-file-version-history-and-retention) keeps whole-object deletion as an explicit, journaled action under F-008. The collection-deletion path was aligned with that recoverable deletion, so there is no second trash:
 
 - ADR 041 has a new Decision 8, Recently deleted is a reserved system area and not a collection, and Decision 3 now says a file is either in exactly one home collection or in Recently deleted, which records the home it came from. The rejected options (a) to (c) are listed under Alternatives Considered, and the open questions are listed under Related Decisions / Notes.
 - PRD:
@@ -52,6 +63,44 @@ Branch: `docs/library-model-owner-folders`. Documentation only; no code, contrac
   - Task 1.2 goes from 54 to 57 hours and Task FS-2.5 from 132 to 147 hours, now also depending on FS-2.8 for API-F2.9.
   - Phase F2 goes from 546 to 564 hours, the MVP from 1,032 to 1,050, the total from 2,885 to 2,903 and the desktop plan from 606 to 609.
   - The checklist row was added and the progress was regenerated: 66%, about 692 of 1,050 hours.
+
+**Owner answers to the open questions (fourth content commit).** The answers above were applied as follows. Each changed SRS row and plan Status note quotes the answers it relies on.
+
+- ADR 041:
+  - Status lists the six answers verbatim.
+  - Decision 3 now says every file has exactly one home collection and deletion is a state.
+  - Decision 4 names restore as the owner's one exception to "no default collection".
+  - Decision 5 adds the deleted state and the library's retention period to the snapshot.
+  - Decision 8 is rewritten: Recently deleted is a filter over the deleted state, and nothing is moved.
+  - New Decisions 9 (restore), 10 (retention scope), 11 (expiry setting) and 12 (duplicate logical paths).
+  - Alternatives, Consequences and Notes are updated; the Notes keep only question 3, question 4b and the proposed values.
+  - ADR 010's amendment note and the ADR index row are updated to match.
+- PRD:
+  - F-004: deletion is a state, and a new bullet numbers a new item at a taken logical path.
+  - F-006 and F-063: Recently deleted is a filter.
+  - F-008: new bullets for the filter, restore, retention and the expiry setting.
+  - F-065: states the expiry exception without rewriting the promise for other cases.
+- Product SRS:
+  - SRS-F-004: the Recently deleted and home-collection bullets are rewritten, and a Same logical path bullet is added.
+  - SRS-F-008: new Recently deleted, Restore, Retention and Expiry bullets, and ADR 041 is added to its Source.
+  - SRS-F-065: its Retention bullet names the one exception, and ADR 041 is added to its Source.
+- Module SRS:
+  - API-S-011: a **Same logical path** clause for upload, copy, move, rename and folder creation, which imports also follow.
+  - API-S-019: collection deletion as a state, the Recently deleted filter, **Restore**, **Retention** and **Expiry**.
+  - API-S-021: the `recently_deleted` node is a filter.
+  - API-S-026: deletion is a state, and the snapshot holds the library's retention period.
+  - API-S-036: a taken import path is numbered.
+  - DE-S-009: the deleted state and the cached library retention, with the installation settings in the operational store.
+  - UI-S-002: the filter, the restore answer, the settings and the numbered names.
+- Plan:
+  - [DE-1.7](../../apps/filesquid/crates/desktop/resources/plan.md) goes from 23 to 25 hours: deletion as a state with the library retention, and numbering for imports.
+  - [API-F2.14](../../apps/filesquid/crates/api/resources/plan.md) goes from 10 to 13 hours: numbering in upload, copy, move, rename and folder creation.
+  - [API-F2.15](../../apps/filesquid/crates/api/resources/plan.md) goes from 12 to 20 hours and is renamed "Recently deleted filter, restore, retention and expiry settings, and retirement of "unfiled"": restore with the untitled collection, the two retention settings, the expiry setting and both expiry behaviours.
+  - [UI-F2.17](../../apps/filesquid/ui/resources/plan.md) goes from 11 to 15 hours: restore answer, settings and numbered names.
+  - Their "do not decide" lists now name only questions 3 and 4b and the proposed values.
+  - Task 1.2 goes from 57 to 59 hours and Task FS-2.5 from 147 to 162.
+  - Phase F2 goes from 564 to 581 hours, the MVP from 1,050 to 1,067, the total from 2,903 to 2,920 and the desktop plan from 609 to 611.
+  - The checklist row of API-F2.15 is renamed, and `python3 scripts/docs/update_mvp_progress.py` was run: 65%, about 694 of 1,067 hours.
 
 **Plan (MVP, phases F0 to F3, before gate FS-3.9).**
 
@@ -83,18 +132,39 @@ Branch: `docs/library-model-owner-folders`. Documentation only; no code, contrac
 
 ## Sync Execution Report
 
+Owner answers of 2026-10-22 (fourth content commit):
+
+- **ADR:** ADR 041 Status, Decisions 3, 4, 5 and 8 rewritten, and new Decisions 9 to 12, with Alternatives, Consequences and Notes updated. ADR 010's amendment note and the ADR index row are updated.
+- **ADR → SRS:**
+  - API-S-011, API-S-019, API-S-021, API-S-026 and API-S-036.
+  - DE-S-009.
+  - UI-S-002.
+  - Each quotes the owner's answers it relies on.
+- **SRS → product SRS:**
+  - SRS-F-004: Recently deleted, Home collection and the new Same logical path bullet.
+  - SRS-F-008: Recently deleted, plus new Restore, Retention and Expiry bullets, with ADR 041 added to its Source.
+  - SRS-F-065: the Retention exception, with ADR 041 added to its Source.
+- **SRS → PRD:** F-004, F-006, F-008, F-063 and F-065. The F-065 promise is kept, with the expiry stated as the owner's one exception. The README "About this project" section names none of these details, so it is unchanged.
+- **SRS → plan:**
+  - DE-1.7, API-F2.14, API-F2.15 and UI-F2.17: Descriptions, hours, Agent Prompts and "do not decide" lists.
+  - Global Tasks 1.2 and FS-2.5, the phase table and the totals.
+  - The checklist row, and the progress bar regenerated.
+- **Conflicts:** none new. The answers close questions 1, 2, 4, 5 and 6; questions 3 and 4b and the proposed values stay open for the owner.
+
+Earlier commits:
+
 - **ADR → SRS:** ADR 041 cascaded into DE-S-009, DE-S-010, DE-S-018, DE-S-019, API-S-011, API-S-026, API-S-036 and UI-S-002, each citing ADR 041 in its parent cell; ADR 005 and ADR 010 carry dated amendment notes pointing to ADR 041.
 - **SRS → product SRS:** SRS-F-001, SRS-F-002 and SRS-F-004 gained one bullet each, linking down to the module rows; ADR 041 added to their Source lists.
 - **SRS → PRD:** PRD F-001, F-002, F-004 and F-009 checked for the library model; no change needed. The Recently deleted decision changed PRD F-004, F-006, F-008 and F-063 (second commit); the README "About this project" section names none of these details, so it is unchanged.
 - **SRS → plan:** DE-1.7, API-F2.14 and UI-F2.17 cite every changed row in Related Requirements; global Tasks 1.2 and FS-2.5, the dispatch table, the phase table and the totals updated; the checklist and progress bar regenerated.
 - **Codebase reality:** no code changed. The root README's catalog and commit sections still describe the in-app roots that the code has today; DE-1.7 updates them when it changes the code.
-- **Conflicts:** one Conflict Artifact below, resolved by the owner's Recently deleted decision; open questions that decision does not settle are listed below; C-056 and UI-1.1 were checked and do not conflict.
+- **Conflicts:** one Conflict Artifact below, resolved by the owner's Recently deleted decision; C-056 and UI-1.1 were checked and do not conflict.
 
 ## Conflict Artifacts
 
 ### Conflict 1: "unfiled" files versus exactly one home collection (resolved 2026-10-22)
 
-**Resolution:** the owner chose a fourth rule, not (a), (b) or (c): "RE: deletion question in #124, when users delete a collection that still holds files, those files go into a "Recently deleted" top-level directory within their library. That directory has a default 30 day retention period before files inside are expunged for good." Recorded as ADR 041 Decision 8 and applied in the second commit (see "Recently deleted" above). "Unfiled" no longer exists as a state.
+**Resolution:** the owner chose a fourth rule, not (a), (b) or (c): "RE: deletion question in #124, when users delete a collection that still holds files, those files go into a "Recently deleted" top-level directory within their library. That directory has a default 30 day retention period before files inside are expunged for good." Recorded as ADR 041 Decision 8 and applied in the second commit (see "Recently deleted" above). "Unfiled" no longer exists as a state. The owner's later answer to question 5 replaced the "top-level directory" with a navigation filter over the deleted state (see "Owner answers to the open questions" above).
 
 1. **Conflict Description:** ADR 041 Decision 3 says every file MUST have exactly one home collection, and the owner chose "Must choose" ("Refuse until the owner picks a collection; no top-level uploads."). Several requirements still create or list files that have no collection. Uploads and imports can no longer create them, but deleting a collection still does.
 2. **PRD/SRS Reference:**
@@ -114,14 +184,27 @@ Branch: `docs/library-model-owner-folders`. Documentation only; no code, contrac
 
 ### Open questions for the owner (Recently deleted and logical paths)
 
-The owner's words do not settle these, so nothing was decided for them. ADR 041 lists them. API-F2.15, DE-1.7 and UI-F2.17 are told not to decide questions 1 to 5, and API-F2.14 and DE-1.7 are told to wait for the owner on question 6:
+**Answered on 2026-10-22** (verbatim, applied as ADR 041 Decisions 8 to 12):
 
-1. **Restore:** where does a restored file go once its original collection no longer exists? Under "Must choose" the likely answer is that the owner picks a destination, but that is not decided.
-2. **Retention scope:** the owner called 30 days the "default". At what scope can it be changed: per library or per installation?
-3. **Single files:** does deleting a single file, not a whole collection, use the same Recently deleted area and the same 30 days? (The existing recoverable deletion of a file already defaults to 30 days and is listed in the deleted view.)
-4. **"Expunged for good":** what does it mean for the OCFL object and its version history? Removing the object directory is an OCFL-level purge that also removes the history PRD F-065 keeps.
-5. **Physical folder:** ADR 041 Decision 8 says files MUST move into Recently deleted. Is that area only a reserved navigation entry over the deleted state, or must it also be a physical folder in the library's storage root?
-6. **Same logical path (from Cubic review):** when an upload, import, copy or move would give a second file the same logical path in one collection, is it refused, renamed or stored beside the first? API-F2.14 waits for the owner on that part.
+- **Question 1, restore** (Decision 9): "Into its original OCFL object and relative filepath inside FileSquid. If its original collection is gone create a new one "untitled collection" and put the restored file inside. If the name "untitled collection" is already taken then just add numberical increments as name suffix, eg "untitled collection 2, untitled collection 3, etc)"
+- **Question 2, retention scope** (Decision 10): "The 30 days defaut retention policy for any files moved to the "Recently deleted" trashcan applies across the whole installation and be configured per library"
+- **Question 4, "expunged for good"** (Decision 11): "Okay, keep the version history by default but provide an admin config option to delete the version history as well"; then "Okay, if the "delete all version history" setting is enabled then the OCFL and any index entries are deleted when the retention period expires, along with the files and metadata, etc.. If the "keep version history" setting is enabled then keep those source OCFL objects in the library, with only version history, no other content."
+- **Question 5, physical folder** (Decision 8): ""Recently deleted" aka Trash can will be a navigation filter over collection items with the deleted state. They are not moved. They are completely deleted from library and filesystem after recently deleted retention period expires."
+- **Question 6, same logical path** (Decision 12): "Filesquid should simply add an incremental number to the new file path so its sits next to conflicting filepath. Eg if filepathX/directoryY already exists and the user wants to create a new directory for a new import at the pre-existing filepathX/directoryY then FileSquid would name the new directory filepathX/directoryY-1, and then filepathX/directoryY-2 and so on."
+
+**Still open.** API-F2.15, DE-1.7 and UI-F2.17 are told not to decide these:
+
+- **Question 3, single files:** does deleting a single file, not a whole collection, appear in the same Recently deleted filter, under the same retention and expiry settings? The orchestrator thinks the answer to question 5, a filter "over collection items with the deleted state", implies "yes", but the owner has not confirmed it. Until then, files deleted one by one keep today's behaviour: the deleted view and a 30-day `purge_after`.
+- **Question 4b, valid OCFL under "keep version history":** OCFL 1.1 does not allow removing content from past versions while the object stays valid. The options are (A) write a small tombstone OCFL object that holds only the history (the inventory facts, the PROV-O records and a purge record), then delete the original object and its content; or (B) keep the whole original object, bytes included, hidden from the library. The orchestrator recommends A. The requirements say only that the object keeps "only version history", and no file is expired under "keep version history" until the owner answers.
+- **Proposed values and readings, owner to confirm:**
+  - The restore title cap of 1,000 ("untitled collection 1000") and its refusal `restore_name_exhausted`.
+  - One "untitled collection" for each gone home collection in a restore command.
+  - The installation settings in the host's operational store, and the library retention in its collection snapshot.
+  - The retention bounds of 1 to 3,650 days.
+  - The expiry setting being installation-wide.
+  - For a file, the number goes before the extension (`photo-1.jpg`).
+  - A deleted file's path counts as taken.
+  - The numbering cap of 1,000 and its refusal `path_suffix_exhausted`.
 
 ### Checked, no conflict: C-056 and UI-1.1
 
