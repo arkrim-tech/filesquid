@@ -60,10 +60,12 @@ Feature: Light and dark themes and official branding
     Then the primary colour should be "#a9c7ff" with "#003063" text
 
   # Edge cases
-  Scenario Outline: Primary actions and body text meet WCAG 2.2 AA
+  Scenario Outline: Text pairs meet WCAG 2.2 AA except the owner's listed design-guide pairs
     Given the <distribution> distribution is active in the <theme> theme
     When I measure the contrast of each text colour on its surface
-    Then every pair should reach at least 4.5 to 1
+    Then every pair not in FileSquid's exempt list (all pairs for ImageSquid) should reach at least 4.5 to 1
+    And every FileSquid exempt pair should use exactly its listed design-guide colours
+    And the focus ring should reach at least 3 to 1 on every surface
 
     Examples:
       | distribution | theme |
@@ -84,10 +86,22 @@ Feature: Light and dark themes and official branding
     When the token test runs
     Then it should fail naming "--fs-error" for the dark theme
 
-  Scenario: A distribution chooses a primary colour below AA
+  Scenario: A distribution chooses a primary colour below AA that is not an exempt value
+    Given a distribution token file whose primary is "#5cd685" with "#ffffff" text
+    When the token test runs
+    Then it should fail naming the primary pair at 1.84 to 1
+
+  Scenario: The design guide's primary with white text is accepted only at its listed values
     Given a distribution token file whose primary is "#16ac49" with "#ffffff" text
     When the token test runs
-    Then it should fail naming the primary pair at 2.99 to 1
+    Then it should not report the primary pair at 2.99 to 1
+    When the primary is changed to "#17ad4a" with "#ffffff" text
+    Then it should fail naming the primary pair
+
+  Scenario: The focus ring has no contrast exception
+    Given a distribution token file whose focus ring is "#16ac49" on a "#ffffff" surface
+    When the token test runs
+    Then it should fail naming the focus-ring pair at 2.99 to 1
 
   Scenario: A component uses a literal colour
     Given a custom element stylesheet with a literal colour value

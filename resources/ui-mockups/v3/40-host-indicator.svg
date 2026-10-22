@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900" role="img" aria-labelledby="title desc">
-<title id="title">FileSquid v2 mockup 40: Host indicator and privacy statement</title>
+<title id="title">FileSquid v3 mockup 40: Host indicator and privacy statement</title>
 <desc id="desc">Host indicator in the app header (owner decision 1a): a badge with a device icon and the host label "This device" replaces the former privacy sentence, in the same place on every browsing screen. Opening it shows a popover with the ADR 032 desktop statement "Your files stay on this device. Only you can read them." and a link to Settings, Privacy. After the MVP, when backup or sync is on, the popover adds "Backup copies are encrypted on this device before upload." Light and dark, keyboard focus shown.</desc>
 <rect x="0" y="0" width="1440" height="900" fill="#F5F5F5"/>
 <text x="50" y="40" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="22" font-weight="700" fill="#000000">Host indicator and privacy statement</text>

@@ -2,7 +2,7 @@
 
 Draft mockups of every screen a person uses in the **FileSquid MVP**: the early-access default distribution on the macOS desktop host ([C-056](../../product-vision.md#release-sequence), [ADR 035](../../architecture/035-macos-first-desktop-mvp.md)). The scope comes from phases F0 to F3 of the [implementation plan](../../implementation-plan.md), up to the gate [Task FS-3.9](../../implementation-plan.md#phase-f3-filesquid-mvp-macos-desktop). The styling follows the [FileSquid Design Guide](../../assets/FileSquid-design-guide-v1.html), and the layouts build on the [v1 drafts](../v1/README.md).
 
-**Status: draft, not the active suite.** The [mockups README](../README.md) names the active suite. Until the owner approves v2 there, these files MUST NOT be read as SRS requirements.
+**Status: archived, superseded by [v3](../v3/README.md)** (owner decision 2026-10-22, verbatim: "yes, make v3 the active suite in that PR"). The [mockups README](../README.md) names the active suite. These files MUST NOT be read as SRS requirements.
 
 ## How v2 differs from v1
 
