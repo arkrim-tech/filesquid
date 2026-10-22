@@ -9,9 +9,9 @@ Mockups live next to the SRS they feed:
 
 These files are hard look-and-feel requirements for the surfaces they show. Outcome-level product needs stay in [`resources/prd.md`](../prd.md). The SRS writer records what each mockup shows as ISO/IEC/IEEE 29148 requirements that are unambiguous, verifiable, consistent, and traced. A pixel or two of browser rendering difference is acceptable.
 
-**Active suite:** none yet. When you add one, name it here. Only the active suite named in a folder's README is a requirement source; archived suites MUST NOT be read as requirements.
+**Active suite:** [v3](./v3/README.md), the FileSquid MVP screens (owner decision 2026-10-22, verbatim: "yes, make v3 the active suite in that PR"). Only the active suite named in a folder's README is a requirement source; archived suites MUST NOT be read as requirements.
 
-**Drafts:** [v3](./v3/README.md) is the current draft of the FileSquid MVP screens and builds on [v2](./v2/README.md). Neither is the active suite.
+**Archived:** [v1](./v1/README.md) and [v2](./v2/README.md), superseded by v3. They are not requirement sources.
 
 ## What goes here
 

@@ -1,8 +1,8 @@
 # UI mockups v3: FileSquid MVP (macOS desktop)
 
-Draft mockups of every end-user surface of the **FileSquid MVP** that is built, specified by an MVP plan row, or changed by an owner decision up to 2026-10-22: the early-access default distribution on the macOS desktop host ([C-056](../../product-vision.md#release-sequence), [ADR 035](../../architecture/035-macos-first-desktop-mvp.md)). v3 starts from [v2](../v2/README.md): the same 1440 × 900 macOS window, logo, layout regions, numbering and README structure. The styling follows the [FileSquid Design Guide (PDF)](../../assets/FileSquid-design-guide-v1.pdf).
+Mockups of every end-user surface of the **FileSquid MVP** that is built, specified by an MVP plan row, or changed by an owner decision up to 2026-10-22: the early-access default distribution on the macOS desktop host ([C-056](../../product-vision.md#release-sequence), [ADR 035](../../architecture/035-macos-first-desktop-mvp.md)). v3 starts from [v2](../v2/README.md): the same 1440 × 900 macOS window, logo, layout regions, numbering and README structure. The styling follows the [FileSquid Design Guide (PDF)](../../assets/FileSquid-design-guide-v1.pdf).
 
-**Status: draft, not the active suite.** The [mockups README](../README.md) names the active suite. Until the owner approves v3 there, these files MUST NOT be read as SRS requirements.
+**Status: active suite** by the owner's decision of 2026-10-22, verbatim: "yes, make v3 the active suite in that PR". The [mockups README](../README.md) names it as the active suite, so these files are requirement sources for the SRS. v1 and v2 are archived.
 
 ## Owner request
 
@@ -172,7 +172,7 @@ Everything in [v2's Left out table](../v2/README.md#left-out-because-the-mvp-doe
 
 ## Questions for the owner
 
-1. **Active suite.** Approve v3 as the active suite, or trim it first.
+1. **Active suite.** Answered 2026-10-22: "yes, make v3 the active suite in that PR". v3 is the active suite.
 2. **Navigation tree.** The built tree (UI-F2.1a, [55](./55-navigation-tree-built.svg)) groups nodes by kind under Pinned, Collections, Virtual collections and Folders; v2 and v3 draw a tree of libraries. Which is the target, and where does a library's Recently deleted node sit in the sectioned tree?
 3. **Deleted files view.** UI-S-006 still lists a "deleted files" sidebar view. v3 replaces it with each library's Recently deleted node (ADR 041: "There is one Trash"). Confirm, or keep a cross-library view as well.
 4. **First collection.** How does the owner create the first collection of an empty library ([07](./07-empty-library.svg))? The API has the command (API-S-019), but no plan row or label gives the UI control.
