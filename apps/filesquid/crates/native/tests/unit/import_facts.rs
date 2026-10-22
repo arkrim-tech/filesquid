@@ -4,6 +4,7 @@
 //! known attributes decoded; the mount table; the name form; and the importing host.
 
 use filesquid_metadata::fact::{Fact, Reason};
+#[cfg(target_os = "linux")]
 use filesquid_metadata::import::attributes::AttrValue;
 use filesquid_metadata::import::{Link, NameForm};
 use filesquid_native::import::facts::{gather_source, SourceError};

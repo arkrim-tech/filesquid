@@ -76,13 +76,15 @@ impl SqliteJobs {
     /// [`JobError::Unavailable`] when the file cannot be created; a store failure when the
     /// database or the schema cannot be opened. The error never names the path.
     pub fn open(path: &Path) -> Result<Self, JobError> {
-        crate::owner_only::create_owner_only(path)
-            .map_err(|err| JobError::Unavailable(format!("job store file: {}", err.kind())))?;
+        let unavailable =
+            |err: std::io::Error| JobError::Unavailable(format!("job store file: {}", err.kind()));
+        let path = crate::owner_only::resolve_folders(path).map_err(unavailable)?;
+        crate::owner_only::create_owner_only(&path).map_err(unavailable)?;
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_NO_MUTEX
             | OpenFlags::SQLITE_OPEN_NOFOLLOW;
-        let conn = Connection::open_with_flags(path, flags).map_err(sql_err)?;
+        let conn = Connection::open_with_flags(&path, flags).map_err(sql_err)?;
         conn.pragma_update(None, "journal_mode", "WAL")
             .map_err(sql_err)?;
         conn.busy_timeout(std::time::Duration::from_secs(5))

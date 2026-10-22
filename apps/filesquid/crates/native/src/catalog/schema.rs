@@ -8,7 +8,7 @@
 //! receipts, pending intent and the journal outbox.
 
 use super::{failed, CATALOG_FILE_EXTENSION, CATALOG_SCHEMA_VERSION};
-use crate::owner_only::create_owner_only;
+use crate::owner_only::{create_owner_only, resolve_folders};
 use filesquid_api::library::{is_uuid_v4, CatalogError};
 use filesquid_core::LibraryId;
 use rusqlite::{Connection, OpenFlags};
@@ -143,8 +143,9 @@ pub(crate) fn file_path(root: &Path, library_id: &LibraryId) -> Result<PathBuf, 
 /// [`CatalogError::Unavailable`] when the file cannot be created or opened;
 /// [`CatalogError::Failed`] when its schema is newer than this host or migration fails.
 pub(crate) fn open_catalog_db(path: &Path) -> Result<Connection, CatalogError> {
-    create_owner_only(path).map_err(|e| unavailable("create catalog file", &e))?;
-    let conn = Connection::open_with_flags(path, open_flags())
+    let path = resolve_folders(path).map_err(|e| unavailable("resolve catalog folder", &e))?;
+    create_owner_only(&path).map_err(|e| unavailable("create catalog file", &e))?;
+    let conn = Connection::open_with_flags(&path, open_flags())
         .map_err(|e| unavailable("open catalog file", &e))?;
     conn.pragma_update(None, "journal_mode", "WAL")
         .map_err(|e| unavailable("set WAL mode", &e))?;

@@ -1,7 +1,29 @@
-//! Owner-only file creation shared by the journal store and the library catalogs.
+//! Owner-only file creation shared by the journal store and the library catalogs, and the
+//! path the SQLite stores open.
 
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// `path` with the folders above it resolved (`std::fs::canonicalize` of its parent) and its
+/// last component kept as given, for an `SQLITE_OPEN_NOFOLLOW` open. SQLite refuses a symbolic
+/// link anywhere in the path it is given, not only at the file, so a store under a linked
+/// folder (macOS's `/var` is one for `/private/var`, a home folder may be one) would never
+/// open. A link at the file itself is still refused, by [`create_owner_only`] and by SQLite,
+/// and SQLite still refuses a folder swapped for a link after this resolution. Filesystem I/O.
+///
+/// # Errors
+/// `path` names no file, or the folder above it cannot be resolved (for example it is
+/// missing).
+pub(crate) fn resolve_folders(path: &Path) -> io::Result<PathBuf> {
+    let name = path
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "the path names no file"))?;
+    let parent = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    Ok(std::fs::canonicalize(parent)?.join(name))
+}
 
 /// Create the file at `path` if missing and set it to mode 0600 on Unix, so other local users
 /// cannot read it; elsewhere the data directory's access control applies. A symbolic link at

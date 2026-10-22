@@ -82,13 +82,15 @@ impl SqliteFindings {
     ///
     /// A [`StoreError`] when the file or the schema cannot be opened.
     pub fn open(path: &Path) -> Result<Self, StoreError> {
-        crate::owner_only::create_owner_only(path)
-            .map_err(|err| StoreError::unavailable(format!("{}: {err}", path.display())))?;
+        let unavailable =
+            |err: std::io::Error| StoreError::unavailable(format!("{}: {err}", path.display()));
+        let resolved = crate::owner_only::resolve_folders(path).map_err(unavailable)?;
+        crate::owner_only::create_owner_only(&resolved).map_err(unavailable)?;
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_NO_MUTEX
             | OpenFlags::SQLITE_OPEN_NOFOLLOW;
-        let conn = Connection::open_with_flags(path, flags).map_err(sql_err)?;
+        let conn = Connection::open_with_flags(&resolved, flags).map_err(sql_err)?;
         conn.pragma_update(None, "journal_mode", "WAL")
             .map_err(sql_err)?;
         conn.busy_timeout(std::time::Duration::from_secs(5))

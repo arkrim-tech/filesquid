@@ -23,6 +23,13 @@
 
 echo "Starting Change Scope Validation..."
 
+# Inside a git hook, git exports repository variables such as GIT_DIR and
+# GIT_INDEX_FILE (absolute paths in a linked worktree). Inherited, they would
+# point the fixture repository's commands, reset --hard included, at the real
+# repository, so drop them before any fixture is created.
+# shellcheck disable=SC2046
+unset $(git rev-parse --local-env-vars)
+
 # The cases set their own environment; the caller's (for example FULL=1 on a
 # full hook run) must not leak into them.
 unset FULL CHANGED_SCOPE_FILES CHANGED_SCOPE_BASE CHANGED_SCOPE_METADATA FILESQUID_CARGO_LOCK_WAIT

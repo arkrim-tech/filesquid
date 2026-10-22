@@ -781,24 +781,27 @@ fn remove_catalog_file(path: &Path) {
 }
 
 /// Copy `conn`'s database consistently to `dest` (`VACUUM INTO`), which must not exist or be
-/// empty. A destination this call created is removed when the copy fails. Filesystem and
-/// database I/O.
+/// empty, through its resolved folders (the connection refuses a linked folder,
+/// [`crate::owner_only::resolve_folders`]). A destination this call created is removed when
+/// the copy fails. Filesystem and database I/O.
 fn vacuum_into(conn: &Connection, dest: &Path) -> Result<(), CatalogError> {
     let existing = std::fs::metadata(dest).map(|m| m.len()).ok();
     if existing.is_some_and(|len| len > 0) {
         return Err(failed("backup destination is not empty"));
     }
+    let dest = crate::owner_only::resolve_folders(dest)
+        .map_err(|e| CatalogError::Unavailable(format!("resolve backup folder: {e}")))?;
     let dest_text = dest
         .to_str()
         .ok_or_else(|| failed("backup destination is not valid UTF-8"))?;
-    crate::owner_only::create_owner_only(dest)
+    crate::owner_only::create_owner_only(&dest)
         .map_err(|e| CatalogError::Unavailable(format!("create backup file: {e}")))?;
     let copied = conn
         .execute("VACUUM INTO ?1", rusqlite::params![dest_text])
         .map(drop)
         .map_err(sql);
     if copied.is_err() && existing.is_none() {
-        remove_catalog_file(dest);
+        remove_catalog_file(&dest);
     }
     copied
 }

@@ -5,7 +5,11 @@ use filesquid_api::journal::{JournalEntry, JournalQuery, JournalStore, Outcome};
 use filesquid_api::local_library::{
     LibraryLocations, RecordedRepair, RepairLedger, RepairRecord, MAX_LOCATION_ID_BYTES,
 };
-use filesquid_native::{HostLocations, SqliteJournal, SqliteRepairLedger, JOURNAL_FILE};
+use filesquid_native::import::plans::SqliteImportPlans;
+use filesquid_native::{
+    HostLocations, SqliteFindings, SqliteJobs, SqliteJournal, SqlitePreferences,
+    SqliteRepairLedger, JOURNAL_FILE,
+};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -267,5 +271,32 @@ fn the_stores_refuse_a_symbolic_link_in_place_of_the_operational_store() {
     let link = dir.0.join(JOURNAL_FILE);
     std::os::unix::fs::symlink(&real, &link).expect("link");
     assert!(SqliteRepairLedger::open(&link, "desktop").is_err());
-    assert!(filesquid_native::SqlitePreferences::open(&link).is_err());
+    assert!(SqlitePreferences::open(&link).is_err());
+    assert!(SqliteJobs::open(&link).is_err());
+    assert!(SqliteFindings::open(&link).is_err());
+    assert!(SqliteImportPlans::open(&link).is_err());
+    assert_eq!(
+        std::fs::metadata(&real).expect("target").len(),
+        0,
+        "never written"
+    );
+}
+
+/// A folder above the operational store may be a symbolic link (macOS's `/var` is one for
+/// `/private/var`, a home folder may be one): every store opens through it, and the file is
+/// written in the folder the link names.
+#[cfg(unix)]
+#[test]
+fn the_stores_open_through_a_linked_folder_above_the_operational_store() {
+    let dir = TempDir::new("folder-link");
+    let real = dir.folder("real");
+    let link = dir.0.join("link");
+    std::os::unix::fs::symlink(&real, &link).expect("link");
+    let store = link.join(JOURNAL_FILE);
+    SqliteRepairLedger::open(&store, "desktop").expect("repair ledger");
+    SqlitePreferences::open(&store).expect("preferences");
+    SqliteJobs::open(&store).expect("jobs");
+    SqliteFindings::open(&store).expect("findings");
+    SqliteImportPlans::open(&store).expect("import plans");
+    assert!(real.join(JOURNAL_FILE).is_file());
 }

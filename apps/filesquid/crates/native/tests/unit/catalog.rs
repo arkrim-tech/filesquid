@@ -663,6 +663,23 @@ fn a_consistent_backup_holds_the_committed_library_and_is_journaled() {
     assert_eq!(ops, ["succeeded", "failed"]);
 }
 
+/// A link where the backup file belongs is refused, never followed.
+#[cfg(unix)]
+#[test]
+fn a_backup_destination_that_is_a_symbolic_link_is_not_followed() {
+    let fx = Fixture::new("backup-link");
+    let lib = fx.create_library("Family archive");
+    let outside = temp_root("backup-link-target");
+    let target = outside.join("elsewhere.sqlite");
+    let dest_dir = temp_root("backup-link-dest");
+    let dest = catalog_file(&dest_dir, &lib);
+    std::os::unix::fs::symlink(&target, &dest).expect("link");
+    assert!(fx.catalog.backup(&lib, &dest).is_err());
+    assert!(!target.exists(), "the link target must not be created");
+    std::fs::remove_dir_all(outside).expect("cleanup");
+    std::fs::remove_dir_all(dest_dir).expect("cleanup");
+}
+
 #[test]
 fn removing_a_catalog_file_loses_only_the_rebuildable_index() {
     let fx = Fixture::new("rebuild");
@@ -910,6 +927,26 @@ fn a_catalog_file_that_is_a_symbolic_link_is_not_followed() {
     );
     assert!(fx.catalog.commit(create).is_err());
     assert!(!target.exists(), "the link target must not be created");
+    std::fs::remove_dir_all(outside).expect("cleanup");
+}
+
+/// A folder above the catalog files may be a symbolic link (macOS's `/var` is one for
+/// `/private/var`): only a link at a catalog file itself is refused.
+#[cfg(unix)]
+#[test]
+fn a_catalog_reached_through_a_linked_folder_opens_and_commits() {
+    let outside = temp_root("linked-folder");
+    let real = outside.join("real");
+    std::fs::create_dir_all(&real).expect("real folder");
+    let link = outside.join("link");
+    std::os::unix::fs::symlink(&real, &link).expect("link");
+    let fx = Fixture::over(link, Arc::new(MemoryJournal::new("desktop")));
+    let lib = fx.create_library("Family archive");
+    assert!(
+        catalog_file(&real, &lib).exists(),
+        "the catalog file is in the real folder"
+    );
+    drop(fx);
     std::fs::remove_dir_all(outside).expect("cleanup");
 }
 
