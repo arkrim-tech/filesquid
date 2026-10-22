@@ -1,0 +1,19 @@
+apps/filesquid/crates/desktop/resources/plan.md
+  s_49187bebd751c1::t_971b1443a11070 186
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0f01b2165bdcf79428e62380e3c494e7f48cda29",
+  "prompts": {},
+  "sessions": {
+    "s_49187bebd751c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2d7d0265-d56c-4f29-b6eb-40569010e7ce",
+        "model": "unknown"
+      },
+      "human_author": "Peter Van Garderen <vangarderen.peter@gmail.com>"
+    }
+  }
+}
