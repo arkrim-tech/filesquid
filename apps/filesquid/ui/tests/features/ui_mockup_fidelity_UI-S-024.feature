@@ -43,7 +43,7 @@ Feature: The default UI matches the active mockup suite
 
     Examples:
       | theme | heading | body    | muted   | tint    | active  |
-      | light | #000000 | #111111 | #777777 | #f0faf4 | #0b7a32 |
+      | light | #000000 | #111111 | #777777 | #f0faf4 | #0f8a39 |
       | dark  | #f5f5f5 | #e0e0e0 | #6a6a6a | #0d2b18 | #4aca74 |
 
   Scenario: The tree is in sections by kind with one Recently deleted last

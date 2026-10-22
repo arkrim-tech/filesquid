@@ -2,8 +2,8 @@
 # tasks, native screen readers, visible focus, scalable text and high-contrast and
 # reduced-motion preferences are supported on every host and in every distribution.
 # UI-S-016: accessibility contracts every @filesquid/ui custom element meets: keyboard reach,
-# skip control, landmarks and accessible names from the label table, a 2px primary focus ring
-# at 3:1, focus recovery, reduced motion, contrast preferences, text scaling and RTL hooks.
+# skip control, landmarks and accessible names from the label table, a 2px --fs-focus-ring focus
+# ring at 3:1 with no contrast exception, focus recovery, reduced motion, contrast preferences, text scaling and RTL hooks.
 Feature: Accessibility contracts in the shell
   As a library owner who uses a keyboard, a screen reader or larger text
   I want every part of the app to be reachable, named and readable
@@ -16,7 +16,7 @@ Feature: Accessibility contracts in the shell
   Scenario: The shell is reachable from the keyboard in a predictable order
     When I press Tab repeatedly from the top of the page
     Then focus should move to "Skip to main content", then the chosen theme option, then "Monitor"
-    And every focused control should show a visible focus ring in the primary colour
+    And every focused control should show a visible focus ring in the focus-ring colour at 3 to 1 or more
 
   Scenario: A screen reader hears named landmarks and controls
     When I list the page's landmarks and controls

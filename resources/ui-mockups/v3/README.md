@@ -28,7 +28,7 @@ The owner answered every question of this README on 2026-10-22. The answers, ver
 | 12 | "No, dont show API info on regular UI screens, just in the Settings" | No API status on browsing screens; Settings, About shows "API: ok · contract 0.21.0" ([32](./32-settings.svg)). |
 | 13 | "Yes, proposed strings are approved" | The proposed strings are required label strings; the plan prompts list them for `labels.en.json`. |
 | 14 | "Design guide: Yes apply PDF values to every screen. Make the logo makr 24px tall. Draw warnings in error colour" | Every screen redrawn with the guide's values (see [Design guide differences](#design-guide-differences)); the sidebar mark is 24 px tall; warnings use the error colour and no warning colour remains. |
-| 15 | "No follow the guide in all cases" | Mockups keep the guide's colours (`#16AC49` with white text, `#E53935`). The SRS records where these fall below WCAG 2.2 AA as a Conflict Artifact. |
+| 15 | "No follow the guide in all cases" | Mockups keep the guide's colours (`#16AC49` with white text, `#E53935`). Where these fall below WCAG 2.2 AA, the owner kept them as a listed exception (decision on Conflict Artifact CA-1, 2026-10-22, verbatim: "a"; [SRS-UI-007](../../srs.md#srs-ui-007-light-and-dark-themes)); the focus ring uses `#0f8a39` in light so it keeps 3:1. |
 | 16 | "Yes" | Storage per collection stays on the library page ([41](./41-library-page.svg)). |
 
 ## How v3 differs from v2
@@ -79,7 +79,7 @@ The PDF is a light-mode print of the HTML guide that v2 cites: the tokens, type 
 | 8 | Logo minimum 24 px tall | Sidebar mark 22 px tall | 24 px (owner answer 14) |
 | 9 | Secondary border "1.5px muted" (the guide's stylesheet uses its default border token) | 1.5 px `#CCCCCC` | Unchanged, `#CCCCCC` / `#333333` |
 | 10 | Small and meta text 13–14 px | Captions at 11–12 px (storage caption, column heads) | 13 px on every screen |
-| 11 | White text on `#16AC49`; light error `#E53935` | Same | Same (owner answer 15: "No follow the guide in all cases"). The built UI's AA values (light primary `#0b7a32`, light error `#c62828`, dark on-primary `#0d2b18`, [UI-S-015](../../../apps/filesquid/ui/resources/srs.md)) and the guide's values conflict with WCAG 2.2 AA; see the Conflict Artifact in the [walkthrough](../../tasks/Task-docs-v3-mockup-requirements-sync-Walkthrough.md). |
+| 11 | White text on `#16AC49`; light error `#E53935` | Same | Same (owner answer 15: "No follow the guide in all cases"). The built UI's AA values (light primary `#0b7a32`, light error `#c62828`, dark on-primary `#0d2b18`, [UI-S-015](../../../apps/filesquid/ui/resources/srs.md)) give way to the guide's values: the owner chose to keep them as a listed exception to WCAG 2.2 AA (Conflict Artifact CA-1 in the [walkthrough](../../tasks/Task-docs-v3-mockup-requirements-sync-Walkthrough.md), resolved 2026-10-22, verbatim: "a"). |
 
 ## Coverage
 
@@ -210,12 +210,12 @@ All closed on 2026-10-22; the answers are under [Owner answers of 2026-10-22](#o
 12. **API status line.** Closed: "No, dont show API info on regular UI screens, just in the Settings".
 13. **Proposed strings.** Closed: "Yes, proposed strings are approved".
 14. **Design guide sweep.** Closed: "Design guide: Yes apply PDF values to every screen. Make the logo makr 24px tall. Draw warnings in error colour".
-15. **Contrast values.** Closed: "No follow the guide in all cases".
+15. **Contrast values.** Closed: "No follow the guide in all cases"; the resulting Conflict Artifact CA-1 is resolved by the owner's choice of option (a), verbatim: "a".
 16. **Storage by collection.** Closed: "Yes".
 
 ## Notes for the SRS writer
 
 - Product name, labels and colours come from the default label table and tokens. Sample names and data are not real records.
 - Dates in v3 assume today is 22 Oct 2026, the 30-day default retention and a 90-day period for Studio work.
-- The ADR 041 readings the owner has not ruled on (one "untitled collection" per gone collection and restore command; retention bounds of 1 to 3,650 days; a deleted file's path counting as taken) are drawn as ADR 041 records them. ADR 041 Decision 8 still describes Recently deleted as a node of each library; owner answer 3 replaces that with one Trash, recorded as a Conflict Artifact in the [walkthrough](../../tasks/Task-docs-v3-mockup-requirements-sync-Walkthrough.md); the owner approved that approach on 2026-10-22, verbatim: "3. yes". Where a guide colour fails a contrast requirement, the mockups follow the guide and the conflict is recorded the same way (approved, verbatim: "2. sounds good").
+- The ADR 041 readings the owner has not ruled on (one "untitled collection" per gone collection and restore command; retention bounds of 1 to 3,650 days; a deleted file's path counting as taken) are drawn as ADR 041 records them. ADR 041 Decision 8 still describes Recently deleted as a node of each library; owner answer 3 replaces that with one Trash, recorded as a Conflict Artifact in the [walkthrough](../../tasks/Task-docs-v3-mockup-requirements-sync-Walkthrough.md); the owner approved that approach on 2026-10-22, verbatim: "3. yes". Where a guide colour fails a contrast requirement, the mockups follow the guide and the conflict is recorded the same way (approved, verbatim: "2. sounds good"); the owner then resolved that conflict, CA-1, by keeping the guide's values as a listed exception, verbatim: "a".
 - The first collection's title on first use ("untitled collection", [57](./57-first-use-library.svg)) follows ADR 041 Decision 9's naming; the owner confirmed answer 4's reading ("1. confirmed").
