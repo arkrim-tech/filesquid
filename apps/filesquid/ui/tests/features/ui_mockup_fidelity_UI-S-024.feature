@@ -3,8 +3,9 @@
 # lifecycle screens. UI-S-028: Destination, drop target, import and jobs. UI-S-029: Recently
 # deleted, collection deletion, restore, duplicate names, write refusals and their settings.
 # UI-S-030: Search composition. UI-S-031: Preview and file panel composition. UI-S-032: Monitor and
-# Logs composition. UI-S-033: Settings page composition.
-# Owner decision 2026-10-22, verbatim: "yes, make v3 the active suite in that PR".
+# Logs composition. UI-S-033: Settings page composition. UI-S-034: First use.
+# Owner decision 2026-10-22, verbatim: "yes, make v3 the active suite in that PR"; the owner's answers to the
+# v3 README questions of the same day are quoted in the v3 README.
 # Executable proof arrives with the tasks that build each surface (UI-F2.18 first, then UI-1.2,
 # UI-F2.3, UI-F2.4, UI-F2.8, UI-F2.9, UI-F2.11, UI-F2.15, UI-F2.16, UI-F2.17): Playwright against
 # vite build plus vite preview at 1440 x 900, in light and dark.
@@ -35,6 +36,7 @@ Feature: The default UI matches the active mockup suite
     Given the <theme> theme is shown
     When I open the collection "Harbour project"
     Then the page title should be 30 px Georgia weight 700 in <heading>
+    And the sidebar logo mark should be 24 px tall
     And the list names should be 14 px in <body>
     And the eyebrow "LIBRARIES" should be 11 px weight 400 upper case in <muted>
     And the active sidebar row should be on <tint> with its text in <active>
@@ -44,9 +46,10 @@ Feature: The default UI matches the active mockup suite
       | light | #000000 | #111111 | #777777 | #f0faf4 | #0b7a32 |
       | dark  | #f5f5f5 | #e0e0e0 | #6a6a6a | #0d2b18 | #4aca74 |
 
-  Scenario: Each library ends with its Recently deleted node
+  Scenario: The tree is in sections by kind with one Recently deleted last
     When I open the sidebar
-    Then every library should list its collections and then "Recently deleted"
+    Then the sections should be "PINNED", "COLLECTIONS" and "VIRTUAL COLLECTIONS" in that order
+    And the last row of the tree should be the one "Recently deleted" entry for every library
     And there should be no separate "Deleted files" item
 
   Scenario: Buttons follow the design guide
@@ -58,18 +61,28 @@ Feature: The default UI matches the active mockup suite
   # Edge cases
   Scenario: Upload and import are disabled at a library's top level
     When I open the empty library "Family archive"
-    Then "Upload files" and "Import files…" should be disabled on the raised surface with placeholder text
-    And "Open a collection to upload or import into it." should be shown
+    Then "Upload files" and "Upload folder…" should be disabled on the raised surface with placeholder text
+    And "Open a collection to upload into it." should be shown
 
-  Scenario: The free-space part of the storage caption is left out when the API has none
-    Given the API reports no free space for the library's storage
+  Scenario: The storage caption shows history and free space on two lines
     When I open the collection "Harbour project"
-    Then the storage caption should read "incl. 4.2 GB history"
+    Then the storage caption should read "incl. 4.2 GB history" and "1.4 TB free on disk"
 
   Scenario: A day or less left is shown as a warning
     When I open "Recently deleted" of "Family archive"
-    Then "1 day left" should be shown in the warning colour
+    Then "1 day left" should be shown in the error colour
+    And each row should name its library
     And every Restore button should be a secondary button
+
+  Scenario: Delete now asks first
+    When I choose "Delete now" on "minutes-2026-09.pdf" in "Recently deleted"
+    Then a dialog should ask "Delete minutes-2026-09.pdf now?"
+    And "Cancel" should have the focus
+
+  Scenario: No API information on browsing screens
+    When I open the collection "Harbour project"
+    Then the header should not show the API status
+    And Settings, About should show "API: ok · contract 0.21.0"
 
   # Error cases
   Scenario: A search operator the desktop cannot answer is refused
