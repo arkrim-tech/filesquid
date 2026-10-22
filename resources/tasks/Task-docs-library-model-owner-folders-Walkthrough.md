@@ -19,6 +19,12 @@ Branch: `docs/library-model-owner-folders`. Documentation only; no code, contrac
 - Question 5, Recently deleted: ""Recently deleted" aka Trash can will be a navigation filter over collection items with the deleted state. They are not moved. They are completely deleted from library and filesystem after recently deleted retention period expires."
 - Questions 4 and 5, expiry settings, final answer: "Okay, if the "delete all version history" setting is enabled then the OCFL and any index entries are deleted when the retention period expires, along with the files and metadata, etc.. If the "keep version history" setting is enabled then keep those source OCFL objects in the library, with only version history, no other content."
 - Question 6, duplicate paths: "Filesquid should simply add an incremental number to the new file path so its sits next to conflicting filepath. Eg if filepathX/directoryY already exists and the user wants to create a new directory for a new import at the pre-existing filepathX/directoryY then FileSquid would name the new directory filepathX/directoryY-1, and then filepathX/directoryY-2 and so on."
+- Question 3, single-file deletes (later the same day): "3. yes, single-file deletes use the same Trash"
+- Question 4b, valid OCFL under "keep version history": "yes, for deletion with version history kept, use the tombstone model where the OCFL object remains in the library but ALL of its contents other than version history is fully deleted"
+- On the orchestrator's tombstone method (delete the original object and recreate it as a tombstone with the same identifier at the same path): "fine on your proposed method to keep tombstone a valid OCFL but then make sure that the original deletion and tombstone creation are also an event in the version history"
+- The bounded name and path searches: "Caps: 9999 for both"
+- Where the number goes in a file name: first "yes, number goes before the exentsion"; then, replacing it: "no, put the number of the first part of the filename, before the first dot"
+- On a name that starts with a dot (`.env` becomes `.env-1`, `.config.json` becomes `.config-1.json`): "yes, the edge is correct especially because the leading dot has operational implications"
 
 Question 5's answer replaces the earlier wording that files "go into a "Recently deleted" top-level directory": Recently deleted (Trash) is a navigation filter over files in the deleted state, nothing is moved, and every file has exactly one home collection, with deletion as a state.
 
@@ -73,7 +79,7 @@ Question 5's answer replaces the earlier wording that files "go into a "Recently
   - Decision 5 adds the deleted state and the library's retention period to the snapshot.
   - Decision 8 is rewritten: Recently deleted is a filter over the deleted state, and nothing is moved.
   - New Decisions 9 (restore), 10 (retention scope), 11 (expiry setting) and 12 (duplicate logical paths).
-  - Alternatives, Consequences and Notes are updated; the Notes keep only question 3, question 4b and the proposed values.
+  - Alternatives, Consequences and Notes are updated; at that commit the Notes kept question 3, question 4b and the proposed values open (closed in the fifth content commit).
   - ADR 010's amendment note and the ADR index row are updated to match.
 - PRD:
   - F-004: deletion is a state, and a new bullet numbers a new item at a taken logical path.
@@ -97,10 +103,28 @@ Question 5's answer replaces the earlier wording that files "go into a "Recently
   - [API-F2.14](../../apps/filesquid/crates/api/resources/plan.md) goes from 10 to 13 hours: numbering in upload, copy, move, rename and folder creation.
   - [API-F2.15](../../apps/filesquid/crates/api/resources/plan.md) goes from 12 to 20 hours and is renamed "Recently deleted filter, restore, retention and expiry settings, and retirement of "unfiled"": restore with the untitled collection, the two retention settings, the expiry setting and both expiry behaviours.
   - [UI-F2.17](../../apps/filesquid/ui/resources/plan.md) goes from 11 to 15 hours: restore answer, settings and numbered names.
-  - Their "do not decide" lists now name only questions 3 and 4b and the proposed values.
+  - Their "do not decide" lists then named only questions 3 and 4b and the proposed values (removed in the fifth content commit).
   - Task 1.2 goes from 57 to 59 hours and Task FS-2.5 from 147 to 162.
   - Phase F2 goes from 564 to 581 hours, the MVP from 1,050 to 1,067, the total from 2,903 to 2,920 and the desktop plan from 609 to 611.
   - The checklist row of API-F2.15 is renamed, and `python3 scripts/docs/update_mvp_progress.py` was run: 65%, about 694 of 1,067 hours.
+
+**Owner's later answers (fifth content commit).** The answers on question 3, question 4b, the tombstone method, the caps and the number placement were applied as follows. Each changed row quotes them.
+
+- ADR 041:
+  - Status quotes the new answers.
+  - Decision 8: every deleted file, single or with its collection, is in the one Trash under one retention, expiry and restore rule.
+  - Decision 9: the title cap is 9,999, and the refusal is journaled.
+  - Decision 11: "keep version history" writes a tombstone with the same identifier at the same path. It holds the facts of every former version, the PROV-O records and a purge record, and its history records the original's deletion (`purge`) and the tombstone's creation (a new `tombstone` kind) as events. Crash recovery and repair complete or report an interrupted write, and recovery from OCFL alone shows tombstones as purged history.
+  - Decision 12: the number goes after the first part of the name, before the first dot (`archive-1.tar.gz`); a leading dot stays in the first part (`.env-1`), for the owner's reason; the cap is 9,999.
+  - Alternatives gain the rejected option B. The Notes say no owner question remains and list the orchestrator's readings.
+  - ADR 010's note describes the tombstone.
+- PRD F-004, F-008 and F-065; SRS-F-004 and SRS-F-008; API-S-011, API-S-019, API-S-021 and API-S-036; UI-S-002: the single-file Trash, the tombstone, the caps and the numbering rule. PRD F-008's 30-day local policy now names the installation default and the per-library override, so single files and collections share one retention rule.
+- Plan:
+  - [API-F2.15](../../apps/filesquid/crates/api/resources/plan.md) goes from 20 to 25 hours: single-file deletes in the same Trash, the tombstone write with its two history events and the new `tombstone` operation kind in `filesquid-core`, and its crash recovery through `filesquid-ocfl`.
+  - [API-F2.14](../../apps/filesquid/crates/api/resources/plan.md), [DE-1.7](../../apps/filesquid/crates/desktop/resources/plan.md) and [UI-F2.17](../../apps/filesquid/ui/resources/plan.md): the caps and numbering rule, with no change of hours.
+  - All "do not decide" lists are removed.
+  - Task FS-2.5 goes from 162 to 167 hours, phase F2 from 581 to 586, the MVP from 1,067 to 1,072 and the total from 2,920 to 2,925.
+  - `python3 scripts/docs/update_mvp_progress.py` was run: 65%, about 694 of 1,072 hours.
 
 **Plan (MVP, phases F0 to F3, before gate FS-3.9).**
 
@@ -131,6 +155,20 @@ Question 5's answer replaces the earlier wording that files "go into a "Recently
 - this walkthrough
 
 ## Sync Execution Report
+
+Owner's later answers of 2026-10-22 (fifth content commit):
+
+- **ADR:** ADR 041 Status and Decisions 8, 9, 11 and 12, Alternatives, Consequences and Notes; ADR 010's amendment note.
+- **ADR → SRS:**
+  - API-S-011, API-S-019, API-S-021 and API-S-036.
+  - UI-S-002.
+- **SRS → product SRS:** SRS-F-004 (Same logical path) and SRS-F-008 (Recently deleted, Restore, Expiry).
+- **SRS → PRD:** F-004, F-008 and F-065. The README "About this project" section names none of these details, so it is unchanged.
+- **SRS → plan:**
+  - API-F2.14, API-F2.15, DE-1.7 and UI-F2.17.
+  - Global Task FS-2.5, the phase table and the totals.
+  - The progress bar regenerated.
+- **Conflicts:** none. Every owner question is answered; the orchestrator's readings are listed under "Open questions for the owner" below.
 
 Owner answers of 2026-10-22 (fourth content commit):
 
@@ -192,19 +230,20 @@ Earlier commits:
 - **Question 5, physical folder** (Decision 8): ""Recently deleted" aka Trash can will be a navigation filter over collection items with the deleted state. They are not moved. They are completely deleted from library and filesystem after recently deleted retention period expires."
 - **Question 6, same logical path** (Decision 12): "Filesquid should simply add an incremental number to the new file path so its sits next to conflicting filepath. Eg if filepathX/directoryY already exists and the user wants to create a new directory for a new import at the pre-existing filepathX/directoryY then FileSquid would name the new directory filepathX/directoryY-1, and then filepathX/directoryY-2 and so on."
 
-**Still open.** API-F2.15, DE-1.7 and UI-F2.17 are told not to decide these:
+**Answered later the same day** (verbatim):
 
-- **Question 3, single files:** does deleting a single file, not a whole collection, appear in the same Recently deleted filter, under the same retention and expiry settings? The orchestrator thinks the answer to question 5, a filter "over collection items with the deleted state", implies "yes", but the owner has not confirmed it. Until then, files deleted one by one keep today's behaviour: the deleted view and a 30-day `purge_after`.
-- **Question 4b, valid OCFL under "keep version history":** OCFL 1.1 does not allow removing content from past versions while the object stays valid. The options are (A) write a small tombstone OCFL object that holds only the history (the inventory facts, the PROV-O records and a purge record), then delete the original object and its content; or (B) keep the whole original object, bytes included, hidden from the library. The orchestrator recommends A. The requirements say only that the object keeps "only version history", and no file is expired under "keep version history" until the owner answers.
-- **Proposed values and readings, owner to confirm:**
-  - The restore title cap of 1,000 ("untitled collection 1000") and its refusal `restore_name_exhausted`.
-  - One "untitled collection" for each gone home collection in a restore command.
-  - The installation settings in the host's operational store, and the library retention in its collection snapshot.
-  - The retention bounds of 1 to 3,650 days.
-  - The expiry setting being installation-wide.
-  - For a file, the number goes before the extension (`photo-1.jpg`).
-  - A deleted file's path counts as taken.
-  - The numbering cap of 1,000 and its refusal `path_suffix_exhausted`.
+- **Question 3, single files** (Decision 8): "3. yes, single-file deletes use the same Trash"
+- **Question 4b, valid OCFL under "keep version history"** (Decision 11): "yes, for deletion with version history kept, use the tombstone model where the OCFL object remains in the library but ALL of its contents other than version history is fully deleted"; then, on the tombstone method: "fine on your proposed method to keep tombstone a valid OCFL but then make sure that the original deletion and tombstone creation are also an event in the version history"
+- **The caps** (Decisions 9 and 12): "Caps: 9999 for both"
+- **Where the number goes in a file name** (Decision 12): "yes, number goes before the exentsion"; then, replacing it: "no, put the number of the first part of the filename, before the first dot"; and on a leading dot: "yes, the edge is correct especially because the leading dot has operational implications"
+
+**No owner question remains open.** These orchestrator's readings are recorded in ADR 041 and built as named constants; the owner has not ruled on them:
+
+- One "untitled collection" for each gone home collection in a restore command.
+- The installation settings in the host's operational store, and the library retention in its collection snapshot.
+- The retention bounds of 1 to 3,650 days.
+- The expiry setting being installation-wide.
+- A deleted file's path counts as taken.
 
 ### Checked, no conflict: C-056 and UI-1.1
 
