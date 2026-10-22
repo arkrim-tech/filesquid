@@ -9,6 +9,7 @@ Branch: `docs/library-model-owner-folders`. Documentation only; no code, contrac
 - To "Where should a file go when no folder or collection is chosen (upload at the library's top level, or an import with no destination)?", the owner chose: "Must choose" — "Refuse until the owner picks a collection; no top-level uploads."
 - To "Where should each library's catalog index (the rebuildable SQLite database) live?", the owner chose: "App data directory" — "Index in the app's data directory, keyed by library UUID, as DE-S-009 says today. The library folder holds only OCFL, so it stays clean for ordinary tools; a moved library just rebuilds its index."
 - Then: "Put it in the MVP roadmap".
+- On Conflict 1 below (deleting a collection that still holds files), later the same day: "RE: deletion question in #124, when users delete a collection that still holds files, those files go into a "Recently deleted" top-level directory within their library. That directory has a default 30 day retention period before files inside are expunged for good."
 
 "Option A" means one library model: every library has collections, folders and virtual collections ([PRD F-004](../prd.md#f-004-collections-folders-and-navigation): "A file's bytes MUST live in exactly one collection"); every file has exactly one home collection; uploads, imports and copies are registered in their home collection, so a file uploaded into a folder appears in that folder at once and "Drop to upload into {folder}" stays accurate; the OCFL collection snapshot inside the library folder is the source of truth, and the per-library SQLite catalog in the app's data directory is a rebuildable index that is rebuilt when a moved or copied library folder is opened.
 
@@ -29,6 +30,29 @@ Branch: `docs/library-model-owner-folders`. Documentation only; no code, contrac
 - Product SRS: bullets added to SRS-F-001 (owner-chosen folders only), SRS-F-002 (destination) and SRS-F-004 (home collection), each citing ADR 041.
 - PRD F-002 and F-004 were checked and not changed: they already agree (F-004 "A file's bytes MUST live in exactly one collection"; F-002 import review shows a "destination album/new-album choice"). PRD unchanged, so the README "About this project" section needs no update.
 
+**Recently deleted (owner decision on Conflict 1, second commit).** Existing rules were searched first: [PRD F-008](../prd.md#f-008-deletion-hidden-files-and-duplicate-review) already has a recoverable deletion that defaults to 30 days and a "Recently Deleted" view; [API-S-019](../../apps/filesquid/crates/api/resources/srs.md) already has `deleted_at`, `purge_after` (30 days by default), the deleted view and confirmed permanent deletion; ADR 040, CO-0.11 and SRS-F-067 already list `delete` and `purge` as operations with PROV-O activities; [PRD F-065](../prd.md#f-065-file-version-history-and-retention) keeps whole-object deletion as an explicit, journaled action under F-008. The collection-deletion path was aligned with that recoverable deletion, so there is no second trash:
+
+- ADR 041 has a new Decision 8, Recently deleted is a reserved system area and not a collection, and Decision 3 now says a file is either in exactly one home collection or in Recently deleted, which records the home it came from. The rejected options (a) to (c) are listed under Alternatives Considered, and the open questions are listed under Related Decisions / Notes.
+- PRD:
+  - F-004: deleting a collection moves its files to Recently deleted.
+  - F-006: the "unfiled" quick filter and rule become "recently deleted".
+  - F-008: the purge after the retention period is recorded, journaled and has its PROV-O activity.
+  - F-063: `is:unfiled` is removed, and `is:deleted` covers these files.
+- Product SRS: SRS-F-004 and SRS-F-008 each gained a Recently deleted bullet, and the SRS-F-063 grammar drops `is:unfiled`.
+- Module SRS:
+  - API-S-012 retires `is:unfiled`.
+  - API-S-019: collection deletion deletes the files in the same command, records their former home, and the expiry purge goes through the permanent-deletion command as a journaled `purge` with PROV-O.
+  - API-S-021: a reserved `recently_deleted` node replaces the unfiled folders.
+  - UI-S-002: the Recently deleted entry is never a destination, and the collection-deletion confirmation names it.
+- Plan:
+  - New [API-F2.15](../../apps/filesquid/crates/api/resources/plan.md) (12 hours, Task FS-2.5).
+  - [DE-1.7](../../apps/filesquid/crates/desktop/resources/plan.md) goes from 20 to 23 hours (former-home columns, collection deletion in the catalog, scheduling the purge job).
+  - [UI-F2.17](../../apps/filesquid/ui/resources/plan.md) goes from 8 to 11 hours (Recently deleted entry, confirmation).
+  - API-F2.3 has a status note.
+  - Task 1.2 goes from 54 to 57 hours and Task FS-2.5 from 132 to 147 hours, now also depending on FS-2.8 for API-F2.9.
+  - Phase F2 goes from 546 to 564 hours, the MVP from 1,032 to 1,050, the total from 2,885 to 2,903 and the desktop plan from 606 to 609.
+  - The checklist row was added and the progress was regenerated: 66%, about 692 of 1,050 hours.
+
 **Plan (MVP, phases F0 to F3, before gate FS-3.9).**
 
 - Desktop [DE-1.7](../../apps/filesquid/crates/desktop/resources/plan.md) widened and renamed "Owner-folder library index, home collections and retirement of in-app catalog roots" (12 to 20 hours): retire the in-app roots, index per folder library in the data directory, snapshot fields, catalog schema v3, index imports with collection and logical path, rebuild from the snapshot, `collection_id` required on imports, `CatalogFolders` and `CatalogScopes` for real, README update. Global Task 1.2.
@@ -44,6 +68,7 @@ Branch: `docs/library-model-owner-folders`. Documentation only; no code, contrac
 - [`resources/architecture/005-sqlite-local-postgres-hosted.md`](../architecture/005-sqlite-local-postgres-hosted.md)
 - [`resources/architecture/010-ocfl-1-1-dual-profile.md`](../architecture/010-ocfl-1-1-dual-profile.md)
 - [`resources/architecture/README.md`](../architecture/README.md)
+- [`resources/prd.md`](../prd.md) (second commit: F-004, F-006, F-008, F-063)
 - [`resources/srs.md`](../srs.md)
 - [`resources/implementation-plan.md`](../implementation-plan.md)
 - [`resources/implementation-plan-checklist.md`](../implementation-plan-checklist.md)
@@ -60,14 +85,16 @@ Branch: `docs/library-model-owner-folders`. Documentation only; no code, contrac
 
 - **ADR → SRS:** ADR 041 cascaded into DE-S-009, DE-S-010, DE-S-018, DE-S-019, API-S-011, API-S-026, API-S-036 and UI-S-002, each citing ADR 041 in its parent cell; ADR 005 and ADR 010 carry dated amendment notes pointing to ADR 041.
 - **SRS → product SRS:** SRS-F-001, SRS-F-002 and SRS-F-004 gained one bullet each, linking down to the module rows; ADR 041 added to their Source lists.
-- **SRS → PRD:** PRD F-001, F-002, F-004 and F-009 checked; no change needed, so the README "About this project" section is unchanged.
+- **SRS → PRD:** PRD F-001, F-002, F-004 and F-009 checked for the library model; no change needed. The Recently deleted decision changed PRD F-004, F-006, F-008 and F-063 (second commit); the README "About this project" section names none of these details, so it is unchanged.
 - **SRS → plan:** DE-1.7, API-F2.14 and UI-F2.17 cite every changed row in Related Requirements; global Tasks 1.2 and FS-2.5, the dispatch table, the phase table and the totals updated; the checklist and progress bar regenerated.
 - **Codebase reality:** no code changed. The root README's catalog and commit sections still describe the in-app roots that the code has today; DE-1.7 updates them when it changes the code.
-- **Conflicts:** one Conflict Artifact below, left for the owner; C-056 and UI-1.1 were checked and do not conflict.
+- **Conflicts:** one Conflict Artifact below, resolved by the owner's Recently deleted decision; open questions that decision does not settle are listed below; C-056 and UI-1.1 were checked and do not conflict.
 
 ## Conflict Artifacts
 
-### Conflict 1: "unfiled" files versus exactly one home collection
+### Conflict 1: "unfiled" files versus exactly one home collection (resolved 2026-10-22)
+
+**Resolution:** the owner chose a fourth rule, not (a), (b) or (c): "RE: deletion question in #124, when users delete a collection that still holds files, those files go into a "Recently deleted" top-level directory within their library. That directory has a default 30 day retention period before files inside are expunged for good." Recorded as ADR 041 Decision 8 and applied in the second commit (see "Recently deleted" above). "Unfiled" no longer exists as a state.
 
 1. **Conflict Description:** ADR 041 Decision 3 says every file MUST have exactly one home collection, and the owner chose "Must choose" ("Refuse until the owner picks a collection; no top-level uploads."). Several requirements still create or list files that have no collection. Uploads and imports can no longer create them, but deleting a collection still does.
 2. **PRD/SRS Reference:**
@@ -84,6 +111,16 @@ Branch: `docs/library-model-owner-folders`. Documentation only; no code, contrac
 
    Artifacts to update: API-S-019, API-S-021, PRD F-004, F-006 and F-063, SRS-F-004, SRS-F-006 and SRS-F-063, API-F2.3 (search grammar) and CL-1.4 in the api plan, the UI-S-006 views, and ADR 041.
 5. **Impact Assessment:** if the conflict is left open, a deleted collection leaves files that break the "exactly one home collection" rule. The rebuilt index and the navigation listing then disagree about where those files live, and DE-1.7 and API-F2.14 cannot test one invariant for every file.
+
+### Open questions for the owner (Recently deleted)
+
+The owner's words do not settle these, so nothing was decided for them. ADR 041 lists them, and API-F2.15, DE-1.7 and UI-F2.17 are told not to decide them:
+
+1. **Restore:** where does a restored file go once its original collection no longer exists? Under "Must choose" the likely answer is that the owner picks a destination, but that is not decided.
+2. **Retention scope:** is the 30-day retention configurable per library or per installation?
+3. **Single files:** does deleting a single file, not a whole collection, use the same Recently deleted area and the same 30 days? (The existing recoverable deletion of a file already defaults to 30 days and is listed in the deleted view.)
+4. **"Expunged for good":** what does it mean for the OCFL object and its version history? Removing the object directory is an OCFL-level purge that also removes the history PRD F-065 keeps.
+5. **Physical folder:** is Recently deleted only a reserved navigation entry over the deleted state (no bytes move, as recorded), or must it also be a physical folder in the library's storage root?
 
 ### Checked, no conflict: C-056 and UI-1.1
 
