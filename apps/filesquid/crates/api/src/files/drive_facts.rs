@@ -169,5 +169,12 @@ async fn head_facts<B: StorageBackend, R, S>(
         media_type,
         size,
         modified_ms,
+        statements: described
+            .record
+            .statements()
+            .statements
+            .iter()
+            .map(|statement| (statement.curie(), statement.value.clone()))
+            .collect(),
     }))
 }

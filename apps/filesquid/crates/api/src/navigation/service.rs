@@ -112,6 +112,11 @@ impl NavigationService {
         self.resolve(principal, node).map(|_| ())
     }
 
+    /// The host's one repository, whose libraries a search covers by default (API-S-012).
+    pub(crate) fn repository_id(&self) -> &RepositoryId {
+        &self.repository.id
+    }
+
     /// The catalog this service reads, for the view operation's file listing (API-S-011).
     pub(crate) fn catalog(&self) -> &Arc<dyn LibraryCatalog> {
         &self.catalog

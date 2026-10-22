@@ -329,6 +329,14 @@ cargo test -p filesquid-api --locked --lib files::drive
 cargo test -p filesquid-api --locked --test integration_drive_views --test unit_canonical --test features
 ```
 
+The search operation of API-F2.3 (API-S-012: the operator grammar, unknown and unavailable operators, permission filtering before ranking, relevance and view sort keys, stable paging, case folding and node scopes) is tested the same way; the grammar, matching and ordering have unit tests in the library:
+
+```sh
+cd apps/filesquid
+cargo test -p filesquid-api --locked --lib files::search
+cargo test -p filesquid-api --locked --test integration_search --test features
+```
+
 The metadata property routes and the upload's file record of API-F1.4 (API-S-035, API-S-026: one `filesquid-metadata` record codec, an upload that creates the file's own OCFL object with its original and record, statement edits, namespace registration, term placement and the read-only facts projection) are tested through the router against real OCFL storage roots in the system temporary directory, which each test removes; the canonical record codec has its own unit tests:
 
 ```sh

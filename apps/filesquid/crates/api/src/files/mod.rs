@@ -34,6 +34,9 @@
 //!   (`GET /files/collection-history-size`, `files.read`); and copy
 //!   (`POST /files/copies`, `files.write`), a new file object with a new FileId whose record
 //!   names its source.
+//! - **Search** (Task API-F2.3, API-S-012; [`search`]): `GET /files/search` (`files.read`)
+//!   answers the readable files and folder rows matching a query of the published grammar
+//!   ([`search_query`]), permission-filtered before ranking, paged like the view.
 //! - **Metadata properties** (Task API-F1.4, API-S-035; [`statements`]): reads of a file's
 //!   statements, of the add order of a bare term name, of the library's namespace registry and
 //!   of the read-only import-record projection take `files.read`; setting or removing a
@@ -70,6 +73,10 @@ mod nodes;
 mod range;
 mod records;
 mod routes;
+pub mod search;
+pub mod search_match;
+pub mod search_query;
+pub mod search_scope;
 mod service;
 pub mod statements;
 mod upload;
@@ -139,6 +146,8 @@ pub const RENAME_OPERATION: &str = "files.rename";
 pub const COPY_OPERATION: &str = "files.copy";
 /// Journal operation of a refused view (Task API-F2.2).
 pub const VIEW_OPERATION: &str = "files.view";
+/// Journal operation of a refused search (Task API-F2.3).
+pub const SEARCH_OPERATION: &str = "files.search";
 /// Journal operation of a refused storage-use count of a collection (Task API-F2.2).
 pub const COLLECTION_HISTORY_SIZE_OPERATION: &str = "files.collection_history_size";
 /// Journal operation of a statement set.
