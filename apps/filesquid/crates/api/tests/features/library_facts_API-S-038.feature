@@ -7,7 +7,7 @@
 # GET /api/v1/libraries/recent (library.read) MUST first keep only the libraries this host opened
 # that the caller may read, then list at most 20 of them, newest first, with ID, name, last opened
 # time, whether open now and free bytes, never a path, storage key or location ID.
-# Task API-F2.18 (contract 0.26.0).
+# Task API-F2.18 (contract 0.27.0).
 Feature: Library facts: name, free space and recent libraries
   As the owner of several libraries
   I want each library to have a name, its free space and a list of the ones I opened

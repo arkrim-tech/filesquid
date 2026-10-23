@@ -1,6 +1,6 @@
 # Task API-F2.18 Walkthrough: Library facts: name, free space and recent libraries
 
-Branch `feat/api-f2.18-library-facts`, modules `filesquid-api` ([plan row](../plan.md)), `filesquid-native` and `filesquid-desktop` (the desktop's location registry), with `filesquid-server`'s answer. Part of global Task 1.2. Contract 0.26.0 (main was 0.25.0); `ui/src/api/schema.d.ts` and `contract-version.ts` regenerated with `npm run contract:types`.
+Branch `feat/api-f2.18-library-facts`, modules `filesquid-api` ([plan row](../plan.md)), `filesquid-native` and `filesquid-desktop` (the desktop's location registry), with `filesquid-server`'s answer. Part of global Task 1.2. Contract 0.27.0 (main was 0.26.0, after API-F2.17); `ui/src/api/schema.d.ts` and `contract-version.ts` regenerated with `npm run contract:types`.
 
 ## SRS mapping
 
