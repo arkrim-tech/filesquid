@@ -10,14 +10,16 @@
 //! Before its first write of each key, the staging area refuses a key below
 //! an OCFL object root or storage root of any version (the copy guard of
 //! OCFL-S-019), so staging is never inside the object and never an OCFL
-//! extension. Reading or recovering an object never reads it.
+//! extension. Reading or recovering an object never reads it. The guard's
+//! warning names the object the area belongs to (OCFL-S-025), which
+//! [`ChangeModel::new`](super::ChangeModel::new) records.
 
 use std::collections::BTreeSet;
 
 use super::error::ChangeError;
 use super::index::{StagingIndex, MAX_INDEX_BYTES};
 use crate::digest::DigestAlgorithm;
-use crate::read::copy_guard::refuse_copy_into_ocfl_root;
+use crate::read::copy_guard::{refuse_copy_into_ocfl_root, CopyConcern};
 use crate::read::small::read_small;
 use crate::read::ReadError;
 use crate::storage::{
@@ -42,6 +44,9 @@ pub(crate) const MAX_LIST_PAGES: usize = MAX_WALK_ENTRIES / MAX_LIST_PAGE + 1;
 pub struct StagingArea<'s, S> {
     backend: &'s S,
     prefix: String,
+    /// The identifier of the object the area belongs to, named in the copy
+    /// guard's warning; empty until a change model records it.
+    object: String,
 }
 
 impl<'s, S: StorageBackend> StagingArea<'s, S> {
@@ -58,7 +63,17 @@ impl<'s, S: StorageBackend> StagingArea<'s, S> {
         Ok(Self {
             backend,
             prefix: prefix.to_string(),
+            object: String::new(),
         })
+    }
+
+    /// The area as the staging area of the object `object_id`, which the
+    /// copy guard's warning names (OCFL-S-025).
+    pub(super) fn for_object(self, object_id: &str) -> Self {
+        Self {
+            object: object_id.to_string(),
+            ..self
+        }
     }
 
     /// The prefix the area lives under.
@@ -222,9 +237,14 @@ impl<'s, S: StorageBackend> StagingArea<'s, S> {
         Ok(false)
     }
 
-    /// Refuse a key below an OCFL object root or storage root.
+    /// Refuse a key below an OCFL object root or storage root, naming the
+    /// area's object in the warning.
     async fn guard(&self, key: &StorageKey) -> Result<(), ChangeError> {
-        refuse_copy_into_ocfl_root(self.backend, key).await?;
+        let concern = CopyConcern {
+            object: &self.object,
+            version: None,
+        };
+        refuse_copy_into_ocfl_root(self.backend, key, concern).await?;
         Ok(())
     }
 }
