@@ -52,7 +52,7 @@ The owner answered every question of this README on 2026-10-22. The answers, ver
 
 From the PDF guide:
 
-- **Brand green** `#16AC49` in both modes: the primary action, active states, focus and accent links. Tri-colour (`#FD1E23`, `#FCD805`, `#007AF9`) only in the logo and file-type badges, never as status.
+- **Brand green** `#16AC49` in both modes: the primary action, active states and accent links; the focus ring is `#0F8A39` in light and `#16AC49` in dark so it keeps 3:1 (owner decision 2026-10-23, verbatim: "3. keep"). Tri-colour (`#FD1E23`, `#FCD805`, `#007AF9`) only in the logo and file-type badges, never as status.
 - **Light:** page `#FFFFFF`, raised `#F5F5F5`; borders subtle `#E0E0E0`, default `#CCCCCC`, control outline `#8E8E8E` (inputs, selects, checkboxes and radio buttons, 3.28:1 on white and 3.01:1 on `#F5F5F5`); text heading `#000000`, body `#111111`, secondary `#555555`, muted `#777777`, placeholder `#999999`; active tint `#F0FAF4` with text `#0f8a39`; error `#E53935`.
 - **Dark:** page `#141414`, card and sidebar `#1C1C1C`, raised `#242424`, overlay `#2C2C2C`; borders `#2A2A2A` and `#333333`, control outline `#757575` (3.03:1 or more on every dark surface); text `#F5F5F5`, `#E0E0E0`, `#A0A0A0`, `#6A6A6A` (muted and placeholder); active tint `#0D2B18` with `#4ACA74`; error `#EF5350`; code chip `#1C1C1C`.
 - **Icons:** line icons, 1.6 px stroke, round caps and joins, no fill; 16, 20 and 24 px; default `#111111` light and `#A0A0A0` dark, active `#16AC49`, muted `#777777` / `#6A6A6A`, disabled `#CCCCCC` / `#3A3A3A`.
