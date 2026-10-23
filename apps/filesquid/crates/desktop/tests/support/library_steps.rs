@@ -1,5 +1,6 @@
-//! Steps of `desktop_libraries_F-001.feature` (Task DE-1.1; SRS-F-001, API-S-025, DE-S-006):
-//! the desktop's library routes over folders the owner chose, driven through the
+//! Steps of `desktop_libraries_F-001.feature` (Tasks DE-1.1, DE-1.7; SRS-F-001, API-S-025,
+//! DE-S-006, DE-S-009, DE-S-010, DE-S-018): the desktop's library routes over folders the owner
+//! chose, each library attached to its catalog index in the data directory, driven through the
 //! `filesquid://` scheme with the per-launch token, against SQLite files and OCFL storage roots
 //! in a scratch directory that is removed when the scenario ends.
 
@@ -7,9 +8,7 @@ use super::DesktopWorld;
 use cucumber::{given, then, when};
 use filesquid_api::auth::LaunchToken;
 use filesquid_api::journal::{JournalEntry, Outcome};
-use filesquid_api::library::{
-    CommandRequest, LibraryCommand, LibraryService, NEW_LIBRARY_REVISION,
-};
+use filesquid_api::library::{CommandRequest, LibraryCatalog, LibraryCommand, LibraryService};
 use filesquid_api::local_library::{CONSENT_STATEMENT_ID, CREATE_OPERATION};
 use filesquid_api::operation::{CommandEnvelope, ExpectedRevision, OperationId, OperationScope};
 use filesquid_api::ApiState;
@@ -20,6 +19,7 @@ use filesquid_desktop_lib::{
     install_history_source, install_launch_token, install_library_routes, open_host_monitor,
     open_library_catalog,
 };
+use filesquid_native::SqliteCatalog;
 use filesquid_native::{
     install_file_service, HostFiles, HostLocations, HostMonitor, OpenedRoots, SqliteJournal,
     SqliteRepairLedger, CATALOG_DIR, JOURNAL_FILE,
@@ -42,6 +42,7 @@ pub struct LibraryRig {
     token: LaunchToken,
     host: Option<HostMonitor>,
     files: HostFiles,
+    catalog: Arc<SqliteCatalog>,
     locations: Arc<HostLocations>,
     location: Option<String>,
     folder: Option<PathBuf>,
@@ -104,12 +105,14 @@ impl LibraryRig {
         let host = open_host_monitor(&state, &data, None).expect("monitor");
         let catalog = Arc::new(open_library_catalog(&data, &host, &installation()).expect("cat"));
         let opened = Arc::new(OpenedRoots::new());
-        install_history_source(&state, catalog, opened.clone()).expect("history");
+        install_history_source(&state, catalog.clone(), opened.clone()).expect("history");
         let serving = LibraryServing {
             files: files.clone(),
             validation: None,
             opened,
             data_dir: data,
+            catalog: catalog.clone(),
+            repository: RepositoryId::new(INSTALLATION).expect("repository"),
         };
         let locations =
             install_library_routes(&state, &host, &installation(), serving).expect("routes");
@@ -119,6 +122,7 @@ impl LibraryRig {
             token,
             host: Some(host),
             files,
+            catalog,
             locations,
             location: None,
             folder: None,
@@ -196,25 +200,19 @@ fn envelope(op: &str, revision: &str, scope: &str) -> CommandEnvelope {
     )
 }
 
-/// A library made by another desktop in `dir` with two snapshot versions, answering its ID
-/// and its OCFL storage root folder.
+/// A library made by another desktop in the data directory `dir`, in a folder of its own,
+/// with two snapshot versions (its creation and the collection "Holidays"), answering its ID
+/// and its folder (its OCFL storage root).
 fn donor_library(dir: &Path) -> (String, PathBuf) {
     std::fs::create_dir_all(dir).expect("donor dir");
     let state = ApiState::new();
     let host = open_host_monitor(&state, dir, None).expect("donor monitor");
     let catalog = Arc::new(open_library_catalog(dir, &host, &installation()).expect("catalog"));
+    let (library, folder) =
+        super::folder_library::attach_new_library(&catalog, dir, "Family archive");
     let service = LibraryService::new(catalog.clone(), host.monitor().journal());
-    let create = CommandRequest {
-        envelope: envelope("op-create", NEW_LIBRARY_REVISION, "library"),
-        command: LibraryCommand::CreateLibrary {
-            repository_id: RepositoryId::new("repo-1").expect("repo"),
-            name: "Family archive".into(),
-        },
-    };
-    let created = service.execute("owner", create).expect("create");
-    let library = created.created_id.expect("library id");
     let collection = CommandRequest {
-        envelope: envelope("op-collection", &created.revision.expect("rev"), &library),
+        envelope: envelope("op-collection", "1", &library),
         command: LibraryCommand::CreateCollection {
             library_id: LibraryId::new(&library).expect("library"),
             title: "Holidays".into(),
@@ -223,12 +221,24 @@ fn donor_library(dir: &Path) -> (String, PathBuf) {
         },
     };
     service.execute("owner", collection).expect("collection");
+    drop(service);
     drop(catalog);
     host.stop();
-    (
-        library.clone(),
-        dir.join(CATALOG_DIR).join(format!("{library}.ocfl")),
-    )
+    (library, folder)
+}
+
+/// Copy the directory tree `from` to `to` (bounded walk).
+fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).expect("dir");
+    for entry in std::fs::read_dir(from).expect("read").take(10_000) {
+        let entry = entry.expect("entry");
+        let target = to.join(entry.file_name());
+        if entry.file_type().expect("type").is_dir() {
+            copy_dir(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).expect("copy");
+        }
+    }
 }
 
 /// The scenario's rig.
@@ -442,4 +452,78 @@ fn ledger_kept(world: &mut DesktopWorld) {
     assert_eq!(receipts.len(), 1);
     let library = rig.library.clone().expect("library");
     assert_eq!(receipts[0].object_id, format!("urn:uuid:{library}"));
+}
+
+#[given(expr = "a library folder holding the collection {string} was copied to a new place")]
+fn copied_library(world: &mut DesktopWorld, title: String) {
+    assert_eq!(title, "Holidays", "the donor library's collection");
+    let rig = rig(world);
+    let (library, root) = donor_library(&rig.dir.join("donor"));
+    let copy = rig.dir.join("copied");
+    copy_dir(&root, &copy);
+    rig.choose(copy);
+    rig.library = Some(library);
+}
+
+#[given("a copy of that folder was chosen")]
+fn copy_chosen(world: &mut DesktopWorld) {
+    let rig = rig(world);
+    let copy = rig.dir.join("copied");
+    copy_dir(&rig.root.clone().expect("root"), &copy);
+    rig.choose(copy);
+}
+
+#[when("the app opens the copied folder without naming its library")]
+async fn open_copy(world: &mut DesktopWorld) {
+    let rig = rig(world);
+    let body = json!({ "location_id": rig.location.clone().expect("location") });
+    rig.post("/api/v1/libraries/openings", body).await;
+}
+
+#[then("the answer should name the library the copied folder holds")]
+fn names_copied_library(world: &mut DesktopWorld) {
+    let rig = rig(world);
+    let (status, body) = rig.answer();
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(
+        body["library_id"],
+        rig.library.clone().expect("library").as_str()
+    );
+}
+
+#[then(expr = "the library should list the collection {string}")]
+fn lists_collection(world: &mut DesktopWorld, title: String) {
+    let rig = rig(world);
+    let library = LibraryId::new(rig.library.clone().expect("library")).expect("library");
+    let collections = rig
+        .catalog
+        .collections(&library, None, 10)
+        .expect("collections");
+    let titles: Vec<&str> = collections.iter().map(|c| c.item.title()).collect();
+    assert_eq!(titles, [title.as_str()], "rebuilt from the copied folder");
+}
+
+#[then("the data directory should hold only that library's index")]
+fn only_index(world: &mut DesktopWorld) {
+    let rig = rig(world);
+    let (_, body) = rig.answer();
+    let library = body["library_id"].as_str().expect("library").to_string();
+    let catalogs = rig.dir.join("data").join(CATALOG_DIR);
+    for entry in std::fs::read_dir(catalogs).expect("catalog dir") {
+        let name = entry
+            .expect("entry")
+            .file_name()
+            .to_string_lossy()
+            .to_string();
+        let index = [".sqlite", ".sqlite-wal", ".sqlite-shm", ".work"]
+            .iter()
+            .any(|suffix| name == format!("{library}{suffix}"));
+        assert!(index, "only the index and its staging: {name}");
+    }
+}
+
+#[then("the chosen folder should hold the library's collection snapshot")]
+fn folder_holds_snapshot(world: &mut DesktopWorld) {
+    let folder = rig(world).folder.clone().expect("folder");
+    assert!(folder.join("snapshot").join("0=ocfl_object_1.1").is_file());
 }
