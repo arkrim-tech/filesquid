@@ -24,6 +24,7 @@ import {
   type PinnedDestination,
 } from "../navigation/model";
 import type { NavigationData, ResolvedPin } from "../navigation/loader";
+import { icon, type IconName } from "./icons";
 
 /** A top-level item of a section, with fixed children when the section decides them. */
 export interface SectionItem {
@@ -218,6 +219,7 @@ function moveButton(
 ): HTMLButtonElement {
   const up = delta < 0;
   const button = control(up ? "up" : "down", `${up ? "up" : "down"}:${view.id}`);
+  button.append(icon(up ? "arrow-up" : "arrow-down", 16));
   button.dataset.delta = String(delta);
   const template = up ? labels.navigationMoveUp : labels.navigationMoveDown;
   button.setAttribute("aria-label", formatLabel(template, { name: view.heading }));
@@ -248,7 +250,8 @@ function unavailableList(pins: readonly PinnedDestination[], labels: LabelTable)
 function unavailableItem(pin: PinnedDestination, labels: LabelTable): HTMLLIElement {
   const li = document.createElement("li");
   const name = document.createElement("span");
-  name.textContent = unavailableName(pin, labels);
+  name.className = "name";
+  name.append(kindIcon(pin.kind), document.createTextNode(unavailableName(pin, labels)));
   const remove = control("remove", `remove:${pin.node}`);
   remove.dataset.node = pin.node;
   remove.dataset.kind = pin.kind;
@@ -333,16 +336,34 @@ function itemLink(
   link.dataset.key = `item:${scope.view.id}:${node.node}`;
   if (parent !== undefined) link.dataset.parent = parent;
   link.setAttribute("aria-level", String(level));
+  // Each level indents by 20 px (16 + 4, mockup 55), so hovered and active rows stay full width.
+  const indent = `calc(var(--fs-space-3) + ${level - 1} * (var(--fs-space-3) + var(--fs-space-1)))`;
+  link.style.setProperty("padding-inline-start", indent);
   link.tabIndex = node.node === scope.place.active?.node ? 0 : -1;
   if (node.node === scope.ctx.current) link.setAttribute("aria-current", "page");
   const twisty = document.createElement("span");
   twisty.className = "twisty";
   twisty.setAttribute("aria-hidden", "true");
+  twisty.append(icon("chevron", 16));
   const name = document.createElement("span");
   name.className = "name";
   name.textContent = nodeName(node, scope.ctx.labels);
-  link.append(twisty, name);
+  link.append(twisty, kindIcon(node.kind), name);
   return link;
+}
+
+/** The 16 px line icon of a node kind (mockup 55). */
+function kindIcon(kind: NavigationKind): SVGSVGElement {
+  const names: Record<NavigationKind, IconName> = {
+    repository: "library",
+    library: "library",
+    collection: "collection",
+    virtual_collection: "layers",
+    folder: "folder",
+  };
+  const svg = icon(names[kind] ?? "folder", 16);
+  svg.classList.add("kind-icon");
+  return svg;
 }
 
 /** A `<button type=button>` with a class and focus key. */

@@ -1,12 +1,18 @@
 /*
- * FileSquid default design tokens (light and dark), from the FileSquid Design Guide
- * (resources/assets/FileSquid-design-guide-v1.html in the FileSquid repository). Components read
- * only these custom properties; distributions override them in their own token sheet.
+ * FileSquid default design tokens (light and dark), the values of the FileSquid Design Guide
+ * (resources/assets/FileSquid-design-guide-v1.pdf in the FileSquid repository) as UI-S-024
+ * records them for the active v3 mockup suite. Components read only these custom properties;
+ * distributions override them in their own token sheet.
  *
- * WCAG 2.2 AA (4.5:1) adjustments to the guide: white text on the brand green #16ac49 is
- * 2.99:1, so the light primary is the darker #0b7a32 (5.46:1) and the dark theme keeps the
- * brand green with dark ink (#0d2b18, 5.11:1). The guide's light error #e53935 is 4.23:1 on
- * white, so the light error is #c62828 (5.62:1).
+ * Contrast (SRS-UI-007, UI-S-015): the guide's primary #16ac49 with white text, its active
+ * text, error, muted, placeholder and badge colours fall below WCAG 2.2 AA 4.5:1 on the surfaces
+ * UI-S-015 lists; the owner keeps them as a listed exception (Conflict Artifact CA-1, 2026-10-22,
+ * verbatim "a"). Every other text pair reaches 4.5:1, and --fs-focus-ring (#0f8a39 light, the
+ * guide's green in dark) and --fs-outline-control (#8e8e8e / #757575) reach 3:1 on every surface
+ * with no exception (owner decisions 2026-10-23 "3. keep" and "1. darken them").
+ *
+ * There is no warning token: warnings use --fs-error (owner answer 14). --fs-brand is for marks
+ * that carry no text. Fills are flat: no gradient, glow or shadow in either theme.
  *
  * --fs-motion-duration supplies every transition and animation duration; components stop all
  * motion under prefers-reduced-motion: reduce (UI-S-016).
@@ -16,58 +22,145 @@
  */
 :root {
   --fs-surface: #ffffff;
+  --fs-surface-card: #ffffff;
+  --fs-surface-raised: #f5f5f5;
+  --fs-surface-overlay: #ffffff;
   --fs-surface-container: #f5f5f5;
+  --fs-on-surface-heading: #000000;
   --fs-on-surface: #111111;
   --fs-on-surface-variant: #555555;
+  --fs-on-surface-muted: #777777;
+  --fs-on-surface-placeholder: #999999;
   --fs-outline: #e0e0e0;
-  --fs-primary: #0b7a32;
+  --fs-outline-strong: #cccccc;
+  --fs-outline-control: #8e8e8e;
+  --fs-primary: #16ac49;
   --fs-on-primary: #ffffff;
   --fs-primary-container: #f0faf4;
-  --fs-on-primary-container: #0b7a32;
-  --fs-error: #c62828;
+  --fs-on-primary-container: #0f8a39;
+  --fs-error: #e53935;
+  --fs-focus-ring: #0f8a39;
+  --fs-brand: #16ac49;
+  --fs-icon: #111111;
+  --fs-icon-muted: #777777;
+  --fs-icon-disabled: #cccccc;
+  --fs-badge-document: #fd1e23;
+  --fs-on-badge-document: #ffffff;
+  --fs-badge-data: #fcd805;
+  --fs-on-badge-data: #111111;
+  --fs-badge-media: #007af9;
+  --fs-on-badge-media: #ffffff;
+  --fs-inverse-surface: #111111;
+  --fs-on-inverse-surface: #ffffff;
+  --fs-scrim: #000000;
+  --fs-scrim-opacity: 0.32;
   --fs-font-sans:
     -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --fs-font-heading: Georgia, Charter, "Palatino Linotype", serif;
   --fs-font-mono: "SF Mono", "Fira Code", "Fira Mono", "Roboto Mono", Consolas, monospace;
+  --fs-font-size-badge: 0.625rem;
+  --fs-font-size-eyebrow: 0.6875rem;
   --fs-font-size-small: 0.8125rem;
+  --fs-font-size-ui: 0.875rem;
+  --fs-font-size-state: 0.9375rem;
   --fs-font-size-body: 1rem;
+  --fs-font-size-lead: 1.0625rem;
   --fs-font-size-title: 1.25rem;
+  --fs-font-size-card: 1.3125rem;
+  --fs-font-size-heading: 1.375rem;
+  --fs-font-size-page: 1.875rem;
+  --fs-font-size-page-large: 2.125rem;
+  --fs-font-size-display: 3.5rem;
   --fs-space-1: 4px;
   --fs-space-2: 8px;
-  --fs-space-3: 12px;
-  --fs-space-4: 16px;
-  --fs-space-5: 24px;
+  --fs-space-3: 16px;
+  --fs-space-4: 24px;
+  --fs-space-5: 40px;
+  --fs-space-6: 64px;
+  --fs-space-7: 96px;
+  --fs-radius-button: 7px;
+  --fs-radius-input: 6px;
+  --fs-radius-dialog: 10px;
   --fs-radius: 8px;
+  --fs-radius-item: 5px;
+  --fs-radius-chip: 4px;
+  --fs-radius-badge: 3px;
+  --fs-radius-check: 3.5px;
+  --fs-radius-pill: 999px;
   --fs-motion-duration: 150ms;
   color-scheme: light;
 }
 
 :root[data-theme="dark"] {
   --fs-surface: #141414;
+  --fs-surface-card: #1c1c1c;
+  --fs-surface-raised: #242424;
+  --fs-surface-overlay: #2c2c2c;
   --fs-surface-container: #1c1c1c;
+  --fs-on-surface-heading: #f5f5f5;
   --fs-on-surface: #e0e0e0;
   --fs-on-surface-variant: #a0a0a0;
+  --fs-on-surface-muted: #6a6a6a;
+  --fs-on-surface-placeholder: #6a6a6a;
   --fs-outline: #2a2a2a;
+  --fs-outline-strong: #333333;
+  --fs-outline-control: #757575;
   --fs-primary: #16ac49;
-  --fs-on-primary: #0d2b18;
+  --fs-on-primary: #ffffff;
   --fs-primary-container: #0d2b18;
   --fs-on-primary-container: #4aca74;
   --fs-error: #ef5350;
+  --fs-focus-ring: #16ac49;
+  --fs-brand: #16ac49;
+  --fs-icon: #a0a0a0;
+  --fs-icon-muted: #6a6a6a;
+  --fs-icon-disabled: #3a3a3a;
+  --fs-badge-document: #fd1e23;
+  --fs-on-badge-document: #ffffff;
+  --fs-badge-data: #fcd805;
+  --fs-on-badge-data: #111111;
+  --fs-badge-media: #007af9;
+  --fs-on-badge-media: #ffffff;
+  --fs-inverse-surface: #2c2c2c;
+  --fs-on-inverse-surface: #f5f5f5;
+  --fs-scrim: #000000;
   color-scheme: dark;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --fs-surface: #141414;
+    --fs-surface-card: #1c1c1c;
+    --fs-surface-raised: #242424;
+    --fs-surface-overlay: #2c2c2c;
     --fs-surface-container: #1c1c1c;
+    --fs-on-surface-heading: #f5f5f5;
     --fs-on-surface: #e0e0e0;
     --fs-on-surface-variant: #a0a0a0;
+    --fs-on-surface-muted: #6a6a6a;
+    --fs-on-surface-placeholder: #6a6a6a;
     --fs-outline: #2a2a2a;
+    --fs-outline-strong: #333333;
+    --fs-outline-control: #757575;
     --fs-primary: #16ac49;
-    --fs-on-primary: #0d2b18;
+    --fs-on-primary: #ffffff;
     --fs-primary-container: #0d2b18;
     --fs-on-primary-container: #4aca74;
     --fs-error: #ef5350;
+    --fs-focus-ring: #16ac49;
+    --fs-brand: #16ac49;
+    --fs-icon: #a0a0a0;
+    --fs-icon-muted: #6a6a6a;
+    --fs-icon-disabled: #3a3a3a;
+    --fs-badge-document: #fd1e23;
+    --fs-on-badge-document: #ffffff;
+    --fs-badge-data: #fcd805;
+    --fs-on-badge-data: #111111;
+    --fs-badge-media: #007af9;
+    --fs-on-badge-media: #ffffff;
+    --fs-inverse-surface: #2c2c2c;
+    --fs-on-inverse-surface: #f5f5f5;
+    --fs-scrim: #000000;
     color-scheme: dark;
   }
 }

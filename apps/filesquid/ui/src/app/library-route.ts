@@ -1,8 +1,9 @@
 /**
  * Hash routing of the library flow (UI-1.1): `#/library` shows the start page (create, open,
- * recover), `#/library/<id>` shows that library's page, and `#/library/<id>/repair` shows its
+ * recover) without the shell's frame (UI-S-027: the welcome screen has no sidebar, header or
+ * footer), `#/library/<id>` shows that library's page, and `#/library/<id>/repair` shows its
  * repair offer, the address the Monitor's W010 note links to through `repairHref`. One page is
- * mounted at a time; any other hash removes it. Later tasks, such as the import UI, read the
+ * mounted at a time; any other hash removes it and restores the frame. Later tasks, such as the import UI, read the
  * open library's ID from this route and need not ask for a folder again.
  */
 import type { FsLibraryDetail } from "../components/fs-library-detail";
@@ -54,6 +55,7 @@ function applyLibraryRoute(
   route: LibraryRoute | undefined,
 ): void {
   const wanted = route ? PAGE_TAG[route.kind] : undefined;
+  shell.toggleAttribute("frameless", route?.kind === "start");
   for (const tag of PAGE_TAGS) {
     if (tag !== wanted) shell.querySelector(`:scope > ${tag}`)?.remove();
   }

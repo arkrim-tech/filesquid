@@ -125,6 +125,30 @@ describe("<fs-ocfl-findings>", () => {
     ]);
   });
 
+  it("draws codes as error-outlined chips for errors and warnings, ids in mono (mockup 54)", async () => {
+    const el = mount(fakeClient(view([finding("E023"), finding("W010")])).client, {
+      repairHref: (id) => `#/library/${id}/repair`,
+    });
+    await settle();
+    const root = el.shadowRoot as ShadowRoot;
+    for (const part of ["errors", "warnings"]) {
+      const chip = root.querySelector(`[data-part="${part}"] td.code .chip`);
+      expect(chip?.classList.contains("alert")).toBe(true);
+    }
+    // Object, version and a present location in mono.
+    for (const column of [2, 3, 5]) {
+      const cell = root.querySelector(`[data-part="errors"] tbody td:nth-child(${column})`);
+      expect(cell?.classList.contains("mono")).toBe(true);
+    }
+    expect(root.querySelector('[data-action="validate"]')?.className).toBe("button secondary");
+    expect(root.querySelector('[data-action="repair"]')?.className).toBe("button ghost");
+    const css = root.querySelector("style")?.textContent ?? "";
+    expect(css).toMatch(
+      /\.chip\.alert \{ border: 1px solid var\(--fs-error\); color: var\(--fs-error\); \}/,
+    );
+    expect(css).toMatch(/\.mono \{ font-family: var\(--fs-font-mono\); \}/);
+  });
+
   it("lists a W010 warning apart from errors, says its files are read-only and links to repair", async () => {
     const fake = fakeClient(view([finding("W010", { location: null })]));
     const el = mount(fake.client, { repairHref: (id) => `#/repair/${id}` });
@@ -182,6 +206,8 @@ describe("<fs-ocfl-findings>", () => {
     expect(cells?.[1]).toBe(labels.findingsRunning);
     expect(cells?.[2]).toBe(labels.findingsNever);
     expect(cells?.[7]).toBe(labels.findingsNotScheduled);
+    const state = el.shadowRoot?.querySelector('[data-part="runs"] tbody td:nth-child(2) .chip');
+    expect(state?.classList.contains("ok")).toBe(true);
   });
 
   it("names a failed run's error code and a capped run's unchecked objects", async () => {

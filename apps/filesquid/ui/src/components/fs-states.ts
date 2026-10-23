@@ -1,9 +1,13 @@
 /**
- * `<fs-states>`: what a view shows instead of its content (UI-F2.1a). Six distinct states,
- * each worded only from the active label table: loading and empty in a polite `role="status"`
+ * `<fs-states>`: what a view shows instead of its content (UI-F2.1a; UI-S-026 **View states**,
+ * mockup `resources/ui-mockups/v3/56-view-states.svg`): one centred treatment, the title 15 px
+ * weight 600, the detail 13 px and a secondary Try again button. Six distinct states, each
+ * worded only from the active label table: loading and empty in a polite `role="status"`
  * region, error, offline, permission denied and unavailable (UI-F2.1b, an HTTP 503) in a
- * `role="alert"` region. Unavailable also shows its reason when the view gives one. Error, offline and unavailable offer Retry, which dispatches a bubbling, composed `fs-retry` event (ADR 031 Decision 6:
- * changes flow up as events); the view that owns the data decides what to reload.
+ * `role="alert"` region. Unavailable also shows its reason when the view gives one. Error,
+ * offline and unavailable offer Retry, which dispatches a bubbling, composed `fs-retry` event
+ * (ADR 031 Decision 6: changes flow up as events); the view that owns the data decides what to
+ * reload.
  *
  * Accessibility (UI-S-016): both live regions exist from the first render and are updated in
  * place, so screen readers announce every change; when focus was inside the element and the
@@ -14,8 +18,10 @@
 import type { LabelTable } from "../theme/labels";
 import { reasonLabel } from "./denial";
 import { A11Y_STYLE } from "./a11y-style";
+import { CONTROL_STYLE } from "./control-style";
 import { focusElement } from "../a11y/focus";
 import type { ViewState } from "./view-state";
+import { icon, type IconName } from "./icons";
 
 /** What the element needs: the active label table. */
 export interface StatesOptions {
@@ -27,16 +33,16 @@ export interface StatesOptions {
 export const RETRY_EVENT = "fs-retry";
 
 const STYLE = `
-  :host { display: block; color: var(--fs-on-surface); font-family: var(--fs-font-sans); font-size: var(--fs-font-size-body); }
+  :host { display: block; color: var(--fs-on-surface); font-family: var(--fs-font-sans); font-size: var(--fs-font-size-ui); }
   :host([hidden]) { display: none; }
-  .region { display: flex; flex-wrap: wrap; align-items: center; gap: var(--fs-space-2) var(--fs-space-3); padding: var(--fs-space-3) var(--fs-space-4); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface-container); }
-  .region:empty { padding: 0; border: 0; }
-  p { margin: 0; min-width: 0; overflow-wrap: anywhere; }
-  .status { color: var(--fs-on-surface-variant); }
-  .alert .title { color: var(--fs-error); font-weight: 600; }
+  .region { display: flex; flex-direction: column; align-items: center; gap: var(--fs-space-2); padding: var(--fs-space-5) var(--fs-space-4); text-align: center; }
+  .region:empty { padding: 0; }
+  p { margin: 0; min-width: 0; max-inline-size: 36rem; overflow-wrap: anywhere; }
+  .title { font-size: var(--fs-font-size-state); font-weight: 600; color: var(--fs-on-surface); }
   .detail { color: var(--fs-on-surface-variant); font-size: var(--fs-font-size-small); }
-  button { padding: var(--fs-space-1) var(--fs-space-3); border: 1px solid var(--fs-primary); border-radius: var(--fs-radius); background: var(--fs-surface); color: var(--fs-primary); font: inherit; font-weight: 600; cursor: pointer; transition: background-color var(--fs-motion-duration), color var(--fs-motion-duration); }
-  button:hover { background: var(--fs-primary-container); color: var(--fs-on-primary-container); }
+  .button { margin-block-start: var(--fs-space-2); }
+  .icon { color: var(--fs-icon); }
+  .icon.alerting { color: var(--fs-error); }
 `;
 
 /** Custom element that shows one {@link ViewState}. */
@@ -74,7 +80,7 @@ export class FsStates extends HTMLElement {
   private skeleton(root: ShadowRoot): void {
     if (root.querySelector(".region")) return;
     const style = document.createElement("style");
-    style.textContent = A11Y_STYLE + STYLE;
+    style.textContent = A11Y_STYLE + CONTROL_STYLE + STYLE;
     const status = region("status");
     const alert = region("alert");
     root.replaceChildren(style, status, alert);
@@ -120,7 +126,23 @@ function isAlert(state: ViewState): boolean {
 /** The message of a loading or empty state. */
 function statusContent(state: ViewState, labels: LabelTable): Node[] {
   const text = state.kind === "empty" ? (state.message ?? labels.stateEmpty) : labels.stateLoading;
-  return [paragraph("title", text)];
+  return [stateIcon(state), paragraph("title", text)];
+}
+
+/** The icon each state draws above its title (mockup 56); error and unavailable in the error colour. */
+function stateIcon(state: ViewState): SVGSVGElement {
+  const names: Record<ViewState["kind"], IconName> = {
+    loading: "clock",
+    empty: "collection",
+    error: "error",
+    offline: "offline",
+    denied: "denied",
+    unavailable: "alert",
+  };
+  const name = state.kind === "empty" && state.message ? "info" : names[state.kind];
+  const svg = icon(name, 24);
+  if (state.kind === "error" || state.kind === "unavailable") svg.classList.add("alerting");
+  return svg;
 }
 
 /** The title of an error, offline or unavailable state. */
@@ -130,20 +152,31 @@ function alertTitle(state: ViewState, labels: LabelTable): string {
   return labels.stateError;
 }
 
+/** The detail line of an error, offline or unavailable state, if any. */
+function alertDetail(state: ViewState, labels: LabelTable): string | undefined {
+  if (state.kind === "unavailable") return state.reason;
+  if (state.kind === "error") return labels.fileActionFailed;
+  return undefined;
+}
+
 /** The message, detail and Retry of an error, offline, denied or unavailable state. */
 function alertContent(state: ViewState, labels: LabelTable, retry: () => void): Node[] {
   if (state.kind === "denied") {
     const detail = state.reason ? reasonLabel(state.reason, labels) : undefined;
     const title = paragraph("title", labels.stateDenied);
-    return detail ? [title, paragraph("detail", detail)] : [title];
+    return detail
+      ? [stateIcon(state), title, paragraph("detail", detail)]
+      : [stateIcon(state), title];
   }
   const title = paragraph("title", alertTitle(state, labels));
-  const reason = state.kind === "unavailable" ? state.reason : undefined;
+  const reason = alertDetail(state, labels);
   const button = document.createElement("button");
   button.type = "button";
+  button.className = "button secondary";
   button.textContent = labels.stateRetry;
   button.addEventListener("click", retry);
-  return reason ? [title, paragraph("detail", reason), button] : [title, button];
+  const glyph = stateIcon(state);
+  return reason ? [glyph, title, paragraph("detail", reason), button] : [glyph, title, button];
 }
 
 /** A `<p>` with a class and text. */

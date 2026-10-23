@@ -24,6 +24,8 @@ export interface Distribution {
   productName: string;
   /** Logo image shown next to the product name. */
   logo: DistributionLogo;
+  /** Release version shown in Settings, About as "{product} {version}" (UI-S-033). Optional. */
+  version?: string;
   /** Visible nouns keyed by internal names. */
   labels: LabelTable;
   /**

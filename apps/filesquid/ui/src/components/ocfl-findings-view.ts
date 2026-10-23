@@ -118,8 +118,21 @@ export function runRow(library: LibraryRuns, labels: LabelTable): HTMLTableRowEl
   row.dataset.libraryId = library.library_id;
   row.dataset.running = String(library.running);
   if (library.last_run) row.dataset.outcome = library.last_run.outcome;
-  row.append(...runCells(library, labels).map((text) => cell(text)));
+  const cells = runCells(library, labels).map((text) => cell(text));
+  // UI-S-032: the state as a chip (Running on the active tint, Idle muted); times in mono.
+  const state = cells[1] as HTMLTableCellElement;
+  state.replaceChildren(chip(state.textContent ?? "", library.running ? "ok" : "muted"));
+  if (library.last_run) for (const index of [2, 3]) cells[index]?.classList.add("mono");
+  if (library.next_run) cells[7]?.classList.add("mono");
+  row.append(...cells);
   return row;
+}
+
+/** A status chip with its text (UI-S-024: chips always carry text). */
+function chip(value: string, kind: "ok" | "muted" | "alert"): HTMLSpanElement {
+  const span = text("span", value);
+  span.className = `chip ${kind}`;
+  return span;
 }
 
 /**
@@ -136,17 +149,19 @@ export function findingRow(finding: FindingView, labels: LabelTable): HTMLTableR
   row.dataset.objectId = finding.object_id;
   row.dataset.code = finding.code;
   row.dataset.severity = finding.severity;
-  const code = cell(finding.code);
+  // UI-S-032: the code as a chip outlined in the error colour, for errors and warnings alike
+  // (owner answer 14); object, version and location in mono.
+  const code = document.createElement("td");
   code.className = "code";
+  code.append(chip(finding.code, "alert"));
   const location = cell(finding.location ?? labels.findingsLocationHidden);
   if (finding.location === null) location.dataset.withheld = "";
-  row.append(
-    cell(finding.library_id),
-    cell(finding.object_id),
-    cell(finding.version ?? "–"),
-    code,
-    location,
-  );
+  else location.className = "mono";
+  const object = cell(finding.object_id);
+  object.className = "mono";
+  const version = cell(finding.version ?? "–");
+  version.className = "mono";
+  row.append(cell(finding.library_id), object, version, code, location);
   return row;
 }
 
@@ -225,6 +240,7 @@ export function readOnlyNotes(
     note.dataset.libraryId = library;
     if (!repairHref) return note;
     const link = text("a", labels.findingsRepair);
+    link.className = "button ghost";
     link.href = repairHref(library);
     link.dataset.action = "repair";
     note.append(" ", link);
