@@ -92,9 +92,9 @@ Every question is closed in the [v3 README](../ui-mockups/v3/README.md#questions
 
 **How answer 4 is applied.** "a name and location" are the new library's name and folder, because a location belongs to a library ([ADR 041](../architecture/041-owner-folder-libraries-and-home-collections.md) Decision 1). On first use FileSquid asks for both, creates the library there and creates its first collection, titled "untitled collection" after ADR 041 Decision 9's naming ([57](../ui-mockups/v3/57-first-use-library.svg), UI-S-034). The owner confirmed this reading ("1. confirmed"), so nothing is blocked.
 
-**Reading the owner should confirm.**
+**Reading confirmed by the owner.**
 
-- **Answer 12.** It names "API info". The host badge stays in the header, because it names the host, not the API, and PRD F-057 requires the UI to make the connected host obvious; the API status moves to Settings, About.
+- **Answer 12.** It names "API info". The host badge stays in the header, because it names the host, not the API, and PRD F-057 requires the UI to make the connected host obvious; the API status moves to Settings, About. The owner confirmed this reading: owner confirmation 2026-10-23, verbatim: "4. yes" (UI-S-015, UI-S-025).
 
 ## Gap analysis
 
