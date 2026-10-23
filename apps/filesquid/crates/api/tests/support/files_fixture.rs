@@ -651,6 +651,38 @@ pub fn upload_input(name: &str, size: usize, rest: serde_json::Value) -> serde_j
     input
 }
 
+/// [`upload_input`] with the fields of `rest`, `key=value` pairs joined by `&` with
+/// percent-encoded values (the form the upload query took before Task API-F2.13).
+pub fn upload_facts(name: &str, size: usize, rest: &str) -> serde_json::Value {
+    let mut fields = serde_json::Map::new();
+    for pair in rest.split('&').filter(|pair| !pair.is_empty()) {
+        let (key, value) = pair.split_once('=').expect("a key=value pair");
+        fields.insert(key.to_string(), serde_json::Value::String(decode(value)));
+    }
+    upload_input(name, size, serde_json::Value::Object(fields))
+}
+
+/// Percent-decode `text`.
+fn decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'%' if i + 2 < bytes.len() => {
+                let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).expect("hex");
+                out.push(u8::from_str_radix(hex, 16).expect("a percent escape"));
+                i += 3;
+            }
+            byte => {
+                out.push(byte);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8(out).expect("UTF-8")
+}
+
 /// A fresh operation ID, unique in this process.
 pub fn operation_id() -> String {
     let n = OPERATIONS.fetch_add(1, Ordering::SeqCst);

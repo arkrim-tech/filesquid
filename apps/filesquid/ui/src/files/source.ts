@@ -6,10 +6,13 @@
  * and a later source (a library-level listing, the browser host) plugs in unchanged.
  *
  * Each write method is one API call that commits one OCFL version (API-S-008); each name says
- * whether it reads, writes or mints, so the side effect is obvious at the call site.
+ * whether it reads, writes or mints, so the side effect is obvious at the call site. Every write
+ * is a command (API-F2.13, UI-S-012): it carries a `CommandEnvelope` with a new operation id and
+ * the revision the caller last read, and only a `committed` outcome resolves; a `conflict`
+ * (a stale revision, or a write that would change nothing) rejects as `ApiError` 409.
  */
-import type { ContentHandleRequest, FileSquidClient } from "../api/client";
-import type { ByteRange } from "../api/commands";
+import { ApiError, type ContentHandleRequest, type FileSquidClient } from "../api/client";
+import { commandEnvelope, type ByteRange, type CommandAnswer } from "../api/commands";
 import type {
   FileCommit,
   FileDetails,
@@ -30,6 +33,24 @@ import { PAGE_SIZE } from "./model";
 export interface SourceOptions {
   /** Cancels the call. */
   readonly signal?: AbortSignal;
+}
+
+/** The revision a write expects, and a way to cancel it. */
+export interface WriteOptions extends SourceOptions {
+  /**
+   * The head version of the object the write changes, as the caller last read it (`v1`,
+   * `v2`, ...); the API refuses a stale one as `conflict` and changes nothing (API-S-002).
+   */
+  readonly revision: string;
+}
+
+/** The revision of an upload's file object before it exists: a new file (API-F2.13). */
+export const NEW_FILE_REVISION = "0";
+
+/** Options of an upload: the revision of the file it replaces, and a way to cancel it. */
+export interface UploadSourceOptions extends SourceOptions {
+  /** The file object's head for new content of `file_id`; {@link NEW_FILE_REVISION} by default. */
+  readonly revision?: string;
 }
 
 /** Everything the file browser asks of the API. */
@@ -55,35 +76,58 @@ export interface FileSource {
     library: LibraryRef,
     facts: UploadFacts,
     body: Blob,
-    options?: SourceOptions,
+    options?: UploadSourceOptions,
   ): Promise<UploadCommit>;
-  /** Create a folder; it stays pending until a file is added beneath it. Writes nothing. */
-  createFolder(object: ObjectRef, path: string, options?: SourceOptions): Promise<FolderAnswer>;
+  /**
+   * Create a folder at the object's head `options.revision`; it stays pending until a file is
+   * added beneath it. Writes nothing.
+   */
+  createFolder(object: ObjectRef, path: string, options: WriteOptions): Promise<FolderAnswer>;
   /** Move one file or folder, or rename a folder; commits one version. Writes. */
-  move(object: ObjectRef, from: string, to: string, options?: SourceOptions): Promise<FileCommit>;
+  move(object: ObjectRef, from: string, to: string, options: WriteOptions): Promise<FileCommit>;
   /** Set a file's display name and nothing else; commits one version of its record. Writes. */
   rename(
     library: LibraryRef,
     fileId: string,
     displayName: string,
-    options?: SourceOptions,
+    options: WriteOptions,
   ): Promise<RenameCommit>;
   /** Remove one file or folder (its bytes stay in history); commits one version. Writes. */
-  remove(object: ObjectRef, path: string, options?: SourceOptions): Promise<FileCommit>;
+  remove(object: ObjectRef, path: string, options: WriteOptions): Promise<FileCommit>;
   /** Restore files or folders from an earlier version; commits one version. Writes. */
   restore(
     object: ObjectRef,
     version: string,
     paths: readonly string[],
-    options?: SourceOptions,
+    options: WriteOptions,
   ): Promise<FileCommit>;
 }
 
 /** The part of `FileSquidClient` the source needs (injectable in tests). */
 export type FileClient = Pick<
   FileSquidClient,
-  "request" | "read" | "uploadFile" | "mintContentHandle"
+  "request" | "read" | "command" | "upload" | "mintContentHandle"
 >;
+
+/** The upload route (API-S-026). */
+const UPLOAD_PATH = "/api/v1/files/upload";
+
+/**
+ * The result of a committed command answer. Pure.
+ *
+ * @param answer The command's answer.
+ * @param path The route, named in an error.
+ * @returns What the command made.
+ * @throws ApiError 409 `conflict` for a `conflict` outcome.
+ * @throws TypeError for any other outcome, or a committed one without a result.
+ */
+function committedResult<T>(answer: CommandAnswer<T>, path: string): T {
+  if (answer.kind === "conflict") throw new ApiError(409, path, { code: "conflict" });
+  if (answer.kind !== "committed" || answer.result === undefined || answer.result === null) {
+    throw new TypeError(`${path} answered ${answer.kind}, not a committed result`);
+  }
+  return answer.result;
+}
 
 /** Build a query string from the defined, non-empty values. */
 function query(values: Readonly<Record<string, string | undefined>>): string {
@@ -231,25 +275,36 @@ export class ClientFileSource implements FileSource {
   }
 
   /**
-   * Upload one file with `PUT /api/v1/files/upload` (API-S-026, API-S-035): the facts in the
-   * query, the declared size from the body, no logical path. Network I/O; commits one version
-   * in the file's own object.
+   * Upload one file with `PUT /api/v1/files/upload` (API-S-026, API-S-035, API-F2.13): the
+   * envelope, the facts as the `input` part with the declared size from the body, and the
+   * bytes; no logical path. Network I/O; commits one version in the file's own object.
    *
    * @param library The library.
    * @param facts The file's name, its normalisation form and the other facts the client gives.
    * @param body The bytes (at most 64 MiB; the caller checks first).
-   * @param options Abort signal.
+   * @param options The revision of `facts.file_id`'s object (a new file by default) and abort
+   *   signal.
    * @returns The version published, with the file's identifier and object.
    * @throws ApiError when the API refuses, `invalid_request` and `conflict` included.
    */
-  upload(
+  async upload(
     library: LibraryRef,
     facts: UploadFacts,
     body: Blob,
-    options: SourceOptions = {},
+    options: UploadSourceOptions = {},
   ): Promise<UploadCommit> {
-    const request = { ...facts, library_id: library.library_id };
-    return this.client.uploadFile(request, body, options);
+    const input = { ...facts, library_id: library.library_id, size: body.size };
+    const envelope = commandEnvelope({
+      scope: `library:${library.library_id}`,
+      expectedRevision: options.revision ?? NEW_FILE_REVISION,
+    });
+    const answer = await this.client.upload<UploadCommit>(UPLOAD_PATH, body, envelope, {
+      method: "PUT",
+      input,
+      filename: facts.name,
+      signal: options.signal,
+    });
+    return committedResult(answer, UPLOAD_PATH);
   }
 
   /**
@@ -257,16 +312,12 @@ export class ClientFileSource implements FileSource {
    *
    * @param object The library and object.
    * @param path The folder's logical path.
-   * @param options Abort signal.
+   * @param options The object's head as last read, and abort signal.
    * @returns Whether the folder exists or stays pending.
    * @throws ApiError when the API refuses, `conflict` included.
    */
-  createFolder(
-    object: ObjectRef,
-    path: string,
-    options: SourceOptions = {},
-  ): Promise<FolderAnswer> {
-    return this.post<FolderAnswer>("folders", { ...bodyOf(object), path }, options);
+  createFolder(object: ObjectRef, path: string, options: WriteOptions): Promise<FolderAnswer> {
+    return this.send<FolderAnswer>("folders", { ...bodyOf(object), path }, options);
   }
 
   /**
@@ -277,24 +328,24 @@ export class ClientFileSource implements FileSource {
    * @param library The library.
    * @param fileId The file (the UUID of its own object).
    * @param displayName The new display name (1 to 1,024 bytes, no `/` or NUL).
-   * @param options Abort signal.
+   * @param options The file object's head as last read, and abort signal.
    * @returns The version published.
    * @throws ApiError when the API refuses: `invalid_request` for a name it cannot take,
-   *   `not_found` for an unknown file, `conflict` for the current name or a record another
-   *   writer changed first, `unavailable` when storage is not reachable.
+   *   `not_found` for an unknown file, `conflict` for the current name, a stale revision or a
+   *   record another writer changed first, `unavailable` when storage is not reachable.
    */
   rename(
     library: LibraryRef,
     fileId: string,
     displayName: string,
-    options: SourceOptions = {},
+    options: WriteOptions,
   ): Promise<RenameCommit> {
     const body: RenameRequest = {
       library_id: library.library_id,
       file_id: fileId,
       display_name: displayName,
     };
-    return this.post<RenameCommit>("renames", body, options);
+    return this.send<RenameCommit>("renames", body, options);
   }
 
   /**
@@ -306,17 +357,12 @@ export class ClientFileSource implements FileSource {
    * @param object The library and object.
    * @param from The file or folder to move.
    * @param to Its new logical path.
-   * @param options Abort signal.
+   * @param options The object's head as last read, and abort signal.
    * @returns The version published.
    * @throws ApiError when the API refuses, `conflict` included.
    */
-  move(
-    object: ObjectRef,
-    from: string,
-    to: string,
-    options: SourceOptions = {},
-  ): Promise<FileCommit> {
-    return this.post<FileCommit>("moves", { ...bodyOf(object), from, to }, options);
+  move(object: ObjectRef, from: string, to: string, options: WriteOptions): Promise<FileCommit> {
+    return this.send<FileCommit>("moves", { ...bodyOf(object), from, to }, options);
   }
 
   /**
@@ -325,12 +371,12 @@ export class ClientFileSource implements FileSource {
    *
    * @param object The library and object.
    * @param path The file or folder.
-   * @param options Abort signal.
+   * @param options The object's head as last read, and abort signal.
    * @returns The version published.
    * @throws ApiError when the API refuses, `conflict` included.
    */
-  remove(object: ObjectRef, path: string, options: SourceOptions = {}): Promise<FileCommit> {
-    return this.post<FileCommit>("removals", { ...bodyOf(object), path }, options);
+  remove(object: ObjectRef, path: string, options: WriteOptions): Promise<FileCommit> {
+    return this.send<FileCommit>("removals", { ...bodyOf(object), path }, options);
   }
 
   /**
@@ -340,7 +386,7 @@ export class ClientFileSource implements FileSource {
    * @param object The library and object.
    * @param version The earlier version: `v1`, `v2`, ...
    * @param paths The files or folders (1 to 1,000).
-   * @param options Abort signal.
+   * @param options The object's head as last read, and abort signal.
    * @returns The version published.
    * @throws ApiError when the API refuses, `conflict` included.
    */
@@ -348,17 +394,26 @@ export class ClientFileSource implements FileSource {
     object: ObjectRef,
     version: string,
     paths: readonly string[],
-    options: SourceOptions = {},
+    options: WriteOptions,
   ): Promise<FileCommit> {
-    return this.post<FileCommit>("restorations", { ...bodyOf(object), version, paths }, options);
+    return this.send<FileCommit>("restorations", { ...bodyOf(object), version, paths }, options);
   }
 
-  /** `POST /api/v1/files/<route>` with a JSON body. Network I/O. */
-  private post<T>(route: string, body: unknown, options: SourceOptions): Promise<T> {
-    return this.client.request<T>(`/api/v1/files/${route}`, {
-      method: "POST",
-      body,
-      signal: options.signal,
+  /**
+   * `POST /api/v1/files/<route>` of the command `{ envelope, input }` with a new operation id,
+   * scoped to `input`'s library and expecting `options.revision`. Network I/O.
+   */
+  private async send<T>(
+    route: string,
+    input: { readonly library_id: string; readonly [field: string]: unknown },
+    options: WriteOptions,
+  ): Promise<T> {
+    const path = `/api/v1/files/${route}`;
+    const envelope = commandEnvelope({
+      scope: `library:${input.library_id}`,
+      expectedRevision: options.revision,
     });
+    const answer = await this.client.command<T>(path, envelope, input, { signal: options.signal });
+    return committedResult(answer, path);
   }
 }

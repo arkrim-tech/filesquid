@@ -261,6 +261,22 @@ describe("FileSquidClient.upload", () => {
     expect(headersOf(seen[0]).get("authorization")).toBe(`Bearer ${TOKEN}`);
   });
 
+  it("sends the input as a JSON part with the method asked for, and keeps the result", async () => {
+    const result = { library_id: "lib", file_id: "f", object_id: "o", version: "v1" };
+    const outcome = { operation_id: "op-1", kind: "committed", error: null, result };
+    const { client, seen } = clientWith(() => json(200, outcome));
+    const input = { library_id: "lib", name: "a.png", size: 6 };
+    const answer = await client.upload("/api/v1/files/upload", new Blob(["pixels"]), ENVELOPE, {
+      method: "PUT",
+      input,
+    });
+    expect(answer).toEqual(outcome);
+    expect(seen[0]?.init.method).toBe("PUT");
+    const form = seen[0]?.init.body as FormData;
+    expect(JSON.parse(await blobText(form.get("input") as Blob))).toEqual(input);
+    expect([...form.keys()]).toEqual(["envelope", "input", "file"]);
+  });
+
   it("keeps a File's own name when no filename is given", async () => {
     const outcome = { operation_id: "op-1", kind: "committed", error: null };
     const { client, seen } = clientWith(() => json(201, outcome));

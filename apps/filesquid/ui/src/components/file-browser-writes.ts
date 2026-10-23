@@ -51,6 +51,11 @@ export interface WritesHost {
   readonly source: FileSource;
   /** The object and folder shown. */
   location(): FileLocation;
+  /**
+   * The head version of the object shown, as last listed: the revision every write in it
+   * expects (API-F2.13); a stale one is refused as `conflict`.
+   */
+  revision(): string;
   /** The row the toolbar acts on, or undefined. */
   target(): FileRow | undefined;
   /** Load the listing again after a commit. */
@@ -75,6 +80,8 @@ type FormMode = { readonly kind: "folder" } | { readonly kind: "rename"; readonl
 interface UndoOffer {
   readonly object: ObjectRef;
   readonly version: string;
+  /** The head the removal published, which the restore expects. */
+  readonly revision: string;
   readonly paths: readonly string[];
   readonly name: string;
 }
@@ -171,11 +178,15 @@ export class FileWrites {
   async remove(row: FileRow | undefined = this.host.target()): Promise<void> {
     if (!row || this.busy) return;
     const object = this.objectNow();
-    const outcome = await this.run(() => this.host.source.remove(object, row.path));
+    const revision = this.host.revision();
+    const outcome = await this.run(() => this.host.source.remove(object, row.path, { revision }));
     if (!outcome) return;
     this.host.committed("remove", outcome, [row.path]);
     const version = previousVersion(outcome.version);
-    this.undoOffer = version ? { object, version, paths: [row.path], name: row.name } : undefined;
+    const paths = [row.path];
+    this.undoOffer = version
+      ? { object, version, revision: outcome.version, paths, name: row.name }
+      : undefined;
     const text = formatLabel(this.host.labels.fileRemoved, {
       name: row.name,
       version: outcome.version,
@@ -283,7 +294,9 @@ export class FileWrites {
     const offer = this.undoOffer;
     if (!offer || this.busy) return;
     const outcome = await this.run(() =>
-      this.host.source.restore(offer.object, offer.version, offer.paths),
+      this.host.source.restore(offer.object, offer.version, offer.paths, {
+        revision: offer.revision,
+      }),
     );
     if (!outcome) return;
     this.undoOffer = undefined;
@@ -385,8 +398,9 @@ export class FileWrites {
     const where = this.host.location();
     const fileId = renameFileId(row, where.object_id);
     if (fileId === undefined || typed === row.name) return this.close(true);
+    const options = { revision: this.host.revision() };
     const commit = await this.run(
-      () => this.host.source.rename({ library_id: where.library_id }, fileId, typed),
+      () => this.host.source.rename({ library_id: where.library_id }, fileId, typed, options),
       renameFailureText,
     );
     if (!commit) return;
@@ -407,7 +421,8 @@ export class FileWrites {
   private async createFolder(mode: FormMode, name: string): Promise<void> {
     const where = this.host.location();
     const path = joinPath(where.prefix, name);
-    const answer = await this.run(() => this.host.source.createFolder(where, path));
+    const revision = this.host.revision();
+    const answer = await this.run(() => this.host.source.createFolder(where, path, { revision }));
     if (!answer) return;
     if (answer.pending && this.isShown(where)) this.host.pendFolder(path);
     const text = answer.pending
@@ -431,7 +446,8 @@ export class FileWrites {
     const to = moveTarget(row, name, folder);
     if (to === undefined) return this.close(true);
     const where = this.host.location();
-    const commit = await this.run(() => this.host.source.move(where, row.path, to));
+    const revision = this.host.revision();
+    const commit = await this.run(() => this.host.source.move(where, row.path, to, { revision }));
     if (!commit) return;
     if (this.mode === mode) this.close(true);
     this.host.committed("move", commit, [row.path, to]);

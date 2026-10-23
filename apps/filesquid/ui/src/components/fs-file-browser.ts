@@ -257,6 +257,7 @@ export class FsFileBrowser extends HTMLElement {
       labels: options.labels,
       source: options.source,
       location: () => this.where,
+      revision: () => this.head,
       target: () => (this.current ? this.rowOfPath(this.current.path) : this.list?.chosenRow()),
       reload: () => this.reload(),
       committed: (operation: WriteOperation, commit: FileCommit, changed: readonly string[]) =>
