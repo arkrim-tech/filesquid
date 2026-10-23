@@ -1,7 +1,11 @@
 /**
  * `<fs-library-start>`: the start page of the library flow (UI-1.1, SRS-F-001, API-S-034;
- * mockups `resources/ui-mockups/v2/01-welcome.svg` to `04-recover-library.svg`). Three
- * choices: create a library, open one, or recover from a copy. Each one asks the host to let
+ * UI-S-027, mockups `resources/ui-mockups/v3/01-welcome.svg` to `04-recover-library.svg`),
+ * shown without the shell's frame: the 56 px title `libraryWelcomeTitle`, the 17 px lead, the
+ * LIBRARIES eyebrow, three cards (Create primary, Open and Recover secondary), the raised privacy
+ * box with the host statement read from the host descriptor when a host client is given, and the
+ * footer line `appFooter` when a version is given. Three choices: create a library, open one, or
+ * recover from a copy. Each one asks the host to let
  * the owner choose a folder (the desktop shows its native dialog), receives only an opaque
  * location ID, passes that ID to the library route, and then goes to the library's page
  * `#/library/<id>`. A cancelled choice changes nothing. A 503 from the chooser is the
@@ -14,6 +18,9 @@
  * library already opened is not opened again.
  */
 import { RETRY_EVENT } from "./fs-states";
+import { formatLabel } from "../theme/labels";
+import type { FsHostIndicator } from "./fs-host-indicator";
+import { icon, type IconName } from "./icons";
 import { libraryFailure, type LibraryAction } from "../libraries/errors";
 import { libraryHref, type LibraryView } from "../libraries/model";
 import {
@@ -36,6 +43,13 @@ const FLOWS = [
   ["open", "libraryOpenTitle", "libraryOpenHelp", "libraryOpen"],
   ["recover", "libraryRecoverTitle", "libraryRecoverHelp", "libraryRecover"],
 ] as const;
+
+/** The 20 px icon of each card (mockup 01). */
+const FLOW_ICON: Readonly<Record<Flow, IconName>> = {
+  create: "plus",
+  open: "folder",
+  recover: "layers",
+};
 
 /**
  * How far a flow got: the folder chosen and the library created or opened, so Retry resumes
@@ -85,7 +99,10 @@ export class FsLibraryStart extends HTMLElement {
     this.generation += 1;
   }
 
-  /** Build the heading, the intro, the feedback block and the three cards. */
+  /**
+   * Build the welcome title, the lead, the feedback block, the LIBRARIES eyebrow, the three
+   * cards, the privacy box and the footer line.
+   */
   private render(): void {
     const options = this.options;
     if (!this.shadowRoot || !options) return;
@@ -96,24 +113,29 @@ export class FsLibraryStart extends HTMLElement {
     this.feedback = feedback;
     const cards = node("div", "cards");
     cards.append(...FLOWS.map((flow) => this.card(flow, labels)));
-    const page = node("div", "page");
+    const page = node("div", "page start");
     page.append(
-      node("h2", undefined, labels.libraries),
+      node("h2", undefined, labels.libraryWelcomeTitle),
       node("p", "intro", labels.libraryIntro),
       feedback.root,
+      node("p", "eyebrow", labels.libraries),
       cards,
+      ...privacyBox(options),
+      ...footerLine(options),
     );
     this.shadowRoot.replaceChildren(pageStyle(), page);
   }
 
-  /** One card: title, help and the button that starts its flow. */
+  /** One card: icon, title, help and the button that starts its flow (Create is primary). */
   private card(flow: (typeof FLOWS)[number], labels: LibraryPageOptions["labels"]): HTMLElement {
     const [name, title, help, action] = flow;
     const section = node("section");
     section.dataset.flow = name;
-    const button = actionButton(name, labels[action]);
+    const button = actionButton(name, labels[action], name === "create" ? "primary" : "secondary");
     button.addEventListener("click", () => void this.run(name));
-    section.append(node("h3", undefined, labels[title]), node("p", "help", labels[help]), button);
+    const glyph = icon(FLOW_ICON[name], 20);
+    section.append(glyph, node("h3", undefined, labels[title]), node("p", "help", labels[help]));
+    section.append(button);
     return section;
   }
 
@@ -213,6 +235,23 @@ export class FsLibraryStart extends HTMLElement {
     const online = (options.online ?? browserOnline)();
     this.feedback?.fail(libraryFailure(reason, action, options.labels, online));
   }
+}
+
+/** The raised privacy box with the inline host statement, when a host client is given. */
+function privacyBox(options: LibraryPageOptions): HTMLElement[] {
+  if (!options.host) return [];
+  const box = node("div", "privacy");
+  const statement = document.createElement("fs-host-indicator") as FsHostIndicator;
+  statement.configure({ labels: options.labels, client: options.host, inline: true });
+  box.append(statement);
+  return [box];
+}
+
+/** The footer line "Open source under the MIT licence · Version {version} · macOS". */
+function footerLine(options: LibraryPageOptions): HTMLElement[] {
+  if (!options.version) return [];
+  const text = formatLabel(options.labels.appFooter, { version: options.version });
+  return [node("p", "app-footer", text)];
 }
 
 /** Go to a hash address in the current window. Side effect: changes the location. */

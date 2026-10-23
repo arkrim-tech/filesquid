@@ -32,7 +32,7 @@ async function signIn(page: Page, token: string): Promise<void> {
   await form.locator("button").click();
 }
 
-test("shell mounts with FileSquid brand, internal vocabulary and live API health", async ({
+test("shell mounts with FileSquid brand, internal vocabulary and the API status in Settings only", async ({
   page,
 }) => {
   const errors = trackErrors(page);
@@ -43,17 +43,20 @@ test("shell mounts with FileSquid brand, internal vocabulary and live API health
 
   const shell = page.locator("fs-app-shell");
   await expect(shell.locator("h1")).toHaveText("FileSquid");
-  await expect(shell.locator("header img")).toHaveAttribute("alt", "FileSquid logo");
+  await expect(shell.locator("nav .brand img")).toHaveAttribute("alt", "FileSquid logo");
   // The live navigation tree fills the navigation slot; this server has no navigation service
-  // yet, so the tree shows the unavailable state (UI-F2.1b). The Monitor link follows it.
+  // yet, so the tree shows the unavailable state (UI-F2.1b). The tool rows follow the storage
+  // block; Logs is for the desktop host only, so the server host hides it (UI-S-021).
   await expect(shell.locator("fs-nav-tree fs-states")).toHaveAttribute("data-state", "unavailable");
-  await expect(shell.locator("nav > ul.tools li")).toHaveText([
+  await expect(shell.locator("nav > ul.tools li:visible")).toHaveText([
     "Create or open a library",
-    "Monitor",
     "Settings",
   ]);
-  await expect(shell.locator('p.api[role="status"]')).toHaveText("API: ok (filesquid)");
-  await expect(shell.locator('p.api[role="alert"]')).toHaveCount(0);
+  await expect(shell.locator("header .monitor")).toHaveText("Monitor");
+  // Owner answer 12: no API information on the browsing screens.
+  await expect(shell.locator("header p.api")).toHaveCount(0);
+  await page.goto("/#/settings");
+  await expect(page.locator('fs-settings .api[role="status"]')).toContainText("API: ok · contract");
   expect(errors).toEqual([]);
 });
 
@@ -66,7 +69,8 @@ test("design tokens switch between light and dark", async ({ page }) => {
   expect(await background()).toBe("rgb(20, 20, 20)");
   // Wait until the theme store has handled the OS change, so its listener cannot run after
   // (and undo) the explicit data-theme set below.
-  await expect(page.locator("fs-app-shell fs-theme-control")).toHaveAttribute(
+  await page.goto("/#/settings");
+  await expect(page.locator("fs-settings fs-theme-control")).toHaveAttribute(
     "data-resolved",
     "dark",
   );
@@ -80,15 +84,15 @@ test("client-side routes fall back to the distribution index", async ({ page }) 
   await expect(page.locator("fs-app-shell h1")).toHaveText("FileSquid");
 });
 
-test("without a token the shell names the missing credentials from the label table", async ({
+test("without a token Settings, About names the missing credentials from the label table", async ({
   page,
 }) => {
   const errors = trackErrors(page, REFUSED_CALL);
-  await page.goto("/");
-  const alert = page.locator('fs-app-shell p.api[role="alert"]');
+  await page.goto("/#/settings");
+  const alert = page.locator('fs-settings .api[role="alert"]');
   await expect(alert).toHaveText("API unavailable: Missing credentials");
   await expect(alert).toHaveAttribute("data-reason", "missing_credentials");
-  await expect(page.locator('fs-app-shell p.api[role="status"]')).toHaveCount(0);
+  await expect(page.locator('fs-settings .api[role="status"]')).toHaveCount(0);
   expect(errors).toEqual([]);
 });
 
@@ -120,8 +124,11 @@ test("Monitor asks for the admin token, then shows live health, processes and th
       .locator('[data-section="journal"] tbody tr td:nth-child(2)', { hasText: "host.started" })
       .first(),
   ).toBeVisible();
-  // Signing in also reloads the shell's API status with the same in-memory token.
-  await expect(page.locator('fs-app-shell p.api[role="status"]')).toHaveText("API: ok (filesquid)");
+  // Signing in also reads the host badge again with the same in-memory token.
+  await expect(page.locator("fs-app-shell header fs-host-indicator")).toHaveAttribute(
+    "data-state",
+    "ready",
+  );
   expect(errors).toEqual([]);
 });
 
@@ -141,7 +148,7 @@ test("the signed-in token stays in memory: not in storage, URL or DOM, gone on r
 }) => {
   const errors = trackErrors(page, REFUSED_CALL);
   await page.goto("/");
-  await page.locator('fs-app-shell nav a[href="#/monitor"]').click();
+  await page.locator('fs-app-shell header a[href="#/monitor"]').click();
   await expect(page).toHaveURL(/#\/monitor$/);
   await signIn(page, ADMIN_TOKEN);
   await expect(page.locator('fs-monitor [data-section="processes"] h2')).toHaveText("Processes");
@@ -175,7 +182,10 @@ test("the desktop launch token authorises the shell, the Monitor and the event c
   page.on("websocket", (socket) => upgrades.push(socket.url()));
   await injectLaunchToken(page, ADMIN_TOKEN);
   await page.goto("/#/monitor");
-  await expect(page.locator('fs-app-shell p.api[role="status"]')).toHaveText("API: ok (filesquid)");
+  await expect(page.locator("fs-app-shell header fs-host-indicator")).toHaveAttribute(
+    "data-state",
+    "ready",
+  );
   await expect(page.locator('fs-monitor [data-section="health"] h2')).toHaveText("Health");
   await expect(page.locator("fs-monitor form[data-form='token']")).toHaveCount(0);
   // One channel each for the host indicator, the navigation tree and the Monitor.
@@ -273,13 +283,13 @@ test.describe("inside the desktop webview (custom URI scheme adapter)", () => {
 
     await page.goto("/#/monitor");
     const shell = page.locator("fs-app-shell");
-    await expect(shell.locator('p.api[role="status"]')).toHaveText("API: ok (filesquid)");
+    await expect(shell.locator("header fs-host-indicator")).toHaveAttribute("data-state", "ready");
     const monitor = shell.locator("fs-monitor");
     await expect(monitor.locator('[data-section="health"] h2')).toHaveText("Health");
     await expect(monitor.locator("form[data-form='token']")).toHaveCount(0);
 
     const paths = forwarded.map((call) => call.path);
-    expect(paths).toContain("/api/v1/health");
+    expect(paths).toContain("/api/v1/host");
     expect(paths).toContain("/api/v1/admin/health");
     expect(forwarded.every((call) => call.auth === `Bearer ${ADMIN_TOKEN}`)).toBe(true);
     const listened = await page.evaluate(() =>

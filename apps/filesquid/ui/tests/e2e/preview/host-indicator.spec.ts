@@ -275,7 +275,8 @@ test("Enter opens the popover with the full statement; Escape closes it and retu
   await serve(page, [descriptor()]);
   await page.goto("/");
   const badge = page.locator("fs-host-indicator button.badge");
-  const popover = page.getByRole("dialog", { name: label(labels, "hostIndicator") });
+  // Mockup 40 (UI-S-033): the popover is titled by the host label, "This device".
+  const popover = page.getByRole("dialog", { name: label(labels, "hostBadgeDesktop") });
   await expect(badge).toHaveText(label(labels, "hostBadgeDesktop"));
   await badge.focus();
   await page.keyboard.press("Enter");
@@ -317,24 +318,29 @@ test("Privacy settings opens the Settings page, whose Privacy section has the fu
     label(labels, "hostOff"),
   ]);
   await expect(privacy.locator("button.badge")).toBeHidden();
+  // UI-S-033: the statement sits in a raised box with no border.
   const style = () =>
-    settings.locator('[data-section="privacy"]').evaluate((el) => {
+    settings.locator('[data-section="privacy"] .note-box').evaluate((el) => {
       const css = getComputedStyle(el);
-      return { background: css.backgroundColor, border: css.borderTopColor };
+      return { background: css.backgroundColor, border: css.borderTopWidth };
     });
-  expect(await style()).toEqual({ background: rgbOf("#f5f5f5"), border: rgbOf("#e0e0e0") });
+  expect(await style()).toEqual({ background: rgbOf("#f5f5f5"), border: "0px" });
   await setScheme(page, "dark");
-  expect(await style()).toEqual({ background: rgbOf("#1c1c1c"), border: rgbOf("#2a2a2a") });
+  expect(await style()).toEqual({ background: rgbOf("#242424"), border: "0px" });
   expect(errors).toEqual([]);
 });
 
-test("computed token values are exact in light and dark", async ({ page }) => {
+test("computed token values are exact in light and dark (UI-S-024, mockup 40)", async ({
+  page,
+}) => {
   const errors = trackErrors(page);
   await serve(page, [descriptor()]);
   const style = (selector: string) =>
     page.locator(`fs-host-indicator ${selector}`).evaluate((el) => {
       const css = getComputedStyle(el);
-      return { background: css.backgroundColor, color: css.color, border: css.borderTopColor };
+      const width = css.borderTopWidth;
+      const border = width === "0px" ? "none" : `${width} ${css.borderTopColor}`;
+      return { background: css.backgroundColor, color: css.color, border };
     });
   await setScheme(page, "light");
   await page.goto("/");
@@ -342,26 +348,18 @@ test("computed token values are exact in light and dark", async ({ page }) => {
   // The badge, closed and not hovered; colour changes are polled past their transition.
   await expect
     .poll(() => style("button.badge"))
-    .toEqual({
-      background: rgbOf("#f5f5f5"),
-      color: rgbOf("#111111"),
-      border: rgbOf("#e0e0e0"),
-    });
+    .toEqual({ background: rgbOf("#f5f5f5"), color: rgbOf("#111111"), border: "none" });
   await setScheme(page, "dark");
   await expect
     .poll(() => style("button.badge"))
-    .toEqual({
-      background: rgbOf("#1c1c1c"),
-      color: rgbOf("#e0e0e0"),
-      border: rgbOf("#2a2a2a"),
-    });
+    .toEqual({ background: rgbOf("#242424"), color: rgbOf("#e0e0e0"), border: "none" });
   await openPopover(page);
   await expect
     .poll(() => style('[role="dialog"]'))
     .toEqual({
-      background: rgbOf("#141414"),
+      background: rgbOf("#2c2c2c"),
       color: rgbOf("#e0e0e0"),
-      border: rgbOf("#2a2a2a"),
+      border: `1px ${rgbOf("#333333")}`,
     });
   await setScheme(page, "light");
   await expect
@@ -369,8 +367,10 @@ test("computed token values are exact in light and dark", async ({ page }) => {
     .toEqual({
       background: rgbOf("#ffffff"),
       color: rgbOf("#111111"),
-      border: rgbOf("#e0e0e0"),
+      border: `1px ${rgbOf("#cccccc")}`,
     });
+  const box = await page.locator('fs-host-indicator [role="dialog"]').boundingBox();
+  expect(Math.abs((box?.width ?? 0) - 372)).toBeLessThanOrEqual(2);
   expect(await tokenColour(page, "--fs-surface")).toBe(rgbOf("#ffffff"));
   expect(errors).toEqual([]);
 });
@@ -387,7 +387,8 @@ test("the badge is reachable by keyboard and has a visible focus outline", async
       return active?.tagName === "BUTTON" && active.classList.contains("badge");
     });
   let reached = false;
-  for (let presses = 0; presses < 12 && !reached; presses += 1) {
+  // The UI-S-025 sidebar comes first in the Tab order, so allow for its controls.
+  for (let presses = 0; presses < 60 && !reached; presses += 1) {
     await page.keyboard.press("Tab");
     reached = await focused();
   }
@@ -396,6 +397,7 @@ test("the badge is reachable by keyboard and has a visible focus outline", async
     const css = getComputedStyle(el);
     return { style: css.outlineStyle, width: css.outlineWidth, color: css.outlineColor };
   });
-  expect(outline).toEqual({ style: "solid", width: "2px", color: rgbOf("#0b7a32") });
+  // UI-S-016: the ring is --fs-focus-ring, #0f8a39 in light (owner decision 2026-10-23).
+  expect(outline).toEqual({ style: "solid", width: "2px", color: rgbOf("#0f8a39") });
   expect(errors).toEqual([]);
 });

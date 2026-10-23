@@ -56,6 +56,7 @@
 //! ([`FileLibrary`]) into a [`FileService`]; this module does no storage I/O of its own
 //! (API-S-006).
 
+pub mod command;
 pub mod copy;
 mod download;
 pub mod drive;
@@ -71,6 +72,7 @@ mod metadata_routes;
 pub mod names;
 mod nodes;
 mod range;
+pub mod receipts;
 mod records;
 mod routes;
 pub mod search;
@@ -83,6 +85,7 @@ mod upload;
 mod versions;
 mod view;
 
+pub use command::{CommandAnswer, ConflictAnswer, FileCommand, NEW_FILE_REVISION};
 pub use download::{Download, DownloadStream};
 pub use drive_facts::{CollectionHistorySizeView, CollectionSizeQuery, FactsAnswer};
 pub use error::FileError;
@@ -92,6 +95,7 @@ pub use labels::{APP_DATA_FOLDER, LABELS_PATH, MAX_LABELS, PROVENANCE_FOLDER, RE
 pub use names::{DisplayNames, NameFuture, StoredFile};
 pub use nodes::{ScopeObject, ScopeObjects};
 pub use range::{RangePlan, RangeRequest};
+pub use receipts::{CommandReceipts, MAX_RECEIPTS};
 pub(crate) use routes::{answer_content, refuse as refuse_file, routes, ContentAnswerKind};
 pub use service::{
     staging_prefix, ContentAnswer, ContentRequest, FileClock, FileLibrary, FileService,

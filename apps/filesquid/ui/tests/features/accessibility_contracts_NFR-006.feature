@@ -77,7 +77,7 @@ Feature: Accessibility contracts in the shell
   Scenario: A right-to-left language mirrors the layout
     Given the distribution's locale is right-to-left
     When I open the app
-    Then the theme control should sit at the left end of the header
+    Then the host badge should sit at the left end of the header
     And the navigation should sit on the right of the main area
 
   # Error cases

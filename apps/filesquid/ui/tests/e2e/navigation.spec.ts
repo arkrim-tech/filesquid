@@ -90,7 +90,10 @@ async function open(page: Page): Promise<void> {
     Object.defineProperty(window, "__FILESQUID_LAUNCH_TOKEN__", { value, enumerable: false });
   }, ADMIN_TOKEN);
   await page.goto("/");
-  await expect(page.locator('fs-app-shell p.api[role="status"]')).toBeVisible();
+  await expect(page.locator("fs-app-shell header fs-host-indicator")).toHaveAttribute(
+    "data-state",
+    "ready",
+  );
 }
 
 /**
@@ -194,7 +197,13 @@ test("the elements are defined and worded from the label table inside the shell"
   expect(defined).toEqual([true, true, true]);
   await mountNavigation(page);
   const shell = page.locator("fs-app-shell");
+  // UI-S-025: the tree sits in the sidebar between the views and the Recently deleted row.
   await expect(shell.getByRole("navigation", { name: labels.navigationMain })).toMatchAriaSnapshot(`
+    - list:
+      - listitem:
+        - link "${labels.fileRoot}"
+      - listitem:
+        - link "${labels.fileRecent}"
     - heading "${labels.collections}" [level=2]
     - button "Move ${labels.collections} up" [disabled]
     - button "Move ${labels.collections} down"
@@ -210,7 +219,13 @@ test("the elements are defined and worded from the label table inside the shell"
       - treeitem "inbox"
     - list:
       - listitem:
-        - link "${labels.monitor}"
+        - link "${labels.navigationRecentlyDeleted}"
+    - paragraph: ${labels.fileStorageUsed}
+    - list:
+      - listitem:
+        - link "${labels.libraryNavLink}"
+      - listitem:
+        - link "${labels.settings}"
   `);
   await expect(shell.getByRole("main")).toMatchAriaSnapshot(`
     - navigation "${labels.navigationBreadcrumb}":
@@ -290,7 +305,10 @@ test("pins, section order and library collapse are kept on the device across a r
   });
   expect(saved).not.toMatch(/Photos|Archive|Family/);
   await page.reload();
-  await expect(page.locator('fs-app-shell p.api[role="status"]')).toBeVisible();
+  await expect(page.locator("fs-app-shell header fs-host-indicator")).toHaveAttribute(
+    "data-state",
+    "ready",
+  );
   await mountNavigation(page, twoLibraries);
   await expect(headings(page)).toHaveText([
     labels.collections,
@@ -376,40 +394,68 @@ for (const scheme of ["light", "dark"] as const) {
         const root = states.shadowRoot;
         const status = root?.querySelector('[role="status"]');
         const alert = root?.querySelector('[role="alert"]');
-        const title = (alert?.textContent ? alert : status)?.querySelector("p");
+        const region = alert?.textContent ? alert : status;
+        const title = region?.querySelector("p");
+        const icon = region?.querySelector("svg");
+        const words = [...(alert?.children ?? [])].filter((c) => c.tagName.toLowerCase() !== "svg");
         return {
           status: status?.textContent ?? "",
-          alert: [...(alert?.children ?? [])].map((c) => c.textContent).join("|"),
+          alert: words.map((c) => c.textContent).join("|"),
           colour: title ? getComputedStyle(title).color : "",
+          icon: icon ? getComputedStyle(icon).color : "",
+          name: icon instanceof SVGElement ? (icon.dataset.icon ?? "") : "",
         };
       });
     }, labels);
+    // Mockup 56 (UI-S-026): every title in the body colour, each state with its own icon, the
+    // error icon in the error colour.
     const error = await tokenColour(page, "--fs-error");
-    const variant = await tokenColour(page, "--fs-on-surface-variant");
+    const body = await tokenColour(page, "--fs-on-surface");
+    const icon = await tokenColour(page, "--fs-icon");
     expect(seen).toEqual([
-      { status: labels.stateLoading, alert: "", colour: variant },
-      { status: labels.stateEmpty, alert: "", colour: variant },
-      { status: "", alert: `${labels.stateError}|${labels.stateRetry}`, colour: error },
-      { status: "", alert: `${labels.stateOffline}|${labels.stateRetry}`, colour: error },
-      { status: "", alert: `${labels.stateDenied}|${labels.authNotPermitted}`, colour: error },
+      { status: labels.stateLoading, alert: "", colour: body, icon, name: "clock" },
+      { status: labels.stateEmpty, alert: "", colour: body, icon, name: "collection" },
+      {
+        status: "",
+        alert: `${labels.stateError}|${labels.fileActionFailed}|${labels.stateRetry}`,
+        colour: body,
+        icon: error,
+        name: "error",
+      },
+      {
+        status: "",
+        alert: `${labels.stateOffline}|${labels.stateRetry}`,
+        colour: body,
+        icon,
+        name: "offline",
+      },
+      {
+        status: "",
+        alert: `${labels.stateDenied}|${labels.authNotPermitted}`,
+        colour: body,
+        icon,
+        name: "denied",
+      },
     ]);
     expect(errors).toEqual([]);
   });
 
-  test(`tree controls draw the 2px primary focus ring in the ${scheme} theme`, async ({ page }) => {
+  test(`tree controls draw the 2px --fs-focus-ring ring in the ${scheme} theme`, async ({
+    page,
+  }) => {
     const errors = trackErrors(page);
     await page.emulateMedia({ colorScheme: scheme });
     await open(page);
     await mountNavigation(page);
-    const ring = `solid 2px ${await tokenColour(page, "--fs-primary")}`;
-    await page.locator("fs-theme-control input[value='system']").focus();
+    const ring = `solid 2px ${await tokenColour(page, "--fs-focus-ring")}`;
+    // UI-S-025: the sidebar's Recent view comes just before the tree in the Tab order.
+    await page.locator('fs-app-shell nav a[href="#/recent"]').focus();
     const seen = [];
-    for (let step = 0; step < 5; step += 1) {
+    for (let step = 0; step < 4; step += 1) {
       await page.keyboard.press("Tab");
       seen.push(await focusRing(page));
     }
     expect(seen.map((s) => s.text)).toEqual([
-      labels.hostBadgeServer,
       `Move ${labels.collections} up`,
       `Move ${labels.collections} down`,
       "Photos",
@@ -434,7 +480,7 @@ test("tree motion follows the token, stops under reduced motion, and forced colo
         return element ? getComputedStyle(element).transitionDuration : "";
       });
     });
-  expect(await durations()).toEqual(["0.15s, 0.15s", "0.15s"]);
+  expect(await durations()).toEqual(["0.15s, 0.15s", "0.15s, 0.15s"]);
   await page.emulateMedia({ reducedMotion: "reduce" });
   expect(await durations()).toEqual(["0s", "0s"]);
   await page.evaluate(() => {

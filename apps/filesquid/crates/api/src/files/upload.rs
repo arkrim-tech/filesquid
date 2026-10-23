@@ -22,12 +22,14 @@ use filesquid_ocfl::read::Object;
 use filesquid_ocfl::storage::StorageBackend;
 use filesquid_ocfl::write::VersionReservations;
 
-/// The file an upload writes: its identifier and object, and its record at the head, if any.
+/// The file an upload writes: its identifier and object, its record and version at the head,
+/// if any, and the version the upload will publish.
 struct Target {
     file_id: FileId,
     root: String,
     object_id: String,
     previous: Option<FileRecord>,
+    head: Option<String>,
     next_version: String,
 }
 
@@ -45,11 +47,15 @@ where
     /// declared size that is not the body's among them); `not_found` for an unknown library
     /// or file; `conflict` when the upload would change nothing or another writer moved the
     /// head; a storage failure otherwise. Nothing is published on any error.
+    ///
+    /// `expected` is the head of the file object the caller read, or
+    /// [`super::NEW_FILE_REVISION`] for a new file; any other is a `conflict`.
     pub async fn upload(
         &self,
         query: UploadQuery,
         bytes: &[u8],
         actor: &str,
+        expected: &str,
     ) -> Result<UploadView, FileError> {
         let form = name_form(&query)?;
         let meta = self.meta(actor, query.message.as_deref())?;
@@ -57,6 +63,7 @@ where
         let _writing = library.writes.lock().await;
         let backend = library.files.backend.as_ref();
         let target = upload_target(backend, query.file_id.as_deref()).await?;
+        check_target_revision(&target, expected)?;
         let started = self.created();
         let media_type = query
             .media_type
@@ -141,17 +148,33 @@ async fn upload_target<B: StorageBackend>(
         (false, Some(_)) => return Err(FileError::conflict("That file already exists.")),
         (false, None) => None,
     };
-    let next_version = match &previous {
-        Some(_) => next_version(backend, &root).await?,
-        None => "v1".to_string(),
+    let (head, next_version) = match &previous {
+        Some(_) => {
+            let (head, next) = versions(backend, &root).await?;
+            (Some(head), next)
+        }
+        None => (None, "v1".to_string()),
     };
     Ok(Target {
         file_id,
         root,
         object_id,
         previous,
+        head,
         next_version,
     })
+}
+
+/// Refuse an upload as a `conflict` unless `expected` is the head of the file it writes, or
+/// [`super::NEW_FILE_REVISION`] for a new file. Pure.
+fn check_target_revision(target: &Target, expected: &str) -> Result<(), FileError> {
+    let current = target.head.as_deref().unwrap_or(super::NEW_FILE_REVISION);
+    match current == expected {
+        true => Ok(()),
+        false => Err(FileError::conflict(
+            "The file changed since it was read, so nothing was uploaded; reload and try again.",
+        )),
+    }
 }
 
 /// The record an upload commits: the first record of a new file, or the previous record
@@ -168,13 +191,16 @@ fn upload_record(
     record.map_err(canonical_error)
 }
 
-/// The version after the head of the object at `root`.
-async fn next_version<B: StorageBackend>(backend: &B, root: &str) -> Result<String, FileError> {
+/// The head of the object at `root` and the version after it.
+async fn versions<B: StorageBackend>(
+    backend: &B,
+    root: &str,
+) -> Result<(String, String), FileError> {
     let object = Object::open(backend, root).await?;
     let next = object.head().next().ok_or_else(|| {
         FileError::conflict("The file has reached the last version its numbering allows.")
     })?;
-    Ok(next.to_string())
+    Ok((object.head().to_string(), next.to_string()))
 }
 
 /// The file identifier `id` names.

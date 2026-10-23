@@ -12,6 +12,8 @@ export {
 export {
   COLOUR_TOKENS,
   CONTRAST_PAIRS,
+  CONTROL_CONTRAST_PAIRS,
+  FILESQUID_CONTRAST_EXEMPTIONS,
   FOCUS_CONTRAST_PAIRS,
   REQUIRED_TOKENS,
   THEME_INDEPENDENT_TOKENS,
@@ -19,9 +21,11 @@ export {
   invalidColourTokens,
   missingTokens,
   tokenValues,
+  type ContrastExemption,
   type ContrastFailure,
   type InvalidColourToken,
   type TokenName,
+  type TokenPair,
 } from "./tokens";
 export {
   AA_TEXT_CONTRAST,

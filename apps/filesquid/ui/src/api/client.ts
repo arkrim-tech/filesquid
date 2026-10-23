@@ -19,8 +19,8 @@ import {
   parseContentRange,
   rangeHeader,
   type ByteRange,
+  type CommandAnswer,
   type CommandEnvelope,
-  type CommandOutcome,
   type ContentRange,
 } from "./commands";
 import type { CompleteList } from "./complete-list";
@@ -36,13 +36,13 @@ export type ApiEvent = components["schemas"]["ApiEvent"];
 export type HostDescriptor = components["schemas"]["HostDescriptor"];
 
 /**
- * The query of `PUT /api/v1/files/upload` (API-S-026, API-S-035), generated from the API
- * contract: the library, the facts the client provides about the file (name and its Unicode
- * normalisation form, declared size, media type, last-modified time) and, for new content of
- * an existing file, its `file_id`. There is no logical path: the API stores the file in its own
- * object.
+ * The `input` part of `PUT /api/v1/files/upload` (API-S-026, API-S-035, API-F2.13), generated
+ * from the API contract: the library, the facts the client provides about the file (name and
+ * its Unicode normalisation form, declared size, media type, last-modified time) and, for new
+ * content of an existing file, its `file_id`. There is no logical path: the API stores the
+ * file in its own object.
  */
-export type FileUploadQuery = operations["uploadFile"]["parameters"]["query"];
+export type FileUploadQuery = components["schemas"]["UploadInput"];
 
 /** The version an upload published in the file's own object, generated from the API contract. */
 export type UploadCommit = components["schemas"]["UploadCommit"];
@@ -168,8 +168,6 @@ const ERROR_CODE_VALUES = [
 const ERROR_CODES: CompleteList<ErrorCode, typeof ERROR_CODE_VALUES> = ERROR_CODE_VALUES;
 /** Path of the content handle mint (API-S-018). */
 const CONTENT_HANDLES_PATH = "/api/v1/content-handles";
-/** Path of the file upload route (API-S-026). */
-const FILE_UPLOAD_PATH = "/api/v1/files/upload";
 /** Path prefix of the content route; a handle's URL is this plus the handle. */
 const CONTENT_ROUTE = "/api/v1/content/";
 /** A content handle: 256 random bits as 43 base64url characters without padding. */
@@ -191,22 +189,6 @@ function navigationQuery(query: NavigationQuery): string {
   if (query.limit !== undefined) params.set("limit", String(query.limit));
   const text = params.toString();
   return text ? `?${text}` : "";
-}
-
-/**
- * Build the query string of an upload: every defined value, URL-encoded, numbers as decimal
- * text. An undefined optional fact is left out; nothing else is dropped, so a required value
- * the caller left empty reaches the API and is refused there. Pure.
- *
- * @param query The upload query.
- * @returns The query string without its leading `?`.
- */
-function uploadSearch(query: FileUploadQuery): string {
-  const params = new URLSearchParams();
-  for (const [key, value] of Object.entries(query)) {
-    if (value !== undefined) params.set(key, String(value));
-  }
-  return params.toString();
 }
 
 /** Build a query string from defined, non-empty filter values (in declaration order). */
@@ -490,6 +472,10 @@ export interface AbortOptions {
 export interface UploadOptions {
   /** File name sent with the `file` part. */
   filename?: string;
+  /** HTTP method; `PUT` by default, the method of the file upload route. */
+  method?: "POST" | "PUT";
+  /** The upload's facts, sent as the `input` part (JSON) when given (API-F2.13). */
+  input?: FileUploadQuery;
   /** Cancels the upload. The command may still apply; retry with the same operation id. */
   signal?: AbortSignal;
 }
@@ -723,95 +709,59 @@ export class FileSquidClient {
    * @param envelope Envelope from `commandEnvelope`; reuse it to retry.
    * @param input Command input, omitted from the body when undefined.
    * @param options Method (`POST` by default) and abort signal.
-   * @returns The outcome; only `committed` is durable completion evidence.
+   * @returns The outcome, with the route's `result` when it answers one; only `committed` is
+   *   durable completion evidence. `T` is the result the caller expects; it is not checked.
    * @throws ApiError on a non-2xx answer other than 409, or when the token cannot be sent.
    * @throws TypeError when the answer is not an outcome for this operation.
    */
-  async command(
+  async command<T = unknown>(
     path: string,
     envelope: CommandEnvelope,
     input?: unknown,
     options: CommandOptions = {},
-  ): Promise<CommandOutcome> {
+  ): Promise<CommandAnswer<T>> {
     const response = await this.transmit(path, {
       method: options.method ?? "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ envelope, input }),
       signal: options.signal,
     });
-    return this.outcome(path, envelope.operation_id, response);
+    return this.outcome<T>(path, envelope.operation_id, response);
   }
 
   /**
-   * Upload one file as `multipart/form-data` with an `envelope` part (JSON) and a `file`
-   * part. The transport sets the multipart boundary. Network I/O.
+   * Upload one file as `multipart/form-data` with an `envelope` part (JSON), an `input` part
+   * (JSON) when `options.input` is given, and a `file` part. The transport sets the multipart
+   * boundary. Network I/O.
    *
    * @param path API path of the upload.
    * @param file File bytes.
    * @param envelope Envelope from `commandEnvelope`; reuse it to retry.
-   * @param options File name and abort signal.
-   * @returns The outcome; only `committed` is durable completion evidence.
+   * @param options File name, method (`PUT` by default), the upload's facts and abort signal.
+   * @returns The outcome, with the route's `result` when it answers one; only `committed` is
+   *   durable completion evidence. `T` is the result the caller expects; it is not checked.
    * @throws ApiError on a non-2xx answer other than 409, or when the token cannot be sent.
    * @throws TypeError when the answer is not an outcome for this operation.
    */
-  async upload(
+  async upload<T = unknown>(
     path: string,
     file: Blob,
     envelope: CommandEnvelope,
     options: UploadOptions = {},
-  ): Promise<CommandOutcome> {
+  ): Promise<CommandAnswer<T>> {
     const form = new FormData();
     form.append("envelope", new Blob([JSON.stringify(envelope)], { type: "application/json" }));
+    if (options.input !== undefined) {
+      const input = JSON.stringify(options.input);
+      form.append("input", new Blob([input], { type: "application/json" }));
+    }
     form.append("file", file, options.filename ?? (file instanceof File ? file.name : "file"));
     const response = await this.transmit(path, {
-      method: "POST",
+      method: options.method ?? "PUT",
       body: form,
       signal: options.signal,
     });
-    return this.outcome(path, envelope.operation_id, response);
-  }
-
-  /**
-   * Send raw bytes with `PUT` as `application/octet-stream` (the file upload route, whose
-   * identifying fields travel in the query string). Network I/O.
-   *
-   * @param path API path with its query, for example `/api/v1/files/upload?...`.
-   * @param body The bytes.
-   * @param options Abort signal.
-   * @returns The parsed JSON answer.
-   * @throws ApiError on a non-2xx answer (a `409` included: the route reports a refused change
-   *   as an error, not as an outcome), or when the token cannot be sent.
-   */
-  async putBytes<T>(path: string, body: Blob, options: AbortOptions = {}): Promise<T> {
-    const response = await this.send(path, {
-      method: "PUT",
-      headers: { "Content-Type": "application/octet-stream" },
-      body,
-      signal: options.signal,
-    });
-    return (await response.json()) as T;
-  }
-
-  /**
-   * Upload one file with `PUT /api/v1/files/upload` (API-S-026, API-S-035): the bytes as the
-   * body and the facts in the query. The declared `size` is always the body's size, so the API's
-   * size check can only fail when the bytes change in transit. Network I/O; the API commits one
-   * OCFL version in the file's own object.
-   *
-   * @param query The library and the file's facts; any optional fact left undefined is not sent.
-   * @param body The bytes (at most 64 MiB; the caller checks first).
-   * @param options Abort signal.
-   * @returns The version published, with the file's identifier and object.
-   * @throws ApiError when the API refuses (`invalid_request`, `not_found`, `conflict`, ...), or
-   *   when the token cannot be sent.
-   */
-  async uploadFile(
-    query: Omit<FileUploadQuery, "size">,
-    body: Blob,
-    options: AbortOptions = {},
-  ): Promise<UploadCommit> {
-    const search = uploadSearch({ ...query, size: body.size });
-    return this.putBytes<UploadCommit>(`${FILE_UPLOAD_PATH}?${search}`, body, options);
+    return this.outcome<T>(path, envelope.operation_id, response);
   }
 
   /**
@@ -862,14 +812,16 @@ export class FileSquidClient {
    * @param path API path, named in an error.
    * @param operationId The id the command was sent with.
    * @param response The raw answer.
-   * @returns The validated outcome.
+   * @returns The validated outcome, with its `result` when the answer has one.
    */
-  private async outcome(
+  private async outcome<T>(
     path: string,
     operationId: string,
     response: Response,
-  ): Promise<CommandOutcome> {
-    if (response.ok) return commandOutcome(await readJsonAnswer(response), operationId);
+  ): Promise<CommandAnswer<T>> {
+    if (response.ok) {
+      return commandOutcome(await readJsonAnswer(response), operationId) as CommandAnswer<T>;
+    }
     if (response.status !== HTTP_CONFLICT) {
       throw new ApiError(response.status, path, await readErrorBody(response));
     }

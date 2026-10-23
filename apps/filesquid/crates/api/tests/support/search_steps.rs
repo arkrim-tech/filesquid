@@ -4,7 +4,7 @@
 //! a seeded library catalog.
 
 use crate::drive_catalog::DriveCatalog;
-use crate::files_fixture::{encode, upload_uri, Answer, FilesRig, LIBRARY};
+use crate::files_fixture::{encode, upload_facts, Answer, FilesRig, LIBRARY};
 use crate::MonitorWorld;
 use axum::http::Method;
 use cucumber::{given, then, when};
@@ -40,13 +40,10 @@ impl SearchWorld {
     /// Upload `bytes` as `name` of `media` and answer its file ID.
     async fn upload(&self, name: &str, media: &str, bytes: &[u8]) -> String {
         let rest = format!("name_normalization=nfc&media_type={}", encode(media));
-        let uri = upload_uri(name, bytes.len(), &rest);
-        let answer = self
-            .rig()
-            .call(Method::PUT, &uri, &[], bytes.to_vec())
-            .await;
+        let uri = upload_facts(name, bytes.len(), &rest);
+        let answer = self.rig().upload(uri, bytes).await;
         assert_eq!(answer.status.as_u16(), 200, "{:?}", answer.json());
-        answer.json()["file_id"].as_str().expect("id").to_string()
+        answer.result()["file_id"].as_str().expect("id").to_string()
     }
 
     /// Set `curie` to `value` on `file`.
