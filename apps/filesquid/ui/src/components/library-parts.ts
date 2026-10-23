@@ -91,7 +91,7 @@ export const LIBRARY_STYLE = `
   .start .intro { max-inline-size: 40rem; font-size: var(--fs-font-size-lead); }
   .help, .note, .truncated { color: var(--fs-on-surface-variant); font-size: var(--fs-font-size-small); }
   .eyebrow { margin-block-start: var(--fs-space-3); }
-  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 20.75rem)); gap: var(--fs-space-4); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 20.75rem)); gap: calc(var(--fs-space-3) + var(--fs-space-1)); }
   .cards section { display: flex; flex-direction: column; align-items: flex-start; gap: var(--fs-space-2); box-sizing: border-box; min-block-size: 15.5rem; padding: var(--fs-space-4); border: 1.5px solid var(--fs-outline-strong); border-radius: var(--fs-radius-dialog); background: var(--fs-surface-card); }
   .cards section[data-flow="create"] { border: 2px solid var(--fs-primary); }
   .cards section .button { margin-block-start: auto; }

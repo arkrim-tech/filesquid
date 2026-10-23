@@ -207,17 +207,26 @@ test("computed token values of the tree and breadcrumb are exact in light and da
     currentText: await current.evaluate((el) => getComputedStyle(el).color),
     crumb: await link.evaluate((el) => getComputedStyle(el).color),
   });
+  // UI-S-025: breadcrumb ancestors in --fs-on-surface-variant; the active row on the tint.
   const tokens = async () => ({
     current: await tokenColour(page, "--fs-primary-container"),
     currentText: await tokenColour(page, "--fs-on-primary-container"),
-    crumb: await tokenColour(page, "--fs-primary"),
+    crumb: await tokenColour(page, "--fs-on-surface-variant"),
   });
   // Polled: the items and links transition their colours when the scheme changes.
   await expect.poll(colours).toEqual(await tokens());
-  expect((await tokens()).crumb).toBe(rgbOf("#0b7a32"));
+  expect(await tokens()).toEqual({
+    current: rgbOf("#f0faf4"),
+    currentText: rgbOf("#0f8a39"),
+    crumb: rgbOf("#555555"),
+  });
   await setScheme(page, "dark");
   const dark = await tokens();
-  expect(dark.crumb).toBe(rgbOf("#16ac49"));
+  expect(dark).toEqual({
+    current: rgbOf("#0d2b18"),
+    currentText: rgbOf("#4aca74"),
+    crumb: rgbOf("#a0a0a0"),
+  });
   await expect.poll(colours).toEqual(dark);
   expect(errors).toEqual([]);
 });

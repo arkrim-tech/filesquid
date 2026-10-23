@@ -33,7 +33,7 @@ const STYLE = `
   .button.destructive { border-color: var(--fs-error); color: var(--fs-error); }
   .button.destructive:hover { background: var(--fs-surface-raised); }
   .button:disabled, .button[aria-disabled="true"] { border-color: var(--fs-outline); background: var(--fs-surface-raised); color: var(--fs-on-surface-placeholder); cursor: default; }
-  .input { box-sizing: border-box; min-block-size: 2.25rem; padding: 0 var(--fs-space-2); border: 1.5px solid var(--fs-outline-control); border-radius: var(--fs-radius-input); background: var(--fs-surface-card); color: var(--fs-on-surface); font-family: var(--fs-font-sans); font-size: var(--fs-font-size-ui); transition: border-color var(--fs-motion-duration); }
+  .input { box-sizing: border-box; min-width: 0; max-inline-size: 100%; min-block-size: 2.25rem; padding: 0 var(--fs-space-2); border: 1.5px solid var(--fs-outline-control); border-radius: var(--fs-radius-input); background: var(--fs-surface-card); color: var(--fs-on-surface); font-family: var(--fs-font-sans); font-size: var(--fs-font-size-ui); transition: border-color var(--fs-motion-duration); }
   .input::placeholder { color: var(--fs-on-surface-placeholder); opacity: 1; }
   .input:focus-visible { outline: none; border: 2px solid var(--fs-focus-ring); }
   .input[aria-invalid="true"] { border: 2px solid var(--fs-error); }

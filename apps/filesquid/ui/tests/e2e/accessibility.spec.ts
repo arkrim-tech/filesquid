@@ -71,61 +71,78 @@ test("landmarks, headings and control names come from the label table", async ({
   await expect(page.locator("html")).toHaveAttribute("lang", "en");
   await expect(page.locator("html")).toHaveAttribute("dir", "ltr");
   const shell = page.locator("fs-app-shell");
-  await expect(shell.locator('p.api[role="status"]')).toHaveText("API: ok (filesquid)");
+  await expect(shell.locator("header fs-host-indicator")).toHaveAttribute("data-state", "ready");
   await expect(shell).toMatchAriaSnapshot(`
     - button "Skip to main content"
-    - banner:
+    - navigation "Main navigation":
       - img "FileSquid logo"
       - heading "FileSquid" [level=1]
-      - group "Theme":
-        - radio "System" [checked]
-        - radio "Light"
-        - radio "Dark"
-      - group "Where your files are":
-        - button "Server"
-    - navigation "Main navigation":
+      - button "New"
+      - textbox "Filter this view"
+      - list:
+        - listitem:
+          - link "All files"
+        - listitem:
+          - link "Recent"
       - status
       - alert:
         - paragraph: This is not available right now
         - button "Try again"
       - list:
         - listitem:
+          - link "Recently deleted"
+      - paragraph: Storage used
+      - list:
+        - listitem:
           - link "Create or open a library"
         - listitem:
-          - link "Monitor"
-        - listitem:
           - link "Settings"
-    - main:
-      - status: "API: ok (filesquid)"
+    - banner:
+      - searchbox "Search files and folders"
+      - group "Where your files are":
+        - button "Server"
+      - link "Monitor"
+    - main
   `);
   await expect(page.getByRole("heading", { level: 1 })).toHaveCount(1);
   expect(errors).toEqual([]);
 });
 
 for (const scheme of ["light", "dark"] as const) {
-  test(`Tab order and a 2px primary focus ring in the ${scheme} theme`, async ({ page }) => {
+  test(`Tab order and a 2px --fs-focus-ring focus ring in the ${scheme} theme`, async ({
+    page,
+  }) => {
     const errors = trackErrors(page);
     await withLaunchToken(page);
     await page.emulateMedia({ colorScheme: scheme });
     await page.goto("/");
-    await expect(page.locator('fs-app-shell p.api[role="status"]')).toBeVisible();
-    // The badge's label comes from the host descriptor, which loads apart from health.
+    // The badge's label comes from the host descriptor.
     await expect(page.locator("fs-host-indicator button.badge")).toHaveText("Server");
-    const ring = `solid 2px ${await tokenColour(page, "--fs-primary")}`;
+    const colour = await tokenColour(page, "--fs-focus-ring");
+    const ring = `solid 2px ${colour}`;
     const seen: Focused[] = [];
     for (let step = 0; step < 3; step += 1) {
       await page.keyboard.press("Tab");
       seen.push(await focused(page));
     }
+    // UI-S-025: the skip control, then the sidebar's New button and its view filter.
     expect(seen.map(({ tag, text }) => `${tag} ${text}`)).toEqual([
       "button Skip to main content",
-      "input System",
-      "button Server",
+      "button New",
+      "input ",
     ]);
-    for (const item of seen) {
+    for (const item of seen.slice(0, 2)) {
       expect(item.outline).toBe(ring);
       expect(item.offset).toBe("2px");
     }
+    // UI-S-024: a focused input shows a 2 px --fs-focus-ring border instead of the ring.
+    // Polled: the border colour has a 150 ms transition.
+    const filter = () =>
+      page.locator("fs-app-shell nav input.filter").evaluate((el) => {
+        const css = getComputedStyle(el);
+        return `${css.borderTopStyle} ${css.borderTopWidth} ${css.borderTopColor}`;
+      });
+    await expect.poll(filter).toBe(ring);
     expect(errors).toEqual([]);
   });
 }
@@ -134,20 +151,24 @@ test("light-DOM content slotted into the shell gets the same focus ring", async 
   const errors = trackErrors(page);
   await withLaunchToken(page);
   await page.goto("/");
-  await expect(page.locator('fs-app-shell p.api[role="status"]')).toBeVisible();
   await page.evaluate(() => {
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = "Slotted action";
     document.querySelector("fs-app-shell")?.append(button);
   });
-  const ring = `solid 2px ${await tokenColour(page, "--fs-primary")}`;
-  // Skip, theme, host badge, the tree's Try again (no navigation service here), the library
-  // link, Monitor, Settings, then the slotted button.
+  const ring = `solid 2px ${await tokenColour(page, "--fs-focus-ring")}`;
+  // The sidebar, the header and then main, where the slotted button sits (UI-S-025).
   await expect(page.locator("fs-nav-tree fs-states")).toHaveAttribute("data-state", "unavailable");
   await expect(page.locator("fs-host-indicator button.badge")).toHaveText("Server");
-  for (let step = 0; step < 8; step += 1) await page.keyboard.press("Tab");
-  const item = await focused(page);
+  // Tab until the slotted button has focus (the body's own text is the button's text too).
+  const reached = (seen: Focused) => seen.tag === "button" && seen.text === "Slotted action";
+  let item = await focused(page);
+  for (let step = 0; step < 30 && !reached(item); step += 1) {
+    await page.keyboard.press("Tab");
+    item = await focused(page);
+  }
+  expect(item.tag).toBe("button");
   expect(item.text).toBe("Slotted action");
   expect(item.outline).toBe(ring);
   expect(item.offset).toBe("2px");
@@ -176,7 +197,7 @@ test("opening the Monitor from the keyboard moves focus to main", async ({ page 
   const errors = trackErrors(page);
   await withLaunchToken(page);
   await page.goto("/");
-  await page.locator('fs-app-shell nav a[href="#/monitor"]').focus();
+  await page.locator('fs-app-shell header a[href="#/monitor"]').focus();
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/#\/monitor$/);
   const monitor = page.locator("fs-monitor");
@@ -213,15 +234,16 @@ test("reduced motion stops every transition", async ({ page }) => {
   const durations = () =>
     page.evaluate(() => {
       const label = document
-        .querySelector("fs-app-shell")
+        .querySelector("fs-settings")
         ?.shadowRoot?.querySelector("fs-theme-control")
         ?.shadowRoot?.querySelector("label");
       return label ? getComputedStyle(label).transitionDuration : "";
     });
   await page.emulateMedia({ reducedMotion: "no-preference" });
-  await page.goto("/");
-  await expect(page.locator("fs-app-shell fs-theme-control label").first()).toBeVisible();
-  expect(await durations()).toBe("0.15s, 0.15s");
+  // The theme control lives in Settings, Appearance (owner answer 7).
+  await page.goto("/#/settings");
+  await expect(page.locator("fs-settings fs-theme-control label").first()).toBeVisible();
+  expect(await durations()).toBe("0.15s, 0.15s, 0.15s");
   await page.emulateMedia({ reducedMotion: "reduce" });
   expect(await durations()).toBe("0s");
   // Every element in every component shadow root, the Monitor included, has no motion.
@@ -271,10 +293,11 @@ test("more contrast strengthens borders; forced colours keep the chosen option",
     probe.remove();
     return colour;
   });
+  await page.goto("/#/settings");
   const backgrounds = () =>
     page.evaluate(() => {
       const labels = document
-        .querySelector("fs-app-shell")
+        .querySelector("fs-settings")
         ?.shadowRoot?.querySelector("fs-theme-control")
         ?.shadowRoot?.querySelectorAll("label");
       return [...(labels ?? [])].map((label) => getComputedStyle(label).backgroundColor);
@@ -306,7 +329,8 @@ for (const { width, scale } of [
         ? { size: getComputedStyle(h1).fontSize, clipped: h1.scrollWidth > h1.clientWidth }
         : undefined;
     });
-    expect(title).toEqual({ size: `${20 * (scale / 100)}px`, clipped: false });
+    // UI-S-025: the sidebar product name is 17 px at 100 % text.
+    expect(title).toEqual({ size: `${17 * (scale / 100)}px`, clipped: false });
     const boxes = await shellBoxes(page, ["nav", "main"]);
     const stacked = (boxes.nav?.bottom ?? 0) <= (boxes.main?.top ?? 0);
     expect(stacked).toBe(width <= 640);
@@ -318,13 +342,16 @@ test("a right-to-left locale mirrors the header and navigation", async ({ page }
   const errors = trackErrors(page);
   await withLaunchToken(page);
   await page.goto("/");
-  await expect(page.locator('fs-app-shell p.api[role="status"]')).toBeVisible();
-  const ltr = await shellBoxes(page, ["h1", "fs-theme-control", "nav", "main"]);
-  expect(ltr["fs-theme-control"]?.x).toBeGreaterThan(ltr.h1?.x ?? 0);
+  await expect(page.locator("fs-app-shell header fs-host-indicator")).toHaveAttribute(
+    "data-state",
+    "ready",
+  );
+  const ltr = await shellBoxes(page, ["h1", "fs-host-indicator", "nav", "main"]);
+  expect(ltr["fs-host-indicator"]?.x).toBeGreaterThan(ltr.h1?.x ?? 0);
   expect(ltr.nav?.x).toBeLessThan(ltr.main?.x ?? 0);
   await page.evaluate(() => document.documentElement.setAttribute("dir", "rtl"));
-  const rtl = await shellBoxes(page, ["h1", "fs-theme-control", "nav", "main"]);
-  expect(rtl["fs-theme-control"]?.x).toBeLessThan(rtl.h1?.x ?? 0);
+  const rtl = await shellBoxes(page, ["h1", "fs-host-indicator", "nav", "main"]);
+  expect(rtl["fs-host-indicator"]?.x).toBeLessThan(rtl.h1?.x ?? 0);
   expect(rtl.nav?.x).toBeGreaterThan(rtl.main?.x ?? 0);
   expect(await scrollsHorizontally(page)).toBe(false);
   expect(errors).toEqual([]);

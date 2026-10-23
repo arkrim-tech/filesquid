@@ -2,7 +2,8 @@
  * ImageSquid design tokens. Primary and on-primary use the Arkrim role values IS-S-008
  * requires: light #005db6 / #ffffff (6.48:1), dark #a9c7ff / #003063 (7.67:1). The surfaces
  * follow the current ImageSquid screenshots (apps/imagesquid/resources/ui-mockups/): white
- * canvas, cool grey sidebar, pale blue secondary ("Select"). Dark surfaces are derived.
+ * canvas, cool grey sidebar (`--fs-surface-card`), pale blue secondary ("Select"). Dark surfaces
+ * are derived.
  *
  * ImageSquid defines every token the FileSquid default does (UI-S-005, UI-S-024): the card,
  * raised and overlay surfaces, the strong and control outlines, the heading, muted and
@@ -14,8 +15,8 @@
  */
 :root {
   --fs-surface: #ffffff;
-  --fs-surface-card: #ffffff;
-  --fs-surface-raised: #f4f5f7;
+  --fs-surface-card: #f4f5f7;
+  --fs-surface-raised: #eceef2;
   --fs-surface-overlay: #ffffff;
   --fs-surface-container: #f4f5f7;
   --fs-on-surface-heading: #111318;
@@ -25,7 +26,7 @@
   --fs-on-surface-placeholder: #5f6670;
   --fs-outline: #e2e5ea;
   --fs-outline-strong: #c4c9d1;
-  --fs-outline-control: #848b96;
+  --fs-outline-control: #7d8490;
   --fs-primary: #005db6;
   --fs-on-primary: #ffffff;
   --fs-primary-container: #dce8fb;

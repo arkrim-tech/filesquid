@@ -11,7 +11,7 @@ import { tokenColour as token, trackErrors } from "./support/strict-dom";
 /** The browser's own console lines for a deliberately refused fetch or WebSocket upgrade. */
 const REFUSED_CALL = /status of 40[13] \(|WebSocket connection to .* failed/;
 
-test("ImageSquid brand, album vocabulary and FileSquid API health", async ({ page }) => {
+test("ImageSquid brand, album vocabulary and the API status in Settings only", async ({ page }) => {
   const errors = trackErrors(page);
   // Stand in for the desktop host, which defines its per-launch token for its own pages.
   await page.addInitScript((value) => {
@@ -21,17 +21,23 @@ test("ImageSquid brand, album vocabulary and FileSquid API health", async ({ pag
   await expect(page).toHaveTitle("ImageSquid");
   const shell = page.locator("fs-app-shell");
   await expect(shell.locator("h1")).toHaveText("ImageSquid");
-  await expect(shell.locator("header img")).toHaveAttribute("src", "/imagesquid-logo.svg");
-  await expect(shell.locator("nav li")).toHaveText([
+  await expect(shell.locator("nav .brand img")).toHaveAttribute("src", "/imagesquid-logo.svg");
+  // The server host hides the desktop-only Logs row (UI-S-021).
+  await expect(shell.locator("nav li:visible")).toHaveText([
+    "All photos",
+    "Recent",
     "Libraries",
     "Albums",
     "Galleries",
     "Exhibits",
+    "Recently deleted",
     "Create or open a library",
-    "Monitor",
     "Settings",
   ]);
-  await expect(shell.locator('p.api[role="status"]')).toHaveText("Archives API: ok (filesquid)");
+  await expect(shell.locator("header .monitor")).toHaveText("Monitor");
+  await expect(shell.locator("header p.api")).toHaveCount(0);
+  await page.goto("/#/settings");
+  await expect(page.locator('fs-settings .api[role="status"]')).toContainText("API: ok · contract");
   expect(errors).toEqual([]);
 });
 
@@ -83,8 +89,9 @@ test("ImageSquid tokens override FileSquid defaults in light and dark (IS-S-008)
 test("ImageSquid's theme control keeps a dark choice across a reload", async ({ page }) => {
   const errors = trackErrors(page, REFUSED_CALL);
   await page.emulateMedia({ colorScheme: "light" });
-  await page.goto("/");
-  const control = page.locator("fs-app-shell fs-theme-control");
+  // Owner answer 7: the theme control lives in Settings, Appearance.
+  await page.goto("/#/settings");
+  const control = page.locator("fs-settings fs-theme-control");
   await expect(control.locator("label")).toHaveText(["System", "Light", "Dark"]);
   await expect(control.locator('input[value="system"]')).toBeChecked();
   await control.locator("label", { hasText: "Dark" }).click();
@@ -93,7 +100,7 @@ test("ImageSquid's theme control keeps a dark choice across a reload", async ({ 
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await expect(control.locator('input[value="dark"]')).toBeChecked();
   expect(await token(page, "--fs-primary")).toBe("rgb(169, 199, 255)"); // #a9c7ff
-  await expect(page.locator("fs-app-shell header img")).toHaveAttribute(
+  await expect(page.locator("fs-app-shell nav .brand img")).toHaveAttribute(
     "src",
     "/imagesquid-logo.svg",
   );
@@ -102,8 +109,8 @@ test("ImageSquid's theme control keeps a dark choice across a reload", async ({ 
 
 test("ImageSquid names missing credentials in its own words", async ({ page }) => {
   const errors = trackErrors(page, REFUSED_CALL);
-  await page.goto("/");
-  const alert = page.locator('fs-app-shell p.api[role="alert"]');
+  await page.goto("/#/settings");
+  const alert = page.locator('fs-settings .api[role="alert"]');
   await expect(alert).toHaveAttribute("data-reason", "missing_credentials");
   await expect(alert).toHaveText("Archives unavailable: Missing credentials");
   expect(errors).toEqual([]);
@@ -112,7 +119,7 @@ test("ImageSquid names missing credentials in its own words", async ({ page }) =
 test("ImageSquid reaches the FileSquid Monitor with its own vocabulary", async ({ page }) => {
   const errors = trackErrors(page, REFUSED_CALL);
   await page.goto("/");
-  await page.locator("fs-app-shell nav a", { hasText: "Monitor" }).click();
+  await page.locator("fs-app-shell header a.monitor").click();
   const monitor = page.locator("fs-monitor");
   const form = monitor.locator("form[data-form='token']");
   await form.locator("input").fill(ADMIN_TOKEN);
@@ -122,10 +129,6 @@ test("ImageSquid reaches the FileSquid Monitor with its own vocabulary", async (
   await expect(monitor.locator('tr[data-process-id^="host-"]')).toHaveAttribute(
     "data-state",
     "running",
-  );
-  // The shell's own API status; the Monitor inside the shell has status regions of its own.
-  await expect(page.locator('fs-app-shell p.api[role="status"]')).toHaveText(
-    "Archives API: ok (filesquid)",
   );
   expect(errors).toEqual([]);
 });
@@ -143,13 +146,13 @@ for (const scheme of ["light", "dark"] as const) {
     const shell = page.locator("fs-app-shell");
     await expect(shell.getByRole("navigation", { name: "Main navigation" })).toBeVisible();
     await expect(shell.getByRole("heading", { level: 1 })).toHaveText("ImageSquid");
-    const ring = `solid 2px ${await token(page, "--fs-primary")}`;
+    const ring = `solid 2px ${await token(page, "--fs-focus-ring")}`;
     const seen: string[] = [];
     await expect(page.locator("fs-host-indicator button.badge")).toHaveText(
       labels.hostBadgeServer ?? "",
     );
-    // Skip, theme, the host badge in the header, then the library and Monitor links.
-    for (let step = 0; step < 5; step += 1) {
+    // UI-S-025: the skip control, then the sidebar's New button.
+    for (let step = 0; step < 2; step += 1) {
       await page.keyboard.press("Tab");
       seen.push(
         await page.evaluate(() => {
@@ -162,13 +165,8 @@ for (const scheme of ["light", "dark"] as const) {
         }),
       );
     }
-    expect(seen).toEqual([
-      `Skip to main content | ${ring}`,
-      `System | ${ring}`,
-      `${labels.hostBadgeServer} | ${ring}`,
-      `${labels.libraryNavLink} | ${ring}`,
-      `Monitor | ${ring}`,
-    ]);
+    expect(seen).toEqual([`Skip to main content | ${ring}`, `${labels.fileNew} | ${ring}`]);
+    await page.locator("fs-app-shell header a.monitor").focus();
     await page.keyboard.press("Enter");
     await expect(page).toHaveURL(/#\/monitor$/);
     await expect(
@@ -193,7 +191,10 @@ for (const scheme of ["light", "dark"] as const) {
     }, ADMIN_TOKEN);
     await page.emulateMedia({ colorScheme: scheme });
     await page.goto("/");
-    await expect(page.locator("fs-app-shell").getByRole("status")).toBeVisible();
+    await expect(page.locator("fs-app-shell header fs-host-indicator")).toHaveAttribute(
+      "data-state",
+      "ready",
+    );
     const alertColour = await page.evaluate((table) => {
       type Configurable = HTMLElement & { configure(o: unknown): void; state?: unknown };
       const node = (id: string, kind: string, name: string | null, children: boolean) => ({
@@ -221,15 +222,16 @@ for (const scheme of ["light", "dark"] as const) {
       states.configure({ labels: table });
       states.state = { kind: "offline" };
       document.querySelector("fs-app-shell")?.append(tree, states);
-      const title = states.shadowRoot?.querySelector('[role="alert"] p');
-      return title ? getComputedStyle(title).color : "";
+      const icon = states.shadowRoot?.querySelector('[role="alert"] svg');
+      return icon ? getComputedStyle(icon).color : "";
     }, labels);
     const tree = page.locator("fs-nav-tree");
     await expect(tree.locator("section h2")).toHaveText(["Albums", "Galleries", "Folders"]);
     await expect(tree.getByRole("treeitem", { name: "Coastal Days" })).toBeVisible();
     await expect(tree.getByRole("button", { name: "Move Albums down" })).toBeVisible();
     await expect(page.locator("fs-states").getByRole("alert")).toContainText("You are offline");
-    expect(alertColour).toBe(await token(page, "--fs-error"));
+    // Mockup 56: the offline state's icon is drawn in the default icon colour.
+    expect(alertColour).toBe(await token(page, "--fs-icon"));
     expect(errors).toEqual([]);
   });
 }

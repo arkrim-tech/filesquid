@@ -74,12 +74,12 @@ export interface StorageSummary {
 export const NEW_EVENT = "fs-new";
 
 const STYLE = `
-  :host { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; min-height: 100vh; background: var(--fs-surface); color: var(--fs-on-surface); font-family: var(--fs-font-sans); font-size: var(--fs-font-size-ui); }
+  :host { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; block-size: 100vh; overflow: hidden; background: var(--fs-surface); color: var(--fs-on-surface); font-family: var(--fs-font-sans); font-size: var(--fs-font-size-ui); }
   :host([frameless]) { grid-template-columns: minmax(0, 1fr); }
   :host([frameless]) nav, :host([frameless]) header, :host([frameless]) footer, :host([frameless]) aside.panel { display: none; }
   .skip { position: absolute; inset-inline-start: var(--fs-space-2); inset-block-start: var(--fs-space-2); z-index: 1; padding: var(--fs-space-2) var(--fs-space-3); border: 0; border-radius: var(--fs-radius-button); background: var(--fs-primary); color: var(--fs-on-primary); font-family: inherit; font-size: var(--fs-font-size-ui); font-weight: 600; cursor: pointer; }
   .skip:not(:focus) { width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  nav { display: flex; flex-direction: column; gap: var(--fs-space-2); box-sizing: border-box; inline-size: 15rem; min-width: 0; padding: var(--fs-space-3) 0; border-inline-end: 1px solid var(--fs-outline); background: var(--fs-surface-card); }
+  nav { display: flex; flex-direction: column; gap: var(--fs-space-2); box-sizing: border-box; inline-size: 15rem; min-width: 0; min-height: 0; overflow: auto; padding: var(--fs-space-3) 0; border-inline-end: 1px solid var(--fs-outline); background: var(--fs-surface-card); }
   .brand { display: flex; align-items: center; gap: var(--fs-space-2); min-width: 0; padding: 0 var(--fs-space-3); }
   .brand img { block-size: var(--fs-space-4); inline-size: auto; }
   h1 { margin: 0; min-width: 0; overflow-wrap: anywhere; font-family: var(--fs-font-heading); font-size: var(--fs-font-size-lead); font-weight: 700; color: var(--fs-on-surface-heading); }
@@ -105,20 +105,21 @@ const STYLE = `
   .storage-fill { block-size: 100%; background: var(--fs-brand); }
   .storage-caption { margin: 0; color: var(--fs-on-surface-muted); }
   .storage-facts { display: grid; gap: var(--fs-space-1); }
-  .content { display: flex; flex-direction: column; min-width: 0; }
+  .content { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
   header { display: flex; flex-wrap: wrap; align-items: center; gap: var(--fs-space-3); box-sizing: border-box; min-block-size: 3.75rem; padding: var(--fs-space-2) var(--fs-space-4); border-block-end: 1px solid var(--fs-outline); }
   .search { flex: 0 1 32.5rem; min-width: 0; }
   .search-slot { flex: 0 1 32.5rem; display: flex; min-width: 0; }
   .spacer { flex: 1 1 auto; }
   fs-host-indicator { flex: 0 0 auto; }
   .monitor { min-inline-size: 6rem; }
-  main { flex: 1 1 auto; min-width: 0; padding: var(--fs-space-4); }
+  main { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; padding: var(--fs-space-4); }
   footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--fs-space-2) var(--fs-space-3); box-sizing: border-box; min-block-size: 2.5rem; padding: var(--fs-space-1) var(--fs-space-3); border-block-start: 1px solid var(--fs-outline); color: var(--fs-on-surface-variant); font-size: var(--fs-font-size-small); }
   footer p { margin: 0; min-width: 0; overflow-wrap: anywhere; }
-  aside.panel { box-sizing: border-box; inline-size: 20rem; min-width: 0; border-inline-start: 1px solid var(--fs-outline); background: var(--fs-surface-card); }
+  aside.panel { box-sizing: border-box; inline-size: 20rem; min-width: 0; min-height: 0; overflow: auto; border-inline-start: 1px solid var(--fs-outline); background: var(--fs-surface-card); }
   [hidden] { display: none !important; }
   @media (max-width: 40rem) {
-    :host { grid-template-columns: minmax(0, 1fr); }
+    :host { grid-template-columns: minmax(0, 1fr); block-size: auto; min-height: 100vh; overflow: visible; }
+    main { overflow: visible; }
     nav { inline-size: auto; border-inline-end: 0; border-block-end: 1px solid var(--fs-outline); }
     aside.panel { inline-size: auto; }
   }

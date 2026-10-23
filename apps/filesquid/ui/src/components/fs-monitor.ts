@@ -116,6 +116,7 @@ const STYLE = `
   [data-section="health"] ul { margin: 0; padding-inline-start: var(--fs-space-3); }
   [data-status="degraded"] .status, [data-status="failing"] .status, tr[data-state="stalled"] td:nth-child(2), tr[data-state="failed"] td:nth-child(2), tr[data-outcome="failed"] td { color: var(--fs-error); }
   form { display: flex; flex-wrap: wrap; gap: var(--fs-space-2); align-items: center; margin-block-end: var(--fs-space-3); }
+  form .input { flex: 0 1 22.5rem; }
   [role="alert"] { color: var(--fs-error); overflow-wrap: anywhere; }
 `;
 

@@ -71,27 +71,41 @@ test("the built page is static, mounts the shell and defines every custom elemen
   expect(errors).toEqual([]);
 });
 
-test("navigation, API status and theme legend words come from the active label table", async ({
+test("sidebar, header and Settings words come from the active label table (UI-S-025, UI-S-033)", async ({
   page,
 }) => {
   const errors = trackErrors(page);
   await page.goto("/");
   const shell = page.locator("fs-app-shell");
+  // The host is the desktop here, so the Logs row is shown (UI-S-021).
   await expect(shell.locator("nav li")).toHaveText(
     [
+      "fileRoot",
+      "fileRecent",
       "libraries",
       "collections",
       "virtualCollections",
       "virtualExhibits",
+      "navigationRecentlyDeleted",
       "libraryNavLink",
-      "monitor",
       "settings",
+      "logs",
     ].map((key) => label(labels, key)),
   );
-  await expect(shell.locator('[role="status"]')).toHaveText(
-    `${label(labels, "apiStatus")}: ok (filesquid)`,
+  await expect(shell.locator("header .monitor")).toHaveText(label(labels, "monitor"));
+  await expect(shell.locator("header input.search")).toHaveAttribute(
+    "placeholder",
+    label(labels, "searchPlaceholder"),
   );
-  await expect(shell.locator("fs-theme-control legend")).toHaveText(label(labels, "theme"));
+  // Owner answers 7 and 12: the theme control and the API status live in Settings only.
+  await expect(shell.locator("header fs-theme-control")).toHaveCount(0);
+  await expect(shell.locator("header p.api")).toHaveCount(0);
+  await page.goto("/#/settings");
+  const settings = page.locator("fs-settings");
+  await expect(settings.locator(".api[role='status']")).toContainText(
+    label(labels, "settingsApiStatus").replace("{status}", "ok").split("{version}")[0] ?? "",
+  );
+  await expect(settings.locator("fs-theme-control legend")).toHaveText(label(labels, "theme"));
   expect(errors).toEqual([]);
 });
 
@@ -102,23 +116,28 @@ test("computed ImageSquid token values are exact in light and dark", async ({ pa
   await expect(page.locator("fs-app-shell h1")).toHaveText("ImageSquid");
   expect(await tokenColour(page, "--fs-primary")).toBe(rgbOf("#005db6"));
   expect(await tokenColour(page, "--fs-on-primary")).toBe(rgbOf("#ffffff"));
+  expect(await tokenColour(page, "--fs-surface-card")).toBe(rgbOf("#f4f5f7"));
+  expect(await tokenColour(page, "--fs-focus-ring")).toBe(rgbOf("#005db6"));
+  expect(await tokenColour(page, "--fs-outline-control")).toBe(rgbOf("#7d8490"));
   expect(await bodyBackground(page)).toBe(rgbOf("#ffffff"));
 
   await setScheme(page, "dark");
   expect(await tokenColour(page, "--fs-primary")).toBe(rgbOf("#a9c7ff"));
   expect(await tokenColour(page, "--fs-on-primary")).toBe(rgbOf("#003063"));
+  expect(await tokenColour(page, "--fs-surface-card")).toBe(rgbOf("#1b1e24"));
+  expect(await tokenColour(page, "--fs-focus-ring")).toBe(rgbOf("#a9c7ff"));
   expect(await bodyBackground(page)).toBe(rgbOf("#121418"));
   expect(errors).toEqual([]);
 });
 
-test("a refused health call shows the unavailable alert", async ({ page }) => {
+test("a refused health call shows the unavailable alert in Settings, About", async ({ page }) => {
   await page.unroute("**/api/v1/health");
   await page.route("**/api/v1/health", (route) =>
     route.fulfill({ status: 503, json: { code: "unavailable", message: "down" } }),
   );
   const errors = trackErrors(page, /status of 503 \(/);
-  await page.goto("/");
-  await expect(page.locator('fs-app-shell [role="alert"]')).toContainText(
+  await page.goto("/#/settings");
+  await expect(page.locator('fs-settings .api[role="alert"]')).toContainText(
     label(labels, "apiUnavailable"),
   );
   expect(errors).toEqual([]);
@@ -140,7 +159,8 @@ test("the library flow runs in ImageSquid with its own label table (UI-1.1)", as
   });
   await page.goto("/#/library");
   const start = page.locator("fs-library-start");
-  await expect(start.locator("h2")).toHaveText(label(labels, "libraries"));
+  await expect(start.locator(".page > h2")).toHaveText(label(labels, "libraryWelcomeTitle"));
+  await expect(start.locator(".eyebrow")).toHaveText(label(labels, "libraries"));
   await expect(start.locator("section[data-flow] button")).toHaveText([
     label(labels, "libraryCreate"),
     label(labels, "libraryOpen"),
@@ -148,7 +168,7 @@ test("the library flow runs in ImageSquid with its own label table (UI-1.1)", as
   ]);
   await start.locator('button[data-action="open"]').click();
   await expect(page).toHaveURL(/#\/library\/lib-1$/);
-  await expect(page.locator("fs-library-detail h2")).toHaveText(label(labels, "library"));
+  await expect(page.locator("fs-library-detail .page > h2")).toHaveText(label(labels, "library"));
   expect(sent.slice(0, 2)).toEqual([
     "POST /api/v1/libraries/location-choices",
     "POST /api/v1/libraries/openings",
