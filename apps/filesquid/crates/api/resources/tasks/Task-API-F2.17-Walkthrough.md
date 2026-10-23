@@ -1,6 +1,6 @@
 # Task API-F2.17 Walkthrough: Rebuild from files as a durable job
 
-Branch `feat/api-f2.17-rebuild-job`, module `filesquid-api` ([plan row](../plan.md)), dispatched by global Task 1.2. Contract **0.25.0** (main was 0.24.0). Mockup: [04-recover-library.svg](../../../../../../resources/ui-mockups/v3/04-recover-library.svg) ([UI-S-027](../../../../ui/resources/srs.md)).
+Branch `feat/api-f2.17-rebuild-job`, module `filesquid-api` ([plan row](../plan.md)), dispatched by global Task 1.2. Contract **0.26.0** (main was 0.25.0 at the last merge of `origin/main`). Mockup: [04-recover-library.svg](../../../../../../resources/ui-mockups/v3/04-recover-library.svg) ([UI-S-027](../../../../ui/resources/srs.md)).
 
 Owner answer 9 of 2026-10-22, verbatim: "Yes, rebuild should be a durable job". The job controls take no `CommandEnvelope` (owner decision 2026-10-23, endorsing API-S-037's exemption).
 
@@ -33,7 +33,7 @@ Owner answer 9 of 2026-10-22, verbatim: "Yes, rebuild should be a durable job". 
 | C13 | The checkpoint is a cursor; the partial report is written with it atomically, bounded, at a cadence that grows with the report | `a_result_past_its_bound_is_refused_and_stores_nothing`, `a_final_result_past_its_bound_is_refused_and_stores_nothing`, `the_checkpoint_holds_a_cursor_and_the_partial_report_is_stored_with_it`, `a_checkpoint_with_a_result_under_an_ended_lease_is_fenced_and_stores_nothing` | Met |
 | C14 | `library.rebuild` journaled once when the rebuild finishes | route test, `a_rebuild_from_a_cursor_reads_no_object_at_or_before_it` | Met |
 | C15 | The SQLite store keeps the result | `a_jobs_result_survives_closing_the_store`, `a_store_made_with_controls_but_before_results_gains_the_result_column`, `a_store_made_before_controls_gains_the_column_and_keeps_its_jobs` | Met |
-| C16 | Contract 0.25.0 and regenerated `schema.d.ts` | `unit_contract` (samples of `RebuildJobAnswer`, `RebuildOutcome` and a completed rebuild's `JobView`), Vitest `contract.test.ts` | Met |
+| C16 | Contract 0.26.0 and regenerated `schema.d.ts` | `unit_contract` (samples of `RebuildJobAnswer`, `RebuildOutcome` and a completed rebuild's `JobView`), Vitest `contract.test.ts` | Met |
 | C17 | The desktop installs its job service and the rebuild runner | desktop `an_opened_folder_feeds_the_history_and_copies_and_rebuilds_without_paths` (SQLite job store, `job.completed` in the SQLite journal); WebdriverIO spec `libraries.e2e.mjs` follows the job | Met |
 | C18 | Bounded loops | `MAX_RUN_PASSES` (1,000 passes per run, then the run gives its lease back), the renewal task ends with its pass, test polls bounded by `MAX_JOB_POLLS` | Met |
 
@@ -45,7 +45,7 @@ Owner answer 9 of 2026-10-22, verbatim: "Yes, rebuild should be a durable job". 
   - [`local_library/rebuild_job.rs`](../../src/local_library/rebuild_job.rs) (new): `REBUILD_JOB_KIND`, `submit_rebuild`, `rebuild_source`, `RebuildJobAnswer`, and `RebuildRunner`, the `JobRunner` of the kind.
   - [`local_library/service.rs`](../../src/local_library/service.rs), [`commands.rs`](../../src/local_library/commands.rs), [`operations.rs`](../../src/local_library/operations.rs): `LibraryOperations::rebuild` is replaced by `rebuild_ready` and `rebuild_from`.
   - [`local_library/routes.rs`](../../src/local_library/routes.rs): the rebuild route answers the job.
-  - [`openapi.json`](../../openapi.json): 0.25.0, `RebuildJobAnswer`, `RebuildOutcome`, `JobView.result`; `tokio`'s `time` feature for the renewal ticker (no new crate; `Cargo.lock` unchanged).
+  - [`openapi.json`](../../openapi.json): 0.26.0, `RebuildJobAnswer`, `RebuildOutcome`, `JobView.result`; `tokio`'s `time` feature for the renewal ticker (no new crate; `Cargo.lock` unchanged).
 - `filesquid-native`: [`jobs_sqlite.rs`](../../../native/src/jobs_sqlite.rs) stores `result` (additive migration of the `jobs` table).
 - `filesquid-desktop`: [`lib.rs`](../../../desktop/src/lib.rs) `install_job_routes` installs this launch's job service in the API state (the job routes answered `unavailable` on the desktop before) and the rebuild runner on the app's runtime; the job service publishes `job.update` events; [`libraries.rs`](../../../desktop/src/libraries.rs) forwards the new operations.
 - `apps/filesquid/ui/src/api/schema.d.ts`: regenerated only. The default UI still calls the rebuild route for a report (`fs-library-start.ts`, `fs-library-detail.ts`); following the job is UI Task UI-1.3.
