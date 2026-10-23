@@ -87,12 +87,17 @@ impl NavigationAccess for Only {
     }
 }
 
-/// Install navigation in `rig` whose caller may read every library except `hidden`.
-fn hide(rig: &LibraryRig, hidden: &str) {
-    let hidden = LibraryId::new(hidden).expect("id");
-    let access = Only(Box::new(move |node| {
-        node != &NodeRef::Library(hidden.clone())
-    }));
+/// Install navigation in `rig` whose caller may read every library except those `hidden`.
+fn hide(rig: &LibraryRig, hidden: &[&str]) {
+    let hidden: Vec<NodeRef> = hidden
+        .iter()
+        .map(|id| NodeRef::Library(LibraryId::new(*id).expect("id")))
+        .collect();
+    install(rig, Only(Box::new(move |node| !hidden.contains(node))));
+}
+
+/// Install navigation in `rig` whose readability `access` decides.
+fn install(rig: &LibraryRig, access: Only) {
     let repository = RepositoryId::new("repo").expect("repository");
     let service = NavigationService::new(
         Arc::new(MemoryCatalog::new()) as Arc<dyn LibraryCatalog>,
@@ -227,7 +232,7 @@ async fn an_unknown_or_unreadable_library_is_not_found_and_journaled_once() {
     let rig = LibraryRig::new(Mount::Server);
     let (hidden, _) = create_named(&rig, "hidden", "Hidden").await;
     let (shown, _) = create_named(&rig, "shown", "Shown").await;
-    hide(&rig, &hidden);
+    hide(&rig, &[&hidden]);
     assert_error(&facts(&rig, &hidden).await, 404, "not_found");
     let unknown = facts(&rig, "7d1c2b9e-4f3a-4e61-8a0b-2c9d5e6f7a80").await;
     assert_error(&unknown, 404, "not_found");
@@ -267,7 +272,7 @@ async fn recent_lists_at_most_20_readable_libraries_newest_first_without_paths()
     }
     rig.clock.advance(1_000);
     let (newest_hidden, _) = create_named(&rig, "hidden-new", "Hidden new").await;
-    hide_two(&rig, &hidden, &newest_hidden);
+    hide(&rig, &[&hidden, &newest_hidden]);
     let answer = rig.get("/api/v1/libraries/recent").await;
     assert_eq!(answer.status, StatusCode::OK, "{}", answer.text());
     let listed = answer.json()["libraries"]
@@ -306,23 +311,6 @@ async fn recent_lists_at_most_20_readable_libraries_newest_first_without_paths()
     assert_redacted(&rig, &[&answer], &["Library 20"]);
 }
 
-/// Install navigation in `rig` whose caller may read every library except `a` and `b`.
-fn hide_two(rig: &LibraryRig, a: &str, b: &str) {
-    let a = LibraryId::new(a).expect("id");
-    let b = LibraryId::new(b).expect("id");
-    let access = Only(Box::new(move |node| {
-        node != &NodeRef::Library(a.clone()) && node != &NodeRef::Library(b.clone())
-    }));
-    let repository = RepositoryId::new("repo").expect("repository");
-    let service = NavigationService::new(
-        Arc::new(MemoryCatalog::new()) as Arc<dyn LibraryCatalog>,
-        Arc::new(MemoryFolderIndex::new()),
-        Arc::new(access),
-        RepositoryInfo::new(repository, None),
-    );
-    assert!(rig.state.install_navigation(Arc::new(service)));
-}
-
 #[tokio::test]
 async fn a_library_this_host_remembers_but_has_not_opened_now_is_listed_as_not_open() {
     let rig = LibraryRig::new(Mount::Desktop);
@@ -336,7 +324,8 @@ async fn a_library_this_host_remembers_but_has_not_opened_now_is_listed_as_not_o
         .insert("loc-elsewhere".into(), FreeSpace::VolumeUnreadable);
     rig.clock.advance(1_000);
     let (library, _) = create_named(&rig, "now", "Now").await;
-    let listed = rig.get("/api/v1/libraries/recent").await.json()["libraries"].clone();
+    let answer = rig.get("/api/v1/libraries/recent").await;
+    let listed = answer.json()["libraries"].clone();
     assert_eq!(listed[0]["library_id"], library.as_str());
     assert_eq!(listed[0]["open"], true);
     assert_eq!(listed[1]["library_id"], earlier.as_str());
@@ -344,4 +333,45 @@ async fn a_library_this_host_remembers_but_has_not_opened_now_is_listed_as_not_o
     assert_eq!(listed[1]["last_opened"], "2026-10-17T23:59:00.000Z");
     assert_eq!(listed[1]["free_bytes"], Value::Null);
     assert_eq!(listed[1]["free_bytes_reason"], "volume_unreadable");
+    assert_redacted(&rig, &[&answer], &["Earlier", "Now"]);
+}
+
+#[tokio::test]
+async fn a_caller_who_may_not_read_the_repository_reads_no_library_facts() {
+    let rig = LibraryRig::new(Mount::Server);
+    let (library, _) = create_named(&rig, "inside", "Inside").await;
+    install(
+        &rig,
+        Only(Box::new(|node| !matches!(node, NodeRef::Repository(_)))),
+    );
+    assert_error(&facts(&rig, &library).await, 404, "not_found");
+    let answer = rig.get("/api/v1/libraries/recent").await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text());
+    assert_eq!(answer.json()["libraries"], json!([]));
+}
+
+#[tokio::test]
+async fn a_name_given_on_open_that_replaces_another_is_journaled_as_a_rename() {
+    let rig = LibraryRig::new(Mount::Desktop);
+    let (library, location) = create_named(&rig, "reopened", "First name").await;
+    let reopen =
+        |name: &str| json!({ "location_id": location, "library_id": library, "name": name });
+    let answer = rig
+        .post("/api/v1/libraries/openings", reopen("First name"))
+        .await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text());
+    assert!(
+        rig.journaled(RENAME_OPERATION).is_empty(),
+        "same name, no rename"
+    );
+    let answer = rig
+        .post("/api/v1/libraries/openings", reopen("Second name"))
+        .await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text());
+    let renames = rig.journaled(RENAME_OPERATION);
+    assert_eq!(renames.len(), 1);
+    assert_eq!(renames[0].outcome, Outcome::Succeeded);
+    assert_eq!(renames[0].target_ids, std::slice::from_ref(&library));
+    assert_eq!(facts(&rig, &library).await.json()["name"], "Second name");
+    assert_redacted(&rig, &[&answer], &["First name", "Second name"]);
 }

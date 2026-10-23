@@ -7,6 +7,8 @@
 # GET /api/v1/libraries/recent (library.read) MUST first keep only the libraries this host opened
 # that the caller may read, then list at most 20 of them, newest first, with ID, name, last opened
 # time, whether open now and free bytes, never a path, storage key or location ID.
+# Hosts read free bytes on Linux and macOS; every other build answers null with
+# volume_unreadable until DE-F3.3 (owner decision 5 of 2026-10-23).
 # Task API-F2.18 (contract 0.27.0).
 Feature: Library facts: name, free space and recent libraries
   As the owner of several libraries

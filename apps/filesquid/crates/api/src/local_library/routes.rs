@@ -17,12 +17,13 @@
 //! - `GET /api/v1/libraries/recent` (`library.read`): the libraries this host opened that
 //!   the caller may read, at most 20, newest first.
 //!
-//! Readability is the navigation access the host installed (API-S-021), else this release's
-//! host access.
+//! Readability is the navigation access the host installed (API-S-021), which must admit the
+//! host's repository and the library, else this release's host access.
 //!
 //! The operations journal their own outcomes and refusals. A handler journals only what it
-//! refuses itself, once: a body or query it cannot read, and a host that has not installed
-//! its library commands yet.
+//! refuses itself, once: a body or query it cannot read, a host that has not installed its
+//! library commands yet, and (on the facts route) a library ID that is malformed or names a
+//! library the caller may not read, journaled as `library.facts` `library_not_found`.
 
 use super::operations::LibraryOperations;
 use super::rebuild_job::{submit_rebuild, RebuildJobAnswer, RebuildOutcome, SubmitRefusal};
@@ -298,12 +299,17 @@ async fn recent(
     answer(operations.recent(actor, readable).await)
 }
 
-/// Whether `principal` may read `library`: by the installed navigation access, else by this
-/// release's host access.
+/// Whether `principal` may read `library`: by the installed navigation access, which must
+/// admit both the host's repository and the library (as navigation resolves a library under
+/// its repository), else by this release's host access.
 fn may_read(state: &ApiState, principal: &Principal, library: &LibraryId) -> bool {
-    let node = crate::navigation::NodeRef::Library(library.clone());
+    use crate::navigation::NodeRef;
+    let node = NodeRef::Library(library.clone());
     match state.navigation() {
-        Some(navigation) => navigation.may_read(principal, &node),
+        Some(navigation) => {
+            let repository = NodeRef::Repository(navigation.repository_id().clone());
+            navigation.may_read(principal, &repository) && navigation.may_read(principal, &node)
+        }
         None => {
             use crate::navigation::NavigationAccess;
             crate::navigation::HostAccess.may_read(principal, &node)

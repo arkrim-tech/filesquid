@@ -8,8 +8,8 @@
 
 use super::error::LocalLibraryError;
 use super::facts::{
-    check_name, LibraryFacts, LibraryRegistry, RecentLibraries, RecentLibrary,
-    RenameLibraryRequest, MAX_RECENT_LIBRARIES,
+    check_name, FreeSpace, LibraryFacts, LibraryRegistry, RecentLibraries, RecentLibrary,
+    RegistryEntry, RenameLibraryRequest, MAX_RECENT_LIBRARIES,
 };
 use super::locations::{
     LibraryLocations, LibraryRequest, LibraryRoot, LibraryView, LocationRequest,
@@ -120,10 +120,8 @@ impl<L: LibraryLocations> LibraryCommands<L> {
                 .journal_success(actor, RENAME_OPERATION, library);
         }
         let entry = registry.entry(library).ok_or(LocalLibraryError::Internal)?;
-        Ok(LibraryFacts::of(
-            &entry,
-            &registry.free_space(&entry.location_id),
-        ))
+        let space = read_free_space(registry, &entry.location_id).await;
+        Ok(LibraryFacts::of(&entry, &space))
     }
 
     /// The facts of a library this host opened, for `actor`: its name and the free space of
@@ -142,10 +140,8 @@ impl<L: LibraryLocations> LibraryCommands<L> {
             Ok((registry, entry))
         });
         let (registry, entry) = self.refused(actor, FACTS_OPERATION, Some(library), checked)?;
-        Ok(LibraryFacts::of(
-            &entry,
-            &registry.free_space(&entry.location_id),
-        ))
+        let space = read_free_space(registry, &entry.location_id).await;
+        Ok(LibraryFacts::of(&entry, &space))
     }
 
     /// The libraries this host opened that `readable` keeps, then at most
@@ -162,17 +158,44 @@ impl<L: LibraryLocations> LibraryCommands<L> {
     ) -> Result<RecentLibraries, LocalLibraryError> {
         let registry = self.refused(actor, RECENT_OPERATION, None, self.registry())?;
         let open = self.lock().clone();
-        let libraries = registry
+        let listed: Vec<RegistryEntry> = registry
             .entries()
             .into_iter()
             .filter(|entry| readable(&entry.library_id))
             .take(MAX_RECENT_LIBRARIES)
-            .map(|entry| {
-                let space = registry.free_space(&entry.location_id);
-                RecentLibrary::of(&entry, open.contains_key(&entry.library_id), &space)
+            .collect();
+        let locations = listed
+            .iter()
+            .map(|entry| entry.location_id.clone())
+            .collect();
+        let spaces = read_free_spaces(registry, locations).await;
+        let libraries = listed
+            .iter()
+            .zip(spaces.iter())
+            .map(|(entry, space)| {
+                RecentLibrary::of(entry, open.contains_key(&entry.library_id), space)
             })
             .collect();
         Ok(RecentLibraries { libraries })
+    }
+
+    /// Remember the library just bound from `request` in `registry`, journaling a rename
+    /// when the request's name replaces a different one this host knew.
+    fn remember(
+        &self,
+        actor: &str,
+        registry: &dyn LibraryRegistry,
+        library_id: &LibraryId,
+        request: &LocationRequest,
+    ) {
+        let known = registry.entry(library_id).map(|entry| entry.name);
+        let now = self.service.now_ms();
+        let name = request.name.as_deref();
+        let kept = registry.remember(library_id, &request.location_id, name, now);
+        if known.is_some_and(|known| known != kept) {
+            self.service
+                .journal_success(actor, RENAME_OPERATION, library_id);
+        }
     }
 
     /// The installed registry, or `unavailable`.
@@ -341,9 +364,7 @@ impl<L: LibraryLocations> LibraryCommands<L> {
             Binding::Open => self.service.open_root(actor, &library_id, backend).await,
         }?;
         if let Some(registry) = &self.registry {
-            let now = self.service.now_ms();
-            let name = request.name.as_deref();
-            registry.remember(&library_id, &request.location_id, name, now);
+            self.remember(actor, registry.as_ref(), &library_id, &request);
         }
         self.lock().insert(library_id.clone(), request.location_id);
         Ok(LibraryView {
@@ -535,4 +556,36 @@ fn too_many_libraries() -> LocalLibraryError {
         "too_many_libraries",
         "Too many libraries are open. Restart FileSquid to open another.",
     )
+}
+
+/// Read the free space of `location_id` off the async executor, since a volume query may
+/// block.
+async fn read_free_space(registry: Arc<dyn LibraryRegistry>, location_id: &str) -> FreeSpace {
+    let spaces = read_free_spaces(registry, vec![location_id.to_string()]).await;
+    spaces
+        .into_iter()
+        .next()
+        .unwrap_or(FreeSpace::VolumeUnreadable)
+}
+
+/// Read the free space of each of `locations` on one blocking thread, in order. A read that
+/// cannot finish answers every location as [`FreeSpace::VolumeUnreadable`], logged.
+async fn read_free_spaces(
+    registry: Arc<dyn LibraryRegistry>,
+    locations: Vec<String>,
+) -> Vec<FreeSpace> {
+    let count = locations.len();
+    let read = move || {
+        locations
+            .iter()
+            .map(|location| registry.free_space(location))
+            .collect()
+    };
+    match tokio::task::spawn_blocking(read).await {
+        Ok(spaces) => spaces,
+        Err(err) => {
+            tracing::warn!(target: super::LOG_TARGET, error = %err, "free space read failed");
+            vec![FreeSpace::VolumeUnreadable; count]
+        }
+    }
 }

@@ -21,6 +21,8 @@ pub struct FactsWorld {
     rig: Option<LibraryRig>,
     /// The libraries created, oldest first: (library ID, location ID).
     libraries: Vec<(String, String)>,
+    /// Every library name given at create or rename, oldest first.
+    names: Vec<String>,
     answer: Option<Answer>,
     location: Option<String>,
 }
@@ -63,6 +65,7 @@ async fn create(w: &mut MonitorWorld, folder: &str, name: &str) {
         .expect("id")
         .to_string();
     w.facts.libraries.push((library, location));
+    w.facts.names.push(name.to_string());
 }
 
 /// Install navigation whose caller may read every library except `hidden`.
@@ -118,6 +121,7 @@ async fn rename(w: &mut MonitorWorld, name: String) {
     let body = json!({ "library_id": library, "name": name });
     let answer = w.facts.rig().post("/api/v1/libraries/renames", body).await;
     assert_eq!(answer.status.as_u16(), 200, "{}", answer.text());
+    w.facts.names.push(name);
     read_facts(w).await;
 }
 
@@ -153,10 +157,9 @@ fn rename_journaled(w: &mut MonitorWorld) {
     assert_eq!(renames[0].outcome, Outcome::Succeeded);
     assert_eq!(renames[0].target_ids, [library]);
     let journal = serde_json::to_string(&rig.journal()).expect("json");
-    assert!(
-        !journal.contains("Family archive"),
-        "no name in the journal"
-    );
+    for name in &w.facts.names {
+        assert!(!journal.contains(name.as_str()), "no name in the journal");
+    }
 }
 
 #[then(expr = "the free bytes should be null because {string}")]

@@ -618,8 +618,14 @@ fn a_named_library_answers_its_facts_and_is_listed_as_recent_without_its_folder(
         );
         assert_eq!(facts["free_bytes_reason"], Value::Null);
     } else {
+        assert_eq!(facts["free_bytes"], Value::Null);
         assert_eq!(facts["free_bytes_reason"], "volume_unreadable");
     }
+    let path = folder.to_string_lossy().to_string();
+    assert!(
+        !facts.to_string().contains(&path),
+        "no folder path: {facts}"
+    );
     let rename = json!({ "library_id": library, "name": "Family archive 1990s" });
     let (status, renamed) = desktop.post("/api/v1/libraries/renames", rename);
     assert_eq!(status, 200, "{renamed}");
@@ -632,6 +638,10 @@ fn a_named_library_answers_its_facts_and_is_listed_as_recent_without_its_folder(
     assert!(
         !recent.to_string().contains("loc-"),
         "no location ID: {recent}"
+    );
+    assert!(
+        !recent.to_string().contains(&path),
+        "no folder path: {recent}"
     );
     let (_, entries) = desktop.stop();
     let renames: Vec<_> = entries

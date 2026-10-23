@@ -200,7 +200,8 @@ pub struct LibraryRig {
     pub locations: Arc<TestLocations>,
     /// The commands installed in the state.
     pub commands: Arc<LibraryCommands<TestLocations>>,
-    /// The host's registry of the libraries it opened (API-S-038).
+    /// The registry of the libraries the rig opened (API-S-038); the `without_registry` rig
+    /// builds it but does not install it, so its routes answer `unavailable`.
     pub registry: Arc<MemoryLibraryRegistry>,
     /// The free space each location reports; 1,000,000 bytes when not set.
     pub free: Arc<Mutex<HashMap<String, FreeSpace>>>,
