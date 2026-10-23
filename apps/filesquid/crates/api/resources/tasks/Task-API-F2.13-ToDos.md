@@ -1,0 +1,22 @@
+# Task API-F2.13 ToDos
+
+- [x] Branch `feat/api-f2.13-command-envelopes` from a fresh `origin/main`
+- [x] Plan and ToDos with every SRS constraint
+- [ ] Failing tests: every write route refuses a body without an envelope (`invalid_request`)
+- [ ] Failing tests: envelope schema version other than 1, or scope other than `library:<id>`, is `invalid_request`
+- [ ] Failing tests: the answer is a `CommandOutcome` for the same operation ID, `committed`, with `result`
+- [ ] Failing tests: a stale expected revision is HTTP 409 with a `conflict` outcome and no new version
+- [ ] Failing tests: a repeated operation ID answers the first outcome with no second version
+- [ ] Failing tests: a no-op (refused or create folder) stores no receipt; its retry is evaluated again
+- [ ] Failing tests: an operation ID reused for another route, library or input is refused
+- [ ] Receipts bounded at 10,000 and the in-flight claim released on every path
+- [ ] Upload as multipart `envelope` + `input` + `file`, at most 64 MiB
+- [ ] Revision rule per route (object head, file head, `0` for a new upload, source head for a copy) under the write lock
+- [ ] Journal entries keep their names and redaction and carry the operation ID
+- [ ] Contract 0.25.0: request and answer schemas, 409 `FileCommandConflict`, regenerated `schema.d.ts`, drift test green
+- [ ] BDD feature for API-S-002 file command envelopes
+- [ ] UI: `command()`/`upload()` keep `result`; `ClientFileSource` and the browser's callers use them with the shown revision
+- [ ] UI: `MemoryFileSource` follows the same rules; unit tests updated
+- [ ] fmt, clippy, api tests, UI lint/typecheck/tests
+- [ ] Docs: plan box, checklist box, progress script, walkthrough with raw output; delete Plan and ToDos
+- [ ] `FULL=1 bash scripts/pre-commit.sh` on the head commit
