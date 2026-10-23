@@ -43,10 +43,11 @@ fn every_operation_kind_has_a_stable_token() {
         (OperationKind::Revert, "revert"),
         (OperationKind::Reinstate, "reinstate"),
         (OperationKind::Snapshot, "snapshot"),
-        (OperationKind::CatalogOrganisation, "catalog"),
+        (OperationKind::CatalogOrganisation, "catalog.organisation"),
         (OperationKind::Repair, "repair"),
         (OperationKind::Export, "export"),
         (OperationKind::Scrub, "scrub"),
+        (OperationKind::Publish, "publish"),
         (OperationKind::Backfill, "backfill"),
         (OperationKind::Unknown, "unknown"),
     ];
@@ -58,6 +59,38 @@ fn every_operation_kind_has_a_stable_token() {
         assert_eq!(json, format!("\"{token}\""));
     }
     assert_eq!(OperationKind::parse("mods"), None);
+}
+
+/// Versions committed before the kind was renamed carry `catalog`: it is
+/// still read as catalog organisation, and never written again.
+#[test]
+fn the_former_catalog_token_is_read_as_catalog_organisation() {
+    assert_eq!(
+        OperationKind::parse("catalog"),
+        Some(OperationKind::CatalogOrganisation)
+    );
+    let kind: OperationKind = serde_json::from_str("\"catalog\"").unwrap();
+    assert_eq!(kind, OperationKind::CatalogOrganisation);
+    assert!(OperationKind::ALL
+        .iter()
+        .all(|kind| kind.as_str() != "catalog"));
+    let stored = "filesquid.operation.v1 {\"operation_id\":\"op-9\",\"kind\":\"catalog\"}";
+    let message = OperationMessage::parse(stored).unwrap().unwrap();
+    assert_eq!(message.kind(), OperationKind::CatalogOrganisation);
+    assert!(
+        message
+            .format()
+            .contains("\"kind\":\"catalog.organisation\""),
+        "rewritten in the current spelling"
+    );
+}
+
+#[test]
+fn the_publish_kind_is_written_and_parsed_back() {
+    let message = OperationMessage::new(op("op-10"), OperationKind::Publish);
+    let text = message.format();
+    assert!(text.contains("\"kind\":\"publish\""), "{text}");
+    assert_eq!(OperationMessage::parse(&text), Ok(Some(message)));
 }
 
 #[test]
