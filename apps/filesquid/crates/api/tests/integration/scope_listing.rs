@@ -12,9 +12,9 @@ mod library_fixture;
 #[path = "../support/drive_catalog.rs"]
 mod drive_catalog;
 
-use axum::http::{Method, StatusCode};
+use axum::http::StatusCode;
 use drive_catalog::DriveCatalog;
-use files_fixture::{encode, upload_uri, Answer, FilesRig, LIBRARY};
+use files_fixture::{encode, upload_facts, Answer, FilesRig, LIBRARY};
 use filesquid_api::files::{
     FileError, ScopeAfter, ScopeEntry, ScopeObject, ScopeObjects, ScopePage,
 };
@@ -103,10 +103,10 @@ impl ScopeObjects for Indexed {
 
 /// Upload `bytes` as a new file named `name` (NFC) and answer its file ID.
 async fn upload(rig: &FilesRig, name: &str, bytes: &[u8]) -> String {
-    let uri = upload_uri(name, bytes.len(), "name_normalization=nfc");
-    let answer = rig.call(Method::PUT, &uri, &[], bytes.to_vec()).await;
+    let input = upload_facts(name, bytes.len(), "name_normalization=nfc");
+    let answer = rig.upload(input, bytes).await;
     assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
-    answer.json()["file_id"]
+    answer.result()["file_id"]
         .as_str()
         .expect("file id")
         .to_string()
