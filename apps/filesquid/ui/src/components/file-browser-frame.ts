@@ -30,6 +30,8 @@ export interface Frame {
   /** The name form. */
   readonly form: {
     readonly element: HTMLFormElement;
+    /** The visible title, "Rename {name}" or "New folder in {folder}" (mockup 14). */
+    readonly title: HTMLElement;
     readonly name: HTMLInputElement;
     readonly folderField: HTMLElement;
     readonly folder: HTMLInputElement;
@@ -65,21 +67,39 @@ export interface Frame {
   readonly panels: HTMLElement;
 }
 
+/**
+ * The frame's stylesheet (UI-S-024, UI-S-026): 36 px buttons with 14 px 600 text, radius 7 px
+ * and a 1.5 px `--fs-outline-strong` border on `--fs-surface-card` (Save filled
+ * `--fs-primary`, the pressed layout half on the active tint); the name form drawn as the rename
+ * form of mockup 14 (`--fs-surface-overlay`, a 1 px `--fs-outline-strong` border, radius 10 px,
+ * the 20 px 700 heading-font title) with its 36 px input (1.5 px `--fs-outline-control`, radius
+ * 6 px, a 2 px `--fs-focus-ring` border on focus) and, for a refusal (mockup 44), a 2 px
+ * `--fs-error` border on the field and the message below it in `--fs-error`.
+ */
 export const STYLE = `
-  .frame { display: flex; flex-direction: column; gap: var(--fs-space-3); min-width: 0; }
+  .frame { display: flex; flex-direction: column; gap: var(--fs-space-3); min-width: 0; font-size: var(--fs-font-size-ui); }
   .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--fs-space-2); }
   .spacer { flex: 1 1 auto; }
   .group { display: inline-flex; gap: var(--fs-space-1); }
-  button { padding: var(--fs-space-1) var(--fs-space-3); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface); color: var(--fs-on-surface); font: inherit; cursor: pointer; transition: background-color var(--fs-motion-duration), color var(--fs-motion-duration); }
-  button:hover { background: var(--fs-surface-container); }
-  button.primary, button[aria-pressed="true"] { border-color: var(--fs-primary); background: var(--fs-primary-container); color: var(--fs-on-primary-container); font-weight: 600; }
-  button[aria-disabled="true"] { opacity: 0.5; cursor: default; }
-  .name-form { display: flex; flex-wrap: wrap; align-items: end; gap: var(--fs-space-2) var(--fs-space-3); padding: var(--fs-space-3); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface-container); }
-  .name-form label { display: flex; flex-direction: column; gap: var(--fs-space-1); font-size: var(--fs-font-size-small); color: var(--fs-on-surface-variant); }
-  .name-form input { min-width: 12rem; padding: var(--fs-space-1) var(--fs-space-2); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface); color: var(--fs-on-surface); font: inherit; }
+  button { box-sizing: border-box; min-block-size: 2.25rem; padding: 0 var(--fs-space-3); border: 1.5px solid var(--fs-outline-strong); border-radius: var(--fs-radius-button); background: var(--fs-surface-card); color: var(--fs-on-surface); font: inherit; font-size: var(--fs-font-size-ui); font-weight: 600; cursor: pointer; transition: background-color var(--fs-motion-duration), color var(--fs-motion-duration); }
+  button:hover { background: var(--fs-surface-raised); }
+  button[aria-pressed="true"] { border-color: var(--fs-primary-container); background: var(--fs-primary-container); color: var(--fs-on-primary-container); }
+  button.primary { border-color: var(--fs-primary); background: var(--fs-primary); color: var(--fs-on-primary); }
+  button.primary:hover { border-color: var(--fs-on-primary-container); background: var(--fs-on-primary-container); }
+  button[aria-disabled="true"] { border-color: var(--fs-outline); background: var(--fs-surface-raised); color: var(--fs-on-surface-placeholder); cursor: default; }
+  .name-form { display: flex; flex-wrap: wrap; align-items: end; gap: var(--fs-space-3); box-sizing: border-box; max-inline-size: 35rem; padding: var(--fs-space-4); border: 1px solid var(--fs-outline-strong); border-radius: var(--fs-radius-dialog); background: var(--fs-surface-overlay); }
+  .form-title { flex: 1 1 100%; margin: 0; font-family: var(--fs-font-heading); font-size: var(--fs-font-size-title); font-weight: 700; color: var(--fs-on-surface-heading); overflow-wrap: anywhere; }
+  .form-title:empty { display: none; }
+  .name-form label { display: flex; flex: 1 1 100%; flex-direction: column; gap: var(--fs-space-1); font-size: var(--fs-font-size-small); color: var(--fs-on-surface-variant); }
+  .name-form input { box-sizing: border-box; min-block-size: 2.25rem; padding: 0 var(--fs-space-2); border: 1.5px solid var(--fs-outline-control); border-radius: var(--fs-radius-input); background: var(--fs-surface-card); color: var(--fs-on-surface); font: inherit; font-size: var(--fs-font-size-ui); }
+  .name-form input:focus-visible { outline: none; border: 2px solid var(--fs-focus-ring); }
+  .name-form:has(.form-error:not(:empty)) input[name="name"] { border: 2px solid var(--fs-error); }
+  .name-form button { min-block-size: 2.375rem; }
   .form-error { flex: 1 1 100%; margin: 0; color: var(--fs-error); font-size: var(--fs-font-size-small); }
-  .status, .alert { display: flex; flex-wrap: wrap; align-items: center; gap: var(--fs-space-2) var(--fs-space-3); overflow-wrap: anywhere; }
+  .form-error:empty { display: none; }
+  .status, .alert { display: flex; flex-wrap: wrap; align-items: center; gap: var(--fs-space-2) var(--fs-space-3); overflow-wrap: anywhere; font-size: var(--fs-font-size-small); }
   .status:empty, .alert:empty { display: none; }
+  .status { color: var(--fs-on-surface-variant); }
   .alert { color: var(--fs-error); }
   .alert p, .status p { margin: 0; }
   .main { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--fs-space-4); min-width: 0; }
@@ -89,7 +109,7 @@ export const STYLE = `
   .drop { position: absolute; inset: 0; z-index: 1; display: flex; align-items: center; justify-content: center; padding: var(--fs-space-4); border: 2px dashed var(--fs-primary); border-radius: var(--fs-radius); background: var(--fs-primary-container); color: var(--fs-on-primary-container); font-weight: 600; text-align: center; }
   .summary, .more, .limit { margin: 0; font-size: var(--fs-font-size-small); color: var(--fs-on-surface-variant); }
   .viewer header { display: flex; flex-wrap: wrap; align-items: center; gap: var(--fs-space-2) var(--fs-space-3); }
-  .viewer h2 { flex: 1 1 8rem; min-width: 0; margin: 0; font-family: var(--fs-font-heading); font-size: var(--fs-font-size-title); overflow-wrap: anywhere; }
+  .viewer h2 { flex: 1 1 8rem; min-width: 0; margin: 0; font-family: var(--fs-font-sans); font-size: var(--fs-font-size-ui); font-weight: 600; color: var(--fs-on-surface); overflow-wrap: anywhere; }
   .position { font-size: var(--fs-font-size-small); color: var(--fs-on-surface-variant); }
   [hidden] { display: none !important; }
 `;
@@ -161,14 +181,16 @@ function buildForm(labels: LabelTable): Frame["form"] {
   element.noValidate = true;
   const name = field(labels.fileFieldName, "name");
   const folder = field(labels.fileFieldFolder, "folder");
+  const title = node("h3", "form-title");
   const error = node("p", "form-error");
   error.setAttribute("role", "alert");
   const submit = node("button", "submit primary", labels.fileSave);
   submit.type = "submit";
   const cancel = button("cancel", labels.fileCancel);
-  element.append(name.label, folder.label, submit, cancel, error);
+  element.append(title, name.label, folder.label, error, submit, cancel);
   return {
     element,
+    title,
     name: name.input,
     folderField: folder.label,
     folder: folder.input,

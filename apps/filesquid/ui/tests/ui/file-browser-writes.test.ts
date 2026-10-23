@@ -246,6 +246,7 @@ describe("new folder", () => {
     const form = one(browser, "form.name-form");
     expect(form.hidden).toBe(false);
     expect(form.getAttribute("aria-label")).toBe("New folder in All files");
+    expect(form.querySelector(".form-title")?.textContent).toBe("New folder in All files");
     const field = one<HTMLInputElement>(browser, "form.name-form input[name=name]");
     expect(rootOf(browser).activeElement).toBe(field);
     await submit(browser, { name: "Photos" });
@@ -659,5 +660,32 @@ describe("answers that arrive after another object is opened", () => {
     answer({ library_id: "lib", object_id: "obj", path: "Photos", pending: true });
     await idle(browser);
     expect(names(browser)).not.toContain("Photos");
+  });
+});
+
+describe("rename form look (UI-S-026, mockups 14 and 44)", () => {
+  it("draws the form, field, refusal border and buttons through the v3 tokens", async () => {
+    const browser = await mount(fixture());
+    const css = rootOf(browser).querySelector("style")?.textContent ?? "";
+    expect(css).toMatch(
+      /\.name-form \{[^}]*border: 1px solid var\(--fs-outline-strong\); border-radius: var\(--fs-radius-dialog\); background: var\(--fs-surface-overlay\)/,
+    );
+    expect(css).toMatch(
+      /\.form-title \{[^}]*font-family: var\(--fs-font-heading\); font-size: var\(--fs-font-size-title\); font-weight: 700/,
+    );
+    expect(css).toMatch(
+      /\.name-form input \{[^}]*min-block-size: 2\.25rem;[^}]*border: 1\.5px solid var\(--fs-outline-control\); border-radius: var\(--fs-radius-input\)/,
+    );
+    expect(css).toMatch(
+      /\.name-form input:focus-visible \{[^}]*border: 2px solid var\(--fs-focus-ring\)/,
+    );
+    expect(css).toMatch(
+      /\.name-form:has\(\.form-error:not\(:empty\)\) input\[name="name"\] \{ border: 2px solid var\(--fs-error\); \}/,
+    );
+    expect(css).toMatch(/\.form-error \{[^}]*color: var\(--fs-error\)/);
+    expect(css).toMatch(
+      /button\.primary \{ border-color: var\(--fs-primary\); background: var\(--fs-primary\); color: var\(--fs-on-primary\); \}/,
+    );
+    expect(one(browser, "form.name-form button.submit").classList.contains("primary")).toBe(true);
   });
 });

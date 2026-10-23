@@ -5,6 +5,14 @@
  * storage, throughput and queues, and the activity journal with search, live tail and JSON
  * Lines export. Every value is rendered with `textContent`; journal data never becomes markup.
  *
+ * Look (UI-S-032, mockups `resources/ui-mockups/v3/31-monitor.svg` and its dark twin): a page
+ * head with the 30 px title, `monitorOwnerOnly`, the Live chip on the active tint and the
+ * secondary Download button (`monitorExport`, "Download JSON Lines", owner answer 8); each
+ * section a card on `--fs-surface-card` with a 1 px `--fs-outline` border and radius 10 px, its
+ * heading an 11 px eyebrow; the health status word 22 px 700 in the heading font; column heads
+ * 13 px 500 in `--fs-on-surface-variant`; a stalled or failed process's state in `--fs-error`
+ * (warnings use the error colour too, owner answer 14); journal rows in mono.
+ *
  * Accessibility (UI-S-016): each table is named by its section heading and sits in a named,
  * focusable scroll region, so narrow windows scroll the table rather than the page; when a
  * re-render removes the focused element, focus moves to the token field, the alert or the first
@@ -25,6 +33,7 @@ import { formatLabel, type LabelKey, type LabelTable } from "../theme/labels";
 import { denialLabel, type DenialText } from "./denial";
 import type { FsOcflFindings } from "./fs-ocfl-findings";
 import { A11Y_STYLE } from "./a11y-style";
+import { CONTROL_STYLE } from "./control-style";
 import { replaceKeepingFocus } from "../a11y/focus";
 
 /** The part of the API client the Monitor needs (injectable in tests). */
@@ -87,19 +96,26 @@ const MAX_BUFFERED_ENTRIES = 1000;
 const GIB = 1024 ** 3;
 
 const STYLE = `
-  :host { display: block; color: var(--fs-on-surface); font-family: var(--fs-font-sans); }
-  section { margin-block-end: var(--fs-space-5); padding: var(--fs-space-4); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface); }
-  h2 { margin: 0 0 var(--fs-space-2); font-size: var(--fs-font-size-body); }
+  :host { display: block; color: var(--fs-on-surface); font-family: var(--fs-font-sans); font-size: var(--fs-font-size-small); }
+  .page-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--fs-space-2) var(--fs-space-3); margin-block-end: var(--fs-space-4); }
+  .page-head .owner { flex: 1 1 auto; margin: 0; color: var(--fs-on-surface-variant); }
+  .page-head .button { align-self: center; }
+  section { margin-block-end: var(--fs-space-4); padding: var(--fs-space-4); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius-dialog); background: var(--fs-surface-card); }
+  h2 { margin: 0 0 var(--fs-space-3); font-size: var(--fs-font-size-eyebrow); font-weight: 400; letter-spacing: 0.1em; text-transform: uppercase; color: var(--fs-on-surface-muted); }
+  .page-head h2 { margin: 0; font-family: var(--fs-font-heading); font-size: var(--fs-font-size-page); font-weight: 700; letter-spacing: normal; text-transform: none; color: var(--fs-on-surface-heading); }
   table { width: 100%; border-collapse: collapse; }
   .scroll { overflow-x: auto; }
-  th, td { text-align: start; padding: var(--fs-space-1) var(--fs-space-2); border-block-end: 1px solid var(--fs-outline); }
-  td { font-family: var(--fs-font-mono); }
+  th, td { text-align: start; padding: var(--fs-space-2); border-block-end: 1px solid var(--fs-outline); }
+  th { font-weight: 500; color: var(--fs-on-surface-variant); }
+  [data-section="journal"] td { font-family: var(--fs-font-mono); }
   dl { display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr); gap: var(--fs-space-1) var(--fs-space-4); margin: 0; }
   dt, dd { min-width: 0; overflow-wrap: anywhere; }
-  dd { margin: 0; font-family: var(--fs-font-mono); }
-  [data-status="ok"] .status { color: var(--fs-primary); }
-  [data-status="degraded"] .status, [data-status="failing"] .status, tr[data-state="stalled"], tr[data-state="failed"] { color: var(--fs-error); }
-  form { display: flex; flex-wrap: wrap; gap: var(--fs-space-2); align-items: center; margin-block-end: var(--fs-space-2); }
+  dt { color: var(--fs-on-surface-variant); }
+  dd { margin: 0; color: var(--fs-on-surface); }
+  .status { margin: 0 0 var(--fs-space-2); font-family: var(--fs-font-heading); font-size: var(--fs-font-size-heading); font-weight: 700; color: var(--fs-on-surface-heading); }
+  [data-section="health"] ul { margin: 0; padding-inline-start: var(--fs-space-3); }
+  [data-status="degraded"] .status, [data-status="failing"] .status, tr[data-state="stalled"] td:nth-child(2), tr[data-state="failed"] td:nth-child(2), tr[data-outcome="failed"] td { color: var(--fs-error); }
+  form { display: flex; flex-wrap: wrap; gap: var(--fs-space-2); align-items: center; margin-block-end: var(--fs-space-3); }
   [role="alert"] { color: var(--fs-error); overflow-wrap: anywhere; }
 `;
 
@@ -327,7 +343,9 @@ export class FsMonitor extends HTMLElement {
     input.required = true;
     const label = el("label", labels.monitorAdminToken);
     label.setAttribute("for", input.id);
+    input.className = "input";
     const button = el("button", labels.monitorSignIn);
+    button.className = "button primary";
     button.setAttribute("type", "submit");
     form.append(label, input, button);
     form.addEventListener("submit", (event) => {
@@ -365,8 +383,30 @@ export class FsMonitor extends HTMLElement {
         scrollRegion("journal", journalTable(labels)),
       ),
     ];
-    replaceKeepingFocus(root, [style(), ...sections], () => root.querySelector("h2"));
+    const head = this.pageHead(labels);
+    const first = () => root.querySelector<HTMLElement>("section h2");
+    replaceKeepingFocus(root, [style(), head, ...sections], first);
     root.querySelector('[data-section="health"] p')?.classList.add("status");
+  }
+
+  /**
+   * The page head: title, the owner-only line, the Live chip and the Download button of the
+   * journal's JSON Lines export.
+   */
+  private pageHead(labels: LabelTable): HTMLElement {
+    const head = document.createElement("div");
+    head.className = "page-head";
+    const owner = el("p", labels.monitorOwnerOnly);
+    owner.className = "owner";
+    const live = el("span", labels.monitorLive);
+    live.className = "chip ok live";
+    const download = el("button", labels.monitorExport);
+    download.className = "button secondary";
+    download.setAttribute("type", "button");
+    download.dataset.action = "export";
+    download.addEventListener("click", () => void this.exportJournal());
+    head.append(el("h2", labels.monitor), owner, live, download);
+    return head;
   }
 
   /**
@@ -450,7 +490,7 @@ export class FsMonitor extends HTMLElement {
     body.replaceChildren(...this.journal.map(journalRow));
   }
 
-  /** Build the journal search and export controls. */
+  /** Build the journal search controls; the Download button sits in the page head. */
   private journalForm(labels: LabelTable): HTMLFormElement {
     const form = document.createElement("form");
     form.dataset.form = "journal";
@@ -460,13 +500,11 @@ export class FsMonitor extends HTMLElement {
     input.placeholder = "ocfl.commit";
     const label = el("label", labels.monitorFilter);
     label.setAttribute("for", input.id);
+    input.className = "input";
     const search = el("button", labels.monitorSearch);
+    search.className = "button secondary";
     search.setAttribute("type", "submit");
-    const exportButton = el("button", labels.monitorExport);
-    exportButton.setAttribute("type", "button");
-    exportButton.dataset.action = "export";
-    exportButton.addEventListener("click", () => void this.exportJournal());
-    form.append(label, input, search, exportButton);
+    form.append(label, input, search);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       this.operationFilter = input.value.trim();
@@ -672,7 +710,7 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, text: string): HTMLEl
 
 /** Create the component stylesheet, the shared accessibility rules first. */
 function style(): HTMLStyleElement {
-  return el("style", A11Y_STYLE + STYLE);
+  return el("style", A11Y_STYLE + CONTROL_STYLE + STYLE);
 }
 
 /** True for non-null objects (event payload guard). */

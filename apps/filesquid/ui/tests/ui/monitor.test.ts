@@ -129,6 +129,33 @@ describe("<fs-monitor>", () => {
     ]);
   });
 
+  it("draws the UI-S-032 page head: title, owner-only line, Live chip and Download", async () => {
+    const el = mount(fakeClient().client);
+    await settle();
+    const head = el.shadowRoot?.querySelector(".page-head");
+    expect(head?.querySelector("h2")?.textContent).toBe(labels.monitor);
+    expect(head?.querySelector(".owner")?.textContent).toBe(labels.monitorOwnerOnly);
+    expect(head?.querySelector(".chip.ok")?.textContent).toBe(labels.monitorLive);
+    const download = head?.querySelector<HTMLButtonElement>('[data-action="export"]');
+    expect(download?.textContent).toBe("Download JSON Lines");
+    expect(download?.className).toBe("button secondary");
+    const css = el.shadowRoot?.querySelector("style")?.textContent ?? "";
+    expect(css).toMatch(
+      /section \{[^}]*border: 1px solid var\(--fs-outline\); border-radius: var\(--fs-radius-dialog\); background: var\(--fs-surface-card\)/,
+    );
+    expect(css).toMatch(/h2 \{[^}]*font-size: var\(--fs-font-size-eyebrow\); font-weight: 400/);
+    expect(css).toMatch(
+      /\.page-head h2 \{[^}]*font-size: var\(--fs-font-size-page\); font-weight: 700/,
+    );
+    expect(css).toMatch(
+      /\.status \{[^}]*font-size: var\(--fs-font-size-heading\); font-weight: 700/,
+    );
+    expect(css).toMatch(/th \{ font-weight: 500; color: var\(--fs-on-surface-variant\); \}/);
+    expect(css).toMatch(
+      /tr\[data-state="stalled"\] td:nth-child\(2\)[^{]*\{ color: var\(--fs-error\); \}/,
+    );
+  });
+
   it("lists processes with state, progress, rate and ETA", async () => {
     const el = mount(fakeClient().client);
     await settle();

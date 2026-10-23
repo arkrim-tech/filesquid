@@ -313,6 +313,7 @@ export class FileWrites {
       ? formatLabel(renameTitle, { name: mode.row.name })
       : formatLabel(labels.fileNewFolderTitle, { folder });
     form.element.setAttribute("aria-label", title);
+    form.title.textContent = title;
     this.setFieldLabel(rename ? labels.fileFieldName : labels.fileFolderName);
     form.submit.textContent = rename ? labels.fileSave : labels.fileCreate;
     form.folderField.hidden = !rename || only;
