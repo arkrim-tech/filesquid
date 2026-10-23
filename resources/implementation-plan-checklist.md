@@ -141,12 +141,7 @@ FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by ga
     - [x] [MD-0.10](../apps/filesquid/crates/metadata/resources/plan.md#phase-f1-persist-through-ocfl-and-namespace-registry-global-task-fs-13) Cited-version check for import commits and the `OriginalName` scrub class
     - [x] [API-F1.4](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-api-f19-in-fs-310-and-api-f15-in-fs-c1) Metadata property routes
     - [x] [API-F1.13](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-api-f19-in-fs-310-and-api-f15-in-fs-c1) Display names and download names
-18. [ ] [Task FS-1.4](./implementation-plan.md#task-fs-1.4) Jobs, events and the authorisation layer
-    - [x] [API-F1.6](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-api-f19-in-fs-310-and-api-f15-in-fs-c1) Job and event routes
-    - [x] [API-F1.7](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-api-f19-in-fs-310-and-api-f15-in-fs-c1) Authentication and authorisation
-19. [x] [Task 0.8](./implementation-plan.md#task-0.8) Test reporting, capability register, and foundation evidence
-    - [x] [UI-0.6](../apps/filesquid/ui/resources/plan.md#phase-f0-test-reporting-global-task-08) Playwright production suite and Allure
-20. [x] [Task 1.1](./implementation-plan.md#task-1.1) Independent local library create, open, copy, and recover
+18. [x] [Task 1.1](./implementation-plan.md#task-1.1) Independent local library create, open, copy, and recover
     - [x] [CL-1.1](../apps/filesquid/crates/api/resources/plan.md#phases-f2-i1-and-f5-application-meaning-global-tasks-11-14-18) Local library create/open/recover commands
     - [x] [API-F1.12](../apps/filesquid/crates/api/resources/plan.md#phase-f2-library-and-repair-routes-global-task-11) Library and repair routes
     - [x] [DE-1.1](../apps/filesquid/crates/desktop/resources/plan.md#phases-f2-i1-and-f5-library-import-gallery-organize-and-setup-global-tasks-1116) Create, open, copy, rebuild library
@@ -155,6 +150,11 @@ FileSquid MVP (early access) on the macOS desktop: phases F0 to F3, closed by ga
     - [x] [IO-1.4](../apps/filesquid/crates/ocfl/resources/plan.md#phase-f2-independent-recovery-global-task-11) Version-inventory repair for heads without one (W010)
     - [x] [API-F2.7](../apps/filesquid/crates/api/resources/plan.md#phase-f2-activity-and-health-monitoring-global-task-fs-24-and-drive-parity-operations-global-task-fs-25-api-f24-in-global-task-fs-27-after-the-mvp) OCFL validation findings in health and the Monitor
     - [x] [UI-F2.14](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) OCFL validation findings in the Monitor
+19. [x] [Task 0.8](./implementation-plan.md#task-0.8) Test reporting, capability register, and foundation evidence
+    - [x] [UI-0.6](../apps/filesquid/ui/resources/plan.md#phase-f0-test-reporting-global-task-08) Playwright production suite and Allure
+20. [ ] [Task FS-1.4](./implementation-plan.md#task-fs-1.4) Jobs, events and the authorisation layer
+    - [x] [API-F1.6](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-api-f19-in-fs-310-and-api-f15-in-fs-c1) Job and event routes
+    - [x] [API-F1.7](../apps/filesquid/crates/api/resources/plan.md#phase-f1-the-api-global-tasks-fs-11fs-14-after-the-mvp-api-f18-in-fs-15-api-f19-in-fs-310-and-api-f15-in-fs-c1) Authentication and authorisation
 21. [ ] [Task FS-2.2](./implementation-plan.md#task-fs-2.2) Drive-style browser and sidebar panels
     - [x] [UI-F2.2](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) `<fs-file-browser>`
     - [ ] [UI-F2.3](../apps/filesquid/ui/resources/plan.md#phase-f2-default-ui-global-tasks-fs-21-fs-22-fs-24-fs-25-11-12-after-the-mvp-ui-f26-in-global-task-fs-23-ui-f210-and-ui-f212-in-global-task-fs-27-ui-f213-in-global-task-fs-26-ui-f25-in-global-task-fs-c1-phase-c) Details and Versions panels
