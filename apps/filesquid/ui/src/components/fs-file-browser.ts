@@ -26,6 +26,7 @@
  */
 import { formatLabel, type LabelTable } from "../theme/labels";
 import { A11Y_STYLE } from "./a11y-style";
+import { CONTROL_STYLE } from "./control-style";
 import { focusElement } from "../a11y/focus";
 import { RETRY_EVENT } from "./fs-states";
 import { failureState, type ViewState } from "./view-state";
@@ -247,7 +248,7 @@ export class FsFileBrowser extends HTMLElement {
     this.writes = new FileWrites(frame, this.writesHost(options));
     this.wireEvents(root, frame);
     const style = document.createElement("style");
-    style.textContent = A11Y_STYLE + STYLE + FRAME_STYLE + ROW_STYLE;
+    style.textContent = A11Y_STYLE + CONTROL_STYLE + STYLE + FRAME_STYLE + ROW_STYLE;
     root.replaceChildren(style, frame.root);
     this.configurePreview();
     this.mountPanels();

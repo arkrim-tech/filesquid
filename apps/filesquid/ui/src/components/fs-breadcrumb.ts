@@ -5,6 +5,9 @@
  * breadcrumb pattern). The trail is data: set `items`, for example from `breadcrumbTrail()`
  * over the navigation data. The element is hidden while the trail is empty.
  *
+ * Look (UI-S-025): 13 px, ancestors in `--fs-on-surface-variant`, the current page 500 in
+ * `--fs-on-surface`, a muted "›" between them.
+ *
  * Accessibility (UI-S-016): separators are drawn by CSS and hidden from assistive technology;
  * the trail wraps instead of scrolling; at most `MAX_DEPTH` links are shown (the last ones, so
  * the current page stays last); after a new trail, focus stays on the link with the same
@@ -26,10 +29,10 @@ const STYLE = `
   :host([hidden]) { display: none; }
   ol { display: flex; flex-wrap: wrap; align-items: center; gap: var(--fs-space-1) var(--fs-space-2); margin: 0; padding: 0; list-style: none; }
   li { display: inline-flex; align-items: center; gap: var(--fs-space-2); min-width: 0; }
-  li + li::before { content: "/" / ""; color: var(--fs-on-surface-variant); }
-  a { color: var(--fs-primary); text-decoration: none; border-radius: var(--fs-radius); overflow-wrap: anywhere; transition: color var(--fs-motion-duration); }
-  a:hover { text-decoration: underline; }
-  a[aria-current="page"] { color: var(--fs-on-surface); font-weight: 600; }
+  li + li::before { content: "\\203A" / ""; color: var(--fs-on-surface-muted); }
+  a { color: var(--fs-on-surface-variant); text-decoration: none; border-radius: var(--fs-radius-item); overflow-wrap: anywhere; transition: color var(--fs-motion-duration); }
+  a:hover { color: var(--fs-on-surface); text-decoration: underline; }
+  a[aria-current="page"] { color: var(--fs-on-surface); font-weight: 500; }
 `;
 
 /** Custom element that shows a breadcrumb trail. */
