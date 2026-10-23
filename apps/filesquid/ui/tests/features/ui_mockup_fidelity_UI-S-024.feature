@@ -8,7 +8,8 @@
 # v3 README questions of the same day are quoted in the v3 README.
 # Executable proof arrives with the tasks that build each surface (UI-F2.18 first, then UI-1.2,
 # UI-F2.3, UI-F2.4, UI-F2.8, UI-F2.9, UI-F2.11, UI-F2.15, UI-F2.16, UI-F2.17): Playwright against
-# vite build plus vite preview at 1440 x 900, in light and dark.
+# vite build plus vite preview at 1440 x 900, in light and dark. UI-F2.18's proof is
+# tests/e2e/preview/mockup-fidelity.spec.ts (the "Built surfaces" scenarios below).
 Feature: The default UI matches the active mockup suite
   As a FileSquid owner on the macOS desktop
   I want every screen to look and read as the approved mockups do
@@ -102,3 +103,67 @@ Feature: The default UI matches the active mockup suite
     When I focus the host badge and press Enter
     Then a popover should say "Your files stay on this device. Only you can read them."
     And pressing Escape should close it and return focus to the badge
+
+  # Built surfaces (Task UI-F2.18, tests/e2e/preview/mockup-fidelity.spec.ts)
+  Scenario Outline: The shell frame matches the mockups in both themes
+    Given the <theme> theme is shown
+    When I open the Monitor
+    Then the sidebar should be 240 x 900 px on <card> with a 1 px <outline> edge
+    And the New button should be 208 x 38 px, filled <primary> with "New" in <on_primary>
+    And the view filter should be 208 x 34 px with the placeholder "Filter this view"
+    And the search field should be 520 x 36 px with a 1.5 px <control> border and radius 6 px
+    And the host badge should be 28 px tall on <raised> reading "This device"
+    And the header should be 60 px tall and the footer 40 px tall
+    And the header should show no theme control
+
+    Examples:
+      | theme | card    | outline | primary | on_primary | control | raised  |
+      | light | #ffffff | #e0e0e0 | #16ac49 | #ffffff    | #8e8e8e | #f5f5f5 |
+      | dark  | #1c1c1c | #2a2a2a | #16ac49 | #ffffff    | #757575 | #242424 |
+
+  Scenario Outline: The welcome screen draws the three cards without the shell
+    Given the <theme> theme is shown
+    When I open the library start page
+    Then the sidebar, header and footer should be hidden
+    And the title "Your files. Private." should be 56 px Georgia weight 700
+    And three cards of 332 x 248 px should be shown, the Create card with a 2 px <primary> border
+    And the privacy box should state "Your files stay on this device. Only you can read them." from the host descriptor
+    And the footer line should read "Open source under the MIT licence · Version 0.1.0 · macOS"
+
+    Examples:
+      | theme | primary |
+      | light | #16ac49 |
+      | dark  | #16ac49 |
+
+  Scenario: The library page draws the facts, the actions and the W010 note
+    When I open the library page of a library whose objects lack a version inventory
+    Then the facts should be 13 px label and value rows with the values 160 px from the labels
+    And the library ID should be shown in the monospace font
+    And "Copy library to…" and "Rebuild catalog from files" should be secondary buttons
+    And a 448 px note with a 1 px error border should say "Their latest version has no version inventory (W010)."
+    And "Review repair" should be a ghost button
+
+  Scenario: The repair consent dialog sits on the black 32 % scrim
+    When I review the repair of 2 objects
+    Then a 600 px dialog on the overlay surface should be titled "Repair 2 object(s)?" in 22 px Georgia weight 700
+    And the scrim should be black at opacity 0.32
+    And "Cancel" should have the focus
+    And the confirm button should be the dialog's one primary button, 38 px tall
+
+  Scenario: A view state is one centred treatment
+    Given the folder chooser answers that it is unavailable
+    When I try to open a library
+    Then the state title should be 15 px weight 600 with its 24 px icon in the error colour
+    And the reason should be 13 px in the secondary text colour
+    And "Try again" should be a 36 px secondary button with a 7 px radius
+    And the three choices should stay on the page
+
+  Scenario: The Monitor draws its page head, cards, chips and stalled state
+    Given a stalled process and an open E023 error and W010 warning
+    When I open the Monitor
+    Then the title "Monitor" should be 30 px with "Only you can open this on this device." and the "Live" chip on the active tint
+    And "Download JSON Lines" should be a secondary button
+    And each section should be a card with a 1 px subtle border and a 10 px radius
+    And the health word should be 22 px Georgia weight 700 in the error colour
+    And the stalled process's state should be in the error colour
+    And the E023 and W010 codes should both be chips outlined in the error colour

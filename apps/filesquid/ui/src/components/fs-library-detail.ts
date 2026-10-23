@@ -176,13 +176,15 @@ export class FsLibraryDetail extends HTMLElement {
     ]);
     const known = registry.lastRebuild(id);
     if (known) this.showResult("rebuild", rebuildReport(known, labels));
+    const side = node("div", "side");
+    side.append(this.actionsSection(), this.repairSlot);
+    const columns = node("div", "columns");
+    columns.append(this.facts(id), side);
     const page = node("div", "page");
     page.append(
-      link("all", labels.libraryStartBack, LIBRARY_ROUTE),
+      link("all crumb", labels.libraryStartBack, LIBRARY_ROUTE),
       node("h2", undefined, labels.library),
-      this.facts(id),
-      this.repairSlot,
-      this.actionsSection(),
+      columns,
     );
     this.shadowRoot.replaceChildren(pageStyle(), page);
     void this.loadCandidates();
@@ -217,6 +219,7 @@ export class FsLibraryDetail extends HTMLElement {
     ];
     for (const [term, value] of rows)
       list.append(node("dt", undefined, term), node("dd", undefined, value));
+    list.querySelector("dd")?.classList.add("mono");
     const section = node("section");
     section.dataset.section = "facts";
     section.append(node("h3", undefined, labels.libraryFactsTitle), list);
@@ -277,7 +280,8 @@ export class FsLibraryDetail extends HTMLElement {
     section.dataset.section = "repair-note";
     section.append(
       node("p", undefined, text),
-      link("review", labels.libraryReviewRepair, libraryRepairHref(id)),
+      node("p", "reason", labels.libraryReadOnlyReason),
+      link("review button ghost", labels.libraryReviewRepair, libraryRepairHref(id)),
     );
     return section;
   }

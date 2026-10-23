@@ -148,7 +148,14 @@ describe("<fs-file-preview>", () => {
     expect(preview.dataset.state).toBe("unsupported");
     const root = preview.shadowRoot as ShadowRoot;
     expect(root.querySelector(".unsupported .title")?.textContent).toBe(labels.fileNoPreview);
-    expect(root.querySelector(".unsupported .help")?.textContent).toBe(labels.fileNoPreviewHelp);
+    expect([...root.querySelectorAll(".unsupported .help")].map((p) => p.textContent)).toEqual([
+      labels.fileNoPreviewKeep,
+      labels.fileNoPreviewOpenElsewhere,
+    ]);
+    expect(root.querySelector(".unsupported .badge")?.textContent).toBe("BLEND");
+    expect(root.querySelector("style")?.textContent).toMatch(
+      /\.unsupported \.title \{[^}]*font-family: var\(--fs-font-heading\)[^}]*font-size: var\(--fs-font-size-heading\)/,
+    );
     expect(root.querySelector("img, video, audio, pre, iframe, object, embed")).toBeNull();
     expect(root.textContent).not.toContain("0a1b2c42");
   });

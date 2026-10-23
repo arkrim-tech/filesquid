@@ -1,9 +1,14 @@
 /**
- * `<fs-host-indicator>`: the host privacy indicator (UI-S-004, UI-S-018). The header shows a
- * compact badge, an icon and a short host label ("This device" on the desktop host), and the
- * badge opens a popover with the full statement: who can read files on the connected host,
- * then, apart from that, the state of encrypted backup and sync to the hosted service (owner
- * decision 2026-10-19, option 1a; mockup `resources/ui-mockups/v2/40-host-indicator.svg`).
+ * `<fs-host-indicator>`: the host privacy indicator (UI-S-004, UI-S-018, UI-S-033). The
+ * header shows a compact pill badge, the device icon and a short host label ("This device" on
+ * the desktop host), and the badge opens a 372 px popover on the overlay surface, titled by that
+ * host label, with the full statement: who can read files on the connected host, then, apart
+ * from that, the state of encrypted backup and sync to the hosted service (owner decision
+ * 2026-10-19, option 1a; mockup `resources/ui-mockups/v3/40-host-indicator.svg`). The host
+ * badge stays in the header: it names the host, not the API (owner confirmation 2026-10-23).
+ *
+ * Each time the host is known or lost the element dispatches a bubbling, composed
+ * {@link HOST_EVENT} with the host type (or none), so the shell can show its desktop-only rows.
  * Every fact comes from the host descriptor (`GET /api/v1/host`, API-S-020) and every word from
  * the active label table; the UI infers nothing.
  *
@@ -22,7 +27,8 @@
  * the popover is closed. The popover ends with a "Privacy settings" link to the Settings page.
  *
  * With `inline: true` the same element is the Settings page's Privacy section: no badge, the
- * full statement shown in place as a named region, following the host the same way.
+ * full statement shown in place as a named region with the desktop's no-telemetry line
+ * (`hostDesktopNoTelemetry`), following the host the same way.
  */
 import { failureState, type ViewState } from "./view-state";
 import type { ApiEvent, HostDescriptor } from "../api/client";
@@ -32,6 +38,11 @@ import { A11Y_STYLE } from "./a11y-style";
 import { RETRY_EVENT, type FsStates } from "./fs-states";
 import { HOST_STATEMENT_STYLE, buildHostStatement } from "./host-statement";
 import { focusElement } from "../a11y/focus";
+import { CONTROL_STYLE } from "./control-style";
+import { icon } from "./icons";
+
+/** Name of the event dispatched when the host becomes known (`detail.hostType`) or unknown. */
+export const HOST_EVENT = "fs-host";
 
 /** The part of the API client the indicator needs (injectable in tests). */
 export interface HostClient {
@@ -68,15 +79,17 @@ const BADGE_LABEL: Readonly<Record<HostType, LabelKey>> = {
 
 const STYLE = `
   :host { position: relative; display: inline-block; min-width: 0; font-family: var(--fs-font-sans); font-size: var(--fs-font-size-small); }
-  .badge { display: inline-flex; align-items: center; gap: var(--fs-space-2); padding: var(--fs-space-1) var(--fs-space-3); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface-container); color: var(--fs-on-surface); font: inherit; cursor: pointer; transition: background-color var(--fs-motion-duration); }
+  .badge { display: inline-flex; align-items: center; gap: var(--fs-space-2); box-sizing: border-box; min-block-size: 1.75rem; padding: 0 var(--fs-space-3) 0 var(--fs-space-2); border: 0; border-radius: var(--fs-radius-pill); background: var(--fs-surface-raised); color: var(--fs-on-surface); font: inherit; font-weight: 600; cursor: pointer; transition: background-color var(--fs-motion-duration), color var(--fs-motion-duration); }
   .badge:hover, .badge[aria-expanded="true"] { background: var(--fs-primary-container); color: var(--fs-on-primary-container); }
-  .icon { display: inline-block; inline-size: 0.9em; block-size: 0.65em; border: 2px solid currentColor; border-radius: var(--fs-radius); }
-  [role="dialog"] { position: absolute; inset-block-start: calc(100% + var(--fs-space-2)); inset-inline-end: 0; z-index: 2; display: grid; gap: var(--fs-space-2); box-sizing: border-box; inline-size: max-content; max-inline-size: min(24rem, calc(100vw - 2 * var(--fs-space-4))); padding: var(--fs-space-3); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface); color: var(--fs-on-surface); overflow-wrap: anywhere; }
+  .badge .icon { color: inherit; }
+  [role="dialog"] { position: absolute; inset-block-start: calc(100% + var(--fs-space-2)); inset-inline-end: 0; z-index: 2; display: grid; gap: var(--fs-space-2); box-sizing: border-box; inline-size: 23.25rem; max-inline-size: calc(100vw - 2 * var(--fs-space-4)); padding: var(--fs-space-3); border: 1px solid var(--fs-outline-strong); border-radius: var(--fs-radius-dialog); background: var(--fs-surface-overlay); color: var(--fs-on-surface); overflow-wrap: anywhere; }
   [hidden] { display: none !important; }
   .popover.inline { position: static; display: grid; gap: var(--fs-space-2); inline-size: auto; max-inline-size: none; padding: 0; border: 0; background: none; color: var(--fs-on-surface); overflow-wrap: anywhere; }
-  .settings-link { color: var(--fs-primary); text-decoration: none; border-radius: var(--fs-radius); }
+  .popover.inline .statement { font-size: var(--fs-font-size-ui); }
+  .settings-link.button { justify-self: start; padding-inline: 0; color: var(--fs-primary); font-size: var(--fs-font-size-small); text-decoration: none; border-block-start: 1px solid var(--fs-outline); border-radius: 0; }
   .settings-link:hover { text-decoration: underline; }
-  h2 { margin: 0; font-size: var(--fs-font-size-small); font-weight: 700; color: var(--fs-on-surface-variant); }
+  h2 { display: flex; align-items: center; gap: var(--fs-space-2); margin: 0; font-size: var(--fs-font-size-ui); font-weight: 600; color: var(--fs-on-surface); }
+  .no-telemetry { margin: 0; color: var(--fs-on-surface-variant); }
   @media (forced-colors: active) {
     .badge[aria-expanded="true"] { forced-color-adjust: none; background: Highlight; color: HighlightText; }
   }
@@ -86,6 +99,7 @@ const STYLE = `
 interface Parts {
   readonly badge: HTMLButtonElement;
   readonly label: HTMLElement;
+  readonly titleText: HTMLElement;
   readonly link: HTMLAnchorElement;
   readonly popover: HTMLElement;
   readonly title: HTMLElement;
@@ -221,7 +235,6 @@ export class FsHostIndicator extends HTMLElement {
     if (!this.parts) this.parts = buildFrame(root, (event) => this.onFrameEvent(event));
     const group = root.querySelector('[role="group"]');
     group?.setAttribute("aria-label", labels.hostIndicator);
-    this.parts.title.textContent = labels.hostIndicator;
     this.parts.link.textContent = labels.hostPrivacySettings;
     this.parts.link.setAttribute("href", this.options?.settingsHref ?? "#/settings");
     if (this.options?.inline) showInline(this.parts);
@@ -274,11 +287,25 @@ export class FsHostIndicator extends HTMLElement {
     void this.load();
   }
 
-  /** Show the badge label; the live region announces it only when it changed. */
+  /**
+   * Show the badge label, which also titles the popover; the live region announces it only when
+   * it changed.
+   */
   private setBadge(text: string): void {
     const parts = this.parts;
     if (!parts) return;
     if (parts.label.textContent !== text) parts.label.textContent = text;
+    parts.titleText.textContent = text;
+  }
+
+  /**
+   * Tell the shell which host is shown now, or that none is (UI-S-021: Logs on the desktop).
+   * Only the header badge announces; an inline statement (Settings, the welcome screen) does not.
+   */
+  private announceHost(hostType: HostType | undefined): void {
+    if (this.options?.inline) return;
+    const detail = { hostType };
+    this.dispatchEvent(new CustomEvent(HOST_EVENT, { detail, bubbles: true, composed: true }));
   }
 
   /** Show the loading, error, offline, denied or unavailable state, with no host facts. */
@@ -292,6 +319,7 @@ export class FsHostIndicator extends HTMLElement {
     this.setBadge(state.kind === "loading" ? labels.hostBadgeLoading : labels.hostBadgeUnknown);
     this.dataset.state = state.kind;
     delete this.dataset.hostType;
+    this.announceHost(undefined);
   }
 
   /** Show a validated descriptor. */
@@ -299,10 +327,15 @@ export class FsHostIndicator extends HTMLElement {
     const labels = this.options?.labels;
     if (!this.parts || !labels) return;
     const view = describeHost(descriptor, labels);
-    this.parts.body.replaceChildren(buildHostStatement(view, labels));
+    const statement = buildHostStatement(view, labels);
+    if (this.options?.inline && sendsNothing(descriptor)) {
+      statement.querySelector(".service")?.before(noTelemetry(labels));
+    }
+    this.parts.body.replaceChildren(statement);
     this.setBadge(labels[BADGE_LABEL[view.hostType]]);
     this.dataset.state = "ready";
     this.dataset.hostType = view.hostType;
+    this.announceHost(view.hostType);
   }
 }
 
@@ -320,7 +353,7 @@ function part(tag: string, cls: string, attributes: Record<string, string> = {})
  */
 function buildFrame(root: ShadowRoot, onEvent: (event: Event) => void): Parts {
   const style = document.createElement("style");
-  style.textContent = A11Y_STYLE + STYLE + HOST_STATEMENT_STYLE;
+  style.textContent = A11Y_STYLE + CONTROL_STYLE + STYLE + HOST_STATEMENT_STYLE;
   const badge = part("button", "badge", {
     type: "button",
     "aria-expanded": "false",
@@ -328,10 +361,12 @@ function buildFrame(root: ShadowRoot, onEvent: (event: Event) => void): Parts {
     "aria-controls": "popover",
   }) as HTMLButtonElement;
   const label = part("span", "label", { "aria-live": "polite" });
-  badge.append(part("span", "icon", { "aria-hidden": "true" }), label);
+  badge.append(icon("device"), label);
   const title = part("h2", "", { id: "popover-title" });
+  const titleText = part("span", "title-text");
+  title.append(icon("device"), titleText);
   const body = part("div", "body");
-  const link = part("a", "settings-link") as HTMLAnchorElement;
+  const link = part("a", "settings-link button ghost") as HTMLAnchorElement;
   const popover = part("div", "popover", {
     id: "popover",
     role: "dialog",
@@ -346,7 +381,24 @@ function buildFrame(root: ShadowRoot, onEvent: (event: Event) => void): Parts {
     group.addEventListener(type, onEvent);
   }
   root.replaceChildren(style, group);
-  return { badge, label, link, popover, title, body };
+  return { badge, label, titleText, link, popover, title, body };
+}
+
+/**
+ * True when nothing leaves the computer: the desktop host with hosted backup and sync both off,
+ * so the no-telemetry line is true as worded.
+ */
+function sendsNothing(descriptor: HostDescriptor): boolean {
+  const service = descriptor.hosted_service;
+  return descriptor.host_type === "desktop" && !service.backup_enabled && !service.sync_enabled;
+}
+
+/** The desktop's no-telemetry line of the Settings page's Privacy section (UI-S-033). */
+function noTelemetry(labels: LabelTable): HTMLParagraphElement {
+  const line = document.createElement("p");
+  line.className = "no-telemetry";
+  line.textContent = labels.hostDesktopNoTelemetry;
+  return line;
 }
 
 /**

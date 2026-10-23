@@ -27,7 +27,11 @@ describe("ImageSquid label table", () => {
     expect(labels.collections).toBe("Albums");
     expect(labels.virtualCollections).toBe("Galleries");
     expect(labels.virtualExhibits).toBe("Exhibits");
-    const nounKeys = REQUIRED_LABEL_KEYS.filter((key) => !key.startsWith("api"));
+    // The search placeholder keeps the screenshot wording of IS-S-004, whose "collections" are
+    // ImageSquid's automatic Collections heading, not the internal noun.
+    const nounKeys = REQUIRED_LABEL_KEYS.filter(
+      (key) => !key.startsWith("api") && key !== "searchPlaceholder",
+    );
     const nouns = nounKeys
       .map((key) => labels[key])
       .join(" ")
@@ -73,6 +77,16 @@ describe("ImageSquid design tokens", () => {
   });
   it("meet WCAG 2.2 AA for primary actions and body text in light and dark", () => {
     expect(contrastFailures(tokensCss)).toEqual([]);
+  });
+  it("take no contrast exemption: the FileSquid default's listed pairs do not apply", () => {
+    expect(contrastFailures(tokensCss, [])).toEqual([]);
+    const { light } = tokenValues(tokensCss);
+    expect(light["--fs-primary"]).not.toBe("#16ac49");
+  });
+  it("use the 8 px spacing scale of UI-S-024", () => {
+    const { light } = tokenValues(tokensCss);
+    const scale = [1, 2, 3, 4, 5, 6, 7].map((step) => light[`--fs-space-${step}`]);
+    expect(scale).toEqual(["4px", "8px", "16px", "24px", "40px", "64px", "96px"]);
   });
   it("write every colour token as #rgb or #rrggbb in both themes", () => {
     expect(invalidColourTokens(tokensCss)).toEqual([]);

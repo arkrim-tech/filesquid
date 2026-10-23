@@ -298,18 +298,19 @@ test("error and warning codes take their colours from tokens in light and dark",
         return node ? getComputedStyle(node).color : "";
       };
       return {
-        error: colour('[data-part="errors"] td.code'),
-        warning: colour('[data-part="warnings"] td.code'),
+        error: colour('[data-part="errors"] td.code .chip'),
+        warning: colour('[data-part="warnings"] td.code .chip'),
       };
     });
-  for (const [scheme, error, variant] of [
-    ["light", "#c62828", "#555555"],
-    ["dark", "#ef5350", "#a0a0a0"],
+  // UI-S-032, owner answer 14: errors and warnings alike are chips outlined in the error colour.
+  for (const [scheme, error] of [
+    ["light", "#e53935"],
+    ["dark", "#ef5350"],
   ] as const) {
     await setScheme(page, scheme);
     await openMonitor(page);
     expect(await tokenColour(page, "--fs-error")).toBe(rgbOf(error));
-    expect(await colours()).toEqual({ error: rgbOf(error), warning: rgbOf(variant) });
+    expect(await colours()).toEqual({ error: rgbOf(error), warning: rgbOf(error) });
   }
   expect(errors).toEqual([]);
 });

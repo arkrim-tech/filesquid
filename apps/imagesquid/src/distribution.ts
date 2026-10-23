@@ -6,6 +6,7 @@
  */
 import type { Distribution } from "@filesquid/ui";
 import manifest from "../distribution.json";
+import pkg from "../package.json";
 import labels from "./theme/labels.en.json";
 
 /**
@@ -15,6 +16,7 @@ import labels from "./theme/labels.en.json";
 export const imagesquid: Distribution = {
   id: manifest.id,
   productName: manifest.productName,
+  version: pkg.version,
   logo: { src: "/imagesquid-logo.svg", alt: `${manifest.productName} logo` },
   labels,
 };

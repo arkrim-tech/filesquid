@@ -316,6 +316,23 @@ test("a format it cannot show says so and shows no viewer", async ({ page }) => 
   await expect(page.locator("fs-file-preview .unsupported .title")).toHaveText(
     label(labels, "fileNoPreview"),
   );
+  // UI-S-031, mockup 24: the badge, the 22 px heading and the two help lines.
+  await expect(page.locator("fs-file-preview .unsupported .help")).toHaveText([
+    label(labels, "fileNoPreviewKeep"),
+    label(labels, "fileNoPreviewOpenElsewhere"),
+  ]);
+  const badge = page.locator("fs-file-preview .unsupported .badge");
+  await expect(badge).toHaveText("BLEND");
+  expect(await badge.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(
+    await tokenColour(page, "--fs-badge-data"),
+  );
+  const title = await page.locator("fs-file-preview .unsupported .title").evaluate((el) => {
+    const css = getComputedStyle(el);
+    return { size: css.fontSize, weight: css.fontWeight, family: css.fontFamily };
+  });
+  expect(title.size).toBe("22px");
+  expect(title.weight).toBe("700");
+  expect(title.family).toMatch(/^Georgia/);
   await expect(
     page.locator("fs-file-preview img, fs-file-preview video, fs-file-preview pre"),
   ).toHaveCount(0);
@@ -551,7 +568,9 @@ test("the layout does not scroll sideways at 320 px, at 200 % text size, or both
   }
 });
 
-test("motion stops under reduced motion and focus is the 2px primary ring", async ({ page }) => {
+test("motion stops under reduced motion and focus is the 2px --fs-focus-ring ring", async ({
+  page,
+}) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await open(page);
   const button = page.getByRole("button", { name: label(labels, "fileNewFolder") });
@@ -572,7 +591,7 @@ test("motion stops under reduced motion and focus is the 2px primary ring", asyn
     width: "2px",
     style: "solid",
     offset: "2px",
-    colour: await tokenColour(page, "--fs-primary"),
+    colour: await tokenColour(page, "--fs-focus-ring"),
   });
 });
 
