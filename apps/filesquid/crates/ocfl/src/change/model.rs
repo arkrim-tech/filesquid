@@ -11,7 +11,7 @@ use super::index::{check_logical_path, path_conflict, Staged, StagingIndex};
 use crate::digest::DigestAlgorithm;
 use crate::guard::reject_git_in_root;
 use crate::inventory::{Inventory, User, VersionNum};
-use crate::read::copy_guard::refuse_copy_into_ocfl_root;
+use crate::read::copy_guard::{refuse_copy_into_ocfl_root, CopyConcern};
 use crate::read::small::root_dir;
 use crate::read::{version_history, Object, ReadError, VersionInfo};
 use crate::storage::{StorageBackend, StorageKey};
@@ -103,12 +103,13 @@ where
         object_id: impl Into<String>,
         staging: StagingArea<'a, S>,
     ) -> Self {
+        let object_id = object_id.into();
         Self {
             storage,
             writer: ObjectWriter::new(storage, reservations, holder),
             root: root.to_string(),
-            object_id: object_id.into(),
-            staging,
+            staging: staging.for_object(&object_id),
+            object_id,
         }
     }
 
@@ -316,13 +317,17 @@ where
         self.check_id(object.id())?;
         let state = object.state(version)?;
         let prefix = prefix.trim_end_matches('/');
+        let concern = CopyConcern {
+            object: &self.object_id,
+            version: Some(version),
+        };
         let mut keys = Vec::with_capacity(state.len());
         for file in state.files() {
             let key = match prefix {
                 "" => StorageKey::new(&file.path)?,
                 prefix => StorageKey::new(&format!("{prefix}/{}", file.path))?,
             };
-            refuse_copy_into_ocfl_root(dest, &key).await?;
+            refuse_copy_into_ocfl_root(dest, &key, concern).await?;
             keys.push(key);
         }
         for (file, key) in state.files().zip(&keys) {
