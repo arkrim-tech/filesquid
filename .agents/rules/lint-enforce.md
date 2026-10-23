@@ -21,7 +21,7 @@ Based on the accepted Architecture Decision Records in `resources/architecture/`
 
 Before running any tests, committing code, or completing an execution task, you MUST execute the following CLI commands inside the correct workspace.
 
-During the FileSquid MVP the pre-commit hook lints, type-checks and tests only `@filesquid/ui` (owner decision 2026-10-23, [ImageSquid during the MVP](./local-verification.md#imagesquid-during-the-mvp)). ImageSquid is still formatted, with `@filesquid/ui`'s Prettier, so these commands need no ImageSquid install.
+During the FileSquid MVP the pre-commit hook's TypeScript lint, typecheck and tests run only for `@filesquid/ui`; its Rust formatting, Clippy and Cargo tests are unchanged and follow the change scope (owner decision 2026-10-23, [ImageSquid during the MVP](./local-verification.md#imagesquid-during-the-mvp)). ImageSquid is still formatted, with `@filesquid/ui`'s Prettier, so these commands need no ImageSquid install.
 
 ### 1. Format each TypeScript UI package
 Run in `apps/filesquid/ui/`, then format `apps/imagesquid/` with the same Prettier (Node runs it on every OS):

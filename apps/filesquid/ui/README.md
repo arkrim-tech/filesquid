@@ -4,7 +4,7 @@ FileSquid's default distribution and the component library every distribution bu
 
 ## Develop and test
 
-From `apps/filesquid/ui`, on any OS with Node.js 22.12 or later:
+From `apps/filesquid/ui`, on any OS with Node.js 22.12 or later and npm 11 or later:
 
 ```sh
 npm ci
@@ -16,7 +16,7 @@ npm run report         # Allure HTML report from tests/allure-results/ into test
 npm run contract:types # regenerate src/api/schema.d.ts and src/api/contract-version.ts from crates/api/openapi.json
 ```
 
-`npm run test:e2e` builds the UI and starts `filesquid-server` with Cargo, so it needs the Rust toolchain and a Playwright browser (`npx playwright install chromium`). The repository's pre-commit hook runs it when `FILESQUID_E2E=1` is set. During the FileSquid MVP this package's lint, typecheck and tests are the only npm suite the hook runs; a change confined to ImageSquid runs them too. The second suite, `tests/e2e/preview/`, serves the static build with `vite preview` on port 4173 and needs no server; both use `tests/e2e/support/strict-dom.ts` for strict DOM assertions (defined elements, labels from the label table, computed tokens in light and dark, no console errors).
+`npm run test:e2e` builds the UI and starts `filesquid-server` with Cargo, so it needs the Rust toolchain and a Playwright browser (`npx playwright install chromium`). The repository's pre-commit hook runs it when `FILESQUID_E2E=1` is set. During the FileSquid MVP this package's lint, typecheck and tests are the only npm suite the hook runs, and they run when the change scope includes this package: a change here or confined to ImageSquid gives `npm:apps/filesquid/ui`, a `full` scope runs them with everything else, and a `docs` scope runs no npm suite ([change-aware test scope](../../../.agents/rules/local-verification.md#change-aware-test-scope)). The hook's format step checks ImageSquid on every commit whatever the scope, with this package's Prettier. The second suite, `tests/e2e/preview/`, serves the static build with `vite preview` on port 4173 and needs no server; both use `tests/e2e/support/strict-dom.ts` for strict DOM assertions (defined elements, labels from the label table, computed tokens in light and dark, no console errors).
 
 ## Theme, tokens and brand
 

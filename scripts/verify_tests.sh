@@ -76,9 +76,11 @@ fi
 WORKSPACE="apps/filesquid"
 MODULE_CRATES="filesquid-core filesquid-ocfl filesquid-metadata filesquid-c2pa filesquid-prov filesquid-api filesquid-native"
 DESKTOP_CRATE="filesquid-desktop"
-UI_PACKAGES="apps/filesquid/ui"
-# Packages whose own suites the hook does not run during the MVP (owner decision 2026-10-23).
-UNHOOKED_PACKAGES="apps/imagesquid"
+# The npm suites the hook runs, from scripts/lib/hook_scope.sh.
+UI_PACKAGES="$HOOK_NPM_PACKAGES"
+# Packages whose own suites the hook does not run during the MVP (owner decision
+# 2026-10-23): the guarded directories of HOOK_GUARDED_PACKAGES.
+UNHOOKED_PACKAGES=$(for pair in $HOOK_GUARDED_PACKAGES; do printf '%s ' "${pair%%=*}"; done)
 FAILED=0
 
 run_step() {

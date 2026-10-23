@@ -34,8 +34,9 @@ echo "Starting Format Validation..."
 . ./scripts/lib/hook_scope.sh
 
 APPS_DIR="./apps"
-# <package>=<package whose node_modules provides Prettier for it>.
-PRETTIER_FROM="apps/imagesquid=apps/filesquid/ui"
+# <package>=<package whose node_modules provides Prettier for it>: each guarded
+# package of scripts/lib/hook_scope.sh uses the Prettier of the package that guards it.
+PRETTIER_FROM="$HOOK_GUARDED_PACKAGES"
 FAILED=0
 SCOPE=$(scope_or_detect "$@")
 

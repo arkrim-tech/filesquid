@@ -1224,3 +1224,47 @@ Starting Lint and Test Validation...
 ========================================
 exit 0
 ```
+
+### Review round 1: a guarded package passed with --scope
+
+`bash scripts/verify_tests.sh --scope npm:apps/imagesquid` was a valid scope that ran no npm suite. `normalise_scope` in `scripts/lib/hook_scope.sh` now rewrites a guarded package to the suite that guards it and turns an unknown package into `full`; `scope_or_detect` and `hook_scope` apply it, so every gate gets the normalised scope. The tested and guarded package lists live once in the library for the gates (`HOOK_NPM_PACKAGES`, `HOOK_GUARDED_PACKAGES`); `scripts/changed_scope.sh` keeps a copy, because it runs on its own, and `test_scope_normalisation` fails when the two differ.
+
+`TMPDIR=<tmpdir> bash scripts/verify_changed_scope.sh` with the new cases, before the library change:
+
+```text
+Starting Change Scope Validation...
+❌ guarded package maps to its suite: expected 'npm:apps/filesquid/ui', got 'npm:apps/imagesquid'
+❌ guarded and tested packages dedupe: expected 'npm:apps/filesquid/ui', got 'npm:apps/imagesquid,apps/filesquid/ui'
+❌ rust token kept beside a mapped npm token: expected 'rust:filesquid-c2pa npm:apps/filesquid/ui', got 'rust:filesquid-c2pa npm:apps/imagesquid'
+❌ unknown npm package runs full: expected 'full', got 'npm:apps/other'
+scripts/verify_changed_scope.sh: line 335: normalise_scope: command not found
+❌ normalise is pure on docs: expected 'docs', got ''
+❌ helper and hook library list the same tested packages: expected '', got 'apps/filesquid/ui'
+❌ helper and hook library list the same guarded packages: expected '', got 'apps/imagesquid=apps/filesquid/ui'
+
+🚨 VALIDATION FAILED: scripts/changed_scope.sh or a hook library broke an expectation above.
+exit 1
+```
+
+After the change:
+
+```text
+Starting Change Scope Validation...
+✅ Change scope validation passed (188 assertions).
+exit 0
+```
+
+`bash scripts/verify_tests.sh --scope npm:apps/imagesquid` after the change, filtered with `grep -E "Test scope|test scope|Skipped: ESLint|🔍 (ESLint|TypeScript|Vitest)|✅ (ESLint|TypeScript|Vitest)|exit"`:
+
+```text
+ℹ️  Test scope: npm:apps/filesquid/ui
+⏭️  Skipped: ESLint, TypeScript, Vitest and Playwright e2e in apps/imagesquid (not run by the hook during the MVP (owner decision 2026-10-23); @filesquid/ui's distribution-table test checks its label table and token file)
+🔍 ESLint (apps/filesquid/ui)...
+✅ ESLint passed (5s).
+🔍 TypeScript (apps/filesquid/ui)...
+✅ TypeScript passed (5s).
+🔍 Vitest (apps/filesquid/ui)...
+✅ Vitest passed (26s).
+✅ Lint and test validation passed (test scope: npm:apps/filesquid/ui).
+exit 0
+```

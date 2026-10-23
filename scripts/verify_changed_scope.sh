@@ -321,6 +321,24 @@ expect_valid() {
   assert_eq "scope grammar '$2'" "$1" "$actual"
 }
 
+# A --scope naming a package the hook does not test maps to the suite that guards it, and an
+# unknown package gives full, so no valid-looking scope can skip the npm checks.
+test_scope_normalisation() {
+  assert_eq "guarded package maps to its suite" "npm:apps/filesquid/ui" "$(scope_or_detect --scope npm:apps/imagesquid)"
+  assert_eq "guarded and tested packages dedupe" "npm:apps/filesquid/ui" \
+    "$(scope_or_detect --scope npm:apps/imagesquid,apps/filesquid/ui)"
+  assert_eq "rust token kept beside a mapped npm token" "rust:filesquid-c2pa npm:apps/filesquid/ui" \
+    "$(scope_or_detect --scope "rust:filesquid-c2pa npm:apps/imagesquid")"
+  assert_eq "unknown npm package runs full" full "$(scope_or_detect --scope npm:apps/other 2>/dev/null)"
+  assert_eq "tested package unchanged" "npm:apps/filesquid/ui" "$(scope_or_detect --scope npm:apps/filesquid/ui)"
+  assert_eq "rust-only scope unchanged" "rust:filesquid-api" "$(scope_or_detect --scope rust:filesquid-api)"
+  assert_eq "normalise is pure on docs" docs "$(normalise_scope docs)"
+  assert_eq "helper and hook library list the same tested packages" "$HOOK_NPM_PACKAGES" \
+    "$(sed -n 's/^NPM_PACKAGES="\(.*\)"$/\1/p' "$HELPER")"
+  assert_eq "helper and hook library list the same guarded packages" "$HOOK_GUARDED_PACKAGES" \
+    "$(sed -n 's/^GUARDED_PACKAGES="\(.*\)"$/\1/p' "$HELPER")"
+}
+
 test_scope_grammar() {
   local scope
   expect_valid yes docs
@@ -420,6 +438,7 @@ test_fallbacks
 test_hook_ignores_overrides
 test_scope_parsers
 test_scope_grammar
+test_scope_normalisation
 test_lock_file_is_ignored
 test_lock_timeout
 test_real_workspace
