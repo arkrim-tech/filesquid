@@ -6,7 +6,7 @@ Branch `feat/api-f2.13-command-envelopes`, module `filesquid-api` ([plan row](..
 
 | SRS ID and title | Covered by |
 |---|---|
-| [API-S-002](../srs.md) Versioned API contract owned by this crate; every mutation route, the file write routes included, takes a `CommandEnvelope` and answers a `CommandOutcome`; a conflict is HTTP 409 with a `conflict` outcome; a repeated operation ID answers its first outcome with no second change | `integration_file_commands` (11 tests), `file_command_envelopes_API-S-002.feature` (7 scenarios), `unit_contract` (drift, samples, documented answers), regenerated `ui/src/api/schema.d.ts` with the UI drift test |
+| [API-S-002](../srs.md) Versioned API contract owned by this crate; every mutation route, the file write routes included, takes a `CommandEnvelope` and answers a `CommandOutcome`; a conflict is HTTP 409 with a `conflict` outcome; a repeated operation ID answers its first outcome with no second change | `integration_file_commands` (12 tests), `unit_receipts` (4 tests), `file_command_envelopes_API-S-002.feature` (7 scenarios), `unit_contract` (drift, samples, documented answers), regenerated `ui/src/api/schema.d.ts` with the UI drift test |
 | [API-S-019](../srs.md) Library domain commands and queries: a stale expected revision is a `conflict` with no change; the stored receipt is answered before the revision is checked; a command that changes nothing stores no receipt | `a_stale_expected_revision_is_a_conflict_outcome_with_no_version`, `a_repeated_operation_is_answered_before_its_revision_is_checked`, `a_refused_command_stores_no_receipt_so_its_retry_is_evaluated_again`, `creating_a_folder_answers_committed_and_stores_no_receipt` |
 | [UI-S-012](../../../../ui/resources/srs.md) The UI reaches FileSquid only through `FileSquidClient`; every command and upload carries a `CommandEnvelope`; a 2xx answer resolves to a `CommandOutcome` for the same operation id; HTTP 409 resolves to `conflict` | `ui/tests/unit/files-source.test.ts`, `client-io.test.ts`, `commands.test.ts`, `files-memory-source.test.ts`, `ui/tests/ui/file-browser-writes.test.ts`, Playwright `tests/e2e/preview/file-browser.spec.ts` against the production build, `host_adapter_UI-S-012.feature` |
 | [CORE-S-005](../../../core/resources/srs.md) Versioned command envelope with operation/idempotency key and expected revision | `an_envelope_of_another_schema_or_scope_is_refused` |
@@ -30,46 +30,47 @@ Known limit: receipts live in memory, so after a host restart a replayed object 
 
 ## Test output
 
-`cargo test -p filesquid-api --locked --test integration_file_commands --test unit_contract`:
+`cargo test -p filesquid-api --locked --test integration_file_commands --test unit_receipts --test unit_contract`:
 
 ```text
      Running tests/integration/file_commands.rs (<target>/debug/deps/integration_file_commands-e03b02b407220fc5)
 
-running 11 tests
+running 12 tests
 test a_repeated_operation_is_answered_before_its_revision_is_checked ... ok
 test a_refused_command_stores_no_receipt_so_its_retry_is_evaluated_again ... ok
 test a_new_upload_names_revision_zero_and_a_copy_its_source_head ... ok
 test an_envelope_of_another_schema_or_scope_is_refused ... ok
+test an_operation_id_of_an_upload_with_other_bytes_is_refused ... ok
 test an_operation_id_of_another_command_is_refused ... ok
 test an_upload_without_its_file_or_input_part_is_refused ... ok
 test creating_a_folder_answers_committed_and_stores_no_receipt ... ok
-test a_repeated_operation_answers_its_first_outcome_with_no_second_version ... ok
 test a_stale_expected_revision_is_a_conflict_outcome_with_no_version ... ok
 test every_write_route_refuses_a_body_without_an_envelope ... ok
+test a_repeated_operation_answers_its_first_outcome_with_no_second_version ... ok
 test every_write_route_answers_a_committed_outcome_for_the_same_operation ... ok
 
-test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s
 
      Running tests/unit/contract.rs (<target>/debug/deps/unit_contract-27eeb267071a4e20)
 
 running 28 tests
 test error_code_all_lists_every_variant ... ok
-test contract_is_openapi_3_1_with_the_crate_api_version ... ok
 test command_envelope_carries_idempotency_key_expected_revision_and_scope ... ok
 test authentication_before_routing_is_documented_as_a_wire_convention ... ok
+test contract_is_openapi_3_1_with_the_crate_api_version ... ok
+test errors_carry_code_and_retryability ... ok
 test error_codes_match_the_rust_enum_with_status_and_retryability ... ok
 test event_topics_in_the_contract_match_the_rust_topics ... ok
-test errors_carry_code_and_retryability ... ok
-test every_component_schema_matches_its_serialized_rust_type ... ok
 test every_component_schema_has_a_rust_sample ... ok
+test every_component_schema_matches_its_serialized_rust_type ... ok
 test every_documented_operation_has_a_unique_operation_id ... ok
-test every_event_topic_documents_its_payload_schema ... ok
 test every_error_response_carries_the_api_error_schema ... ok
+test every_event_topic_documents_its_payload_schema ... ok
 test every_limit_parameter_is_the_shared_page_size ... ok
 test every_operation_documents_both_denials ... ok
 test every_operation_names_the_action_the_router_authorises ... ok
-test health_schema_matches_the_core_payload_and_requires_every_field ... ok
 test every_operation_requires_the_bearer_scheme_and_none_makes_it_optional ... ok
+test health_schema_matches_the_core_payload_and_requires_every_field ... ok
 test host_routes_are_the_event_channel_only ... ok
 test query_envelope_and_page_size_parameter_are_bounded_like_core ... ok
 test routed_and_documented_paths_agree_both_ways ... ok
@@ -79,12 +80,22 @@ test the_checker_accepts_only_truly_unconstrained_objects ... ok
 test the_contract_uses_only_checked_schema_keywords ... ok
 test the_only_public_operation_is_the_liveness_probe ... ok
 {"error":"journal writer stopped","level":"ERROR","message":"journal write failed"}
-{"actor":"system","host":"","journal_write_failed":true,"level":"info","operation":"process.cancelled","outcome":"cancelled","process_id":"import-1","target_ids":[],"time":"2026-10-23T17:45:29.610Z"}
+{"actor":"system","host":"","journal_write_failed":true,"level":"info","operation":"process.cancelled","outcome":"cancelled","process_id":"import-1","target_ids":[],"time":"2026-10-23T18:34:28.152Z"}
 test events_from_every_publisher_match_their_documented_payloads ... ok
 test every_documented_operation_answers_a_documented_status_and_body ... ok
 test router_fallbacks_answer_as_documented ... ok
 
-test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.99s
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.28s
+
+     Running tests/unit/receipts.rs (<target>/debug/deps/unit_receipts-7327fc3f04a01ed5)
+
+running 4 tests
+test a_dropped_claim_frees_its_id_and_stores_nothing ... ok
+test a_second_claim_while_one_is_in_flight_is_busy ... ok
+test a_stored_answer_is_replayed_for_the_same_command_only ... ok
+test the_oldest_receipt_is_forgotten_at_the_cap ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
 ```
 
 BDD, `cargo test -p filesquid-api --locked --test features` (the new feature, then the whole run):
