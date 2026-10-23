@@ -10,7 +10,7 @@ One library model: every library lives in an owner-chosen folder, and every file
 
 Accepted
 
-Amended: 2026-10-23 by owner decision, Decision 8. Owner answer 3 of 2026-10-22, verbatim: "There is only one trash. Not a separate trash per library"; and the owner's decision of 2026-10-23, verbatim: "2. yes amend ADR 041". There is one Recently deleted (Trash) across all libraries; retention stays configurable per library (Decision 10). This closes Conflict Artifact CA-3 of the [v3 sync walkthrough](../tasks/Task-docs-v3-mockup-requirements-sync-Walkthrough.md).
+Amended: 2026-10-23 by owner decision, Decision 8. Owner answer 3 of 2026-10-22, verbatim: "There is only one trash. Not a separate trash per library"; and the owner's decision of 2026-10-23, verbatim: "2. yes amend ADR 041". There is one Recently deleted (Trash) over the deleted files of every library this host has opened that the caller may read; retention stays configurable per library (Decision 10). This closes Conflict Artifact CA-3 of the [v3 sync walkthrough](../tasks/Task-docs-v3-mockup-requirements-sync-Walkthrough.md).
 
 Accepted: 2026-10-22 by owner decision. The owner's decisions, verbatim:
 
@@ -124,7 +124,7 @@ This ADR amends [ADR 005](./005-sqlite-local-postgres-hosted.md) (where the loca
 
 ## Related Decisions / Notes
 
-- **Amendment of 2026-10-23** (verbatim under Status): Decision 8 now has one Recently deleted across all libraries instead of a node of each library; Decisions 9 to 11 are unchanged, and each deleted file still takes its retention from its own library.
+- **Amendment of 2026-10-23** (verbatim under Status): Decision 8 now has one Recently deleted over the deleted files of every library this host has opened that the caller may read instead of a node of each library; Decisions 9 to 11 are unchanged, and each deleted file still takes its retention from its own library.
 - **Owner questions answered on 2026-10-22** (verbatim answers under Status): question 1, restore (Decision 9); question 2, retention scope (Decision 10); question 3, single-file deletes use the same Trash (Decision 8); question 4 and 4b, what expiry removes and the tombstone (Decision 11); question 5, Recently deleted is a filter and nothing is moved (Decision 8); question 6, duplicate logical paths, the caps of 9,999 and where the number goes (Decisions 9 and 12). No owner question remains open.
 - **Orchestrator's readings the owner has not ruled on** (recorded so a later change is one edit): one "untitled collection" per gone home collection and restore command (Decision 9); the installation settings in the host's operational store and a library's retention in its collection snapshot, the retention bounds of 1 to 3,650 days, and the expiry setting being installation-wide (Decisions 10 and 11); a deleted file's path counting as taken (Decision 12).
 
