@@ -24,14 +24,14 @@ Task FS-1.2 [x] 36h: IO-1.2 [x] API-F1.3 [x]
 Task FS-2.1 [x] 48h: UI-0.1 [x] UI-0.2 [x] UI-0.5 [x] UI-F2.1a [x] API-F1.10 [x] API-F1.11 [x] UI-F2.1b [x]
 Task 0.5 [x] 40h: DE-0.1 [x] DE-0.2 [x] DE-0.3 [x] DE-0.4 [x] DE-0.5 [x] DE-0.6 [x] DE-0.8 [x] DE-0.9 [x]
 Task FS-1.3 [x] 66h: MD-0.2 [x] MD-0.7 [x] MD-0.8 [x] MD-0.10 [x] API-F1.4 [x] API-F1.13 [x]
-Task FS-1.4 [ ] 22h: API-F1.6 [x] API-F1.7 [x]
-Task 0.8 [ ] 16h: UI-0.6 [x]
 Task 1.1 [x] 72h: CL-1.1 [x] API-F1.12 [x] DE-1.1 [x] UI-1.1 [x] IO-1.1 [x] IO-1.4 [x] API-F2.7 [x] UI-F2.14 [x]
+Task 0.8 [x] 16h: UI-0.6 [x]
+Task FS-1.4 [ ] 22h: API-F1.6 [x] API-F1.7 [x]
 Task FS-2.2 [ ] 46h: UI-F2.2 [x] UI-F2.3 [ ] UI-F2.4 [ ]
 Task 1.2 [ ] 107h: DE-1.2 [x] DE-1.7 [ ] API-F2.16 [ ] API-F2.17 [ ] API-F2.18 [ ] DE-1.8 [ ] UI-1.2 [ ] UI-1.3 [ ]
 Task FS-2.5 [ ] 194h: API-F2.2 [ ] API-F2.3 [ ] API-F2.5 [x] API-F2.13 [x] API-F2.14 [ ] API-F2.15 [ ] UI-F2.18 [ ] UI-F2.8 [ ] UI-F2.9 [ ] UI-F2.11 [ ] UI-F2.17 [ ]
 Task FS-2.8 [ ] 76h: CO-0.11 [ ] IO-1.5 [ ] PV-0.1 [x] MD-0.9 [ ] PV-0.2 [ ] API-F2.8 [ ] DE-0.10 [ ] API-F2.9 [ ]
-Task FS-2.9 [ ] 70h: API-F2.10 [x] IO-1.6 [ ] API-F2.12 [ ] CLI-0.2 [x] API-F2.11 [x] CL-1.9 [x] DE-0.11 [ ] UI-F2.15 [ ] UI-F2.16 [ ]
+Task FS-2.9 [ ] 70h: API-F2.10 [x] IO-1.6 [x] API-F2.12 [ ] CLI-0.2 [x] API-F2.11 [x] CL-1.9 [x] DE-0.11 [ ] UI-F2.15 [ ] UI-F2.16 [ ]
 Task FS-3.1 [ ] 16h: DE-F3.1 [ ]
 Task FS-3.4 [ ] 24h: DE-F3.2 [ ] UI-F3.1 [ ]
 Task FS-3.9 [ ] 12h:
@@ -73,12 +73,12 @@ Task FS-3.9 [ ] 12h:
     <line class="divider" x1="221.92" y1="28" x2="221.92" y2="46"/>
     <rect x="242.84" y="28" width="34.52" height="18" fill="#1a7f37"><title>Task FS-1.3: 66 of 66 hours</title></rect>
     <line class="divider" x1="242.84" y1="28" x2="242.84" y2="46"/>
-    <rect x="277.37" y="28" width="11.51" height="18" fill="#1a7f37"><title>Task FS-1.4: 22 of 22 hours</title></rect>
+    <rect x="277.37" y="28" width="37.66" height="18" fill="#1a7f37"><title>Task 1.1: 72 of 72 hours</title></rect>
     <line class="divider" x1="277.37" y1="28" x2="277.37" y2="46"/>
-    <rect x="288.88" y="28" width="8.37" height="18" fill="#1a7f37"><title>Task 0.8: 16 of 16 hours</title></rect>
-    <line class="divider" x1="288.88" y1="28" x2="288.88" y2="46"/>
-    <rect x="297.24" y="28" width="37.66" height="18" fill="#1a7f37"><title>Task 1.1: 72 of 72 hours</title></rect>
-    <line class="divider" x1="297.24" y1="28" x2="297.24" y2="46"/>
+    <rect x="315.03" y="28" width="8.37" height="18" fill="#1a7f37"><title>Task 0.8: 16 of 16 hours</title></rect>
+    <line class="divider" x1="315.03" y1="28" x2="315.03" y2="46"/>
+    <rect x="323.40" y="28" width="11.51" height="18" fill="#1a7f37"><title>Task FS-1.4: 22 of 22 hours</title></rect>
+    <line class="divider" x1="323.40" y1="28" x2="323.40" y2="46"/>
     <rect x="334.91" y="28" width="8.02" height="18" fill="#1a7f37"><title>Task FS-2.2: 15 of 46 hours</title></rect>
     <line class="divider" x1="334.91" y1="28" x2="334.91" y2="46"/>
     <rect x="358.97" y="28" width="7.00" height="18" fill="#1a7f37"><title>Task 1.2: 13 of 107 hours</title></rect>
@@ -87,7 +87,7 @@ Task FS-3.9 [ ] 12h:
     <line class="divider" x1="414.94" y1="28" x2="414.94" y2="46"/>
     <rect x="516.43" y="28" width="4.97" height="18" fill="#1a7f37"><title>Task FS-2.8: 10 of 76 hours</title></rect>
     <line class="divider" x1="516.43" y1="28" x2="516.43" y2="46"/>
-    <rect x="556.18" y="28" width="16.27" height="18" fill="#1a7f37"><title>Task FS-2.9: 31 of 70 hours</title></rect>
+    <rect x="556.18" y="28" width="20.34" height="18" fill="#1a7f37"><title>Task FS-2.9: 39 of 70 hours</title></rect>
     <line class="divider" x1="556.18" y1="28" x2="556.18" y2="46"/>
     <rect x="592.80" y="28" width="0.00" height="18" fill="#1a7f37"><title>Task FS-3.1: 0 of 16 hours</title></rect>
     <line class="divider" x1="592.80" y1="28" x2="592.80" y2="46"/>
