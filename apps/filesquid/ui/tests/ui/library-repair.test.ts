@@ -134,6 +134,7 @@ describe("<fs-library-repair> consent", () => {
     const { page } = await mount();
     const root = rootOf(page);
     expect(root.querySelector('[data-action="review"]')?.className).toBe("button primary");
+    expect(root.querySelectorAll(".button.primary")).toHaveLength(1);
     await click(page, '[data-action="review"]');
     const dialog = dialogOf(page) as HTMLElement;
     expect(dialog.classList.contains("dialog")).toBe(true);

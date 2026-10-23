@@ -127,6 +127,7 @@ export const CONTRAST_PAIRS: readonly TokenPair[] = [
   ["--fs-on-primary", "--fs-primary"],
   ["--fs-on-primary-container", "--fs-primary-container"],
   ["--fs-error", "--fs-surface"],
+  ["--fs-error", "--fs-surface-card"],
   ["--fs-error", "--fs-surface-container"],
   ["--fs-on-surface-muted", "--fs-surface"],
   ["--fs-on-surface-muted", "--fs-surface-card"],
@@ -203,11 +204,15 @@ function exempt(
   }));
 }
 
-/** The three light surfaces that are `#ffffff`. */
+/**
+ * The light surfaces that are `#ffffff` and on which these texts are checked. UI-S-015 also
+ * names `--fs-surface-overlay`, but error, muted and placeholder text is never drawn on an
+ * overlay: in dark it would be below 4.5:1 there (`#ef5350` 4.01:1, `#6a6a6a` 2.58:1 on
+ * `#2c2c2c`) with no exemption, so no such pair is checked and none is listed.
+ */
 const WHITE: readonly (readonly [TokenName, string])[] = [
   ["--fs-surface", "#ffffff"],
   ["--fs-surface-card", "#ffffff"],
-  ["--fs-surface-overlay", "#ffffff"],
 ];
 
 /** `backgrounds` at one ratio. */
@@ -221,14 +226,18 @@ const at = (backgrounds: readonly (readonly [TokenName, string])[], ratio: numbe
  */
 export const FILESQUID_CONTRAST_EXEMPTIONS: readonly ContrastExemption[] = [
   ...exempt("light", "--fs-on-primary", "#ffffff", [["--fs-primary", "#16ac49", 2.99]]),
-  ...exempt("light", "--fs-primary", "#16ac49", at(WHITE, 2.99)),
+  ...exempt("light", "--fs-primary", "#16ac49", [
+    ...at(WHITE, 2.99),
+    ["--fs-surface-overlay", "#ffffff", 2.99],
+  ]),
   ...exempt("light", "--fs-on-primary-container", "#0f8a39", [
     ["--fs-primary-container", "#f0faf4", 4.18],
   ]),
+  // Error text is never drawn on --fs-surface-raised (#ef5350 on #242424 is 4.45:1 in dark), so
+  // there is no error/raised pair to list; the same light value on --fs-surface-container is.
   ...exempt("light", "--fs-error", "#e53935", [
     ...at(WHITE, 4.23),
     ["--fs-surface-container", "#f5f5f5", 3.88],
-    ["--fs-surface-raised", "#f5f5f5", 3.88],
   ]),
   ...exempt("light", "--fs-on-surface-muted", "#777777", at(WHITE, 4.48)),
   ...exempt("light", "--fs-on-surface-placeholder", "#999999", at(WHITE, 2.85)),

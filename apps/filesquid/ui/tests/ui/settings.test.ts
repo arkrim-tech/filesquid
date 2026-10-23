@@ -50,15 +50,19 @@ const ok = async (): Promise<HealthStatus> => ({
 /** A client answering the desktop descriptor and health, with an event channel the test drives. */
 function fakeClient(health: () => Promise<HealthStatus> = ok) {
   let listener: ((event: ApiEvent) => void) | undefined;
+  const reads = { host: 0 };
   const client: SettingsClient = {
     health,
-    host: async () => DESKTOP_DESCRIPTOR,
+    host: async () => {
+      reads.host += 1;
+      return DESKTOP_DESCRIPTOR;
+    },
     subscribe: (l) => {
       listener = l;
       return () => undefined;
     },
   };
-  return { client, emit: (event: ApiEvent) => listener?.(event) };
+  return { client, reads, emit: (event: ApiEvent) => listener?.(event) };
 }
 
 /** Mount a Settings page. */
@@ -184,15 +188,17 @@ describe("<fs-settings>", () => {
 
   it("reads health and the host again on refresh, so a sign-in replaces the alert", async () => {
     let calls = 0;
-    const settings = await mount(
-      fakeClient(async () => {
-        calls += 1;
-        if (calls === 1) throw new Error("offline");
-        return ok();
-      }).client,
-    );
+    const fake = fakeClient(async () => {
+      calls += 1;
+      if (calls === 1) throw new Error("offline");
+      return ok();
+    });
+    const settings = await mount(fake.client);
     expect(text(settings, '.api[role="alert"]')).toBe(`${labels.apiUnavailable}: offline`);
+    const hostReads = fake.reads.host;
+    expect(hostReads).toBeGreaterThanOrEqual(1);
     await settings.refresh();
+    expect(fake.reads.host).toBe(hostReads + 1);
     expect(text(settings, '.api[role="status"]')).toBe("API: ok · contract 0.24.0");
     expect(settings.shadowRoot?.querySelector('.api[role="alert"]')).toBeNull();
   });

@@ -15,7 +15,7 @@
  * The Browsing section (UI-F2.8) and the Recently deleted section (UI-F2.17) join with their
  * tasks. Words come only from the label table, styling only from tokens.
  */
-import type { Distribution } from "../distribution";
+import { logoSource, type Distribution } from "../distribution";
 import type { HealthStatus } from "../api/client";
 import { formatLabel, type LabelTable } from "../theme/labels";
 import type { ThemeStore } from "../theme/theme-store";
@@ -24,6 +24,7 @@ import { CONTROL_STYLE } from "./control-style";
 import { denialLabel } from "./denial";
 import type { FsHostIndicator, HostClient } from "./fs-host-indicator";
 import type { FsThemeControl } from "./fs-theme-control";
+import { icon } from "./icons";
 
 /** The part of the API client the page needs: the host descriptor and health. */
 export interface SettingsClient extends HostClient {
@@ -57,7 +58,8 @@ const STYLE = `
   .version { margin: 0; font-size: var(--fs-font-size-body); font-weight: 600; color: var(--fs-on-surface-heading); }
   .about-note { margin: 0; font-size: var(--fs-font-size-small); color: var(--fs-on-surface-variant); overflow-wrap: anywhere; }
   .api { margin: 0; flex: 0 0 auto; font-size: var(--fs-font-size-small); color: var(--fs-on-surface-variant); overflow-wrap: anywhere; }
-  .api[role="alert"] { color: var(--fs-error); }
+  .api[role="alert"] { display: flex; align-items: center; gap: var(--fs-space-1); color: var(--fs-on-surface); }
+  .api[role="alert"] .icon { color: var(--fs-error); }
   fs-host-indicator { display: block; }
 `;
 
@@ -66,6 +68,9 @@ export class FsSettings extends HTMLElement {
   private options?: SettingsOptions;
   /** Number of the newest health read; answers to older reads are discarded. */
   private healthRequest = 0;
+  /** The theme store whose `change` event this page follows for the About logo, if any. */
+  private followed?: ThemeStore;
+  private readonly onThemeChange = () => this.showLogo();
 
   constructor() {
     super();
@@ -94,9 +99,31 @@ export class FsSettings extends HTMLElement {
     await Promise.all([this.loadHealth(), statement?.refresh()]);
   }
 
-  /** Render and read health when attached. */
+  /** Render, read health and follow the theme for the About logo when attached. */
   connectedCallback(): void {
     this.render();
+  }
+
+  /** Stop following the theme once detached. */
+  disconnectedCallback(): void {
+    this.followed?.removeEventListener("change", this.onThemeChange);
+    this.followed = undefined;
+  }
+
+  /** Point the About logo at the variant for the theme shown now (UI-S-015). */
+  private showLogo(): void {
+    const img = this.shadowRoot?.querySelector<HTMLImageElement>(".about img");
+    const options = this.options;
+    if (!img || !options) return;
+    img.src = logoSource(options.distribution.logo, options.theme.resolved);
+  }
+
+  /** Follow the configured theme store's changes, and only that one. */
+  private follow(theme: ThemeStore): void {
+    if (this.followed === theme) return;
+    this.followed?.removeEventListener("change", this.onThemeChange);
+    theme.addEventListener("change", this.onThemeChange);
+    this.followed = theme;
   }
 
   /** Build the title and the three sections, then read health for About. */
@@ -118,6 +145,8 @@ export class FsSettings extends HTMLElement {
       aboutSection(options),
     );
     root.replaceChildren(style, page);
+    this.follow(options.theme);
+    this.showLogo();
     void this.loadHealth();
   }
 
@@ -190,7 +219,6 @@ function aboutSection(options: SettingsOptions): HTMLElement {
   const box = document.createElement("div");
   box.className = "note-box raised about";
   const img = document.createElement("img");
-  img.src = distribution.logo.src;
   img.alt = distribution.logo.alt;
   const text = document.createElement("div");
   text.className = "about-text";
@@ -243,5 +271,10 @@ function showHealthError(target: HTMLElement, labels: LabelTable, error: unknown
   if (denial) target.dataset.reason = denial.reason;
   else delete target.dataset.reason;
   const message = denial?.text ?? (error instanceof Error ? error.message : String(error));
-  target.textContent = `${labels.apiUnavailable}: ${message}`;
+  // The words in the body colour on the raised box (error text there would be below 4.5:1 in
+  // dark), marked by the alert icon in the error colour.
+  target.replaceChildren(
+    icon("alert"),
+    document.createTextNode(`${labels.apiUnavailable}: ${message}`),
+  );
 }

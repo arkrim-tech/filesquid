@@ -29,6 +29,18 @@ Branch `feat/ui-f2.18-v3-tokens-and-shell`. Plan row: [Task UI-F2.18](../plan.md
 - **Contract version.** `npm run contract:types` now also writes `src/api/contract-version.ts` (`tests/support/write-contract-version.mjs`), so the version Settings shows moves with the generated types; the drift test checks it.
 - **Repair consent wording.** `repairConsent` keeps its current string. The owner decided on 2026-10-23 to change it in a separate fix task (`fix/repair-consent-wording`) that changes the API's expected statement, the label, mockup 42 and UI-S-027 together, so the UI and the API never disagree.
 
+## Review fixes (Cubic round 1: 25 P2, 13 P3)
+
+- Contrast: hovered primary buttons keep their tested colours (white on `#0f8a39` or `#4aca74` fell below 4.5:1); disabled buttons keep their disabled colours on hover; a focused invalid input keeps a focus outline; the theme control's options and every input take `--fs-outline-control`.
+- Contrast data: `CONTRAST_PAIRS` gains error text on `--fs-surface-card`; the exemption list now holds only pairs the test checks. Error, muted and placeholder text is never drawn on `--fs-surface-overlay`, because in dark it would be below 4.5:1 there (`#ef5350` 4.01:1, `#6a6a6a` 2.58:1) with no exemption; so the rename form sits on `--fs-surface-card`, and the Settings API alert shows its words in the body colour with the alert icon in the error colour. A unit test fixes the exact allowlist and recomputes each listed ratio.
+- Icons keep a 1.6 CSS px stroke at every size (`vector-effect: non-scaling-stroke`).
+- The file browser frame uses the shared `CONTROL_STYLE` buttons and inputs instead of its own copy, and marks only the refused field with `aria-invalid` (the name, or the folder).
+- The Settings About logo follows the theme (dark-surface variant in dark); only the header badge tells the shell which host is shown, so an inline statement cannot hide the Logs row; the no-telemetry line is shown only while hosted backup and sync are both off, so it is true as worded; the popover's Privacy settings divider renders.
+- The preview badge uses the 10 px badge size; a failed journal entry colours only its outcome.
+- Tests: field names and reason text of the Monitor fixtures follow the contract; the breadcrumb's current link, the per-state icons, every tree row's icons, the single Recently deleted row, the library page columns, the one primary button, the host re-read on refresh, the generated contract version in ImageSquid and its dark control outline, and ImageSquid's Tab order to the host badge and Monitor are asserted; the contrast probe of `theme.spec.ts` refuses a missing token.
+- UI-S-015 names the type-size and radius tokens it requires.
+- Kept, with the reason on the thread: the plan box (the surfaces left open belong to named later tasks or undelivered API rows, listed below); the required approved strings (UI-S-024 Strings and owner answer 13 require both label tables to define them); `hostDesktopNoTelemetry` wording (UI-S-033's wording; UI-S-027 quotes a different sentence for the same key, recorded below for the owner).
+
 ## Not built here (needs a later task or an API route)
 
 - Recent libraries on the welcome screen, the library page's storage used and free space rows and STORAGE BY COLLECTION, and the shell's storage figures: they need the library facts of API-S-038, not delivered. The shell's storage block and `deletedCount` wait for a view to supply them.
@@ -36,13 +48,14 @@ Branch `feat/ui-f2.18-v3-tokens-and-shell`. Plan row: [Task UI-F2.18](../plan.md
 - Storage unavailable (34), the library menu (08) and the preview bar's Download, Show in Finder, zoom and filmstrip (22, 23): UI-F2.17, UI-F2.8 and UI-F2.15.
 - The rename form keeps the file browser's inline form (styled as mockup 14) rather than a modal dialog, so API-F2.13 can move the file browser's callers without a conflicting rewrite.
 - No API route, field or event was assumed or stubbed.
+- For the owner: UI-S-027 quotes `hostDesktopNoTelemetry` as "FileSquid sends nothing off this computer. There is no account and no telemetry." while UI-S-033 and the label table read "FileSquid sends nothing off this computer. No account, no telemetry." The label table keeps the UI-S-033 wording until the owner picks one.
 
 ## How it was tested
 
 1. The tests updated by the previous session and the first new tests of this session ran red against the unfinished implementation (the red runs below), then green. Some look tests (tree, library pages, Monitor, findings, rename form) were written together with their stylesheet changes; they assert the computed constants of the fidelity spec as well.
 2. `npx prettier --write .`, `npx eslint .`, `npx tsc --noEmit` in `apps/filesquid/ui` and `apps/imagesquid`: clean.
 3. `npm test` in both packages.
-4. Playwright, both suites of both packages. The installed Playwright expects a newer Chromium build than this machine has, so the suites ran through temporary configs that point `executablePath` at the machine's Chromium (`/opt/pw-browsers/chromium`); the configs were deleted before committing. Chromium here reports a 1.5 px border as 1 px even at 2x, so the fidelity spec compares 1.5 px borders with the same browser's rendering of 1.5 px, and the component tests assert the authored `1.5px`. No other mocked environment values were used.
+4. Playwright, both suites of both packages. The installed Playwright expects a newer Chromium build than this machine has, so the suites ran through temporary configs that point `executablePath` at the machine's Chromium (`/opt/pw-browsers/chromium`); the configs were deleted before committing. Chromium here reports a 1.5 px border as 1 px even at 2x. The fidelity spec therefore checks only that those borders render as this browser renders 1.5 px, which a 1 px border would also pass; the authored `1.5px` of each such border is covered by the component tests (`tests/unit/component-styles.test.ts`, the `CONTROL_STYLE` and stylesheet assertions in `tests/ui/`), not by the fidelity spec. No other mocked environment values were used.
 
 ## Raw test output
 
@@ -89,6 +102,11 @@ Preview suite (`apps/filesquid/ui`, before the specs and surfaces were updated):
     [chromium] › tests/e2e/preview/host-indicator.spec.ts:331:1 › computed token values are exact in light and dark
     [chromium] › tests/e2e/preview/host-indicator.spec.ts:378:1 › the badge is reachable by keyboard and has a visible focus outline
     [chromium] › tests/e2e/preview/library.spec.ts:45:1 › the start page offers create, open and recover in the active vocabulary
+    [chromium] › tests/e2e/preview/library.spec.ts:74:1 › (1) create asks for a folder, passes the location ID on and shows the library, with no path
+    [chromium] › tests/e2e/preview/library.spec.ts:96:1 › (1) open passes the location ID to the open route
+    [chromium] › tests/e2e/preview/library.spec.ts:110:1 › (1) recover opens the copy, rebuilds from files and reports without repairing
+    [chromium] › tests/e2e/preview/library.spec.ts:166:1 › (2) a cancelled folder choice sends no library request and says nothing changed
+    [chromium] › tests/e2e/preview/library.spec.ts:180:1 › (3) 503 unavailable is the unavailable state with its reason and a Retry, and the choices stay
     [chromium] › tests/e2e/preview/library.spec.ts:335:1 › colours come from tokens in light and dark
     [chromium] › tests/e2e/preview/navigation.spec.ts:194:1 › computed token values of the tree and breadcrumb are exact in light and dark
     [chromium] › tests/e2e/preview/ocfl-findings.spec.ts:289:1 › error and warning codes take their colours from tokens in light and dark

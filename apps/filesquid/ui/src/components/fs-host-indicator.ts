@@ -86,7 +86,7 @@ const STYLE = `
   [hidden] { display: none !important; }
   .popover.inline { position: static; display: grid; gap: var(--fs-space-2); inline-size: auto; max-inline-size: none; padding: 0; border: 0; background: none; color: var(--fs-on-surface); overflow-wrap: anywhere; }
   .popover.inline .statement { font-size: var(--fs-font-size-ui); }
-  .settings-link { justify-self: start; padding-inline: 0; color: var(--fs-primary); font-size: var(--fs-font-size-small); text-decoration: none; border-block-start: 1px solid var(--fs-outline); border-radius: 0; }
+  .settings-link.button { justify-self: start; padding-inline: 0; color: var(--fs-primary); font-size: var(--fs-font-size-small); text-decoration: none; border-block-start: 1px solid var(--fs-outline); border-radius: 0; }
   .settings-link:hover { text-decoration: underline; }
   h2 { display: flex; align-items: center; gap: var(--fs-space-2); margin: 0; font-size: var(--fs-font-size-ui); font-weight: 600; color: var(--fs-on-surface); }
   .no-telemetry { margin: 0; color: var(--fs-on-surface-variant); }
@@ -298,8 +298,12 @@ export class FsHostIndicator extends HTMLElement {
     parts.titleText.textContent = text;
   }
 
-  /** Tell the shell which host is shown now, or that none is (UI-S-021: Logs on the desktop). */
+  /**
+   * Tell the shell which host is shown now, or that none is (UI-S-021: Logs on the desktop).
+   * Only the header badge announces; an inline statement (Settings, the welcome screen) does not.
+   */
   private announceHost(hostType: HostType | undefined): void {
+    if (this.options?.inline) return;
     const detail = { hostType };
     this.dispatchEvent(new CustomEvent(HOST_EVENT, { detail, bubbles: true, composed: true }));
   }
@@ -324,7 +328,7 @@ export class FsHostIndicator extends HTMLElement {
     if (!this.parts || !labels) return;
     const view = describeHost(descriptor, labels);
     const statement = buildHostStatement(view, labels);
-    if (this.options?.inline && view.hostType === "desktop") {
+    if (this.options?.inline && sendsNothing(descriptor)) {
       statement.querySelector(".service")?.before(noTelemetry(labels));
     }
     this.parts.body.replaceChildren(statement);
@@ -378,6 +382,15 @@ function buildFrame(root: ShadowRoot, onEvent: (event: Event) => void): Parts {
   }
   root.replaceChildren(style, group);
   return { badge, label, titleText, link, popover, title, body };
+}
+
+/**
+ * True when nothing leaves the computer: the desktop host with hosted backup and sync both off,
+ * so the no-telemetry line is true as worded.
+ */
+function sendsNothing(descriptor: HostDescriptor): boolean {
+  const service = descriptor.hosted_service;
+  return descriptor.host_type === "desktop" && !service.backup_enabled && !service.sync_enabled;
 }
 
 /** The desktop's no-telemetry line of the Settings page's Privacy section (UI-S-033). */

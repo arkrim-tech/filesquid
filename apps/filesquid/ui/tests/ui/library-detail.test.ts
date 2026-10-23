@@ -113,6 +113,9 @@ describe("<fs-library-detail>", () => {
     expect(buttons.map((b) => b.className)).toEqual(["button secondary", "button secondary"]);
     const css = root.querySelector("style")?.textContent ?? "";
     expect(css).toMatch(/dl \{[^}]*grid-template-columns: 10rem minmax\(0, 1fr\)/);
+    expect(css).toMatch(
+      /\.columns \{ display: grid; grid-template-columns: minmax\(0, 40rem\) minmax\(0, 28rem\); gap: var\(--fs-space-6\)/,
+    );
     expect(css).toMatch(/dt \{ color: var\(--fs-on-surface-muted\); \}/);
     expect(css).toMatch(
       /\.alert, section\[data-section="repair-note"\] \{[^}]*border: 1px solid var\(--fs-error\); border-radius: var\(--fs-radius\)/,

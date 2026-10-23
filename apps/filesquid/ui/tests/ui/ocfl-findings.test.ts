@@ -135,8 +135,11 @@ describe("<fs-ocfl-findings>", () => {
       const chip = root.querySelector(`[data-part="${part}"] td.code .chip`);
       expect(chip?.classList.contains("alert")).toBe(true);
     }
-    const objectCell = root.querySelector('[data-part="errors"] tbody td:nth-child(2)');
-    expect(objectCell?.classList.contains("mono")).toBe(true);
+    // Object, version and a present location in mono.
+    for (const column of [2, 3, 5]) {
+      const cell = root.querySelector(`[data-part="errors"] tbody td:nth-child(${column})`);
+      expect(cell?.classList.contains("mono")).toBe(true);
+    }
     expect(root.querySelector('[data-action="validate"]')?.className).toBe("button secondary");
     expect(root.querySelector('[data-action="repair"]')?.className).toBe("button ghost");
     const css = root.querySelector("style")?.textContent ?? "";

@@ -5,6 +5,7 @@
  * defined, words from the active label table, computed token values in light and dark, no
  * console errors.
  */
+import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import {
   activeLabels,
@@ -16,6 +17,15 @@ import {
   tokenColour,
   trackErrors,
 } from "../support/strict-dom";
+
+/**
+ * The contract version the linked `@filesquid/ui` targets, read from its generated module (the
+ * package entry defines custom elements, which a Node test process cannot load).
+ */
+const CONTRACT_VERSION =
+  /CONTRACT_VERSION = "([^"]+)"/.exec(
+    readFileSync("node_modules/@filesquid/ui/src/api/contract-version.ts", "utf8"),
+  )?.[1] ?? "";
 
 const labels = activeLabels();
 const ELEMENTS = [
@@ -102,8 +112,10 @@ test("sidebar, header and Settings words come from the active label table (UI-S-
   await expect(shell.locator("header p.api")).toHaveCount(0);
   await page.goto("/#/settings");
   const settings = page.locator("fs-settings");
-  await expect(settings.locator(".api[role='status']")).toContainText(
-    label(labels, "settingsApiStatus").replace("{status}", "ok").split("{version}")[0] ?? "",
+  await expect(settings.locator(".api[role='status']")).toHaveText(
+    label(labels, "settingsApiStatus")
+      .replace("{status}", "ok")
+      .replace("{version}", CONTRACT_VERSION),
   );
   await expect(settings.locator("fs-theme-control legend")).toHaveText(label(labels, "theme"));
   expect(errors).toEqual([]);
@@ -126,6 +138,7 @@ test("computed ImageSquid token values are exact in light and dark", async ({ pa
   expect(await tokenColour(page, "--fs-on-primary")).toBe(rgbOf("#003063"));
   expect(await tokenColour(page, "--fs-surface-card")).toBe(rgbOf("#1b1e24"));
   expect(await tokenColour(page, "--fs-focus-ring")).toBe(rgbOf("#a9c7ff"));
+  expect(await tokenColour(page, "--fs-outline-control")).toBe(rgbOf("#858c96"));
   expect(await bodyBackground(page)).toBe(rgbOf("#121418"));
   expect(errors).toEqual([]);
 });

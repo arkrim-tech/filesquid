@@ -403,6 +403,7 @@ for (const scheme of ["light", "dark"] as const) {
           alert: words.map((c) => c.textContent).join("|"),
           colour: title ? getComputedStyle(title).color : "",
           icon: icon ? getComputedStyle(icon).color : "",
+          name: icon instanceof SVGElement ? (icon.dataset.icon ?? "") : "",
         };
       });
     }, labels);
@@ -412,20 +413,28 @@ for (const scheme of ["light", "dark"] as const) {
     const body = await tokenColour(page, "--fs-on-surface");
     const icon = await tokenColour(page, "--fs-icon");
     expect(seen).toEqual([
-      { status: labels.stateLoading, alert: "", colour: body, icon },
-      { status: labels.stateEmpty, alert: "", colour: body, icon },
+      { status: labels.stateLoading, alert: "", colour: body, icon, name: "clock" },
+      { status: labels.stateEmpty, alert: "", colour: body, icon, name: "collection" },
       {
         status: "",
         alert: `${labels.stateError}|${labels.fileActionFailed}|${labels.stateRetry}`,
         colour: body,
         icon: error,
+        name: "error",
       },
-      { status: "", alert: `${labels.stateOffline}|${labels.stateRetry}`, colour: body, icon },
+      {
+        status: "",
+        alert: `${labels.stateOffline}|${labels.stateRetry}`,
+        colour: body,
+        icon,
+        name: "offline",
+      },
       {
         status: "",
         alert: `${labels.stateDenied}|${labels.authNotPermitted}`,
         colour: body,
         icon,
+        name: "denied",
       },
     ]);
     expect(errors).toEqual([]);

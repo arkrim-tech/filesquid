@@ -4,7 +4,8 @@
  * restyles them through tokens alone:
  *
  * - `.button` 36 px tall, 14 px weight 600, radius 7 px; `.primary` filled `--fs-primary` with
- *   `--fs-on-primary`; `.secondary` on `--fs-surface-card` with a 1.5 px `--fs-outline-strong`
+ *   `--fs-on-primary` (its hover keeps the same colours, so the text pair stays the tested one);
+ *   `.secondary` on `--fs-surface-card` with a 1.5 px `--fs-outline-strong`
  *   border; `.ghost` transparent with `--fs-primary` text; `.destructive` with `--fs-error` text
  *   and border; `.plain` transparent with body text; `.large` 38 px (the sidebar New button and
  *   dialog footers); disabled on `--fs-surface-raised` with a 1.5 px `--fs-outline` border and
@@ -25,18 +26,18 @@ const STYLE = `
   .button:hover { background: var(--fs-surface-raised); }
   .button.large { min-block-size: 2.375rem; }
   .button.primary { border-color: var(--fs-primary); background: var(--fs-primary); color: var(--fs-on-primary); }
-  .button.primary:hover { border-color: var(--fs-on-primary-container); background: var(--fs-on-primary-container); }
   .button.ghost { border-style: none; background: none; color: var(--fs-primary); }
   .button.ghost:hover { background: var(--fs-primary-container); color: var(--fs-on-primary-container); }
   .button.plain { border-style: none; background: none; color: var(--fs-on-surface); }
   .button.plain:hover { background: var(--fs-surface-raised); }
   .button.destructive { border-color: var(--fs-error); color: var(--fs-error); }
   .button.destructive:hover { background: var(--fs-surface-raised); }
-  .button:disabled, .button[aria-disabled="true"] { border-color: var(--fs-outline); background: var(--fs-surface-raised); color: var(--fs-on-surface-placeholder); cursor: default; }
+  .button:disabled, .button[aria-disabled="true"], .button.button:disabled:hover, .button.button[aria-disabled="true"]:hover { border-color: var(--fs-outline); border-style: solid; background: var(--fs-surface-raised); color: var(--fs-on-surface-placeholder); cursor: default; }
   .input { box-sizing: border-box; min-width: 0; max-inline-size: 100%; min-block-size: 2.25rem; padding: 0 var(--fs-space-2); border: 1.5px solid var(--fs-outline-control); border-radius: var(--fs-radius-input); background: var(--fs-surface-card); color: var(--fs-on-surface); font-family: var(--fs-font-sans); font-size: var(--fs-font-size-ui); transition: border-color var(--fs-motion-duration); }
   .input::placeholder { color: var(--fs-on-surface-placeholder); opacity: 1; }
   .input:focus-visible { outline: none; border: 2px solid var(--fs-focus-ring); }
   .input[aria-invalid="true"] { border: 2px solid var(--fs-error); }
+  .input[aria-invalid="true"]:focus-visible { outline: 2px solid var(--fs-focus-ring); outline-offset: 2px; }
   .eyebrow { margin: 0; font-family: var(--fs-font-sans); font-size: var(--fs-font-size-eyebrow); font-weight: 400; letter-spacing: 0.1em; text-transform: uppercase; color: var(--fs-on-surface-muted); }
   .chip { display: inline-flex; align-items: center; gap: var(--fs-space-1); box-sizing: border-box; padding: 0 var(--fs-space-2); border-radius: var(--fs-radius-pill); font-family: var(--fs-font-sans); font-size: var(--fs-font-size-eyebrow); font-weight: 500; line-height: 1.6; color: var(--fs-on-surface-variant); }
   .chip.ok { background: var(--fs-primary-container); color: var(--fs-on-primary-container); }

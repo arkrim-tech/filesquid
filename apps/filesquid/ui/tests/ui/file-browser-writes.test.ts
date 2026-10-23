@@ -664,28 +664,40 @@ describe("answers that arrive after another object is opened", () => {
 });
 
 describe("rename form look (UI-S-026, mockups 14 and 44)", () => {
-  it("draws the form, field, refusal border and buttons through the v3 tokens", async () => {
+  it("draws the form, fields and buttons through the shared v3 controls", async () => {
     const browser = await mount(fixture());
     const css = rootOf(browser).querySelector("style")?.textContent ?? "";
     expect(css).toMatch(
-      /\.name-form \{[^}]*border: 1px solid var\(--fs-outline-strong\); border-radius: var\(--fs-radius-dialog\); background: var\(--fs-surface-overlay\)/,
+      /\.name-form \{[^}]*border: 1px solid var\(--fs-outline-strong\); border-radius: var\(--fs-radius-dialog\); background: var\(--fs-surface-card\)/,
     );
     expect(css).toMatch(
       /\.form-title \{[^}]*font-family: var\(--fs-font-heading\); font-size: var\(--fs-font-size-title\); font-weight: 700/,
     );
     expect(css).toMatch(
-      /\.name-form input \{[^}]*min-block-size: 2\.25rem;[^}]*border: 1\.5px solid var\(--fs-outline-control\); border-radius: var\(--fs-radius-input\)/,
+      /\.input \{[^}]*min-block-size: 2\.25rem;[^}]*border: 1\.5px solid var\(--fs-outline-control\); border-radius: var\(--fs-radius-input\)/,
     );
+    expect(css).toMatch(/\.input:focus-visible \{[^}]*border: 2px solid var\(--fs-focus-ring\)/);
     expect(css).toMatch(
-      /\.name-form input:focus-visible \{[^}]*border: 2px solid var\(--fs-focus-ring\)/,
-    );
-    expect(css).toMatch(
-      /\.name-form:has\(\.form-error:not\(:empty\)\) input\[name="name"\] \{ border: 2px solid var\(--fs-error\); \}/,
+      /\.input\[aria-invalid="true"\] \{ border: 2px solid var\(--fs-error\); \}/,
     );
     expect(css).toMatch(/\.form-error \{[^}]*color: var\(--fs-error\)/);
-    expect(css).toMatch(
-      /button\.primary \{ border-color: var\(--fs-primary\); background: var\(--fs-primary\); color: var\(--fs-on-primary\); \}/,
-    );
-    expect(one(browser, "form.name-form button.submit").classList.contains("primary")).toBe(true);
+    expect(one(browser, "form.name-form button.submit").className).toBe("submit button primary");
+    expect(one(browser, "button.new-folder").className).toBe("new-folder button secondary");
+    expect(one(browser, "button.upload").className).toBe("upload button primary");
+    for (const name of ["name", "folder"]) {
+      expect(one(browser, `form.name-form input[name="${name}"]`).className).toBe("input");
+    }
+  });
+
+  it("marks only the field a refusal is about with aria-invalid, and clears it", async () => {
+    const browser = await mount(fixture());
+    await click(one(browser, "button.new-folder"));
+    await submit(browser, { name: "a/b" });
+    const name = one<HTMLInputElement>(browser, 'form.name-form input[name="name"]');
+    const folder = one<HTMLInputElement>(browser, 'form.name-form input[name="folder"]');
+    expect(name.getAttribute("aria-invalid")).toBe("true");
+    expect(folder.hasAttribute("aria-invalid")).toBe(false);
+    await submit(browser, { name: "Photos" });
+    expect(name.hasAttribute("aria-invalid")).toBe(false);
   });
 });

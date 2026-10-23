@@ -95,7 +95,6 @@ export const LIBRARY_STYLE = `
   .cards section { display: flex; flex-direction: column; align-items: flex-start; gap: var(--fs-space-2); box-sizing: border-box; min-block-size: 15.5rem; padding: var(--fs-space-4); border: 1.5px solid var(--fs-outline-strong); border-radius: var(--fs-radius-dialog); background: var(--fs-surface-card); }
   .cards section[data-flow="create"] { border: 2px solid var(--fs-primary); }
   .cards section .button { margin-block-start: auto; }
-  .cards .icon { color: var(--fs-icon); }
   section { display: grid; align-content: start; gap: var(--fs-space-2); min-inline-size: 0; }
   .columns { display: grid; grid-template-columns: minmax(0, 40rem) minmax(0, 28rem); gap: var(--fs-space-6); align-items: start; }
   .side { display: grid; gap: var(--fs-space-4); align-content: start; }
@@ -103,7 +102,6 @@ export const LIBRARY_STYLE = `
   .app-footer { color: var(--fs-on-surface-variant); font-size: var(--fs-font-size-small); }
   .crumb { justify-self: start; color: var(--fs-on-surface-variant); font-size: var(--fs-font-size-small); text-decoration: none; }
   .crumb:hover { color: var(--fs-on-surface); text-decoration: underline; }
-  .button[aria-disabled="true"] { border-color: var(--fs-outline); background: var(--fs-surface-raised); color: var(--fs-on-surface-placeholder); cursor: default; }
   dl { display: grid; grid-template-columns: 10rem minmax(0, 1fr); margin: 0; font-size: var(--fs-font-size-small); }
   dt, dd { margin: 0; padding: var(--fs-space-2) 0; border-block-end: 1px solid var(--fs-outline); overflow-wrap: anywhere; }
   dt { color: var(--fs-on-surface-muted); }

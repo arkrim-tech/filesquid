@@ -89,6 +89,8 @@ export function icon(name: IconName, size = DEFAULT_SIZE): SVGSVGElement {
   svg.dataset.icon = name;
   const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
   path.setAttribute("d", PATHS[name]);
+  // The stroke stays 1.6 CSS px at 16, 20 and 24 px, not 1.6 viewBox units.
+  path.setAttribute("vector-effect", "non-scaling-stroke");
   svg.append(path);
   return svg;
 }

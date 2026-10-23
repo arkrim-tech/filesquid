@@ -201,8 +201,21 @@ describe("<fs-nav-tree> v3 look (UI-S-017, UI-S-024, mockup 55)", () => {
   it("gives every row a 16 px kind icon and parents a chevron twisty", async () => {
     const { root } = await mount();
     const photos = item(root, "collection", "Photos");
-    expect(photos.querySelector<SVGElement>(".kind-icon")?.dataset.icon).toBe("collection");
-    expect(photos.querySelector(".kind-icon")?.getAttribute("width")).toBe("16");
+    const kinds: Record<string, string> = {
+      repository: "library",
+      library: "library",
+      collection: "collection",
+      virtual_collection: "layers",
+      folder: "folder",
+    };
+    const rows = [...root.querySelectorAll<HTMLElement>('[role="treeitem"]')];
+    expect(rows.length).toBeGreaterThan(1);
+    for (const row of rows) {
+      const glyph = row.querySelector<SVGElement>(".kind-icon");
+      expect(glyph?.dataset.icon).toBe(kinds[row.dataset.kind ?? ""]);
+      expect(glyph?.getAttribute("width")).toBe("16");
+      expect(row.querySelector<SVGElement>(".twisty svg")?.dataset.icon).toBe("chevron");
+    }
     expect(photos.querySelector<SVGElement>(".twisty svg")?.dataset.icon).toBe("chevron");
     expect(photos.querySelector(".twisty")?.classList.contains("parent")).toBe(true);
   });

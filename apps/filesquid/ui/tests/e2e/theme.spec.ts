@@ -50,6 +50,10 @@ function contrastFailuresInPage(page: Page, theme: "light" | "dark"): Promise<st
       const probe = document.createElement("span");
       document.body.append(probe);
       const rgb = (token: string): number[] => {
+        // A missing token must fail, not inherit the body colour.
+        if (getComputedStyle(probe).getPropertyValue(token).trim() === "") {
+          throw new Error(`token ${token} is not defined`);
+        }
         probe.style.color = `var(${token})`;
         return (getComputedStyle(probe).color.match(/\d+/g) ?? []).map(Number);
       };

@@ -129,6 +129,9 @@ describe("<fs-app-shell>", () => {
     const tree = root.querySelector(".tree");
     const row = tree?.lastElementChild;
     expect(row?.classList.contains("deleted")).toBe(true);
+    // One row only: no eyebrow, no second entry (UI-S-017).
+    expect(row?.children).toHaveLength(1);
+    expect(row?.firstElementChild?.tagName).toBe("LI");
     const link = row?.querySelector("a");
     expect(link?.getAttribute("href")).toBe("#/recently-deleted");
     expect(link?.querySelector<SVGElement>("svg")?.dataset.icon).toBe("trash");

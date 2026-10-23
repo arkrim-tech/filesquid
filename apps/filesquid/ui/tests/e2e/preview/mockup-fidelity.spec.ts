@@ -136,7 +136,9 @@ async function serveMonitor(page: Page): Promise<void> {
     ocfl_error_codes: ["E023"],
     ocfl_error_objects: 1,
   };
-  const reasons = [{ code: "processes_stalled", count: 1 }];
+  const reasons = [
+    { code: "processes_stalled", severity: "degraded", detail: "1 process(es) stalled" },
+  ];
   await page.route("**/api/v1/admin/health", (route) =>
     route.fulfill({ json: { status: "degraded", reasons, checks } }),
   );
@@ -149,8 +151,9 @@ async function serveMonitor(page: Page): Promise<void> {
     rate_per_second: 1,
     eta_seconds: 7,
     started: "2026-10-22T11:00:00Z",
-    heartbeat: "2026-10-22T11:00:05Z",
-    timeout_ms: 30000,
+    last_heartbeat: "2026-10-22T11:00:05Z",
+    heartbeat_timeout_ms: 30000,
+    error_code: null,
   });
   await page.route("**/api/v1/admin/processes", (route) =>
     route.fulfill({ json: [process("p1", "running"), process("p2", "stalled")] }),
@@ -550,6 +553,9 @@ for (const scheme of SCHEMES) {
         radius: "10px",
       });
       await expect(health.locator(".status")).toHaveText(label(labels, "statusDegraded"));
+      await expect(health.locator('li[data-reason="processes_stalled"]')).toHaveText(
+        "1 process(es) stalled",
+      );
       const status = await look(health.locator(".status"));
       expect(status).toMatchObject({ size: "22px", weight: "700", colour: rgbOf(c.error) });
       expect(status.family).toMatch(/^Georgia/);

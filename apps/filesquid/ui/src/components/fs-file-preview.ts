@@ -55,7 +55,7 @@ const STYLE = `
   .unsupported { display: flex; flex-direction: column; align-items: center; gap: var(--fs-space-2); box-sizing: border-box; max-inline-size: 27.5rem; margin: 0 auto; padding: var(--fs-space-5) var(--fs-space-4); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius-dialog); background: var(--fs-surface-card); text-align: center; }
   .unsupported .title { margin: var(--fs-space-2) 0 0; font-family: var(--fs-font-heading); font-size: var(--fs-font-size-heading); font-weight: 700; color: var(--fs-on-surface-heading); }
   .unsupported .help { margin: 0; color: var(--fs-on-surface); font-size: var(--fs-font-size-ui); }
-  .badge { display: inline-block; padding: 0 var(--fs-space-2); border-radius: var(--fs-radius-badge); font-family: var(--fs-font-mono); font-size: var(--fs-font-size-small); font-weight: 700; line-height: 2; text-transform: uppercase; }
+  .badge { display: inline-block; padding: 0 var(--fs-space-2); border-radius: var(--fs-radius-badge); font-family: var(--fs-font-mono); font-size: var(--fs-font-size-badge); font-weight: 700; line-height: 2; text-transform: uppercase; }
   .badge[data-kind="document"] { background: var(--fs-badge-document); color: var(--fs-on-badge-document); }
   .badge[data-kind="data"] { background: var(--fs-badge-data); color: var(--fs-on-badge-data); }
   .badge[data-kind="media"] { background: var(--fs-badge-media); color: var(--fs-on-badge-media); }

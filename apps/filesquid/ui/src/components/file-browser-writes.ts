@@ -331,9 +331,12 @@ export class FileWrites {
     if (label) label.textContent = text;
   }
 
-  /** Show or clear the form's own error. */
-  private formError(text: string): void {
-    this.frame.form.error.textContent = text;
+  /** Show or clear the form's own error, marking the field it is about with `aria-invalid`. */
+  private formError(text: string, field: HTMLInputElement = this.frame.form.name): void {
+    const { form } = this.frame;
+    form.error.textContent = text;
+    for (const input of [form.name, form.folder]) input.removeAttribute("aria-invalid");
+    if (text) field.setAttribute("aria-invalid", "true");
   }
 
   /** Close the form; when `restore`, return focus to the control that opened it. */
@@ -354,10 +357,11 @@ export class FileWrites {
     const moves = mode.kind === "rename" && !this.renameOnly(mode.row);
     const displayName = mode.kind === "rename" && !moves;
     const limit = displayName ? MAX_DISPLAY_NAME_BYTES : MAX_NAME_BYTES;
-    const problem =
-      validateName(form.name.value, limit) ??
-      (moves ? folderProblem(form.folder.value) : undefined);
-    if (problem) return this.formError(problemText(problem, this.host.labels, displayName));
+    const nameProblem = validateName(form.name.value, limit);
+    const folderIssue = nameProblem || !moves ? undefined : folderProblem(form.folder.value);
+    const problem = nameProblem ?? folderIssue;
+    const field = folderIssue ? form.folder : form.name;
+    if (problem) return this.formError(problemText(problem, this.host.labels, displayName), field);
     this.formError("");
     if (mode.kind === "folder") await this.createFolder(mode, form.name.value.trim());
     else if (moves) await this.move(mode, form.name.value, form.folder.value);

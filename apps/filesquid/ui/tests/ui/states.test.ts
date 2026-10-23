@@ -87,7 +87,7 @@ describe("<fs-states>", () => {
     [{ kind: "denied" }, "denied", false],
     [{ kind: "unavailable" }, "alert", true],
   ] as [ViewState, string, boolean][])(
-    "draws the mockup 56 icon for %o, in the error colour only for errors",
+    "draws the mockup 56 icon for %o, in the error colour only for error and unavailable",
     (state, name, alerting) => {
       const glyph = mount(state).shadowRoot?.querySelector<SVGElement>(".region svg.icon");
       expect(glyph?.dataset.icon).toBe(name);

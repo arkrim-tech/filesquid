@@ -23,7 +23,7 @@ import {
   missingTokens,
   tokenValues,
 } from "../../src/theme/tokens";
-import { NON_TEXT_CONTRAST } from "../../src/theme/contrast";
+import { NON_TEXT_CONTRAST, contrastRatio } from "../../src/theme/contrast";
 import * as themeEntry from "../../src/theme/index";
 
 const tokensCss = readFileSync(new URL("../../src/theme/tokens.css", import.meta.url), "utf8");
@@ -272,6 +272,7 @@ describe("WCAG 2.2 AA contrast (UI-S-015)", () => {
       ["--fs-on-primary", "--fs-primary"],
       ["--fs-on-primary-container", "--fs-primary-container"],
       ["--fs-error", "--fs-surface"],
+      ["--fs-error", "--fs-surface-card"],
       ["--fs-error", "--fs-surface-container"],
       ["--fs-on-surface-muted", "--fs-surface"],
       ["--fs-on-surface-muted", "--fs-surface-card"],
@@ -305,6 +306,41 @@ describe("WCAG 2.2 AA contrast (UI-S-015)", () => {
     expect(failures.some((f) => f.includes("--fs-focus-ring"))).toBe(false);
     expect(failures.some((f) => f.includes("--fs-outline-control"))).toBe(false);
   });
+  it("lists exactly the SRS-UI-007 exempt pairs, each ratio measured from its listed colours", () => {
+    const W = ["--fs-surface", "--fs-surface-card"];
+    const on = (theme: string, fg: string, fv: string, bgs: string[], bv: string) =>
+      bgs.map((bg) => `${theme} ${fg} ${fv} on ${bg} ${bv}`);
+    const expected = [
+      ...on("light", "--fs-on-primary", "#ffffff", ["--fs-primary"], "#16ac49"),
+      ...on("light", "--fs-primary", "#16ac49", [...W, "--fs-surface-overlay"], "#ffffff"),
+      ...on("light", "--fs-on-primary-container", "#0f8a39", ["--fs-primary-container"], "#f0faf4"),
+      ...on("light", "--fs-error", "#e53935", W, "#ffffff"),
+      ...on("light", "--fs-error", "#e53935", ["--fs-surface-container"], "#f5f5f5"),
+      ...on("light", "--fs-on-surface-muted", "#777777", W, "#ffffff"),
+      ...on("light", "--fs-on-surface-placeholder", "#999999", W, "#ffffff"),
+      ...on("dark", "--fs-on-primary", "#ffffff", ["--fs-primary"], "#16ac49"),
+      ...["--fs-on-surface-muted", "--fs-on-surface-placeholder"].flatMap((fg) => [
+        ...on("dark", fg, "#6a6a6a", ["--fs-surface"], "#141414"),
+        ...on("dark", fg, "#6a6a6a", ["--fs-surface-card"], "#1c1c1c"),
+      ]),
+      ...["light", "dark"].flatMap((theme) => [
+        ...on(theme, "--fs-on-badge-document", "#ffffff", ["--fs-badge-document"], "#fd1e23"),
+        ...on(theme, "--fs-on-badge-media", "#ffffff", ["--fs-badge-media"], "#007af9"),
+      ]),
+    ];
+    const listed = FILESQUID_CONTRAST_EXEMPTIONS.map(
+      (e) =>
+        `${e.theme} ${e.foreground} ${e.foregroundValue} on ${e.background} ${e.backgroundValue}`,
+    );
+    expect([...listed].sort()).toEqual([...expected].sort());
+    for (const e of FILESQUID_CONTRAST_EXEMPTIONS) {
+      const measured = contrastRatio(e.foregroundValue, e.backgroundValue) ?? 0;
+      expect(Math.round(measured * 100) / 100).toBe(e.ratio);
+      // Every listed pair is one the token test actually checks.
+      expect(CONTRAST_PAIRS).toContainEqual([e.foreground, e.background]);
+    }
+  });
+
   it("lists the exempt pairs as data: theme, tokens, both exact values and the measured ratio", () => {
     expect(FILESQUID_CONTRAST_EXEMPTIONS).toContainEqual({
       theme: "light",

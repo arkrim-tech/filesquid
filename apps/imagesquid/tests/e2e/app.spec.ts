@@ -151,8 +151,9 @@ for (const scheme of ["light", "dark"] as const) {
     await expect(page.locator("fs-host-indicator button.badge")).toHaveText(
       labels.hostBadgeServer ?? "",
     );
-    // UI-S-025: the skip control, then the sidebar's New button.
-    for (let step = 0; step < 2; step += 1) {
+    // UI-S-025: the skip control, the sidebar's New button, then on through the sidebar to the
+    // header's host badge and Monitor button, each with the ring (inputs draw a border instead).
+    for (let step = 0; step < 40 && !seen.some((s) => s.startsWith("Monitor |")); step += 1) {
       await page.keyboard.press("Tab");
       seen.push(
         await page.evaluate(() => {
@@ -165,8 +166,12 @@ for (const scheme of ["light", "dark"] as const) {
         }),
       );
     }
-    expect(seen).toEqual([`Skip to main content | ${ring}`, `${labels.fileNew} | ${ring}`]);
-    await page.locator("fs-app-shell header a.monitor").focus();
+    expect(seen.slice(0, 2)).toEqual([
+      `Skip to main content | ${ring}`,
+      `${labels.fileNew} | ${ring}`,
+    ]);
+    expect(seen).toContain(`${labels.hostBadgeServer} | ${ring}`);
+    expect(seen.at(-1)).toBe(`Monitor | ${ring}`);
     await page.keyboard.press("Enter");
     await expect(page).toHaveURL(/#\/monitor$/);
     await expect(
