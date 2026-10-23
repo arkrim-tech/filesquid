@@ -84,7 +84,9 @@ Wrote resources/assets/mvp-progress.svg
 
 `python3 scripts/docs/update_mvp_progress.py --check` printed nothing and exited 0.
 
-### `bash scripts/pre-commit.sh` (head of the branch)
+### `bash scripts/pre-commit.sh` (the working tree committed as `b72a7ebe`)
+
+Later Cubic fix commits each passed the same ordinary run (`Test scope: docs`); the final head's run is recorded in the pull request.
 
 ```text
 changed_scope: docs (only documentation or always-run checker scripts outside the crates and npm packages changed)
