@@ -174,6 +174,15 @@ impl DesktopImports {
     }
 }
 
+/// Whether `plan` is the import `request` asks for: the same library, destination collection
+/// and folder, and kind of source. Pure.
+fn same_import(plan: &ImportPlan, request: &ImportRequest) -> bool {
+    plan.library_id == request.library_id
+        && plan.collection_id == request.collection_id
+        && plan.folder == request.folder
+        && plan.method == method_of(request.source)
+}
+
 /// The import method of a picked source. Pure.
 fn method_of(source: ImportSource) -> ImportMethod {
     match source {
@@ -189,6 +198,30 @@ impl DesktopImports {
             .plans
             .job_of_operation(operation_id)
             .map_err(|_| ImportStartError::Unavailable)
+    }
+
+    /// The answer of the job `request`'s operation ID already started, if any: that job when
+    /// its plan names the request's library, destination and kind of source, else a refusal,
+    /// so an operation ID reused for another import is never answered with the first one's
+    /// job. Reads the plans.
+    fn answer_known(
+        &self,
+        request: &ImportRequest,
+    ) -> Result<Option<ImportAnswer>, ImportStartError> {
+        let operation = request.envelope.operation_id();
+        let Some(job_id) = self.known_job(operation.as_str())? else {
+            return Ok(None);
+        };
+        let plan = self
+            .starting
+            .plans
+            .load(&job_id)
+            .map_err(|_| ImportStartError::Unavailable)?
+            .ok_or(ImportStartError::Unavailable)?;
+        match same_import(&plan, request) {
+            true => Ok(Some(ImportAnswer::started(operation, job_id))),
+            false => Err(ImportStartError::OperationReused),
+        }
     }
 
     /// The job of `operation_id`: the one already started, or a new one for `plan`, decided
@@ -212,9 +245,7 @@ impl DesktopImports {
 
 impl ImportStarter for DesktopImports {
     fn replay(&self, request: &ImportRequest) -> Result<Option<ImportAnswer>, ImportStartError> {
-        let operation = request.envelope.operation_id();
-        let job = self.known_job(operation.as_str())?;
-        Ok(job.map(|job_id| ImportAnswer::started(operation, job_id)))
+        self.answer_known(request)
     }
 
     fn start(
@@ -224,8 +255,8 @@ impl ImportStarter for DesktopImports {
     ) -> Result<ImportAnswer, ImportStartError> {
         let operation = request.envelope.operation_id();
         let operation_id = operation.as_str();
-        if let Some(job_id) = self.known_job(operation_id)? {
-            return Ok(ImportAnswer::started(operation, job_id));
+        if let Some(answer) = self.answer_known(request)? {
+            return Ok(answer);
         }
         let library =
             LibraryId::new(&request.library_id).map_err(|_| ImportStartError::LibraryNotFound)?;

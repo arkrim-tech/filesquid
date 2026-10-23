@@ -674,16 +674,25 @@ fn removing_a_collection_that_still_holds_files_is_refused_before_anything_is_pu
     let trips = fx.create_collection(&lib, "Trips");
     path_of(register(&fx, &lib, &trips, &new_file(), "a.jpg", "op-1"));
     let head = snapshot_of(&fx, &lib).version;
-    let commit = CatalogCommit {
+    let removal = |revision: String| CatalogCommit {
         operation_id: fx.op(),
         library_id: lib.clone(),
-        expected_revision: ExpectedRevision::new(fx.revision(&lib)).expect("revision"),
+        expected_revision: ExpectedRevision::new(revision).expect("revision"),
         changes: vec![CatalogChange::RemoveCollection(trips.clone())],
         journal: JournalEntry::new("library.collection.delete", Outcome::Succeeded),
         created_id: None,
         deletion: None,
     };
-    let refused = fx.catalog.commit(commit).expect_err("refused");
+    let stale = fx.catalog.commit(removal("1".into())).expect_err("stale");
+    assert_eq!(
+        stale,
+        CatalogError::Conflict,
+        "the revision rule answers first"
+    );
+    let refused = fx
+        .catalog
+        .commit(removal(fx.revision(&lib)))
+        .expect_err("refused");
     assert_eq!(
         refused,
         CatalogError::Failed(COLLECTION_HOLDS_FILES.to_string())

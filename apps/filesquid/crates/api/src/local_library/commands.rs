@@ -19,7 +19,7 @@ use super::service::{
 };
 use super::snapshot::CopyReport;
 use crate::auth::Principal;
-use crate::canonical::snapshot_library_id;
+use crate::canonical::{snapshot_library_id, CanonicalError};
 use crate::library::mint_uuid_v4;
 use filesquid_core::LibraryId;
 use std::collections::HashMap;
@@ -262,7 +262,8 @@ impl<L: LibraryLocations> LibraryCommands<L> {
     ///
     /// `library_mismatch` when the request names another library than the snapshot's;
     /// `snapshot_unreadable` when the folder holds a snapshot that cannot be read, so a
-    /// damaged or partly copied folder never opens under another ID.
+    /// damaged or partly copied folder never opens under another ID; `unavailable` when the
+    /// storage cannot be reached now.
     async fn named_by_snapshot(
         &self,
         request: LocationRequest,
@@ -273,12 +274,7 @@ impl<L: LibraryLocations> LibraryCommands<L> {
         };
         let named = snapshot_library_id(root.backend.as_ref())
             .await
-            .map_err(|_| {
-                LocalLibraryError::refused(
-                    "snapshot_unreadable",
-                    "That folder's library snapshot cannot be read.",
-                )
-            })?;
+            .map_err(|err| snapshot_refusal(&err))?;
         let Some(named) = named.and_then(|id| LibraryId::new(id).ok()) else {
             return Ok(request);
         };
@@ -460,4 +456,35 @@ fn too_many_libraries() -> LocalLibraryError {
         "too_many_libraries",
         "Too many libraries are open. Restart FileSquid to open another.",
     )
+}
+
+/// The refusal of an open whose folder's snapshot could not be read: `unavailable` when the
+/// storage is unreachable now (a retry may succeed), else `snapshot_unreadable`. Pure.
+fn snapshot_refusal(err: &CanonicalError) -> LocalLibraryError {
+    match err {
+        CanonicalError::Unavailable(_) => LocalLibraryError::Unavailable,
+        _ => LocalLibraryError::refused(
+            "snapshot_unreadable",
+            "That folder's library snapshot cannot be read.",
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_unreachable_snapshot_is_retryable_and_an_unreadable_one_is_refused() {
+        let outage = snapshot_refusal(&CanonicalError::Unavailable("offline".into()));
+        assert!(matches!(outage, LocalLibraryError::Unavailable));
+        let damaged = snapshot_refusal(&CanonicalError::Failed("bad inventory".into()));
+        assert!(matches!(
+            damaged,
+            LocalLibraryError::Refused {
+                code: "snapshot_unreadable",
+                ..
+            }
+        ));
+    }
 }

@@ -4319,7 +4319,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiError"];
                 };
             };
-            /** @description A dialog is already open (`conflict`). */
+            /** @description A dialog is already open (`conflict`, journal code `dialog_open`), or the operation ID already started an import of another library, destination or kind of source (`conflict`, journal code `operation_reused`). */
             409: {
                 headers: {
                     [name: string]: unknown;

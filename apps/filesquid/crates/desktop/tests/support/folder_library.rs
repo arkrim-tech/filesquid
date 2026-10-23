@@ -54,10 +54,13 @@ pub fn attach_folder(
 
 /// Attach every library folder of the data directory `data_dir` to `catalog` again, as the
 /// owner reopens them at the next launch; at most the catalog's [`MAX_LIBRARIES`], and a
-/// fixture with more fails rather than leave libraries unopened. Filesystem and database I/O.
+/// fixture with more, or whose folders cannot be read, fails rather than leave libraries
+/// unopened (no folders yet is none to reattach). Filesystem and database I/O.
 pub fn reattach_all(catalog: &SqliteCatalog, data_dir: &Path) {
-    let Ok(entries) = std::fs::read_dir(folders_of(data_dir)) else {
-        return;
+    let entries = match std::fs::read_dir(folders_of(data_dir)) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return,
+        Err(err) => panic!("the library folders cannot be read: {err}"),
     };
     let entries: Vec<_> = entries.take(MAX_LIBRARIES + 1).collect();
     assert!(

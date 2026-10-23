@@ -329,6 +329,17 @@ fn removing_a_collection_that_still_holds_files_without_deleting_them_is_refused
         .expect("read")
         .expect("library");
     let revision = state.revision.to_string();
+    let stale = raw_commit(
+        "op-stale",
+        &fx.library(),
+        "1",
+        vec![CatalogChange::RemoveCollection(collection.clone())],
+    );
+    assert_eq!(
+        fx.catalog.commit(stale).expect_err("stale"),
+        CatalogError::Conflict,
+        "the revision rule answers first"
+    );
     let unpaired = raw_commit(
         "op-unpaired",
         &fx.library(),

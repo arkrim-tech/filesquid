@@ -207,3 +207,26 @@ fn imported_files_appear_under_their_collection_and_folder() {
         "no path, file or folder name in any journal entry"
     );
 }
+
+#[test]
+fn an_operation_id_reused_for_another_import_is_refused_not_answered_with_its_job() {
+    let dir = fresh_dir("reused");
+    let folder = holiday_folder(&dir);
+    let rig = block_on(ImportRig::launch(dir, Some(vec![folder])));
+    let (status, answer) = block_on(rig.import(LIBRARY, "op-reused", "folder"));
+    assert_eq!(status, 200, "{answer}");
+    assert_eq!(rig.wait_for_files(2), 2);
+    let elsewhere = json!({ "collection_id": rig.collection, "folder": "Elsewhere" });
+    let (status, refused) = block_on(rig.import_into(LIBRARY, "op-reused", "folder", elsewhere));
+    assert_eq!(status, 409, "{refused}");
+    let (status, files) = block_on(rig.import(LIBRARY, "op-reused", "files"));
+    assert_eq!(status, 409, "another kind of source: {files}");
+    assert_eq!(rig.dialog.shown(), 1, "no second dialog");
+    rig.stop_worker();
+    let reused: Vec<_> = rig
+        .journal()
+        .into_iter()
+        .filter(|e| e.error_code.as_deref() == Some("operation_reused"))
+        .collect();
+    assert_eq!(reused.len(), 2, "{reused:?}");
+}

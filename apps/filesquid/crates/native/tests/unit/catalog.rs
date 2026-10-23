@@ -867,17 +867,29 @@ fn scripted(
         deleted_at_ms: 1_000,
         purge_after_ms: 2_000,
     };
-    commit(
-        "4",
-        "op-5",
-        vec![
-            CatalogChange::DeleteCollectionFiles {
-                collection_id: home.clone(),
-                deletion,
-            },
-            CatalogChange::RemoveCollection(home.clone()),
-        ],
+    let delete_collection = || CatalogCommit {
+        deletion: Some(deletion),
+        ..raw(
+            LIB_A,
+            "4",
+            "op-5",
+            vec![
+                CatalogChange::DeleteCollectionFiles {
+                    collection_id: home.clone(),
+                    deletion,
+                },
+                CatalogChange::RemoveCollection(home.clone()),
+            ],
+        )
+    };
+    let receipt = catalog.commit(delete_collection()).unwrap();
+    assert_eq!(
+        receipt.deletion,
+        Some(deletion),
+        "the receipt keeps the times"
     );
+    let replayed = catalog.commit(delete_collection()).unwrap();
+    assert_eq!(replayed, receipt, "a replay answers the first deletion");
     let mut out = vec![catalog.library(&lib).unwrap().unwrap().revision];
     for scope in [
         FileScope::Library,

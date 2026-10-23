@@ -180,7 +180,8 @@ fn finish_unchanged(tx: Transaction<'_>, commit: &CatalogCommit) -> Result<(), C
     tx.commit().map_err(sql)
 }
 
-/// Check the create or revision rule, apply every change and the new revision inside `tx`,
+/// Check the create or revision rule and the removals, apply every change and the new revision
+/// inside `tx`,
 /// and answer the receipt with the virtual collections purged files were removed from (read
 /// before the purge). Database I/O.
 fn apply_changes(
@@ -190,6 +191,7 @@ fn apply_changes(
 ) -> Result<(CommitReceipt, Vec<SnapshotKey>), CatalogError> {
     let current = current_revision(tx)?;
     let revision = next_revision(creates, current, commit)?;
+    check_removals(tx, commit)?;
     let mut purged = project::purged_memberships(tx, &commit.changes)?;
     purged.extend(project::collection_deletions(tx, &commit.changes)?);
     for change in &commit.changes {
@@ -389,11 +391,9 @@ fn apply_change(
 /// Refuse a commit that removes a collection still holding a file that is not deleted, unless
 /// the same commit deletes that collection's files first
 /// ([`CatalogChange::DeleteCollectionFiles`]), so no file is left with a removed home and no
-/// deleted state (ADR 041 Decision 8). Checked before anything is published. Database reads.
-pub(crate) fn check_removals(
-    conn: &Connection,
-    commit: &CatalogCommit,
-) -> Result<(), CatalogError> {
+/// deleted state (ADR 041 Decision 8). Checked after the revision rule and before anything is
+/// applied or published. Database reads.
+fn check_removals(conn: &Connection, commit: &CatalogCommit) -> Result<(), CatalogError> {
     let mut deleted: Vec<&CollectionId> = Vec::new();
     for change in &commit.changes {
         match change {

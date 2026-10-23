@@ -127,10 +127,12 @@ async fn rig_with(extra: &[(&str, &str, &[u8])]) -> (FilesRig, DriveCatalog, Vec
     // The navigation service checks a folder node against the folders committed paths
     // imply; the desktop answers them from the same index (`CatalogFolders`).
     let folders = MemoryFolderIndex::new();
-    folders.add_file(
-        &FolderScope::Collection(collection.clone()),
-        "trips/beach-1.jpg",
-    );
+    for path in ["trips/beach-1.jpg"]
+        .into_iter()
+        .chain(extra.iter().map(|(path, _, _)| *path))
+    {
+        folders.add_file(&FolderScope::Collection(collection.clone()), path);
+    }
     let navigation = NavigationService::new(
         drive.catalog.clone(),
         Arc::new(folders),

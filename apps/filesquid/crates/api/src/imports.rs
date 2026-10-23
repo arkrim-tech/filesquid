@@ -138,6 +138,9 @@ pub enum ImportStartError {
     Busy,
     /// The host cannot show a dialog or run a job now.
     Unavailable,
+    /// The operation ID already started an import of another library, destination or
+    /// source; it is never answered with that job.
+    OperationReused,
 }
 
 impl ImportStartError {
@@ -147,6 +150,7 @@ impl ImportStartError {
             ImportStartError::LibraryNotFound => "library_not_found",
             ImportStartError::Busy => "dialog_open",
             ImportStartError::Unavailable => "unavailable",
+            ImportStartError::OperationReused => "operation_reused",
         }
     }
 }
@@ -168,6 +172,8 @@ pub trait ImportStarter: Send + Sync {
     /// since. The default knows of no job.
     ///
     /// # Errors
+    /// [`ImportStartError::OperationReused`] when that job imports into another library,
+    /// collection or folder, or from another kind of source;
     /// [`ImportStartError::Unavailable`] when the host cannot tell.
     fn replay(&self, request: &ImportRequest) -> Result<Option<ImportAnswer>, ImportStartError> {
         let _ = request;
@@ -424,6 +430,11 @@ async fn refuse(
             Level::Error,
             ErrorCode::Unavailable,
             "This host cannot import now.",
+        ),
+        ImportStartError::OperationReused => (
+            Level::Warn,
+            ErrorCode::Conflict,
+            "That operation ID already started another import (operation_reused).",
         ),
     };
     let entry = JournalEntry::new(IMPORT_START_OPERATION, Outcome::Failed)
