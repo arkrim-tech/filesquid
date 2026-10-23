@@ -3,61 +3,154 @@
  * requires: light #005db6 / #ffffff (6.48:1), dark #a9c7ff / #003063 (7.67:1). The surfaces
  * follow the current ImageSquid screenshots (apps/imagesquid/resources/ui-mockups/): white
  * canvas, cool grey sidebar, pale blue secondary ("Select"). Dark surfaces are derived.
- * Every text pair meets WCAG 2.2 AA in both themes (checked by tests/unit/theme.test.ts).
+ *
+ * ImageSquid defines every token the FileSquid default does (UI-S-005, UI-S-024): the card,
+ * raised and overlay surfaces, the strong and control outlines, the heading, muted and
+ * placeholder text, the focus ring, brand, icon, badge, inverse-surface and scrim colours, the
+ * type sizes, the 8 px spacing scale and the radii. ImageSquid has no contrast exemption: every
+ * text pair meets WCAG 2.2 AA 4.5:1 and the focus ring and control outline reach 3:1 on every
+ * surface in both themes (checked by tests/unit/theme.test.ts). There is no warning token:
+ * warnings use --fs-error. Fills are flat.
  */
 :root {
   --fs-surface: #ffffff;
+  --fs-surface-card: #ffffff;
+  --fs-surface-raised: #f4f5f7;
+  --fs-surface-overlay: #ffffff;
   --fs-surface-container: #f4f5f7;
+  --fs-on-surface-heading: #111318;
   --fs-on-surface: #1c1f24;
   --fs-on-surface-variant: #5f6670;
+  --fs-on-surface-muted: #5f6670;
+  --fs-on-surface-placeholder: #5f6670;
   --fs-outline: #e2e5ea;
+  --fs-outline-strong: #c4c9d1;
+  --fs-outline-control: #848b96;
   --fs-primary: #005db6;
   --fs-on-primary: #ffffff;
   --fs-primary-container: #dce8fb;
   --fs-on-primary-container: #0b4fae;
   --fs-error: #b42318;
+  --fs-focus-ring: #005db6;
+  --fs-brand: #005db6;
+  --fs-icon: #1c1f24;
+  --fs-icon-muted: #5f6670;
+  --fs-icon-disabled: #c4c9d1;
+  --fs-badge-document: #b42318;
+  --fs-on-badge-document: #ffffff;
+  --fs-badge-data: #fcd805;
+  --fs-on-badge-data: #111111;
+  --fs-badge-media: #005db6;
+  --fs-on-badge-media: #ffffff;
+  --fs-inverse-surface: #1c1f24;
+  --fs-on-inverse-surface: #ffffff;
+  --fs-scrim: #000000;
+  --fs-scrim-opacity: 0.32;
   --fs-font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --fs-font-heading: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --fs-font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --fs-font-size-badge: 0.625rem;
+  --fs-font-size-eyebrow: 0.6875rem;
   --fs-font-size-small: 0.8125rem;
+  --fs-font-size-ui: 0.875rem;
+  --fs-font-size-state: 0.9375rem;
   --fs-font-size-body: 1rem;
+  --fs-font-size-lead: 1.0625rem;
   --fs-font-size-title: 1.25rem;
+  --fs-font-size-heading: 1.375rem;
+  --fs-font-size-page: 1.875rem;
+  --fs-font-size-page-large: 2.125rem;
+  --fs-font-size-display: 3.5rem;
   --fs-space-1: 4px;
   --fs-space-2: 8px;
-  --fs-space-3: 12px;
-  --fs-space-4: 16px;
-  --fs-space-5: 24px;
+  --fs-space-3: 16px;
+  --fs-space-4: 24px;
+  --fs-space-5: 40px;
+  --fs-space-6: 64px;
+  --fs-space-7: 96px;
+  --fs-radius-button: 8px;
+  --fs-radius-input: 8px;
+  --fs-radius-dialog: 12px;
   --fs-radius: 10px;
+  --fs-radius-item: 6px;
+  --fs-radius-chip: 4px;
+  --fs-radius-badge: 3px;
+  --fs-radius-check: 4px;
+  --fs-radius-pill: 999px;
   --fs-motion-duration: 150ms;
   color-scheme: light;
 }
 
 :root[data-theme="dark"] {
   --fs-surface: #121418;
+  --fs-surface-card: #1b1e24;
+  --fs-surface-raised: #24282f;
+  --fs-surface-overlay: #2a2e36;
   --fs-surface-container: #1b1e24;
+  --fs-on-surface-heading: #f4f5f7;
   --fs-on-surface: #e6e8ec;
   --fs-on-surface-variant: #a6adb8;
+  --fs-on-surface-muted: #9aa1ac;
+  --fs-on-surface-placeholder: #9aa1ac;
   --fs-outline: #2c3038;
+  --fs-outline-strong: #3a3f48;
+  --fs-outline-control: #858c96;
   --fs-primary: #a9c7ff;
   --fs-on-primary: #003063;
   --fs-primary-container: #24406b;
   --fs-on-primary-container: #d6e4ff;
   --fs-error: #ffb4ab;
+  --fs-focus-ring: #a9c7ff;
+  --fs-brand: #a9c7ff;
+  --fs-icon: #a6adb8;
+  --fs-icon-muted: #858c96;
+  --fs-icon-disabled: #3a3f48;
+  --fs-badge-document: #b42318;
+  --fs-on-badge-document: #ffffff;
+  --fs-badge-data: #fcd805;
+  --fs-on-badge-data: #111111;
+  --fs-badge-media: #005db6;
+  --fs-on-badge-media: #ffffff;
+  --fs-inverse-surface: #2a2e36;
+  --fs-on-inverse-surface: #f4f5f7;
+  --fs-scrim: #000000;
   color-scheme: dark;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --fs-surface: #121418;
+    --fs-surface-card: #1b1e24;
+    --fs-surface-raised: #24282f;
+    --fs-surface-overlay: #2a2e36;
     --fs-surface-container: #1b1e24;
+    --fs-on-surface-heading: #f4f5f7;
     --fs-on-surface: #e6e8ec;
     --fs-on-surface-variant: #a6adb8;
+    --fs-on-surface-muted: #9aa1ac;
+    --fs-on-surface-placeholder: #9aa1ac;
     --fs-outline: #2c3038;
+    --fs-outline-strong: #3a3f48;
+    --fs-outline-control: #858c96;
     --fs-primary: #a9c7ff;
     --fs-on-primary: #003063;
     --fs-primary-container: #24406b;
     --fs-on-primary-container: #d6e4ff;
     --fs-error: #ffb4ab;
+    --fs-focus-ring: #a9c7ff;
+    --fs-brand: #a9c7ff;
+    --fs-icon: #a6adb8;
+    --fs-icon-muted: #858c96;
+    --fs-icon-disabled: #3a3f48;
+    --fs-badge-document: #b42318;
+    --fs-on-badge-document: #ffffff;
+    --fs-badge-data: #fcd805;
+    --fs-on-badge-data: #111111;
+    --fs-badge-media: #005db6;
+    --fs-on-badge-media: #ffffff;
+    --fs-inverse-surface: #2a2e36;
+    --fs-on-inverse-surface: #f4f5f7;
+    --fs-scrim: #000000;
     color-scheme: dark;
   }
 }

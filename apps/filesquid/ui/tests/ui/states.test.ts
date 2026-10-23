@@ -23,10 +23,13 @@ function mount(state: ViewState): FsStates {
   return states;
 }
 
-/** Text of each child of a region, joined by single spaces. */
+/** Text of each child of a region but its decorative icon, joined by single spaces. */
 function text(states: FsStates, selector: string): string {
   const region = states.shadowRoot?.querySelector(selector);
-  return [...(region?.children ?? [])].map((child) => child.textContent ?? "").join(" ");
+  return [...(region?.children ?? [])]
+    .filter((child) => child.getAttribute("aria-hidden") !== "true")
+    .map((child) => child.textContent ?? "")
+    .join(" ");
 }
 
 describe("<fs-states>", () => {
@@ -38,7 +41,11 @@ describe("<fs-states>", () => {
     [{ kind: "loading" }, "status", labels.stateLoading],
     [{ kind: "empty" }, "status", labels.stateEmpty],
     [{ kind: "empty", message: labels.collections }, "status", labels.collections],
-    [{ kind: "error" }, "alert", `${labels.stateError} ${labels.stateRetry}`],
+    [
+      { kind: "error" },
+      "alert",
+      `${labels.stateError} ${labels.fileActionFailed} ${labels.stateRetry}`,
+    ],
     [{ kind: "offline" }, "alert", `${labels.stateOffline} ${labels.stateRetry}`],
     [{ kind: "unavailable" }, "alert", `${labels.stateUnavailable} ${labels.stateRetry}`],
     [
@@ -71,10 +78,36 @@ describe("<fs-states>", () => {
     expect(states.shadowRoot?.querySelector('[role="alert"]')).toBe(alert);
   });
 
+  it.each([
+    [{ kind: "loading" }, "clock", false],
+    [{ kind: "empty" }, "collection", false],
+    [{ kind: "empty", message: labels.navigationGone }, "info", false],
+    [{ kind: "error" }, "error", true],
+    [{ kind: "offline" }, "offline", false],
+    [{ kind: "denied" }, "denied", false],
+    [{ kind: "unavailable" }, "alert", true],
+  ] as [ViewState, string, boolean][])(
+    "draws the mockup 56 icon for %o, in the error colour only for errors",
+    (state, name, alerting) => {
+      const glyph = mount(state).shadowRoot?.querySelector<SVGElement>(".region svg.icon");
+      expect(glyph?.dataset.icon).toBe(name);
+      expect(glyph?.getAttribute("width")).toBe("24");
+      expect(glyph?.classList.contains("alerting")).toBe(alerting);
+    },
+  );
+
+  it("draws the centred UI-S-026 treatment from tokens: 15 px 600 title, 13 px detail", () => {
+    const css = mount({ kind: "error" }).shadowRoot?.querySelector("style")?.textContent ?? "";
+    expect(css).toMatch(/\.region \{[^}]*align-items: center[^}]*text-align: center/);
+    expect(css).toMatch(/\.title \{[^}]*font-size: var\(--fs-font-size-state\); font-weight: 600/);
+    expect(css).toMatch(/\.detail \{[^}]*font-size: var\(--fs-font-size-small\)/);
+    expect(css).toMatch(/\.icon\.alerting \{ color: var\(--fs-error\)/);
+  });
+
   it("puts the shared accessibility stylesheet first", () => {
     const states = mount({ kind: "loading" });
     expect(states.shadowRoot?.querySelector("style")?.textContent).toMatch(
-      /^\s*:focus-visible \{ outline: 2px solid var\(--fs-primary\)/,
+      /^\s*:focus-visible \{ outline: 2px solid var\(--fs-focus-ring\)/,
     );
   });
 

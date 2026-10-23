@@ -21,6 +21,7 @@ import { A11Y_STYLE } from "./a11y-style";
 import { CONTROL_STYLE } from "./control-style";
 import { focusElement } from "../a11y/focus";
 import type { ViewState } from "./view-state";
+import { icon, type IconName } from "./icons";
 
 /** What the element needs: the active label table. */
 export interface StatesOptions {
@@ -37,9 +38,11 @@ const STYLE = `
   .region { display: flex; flex-direction: column; align-items: center; gap: var(--fs-space-2); padding: var(--fs-space-5) var(--fs-space-4); text-align: center; }
   .region:empty { padding: 0; }
   p { margin: 0; min-width: 0; max-inline-size: 36rem; overflow-wrap: anywhere; }
-  .title { font-size: 0.9375rem; font-weight: 600; color: var(--fs-on-surface); }
+  .title { font-size: var(--fs-font-size-state); font-weight: 600; color: var(--fs-on-surface); }
   .detail { color: var(--fs-on-surface-variant); font-size: var(--fs-font-size-small); }
   .button { margin-block-start: var(--fs-space-2); }
+  .icon { color: var(--fs-icon); }
+  .icon.alerting { color: var(--fs-error); }
 `;
 
 /** Custom element that shows one {@link ViewState}. */
@@ -123,7 +126,23 @@ function isAlert(state: ViewState): boolean {
 /** The message of a loading or empty state. */
 function statusContent(state: ViewState, labels: LabelTable): Node[] {
   const text = state.kind === "empty" ? (state.message ?? labels.stateEmpty) : labels.stateLoading;
-  return [paragraph("title", text)];
+  return [stateIcon(state), paragraph("title", text)];
+}
+
+/** The icon each state draws above its title (mockup 56); error and unavailable in the error colour. */
+function stateIcon(state: ViewState): SVGSVGElement {
+  const names: Record<ViewState["kind"], IconName> = {
+    loading: "clock",
+    empty: "collection",
+    error: "error",
+    offline: "offline",
+    denied: "denied",
+    unavailable: "alert",
+  };
+  const name = state.kind === "empty" && state.message ? "info" : names[state.kind];
+  const svg = icon(name, 24);
+  if (state.kind === "error" || state.kind === "unavailable") svg.classList.add("alerting");
+  return svg;
 }
 
 /** The title of an error, offline or unavailable state. */
@@ -145,7 +164,9 @@ function alertContent(state: ViewState, labels: LabelTable, retry: () => void): 
   if (state.kind === "denied") {
     const detail = state.reason ? reasonLabel(state.reason, labels) : undefined;
     const title = paragraph("title", labels.stateDenied);
-    return detail ? [title, paragraph("detail", detail)] : [title];
+    return detail
+      ? [stateIcon(state), title, paragraph("detail", detail)]
+      : [stateIcon(state), title];
   }
   const title = paragraph("title", alertTitle(state, labels));
   const reason = alertDetail(state, labels);
@@ -154,7 +175,8 @@ function alertContent(state: ViewState, labels: LabelTable, retry: () => void): 
   button.className = "button secondary";
   button.textContent = labels.stateRetry;
   button.addEventListener("click", retry);
-  return reason ? [title, paragraph("detail", reason), button] : [title, button];
+  const glyph = stateIcon(state);
+  return reason ? [glyph, title, paragraph("detail", reason), button] : [glyph, title, button];
 }
 
 /** A `<p>` with a class and text. */

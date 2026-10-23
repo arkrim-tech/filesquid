@@ -130,9 +130,9 @@ describe("<fs-app-shell>", () => {
     expect(block?.querySelector(".storage-title")?.textContent).toBe(labels.fileStorageUsed);
     expect(block?.querySelector<HTMLElement>(".storage-facts")?.hidden).toBe(true);
     shell.storage = {
-      usedBytes: 38.4 * 1e9,
-      historyBytes: 4.2 * 1e9,
-      freeBytes: 1.4 * 1e12,
+      usedBytes: 38.4 * 2 ** 30,
+      historyBytes: 4.2 * 2 ** 30,
+      freeBytes: 1.4 * 2 ** 40,
     };
     expect(block?.querySelector<HTMLElement>(".storage-facts")?.hidden).toBe(false);
     expect(block?.querySelector(".storage-value")?.textContent).toBe("38.4 GB");
@@ -141,7 +141,7 @@ describe("<fs-app-shell>", () => {
       "1.4 TB free on disk",
     ]);
     const bar = block?.querySelector<HTMLElement>(".storage-fill");
-    expect(bar?.style.inlineSize).toBe("2.7%");
+    expect(bar?.style.inlineSize).toBe("2.6%");
     shell.storage = undefined;
     expect(block?.querySelector<HTMLElement>(".storage-facts")?.hidden).toBe(true);
   });
@@ -308,7 +308,11 @@ describe("<fs-app-shell>", () => {
   it("refreshes a Settings page it holds when health is refreshed", async () => {
     let reads = 0;
     const client = {
-      health: async () => ({ status: "ok" as const, product: "filesquid", schema_version: 1 }),
+      health: async () => ({
+        status: "ok" as const,
+        product: "filesquid",
+        schema_version: 1 as const,
+      }),
       host: async () => {
         reads += 1;
         return hostFakes().host();

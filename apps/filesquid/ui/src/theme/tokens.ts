@@ -50,6 +50,7 @@ export const REQUIRED_TOKENS = [
   "--fs-font-size-eyebrow",
   "--fs-font-size-small",
   "--fs-font-size-ui",
+  "--fs-font-size-state",
   "--fs-font-size-body",
   "--fs-font-size-lead",
   "--fs-font-size-title",

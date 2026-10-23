@@ -134,6 +134,7 @@ describe("default design tokens", () => {
       "--fs-font-size-eyebrow": "0.6875rem",
       "--fs-font-size-small": "0.8125rem",
       "--fs-font-size-ui": "0.875rem",
+      "--fs-font-size-state": "0.9375rem",
       "--fs-font-size-body": "1rem",
       "--fs-font-size-lead": "1.0625rem",
       "--fs-font-size-title": "1.25rem",

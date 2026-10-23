@@ -1,6 +1,8 @@
 /**
  * UI test: the FileSquid shell rendered as the ImageSquid distribution, with the brand from
- * the ImageSquid manifest and brand assets (IS-S-009) and the shared theme control.
+ * the ImageSquid manifest and brand assets (IS-S-009) in the UI-S-025 frame: the sidebar holds
+ * the mark and name, the header holds no theme control and no API status (owner answers 7 and
+ * 12), and the theme control lives on the shared Settings page.
  */
 import { beforeEach, expect, it } from "vitest";
 import {
@@ -35,7 +37,6 @@ async function mount(dark: boolean) {
   shell.configure({
     distribution: imagesquid,
     client: {
-      health: async () => ({ schema_version: 1, status: "ok", product: "filesquid" }),
       host: async () => ({
         schema_version: 1,
         host_type: "desktop",
@@ -71,15 +72,19 @@ it("renders ImageSquid brand and vocabulary in the shared shell", async () => {
   expect(root?.querySelector("h1")?.textContent).toBe("ImageSquid");
   expect(root?.querySelector("img")?.getAttribute("alt")).toBe("ImageSquid logo");
   expect([...(root?.querySelectorAll("nav li") ?? [])].map((li) => li.textContent)).toEqual([
+    "All photos",
+    "Recent",
     "Libraries",
     "Albums",
     "Galleries",
     "Exhibits",
     "Create or open a library",
-    "Monitor",
     "Settings",
+    "Logs",
   ]);
-  expect(root?.querySelector('[role="status"]')?.textContent).toBe("Archives API: ok (filesquid)");
+  expect(root?.querySelector("nav .new")?.textContent).toBe(imagesquid.labels.fileNew);
+  expect(root?.querySelector("header .monitor")?.textContent).toBe(imagesquid.labels.monitor);
+  expect(root?.querySelector("header")?.textContent).not.toContain("API");
 });
 
 it("inherits the FileSquid accessibility contracts (UI-S-016)", async () => {
@@ -93,16 +98,11 @@ it("inherits the FileSquid accessibility contracts (UI-S-016)", async () => {
   expect(resolveLocale(imagesquid)).toEqual({ lang: "en", dir: "ltr" });
 });
 
-it("keeps the official mark in the dark theme and shows the theme control", async () => {
+it("keeps the official mark in the dark theme and no theme control in the header", async () => {
   const shell = await mount(true);
   const root = shell.shadowRoot;
-  expect(root?.querySelector("header img")?.getAttribute("src")).toBe("/imagesquid-logo.svg");
-  const control = root?.querySelector("header fs-theme-control");
-  expect(control?.getAttribute("data-resolved")).toBe("dark");
-  expect(control?.shadowRoot?.querySelector("legend")?.textContent).toBe("Theme");
-  expect(
-    [...(control?.shadowRoot?.querySelectorAll("label") ?? [])].map((l) => l.textContent),
-  ).toEqual(["System", "Light", "Dark"]);
+  expect(root?.querySelector("nav .brand img")?.getAttribute("src")).toBe("/imagesquid-logo.svg");
+  expect(root?.querySelector("fs-theme-control")).toBeNull();
 });
 
 it("words the navigation tree, breadcrumb and states in ImageSquid's vocabulary (UI-F2.1a)", async () => {

@@ -184,7 +184,7 @@ describe("<fs-nav-tree> structure", () => {
   it("puts the shared accessibility stylesheet first", async () => {
     const { root } = await mount();
     expect(root.querySelector("style")?.textContent).toMatch(
-      /^\s*:focus-visible \{ outline: 2px solid var\(--fs-primary\)/,
+      /^\s*:focus-visible \{ outline: 2px solid var\(--fs-focus-ring\)/,
     );
   });
 });
