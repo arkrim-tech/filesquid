@@ -16,6 +16,8 @@ Amended 2026-10-19 (owner decision of 2026-10-18): "stable Rust" means the exact
 
 Paths updated 2026-10-15; see [ADR 031](./031-vanilla-typescript-ui-and-white-label-theming.md).
 
+Amended 2026-10-23 (owner decision of 2026-10-23, verbatim: "for ImageSquid checks decision use option 2"): the tools are unchanged, but during the FileSquid MVP the pre-commit hook runs ESLint only inside `apps/filesquid/ui/`. Prettier still checks `apps/imagesquid/`, with `@filesquid/ui`'s Prettier; ImageSquid's ESLint runs by hand until ImageSquid work starts ([ImageSquid during the MVP](../../.agents/rules/local-verification.md#imagesquid-during-the-mvp)).
+
 ## Context / Requirement Reference
 
 AGENTS.md linting mandate. [U-38](../product-vision.md#one-api-hosts-and-distributions) requires `cargo audit` / `cargo deny` for crates.io and bundled C libraries.
