@@ -61,7 +61,24 @@ Feature: One client for every FileSquid host
     Then the request should be multipart form data with an "envelope" part and a "file" part
     And the client should return the API's outcome for the same operation id
 
+  Scenario: A file write is a command whose committed outcome carries what it made (API-F2.13)
+    Given the file browser shows an object at its head version
+    When the view moves a file in it
+    Then the request should carry an envelope expecting that head version and the move as its input
+    And the view should receive the version the committed outcome names as its result
+
+  Scenario: A file upload sends its facts as an input part
+    Given a command envelope expecting revision "0" for a new file
+    When the view uploads a file into a library
+    Then the request should be a multipart PUT with "envelope", "input" and "file" parts
+
   # Edge cases
+  Scenario: A file write against an out-of-date head changes nothing
+    Given the object changed after the file browser listed it
+    When the view removes a file with the head it listed
+    Then the API should answer HTTP 409 with a conflict outcome
+    And the view should show the conflict and change nothing
+
   Scenario: A ranged read returns part of a file
     Given a file of 100 bytes
     When the view reads bytes 0 to 9

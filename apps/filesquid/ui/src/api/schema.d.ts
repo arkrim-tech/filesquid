@@ -423,7 +423,7 @@ export interface paths {
         get?: never;
         /**
          * Upload one file as its own object, or new content for an existing file
-         * @description The body is the file's bytes, at most 64 MiB. Without `file_id`, the upload creates the file's own OCFL object `files/<file-id>` (identifier `urn:uuid:<file-id>`, a new UUID v4) with the original at `original/<file-uuid>.<ext>` and its metadata record (the `filesquid-metadata` file record, API-S-026) beside it in v1, never at a logical path the client chooses. With `file_id`, it is a new version of that file's object: the new bytes at the same stored path and one more import entry; the display name and statements stay. The record holds the facts the client provides (name and its normalisation form, size, last-modified time, media type) and lists every other fact as unavailable (MD-S-013). The verified size is the size of the body: a declared `size` that differs fails verification, is refused (400) and commits nothing. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused without publishing (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once.
+         * @description The body is `multipart/form-data` with exactly three parts: `envelope` (JSON), `input` (JSON, the upload's facts) and `file` (the bytes, at most 64 MiB). Without `file_id`, the upload creates the file's own OCFL object `files/<file-id>` (identifier `urn:uuid:<file-id>`, a new UUID v4) with the original at `original/<file-uuid>.<ext>` and its metadata record (the `filesquid-metadata` file record, API-S-026) beside it in v1, never at a logical path the client chooses. With `file_id`, it is a new version of that file's object: the new bytes at the same stored path and one more import entry; the display name and statements stay. The record holds the facts the client provides (name and its normalisation form, size, last-modified time, media type) and lists every other fact as unavailable (MD-S-013). The verified size is the size of the `file` part: a declared `size` that differs fails verification, is refused (400) and commits nothing. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused without publishing (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once. Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of the file's object for an upload with `file_id`, and `0` for a new file. A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). A refusal stores no receipt, so its retry is evaluated again. Receipts are kept in memory while the host runs, at most 10,000.
          */
         put: operations["uploadFile"];
         post?: never;
@@ -444,7 +444,7 @@ export interface paths {
         put?: never;
         /**
          * Create a folder (pending until a file is added)
-         * @description Writes nothing: OCFL stores no empty folder, so a new folder stays pending in the client and is persisted only when a file is added beneath its prefix. A file at the path or at a parent of it is a conflict.
+         * @description Writes nothing: OCFL stores no empty folder, so a new folder stays pending in the client and is persisted only when a file is added beneath its prefix. A file at the path or at a parent of it is a conflict. Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of `object_id` that the caller read (`v1`, `v2`, ...). A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). Creating a folder writes nothing, so it never stores a receipt: a repeated operation_id is evaluated again.
          */
         post: operations["createFolder"];
         delete?: never;
@@ -464,7 +464,7 @@ export interface paths {
         put?: never;
         /**
          * Move or rename one file or folder
-         * @description A folder moves every file below it; no bytes are written. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once. A file object's stored original (`original/` of `files/<file-id>`) never moves: such a move is refused (400) with a pointer to `POST /api/v1/files/renames`, since a rename changes only the display name (API-S-027).
+         * @description A folder moves every file below it; no bytes are written. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once. A file object's stored original (`original/` of `files/<file-id>`) never moves: such a move is refused (400) with a pointer to `POST /api/v1/files/renames`, since a rename changes only the display name (API-S-027). Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of `object_id` that the caller read (`v1`, `v2`, ...). A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). A refusal stores no receipt, so its retry is evaluated again. Receipts are kept in memory while the host runs, at most 10,000.
          */
         post: operations["moveFiles"];
         delete?: never;
@@ -484,7 +484,7 @@ export interface paths {
         put?: never;
         /**
          * Remove one file or folder
-         * @description The bytes stay in the object for history and restore. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once.
+         * @description The bytes stay in the object for history and restore. Publishes exactly one OCFL version through the filesquid-ocfl change model, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). The version is journaled with opaque IDs only; a refusal is journaled once. Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of `object_id` that the caller read (`v1`, `v2`, ...). A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). A refusal stores no receipt, so its retry is evaluated again. Receipts are kept in memory while the host runs, at most 10,000.
          */
         post: operations["removeFiles"];
         delete?: never;
@@ -504,7 +504,7 @@ export interface paths {
         put?: never;
         /**
          * Restore files or folders from an earlier version
-         * @description One restore operation (API-S-014): the new version points at the content the earlier version holds, a revert when it returns every file of the object to that version's and the head holds no other, else a reinstate, named so in the version's filesquid.operation.v1 message, which carries the optional label. Publishes exactly one OCFL version through the filesquid-ocfl change model and leaves earlier versions untouched, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). Paths in the reserved .filesquid folder are refused (400). With provenance configured the version carries its PROV-O record (API-S-028). The version is journaled with opaque IDs only; a refusal is journaled once.
+         * @description One restore operation (API-S-014): the new version points at the content the earlier version holds, a revert when it returns every file of the object to that version's and the head holds no other, else a reinstate, named so in the version's filesquid.operation.v1 message, which carries the optional label. Publishes exactly one OCFL version through the filesquid-ocfl change model and leaves earlier versions untouched, or is refused (409) without publishing when nothing would change, another change is staged or the head is incomplete (API-S-008). Paths in the reserved .filesquid folder are refused (400). With provenance configured the version carries its PROV-O record (API-S-028). The version is journaled with opaque IDs only; a refusal is journaled once. Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of `object_id` that the caller read (`v1`, `v2`, ...). A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). A refusal stores no receipt, so its retry is evaluated again. Receipts are kept in memory while the host runs, at most 10,000.
          */
         post: operations["restoreFiles"];
         delete?: never;
@@ -787,7 +787,7 @@ export interface paths {
         get?: never;
         /**
          * Set or clear the label of one version after commit
-         * @description Commits one version (operation kind label) holding the object's application-data file .filesquid/labels.json, which maps labelled versions to their later labels; null clears a commit-time label. That version's own message carries no label. The file is recovered with the object from an ordinary copy. At most 1,000 labelled versions per object. A label that would not change what the version shows is refused (409) without publishing. Labels never affect retention. With provenance configured the version carries its PROV-O record (API-S-028). Journaled with opaque IDs only; a refusal is journaled once.
+         * @description Commits one version (operation kind label) holding the object's application-data file .filesquid/labels.json, which maps labelled versions to their later labels; null clears a commit-time label. That version's own message carries no label. The file is recovered with the object from an ordinary copy. At most 1,000 labelled versions per object. A label that would not change what the version shows is refused (409) without publishing. Labels never affect retention. With provenance configured the version carries its PROV-O record (API-S-028). Journaled with opaque IDs only; a refusal is journaled once. Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of `object_id` that the caller read (`v1`, `v2`, ...). A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). A refusal stores no receipt, so its retry is evaluated again. Receipts are kept in memory while the host runs, at most 10,000.
          */
         put: operations["setVersionLabel"];
         post?: never;
@@ -1032,7 +1032,7 @@ export interface paths {
         put?: never;
         /**
          * Rename a file
-         * @description Set the display name of a file object's original (API-S-027): the record's display name changes and nothing else, so the stored name, the logical path, the original name and every import entry stay. Publishes exactly one new version of the file's metadata record through the metadata module's `ocfl` store with the caller as the version user, or is refused without publishing (400 for an empty name, one over 1,024 bytes or one with `/` or NUL; 409 when the name is already the display name or another writer moved the record first). The version is journaled as `files.rename` with opaque IDs only; a refusal is journaled once.
+         * @description Set the display name of a file object's original (API-S-027): the record's display name changes and nothing else, so the stored name, the logical path, the original name and every import entry stay. Publishes exactly one new version of the file's metadata record through the metadata module's `ocfl` store with the caller as the version user, or is refused without publishing (400 for an empty name, one over 1,024 bytes or one with `/` or NUL; 409 when the name is already the display name or another writer moved the record first). The version is journaled as `files.rename` with opaque IDs only; a refusal is journaled once. Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of the file's object `urn:uuid:<file_id>` that the caller read. A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). A refusal stores no receipt, so its retry is evaluated again. Receipts are kept in memory while the host runs, at most 10,000.
          */
         post: operations["renameFile"];
         delete?: never;
@@ -1092,7 +1092,7 @@ export interface paths {
         put?: never;
         /**
          * Copy a file into a new file
-         * @description Copy the file `file_id` at its head into a new file (API-S-011, SRS-F-062): a new FileId and stored name `original/<new-uuid>.<ext>` in the new file's own object `files/<new-id>`, published as its version v1. The copy keeps the display name, the original name, the media type and every statement; its one import entry is the source's latest entry rebound to the copy, and its record names the source as the asserted statement `dcterms:source` = `urn:uuid:<source-id>@vN`. The source never changes, and the copy gets no second home collection for the same bytes: it is a new file. A source over 67,108,864 bytes is refused (400) until a streamed copy exists. The copy is journaled as `files.copy` with opaque IDs only; a refusal is journaled once.
+         * @description Copy the file `file_id` at its head into a new file (API-S-011, SRS-F-062): a new FileId and stored name `original/<new-uuid>.<ext>` in the new file's own object `files/<new-id>`, published as its version v1. The copy keeps the display name, the original name, the media type and every statement; its one import entry is the source's latest entry rebound to the copy, and its record names the source as the asserted statement `dcterms:source` = `urn:uuid:<source-id>@vN`. The source never changes, and the copy gets no second home collection for the same bytes: it is a new file. A source over 67,108,864 bytes is refused (400) until a streamed copy exists. The copy is journaled as `files.copy` with opaque IDs only; a refusal is journaled once. Command (Task API-F2.13, API-S-002): the body carries a `CommandEnvelope` beside the input (schema version 1; an opaque operation_id of 1 to 128 letters, digits, `.`, `_`, `-` or `:`; scope `library:<library_id>`). The expected revision is the head version of the source file's object `urn:uuid:<file_id>` that the caller read; the copy's own object is new. A stale revision is answered 409 with a `conflict` outcome and changes nothing. A 200 answer is a `CommandOutcome` of the same operation_id (`committed`) whose `result` is what the command made. A repeated operation_id of the same command that changed something answers its first answer again, before the revision is checked, with no second change; the same operation_id with another route, library or input is refused (400). A refusal stores no receipt, so its retry is evaluated again. Receipts are kept in memory while the host runs, at most 10,000.
          */
         post: operations["copyFile"];
         delete?: never;
@@ -2605,6 +2605,126 @@ export interface components {
             /** @description Whether the job was handed to its kind's worker to run now (resume only); false leaves a pending job for the next launch. */
             scheduled: boolean;
         };
+        /** @description The answer of a file write command: the `CommandOutcome` fields for its operation_id (kind `committed`) and `result`, the version the command published (Task API-F2.13). */
+        FileCommitOutcome: {
+            /** @description The command's operation id. */
+            operation_id: string;
+            kind: components["schemas"]["CommandOutcomeKind"];
+            /** @description Always null for these routes: a refusal is an error answer. */
+            error: components["schemas"]["PortError"] | null;
+            /** @description The version the command published. */
+            result: components["schemas"]["FileCommit"] | null;
+        };
+        /** @description The answer of a file write command: the `CommandOutcome` fields for its operation_id (kind `committed`) and `result`, the version the upload published in the file's object (Task API-F2.13). */
+        UploadCommitOutcome: {
+            /** @description The command's operation id. */
+            operation_id: string;
+            kind: components["schemas"]["CommandOutcomeKind"];
+            /** @description Always null for these routes: a refusal is an error answer. */
+            error: components["schemas"]["PortError"] | null;
+            /** @description The version the upload published in the file's object. */
+            result: components["schemas"]["UploadCommit"] | null;
+        };
+        /** @description The answer of a file write command: the `CommandOutcome` fields for its operation_id (kind `committed`) and `result`, the copy and its first version (Task API-F2.13). */
+        FileCopyOutcome: {
+            /** @description The command's operation id. */
+            operation_id: string;
+            kind: components["schemas"]["CommandOutcomeKind"];
+            /** @description Always null for these routes: a refusal is an error answer. */
+            error: components["schemas"]["PortError"] | null;
+            /** @description The copy and its first version. */
+            result: components["schemas"]["FileCopy"] | null;
+        };
+        /** @description The answer of a file write command: the `CommandOutcome` fields for its operation_id (kind `committed`) and `result`, the version of the file's metadata record the rename published (Task API-F2.13). */
+        MetadataCommitOutcome: {
+            /** @description The command's operation id. */
+            operation_id: string;
+            kind: components["schemas"]["CommandOutcomeKind"];
+            /** @description Always null for these routes: a refusal is an error answer. */
+            error: components["schemas"]["PortError"] | null;
+            /** @description The version of the file's metadata record the rename published. */
+            result: components["schemas"]["MetadataCommit"] | null;
+        };
+        /** @description The answer of a file write command: the `CommandOutcome` fields for its operation_id (kind `committed`) and `result`, whether the folder exists or stays pending (nothing is written, so no receipt is stored) (Task API-F2.13). */
+        FolderAnswerOutcome: {
+            /** @description The command's operation id. */
+            operation_id: string;
+            kind: components["schemas"]["CommandOutcomeKind"];
+            /** @description Always null for these routes: a refusal is an error answer. */
+            error: components["schemas"]["PortError"] | null;
+            /** @description Whether the folder exists or stays pending (nothing is written, so no receipt is stored). */
+            result: components["schemas"]["FolderAnswer"] | null;
+        };
+        /** @description The 409 answer of a file write command (Task API-F2.13, API-S-002): the `ApiError` fields (code `conflict`) beside a `conflict` outcome of the same operation_id, so a `CommandOutcome` reader and an `ApiError` reader both read it. A stale expected revision, a command that would change nothing, a concurrent change and an operation_id still in flight are conflicts. */
+        FileCommandConflict: {
+            /** @description The command's operation id. */
+            operation_id: string;
+            /** @description Always `conflict`. */
+            kind: components["schemas"]["CommandOutcomeKind"];
+            /** @description Always null: the reason is `code` and `message`. */
+            error: null;
+            /** @description Always null: a conflict made nothing. */
+            result: null;
+            code: components["schemas"]["ErrorCode"];
+            /** @description Human-readable message the UI can show. Never contains paths, SQL or internal error text. */
+            message: string;
+            /** @description True when repeating the same request unchanged may succeed. */
+            retryable: boolean;
+        };
+        /** @description Body of `POST /api/v1/files/folders`: the command envelope and the input (Task API-F2.13, API-S-002). */
+        CreateFolderCommand: {
+            envelope: components["schemas"]["CommandEnvelope"];
+            input: components["schemas"]["CreateFolderRequest"];
+        };
+        /** @description Body of `POST /api/v1/files/moves`: the command envelope and the input (Task API-F2.13, API-S-002). */
+        MoveCommand: {
+            envelope: components["schemas"]["CommandEnvelope"];
+            input: components["schemas"]["MoveRequest"];
+        };
+        /** @description Body of `POST /api/v1/files/removals`: the command envelope and the input (Task API-F2.13, API-S-002). */
+        RemoveCommand: {
+            envelope: components["schemas"]["CommandEnvelope"];
+            input: components["schemas"]["RemoveRequest"];
+        };
+        /** @description Body of `POST /api/v1/files/restorations`: the command envelope and the input (Task API-F2.13, API-S-002). */
+        RestoreCommand: {
+            envelope: components["schemas"]["CommandEnvelope"];
+            input: components["schemas"]["RestoreRequest"];
+        };
+        /** @description Body of `PUT /api/v1/files/labels`: the command envelope and the input (Task API-F2.13, API-S-002). */
+        LabelCommand: {
+            envelope: components["schemas"]["CommandEnvelope"];
+            input: components["schemas"]["LabelRequest"];
+        };
+        /** @description Body of `POST /api/v1/files/renames`: the command envelope and the input (Task API-F2.13, API-S-002). */
+        RenameCommand: {
+            envelope: components["schemas"]["CommandEnvelope"];
+            input: components["schemas"]["RenameRequest"];
+        };
+        /** @description Body of `POST /api/v1/files/copies`: the command envelope and the input (Task API-F2.13, API-S-002). */
+        CopyCommand: {
+            envelope: components["schemas"]["CommandEnvelope"];
+            input: components["schemas"]["CopyRequest"];
+        };
+        /** @description The `input` part of `PUT /api/v1/files/upload`: the facts the client provides about one upload (Task API-F2.13; formerly the query). */
+        UploadInput: {
+            /** @description The library. */
+            library_id: string;
+            /** @description The file whose content this upload replaces (UUID v4); a new file when absent. */
+            file_id?: string | null;
+            /** @description The file name the client sent: the original name of a new file (1 to 1,024 bytes without `/` or NUL). */
+            name: string;
+            /** @description The size the client declared, in bytes; it must be the size of the `file` part. */
+            size: number;
+            /** @description The media type the client reported (`type/subtype`); derived from the name's extension when absent. */
+            media_type?: string | null;
+            /** @description The last-modified time the client reported, RFC 3339 UTC. */
+            last_modified?: string | null;
+            /** @description The Unicode normalisation form of `name`; required for a name that is not ASCII (an ASCII name is NFC). */
+            name_normalization?: ("nfc" | "nfd" | "nfkc" | "nfkd" | "unnormalised") | null;
+            /** @description The version message, 1 to 1,024 bytes and not blank. */
+            message?: string | null;
+        };
     };
     responses: {
         /** @description Invalid or malformed request (invalid_request). */
@@ -2806,6 +2926,15 @@ export interface components {
             };
             content: {
                 "application/json": components["schemas"]["ApiError"];
+            };
+        };
+        /** @description A `conflict` outcome of the command's operation_id: the expected revision is stale, the command would change nothing, another change reached the object first, or a command with that operation_id is still running; nothing was published. */
+        CommandConflict: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["FileCommandConflict"];
             };
         };
     };
@@ -3612,31 +3741,22 @@ export interface operations {
     };
     uploadFile: {
         parameters: {
-            query: {
-                /** @description The library. */
-                library_id: components["parameters"]["LibraryId"];
-                /** @description The file whose content this upload replaces (UUID v4); a new file when absent. */
-                file_id?: string;
-                /** @description The file name the client sent: the original name of a new file (1 to 1,024 bytes without `/` or NUL). */
-                name: string;
-                /** @description The size the client declared, in bytes; it must be the size of the body. */
-                size: number;
-                /** @description The media type the client reported (`type/subtype`); derived from the name's extension when absent. */
-                media_type?: string;
-                /** @description The last-modified time the client reported, RFC 3339 UTC. */
-                last_modified?: string;
-                /** @description The Unicode normalisation form of `name`; required for a name that is not ASCII (an ASCII name is NFC). */
-                name_normalization?: "nfc" | "nfd" | "nfkc" | "nfkd" | "unnormalised";
-                /** @description The version message, 1 to 1,024 bytes and not blank. */
-                message?: string;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/octet-stream": string;
+                "multipart/form-data": {
+                    envelope: components["schemas"]["CommandEnvelope"];
+                    input: components["schemas"]["UploadInput"];
+                    /**
+                     * Format: binary
+                     * @description The file's bytes, at most 67,108,864.
+                     */
+                    file: string;
+                };
             };
         };
         responses: {
@@ -3646,14 +3766,14 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UploadCommit"];
+                    "application/json": components["schemas"]["UploadCommitOutcome"];
                 };
             };
             400: components["responses"]["InvalidRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+            409: components["responses"]["CommandConflict"];
             500: components["responses"]["Internal"];
             503: components["responses"]["FilesUnavailable"];
         };
@@ -3667,7 +3787,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CreateFolderRequest"];
+                "application/json": components["schemas"]["CreateFolderCommand"];
             };
         };
         responses: {
@@ -3677,14 +3797,14 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FolderAnswer"];
+                    "application/json": components["schemas"]["FolderAnswerOutcome"];
                 };
             };
             400: components["responses"]["InvalidRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+            409: components["responses"]["CommandConflict"];
             500: components["responses"]["Internal"];
             503: components["responses"]["FilesUnavailable"];
         };
@@ -3698,7 +3818,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["MoveRequest"];
+                "application/json": components["schemas"]["MoveCommand"];
             };
         };
         responses: {
@@ -3708,14 +3828,14 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FileCommit"];
+                    "application/json": components["schemas"]["FileCommitOutcome"];
                 };
             };
             400: components["responses"]["InvalidRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+            409: components["responses"]["CommandConflict"];
             500: components["responses"]["Internal"];
             503: components["responses"]["FilesUnavailable"];
         };
@@ -3729,7 +3849,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RemoveRequest"];
+                "application/json": components["schemas"]["RemoveCommand"];
             };
         };
         responses: {
@@ -3739,14 +3859,14 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FileCommit"];
+                    "application/json": components["schemas"]["FileCommitOutcome"];
                 };
             };
             400: components["responses"]["InvalidRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+            409: components["responses"]["CommandConflict"];
             500: components["responses"]["Internal"];
             503: components["responses"]["FilesUnavailable"];
         };
@@ -3760,7 +3880,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RestoreRequest"];
+                "application/json": components["schemas"]["RestoreCommand"];
             };
         };
         responses: {
@@ -3770,14 +3890,14 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FileCommit"];
+                    "application/json": components["schemas"]["FileCommitOutcome"];
                 };
             };
             400: components["responses"]["InvalidRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+            409: components["responses"]["CommandConflict"];
             500: components["responses"]["Internal"];
             503: components["responses"]["FilesUnavailable"];
         };
@@ -4323,7 +4443,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["LabelRequest"];
+                "application/json": components["schemas"]["LabelCommand"];
             };
         };
         responses: {
@@ -4333,14 +4453,14 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FileCommit"];
+                    "application/json": components["schemas"]["FileCommitOutcome"];
                 };
             };
             400: components["responses"]["InvalidRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+            409: components["responses"]["CommandConflict"];
             500: components["responses"]["Internal"];
             503: components["responses"]["FilesUnavailable"];
         };
@@ -4720,7 +4840,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RenameRequest"];
+                "application/json": components["schemas"]["RenameCommand"];
             };
         };
         responses: {
@@ -4730,14 +4850,14 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MetadataCommit"];
+                    "application/json": components["schemas"]["MetadataCommitOutcome"];
                 };
             };
             400: components["responses"]["InvalidRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+            409: components["responses"]["CommandConflict"];
             500: components["responses"]["Internal"];
             503: components["responses"]["FilesUnavailable"];
         };
@@ -4822,7 +4942,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CopyRequest"];
+                "application/json": components["schemas"]["CopyCommand"];
             };
         };
         responses: {
@@ -4832,14 +4952,14 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FileCopy"];
+                    "application/json": components["schemas"]["FileCopyOutcome"];
                 };
             };
             400: components["responses"]["InvalidRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
+            409: components["responses"]["CommandConflict"];
             500: components["responses"]["Internal"];
             503: components["responses"]["FilesUnavailable"];
         };

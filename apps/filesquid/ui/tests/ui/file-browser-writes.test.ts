@@ -152,6 +152,11 @@ describe("upload", () => {
       ["lib", "one.txt"],
       ["lib", "one.txt"],
     ]);
+    // Retry resends a file under the operation id it was first sent with (API-F2.13), so an
+    // upload that had committed is answered again rather than made twice.
+    const ids = upload.mock.calls.map((c) => c[3]?.operationId);
+    expect(ids[0]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(ids[1]).toBe(ids[0]);
   });
 
   it("shows a drop target for dragged files and uploads what is dropped", async () => {
@@ -250,7 +255,7 @@ describe("new folder", () => {
     const field = one<HTMLInputElement>(browser, "form.name-form input[name=name]");
     expect(rootOf(browser).activeElement).toBe(field);
     await submit(browser, { name: "Photos" });
-    expect(create).toHaveBeenCalledWith(expect.anything(), "Photos");
+    expect(create).toHaveBeenCalledWith(expect.anything(), "Photos", { revision: "v1" });
     expect(status(browser)).toBe("Folder Photos created. It stays pending until a file is added.");
     const pending = control(browser, "Photos").closest(".row") as HTMLElement;
     expect(pending.querySelector(".pending")?.textContent).toBe(labels.fileFolderPending);
@@ -340,7 +345,9 @@ describe("rename through the renames route (API-S-027)", () => {
     );
     await submit(browser, { name: "notes-final.txt" });
     expect(rename).toHaveBeenCalledTimes(1);
-    expect(rename).toHaveBeenCalledWith({ library_id: "lib" }, FILE_ID, "notes-final.txt");
+    expect(rename).toHaveBeenCalledWith({ library_id: "lib" }, FILE_ID, "notes-final.txt", {
+      revision: "v1",
+    });
     expect(move).not.toHaveBeenCalled();
     expect(status(browser)).toBe("notes-final.txt renamed. Version v2 committed.");
     expect(names(browser)).toEqual(["notes-final.txt"]);
@@ -350,8 +357,8 @@ describe("rename through the renames route (API-S-027)", () => {
   it("shows the display name the reloaded listing returns, not the one typed", async () => {
     const { source, browser } = await openRename();
     const real = MemoryFileSource.prototype.rename.bind(source);
-    vi.spyOn(source, "rename").mockImplementation((library, id) =>
-      real(library, id, "Canonical name.txt"),
+    vi.spyOn(source, "rename").mockImplementation((library, id, _name, options) =>
+      real(library, id, "Canonical name.txt", options),
     );
     await submit(browser, { name: "typed.txt" });
     expect(status(browser)).toBe("Canonical name.txt renamed. Version v2 committed.");
@@ -361,8 +368,8 @@ describe("rename through the renames route (API-S-027)", () => {
   it("keeps the typed name in the status when the listing could not be read again", async () => {
     const { source, browser } = await openRename();
     const real = MemoryFileSource.prototype.rename.bind(source);
-    vi.spyOn(source, "rename").mockImplementation(async (library, id) => {
-      const commit = await real(library, id, "Canonical name.txt");
+    vi.spyOn(source, "rename").mockImplementation(async (library, id, _name, options) => {
+      const commit = await real(library, id, "Canonical name.txt", options);
       source.failure = new Error("offline");
       return commit;
     });
@@ -377,7 +384,7 @@ describe("rename through the renames route (API-S-027)", () => {
     expect(rename).not.toHaveBeenCalled();
     const long = `${"é".repeat(300)}.txt`;
     await submit(browser, { name: long });
-    expect(rename).toHaveBeenCalledWith({ library_id: "lib" }, FILE_ID, long);
+    expect(rename).toHaveBeenCalledWith({ library_id: "lib" }, FILE_ID, long, { revision: "v1" });
   });
 
   it("renames a file in a UUID-named object that is not its own with a move", async () => {
@@ -429,7 +436,9 @@ describe("rename or move", () => {
     expect(one<HTMLInputElement>(browser, "input[name=name]").value).toBe("readme.txt");
     expect(one<HTMLInputElement>(browser, "input[name=folder]").value).toBe("");
     await submit(browser, { name: "notes-final.txt" });
-    expect(move).toHaveBeenCalledWith(expect.anything(), "3f9a0005.txt", "notes-final.txt");
+    expect(move).toHaveBeenCalledWith(expect.anything(), "3f9a0005.txt", "notes-final.txt", {
+      revision: "v1",
+    });
     expect(status(browser)).toBe("notes-final.txt moved. Version v2 committed.");
     expect(deepText(rootOf(browser))).not.toContain("3f9a0005");
   });
@@ -442,7 +451,9 @@ describe("rename or move", () => {
     await click(one(browser, "button.rename"));
     await submit(browser, { name: "readme.txt", folder: "Drawings" });
     // Only the folder changed, so the stored name is kept (and never shown).
-    expect(move).toHaveBeenCalledWith(expect.anything(), "3f9a0005.txt", "Drawings/3f9a0005.txt");
+    expect(move).toHaveBeenCalledWith(expect.anything(), "3f9a0005.txt", "Drawings/3f9a0005.txt", {
+      revision: "v1",
+    });
     expect(names(browser)).not.toContain("readme.txt");
   });
 
@@ -453,7 +464,7 @@ describe("rename or move", () => {
     control(browser, "Drawings").focus();
     await click(one(browser, "button.rename"));
     await submit(browser, { name: "Plans" });
-    expect(move).toHaveBeenCalledWith(expect.anything(), "Drawings", "Plans");
+    expect(move).toHaveBeenCalledWith(expect.anything(), "Drawings", "Plans", { revision: "v1" });
     expect(names(browser)).toContain("Plans");
   });
 
@@ -494,11 +505,13 @@ describe("remove and restore", () => {
     const browser = await mount(source);
     control(browser, "readme.txt").focus();
     await click(one(browser, "button.remove"));
-    expect(remove).toHaveBeenCalledWith(expect.anything(), "3f9a0005.txt");
+    expect(remove).toHaveBeenCalledWith(expect.anything(), "3f9a0005.txt", { revision: "v1" });
     expect(status(browser)).toContain("readme.txt removed. Version v2 committed.");
     expect(names(browser)).not.toContain("readme.txt");
     await click(one(browser, "button.undo"));
-    expect(restore).toHaveBeenCalledWith(expect.anything(), "v1", ["3f9a0005.txt"]);
+    expect(restore).toHaveBeenCalledWith(expect.anything(), "v1", ["3f9a0005.txt"], {
+      revision: "v2",
+    });
     expect(status(browser)).toBe("readme.txt restored. Version v3 committed.");
     expect(names(browser)).toContain("readme.txt");
   });
@@ -559,9 +572,12 @@ describe("remove and restore", () => {
     await click(one(browser, "button.remove"));
     browser.location = { library_id: "other-lib", object_id: "other-obj", prefix: "" };
     await click(one(browser, "button.undo"));
-    expect(restore).toHaveBeenCalledWith({ library_id: "lib", object_id: "obj" }, "v1", [
-      "3f9a0005.txt",
-    ]);
+    expect(restore).toHaveBeenCalledWith(
+      { library_id: "lib", object_id: "obj" },
+      "v1",
+      ["3f9a0005.txt"],
+      { revision: "v2" },
+    );
   });
 
   it("does not move focus into another object's listing when Undo restores into the first", async () => {

@@ -140,6 +140,9 @@ mod seal_steps;
 #[path = "support/job_steps.rs"]
 mod job_steps;
 
+#[path = "support/command_steps.rs"]
+mod command_steps;
+
 /// Administrator token accepted by [`admin_state`].
 const ADMIN_TOKEN: &str = "admin";
 
@@ -197,6 +200,7 @@ struct MonitorWorld {
     journal: journal_steps::JournalWorld,
     seal: seal_steps::SealWorld,
     jobs: job_steps::JobWorld,
+    commands: command_steps::CommandWorld,
 }
 
 impl std::fmt::Debug for MonitorWorld {

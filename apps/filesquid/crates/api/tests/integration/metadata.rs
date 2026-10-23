@@ -8,7 +8,7 @@
 mod files_fixture;
 
 use axum::http::{Method, StatusCode};
-use files_fixture::{encode, upload_uri, Answer, FilesRig, LIBRARY};
+use files_fixture::{encode, upload_facts, Answer, FilesRig, LIBRARY};
 use filesquid_metadata::file_record::FileRecord;
 use filesquid_ocfl::read::Object;
 use serde_json::Value;
@@ -21,10 +21,10 @@ fn assert_error(answer: &Answer, status: u16, code: &str) {
 
 /// Upload `bytes` as a new file named `name` with `rest`, and answer the upload view.
 async fn upload(rig: &FilesRig, name: &str, bytes: &[u8], rest: &str) -> Value {
-    let uri = upload_uri(name, bytes.len(), rest);
-    let answer = rig.call(Method::PUT, &uri, &[], bytes.to_vec()).await;
+    let uri = upload_facts(name, bytes.len(), rest);
+    let answer = rig.upload(uri, bytes).await;
     assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
-    answer.json()
+    answer.result()
 }
 
 /// The query naming the file object of `upload` and `rest`.
@@ -87,8 +87,8 @@ async fn an_upload_creates_the_file_object_with_its_original_and_record_in_one_v
 #[tokio::test]
 async fn an_upload_whose_declared_size_differs_fails_verification_and_commits_nothing() {
     let rig = FilesRig::new().await;
-    let uri = upload_uri("a.txt", 4, "");
-    let answer = rig.call(Method::PUT, &uri, &[], b"three".to_vec()).await;
+    let uri = upload_facts("a.txt", 4, "");
+    let answer = rig.upload(uri, b"three").await;
     assert_error(&answer, 400, "invalid_request");
     assert!(!rig.dir.join("root").join("files").exists());
 }
@@ -96,8 +96,8 @@ async fn an_upload_whose_declared_size_differs_fails_verification_and_commits_no
 #[tokio::test]
 async fn a_name_that_is_not_ascii_needs_its_normalisation_form() {
     let rig = FilesRig::new().await;
-    let uri = upload_uri("Été.txt", 2, "");
-    let answer = rig.call(Method::PUT, &uri, &[], b"ab".to_vec()).await;
+    let uri = upload_facts("Été.txt", 2, "");
+    let answer = rig.upload(uri, b"ab").await;
     assert_error(&answer, 400, "invalid_request");
     let upload = upload(&rig, "Été.txt", b"ab", "name_normalization=nfc").await;
     let (_, record) = head_record(&rig, &upload).await;
@@ -127,8 +127,8 @@ async fn a_later_upload_of_the_same_file_is_a_new_version_with_one_more_import_e
         "the display name stays"
     );
     assert_eq!(record.imports()[1].acquisition.object_version, "v2");
-    let unknown = upload_uri("x.pdf", 1, "file_id=0b6f6a58-5c1d-4b5e-9f3e-2a7d8c9e0f19");
-    let answer = rig.call(Method::PUT, &unknown, &[], b"x".to_vec()).await;
+    let unknown = upload_facts("x.pdf", 1, "file_id=0b6f6a58-5c1d-4b5e-9f3e-2a7d8c9e0f19");
+    let answer = rig.upload(unknown, b"x").await;
     assert_error(&answer, 404, "not_found");
 }
 

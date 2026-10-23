@@ -43,14 +43,8 @@ fn assert_error(answer: &Answer, status: u16, code: &str) {
 /// `PUT /api/v1/files/labels` with the owner's token.
 async fn put_label(rig: &FilesRig, version: &str, label: Value) -> Answer {
     let body = body(json!({ "version": version, "label": label }));
-    let headers = [("content-type", "application/json")];
-    rig.call(
-        Method::PUT,
-        "/api/v1/files/labels",
-        &headers,
-        body.to_string().into_bytes(),
-    )
-    .await
+    rig.command_as(Method::PUT, "/api/v1/files/labels", body)
+        .await
 }
 
 /// The file history of `path`.
@@ -148,9 +142,9 @@ async fn restore_reinstates_chosen_files_in_exactly_one_version_with_a_label() {
     let rig = FilesRig::with_files(&[("a.txt", b"alpha"), ("b.txt", b"keep")]).await;
     rig.commit(&[("a.txt", b"bravo!")]).await;
     let request = body(json!({ "version": "v1", "paths": ["a.txt"], "label": "Original" }));
-    let answer = rig.post("/api/v1/files/restorations", request).await;
+    let answer = rig.command("/api/v1/files/restorations", request).await;
     assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
-    assert_eq!(answer.json()["version"], "v3");
+    assert_eq!(answer.result()["version"], "v3");
     assert_eq!(rig.head().await, "v3", "exactly one new version");
     let message = head_message(&rig).await;
     assert!(message.starts_with("filesquid.operation.v1 "), "{message}");
@@ -167,7 +161,7 @@ async fn restore_of_every_file_of_a_version_is_a_revert() {
     let rig = FilesRig::with_files(&[("a.txt", b"alpha")]).await;
     rig.commit(&[("a.txt", b"bravo!")]).await;
     let request = body(json!({ "version": "v1", "paths": ["a.txt"] }));
-    let answer = rig.post("/api/v1/files/restorations", request).await;
+    let answer = rig.command("/api/v1/files/restorations", request).await;
     assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
     let message = head_message(&rig).await;
     assert!(message.contains("\"kind\":\"revert\""), "{message}");
@@ -178,7 +172,7 @@ async fn restore_takes_a_label_not_a_free_message() {
     let rig = FilesRig::with_files(&[("a.txt", b"alpha")]).await;
     rig.commit(&[("a.txt", b"bravo!")]).await;
     let request = body(json!({ "version": "v1", "paths": ["a.txt"], "message": "free text" }));
-    let answer = rig.post("/api/v1/files/restorations", request).await;
+    let answer = rig.command("/api/v1/files/restorations", request).await;
     assert_error(&answer, 400, "invalid_request");
     assert_eq!(rig.head().await, "v2", "nothing published");
 }
@@ -191,7 +185,7 @@ async fn a_later_label_is_committed_as_application_data_and_shown() {
     rig.commit(&[("a.txt", b"bravo!")]).await;
     let answer = put_label(&rig, "v1", json!("First draft")).await;
     assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
-    assert_eq!(answer.json()["version"], "v3");
+    assert_eq!(answer.result()["version"], "v3");
     assert!(head_paths(&rig).await.contains(&LABELS_PATH.to_string()));
     let message = head_message(&rig).await;
     assert!(message.contains("\"kind\":\"label\""), "{message}");
@@ -217,7 +211,7 @@ async fn a_later_label_overrides_and_clears_a_commit_time_label() {
     let rig = FilesRig::with_files(&[("a.txt", b"alpha")]).await;
     rig.commit(&[("a.txt", b"bravo!")]).await;
     let request = body(json!({ "version": "v1", "paths": ["a.txt"], "label": "Restored" }));
-    rig.post("/api/v1/files/restorations", request).await;
+    rig.command("/api/v1/files/restorations", request).await;
     let renamed = put_label(&rig, "v3", json!("Renamed")).await;
     assert_eq!(renamed.status, StatusCode::OK, "{:?}", renamed.json());
     let entries = history(&rig, "a.txt").await["entries"].clone();
@@ -263,7 +257,7 @@ async fn labels_are_bounded_and_checked() {
 async fn the_application_data_folder_is_reserved() {
     let rig = FilesRig::with_files(&[("a.txt", b"alpha")]).await;
     let request = body(json!({ "from": "a.txt", "to": ".filesquid/a.txt" }));
-    let moved = rig.post("/api/v1/files/moves", request).await;
+    let moved = rig.command("/api/v1/files/moves", request).await;
     assert_error(&moved, 400, "invalid_request");
     assert_eq!(rig.head().await, "v1");
 }
@@ -275,7 +269,7 @@ async fn history_size_counts_each_kept_content_of_a_file_once() {
     let rig = FilesRig::with_files(&[("a.txt", b"alpha")]).await;
     rig.commit(&[("a.txt", b"bravo!")]).await;
     let request = body(json!({ "version": "v1", "paths": ["a.txt"] }));
-    rig.post("/api/v1/files/restorations", request).await;
+    rig.command("/api/v1/files/restorations", request).await;
     let uri = format!("/api/v1/files/history-size?{}", query("path=a.txt"));
     let answer = rig.get(&uri).await;
     assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
@@ -322,7 +316,7 @@ async fn a_folder_restore_brings_back_earlier_files_and_keeps_later_ones() {
     rig.commit(&[("docs/a.txt", b"bravo!"), ("docs/new.txt", b"new")])
         .await;
     let request = body(json!({ "version": "v1", "paths": ["docs"] }));
-    let answer = rig.post("/api/v1/files/restorations", request).await;
+    let answer = rig.command("/api/v1/files/restorations", request).await;
     assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
     let paths = head_paths(&rig).await;
     assert!(paths.contains(&"docs/a.txt".to_string()));
@@ -370,7 +364,7 @@ async fn a_restore_commits_its_prov_o_record_and_journals_once() {
     rig.commit(&[("a.txt", b"bravo!")]).await;
     with_provenance(&rig);
     let request = body(json!({ "version": "v1", "paths": ["a.txt"], "label": "Back" }));
-    let answer = rig.post("/api/v1/files/restorations", request).await;
+    let answer = rig.command("/api/v1/files/restorations", request).await;
     assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
     let paths = head_paths(&rig).await;
     assert!(

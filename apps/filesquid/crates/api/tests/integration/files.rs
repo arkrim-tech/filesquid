@@ -8,7 +8,7 @@ mod files_fixture;
 
 use axum::http::{Method, StatusCode};
 use files_fixture::{
-    digest, encode, pattern, query, upload_uri, Answer, FilesRig, LIBRARY, OBJECT,
+    digest, encode, pattern, query, upload_facts, Answer, FilesRig, LIBRARY, OBJECT,
 };
 use filesquid_api::files::{
     DisplayNames, NameFuture, StoredFile, DEFAULT_PAGE, MAX_ANSWER_BYTES, MAX_UPLOAD_BYTES,
@@ -399,10 +399,10 @@ async fn a_read_pins_the_version_it_names() {
 #[tokio::test]
 async fn an_upload_creates_its_own_file_object_and_is_journaled() {
     let rig = FilesRig::with_files(&[("a.txt", b"a")]).await;
-    let uri = upload_uri("b.txt", 3, "");
-    let answer = rig.call(Method::PUT, &uri, &[], b"bee".to_vec()).await;
+    let uri = upload_facts("b.txt", 3, "");
+    let answer = rig.upload(uri, b"bee").await;
     assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
-    let upload = answer.json();
+    let upload = answer.result();
     let file_id = upload["file_id"].as_str().expect("file id").to_string();
     let object_id = format!("urn:uuid:{file_id}");
     assert_eq!(upload["object_id"], object_id.as_str());
@@ -432,8 +432,8 @@ async fn an_upload_creates_its_own_file_object_and_is_journaled() {
 #[tokio::test]
 async fn an_upload_whose_declared_size_differs_commits_nothing() {
     let rig = FilesRig::with_files(&[("a.txt", b"same")]).await;
-    let uri = upload_uri("b.txt", 5, "");
-    let answer = rig.call(Method::PUT, &uri, &[], b"four".to_vec()).await;
+    let uri = upload_facts("b.txt", 5, "");
+    let answer = rig.upload(uri, b"four").await;
     assert_error(&answer, 400, "invalid_request");
     let refused = rig.journaled("files.upload");
     assert_eq!(refused.len(), 1);
@@ -463,7 +463,7 @@ fn assert_refused_no_op(
 async fn a_move_to_the_same_path_is_refused_without_a_version() {
     let rig = FilesRig::with_files(&[("a.txt", b"a")]).await;
     let answer = rig
-        .post(
+        .command(
             "/api/v1/files/moves",
             body(json!({ "from": "a.txt", "to": "a.txt" })),
         )
@@ -477,7 +477,7 @@ async fn a_move_to_the_same_path_is_refused_without_a_version() {
 async fn a_restore_of_the_current_version_is_refused_without_a_version() {
     let rig = FilesRig::with_files(&[("a.txt", b"a")]).await;
     let answer = rig
-        .post(
+        .command(
             "/api/v1/files/restorations",
             body(json!({ "version": "v1", "paths": ["a.txt"] })),
         )
@@ -489,10 +489,8 @@ async fn a_restore_of_the_current_version_is_refused_without_a_version() {
 #[tokio::test]
 async fn an_upload_above_the_cap_is_refused() {
     let rig = FilesRig::with_files(&[("a.txt", b"a")]).await;
-    let uri = upload_uri("big.bin", MAX_UPLOAD_BYTES + 1, "");
-    let answer = rig
-        .call(Method::PUT, &uri, &[], vec![0u8; MAX_UPLOAD_BYTES + 1])
-        .await;
+    let uri = upload_facts("big.bin", MAX_UPLOAD_BYTES + 1, "");
+    let answer = rig.upload(uri, &vec![0u8; MAX_UPLOAD_BYTES + 1]).await;
     assert_error(&answer, 400, "invalid_request");
     assert_eq!(rig.head().await, "v1");
     assert_eq!(rig.journaled("files.upload").len(), 1);
@@ -502,20 +500,20 @@ async fn an_upload_above_the_cap_is_refused() {
 async fn creating_a_folder_commits_nothing_and_stays_pending() {
     let rig = FilesRig::with_files(&[("photos/a.jpg", b"a")]).await;
     let pending = rig
-        .post(
+        .command(
             "/api/v1/files/folders",
             body(json!({ "path": "albums/2026" })),
         )
         .await;
     assert_eq!(pending.status, StatusCode::OK, "{:?}", pending.json());
-    assert_eq!(pending.json()["pending"], true);
-    assert_eq!(pending.json()["path"], "albums/2026");
+    assert_eq!(pending.result()["pending"], true);
+    assert_eq!(pending.result()["path"], "albums/2026");
     let existing = rig
-        .post("/api/v1/files/folders", body(json!({ "path": "photos" })))
+        .command("/api/v1/files/folders", body(json!({ "path": "photos" })))
         .await;
-    assert_eq!(existing.json()["pending"], false);
+    assert_eq!(existing.result()["pending"], false);
     let clash = rig
-        .post(
+        .command(
             "/api/v1/files/folders",
             body(json!({ "path": "photos/a.jpg" })),
         )
@@ -531,7 +529,7 @@ async fn creating_a_folder_commits_nothing_and_stays_pending() {
 #[tokio::test]
 async fn a_file_added_beneath_a_pending_folder_persists_it() {
     let rig = FilesRig::with_files(&[("a.txt", b"a")]).await;
-    rig.post("/api/v1/files/folders", body(json!({ "path": "albums" })))
+    rig.command("/api/v1/files/folders", body(json!({ "path": "albums" })))
         .await;
     rig.commit(&[("albums/b.txt", b"b")]).await;
     let listing = rig
@@ -565,19 +563,19 @@ async fn a_move_renames_a_file_or_a_whole_folder_in_one_version() {
     ])
     .await;
     let file = rig
-        .post(
+        .command(
             "/api/v1/files/moves",
             body(json!({ "from": "a.txt", "to": "b.txt" })),
         )
         .await;
-    assert_eq!(file.json()["version"], "v2", "{:?}", file.json());
+    assert_eq!(file.result()["version"], "v2", "{:?}", file.json());
     let folder = rig
-        .post(
+        .command(
             "/api/v1/files/moves",
             body(json!({ "from": "photos", "to": "pictures" })),
         )
         .await;
-    assert_eq!(folder.json()["version"], "v3", "{:?}", folder.json());
+    assert_eq!(folder.result()["version"], "v3", "{:?}", folder.json());
     let listing = rig
         .get(&format!(
             "/api/v1/files/listing?{}",
@@ -614,11 +612,11 @@ async fn the_read_routes_refuse_an_invalid_path_before_any_lookup() {
     }
     let listing = format!("/api/v1/files/listing?{}", query("prefix=..%2Fx"));
     assert_error(&rig.get(&listing).await, 400, "invalid_request");
+    // The revision is named, not read, so the read count stays the routes' own.
+    let input = body(json!({ "version": "v1", "paths": ["a.txt", "../b.txt"] }));
+    let command = files_fixture::command_body(&input, &files_fixture::operation_id(), "v1");
     let restore = rig
-        .post(
-            "/api/v1/files/restorations",
-            body(json!({ "version": "v1", "paths": ["a.txt", "../b.txt"] })),
-        )
+        .send_command(Method::POST, "/api/v1/files/restorations", &command)
         .await;
     assert_error(&restore, 400, "invalid_request");
     assert_eq!(rig.root.reads(), reads_before, "nothing was read");
@@ -629,20 +627,20 @@ async fn the_read_routes_refuse_an_invalid_path_before_any_lookup() {
 async fn a_remove_and_a_restore_each_publish_one_version() {
     let rig = FilesRig::with_files(&[("a.txt", b"a"), ("b.txt", b"b")]).await;
     let removed = rig
-        .post("/api/v1/files/removals", body(json!({ "path": "a.txt" })))
+        .command("/api/v1/files/removals", body(json!({ "path": "a.txt" })))
         .await;
-    assert_eq!(removed.json()["version"], "v2", "{:?}", removed.json());
+    assert_eq!(removed.result()["version"], "v2", "{:?}", removed.json());
     let gone = rig
         .get(&format!("/api/v1/files/details?{}", query("path=a.txt")))
         .await;
     assert_error(&gone, 404, "not_found");
     let restored = rig
-        .post(
+        .command(
             "/api/v1/files/restorations",
             body(json!({ "version": "v1", "paths": ["a.txt"] })),
         )
         .await;
-    assert_eq!(restored.json()["version"], "v3", "{:?}", restored.json());
+    assert_eq!(restored.result()["version"], "v3", "{:?}", restored.json());
     let back = rig
         .get(&format!("/api/v1/files/content?{}", query("path=a.txt")))
         .await;
@@ -653,7 +651,7 @@ async fn a_remove_and_a_restore_each_publish_one_version() {
 async fn a_move_of_a_missing_path_is_not_found_and_publishes_nothing() {
     let rig = FilesRig::with_files(&[("a.txt", b"a")]).await;
     let answer = rig
-        .post(
+        .command(
             "/api/v1/files/moves",
             body(json!({ "from": "nope.txt", "to": "b.txt" })),
         )
@@ -669,14 +667,14 @@ async fn a_move_of_a_missing_path_is_not_found_and_publishes_nothing() {
 async fn a_request_body_with_an_unknown_field_is_invalid() {
     let rig = FilesRig::with_files(&[("a.txt", b"a")]).await;
     let answer = rig
-        .post(
+        .command(
             "/api/v1/files/removals",
             body(json!({ "path": "a.txt", "force": true })),
         )
         .await;
     assert_error(&answer, 400, "invalid_request");
     let invalid_path = rig
-        .post(
+        .command(
             "/api/v1/files/removals",
             body(json!({ "path": "../a.txt" })),
         )
@@ -693,13 +691,18 @@ async fn file_routes_need_the_token_and_refusals_are_journaled() {
     let uri = format!("/api/v1/files/content?{}", query("path=a.txt"));
     let anonymous = files_fixture::send(&rig.state, Method::GET, &uri, &[], Vec::new()).await;
     assert_error(&anonymous, 401, "unauthorized");
-    let upload_uri = upload_uri("a.txt", 1, "");
+    let input = upload_facts("a.txt", 1, "");
+    let envelope = files_fixture::command_body(&input, &files_fixture::operation_id(), "0");
+    let body = files_fixture::upload_body(Some(&envelope["envelope"]), Some(&input), Some(b"x"));
     let upload = files_fixture::send(
         &rig.state,
         Method::PUT,
-        &upload_uri,
-        &[("authorization", "Bearer wrong")],
-        b"x".to_vec(),
+        files_fixture::UPLOAD_URI,
+        &[
+            ("authorization", "Bearer wrong"),
+            ("content-type", files_fixture::MULTIPART),
+        ],
+        body,
     )
     .await;
     assert_error(&upload, 403, "forbidden");
