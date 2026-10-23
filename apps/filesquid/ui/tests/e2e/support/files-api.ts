@@ -4,7 +4,10 @@
  * `moves`, `renames`, `removals`, `restorations`, `content-handles` and `content/<handle>`) are answered
  * here from a `MemoryFileSource`, which answers as the API does. It records what the browser
  * sent (ranges, handle mints, content requests and their headers) so a test can assert on the
- * wire, and can refuse the next content requests to exercise the single re-mint.
+ * wire, and can refuse the next content requests to exercise the single re-mint. Writes are
+ * commands (API-F2.13): a JSON `{ envelope, input }` body, or the upload's multipart
+ * `envelope`, `input` and `file` parts; a committed write answers the outcome with its `result`,
+ * a stale revision HTTP 409 with a `conflict` outcome.
  */
 import type { Page, Request, Route } from "@playwright/test";
 import { ApiError } from "../../../src/api/client";
@@ -68,14 +71,14 @@ export interface FilesApi {
   readonly listings: { prefix: string; cursor: string | null }[];
   /** Methods and paths of every write the page sent. */
   readonly writes: string[];
-  /** The query of every upload the page sent, as sent. */
+  /** The `input` of every upload the page sent, each value as text. */
   readonly uploads: Record<string, string>[];
 }
 
 /** The normalisation forms the upload route names. */
 const NAME_FORMS = new Set(["nfc", "nfd", "nfkc", "nfkd", "unnormalised"]);
 
-/** The query keys `PUT /api/v1/files/upload` takes (contract 0.18.0); any other is refused. */
+/** The `input` keys `PUT /api/v1/files/upload` takes (contract 0.25.0); any other is refused. */
 const UPLOAD_KEYS = new Set([
   "library_id",
   "file_id",
@@ -86,6 +89,84 @@ const UPLOAD_KEYS = new Set([
   "name_normalization",
   "message",
 ]);
+
+/** A command's envelope as the fake reads it. */
+interface Envelope {
+  readonly schema_version: number;
+  readonly operation_id: string;
+  readonly expected_revision: string;
+  readonly scope: string;
+}
+
+/** One part of a multipart body: its name and its bytes. */
+interface Part {
+  readonly name: string;
+  readonly bytes: Buffer;
+}
+
+/** The parts of a `multipart/form-data` body with `boundary` (bounded by the body's size). */
+function multipartParts(body: Buffer, boundary: string): Part[] {
+  const delimiter = Buffer.from(`--${boundary}`);
+  const parts: Part[] = [];
+  let at = body.indexOf(delimiter);
+  while (at !== -1 && parts.length < 16) {
+    const start = at + delimiter.length + 2;
+    const next = body.indexOf(delimiter, start);
+    if (next === -1) break;
+    const raw = body.subarray(start, next - 2);
+    const split = raw.indexOf("\r\n\r\n");
+    const head = raw.subarray(0, split).toString("utf8");
+    const name = /name="([^"]*)"/.exec(head)?.[1] ?? "";
+    parts.push({ name, bytes: raw.subarray(split + 4) });
+    at = next;
+  }
+  return parts;
+}
+
+/** The envelope, input and file of an upload request. */
+function uploadParts(request: Request): {
+  envelope?: Envelope;
+  input?: Record<string, unknown>;
+  file?: Buffer;
+} {
+  const type = request.headers()["content-type"] ?? "";
+  const boundary = /boundary=(.+)$/.exec(type)?.[1] ?? "";
+  const parts = multipartParts(request.postDataBuffer() ?? Buffer.alloc(0), boundary);
+  const part = (name: string) => parts.find((p) => p.name === name)?.bytes;
+  const json = (bytes?: Buffer) => (bytes ? JSON.parse(bytes.toString("utf8")) : undefined);
+  return { envelope: json(part("envelope")), input: json(part("input")), file: part("file") };
+}
+
+/**
+ * Answer a command as the API does: a repeated operation id is answered its stored committed
+ * answer again without running the write; otherwise the committed outcome with its `result`,
+ * which is then stored in `receipts`, or the API's refusal (which stores nothing).
+ */
+async function answerCommand(
+  route: Route,
+  envelope: Envelope | undefined,
+  receipts: Map<string, object>,
+  call: () => Promise<unknown>,
+): Promise<void> {
+  if (!envelope || envelope.schema_version !== 1 || envelope.operation_id === "") {
+    const body = { code: "invalid_request", message: "no envelope", retryable: false };
+    return route.fulfill({ status: 400, json: body });
+  }
+  const stored = receipts.get(envelope.operation_id);
+  if (stored) return route.fulfill({ json: stored });
+  const operation = { operation_id: envelope.operation_id, error: null };
+  try {
+    const answer = { ...operation, kind: "committed", result: await call() };
+    receipts.set(envelope.operation_id, answer);
+    await route.fulfill({ json: answer });
+  } catch (error) {
+    const status = error instanceof ApiError ? error.status : 500;
+    const code = error instanceof ApiError ? (error.code ?? "internal") : "internal";
+    const refusal = { code, message: "refused", retryable: false };
+    const conflict = status === 409 ? { ...operation, kind: "conflict", result: null } : {};
+    await route.fulfill({ status, json: { ...refusal, ...conflict } });
+  }
+}
 
 /** The query of a request as an object. */
 function queryOf(request: Request): URLSearchParams {
@@ -198,65 +279,82 @@ async function routeReads(page: Page, api: FilesApi): Promise<void> {
   });
 }
 
-/** The write routes. */
+/** The write routes, each a command. */
 async function routeWrites(page: Page, api: FilesApi): Promise<void> {
   const object = { library_id: "lib", object_id: "obj" };
-  await page.route(/\/api\/v1\/files\/upload\?/, (route) => {
-    const q = queryOf(route.request());
-    const bytes = route.request().postDataBuffer() ?? Buffer.alloc(0);
-    api.uploads.push(Object.fromEntries(q));
-    api.writes.push(`PUT upload ${q.get("name") ?? ""}`);
-    return answer(route, () => uploadAsTheApi(api.source, q, bytes));
+  const receipts = new Map<string, object>();
+  await page.route(/\/api\/v1\/files\/upload$/, (route) => {
+    const { envelope, input = {}, file = Buffer.alloc(0) } = uploadParts(route.request());
+    const text = Object.entries(input).map(([key, value]) => [key, String(value)]);
+    api.uploads.push(Object.fromEntries(text));
+    api.writes.push(`PUT upload ${String(input.name ?? "")}`);
+    const revision = envelope?.expected_revision ?? "";
+    return answerCommand(route, envelope, receipts, () =>
+      uploadAsTheApi(api.source, input, file, revision),
+    );
   });
-  const post = (name: string, call: (body: Record<string, unknown>) => Promise<unknown>) =>
+  type Write = (input: Record<string, unknown>, options: { revision: string }) => Promise<unknown>;
+  const post = (name: string, call: Write) =>
     page.route(new RegExp(`/api/v1/files/${name}$`), (route) => {
-      const body = route.request().postDataJSON() as Record<string, unknown>;
-      api.writes.push(`POST ${name} ${JSON.stringify(body)}`);
-      return answer(route, () => call(body));
+      const body = route.request().postDataJSON() as {
+        envelope?: Envelope;
+        input?: Record<string, unknown>;
+      };
+      const input = body.input ?? {};
+      api.writes.push(`POST ${name} ${JSON.stringify(input)}`);
+      const options = { revision: body.envelope?.expected_revision ?? "" };
+      return answerCommand(route, body.envelope, receipts, () => call(input, options));
     });
-  await post("folders", (b) => api.source.createFolder(object, String(b.path)));
-  await post("moves", (b) => api.source.move(object, String(b.from), String(b.to)));
-  await post("renames", (b) =>
+  await post("folders", (b, o) => api.source.createFolder(object, String(b.path), o));
+  await post("moves", (b, o) => api.source.move(object, String(b.from), String(b.to), o));
+  await post("renames", (b, o) =>
     api.source.rename(
       { library_id: String(b.library_id) },
       String(b.file_id),
       String(b.display_name),
+      o,
     ),
   );
-  await post("removals", (b) => api.source.remove(object, String(b.path)));
-  await post("restorations", (b) =>
-    api.source.restore(object, String(b.version), b.paths as string[]),
+  await post("removals", (b, o) => api.source.remove(object, String(b.path), o));
+  await post("restorations", (b, o) =>
+    api.source.restore(object, String(b.version), b.paths as string[], o),
   );
 }
 
 /**
- * Answer an upload as the API's query rules do: an unknown key (a `path` or `object_id` of the
- * old upload form among them), a missing `library_id`, `name` or `size`, a normalisation form
- * the contract does not name, or a declared size that is not the body's is refused with
+ * Answer an upload as the API's input rules do: an unknown key (a `path` or `object_id` of the
+ * old upload form among them), a fact other than `size` that is not text, a missing
+ * `library_id`, `name` or `size`, a normalisation form
+ * the contract does not name, or a declared size that is not the file part's is refused with
  * `invalid_request` before the source is asked.
  */
 async function uploadAsTheApi(
   source: MemoryFileSource,
-  q: URLSearchParams,
+  input: Record<string, unknown>,
   bytes: Buffer,
+  revision: string,
 ): Promise<unknown> {
-  const unknown = [...q.keys()].some((key) => !UPLOAD_KEYS.has(key));
-  const missing = ["library_id", "name", "size"].some((key) => q.get(key) === null);
-  const form = q.get("name_normalization");
-  const badForm = form !== null && !NAME_FORMS.has(form);
-  const badSize = q.get("size") !== String(bytes.byteLength);
-  if (unknown || missing || badForm || badSize) {
+  const text = (key: string) => (typeof input[key] === "string" ? input[key] : undefined);
+  const unknown = Object.keys(input).some((key) => !UPLOAD_KEYS.has(key));
+  const notText = Object.entries(input).some(
+    ([key, value]) => key !== "size" && value !== null && typeof value !== "string",
+  );
+  const missing = ["library_id", "name", "size"].some((key) => input[key] === undefined);
+  const form = text("name_normalization");
+  const badForm = form !== undefined && !NAME_FORMS.has(form);
+  const badSize = input.size !== bytes.byteLength;
+  if (unknown || notText || missing || badForm || badSize) {
     throw new ApiError(400, "/api/v1/files/upload", { code: "invalid_request" });
   }
   const facts = {
-    name: q.get("name") ?? "",
-    file_id: q.get("file_id") ?? undefined,
-    media_type: q.get("media_type") ?? undefined,
-    last_modified: q.get("last_modified") ?? undefined,
-    name_normalization: (q.get("name_normalization") ?? undefined) as NameNormalization | undefined,
+    name: text("name") ?? "",
+    file_id: text("file_id"),
+    media_type: text("media_type"),
+    last_modified: text("last_modified"),
+    name_normalization: form as NameNormalization | undefined,
   };
   const body = new Blob([new Uint8Array(bytes)]);
-  return source.upload({ library_id: q.get("library_id") ?? "" }, facts, body);
+  return source.upload({ library_id: text("library_id") ?? "" }, facts, body, { revision });
 }
 
 /** Mint a handle and serve the content it names. */

@@ -62,7 +62,7 @@ describe("MemoryFileSource listing", () => {
     const file = { ...LOCATION, version: "v1", path: "top.png", display_name: "top.png" };
     await expect(s.list(LOCATION)).rejects.toThrow("boom");
     await expect(s.details(file)).rejects.toThrow("boom");
-    await expect(s.remove(LOCATION, "top.png")).rejects.toThrow("boom");
+    await expect(s.remove(LOCATION, "top.png", { revision: s.head })).rejects.toThrow("boom");
   });
 
   it("orders names by Unicode code point, not by UTF-16 unit", async () => {
@@ -145,11 +145,11 @@ describe("MemoryFileSource writes", () => {
     const s = source();
     const first = await s.upload(LOCATION, { name: "a.txt" }, new Blob(["one"]));
     const again = { name: "a.txt", file_id: first.file_id };
-    const second = await s.upload(LOCATION, again, new Blob(["two"]));
+    const second = await s.upload(LOCATION, again, new Blob(["two"]), { revision: "v1" });
     expect(second).toMatchObject({ file_id: first.file_id, version: "v2" });
-    await expect(s.upload(LOCATION, again, new Blob(["two"]))).rejects.toMatchObject({
-      code: "conflict",
-    });
+    await expect(
+      s.upload(LOCATION, again, new Blob(["two"]), { revision: "v2" }),
+    ).rejects.toMatchObject({ code: "conflict" });
     const unknown = { name: "a.txt", file_id: "0b7e2c1a-3d4f-4a5b-8c6d-7e8f9a0b1c2d" };
     await expect(s.upload(LOCATION, unknown, new Blob(["x"]))).rejects.toMatchObject({
       code: "not_found",
@@ -205,31 +205,60 @@ describe("MemoryFileSource writes", () => {
     const s = source();
     const first = await s.upload(LOCATION, { name: "a.txt" }, new Blob(["one"]));
     const again = { name: "a.txt", file_id: first.file_id };
-    const second = await s.upload(LOCATION, again, new Blob(["two"]));
-    const third = await s.upload(LOCATION, again, new Blob(["three"]));
+    const second = await s.upload(LOCATION, again, new Blob(["two"]), { revision: "v1" });
+    const third = await s.upload(LOCATION, again, new Blob(["three"]), { revision: "v2" });
     expect(Date.parse(second.created)).toBeGreaterThan(Date.parse(first.created));
     expect(Date.parse(third.created)).toBeGreaterThan(Date.parse(second.created));
   });
 
   it("a folder stays pending until a file is added beneath it", async () => {
     const s = source();
-    expect(await s.createFolder(LOCATION, "Empty")).toMatchObject({ path: "Empty", pending: true });
-    expect(await s.createFolder(LOCATION, "Docs")).toMatchObject({ path: "Docs", pending: false });
-    await expect(s.createFolder(LOCATION, "top.png")).rejects.toMatchObject({ code: "conflict" });
+    expect(await s.createFolder(LOCATION, "Empty", { revision: s.head })).toMatchObject({
+      path: "Empty",
+      pending: true,
+    });
+    expect(await s.createFolder(LOCATION, "Docs", { revision: s.head })).toMatchObject({
+      path: "Docs",
+      pending: false,
+    });
+    await expect(s.createFolder(LOCATION, "top.png", { revision: s.head })).rejects.toMatchObject({
+      code: "conflict",
+    });
     expect(s.head).toBe("v1");
   });
 
   it("a move renames a file or moves a folder with everything below it", async () => {
     const s = source();
-    expect((await s.move(LOCATION, "top.png", "picture.png")).version).toBe("v2");
-    await s.move(LOCATION, "Docs", "Papers");
+    expect((await s.move(LOCATION, "top.png", "picture.png", { revision: s.head })).version).toBe(
+      "v2",
+    );
+    await s.move(LOCATION, "Docs", "Papers", { revision: s.head });
     const paths = (await s.list({ ...LOCATION, prefix: "Papers" })).entries.map((e) => e.path);
     expect(paths).toEqual(["Papers/a.txt", "Papers/b.txt"]);
   });
 
+  it("refuses a write whose revision is not the head as a conflict (API-F2.13)", async () => {
+    const s = source();
+    const stale = { revision: "v9" };
+    await expect(s.move(LOCATION, "top.png", "p.png", stale)).rejects.toMatchObject({
+      code: "conflict",
+      status: 409,
+    });
+    await expect(s.remove(LOCATION, "top.png", stale)).rejects.toMatchObject({ status: 409 });
+    await expect(s.restore(LOCATION, "v1", ["top.png"], stale)).rejects.toMatchObject({
+      status: 409,
+    });
+    await expect(s.createFolder(LOCATION, "New", stale)).rejects.toMatchObject({ status: 409 });
+    const upload = s.upload(LOCATION, { name: "n.txt" }, new Blob(["n"]), { revision: "v1" });
+    await expect(upload).rejects.toMatchObject({ status: 409 });
+    expect(s.head).toBe("v1");
+  });
+
   it("a move to the same place is refused as a conflict and commits nothing", async () => {
     const s = source();
-    await expect(s.move(LOCATION, "top.png", "top.png")).rejects.toMatchObject({
+    await expect(
+      s.move(LOCATION, "top.png", "top.png", { revision: s.head }),
+    ).rejects.toMatchObject({
       code: "conflict",
     });
     expect(s.head).toBe("v1");
@@ -252,7 +281,9 @@ describe("MemoryFileSource writes", () => {
 
     it("changes only the display name, as a new version", async () => {
       const s = fileObject();
-      const commit = await s.rename({ library_id: "lib" }, FILE_ID, "notes.txt");
+      const commit = await s.rename({ library_id: "lib" }, FILE_ID, "notes.txt", {
+        revision: s.head,
+      });
       expect(commit).toMatchObject({ object_id: WHERE.object_id, version: "v2" });
       const entry = (await s.list(WHERE)).entries[0];
       expect(entry).toMatchObject({ name: `${FILE_ID}.txt`, display_name: "notes.txt" });
@@ -261,7 +292,8 @@ describe("MemoryFileSource writes", () => {
 
     it("refuses a bad name (400), the current name (409) and an unknown file (404)", async () => {
       const s = fileObject();
-      const rename = (id: string, name: string) => s.rename({ library_id: "lib" }, id, name);
+      const rename = (id: string, name: string) =>
+        s.rename({ library_id: "lib" }, id, name, { revision: s.head });
       for (const bad of ["", "a/b", "a\0b", "x".repeat(1025)]) {
         await expect(rename(FILE_ID, bad)).rejects.toMatchObject({
           code: "invalid_request",
@@ -281,12 +313,12 @@ describe("MemoryFileSource writes", () => {
 
     it("shows the safe form of a stored name, as the API does (API-S-005)", async () => {
       const s = fileObject();
-      await s.rename({ library_id: "lib" }, FILE_ID, "  a\\b\u0007c.txt ");
+      await s.rename({ library_id: "lib" }, FILE_ID, "  a\\b\u0007c.txt ", { revision: s.head });
       const entry = (await s.list(WHERE)).entries[0];
       expect(entry).toMatchObject({ display_name: "a_bc.txt" });
       const ref = { ...WHERE, version: "v2", path: `original/${FILE_ID}.txt`, display_name: "" };
       expect((await s.details(ref)).display_name).toBe("a_bc.txt");
-      await s.rename({ library_id: "lib" }, FILE_ID, "   ");
+      await s.rename({ library_id: "lib" }, FILE_ID, "   ", { revision: s.head });
       expect((await s.list(WHERE)).entries[0]).toMatchObject({ display_name: "file" });
     });
 
@@ -299,7 +331,7 @@ describe("MemoryFileSource writes", () => {
         ["original", "moved"],
         ["elsewhere.txt", "original/in.txt"],
       ] as const) {
-        await expect(s.move(WHERE, from, to)).rejects.toMatchObject({
+        await expect(s.move(WHERE, from, to, { revision: s.head })).rejects.toMatchObject({
           code: "invalid_request",
           status: 400,
         });
@@ -314,21 +346,23 @@ describe("MemoryFileSource writes", () => {
         files: [{ path: "original/notes.txt", content: "n" }],
       });
       await expect(
-        collection.move(WHERE, "original/notes.txt", "original/b.txt"),
+        collection.move(WHERE, "original/notes.txt", "original/b.txt", {
+          revision: collection.head,
+        }),
       ).resolves.toMatchObject({ version: "v2" });
       await expect(
-        collection.rename({ library_id: "lib" }, FILE_ID, "x.txt"),
+        collection.rename({ library_id: "lib" }, FILE_ID, "x.txt", { revision: collection.head }),
       ).rejects.toMatchObject({ code: "not_found" });
     });
   });
 
   it("removes keep history and restore brings a file back as a new version", async () => {
     const s = source();
-    const removed = await s.remove(LOCATION, "Docs/a.txt");
+    const removed = await s.remove(LOCATION, "Docs/a.txt", { revision: s.head });
     expect(removed.version).toBe("v2");
     const docs = await s.list({ ...LOCATION, prefix: "Docs" });
     expect(docs.entries.map((e) => e.name)).toEqual(["b.txt"]);
-    const restored = await s.restore(LOCATION, "v1", ["Docs/a.txt"]);
+    const restored = await s.restore(LOCATION, "v1", ["Docs/a.txt"], { revision: s.head });
     expect(restored.version).toBe("v3");
     const again = await s.list({ ...LOCATION, prefix: "Docs" });
     expect(again.entries.map((e) => e.name)).toEqual(["a.txt", "b.txt"]);
@@ -336,8 +370,12 @@ describe("MemoryFileSource writes", () => {
 
   it("refuses to remove or restore what is not there", async () => {
     const s = source();
-    await expect(s.remove(LOCATION, "ghost.txt")).rejects.toMatchObject({ code: "not_found" });
-    await expect(s.restore(LOCATION, "v9", ["top.png"])).rejects.toMatchObject({
+    await expect(s.remove(LOCATION, "ghost.txt", { revision: s.head })).rejects.toMatchObject({
+      code: "not_found",
+    });
+    await expect(
+      s.restore(LOCATION, "v9", ["top.png"], { revision: s.head }),
+    ).rejects.toMatchObject({
       code: "not_found",
     });
   });

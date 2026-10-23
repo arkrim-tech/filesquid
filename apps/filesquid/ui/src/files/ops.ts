@@ -24,6 +24,7 @@ import {
   type UploadCommit,
   type UploadFacts,
 } from "./model";
+import { newOperationId } from "../api/commands";
 import type { FileSource } from "./source";
 
 /** Most files one batch uploads; further files are left for another batch. */
@@ -71,12 +72,18 @@ export function uploadName(name: string): string {
  * Upload files one at a time, each one `PUT` that creates the file's own object in one version
  * (API-S-026). A file over 64 MiB or with a name over 255 bytes is refused without being sent;
  * a failed file is recorded and the rest continue (files are never sent together). At most
- * {@link MAX_UPLOAD_FILES} files are tried. Network I/O through `source`.
+ * {@link MAX_UPLOAD_FILES} files are tried. Each file is sent under the operation id
+ * `operationIdOf` gives it (API-F2.13): a caller that retries a file with the id it used before
+ * gets the first answer back while the host still holds that upload's receipt. Receipts are
+ * kept in the host's memory and capped, so a retry after a host restart can still make a second
+ * file.
+ * Network I/O through `source`.
  *
  * @param source The file source.
  * @param library The library to upload into.
  * @param files The files.
  * @param progress Called before each file with its place (1-based), the total and its name.
+ * @param operationIdOf The operation id of each file; a new one per file by default.
  * @returns The commits, the failures and the count not tried.
  */
 export async function uploadFiles(
@@ -84,6 +91,7 @@ export async function uploadFiles(
   library: LibraryRef,
   files: readonly File[],
   progress: (current: number, total: number, name: string) => void = () => undefined,
+  operationIdOf: (file: File) => string = () => newOperationId(),
 ): Promise<UploadResult> {
   const batch = files.slice(0, MAX_UPLOAD_FILES);
   const committed: UploadCommit[] = [];
@@ -100,7 +108,8 @@ export async function uploadFiles(
       continue;
     }
     try {
-      committed.push(await source.upload(library, uploadFacts(file, name), file));
+      const operationId = operationIdOf(file);
+      committed.push(await source.upload(library, uploadFacts(file, name), file, { operationId }));
     } catch (error) {
       console.warn("FileSquid could not upload a file", errorKind(error));
       failed.push({ file, name, reason: { error } });

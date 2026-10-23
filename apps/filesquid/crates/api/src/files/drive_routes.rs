@@ -7,6 +7,7 @@
 //! and, for the view, the caller's own journal entries; both may block, so they run on a
 //! blocking thread before the file service reads each file's object.
 
+use super::command::{self, Done, FileCommand};
 use super::copy::{CopyRequest, CopyView};
 use super::drive::{
     check_filter, check_limit, check_view, file_candidate, folder_candidate, matches_filter, page,
@@ -15,20 +16,20 @@ use super::drive::{
 use super::drive_facts::{CollectionHistorySizeView, CollectionSizeQuery};
 use super::drive_scope::{collection_files, my_times, view_scope, ViewScope};
 use super::error::FileError;
-use super::routes::{body, files, query, read_answer, refuse};
+use super::routes::{body, files, query, read_answer};
 use super::search::{parse_zone, search_files, search_page, Examined, SearchPage, SearchRequest};
 use super::search_match::Searcher;
 use super::search_query::parse;
 use super::search_scope::{search_scope, SearchScope};
 use super::{COLLECTION_HISTORY_SIZE_OPERATION, COPY_OPERATION, SEARCH_OPERATION, VIEW_OPERATION};
-use crate::auth::{journal_entry, Action, Principal};
-use crate::journal::{JournalEntry, Outcome};
+use crate::auth::{Action, Principal};
+use crate::journal::JournalEntry;
 use crate::navigation::{NavigationService, NodeRef};
 use crate::routes::Route;
 use crate::ApiState;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Query, State};
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Extension, Json};
 use filesquid_core::CollectionId;
@@ -55,30 +56,41 @@ struct ViewInputs {
     mine: HashMap<String, MyTimes>,
 }
 
-/// `POST /api/v1/files/copies`: copy a file at its head into a new file.
+/// `POST /api/v1/files/copies`: copy a file at its head into a new file, as a command
+/// ([`super::command`]) whose expected revision is the source file object's head.
 async fn copy(
     State(state): State<ApiState>,
     Extension(principal): Extension<Principal>,
-    request: Result<Json<CopyRequest>, JsonRejection>,
+    request: Result<Json<FileCommand<CopyRequest>>, JsonRejection>,
 ) -> Response {
-    let actor = principal.actor().to_string();
-    let outcome = async { files(&state)?.copy(body(request)?, actor).await }.await;
-    let copied = match outcome {
-        Ok(copied) => copied,
-        Err(err) => return refuse(&state, COPY_OPERATION, principal.actor(), err).await,
-    };
-    journal_copy(&state, &principal, &copied).await;
-    Json(copied).into_response()
+    let command = body(request).and_then(|c| command::check(c.envelope, c.input));
+    let principal = &principal;
+    command::run(
+        &state,
+        principal,
+        COPY_OPERATION,
+        command,
+        |files, c, actor| async move {
+            let copied = files.copy(c.input, actor, c.expected).await?;
+            Ok(Done {
+                entries: vec![copy_entry(principal, &copied)],
+                view: copied,
+                changed: true,
+            })
+        },
+    )
+    .await
 }
 
-/// Journal one copy: the caller, the library, the new file's object and its version.
-async fn journal_copy(state: &ApiState, principal: &Principal, copied: &CopyView) {
-    let entry = JournalEntry::new(COPY_OPERATION, Outcome::Succeeded)
-        .actor(principal.actor())
-        .target(copied.library_id.as_str())
-        .target(copied.object_id.as_str())
-        .target(copied.version.as_str());
-    journal_entry(state, entry).await;
+/// The journal entry of one copy: the caller, the library, the new file's object and its
+/// version, with its `<object-id>@vN` reference (API-S-028).
+fn copy_entry(principal: &Principal, copied: &CopyView) -> JournalEntry {
+    let ids = (
+        copied.library_id.as_str(),
+        copied.object_id.as_str(),
+        copied.version.as_str(),
+    );
+    command::version_entry(COPY_OPERATION, principal, ids, true)
 }
 
 /// `GET /api/v1/files/view`: one page of a library, collection or virtual-collection node.

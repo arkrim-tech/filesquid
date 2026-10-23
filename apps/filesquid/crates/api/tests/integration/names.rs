@@ -7,16 +7,16 @@
 #[path = "../support/files_fixture.rs"]
 mod files_fixture;
 
-use axum::http::{Method, StatusCode};
-use files_fixture::{encode, upload_uri, Answer, FilesRig, LIBRARY};
+use axum::http::StatusCode;
+use files_fixture::{encode, upload_input, Answer, FilesRig, LIBRARY};
 use serde_json::{json, Value};
 
 /// Upload `bytes` as a new file named `name` (NFC), and answer the upload view.
 async fn upload(rig: &FilesRig, name: &str, bytes: &[u8]) -> Value {
-    let uri = upload_uri(name, bytes.len(), "name_normalization=nfc");
-    let answer = rig.call(Method::PUT, &uri, &[], bytes.to_vec()).await;
+    let input = upload_input(name, bytes.len(), json!({ "name_normalization": "nfc" }));
+    let answer = rig.upload(input, bytes).await;
     assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
-    answer.json()
+    answer.result()
 }
 
 /// The query naming the file object of `upload`, then `rest`.
@@ -37,7 +37,7 @@ async fn rename(rig: &FilesRig, upload: &Value, name: &str) -> Answer {
         "file_id": upload["file_id"],
         "display_name": name,
     });
-    rig.post("/api/v1/files/renames", body).await
+    rig.command("/api/v1/files/renames", body).await
 }
 
 /// The `Content-Disposition` of the download of `path` in the object of `upload`.
@@ -80,7 +80,7 @@ async fn a_rename_changes_only_the_display_name_in_one_new_version() {
     let upload = upload(&rig, "IMG_0001.JPG", b"jpeg").await;
     let renamed = rename(&rig, &upload, "Harbour at dawn.JPG").await;
     assert_eq!(renamed.status, StatusCode::OK, "{:?}", renamed.json());
-    assert_eq!(renamed.json()["version"], "v2");
+    assert_eq!(renamed.result()["version"], "v2");
     let path = original(&upload, "JPG");
     let listing = rig
         .get(&format!(
@@ -149,7 +149,7 @@ async fn a_move_of_a_file_objects_original_is_refused_with_a_pointer_to_rename()
             "from": from,
             "to": to,
         });
-        let answer = rig.post("/api/v1/files/moves", body).await;
+        let answer = rig.command("/api/v1/files/moves", body).await;
         assert_eq!(answer.status.as_u16(), 400, "{:?}", answer.json());
         let message = answer.json()["message"]
             .as_str()
@@ -168,7 +168,7 @@ async fn an_original_folder_in_an_object_that_is_not_a_file_object_still_moves()
         "from": "original/a.txt",
         "to": "kept/a.txt",
     });
-    let answer = rig.post("/api/v1/files/moves", body).await;
+    let answer = rig.command("/api/v1/files/moves", body).await;
     assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
 }
 

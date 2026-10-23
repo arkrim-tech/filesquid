@@ -22,6 +22,12 @@ export type CommandOutcome = components["schemas"]["CommandOutcome"];
 export type CommandOutcomeKind = components["schemas"]["CommandOutcomeKind"];
 /** Module error carried by an `error` outcome, generated from the API contract. */
 export type PortError = components["schemas"]["PortError"];
+/**
+ * A command answer: the outcome and, on routes that answer one (the file write routes of
+ * API-F2.13), `result`, what a `committed` command made. `result` is absent when the answer
+ * carries none.
+ */
+export type CommandAnswer<T = unknown> = CommandOutcome & { readonly result?: T | null };
 
 /** What a caller supplies to build a {@link CommandEnvelope}. */
 export interface EnvelopeInput {
@@ -134,11 +140,11 @@ function portError(value: unknown): PortError | undefined {
  *
  * @param value Parsed JSON of a 2xx command answer.
  * @param operationId The id the command was sent with.
- * @returns The outcome with contract fields only.
+ * @returns The outcome with contract fields only, `result` included when the answer has one.
  * @throws TypeError when the answer is not a contract `CommandOutcome`, or is for another
  *   operation. A caller MUST NOT treat such an answer as completion.
  */
-export function commandOutcome(value: unknown, operationId: string): CommandOutcome {
+export function commandOutcome(value: unknown, operationId: string): CommandAnswer {
   if (typeof value !== "object" || value === null) {
     throw new TypeError("command answer is not a CommandOutcome");
   }
@@ -154,7 +160,8 @@ export function commandOutcome(value: unknown, operationId: string): CommandOutc
   if (record.operation_id !== operationId) {
     throw new TypeError("command outcome is for another operation");
   }
-  return { operation_id: operationId, kind, error: error ?? null };
+  const outcome: CommandOutcome = { operation_id: operationId, kind, error: error ?? null };
+  return "result" in record ? { ...outcome, result: record.result } : outcome;
 }
 
 /**

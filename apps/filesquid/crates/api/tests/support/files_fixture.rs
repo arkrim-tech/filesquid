@@ -59,6 +59,15 @@ const MAX_JOURNAL_PAGES: usize = 100;
 /// Rigs created so far in this process, so each gets its own directory.
 static RIGS: AtomicU64 = AtomicU64::new(0);
 
+/// Operation IDs handed out so far by [`operation_id`].
+static OPERATIONS: AtomicU64 = AtomicU64::new(0);
+
+/// The multipart boundary of [`upload_body`].
+pub const BOUNDARY: &str = "filesquid-test-boundary-7f3a";
+
+/// The `content-type` of an upload built by [`upload_body`].
+pub const MULTIPART: &str = "multipart/form-data; boundary=filesquid-test-boundary-7f3a";
+
 /// The library ID every test uses.
 pub fn library() -> LibraryId {
     LibraryId::new(LIBRARY).expect("library id")
@@ -314,6 +323,11 @@ impl Answer {
         serde_json::from_slice(&self.body).unwrap_or(serde_json::Value::Null)
     }
 
+    /// The `result` of a command answer: what a committed command made (null otherwise).
+    pub fn result(&self) -> serde_json::Value {
+        self.json()["result"].clone()
+    }
+
     /// The text of header `name`, or `""`.
     pub fn header(&self, name: &str) -> &str {
         self.headers
@@ -516,6 +530,78 @@ impl FilesRig {
             .await
     }
 
+    /// The head version of `object_id` in the rig's library, read through the versions
+    /// route, or `"0"` when the route answers `404` (no such object): the revision a command
+    /// names. Any other answer fails the test, so a refusal is never mistaken for a revision.
+    pub async fn head_of(&self, object_id: &str) -> String {
+        let uri = format!(
+            "/api/v1/files/versions?library_id={LIBRARY}&object_id={}",
+            encode(object_id)
+        );
+        let answer = self.get(&uri).await;
+        match answer.status {
+            StatusCode::OK => answer.json()["head"].as_str().expect("head").to_string(),
+            StatusCode::NOT_FOUND => "0".to_string(),
+            other => panic!("the versions route answered {other}: {:?}", answer.json()),
+        }
+    }
+
+    /// The revision a command on `input` names: the head of `input.object_id`, else of the
+    /// file object of `input.file_id`, else `"0"` (a new file).
+    pub async fn revision_of(&self, input: &serde_json::Value) -> String {
+        if let Some(object_id) = input["object_id"].as_str() {
+            return self.head_of(object_id).await;
+        }
+        match input["file_id"].as_str() {
+            Some(file_id) => self.head_of(&format!("urn:uuid:{file_id}")).await,
+            None => "0".to_string(),
+        }
+    }
+
+    /// `POST uri` of the command `input` with a fresh operation ID and the current revision.
+    pub async fn command(&self, uri: &str, input: serde_json::Value) -> Answer {
+        self.command_as(Method::POST, uri, input).await
+    }
+
+    /// `method uri` of the command `input` with a fresh operation ID and the current revision.
+    pub async fn command_as(&self, method: Method, uri: &str, input: serde_json::Value) -> Answer {
+        let revision = self.revision_of(&input).await;
+        let body = command_body(&input, &operation_id(), &revision);
+        self.send_command(method, uri, &body).await
+    }
+
+    /// `method uri` with the JSON command `body` as it is.
+    pub async fn send_command(
+        &self,
+        method: Method,
+        uri: &str,
+        body: &serde_json::Value,
+    ) -> Answer {
+        let headers = [("content-type", "application/json")];
+        self.call(method, uri, &headers, body.to_string().into_bytes())
+            .await
+    }
+
+    /// `PUT /api/v1/files/upload` of `bytes` with the facts `input`, a fresh operation ID and
+    /// the current revision.
+    pub async fn upload(&self, input: serde_json::Value, bytes: &[u8]) -> Answer {
+        let revision = self.revision_of(&input).await;
+        let envelope = command_body(&input, &operation_id(), &revision)["envelope"].clone();
+        self.send_upload(&envelope, &input, bytes).await
+    }
+
+    /// `PUT /api/v1/files/upload` of `bytes` with `envelope` and `input` as they are.
+    pub async fn send_upload(
+        &self,
+        envelope: &serde_json::Value,
+        input: &serde_json::Value,
+        bytes: &[u8],
+    ) -> Answer {
+        let body = upload_body(Some(envelope), Some(input), Some(bytes));
+        let headers = [("content-type", MULTIPART)];
+        self.call(Method::PUT, UPLOAD_URI, &headers, body).await
+    }
+
     /// Every journal entry, oldest first.
     pub fn journal(&self) -> Vec<JournalEntry> {
         self.monitor.journal().flush();
@@ -554,17 +640,106 @@ pub fn query(rest: &str) -> String {
     format!("{base}&{rest}")
 }
 
-/// The URI of `PUT /api/v1/files/upload` for a new file named `name` declaring `size` bytes,
-/// plus `rest` (`key=value` pairs, already encoded).
-pub fn upload_uri(name: &str, size: usize, rest: &str) -> String {
-    let base = format!(
-        "/api/v1/files/upload?library_id={LIBRARY}&name={}&size={size}",
-        encode(name)
-    );
-    match rest.is_empty() {
-        true => base,
-        false => format!("{base}&{rest}"),
+/// The upload route.
+pub const UPLOAD_URI: &str = "/api/v1/files/upload";
+
+/// The upload facts of a new file named `name` declaring `size` bytes in the rig's library,
+/// plus the fields of `rest` (a JSON object).
+pub fn upload_input(name: &str, size: usize, rest: serde_json::Value) -> serde_json::Value {
+    let mut input = serde_json::json!({ "library_id": LIBRARY, "name": name, "size": size });
+    for (key, value) in rest.as_object().expect("an object of fields") {
+        input[key] = value.clone();
     }
+    input
+}
+
+/// [`upload_input`] with the fields of `rest`, `key=value` pairs joined by `&` with
+/// percent-encoded values (the form the upload query took before Task API-F2.13).
+pub fn upload_facts(name: &str, size: usize, rest: &str) -> serde_json::Value {
+    let mut fields = serde_json::Map::new();
+    for pair in rest.split('&').filter(|pair| !pair.is_empty()) {
+        let (key, value) = pair.split_once('=').expect("a key=value pair");
+        fields.insert(key.to_string(), serde_json::Value::String(decode(value)));
+    }
+    upload_input(name, size, serde_json::Value::Object(fields))
+}
+
+/// Percent-decode `text`.
+fn decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'%' if i + 2 < bytes.len() => {
+                let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).expect("hex");
+                out.push(u8::from_str_radix(hex, 16).expect("a percent escape"));
+                i += 3;
+            }
+            byte => {
+                out.push(byte);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8(out).expect("UTF-8")
+}
+
+/// A fresh operation ID, unique in this process.
+pub fn operation_id() -> String {
+    let n = OPERATIONS.fetch_add(1, Ordering::SeqCst);
+    format!("op-{}-{n}", std::process::id())
+}
+
+/// The command body `{envelope, input}` of `input` under `operation` and `revision`, scoped
+/// to `input.library_id`.
+pub fn command_body(
+    input: &serde_json::Value,
+    operation: &str,
+    revision: &str,
+) -> serde_json::Value {
+    let library = input["library_id"].as_str().unwrap_or_default();
+    serde_json::json!({
+        "envelope": {
+            "schema_version": 1,
+            "operation_id": operation,
+            "expected_revision": revision,
+            "scope": format!("library:{library}"),
+        },
+        "input": input,
+    })
+}
+
+/// A `multipart/form-data` upload body ([`BOUNDARY`]) with the parts given: `envelope` and
+/// `input` as JSON, `file` as the bytes.
+pub fn upload_body(
+    envelope: Option<&serde_json::Value>,
+    input: Option<&serde_json::Value>,
+    file: Option<&[u8]>,
+) -> Vec<u8> {
+    let mut body = Vec::new();
+    let json_parts = [("envelope", envelope), ("input", input)];
+    for (name, value) in json_parts {
+        let Some(value) = value else { continue };
+        let head = format!(
+            "--{BOUNDARY}\r\ncontent-disposition: form-data; name=\"{name}\"\r\n\
+             content-type: application/json\r\n\r\n"
+        );
+        body.extend_from_slice(head.as_bytes());
+        body.extend_from_slice(value.to_string().as_bytes());
+        body.extend_from_slice(b"\r\n");
+    }
+    if let Some(bytes) = file {
+        let head = format!(
+            "--{BOUNDARY}\r\ncontent-disposition: form-data; name=\"file\"; filename=\"file\"\r\n\
+             content-type: application/octet-stream\r\n\r\n"
+        );
+        body.extend_from_slice(head.as_bytes());
+        body.extend_from_slice(bytes);
+        body.extend_from_slice(b"\r\n");
+    }
+    body.extend_from_slice(format!("--{BOUNDARY}--\r\n").as_bytes());
+    body
 }
 
 /// Percent-encode `text` for a query value.

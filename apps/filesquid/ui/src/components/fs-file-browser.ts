@@ -153,6 +153,9 @@ export class FsFileBrowser extends HTMLElement {
       location.object_id !== this.where.object_id
     ) {
       this.pending.clear();
+      // Another object: its head is unknown until its listing loads, so no write expects the
+      // previous object's (API-F2.13).
+      this.head = "";
     }
     if (!same) this.writes?.leave();
     this.where = location;
@@ -258,6 +261,7 @@ export class FsFileBrowser extends HTMLElement {
       labels: options.labels,
       source: options.source,
       location: () => this.where,
+      revision: () => this.head,
       target: () => (this.current ? this.rowOfPath(this.current.path) : this.list?.chosenRow()),
       reload: () => this.reload(),
       committed: (operation: WriteOperation, commit: FileCommit, changed: readonly string[]) =>

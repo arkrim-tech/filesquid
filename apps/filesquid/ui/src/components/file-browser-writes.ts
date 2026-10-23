@@ -9,6 +9,7 @@
  * Remove and restore are the reversible pair the plan names: the Undo offer restores from the
  * version before the removal. There is no control that deletes for good.
  */
+import { newOperationId } from "../api/commands";
 import { formatLabel, type LabelTable } from "../theme/labels";
 import {
   MAX_DISPLAY_NAME_BYTES,
@@ -51,6 +52,11 @@ export interface WritesHost {
   readonly source: FileSource;
   /** The object and folder shown. */
   location(): FileLocation;
+  /**
+   * The head version of the object shown, as last listed: the revision every write in it
+   * expects (API-F2.13); a stale one is refused as `conflict`.
+   */
+  revision(): string;
   /** The row the toolbar acts on, or undefined. */
   target(): FileRow | undefined;
   /** Load the listing again after a commit. */
@@ -75,6 +81,8 @@ type FormMode = { readonly kind: "folder" } | { readonly kind: "rename"; readonl
 interface UndoOffer {
   readonly object: ObjectRef;
   readonly version: string;
+  /** The head the removal published, which the restore expects. */
+  readonly revision: string;
   readonly paths: readonly string[];
   readonly name: string;
 }
@@ -98,6 +106,8 @@ export class FileWrites {
   private busy = false;
   private undoOffer?: UndoOffer;
   private retryable: File[] = [];
+  /** The operation id each file was last sent under, so Retry resends it with the same one. */
+  private readonly uploadIds = new WeakMap<File, string>();
   private retryWhere?: FileLocation;
 
   /**
@@ -171,11 +181,15 @@ export class FileWrites {
   async remove(row: FileRow | undefined = this.host.target()): Promise<void> {
     if (!row || this.busy) return;
     const object = this.objectNow();
-    const outcome = await this.run(() => this.host.source.remove(object, row.path));
+    const revision = this.host.revision();
+    const outcome = await this.run(() => this.host.source.remove(object, row.path, { revision }));
     if (!outcome) return;
     this.host.committed("remove", outcome, [row.path]);
     const version = previousVersion(outcome.version);
-    this.undoOffer = version ? { object, version, paths: [row.path], name: row.name } : undefined;
+    const paths = [row.path];
+    this.undoOffer = version
+      ? { object, version, revision: outcome.version, paths, name: row.name }
+      : undefined;
     const text = formatLabel(this.host.labels.fileRemoved, {
       name: row.name,
       version: outcome.version,
@@ -206,16 +220,37 @@ export class FileWrites {
     if (files.length === 0 || this.busy) return;
     const { labels, source } = this.host;
     this.setBusy(true);
-    const result = await uploadFiles(source, where, files, (current, total, name) =>
-      this.showStatus(
-        formatLabel(labels.fileUploading, { current: String(current), total: String(total), name }),
-      ),
+    const result = await uploadFiles(
+      source,
+      where,
+      files,
+      (current, total, name) =>
+        this.showStatus(
+          formatLabel(labels.fileUploading, {
+            current: String(current),
+            total: String(total),
+            name,
+          }),
+        ),
+      (file) => this.uploadId(file),
     );
     this.setBusy(false);
     const last = result.committed[result.committed.length - 1];
     if (last) this.host.committed("upload", last, []);
     this.reportUpload(result.committed.length, last, result, where);
     if (last) await this.host.reload();
+  }
+
+  /**
+   * The operation id of `file`: the one it was sent under before, when a Retry sends it again,
+   * else a new one (API-F2.13). Side effect: remembers it for the file.
+   */
+  private uploadId(file: File): string {
+    const known = this.uploadIds.get(file);
+    if (known) return known;
+    const id = newOperationId();
+    this.uploadIds.set(file, id);
+    return id;
   }
 
   /** Files chosen in the hidden input: upload them and clear the input. */
@@ -283,7 +318,9 @@ export class FileWrites {
     const offer = this.undoOffer;
     if (!offer || this.busy) return;
     const outcome = await this.run(() =>
-      this.host.source.restore(offer.object, offer.version, offer.paths),
+      this.host.source.restore(offer.object, offer.version, offer.paths, {
+        revision: offer.revision,
+      }),
     );
     if (!outcome) return;
     this.undoOffer = undefined;
@@ -390,8 +427,9 @@ export class FileWrites {
     const where = this.host.location();
     const fileId = renameFileId(row, where.object_id);
     if (fileId === undefined || typed === row.name) return this.close(true);
+    const options = { revision: this.host.revision() };
     const commit = await this.run(
-      () => this.host.source.rename({ library_id: where.library_id }, fileId, typed),
+      () => this.host.source.rename({ library_id: where.library_id }, fileId, typed, options),
       renameFailureText,
     );
     if (!commit) return;
@@ -412,7 +450,8 @@ export class FileWrites {
   private async createFolder(mode: FormMode, name: string): Promise<void> {
     const where = this.host.location();
     const path = joinPath(where.prefix, name);
-    const answer = await this.run(() => this.host.source.createFolder(where, path));
+    const revision = this.host.revision();
+    const answer = await this.run(() => this.host.source.createFolder(where, path, { revision }));
     if (!answer) return;
     if (answer.pending && this.isShown(where)) this.host.pendFolder(path);
     const text = answer.pending
@@ -436,7 +475,8 @@ export class FileWrites {
     const to = moveTarget(row, name, folder);
     if (to === undefined) return this.close(true);
     const where = this.host.location();
-    const commit = await this.run(() => this.host.source.move(where, row.path, to));
+    const revision = this.host.revision();
+    const commit = await this.run(() => this.host.source.move(where, row.path, to, { revision }));
     if (!commit) return;
     if (this.mode === mode) this.close(true);
     this.host.committed("move", commit, [row.path, to]);

@@ -13,7 +13,9 @@ use super::error::FileError;
 use super::labels::{
     check_label, commit_label, refuse_reserved, Labels, LABELS_PATH, MAX_LABELS_FILE_BYTES,
 };
-use super::service::{change_model, check_logical_path, commit_view, read, FileService, Library};
+use super::service::{
+    change_model, check_logical_path, check_revision, commit_view, read, FileService, Library,
+};
 use super::view::{
     CommitView, FileHistorySizeView, HistoryQuery, HistoryView, LabelRequest,
     LibraryHistorySizeView, LibraryQuery, RestoreRequest,
@@ -173,16 +175,20 @@ where
 {
     /// Restore files or folders from an earlier version in exactly one new version: a
     /// `revert` when it returns the object's files to that version's, else a `reinstate`.
+    ///
+    /// `expected` is the object's head the caller read; any other is a `conflict`.
     pub async fn restore(
         &self,
         request: RestoreRequest,
         actor: &str,
+        expected: &str,
     ) -> Result<Committed, FileError> {
         let version = restore_version(&request)?;
         let library = self.library(&request.library_id)?;
         let _writing = library.writes.lock().await;
         let root = library.locate(&request.object_id).await?;
         let object = Object::open(library.files.backend.as_ref(), &root).await?;
+        check_revision(&object.inventory().head, expected)?;
         let files = restore_targets(&object, &version, &request.paths)?;
         let write = Write {
             actor,
@@ -205,10 +211,13 @@ where
 
     /// Set or clear the label of one version after commit, in one new version that holds
     /// the updated labels file.
+    ///
+    /// `expected` is the object's head the caller read; any other is a `conflict`.
     pub async fn set_label(
         &self,
         request: LabelRequest,
         actor: &str,
+        expected: &str,
     ) -> Result<Committed, FileError> {
         if let Some(label) = &request.label {
             check_label(label)?;
@@ -219,6 +228,7 @@ where
         let _writing = library.writes.lock().await;
         let root = library.locate(&request.object_id).await?;
         let object = Object::open(library.files.backend.as_ref(), &root).await?;
+        check_revision(&object.inventory().head, expected)?;
         let block = object
             .inventory()
             .versions
