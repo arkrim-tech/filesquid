@@ -30,7 +30,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"
 time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
-tokio = { version = "1", features = ["sync", "rt"] }
+tokio = { version = "1", features = ["sync", "rt", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry"] }
 
@@ -218,6 +218,10 @@ path = "tests/unit/jobs.rs"
 [[test]]
 name = "unit_job_control"
 path = "tests/unit/job_control.rs"
+
+[[test]]
+name = "unit_rebuild_job"
+path = "tests/unit/rebuild_job.rs"
 
 [[test]]
 name = "integration_job_routes"

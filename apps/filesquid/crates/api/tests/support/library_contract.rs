@@ -15,8 +15,9 @@ use filesquid_api::local_library::choice::{
 use filesquid_api::local_library::{
     JournalRebuild, LibraryCommands, LibraryLocations, LibraryRequest, LibraryRoot, LibraryView,
     LocalLibraryService, LocationRequest, MemoryRepairLedger, ObjectFindings, ObjectRepair,
-    RebuildReport, RebuiltObject, RepairAnswer, RepairCandidate, RepairCandidates, RepairConsent,
-    RepairRequest, RepairResult, SnapshotCopyRequest, UnreadableObject, CONSENT_STATEMENT_ID,
+    RebuildJobAnswer, RebuildOutcome, RebuildReport, RebuiltObject, RepairAnswer, RepairCandidate,
+    RepairCandidates, RepairConsent, RepairRequest, RepairResult, SnapshotCopyRequest,
+    UnreadableObject, CONSENT_STATEMENT_ID, REBUILD_JOB_KIND,
 };
 use filesquid_api::monitor::Monitor;
 use filesquid_api::ApiState;
@@ -412,6 +413,8 @@ pub fn samples() -> Vec<(&'static str, Vec<Value>)> {
                 }),
             ],
         ),
+        ("RebuildJobAnswer", vec![rebuild_answer()]),
+        ("RebuildOutcome", vec![to_value(RebuildOutcome::Pending)]),
         (
             "JournalRebuild",
             vec![
@@ -452,6 +455,35 @@ pub fn samples() -> Vec<(&'static str, Vec<Value>)> {
             })],
         ),
     ]
+}
+
+/// The answer of a rebuild request: its pending job, handed to the runner.
+fn rebuild_answer() -> Value {
+    let job = filesquid_api::jobs::Job {
+        id: "job-1".into(),
+        kind: REBUILD_JOB_KIND.into(),
+        operation_id: "op-1".into(),
+        source: format!("library:{LIBRARY}"),
+        state: filesquid_api::jobs::JobState::Pending,
+        checkpoint: None,
+        done: 0,
+        total: None,
+        attempts: 0,
+        fence: 0,
+        holder: None,
+        lease_expires_ms: None,
+        created_ms: 1_760_000_000_000,
+        updated_ms: 1_760_000_000_000,
+        error_code: None,
+        control: None,
+        result: None,
+    };
+    to_value(RebuildJobAnswer {
+        outcome: RebuildOutcome::Pending,
+        job_id: job.id.clone(),
+        job: filesquid_api::jobs::JobView::of(&job),
+        scheduled: true,
+    })
 }
 
 /// A journal rebuild that restored entries and found one conflict.

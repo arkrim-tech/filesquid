@@ -2558,8 +2558,8 @@
     "/api/v1/libraries/rebuilds": {
       "post": {
         "operationId": "rebuildLibrary",
-        "summary": "Rebuild a library from its files",
-        "description": "Reads every object of the open library from its OCFL files alone, so a host can rebuild its catalog without its database. Validation errors are reported, never adopted or repaired, and an object whose head has no version inventory is flagged. Writes nothing. Refusals: library_not_open and the open errors of the storage root. The outcome is journaled as library.rebuild. Every refusal is journaled once, with its error code and opaque IDs only (an authorisation refusal as api.auth.denied); answers carry opaque library and object identifiers, never a filesystem path, storage key or OCFL content path (API-S-005, API-S-025).",
+        "summary": "Rebuild a library from its files as a durable job",
+        "description": "Starts the rebuild from files as a durable job of kind library.rebuild (API-S-025 Rebuild as a job, API-S-033) and answers pending with its job ID: the job reads every object of the open library from its OCFL files alone, so a host can rebuild its catalog without its database, reports its progress in objects (done of total) on the job routes and the job.update event, and is paused, resumed from its checkpoint without reading a completed object again, and cancelled through the job routes (API-S-037). Once the job has completed, its view's result is the RebuildReport: the objects read, the objects not readable, and each object's validation errors; an object whose head has no version inventory is flagged. Validation errors are reported, never adopted or repaired, and nothing is written to the library's files, so a cancel changes none of them. A library whose rebuild job is unfinished answers that job again, and no second job is submitted. scheduled says whether the job was handed to the host's runner now; false leaves it pending (paused, already running, or a host without a runner for the kind). The request takes no CommandEnvelope: the job's own operation ID identifies it. Refusals before any job is submitted: library_not_open, a malformed body (invalid_request), and a host without a job service (unavailable). The finished rebuild is journaled once as library.rebuild, and its job's state changes as job.*; every refusal is journaled once, with its error code and opaque IDs only (an authorisation refusal as api.auth.denied); answers carry opaque library, job and object identifiers, never a filesystem path, storage key or OCFL content path (API-S-005, API-S-025).",
         "x-filesquid-action": "library.manage",
         "requestBody": {
           "required": true,
@@ -2573,11 +2573,11 @@
         },
         "responses": {
           "200": {
-            "description": "Everything the rebuild found.",
+            "description": "The rebuild's job, pending.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RebuildReport"
+                  "$ref": "#/components/schemas/RebuildJobAnswer"
                 }
               }
             }
@@ -5979,7 +5979,7 @@
       },
       "RebuildReport": {
         "type": "object",
-        "description": "Everything a rebuild from files found, and with the host's journal restore, what it restored of the library's journal.",
+        "description": "Everything a rebuild from files found (the result of a completed library.rebuild job): the objects read, the objects not readable, each object's validation errors, and with the host's journal restore, what it restored of the library's journal.",
         "required": [
           "objects",
           "unreadable"
@@ -6004,6 +6004,40 @@
           }
         },
         "additionalProperties": false
+      },
+      "RebuildJobAnswer": {
+        "type": "object",
+        "description": "The answer of POST /api/v1/libraries/rebuilds: the rebuild's durable job, pending (API-S-025 Rebuild as a job).",
+        "required": [
+          "outcome",
+          "job_id",
+          "job",
+          "scheduled"
+        ],
+        "properties": {
+          "outcome": {
+            "$ref": "#/components/schemas/RebuildOutcome"
+          },
+          "job_id": {
+            "type": "string",
+            "description": "The job's ID: read and control it through the job routes."
+          },
+          "job": {
+            "$ref": "#/components/schemas/JobView"
+          },
+          "scheduled": {
+            "type": "boolean",
+            "description": "Whether the job was handed to the host's runner to run now; false leaves it pending (paused, already running, or a host without a runner for the kind)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RebuildOutcome": {
+        "type": "string",
+        "description": "What became of a rebuild request: pending, a durable job that has not finished.",
+        "enum": [
+          "pending"
+        ]
       },
       "RepairCandidate": {
         "type": "object",
@@ -7890,7 +7924,8 @@
           "done",
           "attempts",
           "created",
-          "updated"
+          "updated",
+          "result"
         ],
         "properties": {
           "id": {
@@ -7899,7 +7934,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "The kind of work, for example import."
+            "description": "The kind of work, for example import or library.rebuild."
           },
           "operation_id": {
             "type": "string",
@@ -7943,13 +7978,24 @@
             "type": "string",
             "format": "date-time",
             "description": "When the job last changed (RFC 3339, UTC)."
+          },
+          "result": {
+            "description": "Once the job has completed, the result its kind defines (for library.rebuild, the RebuildReport of API-S-025), answered by GET /api/v1/jobs/{job} and the control routes; null before then, after a failure or a cancel, for a kind without one, and in the job listing and the job.update event, so neither grows with a report.",
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RebuildReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false
       },
       "JobPage": {
         "type": "object",
-        "description": "One listing of durable jobs.",
+        "description": "One listing of durable jobs. Each listed view carries result null; read a completed job's result through GET /api/v1/jobs/{job}.",
         "required": [
           "jobs",
           "truncated"

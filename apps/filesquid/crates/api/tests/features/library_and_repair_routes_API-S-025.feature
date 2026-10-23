@@ -1,4 +1,5 @@
-# API-S-025: Local library and repair routes
+# API-S-025: Local library and repair routes (Rebuild as a job, owner answer 9 of 2026-10-22)
+# API-S-037: Job routes and job events (the job's result; pause, resume and cancel)
 # API-S-023: Version-inventory repair, consented and journaled (OCFL-S-020)
 # SRS-F-001 / PRD F-001: create and open a local library; copy a completed snapshot
 # SRS-F-042 / PRD F-042: OCFL preservation and portable recovery from files alone
@@ -83,3 +84,29 @@ Feature: Library and repair routes
     Given the server administrator's library with a complete object and an object without a version inventory
     When the server administrator rebuilds the library from its files through the API
     Then the rebuild should flag only the object without a version inventory
+
+  Scenario: The rebuild from files runs as a durable job whose result is the report
+    Given the desktop owner's library with a complete object and an object without a version inventory
+    When the owner starts a rebuild of the library from its files through the API
+    Then the answer should be a pending library.rebuild job without a result
+    When the rebuild job finishes
+    Then the rebuild job should report 2 of 2 objects done
+    And the rebuild should flag only the object without a version inventory
+    And the library folder should be unchanged
+
+  Scenario: A paused rebuild waits, and a cancelled one ends with no change to the library
+    Given the desktop owner's library with a complete object and an object without a version inventory, on a host that runs no rebuild yet
+    When the owner starts a rebuild of the library from its files through the API
+    And the owner pauses the rebuild job through the API
+    Then the rebuild job should be paused
+    When the owner cancels the rebuild job through the API
+    Then the rebuild job should be cancelled
+    And the library folder should be unchanged
+    And "job.paused" should be journaled once for the rebuild job
+    And "job.cancelled" should be journaled once for the rebuild job
+
+  Scenario: A rebuild of a library that is not open is refused once and starts no job
+    Given the desktop owner's host with an empty folder registered
+    When the owner rebuilds a library that is not open through the API
+    Then the answer should be the error "not_found"
+    And exactly one refusal "library_not_open" should be journaled for "library.rebuild"
