@@ -3,7 +3,9 @@
  * (`file`) and it reads the file's storage facts, picks the first renderer that accepts the
  * media type (a registered one before the built-ins) and shows its element: an image, video or
  * audio file through a content handle (UI-S-014), or text through one ranged read of the first
- * 64 KiB. A file no renderer accepts gets a plain "no preview" message and never a broken
+ * 64 KiB. A file no renderer accepts gets the unsupported treatment of UI-S-031 (mockup
+ * `resources/ui-mockups/v3/24-preview-unsupported.svg`): its file-type badge, `fileNoPreview`
+ * as a 22 px heading, `fileNoPreviewKeep` and `fileNoPreviewOpenElsewhere`, and never a broken
  * viewer. Loading, error, offline and permission denied use `<fs-states>` with Try again.
  *
  * The element never fetches by itself: the {@link FileSource} it is given does. Its `data-state`
@@ -15,6 +17,8 @@
  */
 import type { LabelTable } from "../theme/labels";
 import { A11Y_STYLE } from "./a11y-style";
+import { CONTROL_STYLE } from "./control-style";
+import { badgeKind, extensionOf } from "../files/badge";
 import { RETRY_EVENT, type FsStates } from "./fs-states";
 import { failureState, type ViewState } from "./view-state";
 import type { FileDetails, FileRef } from "../files/model";
@@ -40,16 +44,22 @@ export interface FilePreviewOptions {
 }
 
 const STYLE = `
-  :host { display: block; min-width: 0; font-family: var(--fs-font-sans); font-size: var(--fs-font-size-body); color: var(--fs-on-surface); }
+  :host { display: block; min-width: 0; font-family: var(--fs-font-sans); font-size: var(--fs-font-size-ui); color: var(--fs-on-surface); }
   :host([hidden]) { display: none; }
   figure { display: flex; flex-direction: column; align-items: center; gap: var(--fs-space-2); margin: 0; min-width: 0; }
-  img, video { max-inline-size: 100%; max-block-size: 70vh; border-radius: var(--fs-radius); background: var(--fs-surface-container); }
+  img, video { max-inline-size: 100%; max-block-size: 70vh; border-radius: var(--fs-radius); background: var(--fs-surface-raised); }
   audio { inline-size: 100%; }
-  pre { box-sizing: border-box; inline-size: 100%; max-block-size: 70vh; margin: 0; padding: var(--fs-space-3); overflow: auto; border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface-container); font-family: var(--fs-font-mono); font-size: var(--fs-font-size-small); white-space: pre-wrap; overflow-wrap: anywhere; }
-  .note, .help { margin: 0; color: var(--fs-on-surface-variant); font-size: var(--fs-font-size-small); }
+  pre { box-sizing: border-box; inline-size: 100%; max-block-size: 70vh; margin: 0; padding: var(--fs-space-3); overflow: auto; border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface-raised); font-family: var(--fs-font-mono); font-size: var(--fs-font-size-small); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .note { margin: 0; color: var(--fs-on-surface-variant); font-size: var(--fs-font-size-small); }
   .media-error { margin: 0; color: var(--fs-error); font-weight: 600; overflow-wrap: anywhere; }
-  .unsupported { display: flex; flex-direction: column; align-items: center; gap: var(--fs-space-2); padding: var(--fs-space-5); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface-container); text-align: center; }
-  .unsupported .title { margin: 0; font-weight: 600; }
+  .unsupported { display: flex; flex-direction: column; align-items: center; gap: var(--fs-space-2); box-sizing: border-box; max-inline-size: 27.5rem; margin: 0 auto; padding: var(--fs-space-5) var(--fs-space-4); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius-dialog); background: var(--fs-surface-card); text-align: center; }
+  .unsupported .title { margin: var(--fs-space-2) 0 0; font-family: var(--fs-font-heading); font-size: var(--fs-font-size-heading); font-weight: 700; color: var(--fs-on-surface-heading); }
+  .unsupported .help { margin: 0; color: var(--fs-on-surface); font-size: var(--fs-font-size-ui); }
+  .badge { display: inline-block; padding: 0 var(--fs-space-2); border-radius: var(--fs-radius-badge); font-family: var(--fs-font-mono); font-size: var(--fs-font-size-small); font-weight: 700; line-height: 2; text-transform: uppercase; }
+  .badge[data-kind="document"] { background: var(--fs-badge-document); color: var(--fs-on-badge-document); }
+  .badge[data-kind="data"] { background: var(--fs-badge-data); color: var(--fs-on-badge-data); }
+  .badge[data-kind="media"] { background: var(--fs-badge-media); color: var(--fs-on-badge-media); }
+  .badge[data-kind="other"] { background: var(--fs-surface-raised); color: var(--fs-on-surface); }
   [hidden] { display: none !important; }
 `;
 
@@ -150,7 +160,7 @@ export class FsFilePreview extends HTMLElement {
     const options = this.options as FilePreviewOptions;
     const renderers = [...(options.renderers ?? []), ...builtInRenderers()];
     const renderer = pickRenderer(renderers, details);
-    if (!renderer) return this.render([unsupported(options.labels)], "unsupported");
+    if (!renderer) return this.render([unsupported(file, options.labels)], "unsupported");
     const context = this.context(file, details, signal);
     const element = await renderer.render(context);
     if (generation !== this.generation) return;
@@ -194,23 +204,34 @@ export class FsFilePreview extends HTMLElement {
   private render(content: readonly Node[], state: string): void {
     const root = this.shadowRoot as ShadowRoot;
     const style = document.createElement("style");
-    style.textContent = A11Y_STYLE + STYLE;
+    style.textContent = A11Y_STYLE + CONTROL_STYLE + STYLE;
     root.replaceChildren(style, ...content);
     this.dataset.state = state;
   }
 }
 
-/** The message for a file no renderer accepts. */
-function unsupported(labels: LabelTable): HTMLElement {
+/** The unsupported treatment: the file-type badge, the heading and the two help lines. */
+function unsupported(file: FileRef, labels: LabelTable): HTMLElement {
   const box = document.createElement("div");
   box.className = "unsupported";
   box.setAttribute("role", "status");
-  const title = document.createElement("p");
-  title.className = "title";
-  title.textContent = labels.fileNoPreview;
-  const help = document.createElement("p");
-  help.className = "help";
-  help.textContent = labels.fileNoPreviewHelp;
-  box.append(title, help);
+  const extension = extensionOf(file.display_name);
+  const badge = document.createElement("span");
+  badge.className = "badge";
+  badge.dataset.kind = badgeKind(extension);
+  badge.textContent = extension || labels.fileTypeUnknown;
+  box.append(badge, line("title", labels.fileNoPreview));
+  box.append(
+    line("help", labels.fileNoPreviewKeep),
+    line("help", labels.fileNoPreviewOpenElsewhere),
+  );
   return box;
+}
+
+/** A `<p>` with a class and text. */
+function line(cls: string, text: string): HTMLParagraphElement {
+  const p = document.createElement("p");
+  p.className = cls;
+  p.textContent = text;
+  return p;
 }

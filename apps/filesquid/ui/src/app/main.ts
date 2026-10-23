@@ -3,7 +3,8 @@
  * FileSquid's official brand and the internal vocabulary, talking to whichever host serves
  * this page. The navigation tree in the shell's navigation slot reads the host's live
  * navigation listing (UI-F2.1b), and `#/navigation/<node>` shows that destination with its
- * breadcrumb; `#/settings` shows the Settings page with its Privacy section; `#/monitor` shows the Monitor dashboard, whose W010 note links to the library's repair offer;
+ * breadcrumb; `#/settings` shows the Settings page (Appearance with the theme control, Privacy,
+ * About with the API status); `#/monitor` shows the Monitor dashboard, whose W010 note links to the library's repair offer;
  * `#/library` creates, opens or recovers a library and `#/library/<id>` shows it; `#/files/<library>/<object>` shows the
  * file browser until the API lists files by navigation node. On the desktop host the client
  * uses the per-launch token; on the server host the Monitor asks for the administrator token,
@@ -12,6 +13,8 @@
  */
 import "../theme/tokens.css";
 import labels from "../theme/labels.en.json";
+import pkg from "../../package.json";
+import { CONTRACT_VERSION } from "../api/contract-version";
 import {
   ClientFileSource,
   ClientLibrarySource,
@@ -39,6 +42,7 @@ import {
 const filesquid: Distribution = {
   id: "filesquid",
   productName: "FileSquid",
+  version: pkg.version,
   logo: { src: "/filesquid-mark.svg", srcDark: "/filesquid-mark-dark.svg", alt: "FileSquid logo" },
   labels,
 };
@@ -62,7 +66,10 @@ tree.slot = "navigation";
 tree.configure({ labels, source: navigation });
 shell?.append(tree);
 if (shell) bindNavigationRoute(shell, { labels, source: navigation, tree });
-if (shell) bindSettingsRoute(shell, { labels, client });
+if (shell) {
+  const settings = { labels, client, theme, distribution: filesquid };
+  bindSettingsRoute(shell, { ...settings, contractVersion: CONTRACT_VERSION });
+}
 const libraries = {
   labels,
   source: new ClientLibrarySource(client),

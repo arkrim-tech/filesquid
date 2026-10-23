@@ -1,36 +1,71 @@
 /**
- * `<fs-settings>`: the Settings page (UI-S-004, UI-S-018; mockup
- * `resources/ui-mockups/v2/32-settings.svg`). This task delivers its Privacy section: the full
- * host privacy statement of ADR 032 Decision 6, shown in place by an inline
- * `<fs-host-indicator>`, so it follows the host descriptor exactly as the header badge does.
- * The appearance, browsing-preference and About sections of the mockup join as further
- * sections in UI-F2.8 and DE-F3.1. Words come only from the label table, styling only from
- * tokens.
+ * `<fs-settings>`: the Settings page (UI-S-033, UI-S-015, UI-S-004, UI-S-018; mockup
+ * `resources/ui-mockups/v3/32-settings.svg`). Three sections, each with a 22 px heading:
+ *
+ * - **Appearance**: the only `<fs-theme-control>` (owner answer 7, verbatim "Settings ->
+ *   Appaerance") and its help text;
+ * - **Privacy**: the full host privacy statement of ADR 032 Decision 6, shown in place by an
+ *   inline `<fs-host-indicator>`, so it follows the host descriptor exactly as the header badge
+ *   does;
+ * - **About {product}**: the logo, the product and version, the build, licence and format
+ *   notes, and "API: {status} · contract {version}", the only place API information appears
+ *   (owner answer 12, verbatim "No, dont show API info on regular UI screens, just in the
+ *   Settings"); a denied or failed health read is shown there as an alert with its reason.
+ *
+ * The Browsing section (UI-F2.8) and the Recently deleted section (UI-F2.17) join with their
+ * tasks. Words come only from the label table, styling only from tokens.
  */
-import type { LabelTable } from "../theme/labels";
+import type { Distribution } from "../distribution";
+import type { HealthStatus } from "../api/client";
+import { formatLabel, type LabelTable } from "../theme/labels";
+import type { ThemeStore } from "../theme/theme-store";
 import { A11Y_STYLE } from "./a11y-style";
+import { CONTROL_STYLE } from "./control-style";
+import { denialLabel } from "./denial";
 import type { FsHostIndicator, HostClient } from "./fs-host-indicator";
+import type { FsThemeControl } from "./fs-theme-control";
 
-/** What the page needs: the active label table and the client for the host descriptor. */
+/** The part of the API client the page needs: the host descriptor and health. */
+export interface SettingsClient extends HostClient {
+  /** Read API health, for the About section. */
+  health(): Promise<HealthStatus>;
+}
+
+/** What the page needs. */
 export interface SettingsOptions {
   /** Label table for every word shown. */
   labels: LabelTable;
-  /** Client that reads the host descriptor and delivers events. */
-  client: HostClient;
+  /** Client that reads the host descriptor and health and delivers events. */
+  client: SettingsClient;
+  /** Shared theme state, already started, for the Appearance section. */
+  theme: ThemeStore;
+  /** Brand of the active distribution, for the About section. */
+  distribution: Distribution;
+  /** The API contract version this UI targets, shown beside the API status. */
+  contractVersion: string;
 }
 
 const STYLE = `
-  :host { display: block; font-family: var(--fs-font-sans); color: var(--fs-on-surface); }
-  .page { display: grid; gap: var(--fs-space-4); max-inline-size: 48rem; }
-  h2 { margin: 0; font-family: var(--fs-font-heading); font-size: var(--fs-font-size-title); font-weight: 700; color: var(--fs-on-surface); }
-  section { display: grid; gap: var(--fs-space-2); padding: var(--fs-space-3) var(--fs-space-4); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface-container); }
-  h3 { margin: 0; font-size: var(--fs-font-size-body); font-weight: 700; color: var(--fs-on-surface); }
+  :host { display: block; font-family: var(--fs-font-sans); font-size: var(--fs-font-size-ui); color: var(--fs-on-surface); }
+  .page { display: grid; gap: var(--fs-space-4); max-inline-size: 72rem; }
+  section { display: grid; gap: var(--fs-space-3); padding-block-end: var(--fs-space-4); border-block-end: 1px solid var(--fs-outline); }
+  section:last-child { border-block-end: 0; }
+  .help { margin: 0; color: var(--fs-on-surface-variant); font-size: var(--fs-font-size-small); }
+  .about { display: flex; flex-wrap: wrap; align-items: start; gap: var(--fs-space-3) var(--fs-space-4); }
+  .about img { block-size: var(--fs-space-6); inline-size: auto; }
+  .about-text { flex: 1 1 20rem; display: grid; gap: var(--fs-space-1); min-width: 0; }
+  .version { margin: 0; font-size: var(--fs-font-size-body); font-weight: 600; color: var(--fs-on-surface-heading); }
+  .about-note { margin: 0; font-size: var(--fs-font-size-small); color: var(--fs-on-surface-variant); overflow-wrap: anywhere; }
+  .api { margin: 0; flex: 0 0 auto; font-size: var(--fs-font-size-small); color: var(--fs-on-surface-variant); overflow-wrap: anywhere; }
+  .api[role="alert"] { color: var(--fs-error); }
   fs-host-indicator { display: block; }
 `;
 
 /** Custom element that shows the Settings page. */
 export class FsSettings extends HTMLElement {
   private options?: SettingsOptions;
+  /** Number of the newest health read; answers to older reads are discarded. */
+  private healthRequest = 0;
 
   constructor() {
     super();
@@ -38,9 +73,10 @@ export class FsSettings extends HTMLElement {
   }
 
   /**
-   * Set the label table and client, then render. Call before or after connecting.
+   * Set the labels, client, theme, distribution and contract version, then render. Call before
+   * or after connecting.
    *
-   * @param options The active label table and the client.
+   * @param options See {@link SettingsOptions}.
    */
   configure(options: SettingsOptions): void {
     this.options = options;
@@ -48,47 +84,164 @@ export class FsSettings extends HTMLElement {
   }
 
   /**
-   * Read the host descriptor again with the token known now, for example after a sign-in.
-   * Network I/O via the client.
+   * Read health and the host descriptor again with the token known now, for example after a
+   * sign-in. Network I/O via the client.
    *
-   * @returns Resolves once the Privacy section shows the new answer.
+   * @returns Resolves once the About and Privacy sections show the new answers.
    */
   async refresh(): Promise<void> {
-    await this.shadowRoot?.querySelector<FsHostIndicator>("fs-host-indicator")?.refresh();
+    const statement = this.shadowRoot?.querySelector<FsHostIndicator>("fs-host-indicator");
+    await Promise.all([this.loadHealth(), statement?.refresh()]);
   }
 
-  /** Render when attached. */
+  /** Render and read health when attached. */
   connectedCallback(): void {
     this.render();
   }
 
-  /** Build the page heading and the Privacy section with the inline host statement. */
+  /** Build the title and the three sections, then read health for About. */
   private render(): void {
     const root = this.shadowRoot;
     const options = this.options;
     if (!root || !options) return;
-    const { labels } = options;
     const style = document.createElement("style");
-    style.textContent = A11Y_STYLE + STYLE;
+    style.textContent = A11Y_STYLE + CONTROL_STYLE + STYLE;
     const page = document.createElement("div");
     page.className = "page";
     const heading = document.createElement("h2");
-    heading.textContent = labels.settings;
-    page.append(heading, privacySection(options));
+    heading.className = "page-title";
+    heading.textContent = options.labels.settings;
+    page.append(
+      heading,
+      appearanceSection(options),
+      privacySection(options),
+      aboutSection(options),
+    );
     root.replaceChildren(style, page);
+    void this.loadHealth();
+  }
+
+  /**
+   * Read API health and show it in About as the status line or an alert. Only the newest read
+   * updates the line, so a slow answer from before a sign-in cannot overwrite the signed-in
+   * status. Network I/O via the client.
+   */
+  private async loadHealth(): Promise<void> {
+    const target = this.shadowRoot?.querySelector<HTMLElement>(".api");
+    const options = this.options;
+    if (!target || !options) return;
+    const request = ++this.healthRequest;
+    try {
+      const health = await options.client.health();
+      if (request !== this.healthRequest) return;
+      showHealth(target, options, health);
+    } catch (error) {
+      if (request !== this.healthRequest) {
+        console.debug("FileSquid discarded a superseded API health answer", error);
+        return;
+      }
+      showHealthError(target, options.labels, error);
+    }
   }
 }
 
-/** The Privacy section: a named section holding the inline host statement. */
+/** A section with a heading the section is named by. */
+function section(name: string, title: string): { section: HTMLElement; body: HTMLElement[] } {
+  const element = document.createElement("section");
+  element.dataset.section = name;
+  element.setAttribute("aria-labelledby", `${name}-title`);
+  const heading = document.createElement("h3");
+  heading.id = `${name}-title`;
+  heading.className = "section-title";
+  heading.textContent = title;
+  element.append(heading);
+  return { section: element, body: [] };
+}
+
+/** The Appearance section: the theme control and its help text. */
+function appearanceSection(options: SettingsOptions): HTMLElement {
+  const { section: element } = section("appearance", options.labels.settingsAppearance);
+  const control = document.createElement("fs-theme-control") as FsThemeControl;
+  control.configure({ store: options.theme, labels: options.labels });
+  const help = document.createElement("p");
+  help.className = "help";
+  help.textContent = options.labels.themeHelp;
+  element.append(control, help);
+  return element;
+}
+
+/** The Privacy section: the inline host statement in a raised box. */
 function privacySection(options: SettingsOptions): HTMLElement {
-  const section = document.createElement("section");
-  section.dataset.section = "privacy";
-  section.setAttribute("aria-labelledby", "privacy-title");
-  const title = document.createElement("h3");
-  title.id = "privacy-title";
-  title.textContent = options.labels.settingsPrivacy;
+  const { section: element } = section("privacy", options.labels.settingsPrivacy);
+  const box = document.createElement("div");
+  box.className = "note-box raised";
   const statement = document.createElement("fs-host-indicator") as FsHostIndicator;
   statement.configure({ labels: options.labels, client: options.client, inline: true });
-  section.append(title, statement);
-  return section;
+  box.append(statement);
+  element.append(box);
+  return element;
+}
+
+/** The About section: logo, product and version, notes and the API status line. */
+function aboutSection(options: SettingsOptions): HTMLElement {
+  const { labels, distribution } = options;
+  const title = formatLabel(labels.settingsAbout, { product: distribution.productName });
+  const { section: element } = section("about", title);
+  const box = document.createElement("div");
+  box.className = "note-box raised about";
+  const img = document.createElement("img");
+  img.src = distribution.logo.src;
+  img.alt = distribution.logo.alt;
+  const text = document.createElement("div");
+  text.className = "about-text";
+  const version = document.createElement("p");
+  version.className = "version";
+  version.textContent = formatLabel(labels.settingsVersion, {
+    product: distribution.productName,
+    version: distribution.version ?? "",
+  }).trim();
+  text.append(
+    version,
+    ...[labels.settingsBuildNote, labels.settingsLicence, labels.settingsFormats].map(note),
+  );
+  const api = document.createElement("p");
+  api.className = "api";
+  api.setAttribute("role", "status");
+  box.append(img, text, api);
+  element.append(box);
+  return element;
+}
+
+/** One note line of the About box. */
+function note(text: string): HTMLParagraphElement {
+  const p = document.createElement("p");
+  p.className = "about-note";
+  p.textContent = text;
+  return p;
+}
+
+/** Show a health answer as the status line. */
+function showHealth(target: HTMLElement, options: SettingsOptions, health: HealthStatus): void {
+  target.setAttribute("role", "status");
+  delete target.dataset.reason;
+  target.textContent = formatLabel(options.labels.settingsApiStatus, {
+    status: health.status,
+    version: options.contractVersion,
+  });
+}
+
+/**
+ * Show a failed health read as an alert: the label of a denial reason, or the error message.
+ *
+ * @param target The status paragraph.
+ * @param labels The distribution's label table.
+ * @param error What the client rejected with.
+ */
+function showHealthError(target: HTMLElement, labels: LabelTable, error: unknown): void {
+  const denial = denialLabel(error, labels);
+  target.setAttribute("role", "alert");
+  if (denial) target.dataset.reason = denial.reason;
+  else delete target.dataset.reason;
+  const message = denial?.text ?? (error instanceof Error ? error.message : String(error));
+  target.textContent = `${labels.apiUnavailable}: ${message}`;
 }

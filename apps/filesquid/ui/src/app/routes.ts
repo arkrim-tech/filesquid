@@ -23,6 +23,15 @@ export type RouteHost = HTMLElement & {
 /** Hash of the Monitor route. */
 export const MONITOR_ROUTE = "#/monitor";
 
+/** Hash of the All files view of the sidebar (UI-S-025); UI-F2.8 binds it. */
+export const ALL_FILES_ROUTE = "#/files";
+
+/** Hash of the Recent view of the sidebar (UI-S-025, UI-S-026); UI-F2.8 binds it. */
+export const RECENT_ROUTE = "#/recent";
+
+/** Hash of the Logs view (UI-S-025, UI-S-032); UI-F2.16 binds it. */
+export const LOGS_ROUTE = "#/logs";
+
 /**
  * Keep a token typed in at run time (the server host's administrator token) in memory only:
  * no localStorage, no sessionStorage, no URL. It is gone when the page reloads or closes.
@@ -96,7 +105,7 @@ export const SETTINGS_ROUTE = "#/settings";
  * shell's children and moves focus.
  *
  * @param shell Element the Settings page is slotted into (the app shell).
- * @param options Labels and the client for the host descriptor.
+ * @param options Labels, the client, the theme store, the distribution and the contract version.
  * @param win Window whose hash is followed.
  * @returns A function that removes the listener.
  */
