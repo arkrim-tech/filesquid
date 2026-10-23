@@ -300,3 +300,60 @@ fn the_stores_open_through_a_linked_folder_above_the_operational_store() {
     SqliteImportPlans::open(&store).expect("import plans");
     assert!(real.join(JOURNAL_FILE).is_file());
 }
+
+// ---- Library facts (Task API-F2.18; API-S-038) ----
+
+#[test]
+fn the_registry_keeps_each_librarys_name_and_last_opened_time_without_its_folder() {
+    use filesquid_api::local_library::{LibraryRegistry, UNTITLED_LIBRARY};
+    use filesquid_core::LibraryId;
+    let dir = TempDir::new("registry");
+    let locations = HostLocations::new(&dir.folder("data"));
+    let location = locations
+        .register(&dir.folder("Family archive"))
+        .expect("registered");
+    let library = LibraryId::new("6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b").expect("id");
+    assert_eq!(
+        locations.remember(&library, &location, None, 1_000),
+        UNTITLED_LIBRARY
+    );
+    assert_eq!(
+        locations.remember(&library, &location, Some("Holidays"), 2_000),
+        "Holidays"
+    );
+    assert_eq!(locations.rename(&library, "Holidays"), Some(false));
+    assert_eq!(locations.rename(&library, "Holidays 1990s"), Some(true));
+    let entry = locations.entry(&library).expect("remembered");
+    assert_eq!(entry.name, "Holidays 1990s");
+    assert_eq!(entry.last_opened_ms, 2_000);
+    assert_eq!(locations.entries().len(), 1);
+    let other = LibraryId::new("7d1c2b9e-4f3a-4e61-8a0b-2c9d5e6f7a80").expect("id");
+    assert_eq!(
+        locations.rename(&other, "x"),
+        None,
+        "a library never opened here"
+    );
+}
+
+#[test]
+fn free_space_is_read_on_linux_and_macos_and_unreadable_for_an_unknown_location() {
+    use filesquid_api::local_library::{FreeSpace, LibraryRegistry};
+    let dir = TempDir::new("free");
+    let locations = HostLocations::new(&dir.folder("data"));
+    let location = locations
+        .register(&dir.folder("library"))
+        .expect("registered");
+    let space = locations.free_space(&location);
+    if cfg!(any(target_os = "linux", target_os = "macos")) {
+        assert!(
+            matches!(space, FreeSpace::Bytes(bytes) if bytes > 0),
+            "{space:?}"
+        );
+    } else {
+        assert_eq!(space, FreeSpace::VolumeUnreadable, "not read by this build");
+    }
+    assert_eq!(
+        locations.free_space("loc-unknown"),
+        FreeSpace::VolumeUnreadable
+    );
+}

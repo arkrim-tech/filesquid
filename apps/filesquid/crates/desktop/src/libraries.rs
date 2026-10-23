@@ -16,9 +16,10 @@
 
 use filesquid_api::auth::Principal;
 use filesquid_api::local_library::{
-    CopyReport, LibraryCommands, LibraryFuture, LibraryOperations, LibraryRequest, LibraryView,
-    LocalLibraryService, LocationRequest, RebuildEnd, RebuildProgress, RepairAnswer,
-    RepairCandidates, RepairRequest, SnapshotCopyRequest,
+    CopyReport, LibraryCommands, LibraryFacts, LibraryFuture, LibraryOperations, LibraryRequest,
+    LibraryView, LocalLibraryService, LocationRequest, Readable, RebuildEnd, RebuildProgress,
+    RecentLibraries, RenameLibraryRequest, RepairAnswer, RepairCandidates, RepairRequest,
+    SnapshotCopyRequest,
 };
 use filesquid_api::ocfl_validation::ValidationService;
 use filesquid_core::LibraryId;
@@ -61,14 +62,16 @@ impl std::fmt::Debug for DesktopLibraries {
 
 impl DesktopLibraries {
     /// The commands of `service` over `locations`, serving each bound library with
-    /// `serving`. Pure.
+    /// `serving`; `locations` also keeps the name and last-opened time of each library they
+    /// bind and answers its volume's free bytes (API-S-038). Pure.
     pub fn new(
         service: LocalLibraryService,
         locations: Arc<HostLocations>,
         serving: LibraryServing,
     ) -> Self {
         Self {
-            commands: LibraryCommands::new(service, locations.clone()),
+            commands: LibraryCommands::new(service, locations.clone())
+                .with_registry(locations.clone()),
             locations,
             serving,
         }
@@ -182,5 +185,21 @@ impl LibraryOperations for DesktopLibraries {
 
     fn repair(&self, caller: Principal, request: RepairRequest) -> LibraryFuture<'_, RepairAnswer> {
         Box::pin(async move { self.commands.repair(&caller, request).await })
+    }
+
+    fn rename(
+        &self,
+        actor: String,
+        request: RenameLibraryRequest,
+    ) -> LibraryFuture<'_, LibraryFacts> {
+        Box::pin(async move { self.commands.rename(&actor, request).await })
+    }
+
+    fn facts(&self, actor: String, library_id: LibraryId) -> LibraryFuture<'_, LibraryFacts> {
+        Box::pin(async move { self.commands.facts(&actor, &library_id).await })
+    }
+
+    fn recent(&self, actor: String, readable: Readable) -> LibraryFuture<'_, RecentLibraries> {
+        Box::pin(async move { self.commands.recent(&actor, readable.as_ref()).await })
     }
 }

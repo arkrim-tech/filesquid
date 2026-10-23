@@ -596,3 +596,63 @@ fn a_cancelled_or_unusable_pick_registers_nothing() {
         "Choose an empty folder for the copy"
     );
 }
+
+#[test]
+fn a_named_library_answers_its_facts_and_is_listed_as_recent_without_its_folder() {
+    let dir = fresh_dir("facts");
+    let desktop = Desktop::launch(dir.join("data"));
+    let folder = dir.join("Family archive");
+    std::fs::create_dir_all(&folder).expect("folder");
+    let location = desktop.register(&folder);
+    let body = json!({ "location_id": location, "name": "Family archive" });
+    let (status, created) = desktop.post("/api/v1/libraries", body);
+    assert_eq!(status, 200, "{created}");
+    let library = created["library_id"].as_str().expect("id").to_string();
+    let (status, facts) = desktop.get(&format!("/api/v1/libraries/{library}/facts"));
+    assert_eq!(status, 200, "{facts}");
+    assert_eq!(facts["name"], "Family archive");
+    if cfg!(any(target_os = "linux", target_os = "macos")) {
+        assert!(
+            facts["free_bytes"].as_u64().is_some_and(|b| b > 0),
+            "{facts}"
+        );
+        assert_eq!(facts["free_bytes_reason"], Value::Null);
+    } else {
+        assert_eq!(facts["free_bytes"], Value::Null);
+        assert_eq!(facts["free_bytes_reason"], "volume_unreadable");
+    }
+    let path = folder.to_string_lossy().to_string();
+    assert!(
+        !facts.to_string().contains(&path),
+        "no folder path: {facts}"
+    );
+    let rename = json!({ "library_id": library, "name": "Family archive 1990s" });
+    let (status, renamed) = desktop.post("/api/v1/libraries/renames", rename);
+    assert_eq!(status, 200, "{renamed}");
+    let (status, recent) = desktop.get("/api/v1/libraries/recent");
+    assert_eq!(status, 200, "{recent}");
+    let listed = &recent["libraries"][0];
+    assert_eq!(listed["library_id"], library.as_str());
+    assert_eq!(listed["name"], "Family archive 1990s");
+    assert_eq!(listed["open"], true);
+    assert!(
+        !recent.to_string().contains("loc-"),
+        "no location ID: {recent}"
+    );
+    assert!(
+        !recent.to_string().contains(&path),
+        "no folder path: {recent}"
+    );
+    let (_, entries) = desktop.stop();
+    let renames: Vec<_> = entries
+        .iter()
+        .filter(|e| e.operation == "library.rename")
+        .collect();
+    assert_eq!(renames.len(), 1);
+    assert_eq!(renames[0].target_ids, [library]);
+    let journal = serde_json::to_string(&entries).expect("json");
+    assert!(
+        !journal.contains("Family archive"),
+        "no name in the journal"
+    );
+}
