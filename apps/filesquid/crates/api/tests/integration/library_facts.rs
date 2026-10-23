@@ -179,7 +179,7 @@ async fn a_rename_is_journaled_with_the_library_only_and_a_same_name_changes_not
             1,
             "a rename that changes nothing is not journaled"
         );
-        assert_eq!(journaled[0].target_ids, [library.clone()]);
+        assert_eq!(journaled[0].target_ids, std::slice::from_ref(&library));
         assert_redacted(&rig, &[&renamed], &["Family archive"]);
     }
 }
@@ -210,10 +210,11 @@ async fn free_bytes_are_null_with_their_reason_when_the_volume_cannot_be_read() 
     let rig = LibraryRig::new(Mount::Desktop);
     let (unreadable, location) = create_named(&rig, "a", "A").await;
     let (remote, other) = create_named(&rig, "b", "B").await;
-    let mut free = rig.free.lock().expect("free");
-    free.insert(location, FreeSpace::VolumeUnreadable);
-    free.insert(other, FreeSpace::NotLocal);
-    drop(free);
+    {
+        let mut free = rig.free.lock().expect("free");
+        free.insert(location, FreeSpace::VolumeUnreadable);
+        free.insert(other, FreeSpace::NotLocal);
+    }
     for (library, reason) in [(unreadable, "volume_unreadable"), (remote, "not_local")] {
         let json = facts(&rig, &library).await.json();
         assert_eq!(json["free_bytes"], Value::Null);
