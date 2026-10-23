@@ -1,10 +1,12 @@
 /**
  * Unit tests for the file routes as the UI uses them (UI-F2.2): `FileSquidClient`'s content
- * handle mint and raw upload (UI-S-014, UI-S-012), and `ClientFileSource`, which turns each
- * file-browser operation into exactly one API call with the contract's query and body.
+ * handle mint (UI-S-014), and `ClientFileSource`, which turns each file-browser operation into
+ * exactly one API call with the contract's query and body; every write is a command with an
+ * envelope and the expected revision (API-F2.13, UI-S-012).
  */
 import { describe, expect, it, vi } from "vitest";
 import { ApiError, FileSquidClient } from "../../src/api/client";
+import type { CommandEnvelope } from "../../src/api/commands";
 import { ClientFileSource } from "../../src/files/source";
 import type { FileLocation, FileRef } from "../../src/files/model";
 
@@ -25,8 +27,34 @@ function json(status: number, body: unknown): Response {
   });
 }
 
+/** The text of `blob`, read with `FileReader` (jsdom's `Blob` has no `text()`). */
+function blobText(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error("FileReader failed"));
+    reader.readAsText(blob);
+  });
+}
+
+/** The JSON part `name` of a multipart body, or member `name` of a JSON body. */
+async function sentPart(seen: Seen, name: "envelope" | "input"): Promise<unknown> {
+  const body = seen.init.body;
+  if (body instanceof FormData) return JSON.parse(await blobText(body.get(name) as Blob));
+  return (JSON.parse(String(body)) as Record<string, unknown>)[name];
+}
+
+/** A committed answer, with `result`, of the command `seen` carried. */
+async function committed(seen: Seen, result: unknown): Promise<Response> {
+  const { operation_id } = (await sentPart(seen, "envelope")) as CommandEnvelope;
+  return json(200, { operation_id, kind: "committed", error: null, result });
+}
+
 /** A client over a fetch that records calls and answers with `answer`. */
-function clientWith(answer: (seen: Seen) => Response, baseUrl = "filesquid://localhost") {
+function clientWith(
+  answer: (seen: Seen) => Response | Promise<Response>,
+  baseUrl = "filesquid://localhost",
+) {
   const seen: Seen[] = [];
   const client = new FileSquidClient({
     baseUrl,
@@ -105,57 +133,6 @@ describe("FileSquidClient.mintContentHandle", () => {
     const error = await client.mintContentHandle(request).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ApiError);
     expect((error as ApiError).reason).toBe("not_permitted");
-  });
-});
-
-describe("FileSquidClient.putBytes", () => {
-  it("sends the bytes with PUT, the bearer token and an octet-stream type, and parses the answer", async () => {
-    const { client, seen } = clientWith(() => json(200, COMMIT));
-    const body = new Blob([new Uint8Array([1, 2, 3])]);
-    const answer = await client.putBytes<typeof COMMIT>("/api/v1/files/upload?path=x", body);
-    expect(answer).toEqual(COMMIT);
-    expect(seen[0]?.url).toBe("filesquid://localhost/api/v1/files/upload?path=x");
-    expect(seen[0]?.init.method).toBe("PUT");
-    expect(seen[0]?.init.body).toBe(body);
-    const headers = new Headers(seen[0]?.init.headers);
-    expect(headers.get("authorization")).toBe(`Bearer ${TOKEN}`);
-    expect(headers.get("content-type")).toBe("application/octet-stream");
-  });
-
-  it("rejects with ApiError on a conflict", async () => {
-    const { client } = clientWith(() => json(409, { code: "conflict", retryable: false }));
-    const error = await client
-      .putBytes("/api/v1/files/upload", new Blob([]))
-      .catch((e: unknown) => e);
-    expect(error).toBeInstanceOf(ApiError);
-    expect((error as ApiError).code).toBe("conflict");
-  });
-});
-
-describe("FileSquidClient.uploadFile", () => {
-  it("declares the body's size and sends only the facts that are set, as the contract's query", async () => {
-    const { client, seen } = clientWith(() => json(200, UPLOAD));
-    const body = new Blob([new Uint8Array(5)]);
-    const answer = await client.uploadFile({ library_id: "lib 1", name: "a&b.txt" }, body);
-    expect(answer).toEqual(UPLOAD);
-    const url = new URL(String(seen[0]?.url));
-    expect(url.pathname).toBe("/api/v1/files/upload");
-    expect(Object.fromEntries(url.searchParams)).toEqual({
-      library_id: "lib 1",
-      name: "a&b.txt",
-      size: "5",
-    });
-    expect(seen[0]?.init.method).toBe("PUT");
-    expect(new Headers(seen[0]?.init.headers).get("content-type")).toBe("application/octet-stream");
-  });
-
-  it("rejects with ApiError when the upload is refused", async () => {
-    const { client } = clientWith(() => json(400, { code: "invalid_request", retryable: false }));
-    const error = await client
-      .uploadFile({ library_id: "l", name: "a.txt" }, new Blob(["x"]))
-      .catch((e: unknown) => e);
-    expect(error).toBeInstanceOf(ApiError);
-    expect((error as ApiError).code).toBe("invalid_request");
   });
 });
 
@@ -244,8 +221,8 @@ describe("ClientFileSource", () => {
     ).rejects.toBeInstanceOf(TypeError);
   });
 
-  it("uploads one file as one PUT with the client's facts in the query and no path", async () => {
-    const { client, seen } = clientWith(() => json(200, UPLOAD));
+  it("uploads one file as one multipart PUT: envelope, the client's facts as input, no path", async () => {
+    const { client, seen } = clientWith((call) => committed(call, UPLOAD));
     const body = new Blob(["abc"]);
     const facts = {
       name: "Café 2023.txt",
@@ -254,60 +231,102 @@ describe("ClientFileSource", () => {
       last_modified: "2026-10-20T08:00:00.000Z",
     } as const;
     expect(await new ClientFileSource(client).upload(LOCATION, facts, body)).toEqual(UPLOAD);
-    const url = new URL(String(seen[0]?.url));
-    expect(url.pathname).toBe("/api/v1/files/upload");
-    expect(Object.fromEntries(url.searchParams)).toEqual({
+    const [call] = seen as [Seen];
+    expect(new URL(call.url).pathname).toBe("/api/v1/files/upload");
+    expect(new URL(call.url).search).toBe("");
+    expect(call.init.method).toBe("PUT");
+    expect(await sentPart(call, "input")).toEqual({
       library_id: "lib-1",
       name: "Café 2023.txt",
-      size: "3",
+      size: 3,
       media_type: "text/plain",
       last_modified: "2026-10-20T08:00:00.000Z",
       name_normalization: "nfc",
     });
+    expect(await sentPart(call, "envelope")).toMatchObject({
+      schema_version: 1,
+      expected_revision: "0",
+      scope: "library:lib-1",
+    });
+    expect(await blobText((call.init.body as FormData).get("file") as Blob)).toBe("abc");
     expect(seen).toHaveLength(1);
-    expect(seen[0]?.init.method).toBe("PUT");
-    expect(seen[0]?.init.body).toBe(body);
   });
 
   it("always uploads into the library it is given, whatever the facts hold", async () => {
-    const { client, seen } = clientWith(() => json(200, UPLOAD));
+    const { client, seen } = clientWith((call) => committed(call, UPLOAD));
     const facts = { name: "a.txt", library_id: "other" } as unknown as { name: string };
     await new ClientFileSource(client).upload(LOCATION, facts, new Blob(["x"]));
-    expect(new URL(String(seen[0]?.url)).searchParams.get("library_id")).toBe("lib-1");
+    expect(await sentPart(seen[0] as Seen, "input")).toMatchObject({ library_id: "lib-1" });
   });
 
-  it("names the file whose content an upload replaces with file_id", async () => {
-    const { client, seen } = clientWith(() => json(200, { ...UPLOAD, version: "v2" }));
+  it("names the file an upload replaces with file_id and expects that file's head", async () => {
+    const { client, seen } = clientWith((call) => committed(call, { ...UPLOAD, version: "v2" }));
     const facts = { name: "a.txt", name_normalization: "nfc", file_id: UPLOAD.file_id } as const;
-    await new ClientFileSource(client).upload(LOCATION, facts, new Blob(["new"]));
-    const query = new URL(String(seen[0]?.url)).searchParams;
-    expect(query.get("file_id")).toBe(UPLOAD.file_id);
-    expect([...query.keys()].sort()).toEqual([
+    const options = { revision: "v1" };
+    await new ClientFileSource(client).upload(LOCATION, facts, new Blob(["new"]), options);
+    const input = (await sentPart(seen[0] as Seen, "input")) as Record<string, unknown>;
+    expect(input.file_id).toBe(UPLOAD.file_id);
+    expect(Object.keys(input).sort()).toEqual([
       "file_id",
       "library_id",
       "name",
       "name_normalization",
       "size",
     ]);
+    expect(await sentPart(seen[0] as Seen, "envelope")).toMatchObject({ expected_revision: "v1" });
   });
 
-  it("rename is one JSON POST to the renames route with the contract's body", async () => {
-    const { client, seen } = clientWith(() => json(200, COMMIT));
+  it("rename is one command POST to the renames route with the contract's input", async () => {
+    const { client, seen } = clientWith((call) => committed(call, COMMIT));
     const commit = await new ClientFileSource(client).rename(
       { library_id: "lib-1" },
       "5b1d2c3e-7a4f-4e8b-9c6d-0a1b2c3d4e5f",
       "Holiday photo.png",
+      { revision: "v3" },
     );
     expect(commit).toEqual(COMMIT);
     expect(seen).toHaveLength(1);
     const [call] = seen as [Seen];
     expect(new URL(call.url).pathname).toBe("/api/v1/files/renames");
     expect(call.init.method).toBe("POST");
-    expect(JSON.parse(String(call.init.body))).toEqual({
+    expect(await sentPart(call, "input")).toEqual({
       library_id: "lib-1",
       file_id: "5b1d2c3e-7a4f-4e8b-9c6d-0a1b2c3d4e5f",
       display_name: "Holiday photo.png",
     });
+    expect(await sentPart(call, "envelope")).toMatchObject({
+      schema_version: 1,
+      expected_revision: "v3",
+      scope: "library:lib-1",
+    });
+  });
+
+  it("rejects a conflict outcome (HTTP 409) as ApiError conflict and commits nothing", async () => {
+    const { client } = clientWith(() => json(409, { code: "conflict", retryable: false }));
+    const source = new ClientFileSource(client);
+    await expect(source.move(LOCATION, "a", "b", { revision: "v1" })).rejects.toMatchObject({
+      status: 409,
+      code: "conflict",
+    });
+    await expect(source.upload(LOCATION, { name: "a.txt" }, new Blob(["x"]))).rejects.toMatchObject(
+      { status: 409, code: "conflict" },
+    );
+  });
+
+  it("refuses an answer that is not committed or carries no result", async () => {
+    const pending = (call: Seen) =>
+      sentPart(call, "envelope").then((e) =>
+        json(200, {
+          operation_id: (e as CommandEnvelope).operation_id,
+          kind: "pending",
+          error: null,
+        }),
+      );
+    const { client } = clientWith(pending);
+    const source = new ClientFileSource(client);
+    await expect(source.remove(LOCATION, "a", { revision: "v1" })).rejects.toBeInstanceOf(
+      TypeError,
+    );
   });
 
   it.each([
@@ -319,42 +338,47 @@ describe("ClientFileSource", () => {
     const retryable = status === 503; // only `unavailable` is retryable (the contract)
     const { client } = clientWith(() => json(status, { code, message: "x", retryable }));
     await expect(
-      new ClientFileSource(client).rename({ library_id: "lib-1" }, "f", "n"),
+      new ClientFileSource(client).rename({ library_id: "lib-1" }, "f", "n", { revision: "v1" }),
     ).rejects.toMatchObject({ status, code, retryable });
   });
 
   it.each([
     [
       "createFolder",
-      (s: ClientFileSource) => s.createFolder(LOCATION, "A b/New"),
+      (s: ClientFileSource) => s.createFolder(LOCATION, "A b/New", { revision: "v3" }),
       "/api/v1/files/folders",
       { library_id: "lib-1", object_id: "urn:uuid:o1", path: "A b/New" },
     ],
     [
       "move",
-      (s: ClientFileSource) => s.move(LOCATION, "A b/a.txt", "C/a.txt"),
+      (s: ClientFileSource) => s.move(LOCATION, "A b/a.txt", "C/a.txt", { revision: "v3" }),
       "/api/v1/files/moves",
       { library_id: "lib-1", object_id: "urn:uuid:o1", from: "A b/a.txt", to: "C/a.txt" },
     ],
     [
       "remove",
-      (s: ClientFileSource) => s.remove(LOCATION, "A b/a.txt"),
+      (s: ClientFileSource) => s.remove(LOCATION, "A b/a.txt", { revision: "v3" }),
       "/api/v1/files/removals",
       { library_id: "lib-1", object_id: "urn:uuid:o1", path: "A b/a.txt" },
     ],
     [
       "restore",
-      (s: ClientFileSource) => s.restore(LOCATION, "v3", ["A b/a.txt"]),
+      (s: ClientFileSource) => s.restore(LOCATION, "v3", ["A b/a.txt"], { revision: "v3" }),
       "/api/v1/files/restorations",
       { library_id: "lib-1", object_id: "urn:uuid:o1", version: "v3", paths: ["A b/a.txt"] },
     ],
-  ])("%s is one JSON POST with the contract's body", async (_name, call, path, body) => {
-    const { client, seen } = clientWith(() => json(200, COMMIT));
+  ])("%s is one command POST with the contract's input", async (_name, call, path, body) => {
+    const { client, seen } = clientWith((seen) => committed(seen, COMMIT));
     await call(new ClientFileSource(client));
     expect(seen).toHaveLength(1);
     expect(new URL(String(seen[0]?.url)).pathname).toBe(path);
     expect(seen[0]?.init.method).toBe("POST");
-    expect(JSON.parse(String(seen[0]?.init.body))).toEqual(body);
+    expect(await sentPart(seen[0] as Seen, "input")).toEqual(body);
+    expect(await sentPart(seen[0] as Seen, "envelope")).toMatchObject({
+      schema_version: 1,
+      expected_revision: "v3",
+      scope: "library:lib-1",
+    });
   });
 
   it("mints a content handle for one file version and returns only its URL", async () => {

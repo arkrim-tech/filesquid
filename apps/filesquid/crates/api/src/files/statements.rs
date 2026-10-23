@@ -15,7 +15,9 @@ use super::error::FileError;
 use super::records::file_id_of;
 use super::service::{resolve, FileService, Library};
 use super::HOLDER;
-use crate::canonical::layout::{file_object_id, snapshot_object_id, SNAPSHOT_ROOT};
+use crate::canonical::layout::{
+    file_object_id, file_object_root, snapshot_object_id, SNAPSHOT_ROOT,
+};
 use crate::canonical::original::companion_path;
 use crate::canonical::read_file_original;
 use crate::canonical::OwnerReadable;
@@ -421,16 +423,19 @@ where
                 .map_err(metadata_error)
         };
         let ids = (&request.library_id, &request.file_id);
-        self.edit_record(ids, actor, super::METADATA_SET_OPERATION, edit)
+        self.edit_record(ids, actor, (super::METADATA_SET_OPERATION, None), edit)
             .await
     }
 
     /// Rename a file by `actor`: set its display name in one new version of its metadata
     /// record. The stored name, the logical path and the original name stay (API-S-027).
+    ///
+    /// `expected` is the file object's head the caller read; any other is a `conflict`.
     pub async fn rename(
         &self,
         request: RenameRequest,
         actor: &str,
+        expected: &str,
     ) -> Result<MetadataCommitView, FileError> {
         let name = request.display_name.clone();
         let edit = |record: &mut FileRecord| {
@@ -439,7 +444,7 @@ where
                 .map_err(|e| FileError::invalid(format!("The name was refused: {e}.")))
         };
         let ids = (&request.library_id, &request.file_id);
-        self.edit_record(ids, actor, super::RENAME_OPERATION, edit)
+        self.edit_record(ids, actor, (super::RENAME_OPERATION, Some(expected)), edit)
             .await
     }
 
@@ -460,7 +465,7 @@ where
             }
         };
         let ids = (&request.library_id, &request.file_id);
-        self.edit_record(ids, actor, super::METADATA_REMOVE_OPERATION, edit)
+        self.edit_record(ids, actor, (super::METADATA_REMOVE_OPERATION, None), edit)
             .await
     }
 
@@ -502,12 +507,13 @@ where
         committed(&request.library_id, receipt)
     }
 
-    /// Apply `edit` to the head record of a file and commit it by `actor` as `operation`.
+    /// Apply `edit` to the head record of a file and commit it by `actor` as `operation`;
+    /// with an `expected` revision (a command's), only when the file object's head is it.
     async fn edit_record(
         &self,
         (library_id, file_id): (&String, &String),
         actor: &str,
-        operation: &str,
+        (operation, expected): (&str, Option<&str>),
         edit: impl FnOnce(&mut FileRecord) -> Result<(), FileError>,
     ) -> Result<MetadataCommitView, FileError> {
         let id = parse_file_id(file_id)?;
@@ -518,6 +524,10 @@ where
             .await
             .map_err(|_| FileError::not_found())?
             .ok_or_else(FileError::not_found)?;
+        if let Some(expected) = expected {
+            let root = file_object_root(&id).map_err(|_| FileError::not_found())?;
+            super::service::check_head(backend, &root, expected).await?;
+        }
         let mut record = original.record.clone();
         edit(&mut record)?;
         if record == original.record {

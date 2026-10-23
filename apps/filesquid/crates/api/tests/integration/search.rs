@@ -11,7 +11,7 @@ mod drive_catalog;
 
 use axum::http::{Method, StatusCode};
 use drive_catalog::DriveCatalog;
-use files_fixture::{encode, upload_uri, Answer, FilesRig, LIBRARY};
+use files_fixture::{encode, upload_facts, Answer, FilesRig, LIBRARY};
 use filesquid_api::auth::Principal;
 use filesquid_api::navigation::{NavigationAccess, NodeRef};
 use serde_json::{json, Value};
@@ -43,10 +43,10 @@ async fn add(
 ) -> String {
     rig.clock.advance(60_000);
     let rest = format!("name_normalization=nfc&media_type={}", encode(media));
-    let uri = upload_uri(name, bytes.len(), &rest);
-    let answer = rig.call(Method::PUT, &uri, &[], bytes.to_vec()).await;
+    let uri = upload_facts(name, bytes.len(), &rest);
+    let answer = rig.upload(uri, bytes).await;
     assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
-    let id = answer.json()["file_id"].as_str().expect("id").to_string();
+    let id = answer.result()["file_id"].as_str().expect("id").to_string();
     drive.file_in_collection(&id);
     id
 }
@@ -143,12 +143,12 @@ async fn every_answered_operator_narrows_the_results() {
     let (rig, drive) = rig().await;
     let [budget, photo, _deck] = library(&rig, &drive).await;
     let copy = rig
-        .post(
+        .command(
             "/api/v1/files/copies",
             json!({ "library_id": LIBRARY, "file_id": photo }),
         )
         .await
-        .json();
+        .result();
     drive.file_in_collection(copy["file_id"].as_str().expect("copy"));
     drive.delete(&budget);
     let cases: [(&str, &[&str]); 14] = [
@@ -257,11 +257,8 @@ async fn results_are_filtered_by_permission_before_ranking() {
     let (rig, drive) = rig_with(DriveCatalog::with_access(LIBRARY, Arc::new(NoSecret))).await;
     library(&rig, &drive).await;
     rig.clock.advance(60_000);
-    let uri = upload_uri("Budget 2026 secret.pdf", 3, "media_type=application%2Fpdf");
-    let secret = rig
-        .call(Method::PUT, &uri, &[], b"abc".to_vec())
-        .await
-        .json()["file_id"]
+    let uri = upload_facts("Budget 2026 secret.pdf", 3, "media_type=application%2Fpdf");
+    let secret = rig.upload(uri, b"abc").await.result()["file_id"]
         .as_str()
         .expect("id")
         .to_string();
@@ -289,9 +286,9 @@ async fn results_are_filtered_by_permission_before_ranking() {
 #[tokio::test]
 async fn an_unreadable_file_is_never_read_before_ranking() {
     let (rig, drive) = rig_with(DriveCatalog::with_access(LIBRARY, Arc::new(NoSecret))).await;
-    let uri = upload_uri("Budget 2026 secret.pdf", 3, "media_type=application%2Fpdf");
-    let answer = rig.call(Method::PUT, &uri, &[], b"abc".to_vec()).await;
-    let secret = answer.json()["file_id"].as_str().expect("id").to_string();
+    let uri = upload_facts("Budget 2026 secret.pdf", 3, "media_type=application%2Fpdf");
+    let answer = rig.upload(uri, b"abc").await;
+    let secret = answer.result()["file_id"].as_str().expect("id").to_string();
     drive.file_in_new_collection(&secret, SECRET, "Secret plans");
     let before = rig.root.reads();
     assert!(found(&rig, "budget", "").await.is_empty());
@@ -314,9 +311,9 @@ impl NavigationAccess for Nothing {
 #[tokio::test]
 async fn a_caller_who_may_not_read_the_repository_cannot_search_it() {
     let (rig, drive) = rig_with(DriveCatalog::with_access(LIBRARY, Arc::new(Nothing))).await;
-    let uri = upload_uri("budget.pdf", 3, "media_type=application%2Fpdf");
-    let answer = rig.call(Method::PUT, &uri, &[], b"abc".to_vec()).await;
-    drive.file_in_collection(answer.json()["file_id"].as_str().expect("id"));
+    let uri = upload_facts("budget.pdf", 3, "media_type=application%2Fpdf");
+    let answer = rig.upload(uri, b"abc").await;
+    drive.file_in_collection(answer.result()["file_id"].as_str().expect("id"));
     assert_refused(&search(&rig, "budget", "").await, 404, "not_found");
 }
 
@@ -387,14 +384,14 @@ async fn nfc_and_case_folding_are_declared_and_diacritics_are_not_folded() {
     assert!(found(&rig, "cafe resume", "").await.is_empty());
     rig.clock.advance(60_000);
     let decomposed = "Re\u{301}sume\u{301}.txt";
-    let uri = upload_uri(
+    let uri = upload_facts(
         decomposed,
         1,
         "name_normalization=nfd&media_type=text%2Fplain",
     );
-    let answer = rig.call(Method::PUT, &uri, &[], b"r".to_vec()).await;
+    let answer = rig.upload(uri, b"r").await;
     assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
-    drive.file_in_collection(answer.json()["file_id"].as_str().expect("id"));
+    drive.file_in_collection(answer.result()["file_id"].as_str().expect("id"));
     assert_eq!(
         found(&rig, "R\u{c9}SUM\u{c9}", "").await,
         [decomposed, "notes.txt"],

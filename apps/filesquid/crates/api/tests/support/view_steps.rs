@@ -4,9 +4,8 @@
 //! filesystem and a seeded library catalog.
 
 use crate::drive_catalog::{DriveCatalog, COLLECTION, COLLECTION_TITLE, VIRTUAL_TITLE};
-use crate::files_fixture::{encode, upload_uri, Answer, FilesRig, LIBRARY};
+use crate::files_fixture::{encode, upload_facts, Answer, FilesRig, LIBRARY};
 use crate::MonitorWorld;
-use axum::http::Method;
 use cucumber::{given, then, when};
 use filesquid_api::journal::{JournalEntry, JournalStore, Outcome};
 use serde_json::{json, Value};
@@ -53,10 +52,10 @@ impl ViewWorld {
     async fn upload(&mut self, name: &str, bytes: &[u8]) -> String {
         let rig = self.rig();
         rig.clock.advance(60_000);
-        let uri = upload_uri(name, bytes.len(), "name_normalization=nfc");
-        let answer = rig.call(Method::PUT, &uri, &[], bytes.to_vec()).await;
+        let input = upload_facts(name, bytes.len(), "name_normalization=nfc");
+        let answer = rig.upload(input, bytes).await;
         assert_eq!(answer.status.as_u16(), 200, "{:?}", answer.json());
-        let id = answer.json()["file_id"].as_str().expect("id").to_string();
+        let id = answer.result()["file_id"].as_str().expect("id").to_string();
         self.files.insert(name.to_string(), id.clone());
         id
     }
@@ -181,7 +180,7 @@ async fn deleted(w: &mut MonitorWorld, name: String) {
 #[when(expr = "the owner copies {string}")]
 async fn copies(w: &mut MonitorWorld, name: String) {
     let body = json!({ "library_id": LIBRARY, "file_id": w.view.id(&name) });
-    let answer = w.view.rig().post("/api/v1/files/copies", body).await;
+    let answer = w.view.rig().command("/api/v1/files/copies", body).await;
     assert_eq!(answer.status.as_u16(), 200, "{:?}", answer.json());
     w.view.answer = Some(answer);
 }
@@ -223,7 +222,7 @@ async fn opens_view(w: &mut MonitorWorld, view: String) {
 
 #[then(expr = "the copy should have a new file identifier and be shown as {string}")]
 async fn copy_shown(w: &mut MonitorWorld, name: String) {
-    let copy = w.view.answer().json();
+    let copy = w.view.answer().result();
     let id = copy["file_id"].as_str().expect("id");
     assert!(
         !w.view.files.values().any(|known| known == id),
@@ -238,7 +237,7 @@ async fn copy_shown(w: &mut MonitorWorld, name: String) {
 
 #[then("the copy's record should name the source as dcterms:source")]
 async fn copy_source(w: &mut MonitorWorld) {
-    let copy = w.view.answer().json();
+    let copy = w.view.answer().result();
     let id = copy["file_id"].as_str().expect("id");
     let uri = format!("/api/v1/files/metadata?library_id={LIBRARY}&file_id={id}");
     let statements = w.view.rig().get(&uri).await.json();
