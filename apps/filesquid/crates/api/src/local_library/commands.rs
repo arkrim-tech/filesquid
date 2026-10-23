@@ -19,6 +19,7 @@ use super::service::{
 };
 use super::snapshot::CopyReport;
 use crate::auth::Principal;
+use crate::canonical::snapshot_library_id;
 use crate::library::mint_uuid_v4;
 use filesquid_core::LibraryId;
 use std::collections::HashMap;
@@ -211,6 +212,11 @@ impl<L: LibraryLocations> LibraryCommands<L> {
         let _serialised = self.binding.lock().await;
         let operation = binding.operation();
         let target = request.library_id.clone();
+        let request = match binding {
+            Binding::Open => self.named_by_snapshot(request).await,
+            Binding::Create => Ok(request),
+        };
+        let request = self.refused(actor, operation, target.as_ref(), request)?;
         let planned = self.plan_binding(&request, binding);
         let (library_id, root) = self.refused(actor, operation, target.as_ref(), planned)?;
         let backend = root.backend.as_ref();
@@ -223,6 +229,42 @@ impl<L: LibraryLocations> LibraryCommands<L> {
             library_id,
             spec_version: summary.spec_version,
             objects: summary.objects,
+        })
+    }
+
+    /// `request` naming the library the folder's collection snapshot belongs to, so opening a
+    /// moved or copied folder answers its own library rather than a new ID, and a second
+    /// folder of an open library is refused by [`Self::plan_binding`] (ADR 041 Decision 6). A
+    /// folder without a snapshot (or whose snapshot cannot be read, which the open reports) is
+    /// left as the request names it. Reads the location's snapshot head.
+    ///
+    /// # Errors
+    ///
+    /// `library_mismatch` when the request names another library than the snapshot's.
+    async fn named_by_snapshot(
+        &self,
+        request: LocationRequest,
+    ) -> Result<LocationRequest, LocalLibraryError> {
+        check_location(&request.location_id)?;
+        let Ok(root) = self.location(&request.location_id) else {
+            return Ok(request);
+        };
+        let named = snapshot_library_id(root.backend.as_ref())
+            .await
+            .ok()
+            .flatten();
+        let Some(named) = named.and_then(|id| LibraryId::new(id).ok()) else {
+            return Ok(request);
+        };
+        if request.library_id.as_ref().is_some_and(|id| *id != named) {
+            return Err(LocalLibraryError::refused(
+                "library_mismatch",
+                "That folder holds another library than the one named.",
+            ));
+        }
+        Ok(LocationRequest {
+            library_id: Some(named),
+            ..request
         })
     }
 

@@ -232,21 +232,129 @@ fn file_batches_hold_one_to_one_thousand_distinct_files() {
 }
 
 #[test]
-fn deleting_a_collection_retains_its_files_as_unfiled() {
+fn deleting_a_collection_deletes_its_files_in_place() {
     let fx = Fixture::with_library();
     let collection = fx.create_collection("Trips");
     let file = fx.add_file_in("f-1", &collection);
-    fx.run(LibraryCommand::DeleteCollection {
+    let deleted = fx.run(LibraryCommand::DeleteCollection {
+        library_id: fx.library(),
+        collection_id: collection.clone(),
+    });
+    let deletion = deleted.deletion.expect("its file was newly deleted");
+    assert_eq!(deletion.deleted_at_ms, NOW_MS);
+    assert_eq!(deletion.purge_after_ms, NOW_MS + 30 * DAY_MS);
+    assert!(fx
+        .list_files(FileScope::Library, VisibilityFilter::Ordinary)
+        .is_empty());
+    assert_eq!(
+        fx.list_files(FileScope::Library, VisibilityFilter::Deleted),
+        vec![file.clone()]
+    );
+    assert!(
+        fx.list_files(FileScope::Unfiled, VisibilityFilter::Ordinary)
+            .is_empty(),
+        "no file is ever unfiled"
+    );
+    let entry = fx.catalog.file(&file).expect("read").expect("file");
+    assert_eq!(
+        entry.file.home_collection_id(),
+        &collection,
+        "nothing is moved"
+    );
+    assert_eq!(entry.state.deletion, Some(deletion));
+    assert_eq!(
+        fx.catalog.commit_count(),
+        3,
+        "one commit for the collection and its files"
+    );
+}
+
+#[test]
+fn deleting_a_collection_keeps_the_times_of_files_already_deleted() {
+    let fx = Fixture::with_library();
+    let collection = fx.create_collection("Trips");
+    let earlier = fx.add_file_in("f-earlier", &collection);
+    let fresh = fx.add_file_in("f-fresh", &collection);
+    fx.run(LibraryCommand::DeleteFiles {
+        library_id: fx.library(),
+        file_ids: vec![earlier.clone()],
+    });
+    let later_ms = NOW_MS + DAY_MS;
+    let deleted = fx.run_at(
+        later_ms,
+        LibraryCommand::DeleteCollection {
+            library_id: fx.library(),
+            collection_id: collection,
+        },
+    );
+    let answered = deleted.deletion.expect("deletion");
+    assert_eq!(answered.deleted_at_ms, later_ms);
+    let deletion_of = |id: &FileId| fx.catalog.file(id).expect("read").expect("file");
+    let kept = deletion_of(&earlier).state.deletion.expect("still deleted");
+    assert_eq!(kept.deleted_at_ms, NOW_MS);
+    assert_eq!(kept.purge_after_ms, NOW_MS + 30 * DAY_MS);
+    assert_eq!(deletion_of(&fresh).state.deletion, Some(answered));
+}
+
+#[test]
+fn deleting_a_collection_whose_files_are_all_deleted_answers_no_new_deletion() {
+    let fx = Fixture::with_library();
+    let collection = fx.create_collection("Trips");
+    let file = fx.add_file_in("f-1", &collection);
+    fx.run(LibraryCommand::DeleteFiles {
+        library_id: fx.library(),
+        file_ids: vec![file],
+    });
+    let deleted = fx.run(LibraryCommand::DeleteCollection {
+        library_id: fx.library(),
+        collection_id: collection,
+    });
+    assert_eq!(deleted.deletion, None);
+    let empty = fx.create_collection("Empty");
+    let deleted = fx.run(LibraryCommand::DeleteCollection {
+        library_id: fx.library(),
+        collection_id: empty,
+    });
+    assert_eq!(deleted.deletion, None);
+}
+
+#[test]
+fn a_library_s_own_retention_sets_the_purge_after_time() {
+    let fx = Fixture::with_library();
+    fx.catalog.set_retention_days(&fx.library(), Some(7));
+    let state = fx
+        .catalog
+        .library(&fx.library())
+        .expect("read")
+        .expect("library");
+    assert_eq!(state.retention_days, Some(7));
+    let collection = fx.create_collection("Trips");
+    let in_collection = fx.add_file_in("f-1", &collection);
+    let alone = fx.add_file("f-2");
+    let one = fx.run(LibraryCommand::DeleteFiles {
+        library_id: fx.library(),
+        file_ids: vec![alone],
+    });
+    assert_eq!(
+        one.deletion.expect("deleted").purge_after_ms,
+        NOW_MS + 7 * DAY_MS
+    );
+    let all = fx.run(LibraryCommand::DeleteCollection {
         library_id: fx.library(),
         collection_id: collection,
     });
     assert_eq!(
-        fx.list_files(FileScope::Library, VisibilityFilter::Ordinary),
-        vec![file.clone()]
+        all.deletion.expect("deleted").purge_after_ms,
+        NOW_MS + 7 * DAY_MS
     );
+    let entry = fx
+        .catalog
+        .file(&in_collection)
+        .expect("read")
+        .expect("file");
     assert_eq!(
-        fx.list_files(FileScope::Unfiled, VisibilityFilter::Ordinary),
-        vec![file]
+        entry.state.deletion.expect("deleted").purge_after_ms,
+        NOW_MS + 7 * DAY_MS
     );
 }
 

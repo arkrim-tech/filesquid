@@ -5,12 +5,12 @@
 
 use super::error::FileError;
 use super::names::{content_disposition, Disposition};
-use super::nodes::listing_query;
+use super::nodes::{listing_query, Listing};
 use super::range::{RangePlan, RangeRequest};
 use super::service::{ContentAnswer, ContentRequest};
 use super::versions::Committed;
 use super::view::{
-    ContentQuery, FileQuery, FolderRequest, HistoryQuery, LabelRequest, LibraryQuery, ListingQuery,
+    ContentQuery, FileQuery, FolderRequest, HistoryQuery, LabelRequest, LibraryQuery,
     ListingRequest, MoveRequest, ObjectQuery, RemoveRequest, RestoreRequest, UploadQuery,
 };
 use super::{
@@ -104,7 +104,10 @@ async fn listing(
     let outcome = async {
         let files = files(&state)?;
         let listing = resolve_listing(&state, &principal, files.clone(), query(request)?).await?;
-        files.listing(listing).await
+        match listing {
+            Listing::Object(listing) => files.listing(listing).await,
+            Listing::Scope(listing) => files.scope_listing(listing).await,
+        }
     }
     .await;
     read_answer(&state, LIST_OPERATION, &principal, outcome).await
@@ -118,7 +121,7 @@ async fn resolve_listing(
     principal: &Principal,
     files: std::sync::Arc<dyn super::FileOperations>,
     request: ListingRequest,
-) -> Result<ListingQuery, FileError> {
+) -> Result<Listing, FileError> {
     if request.node.is_none() {
         return listing_query(request, principal, None, files.as_ref());
     }

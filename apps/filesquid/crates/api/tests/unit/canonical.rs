@@ -88,6 +88,7 @@ fn head(revision: u64) -> SnapshotEntity {
         },
         revision,
         created_order: 1,
+        retention_days: None,
     })
 }
 
@@ -109,6 +110,8 @@ fn snapshot_file(id: &str, home: &str) -> SnapshotFile {
             hidden: true,
             deletion: None,
         },
+        path: None,
+        object_id: None,
     }
 }
 
@@ -977,5 +980,141 @@ fn a_copy_record_keeps_what_the_owner_sees_and_is_bound_to_the_new_object() {
     assert_eq!(
         source_reference(&source, "v3"),
         format!("urn:uuid:{FILE}@v3")
+    );
+}
+
+/// A registered file entity: home collection `home`, collection logical path `path` and
+/// its own file object (Task DE-1.7).
+fn placed_file(id: &str, home: &str, path: &str) -> SnapshotFile {
+    SnapshotFile {
+        path: Some(path.into()),
+        object_id: Some(file_object_id(&FileId::new(id).unwrap())),
+        ..snapshot_file(id, home)
+    }
+}
+
+#[test]
+fn a_file_entity_records_its_logical_path_and_object() {
+    let entity = SnapshotEntity::File(placed_file(FILE, "c-1", "trips/Caf\u{e9}.jpg"));
+    let bytes = filesquid_api::canonical::entity::encode(&entity).unwrap();
+    let text = String::from_utf8(bytes.clone()).unwrap();
+    assert!(text.contains("\"path\": \"trips/Caf\u{e9}.jpg\""), "{text}");
+    assert!(
+        text.contains(&format!("\"object_id\": \"urn:uuid:{FILE}\"")),
+        "{text}"
+    );
+    let path = SnapshotKey::File(FileId::new(FILE).unwrap())
+        .path()
+        .unwrap();
+    let read = filesquid_api::canonical::entity::decode(&path, &bytes).unwrap();
+    assert_eq!(read, entity);
+    let SnapshotEntity::File(file) = read else {
+        panic!("a file entity")
+    };
+    assert!(file.is_registered());
+}
+
+#[test]
+fn a_file_entity_of_the_earlier_form_is_read_and_reported_unregistered() {
+    let path = format!("files/{FILE}.json");
+    // The entity of the earlier form: no path and no object member at all.
+    let earlier = SnapshotEntity::File(snapshot_file(FILE, "c-1"));
+    let bytes = filesquid_api::canonical::entity::encode(&earlier).unwrap();
+    let text = String::from_utf8(bytes.clone()).unwrap();
+    assert!(
+        !text.contains("\"path\"") && !text.contains("\"object_id\""),
+        "{text}"
+    );
+    let read = filesquid_api::canonical::entity::decode(&path, &bytes).unwrap();
+    let SnapshotEntity::File(file) = read else {
+        panic!("a file entity")
+    };
+    assert_eq!(file.path, None);
+    assert_eq!(file.object_id, None);
+    assert!(!file.is_registered());
+}
+
+#[test]
+fn a_file_entity_with_a_path_outside_the_rule_is_refused_with_a_fixed_reason() {
+    let path = format!("files/{FILE}.json");
+    for bad in ["../secret", "a//b", "Cafe\u{301}"] {
+        let entity = SnapshotEntity::File(placed_file(FILE, "c-1", bad));
+        let bytes = filesquid_api::canonical::entity::encode(&entity).unwrap();
+        let err = filesquid_api::canonical::entity::decode(&path, &bytes).unwrap_err();
+        let CanonicalError::Decode { reason, .. } = err else {
+            panic!("a decode error")
+        };
+        assert_eq!(reason, "file path is not a collection logical path");
+        assert!(!reason.contains(bad));
+    }
+    let mut other = placed_file(FILE, "c-1", "a.jpg");
+    other.object_id = Some("urn:uuid:another".into());
+    let bytes = filesquid_api::canonical::entity::encode(&SnapshotEntity::File(other)).unwrap();
+    let err = filesquid_api::canonical::entity::decode(&path, &bytes).unwrap_err();
+    assert!(
+        matches!(err, CanonicalError::Decode { reason, .. } if reason == "file object is not the file's own")
+    );
+}
+
+#[test]
+fn the_library_entity_keeps_its_own_retention_period() {
+    let SnapshotEntity::Library(mut head) = head(3) else {
+        panic!("the library entity")
+    };
+    head.retention_days = Some(90);
+    let entity = SnapshotEntity::Library(head.clone());
+    let bytes = filesquid_api::canonical::entity::encode(&entity).unwrap();
+    let read = filesquid_api::canonical::entity::decode("library.json", &bytes).unwrap();
+    assert_eq!(read, entity);
+    for bad in [0, 3_651] {
+        head.retention_days = Some(bad);
+        let bytes =
+            filesquid_api::canonical::entity::encode(&SnapshotEntity::Library(head.clone()))
+                .unwrap();
+        assert!(filesquid_api::canonical::entity::decode("library.json", &bytes).is_err());
+    }
+}
+
+#[test]
+fn file_objects_the_snapshot_does_not_register_are_counted() {
+    use filesquid_api::canonical::unregistered_file_objects;
+    let rig = Rig::new();
+    let registered = FileId::new(FILE).unwrap();
+    let stray = FileId::new("3e1d2c9b-8f7a-4b61-9a0b-1c2d3e4f5a60").unwrap();
+    let earlier = FileId::new("5a4b3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c10").unwrap();
+    for (file, op) in [(&registered, "op-a"), (&stray, "op-b"), (&earlier, "op-c")] {
+        commit_original(&rig, file, "a.jpg", "image/jpeg", op).unwrap();
+    }
+    assert_eq!(
+        ready(unregistered_file_objects(&rig.root, None)).unwrap(),
+        3
+    );
+    let model = rig.model(SNAPSHOT_ROOT, &snapshot_object_id(&library_id()));
+    let mut delta = SnapshotDelta::default();
+    delta.put(&head(2)).unwrap();
+    delta
+        .put(&SnapshotEntity::File(placed_file(FILE, "c-1", "a.jpg")))
+        .unwrap();
+    delta
+        .put(&SnapshotEntity::File(snapshot_file(
+            earlier.as_str(),
+            "c-1",
+        )))
+        .unwrap();
+    ready(commit_snapshot(
+        &model,
+        &OwnerReadable,
+        &delta,
+        meta(&record("op-1", "2")),
+    ))
+    .unwrap()
+    .expect("a version");
+    let snapshot = ready(read_snapshot(&rig.root, &OwnerReadable))
+        .unwrap()
+        .expect("snapshot");
+    let count = ready(unregistered_file_objects(&rig.root, Some(&snapshot))).unwrap();
+    assert_eq!(
+        count, 2,
+        "the stray object and the entity of the earlier form"
     );
 }

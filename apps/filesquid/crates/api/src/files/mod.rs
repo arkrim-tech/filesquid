@@ -73,6 +73,7 @@ mod nodes;
 mod range;
 mod records;
 mod routes;
+pub mod scope_listing;
 pub mod search;
 pub mod search_match;
 pub mod search_query;
@@ -90,9 +91,10 @@ pub use handle::{FileFuture, FileOperations};
 pub use import::SourceImport;
 pub use labels::{APP_DATA_FOLDER, LABELS_PATH, MAX_LABELS, PROVENANCE_FOLDER, RESERVED_FOLDERS};
 pub use names::{DisplayNames, NameFuture, StoredFile};
-pub use nodes::{ScopeObject, ScopeObjects};
+pub use nodes::{Listing, ScopeObject, ScopeObjects};
 pub use range::{RangePlan, RangeRequest};
 pub(crate) use routes::{answer_content, refuse as refuse_file, routes, ContentAnswerKind};
+pub use scope_listing::{ScopeAfter, ScopeEntry, ScopeListing, ScopePage};
 pub use service::{
     staging_prefix, ContentAnswer, ContentRequest, FileClock, FileLibrary, FileService,
 };

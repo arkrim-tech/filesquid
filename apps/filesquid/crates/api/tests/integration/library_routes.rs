@@ -219,6 +219,82 @@ async fn an_open_library_folder_under_a_second_location_id_is_refused_once() {
 }
 
 #[tokio::test]
+async fn opening_a_folder_answers_the_library_its_snapshot_names() {
+    let rig = LibraryRig::new(Mount::Desktop);
+    let (_, location) = rig.create("named").await;
+    let snapshot = format!("urn:uuid:{LIBRARY}");
+    let mine = LibraryRig::new(Mount::Desktop);
+    let copy = mine.locations.register("named");
+    std::fs::remove_dir_all(mine.locations.folder(&copy)).expect("clear");
+    rig.object(&location, "snapshot", &snapshot).await;
+    copy_dir(
+        &rig.locations.folder(&location),
+        &mine.locations.folder(&copy),
+    );
+    let answer = mine
+        .post("/api/v1/libraries/openings", json!({ "location_id": copy }))
+        .await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text());
+    assert_eq!(
+        answer.json()["library_id"],
+        LIBRARY,
+        "not a newly minted ID"
+    );
+}
+
+#[tokio::test]
+async fn opening_a_folder_under_another_library_id_than_its_snapshot_s_is_refused_once() {
+    let rig = LibraryRig::new(Mount::Desktop);
+    let location = rig.locations.register("named");
+    std::fs::remove_dir_all(rig.locations.folder(&location)).expect("clear");
+    let source = LibraryRig::new(Mount::Desktop);
+    let (_, origin) = source.create("named").await;
+    source
+        .object(&origin, "snapshot", &format!("urn:uuid:{LIBRARY}"))
+        .await;
+    copy_dir(
+        &source.locations.folder(&origin),
+        &rig.locations.folder(&location),
+    );
+    let other = "0e1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b";
+    let before = failures(&rig).len();
+    let answer = rig
+        .post(
+            "/api/v1/libraries/openings",
+            json!({ "location_id": location, "library_id": other }),
+        )
+        .await;
+    assert_error(&answer, 409, "conflict");
+    assert_one_refusal(&rig, before, OPEN_OPERATION, "library_mismatch");
+}
+
+#[tokio::test]
+async fn a_second_folder_of_an_open_library_is_refused_once() {
+    let rig = LibraryRig::new(Mount::Desktop);
+    let first = rig.locations.register("first");
+    let body = json!({ "location_id": first, "library_id": LIBRARY });
+    let created = rig.post("/api/v1/libraries", body).await;
+    assert_eq!(created.status, StatusCode::OK, "{}", created.text());
+    rig.object(&first, "snapshot", &format!("urn:uuid:{LIBRARY}"))
+        .await;
+    let second = rig.locations.register("second");
+    std::fs::remove_dir_all(rig.locations.folder(&second)).expect("clear");
+    copy_dir(
+        &rig.locations.folder(&first),
+        &rig.locations.folder(&second),
+    );
+    let before = failures(&rig).len();
+    let answer = rig
+        .post(
+            "/api/v1/libraries/openings",
+            json!({ "location_id": second }),
+        )
+        .await;
+    assert_error(&answer, 409, "conflict");
+    assert_one_refusal(&rig, before, OPEN_OPERATION, "library_already_open");
+}
+
+#[tokio::test]
 async fn open_libraries_are_bounded() {
     let rig = LibraryRig::new(Mount::Desktop);
     for n in 0..MAX_OPEN_LIBRARIES {

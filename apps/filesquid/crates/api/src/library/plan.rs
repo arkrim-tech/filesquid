@@ -6,10 +6,12 @@
 //! belong to the command's library, or the command is `not_found`. A command whose result
 //! equals the stored state plans no change.
 
-use super::catalog::{CatalogChange, FileEntry, LibraryCatalog, LibraryRecord};
+use super::catalog::{
+    CatalogChange, FileEntry, FileListing, FileScope, LibraryCatalog, LibraryRecord,
+};
 use super::command::{LibraryCommand, NEW_LIBRARY_REVISION};
 use super::ids::mint_uuid_v4;
-use super::policy::{Deletion, DeletionPolicy, FileState, PurgeConfirmation};
+use super::policy::{Deletion, DeletionPolicy, FileState, PurgeConfirmation, VisibilityFilter};
 use super::LibraryError;
 use crate::operation::CommandEnvelope;
 use filesquid_core::{
@@ -61,15 +63,24 @@ impl Planner<'_> {
             return create_library(expected, repository_id, name);
         }
         let library_id = command.library_id().ok_or(LibraryError::Internal)?;
-        self.check_revision(library_id, expected)?;
-        let mut planned = self.plan_in(library_id, command)?;
+        let retention = self.check_revision(library_id, expected)?;
+        let policy = match retention {
+            Some(recoverable_days) => DeletionPolicy { recoverable_days },
+            None => self.policy,
+        };
+        let mut planned = self.plan_in(library_id, command, policy)?;
         planned.library_id = Some(library_id.clone());
         planned.targets.insert(0, library_id.as_str().to_string());
         Ok(planned)
     }
 
-    /// The library must exist at revision `expected`.
-    fn check_revision(&self, library_id: &LibraryId, expected: &str) -> Result<(), LibraryError> {
+    /// The library must exist at revision `expected`; answers its own retention period, if
+    /// it set one.
+    fn check_revision(
+        &self,
+        library_id: &LibraryId,
+        expected: &str,
+    ) -> Result<Option<u32>, LibraryError> {
         let state = self
             .catalog
             .library(library_id)?
@@ -77,11 +88,17 @@ impl Planner<'_> {
         if state.revision != expected {
             return Err(LibraryError::Conflict);
         }
-        Ok(())
+        Ok(state.retention_days)
     }
 
-    /// Plan a command of an existing library.
-    fn plan_in(&self, lib: &LibraryId, command: &LibraryCommand) -> Result<Planned, LibraryError> {
+    /// Plan a command of an existing library whose deleted files stay recoverable as `policy`
+    /// says (the library's own retention, else the installation default).
+    fn plan_in(
+        &self,
+        lib: &LibraryId,
+        command: &LibraryCommand,
+        policy: DeletionPolicy,
+    ) -> Result<Planned, LibraryError> {
         use LibraryCommand as C;
         match command {
             C::CreateCollection {
@@ -95,7 +112,9 @@ impl Planner<'_> {
                 title,
                 ..
             } => self.rename_collection(lib, collection_id, title),
-            C::DeleteCollection { collection_id, .. } => self.delete_collection(lib, collection_id),
+            C::DeleteCollection { collection_id, .. } => {
+                self.delete_collection(lib, collection_id, policy)
+            }
             C::CreateVirtualCollection {
                 title, expression, ..
             } => create_virtual(lib, title, expression.as_deref()),
@@ -123,7 +142,7 @@ impl Planner<'_> {
                 confirmation,
                 ..
             } => self.purge(lib, file_ids, confirmation),
-            other => self.change_states(lib, other),
+            other => self.change_states(lib, other, policy),
         }
     }
 
@@ -214,17 +233,46 @@ impl Planner<'_> {
         Ok(planned(changes, [id.as_str()]))
     }
 
-    /// Delete a collection of `lib`; its files stay and become unfiled.
+    /// Delete a collection of `lib` and, in the same commit, every one of its files that is
+    /// not already deleted, as `policy` deletes a file (owner decisions 2026-10-22, ADR 041
+    /// Decision 8). Nothing is moved: each file keeps its home collection and logical path. The
+    /// answer carries the deletion times when the collection held a file that was not deleted.
     fn delete_collection(
         &self,
         lib: &LibraryId,
         id: &CollectionId,
+        policy: DeletionPolicy,
     ) -> Result<Planned, LibraryError> {
         self.collection_in(lib, id)?;
-        Ok(planned(
-            vec![CatalogChange::RemoveCollection(id.clone())],
-            [id.as_str()],
-        ))
+        let deletion = policy.deletion_at(self.now_ms);
+        let changes = vec![
+            CatalogChange::DeleteCollectionFiles {
+                collection_id: id.clone(),
+                deletion,
+            },
+            CatalogChange::RemoveCollection(id.clone()),
+        ];
+        let mut out = planned(changes, [id.as_str()]);
+        out.deletion = self.holds_undeleted(lib, id)?.then_some(deletion);
+        Ok(out)
+    }
+
+    /// Whether the collection `id` of `lib` holds a file that is not deleted (ordinary or
+    /// hidden): one bounded page of each view.
+    fn holds_undeleted(&self, lib: &LibraryId, id: &CollectionId) -> Result<bool, LibraryError> {
+        for visibility in [VisibilityFilter::Ordinary, VisibilityFilter::Hidden] {
+            let listing = FileListing {
+                library_id: lib.clone(),
+                scope: FileScope::Collection {
+                    collection_id: id.clone(),
+                },
+                visibility,
+            };
+            if !self.catalog.files(&listing, None, 1)?.is_empty() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Rename a virtual collection of `lib`; the same title changes nothing.
@@ -303,8 +351,9 @@ impl Planner<'_> {
         &self,
         lib: &LibraryId,
         command: &LibraryCommand,
+        policy: DeletionPolicy,
     ) -> Result<Planned, LibraryError> {
-        let deletion = self.policy.deletion_at(self.now_ms);
+        let deletion = policy.deletion_at(self.now_ms);
         let next = state_transition(command, deletion)?;
         let mut changes = Vec::new();
         for file_id in command.file_ids() {

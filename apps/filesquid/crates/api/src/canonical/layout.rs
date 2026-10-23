@@ -126,12 +126,17 @@ pub fn original_path(name: &str) -> Result<String, CanonicalError> {
 
 /// The snapshot entities `change` writes or removes, each once. Every change also touches the
 /// library entity, whose revision advances. A purged file also changes the virtual collections it
-/// belonged to; only the catalog knows those, so the caller adds them.
+/// belonged to, and deleting a collection's files changes their entities; only the catalog
+/// knows those, so the caller adds them.
 pub fn touched(change: &CatalogChange) -> Vec<SnapshotKey> {
     let key = match change {
         CatalogChange::CreateLibrary(_) => return vec![SnapshotKey::Library],
         CatalogChange::PutCollection(c) => SnapshotKey::Collection(c.id().clone()),
         CatalogChange::RemoveCollection(id) => SnapshotKey::Collection(id.clone()),
+        // Its files' entities change too; only the catalog knows them, so it adds them.
+        CatalogChange::DeleteCollectionFiles { collection_id, .. } => {
+            SnapshotKey::Collection(collection_id.clone())
+        }
         CatalogChange::PutVirtualCollection(v) => SnapshotKey::VirtualCollection(v.id().clone()),
         CatalogChange::RemoveVirtualCollection(id) => SnapshotKey::VirtualCollection(id.clone()),
         CatalogChange::AddVirtualMember(m) => {

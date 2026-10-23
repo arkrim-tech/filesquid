@@ -31,7 +31,9 @@ pub(crate) fn navigation_parents(
             | CatalogChange::RemoveCollection(_)
             | CatalogChange::PutVirtualCollection(_)
             | CatalogChange::RemoveVirtualCollection(_) => NodeRef::Library(library_id.clone()),
-            CatalogChange::SetFileState { .. } | CatalogChange::PurgeFile(_) => {
+            CatalogChange::SetFileState { .. }
+            | CatalogChange::PurgeFile(_)
+            | CatalogChange::DeleteCollectionFiles { .. } => {
                 return Some(NavigationParents::Everything);
             }
             CatalogChange::AddVirtualMember(_) | CatalogChange::RemoveVirtualMember { .. } => {

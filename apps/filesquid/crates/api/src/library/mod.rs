@@ -57,7 +57,8 @@ pub use error::LibraryError;
 pub use ids::{is_uuid_v4, mint_uuid_v4};
 pub use memory::MemoryCatalog;
 pub use policy::{
-    Deletion, DeletionPolicy, FileState, PurgeConfirmation, VisibilityFilter, RECOVERABLE_DAYS,
+    Deletion, DeletionPolicy, FileState, PurgeConfirmation, VisibilityFilter, MAX_RETENTION_DAYS,
+    RECOVERABLE_DAYS,
 };
 pub use query::{Cursor, LibraryQuery, Page, QueryAnswer, QueryRequest};
 pub use service::LibraryService;

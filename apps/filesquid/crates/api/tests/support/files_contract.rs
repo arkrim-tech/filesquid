@@ -369,6 +369,7 @@ fn entries() -> [EntryView; 2] {
             modified_version: "v1".into(),
             modified: "2026-10-17T00:00:00Z".into(),
             type_hint: Some("jpg".into()),
+            object_id: Some("urn:uuid:0b6f6a58-5c1d-4b5e-9f3e-2a7d8c9e0f11".into()),
         },
     ]
 }
