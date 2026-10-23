@@ -583,7 +583,7 @@ async fn every_control_is_journaled_once_and_no_entry_names_the_source_or_checkp
         .iter()
         .filter(|e| e.operation.starts_with("job."))
     {
-        assert_eq!(entry.target_ids, [job.id.clone()]);
+        assert_eq!(entry.target_ids, std::slice::from_ref(&job.id));
         assert_eq!(
             entry.operation_id.as_deref(),
             Some(job.operation_id.as_str())

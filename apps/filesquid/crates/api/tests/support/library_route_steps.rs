@@ -214,7 +214,7 @@ fn rebuild_state(w: &mut MonitorWorld, state: String) {
 fn job_journaled_once(w: &mut MonitorWorld, operation: String) {
     let entries = w.routes.rig().journaled(&operation);
     assert_eq!(entries.len(), 1, "{entries:?}");
-    assert_eq!(entries[0].target_ids, [w.routes.job.clone()]);
+    assert_eq!(entries[0].target_ids, std::slice::from_ref(&w.routes.job));
 }
 
 #[when(expr = "the server administrator rebuilds the library from its files through the API")]
@@ -404,9 +404,10 @@ async fn committable(w: &mut MonitorWorld) {
 async fn rebuild_not_open(w: &mut MonitorWorld) {
     let body = json!({ "library_id": crate::library_routes_fixture::LIBRARY });
     let rig = w.routes.rig();
-    w.routes.answer = Some(rig.post("/api/v1/libraries/rebuilds", body).await);
+    let answer = rig.post("/api/v1/libraries/rebuilds", body).await;
     assert!(
         rig.journaled("job.created").is_empty(),
         "no job is submitted"
     );
+    w.routes.answer = Some(answer);
 }

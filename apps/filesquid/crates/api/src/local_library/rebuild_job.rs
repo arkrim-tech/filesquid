@@ -165,10 +165,11 @@ impl RebuildRunner {
         self
     }
 
-    /// Renew the lease every `every` while objects are read (default: a third of the lease).
+    /// Renew the lease every `every` (at least a millisecond) while objects are read
+    /// (default: a third of the lease).
     #[must_use]
     pub fn with_renewal(mut self, every: Duration) -> Self {
-        self.renewal = Some(every);
+        self.renewal = Some(every.max(Duration::from_millis(1)));
         self
     }
 
