@@ -1,6 +1,6 @@
 # Task DE-1.7 Walkthrough: Owner-folder library index, home collections and retirement of in-app catalog roots
 
-Branch: `feat/de-1.7-owner-folder-library-index` (global [Task 1.2](../../../../../../resources/implementation-plan.md#task-1.2)). API contract `0.26.0` (one minor above `0.25.0` on `main`, from API-F2.13). Binding decisions: [ADR 041](../../../../../../resources/architecture/041-owner-folder-libraries-and-home-collections.md).
+Branch: `feat/de-1.7-owner-folder-library-index` (global [Task 1.2](../../../../../../resources/implementation-plan.md#task-1.2)). API contract `0.27.0` (one minor above `0.26.0` on `main`, from API-F2.17). Binding decisions: [ADR 041](../../../../../../resources/architecture/041-owner-folder-libraries-and-home-collections.md).
 
 ## What changed
 
@@ -12,7 +12,7 @@ Branch: `feat/de-1.7-owner-folder-library-index` (global [Task 1.2](../../../../
   - `POST /api/v1/imports` requires `collection_id` and accepts an optional `folder`: no destination is `400 invalid_request` (`destination_required`), an unknown or foreign collection `404 not_found` (`collection_not_found`), a folder outside the path rule `400 invalid_request` (`invalid_path`), all before any dialog and journaled once. `collection_not_supported` is retired.
   - Opening a folder answers the library its snapshot names (a copied or moved folder keeps its ID); a second folder of an open library is `library_already_open`, a request naming another library `library_mismatch`.
   - [`files/scope_listing.rs`](../../../api/src/files/scope_listing.rs) (new): `GET /api/v1/files/listing?node=` answers a collection or folder node from the host's index (its subfolders, then its registered files under their names), paged by an opaque cursor; listing entries carry the file's `object_id`.
-  - `openapi.json` 0.26.0; `ui/src/api/schema.d.ts` regenerated.
+  - `openapi.json` 0.27.0; `ui/src/api/schema.d.ts` regenerated.
 - **`filesquid-native`** (`desktop` feature):
   - Catalog schema v3 ([`schema.rs`](../../../native/src/catalog/schema.rs)): the library's `retention_days` and folder identity; each file's `path`, `object_id`, folder key and name, with a unique `(home, path)` index and a partial folder index; v2 catalogs migrate forward.
   - The in-app roots `libraries/<library-id>.ocfl/` are retired (`OCFL_ROOT_SUFFIX` removed, no migration). [`canonical.rs`](../../../native/src/catalog/canonical.rs) commits the snapshot into the owner's folder through the same backend and fenced leases as the file routes; the catalog directory `libraries/` keeps only `<library-id>.sqlite` and `<library-id>.work/` staging; the rest of the data directory holds the operational store and the file service's staging and leases (`files/<digest>/`, `locations/<digest>/`), never a library's storage root, originals or metadata records. A `CreateLibrary` commit to the catalog is refused (`library_needs_folder`).
@@ -460,4 +460,4 @@ $ FULL=1 bash scripts/pre-commit.sh
 | [API-S-021](../../../api/resources/srs.md) | Navigation listing | `integration_scope_listing` (`a_scope_listing_pages_with_an_opaque_cursor` and three more) |
 | [API-S-025](../../../api/resources/srs.md) | Local library and repair routes | `integration_library_routes` open-by-snapshot tests (`library_mismatch`, `library_already_open`) |
 | [API-S-026](../../../api/resources/srs.md) | The FileSquid OCFL application profile | `a_file_entity_records_its_logical_path_and_object`, `a_file_entity_of_the_earlier_form_is_read_and_reported_unregistered`, `a_file_entity_with_a_path_outside_the_rule_is_refused_with_a_fixed_reason`, `the_library_entity_keeps_its_own_retention_period`, `a_file_object_without_a_snapshot_entry_is_counted_and_left_unregistered` |
-| [API-S-036](../../../api/resources/srs.md) | Import route | `unit_imports_route` (`an_import_without_a_destination_is_refused_before_any_dialog`, `an_unknown_or_foreign_collection_is_not_found_before_any_dialog`, `a_destination_folder_outside_the_path_rule_is_refused_before_any_dialog`); `unit_contract` (0.26.0) |
+| [API-S-036](../../../api/resources/srs.md) | Import route | `unit_imports_route` (`an_import_without_a_destination_is_refused_before_any_dialog`, `an_unknown_or_foreign_collection_is_not_found_before_any_dialog`, `a_destination_folder_outside_the_path_rule_is_refused_before_any_dialog`); `unit_contract` (0.27.0) |
