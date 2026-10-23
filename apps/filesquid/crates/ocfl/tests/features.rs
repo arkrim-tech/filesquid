@@ -9,6 +9,8 @@ use cucumber::{given, then, when, writer, StatsWriter as _, World, WriterExt as 
 
 #[path = "support/object_builder.rs"]
 mod builder;
+#[path = "support/warning_capture.rs"]
+mod capture;
 #[path = "support/change_rig.rs"]
 mod change;
 #[path = "support/change_steps.rs"]
@@ -17,6 +19,8 @@ mod change_steps;
 mod community;
 #[path = "support/content_fixtures.rs"]
 mod content;
+#[path = "support/copy_warning_steps.rs"]
+mod copy_warning_steps;
 #[path = "support/enumerate.rs"]
 mod enumerate;
 #[path = "support/enumerate_steps.rs"]
@@ -105,6 +109,7 @@ struct OcflWorld {
     enumerate: enumerate_steps::EnumerateState,
     change: change_steps::ChangeState,
     view: view_steps::ViewState,
+    copy_warning: copy_warning_steps::CopyWarningState,
 }
 
 /// Run `$body` with `$b` bound to the scenario's concrete backend.

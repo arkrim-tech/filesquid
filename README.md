@@ -21,6 +21,8 @@ FileSquid is one Rust backend with **one API**. Every user interface is plain HT
 
 FileSquid runs as a **desktop app** (Tauri 2; the API is served in-process with no network port), as a **multi-user `filesquid-server`** that you or your organisation operate, and later as an **encrypted browser host**. The paid offer is encrypted **backup and/or sync** at `*.filesquid.tech`: the service stores ciphertext only and never holds your keys. Next come version-compliant batch curation jobs (for example transcoding, Parquet datasets and FAIR reporting), with Arkrim as their UI ([ADR 029](./resources/architecture/029-filesquid-unified-product-and-distributions.md), [ADR 032](./resources/architecture/032-hosting-and-privacy-model.md)).
 
+FileSquid is in development, and much of what is described above is still to be built. The [capability register](./resources/capability-register.md) lists each capability as supported, limited or unsupported, and names the task that delivers it. The [foundation evidence](./resources/foundation-evidence.md) lists the performance budgets. They are proposed and have not been measured yet.
+
 
 # Setup Development Environment
 
@@ -475,6 +477,29 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8083/metrics
 The journal routes filter by `from` and `to` (RFC 3339), `actor`, `operation`, `outcome`, `level`, `process`, `library`, `object` or `file` (a file ID, the same as `object=urn:uuid:<file>`) and `operation_id`; the export takes the same filters and `format=jsonl` (the default) or `format=csv` (RFC 4180 with a header row and CRLF line ends, opaque IDs only), at most 50,000 entries per response (`X-Journal-Next-Cursor` continues it), and every export is journaled as `journal.export`. Each entry of a page or of `GET /api/v1/admin/journal/entries/{entry}` carries `provenance`: for a committed operation, links (API paths) to its PROV-O record and activities; otherwise `"journal_only": true` (failed and refused attempts, single-file downloads and events that commit nothing). `names=true` adds the current display name of the file an entry names, when the host resolves it for the caller; names are never stored or exported. `POST /api/v1/client-events` journals browser console warnings and errors, once per client event ID, as `ui.console.warn`, `ui.console.error` or `ui.console.overflow`: at most 20 events and 16 KiB per request and 60 requests a minute per credential, refused requests included, except a request carrying only one `ui.console.overflow` event, which is never rate-limited. The route exists in this release; the default UI starts forwarding its console to it with UI-F2.16.
 
 On Windows there is no token file: start the server with `FILESQUID_ADMIN_TOKEN` set as shown under **Server host**, set `$TOKEN` to the same value in PowerShell, and call `curl.exe` with the same arguments.
+
+### Journal retention, export and the optional OTLP profile
+
+What exists and what is still open ([ADR 033](./resources/architecture/033-activity-journal-and-live-health-monitoring.md)):
+
+| Piece | State | Task |
+|---|---|---|
+| Activity journal, process registry, health rules, admin routes, `/metrics` and the **Monitor** dashboard (`#/monitor`) | Done | [Task FS-2.4](./resources/implementation-plan.md#task-fs-2.4) |
+| Client events, journal query filters, CSV and JSON Lines export, journaling of every `fsquid` command, durable per-commit entries and the journal rebuild from files | Done | [Task FS-2.9](./resources/implementation-plan.md#task-fs-2.9) (API-F2.10, API-F2.11, CLI-0.2, CL-1.9) |
+| Host journal sealing into OCFL, the **Logs** view and console forwarding from the default UI | Open | Task FS-2.9 (DE-0.11, UI-F2.16) |
+| Store-and-forward **OTLP export** of journal entries and metrics | Open | [Task FS-3.6](./resources/implementation-plan.md#task-fs-3.6) |
+
+- **Retention:** the journal keeps every entry, which is ADR 033's default. There is no retention setting yet. ADR 033 also allows archiving older journal segments into an OCFL object, and Task FS-2.9 builds that.
+- **Export:** export any time range with the `journal/export` route shown above, as JSON Lines (the default) or CSV. A response holds at most 50,000 entries, and `X-Journal-Next-Cursor` continues it. Every export is journaled as `journal.export`.
+- **Optional OTLP export (not built yet):** under ADR 033, a host MAY send journal entries and metrics over OTLP to an endpoint the owner or administrator configures. Export is off by default. It is store-and-forward: the exporter reads the journal through a persisted cursor, so nothing is lost while the sink is down. Task FS-3.6 adds the exporter. Until then no FileSquid process exports journal entries or metrics to an external sink. The JSON events on stdout described above go only to the terminal or process supervisor that started the process. The desktop app never bundles a telemetry server.
+- **Reference `observability` profile:** `docker-compose.yml` defines an opt-in Compose profile with **VictoriaLogs** (`127.0.0.1:9428`, OTLP log ingestion) and **VictoriaMetrics** (`127.0.0.1:8428`, which scrapes `filesquid-server`'s `/metrics` through [`config/victoriametrics/scrape.yml`](./config/victoriametrics/scrape.yml)). Both keep data for one year under `data/`. Neither runs unless you name the profile. From the repository root, list the services Compose would start without the profile and with it:
+
+```sh
+docker compose config --services
+docker compose --profile observability config --services
+```
+
+The first command lists `postgres` and `filesquid-server`. The second also lists `victorialogs` and `victoriametrics`. Both commands only read the Compose file, so they need no running Docker daemon. Task FS-3.6 starts the profile, checks that logs reach VictoriaLogs and metrics reach VictoriaMetrics, and documents the commands for starting it here. Until then, FileSquid's own journal and Monitor are the supported way to read activity and health.
 
 ---
 
