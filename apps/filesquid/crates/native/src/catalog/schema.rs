@@ -5,7 +5,9 @@
 //! Every library has its own file, so no table carries a library column: the file is the
 //! library. Version 1 holds the library row, folders, collections, virtual collections,
 //! virtual-collection memberships, files with their hide and delete state, operation
-//! receipts, pending intent and the journal outbox.
+//! receipts, pending intent and the journal outbox; version 2 the snapshot version the index
+//! reflects; version 3 each file's collection logical path and object, the library's own
+//! retention and the folder the index was built from.
 
 use super::{failed, CATALOG_FILE_EXTENSION, CATALOG_SCHEMA_VERSION};
 use crate::owner_only::{create_owner_only, resolve_folders};
@@ -24,7 +26,8 @@ const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 ///   revision counter and creation order (Unix milliseconds of its creation).
 /// - `virtual_members` references `virtual_collections` and `files` with `ON DELETE CASCADE`,
 ///   so removing a virtual collection or purging a file removes its memberships. Files do
-///   not reference collections: removing a collection keeps its files (they become unfiled).
+///   not reference collections: removing a collection keeps its files, which the same
+///   command deletes in place (version 3, ADR 041 Decision 8).
 /// - `receipts`: the answer of every committed operation ID, for replays.
 /// - `pending_intents`: intent recorded before canonical work (cleared by its commit).
 /// - `journal_outbox`: journal entries committed with their change, until the host journal
@@ -106,8 +109,27 @@ CREATE TABLE journal_outbox (
 /// is rebuilt from the snapshot at open.
 const SCHEMA_V2: &str = "ALTER TABLE library ADD COLUMN snapshot_version TEXT;";
 
+/// Version 3 (Task DE-1.7, ADR 041): the library's own retention period cached from its
+/// snapshot and the identity of the folder the index was built from (a moved or copied folder
+/// has another, so its index is rebuilt); each file's collection logical path and its own
+/// object, with the two columns folder listings read: `dir_key`, the path of the folder that
+/// holds it with every `/` written as U+0001 (`""` at the collection's root), so folders sort
+/// before their siblings whose names continue with a character below `/`, and `name`, its last
+/// segment. A path is unique in its collection; a file of the earlier form has none.
+const SCHEMA_V3: &str = "
+ALTER TABLE library ADD COLUMN retention_days INTEGER;
+ALTER TABLE library ADD COLUMN folder_identity TEXT;
+ALTER TABLE files ADD COLUMN path TEXT;
+ALTER TABLE files ADD COLUMN object_id TEXT;
+ALTER TABLE files ADD COLUMN dir_key TEXT;
+ALTER TABLE files ADD COLUMN name TEXT;
+CREATE UNIQUE INDEX files_place ON files(home_collection_id, path) WHERE path IS NOT NULL;
+CREATE INDEX files_dir ON files(home_collection_id, dir_key, name, id)
+    WHERE path IS NOT NULL AND hidden = 0 AND deleted_at_ms IS NULL;
+";
+
 /// Every migration, by the schema version it produces, applied in order in one transaction.
-const MIGRATIONS: [(i64, &str); 2] = [(1, SCHEMA_V1), (2, SCHEMA_V2)];
+const MIGRATIONS: [(i64, &str); 3] = [(1, SCHEMA_V1), (2, SCHEMA_V2), (3, SCHEMA_V3)];
 
 /// The catalog file name of `library_id`: `<uuid>.sqlite`, or `None` when the identifier is
 /// not a canonical UUID v4 (ADR 021), so no identifier can name a path outside the catalog
