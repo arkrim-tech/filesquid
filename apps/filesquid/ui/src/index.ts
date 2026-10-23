@@ -184,6 +184,7 @@ export {
   MONITOR_ROUTE,
   NAVIGATION_ROUTE_PREFIX,
   RECENT_ROUTE,
+  RECENTLY_DELETED_ROUTE,
   SETTINGS_ROUTE,
   bindFilesRoute,
   bindMonitorRoute,

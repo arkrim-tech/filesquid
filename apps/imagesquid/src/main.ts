@@ -43,7 +43,9 @@ if (shell) {
 }
 if (shell) {
   const source = new ClientLibrarySource(client);
-  bindLibraryRoute(shell, { labels: imagesquid.labels, source, registry: new LibraryRegistry() });
+  const registry = new LibraryRegistry();
+  const facts = { host: client, version: imagesquid.version };
+  bindLibraryRoute(shell, { labels: imagesquid.labels, source, registry, ...facts });
 }
 if (shell) {
   bindMonitorRoute(shell, {

@@ -74,6 +74,8 @@ const libraries = {
   labels,
   source: new ClientLibrarySource(client),
   registry: new LibraryRegistry(),
+  host: client,
+  version: pkg.version,
 };
 if (shell) bindLibraryRoute(shell, libraries);
 if (shell) {

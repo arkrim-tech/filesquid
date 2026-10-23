@@ -29,7 +29,9 @@ export type IconName =
   | "error"
   | "offline"
   | "denied"
-  | "info";
+  | "info"
+  | "arrow-up"
+  | "arrow-down";
 
 /** The path data of each icon on the 24-unit grid. */
 const PATHS: Readonly<Record<IconName, string>> = {
@@ -57,6 +59,8 @@ const PATHS: Readonly<Record<IconName, string>> = {
   offline: "M2 2l20 20M8.5 16.4a5 5 0 0 1 7 0M5 12.9a10 10 0 0 1 5.2-2.8M12 20h.01",
   denied: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM5.7 5.7l12.6 12.6",
   info: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 16v-4M12 8h.01",
+  "arrow-up": "M12 19V5M6 11l6-6 6 6",
+  "arrow-down": "M12 5v14M6 13l6 6 6-6",
 };
 
 /** Default size of an icon in CSS pixels. */

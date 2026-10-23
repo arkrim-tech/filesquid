@@ -138,6 +138,7 @@ describe("default design tokens", () => {
       "--fs-font-size-body": "1rem",
       "--fs-font-size-lead": "1.0625rem",
       "--fs-font-size-title": "1.25rem",
+      "--fs-font-size-card": "1.3125rem",
       "--fs-font-size-heading": "1.375rem",
       "--fs-font-size-page": "1.875rem",
       "--fs-font-size-page-large": "2.125rem",

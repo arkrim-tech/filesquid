@@ -5,8 +5,10 @@
  * - a 240 px sidebar on `--fs-surface-card` with the distribution's 24 px logo mark and product
  *   name (the only `h1`), the New button slot, the view filter slot, the All files and Recent
  *   views, the navigation slot (`<fs-nav-tree slot="navigation">`; the static vocabulary of the
- *   main destinations until one is slotted), the storage block, and the library, Settings and
- *   Logs rows (Logs on the desktop host only, UI-S-021);
+ *   main destinations until one is slotted), then, after a 1 px divider, the single Recently
+ *   deleted row as the tree's final row (UI-S-017, owner answer 2; its count once a view sets
+ *   `deletedCount`), the storage block, and the library, Settings and Logs rows (Logs on the
+ *   desktop host only, UI-S-021);
  * - a 60 px header with the search slot, the host badge (`<fs-host-indicator>`, UI-S-018) and
  *   the Monitor button, and nothing else: no theme control (it lives in Settings, Appearance,
  *   owner answer 7), no API status (Settings, About only, owner answer 12) and no permanent
@@ -34,6 +36,7 @@ import {
   LOGS_ROUTE,
   MONITOR_ROUTE,
   RECENT_ROUTE,
+  RECENTLY_DELETED_ROUTE,
   SETTINGS_ROUTE,
 } from "../app/routes";
 import { LIBRARY_ROUTE } from "../libraries/model";
@@ -85,11 +88,15 @@ const STYLE = `
   .filter { min-block-size: 2.125rem; }
   ul { list-style: none; margin: 0; padding: 0; }
   .views, .tools, .destinations { display: flex; flex-direction: column; }
-  .destinations li, .views a, .tools a { display: flex; align-items: center; gap: var(--fs-space-2); min-block-size: 1.875rem; padding: 0 var(--fs-space-3); color: var(--fs-on-surface-variant); font-size: var(--fs-font-size-small); text-decoration: none; overflow-wrap: anywhere; transition: background-color var(--fs-motion-duration), color var(--fs-motion-duration); }
-  .views a:hover, .tools a:hover { background: var(--fs-surface-raised); color: var(--fs-on-surface); }
-  .views a[aria-current="page"], .tools a[aria-current="page"] { position: relative; background: var(--fs-primary-container); color: var(--fs-on-primary-container); font-weight: 500; }
-  .views a[aria-current="page"]::before, .tools a[aria-current="page"]::before { content: ""; position: absolute; inset-block: 0; inset-inline-start: 0; inline-size: 2.5px; background: var(--fs-brand); }
+  .destinations li, .views a, .tools a, .deleted a { display: flex; align-items: center; gap: var(--fs-space-2); min-block-size: 1.875rem; padding: 0 var(--fs-space-3); color: var(--fs-on-surface-variant); font-size: var(--fs-font-size-small); text-decoration: none; overflow-wrap: anywhere; transition: background-color var(--fs-motion-duration), color var(--fs-motion-duration); }
+  .views a:hover, .tools a:hover, .deleted a:hover { background: var(--fs-surface-raised); color: var(--fs-on-surface); }
+  .views a, .tools a, .deleted a { position: relative; }
+  .views a[aria-current="page"], .tools a[aria-current="page"], .deleted a[aria-current="page"] { position: relative; background: var(--fs-primary-container); color: var(--fs-on-primary-container); font-weight: 500; }
+  .views a[aria-current="page"]::before, .tools a[aria-current="page"]::before, .deleted a[aria-current="page"]::before { content: ""; position: absolute; inset-block: 0; inset-inline-start: 0; inline-size: 2.5px; background: var(--fs-brand); }
   .tree { flex: 1 1 auto; min-height: 0; overflow: auto; }
+  .deleted { margin-block-start: var(--fs-space-2); padding-block-start: var(--fs-space-2); border-block-start: 1px solid var(--fs-outline); }
+  .views a[aria-current="page"] .icon, .tools a[aria-current="page"] .icon, .deleted a[aria-current="page"] .icon { color: var(--fs-primary); }
+  .deleted .count { margin-inline-start: auto; color: var(--fs-on-surface-muted); }
   .storage { display: grid; gap: var(--fs-space-1); padding: var(--fs-space-3) var(--fs-space-3) 0; border-block-start: 1px solid var(--fs-outline); font-size: var(--fs-font-size-small); }
   .storage-head { display: flex; justify-content: space-between; gap: var(--fs-space-2); }
   .storage-title { margin: 0; font-weight: 500; color: var(--fs-on-surface-variant); }
@@ -147,6 +154,7 @@ export class FsAppShell extends HTMLElement {
   private client?: ShellClient;
   private theme?: ThemeStore;
   private summary?: StorageSummary;
+  private deleted?: number;
   private readonly onThemeChange = () => this.showLogo();
   private readonly onHashChange = () => this.syncCurrent();
   /** The document holding this shell's reference to the document-level rules, while connected. */
@@ -191,6 +199,17 @@ export class FsAppShell extends HTMLElement {
   set storage(summary: StorageSummary | undefined) {
     this.summary = summary;
     this.showStorage();
+  }
+
+  /** The number of files in Recently deleted, or undefined while none is known. */
+  get deletedCount(): number | undefined {
+    return this.deleted;
+  }
+
+  /** Show the Recently deleted count at the end of its row, or hide it with undefined. */
+  set deletedCount(count: number | undefined) {
+    this.deleted = count;
+    this.showDeletedCount();
   }
 
   /**
@@ -262,6 +281,7 @@ export class FsAppShell extends HTMLElement {
     );
     this.showLogo();
     this.showStorage();
+    this.showDeletedCount();
     this.syncCurrent();
     recoverFocus(root, hadFocus, () => root.querySelector("main"));
   }
@@ -283,7 +303,7 @@ export class FsAppShell extends HTMLElement {
     nav.setAttribute("aria-label", labels.navigationMain);
     const tree = document.createElement("div");
     tree.className = "tree";
-    tree.append(namedSlot("navigation", destinations(labels)));
+    tree.append(namedSlot("navigation", destinations(labels)), deletedRow(labels));
     nav.append(
       brand(dist),
       namedSlot("new", this.newButton(labels)),
@@ -389,6 +409,15 @@ export class FsAppShell extends HTMLElement {
     if (fill) fill.style.inlineSize = `${usedFraction(summary).toFixed(1)}%`;
   }
 
+  /** Fill or hide the Recently deleted count. */
+  private showDeletedCount(): void {
+    const count = this.shadowRoot?.querySelector<HTMLElement>(".deleted .count");
+    if (!count) return;
+    count.hidden = this.deleted === undefined;
+    const lang = document.documentElement.lang || "en";
+    count.textContent = this.deleted === undefined ? "" : this.deleted.toLocaleString(lang);
+  }
+
   /** Mark the sidebar and header rows of the current route. */
   private syncCurrent(): void {
     const hash = window.location.hash;
@@ -480,6 +509,22 @@ function rows(cls: string, items: readonly Row[], labels: LabelTable): HTMLUList
     li.append(link);
     list.append(li);
   }
+  return list;
+}
+
+/** The single Recently deleted row, the tree's final row, with its count hidden until known. */
+function deletedRow(labels: LabelTable): HTMLUListElement {
+  const list = document.createElement("ul");
+  list.className = "deleted";
+  const li = document.createElement("li");
+  const link = document.createElement("a");
+  link.href = RECENTLY_DELETED_ROUTE;
+  const count = document.createElement("span");
+  count.className = "count";
+  count.hidden = true;
+  link.append(icon("trash"), document.createTextNode(labels.navigationRecentlyDeleted), count);
+  li.append(link);
+  list.append(li);
   return list;
 }
 

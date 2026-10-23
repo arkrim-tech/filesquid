@@ -9,7 +9,9 @@ import type { LibraryRegistry } from "../libraries/registry";
 import type { LabelTable } from "../theme/labels";
 import { focusElement } from "../a11y/focus";
 import { A11Y_STYLE } from "./a11y-style";
+import { CONTROL_STYLE } from "./control-style";
 import type { FsStates } from "./fs-states";
+import type { HostClient } from "./fs-host-indicator";
 
 /** What every library page needs. */
 export interface LibraryPageOptions {
@@ -23,6 +25,14 @@ export interface LibraryPageOptions {
   navigate?: (hash: string) => void;
   /** Whether the browser reports a network connection; `navigator.onLine` by default. */
   online?: () => boolean;
+  /**
+   * Start page only: the client for the host descriptor, so the welcome screen's privacy box
+   * states who can read the files from `GET /api/v1/host` (UI-S-004, UI-S-027). Without it the
+   * box is left out rather than guessed.
+   */
+  host?: HostClient;
+  /** Start page only: the release version for the footer line `appFooter`; left out if absent. */
+  version?: string;
 }
 
 /** A step of a flow that failed, with the step it was and what it rejected with. */
@@ -56,37 +66,66 @@ export async function step<T>(action: LibraryAction, call: () => Promise<T>): Pr
   }
 }
 
-/** The pages' stylesheet; each page puts {@link A11Y_STYLE} before it. */
+/**
+ * The pages' stylesheet (UI-S-027, mockups 01 to 04, 09 and 41 to 43); each page puts
+ * {@link A11Y_STYLE} and {@link CONTROL_STYLE} before it. The welcome page centres a 56 px
+ * title, a 17 px lead, the LIBRARIES eyebrow, three 332 × 248 px cards (radius 10 px, a 1.5 px
+ * `--fs-outline-strong` border, the Create card's 2 px `--fs-primary`) with 21 px 600 heading-font
+ * titles, the raised privacy box and the footer line. The library page shows a 30 px title, the
+ * facts as 13 px label and value rows (values at 160 px, the ID in mono) on the left and the
+ * actions on the right, and the W010 note in a box with a 1 px `--fs-error` border. The repair
+ * page shows mono object lines, the consent dialog on the overlay surface over the scrim, and
+ * the results and refusals. Eyebrows are 11 px 400 upper case in `--fs-on-surface-muted`.
+ */
 export const LIBRARY_STYLE = `
-  :host { display: block; font-family: var(--fs-font-sans); font-size: var(--fs-font-size-body); color: var(--fs-on-surface); }
-  .page { display: grid; gap: var(--fs-space-4); max-inline-size: 56rem; }
-  h2 { margin: 0; font-family: var(--fs-font-heading); font-size: var(--fs-font-size-title); font-weight: 700; }
-  h3 { margin: 0; font-size: var(--fs-font-size-body); font-weight: 700; }
+  :host { display: block; font-family: var(--fs-font-sans); font-size: var(--fs-font-size-ui); color: var(--fs-on-surface); }
+  .page { display: grid; align-content: start; gap: var(--fs-space-3); max-inline-size: 72rem; }
+  .page.start { box-sizing: border-box; max-inline-size: 64.75rem; margin: 0 auto; padding: var(--fs-space-7) 0 var(--fs-space-5); gap: var(--fs-space-4); }
+  h2 { margin: 0; font-family: var(--fs-font-heading); font-size: var(--fs-font-size-page); font-weight: 700; color: var(--fs-on-surface-heading); overflow-wrap: anywhere; }
+  .start h2 { font-size: var(--fs-font-size-display); }
+  h3 { margin: 0; font-family: var(--fs-font-sans); font-size: var(--fs-font-size-eyebrow); font-weight: 400; letter-spacing: 0.1em; text-transform: uppercase; color: var(--fs-on-surface-muted); }
+  .cards h3 { margin-block-start: var(--fs-space-3); font-family: var(--fs-font-heading); font-size: var(--fs-font-size-card); font-weight: 600; letter-spacing: normal; text-transform: none; color: var(--fs-on-surface-heading); }
+  [role="dialog"] h3 { font-family: var(--fs-font-heading); font-size: var(--fs-font-size-heading); font-weight: 700; letter-spacing: normal; text-transform: none; color: var(--fs-on-surface-heading); }
   p { margin: 0; overflow-wrap: anywhere; }
-  .intro, .help, .note { color: var(--fs-on-surface-variant); }
-  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: var(--fs-space-3); }
-  section { display: grid; align-content: start; gap: var(--fs-space-2); box-sizing: border-box; min-inline-size: 0; padding: var(--fs-space-3) var(--fs-space-4); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface-container); }
-  button { justify-self: start; padding: var(--fs-space-1) var(--fs-space-3); border: 1px solid var(--fs-primary); border-radius: var(--fs-radius); background: var(--fs-surface); color: var(--fs-primary); font: inherit; font-weight: 600; cursor: pointer; transition: background-color var(--fs-motion-duration), color var(--fs-motion-duration); }
-  button:hover { background: var(--fs-primary-container); color: var(--fs-on-primary-container); }
-  button.primary { background: var(--fs-primary); color: var(--fs-on-primary); }
-  button[aria-disabled="true"] { opacity: 0.5; cursor: default; }
-  a { color: var(--fs-primary); }
-  dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--fs-space-1) var(--fs-space-4); margin: 0; }
-  dt { color: var(--fs-on-surface-variant); }
-  dd { margin: 0; overflow-wrap: anywhere; }
-  ul { display: grid; gap: var(--fs-space-1); margin: 0; padding-inline-start: var(--fs-space-4); overflow-wrap: anywhere; }
+  .intro { color: var(--fs-on-surface); font-size: var(--fs-font-size-ui); }
+  .start .intro { max-inline-size: 40rem; font-size: var(--fs-font-size-lead); }
+  .help, .note, .truncated { color: var(--fs-on-surface-variant); font-size: var(--fs-font-size-small); }
+  .eyebrow { margin-block-start: var(--fs-space-3); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 20.75rem)); gap: var(--fs-space-4); }
+  .cards section { display: flex; flex-direction: column; align-items: flex-start; gap: var(--fs-space-2); box-sizing: border-box; min-block-size: 15.5rem; padding: var(--fs-space-4); border: 1.5px solid var(--fs-outline-strong); border-radius: var(--fs-radius-dialog); background: var(--fs-surface-card); }
+  .cards section[data-flow="create"] { border: 2px solid var(--fs-primary); }
+  .cards section .button { margin-block-start: auto; }
+  .cards .icon { color: var(--fs-icon); }
+  section { display: grid; align-content: start; gap: var(--fs-space-2); min-inline-size: 0; }
+  .columns { display: grid; grid-template-columns: minmax(0, 40rem) minmax(0, 28rem); gap: var(--fs-space-6); align-items: start; }
+  .side { display: grid; gap: var(--fs-space-4); align-content: start; }
+  .privacy { box-sizing: border-box; padding: var(--fs-space-3) var(--fs-space-4); border-radius: var(--fs-radius); background: var(--fs-surface-raised); }
+  .app-footer { color: var(--fs-on-surface-variant); font-size: var(--fs-font-size-small); }
+  .crumb { justify-self: start; color: var(--fs-on-surface-variant); font-size: var(--fs-font-size-small); text-decoration: none; }
+  .crumb:hover { color: var(--fs-on-surface); text-decoration: underline; }
+  .button[aria-disabled="true"] { border-color: var(--fs-outline); background: var(--fs-surface-raised); color: var(--fs-on-surface-placeholder); cursor: default; }
+  dl { display: grid; grid-template-columns: 10rem minmax(0, 1fr); margin: 0; font-size: var(--fs-font-size-small); }
+  dt, dd { margin: 0; padding: var(--fs-space-2) 0; border-block-end: 1px solid var(--fs-outline); overflow-wrap: anywhere; }
+  dt { color: var(--fs-on-surface-muted); }
+  dd { color: var(--fs-on-surface); }
+  .mono, .offer li, .results li, [role="dialog"] li, .result li { font-family: var(--fs-font-mono); font-size: var(--fs-font-size-small); }
+  ul { display: grid; gap: var(--fs-space-2); margin: 0; padding: 0; list-style: none; overflow-wrap: anywhere; }
+  .results li { padding-block: var(--fs-space-2); border-block-end: 1px solid var(--fs-outline); }
+  [role="dialog"] li { color: var(--fs-on-surface-variant); }
   .status:empty, .alert:empty { display: none; }
-  .alert { color: var(--fs-error); font-weight: 600; }
+  .status { color: var(--fs-on-surface-variant); font-size: var(--fs-font-size-small); }
+  .alert, section[data-section="repair-note"] { box-sizing: border-box; max-inline-size: 51.25rem; padding: var(--fs-space-3); border: 1px solid var(--fs-error); border-radius: var(--fs-radius); background: var(--fs-surface-card); color: var(--fs-on-surface); font-size: var(--fs-font-size-small); font-weight: 600; }
+  section[data-section="repair-note"] { max-inline-size: 28rem; gap: var(--fs-space-1); }
+  section[data-section="repair-note"] .reason { color: var(--fs-on-surface-variant); font-weight: 400; }
+  section[data-section="repair-note"] .button { justify-self: start; padding-inline: 0; }
   .actions { display: flex; flex-wrap: wrap; gap: var(--fs-space-2); }
-  .scrim { position: fixed; inset: 0; z-index: 3; display: grid; place-items: center; padding: var(--fs-space-4); background: color-mix(in srgb, var(--fs-on-surface) 45%, transparent); }
-  [role="dialog"] { display: grid; gap: var(--fs-space-3); box-sizing: border-box; inline-size: min(36rem, 100%); max-block-size: 100%; padding: var(--fs-space-4); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface); color: var(--fs-on-surface); overflow: auto; }
-  .consent { font-weight: 600; }
+  .consent { font-size: var(--fs-font-size-ui); }
 `;
 
-/** The stylesheet of a page: the shared accessibility rules first, then the pages' own. */
+/** The stylesheet of a page: the shared accessibility and control rules first, then its own. */
 export function pageStyle(): HTMLStyleElement {
   const style = document.createElement("style");
-  style.textContent = A11Y_STYLE + LIBRARY_STYLE;
+  style.textContent = A11Y_STYLE + CONTROL_STYLE + LIBRARY_STYLE;
   return style;
 }
 
@@ -110,14 +149,20 @@ export function node<K extends keyof HTMLElementTagNameMap>(
 }
 
 /**
- * Create a button that names its action in `data-action`.
+ * Create a button that names its action in `data-action`: a secondary button, or the screen's
+ * one primary button (UI-S-024: at most one filled primary button per screen and per dialog).
  *
  * @param action The action name, for example `create`.
  * @param text The button's label from the label table.
+ * @param kind `secondary` (default) or `primary`.
  * @returns The button.
  */
-export function actionButton(action: string, text: string): HTMLButtonElement {
-  const button = node("button", undefined, text);
+export function actionButton(
+  action: string,
+  text: string,
+  kind: "primary" | "secondary" = "secondary",
+): HTMLButtonElement {
+  const button = node("button", `button ${kind}`, text);
   button.type = "button";
   button.dataset.action = action;
   return button;

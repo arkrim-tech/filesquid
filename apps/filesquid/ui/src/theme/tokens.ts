@@ -54,6 +54,7 @@ export const REQUIRED_TOKENS = [
   "--fs-font-size-body",
   "--fs-font-size-lead",
   "--fs-font-size-title",
+  "--fs-font-size-card",
   "--fs-font-size-heading",
   "--fs-font-size-page",
   "--fs-font-size-page-large",

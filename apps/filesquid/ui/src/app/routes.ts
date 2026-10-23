@@ -29,6 +29,9 @@ export const ALL_FILES_ROUTE = "#/files";
 /** Hash of the Recent view of the sidebar (UI-S-025, UI-S-026); UI-F2.8 binds it. */
 export const RECENT_ROUTE = "#/recent";
 
+/** Hash of the Recently deleted view (UI-S-002, UI-S-017); UI-F2.17 binds it. */
+export const RECENTLY_DELETED_ROUTE = "#/recently-deleted";
+
 /** Hash of the Logs view (UI-S-025, UI-S-032); UI-F2.16 binds it. */
 export const LOGS_ROUTE = "#/logs";
 

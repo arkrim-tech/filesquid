@@ -78,6 +78,7 @@ it("renders ImageSquid brand and vocabulary in the shared shell", async () => {
     "Albums",
     "Galleries",
     "Exhibits",
+    "Recently deleted",
     "Create or open a library",
     "Settings",
     "Logs",

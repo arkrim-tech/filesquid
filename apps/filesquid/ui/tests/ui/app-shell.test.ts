@@ -122,6 +122,29 @@ describe("<fs-app-shell>", () => {
     expect(slot?.assignedElements()).toEqual([tree]);
   });
 
+  it("ends the tree with the single Recently deleted row after a divider (UI-S-017)", async () => {
+    const shell = mount();
+    await settle();
+    const root = shell.shadowRoot as ShadowRoot;
+    const tree = root.querySelector(".tree");
+    const row = tree?.lastElementChild;
+    expect(row?.classList.contains("deleted")).toBe(true);
+    const link = row?.querySelector("a");
+    expect(link?.getAttribute("href")).toBe("#/recently-deleted");
+    expect(link?.querySelector<SVGElement>("svg")?.dataset.icon).toBe("trash");
+    expect(link?.textContent).toBe(labels.navigationRecentlyDeleted);
+    const count = row?.querySelector<HTMLElement>(".count");
+    expect(count?.hidden).toBe(true);
+    shell.deletedCount = 8;
+    expect(count?.hidden).toBe(false);
+    expect(count?.textContent).toBe("8");
+    shell.deletedCount = undefined;
+    expect(count?.hidden).toBe(true);
+    const css = root.querySelector("style")?.textContent ?? "";
+    expect(css).toMatch(/\.deleted \{[^}]*border-block-start: 1px solid var\(--fs-outline\)/);
+    expect(css).toMatch(/\.deleted \.count \{[^}]*color: var\(--fs-on-surface-muted\)/);
+  });
+
   it("shows the storage block only once a summary is given, worded from the label table", async () => {
     const shell = mount();
     await settle();
