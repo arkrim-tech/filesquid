@@ -195,3 +195,36 @@ test crates/prov/src/ids.rs - ids::percent_encode (line 32) ... ok
 test crates/prov/src/lib.rs - (line 34) ... ok
 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
 ```
+
+## FS-2.8 test gaps (2026-10-23)
+
+Owner decision 3a of 2026-10-23: the Agent Prompt's tests against `FsBackend` as well as `MemoryBackend` are added on branch `test/fs-2.8-fsbackend-rebase-tests`. No defect was found; no library code changed. TDD-ENFORCE: not applicable, these are tests of code delivered in PR #86.
+
+### PROV-S-006: `ocfl` feature (records in OCFL objects and reconstruction)
+
+`tests/unit/ocfl.rs` builds its rig over any backend (`Rig::memory`, `Rig::fs`), and every test that stores an object runs on both: a record committed in its own version, a rebased commit regenerating its record, listing, reconstruction with and without a version `user` and structured `filesquid.operation.v1` messages (including malformed and catalog messages), backfill and its cap, the stray record path, the wrong-object refusal and the record a revert removed. `FsBackend` comes from a test-only dev-dependency on `filesquid-ocfl` with its default `fs` feature; the library's own dependency stays optional and without default features (`unit_isolation` reads only the library's dependency tables and still passes), and `Cargo.lock` is unchanged.
+
+### Raw test output
+
+`cargo test -p filesquid-prov --features ocfl --test unit_ocfl --locked`:
+
+```text
+    Finished `test` profile [unoptimized] target(s) in 0.25s
+     Running tests/unit/ocfl.rs (<target>/debug/deps/unit_ocfl-d400942d0cb9a2c6)
+
+running 12 tests
+test a_catalog_message_without_a_kind_keeps_its_operation_id ... ok
+test a_commit_writes_its_record_named_after_its_version ... ok
+test a_reconstructed_record_invents_no_agent_and_reads_the_operation_message ... ok
+test a_rebased_commit_regenerates_its_record_for_the_new_version ... ok
+test a_record_path_in_the_head_never_answers_for_an_uncommitted_version ... ok
+test a_record_a_revert_removed_from_the_head_is_not_reconstructed ... ok
+test backfill_refuses_an_object_its_change_model_does_not_commit_to ... ok
+test record_paths_follow_the_version_name ... ok
+test backfill_is_capped_per_run ... ok
+test malformed_operation_fields_fall_back_to_the_placeholders ... ok
+test records_are_listed_and_a_version_without_one_reads_as_none ... ok
+test backfill_stages_every_missing_record_and_commits_them_in_one_version ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+```
