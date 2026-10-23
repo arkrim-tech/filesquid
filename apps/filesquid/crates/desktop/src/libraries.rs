@@ -2,7 +2,8 @@
 //! over the folders the owner chose, installed with
 //! [`ApiState::install_libraries`](filesquid_api::ApiState::install_libraries).
 //!
-//! The commands keep the one meaning of create, open, snapshot copy, rebuild and repair
+//! The commands keep the one meaning of create, open, snapshot copy, rebuild (as the
+//! `library.rebuild` job's runs, Task API-F2.17) and repair
 //! ([`LibraryCommands`] over [`LocalLibraryService`]); the desktop only injects where the
 //! storage roots come from ([`HostLocations`]) and the persistent repair ledger
 //! ([`SqliteRepairLedger`](filesquid_native::SqliteRepairLedger) in the operational store). [`DesktopLibraries`] adds what a host
@@ -16,8 +17,9 @@
 use filesquid_api::auth::Principal;
 use filesquid_api::local_library::{
     CopyReport, LibraryCommands, LibraryFacts, LibraryFuture, LibraryOperations, LibraryRequest,
-    LibraryView, LocalLibraryService, LocationRequest, Readable, RebuildReport, RecentLibraries,
-    RenameLibraryRequest, RepairAnswer, RepairCandidates, RepairRequest, SnapshotCopyRequest,
+    LibraryView, LocalLibraryService, LocationRequest, Readable, RebuildEnd, RebuildProgress,
+    RecentLibraries, RenameLibraryRequest, RepairAnswer, RepairCandidates, RepairRequest,
+    SnapshotCopyRequest,
 };
 use filesquid_api::ocfl_validation::ValidationService;
 use filesquid_core::LibraryId;
@@ -155,8 +157,22 @@ impl LibraryOperations for DesktopLibraries {
         Box::pin(async move { self.commands.copy_snapshot(&actor, request).await })
     }
 
-    fn rebuild(&self, actor: String, request: LibraryRequest) -> LibraryFuture<'_, RebuildReport> {
-        Box::pin(async move { self.commands.rebuild(&actor, request).await })
+    fn rebuild_ready(&self, actor: String, request: LibraryRequest) -> LibraryFuture<'_, ()> {
+        Box::pin(async move { self.commands.rebuild_ready(&actor, &request) })
+    }
+
+    fn rebuild_from<'a>(
+        &'a self,
+        actor: String,
+        request: LibraryRequest,
+        after: Option<String>,
+        progress: &'a mut (dyn RebuildProgress + Send),
+    ) -> LibraryFuture<'a, RebuildEnd> {
+        Box::pin(async move {
+            self.commands
+                .rebuild_from(&actor, request, after, progress)
+                .await
+        })
     }
 
     fn repair_candidates(

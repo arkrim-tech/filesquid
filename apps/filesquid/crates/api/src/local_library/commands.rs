@@ -15,7 +15,7 @@ use super::locations::{
     LibraryLocations, LibraryRequest, LibraryRoot, LibraryView, LocationRequest,
     SnapshotCopyRequest, MAX_LOCATION_ID_BYTES,
 };
-use super::rebuild::RebuildReport;
+use super::rebuild::{RebuildEnd, RebuildProgress};
 use super::repair::{RepairAnswer, RepairCandidates, RepairRequest, REPAIR_OPERATION};
 use super::service::{
     LocalLibraryService, CANDIDATES_OPERATION, COPY_OPERATION, CREATE_OPERATION, FACTS_OPERATION,
@@ -243,20 +243,40 @@ impl<L: LibraryLocations> LibraryCommands<L> {
             .await
     }
 
-    /// Rebuild an open library from its files, for `actor`.
+    /// Refuse a rebuild of a library that is not open, for `actor`, before its job is
+    /// submitted; the refusal is journaled once as `library.rebuild`.
     ///
     /// # Errors
     ///
-    /// `library_not_open`, or the errors of [`LocalLibraryService::rebuild`].
-    pub async fn rebuild(
+    /// `library_not_open`.
+    pub fn rebuild_ready(
+        &self,
+        actor: &str,
+        request: &LibraryRequest,
+    ) -> Result<(), LocalLibraryError> {
+        let library = &request.library_id;
+        let root = self.root(library);
+        self.refused(actor, REBUILD_OPERATION, Some(library), root)
+            .map(drop)
+    }
+
+    /// Rebuild an open library from its files after the cursor `after`, for `actor`, telling
+    /// `progress` about each object: the step of a rebuild job.
+    ///
+    /// # Errors
+    ///
+    /// `library_not_open`, or the errors of [`LocalLibraryService::rebuild_from`].
+    pub async fn rebuild_from(
         &self,
         actor: &str,
         request: LibraryRequest,
-    ) -> Result<RebuildReport, LocalLibraryError> {
+        after: Option<String>,
+        progress: &mut (dyn RebuildProgress + Send),
+    ) -> Result<RebuildEnd, LocalLibraryError> {
         let library = &request.library_id;
         let root = self.refused(actor, REBUILD_OPERATION, Some(library), self.root(library))?;
         self.service
-            .rebuild(actor, library, root.backend.as_ref())
+            .rebuild_from(actor, library, root.backend.as_ref(), after, progress)
             .await
     }
 

@@ -727,8 +727,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Rebuild a library from its files
-         * @description Reads every object of the open library from its OCFL files alone, so a host can rebuild its catalog without its database. Validation errors are reported, never adopted or repaired, and an object whose head has no version inventory is flagged. Writes nothing. Refusals: library_not_open and the open errors of the storage root. The outcome is journaled as library.rebuild. Every refusal is journaled once, with its error code and opaque IDs only (an authorisation refusal as api.auth.denied); answers carry opaque library and object identifiers, never a filesystem path, storage key or OCFL content path (API-S-005, API-S-025).
+         * Rebuild a library from its files as a durable job
+         * @description Starts the rebuild from files as a durable job of kind library.rebuild (API-S-025 Rebuild as a job, API-S-033) and answers pending with its job ID: the job reads every object of the open library from its OCFL files alone, so a host can rebuild its catalog without its database, reports its progress in objects (done of total) on the job routes and the job.update event, and is paused, resumed from its checkpoint without reading a completed object again, and cancelled through the job routes (API-S-037). Once the job has completed, its view's result is the RebuildReport: the objects read, the objects not readable, and each object's validation errors; an object whose head has no version inventory is flagged. Validation errors are reported, never adopted or repaired, and nothing is written to the library's files, so a cancel changes none of them. A library whose rebuild job is unfinished answers that job again, and no second job is submitted. scheduled says whether the job was handed to the host's runner now; false leaves it pending (paused, already running, or a host without a runner for the kind). The request takes no CommandEnvelope: the job's own operation ID identifies it. Refusals before any job is submitted: library_not_open, a malformed body (invalid_request), and a host without a job service (unavailable). The finished rebuild is journaled once as library.rebuild, and its job's state changes as job.*; every refusal is journaled once, with its error code and opaque IDs only (an authorisation refusal as api.auth.denied); answers carry opaque library, job and object identifiers, never a filesystem path, storage key or OCFL content path (API-S-005, API-S-025).
          */
         post: operations["rebuildLibrary"];
         delete?: never;
@@ -1939,7 +1939,7 @@ export interface components {
             /** @description The OCFL validation code when an OCFL rule is broken (E###), else unreadable. */
             error_code: string;
         };
-        /** @description Everything a rebuild from files found, and with the host's journal restore, what it restored of the library's journal. */
+        /** @description Everything a rebuild from files found (the result of a completed library.rebuild job): the objects read, the objects not readable, each object's validation errors, and with the host's journal restore, what it restored of the library's journal. */
         RebuildReport: {
             /** @description Objects read, in object-root order. */
             objects: components["schemas"]["RebuiltObject"][];
@@ -1947,6 +1947,20 @@ export interface components {
             unreadable: components["schemas"]["UnreadableObject"][];
             journal?: components["schemas"]["JournalRebuild"];
         };
+        /** @description The answer of POST /api/v1/libraries/rebuilds: the rebuild's durable job, pending (API-S-025 Rebuild as a job). */
+        RebuildJobAnswer: {
+            outcome: components["schemas"]["RebuildOutcome"];
+            /** @description The job's ID: read and control it through the job routes. */
+            job_id: string;
+            job: components["schemas"]["JobView"];
+            /** @description Whether the job was handed to the host's runner to run now; false leaves it pending (paused, already running, or a host without a runner for the kind). */
+            scheduled: boolean;
+        };
+        /**
+         * @description What became of a rebuild request: pending, a durable job that has not finished.
+         * @enum {string}
+         */
+        RebuildOutcome: "pending";
         /** @description An object the UI may offer to repair. */
         RepairCandidate: {
             /** @description The object identifier. */
@@ -2627,7 +2641,7 @@ export interface components {
         JobView: {
             /** @description The job ID. */
             id: string;
-            /** @description The kind of work, for example import. */
+            /** @description The kind of work, for example import or library.rebuild. */
             kind: string;
             /** @description The job's operation ID. */
             operation_id: string;
@@ -2653,8 +2667,10 @@ export interface components {
              * @description When the job last changed (RFC 3339, UTC).
              */
             updated: string;
+            /** @description Once the job has completed, the result its kind defines (for library.rebuild, the RebuildReport of API-S-025), answered by GET /api/v1/jobs/{job} and the control routes; null before then, after a failure or a cancel, for a kind without one, and in the job listing and the job.update event, so neither grows with a report. */
+            result: components["schemas"]["RebuildReport"] | null;
         };
-        /** @description One listing of durable jobs. */
+        /** @description One listing of durable jobs. Each listed view carries result null; read a completed job's result through GET /api/v1/jobs/{job}. */
         JobPage: {
             /** @description The jobs, newest first. */
             jobs: components["schemas"]["JobView"][];
@@ -4464,13 +4480,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Everything the rebuild found. */
+            /** @description The rebuild's job, pending. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RebuildReport"];
+                    "application/json": components["schemas"]["RebuildJobAnswer"];
                 };
             };
             400: components["responses"]["InvalidRequest"];

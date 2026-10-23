@@ -8,7 +8,7 @@ use super::facts::{LibraryFacts, RecentLibraries, RenameLibraryRequest};
 use super::locations::{
     LibraryLocations, LibraryRequest, LibraryView, LocationRequest, SnapshotCopyRequest,
 };
-use super::rebuild::RebuildReport;
+use super::rebuild::{RebuildEnd, RebuildProgress};
 use super::repair::{RepairAnswer, RepairCandidates, RepairRequest};
 use super::snapshot::CopyReport;
 use crate::auth::Principal;
@@ -39,8 +39,19 @@ pub trait LibraryOperations: Send + Sync {
         request: SnapshotCopyRequest,
     ) -> LibraryFuture<'_, CopyReport>;
 
-    /// Rebuild an open library from its files, for `actor`.
-    fn rebuild(&self, actor: String, request: LibraryRequest) -> LibraryFuture<'_, RebuildReport>;
+    /// Refuse a rebuild of a library that is not open, for `actor`, before its job is
+    /// submitted (API-S-025 **Rebuild as a job**).
+    fn rebuild_ready(&self, actor: String, request: LibraryRequest) -> LibraryFuture<'_, ()>;
+
+    /// Rebuild an open library from its files after the cursor `after`, for `actor`, telling
+    /// `progress` about each object, which may stop it: one run of a `library.rebuild` job.
+    fn rebuild_from<'a>(
+        &'a self,
+        actor: String,
+        request: LibraryRequest,
+        after: Option<String>,
+        progress: &'a mut (dyn RebuildProgress + Send),
+    ) -> LibraryFuture<'a, RebuildEnd>;
 
     /// The repair candidates of an open library, for `actor`.
     fn repair_candidates(
@@ -84,8 +95,20 @@ impl<L: LibraryLocations> LibraryOperations for LibraryCommands<L> {
         Box::pin(async move { LibraryCommands::copy_snapshot(self, &actor, request).await })
     }
 
-    fn rebuild(&self, actor: String, request: LibraryRequest) -> LibraryFuture<'_, RebuildReport> {
-        Box::pin(async move { LibraryCommands::rebuild(self, &actor, request).await })
+    fn rebuild_ready(&self, actor: String, request: LibraryRequest) -> LibraryFuture<'_, ()> {
+        Box::pin(async move { LibraryCommands::rebuild_ready(self, &actor, &request) })
+    }
+
+    fn rebuild_from<'a>(
+        &'a self,
+        actor: String,
+        request: LibraryRequest,
+        after: Option<String>,
+        progress: &'a mut (dyn RebuildProgress + Send),
+    ) -> LibraryFuture<'a, RebuildEnd> {
+        Box::pin(async move {
+            LibraryCommands::rebuild_from(self, &actor, request, after, progress).await
+        })
     }
 
     fn repair_candidates(

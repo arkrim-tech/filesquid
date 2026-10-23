@@ -62,7 +62,9 @@ use filesquid_api::host::{HostIdentity, NotEnrolled};
 use filesquid_api::jobs::Jobs;
 use filesquid_api::journal::{JournalEntry, Outcome};
 use filesquid_api::journal_writer::JournalSender;
-use filesquid_api::local_library::{LocalLibraryService, RepairLedger};
+use filesquid_api::local_library::{
+    LocalLibraryService, RebuildRunner, RepairLedger, REBUILD_JOB_KIND,
+};
 use filesquid_api::ocfl_validation::ValidationService;
 use filesquid_api::registry::ProcessHandle;
 use filesquid_api::trace_layer::JournalLayer;
@@ -571,6 +573,33 @@ pub fn install_library_routes(
     Ok(locations)
 }
 
+/// Install this launch's durable job service `jobs` for the job routes (API-S-037) and the
+/// runner of rebuild jobs over the installed library commands, run on `runtime`, the app's
+/// long-lived runtime (Task API-F2.17; API-S-025 **Rebuild as a job**). Resuming an
+/// unfinished rebuild at launch is the host's next step (Task DE-1.8).
+///
+/// # Errors
+/// The library commands are not installed yet, or a job service or a rebuild runner is
+/// already installed.
+pub fn install_job_routes(
+    state: &ApiState,
+    jobs: &Jobs,
+    runtime: tokio::runtime::Handle,
+) -> Result<(), String> {
+    let libraries = state
+        .libraries()
+        .ok_or_else(|| "the library commands are not installed".to_string())?;
+    if !state.install_jobs(Arc::new(jobs.clone())) {
+        return Err("a job service was already installed".to_string());
+    }
+    let runner =
+        RebuildRunner::new(jobs.clone(), libraries, Principal::Owner.actor()).with_runtime(runtime);
+    if !state.install_job_runner(REBUILD_JOB_KIND, Arc::new(runner)) {
+        return Err("a rebuild runner was already installed".to_string());
+    }
+    Ok(())
+}
+
 /// Install where this desktop keeps each user's UI preferences (API-S-011, API-F2.2): the
 /// operational store in `data_dir` ([`SqlitePreferences`]). Opens a database connection.
 ///
@@ -705,6 +734,9 @@ fn start_monitor(
     app.manage(DesktopCatalog(catalog));
     install_library_services(app, &host, &installation, &data_dir, opened)
         .inspect_err(|_| host.stop())?;
+    let runtime = tauri::async_runtime::handle().inner().clone();
+    install_job_routes(&state, &app.state::<DesktopJobs>().0, runtime)
+        .inspect_err(|_| host.stop())?;
     app.manage(DesktopInstallation(installation));
     open_test_library(app, &data_dir);
     let forwarder = Arc::new(event_channel::register_forwarder(host.monitor().registry()));
@@ -806,7 +838,8 @@ fn prepare_backfill(
     catalog: &Arc<SqliteCatalog>,
     opened: &Arc<OpenedRoots>,
 ) -> Result<(BackfillTask, bool), String> {
-    let jobs = history_backfill::open_jobs(data_dir, host)?;
+    let events = app.state::<ApiState>().events.clone();
+    let jobs = history_backfill::open_jobs(data_dir, host)?.with_events(events);
     let recovered = history_backfill::recover_jobs(&jobs).is_ok();
     let task = BackfillTask {
         jobs: jobs.clone(),

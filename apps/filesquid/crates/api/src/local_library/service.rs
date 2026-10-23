@@ -14,7 +14,7 @@ use super::error::LocalLibraryError;
 use super::journal_rebuild::{rebuild_journal, JournalRestore};
 use super::ledger::{RepairLedger, RepairRecord};
 use super::provenance::{commit_repair_record, Provenance, Repaired, PROVENANCE_NOT_CONFIGURED};
-use super::rebuild::{rebuild, RebuildReport};
+use super::rebuild::{rebuild, rebuild_from, RebuildEnd, RebuildProgress, RebuildReport};
 use super::repair::{
     locate, recorded, repair_object, Located, ObjectRefusal, ObjectRepair, RepairAnswer,
     RepairCandidates, RepairRequest, RepairResult, REPAIR_OPERATION,
@@ -177,6 +177,49 @@ impl LocalLibraryService {
         let result = self.rebuild_all(root).await;
         self.journal_outcome(actor, REBUILD_OPERATION, library_id, &result);
         result
+    }
+
+    /// Rebuild what `root` holds after the cursor `after` (from the start without one), for
+    /// `actor`, telling `progress` about each object: the step of a rebuild job
+    /// (API-S-025 **Rebuild as a job**). Once every object has been gone through, the journal
+    /// is restored when a journal restore is installed, and the rebuild's outcome is journaled
+    /// once as `library.rebuild`; a rebuild `progress` stops is not journaled here, and a
+    /// failure is journaled as failed. Nothing is written to `root`.
+    ///
+    /// # Errors
+    ///
+    /// The open errors of the storage root, `journal_too_large`, or `unavailable`.
+    pub async fn rebuild_from<B: StorageBackend>(
+        &self,
+        actor: &str,
+        library_id: &LibraryId,
+        root: &B,
+        after: Option<String>,
+        progress: &mut (dyn RebuildProgress + Send),
+    ) -> Result<RebuildEnd, LocalLibraryError> {
+        let result = self.rebuild_objects(root, after.as_deref(), progress).await;
+        if !matches!(result, Ok(RebuildEnd::Stopped)) {
+            self.journal_outcome(actor, REBUILD_OPERATION, library_id, &result);
+        }
+        result
+    }
+
+    /// The objects of `root` after `after`, then, once they are all gone through and a
+    /// journal restore is installed, its journal. Storage and journal-store I/O.
+    async fn rebuild_objects<B: StorageBackend>(
+        &self,
+        root: &B,
+        after: Option<&str>,
+        progress: &mut (dyn RebuildProgress + Send),
+    ) -> Result<RebuildEnd, LocalLibraryError> {
+        let Some(total) = rebuild_from(root, after, progress).await? else {
+            return Ok(RebuildEnd::Stopped);
+        };
+        let journal = match &self.journal_restore {
+            Some(restore) => Some(rebuild_journal(root, restore).await?),
+            None => None,
+        };
+        Ok(RebuildEnd::Finished { total, journal })
     }
 
     /// The objects of `root` whose committed head lacks its version inventory: what the

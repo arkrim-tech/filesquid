@@ -53,6 +53,7 @@ mod locations;
 mod operations;
 mod provenance;
 mod rebuild;
+mod rebuild_job;
 mod repair;
 mod root;
 pub(crate) mod routes;
@@ -77,7 +78,14 @@ pub use operations::{LibraryFuture, LibraryOperations, Readable};
 pub use provenance::{
     JOURNAL_IDS_UNAVAILABLE, PROVENANCE_COMMIT_FAILED, PROVENANCE_NOT_CONFIGURED,
 };
-pub use rebuild::{RebuildReport, RebuiltObject, UnreadableObject};
+pub use rebuild::{
+    RebuildEnd, RebuildEntry, RebuildProgress, RebuildReport, RebuildStep, RebuiltObject,
+    UnreadableObject,
+};
+pub use rebuild_job::{
+    rebuild_source, submit_rebuild, RebuildJobAnswer, RebuildOutcome, RebuildRunner, REBUILD_BATCH,
+    REBUILD_JOB_KIND,
+};
 pub use repair::{
     ObjectRepair, RepairAnswer, RepairCandidate, RepairCandidates, RepairConsent, RepairRequest,
     RepairResult, CONSENT_STATEMENT, CONSENT_STATEMENT_ID, MAX_CANDIDATES, MAX_REPAIR_OBJECTS,

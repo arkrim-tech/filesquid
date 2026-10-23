@@ -6,7 +6,8 @@
 //! - `POST /api/v1/libraries` (`library.manage`): create a library in an empty location.
 //! - `POST /api/v1/libraries/openings` (`library.manage`): open the library in a location.
 //! - `POST /api/v1/libraries/snapshot-copies` (`library.manage`): copy a completed snapshot.
-//! - `POST /api/v1/libraries/rebuilds` (`library.manage`): rebuild from files.
+//! - `POST /api/v1/libraries/rebuilds` (`library.manage`): rebuild from files as a durable
+//!   `library.rebuild` job (Task API-F2.17), answered `pending` with the job.
 //! - `GET /api/v1/libraries/repair-candidates` (`library.read`): the W010 candidates.
 //! - `POST /api/v1/libraries/repairs` (`library.repair`): the consented repair; the policy
 //!   grants it to the desktop owner only.
@@ -24,6 +25,7 @@
 //! its library commands yet.
 
 use super::operations::LibraryOperations;
+use super::rebuild_job::{submit_rebuild, RebuildJobAnswer, RebuildOutcome, SubmitRefusal};
 use super::repair::REPAIR_OPERATION;
 use super::service::{
     CANDIDATES_OPERATION, COPY_OPERATION, CREATE_OPERATION, FACTS_OPERATION, OPEN_OPERATION,
@@ -32,6 +34,8 @@ use super::service::{
 use super::LocalLibraryError;
 use crate::auth::{journal_entry, Action, Principal};
 use crate::error::ApiError;
+use crate::jobs::routes as job_routes;
+use crate::jobs::{JobError, JobView};
 use crate::journal::{JournalEntry, Level, Outcome};
 use crate::routes::Route;
 use crate::ApiState;
@@ -151,18 +155,68 @@ async fn copy_snapshot(
     answer(operations.copy_snapshot(actor, request).await)
 }
 
-/// `POST /api/v1/libraries/rebuilds`.
+/// `POST /api/v1/libraries/rebuilds`: refuse a library that is not open, then answer the
+/// library's unfinished rebuild job or a new one, handed to the host's runner (API-S-025
+/// **Rebuild as a job**).
 async fn rebuild(
     State(state): State<ApiState>,
     Extension(principal): Extension<Principal>,
     request: Result<Json<super::LibraryRequest>, JsonRejection>,
 ) -> Response {
     let actor = principal.actor().to_string();
-    let (operations, request) = match ready(&state, body(request)) {
+    let checked = ready(&state, body(request))
+        .and_then(|(ops, request)| Ok((ops, request, state.jobs().ok_or_else(no_jobs)?)));
+    let (operations, request, jobs) = match checked {
         Ok(ready) => ready,
         Err(err) => return refuse(&state, REBUILD_OPERATION, &actor, err).await,
     };
-    answer(operations.rebuild(actor, request).await)
+    if let Err(err) = operations
+        .rebuild_ready(actor.clone(), request.clone())
+        .await
+    {
+        return ApiError::from(err).into_response();
+    }
+    let library = request.library_id;
+    let submitted = job_routes::blocking(move || Ok(submit_rebuild(&jobs, &library)))
+        .await
+        .unwrap_or_else(|error| {
+            let journaled = false;
+            Err(SubmitRefusal { error, journaled })
+        });
+    let job = match submitted {
+        Ok(job) => job,
+        Err(refusal) if refusal.journaled => {
+            return ApiError::from(job_failure(&refusal.error)).into_response();
+        }
+        Err(refusal) => {
+            let err = job_failure(&refusal.error);
+            return refuse(&state, REBUILD_OPERATION, &actor, err).await;
+        }
+    };
+    let scheduled = !job.is_paused() && job_routes::schedule(&state, &job);
+    Json(RebuildJobAnswer {
+        outcome: RebuildOutcome::Pending,
+        job_id: job.id.clone(),
+        job: JobView::of(&job),
+        scheduled,
+    })
+    .into_response()
+}
+
+/// The refusal for a host that runs no durable jobs yet.
+fn no_jobs() -> LocalLibraryError {
+    tracing::info!(target: super::LOG_TARGET, "no job service is installed");
+    LocalLibraryError::Unavailable
+}
+
+/// The library error of a job store failure: retryable `unavailable`, else `internal`. Pure
+/// but for the log.
+fn job_failure(err: &JobError) -> LocalLibraryError {
+    tracing::info!(target: super::LOG_TARGET, error = %err, "a rebuild job was not submitted");
+    match err {
+        JobError::Unavailable(_) => LocalLibraryError::Unavailable,
+        _ => LocalLibraryError::Internal,
+    }
 }
 
 /// `GET /api/v1/libraries/repair-candidates`.
