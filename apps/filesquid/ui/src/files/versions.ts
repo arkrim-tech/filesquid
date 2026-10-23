@@ -51,10 +51,24 @@ export function versionRows(history: FileHistory): VersionRow[] {
   });
 }
 
-/** The number of a `v<n>` label, or undefined. */
-function versionNumber(version: string): number | undefined {
+/**
+ * The number of a `v<n>` label, or undefined. OCFL puts no cap on version numbers, so it is a
+ * `bigint`: exact beyond `Number.MAX_SAFE_INTEGER`.
+ */
+function versionNumber(version: string): bigint | undefined {
   const match = /^v([1-9][0-9]*)$/.exec(version);
-  return match ? Number(match[1]) : undefined;
+  return match ? BigInt(match[1] as string) : undefined;
+}
+
+/**
+ * The number of versions that changed the file, all of them, though {@link versionRows} lists
+ * at most {@link MAX_VERSION_ROWS}. Pure.
+ *
+ * @param history The API's history.
+ * @returns The count of its entries.
+ */
+export function versionTotal(history: FileHistory): number {
+  return history.entries.length;
 }
 
 /**
@@ -65,7 +79,7 @@ function versionNumber(version: string): number | undefined {
  */
 export function nextVersion(head: string): string | undefined {
   const number = versionNumber(head);
-  return number === undefined ? undefined : `v${number + 1}`;
+  return number === undefined ? undefined : `v${number + 1n}`;
 }
 
 /**
@@ -77,9 +91,10 @@ export function nextVersion(head: string): string | undefined {
  * @returns Their labels.
  */
 export function laterVersions(rows: readonly VersionRow[], version: string): string[] {
-  const from = versionNumber(version) ?? Number.POSITIVE_INFINITY;
+  const from = versionNumber(version);
+  if (from === undefined) return [];
   return rows
-    .filter((row) => (versionNumber(row.version) ?? 0) > from)
+    .filter((row) => (versionNumber(row.version) ?? 0n) > from)
     .map((row) => row.version)
     .reverse();
 }

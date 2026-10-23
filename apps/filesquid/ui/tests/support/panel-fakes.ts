@@ -61,6 +61,15 @@ export interface Gate {
   open(): void;
 }
 
+/** A promise that settles when `signal` aborts; never without one. */
+function aborted(signal?: AbortSignal): Promise<void> {
+  if (!signal) return new Promise<void>(() => undefined);
+  if (signal.aborted) return Promise.resolve();
+  return new Promise<void>((resolve) =>
+    signal.addEventListener("abort", () => resolve(), { once: true }),
+  );
+}
+
 /** Make a gate. */
 export function gate(): Gate {
   let open: () => void = () => undefined;
@@ -92,12 +101,18 @@ export class FakePanelSource {
   }[] = [];
   /** Calls per method. */
   readonly calls = { details: 0, history: 0, versions: 0, size: 0, restore: 0 };
+  /** When true, calls ignore their abort signal, as a host that answers anyway would. */
+  ignoreAbort = false;
 
-  /** Wait for the method's gate, then fail when a failure is set. */
+  /**
+   * Wait for the method's gate (an abort ends the wait at once, unless `ignoreAbort`), then
+   * fail when a failure is set.
+   */
   private async step(name: keyof FakePanelSource["calls"], options?: SourceOptions): Promise<void> {
     this.calls[name] += 1;
-    await this.gates[name]?.wait;
-    if (options?.signal?.aborted) throw new DOMException("aborted", "AbortError");
+    const signal = this.ignoreAbort ? undefined : options?.signal;
+    await Promise.race([this.gates[name]?.wait, aborted(signal)]);
+    if (signal?.aborted) throw new DOMException("aborted", "AbortError");
     if (this.failures[name] !== undefined) throw this.failures[name];
   }
 
@@ -151,19 +166,21 @@ export class FakePanelSource {
   /** The bytes the history keeps. */
   async historySize(file: FileRef, options?: SourceOptions): Promise<FileHistorySize> {
     await this.step("size", options);
+    const contents = new Set(this.entries.map((e) => e.digest).filter((d) => d !== null));
     return {
       library_id: file.library_id,
       object_id: file.object_id,
       path: file.path,
       versions: this.entries.length,
-      contents: this.entries.length,
+      contents: contents.size,
       bytes: this.bytes,
     };
   }
 
   /**
-   * Record a restore and publish the next version with the restored content; a revision that is
-   * not the head is refused as `conflict`, as the API does (API-F2.13).
+   * Record a restore and publish the next version with the restored content. As the API does,
+   * a revision that is not the head is refused as `conflict` (API-F2.13), and a version or path
+   * the history does not hold as `not_found`.
    */
   async restore(
     object: ObjectRef,
@@ -172,8 +189,11 @@ export class FakePanelSource {
     options: RestoreOptions,
   ): Promise<FileCommit> {
     await this.step("restore", options);
-    if (options.revision !== this.head) {
-      throw new ApiError(409, "/api/v1/files/restorations", { code: "conflict" });
+    const route = "/api/v1/files/restorations";
+    if (options.revision !== this.head) throw new ApiError(409, route, { code: "conflict" });
+    const held = this.entries.some((e) => e.version.version === version && e.digest !== null);
+    if (!held || paths.some((path) => path !== PANEL_FILE.path)) {
+      throw new ApiError(404, route, { code: "not_found" });
     }
     this.restores.push({
       object,

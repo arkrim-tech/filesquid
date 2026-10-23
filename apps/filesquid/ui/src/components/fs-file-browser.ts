@@ -485,8 +485,12 @@ export class FsFileBrowser extends HTMLElement {
    * @returns Resolves once the listing and the viewer show the new answer.
    */
   async reload(): Promise<void> {
-    await this.loadFolder(this.entries.length);
-    this.refreshViewer();
+    const load = this.loadFolder(this.entries.length);
+    // loadFolder counts its generation before its first await: only the newest read refreshes
+    // the viewer, so an older reload cannot point it at stale rows after a newer one started.
+    const generation = this.generation;
+    await load;
+    if (generation === this.generation) this.refreshViewer();
   }
 
   /** Set the breadcrumb to the root and the folders down to the current one. */

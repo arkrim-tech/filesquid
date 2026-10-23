@@ -36,19 +36,24 @@ function stub(name: string): FilePanel & { seen: (FileRef | null | undefined)[] 
   return element;
 }
 
-/** Mount a file panel with two tabs and a Versions view. */
+/** Mount a file panel with two tabs and a Versions view, built by spy factories. */
 function mount() {
   const panel = document.createElement("fs-file-panel") as FsFilePanel;
   panel.configure({ labels });
   const info = stub("info");
   const other = stub("other");
   const versions = stub("versions");
-  panel.registerTab("details", labels.filePanelInfo, () => info);
-  panel.registerTab("other", "Other", () => other);
-  panel.setVersions(() => versions);
+  const factories = {
+    info: vi.fn(() => info),
+    other: vi.fn(() => other),
+    versions: vi.fn(() => versions),
+  };
+  panel.registerTab("details", labels.filePanelInfo, factories.info);
+  panel.registerTab("other", "Other", factories.other);
+  panel.setVersions(factories.versions);
   document.body.replaceChildren(panel);
   panel.fileRef = PANEL_FILE;
-  return { panel, info, other, versions, root: panel.shadowRoot as ShadowRoot };
+  return { panel, info, other, versions, factories, root: panel.shadowRoot as ShadowRoot };
 }
 
 describe("<fs-file-panel>", () => {
@@ -95,7 +100,10 @@ describe("<fs-file-panel>", () => {
   });
 
   it("creates and hands the file only to the panel shown, and no panel a reference to another", () => {
-    const { root, info, other, versions } = mount();
+    const { root, info, other, versions, factories } = mount();
+    expect(factories.info).toHaveBeenCalledTimes(1);
+    expect(factories.other).not.toHaveBeenCalled();
+    expect(factories.versions).not.toHaveBeenCalled();
     expect(info.seen).toEqual([PANEL_FILE]);
     expect(other.seen).toEqual([]);
     expect(versions.seen).toEqual([]);
@@ -146,6 +154,22 @@ describe("<fs-file-panel>", () => {
     expect((root.querySelector(".tabs") as HTMLElement).hidden).toBe(false);
     expect(view.hidden).toBe(true);
     expect(root.activeElement).toBe(history);
+  });
+
+  it("returns to the tabs when another file opens while Versions is shown", () => {
+    const { panel, root } = mount();
+    root.querySelector<HTMLButtonElement>("button.history")?.click();
+    panel.fileRef = { ...PANEL_FILE, version: "v8" };
+    expect(panel.versionsShown).toBe(true);
+    panel.fileRef = { ...PANEL_FILE, path: "original/other.pdf", display_name: "other.pdf" };
+    expect(panel.versionsShown).toBe(false);
+    expect((root.querySelector(".tabs") as HTMLElement).hidden).toBe(false);
+  });
+
+  it("hands the file again to a panel remounted by a re-render", () => {
+    const { panel, info } = mount();
+    panel.registerTab("third", "Third", () => stub("third"));
+    expect(info.seen).toEqual([PANEL_FILE, PANEL_FILE]);
   });
 
   it("dispatches fs-file-panel-close from close", () => {

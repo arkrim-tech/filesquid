@@ -116,10 +116,14 @@ describe("digestRows", () => {
     expect(rows.map((r) => r.label)).toEqual(["SHA-256 digest", "MD5 digest"]);
   });
 
-  it("keeps at most eight fixity algorithms", () => {
+  it("keeps at most eight fixity algorithms besides the content digest, SHA-256 among them", () => {
     const fixity = Object.fromEntries(
       Array.from({ length: 20 }, (_, i) => [`alg${i}`, [`${i}`.repeat(20)]]),
     );
     expect(digestRows(details({ fixity }), labels).length).toBeLessThanOrEqual(9);
+    const withSha = { ...fixity, sha256: ["ab".repeat(32)] };
+    const rows = digestRows(details({ fixity: withSha }), labels);
+    expect(rows.length).toBe(9);
+    expect(rows[0]?.label).toBe("SHA-256 digest");
   });
 });

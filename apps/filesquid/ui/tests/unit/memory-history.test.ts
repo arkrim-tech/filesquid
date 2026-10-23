@@ -8,6 +8,7 @@ import { MemoryFileSource } from "../../src/files/memory-source";
 import type { FileRef } from "../../src/files/model";
 
 const OBJECT = { library_id: "lib", object_id: "obj" };
+const FILE_ID = "5b1d2c3e-7a4f-4e8b-9c6d-0a1b2c3d4e5f";
 const FILE: FileRef = { ...OBJECT, version: "v1", path: "Docs/a.txt", display_name: "" };
 
 /** A source holding a small tree at v1. */
@@ -51,6 +52,44 @@ describe("MemoryFileSource history reads", () => {
     await s.remove(OBJECT, "Docs/a.txt", { revision: "v1" });
     await s.restore(OBJECT, "v1", ["Docs/a.txt"], { revision: "v2" });
     expect(await s.historySize(FILE)).toMatchObject({ versions: 3, contents: 1, bytes: 5 });
+  });
+
+  it("keeps a restore's label on its version, in the versions and the history", async () => {
+    const s = source();
+    await s.remove(OBJECT, "Docs/a.txt", { revision: "v1" });
+    await s.restore(OBJECT, "v1", ["Docs/a.txt"], { revision: "v2", label: "Back again" });
+    expect((await s.versions()).versions.map((v) => v.label)).toEqual([null, null, "Back again"]);
+    expect((await s.history(FILE)).entries.at(-1)?.version.label).toBe("Back again");
+  });
+
+  it("lists no version that only changed the display name, as the API compares content", async () => {
+    const s = new MemoryFileSource({
+      library_id: "lib",
+      object_id: `urn:uuid:${FILE_ID}`,
+      files: [{ path: `original/${FILE_ID}.txt`, displayName: "a.txt", content: "a" }],
+    });
+    await s.rename({ library_id: "lib" }, FILE_ID, "b.txt", { revision: "v1" });
+    const own = { ...FILE, object_id: `urn:uuid:${FILE_ID}`, path: `original/${FILE_ID}.txt` };
+    expect((await s.history(own)).entries.map((e) => e.version.version)).toEqual(["v1"]);
+    expect((await s.versions()).display_name).toBe("b.txt");
+  });
+
+  it("names no file for an object that is not a file object", async () => {
+    expect((await source().versions()).display_name).toBeNull();
+  });
+
+  it("counts two different contents of the same size as two", async () => {
+    const s = new MemoryFileSource({
+      ...OBJECT,
+      files: [
+        { path: "x.txt", content: "ab" },
+        { path: "y.txt", content: "zz" },
+      ],
+    });
+    await s.remove(OBJECT, "x.txt", { revision: "v1" });
+    await s.move(OBJECT, "y.txt", "x.txt", { revision: "v2" });
+    const size = await s.historySize({ ...FILE, path: "x.txt" });
+    expect(size).toMatchObject({ contents: 2, bytes: 4 });
   });
 
   it("refuses a file that never existed", async () => {

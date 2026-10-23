@@ -44,16 +44,18 @@ export function algorithmName(algorithm: string): string {
  * @returns One row per algorithm, at most {@link MAX_FIXITY_ROWS} plus the content digest.
  */
 export function digestRows(details: FileDetails, labels: LabelTable): PropertyRow[] {
-  const values = new Map<string, string>();
-  const fixity = Object.entries(details.fixity).slice(0, MAX_FIXITY_ROWS);
+  const fixity = new Map<string, string>();
   const preferred = details.fixity[PREFERRED]?.[0];
-  if (details.digest_algorithm === PREFERRED) values.set(PREFERRED, details.digest);
-  else if (preferred) values.set(PREFERRED, preferred);
-  values.set(details.digest_algorithm, details.digest);
-  for (const [algorithm, digests] of fixity) {
+  if (preferred && details.digest_algorithm !== PREFERRED) fixity.set(PREFERRED, preferred);
+  for (const [algorithm, digests] of Object.entries(details.fixity)) {
     const first = digests[0];
-    if (first && !values.has(algorithm)) values.set(algorithm, first);
+    const known = algorithm === details.digest_algorithm || fixity.has(algorithm);
+    if (first && !known && fixity.size < MAX_FIXITY_ROWS) fixity.set(algorithm, first);
   }
+  const values = new Map<string, string>();
+  if (fixity.has(PREFERRED)) values.set(PREFERRED, fixity.get(PREFERRED) as string);
+  values.set(details.digest_algorithm, details.digest);
+  for (const [algorithm, digest] of fixity) values.set(algorithm, digest);
   return [...values].map(([algorithm, digest]) => ({
     key: `digest-${algorithm}`,
     label: formatLabel(labels.filePanelDigest, { algorithm: algorithmName(algorithm) }),

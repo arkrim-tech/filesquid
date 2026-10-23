@@ -54,7 +54,11 @@ describe("ClientHistorySource", () => {
     await new ClientHistorySource(c).historySize(FILE);
     const url = new URL((c.request.mock.calls[0] as unknown as [string])[0], "http://x");
     expect(url.pathname).toBe("/api/v1/files/history-size");
-    expect(url.searchParams.get("path")).toBe("original/a b.pdf");
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      library_id: "lib 1",
+      object_id: "urn:uuid:abc",
+      path: "original/a b.pdf",
+    });
   });
 
   it("passes the abort signal on", async () => {

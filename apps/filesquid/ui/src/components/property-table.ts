@@ -222,8 +222,9 @@ export class PropertyTable {
     return this.current;
   }
 
-  /** Show nothing: no file. */
+  /** Show nothing: no file. The filter is emptied, so the next file starts unfiltered. */
   clear(): void {
+    this.resetFilter();
     this.all = [];
     this.count.classList.remove("busy");
     this.count.textContent = "";
@@ -235,6 +236,7 @@ export class PropertyTable {
 
   /** Show the busy line and placeholder rows; the filter is disabled until rows arrive. */
   loading(): void {
+    this.resetFilter();
     this.setState("loading");
     this.filter.disabled = true;
     this.count.textContent = this.options.loadingText;
@@ -255,6 +257,7 @@ export class PropertyTable {
   error(error: unknown): void {
     this.setState("error");
     this.filter.disabled = true;
+    this.clearButton.hidden = true;
     this.count.classList.remove("busy");
     this.count.textContent = "";
     this.body.removeAttribute("aria-busy");
@@ -338,8 +341,15 @@ export class PropertyTable {
     return state;
   }
 
-  /** Empty the filter, show every row and return focus to the field. */
+  /** Empty the filter field and hide its clear button, without drawing anything. */
+  private resetFilter(): void {
+    this.filter.value = "";
+    this.clearButton.hidden = true;
+  }
+
+  /** Empty the filter, show every row and return focus to the field; only over rows. */
   private clearFilter(): void {
+    if (this.current !== "ready" && this.current !== "no-match") return;
     this.filter.value = "";
     this.render();
     this.filter.focus();

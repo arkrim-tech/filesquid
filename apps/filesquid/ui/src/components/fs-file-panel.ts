@@ -77,6 +77,12 @@ const STYLE = `
   }
 `;
 
+/** True when two references name the same file (library, object and path), any version. */
+function sameFile(a: FileRef | null, b: FileRef | null): boolean {
+  if (a === null || b === null) return a === b;
+  return a.library_id === b.library_id && a.object_id === b.object_id && a.path === b.path;
+}
+
 /** Create an element with a class and optional text. */
 function node<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -119,9 +125,14 @@ export class FsFilePanel extends HTMLElement {
     return this.file;
   }
 
-  /** Show another file (null clears the header and the panel shown). */
+  /**
+   * Show another file (null clears the header and the panel shown). Another file, not just a
+   * new version of the same one, returns from the Versions view to the tabs.
+   */
   set fileRef(file: FileRef | null) {
+    if (!sameFile(file, this.file)) this.versionsOpen = false;
     this.file = file;
+    this.applyModeOnly();
     this.showHeader();
     this.deliver();
   }
@@ -279,6 +290,16 @@ export class FsFilePanel extends HTMLElement {
     if (focus && history) focusElement(history);
   }
 
+  /** Show the selected tab or the Versions view without handing out the file. */
+  private applyModeOnly(): void {
+    const root = this.shadowRoot;
+    const area = root?.querySelector<HTMLElement>(".tabs");
+    const view = root?.querySelector<HTMLElement>(".versions-view");
+    if (area) area.hidden = this.versionsOpen;
+    if (view) view.hidden = !this.versionsOpen;
+    root?.querySelector("button.history")?.setAttribute("aria-pressed", String(this.versionsOpen));
+  }
+
   /** Show the selected tab or the Versions view, and hand the file to the panel shown. */
   private applyMode(): void {
     const root = this.shadowRoot;
@@ -290,11 +311,7 @@ export class FsFilePanel extends HTMLElement {
       tab.tabIndex = index === this.selected ? 0 : -1;
     });
     panels.forEach((panel, index) => void (panel.hidden = index !== this.selected));
-    const area = root.querySelector<HTMLElement>(".tabs");
-    const view = root.querySelector<HTMLElement>(".versions-view");
-    if (area) area.hidden = this.versionsOpen;
-    if (view) view.hidden = !this.versionsOpen;
-    root.querySelector("button.history")?.setAttribute("aria-pressed", String(this.versionsOpen));
+    this.applyModeOnly();
     this.deliver();
   }
 
@@ -320,6 +337,9 @@ export class FsFilePanel extends HTMLElement {
       section.dataset.slot = entry.id;
       section.append(entry.element);
       host.replaceChildren(section);
+      // A remounted panel may have cancelled its read when it left the document: hand it the
+      // file again so it reads it anew.
+      entry.delivered = undefined;
     }
     if (entry.delivered === this.file) return;
     entry.delivered = this.file;

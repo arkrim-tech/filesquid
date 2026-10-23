@@ -460,7 +460,11 @@ for (const scheme of SCHEMES) {
     test("panel states (25): loading, no match and error keep the header, tabs and filter", async ({
       page,
     }) => {
-      const errors = trackErrors(page, /status of 503/);
+      // Only the deliberately refused details read is excused.
+      const errors = trackErrors(
+        page,
+        (text, url) => /status of 503/.test(text) && /\/api\/v1\/files\/details\?/.test(url),
+      );
       await page.clock.setFixedTime(NOW);
       const api = await servePanel(page, FACADE);
       const release = api.holdDetails();

@@ -98,8 +98,9 @@ Feature: File version history and retention
     And the field should be marked invalid with "Use at most 512 bytes and no control characters."
 
   Scenario: A refused restore keeps the dialog open and changes nothing
-    Given another change was committed to the file first
-    When I restore v5
+    Given the restore dialog for v5 is open
+    And another change was committed to the file since the Versions view read its head
+    When I choose Restore
     Then the dialog should stay open with "The files changed or another change is in progress. Reload and try again."
     And Escape should close it and return focus to the menu button of v5
 

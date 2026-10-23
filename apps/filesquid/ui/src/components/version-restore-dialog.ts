@@ -61,7 +61,8 @@ const STYLE = `
   .restore-head { display: flex; align-items: start; gap: var(--fs-space-3); }
   .restore-head .dialog-title { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
   .icon-button { display: inline-flex; align-items: center; justify-content: center; inline-size: 1.75rem; block-size: 1.75rem; padding: 0; border: 0; border-radius: var(--fs-radius-item); background: none; color: var(--fs-icon-muted); cursor: pointer; }
-  .icon-button:hover { background: var(--fs-surface-raised); color: var(--fs-icon); }
+  .icon-button:not(:disabled):hover { background: var(--fs-surface-raised); color: var(--fs-icon); }
+  .icon-button:disabled { color: var(--fs-icon-disabled); cursor: default; }
   .file-name { margin-block: var(--fs-space-1) var(--fs-space-4); font-size: var(--fs-font-size-small); color: var(--fs-on-surface-variant); overflow-wrap: anywhere; }
   .change-box { display: grid; gap: var(--fs-space-1); padding: var(--fs-space-3); border-radius: var(--fs-radius); background: var(--fs-surface-raised); }
   .change-box p { display: flex; align-items: center; gap: var(--fs-space-2); margin: 0; font-size: var(--fs-font-size-small); overflow-wrap: anywhere; }

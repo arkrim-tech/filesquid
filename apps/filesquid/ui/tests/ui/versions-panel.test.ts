@@ -6,7 +6,12 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../src/api/client";
-import { accessibilityViolations, defineElements, type FsVersionsPanel } from "../../src/index";
+import {
+  MAX_VERSION_ROWS,
+  accessibilityViolations,
+  defineElements,
+  type FsVersionsPanel,
+} from "../../src/index";
 import labels from "../../src/theme/labels.en.json";
 import { FakePanelSource, PANEL_FILE, gate } from "../support/panel-fakes";
 
@@ -16,7 +21,7 @@ afterEach(() => vi.restoreAllMocks());
 /** Let queued promise callbacks run. */
 const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-/** The fixed clock of the fixture: one hour after v7. */
+/** The fixed clock of the fixture: two hours after v7. */
 const NOW = new Date("2026-10-16T14:00:00Z");
 
 /** Mount a versions panel over `source` showing the fixture file. */
@@ -304,6 +309,58 @@ describe("<fs-versions-panel>", () => {
     root(panel).querySelector<HTMLButtonElement>(".state button.retry")?.click();
     await settle();
     expect(panel.dataset.state).toBe("ready");
+  });
+
+  it("counts every version even when it lists only the newest MAX_VERSION_ROWS", async () => {
+    const source = new FakePanelSource();
+    const one = source.entries[0] as (typeof source.entries)[number];
+    source.entries = Array.from({ length: MAX_VERSION_ROWS + 2 }, (_, i) => ({
+      ...one,
+      version: { ...one.version, version: `v${i + 1}` },
+    }));
+    source.head = `v${MAX_VERSION_ROWS + 2}`;
+    const panel = await mount(source);
+    expect(root(panel).querySelectorAll("li.version")).toHaveLength(MAX_VERSION_ROWS);
+    expect(root(panel).querySelector(".count")?.textContent).toBe("10,002 versions");
+  }, 60_000);
+
+  it("drops an open dialog when the file, its version or the document changes", async () => {
+    const panel = await mount();
+    await openRestore(panel, "v5");
+    panel.fileRef = { ...PANEL_FILE, version: "v8" };
+    expect(root(panel).querySelector('[role="dialog"]')).toBeNull();
+    await settle();
+    await openRestore(panel, "v5");
+    panel.remove();
+    document.body.append(panel);
+    expect(root(panel).querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it("applies nothing from a restore answered after the file changed, but still reports it", async () => {
+    const source = new FakePanelSource();
+    const wait = gate();
+    source.gates.restore = wait;
+    const panel = await mount(source);
+    const changes: unknown[] = [];
+    document.addEventListener("fs-files-change", (e) => changes.push((e as CustomEvent).detail));
+    const dialog = await openRestore(panel, "v5");
+    dialog.querySelector<HTMLButtonElement>("button.restore")?.click();
+    panel.fileRef = { ...PANEL_FILE, path: "original/other.pdf", display_name: "other.pdf" };
+    wait.open();
+    await settle();
+    expect(root(panel).querySelector(".announce")?.textContent).toBe("");
+    expect(changes).toHaveLength(1);
+  });
+
+  it("refuses a restore of a version the history does not hold", async () => {
+    const source = new FakePanelSource();
+    const object = { library_id: "lib", object_id: PANEL_FILE.object_id };
+    await expect(
+      source.restore(object, "v99", [PANEL_FILE.path], { revision: "v7" }),
+    ).rejects.toMatchObject({ code: "not_found" });
+    await expect(
+      source.restore(object, "v2", ["original/nope.pdf"], { revision: "v7" }),
+    ).rejects.toMatchObject({ code: "not_found" });
   });
 
   it("marks a removal and offers no restore from it", async () => {

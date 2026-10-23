@@ -46,6 +46,7 @@ import {
   relativeTime,
   versionCountText,
   versionRows,
+  versionTotal,
   type VersionRow,
 } from "../files/versions";
 
@@ -70,6 +71,8 @@ export const VERSIONS_CLOSE_EVENT = "fs-versions-close";
 /** What one load read. */
 interface Loaded {
   readonly rows: VersionRow[];
+  /** Every version that changed the file, though `rows` holds at most `MAX_VERSION_ROWS`. */
+  readonly total: number;
   readonly head: string;
   readonly bytes?: number;
 }
@@ -159,7 +162,11 @@ export class FsVersionsPanel extends HTMLElement {
     return this.file;
   }
 
-  /** List another file's versions (null clears the view). */
+  /**
+   * List another file's versions (null clears the view). Any other reference, a new version
+   * of the same file included, drops an open dialog; the rows shown are kept only for a new
+   * version of the same file, until its answer replaces them, so the list does not flash.
+   */
   set fileRef(file: FileRef | null) {
     const samePath =
       file !== null &&
@@ -167,17 +174,18 @@ export class FsVersionsPanel extends HTMLElement {
       file.library_id === this.file.library_id &&
       file.object_id === this.file.object_id &&
       file.path === this.file.path;
-    if (!samePath) this.dropDialog();
+    if (file !== this.file) this.dropDialog();
     if (!samePath) this.loaded = undefined;
     this.file = file;
     this.closeMenu(false);
     void this.load();
   }
 
-  /** Cancel a read in flight and close the menu when the element leaves the document. */
+  /** Cancel a read in flight and close the menu and the dialog when the element leaves. */
   disconnectedCallback(): void {
     this.abort?.abort();
     this.closeMenu(false);
+    this.dropDialog();
   }
 
   /** Build the stylesheet, the Back row, the content area, the note and the live region. */
@@ -234,7 +242,12 @@ export class FsVersionsPanel extends HTMLElement {
       source.versions(file, { signal }),
       size,
     ]);
-    return { rows: versionRows(history), head: versions.head, bytes };
+    return {
+      rows: versionRows(history),
+      total: versionTotal(history),
+      head: versions.head,
+      bytes,
+    };
   }
 
   /** No file: nothing listed. */
@@ -277,7 +290,7 @@ export class FsVersionsPanel extends HTMLElement {
     const now = this.options?.now ? this.options.now() : new Date();
     list.append(...loaded.rows.map((row) => this.rowElement(labels, row, now, locale)));
     this.content?.replaceChildren(node("p", "eyebrow", eyebrow), list);
-    if (this.count) this.count.textContent = versionCountText(loaded.rows.length, labels, locale);
+    if (this.count) this.count.textContent = versionCountText(loaded.total, labels, locale);
     this.dataset.state = "ready";
   }
 
@@ -466,9 +479,10 @@ export class FsVersionsPanel extends HTMLElement {
         revision: loaded.head,
         label: label === "" ? undefined : label,
       });
-      this.afterRestore(options.labels, file, commit);
+      this.afterRestore(options.labels, file, commit, dialog);
     } catch (failure) {
       console.warn("FileSquid could not restore a version", errorName(failure));
+      if (this.dialog !== dialog) return;
       this.setBusy(false);
       error.textContent = failureText(failure, options.labels);
     }
@@ -483,9 +497,20 @@ export class FsVersionsPanel extends HTMLElement {
     for (const control of [close, cancel, restore, input]) control.disabled = busy;
   }
 
-  /** The restore committed: close the dialog, announce it, tell the page and list again. */
-  private afterRestore(labels: LabelTable, file: FileRef, commit: FileCommit): void {
-    this.dialog?.parts.scrim.remove();
+  /**
+   * The restore committed: tell the page, so its listing shows the new version; then, unless
+   * the view moved on to another file or version meanwhile (which dropped the dialog), close
+   * the dialog, announce it and list again.
+   */
+  private afterRestore(
+    labels: LabelTable,
+    file: FileRef,
+    commit: FileCommit,
+    dialog: NonNullable<FsVersionsPanel["dialog"]>,
+  ): void {
+    this.emit("fs-files-change", { operation: "restore", commit });
+    if (this.dialog !== dialog) return;
+    this.dialog.parts.scrim.remove();
     this.dialog = undefined;
     if (this.announcer) {
       this.announcer.textContent = formatLabel(labels.fileRestored, {
@@ -493,7 +518,6 @@ export class FsVersionsPanel extends HTMLElement {
         version: commit.version,
       });
     }
-    this.emit("fs-files-change", { operation: "restore", commit });
     void this.load().then(() => {
       const list = this.shadowRoot?.querySelector<HTMLElement>("ul.versions");
       if (list) focusElement(list);

@@ -32,6 +32,7 @@ import {
   type FileSource,
   type SourceOptions,
   type UploadSourceOptions,
+  type RestoreOptions,
   type WriteOptions,
 } from "./source";
 import type {
@@ -100,6 +101,8 @@ interface Stored {
 interface Snapshot {
   readonly created: string;
   readonly files: ReadonlyMap<string, Stored>;
+  /** The version's label, as a restore sets it; null for none. */
+  readonly label: string | null;
 }
 
 /** Route named in the fixture's errors. */
@@ -217,7 +220,7 @@ export class MemoryFileSource implements FileSource, HistorySource {
     const created = new Date(BASE_TIME).toISOString();
     const files = new Map<string, Stored>();
     for (const file of options.files) files.set(file.path, initialFile(file, created));
-    this.snapshots.push({ created, files });
+    this.snapshots.push({ created, files, label: null });
   }
 
   /** The head version label. */
@@ -437,24 +440,25 @@ export class MemoryFileSource implements FileSource, HistorySource {
     });
   }
 
-  /** Restore files or folders from an earlier version as a new version. */
+  /** Restore files or folders from an earlier version as a new version, with its optional label. */
   async restore(
     _object: ObjectRef,
     version: string,
     paths: readonly string[],
-    options: WriteOptions,
+    options: RestoreOptions,
   ): Promise<FileCommit> {
     this.check();
     this.expect(options.revision);
     const earlier = this.snapshot(version);
-    return this.commit((files, label, created) => {
+    const change = (files: Map<string, Stored>, label: string, created: string) => {
       for (const path of paths) {
         const found = [...earlier.files.values()].filter((file) => within(file.path, path));
         if (found.length === 0) throw refusal(404, "not_found");
         for (const file of found)
           files.set(file.path, { ...file, modified: created, modifiedVersion: label });
       }
-    });
+    };
+    return this.commit(change, options.label ?? null);
   }
 
   /** Every version of the object, oldest first, with the head. */
@@ -464,9 +468,17 @@ export class MemoryFileSource implements FileSource, HistorySource {
       library_id: this.options.library_id,
       object_id: this.options.object_id,
       head: this.head,
-      display_name: null,
+      display_name: this.fileName(),
       versions: this.snapshots.map((snapshot, i) => versionRecord(i, snapshot)),
     };
+  }
+
+  /** The display name of the file this object holds when it is a file object, else null. */
+  private fileName(): string | null {
+    const id = fileIdOf(this.options.object_id);
+    const files = [...this.latest().files.values()];
+    const original = id ? files.find((file) => isOriginalPath(file.path, id)) : undefined;
+    return original ? safeDisplayName(original.displayName) : null;
   }
 
   /** The versions that changed the file at `file.path`, oldest first, or `not_found`. */
@@ -539,13 +551,14 @@ export class MemoryFileSource implements FileSource, HistorySource {
   /** Apply a change as the next version; a change that alters nothing is a conflict. */
   private commit(
     change: (files: Map<string, Stored>, version: string, created: string) => void,
+    label: string | null = null,
   ): FileCommit {
     const files = new Map(this.latest().files);
     const version = `v${this.snapshots.length + 1}`;
     const created = new Date(BASE_TIME + this.snapshots.length * 60_000).toISOString();
     change(files, version, created);
     if (sameFiles(files, this.latest().files)) throw refusal(409, "conflict");
-    this.snapshots.push({ created, files });
+    this.snapshots.push({ created, files, label });
     return {
       library_id: this.options.library_id,
       object_id: this.options.object_id,
@@ -595,7 +608,7 @@ function versionRecord(index: number, snapshot: Snapshot) {
     created: snapshot.created,
     message: null,
     user: null,
-    label: null,
+    label: snapshot.label,
   };
 }
 
@@ -617,16 +630,14 @@ function historyEntry(
   };
 }
 
-/** True when two stored files have the same content and display name. */
+/** True when two stored files have the same content: the API's history compares digests only. */
 function sameStored(a: Stored, b: Stored): boolean {
-  return a.displayName === b.displayName && sameBytes(a.bytes, b.bytes);
+  return sameBytes(a.bytes, b.bytes);
 }
 
-/** A stand-in digest of some bytes: their length and a simple checksum, stable per content. */
+/** A stand-in digest of some bytes: their hex, so two contents never share one. */
 function digestOf(bytes: Uint8Array): string {
-  let sum = 0;
-  for (const byte of bytes) sum = (sum * 31 + byte) % 2_147_483_647;
-  return `fixture-${bytes.byteLength}-${sum}`;
+  return `fixture-${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
 /** A fixture file as stored in `v1`. */

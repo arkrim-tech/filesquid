@@ -5,7 +5,8 @@
  * `facade-study.jpg` (four versions) and mockups 26 and 27's `harbour-masterplan-v7.pdf` (seven
  * versions). The restore is a command (API-F2.13): its body is `{ envelope, input }`, a
  * committed answer carries the outcome with its `result`, and an expected revision that is not
- * the head is a 409 `conflict` outcome. The listing, the preview and the shell's routes come
+ * the head is a 409 `conflict` outcome; a repeated operation ID of the same command answers its
+ * first committed answer again, before the revision is checked, as the API's receipts do. The listing, the preview and the shell's routes come
  * from `serveFiles` and `serveNavigation`; these routes are registered after them, so they take
  * precedence.
  */
@@ -141,6 +142,7 @@ export async function servePanel(page: Page, fixture: PanelFixture): Promise<Pan
   });
   await serveFiles(page, source);
   const extra: Record<string, unknown>[] = [];
+  const receipts = new Map<string, { input: string; answer: Record<string, unknown> }>();
   const fail: { status?: number; code?: string } = {};
   let hold: Promise<void> | undefined;
   const api: PanelApi = {
@@ -186,6 +188,12 @@ export async function servePanel(page: Page, fixture: PanelFixture): Promise<Pan
     };
     api.restores.push(input);
     api.revisions.push(envelope.expected_revision);
+    const receipt = receipts.get(envelope.operation_id);
+    if (receipt && receipt.input !== JSON.stringify(input)) {
+      const body = { code: "invalid_request", message: "refused", retryable: false };
+      return route.fulfill({ status: 400, json: body });
+    }
+    if (receipt) return json(route, receipt.answer);
     const head = `v${fixture.versions.length + extra.length}`;
     const operation = { operation_id: envelope.operation_id, error: null };
     if (envelope.expected_revision !== head) {
@@ -197,7 +205,9 @@ export async function servePanel(page: Page, fixture: PanelFixture): Promise<Pan
     const created = "2026-10-16T13:00:00Z";
     extra.push({ version, created, message: null, user: null, label: input.label ?? null });
     const result = { library_id: PANEL_LIBRARY, object_id: PANEL_OBJECT, version, created };
-    return json(route, { ...operation, kind: "committed", result });
+    const answer = { ...operation, kind: "committed", result };
+    receipts.set(envelope.operation_id, { input: JSON.stringify(input), answer });
+    return json(route, answer);
   });
   return api;
 }

@@ -302,6 +302,20 @@ describe("<fs-app-shell>", () => {
       "FOOTER",
     ]);
     expect(styleOf(shell)).toMatch(/:host \{[^}]*grid-template-columns: auto minmax\(0, 1fr\);/);
+    // Beside, not below: the body is a row above 40rem and a column only below it; the
+    // production-build geometry is asserted in tests/e2e/preview/file-panel.spec.ts.
+    const css = styleOf(shell);
+    const desktop = css.slice(0, css.indexOf("@media (max-width: 40rem)"));
+    expect(desktop).toMatch(/\.body \{ display: flex;[^}]*\}/);
+    expect(desktop).not.toMatch(/\.body \{[^}]*flex-direction: column/);
+    expect(css.slice(css.indexOf("@media (max-width: 40rem)"))).toMatch(
+      /\.body \{ flex-direction: column; \}/,
+    );
+    const slotted = document.createElement("div");
+    slotted.slot = "panel";
+    shell.append(slotted);
+    root.querySelector('slot[name="panel"]')?.dispatchEvent(new Event("slotchange"));
+    expect((body.querySelector("aside.panel") as HTMLElement).hidden).toBe(false);
   });
 
   it("hides the sidebar, header and footer in frameless mode, for the welcome screen (UI-S-027)", async () => {

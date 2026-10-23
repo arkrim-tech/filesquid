@@ -14,6 +14,7 @@ import {
   shortIdentifier,
   versionCountText,
   versionRows,
+  versionTotal,
 } from "../../src/files/versions";
 import type { FileHistory, FileHistoryEntry } from "../../src/files/history-source";
 import labels from "../../src/theme/labels.en.json";
@@ -76,6 +77,7 @@ describe("versionRows", () => {
     );
     const rows = versionRows(history(many));
     expect(rows).toHaveLength(MAX_VERSION_ROWS);
+    expect(versionTotal(history(many))).toBe(MAX_VERSION_ROWS + 3);
     expect(rows[0]?.version).toBe(`v${MAX_VERSION_ROWS + 3}`);
   });
 });
@@ -85,6 +87,7 @@ describe("nextVersion and laterVersions", () => {
     expect(nextVersion("v7")).toBe("v8");
     expect(nextVersion("v1")).toBe("v2");
     expect(nextVersion("head")).toBeUndefined();
+    expect(nextVersion("v9007199254740993")).toBe("v9007199254740994");
     expect(nextVersion("v0")).toBeUndefined();
   });
 
@@ -100,6 +103,16 @@ describe("nextVersion and laterVersions", () => {
     expect(laterVersions(rows, "v5")).toEqual(["v6", "v7"]);
     expect(laterVersions(rows, "v7")).toEqual([]);
     expect(laterVersions(rows, "v1")).toEqual(["v5", "v6", "v7"]);
+  });
+
+  it("orders version numbers beyond the safe integer range exactly", () => {
+    const big = versionRows(
+      history([
+        entry("v9007199254740992", "2026-09-27T10:00:00Z", 1),
+        entry("v9007199254740993", "2026-09-28T10:00:00Z", 1),
+      ]),
+    );
+    expect(laterVersions(big, "v9007199254740992")).toEqual(["v9007199254740993"]);
   });
 });
 

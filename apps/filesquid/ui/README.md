@@ -157,18 +157,39 @@ shell.append(browser);
 `<fs-file-panel>` (Task UI-F2.3; [UI-S-003, UI-S-009, UI-S-031](./resources/srs.md); mockups [35](../../../resources/ui-mockups/v3/35-panel-file-info.svg), [26](../../../resources/ui-mockups/v3/26-panel-versions.svg), [27](../../../resources/ui-mockups/v3/27-version-restore.svg) and [25](../../../resources/ui-mockups/v3/25-panel-states.svg); walkthrough: [Task-UI-F2.3-Walkthrough.md](./resources/tasks/Task-UI-F2.3-Walkthrough.md)) is the 320 px file panel the files route puts in the shell's `panel` slot while a file is open: under the full-width header, beside the main column and the footer. Its header holds the file-type badge, the display name, the history button and close; its tabs are panels in named slots.
 
 ```ts
+import {
+  ClientFileSource,
+  ClientHistorySource,
+  defineElements,
+  panelSource,
+  type FsDetailsPanel,
+  type FsFilePanel,
+  type FsVersionsPanel,
+} from "@filesquid/ui";
+
+defineElements();
 const source = panelSource(new ClientFileSource(client), new ClientHistorySource(client));
 const panel = document.createElement("fs-file-panel") as FsFilePanel;
 panel.slot = "panel";
 panel.configure({ labels });
-panel.registerTab("details", labels.filePanelInfo, () => detailsPanel(source)); // File info
-panel.setVersions(() => versionsPanel(source)); // shown by the history button
+panel.registerTab("details", labels.filePanelInfo, () => {
+  const details = document.createElement("fs-details-panel") as FsDetailsPanel;
+  details.configure({ labels, source }); // File info
+  return details;
+});
+panel.setVersions(() => {
+  const versions = document.createElement("fs-versions-panel") as FsVersionsPanel;
+  versions.configure({ labels, source }); // shown by the history button
+  return versions;
+});
 panel.fileRef = file; // only the panel shown reads it
 shell.append(panel);
 ```
 
+`bindFilesRoute(shell, { labels, source, history })` does exactly this for the open file.
+
 - **File info** (`<fs-details-panel>`, the Details panel): storage facts only, from `GET files/details` and `GET files/versions`: original file name, extension, MIME type, size in bytes, the SHA-256 and content digests and other fixity values (shortened, mono, copy puts the whole value on the clipboard), the OCFL object and "v{n} of {total} · {time} UTC". The stored name, the logical path and any content location are never shown. The shared property table (`PropertyTable`: filter, count eyebrow, rows, loading, no-match and error states, footer) is the one UI-F2.15 reuses for Description and Provenance.
-- **Versions** (`<fs-versions-panel>`): Back, the version count, "History {size} · newest first" (`GET files/history-size`), one row per version that changed the file, newest first (`GET files/history`), with its chip, label or "No label", "{relative time} · {size}" and the Current chip on the current version; every other version has a menu with **Restore as new version**, which opens the dialog of mockup 27 and publishes one version through `FileSource.restore` (`POST files/restorations`, a command whose expected revision is the object's head as the view last read it, with the optional label; a head moved meanwhile is refused as `conflict` and the dialog says so). No delete, expiry or thinning control exists. UI-F2.11 adds Download this version and Edit label to the menu.
+- **Versions** (`<fs-versions-panel>`): Back, the version count, "History {size} · newest first" (`GET files/history-size`), one row per version that changed the file, newest first (`GET files/history`), with its chip, label or "No label", "{relative time} · {size}" ("Removed" for a version that removed the file) and the Current chip on the current version; every other version that holds the file has a menu with **Restore as new version**, which opens the dialog of mockup 27 and publishes one version through `FileSource.restore` (`POST files/restorations`, a command whose expected revision is the object's head as the view last read it, with the optional label; a head moved meanwhile is refused as `conflict` and the dialog says so). No delete, expiry or thinning control exists. UI-F2.11 adds Download this version and Edit label to the menu.
 - **Events** (bubbling, composed): `fs-file-panel-close`, `fs-versions-close`, and `fs-files-change` (`detail.operation` `restore`) after a restore, on which the files route reloads the browser (`FsFileBrowser.reload()`).
 - **Reads.** `HistorySource` (`ClientHistorySource` over `FileSquidClient`; `MemoryFileSource` answers it too) reads `files/history`, `files/versions` and `files/history-size`; the panels never fetch by themselves.
 

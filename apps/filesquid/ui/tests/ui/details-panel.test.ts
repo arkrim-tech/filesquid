@@ -105,6 +105,9 @@ describe("<fs-details-panel>", () => {
 
   it("filters rows by label or value and shows no match with Clear filter", async () => {
     const panel = await mount();
+    filter(panel, "application/pdf");
+    expect(root(panel).querySelectorAll(".row")).toHaveLength(1);
+    expect(root(panel).querySelector(".count")?.textContent).toBe("1 of 8 properties · read only");
     filter(panel, "ocfl");
     expect(root(panel).querySelectorAll(".row")).toHaveLength(2);
     expect(root(panel).querySelector(".count")?.textContent).toBe("2 of 8 properties · read only");
@@ -172,6 +175,7 @@ describe("<fs-details-panel>", () => {
 
   it("ignores the answer for a file that is no longer shown", async () => {
     const source = new FakePanelSource();
+    source.ignoreAbort = true;
     const wait = gate();
     source.gates.details = wait;
     const panel = await mount(source);
@@ -180,5 +184,24 @@ describe("<fs-details-panel>", () => {
     await settle();
     expect(panel.dataset.state).toBe("idle");
     expect(root(panel).querySelectorAll(".row")).toHaveLength(0);
+    expect(source.calls.details).toBe(1);
+  });
+
+  it("hides Clear filter and forgets the filter while loading, failed or cleared", async () => {
+    const source = new FakePanelSource();
+    const panel = await mount(source);
+    filter(panel, "ocfl");
+    const clear = root(panel).querySelector<HTMLButtonElement>(
+      ".clear-filter",
+    ) as HTMLButtonElement;
+    expect(clear.hidden).toBe(false);
+    source.failures.details = new ApiError(503, "/api/v1/files/details", { code: "unavailable" });
+    panel.fileRef = { ...PANEL_FILE, version: "v6" };
+    await settle();
+    expect(panel.dataset.state).toBe("error");
+    expect(clear.hidden).toBe(true);
+    expect(root(panel).querySelector<HTMLInputElement>("input.filter")?.value).toBe("");
+    clear.click();
+    expect(panel.dataset.state).toBe("error");
   });
 });
