@@ -512,3 +512,49 @@ fn halting_checks_the_request_in_the_same_step() {
     assert!(matches!(halted, Halt::Halted(JobState::Pending)));
     assert!(jobs.job(&job.id).expect("job").is_paused());
 }
+
+#[test]
+fn the_view_carries_the_result_once_the_job_completes_and_null_otherwise() {
+    let rig = Rig::new();
+    let jobs = rig.jobs();
+    let plain = submit(&jobs, "op-plain");
+    let run = jobs.start(&plain.id, &plain.source).expect("start");
+    run.complete().expect("complete");
+    let view = serde_json::to_value(JobView::of(&jobs.job(&plain.id).expect("job"))).expect("json");
+    assert_eq!(
+        view["result"],
+        serde_json::Value::Null,
+        "a kind without one: {view}"
+    );
+    let job = submit(&jobs, "op-result");
+    let mut run = jobs.start(&job.id, &job.source).expect("start");
+    run.checkpoint_with_result("next=1", r#"{"objects":[1]}"#, 1, Some(2))
+        .expect("checkpoint");
+    let running = jobs.job(&job.id).expect("job");
+    assert_eq!(running.result.as_deref(), Some(r#"{"objects":[1]}"#));
+    assert_eq!(running.checkpoint.as_deref(), Some("next=1"));
+    assert_eq!(JobView::of(&running).result, None, "not before it finishes");
+    run.complete_with_result(r#"{"objects":[1,2]}"#)
+        .expect("complete");
+    let done = jobs.job(&job.id).expect("job");
+    assert_eq!(done.state, JobState::Completed);
+    assert_eq!(
+        JobView::of(&done).result,
+        Some(serde_json::json!({ "objects": [1, 2] }))
+    );
+}
+
+#[test]
+fn a_checkpoint_with_a_result_under_an_ended_lease_is_fenced_and_stores_nothing() {
+    let rig = Rig::new();
+    let jobs = rig.jobs();
+    let job = submit(&jobs, "op-1");
+    let mut run = jobs.start(&job.id, &job.source).expect("start");
+    rig.advance(TTL_MS + 1);
+    let refused = run
+        .checkpoint_with_result("next=1", "{}", 1, Some(2))
+        .expect_err("fenced");
+    assert_eq!(refused, JobError::Fenced);
+    let stored = jobs.job(&job.id).expect("job");
+    assert_eq!((stored.checkpoint, stored.result), (None, None));
+}

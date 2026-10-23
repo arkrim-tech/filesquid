@@ -394,6 +394,7 @@ fn new_job(id: String, spec: JobSpec, now: i64) -> Job {
         updated_ms: now,
         error_code: None,
         control: None,
+        result: None,
     }
 }
 
@@ -509,6 +510,37 @@ impl RunningJob {
         Ok(())
     }
 
+    /// [`checkpoint`](Self::checkpoint) that also stores `result`, the partial result of the
+    /// job's kind, in the same atomic step (store I/O).
+    ///
+    /// # Errors
+    /// As [`checkpoint`](Self::checkpoint).
+    pub fn checkpoint_with_result(
+        &mut self,
+        checkpoint: &str,
+        result: &str,
+        done: u64,
+        total: Option<u64>,
+    ) -> Result<(), JobError> {
+        let now = (self.jobs.clock)();
+        let (lease, ttl) = (self.lease(), self.jobs.ttl_ms);
+        let progress = (checkpoint, result, done, total);
+        let stored = self
+            .jobs
+            .store
+            .update(&self.job.id, &mut |job| {
+                rules::checkpoint_with_result(job, &lease, progress, now, ttl)
+            })
+            .inspect_err(|err| self.refused(err))?;
+        self.keep(&stored)?;
+        self.jobs.publish(&stored);
+        match total {
+            Some(total) => self.handle.progress(done, total),
+            None => self.handle.heartbeat(),
+        }
+        Ok(())
+    }
+
     /// Renew the lease without changing the checkpoint, and heartbeat the run's process
     /// (store I/O). Callable from another thread while one long unit of work runs.
     ///
@@ -532,7 +564,18 @@ impl RunningJob {
     /// # Errors
     /// [`JobError::Fenced`] or a store failure, journaled.
     pub fn complete(self) -> Result<(), JobError> {
-        self.finish(JobState::Completed, None)?;
+        self.finish(JobState::Completed, None, None)?;
+        self.handle.complete();
+        Ok(())
+    }
+
+    /// Finish the job as completed with `result`, the result its kind defines as JSON text,
+    /// stored in the same step (store I/O).
+    ///
+    /// # Errors
+    /// [`JobError::Fenced`] or a store failure, journaled.
+    pub fn complete_with_result(self, result: &str) -> Result<(), JobError> {
+        self.finish(JobState::Completed, None, Some(result))?;
         self.handle.complete();
         Ok(())
     }
@@ -542,7 +585,7 @@ impl RunningJob {
     /// # Errors
     /// [`JobError::Fenced`] or a store failure, journaled.
     pub fn fail(self, error_code: &str) -> Result<(), JobError> {
-        self.finish(JobState::Failed, Some(error_code))?;
+        self.finish(JobState::Failed, Some(error_code), None)?;
         self.handle.fail(error_code);
         Ok(())
     }
@@ -552,7 +595,7 @@ impl RunningJob {
     /// # Errors
     /// [`JobError::Fenced`] or a store failure, journaled.
     pub fn cancel(self) -> Result<(), JobError> {
-        self.finish(JobState::Cancelled, None)?;
+        self.finish(JobState::Cancelled, None, None)?;
         self.handle.cancel();
         Ok(())
     }
@@ -609,16 +652,25 @@ impl RunningJob {
         self.handle.cancel();
     }
 
-    /// Store the job's end as `state` with `error_code` and journal it (an error-level
-    /// entry for a failure).
-    fn finish(&self, state: JobState, error_code: Option<&str>) -> Result<(), JobError> {
+    /// Store the job's end as `state` with `error_code` (and `result`, when given) and journal
+    /// it (an error-level entry for a failure).
+    fn finish(
+        &self,
+        state: JobState,
+        error_code: Option<&str>,
+        result: Option<&str>,
+    ) -> Result<(), JobError> {
         let now = (self.jobs.clock)();
         let lease = self.lease();
         let stored = self
             .jobs
             .store
             .update(&self.job.id, &mut |job| {
-                rules::finish(job, &lease, (state, error_code), now)
+                let mut ended = rules::finish(job, &lease, (state, error_code), now)?;
+                if let Some(result) = result {
+                    ended.result = Some(result.to_string());
+                }
+                Ok(ended)
             })
             .inspect_err(|err| self.refused(err))?;
         let (operation, outcome) = match state {

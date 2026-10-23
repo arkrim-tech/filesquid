@@ -115,7 +115,7 @@ async fn resume(State(state): State<ApiState>, Path(id): Path<String>) -> Respon
 }
 
 /// Hand the pending `job` to the runner of its kind; false when it has none or it refused.
-fn schedule(state: &ApiState, job: &Job) -> bool {
+pub(crate) fn schedule(state: &ApiState, job: &Job) -> bool {
     if job.state != JobState::Pending {
         return false;
     }
@@ -230,7 +230,7 @@ fn conflict_message(rule: &str) -> &'static str {
 
 /// Run the store call `work` on the blocking pool, so a host's SQLite store never blocks the
 /// async runtime.
-async fn blocking<T: Send + 'static>(
+pub(crate) async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, JobError> + Send + 'static,
 ) -> Result<T, JobError> {
     tokio::task::spawn_blocking(work)

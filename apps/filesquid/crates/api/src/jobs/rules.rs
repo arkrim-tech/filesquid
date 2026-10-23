@@ -103,6 +103,24 @@ pub fn checkpoint(
     Ok(job)
 }
 
+/// [`checkpoint`] that also stores `result`, the partial result the job's kind keeps (for
+/// `library.rebuild`, the report so far), in the same step, so the checkpoint and the result
+/// it matches are stored together or not at all.
+///
+/// # Errors
+/// As [`checkpoint`].
+pub fn checkpoint_with_result(
+    job: Job,
+    lease: &Lease,
+    (checkpoint_text, result, done, total): (&str, &str, u64, Option<u64>),
+    now_ms: i64,
+    ttl_ms: i64,
+) -> Result<Job, JobError> {
+    let mut job = checkpoint(job, lease, (checkpoint_text, done, total), now_ms, ttl_ms)?;
+    job.result = Some(result.to_string());
+    Ok(job)
+}
+
 /// Renew `lease` until at least `now_ms + ttl_ms` without changing the checkpoint: what a
 /// worker does while one long unit of work runs.
 ///

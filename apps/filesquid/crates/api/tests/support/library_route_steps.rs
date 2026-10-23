@@ -23,6 +23,7 @@ pub struct LibraryRouteWorld {
     files: Vec<String>,
     failures: usize,
     answer: Option<Answer>,
+    job: String,
 }
 
 impl std::fmt::Debug for LibraryRouteWorld {
@@ -49,7 +50,11 @@ impl LibraryRouteWorld {
 
     /// Install a rig with the library holding the two objects.
     async fn with_library(&mut self, mount: Mount) {
-        let rig = LibraryRig::new(mount);
+        self.with_rig(LibraryRig::new(mount)).await;
+    }
+
+    /// Install `rig` with the library holding the two objects.
+    async fn with_rig(&mut self, rig: LibraryRig) {
         let (library, location) = rig.create("lib").await;
         rig.object(&location, COMPLETE.0, COMPLETE.1).await;
         rig.w010_object(&location, W010.0, W010.1).await;
@@ -128,11 +133,88 @@ async fn copy(w: &mut MonitorWorld) {
     w.routes.answer = Some(rig.post("/api/v1/libraries/snapshot-copies", body).await);
 }
 
-#[when(expr = "the owner rebuilds the library from its files through the API")]
-async fn rebuild(w: &mut MonitorWorld) {
+#[given(
+    expr = "the desktop owner's library with a complete object and an object without a version inventory, on a host that runs no rebuild yet"
+)]
+async fn library_without_runner(w: &mut MonitorWorld) {
+    let rig = LibraryRig::without_rebuild_runner(Mount::Desktop);
+    w.routes.with_rig(rig).await;
+}
+
+#[when(expr = "the owner starts a rebuild of the library from its files through the API")]
+async fn start_rebuild(w: &mut MonitorWorld) {
     let body = json!({ "library_id": w.routes.library });
     let rig = w.routes.rig();
-    w.routes.answer = Some(rig.post("/api/v1/libraries/rebuilds", body).await);
+    let answer = rig.post("/api/v1/libraries/rebuilds", body).await;
+    assert_eq!(answer.status.as_u16(), 200, "{}", answer.text());
+    w.routes.job = answer.json()["job_id"].as_str().expect("job").to_string();
+    w.routes.answer = Some(answer);
+}
+
+#[when(expr = "the owner rebuilds the library from its files through the API")]
+async fn rebuild(w: &mut MonitorWorld) {
+    start_rebuild(w).await;
+    rebuild_finishes(w).await;
+}
+
+#[when(expr = "the rebuild job finishes")]
+async fn rebuild_finishes(w: &mut MonitorWorld) {
+    let rig = w.routes.rig();
+    rig.finished_job(&w.routes.job).await;
+    w.routes.answer = Some(rig.get(&format!("/api/v1/jobs/{}", w.routes.job)).await);
+}
+
+#[when(expr = "the owner {word} the rebuild job through the API")]
+async fn control_rebuild(w: &mut MonitorWorld, control: String) {
+    let control = match control.as_str() {
+        "pauses" => "pause",
+        "resumes" => "resume",
+        _ => "cancel",
+    };
+    let rig = w.routes.rig();
+    let uri = format!("/api/v1/jobs/{}/{control}", w.routes.job);
+    let bearer = format!("Bearer {}", rig.token);
+    let answer = rig
+        .send(axum::http::Method::POST, &uri, Some(&bearer), None)
+        .await;
+    assert_eq!(answer.status.as_u16(), 200, "{}", answer.text());
+    w.routes.answer = Some(answer);
+}
+
+#[then(expr = "the answer should be a pending library.rebuild job without a result")]
+fn pending_rebuild(w: &mut MonitorWorld) {
+    let body = w.routes.answer().json();
+    assert_eq!(body["outcome"], "pending", "{body}");
+    assert_eq!(body["job"]["kind"], "library.rebuild", "{body}");
+    assert_eq!(body["job"]["state"], "pending", "{body}");
+    assert_eq!(body["job"]["result"], Value::Null, "{body}");
+}
+
+#[then(expr = "the rebuild job should report {int} of {int} objects done")]
+fn rebuild_progress(w: &mut MonitorWorld, done: u64, total: u64) {
+    let job = w.routes.answer().json();
+    assert_eq!(job["done"].as_u64(), Some(done), "{job}");
+    assert_eq!(job["total"].as_u64(), Some(total), "{job}");
+}
+
+#[then(expr = "the rebuild job should be {word}")]
+fn rebuild_state(w: &mut MonitorWorld, state: String) {
+    let job = w.routes.answer().json()["job"].clone();
+    match state.as_str() {
+        "paused" => {
+            assert_eq!(job["state"], "pending", "{job}");
+            assert_eq!(job["paused"], true, "{job}");
+        }
+        _ => assert_eq!(job["state"], state.as_str(), "{job}"),
+    }
+    assert_eq!(job["result"], Value::Null, "no result: {job}");
+}
+
+#[then(expr = "{string} should be journaled once for the rebuild job")]
+fn job_journaled_once(w: &mut MonitorWorld, operation: String) {
+    let entries = w.routes.rig().journaled(&operation);
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    assert_eq!(entries[0].target_ids, [w.routes.job.clone()]);
 }
 
 #[when(expr = "the server administrator rebuilds the library from its files through the API")]
@@ -252,7 +334,9 @@ fn unchanged(w: &mut MonitorWorld) {
 
 #[then(expr = "the rebuild should flag only the object without a version inventory")]
 fn rebuild_flags(w: &mut MonitorWorld) {
-    let report = w.routes.answer().json();
+    let job = w.routes.answer().json();
+    assert_eq!(job["state"], "completed", "{job}");
+    let report = &job["result"];
     let flagged: Vec<&str> = report["objects"]
         .as_array()
         .expect("objects")
@@ -314,4 +398,15 @@ async fn committable(w: &mut MonitorWorld) {
     rig.clock.advance(120_000);
     let committed = rig.commit_v3(&w.routes.location, W010.0, W010.1).await;
     assert!(committed.is_ok(), "{committed:?}");
+}
+
+#[when(expr = "the owner rebuilds a library that is not open through the API")]
+async fn rebuild_not_open(w: &mut MonitorWorld) {
+    let body = json!({ "library_id": crate::library_routes_fixture::LIBRARY });
+    let rig = w.routes.rig();
+    w.routes.answer = Some(rig.post("/api/v1/libraries/rebuilds", body).await);
+    assert!(
+        rig.journaled("job.created").is_empty(),
+        "no job is submitted"
+    );
 }

@@ -99,6 +99,11 @@ pub struct Job {
     /// checkpoint or renewal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub control: Option<JobControl>,
+    /// What the job's kind keeps as its result, as JSON text (API-S-037): the partial result
+    /// stored with each checkpoint while the job runs, the whole one once it completed (for
+    /// `library.rebuild`, the rebuild report of API-S-025). Shown only once it completed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<String>,
 }
 
 impl Job {

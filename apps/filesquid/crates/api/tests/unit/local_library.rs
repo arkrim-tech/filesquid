@@ -6,10 +6,13 @@
 mod fixture;
 
 use filesquid_api::journal::Outcome;
-use filesquid_api::local_library::LocalLibraryError;
+use filesquid_api::local_library::{LocalLibraryError, RebuildEnd, RebuildProgress, RebuildStep};
 use filesquid_ocfl::storage::{MemoryBackend, StorageBackend, MAX_PUT_BYTES};
 use filesquid_ocfl::DigestAlgorithm;
 use fixture::{key, library, ready, CountingBackend, Rig};
+use std::ops::ControlFlow;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 /// Paths or storage keys that must never appear in answers or the journal.
 const PATH_MARKERS: [&str; 4] = ["/", "inventory.json", "obj-a", "content"];
@@ -308,6 +311,95 @@ fn rebuild_reports_an_external_edit_instead_of_adopting_it() {
     ready(rig.root.put(&key("obj-a/v2/content/b.txt"), b"tampered")).expect("tamper");
     let report = ready(rig.service.rebuild("owner", &library(), &rig.root)).expect("rebuild");
     assert!(!report.objects[0].error_codes.is_empty(), "{report:?}");
+}
+
+/// A rebuild progress that keeps every root it is told about and stops after `stop_after`.
+struct Collect {
+    roots: Vec<String>,
+    done: Vec<(u64, u64)>,
+    stop_after: usize,
+}
+
+impl RebuildProgress for Collect {
+    fn object(&mut self, step: RebuildStep<'_>) -> ControlFlow<()> {
+        self.roots.push(step.root.to_string());
+        self.done.push((step.done, step.total));
+        match self.roots.len() >= self.stop_after {
+            true => ControlFlow::Break(()),
+            false => ControlFlow::Continue(()),
+        }
+    }
+}
+
+#[test]
+fn a_rebuild_from_a_cursor_reads_no_object_at_or_before_it() {
+    let rig = Rig::with_root();
+    rig.object("obj-a", "urn:uuid:a");
+    rig.object("obj-b", "urn:uuid:b");
+    rig.object("obj-c", "urn:uuid:c");
+    let opened = Arc::new(AtomicBool::new(false));
+    let flag = opened.clone();
+    rig.root.on_read(
+        "obj-a/inventory.json",
+        Box::new(move || flag.store(true, Ordering::SeqCst)),
+    );
+    let mut progress = Collect {
+        roots: Vec::new(),
+        done: Vec::new(),
+        stop_after: usize::MAX,
+    };
+    let after = Some("obj-a".to_string());
+    let end = ready(
+        rig.service
+            .rebuild_from("owner", &library(), &rig.root, after, &mut progress),
+    )
+    .expect("rebuild");
+    assert!(
+        !opened.load(Ordering::SeqCst),
+        "the completed object is not read again"
+    );
+    assert_eq!(progress.roots, ["obj-b", "obj-c"]);
+    assert_eq!(
+        progress.done,
+        [(2, 3), (3, 3)],
+        "progress counts every object"
+    );
+    assert_eq!(
+        end,
+        RebuildEnd::Finished {
+            total: 3,
+            journal: None
+        }
+    );
+    let journaled = rig.journaled("library.rebuild");
+    assert_eq!(journaled.len(), 1, "the finished rebuild is journaled once");
+    assert_eq!(journaled[0].outcome, Outcome::Succeeded);
+}
+
+#[test]
+fn a_rebuild_its_progress_stops_is_not_journaled_as_finished() {
+    let rig = Rig::with_root();
+    rig.object("obj-a", "urn:uuid:a");
+    rig.object("obj-b", "urn:uuid:b");
+    let writes = rig.root.writes();
+    let mut progress = Collect {
+        roots: Vec::new(),
+        done: Vec::new(),
+        stop_after: 1,
+    };
+    let end = ready(
+        rig.service
+            .rebuild_from("owner", &library(), &rig.root, None, &mut progress),
+    )
+    .expect("rebuild");
+    assert_eq!(end, RebuildEnd::Stopped);
+    assert_eq!(progress.roots, ["obj-a"]);
+    assert_eq!(
+        rig.root.writes(),
+        writes,
+        "a stopped rebuild writes nothing"
+    );
+    assert!(rig.journaled("library.rebuild").is_empty());
 }
 
 #[test]
