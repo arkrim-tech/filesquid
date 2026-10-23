@@ -3,7 +3,8 @@
  * `#/navigation/<handle>` shows a navigation destination with its breadcrumb (UI-F2.1b),
  * `#/monitor` shows the Monitor dashboard inside the shell, and
  * `#/files/<library>/<object>/<folder>/...` shows the file browser (UI-F2.2) until the API lists
- * files by navigation node; any other hash shows the shell alone. After a route change focus
+ * files by navigation node, with the file panel (UI-F2.3) in the shell's panel slot while a file
+ * is open; any other hash shows the shell alone. After a route change focus
  * moves to the shell's main area (UI-S-016), so keyboard and
  * screen-reader users land on the new content instead of on a link that may have been removed.
  * Also provides the in-memory token store used on the server host.
@@ -13,6 +14,8 @@ import type { MonitorOptions, TokenStore } from "../components/fs-monitor";
 import type { FsNavigationView, NavigationViewOptions } from "../components/fs-navigation-view";
 import type { FsSettings, SettingsOptions } from "../components/fs-settings";
 import { locationHash, parseLocationHash, type FileLocation } from "../files/model";
+import type { HistorySource } from "../files/history-source";
+import { bindFilePanel, removeFilePanel } from "./file-panel-route";
 
 /** An element the routed views are mounted in; the app shell also offers `focusMain`. */
 export type RouteHost = HTMLElement & {
@@ -217,8 +220,14 @@ function createNavigationView(shell: HTMLElement, options: NavigationRouteOption
   return view;
 }
 
-/** The part of the browser options the files route needs: the labels and the file source. */
-export type FilesRouteOptions = Pick<FileBrowserOptions, "labels" | "source">;
+/**
+ * What the files route needs: the labels and the file source of the browser, and the history
+ * source of the file panel (UI-F2.3); without it the route mounts no file panel.
+ */
+export interface FilesRouteOptions extends Pick<FileBrowserOptions, "labels" | "source"> {
+  /** Reads histories, versions and history sizes for the file panel. */
+  readonly history?: HistorySource;
+}
 
 /**
  * Show or hide an `<fs-file-browser>` child of `shell` to match the current hash, now and on
@@ -254,6 +263,7 @@ function applyFilesRoute(shell: HTMLElement, options: FilesRouteOptions, win: Wi
   const existing = shell.querySelector<FsFileBrowser>("fs-file-browser");
   if (!location) {
     existing?.remove();
+    removeFilePanel(shell);
     return;
   }
   const browser = existing ?? createFileBrowser(shell, options, win);
@@ -267,7 +277,8 @@ function createFileBrowser(
   win: Window,
 ): FsFileBrowser {
   const browser = document.createElement("fs-file-browser") as FsFileBrowser;
-  browser.configure({ ...options, href: locationHash });
+  browser.configure({ labels: options.labels, source: options.source, href: locationHash });
+  if (options.history) bindFilePanel(shell, browser, { ...options, history: options.history });
   browser.addEventListener("fs-location-change", (event) => {
     const { location } = (event as CustomEvent<{ location: FileLocation }>).detail;
     const hash = locationHash(location);

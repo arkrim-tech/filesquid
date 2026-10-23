@@ -287,6 +287,23 @@ describe("<fs-app-shell>", () => {
     expect(panel?.hidden).toBe(true);
   });
 
+  it("puts the file panel region under the header, beside the main column and the footer (35, 26)", async () => {
+    const shell = mount();
+    await settle();
+    const root = shell.shadowRoot as ShadowRoot;
+    const content = root.querySelector(".content") as HTMLElement;
+    expect(
+      [...content.children].map((el) => el.tagName.toLowerCase() + "." + el.className),
+    ).toEqual(["header.", "div.body"]);
+    const body = content.querySelector(".body") as HTMLElement;
+    expect([...body.children].map((el) => el.className)).toEqual(["column", "panel"]);
+    expect([...(body.querySelector(".column")?.children ?? [])].map((el) => el.tagName)).toEqual([
+      "MAIN",
+      "FOOTER",
+    ]);
+    expect(styleOf(shell)).toMatch(/:host \{[^}]*grid-template-columns: auto minmax\(0, 1fr\);/);
+  });
+
   it("hides the sidebar, header and footer in frameless mode, for the welcome screen (UI-S-027)", async () => {
     const shell = mount();
     await settle();
