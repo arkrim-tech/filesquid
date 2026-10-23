@@ -57,5 +57,9 @@ path = "tests/features.rs"
 harness = false
 
 [dev-dependencies]
+# The engine with its default `fs` feature, so the `ocfl` tests also run on
+# `FsBackend`. Tests only: the library's own dependency stays optional and
+# without default features.
+filesquid-ocfl = { path = "../ocfl" }
 cucumber = { version = "0.23", features = ["macros", "output-junit"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
