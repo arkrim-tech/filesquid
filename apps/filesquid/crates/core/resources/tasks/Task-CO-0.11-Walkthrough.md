@@ -12,7 +12,7 @@ Owner decision 3b of 2026-10-23 ("provide and implement recommendations for owne
 
 ### API-S-002: The versioned API contract owned by the API crate
 
-`crates/api/openapi.json` 0.24.0 to 0.25.0 (`API_VERSION` and its `unit_contract` assertion with it): the `OperationKind` enum lists `catalog.organisation` and `publish`. `ui/src/api/schema.d.ts` regenerated with `npm run contract:types` (one line). `filesquid-prov` keeps kinds as validated strings (`check_kind` allows `.`), so it needed no change; no API code maps an operation to `Publish` yet, which API-F2.9's share and publication outputs will do.
+`crates/api/openapi.json` 0.24.0 to 0.25.0 (`API_VERSION` and its `unit_contract` assertion with it): the `OperationKind` enum lists `catalog.organisation` and `publish`. `ui/src/api/schema.d.ts` regenerated with `npm run contract:types` (one line). `filesquid-prov` keeps kinds as validated strings (`check_kind` allows `.`), so it needed no change; no API code maps an operation to `Publish` yet, which API-F2.9's share and publication outputs will do. One desktop assertion read the written token (`crates/desktop/tests/integration/library_catalog.rs`, `a_catalog_commit_carries_its_history_in_the_same_version`) and now expects `catalog.organisation`; no other reader or writer of the `catalog` token exists in the workspace, the UI or ImageSquid.
 
 ### Tests
 
