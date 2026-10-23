@@ -121,7 +121,7 @@ fn after_entry(entry: &ScopeEntry) -> ScopeAfter {
     }
 }
 
-/// The opaque cursor of `after`: [`CURSOR_PREFIX`] and the hexadecimal bytes of its JSON, so
+/// The opaque cursor of `after`: the prefix `s1.` and the hexadecimal bytes of its JSON, so
 /// it holds no readable name. Pure.
 pub fn encode_cursor(after: &ScopeAfter) -> String {
     let json = serde_json::to_vec(after).unwrap_or_default();
