@@ -531,16 +531,18 @@ impl FilesRig {
     }
 
     /// The head version of `object_id` in the rig's library, read through the versions
-    /// route, or `"0"` when the object does not exist: the revision a command names.
+    /// route, or `"0"` when the route answers `404` (no such object): the revision a command
+    /// names. Any other answer fails the test, so a refusal is never mistaken for a revision.
     pub async fn head_of(&self, object_id: &str) -> String {
         let uri = format!(
             "/api/v1/files/versions?library_id={LIBRARY}&object_id={}",
             encode(object_id)
         );
         let answer = self.get(&uri).await;
-        match answer.json()["head"].as_str() {
-            Some(head) => head.to_string(),
-            None => "0".to_string(),
+        match answer.status {
+            StatusCode::OK => answer.json()["head"].as_str().expect("head").to_string(),
+            StatusCode::NOT_FOUND => "0".to_string(),
+            other => panic!("the versions route answered {other}: {:?}", answer.json()),
         }
     }
 

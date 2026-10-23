@@ -108,6 +108,19 @@ describe("uploadFacts", () => {
   });
 });
 
+describe("uploadFiles operation ids", () => {
+  it("sends each file under the operation id the caller gives it", async () => {
+    const source = new MemoryFileSource({ ...OBJECT, files: [{ path: "seed.txt", content: "s" }] });
+    const upload = vi.spyOn(source, "upload");
+    const files = [new File(["a"], "one.txt"), new File(["b"], "two.txt")];
+    await uploadFiles(source, OBJECT, files, undefined, (file) => `op-${file.name}`);
+    expect(upload.mock.calls.map((c) => c[3])).toEqual([
+      { operationId: "op-one.txt" },
+      { operationId: "op-two.txt" },
+    ]);
+  });
+});
+
 describe("uploadFiles", () => {
   /** A source holding nothing, with a spy on upload. */
   function empty() {

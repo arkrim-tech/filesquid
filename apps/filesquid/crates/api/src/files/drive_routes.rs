@@ -83,14 +83,14 @@ async fn copy(
 }
 
 /// The journal entry of one copy: the caller, the library, the new file's object and its
-/// version.
+/// version, with its `<object-id>@vN` reference (API-S-028).
 fn copy_entry(principal: &Principal, copied: &CopyView) -> JournalEntry {
     let ids = (
         copied.library_id.as_str(),
         copied.object_id.as_str(),
         copied.version.as_str(),
     );
-    super::command::version_entry(COPY_OPERATION, principal, ids, false)
+    command::version_entry(COPY_OPERATION, principal, ids, true)
 }
 
 /// `GET /api/v1/files/view`: one page of a library, collection or virtual-collection node.

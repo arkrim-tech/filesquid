@@ -95,10 +95,7 @@ where
         let registry = self.registry(&request.library_id).await?;
         let _writing = library.writes.lock().await;
         let backend = library.files.backend.as_ref();
-        let source = read_source(backend, source_id).await?;
-        if source.version != expected {
-            return Err(stale_source());
-        }
+        let source = read_source(backend, source_id, expected).await?;
         let file_id = mint_file_id()?;
         let reference = source_reference(&source.file_id, &source.version);
         let started = self.created();
@@ -143,8 +140,13 @@ where
     }
 }
 
-/// The head record and bytes of the file `file_id`, read whole within [`MAX_COPY_BYTES`].
-async fn read_source<B: StorageBackend>(backend: &B, file_id: FileId) -> Result<Source, FileError> {
+/// The head record and bytes of the file `file_id`, read whole within [`MAX_COPY_BYTES`] once
+/// its head is `expected`: a stale revision is refused before any byte is read.
+async fn read_source<B: StorageBackend>(
+    backend: &B,
+    file_id: FileId,
+    expected: &str,
+) -> Result<Source, FileError> {
     let original = read_file_original(backend, &OwnerReadable, &file_id)
         .await
         .map_err(copy_error)?
@@ -152,6 +154,9 @@ async fn read_source<B: StorageBackend>(backend: &B, file_id: FileId) -> Result<
     let root = file_object_root(&file_id).map_err(copy_error)?;
     let object = Object::open(backend, &root).await?;
     let head = object.head().clone();
+    if head.to_string() != expected {
+        return Err(stale_source());
+    }
     let size = view::file_details(&object, &head, &original.path)
         .await?
         .size;

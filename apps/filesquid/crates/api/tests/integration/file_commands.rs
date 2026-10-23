@@ -394,6 +394,25 @@ async fn a_new_upload_names_revision_zero_and_a_copy_its_source_head() {
 }
 
 #[tokio::test]
+async fn an_operation_id_of_an_upload_with_other_bytes_is_refused() {
+    let rig = FilesRig::with_files(&[("a.txt", b"a")]).await;
+    let input = upload_input("x.txt", 3, json!({}));
+    let operation = operation_id();
+    let envelope = command_body(&input, &operation, "0")["envelope"].clone();
+    let first = rig.send_upload(&envelope, &input, b"abc").await;
+    assert_committed(&first, &operation);
+    let same_size = rig.send_upload(&envelope, &input, b"xyz").await;
+    assert_invalid(&same_size);
+    let again = rig.send_upload(&envelope, &input, b"abc").await;
+    assert_eq!(
+        again.json(),
+        first.json(),
+        "the same bytes replay the first answer"
+    );
+    assert_eq!(successes(&rig, "files.upload"), 1);
+}
+
+#[tokio::test]
 async fn an_upload_without_its_file_or_input_part_is_refused() {
     let rig = FilesRig::with_files(&[("a.txt", b"a")]).await;
     let input = upload_input("x.txt", 3, json!({}));

@@ -137,20 +137,28 @@ function uploadParts(request: Request): {
   return { envelope: json(part("envelope")), input: json(part("input")), file: part("file") };
 }
 
-/** Answer a command with its committed outcome and `result`, or the API's refusal. */
+/**
+ * Answer a command as the API does: a repeated operation id is answered its stored committed
+ * answer again without running the write; otherwise the committed outcome with its `result`,
+ * which is then stored in `receipts`, or the API's refusal (which stores nothing).
+ */
 async function answerCommand(
   route: Route,
   envelope: Envelope | undefined,
+  receipts: Map<string, object>,
   call: () => Promise<unknown>,
 ): Promise<void> {
   if (!envelope || envelope.schema_version !== 1 || envelope.operation_id === "") {
     const body = { code: "invalid_request", message: "no envelope", retryable: false };
     return route.fulfill({ status: 400, json: body });
   }
+  const stored = receipts.get(envelope.operation_id);
+  if (stored) return route.fulfill({ json: stored });
   const operation = { operation_id: envelope.operation_id, error: null };
   try {
-    const result = await call();
-    await route.fulfill({ json: { ...operation, kind: "committed", result } });
+    const answer = { ...operation, kind: "committed", result: await call() };
+    receipts.set(envelope.operation_id, answer);
+    await route.fulfill({ json: answer });
   } catch (error) {
     const status = error instanceof ApiError ? error.status : 500;
     const code = error instanceof ApiError ? (error.code ?? "internal") : "internal";
@@ -274,13 +282,16 @@ async function routeReads(page: Page, api: FilesApi): Promise<void> {
 /** The write routes, each a command. */
 async function routeWrites(page: Page, api: FilesApi): Promise<void> {
   const object = { library_id: "lib", object_id: "obj" };
+  const receipts = new Map<string, object>();
   await page.route(/\/api\/v1\/files\/upload$/, (route) => {
     const { envelope, input = {}, file = Buffer.alloc(0) } = uploadParts(route.request());
     const text = Object.entries(input).map(([key, value]) => [key, String(value)]);
     api.uploads.push(Object.fromEntries(text));
     api.writes.push(`PUT upload ${String(input.name ?? "")}`);
     const revision = envelope?.expected_revision ?? "";
-    return answerCommand(route, envelope, () => uploadAsTheApi(api.source, input, file, revision));
+    return answerCommand(route, envelope, receipts, () =>
+      uploadAsTheApi(api.source, input, file, revision),
+    );
   });
   type Write = (input: Record<string, unknown>, options: { revision: string }) => Promise<unknown>;
   const post = (name: string, call: Write) =>
@@ -292,7 +303,7 @@ async function routeWrites(page: Page, api: FilesApi): Promise<void> {
       const input = body.input ?? {};
       api.writes.push(`POST ${name} ${JSON.stringify(input)}`);
       const options = { revision: body.envelope?.expected_revision ?? "" };
-      return answerCommand(route, body.envelope, () => call(input, options));
+      return answerCommand(route, body.envelope, receipts, () => call(input, options));
     });
   await post("folders", (b, o) => api.source.createFolder(object, String(b.path), o));
   await post("moves", (b, o) => api.source.move(object, String(b.from), String(b.to), o));
@@ -312,7 +323,8 @@ async function routeWrites(page: Page, api: FilesApi): Promise<void> {
 
 /**
  * Answer an upload as the API's input rules do: an unknown key (a `path` or `object_id` of the
- * old upload form among them), a missing `library_id`, `name` or `size`, a normalisation form
+ * old upload form among them), a fact other than `size` that is not text, a missing
+ * `library_id`, `name` or `size`, a normalisation form
  * the contract does not name, or a declared size that is not the file part's is refused with
  * `invalid_request` before the source is asked.
  */
@@ -324,11 +336,14 @@ async function uploadAsTheApi(
 ): Promise<unknown> {
   const text = (key: string) => (typeof input[key] === "string" ? input[key] : undefined);
   const unknown = Object.keys(input).some((key) => !UPLOAD_KEYS.has(key));
+  const notText = Object.entries(input).some(
+    ([key, value]) => key !== "size" && value !== null && typeof value !== "string",
+  );
   const missing = ["library_id", "name", "size"].some((key) => input[key] === undefined);
   const form = text("name_normalization");
   const badForm = form !== undefined && !NAME_FORMS.has(form);
   const badSize = input.size !== bytes.byteLength;
-  if (unknown || missing || badForm || badSize) {
+  if (unknown || notText || missing || badForm || badSize) {
     throw new ApiError(400, "/api/v1/files/upload", { code: "invalid_request" });
   }
   const facts = {

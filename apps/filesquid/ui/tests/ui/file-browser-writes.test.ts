@@ -152,6 +152,11 @@ describe("upload", () => {
       ["lib", "one.txt"],
       ["lib", "one.txt"],
     ]);
+    // Retry resends a file under the operation id it was first sent with (API-F2.13), so an
+    // upload that had committed is answered again rather than made twice.
+    const ids = upload.mock.calls.map((c) => c[3]?.operationId);
+    expect(ids[0]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(ids[1]).toBe(ids[0]);
   });
 
   it("shows a drop target for dragged files and uploads what is dropped", async () => {

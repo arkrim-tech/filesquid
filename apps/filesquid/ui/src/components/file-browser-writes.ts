@@ -9,6 +9,7 @@
  * Remove and restore are the reversible pair the plan names: the Undo offer restores from the
  * version before the removal. There is no control that deletes for good.
  */
+import { newOperationId } from "../api/commands";
 import { formatLabel, type LabelTable } from "../theme/labels";
 import {
   MAX_DISPLAY_NAME_BYTES,
@@ -105,6 +106,8 @@ export class FileWrites {
   private busy = false;
   private undoOffer?: UndoOffer;
   private retryable: File[] = [];
+  /** The operation id each file was last sent under, so Retry resends it with the same one. */
+  private readonly uploadIds = new WeakMap<File, string>();
   private retryWhere?: FileLocation;
 
   /**
@@ -217,16 +220,37 @@ export class FileWrites {
     if (files.length === 0 || this.busy) return;
     const { labels, source } = this.host;
     this.setBusy(true);
-    const result = await uploadFiles(source, where, files, (current, total, name) =>
-      this.showStatus(
-        formatLabel(labels.fileUploading, { current: String(current), total: String(total), name }),
-      ),
+    const result = await uploadFiles(
+      source,
+      where,
+      files,
+      (current, total, name) =>
+        this.showStatus(
+          formatLabel(labels.fileUploading, {
+            current: String(current),
+            total: String(total),
+            name,
+          }),
+        ),
+      (file) => this.uploadId(file),
     );
     this.setBusy(false);
     const last = result.committed[result.committed.length - 1];
     if (last) this.host.committed("upload", last, []);
     this.reportUpload(result.committed.length, last, result, where);
     if (last) await this.host.reload();
+  }
+
+  /**
+   * The operation id of `file`: the one it was sent under before, when a Retry sends it again,
+   * else a new one (API-F2.13). Side effect: remembers it for the file.
+   */
+  private uploadId(file: File): string {
+    const known = this.uploadIds.get(file);
+    if (known) return known;
+    const id = newOperationId();
+    this.uploadIds.set(file, id);
+    return id;
   }
 
   /** Files chosen in the hidden input: upload them and clear the input. */

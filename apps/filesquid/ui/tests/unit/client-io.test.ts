@@ -241,7 +241,7 @@ describe("FileSquidClient.command", () => {
 });
 
 describe("FileSquidClient.upload", () => {
-  it("POSTs multipart form data with an envelope part and a file part", async () => {
+  it("PUTs multipart form data with an envelope part and a file part by default", async () => {
     const outcome = { operation_id: "op-1", kind: "committed", error: null };
     const { client, seen } = clientWith(() => json(201, outcome));
     const file = new Blob(["pixels"], { type: "image/png" });
@@ -255,7 +255,7 @@ describe("FileSquidClient.upload", () => {
     const part = form.get("file") as File;
     expect(part.name).toBe("a.png");
     expect(await blobText(part)).toBe("pixels");
-    expect(seen[0]?.init.method).toBe("POST");
+    expect(seen[0]?.init.method).toBe("PUT");
     // The transport sets the multipart boundary itself.
     expect(headersOf(seen[0]).has("content-type")).toBe(false);
     expect(headersOf(seen[0]).get("authorization")).toBe(`Bearer ${TOKEN}`);

@@ -307,7 +307,9 @@ async fn upload(
         UPLOAD_OPERATION,
         command,
         |files, c, actor| async move {
-            let upload = files.upload(c.input, bytes, actor, c.expected).await?;
+            let upload = files
+                .upload(c.input.facts, bytes, actor, c.expected)
+                .await?;
             let ids = (
                 upload.library_id.as_str(),
                 upload.object_id.as_str(),
@@ -328,7 +330,7 @@ async fn upload(
 /// `input` (JSON) and `file` (at most [`MAX_UPLOAD_BYTES`] bytes), each once.
 async fn upload_command(
     form: Result<Multipart, MultipartRejection>,
-) -> Result<(Checked<UploadQuery>, Bytes), FileError> {
+) -> Result<(Checked<UploadCommand>, Bytes), FileError> {
     let mut form = form.map_err(|_| {
         FileError::invalid("An upload is multipart/form-data with envelope, input and file parts.")
     })?;
@@ -350,6 +352,32 @@ async fn upload_command(
         ));
     }
     parts.finish()
+}
+
+/// The input an upload's receipt is matched on: its facts and the SHA-256 of its bytes, so
+/// the same operation ID with other bytes is another command, never a replay.
+#[derive(Clone, Debug, Serialize)]
+struct UploadCommand {
+    /// The upload's facts, the `input` part.
+    #[serde(flatten)]
+    facts: UploadQuery,
+    /// The SHA-256 of the `file` part, lowercase hex.
+    content_sha256: String,
+}
+
+impl CommandInput for UploadCommand {
+    fn library_id(&self) -> &str {
+        &self.facts.library_id
+    }
+}
+
+/// The SHA-256 of `bytes` as lowercase hex. Pure.
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 /// The parts of an upload body read so far.
@@ -380,7 +408,7 @@ impl UploadParts {
     }
 
     /// The checked command and the bytes, once every part arrived within the cap.
-    fn finish(self) -> Result<(Checked<UploadQuery>, Bytes), FileError> {
+    fn finish(self) -> Result<(Checked<UploadCommand>, Bytes), FileError> {
         let (Some(envelope), Some(input), Some(file)) = (self.envelope, self.input, self.file)
         else {
             return Err(FileError::invalid(
@@ -390,6 +418,10 @@ impl UploadParts {
         if file.len() > MAX_UPLOAD_BYTES {
             return Err(upload_too_large());
         }
+        let input = UploadCommand {
+            content_sha256: sha256_hex(&file),
+            facts: input,
+        };
         Ok((command::check(envelope, input)?, file))
     }
 }

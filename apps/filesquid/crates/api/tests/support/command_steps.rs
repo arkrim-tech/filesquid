@@ -98,7 +98,8 @@ async fn upload(w: &mut MonitorWorld, name: String, op: String, rev: String) {
 
 #[when(expr = "the owner sends a removal of {string} without an envelope")]
 async fn without_envelope(w: &mut MonitorWorld, path: String) {
-    let body = object_input(json!({ "path": path }));
+    // The input as a command carries it, with the envelope left out and nothing else wrong.
+    let body = json!({ "input": object_input(json!({ "path": path })) });
     let uri = "/api/v1/files/removals";
     let answer = w
         .commands

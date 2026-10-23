@@ -235,7 +235,8 @@ impl Settled {
                 "That operation_id already names another command; send a new one.",
             ),
             Self::Busy => FileError::conflict(
-                "A command with that operation_id is still running; try again when it finishes.",
+                "A command with that operation_id is still running; its outcome is answered to \
+                 the same operation_id once it has finished.",
             ),
             Self::Failed => FileError::internal("a command input could not be fingerprinted"),
         };
@@ -266,20 +267,15 @@ fn claim<T: CommandInput>(
     }
 }
 
-/// Journal a command's success under its operation ID, store the answer of a change as its
-/// receipt, and answer it.
+/// Store the answer of a change as its command's receipt, then journal the success under its
+/// operation ID and answer it. The receipt is stored first, so a request cancelled while the
+/// journal is written still leaves its retry a replay, never a second run.
 async fn committed<V: Serialize>(
     state: &ApiState,
     operation_id: &OperationId,
     done: Done<V>,
     guard: ClaimGuard,
 ) -> Response {
-    for mut entry in done.entries {
-        if entry.operation_id.is_none() {
-            entry.operation_id = Some(operation_id.as_str().to_string());
-        }
-        journal_entry(state, entry).await;
-    }
     let answer = CommandAnswer {
         outcome: CommandOutcome::new(operation_id.clone(), CommandOutcomeKind::Committed),
         result: Some(done.view),
@@ -292,6 +288,12 @@ async fn committed<V: Serialize>(
     };
     if done.changed {
         guard.store(value.clone());
+    }
+    for mut entry in done.entries {
+        if entry.operation_id.is_none() {
+            entry.operation_id = Some(operation_id.as_str().to_string());
+        }
+        journal_entry(state, entry).await;
     }
     Json(value).into_response()
 }

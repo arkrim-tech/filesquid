@@ -47,10 +47,15 @@ export interface WriteOptions extends SourceOptions {
 /** The revision of an upload's file object before it exists: a new file (API-F2.13). */
 export const NEW_FILE_REVISION = "0";
 
-/** Options of an upload: the revision of the file it replaces, and a way to cancel it. */
+/** Options of an upload: the revision of the file it replaces, its operation id, and a way to cancel it. */
 export interface UploadSourceOptions extends SourceOptions {
   /** The file object's head for new content of `file_id`; {@link NEW_FILE_REVISION} by default. */
   readonly revision?: string;
+  /**
+   * The operation id to send; a new one when absent. Reuse it to retry an upload whose answer
+   * was lost: the API then answers the first outcome instead of making a second file.
+   */
+  readonly operationId?: string;
 }
 
 /** Everything the file browser asks of the API. */
@@ -297,6 +302,7 @@ export class ClientFileSource implements FileSource {
     const envelope = commandEnvelope({
       scope: `library:${library.library_id}`,
       expectedRevision: options.revision ?? NEW_FILE_REVISION,
+      operationId: options.operationId,
     });
     const answer = await this.client.upload<UploadCommit>(UPLOAD_PATH, body, envelope, {
       method: "PUT",

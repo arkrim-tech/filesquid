@@ -472,10 +472,10 @@ export interface AbortOptions {
 export interface UploadOptions {
   /** File name sent with the `file` part. */
   filename?: string;
-  /** HTTP method; `POST` by default (the file upload route takes `PUT`). */
+  /** HTTP method; `PUT` by default, the method of the file upload route. */
   method?: "POST" | "PUT";
-  /** The command input, sent as an `input` part (JSON) when given. */
-  input?: unknown;
+  /** The upload's facts, sent as the `input` part (JSON) when given (API-F2.13). */
+  input?: FileUploadQuery;
   /** Cancels the upload. The command may still apply; retry with the same operation id. */
   signal?: AbortSignal;
 }
@@ -737,7 +737,7 @@ export class FileSquidClient {
    * @param path API path of the upload.
    * @param file File bytes.
    * @param envelope Envelope from `commandEnvelope`; reuse it to retry.
-   * @param options File name, method (`POST` by default), command input and abort signal.
+   * @param options File name, method (`PUT` by default), the upload's facts and abort signal.
    * @returns The outcome, with the route's `result` when it answers one; only `committed` is
    *   durable completion evidence. `T` is the result the caller expects; it is not checked.
    * @throws ApiError on a non-2xx answer other than 409, or when the token cannot be sent.
@@ -757,7 +757,7 @@ export class FileSquidClient {
     }
     form.append("file", file, options.filename ?? (file instanceof File ? file.name : "file"));
     const response = await this.transmit(path, {
-      method: options.method ?? "POST",
+      method: options.method ?? "PUT",
       body: form,
       signal: options.signal,
     });

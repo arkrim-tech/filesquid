@@ -158,7 +158,7 @@ async fn rename(
                 commit.object_id.as_str(),
                 commit.version.as_str(),
             );
-            let entry = command::version_entry(RENAME_OPERATION, principal, ids, false);
+            let entry = command::version_entry(RENAME_OPERATION, principal, ids, true);
             Ok(Done {
                 view: commit,
                 entries: vec![entry],
