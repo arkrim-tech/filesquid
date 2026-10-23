@@ -25,7 +25,13 @@ import type {
 } from "./model";
 import { MAX_UPLOAD_BYTES, isControl, isMediaType, lastSegment } from "./model";
 import { fileIdOf, inOriginalFolder, isOriginalPath } from "./ops";
-import type { FileSource, SourceOptions } from "./source";
+import {
+  NEW_FILE_REVISION,
+  type FileSource,
+  type SourceOptions,
+  type UploadSourceOptions,
+  type WriteOptions,
+} from "./source";
 
 /** One file of the fixture. */
 export interface MemoryFile {
@@ -295,15 +301,23 @@ export class MemoryFileSource implements FileSource {
    * version of `facts.file_id`'s object. The object shown is not changed. Refuses what the
    * route refuses: a body over 64 MiB, a bad name, media type, time or `file_id`, or a
    * non-ASCII name without its form (`invalid_request`); an unknown file (`not_found`);
-   * unchanged bytes (`conflict`).
+   * unchanged bytes, or a revision that is not the file's head (`0` for a new file)
+   * (`conflict`).
    */
-  async upload(library: LibraryRef, facts: UploadFacts, body: Blob): Promise<UploadCommit> {
+  async upload(
+    library: LibraryRef,
+    facts: UploadFacts,
+    body: Blob,
+    options: UploadSourceOptions = {},
+  ): Promise<UploadCommit> {
     this.check();
     const form = uploadForm(facts);
     if (form === null || body.size > MAX_UPLOAD_BYTES) throw refusal(400, "invalid_request");
     const bytes = await readBlob(body);
     const previous = facts.file_id === undefined ? undefined : this.uploaded.get(facts.file_id);
     if (facts.file_id !== undefined && previous === undefined) throw refusal(404, "not_found");
+    const head = previous?.upload.version ?? NEW_FILE_REVISION;
+    if ((options.revision ?? NEW_FILE_REVISION) !== head) throw refusal(409, "conflict");
     if (previous && sameBytes(previous.bytes, bytes)) throw refusal(409, "conflict");
     const file_id = previous?.upload.file_id ?? newOperationId();
     const version = `v${previous ? Number(previous.upload.version.slice(1)) + 1 : 1}`;
@@ -324,8 +338,13 @@ export class MemoryFileSource implements FileSource {
   }
 
   /** Create a folder: pending when no file lies below it yet. */
-  async createFolder(_object: ObjectRef, path: string): Promise<FolderAnswer> {
+  async createFolder(
+    _object: ObjectRef,
+    path: string,
+    options: WriteOptions,
+  ): Promise<FolderAnswer> {
     this.check();
+    this.expect(options.revision);
     const files = [...this.latest().files.keys()];
     const blocked = files.some((file) => within(path, file));
     if (blocked) throw refusal(409, "conflict");
@@ -342,13 +361,20 @@ export class MemoryFileSource implements FileSource {
    * Set the display name of the file this object holds (`POST /api/v1/files/renames`,
    * API-S-027): one new version that changes only the display name. Refuses what the route
    * refuses: an empty name, one over 1,024 bytes or with `/` or NUL (`invalid_request`); a file
-   * this object does not hold (`not_found`); the current name (`conflict`).
+   * this object does not hold (`not_found`); the current name, or a revision that is not the
+   * head (`conflict`).
    */
-  async rename(library: LibraryRef, fileId: string, displayName: string): Promise<FileCommit> {
+  async rename(
+    library: LibraryRef,
+    fileId: string,
+    displayName: string,
+    options: WriteOptions,
+  ): Promise<FileCommit> {
     this.check();
     const held = this.holdsFile(fileId) && library.library_id === this.options.library_id;
     if (!held) throw refusal(404, "not_found");
     if (!validDisplayName(displayName)) throw refusal(400, "invalid_request");
+    this.expect(options.revision);
     return this.commit((files) => {
       for (const file of [...files.values()].filter((f) => isOriginalPath(f.path, fileId))) {
         files.set(file.path, { ...file, displayName });
@@ -366,13 +392,19 @@ export class MemoryFileSource implements FileSource {
    * Move one file or folder. As the API does, it refuses (`invalid_request`) a move from or to
    * `original` or below it in a file's own object, which only a rename changes.
    */
-  async move(_object: ObjectRef, from: string, to: string): Promise<FileCommit> {
+  async move(
+    _object: ObjectRef,
+    from: string,
+    to: string,
+    options: WriteOptions,
+  ): Promise<FileCommit> {
     this.check();
     const id = fileIdOf(this.options.object_id);
     const own = id !== undefined && this.holdsFile(id);
     if (own && (inOriginalFolder(from) || inOriginalFolder(to))) {
       throw refusal(400, "invalid_request");
     }
+    this.expect(options.revision);
     return this.commit((files, version, created) => {
       const moving = [...files.keys()].filter((path) => within(path, from));
       if (moving.length === 0) throw refusal(404, "not_found");
@@ -386,8 +418,9 @@ export class MemoryFileSource implements FileSource {
   }
 
   /** Remove one file or folder; earlier versions keep it. */
-  async remove(_object: ObjectRef, path: string): Promise<FileCommit> {
+  async remove(_object: ObjectRef, path: string, options: WriteOptions): Promise<FileCommit> {
     this.check();
+    this.expect(options.revision);
     return this.commit((files) => {
       const removing = [...files.keys()].filter((candidate) => within(candidate, path));
       if (removing.length === 0) throw refusal(404, "not_found");
@@ -400,8 +433,10 @@ export class MemoryFileSource implements FileSource {
     _object: ObjectRef,
     version: string,
     paths: readonly string[],
+    options: WriteOptions,
   ): Promise<FileCommit> {
     this.check();
+    this.expect(options.revision);
     const earlier = this.snapshot(version);
     return this.commit((files, label, created) => {
       for (const path of paths) {
@@ -416,6 +451,11 @@ export class MemoryFileSource implements FileSource {
   /** Reject with the configured failure. */
   private check(): void {
     if (this.failure !== undefined) throw this.failure;
+  }
+
+  /** Refuse a write as `conflict` unless `revision` is the head, as the API does (API-F2.13). */
+  private expect(revision: string): void {
+    if (revision !== this.head) throw refusal(409, "conflict");
   }
 
   /** The newest snapshot. */

@@ -19,13 +19,22 @@ import { FsStates } from "./components/fs-states";
 import { FsThemeControl } from "./components/fs-theme-control";
 
 export { FsAppShell } from "./components/fs-app-shell";
-export type { ShellClient, ShellOptions } from "./components/fs-app-shell";
+export {
+  NEW_EVENT,
+  type ShellClient,
+  type ShellOptions,
+  type StorageSummary,
+} from "./components/fs-app-shell";
 export { FsThemeControl, type ThemeControlOptions } from "./components/fs-theme-control";
 export {
   FsHostIndicator,
+  HOST_EVENT,
   type HostClient,
   type HostIndicatorOptions,
 } from "./components/fs-host-indicator";
+export { icon, type IconName } from "./components/icons";
+export { CONTROL_STYLE } from "./components/control-style";
+export { CONTRACT_VERSION } from "./api/contract-version";
 export {
   HOST_TYPES,
   describeHost,
@@ -131,7 +140,7 @@ export {
 } from "./navigation/contract";
 export { FsNavigationView, type NavigationViewOptions } from "./components/fs-navigation-view";
 export { HOST_STATEMENT_STYLE, buildHostStatement } from "./components/host-statement";
-export { FsSettings, type SettingsOptions } from "./components/fs-settings";
+export { FsSettings, type SettingsClient, type SettingsOptions } from "./components/fs-settings";
 export { FsLibraryStart } from "./components/fs-library-start";
 export { FsLibraryDetail } from "./components/fs-library-detail";
 export { FsLibraryRepair, type RepairPageOptions } from "./components/fs-library-repair";
@@ -170,8 +179,12 @@ export {
 } from "./api/commands";
 export { createHostClient, DESKTOP_EVENT, LAUNCH_TOKEN_GLOBAL, launchToken } from "./api/host";
 export {
+  ALL_FILES_ROUTE,
+  LOGS_ROUTE,
   MONITOR_ROUTE,
   NAVIGATION_ROUTE_PREFIX,
+  RECENT_ROUTE,
+  RECENTLY_DELETED_ROUTE,
   SETTINGS_ROUTE,
   bindFilesRoute,
   bindMonitorRoute,

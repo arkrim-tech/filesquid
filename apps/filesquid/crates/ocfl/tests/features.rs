@@ -7,6 +7,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use cucumber::{given, then, when, writer, StatsWriter as _, World, WriterExt as _};
 
+#[path = "support/bound_order_steps.rs"]
+mod bound_order_steps;
 #[path = "support/object_builder.rs"]
 mod builder;
 #[path = "support/warning_capture.rs"]
@@ -110,6 +112,7 @@ struct OcflWorld {
     change: change_steps::ChangeState,
     view: view_steps::ViewState,
     copy_warning: copy_warning_steps::CopyWarningState,
+    bound_order: bound_order_steps::BoundOrderState,
 }
 
 /// Run `$body` with `$b` bound to the scenario's concrete backend.

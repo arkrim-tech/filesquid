@@ -196,30 +196,34 @@ pub fn sample(
             format!("{path}?collection_id={}", crate::drive_catalog::COLLECTION),
             None,
         ),
-        ("POST", "/api/v1/files/copies") => (path.into(), file_body(json!({}))),
+        ("POST", "/api/v1/files/copies") => (path.into(), file_command(path, json!({}))),
         ("GET" | "HEAD", "/api/v1/files/content")
         | ("GET", "/api/v1/files/download")
         | ("GET", "/api/v1/files/details")
         | ("GET", "/api/v1/files/history") => plain("&path=a.txt"),
-        ("PUT", "/api/v1/files/upload") => (
-            format!("{path}?library_id={LIBRARY}&name=new.txt&size=3"),
-            Some(("application/octet-stream", b"new".to_vec())),
+        ("PUT", "/api/v1/files/upload") => (path.into(), upload_command(path)),
+        ("POST", "/api/v1/files/folders") => (
+            path.into(),
+            object_command(path, json!({ "path": "albums" })),
         ),
-        ("POST", "/api/v1/files/folders") => (path.into(), json_body(json!({ "path": "albums" }))),
         ("POST", "/api/v1/files/moves") => (
             path.into(),
-            json_body(json!({ "from": "move-me.txt", "to": "moved.txt" })),
+            object_command(path, json!({ "from": "move-me.txt", "to": "moved.txt" })),
         ),
-        ("POST", "/api/v1/files/removals") => {
-            (path.into(), json_body(json!({ "path": "remove-me.txt" })))
-        }
+        ("POST", "/api/v1/files/removals") => (
+            path.into(),
+            object_command(path, json!({ "path": "remove-me.txt" })),
+        ),
         ("POST", "/api/v1/files/restorations") => (
             path.into(),
-            json_body(json!({ "version": "v1", "paths": ["restore-me.txt"] })),
+            object_command(
+                path,
+                json!({ "version": "v1", "paths": ["restore-me.txt"] }),
+            ),
         ),
         ("PUT", "/api/v1/files/labels") => (
             path.into(),
-            json_body(json!({ "version": "v1", "label": "First draft" })),
+            object_command(path, json!({ "version": "v1", "label": "First draft" })),
         ),
         ("GET", "/api/v1/files/history-size") => plain("&path=a.txt"),
         ("GET", "/api/v1/files/library-history-size") => {
@@ -243,7 +247,7 @@ pub fn sample(
         ),
         ("POST", "/api/v1/files/renames") => (
             path.into(),
-            file_body(json!({ "display_name": "Été à Nice.jpg" })),
+            file_command(path, json!({ "display_name": "Été à Nice.jpg" })),
         ),
         ("GET", "/api/v1/files/metadata/terms") => {
             (format!("{path}?library_id={LIBRARY}&name=title"), None)
@@ -459,7 +463,197 @@ pub fn samples() -> Vec<(&'static str, Vec<Value>)> {
     all.extend(request_samples());
     all.extend(metadata_samples());
     all.extend(drive_samples());
+    all.extend(command_samples());
     all
+}
+
+/// The placeholder of a sample command's expected revision, followed by the object whose
+/// head it stands for; the contract test reads that head when it sends the sample.
+pub const HEAD_OF: &str = "@head:";
+
+/// The multipart boundary of the sample upload.
+const BOUNDARY: &str = "filesquid-contract-boundary";
+
+/// The `content-type` of the sample upload.
+const MULTIPART: &str = "multipart/form-data; boundary=filesquid-contract-boundary";
+
+/// The object and the whole placeholder of the first [`HEAD_OF`] in `text`, if any.
+pub fn head_marker(text: &str) -> Option<(String, String)> {
+    let start = text.find(HEAD_OF)?;
+    let rest = &text[start + HEAD_OF.len()..];
+    let object: String = rest.chars().take_while(|c| *c != '"').collect();
+    let marker = format!("{HEAD_OF}{object}");
+    Some((object, marker))
+}
+
+/// The envelope of the sample command of `route` whose expected revision is `revision`.
+fn sample_envelope(route: &str, revision: &str) -> Value {
+    json!({
+        "schema_version": 1,
+        "operation_id": format!("contract-{}", route.rsplit('/').next().unwrap_or("command")),
+        "expected_revision": revision,
+        "scope": format!("library:{LIBRARY}"),
+    })
+}
+
+/// The JSON command body of `route` with `input`, expecting the head of `object`.
+fn command(route: &str, input: Value, object: &str) -> Option<(&'static str, Vec<u8>)> {
+    let envelope = sample_envelope(route, &format!("{HEAD_OF}{object}"));
+    let body = json!({ "envelope": envelope, "input": input });
+    Some(("application/json", body.to_string().into_bytes()))
+}
+
+/// [`command`] of an input naming the sample library and object plus `fields`.
+fn object_command(route: &str, fields: Value) -> Option<(&'static str, Vec<u8>)> {
+    let mut input = json!({ "library_id": LIBRARY, "object_id": OBJECT });
+    for (key, value) in fields.as_object().expect("fields") {
+        input[key] = value.clone();
+    }
+    command(route, input, OBJECT)
+}
+
+/// [`command`] of an input naming the sample library and file plus `fields`.
+fn file_command(route: &str, fields: Value) -> Option<(&'static str, Vec<u8>)> {
+    let mut input = json!({ "library_id": LIBRARY, "file_id": FILE });
+    for (key, value) in fields.as_object().expect("fields") {
+        input[key] = value.clone();
+    }
+    command(route, input, &format!("urn:uuid:{FILE}"))
+}
+
+/// The multipart body of the sample upload of a new file, `new.txt`.
+fn upload_command(route: &str) -> Option<(&'static str, Vec<u8>)> {
+    let envelope = sample_envelope(route, "0");
+    let input = json!({ "library_id": LIBRARY, "name": "new.txt", "size": 3 });
+    let mut body = Vec::new();
+    for (name, value) in [("envelope", envelope), ("input", input)] {
+        let head = format!(
+            "--{BOUNDARY}\r\ncontent-disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+        );
+        body.extend_from_slice(head.as_bytes());
+    }
+    let file = format!(
+        "--{BOUNDARY}\r\ncontent-disposition: form-data; name=\"file\"; filename=\"new.txt\"\r\n\r\nnew\r\n--{BOUNDARY}--\r\n"
+    );
+    body.extend_from_slice(file.as_bytes());
+    Some((MULTIPART, body))
+}
+
+/// Serialized samples of the command schemas of the file write routes (Task API-F2.13).
+fn command_samples() -> Vec<(&'static str, Vec<Value>)> {
+    use filesquid_api::error::{ApiError, ErrorCode};
+    use filesquid_api::files::copy::{CopyRequest, CopyView};
+    use filesquid_api::files::statements::{MetadataCommitView, RenameRequest};
+    use filesquid_api::files::{CommandAnswer, ConflictAnswer, FileCommand, UploadQuery};
+    use filesquid_api::operation::{
+        CommandEnvelope, CommandOutcome, CommandOutcomeKind, ExpectedRevision, OperationId,
+        OperationScope,
+    };
+    let id = OperationId::new("4b7f2c1e-9a3d-4e5f-8b6a-0c1d2e3f4a5b").expect("id");
+    let envelope = CommandEnvelope::new(
+        id.clone(),
+        ExpectedRevision::new("v2").expect("revision"),
+        OperationScope::new(format!("library:{LIBRARY}")).expect("scope"),
+    );
+    let committed = || CommandOutcome::new(id.clone(), CommandOutcomeKind::Committed);
+    let answer = |result: Value| {
+        to_value(CommandAnswer {
+            outcome: committed(),
+            result: Some(result),
+        })
+    };
+    let wrap = |input: Value| {
+        to_value(FileCommand {
+            envelope: envelope.clone(),
+            input,
+        })
+    };
+    let commit = json!({
+        "library_id": LIBRARY, "object_id": OBJECT, "version": "v3",
+        "created": "2026-10-18T00:00:00Z"
+    });
+    let upload = UploadView {
+        library_id: LIBRARY.into(),
+        file_id: FILE.into(),
+        object_id: format!("urn:uuid:{FILE}"),
+        version: "v1".into(),
+        created: "2026-10-18T00:00:00Z".into(),
+    };
+    let copy = CopyView {
+        library_id: LIBRARY.into(),
+        file_id: "0b6f6a58-5c1d-4b5e-9f3e-2a7d8c9e0f19".into(),
+        object_id: "urn:uuid:0b6f6a58-5c1d-4b5e-9f3e-2a7d8c9e0f19".into(),
+        version: "v1".into(),
+        created: "2026-10-20T00:00:00Z".into(),
+        source: format!("urn:uuid:{FILE}@v2"),
+    };
+    let metadata = MetadataCommitView {
+        library_id: LIBRARY.into(),
+        object_id: format!("urn:uuid:{FILE}"),
+        version: "v2".into(),
+        created: "2026-10-18T00:00:00Z".into(),
+    };
+    let folder = FolderView {
+        library_id: LIBRARY.into(),
+        object_id: OBJECT.into(),
+        path: "albums".into(),
+        pending: true,
+    };
+    let conflict = ConflictAnswer {
+        outcome: CommandOutcome::new(id.clone(), CommandOutcomeKind::Conflict),
+        result: None,
+        error: ApiError::new(ErrorCode::Conflict, "It changed since it was read."),
+    };
+    let input = |name: Option<&str>| UploadQuery {
+        library_id: LIBRARY.into(),
+        file_id: name.map(|_| FILE.to_string()),
+        name: "Été.txt".into(),
+        size: 3,
+        media_type: name.map(|_| "text/plain".to_string()),
+        last_modified: name.map(|_| "2026-10-18T00:00:00Z".to_string()),
+        name_normalization: name.map(|_| filesquid_metadata::import::NameForm::Nfc),
+        message: name.map(str::to_string),
+    };
+    let requests = request_samples();
+    let request = |name: &str| {
+        requests
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, values)| values[0].clone())
+            .expect("request sample")
+    };
+    let rename = RenameRequest {
+        library_id: LIBRARY.into(),
+        file_id: FILE.into(),
+        display_name: "Été à Nice.jpg".into(),
+    };
+    let copy_request = CopyRequest {
+        library_id: LIBRARY.into(),
+        file_id: FILE.into(),
+        message: None,
+    };
+    vec![
+        ("FileCommitOutcome", vec![answer(commit)]),
+        ("UploadCommitOutcome", vec![answer(to_value(upload))]),
+        ("FileCopyOutcome", vec![answer(to_value(copy))]),
+        ("MetadataCommitOutcome", vec![answer(to_value(metadata))]),
+        ("FolderAnswerOutcome", vec![answer(to_value(folder))]),
+        ("FileCommandConflict", vec![to_value(conflict)]),
+        (
+            "UploadInput",
+            vec![to_value(input(Some("upload"))), to_value(input(None))],
+        ),
+        (
+            "CreateFolderCommand",
+            vec![wrap(request("CreateFolderRequest"))],
+        ),
+        ("MoveCommand", vec![wrap(request("MoveRequest"))]),
+        ("RemoveCommand", vec![wrap(request("RemoveRequest"))]),
+        ("RestoreCommand", vec![wrap(request("RestoreRequest"))]),
+        ("LabelCommand", vec![wrap(request("LabelRequest"))]),
+        ("RenameCommand", vec![wrap(to_value(rename))]),
+        ("CopyCommand", vec![wrap(to_value(copy_request))]),
+    ]
 }
 
 /// Serialized samples of the copy, view and collection storage-use schemas (Task API-F2.2).

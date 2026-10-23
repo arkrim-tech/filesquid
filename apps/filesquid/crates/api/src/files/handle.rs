@@ -78,23 +78,54 @@ pub trait FileOperations: Send + Sync {
     fn check_target(&self, target: ContentTarget) -> FileFuture<'_, ()>;
 
     /// Upload one file by `actor`: a new file object, or new content for an existing file.
-    fn upload(&self, query: UploadQuery, bytes: Bytes, actor: String)
-        -> FileFuture<'_, UploadView>;
+    /// `expected` is the file object's head the caller read, or
+    /// [`super::NEW_FILE_REVISION`] for a new file; any other is a `conflict`.
+    fn upload(
+        &self,
+        query: UploadQuery,
+        bytes: Bytes,
+        actor: String,
+        expected: String,
+    ) -> FileFuture<'_, UploadView>;
 
-    /// Whether a folder exists or stays pending; writes nothing.
-    fn create_folder(&self, request: FolderRequest) -> FileFuture<'_, FolderView>;
+    /// Whether a folder exists or stays pending at the object's head `expected`; writes
+    /// nothing.
+    fn create_folder(&self, request: FolderRequest, expected: String)
+        -> FileFuture<'_, FolderView>;
 
-    /// Move or rename one file or folder by `actor`.
-    fn move_path(&self, request: MoveRequest, actor: String) -> FileFuture<'_, CommitView>;
+    /// Move or rename one file or folder by `actor`, if the object's head is `expected`.
+    fn move_path(
+        &self,
+        request: MoveRequest,
+        actor: String,
+        expected: String,
+    ) -> FileFuture<'_, CommitView>;
 
-    /// Remove one file or folder by `actor`.
-    fn remove(&self, request: RemoveRequest, actor: String) -> FileFuture<'_, CommitView>;
+    /// Remove one file or folder by `actor`, if the object's head is `expected`.
+    fn remove(
+        &self,
+        request: RemoveRequest,
+        actor: String,
+        expected: String,
+    ) -> FileFuture<'_, CommitView>;
 
-    /// Restore files or folders from an earlier version by `actor`, in one version.
-    fn restore(&self, request: RestoreRequest, actor: String) -> FileFuture<'_, Committed>;
+    /// Restore files or folders from an earlier version by `actor`, in one version, if the
+    /// object's head is `expected`.
+    fn restore(
+        &self,
+        request: RestoreRequest,
+        actor: String,
+        expected: String,
+    ) -> FileFuture<'_, Committed>;
 
-    /// Set or clear the label of one version after commit, by `actor`.
-    fn set_label(&self, request: LabelRequest, actor: String) -> FileFuture<'_, Committed>;
+    /// Set or clear the label of one version after commit, by `actor`, if the object's head
+    /// is `expected`.
+    fn set_label(
+        &self,
+        request: LabelRequest,
+        actor: String,
+        expected: String,
+    ) -> FileFuture<'_, Committed>;
 
     /// The statements of one file.
     fn statements(&self, query: FileRecordQuery) -> FileFuture<'_, StatementsView>;
@@ -115,11 +146,23 @@ pub trait FileOperations: Send + Sync {
         actor: String,
     ) -> FileFuture<'_, MetadataCommitView>;
 
-    /// Rename a file (its display name only) by `actor`.
-    fn rename(&self, request: RenameRequest, actor: String) -> FileFuture<'_, MetadataCommitView>;
+    /// Rename a file (its display name only) by `actor`, if the file object's head is
+    /// `expected`.
+    fn rename(
+        &self,
+        request: RenameRequest,
+        actor: String,
+        expected: String,
+    ) -> FileFuture<'_, MetadataCommitView>;
 
-    /// Copy a file at its head into a new file by `actor`.
-    fn copy(&self, request: CopyRequest, actor: String) -> FileFuture<'_, CopyView>;
+    /// Copy a file at its head into a new file by `actor`, if the source's head is
+    /// `expected`.
+    fn copy(
+        &self,
+        request: CopyRequest,
+        actor: String,
+        expected: String,
+    ) -> FileFuture<'_, CopyView>;
 
     /// Remove one statement by `actor`.
     fn remove_statement(
@@ -210,28 +253,53 @@ where
         query: UploadQuery,
         bytes: Bytes,
         actor: String,
+        expected: String,
     ) -> FileFuture<'_, UploadView> {
-        Box::pin(async move { FileService::upload(self, query, &bytes, &actor).await })
+        Box::pin(async move { FileService::upload(self, query, &bytes, &actor, &expected).await })
     }
 
-    fn create_folder(&self, request: FolderRequest) -> FileFuture<'_, FolderView> {
-        Box::pin(self.create_folder(request))
+    fn create_folder(
+        &self,
+        request: FolderRequest,
+        expected: String,
+    ) -> FileFuture<'_, FolderView> {
+        Box::pin(async move { FileService::create_folder(self, request, &expected).await })
     }
 
-    fn move_path(&self, request: MoveRequest, actor: String) -> FileFuture<'_, CommitView> {
-        Box::pin(async move { FileService::move_path(self, request, &actor).await })
+    fn move_path(
+        &self,
+        request: MoveRequest,
+        actor: String,
+        expected: String,
+    ) -> FileFuture<'_, CommitView> {
+        Box::pin(async move { FileService::move_path(self, request, &actor, &expected).await })
     }
 
-    fn remove(&self, request: RemoveRequest, actor: String) -> FileFuture<'_, CommitView> {
-        Box::pin(async move { FileService::remove(self, request, &actor).await })
+    fn remove(
+        &self,
+        request: RemoveRequest,
+        actor: String,
+        expected: String,
+    ) -> FileFuture<'_, CommitView> {
+        Box::pin(async move { FileService::remove(self, request, &actor, &expected).await })
     }
 
-    fn restore(&self, request: RestoreRequest, actor: String) -> FileFuture<'_, Committed> {
-        Box::pin(async move { FileService::restore(self, request, &actor).await })
+    fn restore(
+        &self,
+        request: RestoreRequest,
+        actor: String,
+        expected: String,
+    ) -> FileFuture<'_, Committed> {
+        Box::pin(async move { FileService::restore(self, request, &actor, &expected).await })
     }
 
-    fn set_label(&self, request: LabelRequest, actor: String) -> FileFuture<'_, Committed> {
-        Box::pin(async move { FileService::set_label(self, request, &actor).await })
+    fn set_label(
+        &self,
+        request: LabelRequest,
+        actor: String,
+        expected: String,
+    ) -> FileFuture<'_, Committed> {
+        Box::pin(async move { FileService::set_label(self, request, &actor, &expected).await })
     }
 
     fn history_size(&self, query: HistoryQuery) -> FileFuture<'_, FileHistorySizeView> {
@@ -262,12 +330,22 @@ where
         Box::pin(async move { FileService::set_statement(self, request, &actor).await })
     }
 
-    fn rename(&self, request: RenameRequest, actor: String) -> FileFuture<'_, MetadataCommitView> {
-        Box::pin(async move { FileService::rename(self, request, &actor).await })
+    fn rename(
+        &self,
+        request: RenameRequest,
+        actor: String,
+        expected: String,
+    ) -> FileFuture<'_, MetadataCommitView> {
+        Box::pin(async move { FileService::rename(self, request, &actor, &expected).await })
     }
 
-    fn copy(&self, request: CopyRequest, actor: String) -> FileFuture<'_, CopyView> {
-        Box::pin(async move { FileService::copy(self, request, &actor).await })
+    fn copy(
+        &self,
+        request: CopyRequest,
+        actor: String,
+        expected: String,
+    ) -> FileFuture<'_, CopyView> {
+        Box::pin(async move { FileService::copy(self, request, &actor, &expected).await })
     }
 
     fn remove_statement(

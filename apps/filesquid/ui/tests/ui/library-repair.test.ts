@@ -130,6 +130,31 @@ describe("<fs-library-repair> consent", () => {
     expect(accessibilityViolations(page)).toEqual([]);
   });
 
+  it("draws mockup 42: one primary per screen and dialog, the overlay dialog on the scrim", async () => {
+    const { page } = await mount();
+    const root = rootOf(page);
+    expect(root.querySelector('[data-action="review"]')?.className).toBe("button primary");
+    expect(root.querySelectorAll(".button.primary")).toHaveLength(1);
+    await click(page, '[data-action="review"]');
+    const dialog = dialogOf(page) as HTMLElement;
+    expect(dialog.classList.contains("dialog")).toBe(true);
+    expect(dialog.parentElement?.classList.contains("scrim")).toBe(true);
+    const kinds = [...dialog.querySelectorAll("button")].map((b) => b.className);
+    expect(kinds).toEqual(["button secondary", "button primary"]);
+    expect(dialog.querySelector(".dialog-actions")).not.toBeNull();
+    const css = root.querySelector("style")?.textContent ?? "";
+    expect(css).toMatch(
+      /\.scrim::before \{[^}]*background: var\(--fs-scrim\); opacity: var\(--fs-scrim-opacity\)/,
+    );
+    expect(css).toMatch(
+      /\.dialog \{[^}]*inline-size: min\(37\.5rem, 100%\)[^}]*border-radius: var\(--fs-radius-dialog\); background: var\(--fs-surface-overlay\)/,
+    );
+    expect(css).toMatch(
+      /\[role="dialog"\] h3 \{[^}]*font-size: var\(--fs-font-size-heading\); font-weight: 700/,
+    );
+    expect(css).toMatch(/\.offer li[^{]*\{ font-family: var\(--fs-font-mono\)/);
+  });
+
   it("moves focus into the dialog, to Cancel, without calling the repair route", async () => {
     const { page, source } = await mount();
     await click(page, '[data-action="review"]');

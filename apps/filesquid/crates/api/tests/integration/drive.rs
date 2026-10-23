@@ -309,7 +309,7 @@ async fn listings_leave_out_the_reserved_folders() {
 async fn files_cannot_be_written_into_the_provenance_folder() {
     let rig = FilesRig::with_files(&[("a.txt", b"alpha")]).await;
     let moved = rig
-        .post(
+        .command(
             "/api/v1/files/moves",
             json!({
                 "library_id": files_fixture::LIBRARY,

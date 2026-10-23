@@ -112,7 +112,8 @@ describe("<fs-host-indicator> structure", () => {
     const popover = indicator.shadowRoot?.querySelector<HTMLElement>('[role="dialog"]');
     expect(badge?.getAttribute("aria-controls")).toBe(popover?.id);
     expect(popover?.hidden).toBe(true);
-    expect(text(indicator, '[role="dialog"] h2')).toBe(labels.hostIndicator);
+    // Mockup 40 (UI-S-033): the popover is titled by the host label, "This device".
+    expect(text(indicator, '[role="dialog"] h2')).toBe(labels.hostBadgeDesktop);
     expect(popover?.getAttribute("aria-labelledby")).toBe(
       indicator.shadowRoot?.querySelector('[role="dialog"] h2')?.id,
     );
@@ -475,9 +476,14 @@ describe("<fs-host-indicator> follows the host", () => {
   it("follows a new label table when configured again while connected", async () => {
     const fake = fakeClient(descriptor());
     const indicator = await mount(fake);
-    indicator.configure({ labels: { ...labels, hostIndicator: "Dónde" }, client: fake.client });
+    indicator.configure({
+      labels: { ...labels, hostIndicator: "Dónde", hostBadgeDesktop: "Este equipo" },
+      client: fake.client,
+    });
     await settle();
-    expect(text(indicator, "h2")).toBe("Dónde");
+    const group = indicator.shadowRoot?.querySelector('[role="group"]');
+    expect(group?.getAttribute("aria-label")).toBe("Dónde");
+    expect(text(indicator, "h2")).toBe("Este equipo");
   });
 
   it("refresh() resubscribes (a new token) and reads again", async () => {

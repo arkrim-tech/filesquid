@@ -39,10 +39,7 @@ function mountShell(): FsAppShell {
   const shell = document.createElement("fs-app-shell") as FsAppShell;
   shell.configure({
     distribution,
-    client: {
-      ...hostFakes(),
-      health: async () => ({ status: "ok", product: "filesquid", schema_version: 1 }),
-    },
+    client: hostFakes(),
     theme: fakeThemeStore().store,
   });
   document.body.replaceChildren(shell);
@@ -121,7 +118,6 @@ describe("<fs-app-shell> accessibility (UI-S-016)", () => {
       distribution,
       client: {
         ...hostFakes(),
-        health: async () => ({ status: "ok", product: "x", schema_version: 1 }),
       },
       theme: fakeThemeStore().store,
     });
@@ -177,7 +173,7 @@ describe("<fs-app-shell> accessibility (UI-S-016)", () => {
     const root = mountShell().shadowRoot;
     expect(root?.querySelector("nav")?.getAttribute("aria-label")).toBe(labels.navigationMain);
     expect(root?.querySelectorAll("h1")).toHaveLength(1);
-    expect(root?.querySelector("header h1")?.textContent).toBe("FileSquid");
+    expect(root?.querySelector("nav .brand h1")?.textContent).toBe("FileSquid");
     expect(root?.querySelector("main")?.getAttribute("tabindex")).toBe("-1");
     expect(root?.querySelectorAll("[tabindex]:not([tabindex='-1'])")).toHaveLength(0);
   });
@@ -199,7 +195,6 @@ describe("<fs-app-shell> accessibility (UI-S-016)", () => {
       distribution,
       client: {
         ...hostFakes(),
-        health: async () => ({ status: "ok", product: "x", schema_version: 1 }),
       },
       theme: fakeThemeStore().store,
     });
@@ -215,7 +210,6 @@ describe("<fs-app-shell> accessibility (UI-S-016)", () => {
       distribution,
       client: {
         ...hostFakes(),
-        health: async () => ({ status: "ok", product: "x", schema_version: 1 }),
       },
       theme: fakeThemeStore().store,
     });

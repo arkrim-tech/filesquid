@@ -10,9 +10,9 @@ mod files_fixture;
 #[path = "../support/drive_catalog.rs"]
 mod drive_catalog;
 
-use axum::http::{Method, StatusCode};
+use axum::http::StatusCode;
 use drive_catalog::{DriveCatalog, COLLECTION};
-use files_fixture::{encode, upload_uri, Answer, FilesRig, LIBRARY};
+use files_fixture::{encode, upload_facts, Answer, FilesRig, LIBRARY};
 use filesquid_api::journal::{JournalEntry, JournalStore, Outcome};
 use serde_json::{json, Value};
 
@@ -26,10 +26,10 @@ async fn rig() -> (FilesRig, DriveCatalog) {
 
 /// Upload `bytes` as a new file named `name` (NFC) and answer its file ID.
 async fn upload(rig: &FilesRig, name: &str, bytes: &[u8]) -> String {
-    let uri = upload_uri(name, bytes.len(), "name_normalization=nfc");
-    let answer = rig.call(Method::PUT, &uri, &[], bytes.to_vec()).await;
+    let uri = upload_facts(name, bytes.len(), "name_normalization=nfc");
+    let answer = rig.upload(uri, bytes).await;
     assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
-    answer.json()["file_id"]
+    answer.result()["file_id"]
         .as_str()
         .expect("file id")
         .to_string()
@@ -101,13 +101,13 @@ async fn a_copy_is_a_new_file_that_keeps_the_display_name_and_names_its_source()
     let source = upload(&rig, "IMG_0001.JPG", b"jpeg bytes").await;
     let rename = json!({ "library_id": LIBRARY, "file_id": source, "display_name": "Harbour.JPG" });
     assert_eq!(
-        rig.post("/api/v1/files/renames", rename).await.status,
+        rig.command("/api/v1/files/renames", rename).await.status,
         StatusCode::OK
     );
     let body = json!({ "library_id": LIBRARY, "file_id": source });
-    let answer = rig.post("/api/v1/files/copies", body).await;
+    let answer = rig.command("/api/v1/files/copies", body).await;
     assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
-    let copy = answer.json();
+    let copy = answer.result();
     let copy_id = copy["file_id"].as_str().expect("copy id");
     assert_ne!(copy_id, source, "a new FileId");
     assert_eq!(copy["object_id"], format!("urn:uuid:{copy_id}"));
@@ -167,13 +167,13 @@ async fn a_copy_of_an_unknown_or_malformed_file_publishes_nothing() {
     let unknown =
         json!({ "library_id": LIBRARY, "file_id": "0b6f6a58-5c1d-4b5e-9f3e-2a7d8c9e0f19" });
     assert_error(
-        &rig.post("/api/v1/files/copies", unknown).await,
+        &rig.command("/api/v1/files/copies", unknown).await,
         404,
         "not_found",
     );
     let malformed = json!({ "library_id": LIBRARY, "file_id": "../x" });
     assert_error(
-        &rig.post("/api/v1/files/copies", malformed).await,
+        &rig.command("/api/v1/files/copies", malformed).await,
         400,
         "invalid_request",
     );
@@ -228,7 +228,7 @@ async fn paging_is_stable_and_a_cursor_of_another_or_a_changed_view_is_refused()
     let cursor = first["next_cursor"].as_str().expect("cursor").to_string();
     let rename = json!({ "library_id": LIBRARY, "file_id": first["rows"][0]["file_id"], "display_name": "zz.jpg" });
     assert_eq!(
-        rig.post("/api/v1/files/renames", rename).await.status,
+        rig.command("/api/v1/files/renames", rename).await.status,
         StatusCode::OK
     );
     let changed = view(&rig, &node, &format!("&limit=1&sort=name&cursor={cursor}")).await;
@@ -342,7 +342,7 @@ async fn by_me_keys_follow_only_the_callers_own_changes_and_openings() {
     rig.clock.advance(60_000);
     let rename = json!({ "library_id": LIBRARY, "file_id": alpha, "display_name": "Alpha 2.jpg" });
     assert_eq!(
-        rig.post("/api/v1/files/renames", rename).await.status,
+        rig.command("/api/v1/files/renames", rename).await.status,
         StatusCode::OK
     );
     rig.clock.advance(60_000);
@@ -478,7 +478,7 @@ async fn storage_use_per_collection_counts_its_files_history_once() {
     let ids = three_in_collection(&rig, &drive).await;
     let rename = json!({ "library_id": LIBRARY, "file_id": ids[0], "display_name": "beta 2.jpg" });
     assert_eq!(
-        rig.post("/api/v1/files/renames", rename).await.status,
+        rig.command("/api/v1/files/renames", rename).await.status,
         StatusCode::OK
     );
     drive.delete(&ids[2]);

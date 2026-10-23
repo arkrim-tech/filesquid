@@ -27,7 +27,7 @@
     "report": "allure generate tests/allure-results --output tests/allure-report --clean",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "contract:types": "openapi-typescript ../crates/api/openapi.json -o src/api/schema.d.ts",
+    "contract:types": "openapi-typescript ../crates/api/openapi.json -o src/api/schema.d.ts && node tests/support/write-contract-version.mjs",
     "desktop:dev": "cd ../crates/desktop && tauri dev",
     "desktop:build": "cd ../crates/desktop && tauri build"
   },

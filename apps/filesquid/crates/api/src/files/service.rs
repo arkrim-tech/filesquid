@@ -521,13 +521,19 @@ impl<B: StorageBackend, R, S> FileService<B, R, S> {
     /// Whether the folder `request.path` exists in the head (`pending` false) or would exist
     /// only once a file is added beneath it (`pending` true). Writes nothing: OCFL stores no
     /// empty folder. A file at the path or at one of its parents is a `conflict`.
-    pub async fn create_folder(&self, request: FolderRequest) -> Result<FolderView, FileError> {
+    /// `expected` is the object's head the caller read; any other is a `conflict`.
+    pub async fn create_folder(
+        &self,
+        request: FolderRequest,
+        expected: &str,
+    ) -> Result<FolderView, FileError> {
         check_logical_path(&request.path)?;
         super::labels::refuse_reserved(&request.path)?;
         let library = self.library(&request.library_id)?;
         let root = library.locate(&request.object_id).await?;
         let object = Object::open(library.files.backend.as_ref(), &root).await?;
         let head = object.inventory().head.clone();
+        check_revision(&head, expected)?;
         let state = object.state(&head)?;
         let pending = match view::list_folder(&object, &head, &request.path, None, 1).await {
             Ok(_) => false,
@@ -554,11 +560,13 @@ where
     R: VersionReservations,
     S: StorageBackend,
 {
-    /// Move or rename one file or folder in one new version.
+    /// Move or rename one file or folder in one new version, if the object's head is
+    /// `expected` (else a `conflict`).
     pub async fn move_path(
         &self,
         request: MoveRequest,
         actor: &str,
+        expected: &str,
     ) -> Result<CommitView, FileError> {
         super::labels::refuse_reserved(&request.from)?;
         super::labels::refuse_reserved(&request.to)?;
@@ -566,6 +574,7 @@ where
         let library = self.library(&request.library_id)?;
         let _writing = library.writes.lock().await;
         let root = library.locate(&request.object_id).await?;
+        check_head(library.files.backend.as_ref(), &root, expected).await?;
         refuse_original_move(&request, &root)?;
         let staging = library.staging(&request.object_id)?;
         let model = change_model(&library, &root, &request.object_id, staging);
@@ -573,17 +582,20 @@ where
         Ok(commit_view(&request.library_id, receipt))
     }
 
-    /// Remove one file or folder in one new version; its bytes stay for history.
+    /// Remove one file or folder in one new version, if the object's head is `expected`
+    /// (else a `conflict`); its bytes stay for history.
     pub async fn remove(
         &self,
         request: RemoveRequest,
         actor: &str,
+        expected: &str,
     ) -> Result<CommitView, FileError> {
         super::labels::refuse_reserved(&request.path)?;
         let meta = self.meta(actor, request.message.as_deref())?;
         let library = self.library(&request.library_id)?;
         let _writing = library.writes.lock().await;
         let root = library.locate(&request.object_id).await?;
+        check_head(library.files.backend.as_ref(), &root, expected).await?;
         let staging = library.staging(&request.object_id)?;
         let model = change_model(&library, &root, &request.object_id, staging);
         let receipt = view::remove_path(&model, &request.path, meta).await?;
@@ -611,6 +623,28 @@ where
             ))),
         }
     }
+}
+
+/// Refuse a command as a `conflict` unless `head` is the revision `expected` the caller
+/// read (API-S-002, API-S-019). Pure.
+pub(super) fn check_revision(head: &VersionNum, expected: &str) -> Result<(), FileError> {
+    match head.to_string() == expected {
+        true => Ok(()),
+        false => Err(FileError::conflict(
+            "It changed since it was read, so nothing was changed; reload and try again.",
+        )),
+    }
+}
+
+/// Refuse a command as a `conflict` unless the head of the object at `root` is `expected`.
+/// Reads the object's inventory.
+pub(super) async fn check_head<B: StorageBackend>(
+    backend: &B,
+    root: &str,
+    expected: &str,
+) -> Result<(), FileError> {
+    let object = Object::open(backend, root).await?;
+    check_revision(&object.inventory().head, expected)
 }
 
 /// The change model of `object_id` at `root` of `library`, staging in `staging`.
