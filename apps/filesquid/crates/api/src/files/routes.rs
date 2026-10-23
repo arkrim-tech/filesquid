@@ -3,6 +3,7 @@
 //! JSON or bytes. Every handler runs only after the router's guard has authorised its action
 //! and put the [`Principal`] in the request extensions (API-S-004).
 
+use super::command::{self, version_entry, Checked, CommandInput, Done, FileCommand};
 use super::error::FileError;
 use super::names::{content_disposition, Disposition};
 use super::nodes::listing_query;
@@ -22,11 +23,13 @@ use super::{
 use crate::auth::{journal_entry, Action, Principal};
 use crate::error::ErrorCode;
 use crate::journal::{JournalEntry, Level, Outcome};
+use crate::operation::CommandEnvelope;
 use crate::routes::Route;
 use crate::ApiState;
 use axum::body::{Body, Bytes, HttpBody};
-use axum::extract::rejection::{BytesRejection, JsonRejection, QueryRejection};
-use axum::extract::{DefaultBodyLimit, Query, State};
+use axum::extract::multipart::{Field, MultipartRejection};
+use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::{DefaultBodyLimit, Multipart, Query, State};
 use axum::http::header::{
     ACCEPT_RANGES, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE,
 };
@@ -52,7 +55,7 @@ pub(crate) fn routes() -> Vec<Route> {
         ),
         (
             "/files/upload",
-            put(upload).layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES)),
+            put(upload).layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES + UPLOAD_OVERHEAD)),
             Action::WriteFiles,
         ),
         ("/files/folders", post(create_folder), Action::WriteFiles),
@@ -72,6 +75,13 @@ pub(crate) fn routes() -> Vec<Route> {
     .chain(super::drive_routes::routes())
     .collect()
 }
+
+/// Most parts an upload body has: `envelope`, `input` and `file`.
+const UPLOAD_PARTS: usize = 3;
+
+/// Bytes an upload body may carry beside its file: the multipart framing and the
+/// `envelope` and `input` parts (64 KiB).
+const UPLOAD_OVERHEAD: usize = 64 * 1024;
 
 /// The installed file service, or `unavailable` until the host installs one.
 pub(super) fn files(
@@ -279,104 +289,276 @@ async fn read_content(
 }
 
 /// `PUT /api/v1/files/upload`: upload one file as its own object, or new content for an
-/// existing file; the body is its bytes.
+/// existing file; the body is `multipart/form-data` with the `envelope`, `input` and `file`
+/// parts ([`super::command`]).
 async fn upload(
     State(state): State<ApiState>,
     Extension(principal): Extension<Principal>,
-    request: Result<Query<UploadQuery>, QueryRejection>,
-    bytes: Result<Bytes, BytesRejection>,
+    form: Result<Multipart, MultipartRejection>,
 ) -> Response {
-    let actor = principal.actor().to_string();
-    let outcome = async {
-        let upload = query(request)?;
-        let bytes = bytes.map_err(|_| {
-            FileError::invalid(format!(
-                "An upload carries at most {MAX_UPLOAD_BYTES} bytes."
-            ))
-        })?;
-        files(&state)?.upload(upload, bytes, actor).await
-    }
-    .await;
-    upload_answer(&state, &principal, outcome).await
+    let (command, bytes) = match upload_command(form).await {
+        Ok((command, bytes)) => (Ok(command), bytes),
+        Err(err) => (Err(err), Bytes::new()),
+    };
+    let principal = &principal;
+    command::run(
+        &state,
+        principal,
+        UPLOAD_OPERATION,
+        command,
+        |files, c, actor| async move {
+            let upload = files.upload(c.input, bytes, actor, c.expected).await?;
+            let ids = (
+                upload.library_id.as_str(),
+                upload.object_id.as_str(),
+                upload.version.as_str(),
+            );
+            let entry = version_entry(UPLOAD_OPERATION, principal, ids, true);
+            Ok(Done {
+                view: upload,
+                entries: vec![entry],
+                changed: true,
+            })
+        },
+    )
+    .await
 }
 
-/// Answer an upload: journal its version as [`write_answer`] does and answer the upload view,
-/// which also names the file.
-async fn upload_answer(
-    state: &ApiState,
-    principal: &Principal,
-    outcome: Result<super::UploadView, FileError>,
-) -> Response {
-    let upload = match outcome {
-        Ok(upload) => upload,
-        Err(err) => return refuse(state, UPLOAD_OPERATION, principal.actor(), err).await,
-    };
-    let commit = super::CommitView {
-        library_id: upload.library_id.clone(),
-        object_id: upload.object_id.clone(),
-        version: upload.version.clone(),
-        created: upload.created.clone(),
-    };
-    let journaled = write_answer(state, UPLOAD_OPERATION, principal, Ok(commit)).await;
-    match journaled.status().is_success() {
-        true => Json(upload).into_response(),
-        false => journaled,
+/// The checked command and the bytes of an upload body: exactly the parts `envelope` and
+/// `input` (JSON) and `file` (at most [`MAX_UPLOAD_BYTES`] bytes), each once.
+async fn upload_command(
+    form: Result<Multipart, MultipartRejection>,
+) -> Result<(Checked<UploadQuery>, Bytes), FileError> {
+    let mut form = form.map_err(|_| {
+        FileError::invalid("An upload is multipart/form-data with envelope, input and file parts.")
+    })?;
+    let mut parts = UploadParts::default();
+    for _ in 0..UPLOAD_PARTS {
+        match form.next_field().await.map_err(|_| upload_too_large())? {
+            Some(field) => parts.take(field).await?,
+            None => break,
+        }
     }
+    if form
+        .next_field()
+        .await
+        .map_err(|_| upload_too_large())?
+        .is_some()
+    {
+        return Err(FileError::invalid(
+            "An upload has only envelope, input and file parts.",
+        ));
+    }
+    parts.finish()
+}
+
+/// The parts of an upload body read so far.
+#[derive(Default)]
+struct UploadParts {
+    envelope: Option<CommandEnvelope>,
+    input: Option<UploadQuery>,
+    file: Option<Bytes>,
+}
+
+impl UploadParts {
+    /// Read one part; a part named twice, or by another name, is `invalid_request`.
+    async fn take(&mut self, field: Field<'_>) -> Result<(), FileError> {
+        let name = field.name().unwrap_or_default().to_string();
+        let bytes = field.bytes().await.map_err(|_| upload_too_large())?;
+        let fresh = match name.as_str() {
+            "envelope" => self.envelope.replace(json_part(&bytes)?).is_none(),
+            "input" => self.input.replace(json_part(&bytes)?).is_none(),
+            "file" => self.file.replace(bytes).is_none(),
+            _ => false,
+        };
+        match fresh {
+            true => Ok(()),
+            false => Err(FileError::invalid(
+                "An upload has one envelope, input and file part each.",
+            )),
+        }
+    }
+
+    /// The checked command and the bytes, once every part arrived within the cap.
+    fn finish(self) -> Result<(Checked<UploadQuery>, Bytes), FileError> {
+        let (Some(envelope), Some(input), Some(file)) = (self.envelope, self.input, self.file)
+        else {
+            return Err(FileError::invalid(
+                "An upload needs its envelope, input and file parts.",
+            ));
+        };
+        if file.len() > MAX_UPLOAD_BYTES {
+            return Err(upload_too_large());
+        }
+        Ok((command::check(envelope, input)?, file))
+    }
+}
+
+/// A JSON part, or `invalid_request` for unknown, missing or malformed fields.
+fn json_part<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, FileError> {
+    serde_json::from_slice(bytes)
+        .map_err(|_| FileError::invalid("An upload part has unknown, missing or malformed fields."))
+}
+
+/// The refusal of an upload body over the cap, or one that cannot be read as parts.
+fn upload_too_large() -> FileError {
+    FileError::invalid(format!(
+        "An upload carries at most {MAX_UPLOAD_BYTES} bytes in well-formed multipart parts."
+    ))
+}
+
+/// The checked command of a JSON write route.
+fn json_command<T: CommandInput>(
+    request: Result<Json<FileCommand<T>>, JsonRejection>,
+) -> Result<Checked<T>, FileError> {
+    let command = body(request)?;
+    command::check(command.envelope, command.input)
 }
 
 /// `POST /api/v1/files/folders`: answers whether the folder exists or stays pending; writes
-/// nothing.
+/// nothing, so it stores no receipt and is journaled only when refused.
 async fn create_folder(
     State(state): State<ApiState>,
     Extension(principal): Extension<Principal>,
-    request: Result<Json<FolderRequest>, JsonRejection>,
+    request: Result<Json<FileCommand<FolderRequest>>, JsonRejection>,
 ) -> Response {
-    let outcome = async { files(&state)?.create_folder(body(request)?).await }.await;
-    read_answer(&state, FOLDER_OPERATION, &principal, outcome).await
+    let command = json_command(request);
+    command::run(
+        &state,
+        &principal,
+        FOLDER_OPERATION,
+        command,
+        |files, c, _| async move {
+            let folder = files.create_folder(c.input, c.expected).await?;
+            Ok(Done {
+                view: folder,
+                entries: Vec::new(),
+                changed: false,
+            })
+        },
+    )
+    .await
 }
 
 /// `POST /api/v1/files/moves`.
 async fn move_path(
     State(state): State<ApiState>,
     Extension(principal): Extension<Principal>,
-    request: Result<Json<MoveRequest>, JsonRejection>,
+    request: Result<Json<FileCommand<MoveRequest>>, JsonRejection>,
 ) -> Response {
-    let actor = principal.actor().to_string();
-    let outcome = async { files(&state)?.move_path(body(request)?, actor).await }.await;
-    write_answer(&state, MOVE_OPERATION, &principal, outcome).await
+    let command = json_command(request);
+    let principal = &principal;
+    command::run(
+        &state,
+        principal,
+        MOVE_OPERATION,
+        command,
+        |files, c, actor| async move {
+            let commit = files.move_path(c.input, actor, c.expected).await?;
+            Ok(published(MOVE_OPERATION, principal, commit))
+        },
+    )
+    .await
 }
 
 /// `POST /api/v1/files/removals`.
 async fn remove(
     State(state): State<ApiState>,
     Extension(principal): Extension<Principal>,
-    request: Result<Json<RemoveRequest>, JsonRejection>,
+    request: Result<Json<FileCommand<RemoveRequest>>, JsonRejection>,
 ) -> Response {
-    let actor = principal.actor().to_string();
-    let outcome = async { files(&state)?.remove(body(request)?, actor).await }.await;
-    write_answer(&state, REMOVE_OPERATION, &principal, outcome).await
+    let command = json_command(request);
+    let principal = &principal;
+    command::run(
+        &state,
+        principal,
+        REMOVE_OPERATION,
+        command,
+        |files, c, actor| async move {
+            let commit = files.remove(c.input, actor, c.expected).await?;
+            Ok(published(REMOVE_OPERATION, principal, commit))
+        },
+    )
+    .await
 }
 
 /// `POST /api/v1/files/restorations`.
 async fn restore(
     State(state): State<ApiState>,
     Extension(principal): Extension<Principal>,
-    request: Result<Json<RestoreRequest>, JsonRejection>,
+    request: Result<Json<FileCommand<RestoreRequest>>, JsonRejection>,
 ) -> Response {
-    let actor = principal.actor().to_string();
-    let outcome = async { files(&state)?.restore(body(request)?, actor).await }.await;
-    committed_answer(&state, RESTORE_OPERATION, &principal, outcome).await
+    let command = json_command(request);
+    let principal = &principal;
+    command::run(
+        &state,
+        principal,
+        RESTORE_OPERATION,
+        command,
+        |files, c, actor| async move {
+            let committed = files.restore(c.input, actor, c.expected).await?;
+            Ok(recorded(RESTORE_OPERATION, principal, committed))
+        },
+    )
+    .await
 }
 
 /// `PUT /api/v1/files/labels`: set or clear the label of one version after commit.
 async fn set_label(
     State(state): State<ApiState>,
     Extension(principal): Extension<Principal>,
-    request: Result<Json<LabelRequest>, JsonRejection>,
+    request: Result<Json<FileCommand<LabelRequest>>, JsonRejection>,
 ) -> Response {
-    let actor = principal.actor().to_string();
-    let outcome = async { files(&state)?.set_label(body(request)?, actor).await }.await;
-    committed_answer(&state, LABEL_OPERATION, &principal, outcome).await
+    let command = json_command(request);
+    let principal = &principal;
+    command::run(
+        &state,
+        principal,
+        LABEL_OPERATION,
+        command,
+        |files, c, actor| async move {
+            let committed = files.set_label(c.input, actor, c.expected).await?;
+            Ok(recorded(LABEL_OPERATION, principal, committed))
+        },
+    )
+    .await
+}
+
+/// A published version, journaled as `operation` with its object reference.
+fn published(
+    operation: &str,
+    principal: &Principal,
+    commit: super::CommitView,
+) -> Done<super::CommitView> {
+    let ids = (
+        commit.library_id.as_str(),
+        commit.object_id.as_str(),
+        commit.version.as_str(),
+    );
+    let entry = version_entry(operation, principal, ids, true);
+    Done {
+        view: commit,
+        entries: vec![entry],
+        changed: true,
+    }
+}
+
+/// A version that may carry its commit's journal entries: with provenance installed they are
+/// journaled (each once, under its pre-allocated ID) instead of the route's own entry;
+/// without, the version is journaled as [`published`] does.
+fn recorded(
+    operation: &str,
+    principal: &Principal,
+    committed: Committed,
+) -> Done<super::CommitView> {
+    if committed.entries.is_empty() {
+        return published(operation, principal, committed.view);
+    }
+    Done {
+        view: committed.view,
+        entries: committed.entries,
+        changed: true,
+    }
 }
 
 /// `GET /api/v1/files/history-size`.
@@ -399,28 +581,6 @@ async fn library_history_size(
     read_answer(&state, LIBRARY_HISTORY_SIZE_OPERATION, &principal, outcome).await
 }
 
-/// Answer a write that may carry its commit's journal entries: with provenance installed
-/// they are journaled (each once, under its pre-allocated ID) instead of the route's own
-/// entry; without, the write is journaled as [`write_answer`] does.
-async fn committed_answer(
-    state: &ApiState,
-    operation: &str,
-    principal: &Principal,
-    outcome: Result<Committed, FileError>,
-) -> Response {
-    let committed = match outcome {
-        Ok(committed) => committed,
-        Err(err) => return refuse(state, operation, principal.actor(), err).await,
-    };
-    if committed.entries.is_empty() {
-        return write_answer(state, operation, principal, Ok(committed.view)).await;
-    }
-    for entry in committed.entries {
-        journal_entry(state, entry).await;
-    }
-    Json(committed.view).into_response()
-}
-
 /// Answer a read: the JSON view, or the typed error after journaling the refusal.
 pub(super) async fn read_answer<T: Serialize>(
     state: &ApiState,
@@ -432,51 +592,6 @@ pub(super) async fn read_answer<T: Serialize>(
         Ok(view) => Json(view).into_response(),
         Err(err) => refuse(state, operation, principal.actor(), err).await,
     }
-}
-
-/// Answer a write: journal the published version with opaque IDs only and its
-/// `<object-id>@vN` object reference (ADR 033 Decision 7), or the refusal.
-async fn write_answer(
-    state: &ApiState,
-    operation: &str,
-    principal: &Principal,
-    outcome: Result<super::CommitView, FileError>,
-) -> Response {
-    let commit = match outcome {
-        Ok(commit) => commit,
-        Err(err) => return refuse(state, operation, principal.actor(), err).await,
-    };
-    let entry = JournalEntry::new(operation, Outcome::Succeeded)
-        .actor(principal.actor())
-        .target(commit.library_id.as_str())
-        .target(commit.object_id.as_str())
-        .target(commit.version.as_str());
-    let entry = match object_ref(&commit) {
-        Some(object_ref) => entry.object_ref(object_ref),
-        None => entry,
-    };
-    journal_entry(state, entry).await;
-    Json(commit).into_response()
-}
-
-/// The `<object-id>@vN` reference of the version a write published, as the journal keeps it.
-/// An object ID that no version reference can name (one containing `@` or whitespace, or one
-/// the journal would not keep opaque) cannot be linked by PROV-O either; the write still
-/// succeeds and is journaled with its opaque targets, and the missing link is logged at WARN
-/// so it is never silent.
-fn object_ref(commit: &super::CommitView) -> Option<String> {
-    let reference =
-        filesquid_core::VersionRef::new(commit.object_id.as_str(), commit.version.as_str())
-            .ok()
-            .map(|reference| reference.object_ref())
-            .filter(|object_ref| crate::journal::is_object_ref(object_ref));
-    if reference.is_none() {
-        tracing::warn!(
-            target: "filesquid::files",
-            "a published version was journaled without an object reference"
-        );
-    }
-    reference
 }
 
 /// Journal a refused operation once, with its code, and answer the typed error.

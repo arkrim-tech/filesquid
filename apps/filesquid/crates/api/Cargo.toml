@@ -10,7 +10,7 @@ publish = false
 path = "src/lib.rs"
 
 [dependencies]
-axum = "0.8"
+axum = { version = "0.8", features = ["multipart"] }
 filesquid-core = { path = "../core" }
 # The OCFL engine, without its filesystem backend: hosts inject the storage root (API-S-006).
 filesquid-ocfl = { path = "../ocfl", default-features = false }
@@ -142,6 +142,10 @@ path = "tests/unit/version_inventory_repair.rs"
 [[test]]
 name = "integration_files"
 path = "tests/integration/files.rs"
+
+[[test]]
+name = "integration_file_commands"
+path = "tests/integration/file_commands.rs"
 
 [[test]]
 name = "integration_library_routes"

@@ -80,7 +80,15 @@ where
     /// `invalid_request` for a malformed file ID or message, or a source over
     /// [`MAX_COPY_BYTES`]; `not_found` for an unknown library or file; a storage failure
     /// otherwise. Nothing is published on any error, and the source never changes.
-    pub async fn copy(&self, request: CopyRequest, actor: &str) -> Result<CopyView, FileError> {
+    ///
+    /// `expected` is the source file object's head the caller read; any other is a
+    /// `conflict`, and nothing is copied.
+    pub async fn copy(
+        &self,
+        request: CopyRequest,
+        actor: &str,
+        expected: &str,
+    ) -> Result<CopyView, FileError> {
         let source_id = parse_file_id(&request.file_id)?;
         let meta = self.meta(actor, request.message.as_deref())?;
         let library = self.library(&request.library_id)?;
@@ -88,6 +96,9 @@ where
         let _writing = library.writes.lock().await;
         let backend = library.files.backend.as_ref();
         let source = read_source(backend, source_id).await?;
+        if source.version != expected {
+            return Err(stale_source());
+        }
         let file_id = mint_file_id()?;
         let reference = source_reference(&source.file_id, &source.version);
         let started = self.created();
@@ -156,6 +167,13 @@ async fn read_source<B: StorageBackend>(backend: &B, file_id: FileId) -> Result<
         record: original.record,
         bytes,
     })
+}
+
+/// The refusal of a copy whose source moved past the revision the caller read.
+fn stale_source() -> FileError {
+    FileError::conflict(
+        "The file changed since it was read, so nothing was copied; reload and try again.",
+    )
 }
 
 /// The file error of a canonical refusal or failure of a copy.
