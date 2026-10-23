@@ -143,6 +143,47 @@ where
         self.save(&index, &base).await
     }
 
+    /// Stage the file at `key` of `source` (any backend: a local
+    /// directory on [`FsBackend`](crate::storage::FsBackend), memory, or a
+    /// remote store) as the content of the logical file `path`, and answer
+    /// its sha256 digest (OCFL-S-026).
+    ///
+    /// The file is streamed, never read whole: it is read in chunks of at
+    /// most [`MAX_CHUNK_BYTES`](crate::storage::MAX_CHUNK_BYTES) once to
+    /// hash it, and, only when its bytes are new, once more to copy it into
+    /// the staging area while hashing again, so memory use does not grow
+    /// with the file. Bytes the object's `manifest` holds are not copied
+    /// (OCFL-S-014); a blob the staging area holds under the digest is
+    /// re-hashed and reused when it matches, and replaced with the file's
+    /// bytes when it does not. A file whose two reads differ is refused and
+    /// its partial copy removed. A change after the copy completes is not
+    /// detected: the staged blob holds the bytes that were hashed. The path
+    /// is checked before the file is read.
+    ///
+    /// # Errors
+    ///
+    /// [`ChangeError::SourceChanged`] for a file that changed between the
+    /// two reads, [`ChangeError::Storage`] for a `key` that is not a valid
+    /// storage key or a file above the largest object a backend stores, or
+    /// as [`stage_bytes`](Self::stage_bytes).
+    pub async fn stage_file<D: StorageBackend>(
+        &self,
+        path: &str,
+        source: &D,
+        key: &str,
+    ) -> Result<String, ChangeError> {
+        valid_path(path)?;
+        let key = StorageKey::new(key)?;
+        let (inventory, mut index) = self.load().await?;
+        let base = base_state(inventory.as_ref(), &index)?;
+        check_new_path(&index, &base, path)?;
+        let known = known(inventory.as_ref());
+        let digest = self.staging.put_file(source, &key, &known).await?;
+        index.set(&base, path, Staged::File(digest.clone()));
+        self.save(&index, &base).await?;
+        Ok(digest)
+    }
+
     /// Stage the removal of the logical file `path`.
     ///
     /// # Errors
@@ -450,6 +491,18 @@ fn check_working(index: &StagingIndex, base: &WorkingState) -> Result<(), Change
         Some(path) => Err(conflict_error(path)),
         None => Ok(()),
     }
+}
+
+/// Refuse `path` before any byte of it is read when staging it would put
+/// a logical path of the working state under another (E095).
+fn check_new_path(
+    index: &StagingIndex,
+    base: &WorkingState,
+    path: &str,
+) -> Result<(), ChangeError> {
+    let mut probe = index.clone();
+    probe.set(base, path, Staged::File(String::new()));
+    check_working(&probe, base)
 }
 
 /// The E095 error for `path`.
