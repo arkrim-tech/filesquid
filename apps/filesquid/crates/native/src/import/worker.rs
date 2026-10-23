@@ -45,6 +45,8 @@ pub struct ImportServices {
     pub jobs: Jobs,
     /// The file service the libraries are open in.
     pub files: HostFiles,
+    /// The library index each imported file is registered in.
+    pub index: Arc<dyn super::index::ImportIndex>,
     /// Each job's plan.
     pub plans: Arc<SqliteImportPlans>,
     /// The host's journal.
@@ -233,6 +235,7 @@ fn run_one(
     let context = ImportContext {
         jobs: &services.jobs,
         files: &services.files,
+        index: services.index.as_ref(),
         plans: &services.plans,
         journal: &services.journal,
         build: &services.build,

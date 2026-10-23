@@ -13,6 +13,7 @@
 //! sequence of ADR 005 around it: record intent, commit the snapshot version, then update its
 //! catalog from the published receipt, and reconcile from the snapshot after a crash.
 
+pub mod collection_path;
 pub mod copy;
 pub mod entity;
 mod error;
@@ -22,6 +23,7 @@ pub mod original;
 pub mod outgoing;
 pub mod store;
 mod transform;
+mod unregistered;
 pub mod upload;
 
 pub use copy::{copy_record, source_reference, CopyInput, SOURCE_TERM};
@@ -36,8 +38,9 @@ pub use outgoing::{outgoing_name, OutgoingNames};
 pub use store::{
     commit_file_original, commit_snapshot, commit_snapshot_with, create_storage_root,
     read_commit_journal, read_file_original, read_object_journal, read_snapshot,
-    read_version_journal, LibrarySnapshot, SnapshotDelta, HISTORY_PREFIX, JOURNAL_SUFFIX,
-    MAX_JOURNAL_LINES,
+    read_version_journal, snapshot_library_id, LibrarySnapshot, SnapshotDelta, HISTORY_PREFIX,
+    JOURNAL_SUFFIX, MAX_JOURNAL_LINES,
 };
 pub use transform::{OwnerReadable, ProfileTransform};
+pub use unregistered::{unregistered_file_objects, FILES_ROOT};
 pub use upload::{ascii_name_form, new_upload_record, reupload_record, UploadInput};

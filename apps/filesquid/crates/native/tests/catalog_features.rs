@@ -6,6 +6,7 @@
 #[path = "support/catalog_fixture.rs"]
 mod catalog_fixture;
 
+use catalog_fixture::library_ocfl_root;
 use catalog_fixture::{all_entries, catalog_file, temp_root, Fixture, FlakyJournal};
 use cucumber::{given, then, when, writer, World, WriterExt as _};
 use filesquid_api::canonical::{read_snapshot, OwnerReadable};
@@ -18,7 +19,7 @@ use filesquid_core::{CollectionId, FileId, LibraryId, VirtualCollectionId, Virtu
 use filesquid_native::workers::media::{
     vips, MediaError, MediaWorkers, Rendered, ThumbnailRequest,
 };
-use filesquid_native::{library_ocfl_root, CommitProbe};
+use filesquid_native::CommitProbe;
 use filesquid_ocfl::storage::{complete_immediately, FsBackend};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -357,11 +358,14 @@ fn commit_failed(w: &mut CatalogWorld) {
 #[then(expr = "the backup should open as a catalog at revision {int}")]
 fn backup_opens(w: &mut CatalogWorld, revision: u32) {
     let dir = w.backup.clone().expect("backup");
-    let copy = Fixture::over(dir, Arc::new(MemoryJournal::new("desktop")));
-    assert_eq!(
-        copy.revision(&w.library("Family archive")),
-        revision.to_string()
-    );
+    let library = w.library("Family archive");
+    let copy = rusqlite::Connection::open(catalog_file(&dir, &library)).expect("open the copy");
+    let stored: i64 = copy
+        .query_row("SELECT revision FROM library", [], |r| r.get(0))
+        .expect("the committed library");
+    assert_eq!(stored, i64::from(revision));
+    drop(copy);
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 /// Stops the commit of one operation before or after its snapshot, as a crash would.

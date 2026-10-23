@@ -12,11 +12,26 @@ Feature: Library domain commands and queries
     Then the library should have a UUID version 4 identifier
     And opening the library should answer the name "Family archive" at revision "1"
 
-  Scenario: Deleting a collection keeps its files
+  Scenario: Deleting a collection deletes its files in place
     Given a library with a collection "Trips" holding 2 files
     When the owner deletes the collection "Trips"
-    Then the library should still list 2 files
-    And the unfiled listing should show 2 files
+    Then the ordinary listing should show 0 files
+    And the deleted view should show 2 files
+    And every deleted file should keep its home collection "Trips"
+    And the unfiled listing should show 0 files
+
+  Scenario: Deleting a collection keeps the times of a file already deleted
+    Given a library with a collection "Trips" holding 2 files
+    And the owner deleted the first file a day earlier
+    When the owner deletes the collection "Trips"
+    Then the first file should keep its earlier deletion times
+    And the second file should be deleted now, to be purged 30 days later
+
+  Scenario: A library's own retention period sets the purge-after time
+    Given a library with a collection "Trips" holding 1 file
+    And the library keeps deleted files for 7 days
+    When the owner deletes the collection "Trips"
+    Then the deleted view should show 1 file to be purged 7 days after deletion
 
   Scenario: Removing a file from a virtual collection keeps its other memberships
     Given a library with a collection "Trips" holding 1 file

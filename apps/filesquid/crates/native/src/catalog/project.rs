@@ -3,6 +3,7 @@
 //! encoded by `filesquid-api` into the delta of one snapshot version. Database reads only.
 
 use super::failed;
+use super::placement;
 use super::rows::{self, sql};
 use filesquid_api::canonical::{
     touched, CanonicalError, LibraryHead, SnapshotDelta, SnapshotEntity, SnapshotFile, SnapshotKey,
@@ -170,15 +171,18 @@ fn entity(
     })
 }
 
-/// The library entity: record, revision and creation order. Database I/O.
+/// The library entity: record, revision, creation order and own retention period.
+/// Database I/O.
 fn library(conn: &Connection) -> Result<Option<LibraryHead>, CatalogError> {
-    Ok(
-        rows::library(conn)?.map(|(record, revision, created_order)| LibraryHead {
-            record,
-            revision: u64::try_from(revision).unwrap_or(0),
-            created_order,
-        }),
-    )
+    let Some((record, revision, created_order)) = rows::library(conn)? else {
+        return Ok(None);
+    };
+    Ok(Some(LibraryHead {
+        record,
+        revision: u64::try_from(revision).unwrap_or(0),
+        created_order,
+        retention_days: rows::retention_days(conn)?,
+    }))
 }
 
 /// A virtual collection with its members in membership order. Database I/O.
@@ -214,17 +218,54 @@ fn virtual_entry(
     }))
 }
 
-/// A file's place and state. Database I/O.
+/// A file's place, state, collection logical path and object. Database I/O.
 fn snapshot_file(
     conn: &Connection,
     library_id: &LibraryId,
     id: &FileId,
 ) -> Result<Option<SnapshotFile>, CatalogError> {
-    Ok(
-        rows::keyed_file(conn, library_id, id)?.map(|keyed| SnapshotFile {
-            file: keyed.item.file,
-            order: keyed.key.order,
-            state: keyed.item.state,
-        }),
-    )
+    let Some(keyed) = rows::keyed_file(conn, library_id, id)? else {
+        return Ok(None);
+    };
+    let (path, object_id) = placement::placement_of(conn, id)?;
+    Ok(Some(SnapshotFile {
+        file: keyed.item.file,
+        order: keyed.key.order,
+        state: keyed.item.state,
+        path,
+        object_id,
+    }))
+}
+
+/// The files `changes` delete with their collection: every file of a collection that a
+/// [`CatalogChange::DeleteCollectionFiles`] names and that is not deleted yet, read before the
+/// change applies, so their entities join the commit's version. Database I/O.
+pub(crate) fn collection_deletions(
+    conn: &Connection,
+    changes: &[CatalogChange],
+) -> Result<Vec<SnapshotKey>, CatalogError> {
+    let mut keys = Vec::new();
+    let mut stmt = conn
+        .prepare(
+            "SELECT id FROM files WHERE home_collection_id = ?1 AND deleted_at_ms IS NULL
+             ORDER BY id LIMIT ?2",
+        )
+        .map_err(sql)?;
+    let limit = i64::try_from(MAX_ENTITIES).unwrap_or(i64::MAX);
+    for change in changes {
+        let CatalogChange::DeleteCollectionFiles { collection_id, .. } = change else {
+            continue;
+        };
+        let rows = stmt
+            .query_map(params![collection_id.as_str(), limit], |r| {
+                r.get::<_, String>(0)
+            })
+            .map_err(sql)?;
+        for file in rows {
+            let id = FileId::new(file.map_err(sql)?)
+                .map_err(|_| failed("empty identifier in the catalog"))?;
+            keys.push(SnapshotKey::File(id));
+        }
+    }
+    Ok(keys)
 }

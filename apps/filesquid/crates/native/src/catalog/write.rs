@@ -16,8 +16,11 @@ use filesquid_api::canonical::{operation_kind, OperationRecord, SnapshotDelta, S
 use filesquid_api::journal::JournalEntry;
 use filesquid_api::library::{
     CatalogChange, CatalogCommit, CatalogError, CommitReceipt, FileState, LibraryRecord,
+    COLLECTION_HOLDS_FILES,
 };
-use filesquid_core::{Collection, File, Folder, LibraryId, VirtualCollection, VirtualMembership};
+use filesquid_core::{
+    Collection, CollectionId, File, Folder, LibraryId, VirtualCollection, VirtualMembership,
+};
 use rusqlite::{params, Connection, Transaction};
 
 /// Whether `commit` creates its library. A create that is not the first change, is repeated,
@@ -177,7 +180,8 @@ fn finish_unchanged(tx: Transaction<'_>, commit: &CatalogCommit) -> Result<(), C
     tx.commit().map_err(sql)
 }
 
-/// Check the create or revision rule, apply every change and the new revision inside `tx`,
+/// Check the create or revision rule and the removals, apply every change and the new revision
+/// inside `tx`,
 /// and answer the receipt with the virtual collections purged files were removed from (read
 /// before the purge). Database I/O.
 fn apply_changes(
@@ -187,7 +191,9 @@ fn apply_changes(
 ) -> Result<(CommitReceipt, Vec<SnapshotKey>), CatalogError> {
     let current = current_revision(tx)?;
     let revision = next_revision(creates, current, commit)?;
-    let purged = project::purged_memberships(tx, &commit.changes)?;
+    check_removals(tx, commit)?;
+    let mut purged = project::purged_memberships(tx, &commit.changes)?;
+    purged.extend(project::collection_deletions(tx, &commit.changes)?);
     for change in &commit.changes {
         apply_change(tx, &commit.library_id, change, commit.journal.time_ms)?;
     }
@@ -340,6 +346,21 @@ fn apply_change(
         CatalogChange::RemoveCollection(id) => {
             exec(tx, "DELETE FROM collections WHERE id = ?1", id.as_str())
         }
+        CatalogChange::DeleteCollectionFiles {
+            collection_id,
+            deletion,
+        } => tx
+            .execute(
+                "UPDATE files SET deleted_at_ms = ?2, purge_after_ms = ?3
+                 WHERE home_collection_id = ?1 AND deleted_at_ms IS NULL",
+                params![
+                    collection_id.as_str(),
+                    deletion.deleted_at_ms,
+                    deletion.purge_after_ms
+                ],
+            )
+            .map(drop)
+            .map_err(sql),
         CatalogChange::PutVirtualCollection(v) => {
             same_library(library_id, v.library_id())?;
             put_virtual(tx, v)
@@ -364,6 +385,41 @@ fn apply_change(
             set_file_state(tx, file_id.as_str(), state)
         }
         CatalogChange::PurgeFile(id) => exec(tx, "DELETE FROM files WHERE id = ?1", id.as_str()),
+    }
+}
+
+/// Refuse a commit that removes a collection still holding a file that is not deleted, unless
+/// the same commit deletes that collection's files first
+/// ([`CatalogChange::DeleteCollectionFiles`]), so no file is left with a removed home and no
+/// deleted state (ADR 041 Decision 8). Checked after the revision rule and before anything is
+/// applied or published. Database reads.
+fn check_removals(conn: &Connection, commit: &CatalogCommit) -> Result<(), CatalogError> {
+    let mut deleted: Vec<&CollectionId> = Vec::new();
+    for change in &commit.changes {
+        match change {
+            CatalogChange::DeleteCollectionFiles { collection_id, .. } => {
+                deleted.push(collection_id)
+            }
+            CatalogChange::RemoveCollection(id) if !deleted.contains(&id) => check_empty(conn, id)?,
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Refuse when `collection_id` is the home of a file that is not deleted. Database read.
+fn check_empty(conn: &Connection, collection_id: &CollectionId) -> Result<(), CatalogError> {
+    let holds: bool = conn
+        .query_row(
+            "SELECT EXISTS (SELECT 1 FROM files
+             WHERE home_collection_id = ?1 AND deleted_at_ms IS NULL)",
+            params![collection_id.as_str()],
+            |row| row.get(0),
+        )
+        .map_err(sql)?;
+    match holds {
+        true => Err(failed(COLLECTION_HOLDS_FILES)),
+        false => Ok(()),
     }
 }
 
@@ -406,6 +462,20 @@ pub(crate) fn insert_library(
     )
     .map(drop)
     .map_err(sql)
+}
+
+/// Cache the library's own retention period from its snapshot. Database I/O.
+pub(crate) fn set_retention(tx: &Transaction<'_>, days: Option<u32>) -> Result<(), CatalogError> {
+    tx.execute("UPDATE library SET retention_days = ?1", params![days])
+        .map(drop)
+        .map_err(sql)
+}
+
+/// Record the identity of the folder the index reflects. Database I/O.
+pub(crate) fn set_folder_identity(conn: &Connection, identity: &str) -> Result<(), CatalogError> {
+    conn.execute("UPDATE library SET folder_identity = ?1", params![identity])
+        .map(drop)
+        .map_err(sql)
 }
 
 /// Store a collection, replacing the one with the same identifier. Database I/O.

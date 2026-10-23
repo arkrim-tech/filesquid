@@ -7,19 +7,21 @@
 #[allow(dead_code)]
 mod journal;
 
+#[path = "../support/folder_library.rs"]
+#[allow(dead_code)]
+mod folder_library;
+
 use filesquid_api::auth::{LaunchToken, Principal};
 use filesquid_api::history::backfill::BACKFILL_OPERATION;
 use filesquid_api::journal::{JournalEntry, Outcome};
-use filesquid_api::library::{
-    CommandRequest, LibraryCommand, LibraryService, NEW_LIBRARY_REVISION,
-};
+use filesquid_api::library::{CommandRequest, LibraryCommand, LibraryService};
 use filesquid_api::local_library::{
     MemoryRepairLedger, RepairConsent, RepairRequest, RepairResult, CONSENT_STATEMENT_ID,
 };
 use filesquid_api::operation::{CommandEnvelope, ExpectedRevision, OperationId, OperationScope};
 use filesquid_api::registry::ProcessState;
 use filesquid_api::ApiState;
-use filesquid_core::{InstallationId, LibraryId, RepositoryId};
+use filesquid_core::{InstallationId, LibraryId};
 use filesquid_desktop_lib::api_protocol::handle;
 use filesquid_desktop_lib::{
     history_backfill, install_history_source, install_launch_token, local_library_service,
@@ -48,6 +50,7 @@ fn installation() -> InstallationId {
 fn data_dir(name: &str) -> PathBuf {
     let dir =
         std::env::temp_dir().join(format!("fs-desktop-history-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(folder_library::folders_of(&dir));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("data dir");
     dir
@@ -68,23 +71,11 @@ fn envelope(op: &str, revision: &str, scope: &str) -> CommandEnvelope {
     )
 }
 
-/// Create a library through the API's library service and answer its ID and revision.
-fn create_library(service: &LibraryService) -> (String, String) {
-    create_library_as(service, "op-create")
-}
-
-/// Create a library as operation `op` and answer its ID and revision.
-fn create_library_as(service: &LibraryService, op: &str) -> (String, String) {
-    let request = CommandRequest {
-        envelope: envelope(op, NEW_LIBRARY_REVISION, "library"),
-        command: LibraryCommand::CreateLibrary {
-            repository_id: RepositoryId::new("repo-1").expect("repo"),
-            name: "Family archive".into(),
-        },
-    };
-    let result = service.execute("owner", request).expect("create");
-    let library = result.created_id.expect("library id");
-    (library, result.revision.expect("revision"))
+/// Create a library in a folder of its own, attached to `catalog` whose data directory is
+/// `dir`, as the library routes do; answer its ID and revision.
+fn create_library(catalog: &SqliteCatalog, dir: &Path) -> (String, String) {
+    let (library, _) = folder_library::attach_new_library(catalog, dir, "Family archive");
+    (library, "1".to_string())
 }
 
 /// Add a collection to `library` at `revision`: a second snapshot version.
@@ -125,6 +116,7 @@ impl Desktop {
         let host = open_host_monitor(&state, &dir, None).expect("monitor");
         let catalog =
             Arc::new(open_library_catalog(&dir, &host, &installation()).expect("catalog"));
+        folder_library::reattach_all(&catalog, &dir);
         Self {
             dir,
             state,
@@ -132,6 +124,11 @@ impl Desktop {
             host,
             catalog,
         }
+    }
+
+    /// Create a library in a folder of its own; answer its ID and revision.
+    fn create_library(&self) -> (String, String) {
+        create_library(&self.catalog, &self.dir)
     }
 
     /// The API's library service over this host's catalog.
@@ -162,9 +159,9 @@ impl Desktop {
     }
 }
 
-/// The library's OCFL storage root in the data directory `dir`.
+/// The library's OCFL storage root: its own folder beside the data directory `dir`.
 fn library_root(dir: &Path, library: &str) -> PathBuf {
-    dir.join(CATALOG_DIR).join(format!("{library}.ocfl"))
+    folder_library::folders_of(dir).join(library)
 }
 
 /// The JSON of `body`.
@@ -175,7 +172,7 @@ fn json(body: &[u8]) -> Value {
 #[test]
 fn the_history_routes_answer_from_a_real_desktop_library() {
     let desktop = Desktop::launch("routes");
-    let (library, _) = create_library(&desktop.library_service());
+    let (library, _) = desktop.create_library();
     let (status, _) = desktop.get("/api/v1/history");
     assert_eq!(status, 503, "no history source installed yet");
     install_history_source(
@@ -216,7 +213,7 @@ fn the_history_routes_answer_from_a_real_desktop_library() {
         "installed once"
     );
     let (dir, _) = desktop.stop();
-    std::fs::remove_dir_all(dir).expect("cleanup");
+    folder_library::remove_all(&dir);
 }
 
 /// The filesystem backends of the library's storage root and of a lease store beside it.
@@ -250,7 +247,7 @@ fn consented(library: &str) -> RepairRequest {
 fn a_repair_commits_its_provenance_follow_up_under_the_repair_run_id() {
     let desktop = Desktop::launch("repair");
     let service = desktop.library_service();
-    let (library, revision) = create_library(&service);
+    let (library, revision) = desktop.create_library();
     add_collection(&service, &library, &revision, "op-collection");
     let head = library_root(&desktop.dir, &library)
         .join("snapshot")
@@ -298,7 +295,7 @@ fn a_repair_commits_its_provenance_follow_up_under_the_repair_run_id() {
         .filter(|e| e.operation_id.as_deref() == Some(answer.run_id.as_str()))
         .collect();
     assert_eq!(commits.len(), 1, "{entries:?}");
-    std::fs::remove_dir_all(dir).expect("cleanup");
+    folder_library::remove_all(&dir);
 }
 
 /// Commit a library without any PROV-O record, as a catalog before DE-0.10 did, in `dir`.
@@ -308,9 +305,7 @@ fn library_without_history(dir: &Path) -> String {
     let plain = SqliteCatalog::open(&dir.join(CATALOG_DIR), host.monitor().announcing_store())
         .expect("catalog");
     let plain = Arc::new(plain);
-    let service = LibraryService::new(plain.clone(), host.monitor().journal());
-    let (library, _) = create_library(&service);
-    drop(service);
+    let (library, _) = create_library(&plain, dir);
     drop(plain);
     host.stop();
     library
@@ -390,7 +385,7 @@ fn the_backfill_fills_the_history_of_versions_committed_without_records() {
         .filter(|e| e.operation_id.as_deref() == Some(report.run_id.as_str()))
         .collect();
     assert_eq!(filled.len(), 1, "{entries:?}");
-    std::fs::remove_dir_all(dir).expect("cleanup");
+    folder_library::remove_all(&dir);
 }
 
 /// App exit sets the stop flag the backfill was given: a cancelled call starts no run, and
@@ -425,7 +420,7 @@ fn a_cancelled_backfill_commits_nothing_and_leaves_the_rest_for_the_next_launch(
         "the next launch fills it"
     );
     let (dir, _) = desktop.stop();
-    std::fs::remove_dir_all(dir).expect("cleanup");
+    folder_library::remove_all(&dir);
 }
 
 /// Cubic round 1: a library whose storage root cannot be opened is left out and flags the
@@ -434,15 +429,10 @@ fn a_cancelled_backfill_commits_nothing_and_leaves_the_rest_for_the_next_launch(
 fn one_unreadable_library_leaves_the_others_history_served() {
     let desktop = Desktop::launch("unreadable");
     let service = desktop.library_service();
-    let (readable, _) = create_library_as(&service, "op-readable");
-    let (broken, _) = create_library_as(&service, "op-broken");
-    let scratch = desktop
-        .dir
-        .join(CATALOG_DIR)
-        .join(format!("{broken}.work"))
-        .join("root-scratch");
-    std::fs::remove_dir_all(&scratch).expect("scratch");
-    std::fs::write(&scratch, b"not a directory").expect("block");
+    let (readable, _) = desktop.create_library();
+    let (broken, _) = desktop.create_library();
+    let declaration = library_root(&desktop.dir, &broken).join("0=ocfl_1.1");
+    std::fs::remove_file(&declaration).expect("the storage root can no longer be opened");
     install_history_source(
         &desktop.state,
         desktop.catalog.clone(),
@@ -468,5 +458,5 @@ fn one_unreadable_library_leaves_the_others_history_served() {
     );
     drop(service);
     let (dir, _) = desktop.stop();
-    std::fs::remove_dir_all(dir).expect("cleanup");
+    folder_library::remove_all(&dir);
 }

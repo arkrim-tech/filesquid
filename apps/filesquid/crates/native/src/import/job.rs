@@ -21,18 +21,34 @@
 //!   when space runs short the job is suspended with its checkpoint, to resume later.
 //! - Setting the stop flag (quit) suspends the job between files with its checkpoint.
 //!
+//! - Every import names its destination collection and folder (ADR 041 "Must choose"): a
+//!   plan without one fails its job (`destination_required`), as does a collection the library
+//!   no longer holds (`collection_not_found`). The manifest gives each file its collection
+//!   logical path ([`super::placing`]); a picked source whose path is taken is numbered beside
+//!   it, and one that cannot be placed quarantines its files with its code before any byte is
+//!   read. Each committed file is then registered in its home collection at that path, in the
+//!   library's index and its snapshot, under the import's operation ID. The import's intent is
+//!   recorded before its first file object and cleared when the job ends, so a crash between a
+//!   file's object and its registration leaves the operation pending, and the resumed run
+//!   answers the object and registers it once (DE-S-010).
+//!
 //! Every file's outcome is journaled as [`IMPORT_FILE_OPERATION`] with opaque IDs and an error
 //! code only, never a path or a file name.
 
 use super::file::{import_file, FileImport};
 use super::host::Build;
+use super::index::ImportIndex;
+use super::placing::{logical_path, source_roots};
 use super::plans::{ImportPlan, ManifestEntry, SqliteImportPlans};
+use crate::catalog::{PendingIntent, RegisterFile, Registration, REGISTER_OPERATION};
 use crate::HostFiles;
 use filesquid_api::files::UploadView;
 use filesquid_api::jobs::{JobError, JobSpec, JobState, Jobs, RunningJob};
 use filesquid_api::journal::{JournalEntry, Level, Outcome};
 use filesquid_api::journal_writer::JournalSender;
 use filesquid_api::library::mint_uuid_v4;
+use filesquid_api::operation::{ExpectedRevision, OperationId};
+use filesquid_core::{CollectionId, FileId, LibraryId};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -83,6 +99,8 @@ pub struct ImportContext<'a> {
     pub jobs: &'a Jobs,
     /// The file service the libraries are open in.
     pub files: &'a HostFiles,
+    /// The library index each imported file is registered in.
+    pub index: &'a dyn ImportIndex,
     /// Each job's plan and manifest.
     pub plans: &'a SqliteImportPlans,
     /// The host's journal.
@@ -261,26 +279,72 @@ fn list_entry(
     }
 }
 
-/// The manifest entries of `listed`, each file with a newly minted file identifier. Reads
-/// the random source.
+/// The manifest entries of `listed` for `plan`: each file with a newly minted file identifier
+/// and its collection logical path in the destination, numbered per source as `index` finds
+/// paths taken ([`super::placing`]); a file that cannot be placed is skipped with its code.
+/// Reads the random source, filesystem metadata and the index.
 ///
 /// # Errors
-/// `unavailable` when no identifier can be minted.
-pub fn manifest_of(listed: Vec<Listed>) -> Result<Vec<ManifestEntry>, &'static str> {
+/// `destination_required` for a plan without a collection; `unavailable` when no identifier
+/// can be minted or the index cannot answer.
+pub fn manifest_of(
+    listed: Vec<Listed>,
+    plan: &ImportPlan,
+    index: &dyn ImportIndex,
+) -> Result<Vec<ManifestEntry>, &'static str> {
+    let collection = destination(plan)?;
+    let roots = source_roots(plan, &collection, index)?;
     listed
         .into_iter()
-        .map(|entry| match entry {
-            Listed::File { path, source } => Ok(ManifestEntry::File {
-                path,
-                source,
-                file_id: mint_uuid_v4().map_err(|_| "unavailable")?,
-            }),
-            Listed::Skipped { source, code } => Ok(ManifestEntry::Skipped {
-                source,
-                code: code.to_string(),
-            }),
-        })
+        .map(|entry| manifest_entry(entry, plan, &roots))
         .collect()
+}
+
+/// The manifest entry of one listed entry, placed beneath its source's root. Reads the
+/// random source.
+fn manifest_entry(
+    entry: Listed,
+    plan: &ImportPlan,
+    roots: &[Result<String, &'static str>],
+) -> Result<ManifestEntry, &'static str> {
+    let (path, source) = match entry {
+        Listed::File { path, source } => (path, source),
+        Listed::Skipped { source, code } => return Ok(skipped(source, code)),
+    };
+    let root = roots.get(source).cloned().unwrap_or(Err("invalid_path"));
+    let placed = root.and_then(|root| {
+        let from = plan.sources.get(source).map_or(path.as_path(), |s| s);
+        logical_path(&root, from, &path)
+    });
+    match placed {
+        Ok(logical) => Ok(ManifestEntry::File {
+            path,
+            source,
+            file_id: mint_uuid_v4().map_err(|_| "unavailable")?,
+            logical_path: Some(logical),
+        }),
+        Err(code) => Ok(skipped(source, code)),
+    }
+}
+
+/// A skipped manifest entry of `source` with `code`. Pure.
+fn skipped(source: usize, code: &str) -> ManifestEntry {
+    ManifestEntry::Skipped {
+        source,
+        code: code.to_string(),
+    }
+}
+
+/// The destination collection of `plan`. Pure.
+///
+/// # Errors
+/// `destination_required` when the plan names none (a plan an earlier build kept), or one
+/// that is not a collection identifier.
+fn destination(plan: &ImportPlan) -> Result<CollectionId, &'static str> {
+    plan.collection_id
+        .as_deref()
+        .and_then(|id| CollectionId::new(id).ok())
+        .ok_or("destination_required")
 }
 
 /// The manifest of `job_id`: the one kept by an earlier run, or the listing of `plan` kept
@@ -290,15 +354,16 @@ pub fn manifest_of(listed: Vec<Listed>) -> Result<Vec<ManifestEntry>, &'static s
 /// `too_many_files` for an over-large selection; `unavailable` when the manifest cannot be
 /// read, minted or kept.
 fn job_manifest(
-    plans: &SqliteImportPlans,
+    context: &ImportContext<'_>,
     job_id: &str,
     plan: &ImportPlan,
 ) -> Result<Vec<ManifestEntry>, &'static str> {
+    let plans = context.plans;
     let kept = plans.manifest(job_id).map_err(|_| "unavailable")?;
     if !kept.is_empty() {
         return Ok(kept);
     }
-    let entries = manifest_of(list_plan(plan)?)?;
+    let entries = manifest_of(list_plan(plan)?, plan, context.index)?;
     plans
         .save_manifest(job_id, &entries)
         .map_err(|_| "unavailable")
@@ -378,11 +443,12 @@ pub async fn run_import_job(
     plan: &ImportPlan,
 ) -> Result<ImportRun, JobError> {
     let mut running = context.jobs.start(job_id, &import_source(plan))?;
-    let manifest = match job_manifest(context.plans, job_id, plan) {
+    let operation_id = running.job().operation_id.clone();
+    let manifest = match prepare(context, &running, plan) {
         Ok(manifest) => manifest,
         Err(code) => {
             running.fail(code)?;
-            mark_finished(context, job_id);
+            finish(context, job_id, plan, &operation_id);
             return Err(JobError::Conflict(code));
         }
     };
@@ -410,9 +476,61 @@ pub async fn run_import_job(
         running.checkpoint(&import_checkpoint(index + 1), index as u64 + 1, total)?;
     }
     running.complete()?;
-    mark_finished(context, job_id);
+    finish(context, job_id, plan, &operation_id);
     run.state = JobState::Completed;
     Ok(run)
+}
+
+/// Check `plan`'s destination, record the import's intent and keep or read its manifest.
+/// Reads the index, the filesystem and the plans; writes the intent and the plans.
+///
+/// # Errors
+/// `destination_required`, `collection_not_found`, `too_many_files` or `unavailable`: the
+/// job fails with that code.
+fn prepare(
+    context: &ImportContext<'_>,
+    running: &RunningJob,
+    plan: &ImportPlan,
+) -> Result<Vec<ManifestEntry>, &'static str> {
+    let library = LibraryId::new(&plan.library_id).map_err(|_| "library_not_found")?;
+    let collection = destination(plan)?;
+    let held = context.index.has_collection(&library, &collection);
+    if !held.map_err(|_| "unavailable")? {
+        return Err("collection_not_found");
+    }
+    let intent = import_intent(&library, running.job().operation_id.as_str())?;
+    context.index.begin(&intent).map_err(|_| "unavailable")?;
+    job_manifest(context, running.job().id.as_str(), plan)
+}
+
+/// The pending intent of the import `operation_id` into `library`: an import adds files and
+/// is planned against no revision (`0`). Reads the clock.
+fn import_intent(library: &LibraryId, operation_id: &str) -> Result<PendingIntent, &'static str> {
+    Ok(PendingIntent {
+        library_id: library.clone(),
+        operation_id: OperationId::new(operation_id).map_err(|_| "unavailable")?,
+        operation: IMPORT_FILE_OPERATION.to_string(),
+        expected_revision: ExpectedRevision::new("0").map_err(|_| "unavailable")?,
+        recorded_at_ms: filesquid_api::journal::now_ms(),
+    })
+}
+
+/// Mark `job_id` finished in the plans and clear the import's intent; a failure of either is
+/// logged with its code (the next launch finds the job finished, or the intent pending).
+fn finish(context: &ImportContext<'_>, job_id: &str, plan: &ImportPlan, operation_id: &str) {
+    mark_finished(context, job_id);
+    let cleared = LibraryId::new(&plan.library_id)
+        .ok()
+        .zip(OperationId::new(operation_id).ok())
+        .map(|(library, op)| context.index.finish(&library, &op));
+    if !matches!(cleared, Some(Ok(()))) {
+        tracing::warn!(
+            operation = IMPORT_FILE_OPERATION,
+            job_id,
+            error_code = "unavailable",
+            "an import's intent could not be cleared; it stays pending"
+        );
+    }
 }
 
 /// Mark `job_id` finished in the plans; a failure is logged, and the next launch then finds
@@ -440,9 +558,13 @@ async fn import_entry(
     match entry {
         ManifestEntry::Skipped { code, .. } => quarantine(context, running, code),
         ManifestEntry::File {
+            logical_path: None, ..
+        } => quarantine(context, running, "destination_required"),
+        ManifestEntry::File {
             path,
             source,
             file_id,
+            logical_path: Some(logical),
         } => {
             let import_root = plan.sources.get(*source).map_or(path.as_path(), |s| s);
             let request = FileImport {
@@ -456,8 +578,64 @@ async fn import_entry(
                 build: context.build,
                 actor: context.actor,
             };
-            import_with_attempts(context, running, &request, retries).await
+            let placed = Placed {
+                collection_id: plan.collection_id.as_deref().unwrap_or_default(),
+                path: logical,
+            };
+            import_with_attempts(context, running, &request, &placed, retries).await
         }
+    }
+}
+
+/// Where a file of the manifest is registered.
+struct Placed<'a> {
+    /// Its home collection.
+    collection_id: &'a str,
+    /// Its collection logical path.
+    path: &'a str,
+}
+
+/// What registering a committed file came to.
+enum Registered {
+    /// It is registered (now or before).
+    Done,
+    /// The index refused it with this code; the file is quarantined.
+    Refused(&'static str),
+    /// The index could not be written; a retry may succeed.
+    Retry,
+}
+
+/// Register the committed file `file_id` at `placed`, as the import `running`, journaling the
+/// registration with the import's operation ID and opaque IDs only. Writes the index.
+fn register(
+    context: &ImportContext<'_>,
+    running: &RunningJob,
+    library_id: &str,
+    file_id: &str,
+    placed: &Placed<'_>,
+) -> Registered {
+    let ids = LibraryId::new(library_id)
+        .ok()
+        .zip(FileId::new(file_id).ok())
+        .zip(CollectionId::new(placed.collection_id).ok());
+    let Some(((library, file), collection)) = ids else {
+        return Registered::Refused("destination_required");
+    };
+    let request = RegisterFile {
+        file_id: file,
+        collection_id: collection,
+        path: placed.path.to_string(),
+    };
+    let journal = JournalEntry::new(REGISTER_OPERATION, Outcome::Succeeded)
+        .actor(context.actor)
+        .target(running.job().id.as_str())
+        .operation_id(running.job().operation_id.as_str());
+    match context.index.register(&library, &request, journal) {
+        Ok(Registration::Registered { .. } | Registration::AlreadyRegistered { .. }) => {
+            Registered::Done
+        }
+        Ok(Registration::Refused(code)) => Registered::Refused(code),
+        Err(_) => Registered::Retry,
     }
 }
 
@@ -468,9 +646,11 @@ async fn import_with_attempts(
     context: &ImportContext<'_>,
     running: &RunningJob,
     request: &FileImport<'_>,
+    placed: &Placed<'_>,
     retries: &mut u32,
 ) -> FileOutcome {
     let mut last = "import_failed";
+    let mut committed = false;
     for attempt in 1..=MAX_ATTEMPTS {
         if context.stop.load(Ordering::SeqCst) {
             return FileOutcome::Suspend;
@@ -483,7 +663,17 @@ async fn import_with_attempts(
         }
         *retries += u32::from(attempt > 1);
         match import_file(context.files, request).await {
-            Ok(view) => return imported(context, running, view),
+            Ok(view) => match register(
+                context,
+                running,
+                request.library_id,
+                request.file_id,
+                placed,
+            ) {
+                Registered::Done => return imported(context, running, view),
+                Registered::Refused(code) => return quarantine(context, running, code),
+                Registered::Retry => (last, committed) = ("unavailable", true),
+            },
             Err(failure) if !failure.retry_now() => {
                 return quarantine(context, running, failure.error_code())
             }
@@ -497,7 +687,24 @@ async fn import_with_attempts(
             return FileOutcome::Lost(err);
         }
     }
-    quarantine(context, running, last)
+    match committed {
+        true => unregistered(running),
+        false => quarantine(context, running, last),
+    }
+}
+
+/// Suspend the job whose file object is committed but whose registration the index kept
+/// refusing to take: the job and the import's intent stay, so the next run answers the same
+/// object and registers it, rather than leave a committed object outside every collection.
+/// Logs the code (stdout).
+fn unregistered(running: &RunningJob) -> FileOutcome {
+    tracing::warn!(
+        operation = IMPORT_FILE_OPERATION,
+        job_id = running.job().id.as_str(),
+        error_code = "unavailable",
+        "an imported file is committed but not yet registered; the job is suspended"
+    );
+    FileOutcome::Suspend
 }
 
 /// Journal an imported file and answer it.
