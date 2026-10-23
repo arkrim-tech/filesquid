@@ -73,7 +73,7 @@ const STYLE = `
   .label-input { display: block; box-sizing: border-box; inline-size: calc(100% - 2 * var(--fs-space-1)); }
   .error { margin-block: var(--fs-space-2) 0; padding: var(--fs-space-2); border-radius: var(--fs-radius-item); background: var(--fs-surface-card); color: var(--fs-error); font-size: var(--fs-font-size-small); }
   .error:empty { display: none; }
-  .keep { margin-block: var(--fs-space-3) 0; font-size: var(--fs-font-size-small); color: var(--fs-on-surface-variant); }
+  .keep { margin-block: var(--fs-space-3) var(--fs-space-2); font-size: var(--fs-font-size-small); color: var(--fs-on-surface-variant); }
   .restore-dialog .dialog-actions { padding: var(--fs-space-3) var(--fs-space-4); }
   .restore-dialog .dialog-actions .button { margin-inline: 0; }
   .restore-dialog .dialog-actions .restore { margin-inline-end: var(--fs-space-1); }

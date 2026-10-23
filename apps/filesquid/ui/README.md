@@ -1,6 +1,6 @@
 # @filesquid/ui
 
-FileSquid's default distribution and the component library every distribution builds on: the `FileSquidClient` API client and host adapter, vanilla TypeScript custom elements (`<fs-app-shell>`, `<fs-monitor>`, `<fs-ocfl-findings>`, `<fs-nav-tree>`, `<fs-breadcrumb>`, `<fs-states>`, `<fs-host-indicator>`, `<fs-file-browser>`, `<fs-file-preview>`, `<fs-library-start>`, `<fs-library-detail>`, `<fs-library-repair>`), design tokens and label tables ([ADR 031](../../../resources/architecture/031-vanilla-typescript-ui-and-white-label-theming.md)). Requirements: [SRS](./resources/srs.md). Plan: [plan](./resources/plan.md).
+FileSquid's default distribution and the component library every distribution builds on: the `FileSquidClient` API client and host adapter, vanilla TypeScript custom elements (`<fs-app-shell>`, `<fs-monitor>`, `<fs-ocfl-findings>`, `<fs-nav-tree>`, `<fs-breadcrumb>`, `<fs-states>`, `<fs-host-indicator>`, `<fs-file-browser>`, `<fs-file-preview>`, `<fs-file-panel>`, `<fs-details-panel>`, `<fs-versions-panel>`, `<fs-library-start>`, `<fs-library-detail>`, `<fs-library-repair>`), design tokens and label tables ([ADR 031](../../../resources/architecture/031-vanilla-typescript-ui-and-white-label-theming.md)). Requirements: [SRS](./resources/srs.md). Plan: [plan](./resources/plan.md).
 
 ## Develop and test
 
@@ -144,13 +144,33 @@ browser.registerPreviewRenderer(myRenderer); // tried before the built-ins
 shell.append(browser);
 ```
 
-- **Route.** `bindFilesRoute(shell, { labels, source })` shows the browser for `#/files/<library>/<object>/<folder>/...` (each segment percent-encoded; see `locationHash`) and follows the Back button. Until the API lists files by navigation node, this route is the way to reach the browser.
+- **Route.** `bindFilesRoute(shell, { labels, source, history })` shows the browser for `#/files/<library>/<object>/<folder>/...` (each segment percent-encoded; see `locationHash`) and follows the Back button. Until the API lists files by navigation node, this route is the way to reach the browser.
 - **Writes.** Each is one API call that commits one OCFL version: `PUT files/upload` (one call per file, at most 64 MiB, refused before sending beyond that; the query carries the library and the file's facts, never a logical path: `name`, `size`, `name_normalization`, and `media_type` and `last_modified` when the browser reports them in a form the API takes, and the API stores the file in its own object `files/<file-id>`, [API-S-026, API-S-035](../crates/api/resources/srs.md); the API gives an uploaded file no home collection or folder yet, so it does not appear in the folder shown or the navigation tree after the upload), `POST files/folders` (the folder stays pending, marked, until a file is added beneath it), `POST files/renames` (rename a file in its own object: sets only its display name as a new version of its metadata record, [API-S-027](../crates/api/resources/srs.md); the form offers no folder, and a refusal shows the label for its code: `invalid_request`, `not_found`, `conflict`, `unavailable`), `POST files/moves` (a folder's rename, and a real move of a file in any other object; typing the name already shown keeps the stored name; the API refuses a move from or to `original` or below it in a file object), `POST files/removals` and `POST files/restorations` (Undo restores from the version before the removal). There is no delete-forever control. A refusal shows the label for its reason and changes nothing.
 - **Preview.** The preview reads the file's media type from `GET files/details`. Image, video and audio files play natively through a **content handle** minted by `FileSquidClient.mintContentHandle` ([UI-S-014](./resources/srs.md)): the handle URL is only ever a media element's `src`, never in the address, history, storage, a log, text or a link. On a media error one new handle is minted and playback resumes at the same position and paused state; a second failure shows the error. Text is read with one ranged read of the first 64 KiB. Anything else says there is no preview.
 - **Panel slots.** A panel is an element with a `fileRef` property (`FileRef`: `library_id`, `object_id`, `version`, `path`, `display_name`, or null when no file is open). `registerPanel(id, create)` mounts it in the sidebar in registration order; panels get no reference to each other (ADR 028 Decision 6).
 - **Events** (bubbling, composed): `fs-location-change` (`detail.location`), `fs-file-open` (`detail.file`, null on close), `fs-files-change` (`detail.operation`, `detail.commit`).
 - **Large folders.** Only the rows near the viewport are in the DOM (5 rows of overscan; rows are `3rem` tall in the list and `9rem` in the grid, so text scaling holds), rows are keyed by logical path and keep their element and focus, and pages of 200 entries load as the window nears the end, up to 500 pages.
 - **Keyboard.** The listing is one Tab stop; ArrowUp, ArrowDown, Home, End, PageUp and PageDown move the active row (the sideways arrows too in the grid), Enter opens it, F2 renames and Delete removes it. Rename and Remove in the toolbar act on the row that last had focus, or on the open file.
+
+## File panel
+
+`<fs-file-panel>` (Task UI-F2.3; [UI-S-003, UI-S-009, UI-S-031](./resources/srs.md); mockups [35](../../../resources/ui-mockups/v3/35-panel-file-info.svg), [26](../../../resources/ui-mockups/v3/26-panel-versions.svg), [27](../../../resources/ui-mockups/v3/27-version-restore.svg) and [25](../../../resources/ui-mockups/v3/25-panel-states.svg); walkthrough: [Task-UI-F2.3-Walkthrough.md](./resources/tasks/Task-UI-F2.3-Walkthrough.md)) is the 320 px file panel the files route puts in the shell's `panel` slot while a file is open: under the full-width header, beside the main column and the footer. Its header holds the file-type badge, the display name, the history button and close; its tabs are panels in named slots.
+
+```ts
+const source = panelSource(new ClientFileSource(client), new ClientHistorySource(client));
+const panel = document.createElement("fs-file-panel") as FsFilePanel;
+panel.slot = "panel";
+panel.configure({ labels });
+panel.registerTab("details", labels.filePanelInfo, () => detailsPanel(source)); // File info
+panel.setVersions(() => versionsPanel(source)); // shown by the history button
+panel.fileRef = file; // only the panel shown reads it
+shell.append(panel);
+```
+
+- **File info** (`<fs-details-panel>`, the Details panel): storage facts only, from `GET files/details` and `GET files/versions`: original file name, extension, MIME type, size in bytes, the SHA-256 and content digests and other fixity values (shortened, mono, copy puts the whole value on the clipboard), the OCFL object and "v{n} of {total} · {time} UTC". The stored name, the logical path and any content location are never shown. The shared property table (`PropertyTable`: filter, count eyebrow, rows, loading, no-match and error states, footer) is the one UI-F2.15 reuses for Description and Provenance.
+- **Versions** (`<fs-versions-panel>`): Back, the version count, "History {size} · newest first" (`GET files/history-size`), one row per version that changed the file, newest first (`GET files/history`), with its chip, label or "No label", "{relative time} · {size}" and the Current chip on the current version; every other version has a menu with **Restore as new version**, which opens the dialog of mockup 27 and publishes one version through `FileSource.restore` (`POST files/restorations` with the optional label). No delete, expiry or thinning control exists. UI-F2.11 adds Download this version and Edit label to the menu.
+- **Events** (bubbling, composed): `fs-file-panel-close`, `fs-versions-close`, and `fs-files-change` (`detail.operation` `restore`) after a restore, on which the files route reloads the browser (`FsFileBrowser.reload()`).
+- **Reads.** `HistorySource` (`ClientHistorySource` over `FileSquidClient`; `MemoryFileSource` answers it too) reads `files/history`, `files/versions` and `files/history-size`; the panels never fetch by themselves.
 
 The element lists one object's logical tree because that is what the file routes (API-F1.3) answer; the navigation node handles (UI-F2.1b) name collections and folders that span many objects, so opening the browser from the tree waits for a file listing by navigation node (the library-level file views of API-S-019), which UI-F2.8 builds on.
 

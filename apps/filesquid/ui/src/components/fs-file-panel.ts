@@ -52,14 +52,14 @@ interface Entry {
 const STYLE = `
   :host { display: flex; flex-direction: column; box-sizing: border-box; min-block-size: 100%; background: var(--fs-surface-card); color: var(--fs-on-surface); font-family: var(--fs-font-sans); font-size: var(--fs-font-size-ui); }
   :host([hidden]) { display: none; }
-  .head { display: flex; align-items: center; gap: var(--fs-space-1); box-sizing: border-box; min-block-size: 3.25rem; padding: var(--fs-space-3) var(--fs-space-3) 0; }
-  .badge { flex: 0 0 auto; margin-inline: var(--fs-space-1) var(--fs-space-1); padding: 0 var(--fs-space-2); border-radius: var(--fs-radius-badge); font-family: var(--fs-font-mono); font-size: var(--fs-font-size-badge); font-weight: 700; line-height: 1.6; text-transform: uppercase; }
+  .head { display: flex; align-items: center; gap: 0; box-sizing: border-box; min-block-size: 3.25rem; padding: var(--fs-space-3) var(--fs-space-3) 0; }
+  .badge { flex: 0 0 auto; margin-inline: var(--fs-space-1) var(--fs-space-2); padding: 0 var(--fs-space-2); border-radius: var(--fs-radius-badge); font-family: var(--fs-font-mono); font-size: var(--fs-font-size-badge); font-weight: 700; line-height: 1.6; text-transform: uppercase; }
   .badge:empty { display: none; }
   .badge[data-kind="document"] { background: var(--fs-badge-document); color: var(--fs-on-badge-document); }
   .badge[data-kind="data"] { background: var(--fs-badge-data); color: var(--fs-on-badge-data); }
   .badge[data-kind="media"] { background: var(--fs-badge-media); color: var(--fs-on-badge-media); }
   .badge[data-kind="other"] { background: var(--fs-surface-raised); color: var(--fs-on-surface); }
-  h2.name { flex: 1 1 auto; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--fs-font-sans); font-size: var(--fs-font-size-ui); font-weight: 600; color: var(--fs-on-surface-heading); }
+  h2.name { flex: 1 1 auto; min-width: 0; margin: 0 var(--fs-space-1) 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--fs-font-sans); font-size: var(--fs-font-size-ui); font-weight: 600; color: var(--fs-on-surface-heading); }
   .icon-button { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; inline-size: 1.875rem; block-size: 1.75rem; padding: 0; border: 0; border-radius: var(--fs-radius-input); background: none; color: var(--fs-icon-muted); cursor: pointer; transition: background-color var(--fs-motion-duration), color var(--fs-motion-duration); }
   .icon-button:hover { background: var(--fs-surface-raised); color: var(--fs-icon); }
   .history[aria-pressed="true"], .history[aria-pressed="true"]:hover { background: var(--fs-primary-container); color: var(--fs-on-primary-container); }

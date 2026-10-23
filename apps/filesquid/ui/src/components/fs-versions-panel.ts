@@ -75,13 +75,13 @@ interface Loaded {
 const STYLE = `
   :host { position: relative; display: flex; flex-direction: column; min-block-size: 100%; font-family: var(--fs-font-sans); font-size: var(--fs-font-size-ui); color: var(--fs-on-surface); }
   :host([hidden]) { display: none; }
-  .bar { display: flex; align-items: center; justify-content: space-between; gap: var(--fs-space-2); box-sizing: border-box; min-block-size: 2.5625rem; padding: var(--fs-space-1) var(--fs-space-4) 0 var(--fs-space-3); border-block-end: 1px solid var(--fs-outline); }
-  .back { min-block-size: 2rem; padding: 0 var(--fs-space-1); font-size: var(--fs-font-size-small); font-weight: 500; color: var(--fs-on-surface-variant); }
-  .back .icon { color: var(--fs-icon); }
+  .back-row { display: flex; align-items: center; justify-content: space-between; gap: var(--fs-space-2); box-sizing: border-box; min-block-size: 2.5625rem; padding: var(--fs-space-1) var(--fs-space-3) 0; border-block-end: 1px solid var(--fs-outline); }
+  .back-row .back { min-block-size: 2rem; padding: 0 var(--fs-space-1); font-size: var(--fs-font-size-small); font-weight: 500; color: var(--fs-on-surface-variant); }
+  .back-row .back .icon { color: var(--fs-icon); }
   :host(:dir(rtl)) .back .icon { transform: scaleX(-1); }
-  .bar .count { margin: 0; padding: 0; font-size: var(--fs-font-size-small); line-height: normal; color: var(--fs-on-surface-muted); }
+  .back-row .count { margin: 0 var(--fs-space-1) 0 0; padding: 0; font-size: var(--fs-font-size-small); line-height: normal; color: var(--fs-on-surface-muted); }
   .content { flex: 1 1 auto; padding: var(--fs-space-3) var(--fs-space-2) var(--fs-space-3); }
-  .content > .eyebrow { margin: 0 var(--fs-space-3) var(--fs-space-2); line-height: 1.4; }
+  .content > .eyebrow { margin: 0 var(--fs-space-2) var(--fs-space-2); padding-inline: var(--fs-space-1); line-height: 1.4; }
   .eyebrow.busy { font-weight: 500; text-transform: none; }
   ul.versions { list-style: none; display: grid; gap: var(--fs-space-1); margin: 0; padding: 0; }
   ul.versions:focus { outline: none; }
@@ -91,20 +91,20 @@ const STYLE = `
   .dot { grid-row: 1; justify-self: center; align-self: center; box-sizing: border-box; inline-size: 0.625rem; block-size: 0.625rem; border: 1.5px solid var(--fs-outline-strong); border-radius: var(--fs-radius-pill); background: var(--fs-surface-card); }
   .version[data-current] .dot { border-color: var(--fs-brand); background: var(--fs-brand); }
   .line { grid-column: 2; display: flex; align-items: center; gap: var(--fs-space-2); min-width: 0; min-block-size: 1.5rem; }
-  .version .mono-chip { flex: 0 0 auto; padding: var(--fs-space-1) var(--fs-space-2); line-height: 1; }
+  .version .mono-chip { flex: 0 0 auto; padding: var(--fs-space-1) var(--fs-space-2); line-height: 1.2; }
   .label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-font-size-ui); font-weight: 600; color: var(--fs-on-surface); }
   .no-label { flex: 1 1 auto; min-width: 0; font-size: var(--fs-font-size-small); font-style: italic; color: var(--fs-on-surface-muted); }
   .version:hover .no-label, .version:focus-within .no-label { color: var(--fs-on-surface-variant); }
-  .current { flex: 0 0 auto; padding: var(--fs-space-1) var(--fs-space-2); border-radius: var(--fs-radius-chip); line-height: 1; }
+  .current { flex: 0 0 auto; padding: var(--fs-space-1) var(--fs-space-2); border-radius: var(--fs-radius-chip); line-height: 1.2; }
   .more { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; inline-size: 1.5rem; block-size: 1.5rem; padding: 0; border: 0; border-radius: var(--fs-radius-item); background: none; color: var(--fs-icon-muted); cursor: pointer; }
   .more:hover, .more:focus-visible, .more[aria-expanded="true"], .version:hover .more { color: var(--fs-icon); }
   .meta { grid-column: 2; margin: 0; font-size: var(--fs-font-size-small); color: var(--fs-on-surface-variant); }
-  .menu { position: absolute; z-index: 2; inset-inline-end: 8px; inset-block-start: 34px; display: grid; box-sizing: border-box; inline-size: 14.5rem; padding: var(--fs-space-1); border: 1px solid var(--fs-outline-strong); border-radius: var(--fs-radius); background: var(--fs-surface-overlay); }
+  .menu { position: absolute; z-index: 2; inset-inline-end: 12px; inset-block-start: 30px; display: grid; box-sizing: border-box; inline-size: 14.5rem; padding: var(--fs-space-1); border: 1px solid var(--fs-outline-strong); border-radius: var(--fs-radius); background: var(--fs-surface-overlay); }
   .menu-item { display: flex; align-items: center; gap: var(--fs-space-2); box-sizing: border-box; min-block-size: 2.125rem; padding: 0 var(--fs-space-2); border: 0; border-radius: var(--fs-radius-item); background: none; color: var(--fs-on-surface); font-family: inherit; font-size: var(--fs-font-size-small); text-align: start; cursor: pointer; }
   .menu-item:hover, .menu-item:focus-visible { background: var(--fs-surface-raised); }
-  .note { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: var(--fs-space-2); margin: 0 var(--fs-space-2) var(--fs-space-4) var(--fs-space-2); padding: var(--fs-space-3) var(--fs-space-3) var(--fs-space-2); border-radius: var(--fs-radius); background: var(--fs-surface-raised); }
+  .note { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: var(--fs-space-2); box-sizing: border-box; inline-size: min(18.5rem, calc(100% - 2 * var(--fs-space-2))); margin: 0 auto var(--fs-space-4); padding: var(--fs-space-3) var(--fs-space-3) var(--fs-space-2); border-radius: var(--fs-radius); background: var(--fs-surface-raised); }
   .note .icon { grid-row: 1 / span 2; color: var(--fs-icon); }
-  .note p { margin: 0; font-size: var(--fs-font-size-small); line-height: 1.3; }
+  .note p { margin: 0; font-size: var(--fs-font-size-small); line-height: 1.23; }
   .note-title { font-weight: 600; color: var(--fs-on-surface); }
   .note-detail { color: var(--fs-on-surface-variant); }
   .announce { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
@@ -183,7 +183,7 @@ export class FsVersionsPanel extends HTMLElement {
     const style = document.createElement("style");
     style.textContent =
       A11Y_STYLE + CONTROL_STYLE + STYLE + PROPERTY_TABLE_STYLE + RESTORE_DIALOG_STYLE;
-    const bar = node("div", "bar");
+    const bar = node("div", "back-row");
     const back = node("button", "button plain back");
     back.type = "button";
     back.append(icon("chevron-back"), document.createTextNode(labels.versionsBack));

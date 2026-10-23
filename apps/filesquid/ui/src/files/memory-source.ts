@@ -5,7 +5,9 @@
  * write, restore from an earlier version, a folder that stays pending until a file is added,
  * an upload that creates the file's own object (API-S-026) and refuses the facts the API
  * refuses, and the API's refusals as `ApiError` (`not_found`, `conflict`, `invalid_request`,
- * `range_not_satisfiable`). Tests and demos use it; the live source is `ClientFileSource`.
+ * `range_not_satisfiable`). It also answers the history reads of the file panel (UI-F2.3) as
+ * `GET /files/history`, `/files/versions` and `/files/history-size` do. Tests and demos use it;
+ * the live sources are `ClientFileSource` and `ClientHistorySource`.
  */
 import { ApiError } from "../api/client";
 import { newOperationId, type ByteRange } from "../api/commands";
@@ -26,6 +28,13 @@ import type {
 import { MAX_UPLOAD_BYTES, isControl, isMediaType, lastSegment } from "./model";
 import { fileIdOf, inOriginalFolder, isOriginalPath } from "./ops";
 import type { FileSource, SourceOptions } from "./source";
+import type {
+  FileHistory,
+  FileHistoryEntry,
+  FileHistorySize,
+  HistorySource,
+  ObjectVersions,
+} from "./history-source";
 
 /** One file of the fixture. */
 export interface MemoryFile {
@@ -186,7 +195,7 @@ function byName(a: string, b: string): number {
 }
 
 /** A file source answering from memory. */
-export class MemoryFileSource implements FileSource {
+export class MemoryFileSource implements FileSource, HistorySource {
   private readonly snapshots: Snapshot[] = [];
   private readonly cursors = new Map<string, { prefix: string; offset: number }>();
   private readonly uploaded = new Map<string, UploadedFile>();
@@ -413,6 +422,55 @@ export class MemoryFileSource implements FileSource {
     });
   }
 
+  /** Every version of the object, oldest first, with the head. */
+  async versions(): Promise<ObjectVersions> {
+    this.check();
+    return {
+      library_id: this.options.library_id,
+      object_id: this.options.object_id,
+      head: this.head,
+      display_name: null,
+      versions: this.snapshots.map((snapshot, i) => versionRecord(i, snapshot)),
+    };
+  }
+
+  /** The versions that changed the file at `file.path`, oldest first, or `not_found`. */
+  async history(file: FileRef): Promise<FileHistory> {
+    this.check();
+    const entries: FileHistoryEntry[] = [];
+    this.snapshots.forEach((snapshot, i) => {
+      const before = this.snapshots[i - 1]?.files.get(file.path);
+      const entry = historyEntry(i, snapshot, before, snapshot.files.get(file.path));
+      if (entry) entries.push(entry);
+    });
+    const shown = this.latest().files.get(file.path) ?? this.snapshots[0]?.files.get(file.path);
+    if (entries.length === 0) throw refusal(404, "not_found");
+    return {
+      library_id: this.options.library_id,
+      object_id: this.options.object_id,
+      path: file.path,
+      display_name: safeDisplayName(shown?.displayName ?? lastSegment(file.path)),
+      entries,
+    };
+  }
+
+  /** The bytes the file's history keeps, each distinct content once. */
+  async historySize(file: FileRef): Promise<FileHistorySize> {
+    const { entries } = await this.history(file);
+    const contents = new Map<string, number>();
+    for (const entry of entries) {
+      if (entry.digest !== null) contents.set(entry.digest, entry.size ?? 0);
+    }
+    return {
+      library_id: this.options.library_id,
+      object_id: this.options.object_id,
+      path: file.path,
+      versions: entries.length,
+      contents: contents.size,
+      bytes: [...contents.values()].reduce((sum, bytes) => sum + bytes, 0),
+    };
+  }
+
   /** Reject with the configured failure. */
   private check(): void {
     if (this.failure !== undefined) throw this.failure;
@@ -488,6 +546,47 @@ export class MemoryFileSource implements FileSource {
       this.cursors.delete(this.cursors.keys().next().value as string);
     return cursor;
   }
+}
+
+/** The version record of snapshot `index`. */
+function versionRecord(index: number, snapshot: Snapshot) {
+  return {
+    version: `v${index + 1}`,
+    created: snapshot.created,
+    message: null,
+    user: null,
+    label: null,
+  };
+}
+
+/** The history entry of snapshot `index` for one file, or undefined when it left the file alone. */
+function historyEntry(
+  index: number,
+  snapshot: Snapshot,
+  before: Stored | undefined,
+  after: Stored | undefined,
+): FileHistoryEntry | undefined {
+  if (!before && !after) return undefined;
+  if (before && after && sameStored(before, after)) return undefined;
+  const change = !before ? "added" : after ? "changed" : "deleted";
+  return {
+    version: versionRecord(index, snapshot),
+    change,
+    digest: after ? digestOf(after.bytes) : null,
+    size: after ? after.bytes.byteLength : null,
+  };
+}
+
+/** True when two stored files have the same content and display name. */
+function sameStored(a: Stored, b: Stored): boolean {
+  return a.displayName === b.displayName && sameBytes(a.bytes, b.bytes);
+}
+
+/** A stand-in digest of some bytes: their length and a simple checksum, stable per content. */
+function digestOf(bytes: Uint8Array): string {
+  let sum = 0;
+  for (const byte of bytes) sum = (sum * 31 + byte) % 2_147_483_647;
+  return `fixture-${bytes.byteLength}-${sum}`;
 }
 
 /** A fixture file as stored in `v1`. */

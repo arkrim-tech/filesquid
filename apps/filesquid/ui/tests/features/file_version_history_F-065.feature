@@ -64,6 +64,45 @@ Feature: File version history and retention
     Then no version content should have been removed
     And the user should see a capacity warning that explains the hardware or quota limit without discarding data
 
+  # Task UI-F2.3: the Versions view and the restore dialog (UI-S-009, UI-S-031 mockups 26 and 27)
+  Scenario: The history button opens the Versions view in place of the tabs
+    Given a file "harbour-masterplan-v7.pdf" with seven versions, the newest labelled "Issued for tender"
+    When I press the history button in the file panel header
+    Then the button should be pressed and the tabs hidden
+    And I should see Back, "7 versions" and the eyebrow "History 96.3 MB · newest first"
+    And the rows should list v7 to v1 with the label or "No label" and "{relative time} · {size}"
+    And only v7 should carry the "Current" chip and offer no menu
+    And the note "FileSquid keeps every version." should explain that nothing is thinned
+    When I choose Back
+    Then the tabs should return and focus should be on the history button
+
+  Scenario: Restore as new version opens a dialog naming what changes
+    Given the Versions view of "harbour-masterplan-v7.pdf" whose head is v7
+    When I choose "Restore as new version" in the menu of v5
+    Then a dialog should ask "Restore v5 as a new version?" and name the file
+    And it should show the source line of v5 and "New current version, same content as v5" for v8 on the active tint
+    And it should say "v6 and v7 stay in the history. You can restore them later."
+    And it should offer an optional label for v8, Cancel and one primary Restore
+
+  Scenario: Restoring sends one call with the label and lists the new current version
+    Given the restore dialog for v5 is open
+    When I type the label "Back to client review version" and choose Restore
+    Then exactly one restore of v5 for the file should be sent with that label
+    And the dialog should close and "harbour-masterplan-v7.pdf restored. Version v8 committed." should be announced
+    And v8 should be listed first as the current version with that label
+
+  Scenario: A label the route would refuse is refused before any call
+    Given the restore dialog for v5 is open
+    When I type a label longer than 512 bytes, or one with a control character, and choose Restore
+    Then no restore should be sent
+    And the field should be marked invalid with "Use at most 512 bytes and no control characters."
+
+  Scenario: A refused restore keeps the dialog open and changes nothing
+    Given another change was committed to the file first
+    When I restore v5
+    Then the dialog should stay open with "The files changed or another change is in progress. Reload and try again."
+    And Escape should close it and return focus to the menu button of v5
+
   Scenario: History size is reported
     When I open the file's details
     Then I should see the bytes used by its version history

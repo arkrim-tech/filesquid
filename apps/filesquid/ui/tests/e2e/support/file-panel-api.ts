@@ -1,0 +1,185 @@
+/**
+ * Fakes of the routes the file panel reads and writes (UI-F2.3) for the production-build
+ * Playwright tests: `files/details`, `files/history`, `files/versions`, `files/history-size`
+ * (API-F1.3, API-F2.5) and `files/restorations`. They answer the mockups' data: mockup 35's
+ * `facade-study.jpg` (four versions) and mockups 26 and 27's `harbour-masterplan-v7.pdf` (seven
+ * versions). The listing, the preview and the shell's routes come from `serveFiles` and
+ * `serveNavigation`; these routes are registered after them, so they take precedence.
+ */
+import type { Page, Route } from "@playwright/test";
+import { MemoryFileSource } from "../../../src/files/memory-source";
+import { PNG, serveFiles } from "./files-api";
+
+/** The object both fixture files live in, a file object's `urn:uuid` (mockup 35). */
+export const PANEL_OBJECT = "urn:uuid:7f3c9a1e-0b2c-4d5e-8f90-a1b2c341d2b8";
+/** The library. */
+export const PANEL_LIBRARY = "lib";
+/** The route of the object's root folder. */
+export const PANEL_ROUTE = `/#/files/${PANEL_LIBRARY}/${encodeURIComponent(PANEL_OBJECT)}/original`;
+/** Stored names, which never reach the page. */
+export const PANEL_STORED = ["9f2c41aa", "9f2c41ab"] as const;
+
+/** One fixture file: its stored path, display name and versions (label, time, size). */
+export interface PanelFixture {
+  readonly path: string;
+  readonly displayName: string;
+  readonly mediaType: string;
+  readonly versions: readonly (readonly [string | null, string, number])[];
+}
+
+/** Mockup 35: facade-study.jpg, four versions, the head v4 at 11:05 UTC on 16 Oct 2026. */
+export const FACADE: PanelFixture = {
+  path: `original/${PANEL_STORED[0]}.jpg`,
+  displayName: "facade-study.jpg",
+  mediaType: "image/jpeg",
+  versions: [
+    [null, "2026-10-12T14:20:00Z", 6_481_920],
+    [null, "2026-10-13T09:00:00Z", 6_481_920],
+    [null, "2026-10-15T09:00:00Z", 6_481_920],
+    [null, "2026-10-16T11:05:00Z", 6_481_920],
+  ],
+};
+
+/** Mockups 26 and 27: harbour-masterplan-v7.pdf, seven versions. */
+export const HARBOUR: PanelFixture = {
+  path: `original/${PANEL_STORED[1]}.pdf`,
+  displayName: "harbour-masterplan-v7.pdf",
+  mediaType: "application/pdf",
+  versions: [
+    [null, "2026-09-27T10:00:00Z", 8_703_180],
+    ["First draft", "2026-09-28T10:00:00Z", 10_066_330],
+    [null, "2026-10-02T10:00:00Z", 12_373_197],
+    [null, "2026-10-07T10:00:00Z", 14_889_779],
+    ["Client review", "2026-10-09T10:00:00Z", 18_769_510],
+    [null, "2026-10-15T10:00:00Z", 18_979_225],
+    ["Issued for tender", "2026-10-16T12:00:00Z", 19_293_798],
+  ],
+};
+
+/** What the fake saw and how to steer it. */
+export interface PanelApi {
+  /** Bodies of every restore the page sent. */
+  readonly restores: Record<string, unknown>[];
+  /** Answer the details route with this status and code instead (an error state). */
+  failDetails(status: number, code: string): void;
+  /** Hold the details route until the returned function is called (the loading state). */
+  holdDetails(): () => void;
+}
+
+/** The SHA-256 the inventory's fixity block records for the fixture (mockup 35). */
+const SHA256 = `9b1f4e${"0".repeat(52)}c07a2d`;
+
+/** The version records of a fixture, plus the versions restores added. */
+function records(fixture: PanelFixture, extra: readonly Record<string, unknown>[]) {
+  const base = fixture.versions.map(([label, created], i) => ({
+    version: `v${i + 1}`,
+    created,
+    message: null,
+    user: { name: "Owner", address: null },
+    label,
+  }));
+  return [...base, ...extra];
+}
+
+/** The storage facts of the fixture at its head. */
+function details(fixture: PanelFixture, count: number) {
+  const last = fixture.versions[fixture.versions.length - 1] as readonly [unknown, string, number];
+  return {
+    library_id: PANEL_LIBRARY,
+    object_id: PANEL_OBJECT,
+    version: `v${count}`,
+    path: fixture.path,
+    name: fixture.path.split("/").pop(),
+    display_name: fixture.displayName,
+    digest: "5a".repeat(64),
+    digest_algorithm: "sha512",
+    size: last[2],
+    fixity: { sha256: [SHA256] },
+    last_change: { version: `v${count}`, created: last[1], message: null, user: null },
+    type_hint: fixture.path.split(".").pop(),
+    media_type: fixture.mediaType,
+  };
+}
+
+/** The file's history, oldest first. */
+function history(fixture: PanelFixture, extra: readonly Record<string, unknown>[]) {
+  const entries = records(fixture, extra).map((version, i) => ({
+    version,
+    change: i === 0 ? "added" : "changed",
+    digest: `d${i}`,
+    size: fixture.versions[i]?.[2] ?? fixture.versions[4]?.[2] ?? 0,
+  }));
+  return {
+    library_id: PANEL_LIBRARY,
+    object_id: PANEL_OBJECT,
+    path: fixture.path,
+    display_name: fixture.displayName,
+    entries,
+  };
+}
+
+/**
+ * Serve the listing of the object holding `fixture`, and the file panel's routes for it.
+ *
+ * @param page - The page under test.
+ * @param fixture - The file the panel shows.
+ * @returns What the fake saw, and ways to fail or hold the details route.
+ */
+export async function servePanel(page: Page, fixture: PanelFixture): Promise<PanelApi> {
+  const source = new MemoryFileSource({
+    library_id: PANEL_LIBRARY,
+    object_id: PANEL_OBJECT,
+    files: [
+      { path: fixture.path, displayName: fixture.displayName, content: new Uint8Array(PNG) },
+      { path: "original/9f2c41ff.txt", displayName: "readme.txt", content: "hello" },
+    ],
+  });
+  await serveFiles(page, source);
+  const extra: Record<string, unknown>[] = [];
+  const fail: { status?: number; code?: string } = {};
+  let hold: Promise<void> | undefined;
+  const api: PanelApi = {
+    restores: [],
+    failDetails: (status, code) => Object.assign(fail, { status, code }),
+    holdDetails: () => {
+      let release: () => void = () => undefined;
+      hold = new Promise<void>((resolve) => (release = resolve));
+      return () => release();
+    },
+  };
+  const json = (route: Route, body: unknown) => route.fulfill({ json: body });
+  await page.route(/\/api\/v1\/files\/details\?/, async (route) => {
+    await hold;
+    if (fail.status) {
+      const body = { code: fail.code, message: "refused", retryable: true };
+      return route.fulfill({ status: fail.status, json: body });
+    }
+    return json(route, details(fixture, fixture.versions.length + extra.length));
+  });
+  await page.route(/\/api\/v1\/files\/history\?/, (route) => json(route, history(fixture, extra)));
+  await page.route(/\/api\/v1\/files\/versions\?/, (route) => {
+    const versions = records(fixture, extra);
+    const head = `v${versions.length}`;
+    const body = { library_id: PANEL_LIBRARY, object_id: PANEL_OBJECT, head, versions };
+    return json(route, { ...body, display_name: fixture.displayName });
+  });
+  await page.route(/\/api\/v1\/files\/history-size\?/, (route) =>
+    json(route, {
+      library_id: PANEL_LIBRARY,
+      object_id: PANEL_OBJECT,
+      path: fixture.path,
+      versions: fixture.versions.length,
+      contents: fixture.versions.length,
+      bytes: 100_978_892,
+    }),
+  );
+  await page.route("**/api/v1/files/restorations", async (route) => {
+    const body = route.request().postDataJSON() as Record<string, unknown>;
+    api.restores.push(body);
+    const version = `v${fixture.versions.length + extra.length + 1}`;
+    const created = "2026-10-16T13:00:00Z";
+    extra.push({ version, created, message: null, user: null, label: body.label ?? null });
+    return json(route, { library_id: PANEL_LIBRARY, object_id: PANEL_OBJECT, version, created });
+  });
+  return api;
+}
