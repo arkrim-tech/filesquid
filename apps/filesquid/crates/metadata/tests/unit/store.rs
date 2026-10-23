@@ -461,7 +461,8 @@ mod commit_options {
     use filesquid_metadata::store::ocfl::{CommitOptions, EDIT_MESSAGE};
     use filesquid_ocfl::inventory::User;
     use filesquid_ocfl::read::Object;
-    use filesquid_ocfl::write::BoundContext;
+    use filesquid_ocfl::storage::MemoryBackend;
+    use filesquid_ocfl::write::{BoundContext, LeaseConfig, LeaseStore};
 
     use super::*;
 
@@ -590,5 +591,143 @@ mod commit_options {
             "the staging area was kept, and the next save publishes the edit"
         );
         assert_eq!(rig.versions(OBJECT_ID), ["v1", "v2"]);
+    }
+
+    /// A lease clock the test moves by hand.
+    struct ManualClock(std::sync::atomic::AtomicU64);
+
+    impl filesquid_ocfl::write::Clock for ManualClock {
+        fn now_millis(&self) -> Option<u64> {
+            Some(self.0.load(std::sync::atomic::Ordering::SeqCst))
+        }
+    }
+
+    /// Leases on a hand-moved clock: 60 s, margin 10 s.
+    type ManualLeases<'c> = LeaseStore<MemoryBackend, &'c ManualClock>;
+
+    impl filesquid_ocfl::write::Clock for &ManualClock {
+        fn now_millis(&self) -> Option<u64> {
+            (**self).now_millis()
+        }
+    }
+
+    /// Let the edit's reservation of `v2` lapse and have another writer take
+    /// it over and publish `v2` with `other.txt`, so the edit's commit finds
+    /// the head moved under its reservation and is rebased.
+    fn take_over_v2<B: StorageBackend>(
+        rig: &Rig<B>,
+        leases: &ManualLeases<'_>,
+        clock: &ManualClock,
+    ) {
+        clock
+            .0
+            .fetch_add(120_000, std::sync::atomic::Ordering::SeqCst);
+        let staging = StagingArea::new(&rig.staging, "other-writer").unwrap();
+        let root = object_root(OBJECT_ID);
+        let other = ChangeModel::new(&rig.storage, leases, "other", &root, OBJECT_ID, staging);
+        ready(other.stage_bytes("other.txt", b"other")).unwrap();
+        let meta = filesquid_ocfl::change::VersionMeta::new(filesquid_ocfl::write::rfc3339_utc(
+            1_791_590_460_000,
+        ));
+        let receipt = ready(other.commit(meta)).expect("the other writer takes over v2");
+        assert_eq!(receipt.version, v("v2"));
+        assert!(
+            receipt.took_over,
+            "the edit's lapsed reservation was taken over"
+        );
+    }
+
+    /// The bytes of `path` in `version` of the photo object.
+    fn file_bytes<B: StorageBackend>(rig: &Rig<B>, version: &str, path: &str) -> Vec<u8> {
+        let object = ready(Object::open(&rig.storage, &object_root(OBJECT_ID))).unwrap();
+        let mut reader = object.stream_file(&v(version), path, 1 << 16).unwrap();
+        let mut bytes = Vec::new();
+        while let Some(chunk) = ready(reader.next_chunk()).unwrap() {
+            bytes.extend(chunk);
+        }
+        bytes
+    }
+
+    /// Edit the photo's record with a version-bound record file. The first
+    /// call of the function (for `v2`, under the edit's reservation) lets
+    /// another writer take over and publish `v2`; the commit is rebased and
+    /// the function runs again for `v3`, whose file alone is published.
+    fn rebased_edit_regenerates_on<B: StorageBackend>(rig: &Rig<B>) {
+        rig.seed(OBJECT_ID, &[("photo.jpg", b"pixels")]);
+        let clock = ManualClock(std::sync::atomic::AtomicU64::new(1_791_590_400_000));
+        let config = LeaseConfig {
+            ttl_ms: 60_000,
+            margin_ms: 10_000,
+        };
+        let leases = LeaseStore::new(MemoryBackend::new(), "leases", &clock, config).unwrap();
+        let store = OcflStore {
+            storage: &rig.storage,
+            reservations: &leases,
+            staging: &rig.staging,
+            staging_prefix: "metadata-changes".to_string(),
+            holder: "metadata-test".to_string(),
+            clock: SystemClock,
+            object_root: object_root as fn(&str) -> String,
+        };
+        let seen = std::sync::Mutex::new(Vec::new());
+        let record_file = |context: &BoundContext<'_>| {
+            let first = {
+                let mut seen = seen.lock().unwrap();
+                seen.push(context.version.to_string());
+                seen.len() == 1
+            };
+            if first {
+                take_over_v2(rig, &leases, &clock);
+            }
+            let name = format!("provenance/{}.jsonld", context.version);
+            let body = format!("{} {}", context.version, context.created);
+            Ok(BTreeMap::from([(name, body.into_bytes())]))
+        };
+        let options = CommitOptions {
+            bound: Some(&record_file),
+            ..CommitOptions::default()
+        };
+        let receipt = ready(store.commit_record_with(&photo(), &titled("Harbour"), &options))
+            .expect("commit")
+            .expect("a version");
+        assert_eq!(
+            receipt.version,
+            v("v3"),
+            "rebased past the other writer's v2"
+        );
+        assert_eq!(
+            *seen.lock().unwrap(),
+            ["v2", "v3"],
+            "regenerated after the rebase"
+        );
+        let object = ready(Object::open(&rig.storage, &object_root(OBJECT_ID))).unwrap();
+        let v2 = object.state(&v("v2")).unwrap();
+        assert!(
+            v2.get("provenance/v2.jsonld").is_none(),
+            "the v2 file was never published"
+        );
+        let v3 = object.state(&v("v3")).unwrap();
+        assert!(v3.get("provenance/v2.jsonld").is_none(), "no stale file");
+        assert!(
+            v3.get("other.txt").is_some(),
+            "the other writer's change kept"
+        );
+        let expected = format!("v3 {}", receipt.created).into_bytes();
+        assert_eq!(file_bytes(rig, "v3", "provenance/v3.jsonld"), expected);
+        assert_eq!(title_at(rig, None).as_deref(), Some("Harbour"));
+        let report = ready(validate_object(&rig.storage, &object_root(OBJECT_ID))).unwrap();
+        assert!(report.is_valid(), "{:?}", report.errors());
+    }
+
+    #[test]
+    fn a_rebased_edit_regenerates_its_bound_file_for_the_new_version() {
+        rebased_edit_regenerates_on(&Rig::memory());
+        let dir = std::env::temp_dir().join(format!("md-0.9-rebase-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let storage =
+            filesquid_ocfl::storage::FsBackend::new(dir.join("root"), dir.join("multipart"))
+                .expect("fs backend");
+        rebased_edit_regenerates_on(&Rig::over(storage));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
