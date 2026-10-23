@@ -50,6 +50,9 @@ pub const JOB_LEASE_TTL_MS: i64 = 15_000;
 /// Largest checkpoint a job may store, in bytes.
 pub const MAX_CHECKPOINT_BYTES: usize = 64 * 1024;
 
+/// Largest result a job may store, in bytes (a rebuild report of about 300,000 objects).
+pub const MAX_RESULT_BYTES: usize = 64 * 1024 * 1024;
+
 /// Most unfinished jobs one recovery reads.
 pub const MAX_RECOVERED_JOBS: usize = 1_000;
 

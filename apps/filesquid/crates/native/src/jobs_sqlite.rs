@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     created_ms INTEGER NOT NULL,
     updated_ms INTEGER NOT NULL,
     error_code TEXT,
-    control TEXT
+    control TEXT,
+    result TEXT
 );
 CREATE INDEX IF NOT EXISTS jobs_unfinished ON jobs (state, created_ms, id);
 CREATE INDEX IF NOT EXISTS jobs_newest ON jobs (created_ms, id);
@@ -41,7 +42,8 @@ CREATE INDEX IF NOT EXISTS jobs_leased ON jobs (kind, state, lease_expires_ms);
 
 /// Columns of a job, in [`job`] and [`write`] order.
 const COLUMNS: &str = "id, kind, operation_id, source, state, checkpoint, done, total, \
-    attempts, fence, holder, lease_expires_ms, created_ms, updated_ms, error_code, control";
+    attempts, fence, holder, lease_expires_ms, created_ms, updated_ms, error_code, control, \
+    result";
 
 /// The job store backed by SQLite.
 pub struct SqliteJobs {
@@ -89,7 +91,7 @@ impl SqliteJobs {
             .map_err(sql_err)?;
         conn.busy_timeout(std::time::Duration::from_secs(5))
             .map_err(sql_err)?;
-        add_control_column(&conn)?;
+        add_columns(&conn)?;
         conn.execute_batch(SCHEMA).map_err(sql_err)?;
         Ok(Self {
             conn: Mutex::new(conn),
@@ -188,9 +190,13 @@ impl JobStore for SqliteJobs {
     }
 }
 
-/// Add the `control` column (API-S-037) to a `jobs` table created before it existed; a table
-/// without it, or none yet, is left to [`SCHEMA`]. Idempotent. Database I/O.
-fn add_control_column(conn: &Connection) -> Result<(), JobError> {
+/// Columns added to the `jobs` table after it was first created, in the order they were
+/// added: the `control` column (API-S-037) and the `result` column (Task API-F2.17).
+const ADDED_COLUMNS: [&str; 2] = ["control", "result"];
+
+/// Add each of [`ADDED_COLUMNS`] that a `jobs` table created before it existed lacks; no
+/// table yet is left to [`SCHEMA`]. Idempotent. Database I/O.
+fn add_columns(conn: &Connection) -> Result<(), JobError> {
     let mut stmt = conn
         .prepare("SELECT name FROM pragma_table_info('jobs')")
         .map_err(sql_err)?;
@@ -199,11 +205,17 @@ fn add_control_column(conn: &Connection) -> Result<(), JobError> {
         .map_err(sql_err)?
         .collect::<Result<Vec<String>, _>>()
         .map_err(sql_err)?;
-    if columns.is_empty() || columns.iter().any(|name| name == "control") {
+    if columns.is_empty() {
         return Ok(());
     }
-    conn.execute_batch("ALTER TABLE jobs ADD COLUMN control TEXT")
-        .map_err(sql_err)
+    let missing = ADDED_COLUMNS
+        .iter()
+        .filter(|added| !columns.iter().any(|name| name == *added));
+    for column in missing {
+        conn.execute_batch(&format!("ALTER TABLE jobs ADD COLUMN {column} TEXT"))
+            .map_err(sql_err)?;
+    }
+    Ok(())
 }
 
 impl SqliteJobs {
@@ -263,7 +275,7 @@ fn write(
     let total = job.total.map(to_i64).transpose()?;
     let sql = format!(
         "{verb} INTO jobs ({COLUMNS}) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)"
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)"
     );
     Ok(conn
         .execute(
@@ -285,6 +297,7 @@ fn write(
                 job.updated_ms,
                 job.error_code,
                 job.control.map(JobControl::as_str),
+                job.result,
             ],
         )
         .map(drop))
@@ -332,5 +345,6 @@ fn job(row: &Row<'_>) -> rusqlite::Result<Job> {
         updated_ms: row.get(13)?,
         error_code: row.get(14)?,
         control,
+        result: row.get(16)?,
     })
 }

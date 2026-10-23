@@ -99,6 +99,11 @@ pub struct Job {
     /// checkpoint or renewal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub control: Option<JobControl>,
+    /// What the job's kind keeps as its result, as JSON text (API-S-037): the partial result
+    /// stored with each checkpoint while the job runs, the whole one once it completed (for
+    /// `library.rebuild`, the rebuild report of API-S-025). Shown only once it completed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<String>,
 }
 
 impl Job {
@@ -158,7 +163,8 @@ pub enum JobError {
     Conflict(&'static str),
     /// The lease is no longer the job's: it expired or another worker took it over.
     Fenced,
-    /// The checkpoint is larger than [`super::MAX_CHECKPOINT_BYTES`].
+    /// The checkpoint is larger than [`super::MAX_CHECKPOINT_BYTES`], or a result larger than
+    /// [`super::MAX_RESULT_BYTES`].
     TooLarge,
     /// The source changed since the job was submitted; the job failed and nothing of it is
     /// reused.

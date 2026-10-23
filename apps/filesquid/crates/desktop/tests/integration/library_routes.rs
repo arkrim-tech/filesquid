@@ -31,8 +31,8 @@ use filesquid_desktop_lib::libraries::LibraryServing;
 use filesquid_desktop_lib::navigation::{install_navigation, owner_event_filter};
 use filesquid_desktop_lib::{
     history_backfill, install_backfill_route, install_file_provenance, install_file_scopes,
-    install_folder_choice, install_history_source, install_host_preferences, install_launch_token,
-    install_library_routes, open_host_monitor, open_library_catalog,
+    install_folder_choice, install_history_source, install_host_preferences, install_job_routes,
+    install_launch_token, install_library_routes, open_host_monitor, open_library_catalog,
 };
 use filesquid_native::workers::history_backfill::{backfill_source, open_jobs};
 use filesquid_native::{
@@ -45,6 +45,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
+
+/// Upper bound on job reads by [`Desktop::finished_job`] (AGENTS.md §22).
+const MAX_JOB_POLLS: usize = 500;
 
 /// The installation UUID of these tests.
 const INSTALLATION: &str = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
@@ -117,6 +120,8 @@ struct Desktop {
     files: HostFiles,
     locations: Arc<HostLocations>,
     opened: Arc<OpenedRoots>,
+    /// The long-lived runtime the rebuild runner runs jobs on, as the app's runtime.
+    runtime: tokio::runtime::Runtime,
 }
 
 impl Desktop {
@@ -139,6 +144,13 @@ impl Desktop {
         };
         let locations =
             install_library_routes(&state, &host, &installation(), serving).expect("routes");
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_time()
+            .build()
+            .expect("runtime");
+        let jobs = open_jobs(&dir, &host).expect("jobs");
+        install_job_routes(&state, &jobs, runtime.handle().clone()).expect("job routes");
         Self {
             dir,
             state,
@@ -148,7 +160,25 @@ impl Desktop {
             files,
             locations,
             opened,
+            runtime,
         }
+    }
+
+    /// Read job `id` until it has finished (at most [`MAX_JOB_POLLS`] reads, 10 ms apart);
+    /// answer its view.
+    fn finished_job(&self, id: &str) -> Value {
+        let mut view = Value::Null;
+        for _ in 0..MAX_JOB_POLLS {
+            let (status, body) = self.get(&format!("/api/v1/jobs/{id}"));
+            assert_eq!(status, 200, "{body}");
+            view = body;
+            let state = view["state"].as_str().unwrap_or_default();
+            if ["completed", "failed", "cancelled"].contains(&state) {
+                return view;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("the job did not finish: {view}");
     }
 
     /// Register `folder` as the owner's choice.
@@ -193,6 +223,7 @@ impl Desktop {
 
     /// Stop the monitor (flushing the journal) and answer the journal's entries.
     fn stop(self) -> (PathBuf, Vec<JournalEntry>) {
+        self.runtime.shutdown_timeout(Duration::from_secs(5));
         drop(self.catalog);
         self.host.stop();
         let store = SqliteJournal::open(&self.dir.join(JOURNAL_FILE), "desktop").expect("journal");
@@ -307,8 +338,26 @@ fn an_opened_folder_feeds_the_history_and_copies_and_rebuilds_without_paths() {
         json!({ "library_id": library }),
     );
     assert_eq!(status, 200, "{rebuilt}");
-    assert_eq!(rebuilt["objects"].as_array().expect("objects").len(), 1);
-    desktop.stop();
+    assert_eq!(rebuilt["outcome"], "pending", "{rebuilt}");
+    assert_eq!(rebuilt["job"]["kind"], "library.rebuild");
+    assert_eq!(rebuilt["scheduled"], true, "the desktop runs rebuild jobs");
+    let job = desktop.finished_job(rebuilt["job_id"].as_str().expect("job id"));
+    assert_eq!(job["state"], "completed", "{job}");
+    assert_eq!(
+        job["result"]["objects"].as_array().expect("objects").len(),
+        1
+    );
+    assert_eq!(
+        (job["done"].as_u64(), job["total"].as_u64()),
+        (Some(1), Some(1))
+    );
+    let (_, entries) = desktop.stop();
+    let completed = entries.iter().filter(|e| e.operation == "job.completed");
+    assert_eq!(
+        completed.count(),
+        1,
+        "the rebuild job is journaled in the SQLite journal"
+    );
 }
 
 #[test]

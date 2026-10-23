@@ -20,6 +20,10 @@ use crate::library::mint_uuid_v4;
 use crate::registry::{Clock, ProcessHandle, ProcessRegistry, ProcessSpec};
 use std::sync::{Arc, Mutex, PoisonError};
 
+/// A checkpoint transition: the job, the run's lease, now and the lease length in, the
+/// checkpointed job out (`rules::checkpoint` or `rules::checkpoint_with_result`).
+type ProgressRule<'a> = dyn FnMut(Job, &Lease, i64, i64) -> Result<Job, JobError> + 'a;
+
 /// Heartbeat timeout of a running job's process: a run that neither checkpoints, renews nor
 /// finishes for this long is stalled.
 const JOB_HEARTBEAT_TIMEOUT_MS: i64 = 60_000;
@@ -217,7 +221,7 @@ impl Jobs {
         let Some(events) = &self.events else {
             return;
         };
-        match serde_json::to_value(JobView::of(job)) {
+        match serde_json::to_value(JobView::summary(job)) {
             Ok(data) => {
                 events.publish(ApiEvent::new(topic::JOB_UPDATE, data));
             }
@@ -394,6 +398,7 @@ fn new_job(id: String, spec: JobSpec, now: i64) -> Job {
         updated_ms: now,
         error_code: None,
         control: None,
+        result: None,
     }
 }
 
@@ -491,22 +496,55 @@ impl RunningJob {
         done: u64,
         total: Option<u64>,
     ) -> Result<(), JobError> {
+        self.store_progress(&mut |job, lease, now, ttl| {
+            rules::checkpoint(job, lease, (checkpoint, done, total), now, ttl)
+        })
+        .map(|()| self.progress(done, total))
+    }
+
+    /// [`checkpoint`](Self::checkpoint) that also stores `result`, the partial result of the
+    /// job's kind, in the same atomic step (store I/O).
+    ///
+    /// # Errors
+    /// As [`checkpoint`](Self::checkpoint), and [`JobError::TooLarge`] for a result past
+    /// [`super::MAX_RESULT_BYTES`] (nothing is stored).
+    pub fn checkpoint_with_result(
+        &mut self,
+        checkpoint: &str,
+        result: &str,
+        done: u64,
+        total: Option<u64>,
+    ) -> Result<(), JobError> {
+        let progress = (checkpoint, result, done, total);
+        self.store_progress(&mut |job, lease, now, ttl| {
+            rules::checkpoint_with_result(job, lease, progress, now, ttl)
+        })
+        .map(|()| self.progress(done, total))
+    }
+
+    /// Apply the checkpoint transition `rule` under this run's lease in one store update,
+    /// keep the renewed lease and the control the store answered, and publish the job (store
+    /// I/O). A refusal is journaled.
+    fn store_progress(&self, rule: &mut ProgressRule<'_>) -> Result<(), JobError> {
         let now = (self.jobs.clock)();
         let (lease, ttl) = (self.lease(), self.jobs.ttl_ms);
         let stored = self
             .jobs
             .store
-            .update(&self.job.id, &mut |job| {
-                rules::checkpoint(job, &lease, (checkpoint, done, total), now, ttl)
-            })
+            .update(&self.job.id, &mut |job| rule(job, &lease, now, ttl))
             .inspect_err(|err| self.refused(err))?;
         self.keep(&stored)?;
         self.jobs.publish(&stored);
+        Ok(())
+    }
+
+    /// Report `done` of `total` units to the registry, or a heartbeat when the total is not
+    /// known.
+    fn progress(&self, done: u64, total: Option<u64>) {
         match total {
             Some(total) => self.handle.progress(done, total),
             None => self.handle.heartbeat(),
         }
-        Ok(())
     }
 
     /// Renew the lease without changing the checkpoint, and heartbeat the run's process
@@ -532,7 +570,20 @@ impl RunningJob {
     /// # Errors
     /// [`JobError::Fenced`] or a store failure, journaled.
     pub fn complete(self) -> Result<(), JobError> {
-        self.finish(JobState::Completed, None)?;
+        self.finish(JobState::Completed, None, None)?;
+        self.handle.complete();
+        Ok(())
+    }
+
+    /// Finish the job as completed with `result`, the result its kind defines as JSON text,
+    /// stored in the same step (store I/O).
+    ///
+    /// # Errors
+    /// [`JobError::TooLarge`] for a result past [`super::MAX_RESULT_BYTES`] (nothing is
+    /// stored; the job stays running until its lease ends, so a caller checks the size
+    /// first), [`JobError::Fenced`] or a store failure, journaled.
+    pub fn complete_with_result(self, result: &str) -> Result<(), JobError> {
+        self.finish(JobState::Completed, None, Some(result))?;
         self.handle.complete();
         Ok(())
     }
@@ -542,7 +593,7 @@ impl RunningJob {
     /// # Errors
     /// [`JobError::Fenced`] or a store failure, journaled.
     pub fn fail(self, error_code: &str) -> Result<(), JobError> {
-        self.finish(JobState::Failed, Some(error_code))?;
+        self.finish(JobState::Failed, Some(error_code), None)?;
         self.handle.fail(error_code);
         Ok(())
     }
@@ -552,7 +603,7 @@ impl RunningJob {
     /// # Errors
     /// [`JobError::Fenced`] or a store failure, journaled.
     pub fn cancel(self) -> Result<(), JobError> {
-        self.finish(JobState::Cancelled, None)?;
+        self.finish(JobState::Cancelled, None, None)?;
         self.handle.cancel();
         Ok(())
     }
@@ -609,16 +660,27 @@ impl RunningJob {
         self.handle.cancel();
     }
 
-    /// Store the job's end as `state` with `error_code` and journal it (an error-level
-    /// entry for a failure).
-    fn finish(&self, state: JobState, error_code: Option<&str>) -> Result<(), JobError> {
+    /// Store the job's end as `state` with `error_code` and `result` (a partial result stored
+    /// earlier is cleared when none is given) and journal it (an error-level entry for a
+    /// failure).
+    fn finish(
+        &self,
+        state: JobState,
+        error_code: Option<&str>,
+        result: Option<&str>,
+    ) -> Result<(), JobError> {
         let now = (self.jobs.clock)();
         let lease = self.lease();
         let stored = self
             .jobs
             .store
             .update(&self.job.id, &mut |job| {
-                rules::finish(job, &lease, (state, error_code), now)
+                if result.is_some_and(|result| result.len() > super::MAX_RESULT_BYTES) {
+                    return Err(JobError::TooLarge);
+                }
+                let mut ended = rules::finish(job, &lease, (state, error_code), now)?;
+                ended.result = result.map(str::to_string);
+                Ok(ended)
             })
             .inspect_err(|err| self.refused(err))?;
         let (operation, outcome) = match state {

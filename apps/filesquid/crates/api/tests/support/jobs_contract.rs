@@ -40,6 +40,7 @@ fn pending(id: &str) -> Job {
         updated_ms: 1_760_000_000_000,
         error_code: None,
         control: None,
+        result: None,
     }
 }
 
@@ -97,10 +98,18 @@ pub fn samples() -> Vec<(&'static str, Vec<Value>)> {
     let mut failed = pending("failed");
     failed.state = JobState::Failed;
     failed.error_code = Some("source_changed".into());
+    let mut rebuilt = pending("rebuilt");
+    rebuilt.kind = "library.rebuild".into();
+    rebuilt.state = JobState::Completed;
+    rebuilt.result = Some(
+        r#"{"objects":[{"object_id":"urn:uuid:a","head":"v1","files":1,"digest_algorithm":"sha512","error_codes":[],"missing_version_inventory":false}],"unreadable":[{"error_code":"E034"}]}"#
+            .into(),
+    );
     let views = [
         JobView::of(&pending("job")),
         JobView::of(&paused),
         JobView::of(&failed),
+        JobView::of(&rebuilt),
     ];
     let states = [
         JobState::Pending,

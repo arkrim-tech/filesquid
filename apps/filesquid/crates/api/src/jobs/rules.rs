@@ -2,7 +2,7 @@
 //! atomic read-modify-write, so every host enforces the same lease and fencing rules.
 
 use super::model::{Job, JobControl, JobError, JobState, Lease};
-use super::MAX_CHECKPOINT_BYTES;
+use super::{MAX_CHECKPOINT_BYTES, MAX_RESULT_BYTES};
 
 /// Error code of a job whose source changed since it was submitted.
 pub const SOURCE_CHANGED: &str = "source_changed";
@@ -100,6 +100,27 @@ pub fn checkpoint(
     job.total = total;
     job.lease_expires_ms = Some(extended(&job, now_ms, ttl_ms));
     job.updated_ms = now_ms;
+    Ok(job)
+}
+
+/// [`checkpoint`] that also stores `result`, the partial result the job's kind keeps (for
+/// `library.rebuild`, the report so far), in the same step, so the checkpoint and the result
+/// it matches are stored together or not at all.
+///
+/// # Errors
+/// As [`checkpoint`]; [`JobError::TooLarge`] for a result past [`MAX_RESULT_BYTES`].
+pub fn checkpoint_with_result(
+    job: Job,
+    lease: &Lease,
+    (checkpoint_text, result, done, total): (&str, &str, u64, Option<u64>),
+    now_ms: i64,
+    ttl_ms: i64,
+) -> Result<Job, JobError> {
+    let mut job = checkpoint(job, lease, (checkpoint_text, done, total), now_ms, ttl_ms)?;
+    if result.len() > MAX_RESULT_BYTES {
+        return Err(JobError::TooLarge);
+    }
+    job.result = Some(result.to_string());
     Ok(job)
 }
 
