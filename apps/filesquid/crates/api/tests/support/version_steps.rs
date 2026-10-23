@@ -52,9 +52,7 @@ fn body(fields: Value) -> Value {
 /// `PUT /api/v1/files/labels`.
 async fn put_label(rig: &FilesRig, version: &str, label: Value) -> Answer {
     let body = body(json!({ "version": version, "label": label }));
-    let headers = [("content-type", "application/json")];
-    let bytes = body.to_string().into_bytes();
-    rig.call(Method::PUT, "/api/v1/files/labels", &headers, bytes)
+    rig.command_as(Method::PUT, "/api/v1/files/labels", body)
         .await
 }
 
@@ -144,7 +142,7 @@ async fn read_range(w: &mut MonitorWorld, start: u64, end: u64, path: String, ve
 async fn restore(w: &mut MonitorWorld, path: String, version: String, text: String) {
     let request = body(json!({ "version": version, "paths": [path], "label": text }));
     let rig = w.versions.rig();
-    w.versions.answer = Some(rig.post("/api/v1/files/restorations", request).await);
+    w.versions.answer = Some(rig.command("/api/v1/files/restorations", request).await);
 }
 
 #[when(expr = "the owner labels version {string} as {string}")]

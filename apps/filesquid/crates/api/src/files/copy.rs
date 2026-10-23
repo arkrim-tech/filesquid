@@ -80,14 +80,22 @@ where
     /// `invalid_request` for a malformed file ID or message, or a source over
     /// [`MAX_COPY_BYTES`]; `not_found` for an unknown library or file; a storage failure
     /// otherwise. Nothing is published on any error, and the source never changes.
-    pub async fn copy(&self, request: CopyRequest, actor: &str) -> Result<CopyView, FileError> {
+    ///
+    /// `expected` is the source file object's head the caller read; any other is a
+    /// `conflict`, and nothing is copied.
+    pub async fn copy(
+        &self,
+        request: CopyRequest,
+        actor: &str,
+        expected: &str,
+    ) -> Result<CopyView, FileError> {
         let source_id = parse_file_id(&request.file_id)?;
         let meta = self.meta(actor, request.message.as_deref())?;
         let library = self.library(&request.library_id)?;
         let registry = self.registry(&request.library_id).await?;
         let _writing = library.writes.lock().await;
         let backend = library.files.backend.as_ref();
-        let source = read_source(backend, source_id).await?;
+        let source = read_source(backend, source_id, expected).await?;
         let file_id = mint_file_id()?;
         let reference = source_reference(&source.file_id, &source.version);
         let started = self.created();
@@ -132,8 +140,13 @@ where
     }
 }
 
-/// The head record and bytes of the file `file_id`, read whole within [`MAX_COPY_BYTES`].
-async fn read_source<B: StorageBackend>(backend: &B, file_id: FileId) -> Result<Source, FileError> {
+/// The head record and bytes of the file `file_id`, read whole within [`MAX_COPY_BYTES`] once
+/// its head is `expected`: a stale revision is refused before any byte is read.
+async fn read_source<B: StorageBackend>(
+    backend: &B,
+    file_id: FileId,
+    expected: &str,
+) -> Result<Source, FileError> {
     let original = read_file_original(backend, &OwnerReadable, &file_id)
         .await
         .map_err(copy_error)?
@@ -141,6 +154,9 @@ async fn read_source<B: StorageBackend>(backend: &B, file_id: FileId) -> Result<
     let root = file_object_root(&file_id).map_err(copy_error)?;
     let object = Object::open(backend, &root).await?;
     let head = object.head().clone();
+    if head.to_string() != expected {
+        return Err(stale_source());
+    }
     let size = view::file_details(&object, &head, &original.path)
         .await?
         .size;
@@ -156,6 +172,13 @@ async fn read_source<B: StorageBackend>(backend: &B, file_id: FileId) -> Result<
         record: original.record,
         bytes,
     })
+}
+
+/// The refusal of a copy whose source moved past the revision the caller read.
+fn stale_source() -> FileError {
+    FileError::conflict(
+        "The file changed since it was read, so nothing was copied; reload and try again.",
+    )
 }
 
 /// The file error of a canonical refusal or failure of a copy.

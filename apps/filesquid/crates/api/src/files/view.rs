@@ -101,9 +101,9 @@ pub struct ObjectQuery {
     pub object_id: String,
 }
 
-/// Query of `PUT /api/v1/files/upload`: the facts the client provides about one upload. The
-/// body is the bytes.
-#[derive(Clone, Debug, Deserialize)]
+/// Input of `PUT /api/v1/files/upload`: the facts the client provides about one upload, sent
+/// as the `input` part beside the `envelope` and `file` parts ([`super::command`]).
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct UploadQuery {
     /// The library.

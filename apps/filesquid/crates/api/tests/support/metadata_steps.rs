@@ -3,7 +3,7 @@
 //! term placement and the facts projection, through the router over a real OCFL storage root
 //! on the local filesystem.
 
-use crate::files_fixture::{encode, upload_uri, Answer, FilesRig, LIBRARY};
+use crate::files_fixture::{encode, upload_facts, Answer, FilesRig, LIBRARY};
 use crate::MonitorWorld;
 use axum::http::Method;
 use cucumber::{given, then, when};
@@ -48,14 +48,10 @@ impl MetadataWorld {
 
 /// Upload `bytes` as a new file named `name` with `rest`.
 async fn upload(w: &mut MetadataWorld, name: &str, bytes: &[u8], rest: &str) {
-    let uri = upload_uri(name, bytes.len(), rest);
-    let answer = w
-        .rig()
-        .await
-        .call(Method::PUT, &uri, &[], bytes.to_vec())
-        .await;
+    let uri = upload_facts(name, bytes.len(), rest);
+    let answer = w.rig().await.upload(uri, bytes).await;
     assert_eq!(answer.status.as_u16(), 200, "{:?}", answer.json());
-    w.upload = Some(answer.json());
+    w.upload = Some(answer.result());
     w.answer = Some(answer);
 }
 
@@ -90,9 +86,9 @@ async fn uploaded_as(w: &mut MonitorWorld, name: String, media_type: String) {
 
 #[when(expr = "the owner uploads {string} declaring {int} bytes but sending {int}")]
 async fn upload_mismatch(w: &mut MonitorWorld, name: String, declared: usize, sent: usize) {
-    let uri = upload_uri(&name, declared, "");
+    let uri = upload_facts(&name, declared, "");
     let rig = w.metadata.rig().await;
-    let answer = rig.call(Method::PUT, &uri, &[], vec![b'x'; sent]).await;
+    let answer = rig.upload(uri, &vec![b'x'; sent]).await;
     w.metadata.answer = Some(answer);
 }
 

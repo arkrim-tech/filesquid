@@ -87,6 +87,17 @@ describe("commandOutcome", () => {
     expect(commandOutcome(value, "op-1")).toEqual(value);
   });
 
+  it("keeps the result a file write route answers beside the outcome (API-F2.13)", () => {
+    const result = { library_id: "l", object_id: "o", version: "v2", created: "t" };
+    const value = { operation_id: "op-1", kind: "committed", error: null, result, extra: 1 };
+    expect(commandOutcome(value, "op-1")).toEqual({
+      operation_id: "op-1",
+      kind: "committed",
+      error: null,
+      result,
+    });
+  });
+
   it("drops fields the contract does not define", () => {
     const value = { operation_id: "op-1", kind: "committed", error: null, extra: "x" };
     expect(commandOutcome(value, "op-1")).toEqual({
