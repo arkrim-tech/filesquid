@@ -96,3 +96,93 @@ Feature: Version-inventory repair for heads without one
 155 scenarios (152 passed, 3 skipped)
 726 steps (723 passed, 3 skipped)
 ```
+
+## FS-2.8 test gaps (2026-10-23)
+
+Owner decision 3a of 2026-10-23 ("provide and implement recommendations for owner's decisions 1-6"): the Agent Prompt's test that the [OCFL-S-018](../srs.md) write order holds for bound files on `FsBackend` as well as `MemoryBackend` is added on branch `test/fs-2.8-fsbackend-rebase-tests`. No defect was found; no library code changed. TDD-ENFORCE: not applicable, these are tests of code delivered in PR #86.
+
+### OCFL-S-018: Write order and unpublished versions (`vN` reserved before any `vN` byte; content, then version inventory and sidecar, then root inventory and sidecar last), for version-bound files
+
+- `tests/integration/bound_files.rs`: every test now runs on `MemoryBackend` and `FsBackend` (`on_both!`), and the new `bound_files_follow_the_publication_order` checks that the function runs after the lease reservation and before any `v2` byte, that the staged file and the bound file are written first, then `v2/inventory.json` and its sidecar, then the root inventory and its sidecar, and that the lease is released last.
+- `version_bound_files_OCFL-S-024.feature`: the outline `A version-bound record follows the write order on the <backend> backend` runs the same check on the `memory` and `filesystem` backends (steps in `tests/support/bound_order_steps.rs`).
+
+### OCFL-S-024: Version-bound logical files
+
+The existing reserved-name, rebase, failure, pass-through and bound-only tests now also pass on `FsBackend`.
+
+### Raw test output
+
+`cargo test -p filesquid-ocfl --test integration_bound_files --locked`:
+
+```text
+     Running tests/integration/bound_files.rs (<target>/debug/deps/integration_bound_files-158813c74eba4c27)
+
+running 15 tests
+test a_bound_file_may_not_replace_a_staged_one ... ok
+test a_bound_only_commit_with_no_files_publishes_nothing ... ok
+test a_bound_only_commit_adds_a_version_holding_only_the_bound_files ... ok
+test a_failing_function_publishes_nothing_and_keeps_the_staging_area ... ok
+test a_bound_only_commit_leaves_staged_changes_alone ... ok
+test bound_bytes_the_object_holds_are_not_written_again ... ok
+test a_rebased_commit_binds_its_files_to_the_new_version ... ok
+test bound_files_carry_the_reserved_version_and_created_time ... ok
+test bound_files_follow_the_publication_order ... ok
+test the_function_runs_under_the_version_reservation ... ok
+test bound_files_over_the_commit_byte_bound_publish_nothing ... ok
+test too_many_bound_files_are_refused ... ok
+test the_function_is_told_when_the_reservation_took_over_a_lease ... ok
+test version_user_and_message_pass_through_unchanged ... ok
+test revert_and_reinstate_also_carry_bound_files ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+```
+
+`cargo test -p filesquid-ocfl --test features --locked` (the OCFL-S-024 feature and the summary; the three skipped steps are the existing `reusable_ocfl_engine_F-051.feature` scenarios owned by other crates):
+
+```text
+Feature: Version-bound logical files
+  Scenario: A commit carries a record named after its reserved version
+   ✔> Given an object committed at "v1" with "a.txt", "b.txt" and "c.txt" through the change model
+   ✔  Given writer "writer-a" staged new bytes for "a.txt"
+   ✔  When writer "writer-a" commits the staged changes with a version-bound record
+   ✔  Then the object head should be "v2" through the change model
+   ✔  And "v2" should hold the record "record/v2.txt" naming "v2" and its created time
+  Scenario: A record-only commit adds one version holding only the record
+   ✔> Given an object committed at "v1" with "a.txt", "b.txt" and "c.txt" through the change model
+   ✔  When writer "writer-a" commits only a version-bound record
+   ✔  Then the object head should be "v2" through the change model
+   ✔  And "v2" should hold the record "record/v2.txt" naming "v2" and its created time
+  Scenario: A rebased commit binds its record to the new version
+   ✔> Given an object committed at "v1" with "a.txt", "b.txt" and "c.txt" through the change model
+   ✔  Given writer "writer-a" staged new bytes for "a.txt"
+   ✔  And writer "writer-b" committed "v2" with new bytes for "b.txt"
+   ✔  When writer "writer-a" commits the staged changes with a version-bound record
+   ✔  Then the object head should be "v3" through the change model
+   ✔  And "v3" should hold the record "record/v3.txt" naming "v3" and its created time
+  Scenario: A failing record function publishes nothing
+   ✔> Given an object committed at "v1" with "a.txt", "b.txt" and "c.txt" through the change model
+   ✔  Given writer "writer-a" staged new bytes for "a.txt"
+   ✔  When writer "writer-a" commits the staged changes with a failing record function
+   ✔  Then the commit should be refused for its version-bound files
+   ✔  And the object head should be "v1" through the change model
+  Scenario Outline: A version-bound record follows the write order on the memory backend
+   ✔> Given an object committed at "v1" with "a.txt", "b.txt" and "c.txt" through the change model
+   ✔  Given an object committed at "v1" through the change model on the memory backend
+   ✔  And a writer staged new bytes for "b.txt" on that backend
+   ✔  When the writer commits the staged changes with a version-bound record on that backend
+   ✔  Then the version should be reserved before the record function ran and before any "v2" byte
+   ✔  And "v2" content should be written before its version inventory and the root inventory last
+   ✔  And the backend's object should validate with zero errors
+  Scenario Outline: A version-bound record follows the write order on the filesystem backend
+   ✔> Given an object committed at "v1" with "a.txt", "b.txt" and "c.txt" through the change model
+   ✔  Given an object committed at "v1" through the change model on the filesystem backend
+   ✔  And a writer staged new bytes for "b.txt" on that backend
+   ✔  When the writer commits the staged changes with a version-bound record on that backend
+   ✔  Then the version should be reserved before the record function ran and before any "v2" byte
+   ✔  And "v2" content should be written before its version inventory and the root inventory last
+   ✔  And the backend's object should validate with zero errors
+[Summary]
+17 features
+160 scenarios (157 passed, 3 skipped)
+755 steps (752 passed, 3 skipped)
+```
