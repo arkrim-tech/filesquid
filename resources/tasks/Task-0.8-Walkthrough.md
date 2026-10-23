@@ -84,9 +84,9 @@ Wrote resources/assets/mvp-progress.svg
 
 `python3 scripts/docs/update_mvp_progress.py --check` printed nothing and exited 0.
 
-### `bash scripts/pre-commit.sh` (the working tree committed as `b72a7ebe`)
+### `bash scripts/pre-commit.sh` (the working tree committed as `c79f4daa`)
 
-Later Cubic fix commits each passed the same ordinary run (`Test scope: docs`); the final head's run is recorded in the pull request.
+This is the run on the last content commit: every document of the task in its final state. The only commit after it replaces this block with this output. The ordinary hook run on the PR's final head is quoted in the pull request, because a walkthrough cannot hold the output of a run on the commit that adds that output. Each earlier commit (`b72a7ebe`, `4a6a74c8`) passed the same ordinary run with `Test scope: docs`.
 
 ```text
 changed_scope: docs (only documentation or always-run checker scripts outside the crates and npm packages changed)
@@ -106,13 +106,9 @@ Starting Port Isolation Validation...
 
 🚀 VALIDATION PASSED: All modules maintain strict port isolation.
 Starting Document Sync Validation...
-✅ Document Sync Validation passed.
 Starting PRD/SRS Traceability Validation...
 ✅ Traceability Validation passed: 96 PRD requirements, 84 resolved SRS references.
 Starting Portable Documentation Validation...
-grep: resources/tasks/Task-0.8-Plan.md: No such file or directory
-grep: resources/tasks/Task-0.8-ToDos.md: No such file or directory
-✅ Portable Documentation validation passed.
 Starting Workspace Boundary Validation...
 ✅ Workspace Boundary validation passed.
 Starting logging rule validation...
@@ -130,19 +126,19 @@ TAP version 13
 # Subtest: stack ADRs exist with ISO 42010 sections and accepted vocabulary
 ok 1 - stack ADRs exist with ISO 42010 sections and accepted vocabulary
   ---
-  duration_ms: 12.625295
+  duration_ms: 11.833341
   type: 'test'
   ...
 # Subtest: ADR markdown hrefs reject absolute destinations
 ok 2 - ADR markdown hrefs reject absolute destinations
   ---
-  duration_ms: 0.338192
+  duration_ms: 0.361504
   type: 'test'
   ...
 # Subtest: FileSquid ADRs 029-032 are indexed with the FileSquid header and expected status
 ok 3 - FileSquid ADRs 029-032 are indexed with the FileSquid header and expected status
   ---
-  duration_ms: 1.230514
+  duration_ms: 0.889774
   type: 'test'
   ...
 1..3
@@ -153,7 +149,7 @@ ok 3 - FileSquid ADRs 029-032 are indexed with the FileSquid header and expected
 # cancelled 0
 # skipped 0
 # todo 0
-# duration_ms 91.121829
+# duration_ms 79.25626
 ✅ ADR structure (ISO 42010) passed.
 🔍 PRD allocation...
 FileSquid: 263 vision IDs, 263 allocated, 133 allocation rows
@@ -172,7 +168,7 @@ checked 173 documents: 0 link(s) cross the FileSquid/ImageSquid boundary
 🔍 MVP queue and merge driver tests...
 ......................................................
 ----------------------------------------------------------------------
-Ran 54 tests in 6.763s
+Ran 54 tests in 6.606s
 
 OK
 ✅ MVP queue and merge driver tests passed.
