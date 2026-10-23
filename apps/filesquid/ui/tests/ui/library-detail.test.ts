@@ -95,9 +95,37 @@ describe("<fs-library-detail>", () => {
     expect(note?.querySelector("p")?.textContent).toBe(
       labels.libraryReadOnly.replace("{count}", "2"),
     );
+    expect(note?.querySelector(".reason")?.textContent).toBe(labels.libraryReadOnlyReason);
     const link = note?.querySelector("a") as HTMLAnchorElement;
     expect(link.textContent).toBe(labels.libraryReviewRepair);
     expect(link.getAttribute("href")).toBe("#/library/lib-1/repair");
+    expect(link.className).toBe("review button ghost");
+  });
+
+  it("lays the page out as mockup 41: facts at the left, actions and the W010 note at the right", async () => {
+    const { page } = await mount();
+    const root = rootOf(page);
+    expect(root.querySelector(".columns > section[data-section='facts']")).not.toBeNull();
+    expect(root.querySelector(".columns .side > section[data-section='actions']")).not.toBeNull();
+    expect(root.querySelector(".side [data-section='repair-note']")).not.toBeNull();
+    expect(root.querySelector("dd")?.classList.contains("mono")).toBe(true);
+    const buttons = [...root.querySelectorAll("[data-section='actions'] button")];
+    expect(buttons.map((b) => b.className)).toEqual(["button secondary", "button secondary"]);
+    const css = root.querySelector("style")?.textContent ?? "";
+    expect(css).toMatch(/dl \{[^}]*grid-template-columns: 10rem minmax\(0, 1fr\)/);
+    expect(css).toMatch(
+      /\.columns \{ display: grid; grid-template-columns: minmax\(0, 40rem\) minmax\(0, 28rem\); gap: var\(--fs-space-6\)/,
+    );
+    expect(css).toMatch(/dt \{ color: var\(--fs-on-surface-muted\); \}/);
+    expect(css).toMatch(
+      /\.alert, section\[data-section="repair-note"\] \{[^}]*border: 1px solid var\(--fs-error\); border-radius: var\(--fs-radius\)/,
+    );
+    expect(css).toMatch(
+      /h2 \{[^}]*font-family: var\(--fs-font-heading\); font-size: var\(--fs-font-size-page\); font-weight: 700/,
+    );
+    expect(css).toMatch(
+      /h3 \{[^}]*font-size: var\(--fs-font-size-eyebrow\); font-weight: 400; letter-spacing: 0\.1em; text-transform: uppercase/,
+    );
   });
 
   it("words a truncated candidate list as at least", async () => {

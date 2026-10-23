@@ -142,7 +142,7 @@ export class FsLibraryRepair extends HTMLElement {
     this.candidates = [];
     const page = node("div", "page");
     page.append(
-      link("back", labels.libraryBack, libraryHref(id)),
+      link("back crumb", labels.libraryBack, libraryHref(id)),
       node("h2", undefined, labels.repairTitle),
       node("p", "intro", labels.repairIntro),
       this.feedback.root,
@@ -205,7 +205,7 @@ export class FsLibraryRepair extends HTMLElement {
   /** The button that opens the consent dialog. */
   private reviewButton(): HTMLButtonElement {
     const { labels } = this.options as RepairPageOptions;
-    const button = actionButton("review", labels.repairReview);
+    const button = actionButton("review", labels.repairReview, "primary");
     button.addEventListener("click", () => this.openDialog(button));
     return button;
   }
@@ -225,11 +225,14 @@ export class FsLibraryRepair extends HTMLElement {
     const names = node("ul");
     names.append(...this.candidates.map((item) => node("li", undefined, item.object_id)));
     const cancel = actionButton("cancel", labels.repairCancel);
-    const confirm = actionButton("confirm", formatLabel(labels.repairConfirm, { count }));
-    confirm.classList.add("primary");
-    const buttons = node("div", "actions");
+    const confirm = actionButton(
+      "confirm",
+      formatLabel(labels.repairConfirm, { count }),
+      "primary",
+    );
+    const buttons = node("div", "actions dialog-actions");
     buttons.append(cancel, confirm);
-    const dialog = node("div");
+    const dialog = node("div", "dialog");
     dialog.setAttribute("role", "dialog");
     dialog.setAttribute("aria-modal", "true");
     dialog.setAttribute("aria-labelledby", "repair-title");

@@ -31,6 +31,8 @@ const REFUSED = /status of (409|503)/;
 const PATH = /[A-Za-z]:\\|\/Users\/|\/home\/|\/Volumes\//;
 
 const start = (page: Page): Locator => page.locator("fs-library-start");
+/** The start page's own title, not the inline host statement's heading. */
+const startTitle = (page: Page): Locator => start(page).locator(".page > h2");
 const detail = (page: Page): Locator => page.locator("fs-library-detail");
 const repair = (page: Page): Locator => page.locator("fs-library-repair");
 const flow = (page: Page, name: string): Locator =>
@@ -39,7 +41,7 @@ const flow = (page: Page, name: string): Locator =>
 /** Open the start page. */
 async function openStart(page: Page): Promise<void> {
   await page.goto("/#/library");
-  await expect(start(page).locator("h2")).toHaveText(text("libraries"));
+  await expect(startTitle(page)).toHaveText(text("libraryWelcomeTitle"));
 }
 
 test("the start page offers create, open and recover in the active vocabulary", async ({
@@ -55,6 +57,10 @@ test("the start page offers create, open and recover in the active vocabulary", 
     "fs-states",
   ]);
   await expect(start(page).locator(".intro")).toHaveText(text("libraryIntro"));
+  await expect(start(page).locator(".eyebrow")).toHaveText(text("libraries"));
+  // UI-S-027: the welcome screen is drawn without the shell's sidebar, header and footer.
+  await expect(page.locator("fs-app-shell")).toHaveAttribute("frameless", "");
+  await expect(page.locator("fs-app-shell nav")).toBeHidden();
   await expect(start(page).locator("section[data-flow] h3")).toHaveText([
     text("libraryCreateTitle"),
     text("libraryOpenTitle"),
@@ -115,12 +121,15 @@ test("(1) recover opens the copy, rebuilds from files and reports without repair
   await openStart(page);
   await flow(page, "recover").click();
   await expect(page).toHaveURL(new RegExp(`#/library/${LIB}$`));
-  expect(api.seen.map(({ path }) => path)).toEqual([
-    "/api/v1/libraries/location-choices",
-    "/api/v1/libraries/openings",
-    "/api/v1/libraries/rebuilds",
-    "/api/v1/libraries/repair-candidates",
-  ]);
+  // Polled: the library page reads its repair candidates once it is mounted after navigating.
+  await expect
+    .poll(() => api.seen.map(({ path }) => path))
+    .toEqual([
+      "/api/v1/libraries/location-choices",
+      "/api/v1/libraries/openings",
+      "/api/v1/libraries/rebuilds",
+      "/api/v1/libraries/repair-candidates",
+    ]);
   const report = detail(page).locator('[data-result="rebuild"]');
   await expect(report.locator("p")).toHaveText(
     text("libraryRebuilt")
@@ -133,9 +142,10 @@ test("(1) recover opens the copy, rebuilds from files and reports without repair
       .replace("{object}", OBJECTS[1] ?? "")
       .replace("{codes}", "E023"),
   );
-  await expect(detail(page).locator('[data-section="repair-note"] p')).toHaveText(
+  await expect(detail(page).locator('[data-section="repair-note"] p')).toHaveText([
     text("libraryReadOnly").replace("{count}", "2"),
-  );
+    text("libraryReadOnlyReason"),
+  ]);
   expect(api.to("/api/v1/libraries/repairs")).toEqual([]);
   expect(errors).toEqual([]);
 });
@@ -345,25 +355,26 @@ test("colours come from tokens in light and dark", async ({ page }) => {
       const style = (selector: string) => getComputedStyle(root.querySelector(selector) as Element);
       return {
         heading: style("h2").color,
-        card: style("section").backgroundColor,
         dialog: style('[role="dialog"]').backgroundColor,
-        confirmBackground: style("button.primary").backgroundColor,
-        confirmText: style("button.primary").color,
+        dialogBorder: style('[role="dialog"]').borderTopColor,
+        confirmBackground: style('[role="dialog"] button.primary').backgroundColor,
+        confirmText: style('[role="dialog"] button.primary').color,
         cancelBorder: style('button[data-action="cancel"]').borderTopColor,
       };
     });
     expect(colours).toEqual({
-      heading: await tokenColour(page, "--fs-on-surface"),
-      card: await tokenColour(page, "--fs-surface-container"),
-      dialog: await tokenColour(page, "--fs-surface"),
+      heading: await tokenColour(page, "--fs-on-surface-heading"),
+      dialog: await tokenColour(page, "--fs-surface-overlay"),
+      dialogBorder: await tokenColour(page, "--fs-outline-strong"),
       confirmBackground: await tokenColour(page, "--fs-primary"),
       confirmText: await tokenColour(page, "--fs-on-primary"),
-      cancelBorder: await tokenColour(page, "--fs-primary"),
+      cancelBorder: await tokenColour(page, "--fs-outline-strong"),
     });
     await page.goto("/#/library");
     await flow(page, "create").waitFor();
     await flow(page, "open").click();
-    const alert = start(page).locator("fs-states .title");
+    // Mockup 56: the unavailable state's icon is drawn in the error colour.
+    const alert = start(page).locator("fs-states svg.alerting");
     await expect(alert).toBeVisible();
     const error = await alert.evaluate((node) => getComputedStyle(node).color);
     expect(error).toBe(await tokenColour(page, "--fs-error"));

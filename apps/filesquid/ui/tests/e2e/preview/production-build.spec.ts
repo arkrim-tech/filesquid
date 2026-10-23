@@ -17,6 +17,7 @@ import {
   trackErrors,
 } from "../support/strict-dom";
 import { serveNavigation } from "../support/navigation-api";
+import { CONTRACT_VERSION } from "../../../src/api/contract-version";
 
 const labels = activeLabels();
 const ELEMENTS = [
@@ -76,45 +77,73 @@ test("the built page is static, mounts the shell and defines every custom elemen
   expect(errors).toEqual([]);
 });
 
-test("navigation, API status and theme legend words come from the active label table", async ({
+test("sidebar, header and Settings words come from the active label table (UI-S-025, UI-S-033)", async ({
   page,
 }) => {
   const errors = trackErrors(page);
   await page.goto("/");
   const shell = page.locator("fs-app-shell");
-  // The live navigation tree fills the shell's navigation slot; the Monitor link follows it.
+  // The live navigation tree fills the shell's navigation slot.
   await expect(shell.locator("fs-nav-tree section h2")).toHaveText(
     ["collections", "virtualCollections", "folders"].map((key) => label(labels, key)),
   );
-  await expect(shell.locator("nav > ul.tools li")).toHaveText([
-    label(labels, "libraryNavLink"),
-    label(labels, "monitor"),
-    label(labels, "settings"),
-  ]);
-  await expect(shell.locator('p.api[role="status"]')).toHaveText(
-    `${label(labels, "apiStatus")}: ok (filesquid)`,
+  await expect(shell.locator("nav ul.views li")).toHaveText(
+    ["fileRoot", "fileRecent"].map((key) => label(labels, key)),
   );
-  await expect(shell.locator("fs-theme-control legend")).toHaveText(label(labels, "theme"));
+  await expect(shell.locator("nav ul.deleted li")).toHaveText(
+    label(labels, "navigationRecentlyDeleted"),
+  );
+  // The host descriptor names the desktop host, so the Logs row is shown (UI-S-021).
+  await expect(shell.locator("nav > ul.tools li")).toHaveText(
+    ["libraryNavLink", "settings", "logs"].map((key) => label(labels, key)),
+  );
+  await expect(shell.locator("nav .new")).toHaveText(label(labels, "fileNew"));
+  await expect(shell.locator("nav input.filter")).toHaveAttribute(
+    "placeholder",
+    label(labels, "fileFilterView"),
+  );
+  await expect(shell.locator("header input.search")).toHaveAttribute(
+    "placeholder",
+    label(labels, "searchPlaceholder"),
+  );
+  await expect(shell.locator("header .monitor")).toHaveText(label(labels, "monitor"));
+  // Owner answers 7 and 12: no theme control and no API status outside Settings.
+  await expect(shell.locator("header fs-theme-control")).toHaveCount(0);
+  await expect(shell.locator("p.api")).toHaveCount(0);
+  await page.goto("/#/settings");
+  const settings = page.locator("fs-settings");
+  await expect(settings.locator(".api[role='status']")).toHaveText(
+    label(labels, "settingsApiStatus")
+      .replace("{status}", "ok")
+      .replace("{version}", CONTRACT_VERSION),
+  );
+  await expect(settings.locator("fs-theme-control legend")).toHaveText(label(labels, "theme"));
   expect(errors).toEqual([]);
 });
 
-test("computed token values are exact in light and dark", async ({ page }) => {
+test("computed token values are exact in light and dark (UI-S-024, CA-1)", async ({ page }) => {
   const errors = trackErrors(page);
   await setScheme(page, "light");
   await page.goto("/");
   await expect(page.locator("fs-app-shell h1")).toHaveText("FileSquid");
-  expect(await tokenColour(page, "--fs-primary")).toBe(rgbOf("#0b7a32"));
+  expect(await tokenColour(page, "--fs-primary")).toBe(rgbOf("#16ac49"));
   expect(await tokenColour(page, "--fs-on-primary")).toBe(rgbOf("#ffffff"));
+  expect(await tokenColour(page, "--fs-error")).toBe(rgbOf("#e53935"));
+  expect(await tokenColour(page, "--fs-focus-ring")).toBe(rgbOf("#0f8a39"));
+  expect(await tokenColour(page, "--fs-outline-control")).toBe(rgbOf("#8e8e8e"));
   expect(await bodyBackground(page)).toBe(rgbOf("#ffffff"));
 
   await setScheme(page, "dark");
   expect(await tokenColour(page, "--fs-primary")).toBe(rgbOf("#16ac49"));
-  expect(await tokenColour(page, "--fs-on-primary")).toBe(rgbOf("#0d2b18"));
+  expect(await tokenColour(page, "--fs-on-primary")).toBe(rgbOf("#ffffff"));
+  expect(await tokenColour(page, "--fs-error")).toBe(rgbOf("#ef5350"));
+  expect(await tokenColour(page, "--fs-focus-ring")).toBe(rgbOf("#16ac49"));
+  expect(await tokenColour(page, "--fs-outline-control")).toBe(rgbOf("#757575"));
   expect(await bodyBackground(page)).toBe(rgbOf("#141414"));
   expect(errors).toEqual([]);
 });
 
-test("a refused health call shows the unavailable alert, not a console error from the app", async ({
+test("a refused health call shows the unavailable alert in Settings, About, not a console error", async ({
   page,
 }) => {
   await page.unroute("**/api/v1/health");
@@ -122,9 +151,10 @@ test("a refused health call shows the unavailable alert, not a console error fro
     route.fulfill({ status: 503, json: { code: "unavailable", message: "down" } }),
   );
   const errors = trackErrors(page, /status of 503 \(/);
-  await page.goto("/");
-  await expect(page.locator('fs-app-shell p.api[role="alert"]')).toContainText(
+  await page.goto("/#/settings");
+  await expect(page.locator('fs-settings .api[role="alert"]')).toContainText(
     label(labels, "apiUnavailable"),
   );
+  await expect(page.locator("fs-app-shell header p.api")).toHaveCount(0);
   expect(errors).toEqual([]);
 });

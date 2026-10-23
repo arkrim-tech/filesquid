@@ -15,6 +15,7 @@ import {
 } from "../../src/index";
 import labels from "../../src/theme/labels.en.json";
 import { FakeLibrarySource, LIBRARY, REBUILD, apiError } from "../support/library-fakes";
+import { hostFakes } from "../support/host-fakes";
 
 beforeEach(() => defineElements());
 afterEach(() => vi.restoreAllMocks());
@@ -46,8 +47,9 @@ describe("<fs-library-start>", () => {
     expect(customElements.get("fs-library-start")).toBeDefined();
     const { page } = await mount();
     const root = rootOf(page);
-    expect(root.querySelector("h2")?.textContent).toBe(labels.libraries);
+    expect(root.querySelector("h2")?.textContent).toBe(labels.libraryWelcomeTitle);
     expect(root.querySelector(".intro")?.textContent).toBe(labels.libraryIntro);
+    expect(root.querySelector(".eyebrow")?.textContent).toBe(labels.libraries);
     const flows = [...root.querySelectorAll("section[data-flow]")].map((section) => [
       (section as HTMLElement).dataset.flow,
       section.querySelector("h3")?.textContent,
@@ -59,6 +61,50 @@ describe("<fs-library-start>", () => {
       ["open", labels.libraryOpenTitle, labels.libraryOpenHelp, labels.libraryOpen],
       ["recover", labels.libraryRecoverTitle, labels.libraryRecoverHelp, labels.libraryRecover],
     ]);
+  });
+
+  it("draws the v3 welcome (UI-S-027, mockup 01): Create primary, Open and Recover secondary", async () => {
+    const { page } = await mount();
+    const root = rootOf(page);
+    const kinds = [...root.querySelectorAll("section[data-flow] button")].map((b) => b.className);
+    expect(kinds).toEqual(["button primary", "button secondary", "button secondary"]);
+    const icons = [...root.querySelectorAll<SVGElement>("section[data-flow] svg")];
+    expect(icons.map((svg) => svg.getAttribute("width"))).toEqual(["20", "20", "20"]);
+    const css = root.querySelector("style")?.textContent ?? "";
+    expect(css).toMatch(/\.start h2 \{ font-size: var\(--fs-font-size-display\); \}/);
+    expect(css).toMatch(/\.start \.intro \{[^}]*font-size: var\(--fs-font-size-lead\)/);
+    expect(css).toMatch(
+      /\.cards section \{[^}]*border: 1\.5px solid var\(--fs-outline-strong\); border-radius: var\(--fs-radius-dialog\)/,
+    );
+    expect(css).toMatch(
+      /section\[data-flow="create"\] \{ border: 2px solid var\(--fs-primary\); \}/,
+    );
+    expect(css).toMatch(
+      /\.cards h3 \{[^}]*font-family: var\(--fs-font-heading\); font-size: var\(--fs-font-size-card\); font-weight: 600/,
+    );
+  });
+
+  it("leaves out the privacy box and footer without a host client and version", async () => {
+    const { page } = await mount();
+    expect(rootOf(page).querySelector(".privacy")).toBeNull();
+    expect(rootOf(page).querySelector(".app-footer")).toBeNull();
+  });
+
+  it("shows the host statement from the descriptor and the footer line when given", async () => {
+    const page = document.createElement("fs-library-start") as FsLibraryStart;
+    const source = new FakeLibrarySource();
+    const registry = new LibraryRegistry();
+    page.configure({ labels, source, registry, host: hostFakes(), version: "0.1.0" });
+    document.body.replaceChildren(page);
+    await settle();
+    await settle();
+    const root = rootOf(page);
+    const statement = root.querySelector(".privacy fs-host-indicator");
+    expect(statement?.shadowRoot?.textContent).toContain(labels.hostDesktop);
+    expect(statement?.shadowRoot?.textContent).toContain(labels.hostDesktopNoTelemetry);
+    expect(root.querySelector(".app-footer")?.textContent).toBe(
+      "Open source under the MIT licence · Version 0.1.0 · macOS",
+    );
   });
 
   it("puts the shared accessibility stylesheet first and passes the accessibility audit", async () => {

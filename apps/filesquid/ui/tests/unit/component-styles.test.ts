@@ -203,8 +203,8 @@ function fixedPixelHeights(css: string): string[] {
 }
 
 describe("UI-S-016 accessibility contracts in component stylesheets", () => {
-  it("the shared stylesheet draws a 2px primary focus ring offset by 2px", () => {
-    expect(shared).toMatch(/:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--fs-primary\)/);
+  it("the shared stylesheet draws a 2px --fs-focus-ring focus ring offset by 2px", () => {
+    expect(shared).toMatch(/:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--fs-focus-ring\)/);
     expect(shared).toMatch(/:focus-visible\s*\{[^}]*outline-offset:\s*2px/);
   });
   it("the shared stylesheet stops motion under prefers-reduced-motion", () => {
@@ -221,9 +221,10 @@ describe("UI-S-016 accessibility contracts in component stylesheets", () => {
     expect(mediaBlock(shared, "forced-colors: active")).toMatch(/outline-color:\s*Highlight/);
   });
   it.each(ELEMENTS)("%s includes the shared accessibility stylesheet", (name) => {
-    // The rendering expression, not just the import: the shared rules go first in the style.
+    // The rendering expression, not just the import: the shared rules go first in the style,
+    // optionally followed by the shared control stylesheet (UI-S-024).
     expect(sources.find((s) => s.name === name)?.source).toMatch(
-      /A11Y_STYLE\s*\+\s*STYLE|\$\{A11Y_STYLE\}\$\{STYLE\}/,
+      /A11Y_STYLE\s*\+\s*(?:CONTROL_STYLE\s*\+\s*)?STYLE|\$\{A11Y_STYLE\}(?:\$\{CONTROL_STYLE\})?\$\{STYLE\}/,
     );
   });
   it.each(sources)("$name uses logical properties only", ({ css }) => {
