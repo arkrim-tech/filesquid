@@ -10,10 +10,18 @@
 //! ([`HostLocations::root_of`], [`crate::files::open_fs_library_root`]).
 //!
 //! Registrations live in memory for the host's lifetime; at most [`MAX_LOCATIONS`].
+//!
+//! The registry is also the desktop's [`LibraryRegistry`] (Task API-F2.18; API-S-038): it keeps
+//! each library's name, the location it was opened from and when, in a [`RegistryBook`] for the
+//! host's lifetime (keeping it across launches is DE-1.8's), and answers the free bytes of a
+//! registered folder's volume on Linux and macOS with `fs4`. Any other build answers
+//! `volume_unreadable` (owner decision 5 of 2026-10-23: the Win32 read is DE-F3.3's).
 
 use crate::files::{real_dir, storage_root, HostLeases};
 use filesquid_api::history::backfill::{Backfill, BackfillError, BackfillReport};
-use filesquid_api::local_library::{LibraryLocations, LibraryRoot};
+use filesquid_api::local_library::{
+    FreeSpace, LibraryLocations, LibraryRegistry, LibraryRoot, RegistryBook, RegistryEntry,
+};
 use filesquid_core::LibraryId;
 use filesquid_ocfl::storage::{complete_immediately, FsBackend};
 use filesquid_ocfl::write::{LeaseConfig, LeaseStore, SystemClock};
@@ -44,6 +52,8 @@ struct Location {
 pub struct HostLocations {
     data_dir: PathBuf,
     locations: Mutex<HashMap<String, Location>>,
+    /// What this host remembers of each library it bound (API-S-038).
+    libraries: RegistryBook,
 }
 
 impl std::fmt::Debug for HostLocations {
@@ -58,6 +68,7 @@ impl HostLocations {
         Self {
             data_dir: data_dir.to_path_buf(),
             locations: Mutex::new(HashMap::new()),
+            libraries: RegistryBook::new(),
         }
     }
 
@@ -202,6 +213,64 @@ impl LibraryLocations for HostLocations {
             _ => true,
         }
     }
+}
+
+impl LibraryRegistry for HostLocations {
+    fn remember(
+        &self,
+        library_id: &LibraryId,
+        location_id: &str,
+        name: Option<&str>,
+        opened_ms: i64,
+    ) -> String {
+        self.libraries
+            .remember(library_id, location_id, name, opened_ms)
+    }
+
+    fn rename(&self, library_id: &LibraryId, name: &str) -> Option<bool> {
+        self.libraries.rename(library_id, name)
+    }
+
+    fn entry(&self, library_id: &LibraryId) -> Option<RegistryEntry> {
+        self.libraries.entry(library_id)
+    }
+
+    fn entries(&self) -> Vec<RegistryEntry> {
+        self.libraries.entries()
+    }
+
+    /// The free bytes of the registered folder's volume; `volume_unreadable` for an unknown
+    /// location, a volume that cannot be read, or a build that does not read it. Queries the
+    /// volume.
+    fn free_space(&self, location_id: &str) -> FreeSpace {
+        match self.folder_of(location_id) {
+            Some(folder) => volume_free_space(&folder),
+            None => FreeSpace::VolumeUnreadable,
+        }
+    }
+}
+
+/// The bytes free to this process on the volume that holds `folder` (Linux and macOS).
+/// Queries the volume.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn volume_free_space(folder: &Path) -> FreeSpace {
+    match fs4::available_space(folder) {
+        Ok(bytes) => FreeSpace::Bytes(bytes),
+        Err(err) => {
+            tracing::info!(
+                target: "filesquid::native",
+                error_kind = ?err.kind(),
+                "the free space of a library's volume could not be read"
+            );
+            FreeSpace::VolumeUnreadable
+        }
+    }
+}
+
+/// Not read by this build (owner decision 5 of 2026-10-23; DE-F3.3 adds the Win32 read).
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn volume_free_space(_folder: &Path) -> FreeSpace {
+    FreeSpace::VolumeUnreadable
 }
 
 /// The ID a canonical `folder` is registered under in `locations` (the smallest, when it

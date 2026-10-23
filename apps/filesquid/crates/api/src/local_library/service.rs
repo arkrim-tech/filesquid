@@ -44,6 +44,12 @@ pub const COPY_OPERATION: &str = "library.snapshot.copy";
 pub const REBUILD_OPERATION: &str = "library.rebuild";
 /// Journal operation of the repair candidate query (failures only).
 pub const CANDIDATES_OPERATION: &str = "library.repair_candidates";
+/// Journal operation of renaming a library (API-S-038).
+pub const RENAME_OPERATION: &str = "library.rename";
+/// Journal operation of the library facts query (failures only).
+pub const FACTS_OPERATION: &str = "library.facts";
+/// Journal operation of the recent libraries query (failures only).
+pub const RECENT_OPERATION: &str = "library.recent";
 
 /// Runs the local library operations of [`crate::local_library`] for every host.
 #[derive(Clone)]
@@ -388,6 +394,21 @@ impl LocalLibraryService {
                 .target(library_id.as_str())
                 .at_ms((self.clock)()),
         );
+    }
+
+    /// The time of this service's clock (Unix milliseconds, UTC).
+    pub(super) fn now_ms(&self) -> i64 {
+        (self.clock)()
+    }
+
+    /// Journal a success of `operation` on `library_id` by `actor`, with opaque IDs only.
+    pub(super) fn journal_success(
+        &self,
+        actor: &str,
+        operation: &'static str,
+        library_id: &LibraryId,
+    ) {
+        self.journal_outcome::<()>(actor, operation, library_id, &Ok(()));
     }
 
     /// Journal a refusal of `operation` that the API made before reaching the operation
