@@ -1,0 +1,24 @@
+# Task API-F2.17 ToDos
+
+- [ ] Failing tests written and run (C1 to C17)
+- [ ] C1 rebuild route answers pending with a `library.rebuild` job
+- [ ] C2 repeated rebuild answers the unfinished job
+- [ ] C3 progress counts objects
+- [ ] C4 pause holds at a checkpoint
+- [ ] C5 resume reads no completed object again
+- [ ] C6 cancel changes no library file
+- [ ] C7 crash resumes from the checkpoint
+- [ ] C8 report is the job's result; `null` otherwise
+- [ ] C9 every control journaled once; redaction
+- [ ] C10 refusals before submission, journaled once
+- [ ] C11 no job service: 503, journaled once
+- [ ] C12 lease renewed during a long object
+- [ ] C13 checkpoint cursor only; partial result written with it
+- [ ] C14 `library.rebuild` outcome journaled once
+- [ ] C15 SQLite keeps the result
+- [ ] C16 contract 0.25.0 and regenerated `schema.d.ts`
+- [ ] C17 desktop wiring
+- [ ] C18 bounded loops
+- [ ] BDD scenarios (feature-writer)
+- [ ] SRS, plan, checklist, README check, walkthrough
+- [ ] `FULL=1 bash scripts/pre-commit.sh`
