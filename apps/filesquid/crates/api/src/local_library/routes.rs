@@ -17,7 +17,7 @@
 //! its library commands yet.
 
 use super::operations::LibraryOperations;
-use super::rebuild_job::{submit_rebuild, RebuildJobAnswer, RebuildOutcome};
+use super::rebuild_job::{submit_rebuild, RebuildJobAnswer, RebuildOutcome, SubmitRefusal};
 use super::repair::REPAIR_OPERATION;
 use super::service::{
     CANDIDATES_OPERATION, COPY_OPERATION, CREATE_OPERATION, OPEN_OPERATION, REBUILD_OPERATION,
@@ -160,10 +160,21 @@ async fn rebuild(
         return ApiError::from(err).into_response();
     }
     let library = request.library_id;
-    let submitted = job_routes::blocking(move || submit_rebuild(&jobs, &library)).await;
+    let submitted = job_routes::blocking(move || Ok(submit_rebuild(&jobs, &library)))
+        .await
+        .unwrap_or_else(|error| {
+            let journaled = false;
+            Err(SubmitRefusal { error, journaled })
+        });
     let job = match submitted {
         Ok(job) => job,
-        Err(err) => return refuse(&state, REBUILD_OPERATION, &actor, job_failure(&err)).await,
+        Err(refusal) if refusal.journaled => {
+            return ApiError::from(job_failure(&refusal.error)).into_response();
+        }
+        Err(refusal) => {
+            let err = job_failure(&refusal.error);
+            return refuse(&state, REBUILD_OPERATION, &actor, err).await;
+        }
     };
     let scheduled = !job.is_paused() && job_routes::schedule(&state, &job);
     Json(RebuildJobAnswer {

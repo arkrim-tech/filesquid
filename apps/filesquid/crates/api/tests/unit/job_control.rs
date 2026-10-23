@@ -558,3 +558,32 @@ fn a_checkpoint_with_a_result_under_an_ended_lease_is_fenced_and_stores_nothing(
     let stored = jobs.job(&job.id).expect("job");
     assert_eq!((stored.checkpoint, stored.result), (None, None));
 }
+
+#[test]
+fn completing_without_a_result_clears_a_partial_one() {
+    let rig = Rig::new();
+    let jobs = rig.jobs();
+    let job = submit(&jobs, "op-1");
+    let mut run = jobs.start(&job.id, &job.source).expect("start");
+    run.checkpoint_with_result("next=1", "{}", 1, Some(2))
+        .expect("checkpoint");
+    run.complete().expect("complete");
+    let done = jobs.job(&job.id).expect("job");
+    assert_eq!(done.result, None, "no stale partial result");
+    assert_eq!(JobView::of(&done).result, None);
+}
+
+#[test]
+fn a_result_past_its_bound_is_refused_and_stores_nothing() {
+    let rig = Rig::new();
+    let jobs = rig.jobs();
+    let job = submit(&jobs, "op-1");
+    let mut run = jobs.start(&job.id, &job.source).expect("start");
+    let huge = "x".repeat(filesquid_api::jobs::MAX_RESULT_BYTES + 1);
+    let refused = run
+        .checkpoint_with_result("next=1", &huge, 1, Some(2))
+        .expect_err("too large");
+    assert_eq!(refused, JobError::TooLarge);
+    let stored = jobs.job(&job.id).expect("job");
+    assert_eq!((stored.checkpoint, stored.result), (None, None));
+}

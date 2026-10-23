@@ -169,7 +169,8 @@ async fn control_rebuild(w: &mut MonitorWorld, control: String) {
     let control = match control.as_str() {
         "pauses" => "pause",
         "resumes" => "resume",
-        _ => "cancel",
+        "cancels" => "cancel",
+        other => panic!("unknown rebuild job control: {other}"),
     };
     let rig = w.routes.rig();
     let uri = format!("/api/v1/jobs/{}/{control}", w.routes.job);

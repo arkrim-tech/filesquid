@@ -338,16 +338,32 @@ fn a_rebuild_from_a_cursor_reads_no_object_at_or_before_it() {
     rig.object("obj-b", "urn:uuid:b");
     rig.object("obj-c", "urn:uuid:c");
     let opened = Arc::new(AtomicBool::new(false));
-    let flag = opened.clone();
-    rig.root.on_read(
-        "obj-a/inventory.json",
-        Box::new(move || flag.store(true, Ordering::SeqCst)),
-    );
-    let mut progress = Collect {
+    let arm = |rig: &Rig| {
+        let flag = opened.clone();
+        rig.root.on_read(
+            "obj-a/inventory.json",
+            Box::new(move || flag.store(true, Ordering::SeqCst)),
+        );
+    };
+    let every = || Collect {
         roots: Vec::new(),
         done: Vec::new(),
         stop_after: usize::MAX,
     };
+    arm(&rig);
+    let mut whole = every();
+    ready(
+        rig.service
+            .rebuild_from("owner", &library(), &rig.root, None, &mut whole),
+    )
+    .expect("rebuild");
+    assert!(
+        opened.load(Ordering::SeqCst),
+        "positive control: a rebuild without a cursor reads the object's inventory"
+    );
+    opened.store(false, Ordering::SeqCst);
+    arm(&rig);
+    let mut progress = every();
     let after = Some("obj-a".to_string());
     let end = ready(
         rig.service
@@ -372,8 +388,12 @@ fn a_rebuild_from_a_cursor_reads_no_object_at_or_before_it() {
         }
     );
     let journaled = rig.journaled("library.rebuild");
-    assert_eq!(journaled.len(), 1, "the finished rebuild is journaled once");
-    assert_eq!(journaled[0].outcome, Outcome::Succeeded);
+    assert_eq!(
+        journaled.len(),
+        2,
+        "each finished rebuild is journaled once"
+    );
+    assert!(journaled.iter().all(|e| e.outcome == Outcome::Succeeded));
 }
 
 #[test]

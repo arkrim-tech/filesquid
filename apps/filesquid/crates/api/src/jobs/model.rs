@@ -163,7 +163,8 @@ pub enum JobError {
     Conflict(&'static str),
     /// The lease is no longer the job's: it expired or another worker took it over.
     Fenced,
-    /// The checkpoint is larger than [`super::MAX_CHECKPOINT_BYTES`].
+    /// The checkpoint is larger than [`super::MAX_CHECKPOINT_BYTES`], or a result larger than
+    /// [`super::MAX_RESULT_BYTES`].
     TooLarge,
     /// The source changed since the job was submitted; the job failed and nothing of it is
     /// reused.

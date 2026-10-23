@@ -438,6 +438,38 @@ async fn pause_holds_the_rebuild_at_a_checkpoint_and_resume_reads_no_completed_o
 }
 
 #[tokio::test]
+async fn a_cancel_asked_during_the_last_object_cancels_instead_of_completing() {
+    let rig = Rig::new(3);
+    let job = rig.submit();
+    let jobs = rig.jobs();
+    let id = job.id.clone();
+    rig.library.on_object(move |index| {
+        if index == 2 {
+            jobs.cancel(&id).expect("cancel");
+        }
+        Step::Go
+    });
+    let state = rig.runner(100).run(&job.id).await.expect("run");
+    assert_eq!(state, JobState::Cancelled);
+    assert_eq!(JobView::of(&rig.job(&job.id)).result, None);
+}
+
+#[tokio::test]
+async fn a_submission_past_the_unfinished_bound_is_refused_instead_of_duplicated() {
+    let rig = Rig::new(1);
+    let jobs = rig.jobs();
+    for index in 0..filesquid_api::jobs::MAX_RECOVERED_JOBS {
+        let other = format!("00000000-0000-4000-8000-{index:012}");
+        let library = LibraryId::new(&other).expect("library");
+        submit_rebuild(&jobs, &library).expect("submit");
+    }
+    let library = LibraryId::new(LIBRARY).expect("library");
+    let refused = submit_rebuild(&jobs, &library).expect_err("bound reached");
+    assert_eq!(refused.error.error_code(), "unavailable");
+    assert!(!refused.journaled, "the caller journals it");
+}
+
+#[tokio::test]
 async fn a_paused_rebuild_is_not_started_until_it_is_resumed() {
     let rig = Rig::new(3);
     let job = rig.submit();

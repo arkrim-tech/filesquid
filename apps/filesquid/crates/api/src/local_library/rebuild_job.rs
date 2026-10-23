@@ -6,11 +6,14 @@
 //! ([`submit_rebuild`]; a library whose rebuild is unfinished answers that job) and hands it
 //! to the runner the host installed for the kind. [`RebuildRunner`] is that runner: it leases
 //! the job, reads the library's objects through the host's [`LibraryOperations`] in
-//! object-root order and, every batch of objects, stores in one atomic step a checkpoint (the
-//! root of the last object read, a cursor of a few bytes) and the report so far as the job's
-//! stored result. A pause or cancel asked through the job routes is seen at the next
-//! checkpoint (or lease renewal), where the run stops: a paused job stays pending with its
-//! checkpoint, a cancelled one ends as cancelled. A resumed run, and a run after a crash
+//! object-root order and, every batch of objects (at least [`REBUILD_BATCH`], and at least a
+//! sixteenth of the objects reported so far, so a large report is rewritten a bounded number
+//! of times), stores in one atomic step a checkpoint (the root of the last object read, a
+//! cursor of a few bytes) and the report so far as the job's stored result, at most
+//! [`crate::jobs::MAX_RESULT_BYTES`] (past it the job fails `too_large`). Each checkpoint and
+//! each lease renewal reads the control asked of the job; once a pause or cancel is read, the
+//! run checkpoints after the object it is reading and stops there: a paused job stays pending
+//! with its checkpoint, a cancelled one ends as cancelled. A resumed run, and a run after a crash
 //! whose lease recovery released, continue after the cursor, so no checkpointed object is
 //! read again. A finished run completes the job with the whole report as its result, which
 //! the job view carries once the job has completed.
@@ -43,6 +46,10 @@ pub const REBUILD_BATCH: usize = 64;
 /// Most passes one run makes (AGENTS.md §22): a pass ends where the run stopped for a request
 /// that a resume then cleared before the run gave its lease back, and the run goes on.
 const MAX_RUN_PASSES: usize = 1_000;
+
+/// The share of the objects reported so far that are read between two checkpoints at
+/// least (one sixteenth), so the stored report is rewritten O(log n) times.
+const CHECKPOINT_SHARE: usize = 16;
 
 /// Error code of a job whose source identity names no library.
 const INVALID_SOURCE: &str = "invalid_source";
@@ -84,23 +91,58 @@ fn library_of(job: &Job) -> Option<LibraryId> {
     LibraryId::new(id).ok()
 }
 
+/// Why [`submit_rebuild`] answered no job.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SubmitRefusal {
+    /// The job error.
+    pub error: JobError,
+    /// Whether the job service already journaled it (a store refusal of the new job); every
+    /// other refusal is the caller's to journal.
+    pub journaled: bool,
+}
+
+impl SubmitRefusal {
+    /// A refusal the caller journals.
+    fn unjournaled(error: JobError) -> Self {
+        Self {
+            error,
+            journaled: false,
+        }
+    }
+}
+
 /// The unfinished rebuild job of `library`, or a new pending one (store I/O; `job.created` is
-/// journaled for a new job).
+/// journaled for a new job). At most [`MAX_RECOVERED_JOBS`] unfinished rebuild jobs are read
+/// (one per library); when that many are unfinished and none is the library's, nothing is
+/// submitted, so a job the bound left out is never duplicated.
 ///
 /// # Errors
-/// A store failure, or [`JobError::Unavailable`] when no ID can be minted.
-pub fn submit_rebuild(jobs: &Jobs, library: &LibraryId) -> Result<Job, JobError> {
+/// A store failure; [`JobError::Unavailable`] when no ID can be minted or the bound is
+/// reached.
+pub fn submit_rebuild(jobs: &Jobs, library: &LibraryId) -> Result<Job, SubmitRefusal> {
     let _one = SUBMITTING.lock().unwrap_or_else(PoisonError::into_inner);
     let source = rebuild_source(library);
-    let open = jobs.unfinished_of(REBUILD_JOB_KIND, MAX_RECOVERED_JOBS)?;
+    let open = jobs
+        .unfinished_of(REBUILD_JOB_KIND, MAX_RECOVERED_JOBS)
+        .map_err(SubmitRefusal::unjournaled)?;
+    let bound_reached = open.len() >= MAX_RECOVERED_JOBS;
     if let Some(job) = open.into_iter().find(|job| job.source == source) {
         return Ok(job);
     }
-    let operation_id = mint_uuid_v4().map_err(|err| JobError::Unavailable(err.to_string()))?;
-    jobs.submit(JobSpec {
+    if bound_reached {
+        let error = JobError::Unavailable("too many unfinished rebuild jobs".into());
+        return Err(SubmitRefusal::unjournaled(error));
+    }
+    let operation_id = mint_uuid_v4()
+        .map_err(|err| SubmitRefusal::unjournaled(JobError::Unavailable(err.to_string())))?;
+    let spec = JobSpec {
         kind: REBUILD_JOB_KIND.to_string(),
         operation_id,
         source,
+    };
+    jobs.submit(spec).map_err(|error| SubmitRefusal {
+        error,
+        journaled: true,
     })
 }
 
@@ -208,7 +250,7 @@ impl RebuildRunner {
         for _ in 0..MAX_RUN_PASSES {
             let (returned, end) = self.pass(run, library, tracker).await?;
             if let Some(err) = tracker.refused.take() {
-                return Err(err);
+                return refused(returned, err);
             }
             run = match end {
                 Ok(RebuildEnd::Finished { total, journal }) => {
@@ -286,6 +328,17 @@ impl JobRunner for RebuildRunner {
         runtime.spawn(async move { runner.run_logged(&id).await });
         Ok(())
     }
+}
+
+/// End a run whose checkpoint was refused: a report past the result bound fails the job
+/// (`too_large`); any other refusal (a lost lease, a store failure) leaves the job to its
+/// lease and is answered.
+fn refused(run: RunningJob, err: JobError) -> Result<JobState, JobError> {
+    if err != JobError::TooLarge {
+        return Err(err);
+    }
+    run.fail(err.error_code())?;
+    Ok(JobState::Failed)
 }
 
 /// Lock the shared run.
@@ -418,11 +471,27 @@ impl Tracker {
         total: u64,
         journal: Option<super::JournalRebuild>,
     ) -> Result<JobState, JobError> {
-        self.report.journal = journal;
         (self.done, self.total) = (total, Some(total));
-        self.save(&mut run)?;
+        if let Err(err) = self.save(&mut run) {
+            return refused(run, err);
+        }
+        if run.requested().is_some() {
+            match run.halt_if_requested()? {
+                Halt::Halted(state) => return Ok(state),
+                Halt::Continued(continued) => run = *continued,
+            }
+        }
+        self.report.journal = journal;
         run.complete_with_result(&encode(&self.report)?)?;
         Ok(JobState::Completed)
+    }
+
+    /// Whether the objects read since the last checkpoint are due one: at least a batch,
+    /// and at least a sixteenth of the objects reported so far, so a large library's report
+    /// is rewritten a bounded number of times per doubling.
+    fn due(&self) -> bool {
+        let reported = self.report.objects.len() + self.report.unreadable.len();
+        self.unsaved >= self.batch.max(reported / CHECKPOINT_SHARE)
     }
 }
 
@@ -446,7 +515,7 @@ impl RebuildProgress for JobProgress<'_> {
     fn object(&mut self, step: RebuildStep<'_>) -> ControlFlow<()> {
         self.tracker.add(step);
         let mut run = lock(self.run);
-        if run.requested().is_none() && self.tracker.unsaved < self.tracker.batch {
+        if run.requested().is_none() && !self.tracker.due() {
             return ControlFlow::Continue(());
         }
         if let Err(err) = self.tracker.save(&mut run) {

@@ -2,7 +2,7 @@
 //! atomic read-modify-write, so every host enforces the same lease and fencing rules.
 
 use super::model::{Job, JobControl, JobError, JobState, Lease};
-use super::MAX_CHECKPOINT_BYTES;
+use super::{MAX_CHECKPOINT_BYTES, MAX_RESULT_BYTES};
 
 /// Error code of a job whose source changed since it was submitted.
 pub const SOURCE_CHANGED: &str = "source_changed";
@@ -108,7 +108,7 @@ pub fn checkpoint(
 /// it matches are stored together or not at all.
 ///
 /// # Errors
-/// As [`checkpoint`].
+/// As [`checkpoint`]; [`JobError::TooLarge`] for a result past [`MAX_RESULT_BYTES`].
 pub fn checkpoint_with_result(
     job: Job,
     lease: &Lease,
@@ -117,6 +117,9 @@ pub fn checkpoint_with_result(
     ttl_ms: i64,
 ) -> Result<Job, JobError> {
     let mut job = checkpoint(job, lease, (checkpoint_text, done, total), now_ms, ttl_ms)?;
+    if result.len() > MAX_RESULT_BYTES {
+        return Err(JobError::TooLarge);
+    }
     job.result = Some(result.to_string());
     Ok(job)
 }

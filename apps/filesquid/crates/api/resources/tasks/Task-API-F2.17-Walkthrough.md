@@ -6,7 +6,7 @@ Owner answer 9 of 2026-10-22, verbatim: "Yes, rebuild should be a durable job". 
 
 ## API-S-025: Local library and repair routes (Rebuild as a job)
 
-`POST /api/v1/libraries/rebuilds` (`library.manage`) refuses a library that is not open, a malformed body and a host without a job service before any job is submitted (each journaled once as `library.rebuild`), then answers `{outcome: pending, job_id, job, scheduled}`: a job of kind `library.rebuild` whose source identity is `library:<id>` (stored, never answered or journaled). A library whose rebuild job is unfinished answers that job, and no second job is submitted. The host's runner reads the objects in object-root order and, every batch (64 objects by default), stores in one atomic step a checkpoint holding only the root of the last object read and the report so far as the job's stored result. A pause or cancel is seen at the next checkpoint (or lease renewal), where the run stops; a resumed run, and a run after a crash once recovery released its lease, continue after the cursor, so no checkpointed object is read again and none is reported twice. A finished run completes the job with the report (objects read, objects not readable, each object's validation errors, and the journal restore) as its result, and the finished rebuild is journaled once as `library.rebuild`. A lease ticker renews the lease (every third of it by default) while one long object is read. Nothing is written to the library's files, so a cancel changes none of them.
+`POST /api/v1/libraries/rebuilds` (`library.manage`) refuses a library that is not open, a malformed body and a host without a job service before any job is submitted (each journaled once as `library.rebuild`), then answers `{outcome: pending, job_id, job, scheduled}`: a job of kind `library.rebuild` whose source identity is `library:<id>` (stored, never answered or journaled). A library whose rebuild job is unfinished answers that job, and no second job is submitted; when 1,000 rebuild jobs are unfinished and none is the library's, the request is refused `unavailable` rather than risk a duplicate. The host's runner reads the objects in object-root order and, every batch (at least 64 objects, and at least a sixteenth of the objects reported so far, so a large report is rewritten a bounded number of times), stores in one atomic step a checkpoint holding only the root of the last object read and the report so far as the job's stored result, at most 64 MiB (`MAX_RESULT_BYTES`; past it the job fails `too_large`). Each checkpoint and each lease renewal reads the control asked of the job; once a pause or cancel is read, the run checkpoints after the object it is reading and stops there, also when the request comes during the last object; a resumed run, and a run after a crash once recovery released its lease, continue after the cursor, so no checkpointed object is read again and none is reported twice. A finished run completes the job with the report (objects read, objects not readable, each object's validation errors, and the journal restore) as its result, and the finished rebuild is journaled once as `library.rebuild`. A lease ticker renews the lease (every third of it by default) while one long object is read. Nothing is written to the library's files, so a cancel changes none of them.
 
 ## API-S-037: Job routes and job events
 
@@ -14,23 +14,23 @@ Owner answer 9 of 2026-10-22, verbatim: "Yes, rebuild should be a durable job". 
 
 ## API-S-033: Durable job model
 
-`Job.result` is stored with the job (`RunningJob::checkpoint_with_result` writes it with the checkpoint under the lease, `complete_with_result` with the end); a write under an ended lease is fenced and stores neither. The SQLite job store adds a `result` column with an additive migration and keeps it across a reopen.
+`Job.result` is stored with the job (`RunningJob::checkpoint_with_result` writes it with the checkpoint under the lease, `complete_with_result` with the end, and a job finished without a result clears a partial one); a write under an ended lease is fenced and stores neither, and a result past `MAX_RESULT_BYTES` is refused `too_large`. The SQLite job store adds a `result` column with an additive migration and keeps it across a reopen.
 
 | # | Constraint | Gate | State |
 |---|---|---|---|
 | C1 | The rebuild answers pending with a `library.rebuild` job, handed to the runner | `the_rebuild_answers_pending_with_a_library_rebuild_job_whose_result_is_the_report` (both mounts), `a_rebuild_is_a_pending_library_rebuild_job_whose_source_names_the_library`, scenario "The rebuild from files runs as a durable job whose result is the report", desktop `an_opened_folder_feeds_the_history_and_copies_and_rebuilds_without_paths` | Met |
-| C2 | A repeated rebuild answers the unfinished job | `a_repeated_rebuild_answers_the_unfinished_job`, `a_repeated_rebuild_answers_the_unfinished_job_and_cancel_changes_no_file` | Met |
+| C2 | A repeated rebuild answers the unfinished job; past the 1,000-job read bound it is refused, never duplicated | `a_repeated_rebuild_answers_the_unfinished_job`, `a_submission_past_the_unfinished_bound_is_refused_instead_of_duplicated`, `a_repeated_rebuild_answers_the_unfinished_job_and_cancel_changes_no_file` | Met |
 | C3 | Progress counts objects (`done`, `total`) | `progress_counts_objects_and_the_report_is_the_jobs_result`, `an_empty_library_completes_with_zero_of_zero_objects`, `a_rebuild_from_a_cursor_reads_no_object_at_or_before_it`, scenario step "report 2 of 2 objects done" | Met |
 | C4 | Pause holds the job at a checkpoint | `pause_holds_the_rebuild_at_a_checkpoint_and_resume_reads_no_completed_object_again`, `a_paused_rebuild_is_not_started_until_it_is_resumed`, scenario "A paused rebuild waits..." | Met |
-| C5 | Resume reads no completed object again | `pause_holds_the_rebuild_at_a_checkpoint_and_resume_reads_no_completed_object_again`, `a_rebuild_from_a_cursor_reads_no_object_at_or_before_it` (the completed object's inventory is never read) | Met |
-| C6 | Cancel ends it with no change to the library's files | `cancel_ends_the_rebuild_as_cancelled`, `cancelling_a_pending_rebuild_reads_nothing`, `a_repeated_rebuild_answers_the_unfinished_job_and_cancel_changes_no_file`, `a_rebuild_its_progress_stops_is_not_journaled_as_finished` (no write), scenario | Met |
+| C5 | Resume reads no completed object again | `pause_holds_the_rebuild_at_a_checkpoint_and_resume_reads_no_completed_object_again`, `a_rebuild_from_a_cursor_reads_no_object_at_or_before_it` (a rebuild without a cursor reads the object's inventory; one after it does not) | Met |
+| C6 | Cancel ends it with no change to the library's files | `cancel_ends_the_rebuild_as_cancelled`, `a_cancel_asked_during_the_last_object_cancels_instead_of_completing`, `cancelling_a_pending_rebuild_reads_nothing`, `a_repeated_rebuild_answers_the_unfinished_job_and_cancel_changes_no_file`, `a_rebuild_its_progress_stops_is_not_journaled_as_finished` (no write), scenario | Met |
 | C7 | A crash resumes from the checkpoint | `a_crash_resumes_from_the_checkpoint` (the run is dropped mid-object; recovery releases the expired lease; objects 0 to 3 are not read again) | Met |
-| C8 | The report is the job's result in the view once finished; `null` otherwise | `the_view_carries_the_result_once_the_job_completes_and_null_otherwise`, `the_view_carries_no_source_checkpoint_lease_or_fence`, `result_of` in every runner test | Met |
+| C8 | The report is the job's result in the view once finished; `null` otherwise | `the_view_carries_the_result_once_the_job_completes_and_null_otherwise`, `completing_without_a_result_clears_a_partial_one`, `the_view_carries_no_source_checkpoint_lease_or_fence`, `result_of` in every runner test | Met |
 | C9 | Every control journaled once; no source, checkpoint or report journaled | `every_control_is_journaled_once_and_no_entry_names_the_source_or_checkpoint`, scenario "journaled once for the rebuild job", `assert_redacted` in the route test | Met |
 | C10 | Refusals before a job is submitted, journaled once | `a_rebuild_of_a_library_that_is_not_open_submits_no_job`, scenario "A rebuild of a library that is not open..." | Met |
 | C11 | No job service: `503 unavailable`, journaled once | `a_rebuild_on_a_host_without_a_job_service_is_unavailable_and_journaled_once` | Met |
 | C12 | The lease is kept while one long object is read | `a_long_object_keeps_the_lease` (the clock moves 30 s past a 15 s lease during one object) | Met |
-| C13 | The checkpoint is a cursor; the partial report is written with it atomically | `the_checkpoint_holds_a_cursor_and_the_partial_report_is_stored_with_it`, `a_checkpoint_with_a_result_under_an_ended_lease_is_fenced_and_stores_nothing` | Met |
+| C13 | The checkpoint is a cursor; the partial report is written with it atomically, bounded, at a cadence that grows with the report | `a_result_past_its_bound_is_refused_and_stores_nothing`, `the_checkpoint_holds_a_cursor_and_the_partial_report_is_stored_with_it`, `a_checkpoint_with_a_result_under_an_ended_lease_is_fenced_and_stores_nothing` | Met |
 | C14 | `library.rebuild` journaled once when the rebuild finishes | route test, `a_rebuild_from_a_cursor_reads_no_object_at_or_before_it` | Met |
 | C15 | The SQLite store keeps the result | `a_jobs_result_survives_closing_the_store`, `a_store_made_with_controls_but_before_results_gains_the_result_column`, `a_store_made_before_controls_gains_the_column_and_keeps_its_jobs` | Met |
 | C16 | Contract 0.25.0 and regenerated `schema.d.ts` | `unit_contract` (samples of `RebuildJobAnswer`, `RebuildOutcome` and a completed rebuild's `JobView`), Vitest `contract.test.ts` | Met |
@@ -80,20 +80,70 @@ error: could not compile `filesquid-api` (test "unit_rebuild_job") due to 7 prev
 ```text
 error[E0599]: no method named `checkpoint_with_result` found for struct `RunningJob` in the current scope
    --> crates/api/tests/unit/job_control.rs:527:9
+    |
+527 |     run.checkpoint_with_result("next=1", r#"{"objects":[1]}"#, 1, Some(2))
+    |         ^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: there is a method `checkpoint_text` with a similar name, but with different arguments
    --> crates/api/src/jobs/service.rs:438:5
+    |
+438 |     pub fn checkpoint_text(&self) -> Option<&str> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
 error[E0609]: no field `result` on type `Job`
    --> crates/api/tests/unit/job_control.rs:530:24
+    |
+530 |     assert_eq!(running.result.as_deref(), Some(r#"{"objects":[1]}"#));
+    |                        ^^^^^^ unknown field
+    |
+    = note: available fields are: `id`, `kind`, `operation_id`, `source`, `state` ... and 11 others
+
 error[E0609]: no field `result` on type `JobView`
    --> crates/api/tests/unit/job_control.rs:532:38
+    |
+532 |     assert_eq!(JobView::of(&running).result, None, "not before it finishes");
+    |                                      ^^^^^^ unknown field
+    |
+    = note: available fields are: `id`, `kind`, `operation_id`, `state`, `paused` ... and 7 others
+
 error[E0599]: no method named `complete_with_result` found for struct `RunningJob` in the current scope
    --> crates/api/tests/unit/job_control.rs:533:9
+    |
+533 |     run.complete_with_result(r#"{"objects":[1,2]}"#)
+    |         ^^^^^^^^^^^^^^^^^^^^ method not found in `RunningJob`
+
 error[E0609]: no field `result` on type `JobView`
    --> crates/api/tests/unit/job_control.rs:538:28
+    |
+538 |         JobView::of(&done).result,
+    |                            ^^^^^^ unknown field
+    |
+    = note: available fields are: `id`, `kind`, `operation_id`, `state`, `paused` ... and 7 others
+
 error[E0599]: no method named `checkpoint_with_result` found for struct `RunningJob` in the current scope
    --> crates/api/tests/unit/job_control.rs:551:10
+    |
+550 |       let refused = run
+    |  ___________________-
+551 | |         .checkpoint_with_result("next=1", "{}", 1, Some(2))
+    | |_________-^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: there is a method `checkpoint_text` with a similar name, but with different arguments
    --> crates/api/src/jobs/service.rs:438:5
+    |
+438 |     pub fn checkpoint_text(&self) -> Option<&str> {
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
 error[E0609]: no field `result` on type `Job`
    --> crates/api/tests/unit/job_control.rs:555:43
+    |
+555 |     assert_eq!((stored.checkpoint, stored.result), (None, None));
+    |                                           ^^^^^^ unknown field
+    |
+    = note: available fields are: `id`, `kind`, `operation_id`, `source`, `state` ... and 11 others
+
+Some errors have detailed explanations: E0599, E0609.
+For more information about an error, try `rustc --explain E0599`.
 error: could not compile `filesquid-api` (test "unit_job_control") due to 7 previous errors
 ```
 
