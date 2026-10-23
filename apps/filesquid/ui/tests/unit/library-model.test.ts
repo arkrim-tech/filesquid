@@ -61,11 +61,11 @@ describe("consentRequest", () => {
       consent: {
         library_id: "lib-1",
         object_ids: ids,
-        statement_id: "version_inventory_repair.v1",
+        statement_id: "version_inventory_repair.v2",
         confirmed: true,
       },
     });
-    expect(REPAIR_STATEMENT_ID).toBe("version_inventory_repair.v1");
+    expect(REPAIR_STATEMENT_ID).toBe("version_inventory_repair.v2");
   });
 
   it("refuses an empty list, more than 1,000 objects and an ID over 1,024 bytes", () => {

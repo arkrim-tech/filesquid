@@ -236,7 +236,7 @@ test("(4) confirm sends the consent for exactly the named objects and shows each
       consent: {
         library_id: LIB,
         object_ids: OBJECTS,
-        statement_id: "version_inventory_repair.v1",
+        statement_id: "version_inventory_repair.v2",
         confirmed: true,
       },
     },

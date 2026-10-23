@@ -99,7 +99,7 @@ Feature: Independent local library and ownership
     Given the repair offer lists two objects
     When I review the repair
     Then the dialog should name both objects
-    And it should say that one copy of the root inventory and its sidecar will be added to each object's latest version directory and that nothing else changes
+    And it should say that one copy of the root inventory and its sidecar will be added to each object's latest version directory, that a new version recording the repair will be committed to each object's history, and that no file content changes
     And no repair request should be sent until I confirm
     When I confirm
     Then the repair route should receive the consent for exactly those two objects

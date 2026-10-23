@@ -261,7 +261,7 @@
   "repairTruncated": "More objects need repair than are listed here (at most {limit}). Repair these first, then review again.",
   "repairReview": "Review repair…",
   "repairDialogTitle": "Repair {count} object(s)?",
-  "repairConsent": "One copy of the root inventory and its sidecar will be added to each listed object's latest version directory. Nothing else changes.",
+  "repairConsent": "One copy of the root inventory and its sidecar will be added to each listed object's latest version directory, and a new version recording this repair will be committed to each object's history. No file content changes.",
   "repairConfirm": "Repair {count} object(s)",
   "repairCancel": "Cancel",
   "repairResultsTitle": "Result per object",

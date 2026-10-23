@@ -37,7 +37,7 @@ export type RepairAnswer = components["schemas"]["RepairAnswer"];
 export type ObjectRepair = components["schemas"]["ObjectRepair"];
 
 /** The statement the consent dialog shows, as the contract names it. */
-export const REPAIR_STATEMENT_ID = "version_inventory_repair.v1";
+export const REPAIR_STATEMENT_ID = "version_inventory_repair.v2";
 /** Most objects one repair request may name (API-S-023). */
 export const MAX_REPAIR_OBJECTS = 1000;
 /** Most bytes one object identifier in a repair request may have. */
