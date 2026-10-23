@@ -2,12 +2,16 @@
 //! ADR 040 Decisions 3 and 7): records as `provenance/<version>.jsonld` in
 //! the version they describe, written through the change-model hook,
 //! regenerated on rebase, read back, listed, and reconstructed from
-//! inventories for versions that have none.
+//! inventories for versions that have none. Every test that stores an
+//! object runs on an in-memory storage root and on `FsBackend`.
 
 use filesquid_ocfl::change::{ChangeError, ChangeModel, StagingArea, VersionMeta};
 use filesquid_ocfl::inventory::User;
 use filesquid_ocfl::read::Object;
-use filesquid_ocfl::storage::{complete_immediately, MemoryBackend};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use filesquid_ocfl::storage::{complete_immediately, FsBackend, MemoryBackend, StorageBackend};
 use filesquid_ocfl::write::{rfc3339_utc, LeaseConfig, LeaseStore, SystemClock};
 use filesquid_ocfl::VersionNum;
 use filesquid_prov::ocfl::{
@@ -20,11 +24,22 @@ const OBJECT_ID: &str = "urn:uuid:6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b";
 const ROOT: &str = "objects/a";
 const INSTALLATION: &str = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
 
-/// Storage root, leases and staging for one test.
-struct Rig {
-    storage: MemoryBackend,
+/// Scratch directory for one filesystem backend, removed on drop.
+struct Scratch(PathBuf);
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// Storage root on backend `B`, with leases and staging in memory, for one
+/// test. A filesystem rig owns its scratch directory.
+struct Rig<B> {
+    storage: B,
     leases: LeaseStore<MemoryBackend, SystemClock>,
     staging: MemoryBackend,
+    _scratch: Option<Scratch>,
 }
 
 fn ready<F: std::future::Future>(future: F) -> F::Output {
@@ -35,26 +50,52 @@ fn v(name: &str) -> VersionNum {
     VersionNum::parse(name).expect("version")
 }
 
-impl Rig {
-    fn new() -> Self {
-        let leases = LeaseStore::new(
-            MemoryBackend::new(),
-            "leases",
-            SystemClock,
-            LeaseConfig::default(),
-        )
-        .expect("leases");
+/// An in-memory lease store.
+fn leases() -> LeaseStore<MemoryBackend, SystemClock> {
+    LeaseStore::new(
+        MemoryBackend::new(),
+        "leases",
+        SystemClock,
+        LeaseConfig::default(),
+    )
+    .expect("leases")
+}
+
+impl Rig<MemoryBackend> {
+    /// A rig whose storage root is in memory.
+    fn memory() -> Self {
         Self {
             storage: MemoryBackend::new(),
-            leases,
+            leases: leases(),
             staging: MemoryBackend::new(),
+            _scratch: None,
         }
     }
+}
 
+impl Rig<FsBackend> {
+    /// A rig whose storage root is a fresh directory.
+    fn fs() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+            .join(format!("prov-ocfl-{}-{n}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let storage = FsBackend::new(dir.join("root"), dir.join("staging")).expect("fs backend");
+        Self {
+            storage,
+            leases: leases(),
+            staging: MemoryBackend::new(),
+            _scratch: Some(Scratch(dir)),
+        }
+    }
+}
+
+impl<B: StorageBackend> Rig<B> {
     fn model(
         &self,
         holder: &str,
-    ) -> ChangeModel<'_, MemoryBackend, LeaseStore<MemoryBackend, SystemClock>, MemoryBackend> {
+    ) -> ChangeModel<'_, B, LeaseStore<MemoryBackend, SystemClock>, MemoryBackend> {
         let staging = StagingArea::new(&self.staging, &format!("changes/{holder}")).unwrap();
         ChangeModel::new(
             &self.storage,
@@ -66,7 +107,7 @@ impl Rig {
         )
     }
 
-    fn object(&self) -> Object<'_, MemoryBackend> {
+    fn object(&self) -> Object<'_, B> {
         ready(Object::open(&self.storage, ROOT)).expect("open")
     }
 
@@ -78,6 +119,14 @@ impl Rig {
         }
         ready(m.commit(meta)).unwrap().version
     }
+}
+
+/// Run `$scenario` on an in-memory storage root and on `FsBackend`.
+macro_rules! on_both {
+    ($scenario:ident) => {{
+        $scenario(&Rig::memory());
+        $scenario(&Rig::fs());
+    }};
 }
 
 fn created(n: u64) -> String {
@@ -100,9 +149,7 @@ fn operation(id: &str, kind: &str) -> OperationFacts {
     }
 }
 
-#[test]
-fn a_commit_writes_its_record_named_after_its_version() {
-    let rig = Rig::new();
+fn a_commit_writes_its_record_named_after_its_version_on<B: StorageBackend>(rig: &Rig<B>) {
     rig.commit_plain(&[("a.txt", b"alpha")], VersionMeta::new(created(1)));
     let m = rig.model("writer");
     ready(m.stage_bytes("a.txt", b"alpha two")).unwrap();
@@ -137,8 +184,11 @@ fn a_commit_writes_its_record_named_after_its_version() {
 }
 
 #[test]
-fn a_rebased_commit_regenerates_its_record_for_the_new_version() {
-    let rig = Rig::new();
+fn a_commit_writes_its_record_named_after_its_version() {
+    on_both!(a_commit_writes_its_record_named_after_its_version_on);
+}
+
+fn a_rebased_commit_regenerates_its_record_for_the_new_version_on<B: StorageBackend>(rig: &Rig<B>) {
     rig.commit_plain(&[("a.txt", b"alpha")], VersionMeta::new(created(1)));
     let mine = rig.model("mine");
     ready(mine.stage_bytes("b.txt", b"bravo")).unwrap();
@@ -156,8 +206,11 @@ fn a_rebased_commit_regenerates_its_record_for_the_new_version() {
 }
 
 #[test]
-fn records_are_listed_and_a_version_without_one_reads_as_none() {
-    let rig = Rig::new();
+fn a_rebased_commit_regenerates_its_record_for_the_new_version() {
+    on_both!(a_rebased_commit_regenerates_its_record_for_the_new_version_on);
+}
+
+fn records_are_listed_and_a_version_without_one_reads_as_none_on<B: StorageBackend>(rig: &Rig<B>) {
     rig.commit_plain(&[("a.txt", b"alpha")], VersionMeta::new(created(1)));
     let m = rig.model("writer");
     ready(m.stage_bytes("b.txt", b"bravo")).unwrap();
@@ -170,8 +223,13 @@ fn records_are_listed_and_a_version_without_one_reads_as_none() {
 }
 
 #[test]
-fn a_reconstructed_record_invents_no_agent_and_reads_the_operation_message() {
-    let rig = Rig::new();
+fn records_are_listed_and_a_version_without_one_reads_as_none() {
+    on_both!(records_are_listed_and_a_version_without_one_reads_as_none_on);
+}
+
+fn a_reconstructed_record_invents_no_agent_and_reads_the_operation_message_on<B: StorageBackend>(
+    rig: &Rig<B>,
+) {
     rig.commit_plain(&[("a.txt", b"alpha")], VersionMeta::new(created(1)));
     let message = r#"filesquid.operation.v1 {"operation_id":"op-7","kind":"rename"}"#;
     let user = User {
@@ -212,8 +270,13 @@ fn a_reconstructed_record_invents_no_agent_and_reads_the_operation_message() {
 }
 
 #[test]
-fn backfill_stages_every_missing_record_and_commits_them_in_one_version() {
-    let rig = Rig::new();
+fn a_reconstructed_record_invents_no_agent_and_reads_the_operation_message() {
+    on_both!(a_reconstructed_record_invents_no_agent_and_reads_the_operation_message_on);
+}
+
+fn backfill_stages_every_missing_record_and_commits_them_in_one_version_on<B: StorageBackend>(
+    rig: &Rig<B>,
+) {
     for n in 1..=3u64 {
         let name = format!("f{n}.txt");
         rig.commit_plain(
@@ -248,8 +311,11 @@ fn backfill_stages_every_missing_record_and_commits_them_in_one_version() {
 }
 
 #[test]
-fn backfill_is_capped_per_run() {
-    let rig = Rig::new();
+fn backfill_stages_every_missing_record_and_commits_them_in_one_version() {
+    on_both!(backfill_stages_every_missing_record_and_commits_them_in_one_version_on);
+}
+
+fn backfill_is_capped_per_run_on<B: StorageBackend>(rig: &Rig<B>) {
     for n in 1..=3u64 {
         let name = format!("f{n}.txt");
         rig.commit_plain(
@@ -263,13 +329,18 @@ fn backfill_is_capped_per_run() {
 }
 
 #[test]
+fn backfill_is_capped_per_run() {
+    on_both!(backfill_is_capped_per_run_on);
+}
+
+#[test]
 fn record_paths_follow_the_version_name() {
     assert_eq!(record_path("v3"), "provenance/v3.jsonld");
 }
 
-#[test]
-fn a_record_path_in_the_head_never_answers_for_an_uncommitted_version() {
-    let rig = Rig::new();
+fn a_record_path_in_the_head_never_answers_for_an_uncommitted_version_on<B: StorageBackend>(
+    rig: &Rig<B>,
+) {
     let first = rig.commit_plain(&[("a.txt", b"alpha")], VersionMeta::new(created(1)));
     let stray = reconstruct(rig.object().inventory(), &first, &created(9)).unwrap();
     let bytes = to_json_ld(&stray).into_bytes();
@@ -283,37 +354,52 @@ fn a_record_path_in_the_head_never_answers_for_an_uncommitted_version() {
     assert!(matches!(err, RecordError::Read(_)), "{err}");
 }
 
-/// Reconstruct `v1` of an object whose only version carries `message`.
-fn reconstruct_with_message(message: &str) -> Record {
-    let rig = Rig::new();
+#[test]
+fn a_record_path_in_the_head_never_answers_for_an_uncommitted_version() {
+    on_both!(a_record_path_in_the_head_never_answers_for_an_uncommitted_version_on);
+}
+
+/// Reconstruct `v1` of an object on `rig` whose only version carries
+/// `message`.
+fn reconstruct_on<B: StorageBackend>(rig: &Rig<B>, message: &str) -> Record {
     let meta = VersionMeta::new(created(1)).with_message(message);
     let version = rig.commit_plain(&[("a.txt", b"alpha")], meta);
     reconstruct(rig.object().inventory(), &version, &created(9)).expect("reconstruct")
 }
 
+/// Reconstruct `v1` of an object whose only version carries `message`, on
+/// an in-memory storage root and on `FsBackend`; both records are returned.
+fn reconstruct_with_message(message: &str) -> [Record; 2] {
+    [
+        reconstruct_on(&Rig::memory(), message),
+        reconstruct_on(&Rig::fs(), message),
+    ]
+}
+
 #[test]
 fn malformed_operation_fields_fall_back_to_the_placeholders() {
-    let record = reconstruct_with_message(
+    let spaced = reconstruct_with_message(
         r#"filesquid.operation.v1 {"operation_id":"has space","kind":"Not a kind!"}"#,
     );
-    assert_eq!(record.activity().operation(), "unrecorded");
-    assert_eq!(record.activity().kind(), "unknown");
-    let record = reconstruct_with_message(r#"filesquid.operation.v1 {"operation_id":"","kind":7}"#);
-    assert_eq!(record.activity().operation(), "unrecorded");
-    assert_eq!(record.activity().kind(), "unknown");
+    let empty = reconstruct_with_message(r#"filesquid.operation.v1 {"operation_id":"","kind":7}"#);
+    for record in spaced.iter().chain(&empty) {
+        assert_eq!(record.activity().operation(), "unrecorded");
+        assert_eq!(record.activity().kind(), "unknown");
+    }
 }
 
 #[test]
 fn a_catalog_message_without_a_kind_keeps_its_operation_id() {
     let message = r#"filesquid.operation.v1 {"operation_id":"op-8","revision":"12","created_id":"c-1","deletion":{"deleted_at":"2026-10-19T10:00:00Z"}}"#;
-    let record = reconstruct_with_message(message);
-    assert_eq!(record.activity().operation(), "op-8");
-    assert_eq!(record.activity().kind(), "unknown");
+    for record in reconstruct_with_message(message) {
+        assert_eq!(record.activity().operation(), "op-8");
+        assert_eq!(record.activity().kind(), "unknown");
+    }
 }
 
-#[test]
-fn backfill_refuses_an_object_its_change_model_does_not_commit_to() {
-    let rig = Rig::new();
+fn backfill_refuses_an_object_its_change_model_does_not_commit_to_on<B: StorageBackend>(
+    rig: &Rig<B>,
+) {
     rig.commit_plain(&[("a.txt", b"alpha")], VersionMeta::new(created(1)));
     let staging = StagingArea::new(&rig.staging, "changes/other").unwrap();
     let other = ChangeModel::new(
@@ -333,8 +419,13 @@ fn backfill_refuses_an_object_its_change_model_does_not_commit_to() {
 }
 
 #[test]
-fn a_record_a_revert_removed_from_the_head_is_not_reconstructed() {
-    let rig = Rig::new();
+fn backfill_refuses_an_object_its_change_model_does_not_commit_to() {
+    on_both!(backfill_refuses_an_object_its_change_model_does_not_commit_to_on);
+}
+
+fn a_record_a_revert_removed_from_the_head_is_not_reconstructed_on<B: StorageBackend>(
+    rig: &Rig<B>,
+) {
     rig.commit_plain(&[("a.txt", b"alpha")], VersionMeta::new(created(1)));
     let m = rig.model("writer");
     ready(m.stage_bytes("b.txt", b"bravo")).unwrap();
@@ -353,4 +444,9 @@ fn a_record_a_revert_removed_from_the_head_is_not_reconstructed() {
         [v("v2")],
         "history still lists the record of v2"
     );
+}
+
+#[test]
+fn a_record_a_revert_removed_from_the_head_is_not_reconstructed() {
+    on_both!(a_record_a_revert_removed_from_the_head_is_not_reconstructed_on);
 }
