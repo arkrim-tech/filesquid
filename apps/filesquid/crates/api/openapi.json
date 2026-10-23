@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "FileSquid API",
-    "version": "0.25.0",
+    "version": "0.26.0",
     "description": "The single FileSquid API served by every FileSquid host. See resources/architecture/030-filesquid-api-and-transports.md. Conventions: a command (mutation) sends a CommandEnvelope as the `envelope` member of its JSON request body (operation_id is the idempotency key, expected_revision the revision last read) and answers with a CommandOutcome; a query (list) takes the PageSize (`limit`, 1-1000) and Cursor (`cursor`) parameters; every failed request answers with an ApiError body (code, message, retryable). Router-wide fallbacks: any /api/v1/ path not in this contract answers 404 not_found, and a documented path called with a method it does not document answers 405 method_not_allowed; both carry the ApiError body. They are not listed per operation because no operation sends them. Authorisation is deny-by-default: every operation, including health, the contract and the event channel, requires the bearerAuth credential and is authorised before anything else runs, so a call without it answers 401 unauthorized and a call whose credential is not accepted or does not grant the operation answers 403 forbidden, before any 404 or 405; both carry the ApiError body with a DenialReason in `reason`. Each operation names the authorisation action it performs in x-filesquid-action. The one deliberate exception is GET /api/v1/health/live (x-filesquid-action public, security []), a liveness probe that answers only {\"status\":\"up\"} without a credential. The content route GET and HEAD /api/v1/content/{handle} (x-filesquid-action content.read, x-filesquid-credential content-handle, security []) is not public: its only credential is the content handle in its path, minted by POST /api/v1/content-handles for one file version (API-S-018); a Bearer token is not accepted there, and every unusable request under /api/v1/content/ (unknown, malformed, missing, expired, evicted or revoked handle, an extra path segment or another method) answers one identical 403 forbidden with reason invalid_credentials, never 401, 404 or 405. Paths marked x-filesquid-host-route are served by the hosts, not by the filesquid-api router."
   },
   "security": [
@@ -4022,6 +4022,132 @@
           }
         }
       }
+    },
+    "/api/v1/libraries/renames": {
+      "post": {
+        "operationId": "renameLibrary",
+        "summary": "Rename a library",
+        "description": "Renames a library this host opened (API-S-038) and answers its facts. The name follows the rules of API-S-019: 1 to 1,024 bytes, not blank, no control characters (invalid_request with the code invalid_name). A library this host never opened is 404 not_found (library_not_found). A rename is journaled as library.rename with the library ID only, never the name; a rename to the current name changes nothing and is not journaled. A host without a library registry, filesquid-server among them, answers 503 unavailable. Takes a plain body: the library routes take a CommandEnvelope from API-F2.19.",
+        "x-filesquid-action": "library.manage",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameLibraryRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The library's facts after the rename.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryFacts"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/LibraryNotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/LibraryUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/libraries/{library}/facts": {
+      "get": {
+        "operationId": "getLibraryFacts",
+        "summary": "A library's name and free space",
+        "description": "Answers {library_id, name, free_bytes, free_bytes_reason} of a library this host opened (API-S-038): free_bytes is the free space of the volume that holds its storage root, or null with free_bytes_reason volume_unreadable (the volume could not be read; every build other than Linux and macOS until DE-F3.3) or not_local. Readable by anyone who may read the library, not by administrators only. An unknown library, or one the caller may not read, is 404 not_found; each refusal is journaled once as library.facts. A host without a library registry, filesquid-server among them, answers 503 unavailable. Never a path, storage key or location ID.",
+        "x-filesquid-action": "library.read",
+        "parameters": [
+          {
+            "name": "library",
+            "in": "path",
+            "required": true,
+            "description": "The library ID.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The library's facts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryFacts"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/LibraryNotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/LibraryUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/libraries/recent": {
+      "get": {
+        "operationId": "listRecentLibraries",
+        "summary": "The libraries this host opened",
+        "description": "First keeps only the libraries this host opened that the caller may read, then lists at most 20 of them, newest first (API-S-038): each with its ID, name, last opened time (RFC 3339 UTC), whether it is open now and the free bytes of its volume when its folder is reachable. Never a path, storage key or location ID. A host without a library registry, filesquid-server among them, answers 503 unavailable, journaled once as library.recent.",
+        "x-filesquid-action": "library.read",
+        "responses": {
+          "200": {
+            "description": "The recent libraries.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecentLibraries"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/LibraryUnavailable"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -5775,7 +5901,7 @@
       },
       "LibraryLocationRequest": {
         "type": "object",
-        "description": "Body of POST /api/v1/libraries and POST /api/v1/libraries/openings: the folder the owner chose, by the opaque location ID the host registered it under, never by its path.",
+        "description": "Body of POST /api/v1/libraries and POST /api/v1/libraries/openings: the folder the owner chose, by the opaque location ID the host registered it under, never by its path. Since contract 0.26.0 it may carry the library's name.",
         "required": [
           "location_id"
         ],
@@ -5791,6 +5917,12 @@
             "description": "The library ID to use, at most 128 bytes; a new UUID v4 when absent.",
             "minLength": 1,
             "maxLength": 128
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "The library's name (API-S-038): 1 to 1,024 bytes, not blank, no control characters; refused as invalid_request with the code invalid_name otherwise. Kept when given; a library first bound without one is named \"Untitled library\"."
           }
         },
         "additionalProperties": false
@@ -8443,6 +8575,149 @@
               }
             ],
             "description": "The version message, 1 to 1,024 bytes and not blank."
+          }
+        }
+      },
+      "FreeBytesReason": {
+        "type": "string",
+        "enum": [
+          "volume_unreadable",
+          "not_local"
+        ],
+        "description": "Why free_bytes is null: the volume could not be read (or this build does not read it), or the storage is not a local volume."
+      },
+      "LibraryFacts": {
+        "type": "object",
+        "description": "A library's facts (API-S-038): its ID, name and the free bytes of the volume that holds its storage root. Never a path, storage key or location ID.",
+        "required": [
+          "library_id",
+          "name",
+          "free_bytes",
+          "free_bytes_reason"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "Its name."
+          },
+          "free_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "description": "The bytes free on the volume that holds the library's storage root, or null."
+          },
+          "free_bytes_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FreeBytesReason"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why free_bytes is null; null when it is known."
+          }
+        }
+      },
+      "RecentLibrary": {
+        "type": "object",
+        "description": "One library this host opened (API-S-038). Never a path, storage key or location ID.",
+        "required": [
+          "library_id",
+          "name",
+          "last_opened",
+          "open",
+          "free_bytes",
+          "free_bytes_reason"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "description": "The library."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "Its name."
+          },
+          "last_opened": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it was last created or opened, RFC 3339 UTC."
+          },
+          "open": {
+            "type": "boolean",
+            "description": "Whether it is open on this host now."
+          },
+          "free_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "description": "The free bytes of its volume when its folder is reachable, or null."
+          },
+          "free_bytes_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FreeBytesReason"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why free_bytes is null; null when it is known."
+          }
+        }
+      },
+      "RecentLibraries": {
+        "type": "object",
+        "description": "The libraries this host opened that the caller may read: at most 20, newest first.",
+        "required": [
+          "libraries"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "libraries": {
+            "type": "array",
+                        "items": {
+              "$ref": "#/components/schemas/RecentLibrary"
+            },
+            "description": "Newest first."
+          }
+        }
+      },
+      "RenameLibraryRequest": {
+        "type": "object",
+        "description": "Body of POST /api/v1/libraries/renames (a plain body; the library routes take a CommandEnvelope from API-F2.19).",
+        "required": [
+          "library_id",
+          "name"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "A library this host opened."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "Its new name: 1 to 1,024 bytes, not blank, no control characters."
           }
         }
       }

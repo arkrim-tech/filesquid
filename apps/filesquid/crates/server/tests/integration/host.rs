@@ -382,3 +382,32 @@ async fn the_server_offers_no_folder_dialog_or_backfill_launcher_yet() {
     host.stop();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[tokio::test]
+async fn the_server_keeps_no_library_registry_so_the_library_facts_are_unavailable() {
+    let dir = data_dir("no-registry");
+    let config = config(&dir, Some("Example Archive")).expect("config");
+    let state = ApiState::new();
+    let host = start_server(&config, &state, None).expect("server starts");
+    let library = "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b";
+    for path in [
+        "/api/v1/libraries/recent".to_string(),
+        format!("/api/v1/libraries/{library}/facts"),
+    ] {
+        let request = Request::get(path.as_str())
+            .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+            .body(Body::empty())
+            .expect("request");
+        let response = app(&config, state.clone())
+            .oneshot(request)
+            .await
+            .expect("answer");
+        assert_eq!(response.status().as_u16(), 503, "{path}");
+    }
+    let body = serde_json::json!({ "library_id": library, "name": "Archive" });
+    let (status, answer) = post(state.clone(), &config, "/api/v1/libraries/renames", body).await;
+    assert_eq!(status, 503, "{answer}");
+    assert_eq!(answer["code"], "unavailable");
+    host.stop();
+    let _ = std::fs::remove_dir_all(&dir);
+}

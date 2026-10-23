@@ -1261,6 +1261,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/libraries/renames": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rename a library
+         * @description Renames a library this host opened (API-S-038) and answers its facts. The name follows the rules of API-S-019: 1 to 1,024 bytes, not blank, no control characters (invalid_request with the code invalid_name). A library this host never opened is 404 not_found (library_not_found). A rename is journaled as library.rename with the library ID only, never the name; a rename to the current name changes nothing and is not journaled. A host without a library registry, filesquid-server among them, answers 503 unavailable. Takes a plain body: the library routes take a CommandEnvelope from API-F2.19.
+         */
+        post: operations["renameLibrary"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/libraries/{library}/facts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A library's name and free space
+         * @description Answers {library_id, name, free_bytes, free_bytes_reason} of a library this host opened (API-S-038): free_bytes is the free space of the volume that holds its storage root, or null with free_bytes_reason volume_unreadable (the volume could not be read; every build other than Linux and macOS until DE-F3.3) or not_local. Readable by anyone who may read the library, not by administrators only. An unknown library, or one the caller may not read, is 404 not_found; each refusal is journaled once as library.facts. A host without a library registry, filesquid-server among them, answers 503 unavailable. Never a path, storage key or location ID.
+         */
+        get: operations["getLibraryFacts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/libraries/recent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The libraries this host opened
+         * @description First keeps only the libraries this host opened that the caller may read, then lists at most 20 of them, newest first (API-S-038): each with its ID, name, last opened time (RFC 3339 UTC), whether it is open now and the free bytes of its volume when its folder is reachable. Never a path, storage key or location ID. A host without a library registry, filesquid-server among them, answers 503 unavailable, journaled once as library.recent.
+         */
+        get: operations["listRecentLibraries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1811,12 +1871,14 @@ export interface components {
              */
             all?: true;
         };
-        /** @description Body of POST /api/v1/libraries and POST /api/v1/libraries/openings: the folder the owner chose, by the opaque location ID the host registered it under, never by its path. */
+        /** @description Body of POST /api/v1/libraries and POST /api/v1/libraries/openings: the folder the owner chose, by the opaque location ID the host registered it under, never by its path. Since contract 0.26.0 it may carry the library's name. */
         LibraryLocationRequest: {
             /** @description The opaque location ID, 1 to 128 bytes. */
             location_id: string;
             /** @description The library ID to use, at most 128 bytes; a new UUID v4 when absent. */
             library_id?: string;
+            /** @description The library's name (API-S-038): 1 to 1,024 bytes, not blank, no control characters; refused as invalid_request with the code invalid_name otherwise. Kept when given; a library first bound without one is named "Untitled library". */
+            name?: string;
         };
         /** @description A created or opened library. */
         LibraryView: {
@@ -2724,6 +2786,52 @@ export interface components {
             name_normalization?: ("nfc" | "nfd" | "nfkc" | "nfkd" | "unnormalised") | null;
             /** @description The version message, 1 to 1,024 bytes and not blank. */
             message?: string | null;
+        };
+        /**
+         * @description Why free_bytes is null: the volume could not be read (or this build does not read it), or the storage is not a local volume.
+         * @enum {string}
+         */
+        FreeBytesReason: "volume_unreadable" | "not_local";
+        /** @description A library's facts (API-S-038): its ID, name and the free bytes of the volume that holds its storage root. Never a path, storage key or location ID. */
+        LibraryFacts: {
+            /** @description The library. */
+            library_id: string;
+            /** @description Its name. */
+            name: string;
+            /** @description The bytes free on the volume that holds the library's storage root, or null. */
+            free_bytes: number | null;
+            /** @description Why free_bytes is null; null when it is known. */
+            free_bytes_reason: components["schemas"]["FreeBytesReason"] | null;
+        };
+        /** @description One library this host opened (API-S-038). Never a path, storage key or location ID. */
+        RecentLibrary: {
+            /** @description The library. */
+            library_id: string;
+            /** @description Its name. */
+            name: string;
+            /**
+             * Format: date-time
+             * @description When it was last created or opened, RFC 3339 UTC.
+             */
+            last_opened: string;
+            /** @description Whether it is open on this host now. */
+            open: boolean;
+            /** @description The free bytes of its volume when its folder is reachable, or null. */
+            free_bytes: number | null;
+            /** @description Why free_bytes is null; null when it is known. */
+            free_bytes_reason: components["schemas"]["FreeBytesReason"] | null;
+        };
+        /** @description The libraries this host opened that the caller may read: at most 20, newest first. */
+        RecentLibraries: {
+            /** @description Newest first. */
+            libraries: components["schemas"]["RecentLibrary"][];
+        };
+        /** @description Body of POST /api/v1/libraries/renames (a plain body; the library routes take a CommandEnvelope from API-F2.19). */
+        RenameLibraryRequest: {
+            /** @description A library this host opened. */
+            library_id: string;
+            /** @description Its new name: 1 to 1,024 bytes, not blank, no control characters. */
+            name: string;
         };
     };
     responses: {
@@ -5226,6 +5334,88 @@ export interface operations {
             409: components["responses"]["JobConflict"];
             500: components["responses"]["Internal"];
             503: components["responses"]["JobsUnavailable"];
+        };
+    };
+    renameLibrary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RenameLibraryRequest"];
+            };
+        };
+        responses: {
+            /** @description The library's facts after the rename. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryFacts"];
+                };
+            };
+            400: components["responses"]["InvalidRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LibraryNotFound"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["LibraryUnavailable"];
+        };
+    };
+    getLibraryFacts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The library ID. */
+                library: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The library's facts. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryFacts"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["LibraryNotFound"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["LibraryUnavailable"];
+        };
+    };
+    listRecentLibraries: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The recent libraries. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecentLibraries"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["Internal"];
+            503: components["responses"]["LibraryUnavailable"];
         };
     };
 }
