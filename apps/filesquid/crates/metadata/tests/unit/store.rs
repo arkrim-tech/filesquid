@@ -591,4 +591,93 @@ mod commit_options {
         );
         assert_eq!(rig.versions(OBJECT_ID), ["v1", "v2"]);
     }
+
+    /// A clock that lets another writer commit `other.txt` the first time
+    /// the store reads it: after the edit is staged and before its commit
+    /// reserves a version, so the commit is rebased onto the new head.
+    struct InterleavingClock<'r, B: StorageBackend> {
+        rig: &'r Rig<B>,
+        moved: std::sync::atomic::AtomicBool,
+    }
+
+    impl<B: StorageBackend> filesquid_ocfl::write::Clock for InterleavingClock<'_, B> {
+        fn now_millis(&self) -> Option<u64> {
+            if !self.moved.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                self.rig.seed(OBJECT_ID, &[("other.txt", b"other")]);
+            }
+            SystemClock.now_millis()
+        }
+    }
+
+    /// Edit the photo's record with a version-bound record file while
+    /// another writer moves the head from `v1` to `v2`, and check the edit
+    /// is rebased to `v3` with the file regenerated for `v3`.
+    fn rebased_edit_regenerates_on<B: StorageBackend>(rig: &Rig<B>) {
+        rig.seed(OBJECT_ID, &[("photo.jpg", b"pixels")]);
+        let clock = InterleavingClock {
+            rig,
+            moved: std::sync::atomic::AtomicBool::new(false),
+        };
+        let store = OcflStore {
+            storage: &rig.storage,
+            reservations: &rig.leases,
+            staging: &rig.staging,
+            staging_prefix: "metadata-changes".to_string(),
+            holder: "metadata-test".to_string(),
+            clock,
+            object_root: object_root as fn(&str) -> String,
+        };
+        let seen = std::sync::Mutex::new(Vec::new());
+        let record_file = |context: &BoundContext<'_>| {
+            seen.lock().unwrap().push(context.version.to_string());
+            let name = format!("provenance/{}.jsonld", context.version);
+            let body = format!("{} {}", context.version, context.created);
+            Ok(BTreeMap::from([(name, body.into_bytes())]))
+        };
+        let options = CommitOptions {
+            bound: Some(&record_file),
+            ..CommitOptions::default()
+        };
+        let receipt = ready(store.commit_record_with(&photo(), &titled("Harbour"), &options))
+            .expect("commit")
+            .expect("a version");
+        assert!(store.clock.moved.load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(
+            receipt.version,
+            v("v3"),
+            "rebased past the other writer's v2"
+        );
+        assert_eq!(seen.lock().unwrap().last().map(String::as_str), Some("v3"));
+        let object = ready(Object::open(&rig.storage, &object_root(OBJECT_ID))).unwrap();
+        let state = object.state(&v("v3")).unwrap();
+        assert!(state.get("provenance/v3.jsonld").is_some(), "regenerated");
+        assert!(state.get("provenance/v2.jsonld").is_none(), "no stale file");
+        assert!(
+            state.get("other.txt").is_some(),
+            "the other writer's change kept"
+        );
+        let mut reader = object
+            .stream_file(&v("v3"), "provenance/v3.jsonld", 1 << 16)
+            .unwrap();
+        let mut bytes = Vec::new();
+        while let Some(chunk) = ready(reader.next_chunk()).unwrap() {
+            bytes.extend(chunk);
+        }
+        assert_eq!(bytes, format!("v3 {}", receipt.created).into_bytes());
+        assert_eq!(title_at(rig, None).as_deref(), Some("Harbour"));
+        let report = ready(validate_object(&rig.storage, &object_root(OBJECT_ID))).unwrap();
+        assert!(report.is_valid(), "{:?}", report.errors());
+    }
+
+    #[test]
+    fn a_rebased_edit_regenerates_its_bound_file_for_the_new_version() {
+        rebased_edit_regenerates_on(&Rig::memory());
+        let dir = std::env::temp_dir().join(format!("md-0.9-rebase-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let storage =
+            filesquid_ocfl::storage::FsBackend::new(dir.join("root"), dir.join("multipart"))
+                .expect("fs backend");
+        rebased_edit_regenerates_on(&Rig::over(storage));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }
