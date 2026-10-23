@@ -12,7 +12,7 @@
 use std::fmt;
 
 use super::committed::read_committed;
-use super::copy_guard::refuse_copy_into_ocfl_root;
+use super::copy_guard::{refuse_copy_into_ocfl_root, CopyConcern};
 use super::declaration::read_declaration;
 use super::error::ReadError;
 use super::history::{diff_versions, version_history, Change, VersionInfo};
@@ -204,7 +204,11 @@ impl<'a, B: StorageBackend> Object<'a, B> {
         precondition: Option<&Precondition>,
     ) -> Result<ObjectMeta, ReadError> {
         let source = self.stream_file(version, path, MAX_CHUNK_BYTES)?;
-        refuse_copy_into_ocfl_root(dest, dest_key).await?;
+        let concern = CopyConcern {
+            object: self.id(),
+            version: Some(version),
+        };
+        refuse_copy_into_ocfl_root(dest, dest_key, concern).await?;
         copy_to(source, dest, dest_key.clone(), precondition).await
     }
 }
