@@ -158,6 +158,11 @@ path = "tests/integration/independent_recovery.rs"
 required-features = ["fs"]
 
 [[test]]
+name = "integration_copy_guard_warnings"
+path = "tests/integration/copy_guard_warnings.rs"
+required-features = ["fs"]
+
+[[test]]
 name = "integration_view_api"
 path = "tests/integration/view_api.rs"
 required-features = ["fs"]
