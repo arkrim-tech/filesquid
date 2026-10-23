@@ -8,6 +8,10 @@
 //! candidate, not repaired. An object that cannot be opened, resolved or validated is
 //! reported by its error code only, and the rebuild goes on. Nothing is written to the
 //! storage root; the journal half (`journal_rebuild`) writes only to the journal store.
+//!
+//! A rebuild may start after a cursor, the root of the last object a durable job checkpointed
+//! (`rebuild_job`, API-S-025 **Rebuild as a job**), so a resumed job reads no completed object
+//! again; its [`RebuildProgress`] is told about each object and may stop it.
 
 use super::candidates::head_files;
 use super::error::{is_outage, LocalLibraryError};
@@ -16,6 +20,7 @@ use filesquid_ocfl::read::{Object, StorageRoot};
 use filesquid_ocfl::storage::StorageBackend;
 use filesquid_ocfl::{validate_object, ReadError};
 use serde::{Deserialize, Serialize};
+use std::ops::ControlFlow;
 
 /// One object rebuilt from its files.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,6 +59,63 @@ pub struct RebuildReport {
     pub journal: Option<JournalRebuild>,
 }
 
+/// What a rebuild found of one object.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RebuildEntry {
+    /// The object was read.
+    Read(RebuiltObject),
+    /// The object could not be opened or read.
+    Unreadable(UnreadableObject),
+}
+
+/// One object a rebuild went through, as its [`RebuildProgress`] is told.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RebuildStep<'a> {
+    /// The object's root in the storage root: the cursor a resumed rebuild starts after. It
+    /// is a storage key, so it MUST NOT be answered or journaled (API-S-005).
+    pub root: &'a str,
+    /// What was found.
+    pub entry: RebuildEntry,
+    /// Objects gone through so far, in object-root order, those before the cursor included.
+    pub done: u64,
+    /// Objects in the storage root.
+    pub total: u64,
+}
+
+/// Where a rebuild is told about each object it goes through, and may stop it.
+pub trait RebuildProgress {
+    /// `step` was gone through. [`ControlFlow::Break`] stops the rebuild before the next
+    /// object.
+    fn object(&mut self, step: RebuildStep<'_>) -> ControlFlow<()>;
+}
+
+/// How a rebuild from a cursor ended.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RebuildEnd {
+    /// Every object after the cursor was gone through.
+    Finished {
+        /// Objects in the storage root.
+        total: u64,
+        /// What the journal rebuild restored, when the host installed a journal restore.
+        journal: Option<JournalRebuild>,
+    },
+    /// The progress stopped it before its last object.
+    Stopped,
+}
+
+/// The progress of a one-shot rebuild: every object collected into one report.
+struct Collect(RebuildReport);
+
+impl RebuildProgress for Collect {
+    fn object(&mut self, step: RebuildStep<'_>) -> ControlFlow<()> {
+        match step.entry {
+            RebuildEntry::Read(object) => self.0.objects.push(object),
+            RebuildEntry::Unreadable(item) => self.0.unreadable.push(item),
+        }
+        ControlFlow::Continue(())
+    }
+}
+
 /// Read every object of `backend`'s storage root from its files. Writes nothing.
 ///
 /// # Errors
@@ -62,25 +124,70 @@ pub struct RebuildReport {
 pub(super) async fn rebuild<B: StorageBackend>(
     backend: &B,
 ) -> Result<RebuildReport, LocalLibraryError> {
+    let mut collect = Collect(RebuildReport {
+        objects: Vec::new(),
+        unreadable: Vec::new(),
+        journal: None,
+    });
+    rebuild_from(backend, None, &mut collect).await?;
+    Ok(collect.0)
+}
+
+/// Read, in object-root order, every object of `backend`'s storage root whose root sorts
+/// after `after` (all of them without a cursor), telling `progress` about each one; an object
+/// at or before the cursor is not opened. Writes nothing. Answers the number of objects in
+/// the storage root, or `None` when `progress` stopped it.
+///
+/// # Errors
+///
+/// The open errors of the storage root; `unavailable` for a storage failure.
+pub(super) async fn rebuild_from<B: StorageBackend>(
+    backend: &B,
+    after: Option<&str>,
+    progress: &mut (dyn RebuildProgress + Send),
+) -> Result<Option<u64>, LocalLibraryError> {
     let storage = StorageRoot::open(backend)
         .await
         .map_err(|err| LocalLibraryError::from_open(&err))?;
-    let mut report = RebuildReport {
-        objects: Vec::with_capacity(storage.objects().len()),
-        unreadable: Vec::new(),
-        journal: None,
-    };
-    for root in storage.objects() {
-        let read = match storage.open_object(root).await {
-            Ok(object) => rebuilt(backend, &object).await,
-            Err(err) => Err(err),
+    let roots = storage.objects();
+    let total = roots.len() as u64;
+    let start = after.map_or(0, |after| {
+        roots.partition_point(|root| root.as_str() <= after)
+    });
+    for (index, root) in roots.iter().enumerate().skip(start) {
+        let entry = read_object(backend, &storage, root).await?;
+        let done = index as u64 + 1;
+        let step = RebuildStep {
+            root,
+            entry,
+            done,
+            total,
         };
-        match read {
-            Ok(object) => report.objects.push(object),
-            Err(err) => report.unreadable.push(unreadable(&err)?),
+        if progress.object(step).is_break() {
+            return Ok(None);
         }
     }
-    Ok(report)
+    Ok(Some(total))
+}
+
+/// What one object holds, or why it is unreadable.
+///
+/// # Errors
+///
+/// `unavailable` (or `internal`) for a storage outage, which stops the rebuild.
+async fn read_object<B: StorageBackend>(
+    backend: &B,
+    storage: &StorageRoot<'_, B>,
+    root: &str,
+) -> Result<RebuildEntry, LocalLibraryError> {
+    let read = match storage.open_object(root).await {
+        Ok(object) => rebuilt(backend, &object).await,
+        Err(err) => Err(err),
+    };
+    match read {
+        Ok(object) => Ok(RebuildEntry::Read(object)),
+        Err(err) => unreadable(&err).map(RebuildEntry::Unreadable),
+    }
 }
 
 /// The rebuilt view of one opened object.

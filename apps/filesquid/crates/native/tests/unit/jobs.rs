@@ -32,6 +32,7 @@ fn job(id: &str, created_ms: i64) -> Job {
         updated_ms: created_ms,
         error_code: None,
         control: None,
+        result: None,
     }
 }
 
@@ -230,6 +231,7 @@ fn a_store_made_before_controls_gains_the_column_and_keeps_its_jobs() {
     let store = open(&dir);
     let old = store.get("old").expect("read").expect("kept");
     assert_eq!(old.control, None);
+    assert_eq!(old.result, None, "the result column is added too");
     drop(store);
     open(&dir);
     let _ = std::fs::remove_dir_all(&dir);
@@ -322,4 +324,60 @@ fn held(store: &SqliteJobs, id: &str, kinds: &dyn Fn(&Job) -> Vec<String>) -> us
         })
         .expect("update");
     seen.expect("counted")
+}
+
+#[test]
+fn a_jobs_result_survives_closing_the_store() {
+    let dir = dir("result");
+    let store = open(&dir);
+    store.insert(&job("j1", 10)).unwrap();
+    let report = r#"{"objects":[],"unreadable":[]}"#;
+    store
+        .update("j1", &mut |mut job| {
+            job.state = JobState::Completed;
+            job.result = Some(report.into());
+            Ok(job)
+        })
+        .expect("updated");
+    drop(store);
+    let reopened = open(&dir).get("j1").expect("read").expect("job");
+    assert_eq!(reopened.result.as_deref(), Some(report));
+    let listed = open(&dir)
+        .list(&JobFilter {
+            kind: None,
+            state: None,
+            limit: 10,
+        })
+        .expect("list");
+    assert_eq!(listed.jobs[0].result.as_deref(), Some(report));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_store_made_with_controls_but_before_results_gains_the_result_column() {
+    let dir = dir("migrate-result");
+    let path = dir.join(JOURNAL_FILE);
+    let conn = rusqlite::Connection::open(&path).expect("sqlite");
+    conn.execute_batch(
+        "CREATE TABLE jobs (id TEXT PRIMARY KEY, kind TEXT NOT NULL, operation_id TEXT NOT NULL, \
+         source TEXT NOT NULL, state TEXT NOT NULL, checkpoint TEXT, done INTEGER NOT NULL, \
+         total INTEGER, attempts INTEGER NOT NULL, fence INTEGER NOT NULL, holder TEXT, \
+         lease_expires_ms INTEGER, created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL, \
+         error_code TEXT, control TEXT); \
+         INSERT INTO jobs VALUES ('old', 'prov.backfill', 'op-1', 'installation:a', 'pending', \
+         NULL, 0, NULL, 0, 0, NULL, NULL, 5, 5, NULL, 'pause');",
+    )
+    .expect("schema with controls");
+    drop(conn);
+    let store = open(&dir);
+    let old = store.get("old").expect("read").expect("kept");
+    assert_eq!(old.control, Some(JobControl::Pause));
+    assert_eq!(old.result, None);
+    store
+        .update("old", &mut |mut job| {
+            job.result = Some("{}".into());
+            Ok(job)
+        })
+        .expect("a result is stored after the migration");
+    let _ = std::fs::remove_dir_all(&dir);
 }
