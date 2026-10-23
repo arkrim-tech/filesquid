@@ -2,7 +2,8 @@
  * Unit tests for the history reads the Details and Versions panels use (UI-F2.3): each method
  * of `ClientHistorySource` is one GET of an existing route with the query the contract names,
  * and `ClientFileSource.restore` sends the optional label member of `POST
- * /api/v1/files/restorations` (API-F2.5).
+ * /api/v1/files/restorations` (API-F2.5) in the command's input, with the head it read as the
+ * envelope's expected revision (API-F2.13).
  */
 import { describe, expect, it, vi } from "vitest";
 import { ClientHistorySource } from "../../src/files/history-source";
@@ -64,30 +65,47 @@ describe("ClientHistorySource", () => {
   });
 });
 
+/** A client whose `command` records its calls and answers a committed restore. */
+function commandClient() {
+  const result = { library_id: "lib", object_id: "obj", version: "v8", created: "t" };
+  const command = vi.fn(async () => ({
+    operation_id: "op",
+    error: null,
+    kind: "committed",
+    result,
+  }));
+  return { command } as unknown as FileClient & { command: typeof command };
+}
+
 describe("ClientFileSource.restore", () => {
-  it("sends the label with the restore when one is given", async () => {
-    const c = client({ version: "v8" });
+  it("sends the label in the command's input and the head as its expected revision", async () => {
+    const c = commandClient();
     const object = { library_id: "lib", object_id: "obj" };
-    await new ClientFileSource(c).restore(object, "v5", ["original/a.pdf"], {
+    const commit = await new ClientFileSource(c).restore(object, "v5", ["original/a.pdf"], {
+      revision: "v7",
       label: "Back to client review",
     });
-    expect(c.request).toHaveBeenCalledWith("/api/v1/files/restorations", {
-      method: "POST",
-      body: {
+    expect(commit.version).toBe("v8");
+    expect(c.command).toHaveBeenCalledWith(
+      "/api/v1/files/restorations",
+      expect.objectContaining({ expected_revision: "v7", scope: "library:lib" }),
+      {
         library_id: "lib",
         object_id: "obj",
         version: "v5",
         paths: ["original/a.pdf"],
         label: "Back to client review",
       },
-      signal: undefined,
-    });
+      { signal: undefined },
+    );
   });
 
   it("sends no label member without one", async () => {
-    const c = client({ version: "v8" });
-    await new ClientFileSource(c).restore({ library_id: "l", object_id: "o" }, "v1", ["p"]);
-    const [, options] = c.request.mock.calls[0] as unknown as [string, { body: object }];
-    expect(options.body).not.toHaveProperty("label");
+    const c = commandClient();
+    await new ClientFileSource(c).restore({ library_id: "l", object_id: "o" }, "v1", ["p"], {
+      revision: "v2",
+    });
+    const [, , input] = c.command.mock.calls[0] as unknown as [string, object, object];
+    expect(input).not.toHaveProperty("label");
   });
 });

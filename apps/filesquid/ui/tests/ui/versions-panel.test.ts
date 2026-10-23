@@ -159,6 +159,7 @@ describe("<fs-versions-panel>", () => {
         object: { library_id: "lib", object_id: PANEL_FILE.object_id },
         version: "v5",
         paths: [PANEL_FILE.path],
+        revision: "v7",
         label: "Back to client review version",
       },
     ]);
@@ -196,6 +197,17 @@ describe("<fs-versions-panel>", () => {
     dialog.querySelector<HTMLButtonElement>("button.restore")?.click();
     await settle();
     expect(source.calls.restore).toBe(0);
+  });
+
+  it("sends the head it read as the revision, so a head moved meanwhile is refused", async () => {
+    const source = new FakePanelSource();
+    const panel = await mount(source);
+    const dialog = await openRestore(panel, "v5");
+    source.head = "v9";
+    dialog.querySelector<HTMLButtonElement>("button.restore")?.click();
+    await settle();
+    expect(source.restores).toEqual([]);
+    expect(dialog.querySelector(".error")?.textContent).toBe(labels.fileConflict);
   });
 
   it("keeps the dialog open with the refusal's words when the restore is refused", async () => {

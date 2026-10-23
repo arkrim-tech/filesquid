@@ -7,7 +7,9 @@
  * eyebrow "HISTORY {size} · NEWEST FIRST"; and the note that FileSquid keeps every version. A
  * version other than the current one has a menu with **Restore as new version**, which opens
  * the restore dialog and publishes one new version through `FileSource.restore` (API-F2.5,
- * `POST /api/v1/files/restorations`). No delete, expiry or thinning control exists.
+ * `POST /api/v1/files/restorations`), a command whose expected revision is the object's head as
+ * last read (API-F2.13); a head another writer moved meanwhile is refused as `conflict` and
+ * changes nothing. No delete, expiry or thinning control exists.
  *
  * Reads: `GET /api/v1/files/history`, `GET /api/v1/files/versions` (the head, for the next
  * version) and `GET /api/v1/files/history-size`, through {@link HistorySource}. UI-F2.11 adds
@@ -446,8 +448,8 @@ export class FsVersionsPanel extends HTMLElement {
 
   /** Check the label, then restore the version as a new version in one call. */
   private async submitRestore(row: VersionRow): Promise<void> {
-    const { options, file, dialog } = this;
-    if (!options || !file || !dialog || dialog.busy) return;
+    const { options, file, dialog, loaded } = this;
+    if (!options || !file || !dialog || !loaded || dialog.busy) return;
     const { input, error } = dialog.parts;
     if (labelProblem(input.value)) {
       input.setAttribute("aria-invalid", "true");
@@ -461,6 +463,7 @@ export class FsVersionsPanel extends HTMLElement {
     try {
       const object = { library_id: file.library_id, object_id: file.object_id };
       const commit = await options.source.restore(object, row.version, [file.path], {
+        revision: loaded.head,
         label: label === "" ? undefined : label,
       });
       this.afterRestore(options.labels, file, commit);

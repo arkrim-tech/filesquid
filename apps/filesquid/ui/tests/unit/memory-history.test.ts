@@ -24,7 +24,7 @@ function source(): MemoryFileSource {
 describe("MemoryFileSource history reads", () => {
   it("lists every version of the object, oldest first, with the head", async () => {
     const s = source();
-    await s.remove(OBJECT, "top.png");
+    await s.remove(OBJECT, "top.png", { revision: "v1" });
     const versions = await s.versions();
     expect(versions.head).toBe("v2");
     expect(versions.versions.map((v) => v.version)).toEqual(["v1", "v2"]);
@@ -33,9 +33,9 @@ describe("MemoryFileSource history reads", () => {
 
   it("lists only the versions that changed the file: added, removed and restored", async () => {
     const s = source();
-    await s.remove(OBJECT, "top.png");
-    await s.remove(OBJECT, "Docs/a.txt");
-    await s.restore(OBJECT, "v1", ["Docs/a.txt"]);
+    await s.remove(OBJECT, "top.png", { revision: "v1" });
+    await s.remove(OBJECT, "Docs/a.txt", { revision: "v2" });
+    await s.restore(OBJECT, "v1", ["Docs/a.txt"], { revision: "v3" });
     const history = await s.history(FILE);
     expect(history.display_name).toBe("Alpha notes.txt");
     expect(history.entries.map((e) => [e.version.version, e.change, e.size])).toEqual([
@@ -48,8 +48,8 @@ describe("MemoryFileSource history reads", () => {
 
   it("counts each distinct content of the history once", async () => {
     const s = source();
-    await s.remove(OBJECT, "Docs/a.txt");
-    await s.restore(OBJECT, "v1", ["Docs/a.txt"]);
+    await s.remove(OBJECT, "Docs/a.txt", { revision: "v1" });
+    await s.restore(OBJECT, "v1", ["Docs/a.txt"], { revision: "v2" });
     expect(await s.historySize(FILE)).toMatchObject({ versions: 3, contents: 1, bytes: 5 });
   });
 

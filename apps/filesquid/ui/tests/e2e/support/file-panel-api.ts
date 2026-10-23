@@ -3,8 +3,11 @@
  * Playwright tests: `files/details`, `files/history`, `files/versions`, `files/history-size`
  * (API-F1.3, API-F2.5) and `files/restorations`. They answer the mockups' data: mockup 35's
  * `facade-study.jpg` (four versions) and mockups 26 and 27's `harbour-masterplan-v7.pdf` (seven
- * versions). The listing, the preview and the shell's routes come from `serveFiles` and
- * `serveNavigation`; these routes are registered after them, so they take precedence.
+ * versions). The restore is a command (API-F2.13): its body is `{ envelope, input }`, a
+ * committed answer carries the outcome with its `result`, and an expected revision that is not
+ * the head is a 409 `conflict` outcome. The listing, the preview and the shell's routes come
+ * from `serveFiles` and `serveNavigation`; these routes are registered after them, so they take
+ * precedence.
  */
 import type { Page, Route } from "@playwright/test";
 import { MemoryFileSource } from "../../../src/files/memory-source";
@@ -58,8 +61,10 @@ export const HARBOUR: PanelFixture = {
 
 /** What the fake saw and how to steer it. */
 export interface PanelApi {
-  /** Bodies of every restore the page sent. */
+  /** The input of every restore the page sent. */
   readonly restores: Record<string, unknown>[];
+  /** The expected revision of every restore's envelope. */
+  readonly revisions: string[];
   /** Answer the details route with this status and code instead (an error state). */
   failDetails(status: number, code: string): void;
   /** Hold the details route until the returned function is called (the loading state). */
@@ -140,6 +145,7 @@ export async function servePanel(page: Page, fixture: PanelFixture): Promise<Pan
   let hold: Promise<void> | undefined;
   const api: PanelApi = {
     restores: [],
+    revisions: [],
     failDetails: (status, code) => Object.assign(fail, { status, code }),
     holdDetails: () => {
       let release: () => void = () => undefined;
@@ -174,12 +180,24 @@ export async function servePanel(page: Page, fixture: PanelFixture): Promise<Pan
     }),
   );
   await page.route("**/api/v1/files/restorations", async (route) => {
-    const body = route.request().postDataJSON() as Record<string, unknown>;
-    api.restores.push(body);
+    const { envelope, input } = route.request().postDataJSON() as {
+      envelope: { operation_id: string; expected_revision: string };
+      input: Record<string, unknown>;
+    };
+    api.restores.push(input);
+    api.revisions.push(envelope.expected_revision);
+    const head = `v${fixture.versions.length + extra.length}`;
+    const operation = { operation_id: envelope.operation_id, error: null };
+    if (envelope.expected_revision !== head) {
+      const conflict = { ...operation, kind: "conflict", result: null };
+      const refusal = { code: "conflict", message: "refused", retryable: false };
+      return route.fulfill({ status: 409, json: { ...refusal, ...conflict } });
+    }
     const version = `v${fixture.versions.length + extra.length + 1}`;
     const created = "2026-10-16T13:00:00Z";
-    extra.push({ version, created, message: null, user: null, label: body.label ?? null });
-    return json(route, { library_id: PANEL_LIBRARY, object_id: PANEL_OBJECT, version, created });
+    extra.push({ version, created, message: null, user: null, label: input.label ?? null });
+    const result = { library_id: PANEL_LIBRARY, object_id: PANEL_OBJECT, version, created };
+    return json(route, { ...operation, kind: "committed", result });
   });
   return api;
 }

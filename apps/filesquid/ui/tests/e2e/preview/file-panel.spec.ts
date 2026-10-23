@@ -443,6 +443,7 @@ for (const scheme of SCHEMES) {
           label: "Back to client review version",
         },
       ]);
+      expect(api.revisions).toEqual(["v7"]);
       await expect(view.locator(".announce")).toHaveText(
         fill("fileRestored", { name: "harbour-masterplan-v7.pdf", version: "v8" }),
       );

@@ -82,11 +82,12 @@ export class FakePanelSource {
   /** Gates each method waits on, when set. */
   readonly gates: Partial<Record<"details" | "history" | "versions" | "size" | "restore", Gate>> =
     {};
-  /** Every restore, in order. */
+  /** Every restore, in order, with the revision it expected. */
   readonly restores: {
     object: ObjectRef;
     version: string;
     paths: readonly string[];
+    revision: string;
     label?: string;
   }[] = [];
   /** Calls per method. */
@@ -160,15 +161,27 @@ export class FakePanelSource {
     };
   }
 
-  /** Record a restore and publish the next version with the restored content. */
+  /**
+   * Record a restore and publish the next version with the restored content; a revision that is
+   * not the head is refused as `conflict`, as the API does (API-F2.13).
+   */
   async restore(
     object: ObjectRef,
     version: string,
     paths: readonly string[],
-    options: RestoreOptions = {},
+    options: RestoreOptions,
   ): Promise<FileCommit> {
     await this.step("restore", options);
-    this.restores.push({ object, version, paths, label: options.label });
+    if (options.revision !== this.head) {
+      throw new ApiError(409, "/api/v1/files/restorations", { code: "conflict" });
+    }
+    this.restores.push({
+      object,
+      version,
+      paths,
+      revision: options.revision,
+      label: options.label,
+    });
     const source = this.entries.find((e) => e.version.version === version);
     const next = `v${Number(this.head.slice(1)) + 1}`;
     const created = "2026-10-16T13:00:00Z";
