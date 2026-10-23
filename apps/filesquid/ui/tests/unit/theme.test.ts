@@ -295,6 +295,10 @@ describe("WCAG 2.2 AA contrast (UI-S-015)", () => {
     expect(failures).toContain("light --fs-primary on --fs-surface 2.99");
     expect(failures).toContain("light --fs-on-primary-container on --fs-primary-container 4.18");
     expect(failures).toContain("light --fs-error on --fs-surface 4.23");
+    // Error text on the card surface is checked too (the rename form sits there): exempt in light
+    // only at its listed values, and above 4.5:1 in dark.
+    expect(failures).toContain("light --fs-error on --fs-surface-card 4.23");
+    expect(failures.some((f) => f.startsWith("dark --fs-error on --fs-surface-card"))).toBe(false);
     expect(failures).toContain("light --fs-error on --fs-surface-container 3.88");
     expect(failures).toContain("light --fs-on-surface-muted on --fs-surface 4.48");
     expect(failures).toContain("light --fs-on-surface-placeholder on --fs-surface 2.85");

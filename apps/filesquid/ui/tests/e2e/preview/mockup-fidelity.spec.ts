@@ -137,7 +137,7 @@ async function serveMonitor(page: Page): Promise<void> {
     ocfl_error_objects: 1,
   };
   const reasons = [
-    { code: "processes_stalled", severity: "degraded", detail: "1 process(es) stalled" },
+    { code: "process_stalled", severity: "degraded", detail: "1 process(es) stalled" },
   ];
   await page.route("**/api/v1/admin/health", (route) =>
     route.fulfill({ json: { status: "degraded", reasons, checks } }),
@@ -553,7 +553,7 @@ for (const scheme of SCHEMES) {
         radius: "10px",
       });
       await expect(health.locator(".status")).toHaveText(label(labels, "statusDegraded"));
-      await expect(health.locator('li[data-reason="processes_stalled"]')).toHaveText(
+      await expect(health.locator('li[data-reason="process_stalled"]')).toHaveText(
         "1 process(es) stalled",
       );
       const status = await look(health.locator(".status"));

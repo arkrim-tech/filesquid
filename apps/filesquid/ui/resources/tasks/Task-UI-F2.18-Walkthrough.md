@@ -41,6 +41,11 @@ Branch `feat/ui-f2.18-v3-tokens-and-shell`. Plan row: [Task UI-F2.18](../plan.md
 - UI-S-015 names the type-size and radius tokens it requires.
 - Kept, with the reason on the thread: the plan box (the surfaces left open belong to named later tasks or undelivered API rows, listed below); the required approved strings (UI-S-024 Strings and owner answer 13 require both label tables to define them); `hostDesktopNoTelemetry` wording (UI-S-033's wording; UI-S-027 quotes a different sentence for the same key, recorded below for the owner).
 
+## Review fixes (Cubic round 2: 1 P2, 1 P3)
+
+- The Monitor fixture of the fidelity spec uses the API's `process_stalled` reason code.
+- The token test asserts that light error text on `--fs-surface-card` is reported without the exemptions (4.23:1) and that dark error text there passes.
+
 ## Not built here (needs a later task or an API route)
 
 - Recent libraries on the welcome screen, the library page's storage used and free space rows and STORAGE BY COLLECTION, and the shell's storage figures: they need the library facts of API-S-038, not delivered. The shell's storage block and `deletedCount` wait for a view to supply them.
