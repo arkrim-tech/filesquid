@@ -10,7 +10,7 @@ Owner answer 9 of 2026-10-22, verbatim: "Yes, rebuild should be a durable job". 
 
 ## API-S-037: Job routes and job events
 
-`JobView` gains `result`: once the job has completed, the result its kind defines (the `RebuildReport` for `library.rebuild`), `null` before then, after a failure or cancel, and for a kind without one. The view still carries no source identity, checkpoint, lease holder or fence. Pause, resume and cancel work on the rebuild job as on every job: each change journaled once (`job.paused`, `job.resumed`, `job.cancel_requested`, `job.cancelled`) under the job's operation ID; a repeated pause changes nothing and is not journaled.
+`JobView` gains `result`: once the job has completed, the result its kind defines (the `RebuildReport` for `library.rebuild`), answered by `GET /api/v1/jobs/{job}` and the control routes; `null` before then, after a failure or cancel, for a kind without one, and in the job listing and the `job.update` event (`JobView::summary`), so neither grows with a report (Cubic round 2; API-S-037 now says so). The view still carries no source identity, checkpoint, lease holder or fence. Pause, resume and cancel work on the rebuild job as on every job: each change journaled once (`job.paused`, `job.resumed`, `job.cancel_requested`, `job.cancelled`) under the job's operation ID; a repeated pause changes nothing and is not journaled.
 
 ## API-S-033: Durable job model
 
@@ -25,12 +25,12 @@ Owner answer 9 of 2026-10-22, verbatim: "Yes, rebuild should be a durable job". 
 | C5 | Resume reads no completed object again | `pause_holds_the_rebuild_at_a_checkpoint_and_resume_reads_no_completed_object_again`, `a_rebuild_from_a_cursor_reads_no_object_at_or_before_it` (a rebuild without a cursor reads the object's inventory; one after it does not) | Met |
 | C6 | Cancel ends it with no change to the library's files | `cancel_ends_the_rebuild_as_cancelled`, `a_cancel_asked_during_the_last_object_cancels_instead_of_completing`, `cancelling_a_pending_rebuild_reads_nothing`, `a_repeated_rebuild_answers_the_unfinished_job_and_cancel_changes_no_file`, `a_rebuild_its_progress_stops_is_not_journaled_as_finished` (no write), scenario | Met |
 | C7 | A crash resumes from the checkpoint | `a_crash_resumes_from_the_checkpoint` (the run is dropped mid-object; recovery releases the expired lease; objects 0 to 3 are not read again) | Met |
-| C8 | The report is the job's result in the view once finished; `null` otherwise | `the_view_carries_the_result_once_the_job_completes_and_null_otherwise`, `completing_without_a_result_clears_a_partial_one`, `the_view_carries_no_source_checkpoint_lease_or_fence`, `result_of` in every runner test | Met |
+| C8 | The report is the job's result in the view once finished; `null` otherwise | `the_view_carries_the_result_once_the_job_completes_and_null_otherwise`, `completing_without_a_result_clears_a_partial_one`, `the_summary_view_and_the_job_update_event_carry_no_result`, the listing assertion of the route test, `the_view_carries_no_source_checkpoint_lease_or_fence`, `result_of` in every runner test | Met |
 | C9 | Every control journaled once; no source, checkpoint or report journaled | `every_control_is_journaled_once_and_no_entry_names_the_source_or_checkpoint`, scenario "journaled once for the rebuild job", `assert_redacted` in the route test | Met |
 | C10 | Refusals before a job is submitted, journaled once | `a_rebuild_of_a_library_that_is_not_open_submits_no_job`, scenario "A rebuild of a library that is not open..." | Met |
 | C11 | No job service: `503 unavailable`, journaled once | `a_rebuild_on_a_host_without_a_job_service_is_unavailable_and_journaled_once` | Met |
 | C12 | The lease is kept while one long object is read | `a_long_object_keeps_the_lease` (the clock moves 30 s past a 15 s lease during one object) | Met |
-| C13 | The checkpoint is a cursor; the partial report is written with it atomically, bounded, at a cadence that grows with the report | `a_result_past_its_bound_is_refused_and_stores_nothing`, `the_checkpoint_holds_a_cursor_and_the_partial_report_is_stored_with_it`, `a_checkpoint_with_a_result_under_an_ended_lease_is_fenced_and_stores_nothing` | Met |
+| C13 | The checkpoint is a cursor; the partial report is written with it atomically, bounded, at a cadence that grows with the report | `a_result_past_its_bound_is_refused_and_stores_nothing`, `a_final_result_past_its_bound_is_refused_and_stores_nothing`, `the_checkpoint_holds_a_cursor_and_the_partial_report_is_stored_with_it`, `a_checkpoint_with_a_result_under_an_ended_lease_is_fenced_and_stores_nothing` | Met |
 | C14 | `library.rebuild` journaled once when the rebuild finishes | route test, `a_rebuild_from_a_cursor_reads_no_object_at_or_before_it` | Met |
 | C15 | The SQLite store keeps the result | `a_jobs_result_survives_closing_the_store`, `a_store_made_with_controls_but_before_results_gains_the_result_column`, `a_store_made_before_controls_gains_the_column_and_keeps_its_jobs` | Met |
 | C16 | Contract 0.25.0 and regenerated `schema.d.ts` | `unit_contract` (samples of `RebuildJobAnswer`, `RebuildOutcome` and a completed rebuild's `JobView`), Vitest `contract.test.ts` | Met |
@@ -158,32 +158,38 @@ The first green run of `unit_rebuild_job` failed one assertion, which expected a
 
 ```text
      Running tests/unit/rebuild_job.rs (<target>/debug/deps/unit_rebuild_job-f8523ef55133abfb)
-running 14 tests
-test a_paused_rebuild_is_not_started_until_it_is_resumed ... ok
+running 16 tests
 test a_library_that_is_no_longer_open_fails_the_job_with_its_code ... ok
+test a_cancel_asked_during_the_last_object_cancels_instead_of_completing ... ok
 test a_rebuild_is_a_pending_library_rebuild_job_whose_source_names_the_library ... ok
+test a_paused_rebuild_is_not_started_until_it_is_resumed ... ok
 test a_repeated_rebuild_answers_the_unfinished_job ... ok
 test an_empty_library_completes_with_zero_of_zero_objects ... ok
-test cancel_ends_the_rebuild_as_cancelled ... ok
+test a_long_object_keeps_the_lease ... ok
 test cancelling_a_pending_rebuild_reads_nothing ... ok
-test pause_holds_the_rebuild_at_a_checkpoint_and_resume_reads_no_completed_object_again ... ok
-test every_control_is_journaled_once_and_no_entry_names_the_source_or_checkpoint ... ok
+test a_submission_past_the_unfinished_bound_is_refused_instead_of_duplicated ... ok
+test cancel_ends_the_rebuild_as_cancelled ... ok
 test progress_counts_objects_and_the_report_is_the_jobs_result ... ok
 test the_checkpoint_holds_a_cursor_and_the_partial_report_is_stored_with_it ... ok
+test pause_holds_the_rebuild_at_a_checkpoint_and_resume_reads_no_completed_object_again ... ok
+test every_control_is_journaled_once_and_no_entry_names_the_source_or_checkpoint ... ok
 test the_view_carries_no_source_checkpoint_lease_or_fence ... ok
-test a_long_object_keeps_the_lease ... ok
 test a_crash_resumes_from_the_checkpoint ... ok
-test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
 ```
 
 `cargo test -p filesquid-api --locked --test unit_job_control result`:
 
 ```text
      Running tests/unit/job_control.rs (<target>/debug/deps/unit_job_control-9e2eb351d6a625a3)
-running 2 tests
+running 6 tests
 test a_checkpoint_with_a_result_under_an_ended_lease_is_fenced_and_stores_nothing ... ok
+test completing_without_a_result_clears_a_partial_one ... ok
+test the_summary_view_and_the_job_update_event_carry_no_result ... ok
 test the_view_carries_the_result_once_the_job_completes_and_null_otherwise ... ok
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.00s
+test a_result_past_its_bound_is_refused_and_stores_nothing ... ok
+test a_final_result_past_its_bound_is_refused_and_stores_nothing ... ok
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.05s
 ```
 
 `cargo test -p filesquid-api --locked --test unit_local_library a_rebuild`:
@@ -201,11 +207,11 @@ test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 18 filtered out; fin
 ```text
      Running tests/integration/library_routes.rs (<target>/debug/deps/integration_library_routes-fee10c62a04963dd)
 running 4 tests
-test a_rebuild_of_a_library_that_is_not_open_submits_no_job ... ok
 test a_rebuild_on_a_host_without_a_job_service_is_unavailable_and_journaled_once ... ok
+test a_rebuild_of_a_library_that_is_not_open_submits_no_job ... ok
 test a_repeated_rebuild_answers_the_unfinished_job_and_cancel_changes_no_file ... ok
 test the_rebuild_answers_pending_with_a_library_rebuild_job_whose_result_is_the_report ... ok
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 22 filtered out; finished in 0.09s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 22 filtered out; finished in 0.10s
 ```
 
 `cargo test -p filesquid-native --locked --test unit_jobs`:
@@ -251,25 +257,25 @@ test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
      Running tests/unit/contract.rs (<target>/debug/deps/unit_contract-e551d1b63735a1b3)
 running 28 tests
 test error_code_all_lists_every_variant ... ok
+test error_codes_match_the_rust_enum_with_status_and_retryability ... ok
 test command_envelope_carries_idempotency_key_expected_revision_and_scope ... ok
 test contract_is_openapi_3_1_with_the_crate_api_version ... ok
-test error_codes_match_the_rust_enum_with_status_and_retryability ... ok
 test authentication_before_routing_is_documented_as_a_wire_convention ... ok
-test event_topics_in_the_contract_match_the_rust_topics ... ok
 test errors_carry_code_and_retryability ... ok
+test event_topics_in_the_contract_match_the_rust_topics ... ok
 test every_component_schema_has_a_rust_sample ... ok
-test every_documented_operation_has_a_unique_operation_id ... ok
 test every_component_schema_matches_its_serialized_rust_type ... ok
-test every_event_topic_documents_its_payload_schema ... ok
+test every_documented_operation_has_a_unique_operation_id ... ok
 test every_error_response_carries_the_api_error_schema ... ok
-test every_limit_parameter_is_the_shared_page_size ... ok
+test every_event_topic_documents_its_payload_schema ... ok
 test every_operation_documents_both_denials ... ok
+test every_limit_parameter_is_the_shared_page_size ... ok
 test every_operation_names_the_action_the_router_authorises ... ok
 test every_operation_requires_the_bearer_scheme_and_none_makes_it_optional ... ok
 test health_schema_matches_the_core_payload_and_requires_every_field ... ok
 test host_routes_are_the_event_channel_only ... ok
-test routed_and_documented_paths_agree_both_ways ... ok
 test query_envelope_and_page_size_parameter_are_bounded_like_core ... ok
+test routed_and_documented_paths_agree_both_ways ... ok
 test router_fallbacks_are_documented_as_wire_conventions ... ok
 test router_serves_its_own_contract ... ok
 test the_checker_accepts_only_truly_unconstrained_objects ... ok
@@ -278,18 +284,18 @@ test the_only_public_operation_is_the_liveness_probe ... ok
 test events_from_every_publisher_match_their_documented_payloads ... ok
 test every_documented_operation_answers_a_documented_status_and_body ... ok
 test router_fallbacks_answer_as_documented ... ok
-test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.94s
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.03s
 ```
 
 `npx vitest run tests/unit/contract.test.ts` (in `apps/filesquid/ui`, after `npm run contract:types`):
 
 ```text
  RUN  v4.1.12 <repo>/apps/filesquid/ui
- ✓ tests/unit/contract.test.ts (1 test) 230ms
+ ✓ tests/unit/contract.test.ts (1 test) 206ms
  Test Files  1 passed (1)
       Tests  1 passed (1)
-   Start at  17:28:49
-   Duration  1.08s (transform 70ms, setup 83ms, import 628ms, tests 230ms, environment 0ms)
+   Start at  18:19:14
+   Duration  1.05s (transform 65ms, setup 55ms, import 648ms, tests 206ms, environment 0ms)
 JUNIT report written to <repo>/apps/filesquid/ui/tests/allure-results/vitest-junit.xml
 ```
 
@@ -375,7 +381,7 @@ BDD (`cargo test -p filesquid-api --locked --test features`), the API-S-025 scen
 
 ## Sync Execution Report
 
-- `apps/filesquid/crates/api/resources/srs.md` API-S-025: the rebuild job's one-per-library rule, its refusals before submission, its cursor checkpoint and its stored partial report.
+- `apps/filesquid/crates/api/resources/srs.md` API-S-025: the rebuild job's one-per-library rule, its refusals before submission, its cursor checkpoint and its stored partial report. API-S-037: the result is answered by the job route and the control routes; the listing and the `job.update` event carry `null`.
 - `apps/filesquid/crates/desktop/resources/srs.md` DE-S-014: each job row keeps its kind's result; the host installs its job service for the job routes.
 - PRD, product SRS, ADRs: no change. The rebuild as a job is already in the PRD's F-001 and F-009 parents through API-S-025, and ADR 007's job model gains a stored field, not a new decision.
 

@@ -66,7 +66,7 @@ async fn list(
     let listed = blocking(move || jobs.list(&filter)).await;
     match listed {
         Ok(list) => Json(JobPage {
-            jobs: list.jobs.iter().map(JobView::of).collect(),
+            jobs: list.jobs.iter().map(JobView::summary).collect(),
             truncated: list.truncated,
         })
         .into_response(),

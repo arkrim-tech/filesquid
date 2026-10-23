@@ -2605,10 +2605,10 @@ export interface components {
              * @description When the job last changed (RFC 3339, UTC).
              */
             updated: string;
-            /** @description Once the job has completed, the result its kind defines (for library.rebuild, the RebuildReport of API-S-025); null before then, after a failure or a cancel, and for a kind without one. */
+            /** @description Once the job has completed, the result its kind defines (for library.rebuild, the RebuildReport of API-S-025), answered by GET /api/v1/jobs/{job} and the control routes; null before then, after a failure or a cancel, for a kind without one, and in the job listing and the job.update event, so neither grows with a report. */
             result: components["schemas"]["RebuildReport"] | null;
         };
-        /** @description One listing of durable jobs. */
+        /** @description One listing of durable jobs. Each listed view carries result null; read a completed job's result through GET /api/v1/jobs/{job}. */
         JobPage: {
             /** @description The jobs, newest first. */
             jobs: components["schemas"]["JobView"][];

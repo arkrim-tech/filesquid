@@ -221,7 +221,7 @@ impl Jobs {
         let Some(events) = &self.events else {
             return;
         };
-        match serde_json::to_value(JobView::of(job)) {
+        match serde_json::to_value(JobView::summary(job)) {
             Ok(data) => {
                 events.publish(ApiEvent::new(topic::JOB_UPDATE, data));
             }
@@ -579,7 +579,9 @@ impl RunningJob {
     /// stored in the same step (store I/O).
     ///
     /// # Errors
-    /// [`JobError::Fenced`] or a store failure, journaled.
+    /// [`JobError::TooLarge`] for a result past [`super::MAX_RESULT_BYTES`] (nothing is
+    /// stored; the job stays running until its lease ends, so a caller checks the size
+    /// first), [`JobError::Fenced`] or a store failure, journaled.
     pub fn complete_with_result(self, result: &str) -> Result<(), JobError> {
         self.finish(JobState::Completed, None, Some(result))?;
         self.handle.complete();
@@ -673,6 +675,9 @@ impl RunningJob {
             .jobs
             .store
             .update(&self.job.id, &mut |job| {
+                if result.is_some_and(|result| result.len() > super::MAX_RESULT_BYTES) {
+                    return Err(JobError::TooLarge);
+                }
                 let mut ended = rules::finish(job, &lease, (state, error_code), now)?;
                 ended.result = result.map(str::to_string);
                 Ok(ended)

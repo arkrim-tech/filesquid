@@ -28,7 +28,7 @@ use super::operations::LibraryOperations;
 use super::rebuild::{RebuildEnd, RebuildEntry, RebuildProgress, RebuildReport, RebuildStep};
 use crate::jobs::{
     Halt, Job, JobError, JobRunner, JobSpec, JobState, JobView, Jobs, RunningJob,
-    MAX_RECOVERED_JOBS,
+    MAX_RECOVERED_JOBS, MAX_RESULT_BYTES,
 };
 use crate::library::mint_uuid_v4;
 use filesquid_core::LibraryId;
@@ -482,7 +482,11 @@ impl Tracker {
             }
         }
         self.report.journal = journal;
-        run.complete_with_result(&encode(&self.report)?)?;
+        let report = encode(&self.report)?;
+        if report.len() > MAX_RESULT_BYTES {
+            return refused(run, JobError::TooLarge);
+        }
+        run.complete_with_result(&report)?;
         Ok(JobState::Completed)
     }
 

@@ -587,3 +587,47 @@ fn a_result_past_its_bound_is_refused_and_stores_nothing() {
     let stored = jobs.job(&job.id).expect("job");
     assert_eq!((stored.checkpoint, stored.result), (None, None));
 }
+
+#[test]
+fn a_final_result_past_its_bound_is_refused_and_stores_nothing() {
+    let rig = Rig::new();
+    let jobs = rig.jobs();
+    let job = submit(&jobs, "op-1");
+    let run = jobs.start(&job.id, &job.source).expect("start");
+    let huge = "x".repeat(filesquid_api::jobs::MAX_RESULT_BYTES + 1);
+    let refused = run.complete_with_result(&huge).expect_err("too large");
+    assert_eq!(refused, JobError::TooLarge);
+    let stored = jobs.job(&job.id).expect("job");
+    assert_eq!((stored.state, stored.result), (JobState::Running, None));
+}
+
+#[tokio::test]
+async fn the_summary_view_and_the_job_update_event_carry_no_result() {
+    let rig = Rig::new();
+    let jobs = rig.jobs();
+    let mut events = rig.events.subscription().expect("slot");
+    let job = submit(&jobs, "op-1");
+    let run = jobs.start(&job.id, &job.source).expect("start");
+    run.complete_with_result(r#"{"objects":[]}"#)
+        .expect("complete");
+    let done = jobs.job(&job.id).expect("job");
+    assert!(
+        JobView::of(&done).result.is_some(),
+        "the job route answers it"
+    );
+    assert_eq!(JobView::summary(&done).result, None);
+    let mut completed = None;
+    for _ in 0..20 {
+        let event = events.next().await.expect("event");
+        if event.topic == topic::JOB_UPDATE && event.data["state"] == "completed" {
+            completed = Some(event);
+            break;
+        }
+    }
+    let completed = completed.expect("the completion's job.update event");
+    assert_eq!(
+        completed.data["result"],
+        serde_json::Value::Null,
+        "events carry no result"
+    );
+}

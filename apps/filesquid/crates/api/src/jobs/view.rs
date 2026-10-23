@@ -36,7 +36,8 @@ pub struct JobView {
     /// When it last changed (RFC 3339, UTC).
     pub updated: String,
     /// Once it has completed, the result its kind defines (for `library.rebuild`, the rebuild
-    /// report of API-S-025); `null` before then, and for a kind without one.
+    /// report of API-S-025); `null` before then, for a kind without one, and in a
+    /// [`JobView::summary`].
     pub result: Option<serde_json::Value>,
 }
 
@@ -58,6 +59,20 @@ impl JobView {
             updated: format_rfc3339_ms(job.updated_ms),
             result: shown_result(job),
         }
+    }
+}
+
+impl JobView {
+    /// The view of `job` without its result (`null`): what the job listing and the
+    /// `job.update` event carry, so neither grows with a completed job's report; the result
+    /// is answered by `GET /api/v1/jobs/{job}` ([`JobView::of`]). Pure.
+    pub fn summary(job: &Job) -> Self {
+        let mut view = Self::of(&Job {
+            result: None,
+            ..job.clone()
+        });
+        view.result = None;
+        view
     }
 }
 

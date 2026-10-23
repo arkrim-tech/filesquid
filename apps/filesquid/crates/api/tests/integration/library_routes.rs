@@ -349,6 +349,13 @@ async fn the_rebuild_answers_pending_with_a_library_rebuild_job_whose_result_is_
                 body["job_id"].as_str().unwrap()
             ))
             .await;
+        let listed = rig.get("/api/v1/jobs?kind=library.rebuild").await;
+        assert_eq!(listed.json()["jobs"][0]["state"], "completed");
+        assert_eq!(
+            listed.json()["jobs"][0]["result"],
+            Value::Null,
+            "the listing carries no report; the job route does"
+        );
         assert_redacted(&rig, &[&answer, &view]);
     }
 }
