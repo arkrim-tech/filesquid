@@ -1,5 +1,6 @@
 # OCFL-S-024: Version-bound logical files. A commit may carry a function that returns logical files from the reserved version name and the created time; it runs after the vN reservation and before any vN byte, again after a rebase, its output is digested and written like any staged file, and nothing is published when it fails. VersionMeta user and message pass through unchanged.
 # OCFL-S-016: Concurrent commits (a rebased commit binds its files to the new version)
+# OCFL-S-018: Write order and unpublished versions (vN reserved before any vN byte; content, then version inventory and sidecar, then root inventory and sidecar last)
 # F-067: PROV-O history of every version and change
 # F-051: OCFL module
 Feature: Version-bound logical files
@@ -37,7 +38,21 @@ Feature: Version-bound logical files
     Then the commit should be refused for its version-bound files
     And the object head should be "v1" through the change model
 
+  # Edge case: the write order holds for bound files on every backend
+  Scenario Outline: A version-bound record follows the write order on the <backend> backend
+    Given an object committed at "v1" through the change model on the <backend> backend
+    And a writer staged new bytes for "b.txt" on that backend
+    When the writer commits the staged changes with a version-bound record on that backend
+    Then the version should be reserved before the record function ran and before any "v2" byte
+    And "v2" content should be written before its version inventory and the root inventory last
+    And the backend's object should validate with zero errors
+
+    Examples:
+      | backend    |
+      | memory     |
+      | filesystem |
+
   # Source
-  # - apps/filesquid/crates/ocfl/resources/srs.md OCFL-S-024, OCFL-S-016
+  # - apps/filesquid/crates/ocfl/resources/srs.md OCFL-S-024, OCFL-S-016, OCFL-S-018
   # - resources/prd.md F-067, F-051
   # - resources/architecture/040-prov-o-history.md Decision 3
