@@ -144,7 +144,9 @@ async fn a_write_through_the_host_service_publishes_one_version() {
         name_normalization: None,
         message: None,
     };
-    let commit = FileOperations::upload(&files, upload, b"bee".to_vec().into(), "owner".into())
+    let bytes = b"bee".to_vec().into();
+    let new_file = filesquid_api::files::NEW_FILE_REVISION.to_string();
+    let commit = FileOperations::upload(&files, upload, bytes, "owner".into(), new_file)
         .await
         .expect("upload");
     assert_eq!(commit.version, "v1", "a new file object");

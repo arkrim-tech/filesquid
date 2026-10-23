@@ -3,6 +3,7 @@
 //! journaled when they succeed; edits take `files.write` and are journaled with opaque IDs
 //! only, through the same answers as the other file writes.
 
+use super::command::{self, Done, FileCommand};
 use super::error::FileError;
 use super::routes::{body, files, query, read_answer, refuse};
 use super::statements::{
@@ -136,15 +137,36 @@ async fn register_namespace(
     edit_answer(&state, NAMESPACE_OPERATION, &principal, outcome).await
 }
 
-/// `POST /api/v1/files/renames`: change a file's display name only.
+/// `POST /api/v1/files/renames`: change a file's display name only, as a command
+/// ([`super::command`]) whose expected revision is the file object's head.
 async fn rename(
     State(state): State<ApiState>,
     Extension(principal): Extension<Principal>,
-    request: Result<Json<RenameRequest>, JsonRejection>,
+    request: Result<Json<FileCommand<RenameRequest>>, JsonRejection>,
 ) -> Response {
-    let actor = principal.actor().to_string();
-    let outcome = async { files(&state)?.rename(body(request)?, actor).await }.await;
-    edit_answer(&state, RENAME_OPERATION, &principal, outcome).await
+    let command = body(request).and_then(|c| command::check(c.envelope, c.input));
+    let principal = &principal;
+    command::run(
+        &state,
+        principal,
+        RENAME_OPERATION,
+        command,
+        |files, c, actor| async move {
+            let commit = files.rename(c.input, actor, c.expected).await?;
+            let ids = (
+                commit.library_id.as_str(),
+                commit.object_id.as_str(),
+                commit.version.as_str(),
+            );
+            let entry = command::version_entry(RENAME_OPERATION, principal, ids, true);
+            Ok(Done {
+                view: commit,
+                entries: vec![entry],
+                changed: true,
+            })
+        },
+    )
+    .await
 }
 
 /// Answer a metadata edit: journal its version with opaque IDs only, or the refusal.

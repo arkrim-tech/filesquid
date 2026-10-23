@@ -3,9 +3,8 @@
 //! refused move of a stored original, download names and the sharing default, through the
 //! router over a real OCFL storage root on the local filesystem.
 
-use crate::files_fixture::{encode, upload_uri, Answer, FilesRig, LIBRARY};
+use crate::files_fixture::{encode, upload_facts, Answer, FilesRig, LIBRARY};
 use crate::MonitorWorld;
-use axum::http::Method;
 use cucumber::{given, then, when};
 use filesquid_api::canonical::{outgoing_name, OutgoingNames};
 use filesquid_core::FileId;
@@ -98,14 +97,10 @@ async fn head_record(w: &mut NamesWorld) -> FileRecord {
 #[given(expr = "the owner has uploaded {string}")]
 async fn uploaded(w: &mut MonitorWorld, name: String) {
     let w = &mut w.names;
-    let uri = upload_uri(&name, 4, "name_normalization=nfc");
-    let answer = w
-        .rig()
-        .await
-        .call(Method::PUT, &uri, &[], b"data".to_vec())
-        .await;
+    let input = upload_facts(&name, 4, "name_normalization=nfc");
+    let answer = w.rig().await.upload(input, b"data").await;
     assert_eq!(answer.status.as_u16(), 200, "{:?}", answer.json());
-    w.upload = Some(answer.json());
+    w.upload = Some(answer.result());
 }
 
 #[when(expr = "the owner renames the file to {string}")]
@@ -113,7 +108,7 @@ async fn renames(w: &mut MonitorWorld, name: String) {
     let w = &mut w.names;
     let name = name.replace("\\\"", "\"").replace("\\\\", "\\");
     let body = json!({ "library_id": LIBRARY, "file_id": w.file_id(), "display_name": name });
-    let answer = w.rig().await.post("/api/v1/files/renames", body).await;
+    let answer = w.rig().await.command("/api/v1/files/renames", body).await;
     assert_eq!(answer.status.as_u16(), 200, "{:?}", answer.json());
     w.answer = Some(answer);
 }
@@ -128,7 +123,7 @@ async fn moves_original(w: &mut MonitorWorld, to: String) {
         "from": w.original("txt"),
         "to": to,
     });
-    w.answer = Some(w.rig().await.post("/api/v1/files/moves", body).await);
+    w.answer = Some(w.rig().await.command("/api/v1/files/moves", body).await);
 }
 
 #[then(expr = "the file's history should name it {string}")]
@@ -148,7 +143,7 @@ async fn versions_name(w: &mut MonitorWorld, name: String) {
 
 #[then(expr = "the rename should publish version {string}")]
 async fn rename_version(w: &mut MonitorWorld, version: String) {
-    assert_eq!(w.names.answer().json()["version"], version);
+    assert_eq!(w.names.answer().result()["version"], version);
 }
 
 #[then(expr = "the listing should show {string} at the same stored path")]

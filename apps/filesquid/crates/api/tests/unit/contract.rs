@@ -331,7 +331,7 @@ async fn call(state: &ApiState, method: &Method, path: &str) -> (StatusCode, Vec
         request = request.header("content-type", *content_type);
     }
     let body = match body {
-        Some((_, bytes)) => Body::from(bytes),
+        Some((_, bytes)) => Body::from(with_revision(state, bytes).await),
         None => sample_body(method, path),
     };
     let request = request.body(body).expect("request");
@@ -347,6 +347,40 @@ async fn call(state: &ApiState, method: &Method, path: &str) -> (StatusCode, Vec
         .expect("body")
         .to_bytes();
     (status, body.to_vec())
+}
+
+/// `bytes` with a sample command's head placeholder ([`files_contract::HEAD_OF`]) replaced by
+/// the head of the object it names on `state`, read through the versions route; `v1` when
+/// `state` cannot answer it (no authoriser or no file service), where the command is refused
+/// before its revision is compared.
+async fn with_revision(state: &ApiState, bytes: Vec<u8>) -> Vec<u8> {
+    let text = String::from_utf8_lossy(&bytes).to_string();
+    let Some((object, marker)) = files_contract::head_marker(&text) else {
+        return bytes;
+    };
+    let uri = format!(
+        "/api/v1/files/versions?library_id={}&object_id={}",
+        files_contract::LIBRARY,
+        object.replace(':', "%3A")
+    );
+    let request = Request::builder()
+        .uri(uri)
+        .header("authorization", format!("Bearer {TOKEN}"))
+        .body(Body::empty())
+        .expect("request");
+    let response = router(state.clone())
+        .oneshot(request)
+        .await
+        .expect("router answers");
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let answer: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    let head = answer["head"].as_str().unwrap_or("v1");
+    text.replace(&marker, head).into_bytes()
 }
 
 /// The body a documented operation needs to answer 200: the default settings for the settings
@@ -523,9 +557,30 @@ fn every_error_response_carries_the_api_error_schema() {
                 let body = checker
                     .resolve(&response["content"]["application/json"]["schema"])
                     .expect("schema $ref");
+                if status == "409" && *body == *schema(&doc, "FileCommandConflict") {
+                    assert_carries_api_error(body, api_error, &format!("{method} {path}"));
+                    continue;
+                }
                 assert_eq!(body, api_error, "{method} {path} {status} body is ApiError");
             }
         }
+    }
+}
+
+/// Assert the 409 answer `body` of a file write command (Task API-F2.13) carries every
+/// `ApiError` field a denial does not add, with the same schema and required, beside its
+/// outcome fields.
+fn assert_carries_api_error(body: &Value, api_error: &Value, at: &str) {
+    for field in ["code", "message", "retryable"] {
+        assert_eq!(
+            body["properties"][field], api_error["properties"][field],
+            "{at} 409 {field}"
+        );
+        let required = body["required"].as_array().expect("required");
+        assert!(
+            required.iter().any(|r| r == field),
+            "{at} 409 requires {field}"
+        );
     }
 }
 

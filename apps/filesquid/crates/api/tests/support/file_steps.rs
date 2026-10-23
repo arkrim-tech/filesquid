@@ -3,7 +3,7 @@
 //! a real OCFL root on the local filesystem.
 
 use crate::files_fixture::{
-    encode, pattern, query, send, upload_uri, Answer, FilesRig, LIBRARY, OBJECT,
+    encode, pattern, query, send, upload_facts, Answer, FilesRig, LIBRARY, OBJECT,
 };
 use crate::MonitorWorld;
 use axum::http::{Method, StatusCode};
@@ -98,8 +98,8 @@ fn no_storage_paths(w: &mut MonitorWorld) {
 #[when(expr = "the owner uploads a new file named {string}")]
 async fn upload(w: &mut MonitorWorld, name: String) {
     let bytes = b"new bytes".to_vec();
-    let uri = upload_uri(&name, bytes.len(), "");
-    let answer = w.files.rig().call(Method::PUT, &uri, &[], bytes).await;
+    let uri = upload_facts(&name, bytes.len(), "");
+    let answer = w.files.rig().upload(uri, &bytes).await;
     w.files.answers.push(answer);
 }
 
@@ -112,7 +112,7 @@ async fn committed_beneath(w: &mut MonitorWorld, path: String) {
 fn own_object(w: &mut MonitorWorld) {
     let answer = w.files.last();
     assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
-    let upload = answer.json();
+    let upload = answer.result();
     let file_id = upload["file_id"].as_str().expect("file id");
     assert_eq!(upload["object_id"], format!("urn:uuid:{file_id}"));
     assert_eq!(upload["version"], "v1");
@@ -154,7 +154,8 @@ async fn journaled_opaque(w: &mut MonitorWorld, operation: String) {
     assert_eq!(entries.len(), 1);
     let entry = &entries[0];
     assert_eq!(entry.outcome, Outcome::Succeeded);
-    let last = w.files.last().json();
+    // A command answers what it made as its `result`.
+    let last = w.files.last().result();
     let expected = match last["file_id"].is_string() {
         // An upload writes the file's own object, which the answer names.
         true => [
@@ -183,7 +184,7 @@ async fn journaled_opaque(w: &mut MonitorWorld, operation: String) {
 #[when(expr = "the owner moves {string} to {string}")]
 async fn move_path(w: &mut MonitorWorld, from: String, to: String) {
     let request = body(json!({ "from": from, "to": to }));
-    let answer = w.files.rig().post("/api/v1/files/moves", request).await;
+    let answer = w.files.rig().command("/api/v1/files/moves", request).await;
     assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
     w.files.answers.push(answer);
 }
@@ -206,7 +207,7 @@ async fn post_restore(w: &MonitorWorld, path: &str, version: &str) -> Answer {
     let request = body(json!({ "version": version, "paths": [path] }));
     w.files
         .rig()
-        .post("/api/v1/files/restorations", request)
+        .command("/api/v1/files/restorations", request)
         .await
 }
 
@@ -228,14 +229,14 @@ async fn create_folder(w: &mut MonitorWorld, path: String) {
     let answer = w
         .files
         .rig()
-        .post("/api/v1/files/folders", body(json!({ "path": path })))
+        .command("/api/v1/files/folders", body(json!({ "path": path })))
         .await;
     w.files.answers.push(answer);
 }
 
 #[then(expr = "the folder should be pending and no version should be published")]
 async fn folder_pending(w: &mut MonitorWorld) {
-    assert_eq!(w.files.last().json()["pending"], true);
+    assert_eq!(w.files.last().result()["pending"], true);
     assert_new_versions(w, 0).await;
 }
 

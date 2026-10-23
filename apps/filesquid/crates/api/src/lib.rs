@@ -112,6 +112,9 @@ pub struct ApiState {
     files: Arc<OnceLock<Arc<dyn files::FileOperations>>>,
     /// The live content handles, in memory only: they end with this state (API-S-018).
     content_handles: Arc<content::ContentHandles>,
+    /// The receipts of the file write commands, in memory only: a repeated operation ID
+    /// answers its first answer while this state lives (API-S-002, API-S-019).
+    file_receipts: Arc<files::CommandReceipts>,
     /// The host's OCFL validation, installed once at startup (the validation routes answer
     /// 503 until then).
     validation: Arc<OnceLock<Arc<dyn ocfl_validation::OcflValidation>>>,
@@ -216,6 +219,7 @@ impl ApiState {
             host: Arc::new(OnceLock::new()),
             files: Arc::new(OnceLock::new()),
             content_handles: Arc::new(content::ContentHandles::new(clock)),
+            file_receipts: Arc::new(files::CommandReceipts::new()),
             validation: Arc::new(OnceLock::new()),
             history: Arc::new(OnceLock::new()),
             libraries: Arc::new(OnceLock::new()),
@@ -317,6 +321,11 @@ impl ApiState {
     /// The live content handles.
     pub fn content_handles(&self) -> &content::ContentHandles {
         &self.content_handles
+    }
+
+    /// The receipts of the file write commands.
+    pub fn file_receipts(&self) -> &Arc<files::CommandReceipts> {
+        &self.file_receipts
     }
 
     /// End every content handle minted with the Bearer `token` (logout, session end or
