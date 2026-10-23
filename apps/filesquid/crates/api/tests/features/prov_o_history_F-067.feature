@@ -109,7 +109,7 @@ Feature: PROV-O history of every version and change
 
   Scenario: Versions committed before the history existed are reconstructed once
     Given an object with three versions and no PROV-O records
-    When the reconstruction job runs, is interrupted and resumes
+    When the backfill job runs, is interrupted and resumes
     Then exactly one provenance-only version should be committed to the object
     And each of the three versions should have exactly one record marked "reconstructed"
     And each record should state its own recording time
