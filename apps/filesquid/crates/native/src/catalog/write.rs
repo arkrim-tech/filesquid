@@ -16,8 +16,11 @@ use filesquid_api::canonical::{operation_kind, OperationRecord, SnapshotDelta, S
 use filesquid_api::journal::JournalEntry;
 use filesquid_api::library::{
     CatalogChange, CatalogCommit, CatalogError, CommitReceipt, FileState, LibraryRecord,
+    COLLECTION_HOLDS_FILES,
 };
-use filesquid_core::{Collection, File, Folder, LibraryId, VirtualCollection, VirtualMembership};
+use filesquid_core::{
+    Collection, CollectionId, File, Folder, LibraryId, VirtualCollection, VirtualMembership,
+};
 use rusqlite::{params, Connection, Transaction};
 
 /// Whether `commit` creates its library. A create that is not the first change, is repeated,
@@ -380,6 +383,43 @@ fn apply_change(
             set_file_state(tx, file_id.as_str(), state)
         }
         CatalogChange::PurgeFile(id) => exec(tx, "DELETE FROM files WHERE id = ?1", id.as_str()),
+    }
+}
+
+/// Refuse a commit that removes a collection still holding a file that is not deleted, unless
+/// the same commit deletes that collection's files first
+/// ([`CatalogChange::DeleteCollectionFiles`]), so no file is left with a removed home and no
+/// deleted state (ADR 041 Decision 8). Checked before anything is published. Database reads.
+pub(crate) fn check_removals(
+    conn: &Connection,
+    commit: &CatalogCommit,
+) -> Result<(), CatalogError> {
+    let mut deleted: Vec<&CollectionId> = Vec::new();
+    for change in &commit.changes {
+        match change {
+            CatalogChange::DeleteCollectionFiles { collection_id, .. } => {
+                deleted.push(collection_id)
+            }
+            CatalogChange::RemoveCollection(id) if !deleted.contains(&id) => check_empty(conn, id)?,
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Refuse when `collection_id` is the home of a file that is not deleted. Database read.
+fn check_empty(conn: &Connection, collection_id: &CollectionId) -> Result<(), CatalogError> {
+    let holds: bool = conn
+        .query_row(
+            "SELECT EXISTS (SELECT 1 FROM files
+             WHERE home_collection_id = ?1 AND deleted_at_ms IS NULL)",
+            params![collection_id.as_str()],
+            |row| row.get(0),
+        )
+        .map_err(sql)?;
+    match holds {
+        true => Err(failed(COLLECTION_HOLDS_FILES)),
+        false => Ok(()),
     }
 }
 

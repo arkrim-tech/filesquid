@@ -89,7 +89,9 @@ pub enum FileScope {
         /// The virtual collection.
         virtual_collection_id: VirtualCollectionId,
     },
-    /// Files whose collection was removed (`is:unfiled` of F-063).
+    /// Files that are not deleted and whose collection was removed (`is:unfiled` of F-063).
+    /// A collection's deletion deletes its files in place (ADR 041 Decision 8), so they show
+    /// in the deleted view of their library, never here.
     Unfiled,
 }
 
@@ -104,6 +106,11 @@ pub struct FileListing {
     pub visibility: VisibilityFilter,
 }
 
+/// The failure detail of a commit that removes a collection still holding a file that is not
+/// deleted without deleting its files first ([`CatalogChange::RemoveCollection`]).
+pub const COLLECTION_HOLDS_FILES: &str =
+    "a removed collection still holds files that are not deleted";
+
 /// One change of a [`CatalogCommit`]. A host applies all of a commit's changes or none.
 /// [`CatalogChange::CreateLibrary`] may appear only as the first change of a commit, at
 /// most once, and only for the commit's own library.
@@ -114,7 +121,9 @@ pub enum CatalogChange {
     /// Store a collection, replacing one with the same identifier.
     PutCollection(Collection),
     /// Remove a collection record. Its files stay in place, deleted by the
-    /// [`CatalogChange::DeleteCollectionFiles`] the same commit carries before it.
+    /// [`CatalogChange::DeleteCollectionFiles`] the same commit carries before it; a host
+    /// refuses the commit ([`COLLECTION_HOLDS_FILES`]) when the collection still holds a file
+    /// that is not deleted.
     RemoveCollection(CollectionId),
     /// Mark every file whose home is the collection and that is not already deleted as
     /// recoverably deleted with `deletion`; a file already deleted keeps its earlier times.

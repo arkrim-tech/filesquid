@@ -130,21 +130,31 @@ pub fn numbered(segment: &str, n: u32, kind: ItemKind) -> String {
 
 /// The path a new item at `path` gets: `path` itself when `taken` says it is free, else the
 /// first free numbered path beside it, trying at most [`MAX_SUFFIX`] numbers. `taken` answers
-/// whether a path is already used in the collection (a deleted file's path included).
+/// whether a path is already used in the collection (a deleted file's path included). An item
+/// named like a reserved folder at the collection's root counts as taken, so it is numbered
+/// beside it (`provenance-1`) rather than placed inside the reserved folder.
 ///
 /// # Errors
 /// The outer error is `taken`'s own failure, which stops the search. The inner one is
 /// [`PathError::SuffixExhausted`] when every number is taken, [`PathError::NameTooLong`] when a
 /// numbered segment would exceed [`MAX_SEGMENT_BYTES`] bytes, or [`PathError::Invalid`] for a
-/// `path` outside the rule or a numbered path over [`MAX_PATH_BYTES`] bytes.
+/// `path` outside the rule, a `path` inside a reserved folder or a numbered path over
+/// [`MAX_PATH_BYTES`] bytes.
 pub fn free_path<E>(
     path: &str,
     kind: ItemKind,
-    taken: &mut dyn FnMut(&str) -> Result<bool, E>,
+    used: &mut dyn FnMut(&str) -> Result<bool, E>,
 ) -> Result<Result<String, PathError>, E> {
     if let Err(err) = check_collection_path(path) {
         return Ok(Err(err));
     }
+    if path.contains('/') && check_folder(path).is_err() {
+        return Ok(Err(PathError::Invalid));
+    }
+    let mut taken = |candidate: &str| match RESERVED_FOLDERS.contains(&candidate) {
+        true => Ok(true),
+        false => used(candidate),
+    };
     if !taken(path)? {
         return Ok(Ok(path.to_string()));
     }

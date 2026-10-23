@@ -58,8 +58,9 @@ pub(crate) struct CanonicalRoot {
 impl CanonicalRoot {
     /// The canonical storage of `library_id` in the owner's folder `folder`, with its staging
     /// area in `<root>/<library-id>.work/` (created owner-only). The folder's storage-root
-    /// declaration is written when the folder is empty (refused when it holds anything else).
-    /// Filesystem I/O.
+    /// declaration is written when the folder is empty (refused when it holds anything else)
+    /// before the staging area is made, so a folder that cannot be used leaves nothing in the
+    /// catalog directory. Filesystem I/O.
     ///
     /// # Errors
     /// [`CatalogError::Unavailable`] when a directory or backend cannot be opened;
@@ -70,34 +71,16 @@ impl CanonicalRoot {
         folder: &HostRoot,
     ) -> Result<Self, CatalogError> {
         let work = sibling(root, library_id, WORK_DIR_SUFFIX)?;
+        declare(folder.backend.as_ref())?;
         create_owner_dir(root, &work)?;
         let staging = FsBackend::new(work.join("staging"), work.join("staging-scratch"))
             .map_err(unavailable("staging"))?;
-        let canonical = Self {
+        Ok(Self {
             ocfl: folder.backend.clone(),
             staging,
             leases: folder.reservations.clone(),
             object_id: snapshot_object_id(library_id),
-        };
-        canonical.declare()?;
-        Ok(canonical)
-    }
-
-    /// Write the storage-root declaration unless the root already has one. Filesystem I/O.
-    fn declare(&self) -> Result<(), CatalogError> {
-        if self.is_declared()? {
-            return Ok(());
-        }
-        drive(create_storage_root(self.ocfl.as_ref()))?.map_err(CatalogError::from)
-    }
-
-    /// Whether the storage root's declaration exists. Filesystem I/O.
-    fn is_declared(&self) -> Result<bool, CatalogError> {
-        use filesquid_ocfl::storage::{StorageBackend, StorageKey};
-        let name = filesquid_ocfl::Declaration::storage_root(filesquid_ocfl::SpecVersion::V1_1)
-            .file_name();
-        let key = StorageKey::new(&name).map_err(unavailable("OCFL root"))?;
-        drive(self.ocfl.exists(&key))?.map_err(unavailable("OCFL root"))
+        })
     }
 
     /// The storage root's backend, shared with the file routes, for the history routes.
@@ -195,6 +178,23 @@ impl CanonicalRoot {
     ) -> Result<u64, CatalogError> {
         drive(unregistered_file_objects(self.ocfl.as_ref(), snapshot))?.map_err(CatalogError::from)
     }
+}
+
+/// Write the storage-root declaration of `ocfl` unless it already has one. Filesystem I/O.
+fn declare(ocfl: &FsBackend) -> Result<(), CatalogError> {
+    if is_declared(ocfl)? {
+        return Ok(());
+    }
+    drive(create_storage_root(ocfl))?.map_err(CatalogError::from)
+}
+
+/// Whether the storage root's declaration exists in `ocfl`. Filesystem I/O.
+fn is_declared(ocfl: &FsBackend) -> Result<bool, CatalogError> {
+    use filesquid_ocfl::storage::{StorageBackend, StorageKey};
+    let name =
+        filesquid_ocfl::Declaration::storage_root(filesquid_ocfl::SpecVersion::V1_1).file_name();
+    let key = StorageKey::new(&name).map_err(unavailable("OCFL root"))?;
+    drive(ocfl.exists(&key))?.map_err(unavailable("OCFL root"))
 }
 
 /// The journal entry one line holds, redacted. Pure apart from the warning it logs (stdout)

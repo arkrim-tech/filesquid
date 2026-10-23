@@ -508,7 +508,12 @@ fn only_index(world: &mut DesktopWorld) {
     let rig = rig(world);
     let (_, body) = rig.answer();
     let library = body["library_id"].as_str().expect("library").to_string();
-    let catalogs = rig.dir.join("data").join(CATALOG_DIR);
+    let data = rig.dir.join("data");
+    let catalogs = data.join(CATALOG_DIR);
+    assert!(
+        catalogs.join(format!("{library}.sqlite")).is_file(),
+        "the index"
+    );
     for entry in std::fs::read_dir(catalogs).expect("catalog dir") {
         let name = entry
             .expect("entry")
@@ -520,10 +525,38 @@ fn only_index(world: &mut DesktopWorld) {
             .any(|suffix| name == format!("{library}{suffix}"));
         assert!(index, "only the index and its staging: {name}");
     }
+    let stored = ocfl_files_below(&data, 16);
+    assert!(stored.is_empty(), "no OCFL root or object: {stored:?}");
+}
+
+/// The names of the OCFL declarations and inventories anywhere below `dir`, at most `depth`
+/// levels deep (filesystem I/O).
+fn ocfl_files_below(dir: &std::path::Path, depth: usize) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let is_dir = entry.file_type().is_ok_and(|t| t.is_dir());
+        match is_dir {
+            true if depth > 0 => found.extend(ocfl_files_below(&entry.path(), depth - 1)),
+            true => {}
+            false if name.starts_with("0=ocfl") || name == "inventory.json" => found.push(name),
+            false => {}
+        }
+    }
+    found
 }
 
 #[then("the chosen folder should hold the library's collection snapshot")]
 fn folder_holds_snapshot(world: &mut DesktopWorld) {
     let folder = rig(world).folder.clone().expect("folder");
-    assert!(folder.join("snapshot").join("0=ocfl_object_1.1").is_file());
+    let inventory = std::fs::read(folder.join("snapshot").join("inventory.json"))
+        .expect("the snapshot's inventory");
+    let inventory: serde_json::Value = serde_json::from_slice(&inventory).expect("inventory json");
+    assert_eq!(
+        inventory["head"], "v1",
+        "the snapshot's first version is published"
+    );
 }

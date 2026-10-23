@@ -170,3 +170,31 @@ fn join_puts_a_path_beneath_its_destination_folder() {
     assert_eq!(join(None, "a.jpg"), "a.jpg");
     assert_eq!(join(Some("trips"), "x/a.jpg"), "trips/x/a.jpg");
 }
+
+#[test]
+fn an_item_named_like_a_reserved_folder_is_numbered_beside_it() {
+    let mut taken = taken_in(&[]);
+    for (name, kind, expected) in [
+        ("provenance", ItemKind::Folder, "provenance-1"),
+        (".filesquid", ItemKind::Folder, ".filesquid-1"),
+        ("provenance", ItemKind::File, "provenance-1"),
+    ] {
+        let path = free_path(name, kind, &mut taken).expect("store");
+        assert_eq!(path, Ok(expected.to_string()), "{name}");
+    }
+    let nested = free_path("trips/provenance", ItemKind::Folder, &mut taken).expect("store");
+    assert_eq!(
+        nested,
+        Ok("trips/provenance".to_string()),
+        "only the root is reserved"
+    );
+}
+
+#[test]
+fn a_path_inside_a_reserved_folder_is_invalid() {
+    let mut taken = taken_in(&[]);
+    for path in ["provenance/a.jpg", ".filesquid/x/y"] {
+        let placed = free_path(path, ItemKind::File, &mut taken).expect("store");
+        assert_eq!(placed, Err(PathError::Invalid), "{path}");
+    }
+}

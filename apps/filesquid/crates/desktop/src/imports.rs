@@ -211,6 +211,12 @@ impl DesktopImports {
 }
 
 impl ImportStarter for DesktopImports {
+    fn replay(&self, request: &ImportRequest) -> Result<Option<ImportAnswer>, ImportStartError> {
+        let operation = request.envelope.operation_id();
+        let job = self.known_job(operation.as_str())?;
+        Ok(job.map(|job_id| ImportAnswer::started(operation, job_id)))
+    }
+
     fn start(
         &self,
         _actor: &str,

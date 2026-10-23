@@ -2,7 +2,8 @@
 //! or `cancelled`; refuses a body whose envelope scope is not the library's (`400`), a request
 //! without a destination collection (`400`, `destination_required`) or with an unknown one
 //! (`404`, `collection_not_found`) before any dialog (Task DE-1.7, ADR 041), an open dialog
-//! (`409`), a library that is not open (`404`) and a host without an import dialog (`503`);
+//! (`409`), a library that is not open (`404`), a catalog that failed (`500`) and a host without
+//! an import dialog (`503`); answers a repeated operation with its job before checking anything;
 //! journals each request once without a path; and is authorised before it runs.
 
 use axum::body::Body;
@@ -14,14 +15,17 @@ use filesquid_api::imports::{
 };
 use filesquid_api::journal::{JournalEntry, JournalQuery, MemoryJournal, Outcome};
 use filesquid_api::library::{
-    CatalogChange, CatalogCommit, LibraryCatalog, LibraryRecord, MemoryCatalog,
-    NEW_LIBRARY_REVISION,
+    CatalogChange, CatalogCommit, CatalogError, CommitReceipt, FileEntry, FileListing, Keyed,
+    LibraryCatalog, LibraryRecord, LibraryState, MemoryCatalog, PageKey, NEW_LIBRARY_REVISION,
 };
 use filesquid_api::monitor::{Monitor, MonitorConfig, StaticHostChecks};
 use filesquid_api::navigation::{HostAccess, MemoryFolderIndex, NavigationService, RepositoryInfo};
 use filesquid_api::operation::{ExpectedRevision, OperationId};
 use filesquid_api::{router, ApiState};
-use filesquid_core::{Collection, CollectionId, Library, LibraryId, RepositoryId};
+use filesquid_core::{
+    Collection, CollectionId, FileId, Folder, FolderId, Library, LibraryId, RepositoryId,
+    VirtualCollection, VirtualCollectionId,
+};
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
@@ -73,6 +77,10 @@ struct Host {
 
 impl Host {
     fn start() -> Self {
+        Self::with_navigation(navigation())
+    }
+
+    fn with_navigation(navigation: NavigationService) -> Self {
         let state = ApiState::new();
         let token = LaunchToken::generate().expect("token");
         state.install_authoriser(Authoriser::desktop_owner(&token));
@@ -83,7 +91,7 @@ impl Host {
             state.events.clone(),
         );
         state.install_monitor(monitor.clone());
-        state.install_navigation(Arc::new(navigation()));
+        state.install_navigation(Arc::new(navigation));
         Self {
             state,
             monitor,
@@ -373,6 +381,131 @@ async fn a_destination_folder_outside_the_path_rule_is_refused_before_any_dialog
         let entries = host.starts();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].error_code.as_deref(), Some("invalid_path"));
-        assert!(!format!("{entries:?}").contains("escape"));
+        let journaled = format!("{entries:?}");
+        if !folder.is_empty() {
+            assert!(!journaled.contains(folder), "{folder:?}: {journaled}");
+        }
     }
+}
+
+/// A starter that knows the job of every operation already, as after a first start.
+struct ReplayingStarter;
+
+impl ImportStarter for ReplayingStarter {
+    fn start(&self, _: &str, _: &ImportRequest) -> Result<ImportAnswer, ImportStartError> {
+        panic!("a replay shows no dialog");
+    }
+
+    fn replay(&self, request: &ImportRequest) -> Result<Option<ImportAnswer>, ImportStartError> {
+        let operation = request.envelope.operation_id();
+        Ok(Some(ImportAnswer::started(operation, "job-1".to_string())))
+    }
+}
+
+#[tokio::test]
+async fn a_repeated_operation_answers_its_job_before_the_destination_is_checked_again() {
+    let host = Host::start();
+    host.state
+        .install_import_starter(Arc::new(ReplayingStarter));
+    let mut request = body(&format!("library:{LIBRARY}"));
+    request["collection_id"] = json!(FOREIGN_COLLECTION);
+    let (status, answer) = host.post(request, true).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer["job_id"], "job-1");
+    assert_eq!(answer["import"], "started");
+    let entries = host.starts();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].outcome, Outcome::Succeeded);
+}
+
+/// A catalog whose store fails for every call in a way a retry will not fix.
+struct BrokenCatalog;
+
+/// The error every [`BrokenCatalog`] call answers.
+fn broken<T>() -> Result<T, CatalogError> {
+    Err(CatalogError::Failed("store broken".into()))
+}
+
+impl LibraryCatalog for BrokenCatalog {
+    fn receipt(&self, _: &OperationId) -> Result<Option<CommitReceipt>, CatalogError> {
+        broken()
+    }
+    fn library(&self, _: &LibraryId) -> Result<Option<LibraryState>, CatalogError> {
+        broken()
+    }
+    fn libraries(
+        &self,
+        _: &RepositoryId,
+        _: Option<&PageKey>,
+        _: usize,
+    ) -> Result<Vec<Keyed<LibraryRecord>>, CatalogError> {
+        broken()
+    }
+    fn collection(&self, _: &CollectionId) -> Result<Option<Collection>, CatalogError> {
+        broken()
+    }
+    fn collections(
+        &self,
+        _: &LibraryId,
+        _: Option<&PageKey>,
+        _: usize,
+    ) -> Result<Vec<Keyed<Collection>>, CatalogError> {
+        broken()
+    }
+    fn virtual_collection(
+        &self,
+        _: &VirtualCollectionId,
+    ) -> Result<Option<VirtualCollection>, CatalogError> {
+        broken()
+    }
+    fn virtual_collections(
+        &self,
+        _: &LibraryId,
+        _: Option<&PageKey>,
+        _: usize,
+    ) -> Result<Vec<Keyed<VirtualCollection>>, CatalogError> {
+        broken()
+    }
+    fn is_virtual_member(&self, _: &VirtualCollectionId, _: &FileId) -> Result<bool, CatalogError> {
+        broken()
+    }
+    fn last_member_order(&self, _: &VirtualCollectionId) -> Result<Option<i64>, CatalogError> {
+        broken()
+    }
+    fn folder(&self, _: &FolderId) -> Result<Option<Folder>, CatalogError> {
+        broken()
+    }
+    fn file(&self, _: &FileId) -> Result<Option<FileEntry>, CatalogError> {
+        broken()
+    }
+    fn files(
+        &self,
+        _: &FileListing,
+        _: Option<&PageKey>,
+        _: usize,
+    ) -> Result<Vec<Keyed<FileEntry>>, CatalogError> {
+        broken()
+    }
+    fn commit(&self, _: CatalogCommit) -> Result<CommitReceipt, CatalogError> {
+        broken()
+    }
+}
+
+#[tokio::test]
+async fn a_catalog_failure_a_retry_cannot_fix_is_internal_not_unavailable() {
+    let navigation = NavigationService::new(
+        Arc::new(BrokenCatalog),
+        Arc::new(MemoryFolderIndex::new()),
+        Arc::new(HostAccess),
+        RepositoryInfo::new(RepositoryId::new("repo-1").expect("repository"), None),
+    );
+    let host = Host::with_navigation(navigation);
+    let starter = ScriptedStarter::new(Ok(Some("job-1")));
+    host.state.install_import_starter(starter.clone());
+    let (status, answer) = host.post(body(&format!("library:{LIBRARY}")), true).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{answer}");
+    assert!(starter.asked.lock().expect("asked").is_empty(), "no dialog");
+    let entries = host.starts();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].error_code.as_deref(), Some("internal"));
 }

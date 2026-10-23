@@ -187,8 +187,10 @@ impl Desktop {
         ));
         let status = response.status().as_u16();
         let text = String::from_utf8_lossy(response.body()).to_string();
+        // Every library folder of a test sits beside its data directory, below the test root.
+        let root = self.dir.parent().unwrap_or(&self.dir);
         assert!(
-            !text.contains(self.dir.to_string_lossy().as_ref()),
+            !text.contains(root.to_string_lossy().as_ref()),
             "no host path in an answer: {text}"
         );
         (status, serde_json::from_str(&text).unwrap_or(Value::Null))
@@ -592,7 +594,7 @@ fn the_data_directory_keeps_only_each_library_s_index_never_its_files() {
 }
 
 #[test]
-fn a_library_folder_copied_elsewhere_reopens_with_its_collections_and_registered_files() {
+fn a_library_folder_copied_elsewhere_reopens_with_its_collections() {
     let dir = fresh_dir("moved");
     let (library, folder) = donor_library(&dir.join("donor"));
     let desktop = Desktop::launch(dir.join("data"));

@@ -200,7 +200,9 @@ fn second_deleted_now(w: &mut MonitorWorld, days: i64) {
 #[given(expr = "the library keeps deleted files for {int} days")]
 fn library_retention(w: &mut MonitorWorld, days: u32) {
     let fx = w.library.fx();
-    fx.catalog.set_retention_days(&fx.library(), Some(days));
+    fx.catalog
+        .set_retention_days(&fx.library(), Some(days))
+        .expect("retention");
 }
 
 #[given(expr = "the file is a member of the virtual collections {string} and {string}")]

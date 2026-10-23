@@ -235,7 +235,8 @@ impl Planner<'_> {
 
     /// Delete a collection of `lib` and, in the same commit, every one of its files that is
     /// not already deleted, as `policy` deletes a file (owner decisions 2026-10-22, ADR 041
-    /// Decision 8). Nothing is moved: each file keeps its home collection and logical path. The
+    /// Decision 8); a collection without such a file is only removed. A file registered after
+    /// this plan makes the catalog refuse the removal rather than leave it undeleted. Nothing is moved: each file keeps its home collection and logical path. The
     /// answer carries the deletion times when the collection held a file that was not deleted.
     fn delete_collection(
         &self,
@@ -245,15 +246,17 @@ impl Planner<'_> {
     ) -> Result<Planned, LibraryError> {
         self.collection_in(lib, id)?;
         let deletion = policy.deletion_at(self.now_ms);
-        let changes = vec![
-            CatalogChange::DeleteCollectionFiles {
-                collection_id: id.clone(),
-                deletion,
-            },
-            CatalogChange::RemoveCollection(id.clone()),
-        ];
+        let holds = self.holds_undeleted(lib, id)?;
+        let files = holds.then(|| CatalogChange::DeleteCollectionFiles {
+            collection_id: id.clone(),
+            deletion,
+        });
+        let changes = files
+            .into_iter()
+            .chain([CatalogChange::RemoveCollection(id.clone())])
+            .collect();
         let mut out = planned(changes, [id.as_str()]);
-        out.deletion = self.holds_undeleted(lib, id)?.then_some(deletion);
+        out.deletion = holds.then_some(deletion);
         Ok(out)
     }
 

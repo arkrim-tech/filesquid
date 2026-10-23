@@ -21,8 +21,9 @@ use filesquid_core::CollectionId;
 use std::path::{Component, Path};
 
 /// The collection logical path of each source of `plan` in `collection_id` beneath the
-/// destination folder, numbered when taken, or the code that quarantines its files. Reads
-/// filesystem metadata and the index.
+/// destination folder, numbered when taken in the index or by a source before it in the same
+/// plan (two picked folders of one name land beside each other), or the code that
+/// quarantines its files. Reads filesystem metadata and the index.
 ///
 /// # Errors
 /// `unavailable` when the index cannot answer.
@@ -31,19 +32,38 @@ pub fn source_roots(
     collection_id: &CollectionId,
     index: &dyn ImportIndex,
 ) -> Result<Vec<Result<String, &'static str>>, &'static str> {
-    plan.sources
-        .iter()
-        .map(|source| source_root(source, plan.folder.as_deref(), collection_id, index))
-        .collect()
+    let mut chosen: Vec<String> = Vec::with_capacity(plan.sources.len());
+    let mut roots = Vec::with_capacity(plan.sources.len());
+    for source in &plan.sources {
+        let taken = |path: &str| {
+            let by_plan = chosen.iter().any(|root| overlaps(root, path));
+            Ok(by_plan || index.path_taken(collection_id, path)?)
+        };
+        let root = source_root(source, plan.folder.as_deref(), taken)?;
+        if let Ok(path) = &root {
+            chosen.push(path.clone());
+        }
+        roots.push(root);
+    }
+    Ok(roots)
 }
 
-/// The path of the source `source` beneath `folder` in `collection_id`. Reads filesystem
-/// metadata and the index.
+/// Whether the paths `a` and `b` are the same or one lies below the other. Pure.
+fn overlaps(a: &str, b: &str) -> bool {
+    let below = |inner: &str, outer: &str| {
+        inner
+            .strip_prefix(outer)
+            .is_some_and(|rest| rest.starts_with('/'))
+    };
+    a == b || below(a, b) || below(b, a)
+}
+
+/// The path of the source `source` beneath `folder`, numbered while `taken` says a path is
+/// used. Reads filesystem metadata and, through `taken`, the index.
 fn source_root(
     source: &Path,
     folder: Option<&str>,
-    collection_id: &CollectionId,
-    index: &dyn ImportIndex,
+    mut taken: impl FnMut(&str) -> Result<bool, String>,
 ) -> Result<Result<String, &'static str>, &'static str> {
     let Some(name) = source.file_name() else {
         return Ok(Err(PathError::Invalid.error_code()));
@@ -57,7 +77,6 @@ fn source_root(
         false => ItemKind::File,
     };
     let wanted = join(folder, &segment);
-    let mut taken = |path: &str| index.path_taken(collection_id, path);
     let free = free_path(&wanted, kind, &mut taken).map_err(|_| "unavailable")?;
     Ok(free.map_err(|err| err.error_code()))
 }

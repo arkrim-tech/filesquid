@@ -16,6 +16,7 @@
 //! principal this host authenticates, and the API refuses the repair for anyone else.
 
 use filesquid_api::auth::Principal;
+use filesquid_api::library::CatalogError;
 use filesquid_api::local_library::{
     CopyReport, LibraryCommands, LibraryFuture, LibraryOperations, LibraryRequest, LibraryView,
     LocalLibraryService, LocationRequest, RebuildReport, RepairAnswer, RepairCandidates,
@@ -90,8 +91,9 @@ impl DesktopLibraries {
     /// Serve the bound library of `view`: its files from its folder's root and leases, its
     /// catalog index, its validation and its history. A part that cannot be served is logged
     /// as a warning with its error code only (the journal layer journals it); the library
-    /// stays open in the commands. Creates directories in the data directory.
-    fn serve(&self, view: &LibraryView) {
+    /// stays open in the commands. Creates directories in the data directory; the catalog
+    /// attach (which may rebuild a whole index) runs on a blocking thread.
+    async fn serve(&self, view: &LibraryView) {
         let location = self.commands.location_of(&view.library_id);
         let root = location
             .as_deref()
@@ -101,7 +103,7 @@ impl DesktopLibraries {
             return;
         };
         let identity = location.and_then(|location| self.locations.identity_of(&location));
-        self.attach(&view.library_id, &root, identity);
+        self.attach(&view.library_id, &root, identity).await;
         if open_fs_library_root(
             &self.serving.files,
             &view.library_id,
@@ -118,10 +120,11 @@ impl DesktopLibraries {
         self.serving.opened.insert(&view.library_id, root);
     }
 
-    /// Attach `library_id`'s folder `root` (identified as `identity`) to its catalog index,
-    /// logging a folder that cannot be attached with its error code only. Filesystem and
+    /// Attach `library_id`'s folder `root` (identified as `identity`) to its catalog index on
+    /// a blocking thread, logging a folder that cannot be attached with its error code only
+    /// (`conflict`, `unavailable` or `internal`, as the catalog classified it). Filesystem and
     /// database I/O.
-    fn attach(
+    async fn attach(
         &self,
         library_id: &LibraryId,
         root: &filesquid_native::HostRoot,
@@ -138,8 +141,12 @@ impl DesktopLibraries {
             root: root.clone(),
             identity,
         };
-        if self.serving.catalog.attach(&folder).is_err() {
-            warn_unserved(library_id, "catalog_unavailable");
+        let catalog = self.serving.catalog.clone();
+        let attached = tokio::task::spawn_blocking(move || catalog.attach(&folder)).await;
+        match attached {
+            Ok(Ok(_)) => {}
+            Ok(Err(err)) => warn_unserved(library_id, attach_error_code(&err)),
+            Err(_) => warn_unserved(library_id, "internal"),
         }
     }
 
@@ -151,8 +158,17 @@ impl DesktopLibraries {
         >,
     ) -> Result<LibraryView, filesquid_api::local_library::LocalLibraryError> {
         let view = bind.await?;
-        self.serve(&view);
+        self.serve(&view).await;
         Ok(view)
+    }
+}
+
+/// The error code of a catalog attach failure: whether a retry may help. Pure.
+fn attach_error_code(err: &CatalogError) -> &'static str {
+    match err {
+        CatalogError::Conflict => "conflict",
+        CatalogError::Unavailable(_) => "unavailable",
+        CatalogError::Failed(_) => "internal",
     }
 }
 

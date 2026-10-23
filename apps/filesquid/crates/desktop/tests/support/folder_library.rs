@@ -5,7 +5,7 @@
 
 use filesquid_core::{LibraryId, RepositoryId};
 use filesquid_native::catalog::LibraryFolder;
-use filesquid_native::{HostLocations, SqliteCatalog};
+use filesquid_native::{HostLocations, SqliteCatalog, MAX_LIBRARIES};
 use std::path::{Path, PathBuf};
 
 /// The installation every desktop test library belongs to.
@@ -50,6 +50,25 @@ pub fn attach_folder(
         identity: locations.identity_of(&location).expect("identity"),
     };
     catalog.attach(&library).expect("attached");
+}
+
+/// Attach every library folder of the data directory `data_dir` to `catalog` again, as the
+/// owner reopens them at the next launch; at most the catalog's [`MAX_LIBRARIES`], and a
+/// fixture with more fails rather than leave libraries unopened. Filesystem and database I/O.
+pub fn reattach_all(catalog: &SqliteCatalog, data_dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(folders_of(data_dir)) else {
+        return;
+    };
+    let entries: Vec<_> = entries.take(MAX_LIBRARIES + 1).collect();
+    assert!(
+        entries.len() <= MAX_LIBRARIES,
+        "more library folders than a catalog serves"
+    );
+    for entry in entries {
+        let entry = entry.expect("entry");
+        let id = entry.file_name().to_string_lossy().to_string();
+        attach_folder(catalog, data_dir, &id, &entry.path(), "Family archive");
+    }
 }
 
 /// Remove the data directory `data_dir` and its library folders (filesystem I/O).

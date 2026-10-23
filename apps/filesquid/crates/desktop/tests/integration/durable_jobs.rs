@@ -63,19 +63,6 @@ fn libraries_without_history(dir: &Path, ops: &[&str]) -> Vec<String> {
     ids
 }
 
-/// Attach every library folder of the data directory `dir` to `catalog`, as the owner
-/// reopens them at the next launch.
-fn reattach(catalog: &SqliteCatalog, dir: &Path) {
-    let Ok(entries) = std::fs::read_dir(folder_library::folders_of(dir)) else {
-        return;
-    };
-    for entry in entries.take(64) {
-        let entry = entry.expect("entry");
-        let id = entry.file_name().to_string_lossy().to_string();
-        folder_library::attach_folder(catalog, dir, &id, &entry.path(), "Family archive");
-    }
-}
-
 /// One launch of the desktop host's journaling, catalogs and jobs.
 struct Launch {
     dir: PathBuf,
@@ -89,7 +76,7 @@ impl Launch {
         let state = ApiState::new();
         let host = open_host_monitor(&state, dir, None).expect("monitor");
         let catalog = Arc::new(open_library_catalog(dir, &host, &installation()).expect("catalog"));
-        reattach(&catalog, dir);
+        folder_library::reattach_all(&catalog, dir);
         let jobs = open_jobs(dir, &host).expect("jobs");
         Self {
             dir: dir.to_path_buf(),

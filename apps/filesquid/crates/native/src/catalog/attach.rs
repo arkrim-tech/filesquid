@@ -10,12 +10,13 @@
 //! of the folder that the snapshot does not register are counted in that entry and stay
 //! unregistered. A folder without a snapshot (a library the owner just created, or one an
 //! earlier build created without a collection snapshot) gets its library entity, published as
-//! the first snapshot version and journaled as `library.create`.
+//! the first snapshot version and journaled as `library.create`; an index built from another
+//! folder is emptied first, so nothing of that folder is served from this one.
 
 use super::intent::{self, PendingIntent};
 use super::{
-    canonical, error_code, failed, names_other_library, reconcile, reconcile_library, rows, schema,
-    write, OpenLibrary, SqliteCatalog, LOG_TARGET, MAX_LIBRARIES,
+    canonical, error_code, failed, library_ids, names_other_library, reconcile, reconcile_library,
+    rows, schema, write, OpenLibrary, SqliteCatalog, LOG_TARGET, MAX_LIBRARIES,
 };
 use crate::locations::HostRoot;
 use filesquid_api::canonical::SnapshotKey;
@@ -85,7 +86,7 @@ impl SqliteCatalog {
                 false => Err(CatalogError::Conflict),
             };
         }
-        if libraries.len() >= MAX_LIBRARIES {
+        if libraries.len() >= MAX_LIBRARIES || self.directory_full(&folder.library_id)? {
             return Err(failed(format!(
                 "a catalog serves at most {MAX_LIBRARIES} libraries"
             )));
@@ -96,6 +97,14 @@ impl SqliteCatalog {
         Ok(report)
     }
 
+    /// Whether a new index for `library_id` would put more than [`MAX_LIBRARIES`] catalog
+    /// files in the catalog directory, which the next launch would then refuse to open: its
+    /// file is not there yet and the directory already holds that many. Reads the directory.
+    fn directory_full(&self, library_id: &LibraryId) -> Result<bool, CatalogError> {
+        let ids = library_ids(&self.root)?;
+        Ok(!ids.contains_key(library_id.as_str()) && ids.len() >= MAX_LIBRARIES)
+    }
+
     /// Open `folder`'s index and canonical storage and bring the index to its snapshot.
     /// Filesystem and database I/O.
     fn open_folder(
@@ -103,15 +112,19 @@ impl SqliteCatalog {
         folder: &LibraryFolder,
     ) -> Result<(OpenLibrary, AttachReport), CatalogError> {
         let id = &folder.library_id;
+        let canonical = canonical::CanonicalRoot::open(&self.root, id, &folder.root)?;
         let mut conn = schema::open_catalog_db(&schema::file_path(&self.root, id)?)?;
         if names_other_library(&conn, id)? {
             return Err(failed("a catalog file names another library"));
         }
-        let canonical = canonical::CanonicalRoot::open(&self.root, id, &folder.root)?;
+        let snapshot = canonical.read()?;
         if rows::folder_identity(&conn)?.as_deref() != Some(folder.identity.as_str()) {
-            reconcile::forget_snapshot(&conn)?;
+            match snapshot.is_some() {
+                true => reconcile::forget_snapshot(&conn).map(drop)?,
+                false => reconcile::clear_index(&mut conn)?,
+            }
         }
-        let report = match rows::library(&conn)?.is_some() || canonical.read()?.is_some() {
+        let report = match rows::library(&conn)?.is_some() || snapshot.is_some() {
             true => rebuilt(reconcile_library(&mut conn, &canonical, id)?),
             false => self.create_entity(&mut conn, &canonical, folder)?,
         };

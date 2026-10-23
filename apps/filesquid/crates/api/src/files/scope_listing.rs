@@ -14,6 +14,7 @@
 //! identifier; the cursor is opaque and names no path.
 
 use super::error::FileError;
+use super::names::safe_name;
 use super::service::{page_size, FileService};
 use super::view::{EntryView, FolderPageView, ListingQuery};
 use crate::canonical::file_object_id;
@@ -92,13 +93,17 @@ pub struct ScopeListing {
 }
 
 impl ScopeListing {
-    /// The listing of `page` of `folder` when the index was asked for `limit` + 1 entries:
-    /// at most `limit` kept, and a cursor after the last kept one when more remain. Pure.
-    pub fn of(folder: &str, mut page: ScopePage, limit: usize) -> Self {
+    /// The listing of `page` of `folder` of the scope keyed `scope_key` when the index was
+    /// asked for `limit` + 1 entries: at most `limit` kept, and a cursor after the last kept
+    /// one, bound to that scope and folder, when more remain. Pure.
+    pub fn of(scope_key: &str, folder: &str, mut page: ScopePage, limit: usize) -> Self {
         let more = page.entries.len() > limit;
         page.entries.truncate(limit);
         let next_cursor = match (more, page.entries.last()) {
-            (true, Some(last)) => Some(encode_cursor(&after_entry(last))),
+            (true, Some(last)) => Some(encode_cursor(
+                &listing_context(scope_key, folder),
+                &after_entry(last),
+            )),
             _ => None,
         };
         Self {
@@ -121,16 +126,41 @@ fn after_entry(entry: &ScopeEntry) -> ScopeAfter {
     }
 }
 
-/// The opaque cursor of `after`: the prefix `s1.` and the hexadecimal bytes of its JSON, so
-/// it holds no readable name. Pure.
-pub fn encode_cursor(after: &ScopeAfter) -> String {
-    let json = serde_json::to_vec(after).unwrap_or_default();
+/// What a scope cursor holds: the listing it belongs to and where its page starts.
+#[derive(Serialize, Deserialize)]
+struct Cursor {
+    /// The listing's context ([`listing_context`]).
+    #[serde(rename = "c")]
+    context: String,
+    /// Where the page starts.
+    #[serde(rename = "a")]
+    after: ScopeAfter,
+}
+
+/// The context of the listing of `folder` of the scope keyed `scope_key`: the first 16
+/// hexadecimal digits of the SHA-256 of both, so a cursor of another scope or folder is told
+/// apart without naming either. Pure.
+pub fn listing_context(scope_key: &str, folder: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(format!("{scope_key}\0{folder}").as_bytes());
+    digest.iter().take(8).map(|b| format!("{b:02x}")).collect()
+}
+
+/// The opaque cursor of `after` in the listing `context`: the prefix `s1.` and the
+/// hexadecimal bytes of their JSON, so it holds no readable name. Pure.
+pub fn encode_cursor(context: &str, after: &ScopeAfter) -> String {
+    let cursor = Cursor {
+        context: context.to_string(),
+        after: after.clone(),
+    };
+    let json = serde_json::to_vec(&cursor).unwrap_or_default();
     let hex: String = json.iter().map(|b| format!("{b:02x}")).collect();
     format!("{CURSOR_PREFIX}{hex}")
 }
 
-/// The position a scope cursor names, or `None` for a cursor that is not one. Pure.
-pub fn decode_cursor(cursor: &str) -> Option<ScopeAfter> {
+/// The position a scope cursor names in the listing `context`, or `None` for a cursor that
+/// is not one or belongs to another listing. Pure.
+pub fn decode_cursor(context: &str, cursor: &str) -> Option<ScopeAfter> {
     let hex = cursor.strip_prefix(CURSOR_PREFIX)?;
     if hex.len() % 2 != 0 || !hex.is_ascii() {
         return None;
@@ -139,7 +169,8 @@ pub fn decode_cursor(cursor: &str) -> Option<ScopeAfter> {
         .step_by(2)
         .map(|at| u8::from_str_radix(&hex[at..at + 2], 16).ok())
         .collect();
-    serde_json::from_slice(&bytes?).ok()
+    let cursor: Cursor = serde_json::from_slice(&bytes?).ok()?;
+    (cursor.context == context).then_some(cursor.after)
 }
 
 /// The page size of a scope listing: as an object listing's (1 to 1,000, 200 by default).
@@ -168,7 +199,7 @@ where
             match entry {
                 ScopeEntry::Folder { name } => entries.push(EntryView::Folder {
                     path: join(&listing.folder, &name),
-                    name,
+                    name: shown_name(&name),
                 }),
                 ScopeEntry::File { name, file_id } => {
                     let found = self.scope_file(&listing.library_id, &file_id, name).await?;
@@ -221,7 +252,13 @@ where
     }
 }
 
-/// `entry` shown under its collection name `name`, naming its object. Pure.
+/// The name an index segment is shown under: its API-S-005 safe form, as ordinary listings
+/// show names. Pure.
+fn shown_name(name: &str) -> String {
+    safe_name(name).unwrap_or_else(|| "file".to_string())
+}
+
+/// `entry` shown under its collection name `name` (in its safe form), naming its object. Pure.
 fn shown_as(entry: EntryView, name: String, object: String) -> EntryView {
     match entry {
         EntryView::File {
@@ -235,7 +272,7 @@ fn shown_as(entry: EntryView, name: String, object: String) -> EntryView {
             ..
         } => EntryView::File {
             name: stored,
-            display_name: name,
+            display_name: shown_name(&name),
             path,
             digest,
             size,

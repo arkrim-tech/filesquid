@@ -47,7 +47,7 @@ mod service;
 pub(crate) use announce::{navigation_parents, NavigationParents};
 pub use catalog::{
     CatalogChange, CatalogCommit, CatalogError, CommitReceipt, FileEntry, FileListing, FileScope,
-    Keyed, LibraryCatalog, LibraryRecord, LibraryState, PageKey,
+    Keyed, LibraryCatalog, LibraryRecord, LibraryState, PageKey, COLLECTION_HOLDS_FILES,
 };
 pub use command::{
     CommandRequest, CommandResult, LibraryCommand, MAX_EXPRESSION_BYTES, MAX_FILES_PER_COMMAND,

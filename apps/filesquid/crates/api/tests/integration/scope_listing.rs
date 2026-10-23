@@ -115,6 +115,11 @@ async fn upload(rig: &FilesRig, name: &str, bytes: &[u8]) -> String {
 /// A rig with two uploaded files registered in the drive catalog's collection at
 /// `trips/beach-1.jpg` and `notes.txt`.
 async fn rig() -> (FilesRig, DriveCatalog, Vec<String>) {
+    rig_with(&[]).await
+}
+
+/// [`rig`] with `extra` files (collection logical path, uploaded name, bytes) registered too.
+async fn rig_with(extra: &[(&str, &str, &[u8])]) -> (FilesRig, DriveCatalog, Vec<String>) {
     // The fixture shares the files rig's library ID with the drive catalog's library.
     let rig = FilesRig::new().await;
     let drive = DriveCatalog::new(LIBRARY);
@@ -140,15 +145,23 @@ async fn rig() -> (FilesRig, DriveCatalog, Vec<String>) {
     let notes = upload(&rig, "notes.txt", b"words").await;
     drive.file_in_collection(&beach);
     drive.file_in_collection(&notes);
+    let mut indexed = vec![
+        ("trips/beach-1.jpg".to_string(), beach.clone()),
+        ("notes.txt".to_string(), notes.clone()),
+    ];
+    let mut ids = vec![beach, notes];
+    for (path, name, bytes) in extra {
+        let id = upload(&rig, name, bytes).await;
+        drive.file_in_collection(&id);
+        indexed.push((path.to_string(), id.clone()));
+        ids.push(id);
+    }
     let index = Indexed {
         collection,
-        files: Mutex::new(vec![
-            ("trips/beach-1.jpg".to_string(), beach.clone()),
-            ("notes.txt".to_string(), notes.clone()),
-        ]),
+        files: Mutex::new(indexed),
     };
     assert!(rig.service.install_scope_objects(Arc::new(index)));
-    (rig, drive, vec![beach, notes])
+    (rig, drive, ids)
 }
 
 /// `GET /api/v1/files/listing?node=<handle><rest>`.
@@ -254,5 +267,44 @@ async fn a_scope_listing_names_no_filesystem_path() {
     assert!(
         !text.contains("/tmp") && !text.contains("/dev/shm"),
         "{text}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cursor_of_another_folder_is_refused() {
+    let (rig, drive, _) = rig().await;
+    let first = list(&rig, &drive.collection_node(), "&limit=1").await;
+    let cursor = first.json()["next_cursor"]
+        .as_str()
+        .expect("a next page")
+        .to_string();
+    let collection = CollectionId::new(drive_catalog::COLLECTION).expect("collection");
+    let folder = NodeRef::folder(FolderScope::Collection(collection), "trips")
+        .to_handle()
+        .expect("handle");
+    let rest = format!("&limit=1&cursor={}", encode(&cursor));
+    let reused = list(&rig, &folder, &rest).await;
+    assert_eq!(
+        reused.status,
+        StatusCode::BAD_REQUEST,
+        "{:?}",
+        reused.json()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_indexed_name_is_shown_in_its_safe_form() {
+    let (rig, _drive, _) = rig_with(&[("trips/ padded.txt ", "padded.txt", b"pad")]).await;
+    let collection = CollectionId::new(drive_catalog::COLLECTION).expect("collection");
+    let folder = NodeRef::folder(FolderScope::Collection(collection), "trips")
+        .to_handle()
+        .expect("handle");
+    let answer = list(&rig, &folder, "").await;
+    assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.json());
+    let names: Vec<String> = shown(&answer.json()).into_iter().map(|(_, n)| n).collect();
+    assert_eq!(
+        names,
+        ["padded.txt", "beach-1.jpg"],
+        "ordered by the stored name"
     );
 }

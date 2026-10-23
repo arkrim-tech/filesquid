@@ -186,6 +186,21 @@ fn restore_receipts(
     Ok(())
 }
 
+/// Empty an index built from another folder that holds no snapshot: every organisation row,
+/// the library row, the receipts and the pending intents go (the journal outbox stays, to be
+/// forwarded), so the folder's own library entity is created afresh and nothing of the other
+/// folder is served. Database I/O.
+pub(crate) fn clear_index(conn: &mut Connection) -> Result<(), CatalogError> {
+    let tx = conn.transaction().map_err(sql)?;
+    tx.execute_batch(
+        "DELETE FROM virtual_members; DELETE FROM files; DELETE FROM collections;
+         DELETE FROM virtual_collections; DELETE FROM folders; DELETE FROM library;
+         DELETE FROM receipts; DELETE FROM pending_intents;",
+    )
+    .map_err(sql)?;
+    tx.commit().map_err(sql)
+}
+
 /// Forget the snapshot version the catalog claims to reflect: its library's OCFL root holds
 /// no snapshot (it was moved or deleted), so the next commit publishes every entity again
 /// instead of a partial delta. Database I/O.

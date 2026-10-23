@@ -2,7 +2,7 @@
 //! import route served through the `filesquid://` scheme with the per-launch token, a scripted
 //! dialog in place of the native one, the native import worker, and one library in a folder
 //! of a scratch directory that is removed when the rig is dropped, attached to its catalog
-//! index with the destination collection [`COLLECTION`], and the navigation and listing routes
+//! index with one destination collection (`ImportRig::collection`), and the navigation and listing routes
 //! over that index.
 //!
 //! The including test crate MUST declare `mod journal` (`support/journal.rs`) at its root.

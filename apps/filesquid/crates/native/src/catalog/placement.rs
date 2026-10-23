@@ -81,9 +81,47 @@ pub(crate) fn placement_of(
     Ok(row.unwrap_or((None, None)))
 }
 
-/// Whether `path` is taken in `collection_id`: a file of any state sits there, or below it
-/// (the path names a folder). Database I/O.
+/// Whether `path` is taken in `collection_id`: a file of any state sits there, below it (the
+/// path names a folder) or at one of its ancestors (a file cannot also be a folder).
+/// Database I/O.
 pub(crate) fn taken(
+    conn: &Connection,
+    collection_id: &CollectionId,
+    path: &str,
+) -> Result<bool, CatalogError> {
+    if at_or_below(conn, collection_id, path)? {
+        return Ok(true);
+    }
+    for ancestor in ancestors(path) {
+        if file_at(conn, collection_id, ancestor)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The proper ancestors of `path`, nearest first: at most one per `/`, so the walk is
+/// bounded by the path's 1,024 bytes. Pure.
+fn ancestors(path: &str) -> impl Iterator<Item = &str> {
+    path.match_indices('/').rev().map(|(at, _)| &path[..at])
+}
+
+/// Whether a file of any state sits exactly at `path` in `collection_id`. Database I/O.
+fn file_at(
+    conn: &Connection,
+    collection_id: &CollectionId,
+    path: &str,
+) -> Result<bool, CatalogError> {
+    conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM files WHERE home_collection_id = ?1 AND path = ?2)",
+        params![collection_id.as_str(), path],
+        |r| r.get::<_, bool>(0),
+    )
+    .map_err(sql)
+}
+
+/// Whether a file of any state sits at `path` in `collection_id` or below it. Database I/O.
+fn at_or_below(
     conn: &Connection,
     collection_id: &CollectionId,
     path: &str,

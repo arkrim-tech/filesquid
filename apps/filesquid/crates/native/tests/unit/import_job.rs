@@ -772,13 +772,14 @@ async fn a_queued_job_without_a_plan_is_failed_not_left_pending() {
     assert_eq!(stored.error_code.as_deref(), Some("plan_missing"));
 }
 
-/// An index that forwards to the rig's catalog but answers every path as taken, or fails the
+/// An index that forwards to the rig's catalog but answers every path as taken, fails the
 /// first registration and sets a stop flag, as a crash between a file's object and its
-/// registration would.
+/// registration would, or fails every registration, as an index that cannot be written.
 struct Scripted<'a> {
     inner: &'a SqliteCatalog,
     all_taken: bool,
     crash_once: std::sync::Mutex<Option<&'a AtomicBool>>,
+    refuse_writes: bool,
 }
 
 impl ImportIndex for Scripted<'_> {
@@ -810,6 +811,9 @@ impl ImportIndex for Scripted<'_> {
         if let Some(stop) = self.crash_once.lock().expect("lock").take() {
             stop.store(true, Ordering::SeqCst);
             return Err("crashed before the registration".into());
+        }
+        if self.refuse_writes {
+            return Err("the index cannot be written".into());
         }
         self.inner.register(library, file, journal)
     }
@@ -949,6 +953,7 @@ async fn a_source_whose_numbers_are_all_taken_is_quarantined_as_path_suffix_exha
         inner: rig.catalog.as_ref(),
         all_taken: true,
         crash_once: std::sync::Mutex::new(None),
+        refuse_writes: false,
     };
     let plan = plan(&folder);
     let job = rig.submit(&plan, "op-exhausted");
@@ -973,6 +978,7 @@ async fn a_crash_between_a_file_s_object_and_its_registration_resumes_and_regist
         inner: rig.catalog.as_ref(),
         all_taken: false,
         crash_once: std::sync::Mutex::new(Some(&rig.stop)),
+        refuse_writes: false,
     };
     let crashing = rig.context_over(&journal, Duration::from_millis(1), &index);
     let run = run_import_job(&crashing, &job.id, &plan)
@@ -1023,4 +1029,70 @@ async fn a_plan_without_a_destination_fails_its_job_as_destination_required() {
     assert_eq!(stored.state, JobState::Failed);
     assert_eq!(stored.error_code.as_deref(), Some("destination_required"));
     assert_eq!(objects(&dir.0), 0);
+}
+
+#[tokio::test]
+async fn a_file_the_index_keeps_refusing_to_register_suspends_the_job_and_keeps_its_intent() {
+    let dir = TempDir::new("register-down");
+    let rig = Rig::new(&dir.0).await;
+    let folder = holiday_folder(&dir.0);
+    let plan = plan(&folder);
+    let job = rig.submit(&plan, "op-down");
+    let journal = rig.monitor.journal();
+    let index = Scripted {
+        inner: rig.catalog.as_ref(),
+        all_taken: false,
+        crash_once: std::sync::Mutex::new(None),
+        refuse_writes: true,
+    };
+    let down = rig.context_over(&journal, Duration::from_millis(1), &index);
+    let run = run_import_job(&down, &job.id, &plan).await.expect("ran");
+    assert_eq!(run.state, JobState::Pending, "suspended, not finished");
+    assert!(
+        run.quarantined.is_empty(),
+        "the committed file is not given up"
+    );
+    assert_eq!(objects(&dir.0), 1, "its object was committed");
+    let id = LibraryId::new(LIBRARY).expect("library");
+    let pending = rig.catalog.pending_intents(&id, 10).expect("intents");
+    assert_eq!(pending.len(), 1, "the import's operation stays pending");
+    let run = run_import_job(&rig.context(&journal), &job.id, &plan)
+        .await
+        .expect("resumed");
+    assert_eq!(run.state, JobState::Completed);
+    assert_eq!(
+        objects(&dir.0),
+        3,
+        "the committed file was answered, not imported twice"
+    );
+    assert_eq!(rig.registered().len(), 3, "every file registered");
+}
+
+#[tokio::test]
+async fn two_picked_folders_of_one_name_land_beside_each_other() {
+    let dir = TempDir::new("same-name");
+    let rig = Rig::new(&dir.0).await;
+    let first = holiday_folder(&dir.0.join("camera"));
+    let second = dir.0.join("phone").join("Holidays");
+    std::fs::create_dir_all(&second).expect("second folder");
+    std::fs::write(second.join("d.jpg"), b"dd").expect("d");
+    let both = ImportPlan {
+        sources: vec![first.clone(), second],
+        ..plan(&first)
+    };
+    let job = rig.submit(&both, "op-both");
+    let journal = rig.monitor.journal();
+    let run = run_import_job(&rig.context(&journal), &job.id, &both)
+        .await
+        .expect("ran");
+    assert_eq!(run.imported.len(), 4);
+    assert_eq!(
+        rig.registered(),
+        [
+            "trips/Holidays-1/d.jpg",
+            "trips/Holidays/Day 2/c.txt",
+            "trips/Holidays/a.jpg",
+            "trips/Holidays/b.png"
+        ]
+    );
 }

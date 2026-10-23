@@ -133,10 +133,8 @@ pub fn touched(change: &CatalogChange) -> Vec<SnapshotKey> {
         CatalogChange::CreateLibrary(_) => return vec![SnapshotKey::Library],
         CatalogChange::PutCollection(c) => SnapshotKey::Collection(c.id().clone()),
         CatalogChange::RemoveCollection(id) => SnapshotKey::Collection(id.clone()),
-        // Its files' entities change too; only the catalog knows them, so it adds them.
-        CatalogChange::DeleteCollectionFiles { collection_id, .. } => {
-            SnapshotKey::Collection(collection_id.clone())
-        }
+        // Only its files' entities change; only the catalog knows them, so it adds them.
+        CatalogChange::DeleteCollectionFiles { .. } => return vec![SnapshotKey::Library],
         CatalogChange::PutVirtualCollection(v) => SnapshotKey::VirtualCollection(v.id().clone()),
         CatalogChange::RemoveVirtualCollection(id) => SnapshotKey::VirtualCollection(id.clone()),
         CatalogChange::AddVirtualMember(m) => {

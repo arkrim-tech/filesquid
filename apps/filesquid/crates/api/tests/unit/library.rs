@@ -11,8 +11,8 @@ use filesquid_api::library::{
     is_uuid_v4, mint_uuid_v4, CatalogChange, CatalogCommit, CatalogError, CommandRequest,
     CommitReceipt, FileEntry, FileListing, FileScope, Keyed, LibraryCatalog, LibraryCommand,
     LibraryError, LibraryQuery, LibraryRecord, LibraryService, LibraryState, PageKey,
-    PurgeConfirmation, QueryRequest, VisibilityFilter, MAX_FILES_PER_COMMAND, MAX_NAME_BYTES,
-    NEW_LIBRARY_REVISION, RECOVERABLE_DAYS,
+    PurgeConfirmation, QueryRequest, VisibilityFilter, COLLECTION_HOLDS_FILES,
+    MAX_FILES_PER_COMMAND, MAX_NAME_BYTES, NEW_LIBRARY_REVISION, RECOVERABLE_DAYS,
 };
 use filesquid_api::metrics::Metrics;
 use filesquid_api::operation::{
@@ -319,9 +319,70 @@ fn deleting_a_collection_whose_files_are_all_deleted_answers_no_new_deletion() {
 }
 
 #[test]
+fn removing_a_collection_that_still_holds_files_without_deleting_them_is_refused() {
+    let fx = Fixture::with_library();
+    let collection = fx.create_collection("Trips");
+    let file = fx.add_file_in("f-1", &collection);
+    let state = fx
+        .catalog
+        .library(&fx.library())
+        .expect("read")
+        .expect("library");
+    let revision = state.revision.to_string();
+    let unpaired = raw_commit(
+        "op-unpaired",
+        &fx.library(),
+        &revision,
+        vec![CatalogChange::RemoveCollection(collection.clone())],
+    );
+    let refused = fx.catalog.commit(unpaired).expect_err("refused");
+    assert_eq!(
+        refused,
+        CatalogError::Failed(COLLECTION_HOLDS_FILES.to_string())
+    );
+    assert!(
+        fx.catalog.collection(&collection).expect("read").is_some(),
+        "nothing changed"
+    );
+    let entry = fx.catalog.file(&file).expect("read").expect("file");
+    assert!(entry.state.deletion.is_none(), "the file is untouched");
+}
+
+#[test]
+fn deleting_a_collection_without_files_only_removes_it() {
+    let fx = Fixture::with_library();
+    let empty = fx.create_collection("Empty");
+    let deleted = fx.run(LibraryCommand::DeleteCollection {
+        library_id: fx.library(),
+        collection_id: empty.clone(),
+    });
+    assert_eq!(deleted.deletion, None);
+    assert!(fx.catalog.collection(&empty).expect("read").is_none());
+}
+
+#[test]
+fn a_retention_period_outside_one_to_3650_days_is_refused() {
+    let fx = Fixture::with_library();
+    for days in [0, 3_651] {
+        assert!(fx
+            .catalog
+            .set_retention_days(&fx.library(), Some(days))
+            .is_err());
+    }
+    let state = fx
+        .catalog
+        .library(&fx.library())
+        .expect("read")
+        .expect("library");
+    assert_eq!(state.retention_days, None);
+}
+
+#[test]
 fn a_library_s_own_retention_sets_the_purge_after_time() {
     let fx = Fixture::with_library();
-    fx.catalog.set_retention_days(&fx.library(), Some(7));
+    fx.catalog
+        .set_retention_days(&fx.library(), Some(7))
+        .expect("retention");
     let state = fx
         .catalog
         .library(&fx.library())

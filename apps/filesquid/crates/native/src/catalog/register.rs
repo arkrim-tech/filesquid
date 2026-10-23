@@ -16,7 +16,7 @@ use super::{placement, rows, write, SqliteCatalog};
 use filesquid_api::canonical::collection_path::{free_path, ItemKind};
 use filesquid_api::canonical::SnapshotKey;
 use filesquid_api::files::{ScopeAfter, ScopeEntry, ScopePage};
-use filesquid_api::journal::JournalEntry;
+use filesquid_api::journal::{JournalEntry, Level, Outcome};
 use filesquid_api::library::CatalogError;
 use filesquid_core::{CollectionId, File, FileId, LibraryId};
 use rusqlite::{Connection, Transaction};
@@ -73,11 +73,28 @@ impl SqliteCatalog {
             .target(request.collection_id.as_str());
         let keys = vec![SnapshotKey::File(request.file_id.clone())];
         let mut outcome = Registration::Refused("internal");
-        self.write_journaled(library_id, journal, keys, |tx| {
+        self.write_journaled(library_id, journal.clone(), keys, |tx| {
             outcome = place_new(tx, library_id, request)?;
             Ok(())
         })?;
+        if let Registration::Refused(code) = outcome {
+            self.journal_refused(library_id, refused_entry(journal, code))?;
+        }
         Ok(outcome)
+    }
+
+    /// Store the `failed` entry of a refused registration of `library_id` in its outbox and
+    /// forward it. Database and journal I/O.
+    fn journal_refused(
+        &self,
+        library_id: &LibraryId,
+        entry: JournalEntry,
+    ) -> Result<(), CatalogError> {
+        let mut libraries = self.lock()?;
+        let library = super::open_library_mut(&mut libraries, library_id)?;
+        super::journal_alone(&mut library.conn, &entry)?;
+        self.forward_logged(&library.conn);
+        Ok(())
     }
 
     /// Whether `path` is taken in the collection `collection_id`, by a file of any state or
@@ -170,18 +187,24 @@ impl SqliteCatalog {
     }
 }
 
-/// Place `request`'s file inside `tx`: answer a registered file as it is; refuse a collection
-/// the library does not hold; else store the file at the first free path. Database I/O.
+/// The `failed` entry of a registration journaled as `journal` that was refused with `code`.
+/// Pure.
+fn refused_entry(journal: JournalEntry, code: &str) -> JournalEntry {
+    let mut entry = journal.level(Level::Warn).error_code(code);
+    entry.outcome = Outcome::Failed;
+    entry
+}
+
+/// Place `request`'s file inside `tx`: answer a file that already has a path as it is; refuse
+/// a collection the library does not hold; else store the file (a new one, or one of the
+/// earlier snapshot form that has none) at the first free path. Database I/O.
 fn place_new(
     tx: &Transaction<'_>,
     library_id: &LibraryId,
     request: &RegisterFile,
 ) -> Result<Registration, CatalogError> {
-    if rows::keyed_file(tx, library_id, &request.file_id)?.is_some() {
-        let (path, _) = placement::placement_of(tx, &request.file_id)?;
-        return Ok(Registration::AlreadyRegistered {
-            path: path.unwrap_or_default(),
-        });
+    if let (Some(path), _) = placement::placement_of(tx, &request.file_id)? {
+        return Ok(Registration::AlreadyRegistered { path });
     }
     if rows::collection(tx, library_id, &request.collection_id)?.is_none() {
         return Ok(Registration::Refused("collection_not_found"));

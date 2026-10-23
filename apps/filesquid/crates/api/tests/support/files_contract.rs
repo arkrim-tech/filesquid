@@ -357,7 +357,7 @@ fn versions() -> [VersionView; 2] {
     [full, bare]
 }
 
-/// Both kinds of listing entry.
+/// Both kinds of listing entry of one object's listing (no `object_id`).
 fn entries() -> [EntryView; 2] {
     [
         EntryView::Folder {
@@ -373,9 +373,24 @@ fn entries() -> [EntryView; 2] {
             modified_version: "v1".into(),
             modified: "2026-10-17T00:00:00Z".into(),
             type_hint: Some("jpg".into()),
-            object_id: Some("urn:uuid:0b6f6a58-5c1d-4b5e-9f3e-2a7d8c9e0f11".into()),
+            object_id: None,
         },
     ]
+}
+
+/// A file entry of a collection or folder listing, which names its own object.
+fn scope_entry() -> EntryView {
+    EntryView::File {
+        name: "0b6f6a58-5c1d-4b5e-9f3e-2a7d8c9e0f11.jpg".into(),
+        display_name: "Été à Nice 2023.jpg".into(),
+        path: "original/0b6f6a58-5c1d-4b5e-9f3e-2a7d8c9e0f11.jpg".into(),
+        digest: "ab".repeat(32),
+        size: 3,
+        modified_version: "v1".into(),
+        modified: "2026-10-17T00:00:00Z".into(),
+        type_hint: Some("jpg".into()),
+        object_id: Some("urn:uuid:0b6f6a58-5c1d-4b5e-9f3e-2a7d8c9e0f11".into()),
+    }
 }
 
 /// A details answer.
@@ -433,14 +448,28 @@ pub fn samples() -> Vec<(&'static str, Vec<Value>)> {
         entries: entries().to_vec(),
         next_cursor: next,
     };
+    let scope_page = FolderPageView {
+        library_id: LIBRARY.into(),
+        object_id: String::new(),
+        version: String::new(),
+        prefix: "trips".into(),
+        entries: vec![entries()[0].clone(), scope_entry()],
+        next_cursor: None,
+    };
     let history = history();
+    let mut folder_entries = entries().map(to_value).to_vec();
+    folder_entries.push(to_value(scope_entry()));
     let mut all = vec![
         ("VersionUser", vec![to_value(versions()[0].user.clone())]),
         ("VersionRecord", versions().map(to_value).to_vec()),
-        ("FolderEntry", entries().map(to_value).to_vec()),
+        ("FolderEntry", folder_entries),
         (
             "FolderPage",
-            vec![to_value(page(Some("c".into()))), to_value(page(None))],
+            vec![
+                to_value(page(Some("c".into()))),
+                to_value(page(None)),
+                to_value(scope_page),
+            ],
         ),
         ("FileDetails", vec![to_value(details())]),
         (

@@ -650,6 +650,7 @@ async fn import_with_attempts(
     retries: &mut u32,
 ) -> FileOutcome {
     let mut last = "import_failed";
+    let mut committed = false;
     for attempt in 1..=MAX_ATTEMPTS {
         if context.stop.load(Ordering::SeqCst) {
             return FileOutcome::Suspend;
@@ -671,7 +672,7 @@ async fn import_with_attempts(
             ) {
                 Registered::Done => return imported(context, running, view),
                 Registered::Refused(code) => return quarantine(context, running, code),
-                Registered::Retry => last = "unavailable",
+                Registered::Retry => (last, committed) = ("unavailable", true),
             },
             Err(failure) if !failure.retry_now() => {
                 return quarantine(context, running, failure.error_code())
@@ -686,7 +687,24 @@ async fn import_with_attempts(
             return FileOutcome::Lost(err);
         }
     }
-    quarantine(context, running, last)
+    match committed {
+        true => unregistered(running),
+        false => quarantine(context, running, last),
+    }
+}
+
+/// Suspend the job whose file object is committed but whose registration the index kept
+/// refusing to take: the job and the import's intent stay, so the next run answers the same
+/// object and registers it, rather than leave a committed object outside every collection.
+/// Logs the code (stdout).
+fn unregistered(running: &RunningJob) -> FileOutcome {
+    tracing::warn!(
+        operation = IMPORT_FILE_OPERATION,
+        job_id = running.job().id.as_str(),
+        error_code = "unavailable",
+        "an imported file is committed but not yet registered; the job is suspended"
+    );
+    FileOutcome::Suspend
 }
 
 /// Journal an imported file and answer it.

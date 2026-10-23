@@ -5,7 +5,7 @@
 use super::failed;
 use filesquid_api::library::{
     CatalogError, CommitReceipt, Deletion, FileEntry, FileListing, FileScope, FileState, Keyed,
-    LibraryRecord, PageKey, VisibilityFilter,
+    LibraryRecord, PageKey, VisibilityFilter, MAX_RETENTION_DAYS,
 };
 use filesquid_core::{
     Collection, CollectionId, CollectionSort, File, FileId, Folder, FolderId, Library, LibraryId,
@@ -72,8 +72,8 @@ pub(crate) fn library(
     Ok(Some((LibraryRecord { library, name }, revision, order)))
 }
 
-/// The library's own retention period in days, when its snapshot sets one (ADR 041
-/// Decision 10). Database I/O.
+/// The library's own retention period in days (1 to [`MAX_RETENTION_DAYS`]), when its
+/// snapshot sets one (ADR 041 Decision 10). Database I/O.
 pub(crate) fn retention_days(conn: &Connection) -> Result<Option<u32>, CatalogError> {
     let row: Option<Option<i64>> = conn
         .query_row("SELECT retention_days FROM library", [], |r| r.get(0))
@@ -81,7 +81,10 @@ pub(crate) fn retention_days(conn: &Connection) -> Result<Option<u32>, CatalogEr
         .map_err(sql)?;
     row.flatten()
         .map(|days| {
-            u32::try_from(days).map_err(|_| failed("retention out of range in the catalog"))
+            u32::try_from(days)
+                .ok()
+                .filter(|days| (1..=MAX_RETENTION_DAYS).contains(days))
+                .ok_or_else(|| failed("retention out of range in the catalog"))
         })
         .transpose()
 }
@@ -338,7 +341,8 @@ fn scope_sql(scope: &FileScope) -> (&'static str, &'static str, &'static str) {
         FileScope::Unfiled => (
             "files f",
             "f.list_order",
-            "?4 = '' AND NOT EXISTS (SELECT 1 FROM collections c WHERE c.id = f.home_collection_id)",
+            "?4 = '' AND f.deleted_at_ms IS NULL
+             AND NOT EXISTS (SELECT 1 FROM collections c WHERE c.id = f.home_collection_id)",
         ),
     }
 }

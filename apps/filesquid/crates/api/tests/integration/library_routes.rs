@@ -269,6 +269,37 @@ async fn opening_a_folder_under_another_library_id_than_its_snapshot_s_is_refuse
 }
 
 #[tokio::test]
+async fn opening_a_folder_whose_snapshot_cannot_be_read_is_refused_once() {
+    let rig = LibraryRig::new(Mount::Desktop);
+    let location = rig.locations.register("damaged");
+    std::fs::remove_dir_all(rig.locations.folder(&location)).expect("clear");
+    let source = LibraryRig::new(Mount::Desktop);
+    let (_, origin) = source.create("damaged").await;
+    source
+        .object(&origin, "snapshot", &format!("urn:uuid:{LIBRARY}"))
+        .await;
+    copy_dir(
+        &source.locations.folder(&origin),
+        &rig.locations.folder(&location),
+    );
+    let inventory = rig
+        .locations
+        .folder(&location)
+        .join("snapshot")
+        .join("inventory.json");
+    std::fs::write(&inventory, b"{ not an inventory").expect("damage the snapshot");
+    let before = failures(&rig).len();
+    let answer = rig
+        .post(
+            "/api/v1/libraries/openings",
+            json!({ "location_id": location }),
+        )
+        .await;
+    assert_error(&answer, 409, "conflict");
+    assert_one_refusal(&rig, before, OPEN_OPERATION, "snapshot_unreadable");
+}
+
+#[tokio::test]
 async fn a_second_folder_of_an_open_library_is_refused_once() {
     let rig = LibraryRig::new(Mount::Desktop);
     let first = rig.locations.register("first");

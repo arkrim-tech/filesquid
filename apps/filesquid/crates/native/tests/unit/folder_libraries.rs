@@ -14,8 +14,12 @@ use filesquid_api::canonical::{
 };
 use filesquid_api::files::{ScopeAfter, ScopeEntry};
 use filesquid_api::journal::{JournalEntry, Outcome};
-use filesquid_api::library::{CatalogError, LibraryCatalog, LibraryCommand};
-use filesquid_core::{CollectionId, FileId, LibraryId};
+use filesquid_api::library::{
+    CatalogChange, CatalogCommit, CatalogError, FileListing, FileScope, LibraryCatalog,
+    LibraryCommand, VisibilityFilter, COLLECTION_HOLDS_FILES,
+};
+use filesquid_api::operation::ExpectedRevision;
+use filesquid_core::{CollectionId, File, FileId, LibraryId};
 use filesquid_native::catalog::{RegisterFile, Registration};
 use filesquid_native::{CATALOG_SCHEMA_VERSION, RECONCILE_OPERATION};
 use filesquid_ocfl::change::{ChangeModel, StagingArea, VersionMeta};
@@ -661,6 +665,203 @@ fn an_index_write_for_a_library_that_is_not_attached_is_refused() {
         .register_file(&lib, &request, registration_entry("op"))
         .unwrap_err();
     assert!(matches!(refused, CatalogError::Failed(_)));
+}
+
+#[test]
+fn removing_a_collection_that_still_holds_files_is_refused_before_anything_is_published() {
+    let fx = Fixture::new("de17-unpaired-removal");
+    let lib = fx.create_library("Family archive");
+    let trips = fx.create_collection(&lib, "Trips");
+    path_of(register(&fx, &lib, &trips, &new_file(), "a.jpg", "op-1"));
+    let head = snapshot_of(&fx, &lib).version;
+    let commit = CatalogCommit {
+        operation_id: fx.op(),
+        library_id: lib.clone(),
+        expected_revision: ExpectedRevision::new(fx.revision(&lib)).expect("revision"),
+        changes: vec![CatalogChange::RemoveCollection(trips.clone())],
+        journal: JournalEntry::new("library.collection.delete", Outcome::Succeeded),
+        created_id: None,
+        deletion: None,
+    };
+    let refused = fx.catalog.commit(commit).expect_err("refused");
+    assert_eq!(
+        refused,
+        CatalogError::Failed(COLLECTION_HOLDS_FILES.to_string())
+    );
+    assert_eq!(
+        snapshot_of(&fx, &lib).version,
+        head,
+        "nothing was published"
+    );
+    assert!(fx.catalog.collection(&trips).expect("read").is_some());
+}
+
+#[test]
+fn a_file_s_path_is_taken_below_it_and_no_file_sits_below_a_file() {
+    let fx = Fixture::new("de17-file-prefix");
+    let lib = fx.create_library("Family archive");
+    let trips = fx.create_collection(&lib, "Trips");
+    path_of(register(&fx, &lib, &trips, &new_file(), "notes", "op-1"));
+    path_of(register(
+        &fx,
+        &lib,
+        &trips,
+        &new_file(),
+        "beach/a.jpg",
+        "op-2",
+    ));
+    let taken = |path: &str| fx.catalog.path_taken(&trips, path).expect("read");
+    assert!(taken("notes"));
+    assert!(taken("notes/inside.txt"), "a file is not a folder");
+    assert!(taken("notes/deeper/inside.txt"));
+    assert!(taken("beach"), "a folder of a file");
+    assert!(!taken("notes-2"));
+    assert!(!taken("beach-1"));
+}
+
+#[test]
+fn a_file_of_the_earlier_form_is_placed_when_it_is_registered() {
+    let fx = Fixture::new("de17-earlier-form");
+    let lib = fx.create_library("Family archive");
+    let trips = fx.create_collection(&lib, "Trips");
+    let file = new_file();
+    let unplaced = File::new(file.clone(), lib.clone(), trips.clone());
+    fx.catalog
+        .index_files(&lib, &[(unplaced, 1)], registration_entry("op-index"))
+        .expect("index without a path");
+    let placed = register(&fx, &lib, &trips, &file, "a.jpg", "op-1");
+    assert_eq!(
+        placed,
+        Registration::Registered {
+            path: "a.jpg".into()
+        }
+    );
+    let again = register(&fx, &lib, &trips, &file, "a.jpg", "op-2");
+    assert_eq!(
+        again,
+        Registration::AlreadyRegistered {
+            path: "a.jpg".into()
+        }
+    );
+}
+
+#[test]
+fn a_refused_registration_is_journaled_as_failed_with_its_code() {
+    let fx = Fixture::new("de17-refused-journal");
+    let lib = fx.create_library("Family archive");
+    let trips = fx.create_collection(&lib, "Trips");
+    let long = format!("{}.jpg", "n".repeat(251));
+    path_of(register(&fx, &lib, &trips, &new_file(), &long, "op-1"));
+    let refused = register(&fx, &lib, &trips, &new_file(), &long, "op-2");
+    assert_eq!(refused, Registration::Refused("name_too_long"));
+    let failed: Vec<JournalEntry> = all_entries(fx.journal.as_ref())
+        .into_iter()
+        .filter(|e| e.operation == "library.files.register" && e.outcome == Outcome::Failed)
+        .collect();
+    assert_eq!(failed.len(), 1, "{failed:?}");
+    assert_eq!(failed[0].error_code.as_deref(), Some("name_too_long"));
+    assert_eq!(failed[0].operation_id.as_deref(), Some("op-2"));
+    assert!(!format!("{failed:?}").contains("nnnn"), "no name journaled");
+}
+
+#[test]
+fn an_empty_folder_attached_with_an_index_of_another_folder_starts_afresh() {
+    let fx = Fixture::new("de17-stale-index");
+    let lib = fx.create_library("Family archive");
+    fx.create_collection(&lib, "Trips");
+    let root = fx.release();
+    std::fs::remove_dir_all(folders_dir(&root).join(lib.as_str())).expect("lose the folder");
+    let fx = Fixture::over(
+        root,
+        std::sync::Arc::new(filesquid_api::journal::MemoryJournal::new("desktop")),
+    );
+    let empty = fx.root.with_extension("empty");
+    let _ = std::fs::remove_dir_all(&empty);
+    std::fs::create_dir_all(&empty).expect("empty folder");
+    let report = fx.attach(&lib, &empty).expect("attach");
+    assert!(report.created, "the folder's own library entity");
+    let collections = fx.catalog.collections(&lib, None, 10).expect("read");
+    assert!(
+        collections.is_empty(),
+        "nothing of the other folder: {collections:?}"
+    );
+    let _ = std::fs::remove_dir_all(&empty);
+}
+
+#[test]
+fn a_folder_that_cannot_be_a_library_leaves_nothing_in_the_catalog_directory() {
+    let fx = Fixture::new("de17-unusable-folder");
+    let folder = fx.root.with_extension("unusable");
+    let _ = std::fs::remove_dir_all(&folder);
+    std::fs::create_dir_all(&folder).expect("folder");
+    std::fs::write(folder.join("holiday.jpg"), b"not a library").expect("a file");
+    let lib = LibraryId::new(filesquid_api::library::mint_uuid_v4().expect("uuid")).expect("id");
+    assert!(
+        fx.attach(&lib, &folder).is_err(),
+        "not an OCFL storage root"
+    );
+    let left: Vec<String> = catalog_names(&fx.root)
+        .into_iter()
+        .filter(|name| name.starts_with(lib.as_str()))
+        .collect();
+    assert!(left.is_empty(), "{left:?}");
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+#[test]
+fn no_index_is_created_beyond_the_catalog_s_limit_of_files() {
+    let fx = Fixture::new("de17-index-limit");
+    for _ in 0..filesquid_native::MAX_LIBRARIES {
+        let id = filesquid_api::library::mint_uuid_v4().expect("uuid");
+        std::fs::write(fx.root.join(format!("{id}.sqlite")), b"").expect("an index file");
+    }
+    let folder = fx.root.with_extension("one-more");
+    let _ = std::fs::remove_dir_all(&folder);
+    std::fs::create_dir_all(&folder).expect("folder");
+    let lib = LibraryId::new(filesquid_api::library::mint_uuid_v4().expect("uuid")).expect("id");
+    let refused = fx.attach(&lib, &folder).expect_err("refused");
+    assert!(matches!(refused, CatalogError::Failed(_)), "{refused:?}");
+    assert!(!catalog_file(&fx.root, &lib).exists(), "no new index");
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+#[test]
+fn files_deleted_with_their_collection_are_deleted_not_unfiled() {
+    let fx = Fixture::new("de17-not-unfiled");
+    let lib = fx.create_library("Family archive");
+    let trips = fx.create_collection(&lib, "Trips");
+    let file = new_file();
+    path_of(register(&fx, &lib, &trips, &file, "a.jpg", "op-1"));
+    fx.run(
+        &fx.revision(&lib),
+        LibraryCommand::DeleteCollection {
+            library_id: lib.clone(),
+            collection_id: trips,
+        },
+    );
+    let listed = |scope: FileScope, visibility: VisibilityFilter| -> Vec<FileId> {
+        let listing = FileListing {
+            library_id: lib.clone(),
+            scope,
+            visibility,
+        };
+        fx.catalog
+            .files(&listing, None, 10)
+            .expect("read")
+            .into_iter()
+            .map(|keyed| keyed.item.file.id().clone())
+            .collect()
+    };
+    for visibility in [VisibilityFilter::Ordinary, VisibilityFilter::Deleted] {
+        assert!(
+            listed(FileScope::Unfiled, visibility).is_empty(),
+            "{visibility:?}"
+        );
+    }
+    assert_eq!(
+        listed(FileScope::Library, VisibilityFilter::Deleted),
+        [file]
+    );
 }
 
 /// Copy the directory tree `from` to `to` (bounded walk).

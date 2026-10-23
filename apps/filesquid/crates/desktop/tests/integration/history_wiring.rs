@@ -116,7 +116,7 @@ impl Desktop {
         let host = open_host_monitor(&state, &dir, None).expect("monitor");
         let catalog =
             Arc::new(open_library_catalog(&dir, &host, &installation()).expect("catalog"));
-        reattach(&catalog, &dir);
+        folder_library::reattach_all(&catalog, &dir);
         Self {
             dir,
             state,
@@ -156,18 +156,6 @@ impl Desktop {
         self.host.stop();
         let entries = host_journal(&self.dir);
         (self.dir, entries)
-    }
-}
-
-/// Attach every library folder of the data directory `dir` again, as the owner reopens them.
-fn reattach(catalog: &SqliteCatalog, dir: &Path) {
-    let Ok(entries) = std::fs::read_dir(folder_library::folders_of(dir)) else {
-        return;
-    };
-    for entry in entries.take(64) {
-        let entry = entry.expect("entry");
-        let id = entry.file_name().to_string_lossy().to_string();
-        folder_library::attach_folder(catalog, dir, &id, &entry.path(), "Family archive");
     }
 }
 

@@ -817,7 +817,7 @@ fn an_unusable_root_fails_without_naming_its_path() {
 }
 
 /// Drive `catalog` through a fixed sequence of commits (create, collections, virtual
-/// collection, memberships, hide, delete, collection removal) and answer what every listing
+/// collection, memberships, hide, collection deletion with its files) and answer what every listing
 /// shows afterwards, with each library's revision.
 fn scripted(
     catalog: &dyn LibraryCatalog,
@@ -863,10 +863,20 @@ fn scripted(
             state: hide,
         }],
     );
+    let deletion = filesquid_api::library::Deletion {
+        deleted_at_ms: 1_000,
+        purge_after_ms: 2_000,
+    };
     commit(
         "4",
         "op-5",
-        vec![CatalogChange::RemoveCollection(home.clone())],
+        vec![
+            CatalogChange::DeleteCollectionFiles {
+                collection_id: home.clone(),
+                deletion,
+            },
+            CatalogChange::RemoveCollection(home.clone()),
+        ],
     );
     let mut out = vec![catalog.library(&lib).unwrap().unwrap().revision];
     for scope in [
@@ -876,7 +886,11 @@ fn scripted(
             virtual_collection_id: vc.clone(),
         },
     ] {
-        for visibility in [VisibilityFilter::Ordinary, VisibilityFilter::Hidden] {
+        for visibility in [
+            VisibilityFilter::Ordinary,
+            VisibilityFilter::Hidden,
+            VisibilityFilter::Deleted,
+        ] {
             let listing = FileListing {
                 library_id: lib.clone(),
                 scope: scope.clone(),

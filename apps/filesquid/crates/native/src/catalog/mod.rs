@@ -901,6 +901,7 @@ impl LibraryCatalog for SqliteCatalog {
             return Err(CatalogError::Conflict);
         }
         let library = open_library_mut(&mut libraries, &commit.library_id)?;
+        write::check_removals(&library.conn, &commit)?;
         let canonical = self.canonical(&library.canonical);
         let receipt = write::apply_commit(&mut library.conn, &commit, false, &canonical)
             .map_err(|stopped| stopped.error)?;

@@ -7,9 +7,9 @@
 
 use super::catalog::{
     CatalogChange, CatalogCommit, CatalogError, CommitReceipt, FileEntry, FileListing, FileScope,
-    Keyed, LibraryCatalog, LibraryRecord, LibraryState, PageKey,
+    Keyed, LibraryCatalog, LibraryRecord, LibraryState, PageKey, COLLECTION_HOLDS_FILES,
 };
-use super::policy::Deletion;
+use super::policy::{Deletion, MAX_RETENTION_DAYS};
 use crate::journal::JournalEntry;
 use crate::operation::OperationId;
 use filesquid_core::{
@@ -103,10 +103,22 @@ impl MemoryCatalog {
 
     /// Set the retention period of `library_id`, as the settings command of API-F2.15 will
     /// (a test seam until then); an unknown library is left alone.
-    pub fn set_retention_days(&self, library_id: &LibraryId, days: Option<u32>) {
+    ///
+    /// # Errors
+    /// [`CatalogError::Failed`] for a period outside 1 to [`MAX_RETENTION_DAYS`] days; nothing
+    /// is stored.
+    pub fn set_retention_days(
+        &self,
+        library_id: &LibraryId,
+        days: Option<u32>,
+    ) -> Result<(), CatalogError> {
+        if days.is_some_and(|days| !(1..=MAX_RETENTION_DAYS).contains(&days)) {
+            return Err(CatalogError::Failed("retention period out of range".into()));
+        }
         if let Some(library) = self.read().libraries.get_mut(library_id.as_str()) {
             library.retention_days = days;
         }
+        Ok(())
     }
 
     /// Number of operations recorded with a receipt; an operation that changed nothing has
@@ -196,9 +208,10 @@ impl State {
                     file.id().as_str().to_string(),
                 ))
                 .copied(),
-            FileScope::Unfiled => (!self
-                .collections
-                .contains_key(file.home_collection_id().as_str()))
+            FileScope::Unfiled => (stored.entry.state.deletion.is_none()
+                && !self
+                    .collections
+                    .contains_key(file.home_collection_id().as_str()))
             .then_some(stored.order),
         }
     }
@@ -268,6 +281,37 @@ impl State {
             .filter(|stored| stored.entry.file.home_collection_id() == collection_id)
             .filter(|stored| stored.entry.state.deletion.is_none())
             .for_each(|stored| stored.entry.state.deletion = Some(deletion));
+    }
+
+    /// Refuse a commit that removes a collection still holding a file that is not deleted,
+    /// unless the same commit deletes that collection's files before removing it, so no
+    /// file is left with a removed home and no deleted state (ADR 041 Decision 8). Pure.
+    fn check_removals(&self, commit: &CatalogCommit) -> Result<(), CatalogError> {
+        let mut deleted: Vec<&CollectionId> = Vec::new();
+        for change in &commit.changes {
+            match change {
+                CatalogChange::DeleteCollectionFiles { collection_id, .. } => {
+                    deleted.push(collection_id)
+                }
+                CatalogChange::RemoveCollection(id) if !deleted.contains(&id) => {
+                    self.check_empty(id)?
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// Refuse when `collection_id` is the home of a file that is not deleted. Pure.
+    fn check_empty(&self, collection_id: &CollectionId) -> Result<(), CatalogError> {
+        let holds = self.files.values().any(|stored| {
+            stored.entry.file.home_collection_id() == collection_id
+                && stored.entry.state.deletion.is_none()
+        });
+        match holds {
+            true => Err(CatalogError::Failed(COLLECTION_HOLDS_FILES.into())),
+            false => Ok(()),
+        }
     }
 
     /// Remove a virtual collection and its memberships.
@@ -474,6 +518,7 @@ impl LibraryCatalog for MemoryCatalog {
             return Ok(done.clone());
         }
         let revision = state.next_revision(&commit)?;
+        state.check_removals(&commit)?;
         if commit.changes.is_empty() {
             return Ok(unstored_receipt(commit, revision));
         }
