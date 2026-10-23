@@ -86,7 +86,7 @@ fn the_former_catalog_token_is_read_as_catalog_organisation() {
 }
 
 #[test]
-fn share_and_publication_outputs_have_the_publish_kind() {
+fn the_publish_kind_is_written_and_parsed_back() {
     let message = OperationMessage::new(op("op-10"), OperationKind::Publish);
     let text = message.format();
     assert!(text.contains("\"kind\":\"publish\""), "{text}");
