@@ -187,7 +187,8 @@ fn apply_changes(
 ) -> Result<(CommitReceipt, Vec<SnapshotKey>), CatalogError> {
     let current = current_revision(tx)?;
     let revision = next_revision(creates, current, commit)?;
-    let purged = project::purged_memberships(tx, &commit.changes)?;
+    let mut purged = project::purged_memberships(tx, &commit.changes)?;
+    purged.extend(project::collection_deletions(tx, &commit.changes)?);
     for change in &commit.changes {
         apply_change(tx, &commit.library_id, change, commit.journal.time_ms)?;
     }
@@ -340,6 +341,21 @@ fn apply_change(
         CatalogChange::RemoveCollection(id) => {
             exec(tx, "DELETE FROM collections WHERE id = ?1", id.as_str())
         }
+        CatalogChange::DeleteCollectionFiles {
+            collection_id,
+            deletion,
+        } => tx
+            .execute(
+                "UPDATE files SET deleted_at_ms = ?2, purge_after_ms = ?3
+                 WHERE home_collection_id = ?1 AND deleted_at_ms IS NULL",
+                params![
+                    collection_id.as_str(),
+                    deletion.deleted_at_ms,
+                    deletion.purge_after_ms
+                ],
+            )
+            .map(drop)
+            .map_err(sql),
         CatalogChange::PutVirtualCollection(v) => {
             same_library(library_id, v.library_id())?;
             put_virtual(tx, v)
@@ -406,6 +422,20 @@ pub(crate) fn insert_library(
     )
     .map(drop)
     .map_err(sql)
+}
+
+/// Cache the library's own retention period from its snapshot. Database I/O.
+pub(crate) fn set_retention(tx: &Transaction<'_>, days: Option<u32>) -> Result<(), CatalogError> {
+    tx.execute("UPDATE library SET retention_days = ?1", params![days])
+        .map(drop)
+        .map_err(sql)
+}
+
+/// Record the identity of the folder the index reflects. Database I/O.
+pub(crate) fn set_folder_identity(conn: &Connection, identity: &str) -> Result<(), CatalogError> {
+    conn.execute("UPDATE library SET folder_identity = ?1", params![identity])
+        .map(drop)
+        .map_err(sql)
 }
 
 /// Store a collection, replacing the one with the same identifier. Database I/O.

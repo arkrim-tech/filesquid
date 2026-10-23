@@ -72,6 +72,29 @@ pub(crate) fn library(
     Ok(Some((LibraryRecord { library, name }, revision, order)))
 }
 
+/// The library's own retention period in days, when its snapshot sets one (ADR 041
+/// Decision 10). Database I/O.
+pub(crate) fn retention_days(conn: &Connection) -> Result<Option<u32>, CatalogError> {
+    let row: Option<Option<i64>> = conn
+        .query_row("SELECT retention_days FROM library", [], |r| r.get(0))
+        .optional()
+        .map_err(sql)?;
+    row.flatten()
+        .map(|days| {
+            u32::try_from(days).map_err(|_| failed("retention out of range in the catalog"))
+        })
+        .transpose()
+}
+
+/// The identity of the folder the index was built from, if recorded. Database I/O.
+pub(crate) fn folder_identity(conn: &Connection) -> Result<Option<String>, CatalogError> {
+    let row: Option<Option<String>> = conn
+        .query_row("SELECT folder_identity FROM library", [], |r| r.get(0))
+        .optional()
+        .map_err(sql)?;
+    Ok(row.flatten())
+}
+
 /// The receipt stored for `operation_id`, if any. Database I/O.
 pub(crate) fn receipt(
     conn: &Connection,

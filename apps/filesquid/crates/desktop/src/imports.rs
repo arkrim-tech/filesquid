@@ -4,9 +4,10 @@
 //! A request whose operation ID already started a job answers that job. Otherwise the owner
 //! picks files or a folder in a native dialog the host shows from Rust ([`RfdSources`], the
 //! `rfd` crate, so the webview keeps no dialog permission, DE-S-002), the host submits one
-//! durable import job, keeps its plan in its operational store (a job whose plan cannot be
-//! kept is failed at once, so none is left without one) and queues it on the native import
-//! worker. The check for an existing job and the submission run under one lock, so two
+//! durable import job, keeps its plan (with the destination collection and folder the
+//! request named, which the API checked before the dialog, Task DE-1.7) in its operational
+//! store (a job whose plan cannot be kept is failed at once, so none is left without one) and
+//! queues it on the native import worker. The check for an existing job and the submission run under one lock, so two
 //! requests can never make two jobs for one operation ID. Only opaque IDs leave the host;
 //! the picked paths never do (DE-S-006).
 
@@ -230,6 +231,8 @@ impl ImportStarter for DesktopImports {
         };
         let plan = ImportPlan {
             library_id: request.library_id.clone(),
+            collection_id: request.collection_id.clone(),
+            folder: request.folder.clone(),
             sources,
             method: method_of(request.source),
         };

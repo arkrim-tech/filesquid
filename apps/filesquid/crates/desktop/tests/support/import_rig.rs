@@ -1,27 +1,34 @@
-//! The desktop of one import test or scenario (Task DE-1.2; API-S-036, DE-S-019): the import
-//! route served through the `filesquid://` scheme with the per-launch token, a scripted
-//! dialog in place of the native one, the native import worker, and one folder-bound library
-//! whose OCFL storage root lies in a scratch directory that is removed when the rig is dropped.
+//! The desktop of one import test or scenario (Tasks DE-1.2, DE-1.7; API-S-036, DE-S-019): the
+//! import route served through the `filesquid://` scheme with the per-launch token, a scripted
+//! dialog in place of the native one, the native import worker, and one library in a folder
+//! of a scratch directory that is removed when the rig is dropped, attached to its catalog
+//! index with the destination collection [`COLLECTION`], and the navigation and listing routes
+//! over that index.
 //!
 //! The including test crate MUST declare `mod journal` (`support/journal.rs`) at its root.
 
 use filesquid_api::auth::LaunchToken;
 use filesquid_api::imports::{ImportSource, ImportStartError};
 use filesquid_api::journal::JournalEntry;
+use filesquid_api::library::{CommandRequest, LibraryCatalog, LibraryCommand, LibraryService};
 use filesquid_api::local_library::{LocalLibraryService, MemoryRepairLedger};
+use filesquid_api::operation::{CommandEnvelope, ExpectedRevision, OperationId, OperationScope};
 use filesquid_api::ApiState;
-use filesquid_core::LibraryId;
+use filesquid_core::{InstallationId, LibraryId};
 use filesquid_desktop_lib::api_protocol::handle;
 use filesquid_desktop_lib::imports::{ImportStarting, SourceDialog};
 use filesquid_desktop_lib::{
-    import_build, install_import_route, install_launch_token, open_host_monitor,
+    import_build, install_file_scopes, install_import_route, install_launch_token,
+    installation_repository, open_host_monitor, open_library_catalog,
 };
+use filesquid_native::catalog::{LibraryFolder, DEFAULT_LIBRARY_NAME};
 use filesquid_native::import::job::IMPORT_FILE_OPERATION;
 use filesquid_native::import::plans::SqliteImportPlans;
 use filesquid_native::import::worker::{ImportServices, ImportWorker};
 use filesquid_native::workers::history_backfill::open_jobs;
 use filesquid_native::{
-    install_file_service, open_fs_library, HostFiles, HostMonitor, SqliteJournal, JOURNAL_FILE,
+    install_file_service, open_fs_library_root, HostFiles, HostLocations, HostMonitor,
+    SqliteCatalog, SqliteJournal, JOURNAL_FILE,
 };
 use filesquid_ocfl::storage::FsBackend;
 use serde_json::{json, Value};
@@ -35,6 +42,12 @@ pub const LIBRARY: &str = "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b";
 
 /// A library no rig opens.
 pub const UNOPENED_LIBRARY: &str = "7a2e3d4c-5b6f-4a70-9b8c-0d1e2f3a4b5c";
+
+/// The installation of every rig.
+pub const INSTALLATION: &str = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+
+/// The folder every import of [`ImportRig::import`] files into.
+pub const FOLDER: &str = "trips";
 
 /// Longest wait for the worker to import the expected files.
 const IMPORT_WAIT: Duration = Duration::from_secs(30);
@@ -84,6 +97,10 @@ pub struct ImportRig {
     pub dir: PathBuf,
     /// The scripted dialog.
     pub dialog: Arc<ScriptedDialog>,
+    /// The library's catalog index, until the rig shuts down.
+    catalog: Option<Arc<SqliteCatalog>>,
+    /// The destination collection of [`ImportRig::import`].
+    pub collection: String,
     state: ApiState,
     token: LaunchToken,
     host: Option<HostMonitor>,
@@ -108,6 +125,8 @@ impl Drop for ImportRig {
 
 /// The starter's parts of one launch.
 struct Launch {
+    catalog: Arc<SqliteCatalog>,
+    collection: String,
     state: ApiState,
     token: LaunchToken,
     host: HostMonitor,
@@ -127,6 +146,8 @@ impl ImportRig {
         Self {
             dir,
             dialog,
+            catalog: Some(launch.catalog),
+            collection: launch.collection,
             state: launch.state,
             token: launch.token,
             host: Some(launch.host),
@@ -140,11 +161,18 @@ impl ImportRig {
     pub async fn relaunch(&mut self) {
         self.shut_down();
         let launch = start(&self.dir, &self.dialog, false).await;
+        self.catalog = Some(launch.catalog);
+        self.collection = launch.collection;
         self.state = launch.state;
         self.token = launch.token;
         self.host = Some(launch.host);
         self.worker = launch.worker;
         self.stop = launch.stop;
+    }
+
+    /// The library's catalog index.
+    pub fn catalog(&self) -> &SqliteCatalog {
+        self.catalog.as_deref().expect("the rig is running")
     }
 
     /// Stop the import worker, as a quit does, leaving the route installed.
@@ -162,12 +190,27 @@ impl ImportRig {
         // Drop the route's state, and with it every SQLite connection, before the directory
         // goes (Windows cannot remove an open database file).
         self.state = ApiState::new();
+        self.catalog = None;
     }
 
     /// POST an import of the `source` of `library` under `operation` through the scheme as
     /// the owner, asserting that the answer names no scratch path.
     pub async fn import(&self, library: &str, operation: &str, source: &str) -> (u16, Value) {
-        let body = json!({
+        let destination = json!({ "collection_id": self.collection, "folder": FOLDER });
+        self.import_into(library, operation, source, destination)
+            .await
+    }
+
+    /// POST an import as [`ImportRig::import`] does, naming `destination` (an object of
+    /// `collection_id` and `folder`, either left out to test its refusal).
+    pub async fn import_into(
+        &self,
+        library: &str,
+        operation: &str,
+        source: &str,
+        destination: Value,
+    ) -> (u16, Value) {
+        let mut body = json!({
             "envelope": {
                 "schema_version": 1,
                 "operation_id": operation,
@@ -177,14 +220,31 @@ impl ImportRig {
             "library_id": library,
             "source": source
         });
-        let request = http::Request::post("filesquid://localhost/api/v1/imports")
+        if let (Some(body), Some(destination)) = (body.as_object_mut(), destination.as_object()) {
+            body.extend(destination.clone());
+        }
+        let bytes = body.to_string().into_bytes();
+        self.send("POST", "/api/v1/imports", bytes).await
+    }
+
+    /// GET `path` through the scheme as the owner.
+    pub async fn get(&self, path: &str) -> (u16, Value) {
+        self.send("GET", path, Vec::new()).await
+    }
+
+    /// Send `method` `path` with `body` through the scheme as the owner, asserting that the
+    /// answer names no scratch path.
+    async fn send(&self, method: &str, path: &str, body: Vec<u8>) -> (u16, Value) {
+        let request = http::Request::builder()
+            .method(method)
+            .uri(format!("filesquid://localhost{path}"))
             .header(http::header::ORIGIN, "tauri://localhost")
             .header(http::header::CONTENT_TYPE, "application/json")
             .header(
                 http::header::AUTHORIZATION,
                 format!("Bearer {}", self.token.secret()),
             )
-            .body(body.to_string().into_bytes())
+            .body(body)
             .expect("request");
         let response = handle(self.state.clone(), request).await;
         let text = String::from_utf8_lossy(response.body()).to_string();
@@ -259,8 +319,10 @@ async fn create_root(dir: &Path, host: &HostMonitor) {
 }
 
 /// Launch the import route over `<dir>/data`: the token, the file service with [`LIBRARY`]
-/// open at `<dir>/root` (created first when `create`), the jobs, the plans, the worker (which
-/// runs every unfinished import job when idle) and the route with `dialog`.
+/// open at `<dir>/root` (created first when `create`, with its destination collection),
+/// attached to its catalog index, the navigation and listing over it, the jobs, the plans,
+/// the worker (which runs every unfinished import job when idle) and the route with
+/// `dialog`.
 async fn start(dir: &Path, dialog: &Arc<ScriptedDialog>, create: bool) -> Launch {
     let state = ApiState::new();
     let token = install_launch_token(&state).expect("token");
@@ -270,7 +332,16 @@ async fn start(dir: &Path, dialog: &Arc<ScriptedDialog>, create: bool) -> Launch
     if create {
         create_root(dir, &host).await;
     }
-    open_library(dir, &files);
+    let installation = InstallationId::parse(INSTALLATION).expect("installation");
+    let catalog = Arc::new(open_library_catalog(&data, &host, &installation).expect("catalog"));
+    open_library(dir, &files, &catalog, &installation);
+    let collection = match create {
+        true => create_collection(&catalog, &host),
+        false => first_collection(&catalog),
+    };
+    filesquid_desktop_lib::navigation::install_navigation(&state, catalog.clone(), &installation)
+        .expect("navigation");
+    install_file_scopes(&files, &catalog).expect("scopes");
     let jobs = open_jobs(&data, &host).expect("jobs");
     let plans = Arc::new(SqliteImportPlans::open(&data.join(JOURNAL_FILE)).expect("plans"));
     let stop = Arc::new(AtomicBool::new(false));
@@ -278,6 +349,7 @@ async fn start(dir: &Path, dialog: &Arc<ScriptedDialog>, create: bool) -> Launch
         ImportWorker::spawn(ImportServices {
             jobs: jobs.clone(),
             files: files.clone(),
+            index: catalog.clone(),
             plans: plans.clone(),
             journal: host.monitor().journal(),
             build: import_build(),
@@ -298,6 +370,8 @@ async fn start(dir: &Path, dialog: &Arc<ScriptedDialog>, create: bool) -> Launch
     };
     install_import_route(&state, starting).expect("route");
     Launch {
+        catalog,
+        collection,
         state,
         token,
         host,
@@ -306,8 +380,61 @@ async fn start(dir: &Path, dialog: &Arc<ScriptedDialog>, create: bool) -> Launch
     }
 }
 
-/// Serve the storage root `<dir>/root` as [`LIBRARY`] through `files` (creates directories).
-fn open_library(dir: &Path, files: &HostFiles) {
+/// Serve the storage root `<dir>/root` as [`LIBRARY`] through `files` and attach it to its
+/// index in `catalog`, through one set of leases, as the desktop's library routes do (creates
+/// directories).
+fn open_library(
+    dir: &Path,
+    files: &HostFiles,
+    catalog: &SqliteCatalog,
+    installation: &InstallationId,
+) {
     let id = LibraryId::new(LIBRARY).expect("library");
-    open_fs_library(files, &id, &dir.join("root"), &dir.join("data")).expect("opened");
+    let data = dir.join("data");
+    let locations = HostLocations::new(&data);
+    let location = locations.register(&dir.join("root")).expect("location");
+    let root = locations.root_of(&location).expect("root");
+    open_fs_library_root(files, &id, &root, &data).expect("opened");
+    let folder = LibraryFolder {
+        library_id: id,
+        repository_id: installation_repository(installation).expect("repository"),
+        name: DEFAULT_LIBRARY_NAME.into(),
+        root,
+        identity: locations.identity_of(&location).expect("identity"),
+    };
+    catalog.attach(&folder).expect("attached");
+}
+
+/// Create the destination collection "Holidays" in [`LIBRARY`] through the library commands;
+/// answer its ID.
+fn create_collection(catalog: &Arc<SqliteCatalog>, host: &HostMonitor) -> String {
+    let library = LibraryId::new(LIBRARY).expect("library");
+    let revision = catalog
+        .library(&library)
+        .expect("read")
+        .expect("library")
+        .revision;
+    let service = LibraryService::new(catalog.clone(), host.monitor().journal());
+    let request = CommandRequest {
+        envelope: CommandEnvelope::new(
+            OperationId::new("op-collection").expect("op"),
+            ExpectedRevision::new(revision).expect("revision"),
+            OperationScope::new("library").expect("scope"),
+        ),
+        command: LibraryCommand::CreateCollection {
+            library_id: library,
+            title: "Holidays".into(),
+            folder_id: None,
+            sort: Default::default(),
+        },
+    };
+    let created = service.execute("owner", request).expect("collection");
+    created.created_id.expect("collection id")
+}
+
+/// The ID of [`LIBRARY`]'s first collection (a relaunch finds the one the launch created).
+fn first_collection(catalog: &SqliteCatalog) -> String {
+    let library = LibraryId::new(LIBRARY).expect("library");
+    let collections = catalog.collections(&library, None, 1).expect("collections");
+    collections[0].item.id().as_str().to_string()
 }

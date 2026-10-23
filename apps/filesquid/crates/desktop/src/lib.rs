@@ -67,7 +67,7 @@ use filesquid_api::ocfl_validation::ValidationService;
 use filesquid_api::registry::ProcessHandle;
 use filesquid_api::trace_layer::JournalLayer;
 use filesquid_api::ApiState;
-use filesquid_core::InstallationId;
+use filesquid_core::{InstallationId, RepositoryId};
 use filesquid_native::import::plans::SqliteImportPlans;
 use filesquid_native::installation::{
     self, InstallationError, InstallationSource, INSTALLATION_CREATED,
@@ -588,13 +588,17 @@ pub fn install_host_preferences(
     Ok(())
 }
 
-/// Tell the file service which OCFL object holds each folder scope's files, for the listing
-/// by navigation node (API-F2.2): [`navigation::CatalogScopes`].
+/// Tell the file service what the listing by navigation node lists (API-F2.2, DE-1.7): the
+/// folders and registered files of a collection or folder node from `catalog`'s index
+/// ([`navigation::CatalogScopes`]).
 ///
 /// # Errors
 /// The file service already has its scope objects.
-pub fn install_file_scopes(files: &filesquid_native::HostFiles) -> Result<(), String> {
-    if !files.install_scope_objects(Arc::new(navigation::CatalogScopes)) {
+pub fn install_file_scopes(
+    files: &filesquid_native::HostFiles,
+    catalog: &Arc<SqliteCatalog>,
+) -> Result<(), String> {
+    if !files.install_scope_objects(Arc::new(navigation::CatalogScopes(catalog.clone()))) {
         return Err("the file service's scope objects were already installed".to_string());
     }
     Ok(())
@@ -702,8 +706,8 @@ fn start_monitor(
     app.manage(DesktopMedia(media_workers(&host)));
     navigation::install_navigation(&state, catalog.clone(), &installation)
         .inspect_err(|_| host.stop())?;
-    app.manage(DesktopCatalog(catalog));
-    install_library_services(app, &host, &installation, &data_dir, opened)
+    app.manage(DesktopCatalog(catalog.clone()));
+    install_library_services(app, &host, &installation, &data_dir, (opened, catalog))
         .inspect_err(|_| host.stop())?;
     app.manage(DesktopInstallation(installation));
     open_test_library(app, &data_dir);
@@ -754,9 +758,11 @@ fn start_imports(
     let plans = Arc::new(SqliteImportPlans::open(&data_dir.join(JOURNAL_FILE))?);
     let jobs = app.state::<DesktopJobs>().0.clone();
     let files = app.state::<DesktopFiles>().0.clone();
+    let catalog = app.state::<DesktopCatalog>().0.clone();
     let worker = Arc::new(ImportWorker::spawn(ImportServices {
         jobs: jobs.clone(),
         files: files.clone(),
+        index: catalog,
         plans: plans.clone(),
         journal: host.monitor().journal(),
         build: import_build(),
@@ -852,19 +858,21 @@ fn install_library_services(
     host: &HostMonitor,
     installation: &InstallationId,
     data_dir: &std::path::Path,
-    opened: Arc<OpenedRoots>,
+    (opened, catalog): (Arc<OpenedRoots>, Arc<SqliteCatalog>),
 ) -> Result<(), String> {
     let state = app.state::<ApiState>();
     let validation = host.start_validation::<FsBackend>(data_dir, &state)?;
     let files = app.state::<DesktopFiles>().0.clone();
     install_file_provenance(&files, host, installation)?;
-    install_file_scopes(&files)?;
+    install_file_scopes(&files, &catalog)?;
     install_host_preferences(&state, data_dir)?;
     let serving = LibraryServing {
         files,
         validation: Some(validation.clone()),
         opened,
         data_dir: data_dir.to_path_buf(),
+        repository: installation_repository(installation)?,
+        catalog,
     };
     let locations = install_library_routes(&state, host, installation, serving)?;
     let dialog = Box::new(folder_choice::RfdDialog::new(app.clone()));
@@ -872,6 +880,16 @@ fn install_library_services(
     app.manage(DesktopValidation(validation));
     app.manage(DesktopLocations(locations));
     Ok(())
+}
+
+/// This installation as the repository its libraries name (a repository is one
+/// installation). Pure.
+///
+/// # Errors
+/// The installation UUID is not a valid repository ID (never, for a parsed UUID).
+pub fn installation_repository(installation: &InstallationId) -> Result<RepositoryId, String> {
+    RepositoryId::new(installation.as_str())
+        .map_err(|_| "the installation is not a repository ID".to_string())
 }
 
 /// Tick the monitor once per [`TICK`] until `stop` is set at app exit (bounded by the app's lifetime).

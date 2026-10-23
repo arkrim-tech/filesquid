@@ -1,22 +1,30 @@
-//! Unit tests for the import job of Task DE-1.2 (F-002, NFR-003, DE-S-014): a folder imported
-//! as one durable job, one stable listing kept as the job's manifest (unreadable entries kept
-//! with their codes), a checkpoint after each file, a quit that suspends between files and a
-//! resume that imports only the remaining files, a file committed before a crash answered and
-//! not imported twice, a file that keeps failing quarantined after five attempts without
-//! stopping the batch, the staging reserve, the plans store, the worker's paged recovery of
-//! every unfinished job, and journal entries with no path.
+//! Unit tests for the import job of Tasks DE-1.2 and DE-1.7 (F-002, NFR-003, DE-S-014,
+//! DE-S-019): a folder imported as one durable job, one stable listing kept as the job's
+//! manifest (unreadable entries kept with their codes), a checkpoint after each file, a quit
+//! that suspends between files and a resume that imports only the remaining files, a file
+//! committed before a crash answered and not imported twice, a file that keeps failing
+//! quarantined after five attempts without stopping the batch, the staging reserve, the plans
+//! store, the worker's paged recovery of every unfinished job, and journal entries with no
+//! path. Since DE-1.7 every import names its destination collection and folder: each file is
+//! registered there at its logical path in the library's index (ADR 041), a taken path is
+//! numbered, and a crash between a file's object and its registration resumes.
 
 use filesquid_api::jobs::{JobState, JobStore, Jobs, MemoryJobStore};
 use filesquid_api::journal::{JournalEntry, JournalQuery, MemoryJournal};
 use filesquid_api::journal_writer::{JournalWriter, WriterConfig};
+use filesquid_api::library::{CatalogChange, CatalogCommit, LibraryCatalog};
 use filesquid_api::local_library::{LocalLibraryService, MemoryRepairLedger};
 use filesquid_api::metrics::Metrics;
 use filesquid_api::monitor::{Monitor, MonitorConfig, StaticHostChecks};
+use filesquid_api::operation::{ExpectedRevision, OperationId};
 use filesquid_api::EventBus;
 use filesquid_core::LibraryId;
+use filesquid_core::{Collection, CollectionId, RepositoryId};
 use filesquid_metadata::import::ImportMethod;
+use filesquid_native::catalog::{LibraryFolder, PendingIntent, RegisterFile, Registration};
 use filesquid_native::import::file::{import_file, FileImport};
 use filesquid_native::import::host::Build;
+use filesquid_native::import::index::ImportIndex;
 use filesquid_native::import::job::{
     backoff, checkpoint_next, import_checkpoint, list_plan, manifest_of, reserve_for,
     run_import_job, submit_import, ImportContext, Listed, IMPORT_FILE_OPERATION, MAX_ATTEMPTS,
@@ -24,7 +32,7 @@ use filesquid_native::import::job::{
 };
 use filesquid_native::import::plans::{ImportPlan, ManifestEntry, SqliteImportPlans};
 use filesquid_native::import::worker::{ImportServices, ImportWorker};
-use filesquid_native::{open_fs_library, HostFiles};
+use filesquid_native::{open_fs_library_root, HostFiles, HostLocations, SqliteCatalog};
 use filesquid_ocfl::storage::FsBackend;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -33,6 +41,12 @@ use std::time::Duration;
 
 /// The library every test imports into.
 const LIBRARY: &str = "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b";
+
+/// The destination collection of every test's imports.
+const COLLECTION: &str = "c0ffee00-1234-4abc-8def-0123456789ab";
+
+/// The destination folder inside it.
+const FOLDER: &str = "trips";
 
 /// A fresh directory for one test, removed when dropped.
 struct TempDir(PathBuf);
@@ -57,9 +71,11 @@ impl Drop for TempDir {
     }
 }
 
-/// The host of one test: a library served by a file service, a job service and a journal.
+/// The host of one test: a library in its own folder, indexed by a catalog and served by a
+/// file service through the same leases, a job service and a journal.
 struct Rig {
     files: HostFiles,
+    catalog: Arc<SqliteCatalog>,
     store: Arc<MemoryJobStore>,
     jobs: Jobs,
     plans: Arc<SqliteImportPlans>,
@@ -84,7 +100,27 @@ impl Rig {
         create_root(&backend, &id).await;
         let files = HostFiles::new();
         let data = dir.join("data");
-        open_fs_library(&files, &id, &root, &data).expect("opened");
+        std::fs::create_dir_all(&data).expect("data");
+        let locations = HostLocations::new(&data);
+        let location = locations.register(&root).expect("location");
+        let host_root = locations.root_of(&location).expect("root");
+        open_fs_library_root(&files, &id, &host_root, &data).expect("opened");
+        let catalog = Arc::new(
+            SqliteCatalog::open(
+                &data.join("libraries"),
+                Arc::new(MemoryJournal::new("desktop")),
+            )
+            .expect("catalog"),
+        );
+        let folder = LibraryFolder {
+            library_id: id.clone(),
+            repository_id: RepositoryId::new("repo-1").expect("repository"),
+            name: "Library".into(),
+            root: host_root,
+            identity: locations.identity_of(&location).expect("identity"),
+        };
+        catalog.attach(&folder).expect("attached");
+        add_collection(&catalog, &id);
         let store = Arc::new(MemoryJobStore::new());
         let jobs = Jobs::new(
             store.clone(),
@@ -95,6 +131,7 @@ impl Rig {
         let plans = Arc::new(SqliteImportPlans::open(&dir.join("plans.sqlite")).expect("plans"));
         Self {
             files,
+            catalog,
             store,
             jobs,
             plans,
@@ -121,9 +158,19 @@ impl Rig {
         journal: &'a filesquid_api::journal_writer::JournalSender,
         retry_unit: Duration,
     ) -> ImportContext<'a> {
+        self.context_over(journal, retry_unit, self.catalog.as_ref())
+    }
+
+    fn context_over<'a>(
+        &'a self,
+        journal: &'a filesquid_api::journal_writer::JournalSender,
+        retry_unit: Duration,
+        index: &'a dyn ImportIndex,
+    ) -> ImportContext<'a> {
         ImportContext {
             jobs: &self.jobs,
             files: &self.files,
+            index,
             plans: &self.plans,
             journal,
             build: &self.build,
@@ -140,6 +187,35 @@ impl Rig {
         let job = submit_import(&self.jobs, plan, operation).expect("job");
         self.plans.save(&job.id, operation, plan).expect("plan");
         job
+    }
+
+    /// The collection logical paths registered in the destination collection, sorted.
+    fn registered(&self) -> Vec<String> {
+        let collection = CollectionId::new(COLLECTION).expect("collection");
+        let mut found = Vec::new();
+        let mut stack = vec![String::new()];
+        for _ in 0..1_000 {
+            let Some(folder) = stack.pop() else {
+                break;
+            };
+            let page = self
+                .catalog
+                .scope_entries(&collection, &folder, None, 1_000)
+                .expect("entries")
+                .expect("indexed");
+            for entry in page.entries {
+                let join = |name: &str| match folder.as_str() {
+                    "" => name.to_string(),
+                    folder => format!("{folder}/{name}"),
+                };
+                match entry {
+                    filesquid_api::files::ScopeEntry::Folder { name } => stack.push(join(&name)),
+                    filesquid_api::files::ScopeEntry::File { name, .. } => found.push(join(&name)),
+                }
+            }
+        }
+        found.sort();
+        found
     }
 
     /// The stored job `id`.
@@ -176,6 +252,34 @@ impl Rig {
     }
 }
 
+/// Store the destination collection [`COLLECTION`] in `id`'s index (a library command would).
+fn add_collection(catalog: &SqliteCatalog, id: &LibraryId) {
+    let collection = Collection::new(
+        CollectionId::new(COLLECTION).expect("collection"),
+        id.clone(),
+        "Holidays",
+    )
+    .expect("collection");
+    let revision = catalog
+        .library(id)
+        .expect("read")
+        .expect("library")
+        .revision;
+    let commit = CatalogCommit {
+        operation_id: OperationId::new("op-collection").expect("op"),
+        library_id: id.clone(),
+        expected_revision: ExpectedRevision::new(revision).expect("revision"),
+        changes: vec![CatalogChange::PutCollection(collection)],
+        journal: JournalEntry::new(
+            "library.collection.create",
+            filesquid_api::journal::Outcome::Succeeded,
+        ),
+        created_id: None,
+        deletion: None,
+    };
+    catalog.commit(commit).expect("collection");
+}
+
 /// An empty OCFL storage root on `backend` for `id`.
 async fn create_root(backend: &FsBackend, id: &LibraryId) {
     let writer = JournalWriter::start(
@@ -201,10 +305,12 @@ fn holiday_folder(dir: &Path) -> PathBuf {
     folder
 }
 
-/// The plan of importing `root`.
+/// The plan of importing `root` into [`COLLECTION`], folder [`FOLDER`].
 fn plan(root: &Path) -> ImportPlan {
     ImportPlan {
         library_id: LIBRARY.into(),
+        collection_id: Some(COLLECTION.into()),
+        folder: Some(FOLDER.into()),
         sources: vec![root.to_path_buf()],
         method: ImportMethod::Folder,
     }
@@ -331,11 +437,23 @@ async fn a_folder_is_imported_as_one_job_with_a_checkpoint_per_file() {
     assert!(entries
         .iter()
         .all(|e| e.target_ids.contains(&job.id) && e.operation_id.as_deref() == Some("op-import")));
+    assert_eq!(
+        rig.registered(),
+        [
+            "trips/Holidays/Day 2/c.txt",
+            "trips/Holidays/a.jpg",
+            "trips/Holidays/b.png"
+        ],
+        "each file in its home collection beneath the destination folder"
+    );
 }
 
-/// The manifest of the holiday folder with the file at `index` given `file_id`.
-fn manifest_with(folder: &Path, index: usize, file_id: &str) -> Vec<ManifestEntry> {
-    let mut manifest = manifest_of(list_plan(&plan(folder)).expect("listed")).expect("manifest");
+/// The manifest of the holiday folder with the file at `index` given `file_id`, placed by
+/// `rig`'s index.
+fn manifest_with(rig: &Rig, folder: &Path, index: usize, file_id: &str) -> Vec<ManifestEntry> {
+    let plan = plan(folder);
+    let listed = list_plan(&plan).expect("listed");
+    let mut manifest = manifest_of(listed, &plan, rig.catalog.as_ref()).expect("manifest");
     if let ManifestEntry::File { file_id: id, .. } = &mut manifest[index] {
         *id = file_id.to_string();
     }
@@ -352,7 +470,7 @@ async fn a_file_that_keeps_failing_is_quarantined_after_five_attempts_and_the_re
         .await;
     let plan = plan(&folder);
     let job = rig.submit(&plan, "op-quarantine");
-    let manifest = manifest_with(&folder, 1, &taken);
+    let manifest = manifest_with(&rig, &folder, 1, &taken);
     rig.plans
         .save_manifest(&job.id, &manifest)
         .expect("manifest");
@@ -405,7 +523,7 @@ async fn a_quit_suspends_between_files_and_the_resume_imports_only_the_rest() {
     let plan = plan(&folder);
     let job = rig.submit(&plan, "op-resume");
     rig.plans
-        .save_manifest(&job.id, &manifest_with(&folder, 1, &taken))
+        .save_manifest(&job.id, &manifest_with(&rig, &folder, 1, &taken))
         .expect("manifest");
     let watcher = {
         let rig = rig.clone();
@@ -455,7 +573,7 @@ async fn a_file_committed_before_a_crash_is_answered_not_imported_twice() {
     rig.import_as(&folder.join("Day 2").join("c.txt"), &committed, &job.id)
         .await;
     rig.plans
-        .save_manifest(&job.id, &manifest_with(&folder, 0, &committed))
+        .save_manifest(&job.id, &manifest_with(&rig, &folder, 0, &committed))
         .expect("manifest");
     let journal = rig.monitor.journal();
     let run = run_import_job(&rig.context(&journal), &job.id, &plan)
@@ -500,6 +618,7 @@ fn a_plan_and_its_manifest_survive_a_restart_and_one_operation_has_one_job() {
             path: folder.join("a.jpg"),
             source: 0,
             file_id: new_id(),
+            logical_path: Some("trips/a.jpg".into()),
         },
         ManifestEntry::Skipped {
             source: 1,
@@ -576,6 +695,7 @@ fn worker(rig: &Rig, stop: &Arc<AtomicBool>) -> ImportWorker {
     ImportWorker::spawn(ImportServices {
         jobs: rig.jobs.clone(),
         files: rig.files.clone(),
+        index: rig.catalog.clone(),
         plans: rig.plans.clone(),
         journal: rig.monitor.journal(),
         build: rig.build.clone(),
@@ -650,4 +770,257 @@ async fn a_queued_job_without_a_plan_is_failed_not_left_pending() {
     let stored = rig.job(&job.id);
     assert_eq!(stored.state, JobState::Failed);
     assert_eq!(stored.error_code.as_deref(), Some("plan_missing"));
+}
+
+/// An index that forwards to the rig's catalog but answers every path as taken, or fails the
+/// first registration and sets a stop flag, as a crash between a file's object and its
+/// registration would.
+struct Scripted<'a> {
+    inner: &'a SqliteCatalog,
+    all_taken: bool,
+    crash_once: std::sync::Mutex<Option<&'a AtomicBool>>,
+}
+
+impl ImportIndex for Scripted<'_> {
+    fn has_collection(
+        &self,
+        library: &LibraryId,
+        collection: &CollectionId,
+    ) -> Result<bool, String> {
+        self.inner.has_collection(library, collection)
+    }
+
+    fn path_taken(&self, collection: &CollectionId, path: &str) -> Result<bool, String> {
+        match self.all_taken {
+            true => Ok(true),
+            false => ImportIndex::path_taken(self.inner, collection, path),
+        }
+    }
+
+    fn begin(&self, intent: &PendingIntent) -> Result<(), String> {
+        self.inner.begin(intent)
+    }
+
+    fn register(
+        &self,
+        library: &LibraryId,
+        file: &RegisterFile,
+        journal: JournalEntry,
+    ) -> Result<Registration, String> {
+        if let Some(stop) = self.crash_once.lock().expect("lock").take() {
+            stop.store(true, Ordering::SeqCst);
+            return Err("crashed before the registration".into());
+        }
+        self.inner.register(library, file, journal)
+    }
+
+    fn finish(&self, library: &LibraryId, operation: &OperationId) -> Result<(), String> {
+        self.inner.finish(library, operation)
+    }
+}
+
+#[tokio::test]
+async fn a_folder_imported_again_is_numbered_beside_the_first() {
+    let dir = TempDir::new("numbered-folder");
+    let rig = Rig::new(&dir.0).await;
+    let folder = holiday_folder(&dir.0);
+    let journal = rig.monitor.journal();
+    for op in ["op-first", "op-again"] {
+        let plan = plan(&folder);
+        let job = rig.submit(&plan, op);
+        let run = run_import_job(&rig.context(&journal), &job.id, &plan)
+            .await
+            .expect("ran");
+        assert_eq!(run.imported.len(), 3, "{op}");
+    }
+    let again: Vec<String> = rig
+        .registered()
+        .into_iter()
+        .filter(|path| path.starts_with("trips/Holidays-1/"))
+        .collect();
+    assert_eq!(
+        again,
+        [
+            "trips/Holidays-1/Day 2/c.txt",
+            "trips/Holidays-1/a.jpg",
+            "trips/Holidays-1/b.png"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_deleted_file_s_path_counts_as_taken() {
+    let dir = TempDir::new("deleted-taken");
+    let rig = Rig::new(&dir.0).await;
+    let folder = holiday_folder(&dir.0);
+    let journal = rig.monitor.journal();
+    let single = ImportPlan {
+        sources: vec![folder.join("a.jpg")],
+        method: ImportMethod::FilePicker,
+        ..plan(&folder)
+    };
+    let job = rig.submit(&single, "op-first");
+    let first = run_import_job(&rig.context(&journal), &job.id, &single)
+        .await
+        .expect("ran");
+    let file = filesquid_core::FileId::new(first.imported[0].file_id.clone()).expect("file");
+    let id = LibraryId::new(LIBRARY).expect("library");
+    let revision = rig
+        .catalog
+        .library(&id)
+        .expect("read")
+        .expect("library")
+        .revision;
+    let deletion = filesquid_api::library::Deletion {
+        deleted_at_ms: 1_792_281_600_000,
+        purge_after_ms: 1_792_281_600_000 + 30 * 86_400_000,
+    };
+    let delete = CatalogCommit {
+        operation_id: OperationId::new("op-delete").expect("op"),
+        library_id: id.clone(),
+        expected_revision: ExpectedRevision::new(revision).expect("revision"),
+        changes: vec![CatalogChange::SetFileState {
+            file_id: file,
+            state: filesquid_api::library::FileState {
+                hidden: false,
+                deletion: Some(deletion),
+            },
+        }],
+        journal: JournalEntry::new(
+            "library.file.delete",
+            filesquid_api::journal::Outcome::Succeeded,
+        ),
+        created_id: None,
+        deletion: Some(deletion),
+    };
+    rig.catalog.commit(delete).expect("deleted");
+    let job = rig.submit(&single, "op-again");
+    run_import_job(&rig.context(&journal), &job.id, &single)
+        .await
+        .expect("ran");
+    assert_eq!(
+        rig.registered(),
+        ["trips/a-1.jpg"],
+        "the deleted file keeps its place"
+    );
+}
+
+#[tokio::test]
+async fn a_numbered_name_over_255_bytes_is_quarantined_as_name_too_long() {
+    let dir = TempDir::new("too-long");
+    let rig = Rig::new(&dir.0).await;
+    let long = dir.0.join(format!("{}.jpg", "n".repeat(251)));
+    std::fs::write(&long, b"long").expect("a 255-byte name");
+    let journal = rig.monitor.journal();
+    let single = ImportPlan {
+        sources: vec![long.clone()],
+        method: ImportMethod::FilePicker,
+        ..plan(&long)
+    };
+    let job = rig.submit(&single, "op-first");
+    let run = run_import_job(&rig.context(&journal), &job.id, &single)
+        .await
+        .expect("ran");
+    assert_eq!(run.imported.len(), 1);
+    let job = rig.submit(&single, "op-again");
+    let run = run_import_job(&rig.context(&journal), &job.id, &single)
+        .await
+        .expect("ran");
+    assert_eq!(run.quarantined, ["name_too_long"]);
+    assert_eq!(objects(&dir.0), 1, "no object for the refused name");
+    let failed: Vec<_> = rig
+        .entries(IMPORT_FILE_OPERATION)
+        .into_iter()
+        .filter(|e| e.error_code.as_deref() == Some("name_too_long"))
+        .collect();
+    assert_eq!(failed.len(), 1);
+    assert!(
+        !format!("{failed:?}").contains("nnnn"),
+        "no file name journaled"
+    );
+}
+
+#[tokio::test]
+async fn a_source_whose_numbers_are_all_taken_is_quarantined_as_path_suffix_exhausted() {
+    let dir = TempDir::new("exhausted");
+    let rig = Rig::new(&dir.0).await;
+    let folder = holiday_folder(&dir.0);
+    let index = Scripted {
+        inner: rig.catalog.as_ref(),
+        all_taken: true,
+        crash_once: std::sync::Mutex::new(None),
+    };
+    let plan = plan(&folder);
+    let job = rig.submit(&plan, "op-exhausted");
+    let journal = rig.monitor.journal();
+    let context = rig.context_over(&journal, Duration::from_millis(1), &index);
+    let run = run_import_job(&context, &job.id, &plan).await.expect("ran");
+    assert_eq!(run.state, JobState::Completed);
+    assert!(run.imported.is_empty());
+    assert_eq!(run.quarantined, ["path_suffix_exhausted"; 3]);
+    assert_eq!(objects(&dir.0), 0, "nothing committed");
+}
+
+#[tokio::test]
+async fn a_crash_between_a_file_s_object_and_its_registration_resumes_and_registers_once() {
+    let dir = TempDir::new("crash-register");
+    let rig = Rig::new(&dir.0).await;
+    let folder = holiday_folder(&dir.0);
+    let plan = plan(&folder);
+    let job = rig.submit(&plan, "op-crash");
+    let journal = rig.monitor.journal();
+    let index = Scripted {
+        inner: rig.catalog.as_ref(),
+        all_taken: false,
+        crash_once: std::sync::Mutex::new(Some(&rig.stop)),
+    };
+    let crashing = rig.context_over(&journal, Duration::from_millis(1), &index);
+    let run = run_import_job(&crashing, &job.id, &plan)
+        .await
+        .expect("ran");
+    assert_eq!(run.state, JobState::Pending, "suspended at the first file");
+    assert_eq!(objects(&dir.0), 1, "its object was committed");
+    assert!(rig.registered().is_empty(), "but not registered");
+    let id = LibraryId::new(LIBRARY).expect("library");
+    let pending = rig.catalog.pending_intents(&id, 10).expect("intents");
+    assert_eq!(pending.len(), 1, "the import's operation stays pending");
+    assert_eq!(pending[0].operation_id.as_str(), "op-crash");
+    rig.stop.store(false, Ordering::SeqCst);
+    let run = run_import_job(&rig.context(&journal), &job.id, &plan)
+        .await
+        .expect("resumed");
+    assert_eq!(run.state, JobState::Completed);
+    assert_eq!(
+        objects(&dir.0),
+        3,
+        "the first file was answered, not imported twice"
+    );
+    assert_eq!(rig.registered().len(), 3, "and registered once");
+    assert!(
+        rig.catalog
+            .pending_intents(&id, 10)
+            .expect("intents")
+            .is_empty(),
+        "the finished job clears its intent"
+    );
+}
+
+#[tokio::test]
+async fn a_plan_without_a_destination_fails_its_job_as_destination_required() {
+    let dir = TempDir::new("no-destination");
+    let rig = Rig::new(&dir.0).await;
+    let folder = holiday_folder(&dir.0);
+    let earlier = ImportPlan {
+        collection_id: None,
+        folder: None,
+        ..plan(&folder)
+    };
+    let job = rig.submit(&earlier, "op-earlier");
+    let journal = rig.monitor.journal();
+    let failed = run_import_job(&rig.context(&journal), &job.id, &earlier).await;
+    assert!(failed.is_err());
+    let stored = rig.job(&job.id);
+    assert_eq!(stored.state, JobState::Failed);
+    assert_eq!(stored.error_code.as_deref(), Some("destination_required"));
+    assert_eq!(objects(&dir.0), 0);
 }

@@ -26,7 +26,9 @@ CREATE TABLE IF NOT EXISTS import_plans (
     operation_id TEXT NOT NULL UNIQUE,
     library_id TEXT NOT NULL,
     method TEXT NOT NULL,
-    finished INTEGER NOT NULL DEFAULT 0 CHECK (finished IN (0, 1))
+    finished INTEGER NOT NULL DEFAULT 0 CHECK (finished IN (0, 1)),
+    collection_id TEXT,
+    folder TEXT
 );
 CREATE INDEX IF NOT EXISTS import_plans_unfinished ON import_plans(finished, job_id);
 CREATE TABLE IF NOT EXISTS import_sources (
@@ -42,10 +44,20 @@ CREATE TABLE IF NOT EXISTS import_manifest (
     path BLOB,
     file_id TEXT,
     skipped TEXT,
+    logical_path TEXT,
     PRIMARY KEY (job_id, idx),
     CHECK ((path IS NOT NULL AND file_id IS NOT NULL) <> (skipped IS NOT NULL))
 ) WITHOUT ROWID;
 ";
+
+/// Columns added after a store was first created, by table, each added at open when missing
+/// (Task DE-1.7: the destination and each file's logical path), so a plan kept by an earlier
+/// build is still read; such a plan names no destination.
+const ADDED_COLUMNS: [(&str, &str, &str); 3] = [
+    ("import_plans", "collection_id", "TEXT"),
+    ("import_plans", "folder", "TEXT"),
+    ("import_manifest", "logical_path", "TEXT"),
+];
 
 /// Most sources one plan names (the files picked at once).
 pub const MAX_PLAN_SOURCES: usize = 10_000;
@@ -59,6 +71,12 @@ pub const MAX_MANIFEST_ENTRIES: usize = super::job::MAX_IMPORT_FILES;
 pub struct ImportPlan {
     /// The library to import into.
     pub library_id: String,
+    /// The destination collection (ADR 041 "Must choose"); `None` only in a plan an earlier
+    /// build kept, whose job then fails as `destination_required`.
+    pub collection_id: Option<String>,
+    /// The destination folder inside the collection, a collection logical path; the
+    /// collection's root when `None`.
+    pub folder: Option<String>,
     /// The files or the folder the owner picked.
     pub sources: Vec<PathBuf>,
     /// How the files reached FileSquid.
@@ -76,6 +94,10 @@ pub enum ManifestEntry {
         source: usize,
         /// The identifier minted for its file object (UUID v4).
         file_id: String,
+        /// Its collection logical path: its path beneath its picked source, under the
+        /// source's (numbered) name, beneath the destination folder; `None` only in a
+        /// manifest an earlier build kept.
+        logical_path: Option<String>,
     },
     /// An entry of a source that could not be listed, with its error code.
     Skipped {
@@ -147,6 +169,7 @@ impl SqliteImportPlans {
         conn.pragma_update(None, "foreign_keys", "ON")
             .map_err(failed)?;
         conn.execute_batch(SCHEMA).map_err(failed)?;
+        add_missing_columns(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -174,13 +197,16 @@ impl SqliteImportPlans {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(failed)?;
         tx.execute(
-            "INSERT INTO import_plans (job_id, operation_id, library_id, method)
-             VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO import_plans
+             (job_id, operation_id, library_id, method, collection_id, folder)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 job_id,
                 operation_id,
                 plan.library_id,
-                method_name(plan.method)
+                method_name(plan.method),
+                plan.collection_id,
+                plan.folder
             ],
         )
         .map_err(failed)?;
@@ -194,20 +220,23 @@ impl SqliteImportPlans {
     /// The plans could not be read.
     pub fn load(&self, job_id: &str) -> Result<Option<ImportPlan>, String> {
         let conn = self.lock()?;
-        let row: Option<(String, String)> = conn
+        let row: Option<PlanRow> = conn
             .query_row(
-                "SELECT library_id, method FROM import_plans WHERE job_id = ?1",
+                "SELECT library_id, method, collection_id, folder FROM import_plans
+                 WHERE job_id = ?1",
                 params![job_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .optional()
             .map_err(failed)?;
-        let Some((library_id, method)) = row else {
+        let Some((library_id, method, collection_id, folder)) = row else {
             return Ok(None);
         };
         let sources = load_sources(&conn, job_id)?;
         Ok(method_of(&method).map(|method| ImportPlan {
             library_id,
+            collection_id,
+            folder,
             sources,
             method,
         }))
@@ -306,6 +335,29 @@ impl SqliteImportPlans {
     }
 }
 
+/// One stored plan row: library, method, destination collection and folder.
+type PlanRow = (String, String, Option<String>, Option<String>);
+
+/// Add each of [`ADDED_COLUMNS`] its table lacks. Database I/O.
+fn add_missing_columns(conn: &Connection) -> Result<(), String> {
+    for (table, column, kind) in ADDED_COLUMNS {
+        let present: bool = conn
+            .query_row(
+                &format!(
+                    "SELECT EXISTS (SELECT 1 FROM pragma_table_info('{table}') WHERE name = ?1)"
+                ),
+                params![column],
+                |row| row.get(0),
+            )
+            .map_err(failed)?;
+        if !present {
+            conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind};"))
+                .map_err(failed)?;
+        }
+    }
+    Ok(())
+}
+
 /// Insert the sources of `job_id` in order. Database I/O.
 fn insert_sources(tx: &Transaction<'_>, job_id: &str, sources: &[PathBuf]) -> Result<(), String> {
     let mut stmt = tx
@@ -340,23 +392,28 @@ fn insert_manifest(
 ) -> Result<(), String> {
     let mut stmt = tx
         .prepare(
-            "INSERT INTO import_manifest (job_id, idx, source_idx, path, file_id, skipped)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO import_manifest
+             (job_id, idx, source_idx, path, file_id, skipped, logical_path)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         )
         .map_err(failed)?;
     for (index, entry) in entries.iter().enumerate() {
-        let (source, path, file_id, skipped) = match entry {
+        let (source, path, file_id, skipped, logical) = match entry {
             ManifestEntry::File {
                 path,
                 source,
                 file_id,
+                logical_path,
             } => (
                 *source,
                 Some(path_bytes(path)),
                 Some(file_id.as_str()),
                 None,
+                logical_path.as_deref(),
             ),
-            ManifestEntry::Skipped { source, code } => (*source, None, None, Some(code.as_str())),
+            ManifestEntry::Skipped { source, code } => {
+                (*source, None, None, Some(code.as_str()), None)
+            }
         };
         stmt.execute(params![
             job_id,
@@ -364,27 +421,40 @@ fn insert_manifest(
             source as i64,
             path,
             file_id,
-            skipped
+            skipped,
+            logical
         ])
         .map_err(failed)?;
     }
     Ok(())
 }
 
-/// One stored manifest row.
-type ManifestRow = (i64, Option<Vec<u8>>, Option<String>, Option<String>);
+/// One stored manifest row: source index, path, file ID, skip code and logical path.
+type ManifestRow = (
+    i64,
+    Option<Vec<u8>>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
 
 /// The manifest of `job_id` in order, at most [`MAX_MANIFEST_ENTRIES`]. Database I/O.
 fn manifest_rows(conn: &Connection, job_id: &str) -> Result<Vec<ManifestEntry>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT source_idx, path, file_id, skipped FROM import_manifest
+            "SELECT source_idx, path, file_id, skipped, logical_path FROM import_manifest
              WHERE job_id = ?1 ORDER BY idx LIMIT ?2",
         )
         .map_err(failed)?;
     let rows = stmt
         .query_map(params![job_id, MAX_MANIFEST_ENTRIES as i64], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
         })
         .map_err(failed)?;
     let rows: Vec<ManifestRow> = rows.collect::<Result<_, _>>().map_err(failed)?;
@@ -395,12 +465,13 @@ fn manifest_rows(conn: &Connection, job_id: &str) -> Result<Vec<ManifestEntry>, 
 fn manifest_entry(row: ManifestRow) -> Result<ManifestEntry, String> {
     let source = usize::try_from(row.0).map_err(|_| "a manifest row is malformed".to_string())?;
     match row {
-        (_, Some(path), Some(file_id), None) => Ok(ManifestEntry::File {
+        (_, Some(path), Some(file_id), None, logical_path) => Ok(ManifestEntry::File {
             path: path_of(path)?,
             source,
             file_id,
+            logical_path,
         }),
-        (_, None, None, Some(code)) => Ok(ManifestEntry::Skipped { source, code }),
+        (_, None, None, Some(code), None) => Ok(ManifestEntry::Skipped { source, code }),
         _ => Err("a manifest row is malformed".to_string()),
     }
 }

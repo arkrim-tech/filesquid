@@ -1,9 +1,11 @@
-//! Task DE-1.2: the desktop's import route (API-S-036, DE-S-019) through the `filesquid://`
-//! scheme with the per-launch token: the owner picks a folder in the host's dialog (scripted
-//! here), one durable import job runs on the native worker and commits every file as its own
-//! object with its record; the same operation ID answers the same job; a cancelled dialog makes
-//! no job; a library that is not open is refused; a job the worker could not take runs at the
-//! next launch; and no answer or journal entry names a path.
+//! Tasks DE-1.2 and DE-1.7: the desktop's import route (API-S-036, DE-S-019) through the
+//! `filesquid://` scheme with the per-launch token: the owner picks a folder in the host's
+//! dialog (scripted here), one durable import job runs on the native worker and commits every
+//! file as its own object with its record, registered in the destination collection and folder
+//! the request named, so the navigation and listing routes show it there; a request without a
+//! destination is refused before any dialog; the same operation ID answers the same job; a
+//! cancelled dialog makes no job; a library that is not open is refused; a job the worker could
+//! not take runs at the next launch; and no answer or journal entry names a path.
 
 #[path = "../support/journal.rs"]
 #[allow(dead_code)]
@@ -13,7 +15,9 @@ mod journal;
 #[allow(dead_code)]
 mod import_rig;
 
-use filesquid_api::imports::IMPORT_START_OPERATION;
+use filesquid_api::imports::{DESTINATION_REQUIRED, IMPORT_START_OPERATION};
+use filesquid_api::navigation::{FolderScope, NodeRef};
+use filesquid_core::CollectionId;
 use import_rig::{fresh_dir, holiday_folder, ImportRig, LIBRARY, UNOPENED_LIBRARY};
 use journal::block_on;
 use serde_json::json;
@@ -96,4 +100,110 @@ fn a_job_the_stopped_worker_could_not_take_runs_at_the_next_launch() {
     assert_eq!(rig.dialog.shown(), 1, "no second dialog");
     rig.stop_worker();
     assert_eq!(rig.file_objects(), 2);
+}
+
+#[test]
+fn an_import_without_a_destination_is_refused_before_any_dialog() {
+    let dir = fresh_dir("no-destination");
+    let folder = holiday_folder(&dir);
+    let rig = block_on(ImportRig::launch(dir, Some(vec![folder])));
+    let only_folder = json!({ "folder": "trips" });
+    let (status, answer) = block_on(rig.import_into(LIBRARY, "op-nowhere", "folder", only_folder));
+    assert_eq!(status, 400, "{answer}");
+    assert!(
+        answer["message"]
+            .as_str()
+            .is_some_and(|m| m.contains(DESTINATION_REQUIRED)),
+        "{answer}"
+    );
+    assert_eq!(rig.dialog.shown(), 0, "no dialog");
+    rig.stop_worker();
+    let refusals: Vec<_> = rig
+        .journal()
+        .into_iter()
+        .filter(|e| e.operation == IMPORT_START_OPERATION)
+        .collect();
+    assert_eq!(refusals.len(), 1, "journaled once");
+    assert_eq!(
+        refusals[0].error_code.as_deref(),
+        Some(DESTINATION_REQUIRED)
+    );
+    assert_eq!(
+        rig.file_objects(),
+        0,
+        "nothing imported to the library's top level"
+    );
+}
+
+/// The handle of `node`.
+fn handle(node: &NodeRef) -> String {
+    node.to_handle().expect("handle")
+}
+
+/// The names of the nodes or entries of `page` under `key`, shown names first.
+fn names(page: &serde_json::Value, key: &str) -> Vec<String> {
+    page[key]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|item| {
+            let name = item.get("display_name").unwrap_or(&item["name"]);
+            name.as_str().expect("name").to_string()
+        })
+        .collect()
+}
+
+#[test]
+fn imported_files_appear_under_their_collection_and_folder() {
+    let dir = fresh_dir("navigation");
+    let folder = holiday_folder(&dir);
+    let rig = block_on(ImportRig::launch(dir, Some(vec![folder])));
+    let (status, answer) = block_on(rig.import(LIBRARY, "op-trip", "folder"));
+    assert_eq!(status, 200, "{answer}");
+    assert_eq!(rig.wait_for_files(2), 2);
+    rig.stop_worker();
+    let collection = CollectionId::new(rig.collection.clone()).expect("collection");
+    let scope = FolderScope::Collection(collection.clone());
+    let node = handle(&NodeRef::Collection(collection));
+    let (status, page) = block_on(rig.get(&format!("/api/v1/navigation?node={node}")));
+    assert_eq!(status, 200, "{page}");
+    assert_eq!(names(&page, "nodes"), ["trips"], "the destination folder");
+    let trips = handle(&NodeRef::folder(scope.clone(), "trips"));
+    let (status, page) = block_on(rig.get(&format!("/api/v1/navigation?node={trips}")));
+    assert_eq!(status, 200, "{page}");
+    assert_eq!(
+        names(&page, "nodes"),
+        ["Holidays"],
+        "the picked folder kept"
+    );
+    let picked = handle(&NodeRef::folder(scope, "trips/Holidays"));
+    let (status, page) = block_on(rig.get(&format!("/api/v1/files/listing?node={picked}")));
+    assert_eq!(status, 200, "{page}");
+    assert_eq!(names(&page, "entries"), ["Beach day.jpg", "Notes.txt"]);
+    let objects: Vec<&str> = page["entries"]
+        .as_array()
+        .expect("entries")
+        .iter()
+        .map(|e| e["object_id"].as_str().expect("its own object"))
+        .collect();
+    assert_eq!(objects.len(), 2);
+    assert!(objects.iter().all(|o| o.starts_with("urn:uuid:")));
+    let registrations = rig
+        .journal()
+        .into_iter()
+        .filter(|e| e.operation == "library.files.register")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        registrations.len(),
+        2,
+        "each registration journaled with its version"
+    );
+    assert!(registrations
+        .iter()
+        .all(|e| e.operation_id.as_deref() == Some("op-trip")));
+    let text = format!("{:?}", rig.journal());
+    assert!(
+        !text.contains("Beach day") && !text.contains("Holidays") && !text.contains("trips/"),
+        "no path, file or folder name in any journal entry"
+    );
 }
