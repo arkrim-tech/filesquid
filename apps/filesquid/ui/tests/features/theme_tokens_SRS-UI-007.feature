@@ -5,7 +5,8 @@
 # primary actions and body text meet WCAG 2.2 AA in both themes in every distribution; no
 # mockup pixel matching.
 # UI-S-015: the shell shows the active distribution's product name and logo (with a
-# dark-surface variant when it has one) and the theme control; the choice is kept on the device.
+# dark-surface variant when it has one); the theme control lives in Settings, Appearance (owner
+# answer 7, verbatim "Settings -> Appaerance"); the choice is kept on the device.
 Feature: Light and dark themes and official branding
   As a library owner
   I want the app to look right in light and dark and to carry its distribution's brand
@@ -18,8 +19,8 @@ Feature: Light and dark themes and official branding
   Scenario: The theme follows the operating system by default
     Given I have never chosen a theme on this device
     And my operating system prefers dark
-    When I open the app
-    Then the theme control should show "System" as chosen
+    When I open Settings
+    Then the theme control in Appearance should show "System" as chosen
     And the shell should use the dark token values
 
   Scenario: Choosing dark keeps dark after a relaunch

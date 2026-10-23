@@ -30,6 +30,8 @@ export interface Frame {
   /** The name form. */
   readonly form: {
     readonly element: HTMLFormElement;
+    /** The visible title, "Rename {name}" or "New folder in {folder}" (mockup 14). */
+    readonly title: HTMLElement;
     readonly name: HTMLInputElement;
     readonly folderField: HTMLElement;
     readonly folder: HTMLInputElement;
@@ -65,21 +67,33 @@ export interface Frame {
   readonly panels: HTMLElement;
 }
 
+/**
+ * The frame's stylesheet (UI-S-024, UI-S-026), after the shared `CONTROL_STYLE` that draws
+ * its buttons (`.button`: 36 px, 14 px 600, radius 7 px; Upload and Save `.primary`) and inputs
+ * (`.input`: 36 px, a 1.5 px `--fs-outline-control` border, a 2 px `--fs-focus-ring` border on
+ * focus and a 2 px `--fs-error` border on the field marked `aria-invalid`, mockup 44): the
+ * pressed layout half on the active tint, and the name form drawn as the rename form of mockup
+ * 14 (a 1 px `--fs-outline-strong` border, radius 10 px, the 20 px 700 heading-font title) with
+ * the message below the field in `--fs-error`. The form sits in the page, so it is on
+ * `--fs-surface-card`: the error text there meets the contrast rule in both themes, which it
+ * would not on `--fs-surface-overlay` in dark (4.01:1).
+ */
 export const STYLE = `
-  .frame { display: flex; flex-direction: column; gap: var(--fs-space-3); min-width: 0; }
+  .frame { display: flex; flex-direction: column; gap: var(--fs-space-3); min-width: 0; font-size: var(--fs-font-size-ui); }
   .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--fs-space-2); }
   .spacer { flex: 1 1 auto; }
   .group { display: inline-flex; gap: var(--fs-space-1); }
-  button { padding: var(--fs-space-1) var(--fs-space-3); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface); color: var(--fs-on-surface); font: inherit; cursor: pointer; transition: background-color var(--fs-motion-duration), color var(--fs-motion-duration); }
-  button:hover { background: var(--fs-surface-container); }
-  button.primary, button[aria-pressed="true"] { border-color: var(--fs-primary); background: var(--fs-primary-container); color: var(--fs-on-primary-container); font-weight: 600; }
-  button[aria-disabled="true"] { opacity: 0.5; cursor: default; }
-  .name-form { display: flex; flex-wrap: wrap; align-items: end; gap: var(--fs-space-2) var(--fs-space-3); padding: var(--fs-space-3); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface-container); }
-  .name-form label { display: flex; flex-direction: column; gap: var(--fs-space-1); font-size: var(--fs-font-size-small); color: var(--fs-on-surface-variant); }
-  .name-form input { min-width: 12rem; padding: var(--fs-space-1) var(--fs-space-2); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface); color: var(--fs-on-surface); font: inherit; }
+  .button[aria-pressed="true"] { border-color: var(--fs-primary-container); background: var(--fs-primary-container); color: var(--fs-on-primary-container); }
+  .name-form { display: flex; flex-wrap: wrap; align-items: end; gap: var(--fs-space-3); box-sizing: border-box; max-inline-size: 35rem; padding: var(--fs-space-4); border: 1px solid var(--fs-outline-strong); border-radius: var(--fs-radius-dialog); background: var(--fs-surface-card); }
+  .form-title { flex: 1 1 100%; margin: 0; font-family: var(--fs-font-heading); font-size: var(--fs-font-size-title); font-weight: 700; color: var(--fs-on-surface-heading); overflow-wrap: anywhere; }
+  .form-title:empty { display: none; }
+  .name-form label { display: flex; flex: 1 1 100%; flex-direction: column; gap: var(--fs-space-1); font-size: var(--fs-font-size-small); color: var(--fs-on-surface-variant); }
+  .name-form button { min-block-size: 2.375rem; }
   .form-error { flex: 1 1 100%; margin: 0; color: var(--fs-error); font-size: var(--fs-font-size-small); }
-  .status, .alert { display: flex; flex-wrap: wrap; align-items: center; gap: var(--fs-space-2) var(--fs-space-3); overflow-wrap: anywhere; }
+  .form-error:empty { display: none; }
+  .status, .alert { display: flex; flex-wrap: wrap; align-items: center; gap: var(--fs-space-2) var(--fs-space-3); overflow-wrap: anywhere; font-size: var(--fs-font-size-small); }
   .status:empty, .alert:empty { display: none; }
+  .status { color: var(--fs-on-surface-variant); }
   .alert { color: var(--fs-error); }
   .alert p, .status p { margin: 0; }
   .main { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--fs-space-4); min-width: 0; }
@@ -89,7 +103,7 @@ export const STYLE = `
   .drop { position: absolute; inset: 0; z-index: 1; display: flex; align-items: center; justify-content: center; padding: var(--fs-space-4); border: 2px dashed var(--fs-primary); border-radius: var(--fs-radius); background: var(--fs-primary-container); color: var(--fs-on-primary-container); font-weight: 600; text-align: center; }
   .summary, .more, .limit { margin: 0; font-size: var(--fs-font-size-small); color: var(--fs-on-surface-variant); }
   .viewer header { display: flex; flex-wrap: wrap; align-items: center; gap: var(--fs-space-2) var(--fs-space-3); }
-  .viewer h2 { flex: 1 1 8rem; min-width: 0; margin: 0; font-family: var(--fs-font-heading); font-size: var(--fs-font-size-title); overflow-wrap: anywhere; }
+  .viewer h2 { flex: 1 1 8rem; min-width: 0; margin: 0; font-family: var(--fs-font-sans); font-size: var(--fs-font-size-ui); font-weight: 600; color: var(--fs-on-surface); overflow-wrap: anywhere; }
   .position { font-size: var(--fs-font-size-small); color: var(--fs-on-surface-variant); }
   [hidden] { display: none !important; }
 `;
@@ -106,9 +120,13 @@ function node<K extends keyof HTMLElementTagNameMap>(
   return element;
 }
 
-/** A `type="button"` with a class and its label. */
-function button(className: string, text: string): HTMLButtonElement {
-  const out = node("button", className, text);
+/** A `type="button"` styled as a shared control button, with a class and its label. */
+function button(
+  className: string,
+  text: string,
+  kind: "primary" | "secondary" = "secondary",
+): HTMLButtonElement {
+  const out = node("button", `${className} button ${kind}`, text);
   out.type = "button";
   return out;
 }
@@ -118,6 +136,7 @@ function field(text: string, name: string): { label: HTMLLabelElement; input: HT
   const label = document.createElement("label");
   const input = document.createElement("input");
   input.type = "text";
+  input.className = "input";
   input.name = name;
   input.autocomplete = "off";
   label.append(node("span", "field-label", text), input);
@@ -129,7 +148,7 @@ function buildToolbar(labels: LabelTable): { element: HTMLElement; bar: Frame["b
   const element = node("div", "toolbar");
   element.setAttribute("role", "toolbar");
   element.setAttribute("aria-label", labels.fileToolbar);
-  const upload = button("upload primary", labels.fileUpload);
+  const upload = button("upload", labels.fileUpload, "primary");
   const newFolder = button("new-folder", labels.fileNewFolder);
   const rename = button("rename", labels.fileRenameMove);
   const remove = button("remove", labels.fileRemove);
@@ -161,14 +180,16 @@ function buildForm(labels: LabelTable): Frame["form"] {
   element.noValidate = true;
   const name = field(labels.fileFieldName, "name");
   const folder = field(labels.fileFieldFolder, "folder");
+  const title = node("h3", "form-title");
   const error = node("p", "form-error");
   error.setAttribute("role", "alert");
-  const submit = node("button", "submit primary", labels.fileSave);
+  const submit = node("button", "submit button primary", labels.fileSave);
   submit.type = "submit";
   const cancel = button("cancel", labels.fileCancel);
-  element.append(name.label, folder.label, submit, cancel, error);
+  element.append(title, name.label, folder.label, error, submit, cancel);
   return {
     element,
+    title,
     name: name.input,
     folderField: folder.label,
     folder: folder.input,

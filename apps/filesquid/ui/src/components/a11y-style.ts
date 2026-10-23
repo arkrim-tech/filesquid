@@ -3,8 +3,9 @@
  * root (UI-S-016), so the contracts hold in every component and every distribution inherits
  * them without code:
  *
- * - a visible focus ring on everything in the Tab order: 2px solid `--fs-primary`, offset 2px
- *   (the token contrast test keeps it at 3:1 on the page, sidebar and selected item);
+ * - a visible focus ring on everything in the Tab order: 2px solid `--fs-focus-ring`, offset
+ *   2px (the token contrast test keeps it at 3:1 on every surface, with no exception;
+ *   `#0f8a39` light and `#16ac49` dark in the FileSquid default, owner decision 2026-10-23);
  * - no focus ring on elements focused only by script (`tabindex="-1"` targets of focus
  *   recovery), which are not in the Tab order;
  * - no motion under `prefers-reduced-motion: reduce`;
@@ -13,7 +14,7 @@
  */
 
 const STYLE = `
-  :focus-visible { outline: 2px solid var(--fs-primary); outline-offset: 2px; }
+  :focus-visible { outline: 2px solid var(--fs-focus-ring); outline-offset: 2px; }
   [tabindex="-1"]:focus { outline: none; }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { transition-duration: 0s !important; animation-duration: 0s !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }

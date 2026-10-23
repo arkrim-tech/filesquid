@@ -184,7 +184,65 @@ describe("<fs-nav-tree> structure", () => {
   it("puts the shared accessibility stylesheet first", async () => {
     const { root } = await mount();
     expect(root.querySelector("style")?.textContent).toMatch(
-      /^\s*:focus-visible \{ outline: 2px solid var\(--fs-primary\)/,
+      /^\s*:focus-visible \{ outline: 2px solid var\(--fs-focus-ring\)/,
+    );
+  });
+});
+
+describe("<fs-nav-tree> v3 look (UI-S-017, UI-S-024, mockup 55)", () => {
+  it("draws section headings as eyebrows: 11 px 400 upper case, 0.1em, muted", async () => {
+    const { root } = await mount();
+    const css = root.querySelector("style")?.textContent ?? "";
+    expect(css).toMatch(
+      /h2 \{[^}]*font-size: var\(--fs-font-size-eyebrow\); font-weight: 400; letter-spacing: 0\.1em; text-transform: uppercase; color: var\(--fs-on-surface-muted\)/,
+    );
+  });
+
+  it("gives every row a 16 px kind icon and parents a chevron twisty", async () => {
+    const { root } = await mount();
+    const photos = item(root, "collection", "Photos");
+    const kinds: Record<string, string> = {
+      repository: "library",
+      library: "library",
+      collection: "collection",
+      virtual_collection: "layers",
+      folder: "folder",
+    };
+    const rows = [...root.querySelectorAll<HTMLElement>('[role="treeitem"]')];
+    expect(rows.length).toBeGreaterThan(1);
+    for (const row of rows) {
+      const glyph = row.querySelector<SVGElement>(".kind-icon");
+      expect(glyph?.dataset.icon).toBe(kinds[row.dataset.kind ?? ""]);
+      expect(glyph?.getAttribute("width")).toBe("16");
+      expect(row.querySelector<SVGElement>(".twisty svg")?.dataset.icon).toBe("chevron");
+    }
+    expect(photos.querySelector<SVGElement>(".twisty svg")?.dataset.icon).toBe("chevron");
+    expect(photos.querySelector(".twisty")?.classList.contains("parent")).toBe(true);
+  });
+
+  it("draws Move up and Move down as arrow icons named by their labels", async () => {
+    const { root } = await mount();
+    const up = button(root, "collection", "up");
+    expect(up.querySelector<SVGElement>("svg")?.dataset.icon).toBe("arrow-up");
+    expect(button(root, "collection", "down").querySelector<SVGElement>("svg")?.dataset.icon).toBe(
+      "arrow-down",
+    );
+    expect(up.getAttribute("aria-label")).toContain(labels.collections);
+  });
+
+  it("styles rows 30 px, 13 px, with the active tint and a 2.5 px brand bar", async () => {
+    const { root } = await mount();
+    const css = root.querySelector("style")?.textContent ?? "";
+    expect(css).toMatch(/:host \{[^}]*font-size: var\(--fs-font-size-small\)/);
+    expect(css).toMatch(/\ba \{[^}]*min-block-size: 1\.875rem/);
+    expect(css).toMatch(
+      /a\[aria-current="page"\] \{ background: var\(--fs-primary-container\); color: var\(--fs-on-primary-container\); font-weight: 500; \}/,
+    );
+    expect(css).toMatch(
+      /a\[aria-current="page"\]::before \{[^}]*inline-size: 2\.5px; background: var\(--fs-brand\)/,
+    );
+    expect(css).toMatch(
+      /a\[data-kind="library"\][^{]*\{ color: var\(--fs-on-surface\); font-weight: 500; \}/,
     );
   });
 });

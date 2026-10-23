@@ -19,6 +19,7 @@
 import type { FileSquidClient, FindingsView } from "../api/client";
 import { formatLabel, type LabelTable } from "../theme/labels";
 import { A11Y_STYLE } from "./a11y-style";
+import { CONTROL_STYLE } from "./control-style";
 import { reasonLabel } from "./denial";
 import { RETRY_EVENT, type FsStates } from "./fs-states";
 import {
@@ -57,23 +58,24 @@ export interface FindingsOptions {
 type Phase = "loading" | "ready" | "failed";
 
 const STYLE = `
-  :host { display: block; color: var(--fs-on-surface); font-family: var(--fs-font-sans); }
-  h3 { margin: var(--fs-space-3) 0 var(--fs-space-1); font-size: var(--fs-font-size-body); }
+  :host { display: block; color: var(--fs-on-surface); font-family: var(--fs-font-sans); font-size: var(--fs-font-size-small); }
+  h3 { margin: var(--fs-space-4) 0 var(--fs-space-2); font-size: var(--fs-font-size-small); font-weight: 600; color: var(--fs-on-surface); }
   table { width: 100%; border-collapse: collapse; }
   .scroll { overflow-x: auto; }
-  th, td { text-align: start; padding: var(--fs-space-1) var(--fs-space-2); border-block-end: 1px solid var(--fs-outline); overflow-wrap: anywhere; }
-  td { font-family: var(--fs-font-mono); }
-  [data-part="errors"] .code { color: var(--fs-error); font-weight: 600; }
-  [data-part="warnings"] .code { color: var(--fs-on-surface-variant); font-weight: 600; }
-  td[data-withheld] { color: var(--fs-on-surface-variant); font-family: var(--fs-font-sans); }
-  dl { display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr); gap: var(--fs-space-1) var(--fs-space-4); margin: 0; }
+  th, td { text-align: start; padding: var(--fs-space-2); border-block-end: 1px solid var(--fs-outline); overflow-wrap: anywhere; }
+  th { font-weight: 500; color: var(--fs-on-surface-variant); }
+  .mono { font-family: var(--fs-font-mono); }
+  td[data-withheld] { color: var(--fs-on-surface-variant); }
+  dl { display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr); gap: var(--fs-space-2) var(--fs-space-4); margin: 0; }
   dt, dd { min-width: 0; overflow-wrap: anywhere; }
-  dd { margin: 0; font-family: var(--fs-font-mono); }
-  form { display: flex; flex-wrap: wrap; gap: var(--fs-space-2); align-items: center; margin: 0; }
+  dt { color: var(--fs-on-surface-muted); }
+  dd { margin: 0; color: var(--fs-on-surface); }
+  form { display: flex; flex-wrap: wrap; gap: var(--fs-space-2); align-items: center; margin: 0 0 var(--fs-space-3); }
   p { margin: var(--fs-space-1) 0; overflow-wrap: anywhere; }
+  [data-part="run-result"] { color: var(--fs-on-surface-variant); }
   [data-part="run-result"][data-outcome="failed"] { color: var(--fs-error); }
   .note { color: var(--fs-on-surface-variant); }
-  a { color: var(--fs-primary); }
+  [data-note="read-only"] { color: var(--fs-on-surface); }
 `;
 
 /** Custom element that renders the open OCFL validation findings and runs. */
@@ -170,7 +172,7 @@ export class FsOcflFindings extends HTMLElement {
     const labels = this.options?.labels;
     if (!root || !labels || root.querySelector(".content")) return;
     const style = document.createElement("style");
-    style.textContent = A11Y_STYLE + STYLE;
+    style.textContent = A11Y_STYLE + CONTROL_STYLE + STYLE;
     const states = document.createElement("fs-states") as FsStates;
     states.configure({ labels });
     states.addEventListener(RETRY_EVENT, () => {
@@ -211,6 +213,7 @@ export class FsOcflFindings extends HTMLElement {
     button.type = "submit";
     button.dataset.action = "validate";
     button.textContent = labels.findingsValidate;
+    button.className = "button secondary";
     const result = document.createElement("p");
     result.dataset.part = "run-result";
     result.setAttribute("role", "status");

@@ -1,8 +1,11 @@
 /**
- * `<fs-theme-control>`: the theme control every distribution's shell shows (SRS-UI-007).
- * A labelled group of three native radio buttons (System, Light, Dark), so it works with the
- * keyboard (arrow keys) and screen readers without custom key handling. It reads and changes
- * the shared {@link ThemeStore}; it keeps no theme state of its own.
+ * `<fs-theme-control>`: the theme control of Settings, Appearance (SRS-UI-007, UI-S-015,
+ * UI-S-033; owner answer 7, verbatim "Settings -> Appaerance"; mockup
+ * `resources/ui-mockups/v3/32-settings.svg`). A labelled group of three native radio buttons
+ * (System, Light, Dark) drawn as a segmented control, the chosen one at weight 600 on the
+ * active tint, so it works with the keyboard (arrow keys) and screen readers without custom key
+ * handling. It reads and changes the shared {@link ThemeStore}; it keeps no theme state of its
+ * own.
  *
  * Accessibility (UI-S-016): the radio group is one Tab stop; the focus ring is drawn on the
  * label of the focused radio; colour changes take `--fs-motion-duration` (none under reduced
@@ -28,11 +31,12 @@ export interface ThemeControlOptions {
 
 const STYLE = `
   :host { display: inline-block; max-width: 100%; font-family: var(--fs-font-sans); color: var(--fs-on-surface); }
-  fieldset { position: relative; display: flex; flex-wrap: wrap; gap: var(--fs-space-1); margin: 0; padding: var(--fs-space-1); border: 1px solid var(--fs-outline); border-radius: var(--fs-radius); background: var(--fs-surface-container); }
+  fieldset { position: relative; display: flex; flex-wrap: wrap; gap: var(--fs-space-2); margin: 0; padding: 0; border: 0; }
   legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  label { position: relative; display: inline-flex; align-items: center; padding: var(--fs-space-1) var(--fs-space-3); border-radius: var(--fs-radius); font-size: var(--fs-font-size-small); font-weight: 600; color: var(--fs-on-surface-variant); background: var(--fs-surface-container); cursor: pointer; transition: color var(--fs-motion-duration), background-color var(--fs-motion-duration); }
-  label:has(input:checked) { color: var(--fs-on-primary-container); background: var(--fs-primary-container); }
-  label:has(input:focus-visible) { outline: 2px solid var(--fs-primary); outline-offset: 2px; }
+  label { position: relative; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; min-inline-size: 6.375rem; min-block-size: 2.125rem; padding: 0 var(--fs-space-3); border: 1.5px solid var(--fs-outline-control); border-radius: var(--fs-radius-button); font-size: var(--fs-font-size-small); font-weight: 500; color: var(--fs-on-surface); background: var(--fs-surface-card); cursor: pointer; transition: color var(--fs-motion-duration), background-color var(--fs-motion-duration), border-color var(--fs-motion-duration); }
+  label:hover { background: var(--fs-surface-raised); }
+  label:has(input:checked) { border-color: var(--fs-primary); background: var(--fs-primary-container); color: var(--fs-on-primary-container); font-size: var(--fs-font-size-ui); font-weight: 600; }
+  label:has(input:focus-visible) { outline: 2px solid var(--fs-focus-ring); outline-offset: 2px; }
   input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; }
   input:focus-visible { outline: none; }
   @media (forced-colors: active) {

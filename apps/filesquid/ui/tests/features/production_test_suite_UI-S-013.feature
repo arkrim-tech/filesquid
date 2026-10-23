@@ -14,7 +14,7 @@ Feature: Production-artifact UI test suite with Allure reporting
   Scenario: The static build mounts with every custom element defined
     Given the build is served by "vite preview" on the workspace's preview port
     When the page loads
-    Then the elements "fs-app-shell", "fs-theme-control", "fs-states", "fs-nav-tree", "fs-breadcrumb" and "fs-monitor" should be defined
+    Then the elements "fs-app-shell", "fs-theme-control", "fs-states", "fs-nav-tree", "fs-breadcrumb", "fs-settings" and "fs-monitor" should be defined
     And the page should load only hashed script files from "/assets/"
     And the page should contain no inline script
     And the browser console should show no error
@@ -22,8 +22,12 @@ Feature: Production-artifact UI test suite with Allure reporting
   Scenario: Every visible word comes from the active label table
     Given the build is served by "vite preview" on the workspace's preview port
     When the page loads
-    Then the navigation entries should read as the label table's "libraries", "collections", "virtualCollections", "virtualExhibits" and "monitor" words
-    And the API status line should use the label table's "apiStatus" word
+    Then the sidebar views should read as the label table's "fileRoot" and "fileRecent" words
+    And the sidebar rows should read as the label table's "navigationRecentlyDeleted", "libraryNavLink", "settings" and "logs" words
+    And the header's Monitor button should use the label table's "monitor" word
+    And the header should show neither a theme control nor an API status line
+    When I open Settings
+    Then the API status line should use the label table's "settingsApiStatus" wording
     And the theme control legend should use the label table's "theme" word
 
   Scenario Outline: Computed token values are exact in each colour scheme
@@ -32,12 +36,14 @@ Feature: Production-artifact UI test suite with Allure reporting
     When the page loads
     Then the computed "--fs-primary" colour should be "<primary>"
     And the computed "--fs-on-primary" colour should be "<on_primary>"
+    And the computed "--fs-focus-ring" colour should be "<focus>"
     And the page background should be "<surface>"
 
+    # The design guide's values (owner decision 2026-10-22 on Conflict Artifact CA-1, verbatim: "a").
     Examples:
-      | scheme | primary | on_primary | surface |
-      | light  | #0b7a32 | #ffffff    | #ffffff |
-      | dark   | #16ac49 | #0d2b18    | #141414 |
+      | scheme | primary | on_primary | focus   | surface |
+      | light  | #16ac49 | #ffffff    | #0f8a39 | #ffffff |
+      | dark   | #16ac49 | #ffffff    | #16ac49 | #141414 |
 
   Scenario Outline: A distribution runs the same suite shape with its own tokens
     Given the "<distribution>" build is served by "vite preview" on port <port>
