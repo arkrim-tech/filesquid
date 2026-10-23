@@ -1150,14 +1150,14 @@ Every module task appears in exactly one global Description. `through` ranges in
 | F1 | FS-1.1 | API-F1.1, API-F1.2, DE-F1.1 |
 | F1 | FS-1.2 | IO-1.2, API-F1.3 |
 | F1 | FS-1.3 | MD-0.2, MD-0.7, MD-0.8, MD-0.10, API-F1.4, API-F1.13 |
-| F1 | FS-1.4 | API-F1.6, API-F1.7 |
+| F1 | FS-1.4 | API-F1.6, API-F1.7, DE-1.9 |
 | F3R | FS-3.10 | SV-F1.1, SV-F1.3, API-F1.9, SV-F1.2, BE-0.6 |
 | F3R | FS-1.5 | API-F1.8 |
 | F2 | FS-2.1 | UI-0.1, UI-0.2, UI-0.5, UI-F2.1a, API-F1.10, API-F1.11, UI-F2.1b |
 | F2 | FS-2.2 | UI-F2.2, UI-F2.3, UI-F2.4 |
 | F3R | FS-2.3 | UI-F2.6 |
 | F2 | 1.1 | CL-1.1, DE-1.1, UI-1.1, IO-1.1, IO-1.4, API-F2.7, UI-F2.14 |
-| F2 | 1.2 | DE-1.2, DE-1.7, API-F2.16, API-F2.17, API-F2.18, DE-1.8, UI-1.2, UI-1.3 |
+| F2 | 1.2 | DE-1.2, IO-1.7, DE-1.7, API-F2.16, API-F2.17, API-F2.18, DE-1.8, UI-1.2, UI-1.3 |
 | F2 | 1.9 (superseded) | IO-1.3, MD-0.6, CP-0.8 (superseded); IO-1.2 → FS-1.2 |
 | F3 | FS-3.1 | DE-F3.1 |
 | F3R | FS-3.11 | DE-F3.3 |
