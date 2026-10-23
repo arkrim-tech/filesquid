@@ -91,11 +91,15 @@ fn names_destination_and_root(world: &mut OcflWorld, destination: String, root: 
     assert_eq!(fields.get("root"), Some(&root), "{fields:?}");
 }
 
-#[then(expr = "the warning should name the root {string}")]
-fn names_root(world: &mut OcflWorld, root: String) {
+#[then(expr = "the warning should name a destination under {string} and the root {string}")]
+fn names_destination_under(world: &mut OcflWorld, prefix: String, root: String) {
     let fields = warning(world);
+    let destination = fields.get("destination").map(String::as_str);
+    assert!(
+        destination.is_some_and(|d| d.starts_with(&prefix)),
+        "{fields:?}"
+    );
     assert_eq!(fields.get("root"), Some(&root), "{fields:?}");
-    assert!(fields.contains_key("destination"), "{fields:?}");
 }
 
 #[then(expr = "the warning should name the object {string} at version {string}")]

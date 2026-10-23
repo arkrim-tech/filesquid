@@ -27,7 +27,7 @@ Feature: Copy-guard warnings name the object
   Scenario: A refused staging write names the object without a version
     When I stage "d.txt" in a staging area under "obj/staging" while warnings are recorded
     Then the copy should be refused and one copy-guard warning recorded
-    And the warning should name the root "obj"
+    And the warning should name a destination under "obj/staging/" and the root "obj"
     And the warning should name the object "urn:example:obj" without a version
 
   # Source

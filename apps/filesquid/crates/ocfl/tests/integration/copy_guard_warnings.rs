@@ -106,6 +106,7 @@ fn copy_file_warning_names_object_and_version<B: StorageBackend>(rig: &Rig<B>) {
         ROOT,
         Some("v1"),
     );
+    assert!(!rig.stored("obj/v1/content/c.txt"), "nothing copied");
 }
 
 #[test]
@@ -166,6 +167,7 @@ fn the_warning_comes_from_the_engine_target() {
     let capture = WarningCapture::default();
     let _ = capture.run(|| ready(model(&rig, "w").checkout(&v("v1"), &rig.storage, "obj/out")));
     let targets = capture.targets();
+    assert!(!targets.is_empty(), "the refusal warned");
     assert!(
         targets.iter().all(|t| t.starts_with("filesquid_ocfl")),
         "{targets:?}"

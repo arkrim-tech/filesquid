@@ -12,11 +12,11 @@ The copy guard's `tracing` warning (`refused a copy into an OCFL root`, target `
 | `ChangeModel::checkout` | the change model's object | the version checked out |
 | Staging writes (`stage_bytes`, `stage_tree`, index and blob writes, clear) | the object the change model was built for | none: the call knows no version |
 
-`object` and `version` are the field names the API's journal layer already reads from `filesquid_ocfl` events (`crates/api/src/trace_layer.rs`), so the API journals `<object>@<version>` as the object reference with no change in `filesquid-api`. Tests: `integration_copy_guard_warnings` (4 tests; three run on MemoryBackend and FsBackend) and `copy_guard_warning_OCFL-S-025.feature` (3 scenarios).
+`object` and `version` are the field names the API's journal layer already reads from `filesquid_ocfl` events (`crates/api/src/trace_layer.rs`), so the API can journal `<object>@<version>` as the object reference with no change in `filesquid-api`, whenever the identifier and version form a reference its journal accepts (`is_object_ref`). Tests: `integration_copy_guard_warnings` (4 tests; three run on MemoryBackend and FsBackend) and `copy_guard_warning_OCFL-S-025.feature` (3 scenarios).
 
-## OCFL-S-019: Inspection and copy never edit a completed object (the refusal rules and the returned error stay as they are)
+## OCFL-S-019: Inspection and copy never edit an object (the refusal rules and the returned error stay as they are)
 
-Each test also asserts the error is still `ReadError::CopyIntoOcflRoot` (with the same `key` and `root` for `copy_file`) and that nothing was written at the destination. The existing `read_only_copy_OCFL-S-019.feature` and `integration_change_model` refusal tests pass unchanged.
+Each test also asserts the error is still `ReadError::CopyIntoOcflRoot` (with the same `key` and `root` for `copy_file`) and that nothing was written at the destination (`obj/v1/content/c.txt`, `obj/out`, `obj/staging`). The existing `read_only_copy_OCFL-S-019.feature` and `integration_change_model` refusal tests pass unchanged.
 
 ## API-S-031: Journal query, search and export (engine warnings journaled with operation and object reference fields)
 
@@ -58,17 +58,17 @@ test result: FAILED. 1 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; 
 `cargo test -p filesquid-ocfl --test integration_copy_guard_warnings --locked`:
 
 ```text
-    Finished `test` profile [unoptimized] target(s) in 0.14s
+   Compiling filesquid-ocfl v0.1.0 (<repo>/apps/filesquid/crates/ocfl)
+    Finished `test` profile [unoptimized] target(s) in 1.22s
      Running tests/integration/copy_guard_warnings.rs (<target>/debug/deps/integration_copy_guard_warnings-2815ebb654452722)
 
 running 4 tests
 test the_warning_comes_from_the_engine_target ... ok
-test a_refused_staging_write_names_the_object_without_a_version ... ok
 test a_refused_copy_file_names_the_source_object_and_version ... ok
+test a_refused_staging_write_names_the_object_without_a_version ... ok
 test a_refused_checkout_names_the_object_and_version ... ok
 
 test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
-
 ```
 
 `cargo test -p filesquid-ocfl --test features --locked` (the new feature and the summary; the three skipped steps are the existing `reusable_ocfl_engine_F-051.feature` scenarios owned by other crates):
@@ -91,6 +91,8 @@ Feature: Copy-guard warnings name the object
    ✔> Given an OCFL object "obj" committed at "v1" through the engine writer
    ✔  When I stage "d.txt" in a staging area under "obj/staging" while warnings are recorded
    ✔  Then the copy should be refused and one copy-guard warning recorded
+   ✔  And the warning should name a destination under "obj/staging/" and the root "obj"
+   ✔  And the warning should name the object "urn:example:obj" without a version
 [Summary]
 17 features
 158 scenarios (155 passed, 3 skipped)
