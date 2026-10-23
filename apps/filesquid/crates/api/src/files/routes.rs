@@ -351,7 +351,26 @@ async fn upload_command(
             "An upload has only envelope, input and file parts.",
         ));
     }
-    parts.finish()
+    let (checked, file) = parts.finish()?;
+    let content_sha256 = hash_upload(file.clone()).await?;
+    let command = Checked {
+        operation_id: checked.operation_id,
+        expected: checked.expected,
+        input: UploadCommand {
+            facts: checked.input,
+            content_sha256,
+        },
+    };
+    Ok((command, file))
+}
+
+/// The SHA-256 of an upload's bytes as lowercase hex, computed on a blocking thread since it
+/// reads up to [`MAX_UPLOAD_BYTES`].
+async fn hash_upload(file: Bytes) -> Result<String, FileError> {
+    let digest = move || filesquid_ocfl::DigestAlgorithm::Sha256.digest_hex(&file);
+    tokio::task::spawn_blocking(digest)
+        .await
+        .map_err(|_| FileError::internal("the upload digest task failed"))
 }
 
 /// The input an upload's receipt is matched on: its facts and the SHA-256 of its bytes, so
@@ -369,15 +388,6 @@ impl CommandInput for UploadCommand {
     fn library_id(&self) -> &str {
         &self.facts.library_id
     }
-}
-
-/// The SHA-256 of `bytes` as lowercase hex. Pure.
-fn sha256_hex(bytes: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    Sha256::digest(bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
 }
 
 /// The parts of an upload body read so far.
@@ -407,8 +417,9 @@ impl UploadParts {
         }
     }
 
-    /// The checked command and the bytes, once every part arrived within the cap.
-    fn finish(self) -> Result<(Checked<UploadCommand>, Bytes), FileError> {
+    /// The checked envelope and facts, and the bytes, once every part arrived within the cap;
+    /// the bytes are hashed only after the envelope is checked.
+    fn finish(self) -> Result<(Checked<UploadQuery>, Bytes), FileError> {
         let (Some(envelope), Some(input), Some(file)) = (self.envelope, self.input, self.file)
         else {
             return Err(FileError::invalid(
@@ -418,10 +429,6 @@ impl UploadParts {
         if file.len() > MAX_UPLOAD_BYTES {
             return Err(upload_too_large());
         }
-        let input = UploadCommand {
-            content_sha256: sha256_hex(&file),
-            facts: input,
-        };
         Ok((command::check(envelope, input)?, file))
     }
 }

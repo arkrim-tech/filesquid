@@ -74,7 +74,9 @@ export function uploadName(name: string): string {
  * a failed file is recorded and the rest continue (files are never sent together). At most
  * {@link MAX_UPLOAD_FILES} files are tried. Each file is sent under the operation id
  * `operationIdOf` gives it (API-F2.13): a caller that retries a file with the id it used before
- * gets the first answer back when that upload had already committed, never a second file.
+ * gets the first answer back while the host still holds that upload's receipt. Receipts are
+ * kept in the host's memory and capped, so a retry after a host restart can still make a second
+ * file.
  * Network I/O through `source`.
  *
  * @param source The file source.
