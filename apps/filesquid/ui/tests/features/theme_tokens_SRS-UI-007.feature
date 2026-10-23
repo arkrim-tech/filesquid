@@ -87,6 +87,18 @@ Feature: Light and dark themes and official branding
     When the token test runs
     Then it should fail naming "--fs-error" for the dark theme
 
+  # UI-S-005, owner decision 2026-10-23: the FileSquid UI package's own suite checks the
+  # ImageSquid tables while the pre-commit hook runs no ImageSquid suite.
+  Scenario: The ImageSquid label table lacks a default key
+    Given the ImageSquid label table without the default key "virtualExhibits"
+    When the FileSquid UI distribution-table test runs
+    Then it should fail naming "virtualExhibits" for ImageSquid
+
+  Scenario: The ImageSquid token file lacks a default dark token
+    Given the ImageSquid token file without a dark value for "--fs-error"
+    When the FileSquid UI distribution-table test runs
+    Then it should fail naming "--fs-error" for the dark theme of ImageSquid
+
   Scenario: A distribution chooses a primary colour below AA that is not an exempt value
     Given a distribution token file whose primary is "#5cd685" with "#ffffff" text
     When the token test runs

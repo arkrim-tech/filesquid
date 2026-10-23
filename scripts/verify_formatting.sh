@@ -15,8 +15,14 @@
 #     caused by a non-Rust file such as a manifest or a script.
 #   - TypeScript: `prettier --check .` in each npm package (a directory under
 #     apps/ or apps/*/ that holds a package.json), on every commit, because
-#     Prettier also checks the package's Markdown. Requires `npm ci` to have
-#     been run in that package; the check fails with that instruction otherwise.
+#     Prettier also checks the package's Markdown. It runs the Prettier installed
+#     in the package's own node_modules, except for a package listed in
+#     PRETTIER_FROM, which is checked with the named package's Prettier and its
+#     own .prettierrc.json and .prettierignore: apps/imagesquid uses
+#     apps/filesquid/ui's, because the hook needs no ImageSquid install during
+#     the MVP (owner decision 2026-10-23, .agents/rules/local-verification.md).
+#     Requires `npm ci` in the package that provides Prettier; the check fails
+#     with that instruction otherwise.
 #   - Elixir: `mix format --check-formatted` in each app with a mix.exs.
 #
 # Usage: ./scripts/verify_formatting.sh [--scope <scope>]   (from the repository root)
@@ -28,6 +34,8 @@ echo "Starting Format Validation..."
 . ./scripts/lib/hook_scope.sh
 
 APPS_DIR="./apps"
+# <package>=<package whose node_modules provides Prettier for it>.
+PRETTIER_FROM="apps/imagesquid=apps/filesquid/ui"
 FAILED=0
 SCOPE=$(scope_or_detect "$@")
 
@@ -57,19 +65,31 @@ check_rust_workspace() {
   FAILED=1
 }
 
+prettier_home() {
+  # $1 = package directory (with or without a leading ./). Prints the package
+  # directory whose node_modules provides Prettier for it. Pure.
+  local dir="${1#./}" pair
+  for pair in $PRETTIER_FROM; do
+    [ "$dir" = "${pair%%=*}" ] && { echo "${pair#*=}"; return; }
+  done
+  echo "$dir"
+}
+
 check_npm_package() {
   # $1 = package directory holding package.json
-  local dir="$1"
+  local dir="$1" home prettier
+  home=$(prettier_home "$dir")
   echo "🔍 Validating Prettier formatting in $dir..."
-  if [ ! -d "$dir/node_modules" ]; then
-    echo "❌ ERROR ($dir): node_modules missing. Run 'npm ci' in $dir first."
+  prettier="$(pwd)/$home/node_modules/.bin/prettier"
+  if [ ! -x "$prettier" ]; then
+    echo "❌ ERROR ($dir): Prettier missing from $home/node_modules. Run 'npm ci' in $home first."
     FAILED=1
     return
   fi
-  if (cd "$dir" && npx prettier --check . >/dev/null 2>&1); then
+  if (cd "$dir" && "$prettier" --check . >/dev/null 2>&1); then
     echo "✅ $dir is properly formatted."
   else
-    echo "❌ ERROR ($dir): Prettier format violation. Run 'npx prettier --write .' in $dir."
+    echo "❌ ERROR ($dir): Prettier format violation. Run '$prettier --write .' in $dir."
     FAILED=1
   fi
 }

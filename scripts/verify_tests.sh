@@ -27,9 +27,13 @@
 #       5c. filesquid-prov feature matrix: clippy and tests with --all-features (the `ocfl`
 #          tests are skipped by the default features), and `cargo check --lib --target
 #          wasm32-unknown-unknown` with default features and with `ocfl` (PROV-S-001, PROV-S-006)
-#     In each UI package (apps/filesquid/ui, apps/imagesquid):
-#       6. npm run lint, npm run check, npm test
+#     In the FileSquid UI package (apps/filesquid/ui), the only npm suite the hook
+#     runs during the MVP (owner decision 2026-10-23, .agents/rules/local-verification.md):
+#       6. npm run lint, npm run check, npm test (its distribution-table test reads
+#          apps/imagesquid's label table and token file, UI-S-005)
 #       7. npm run test:e2e, only when FILESQUID_E2E=1
+#     apps/imagesquid keeps its own npm scripts for running by hand; the hook does not
+#     run its lint, typecheck, Vitest or Playwright suite.
 #     Desktop packaged window (apps/filesquid/crates/desktop/tests/e2e):
 #       8. only when FILESQUID_DESKTOP_E2E=1: build the test-instrumented binary,
 #          check formatting, run WebdriverIO (under xvfb-run on Linux without a display)
@@ -72,7 +76,9 @@ fi
 WORKSPACE="apps/filesquid"
 MODULE_CRATES="filesquid-core filesquid-ocfl filesquid-metadata filesquid-c2pa filesquid-prov filesquid-api filesquid-native"
 DESKTOP_CRATE="filesquid-desktop"
-UI_PACKAGES="apps/filesquid/ui apps/imagesquid"
+UI_PACKAGES="apps/filesquid/ui"
+# Packages whose own suites the hook does not run during the MVP (owner decision 2026-10-23).
+UNHOOKED_PACKAGES="apps/imagesquid"
 FAILED=0
 
 run_step() {
@@ -266,6 +272,14 @@ run_npm_packages() {
   done
 }
 
+note_unhooked_packages() {
+  # Prints, once per run, the packages whose own suites the hook leaves out.
+  local pkg
+  for pkg in $UNHOOKED_PACKAGES; do
+    skip_step "ESLint, TypeScript, Vitest and Playwright e2e in $pkg" "not run by the hook during the MVP (owner decision 2026-10-23); @filesquid/ui's distribution-table test checks its label table and token file"
+  done
+}
+
 run_desktop_e2e() {
   # Packaged-window tests: build the test-instrumented binary, then drive it with WebdriverIO.
   local dir="$WORKSPACE/crates/desktop/tests/e2e"
@@ -326,6 +340,7 @@ run_partial_scope() {
 
 SCOPE=$(scope_or_detect "$@")
 echo "ℹ️  Test scope: $SCOPE"
+note_unhooked_packages
 case "$SCOPE" in
   full) run_full_scope ;;
   docs) run_docs_scope ;;
