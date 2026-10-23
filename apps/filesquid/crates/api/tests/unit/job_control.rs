@@ -618,7 +618,8 @@ async fn the_summary_view_and_the_job_update_event_carry_no_result() {
     assert_eq!(JobView::summary(&done).result, None);
     let mut completed = None;
     for _ in 0..20 {
-        let event = events.next().await.expect("event");
+        let next = tokio::time::timeout(std::time::Duration::from_secs(5), events.next());
+        let event = next.await.expect("an event within 5 s").expect("event");
         if event.topic == topic::JOB_UPDATE && event.data["state"] == "completed" {
             completed = Some(event);
             break;

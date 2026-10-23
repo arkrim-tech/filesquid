@@ -187,8 +187,8 @@ test a_checkpoint_with_a_result_under_an_ended_lease_is_fenced_and_stores_nothin
 test completing_without_a_result_clears_a_partial_one ... ok
 test the_summary_view_and_the_job_update_event_carry_no_result ... ok
 test the_view_carries_the_result_once_the_job_completes_and_null_otherwise ... ok
-test a_result_past_its_bound_is_refused_and_stores_nothing ... ok
 test a_final_result_past_its_bound_is_refused_and_stores_nothing ... ok
+test a_result_past_its_bound_is_refused_and_stores_nothing ... ok
 test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.05s
 ```
 
