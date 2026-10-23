@@ -123,7 +123,7 @@ pub struct Checked<T> {
 }
 
 /// What a command that ran answers: the route's view, its journal entries (each without an
-/// operation ID; [`run`] adds the envelope's), and whether it changed anything.
+/// operation ID; the route adds the envelope's), and whether it changed anything.
 #[derive(Debug)]
 pub struct Done<V> {
     /// What the route answers as `result`.
