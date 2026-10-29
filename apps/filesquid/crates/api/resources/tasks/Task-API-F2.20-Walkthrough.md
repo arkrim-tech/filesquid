@@ -162,6 +162,8 @@ Running 2 tests using 1 worker
   2 passed (10.4s)
 ```
 
+The head-commit hook run (`FULL=1 bash scripts/pre-commit.sh` with a private Cargo target, `Test scope: full`) is recorded in the pull request.
+
 ## Sync Execution Report
 
 - No upstream document changed in this branch: API-S-023 and UI-S-027 carry the decision through PR #131.
