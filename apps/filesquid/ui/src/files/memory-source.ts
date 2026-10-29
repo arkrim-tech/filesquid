@@ -5,7 +5,9 @@
  * write, restore from an earlier version, a folder that stays pending until a file is added,
  * an upload that creates the file's own object (API-S-026) and refuses the facts the API
  * refuses, and the API's refusals as `ApiError` (`not_found`, `conflict`, `invalid_request`,
- * `range_not_satisfiable`). Tests and demos use it; the live source is `ClientFileSource`.
+ * `range_not_satisfiable`). It also answers the history reads of the file panel (UI-F2.3) as
+ * `GET /files/history`, `/files/versions` and `/files/history-size` do. Tests and demos use it;
+ * the live sources are `ClientFileSource` and `ClientHistorySource`.
  */
 import { ApiError } from "../api/client";
 import { newOperationId, type ByteRange } from "../api/commands";
@@ -23,15 +25,23 @@ import type {
   UploadCommit,
   UploadFacts,
 } from "./model";
-import { MAX_UPLOAD_BYTES, isControl, isMediaType, lastSegment } from "./model";
+import { MAX_UPLOAD_BYTES, isControl, isMediaType, lastSegment, validLabel } from "./model";
 import { fileIdOf, inOriginalFolder, isOriginalPath } from "./ops";
 import {
   NEW_FILE_REVISION,
   type FileSource,
   type SourceOptions,
   type UploadSourceOptions,
+  type RestoreOptions,
   type WriteOptions,
 } from "./source";
+import type {
+  FileHistory,
+  FileHistoryEntry,
+  FileHistorySize,
+  HistorySource,
+  ObjectVersions,
+} from "./history-source";
 
 /** One file of the fixture. */
 export interface MemoryFile {
@@ -91,6 +101,8 @@ interface Stored {
 interface Snapshot {
   readonly created: string;
   readonly files: ReadonlyMap<string, Stored>;
+  /** The version's label, as a restore sets it; null for none. */
+  readonly label: string | null;
 }
 
 /** Route named in the fixture's errors. */
@@ -192,7 +204,7 @@ function byName(a: string, b: string): number {
 }
 
 /** A file source answering from memory. */
-export class MemoryFileSource implements FileSource {
+export class MemoryFileSource implements FileSource, HistorySource {
   private readonly snapshots: Snapshot[] = [];
   private readonly cursors = new Map<string, { prefix: string; offset: number }>();
   private readonly uploaded = new Map<string, UploadedFile>();
@@ -208,7 +220,7 @@ export class MemoryFileSource implements FileSource {
     const created = new Date(BASE_TIME).toISOString();
     const files = new Map<string, Stored>();
     for (const file of options.files) files.set(file.path, initialFile(file, created));
-    this.snapshots.push({ created, files });
+    this.snapshots.push({ created, files, label: null });
   }
 
   /** The head version label. */
@@ -428,24 +440,89 @@ export class MemoryFileSource implements FileSource {
     });
   }
 
-  /** Restore files or folders from an earlier version as a new version. */
+  /**
+   * Restore files or folders from an earlier version as a new version, with its optional label.
+   * A label the restorations route refuses (blank, over 512 bytes or with a control character)
+   * is `invalid_request`, checked before the revision as the route checks its body first.
+   */
   async restore(
     _object: ObjectRef,
     version: string,
     paths: readonly string[],
-    options: WriteOptions,
+    options: RestoreOptions,
   ): Promise<FileCommit> {
     this.check();
+    if (options.label !== undefined && !validLabel(options.label)) {
+      throw refusal(400, "invalid_request");
+    }
     this.expect(options.revision);
     const earlier = this.snapshot(version);
-    return this.commit((files, label, created) => {
+    const change = (files: Map<string, Stored>, label: string, created: string) => {
       for (const path of paths) {
         const found = [...earlier.files.values()].filter((file) => within(file.path, path));
         if (found.length === 0) throw refusal(404, "not_found");
         for (const file of found)
           files.set(file.path, { ...file, modified: created, modifiedVersion: label });
       }
+    };
+    return this.commit(change, options.label ?? null);
+  }
+
+  /** Every version of the object, oldest first, with the head. */
+  async versions(): Promise<ObjectVersions> {
+    this.check();
+    return {
+      library_id: this.options.library_id,
+      object_id: this.options.object_id,
+      head: this.head,
+      display_name: this.fileName(),
+      versions: this.snapshots.map((snapshot, i) => versionRecord(i, snapshot)),
+    };
+  }
+
+  /** The display name of the file this object holds when it is a file object, else null. */
+  private fileName(): string | null {
+    const id = fileIdOf(this.options.object_id);
+    const files = [...this.latest().files.values()];
+    const original = id ? files.find((file) => isOriginalPath(file.path, id)) : undefined;
+    return original ? safeDisplayName(original.displayName) : null;
+  }
+
+  /** The versions that changed the file at `file.path`, oldest first, or `not_found`. */
+  async history(file: FileRef): Promise<FileHistory> {
+    this.check();
+    const entries: FileHistoryEntry[] = [];
+    this.snapshots.forEach((snapshot, i) => {
+      const before = this.snapshots[i - 1]?.files.get(file.path);
+      const entry = historyEntry(i, snapshot, before, snapshot.files.get(file.path));
+      if (entry) entries.push(entry);
     });
+    const shown = this.latest().files.get(file.path) ?? this.snapshots[0]?.files.get(file.path);
+    if (entries.length === 0) throw refusal(404, "not_found");
+    return {
+      library_id: this.options.library_id,
+      object_id: this.options.object_id,
+      path: file.path,
+      display_name: safeDisplayName(shown?.displayName ?? lastSegment(file.path)),
+      entries,
+    };
+  }
+
+  /** The bytes the file's history keeps, each distinct content once. */
+  async historySize(file: FileRef): Promise<FileHistorySize> {
+    const { entries } = await this.history(file);
+    const contents = new Map<string, number>();
+    for (const entry of entries) {
+      if (entry.digest !== null) contents.set(entry.digest, entry.size ?? 0);
+    }
+    return {
+      library_id: this.options.library_id,
+      object_id: this.options.object_id,
+      path: file.path,
+      versions: entries.length,
+      contents: contents.size,
+      bytes: [...contents.values()].reduce((sum, bytes) => sum + bytes, 0),
+    };
   }
 
   /** Reject with the configured failure. */
@@ -481,13 +558,14 @@ export class MemoryFileSource implements FileSource {
   /** Apply a change as the next version; a change that alters nothing is a conflict. */
   private commit(
     change: (files: Map<string, Stored>, version: string, created: string) => void,
+    label: string | null = null,
   ): FileCommit {
     const files = new Map(this.latest().files);
     const version = `v${this.snapshots.length + 1}`;
     const created = new Date(BASE_TIME + this.snapshots.length * 60_000).toISOString();
     change(files, version, created);
     if (sameFiles(files, this.latest().files)) throw refusal(409, "conflict");
-    this.snapshots.push({ created, files });
+    this.snapshots.push({ created, files, label });
     return {
       library_id: this.options.library_id,
       object_id: this.options.object_id,
@@ -528,6 +606,45 @@ export class MemoryFileSource implements FileSource {
       this.cursors.delete(this.cursors.keys().next().value as string);
     return cursor;
   }
+}
+
+/** The version record of snapshot `index`. */
+function versionRecord(index: number, snapshot: Snapshot) {
+  return {
+    version: `v${index + 1}`,
+    created: snapshot.created,
+    message: null,
+    user: null,
+    label: snapshot.label,
+  };
+}
+
+/** The history entry of snapshot `index` for one file, or undefined when it left the file alone. */
+function historyEntry(
+  index: number,
+  snapshot: Snapshot,
+  before: Stored | undefined,
+  after: Stored | undefined,
+): FileHistoryEntry | undefined {
+  if (!before && !after) return undefined;
+  if (before && after && sameStored(before, after)) return undefined;
+  const change = !before ? "added" : after ? "changed" : "deleted";
+  return {
+    version: versionRecord(index, snapshot),
+    change,
+    digest: after ? digestOf(after.bytes) : null,
+    size: after ? after.bytes.byteLength : null,
+  };
+}
+
+/** True when two stored files have the same content: the API's history compares digests only. */
+function sameStored(a: Stored, b: Stored): boolean {
+  return sameBytes(a.bytes, b.bytes);
+}
+
+/** A stand-in digest of some bytes: their hex, so two contents never share one. */
+function digestOf(bytes: Uint8Array): string {
+  return `fixture-${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 }
 
 /** A fixture file as stored in `v1`. */

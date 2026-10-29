@@ -1,6 +1,7 @@
 /**
  * A fake of the file routes for the production-build Playwright tests (UI-F2.2): the page is the
- * real built UI, the routes (`files/listing`, `details`, `content`, `upload`, `folders`,
+ * real built UI, the routes (`files/listing`, `details`, `history`, `versions`, `history-size`,
+ * `content`, `upload`, `folders`,
  * `moves`, `renames`, `removals`, `restorations`, `content-handles` and `content/<handle>`) are answered
  * here from a `MemoryFileSource`, which answers as the API does. It records what the browser
  * sent (ranges, handle mints, content requests and their headers) so a test can assert on the
@@ -249,7 +250,7 @@ export async function serveFiles(page: Page, source: MemoryFileSource): Promise<
   return api;
 }
 
-/** The read routes: listing, details and ranged content. */
+/** The read routes: listing, details, the history reads and ranged content. */
 async function routeReads(page: Page, api: FilesApi): Promise<void> {
   await page.route(/\/api\/v1\/files\/listing\?/, (route) => {
     const q = queryOf(route.request());
@@ -263,6 +264,15 @@ async function routeReads(page: Page, api: FilesApi): Promise<void> {
   });
   await page.route(/\/api\/v1\/files\/details\?/, (route) =>
     answer(route, () => api.source.details(refOf(queryOf(route.request())))),
+  );
+  await page.route(/\/api\/v1\/files\/history\?/, (route) =>
+    answer(route, () => api.source.history(refOf(queryOf(route.request())))),
+  );
+  await page.route(/\/api\/v1\/files\/versions\?/, (route) =>
+    answer(route, () => api.source.versions()),
+  );
+  await page.route(/\/api\/v1\/files\/history-size\?/, (route) =>
+    answer(route, () => api.source.historySize(refOf(queryOf(route.request())))),
   );
   await page.route(/\/api\/v1\/files\/content\?/, async (route) => {
     const header = route.request().headers()["range"] ?? "";

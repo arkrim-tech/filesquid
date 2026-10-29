@@ -4,8 +4,14 @@
  * with `pushState` (so Back works without a second load), and any other hash removes it.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { bindFilesRoute, defineElements, type FsFileBrowser } from "../../src/index";
+import {
+  bindFilesRoute,
+  defineElements,
+  type FsFileBrowser,
+  type FsFilePanel,
+} from "../../src/index";
 import { fixture, one, settle, control, click } from "../support/file-browser-fakes";
+import { FakePanelSource } from "../support/panel-fakes";
 import labels from "../../src/theme/labels.en.json";
 
 let host: HTMLElement & { focusMain: () => void };
@@ -88,6 +94,74 @@ describe("bindFilesRoute", () => {
     (links[links.length - 1] as HTMLAnchorElement).click();
     await settle();
     expect(push).not.toHaveBeenCalled();
+  });
+
+  it("mounts the file panel in the panel slot for the opened file and removes it on close (UI-F2.3)", async () => {
+    window.history.replaceState(null, "", "#/files/lib/obj");
+    stop = bindFilesRoute(host, { labels, source: fixture(), history: new FakePanelSource() });
+    await settle();
+    expect(host.querySelector("fs-file-panel")).toBeNull();
+    await click(control(browser() as FsFileBrowser, "readme.txt"));
+    await settle();
+    const panel = host.querySelector<FsFilePanel>("fs-file-panel") as FsFilePanel;
+    expect(panel.slot).toBe("panel");
+    expect(panel.fileRef).toMatchObject({ display_name: "readme.txt", version: "v1" });
+    const tabs = panel.shadowRoot?.querySelectorAll('[role="tab"]') ?? [];
+    expect([...tabs].map((t) => t.textContent)).toEqual([labels.filePanelInfo]);
+    expect(panel.shadowRoot?.querySelector("fs-details-panel")).not.toBeNull();
+    expect(panel.shadowRoot?.querySelector("fs-versions-panel")).toBeNull();
+    panel.shadowRoot?.querySelector<HTMLButtonElement>("button.history")?.click();
+    expect(panel.shadowRoot?.querySelector("fs-versions-panel")).not.toBeNull();
+    panel.dispatchEvent(new CustomEvent("fs-file-panel-close", { bubbles: true, composed: true }));
+    expect(host.querySelector("fs-file-panel")).toBeNull();
+    expect((browser() as FsFileBrowser).file).not.toBeNull();
+  });
+
+  it("removes the file panel when the viewer closes or the route leaves the files", async () => {
+    window.history.replaceState(null, "", "#/files/lib/obj");
+    stop = bindFilesRoute(host, { labels, source: fixture(), history: new FakePanelSource() });
+    await settle();
+    await click(control(browser() as FsFileBrowser, "readme.txt"));
+    await settle();
+    expect(host.querySelector("fs-file-panel")).not.toBeNull();
+    const back = (browser() as FsFileBrowser).shadowRoot?.querySelector<HTMLButtonElement>(
+      "button.back",
+    );
+    back?.click();
+    expect(host.querySelector("fs-file-panel")).toBeNull();
+    await click(control(browser() as FsFileBrowser, "readme.txt"));
+    await settle();
+    window.history.replaceState(null, "", "#/monitor");
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    expect(host.querySelector("fs-file-panel")).toBeNull();
+  });
+
+  it("reloads the listing after the panel commits a restore", async () => {
+    window.history.replaceState(null, "", "#/files/lib/obj");
+    stop = bindFilesRoute(host, { labels, source: fixture(), history: new FakePanelSource() });
+    await settle();
+    await click(control(browser() as FsFileBrowser, "readme.txt"));
+    await settle();
+    const reload = vi.spyOn(browser() as FsFileBrowser, "reload");
+    const panel = host.querySelector("fs-file-panel") as HTMLElement;
+    const commit = { library_id: "lib", object_id: "obj", version: "v2", created: "" };
+    panel.dispatchEvent(
+      new CustomEvent("fs-files-change", {
+        detail: { operation: "restore", commit },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("mounts no file panel without a history source", async () => {
+    window.history.replaceState(null, "", "#/files/lib/obj");
+    stop = bindFilesRoute(host, { labels, source: fixture() });
+    await settle();
+    await click(control(browser() as FsFileBrowser, "readme.txt"));
+    await settle();
+    expect(host.querySelector("fs-file-panel")).toBeNull();
   });
 
   it("stops following the hash once unbound", async () => {
