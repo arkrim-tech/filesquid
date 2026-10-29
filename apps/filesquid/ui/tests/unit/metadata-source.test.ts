@@ -104,6 +104,9 @@ describe("ClientMetadataSource", () => {
     await expect(source.setStatement(another, "dcterms:title", "x")).rejects.toBeInstanceOf(
       TypeError,
     );
+    await expect(source.removeStatement(another, "dcterms:title")).rejects.toBeInstanceOf(
+      TypeError,
+    );
     expect(c.request).not.toHaveBeenCalled();
   });
 

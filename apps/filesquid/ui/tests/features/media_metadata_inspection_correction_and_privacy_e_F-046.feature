@@ -129,10 +129,16 @@ Feature: Media metadata inspection, correction and privacy exports
     Then I should see that no properties match the word
     And Clear filter should show every row again
 
-  Scenario: A failed statements read shows the reason and Try again
-    Given the statements read fails
+  Scenario: A refused statements read shows the reason, the code and Try again
+    Given the API refuses the statements read with an error code
     When I open the file's Description tab
-    Then I should see "Could not load the description" with the reason, "Nothing was changed." and the code
+    Then I should see "Could not load the description" with the reason, "Nothing was changed." and that code
+    And Try again should read the statements again
+
+  Scenario: A statements read that fails without an answer shows the reason and Try again
+    Given the statements read fails before the API answers
+    When I open the file's Description tab
+    Then I should see "Could not load the description" with the reason and "Nothing was changed." and no code
     And Try again should read the statements again
 
   # Source

@@ -10,7 +10,7 @@ Branch `feat/ui-f2.4-metadata-panel`. Plan row: [Task UI-F2.4](../plan.md). Mock
 | [UI-S-022](../srs.md) File panel tabs: the Description tab shows the Dublin Core `dcterms:` and Schema.org `schema:` statements, viewable and editable as MD-S-011 allows, sharing one property-table component, with copy, filter and distinct empty, loading and error states | Rows keyed by CURIE on the shared `PropertyTable` (extended with source chips, row actions, an empty state and a slot below the rows), copy, filter, no-match, loading, error and empty states | `tests/ui/metadata-panel.test.ts`, `tests/e2e/preview/metadata-panel.spec.ts` |
 | [UI-S-031](../srs.md) Preview and file panel composition: Description rows keyed by the mono property in `--fs-primary` for owner values and `--fs-on-surface-variant` for extracted values with a source chip "You" or "File"; a hovered row shows edit, remove and copy; Add property (ghost) below; the Add property dialog (600 px) with the search field, the eyebrows DUBLIN CORE TERMS, SCHEMA.ORG SUGGESTION, REGISTERED NAMESPACES, "Key in a custom namespace…", "Value for {property}" and Cancel and Add; panel states of mockup 25 | Exactly that composition, each string a label key, each constant a token; the dialog's groups follow the API's add order | `tests/e2e/preview/metadata-panel.spec.ts` (boxes within 2 px, computed styles, light and dark) |
 | [UI-S-024](../srs.md) Visual constants of the active mockup suite | Every colour, size, radius and spacing through tokens; no literal colour or size in the two new component stylesheets; logical properties only | `tests/unit/component-styles.test.ts`, `tests/e2e/preview/metadata-panel.spec.ts` |
-| [UI-S-012](../srs.md) UIs reach FileSquid only through `FileSquidClient` | `ClientMetadataSource` over the five metadata property routes of contract 0.27.0 (API-S-035): `GET /files/metadata`, `PUT /files/metadata/statements`, `POST /files/metadata/removals`, `GET /files/metadata/terms`, `GET /files/metadata/namespaces`; the element never fetches | `tests/unit/metadata-source.test.ts` |
+| [UI-S-012](../srs.md) UIs reach FileSquid only through `FileSquidClient` | `ClientMetadataSource` over the five metadata property routes of contract 0.28.0 on `main` (unchanged since 0.27.0; API-S-035): `GET /files/metadata`, `PUT /files/metadata/statements`, `POST /files/metadata/removals`, `GET /files/metadata/terms`, `GET /files/metadata/namespaces`; the element never fetches | `tests/unit/metadata-source.test.ts` |
 | [UI-S-005](../srs.md) A distribution's label table MUST define every key of the default table | 85 new keys (`filePanelDescription`, `metadata*`, and one `dcterms<Term>` definition per offered `/terms/` property) in `REQUIRED_LABEL_KEYS`, the default table and ImageSquid's table | `tests/unit/theme.test.ts`, `tests/unit/distribution-tables.test.ts` |
 | [UI-S-013](../srs.md) UI tests against production artifacts with strict DOM assertions | Playwright against `vite build` plus `vite preview`, 1440 × 900, light and dark, no console errors | Playwright output below |
 | [UI-S-016](../srs.md) Accessibility contracts | Description list rows, actions named by their property, a polite status region for every commit, an alert error state, a modal dialog that keeps Tab inside and returns focus on Escape, the 2 px `--fs-focus-ring` ring, no load moves focus | `tests/ui/metadata-panel.test.ts`, `tests/e2e/preview/metadata-panel.spec.ts` |
@@ -32,7 +32,7 @@ PRD: [F-046](../../../../../resources/prd.md#f-046-media-metadata-inspection-cor
 
 ## Decisions and open points for the owner
 
-- **Scope follows the active suite, not the older row text.** The UI-F2.4 row (and the global FS-2.2 description) name `exif:` rows and a read-only Import record section in the Metadata panel. The later owner decision of 2026-10-19 (UI-S-022) and the v3 suite (UI-S-031) put technical `exif:` rows under "TECHNICAL · READ FROM THE FILE" and the import facts (`GET /files/facts`, ADR 038) in the **File info** tab, both UI-F2.15's job, and the F2.3 walkthrough already assigned the facts-route rows to UI-F2.15. So the Description tab lists descriptive statements only (`TECHNICAL_PREFIXES` excludes `exif`, a one-line constant for UI-F2.15 to build on), and neither technical rows nor the Import record are drawn here. If the owner wants the Import record in the Description tab after all, say so and it is a read-only section over `GET /files/facts` (the route exists in contract 0.27.0).
+- **Scope follows the active suite, not the older row text.** The UI-F2.4 row (and the global FS-2.2 description) name `exif:` rows and a read-only Import record section in the Metadata panel. The later owner decision of 2026-10-19 (UI-S-022) and the v3 suite (UI-S-031) put technical `exif:` rows under "TECHNICAL · READ FROM THE FILE" and the import facts (`GET /files/facts`, ADR 038) in the **File info** tab, both UI-F2.15's job, and the F2.3 walkthrough already assigned the facts-route rows to UI-F2.15. So the Description tab lists descriptive statements only (`TECHNICAL_PREFIXES` excludes `exif`, a one-line constant for UI-F2.15 to build on), and neither technical rows nor the Import record are drawn here. If the owner wants the Import record in the Description tab after all, say so and it is a read-only section over `GET /files/facts` (the route exists in contract 0.28.0).
 - **Term descriptions and local search.** The terms route answers the add order of one exact name, while mockup 29 draws prefix matches ("righ" → rights, rightsHolder) with definitions. The UI therefore ships the 52 file-scoped `/terms/` names (the register's 55 less the three `accrual*` terms MD-S-002 refuses on a file) with one definition per term in the label table, worded for a file. The list mirrors the metadata module's register; it is not read from the API. The Schema.org suggestion is shown exactly as the API answers it (`schema:<typed name>`), since the API offers no Schema.org vocabulary.
 - **Extracted rows are read-only.** The API marks only `exif:` statements extracted today, so every Description row is asserted in practice; the UI still draws the extracted tone, the "File" chip and copy-only for any statement the contract marks `extracted`, as mockup 28 draws `dcterms:created`.
 - **Remove has no confirmation dialog.** Mockup 28 draws remove as a hover action and no approved string exists for a confirmation; a removal commits one version that the Versions view can restore, and it is announced.
@@ -40,12 +40,17 @@ PRD: [F-046](../../../../../resources/prd.md#f-046-media-metadata-inspection-cor
 - **No `CommandEnvelope`** on the set and remove routes, as the contract defines them (open owner decision); `ClientMetadataSource.setStatement` and `removeStatement` are their only call sites.
 - **The files-route test for the Description tab** was written after the wiring as a wiring proof; the red-first run covered the element, the dialog, the model and the source.
 
-No API route, field or event was assumed or stubbed; every route used is in `apps/filesquid/crates/api/openapi.json` on `main` (0.27.0).
+No API route, field or event was assumed or stubbed; every route used is in `apps/filesquid/crates/api/openapi.json` on `main` (0.28.0 after the merge of PR #143; the metadata routes are unchanged since 0.27.0).
 
 ## Review fixes (Cubic round 1: 4 P1, 24 P2, 3 P3)
 
 - **Fixed (1 P1, 20 P2, 3 P3):** a write that commits after another file opened no longer switches the panel back (the page's navigation wins; the commit is still reported); the Add property focus target covers the empty state; a custom key's invalid mark is cleared when a candidate is chosen; a row's actions are disabled while its removal runs; the count eyebrow names extensions when a registered or custom row is listed (`metadataCountExtended`, two new keys in both tables); the value label says a value is non-empty; the edit icon is the mockup's pencil; a custom key may be up to the set route's 255 bytes (`validStatementTerm`) while the lookup keeps 128; `metadataFileId` accepts only a file's own original path (a collection snapshot is `urn:uuid:` too); the chip and the action buttons sit in the row's flow so a long key or value wraps; the empty-record branch is checked before the no-match branch; the fakes follow the contract (`dc:` normalised, value bounds, term lists, at most 64 candidates, the e2e `retryable` flag from the code); the source tests assert exactly one request; the oversized-value path, the edit and removal flows against the production build, and the split state scenarios are tested; the README no longer presents technical rows as built; the UI-F2.4 and FS-2.2 descriptions record the amendment.
 - **Answered (3 P1, 4 P2):** the metadata set and remove routes take plain bodies in the contract on `main` (0.28.0: `SetStatementRequest` and `RemoveStatementRequest` have no envelope member and `additionalProperties: false`), a UI PR does not bump the contract, and the API's own alignment of these routes with API-S-002 is the open owner decision already handed back, so the client follows the contract as published and keeps both call sites in one place; the e2e fixture marks `dcterms:created` extracted because the contract's `StatementSource` allows it on any statement, mockup 28 draws it so, and F-046 expects extraction to reach `dcterms:` rows; the FS-2.2 tick stands with the amendment rather than an open box over three ticked rows (the owner may reopen it).
+
+## Review fixes (Cubic round 2: 0 P1, 3 P2, 4 P3)
+
+- **Fixed (3 P2, 4 P3):** the F-046 error scenario is two scenarios, a coded API refusal (the code shown) and a failure before any answer (no code); the fake refuses a CURIE with a second colon on set and removal; the FS-2.2 amendment maps the import facts to `GET /files/facts` and the technical `exif:` rows to the statements route `GET /files/metadata` (the UI plan row too) and names the MVP file panel's tabs as built (File info and Description, Versions behind the header button); the mismatched-path refusal test covers `removeStatement`; this walkthrough names one contract version (0.28.0 on `main`, the metadata routes unchanged since 0.27.0); the e2e fake records each write's HTTP method and the spec asserts `PUT` then `POST`.
+- `origin/main` was merged by its own merge commit first (PR #142, Rust only plus the progress block; no conflict).
 
 ## How it was tested
 
@@ -525,4 +530,39 @@ Running 100 tests using 2 workers
 ℹ️  Test scope: npm:apps/filesquid/ui
 ✅ Lint and test validation passed (test scope: npm:apps/filesquid/ui).
 ✅ All Pre-Commit Hooks Passed! Test scope: npm:apps/filesquid/ui (70s)
+```
+
+## Raw test output (Cubic round 2, after merging main)
+
+### npm test (apps/filesquid/ui)
+
+```text
+ Test Files  67 passed (67)
+      Tests  1481 passed | 1 skipped (1482)
+   Duration  31.31s (transform 5.27s, setup 2.80s, import 11.47s, tests 31.75s, environment 35.61s)
+```
+
+### Playwright, production build: metadata-panel.spec.ts (temporary config with the machine's Chromium)
+
+```text
+Running 10 tests using 1 worker
+  ✓   1 [chromium] › tests/e2e/preview/metadata-panel.spec.ts:89:5 › light theme › Description (28): tab, filter, count, rows, chips, actions and Add property (2.3s)
+  ✓   2 [chromium] › tests/e2e/preview/metadata-panel.spec.ts:224:5 › light theme › Add property (29): the dialog, the groups in the add order, one set and the new row (1.7s)
+  ✓   3 [chromium] › tests/e2e/preview/metadata-panel.spec.ts:379:5 › light theme › edit and remove (28): one PUT, one POST, the rows and the announcements (971ms)
+  ✓   4 [chromium] › tests/e2e/preview/metadata-panel.spec.ts:435:5 › light theme › panel states (25): empty, loading, no match and error keep the header, tabs and filter (907ms)
+  ✓   5 [chromium] › tests/e2e/preview/metadata-panel.spec.ts:503:5 › light theme › no match and keyboard: the filter, Escape in the dialog, and the focus ring (731ms)
+  ✓   6 [chromium] › tests/e2e/preview/metadata-panel.spec.ts:89:5 › dark theme › Description (28): tab, filter, count, rows, chips, actions and Add property (1.4s)
+  ✓   7 [chromium] › tests/e2e/preview/metadata-panel.spec.ts:224:5 › dark theme › Add property (29): the dialog, the groups in the add order, one set and the new row (1.6s)
+  ✓   8 [chromium] › tests/e2e/preview/metadata-panel.spec.ts:379:5 › dark theme › edit and remove (28): one PUT, one POST, the rows and the announcements (879ms)
+  ✓   9 [chromium] › tests/e2e/preview/metadata-panel.spec.ts:435:5 › dark theme › panel states (25): empty, loading, no match and error keep the header, tabs and filter (1.0s)
+  ✓  10 [chromium] › tests/e2e/preview/metadata-panel.spec.ts:503:5 › dark theme › no match and keyboard: the filter, Escape in the dialog, and the focus ring (727ms)
+  10 passed (26.1s)
+```
+
+### Pre-commit hook (ordinary run, `bash scripts/pre-commit.sh`, round 2 head commit)
+
+```text
+ℹ️  Test scope: npm:apps/filesquid/ui
+✅ Lint and test validation passed (test scope: npm:apps/filesquid/ui).
+✅ All Pre-Commit Hooks Passed! Test scope: npm:apps/filesquid/ui (66s)
 ```

@@ -424,6 +424,7 @@ for (const scheme of SCHEMES) {
           curie: "schema:copyrightYear",
         },
       ]);
+      expect(api.methods).toEqual(["PUT", "POST"]);
       await expect(description.locator(".row")).toHaveCount(7);
       await expect(year).toHaveCount(0);
       await expect(description.locator(".count")).toHaveText(fill("metadataCount", { count: "7" }));

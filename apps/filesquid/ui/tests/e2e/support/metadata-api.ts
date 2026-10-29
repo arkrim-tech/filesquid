@@ -127,6 +127,8 @@ export const REGISTRY = [
 export interface MetadataApi {
   /** The body of every set the page sent. */
   readonly sets: Record<string, unknown>[];
+  /** The HTTP method of every write the page sent, in order (`PUT` for a set, `POST` for a removal). */
+  readonly methods: string[];
   /** The body of every removal the page sent. */
   readonly removals: Record<string, unknown>[];
   /** Every name the page asked the terms route about. */
@@ -160,6 +162,7 @@ export async function serveMetadata(
   let hold: Promise<void> | undefined;
   const api: MetadataApi = {
     sets: [],
+    methods: [],
     removals: [],
     lookups: [],
     failStatements: (status, code) => Object.assign(fail, { status, code }),
@@ -199,6 +202,7 @@ export async function serveMetadata(
   });
   await page.route("**/api/v1/files/metadata/statements", (route) => {
     const body = route.request().postDataJSON() as { curie: string; value: string };
+    api.methods.push(route.request().method());
     api.sets.push(body);
     const [prefix, term] = body.curie.split(":") as [string, string];
     const known =
@@ -214,6 +218,7 @@ export async function serveMetadata(
   });
   await page.route("**/api/v1/files/metadata/removals", (route) => {
     const body = route.request().postDataJSON() as { curie: string };
+    api.methods.push(route.request().method());
     api.removals.push(body);
     const before = statements.length;
     statements = statements.filter((s) => s.curie !== body.curie);

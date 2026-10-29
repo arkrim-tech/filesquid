@@ -163,8 +163,10 @@ export class FakeMetadataSource implements MetadataSource {
     await this.step("set", options);
     const route = "/api/v1/files/metadata/statements";
     const stored = normalised(curie);
-    const [prefix, term] = stored.split(":") as [string, string | undefined];
-    const name = term ?? "";
+    const parts = stored.split(":");
+    const [prefix, term] = parts;
+    // `prefix:term` exactly; a second colon is a malformed CURIE the route refuses.
+    const name = parts.length === 2 ? (term ?? "") : "";
     const known =
       (prefix === "dcterms" && DCTERMS_FILE_TERMS.includes(name)) ||
       prefix === "schema" ||
@@ -192,6 +194,9 @@ export class FakeMetadataSource implements MetadataSource {
     await this.step("remove", options);
     const route = "/api/v1/files/metadata/removals";
     const stored = normalised(curie);
+    if (stored.split(":").length !== 2) {
+      throw new ApiError(400, route, { code: "invalid_request" });
+    }
     const before = this.statements_.length;
     this.statements_ = this.statements_.filter((s) => s.curie !== stored);
     if (this.statements_.length === before) {
