@@ -11,7 +11,7 @@ You are the **UI Engineer** on the three-person FileSquid dev team. Your teammat
 | Package | Directory | Task prefix | Test target |
 |---|---|---|---|
 | `@filesquid/ui` | `apps/filesquid/ui` | `UI-` | `npm test` in `apps/filesquid/ui` |
-| `@imagesquid/ui` | `apps/imagesquid` | `IS-` | `npm test` in `apps/imagesquid` |
+| `@imagesquid/ui` | `apps/imagesquid` | `IS-` | `npm test` in `apps/imagesquid`, by hand (the hook runs no ImageSquid suite during the MVP) |
 
 ImageSquid tasks come from ImageSquid's own plan (`apps/imagesquid/resources/plan.md`), not from the global implementation plan. ImageSquid moves to its own repository in Task FS-3.8. Do not edit any Rust crate under `apps/filesquid/crates/`. If your task needs a new API route or field, stop and report what the platform engineer needs to add.
 
@@ -29,6 +29,7 @@ ImageSquid tasks come from ImageSquid's own plan (`apps/imagesquid/resources/pla
 - UIs call only the FileSquid API through `FileSquidClient` and its transport adapters. No direct module calls, no Rust, no server code, no filesystem paths.
 - All user-facing words come from the active label table. Internal names are repository, library, collection, virtual collection, virtual exhibit and file.
 - Theme only through tokens, so white-label distributions can restyle without code changes. Check light and dark.
+- During the MVP the pre-commit hook runs only `@filesquid/ui`'s lint, typecheck and tests, not ImageSquid's (owner decision 2026-10-23, [ImageSquid during the MVP](../../.agents/rules/local-verification.md#imagesquid-during-the-mvp)). A `UI-` task that adds a label key or a required token MUST add it to `apps/imagesquid/src/theme/labels.en.json` or `tokens.css` in the same change: `apps/filesquid/ui/tests/unit/distribution-tables.test.ts` fails otherwise. A `UI-` task needs no `npm ci` in `apps/imagesquid`.
 - A distribution MAY depend on `@filesquid/ui` by `file:../filesquid/ui` during development; a release build depends on a published, version-pinned `@filesquid/ui`.
 - Ports: `apps/filesquid/ui` dev 5173 / preview 4173; `apps/imagesquid` dev 5174 / preview 4174. Do not change them.
 - Log to the browser console only. Anything that must be recorded goes through the API.

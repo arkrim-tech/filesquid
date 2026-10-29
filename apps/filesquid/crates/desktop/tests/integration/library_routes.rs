@@ -1,8 +1,10 @@
-//! Task DE-1.1: the desktop's library and repair routes (API-S-025) over folders the owner
-//! chose. The host registers each folder under an opaque location ID, injects its storage root
-//! and the persistent repair ledger, and serves each library it binds (files, validation,
-//! PROV-O history). Driven through the `filesquid://` scheme with the per-launch token, against
-//! SQLite files and OCFL storage roots on disk.
+//! Tasks DE-1.1 and DE-1.7: the desktop's library and repair routes (API-S-025) over folders
+//! the owner chose. The host registers each folder under an opaque location ID, injects its
+//! storage root and the persistent repair ledger, and serves each library it binds (files,
+//! its catalog index in the data directory, validation, PROV-O history). Every library lives
+//! in a folder the owner chose; the data directory keeps only its rebuildable index (ADR 041).
+//! Driven through the `filesquid://` scheme with the per-launch token, against SQLite files
+//! and OCFL storage roots on disk.
 
 #[path = "../support/journal.rs"]
 #[allow(dead_code)]
@@ -12,9 +14,7 @@ use filesquid_api::auth::LaunchToken;
 use filesquid_api::history::backfill::BACKFILL_OPERATION;
 use filesquid_api::history::launch::BACKFILL_REQUEST_OPERATION;
 use filesquid_api::journal::{JournalEntry, Outcome};
-use filesquid_api::library::{
-    CommandRequest, LibraryCommand, LibraryService, NEW_LIBRARY_REVISION,
-};
+use filesquid_api::library::{CommandRequest, LibraryCommand, LibraryService};
 use filesquid_api::local_library::choice::{
     ChoicePurpose, ChooseError, LocationChooser, CHOOSE_OPERATION,
 };
@@ -31,9 +31,10 @@ use filesquid_desktop_lib::libraries::LibraryServing;
 use filesquid_desktop_lib::navigation::{install_navigation, owner_event_filter};
 use filesquid_desktop_lib::{
     history_backfill, install_backfill_route, install_file_provenance, install_file_scopes,
-    install_folder_choice, install_history_source, install_host_preferences, install_launch_token,
-    install_library_routes, open_host_monitor, open_library_catalog,
+    install_folder_choice, install_history_source, install_host_preferences, install_job_routes,
+    install_launch_token, install_library_routes, open_host_monitor, open_library_catalog,
 };
+use filesquid_native::catalog::DEFAULT_LIBRARY_NAME;
 use filesquid_native::workers::history_backfill::{backfill_source, open_jobs};
 use filesquid_native::{
     install_file_service, HostFiles, HostLocations, HostMonitor, OpenedRoots, SqliteCatalog,
@@ -45,6 +46,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
+
+/// Upper bound on job reads by [`Desktop::finished_job`] (AGENTS.md §22).
+const MAX_JOB_POLLS: usize = 500;
 
 /// The installation UUID of these tests.
 const INSTALLATION: &str = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
@@ -74,36 +78,20 @@ fn envelope(op: &str, revision: &str, scope: &str) -> CommandEnvelope {
     )
 }
 
-/// A library made by another desktop in `dir` with two snapshot versions (each with its
-/// PROV-O record), answering its ID and its OCFL storage root folder.
+/// A library made by another desktop in the folder `<dir>/library` the owner chose there,
+/// with two snapshot versions (its creation and a collection "Holidays", each with its PROV-O
+/// record), answering its ID and the folder.
 fn donor_library(dir: &Path) -> (String, PathBuf) {
-    let state = ApiState::new();
-    let host = open_host_monitor(&state, dir, None).expect("donor monitor");
-    let catalog = Arc::new(open_library_catalog(dir, &host, &installation()).expect("catalog"));
-    let service = LibraryService::new(catalog.clone(), host.monitor().journal());
-    let create = CommandRequest {
-        envelope: envelope("op-create", NEW_LIBRARY_REVISION, "library"),
-        command: LibraryCommand::CreateLibrary {
-            repository_id: RepositoryId::new("repo-1").expect("repo"),
-            name: "Family archive".into(),
-        },
-    };
-    let created = service.execute("owner", create).expect("create");
-    let library = created.created_id.expect("library id");
-    let collection = CommandRequest {
-        envelope: envelope("op-collection", &created.revision.expect("rev"), &library),
-        command: LibraryCommand::CreateCollection {
-            library_id: LibraryId::new(&library).expect("library"),
-            title: "Holidays".into(),
-            folder_id: None,
-            sort: Default::default(),
-        },
-    };
-    service.execute("owner", collection).expect("collection");
-    drop(catalog);
-    host.stop();
-    let root = dir.join(CATALOG_DIR).join(format!("{library}.ocfl"));
-    (library, root)
+    let donor = Desktop::launch(dir.join("data"));
+    let folder = dir.join("library");
+    std::fs::create_dir_all(&folder).expect("folder");
+    let location = donor.register(&folder);
+    let (status, body) = donor.post("/api/v1/libraries", json!({ "location_id": location }));
+    assert_eq!(status, 200, "{body}");
+    let library = body["library_id"].as_str().expect("library id").to_string();
+    donor.create_collection(&library, "Holidays");
+    donor.stop();
+    (library, folder)
 }
 
 /// The desktop of one test: its API state, token, monitor, file service, folder registry and
@@ -117,6 +105,8 @@ struct Desktop {
     files: HostFiles,
     locations: Arc<HostLocations>,
     opened: Arc<OpenedRoots>,
+    /// The long-lived runtime the rebuild runner runs jobs on, as the app's runtime.
+    runtime: tokio::runtime::Runtime,
 }
 
 impl Desktop {
@@ -136,9 +126,18 @@ impl Desktop {
             validation: None,
             opened: opened.clone(),
             data_dir: dir.clone(),
+            catalog: catalog.clone(),
+            repository: RepositoryId::new(INSTALLATION).expect("repository"),
         };
         let locations =
             install_library_routes(&state, &host, &installation(), serving).expect("routes");
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_time()
+            .build()
+            .expect("runtime");
+        let jobs = open_jobs(&dir, &host).expect("jobs");
+        install_job_routes(&state, &jobs, runtime.handle().clone()).expect("job routes");
         Self {
             dir,
             state,
@@ -148,7 +147,51 @@ impl Desktop {
             files,
             locations,
             opened,
+            runtime,
         }
+    }
+
+    /// Create a collection titled `title` in the attached `library` through the library
+    /// commands; answer its ID.
+    fn create_collection(&self, library: &str, title: &str) -> String {
+        let library = LibraryId::new(library).expect("library");
+        let revision = {
+            use filesquid_api::library::LibraryCatalog;
+            self.catalog
+                .library(&library)
+                .expect("read")
+                .expect("attached")
+                .revision
+        };
+        let service = LibraryService::new(self.catalog.clone(), self.host.monitor().journal());
+        let request = CommandRequest {
+            envelope: envelope("op-collection", &revision, "library"),
+            command: LibraryCommand::CreateCollection {
+                library_id: library,
+                title: title.into(),
+                folder_id: None,
+                sort: Default::default(),
+            },
+        };
+        let created = service.execute("owner", request).expect("collection");
+        created.created_id.expect("collection id")
+    }
+
+    /// Read job `id` until it has finished (at most [`MAX_JOB_POLLS`] reads, 10 ms apart);
+    /// answer its view.
+    fn finished_job(&self, id: &str) -> Value {
+        let mut view = Value::Null;
+        for _ in 0..MAX_JOB_POLLS {
+            let (status, body) = self.get(&format!("/api/v1/jobs/{id}"));
+            assert_eq!(status, 200, "{body}");
+            view = body;
+            let state = view["state"].as_str().unwrap_or_default();
+            if ["completed", "failed", "cancelled"].contains(&state) {
+                return view;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("the job did not finish: {view}");
     }
 
     /// Register `folder` as the owner's choice.
@@ -174,8 +217,10 @@ impl Desktop {
         ));
         let status = response.status().as_u16();
         let text = String::from_utf8_lossy(response.body()).to_string();
+        // Every library folder of a test sits beside its data directory, below the test root.
+        let root = self.dir.parent().unwrap_or(&self.dir);
         assert!(
-            !text.contains(self.dir.to_string_lossy().as_ref()),
+            !text.contains(root.to_string_lossy().as_ref()),
             "no host path in an answer: {text}"
         );
         (status, serde_json::from_str(&text).unwrap_or(Value::Null))
@@ -193,6 +238,7 @@ impl Desktop {
 
     /// Stop the monitor (flushing the journal) and answer the journal's entries.
     fn stop(self) -> (PathBuf, Vec<JournalEntry>) {
+        self.runtime.shutdown_timeout(Duration::from_secs(5));
         drop(self.catalog);
         self.host.stop();
         let store = SqliteJournal::open(&self.dir.join(JOURNAL_FILE), "desktop").expect("journal");
@@ -307,8 +353,26 @@ fn an_opened_folder_feeds_the_history_and_copies_and_rebuilds_without_paths() {
         json!({ "library_id": library }),
     );
     assert_eq!(status, 200, "{rebuilt}");
-    assert_eq!(rebuilt["objects"].as_array().expect("objects").len(), 1);
-    desktop.stop();
+    assert_eq!(rebuilt["outcome"], "pending", "{rebuilt}");
+    assert_eq!(rebuilt["job"]["kind"], "library.rebuild");
+    assert_eq!(rebuilt["scheduled"], true, "the desktop runs rebuild jobs");
+    let job = desktop.finished_job(rebuilt["job_id"].as_str().expect("job id"));
+    assert_eq!(job["state"], "completed", "{job}");
+    assert_eq!(
+        job["result"]["objects"].as_array().expect("objects").len(),
+        1
+    );
+    assert_eq!(
+        (job["done"].as_u64(), job["total"].as_u64()),
+        (Some(1), Some(1))
+    );
+    let (_, entries) = desktop.stop();
+    let completed = entries.iter().filter(|e| e.operation == "job.completed");
+    assert_eq!(
+        completed.count(),
+        1,
+        "the rebuild job is journaled in the SQLite journal"
+    );
 }
 
 #[test]
@@ -359,25 +423,12 @@ fn the_navigation_lists_the_installations_repository_and_its_libraries() {
     assert_eq!(status, 503, "no navigation installed yet");
     install_navigation(&desktop.state, desktop.catalog.clone(), &installation())
         .expect("installed");
-    let service = LibraryService::new(desktop.catalog.clone(), desktop.host.monitor().journal());
-    let create = CommandRequest {
-        envelope: envelope("op-nav", NEW_LIBRARY_REVISION, "library"),
-        command: LibraryCommand::CreateLibrary {
-            repository_id: RepositoryId::new(INSTALLATION).expect("repo"),
-            name: "Family archive".into(),
-        },
-    };
-    let library = service.execute("owner", create).expect("create");
-    let library = library.created_id.expect("library id");
-    let service = LibraryService::new(desktop.catalog.clone(), desktop.host.monitor().journal());
-    let create = CommandRequest {
-        envelope: envelope("op-nav", NEW_LIBRARY_REVISION, "library"),
-        command: LibraryCommand::CreateLibrary {
-            repository_id: RepositoryId::new(INSTALLATION).expect("repo"),
-            name: "Family archive".into(),
-        },
-    };
-    service.execute("owner", create).expect("create");
+    let folder = dir.join("library");
+    std::fs::create_dir_all(&folder).expect("folder");
+    let location = desktop.register(&folder);
+    let (status, body) = desktop.post("/api/v1/libraries", json!({ "location_id": location }));
+    assert_eq!(status, 200, "{body}");
+    let library = body["library_id"].as_str().expect("library id").to_string();
     let (status, page) = desktop.get("/api/v1/navigation");
     assert_eq!(status, 200, "{page}");
     let nodes = page["nodes"].as_array().expect("nodes");
@@ -387,13 +438,13 @@ fn the_navigation_lists_the_installations_repository_and_its_libraries() {
     assert_eq!(status, 200, "{page}");
     let libraries = page["nodes"].as_array().expect("nodes");
     assert_eq!(libraries.len(), 1, "the repository's library: {page}");
-    assert_eq!(libraries[0]["name"], "Family archive", "{page}");
+    assert_eq!(libraries[0]["name"], DEFAULT_LIBRARY_NAME, "{page}");
     let repository = nodes[0]["node"].as_str().expect("handle").to_string();
     let (status, page) = desktop.get(&format!("/api/v1/navigation?node={repository}"));
     assert_eq!(status, 200, "{page}");
     let libraries = page["nodes"].as_array().expect("nodes");
     assert_eq!(libraries.len(), 1, "{page}");
-    assert_eq!(libraries[0]["name"], "Family archive", "{page}");
+    assert_eq!(libraries[0]["name"], DEFAULT_LIBRARY_NAME, "{page}");
     assert!(page.to_string().contains(&library) || libraries[0]["node"].is_string());
     let filter = owner_event_filter(&desktop.state).expect("filter");
     let change = NavigationChange::All { all: AlwaysTrue }
@@ -456,7 +507,7 @@ fn the_owners_preferences_are_kept_in_the_operational_store() {
     let (status, _) = desktop.get("/api/v1/preferences");
     assert_eq!(status, 503, "no store installed yet");
     install_host_preferences(&desktop.state, &desktop.dir).expect("installed");
-    install_file_scopes(&desktop.files).expect("scopes");
+    install_file_scopes(&desktop.files, &desktop.catalog).expect("scopes");
     let (status, defaults) = desktop.get("/api/v1/preferences");
     assert_eq!(status, 200, "{defaults}");
     let (status, saved) = desktop.send("PUT", "/api/v1/preferences", Some(defaults.clone()), true);
@@ -467,8 +518,18 @@ fn the_owners_preferences_are_kept_in_the_operational_store() {
     let kept = store.load("owner").expect("load").expect("saved");
     assert_eq!(serde_json::to_value(kept).expect("json"), saved);
     let files = HostFiles::new();
-    assert!(install_file_scopes(&files).is_ok());
-    assert!(install_file_scopes(&files).is_err(), "installed once");
+    let catalog = Arc::new(
+        SqliteCatalog::open(
+            &data.join(CATALOG_DIR),
+            Arc::new(filesquid_api::journal::MemoryJournal::new("desktop")),
+        )
+        .expect("catalog"),
+    );
+    assert!(install_file_scopes(&files, &catalog).is_ok());
+    assert!(
+        install_file_scopes(&files, &catalog).is_err(),
+        "installed once"
+    );
 }
 
 /// A folder dialog in which the owner picks `folder`, or cancels when it is `None`.
@@ -546,4 +607,106 @@ fn a_cancelled_or_unusable_pick_registers_nothing() {
         dialog_title(ChoicePurpose::CopyDestination),
         "Choose an empty folder for the copy"
     );
+}
+
+#[test]
+fn the_data_directory_keeps_only_each_library_s_index_never_its_files() {
+    let dir = fresh_dir("layout");
+    let desktop = Desktop::launch(dir.join("data"));
+    let folder = dir.join("My library");
+    std::fs::create_dir_all(&folder).expect("folder");
+    let location = desktop.register(&folder);
+    let (status, body) = desktop.post("/api/v1/libraries", json!({ "location_id": location }));
+    assert_eq!(status, 200, "{body}");
+    let library = body["library_id"].as_str().expect("id").to_string();
+    desktop.create_collection(&library, "Holidays");
+    let mut names: Vec<String> = std::fs::read_dir(dir.join("data").join(CATALOG_DIR))
+        .expect("catalog dir")
+        .map(|e| e.expect("entry").file_name().to_string_lossy().to_string())
+        .collect();
+    names.sort();
+    for name in &names {
+        assert!(
+            name.starts_with(&library)
+                && (name.ends_with(".sqlite")
+                    || name.ends_with(".sqlite-wal")
+                    || name.ends_with(".sqlite-shm")
+                    || name.ends_with(".work")),
+            "only the index and its staging: {names:?}"
+        );
+    }
+    assert!(
+        folder.join("snapshot").is_dir(),
+        "the snapshot is in the chosen folder"
+    );
+    desktop.stop();
+}
+
+#[test]
+fn a_library_folder_copied_elsewhere_reopens_with_its_collections() {
+    let dir = fresh_dir("moved");
+    let (library, folder) = donor_library(&dir.join("donor"));
+    let desktop = Desktop::launch(dir.join("data"));
+    install_navigation(&desktop.state, desktop.catalog.clone(), &installation())
+        .expect("navigation");
+    let copy = dir.join("moved library");
+    copy_dir(&folder, &copy);
+    let location = desktop.register(&copy);
+    let (status, answer) = desktop.post(
+        "/api/v1/libraries/openings",
+        json!({ "location_id": location }),
+    );
+    assert_eq!(status, 200, "{answer}");
+    assert_eq!(
+        answer["library_id"],
+        library.as_str(),
+        "the copy keeps its library"
+    );
+    let node =
+        filesquid_api::navigation::NodeRef::Library(LibraryId::new(&library).expect("library"))
+            .to_handle()
+            .expect("handle");
+    let (status, page) = desktop.get(&format!("/api/v1/navigation?node={node}"));
+    assert_eq!(status, 200, "{page}");
+    let titles: Vec<&str> = page["nodes"]
+        .as_array()
+        .expect("nodes")
+        .iter()
+        .map(|n| n["name"].as_str().expect("name"))
+        .collect();
+    assert_eq!(
+        titles,
+        ["Holidays"],
+        "rebuilt from the copied folder: {page}"
+    );
+    let original = desktop.register(&folder);
+    let (status, refused) = desktop.post(
+        "/api/v1/libraries/openings",
+        json!({ "location_id": original }),
+    );
+    assert_eq!(status, 409, "{refused}");
+    let (_, entries) = desktop.stop();
+    assert!(
+        entries.iter().any(|e| e.operation == "library.root.open"
+            && e.error_code.as_deref() == Some("library_already_open")),
+        "a second folder of an open library is refused"
+    );
+    assert!(
+        entries.iter().any(|e| e.operation == "library.reconcile"),
+        "the index was rebuilt in a journaled reconcile"
+    );
+}
+
+/// Copy the directory tree `from` to `to` (bounded walk).
+fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).expect("dir");
+    for entry in std::fs::read_dir(from).expect("read").take(10_000) {
+        let entry = entry.expect("entry");
+        let target = to.join(entry.file_name());
+        if entry.file_type().expect("type").is_dir() {
+            copy_dir(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).expect("copy");
+        }
+    }
 }

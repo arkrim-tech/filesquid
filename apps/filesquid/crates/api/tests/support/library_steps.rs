@@ -2,7 +2,7 @@
 //! (Task CL-0.2): the library commands and queries of the application layer, driven through
 //! `LibraryService` over the reference `MemoryCatalog`.
 
-use crate::library_fixture::{Fixture, DAY_MS};
+use crate::library_fixture::{Fixture, DAY_MS, NOW_MS};
 use crate::MonitorWorld;
 use cucumber::{given, then, when};
 use filesquid_api::library::{
@@ -139,6 +139,70 @@ fn unfiled_lists(w: &mut MonitorWorld, count: usize) {
             .count(FileScope::Unfiled, VisibilityFilter::Ordinary),
         count
     );
+}
+
+#[then(expr = "every deleted file should keep its home collection {string}")]
+fn deleted_keep_home(w: &mut MonitorWorld, title: String) {
+    let home = w.library.collection(&title);
+    for file in &w.library.files {
+        let entry = w
+            .library
+            .fx()
+            .catalog
+            .file(file)
+            .expect("read")
+            .expect("file");
+        assert_eq!(entry.file.home_collection_id(), &home);
+        assert!(entry.state.deletion.is_some());
+    }
+}
+
+#[given(expr = "the owner deleted the first file a day earlier")]
+fn deleted_first_earlier(w: &mut MonitorWorld) {
+    let w = &mut w.library;
+    w.fx().run_at(
+        NOW_MS - DAY_MS,
+        LibraryCommand::DeleteFiles {
+            library_id: w.fx().library(),
+            file_ids: vec![w.files[0].clone()],
+        },
+    );
+}
+
+#[then(expr = "the first file should keep its earlier deletion times")]
+fn first_kept_times(w: &mut MonitorWorld) {
+    let entry = w
+        .library
+        .fx()
+        .catalog
+        .file(&w.library.files[0])
+        .expect("read")
+        .expect("file");
+    let deletion = entry.state.deletion.expect("deleted");
+    assert_eq!(deletion.deleted_at_ms, NOW_MS - DAY_MS);
+    assert_eq!(deletion.purge_after_ms, NOW_MS - DAY_MS + 30 * DAY_MS);
+}
+
+#[then(expr = "the second file should be deleted now, to be purged {int} days later")]
+fn second_deleted_now(w: &mut MonitorWorld, days: i64) {
+    let entry = w
+        .library
+        .fx()
+        .catalog
+        .file(&w.library.files[1])
+        .expect("read")
+        .expect("file");
+    let deletion = entry.state.deletion.expect("deleted");
+    assert_eq!(deletion.deleted_at_ms, NOW_MS);
+    assert_eq!(deletion.purge_after_ms, NOW_MS + days * DAY_MS);
+}
+
+#[given(expr = "the library keeps deleted files for {int} days")]
+fn library_retention(w: &mut MonitorWorld, days: u32) {
+    let fx = w.library.fx();
+    fx.catalog
+        .set_retention_days(&fx.library(), Some(days))
+        .expect("retention");
 }
 
 #[given(expr = "the file is a member of the virtual collections {string} and {string}")]

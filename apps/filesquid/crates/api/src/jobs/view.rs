@@ -35,6 +35,10 @@ pub struct JobView {
     pub created: String,
     /// When it last changed (RFC 3339, UTC).
     pub updated: String,
+    /// Once it has completed, the result its kind defines (for `library.rebuild`, the rebuild
+    /// report of API-S-025); `null` before then, for a kind without one, and in a
+    /// [`JobView::summary`].
+    pub result: Option<serde_json::Value>,
 }
 
 impl JobView {
@@ -53,8 +57,35 @@ impl JobView {
             error_code: job.error_code.clone(),
             created: format_rfc3339_ms(job.created_ms),
             updated: format_rfc3339_ms(job.updated_ms),
+            result: shown_result(job),
         }
     }
+}
+
+impl JobView {
+    /// The view of `job` without its result (`null`): what the job listing and the
+    /// `job.update` event carry, so neither grows with a completed job's report; the result
+    /// is answered by `GET /api/v1/jobs/{job}` ([`JobView::of`]). Pure.
+    pub fn summary(job: &Job) -> Self {
+        let mut view = Self::of(&Job {
+            result: None,
+            ..job.clone()
+        });
+        view.result = None;
+        view
+    }
+}
+
+/// The result `job` shows: its stored result once it has completed, else none. A stored
+/// result that is not JSON is not shown and is logged. Pure but for the log.
+fn shown_result(job: &Job) -> Option<serde_json::Value> {
+    let text = job.result.as_deref()?;
+    if job.state != JobState::Completed {
+        return None;
+    }
+    serde_json::from_str(text)
+        .inspect_err(|err| tracing::warn!(error = %err, "a job's stored result is not JSON"))
+        .ok()
 }
 
 /// The answer of `GET /api/v1/jobs`.

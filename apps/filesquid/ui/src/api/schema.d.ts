@@ -298,7 +298,7 @@ export interface paths {
         };
         /**
          * List one folder of an object version, by path or by navigation node
-         * @description The folders and files directly below a logical-path prefix, folders first, with an opaque cursor; limit 1-1000, default 200. The folder is named either by library_id and object_id with an optional prefix, or by one collection or folder navigation node (API-S-021), never both (400 invalid_request otherwise). A node must be readable to the caller: an unknown, malformed or unreadable node, or one no object holds, answers one identical 404 not_found; a library, virtual collection or repository node answers 400 invalid_request. The reserved folders provenance (PROV-O records) and .filesquid (application data) are left out of the root's page, so a page may hold fewer entries than asked while next_cursor remains; a prefix inside them answers 404. Answers storage facts only; a successful read is not journaled, a refusal is journaled once (API-S-017).
+         * @description The folders and files directly below a logical-path prefix, folders first, with an opaque cursor; limit 1-1000, default 200. The folder is named either by library_id and object_id with an optional prefix, or by one collection or folder navigation node (API-S-021), never both (400 invalid_request otherwise). A collection or folder node is listed from the host's index of registered files where it keeps one (Task DE-1.7, ADR 041): the node's subfolders, implied by the collection logical paths of ordinary files (a folder implied only by hidden or deleted files is left out), by name in code-point order, then its registered ordinary files by name, each from its own object (`object_id`) and shown under its name in the collection; such a node takes no version, and a cursor of another listing is refused 400 invalid_request. A node must be readable to the caller: an unknown, malformed or unreadable node, or one no object holds, answers one identical 404 not_found; a library, virtual collection or repository node answers 400 invalid_request. The reserved folders provenance (PROV-O records) and .filesquid (application data) are left out of the root's page, so a page may hold fewer entries than asked while next_cursor remains; a prefix inside them answers 404. Answers storage facts only; a successful read is not journaled, a refusal is journaled once (API-S-017).
          */
         get: operations["listFolder"];
         put?: never;
@@ -668,7 +668,7 @@ export interface paths {
         put?: never;
         /**
          * Open the library in a folder
-         * @description Opens the OCFL storage root in the folder the host registered as location_id through the engine's guards, and binds the library ID (library_id when given, else a new UUID v4) to it. Writes and repairs nothing. Opening a location that is already open answers its library again. Refusals: invalid_location, invalid_library, location_not_found, location_in_use, library_already_open, too_many_libraries, not_a_storage_root and git_in_root. Only a failure is journaled, as library.root.open. Every refusal is journaled once, with its error code and opaque IDs only (an authorisation refusal as api.auth.denied); answers carry opaque library and object identifiers, never a filesystem path, storage key or OCFL content path (API-S-005, API-S-025).
+         * @description Opens the OCFL storage root in the folder the host registered as location_id through the engine's guards, and binds the library ID to it: the library its collection snapshot names (a moved or copied folder keeps its library), else library_id when given, else a new UUID v4. A library_id other than the snapshot's is refused (library_mismatch); a second folder of a library that is already open is refused (library_already_open), so two folders never share one index (ADR 041 Decision 6). Writes and repairs nothing. Opening a location that is already open answers its library again. Refusals: invalid_location, invalid_library, location_not_found, location_in_use, library_already_open, library_mismatch, too_many_libraries, not_a_storage_root and git_in_root. Only a failure is journaled, as library.root.open. Every refusal is journaled once, with its error code and opaque IDs only (an authorisation refusal as api.auth.denied); answers carry opaque library and object identifiers, never a filesystem path, storage key or OCFL content path (API-S-005, API-S-025).
          */
         post: operations["openLibrary"];
         delete?: never;
@@ -688,7 +688,7 @@ export interface paths {
         put?: never;
         /**
          * Import files or a folder the owner picks in the host's dialog
-         * @description API-S-036. The host shows its own native dialog for the source named (`files` or `folder`), and imports what the owner picks into the open library as one durable import job (kind `import`): each file's original and its metadata record with the facts the host's operating system provides are committed in one version of the file's own object, as an upload is (API-S-026, ADR 038). The body carries a CommandEnvelope whose scope is `library:<library_id>`; its operation ID is the idempotency key, so the same operation ID answers the same job instead of starting a second import. An import only adds new files, so the expected revision is not compared. The answer carries the command outcome API-S-002 requires: `pending` with the job (`import: started`), or `committed` with `import: cancelled` when the owner closed the dialog and no job was made. No path, file name or storage key crosses the API in the request, the answer, an error or the journal. A request that names a `collection_id` is refused 400 invalid_request (`collection_not_supported`) before any dialog, so no caller believes its files were filed. A request while a dialog is open is refused 409 conflict (`dialog_open`); a library that is not open answers 404 not_found; a host without an import dialog (filesquid-server) answers 503 unavailable. Each request is journaled once as `import.start`; each file as `import.file`.
+         * @description API-S-036. The host shows its own native dialog for the source named (`files` or `folder`), and imports what the owner picks into the open library as one durable import job (kind `import`): each file's original and its metadata record with the facts the host's operating system provides are committed in one version of the file's own object, as an upload is (API-S-026, ADR 038). The body carries a CommandEnvelope whose scope is `library:<library_id>`; its operation ID is the idempotency key, so the same operation ID answers the same job instead of starting a second import. An import only adds new files, so the expected revision is not compared. The answer carries the command outcome API-S-002 requires: `pending` with the job (`import: started`), or `committed` with `import: cancelled` when the owner closed the dialog and no job was made. No path, file name or storage key crosses the API in the request, the answer, an error or the journal. Every import names its destination (owner decision 2026-10-22, "Must choose", ADR 041): `collection_id` and optionally `folder`. A request without `collection_id` is refused 400 invalid_request (`destination_required`) and an unknown collection 404 not_found (`collection_not_found`), each before any dialog and journaled once. Each imported file is registered in its home collection at its logical path in the library's collection snapshot under the request's operation ID, so it appears in navigation and in the listing by collection or folder node. A request while a dialog is open is refused 409 conflict (`dialog_open`); a library that is not open answers 404 not_found; a host without an import dialog (filesquid-server) answers 503 unavailable. Each request is journaled once as `import.start`; each file as `import.file`.
          */
         post: operations["startImport"];
         delete?: never;
@@ -727,8 +727,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Rebuild a library from its files
-         * @description Reads every object of the open library from its OCFL files alone, so a host can rebuild its catalog without its database. Validation errors are reported, never adopted or repaired, and an object whose head has no version inventory is flagged. Writes nothing. Refusals: library_not_open and the open errors of the storage root. The outcome is journaled as library.rebuild. Every refusal is journaled once, with its error code and opaque IDs only (an authorisation refusal as api.auth.denied); answers carry opaque library and object identifiers, never a filesystem path, storage key or OCFL content path (API-S-005, API-S-025).
+         * Rebuild a library from its files as a durable job
+         * @description Starts the rebuild from files as a durable job of kind library.rebuild (API-S-025 Rebuild as a job, API-S-033) and answers pending with its job ID: the job reads every object of the open library from its OCFL files alone, so a host can rebuild its catalog without its database, reports its progress in objects (done of total) on the job routes and the job.update event, and is paused, resumed from its checkpoint without reading a completed object again, and cancelled through the job routes (API-S-037). Once the job has completed, its view's result is the RebuildReport: the objects read, the objects not readable, and each object's validation errors; an object whose head has no version inventory is flagged. Validation errors are reported, never adopted or repaired, and nothing is written to the library's files, so a cancel changes none of them. A library whose rebuild job is unfinished answers that job again, and no second job is submitted. scheduled says whether the job was handed to the host's runner now; false leaves it pending (paused, already running, or a host without a runner for the kind). The request takes no CommandEnvelope: the job's own operation ID identifies it. Refusals before any job is submitted: library_not_open, a malformed body (invalid_request), and a host without a job service (unavailable). The finished rebuild is journaled once as library.rebuild, and its job's state changes as job.*; every refusal is journaled once, with its error code and opaque IDs only (an authorisation refusal as api.auth.denied); answers carry opaque library, job and object identifiers, never a filesystem path, storage key or OCFL content path (API-S-005, API-S-025).
          */
         post: operations["rebuildLibrary"];
         delete?: never;
@@ -1530,7 +1530,7 @@ export interface components {
             kind: "file";
             /** @description Its last path segment: the name it is stored under. */
             name: string;
-            /** @description The name users see: the owner's original file name from the host's file record, made safe (no path separator or control character), or the stored name when no record holds one. Users never see the stored name in its place. */
+            /** @description The name users see: the owner's original file name from the host's file record, made safe (no path separator or control character), or the stored name when no record holds one. Users never see the stored name in its place. In a listing by collection or folder node it is the file's name in the collection: the last segment of its collection logical path, numbered when its path was taken. */
             display_name: string;
             /** @description Its logical path. */
             path: string;
@@ -1544,14 +1544,16 @@ export interface components {
             modified: string;
             /** @description The lowercase extension: a display hint only, never a format identification. */
             type_hint: string | null;
+            /** @description The file's own OCFL object (`urn:uuid:<file-id>`). Present in a listing by collection or folder node, where every registered file has its own object and `path` is its original's logical path inside that object (Task DE-1.7); absent in a listing of one object. */
+            object_id?: string;
         };
         /** @description One page of a folder listing: folders first, then files, at most the requested limit (1-1000, default 200). */
         FolderPage: {
             /** @description The library. */
             library_id: string;
-            /** @description The OCFL object identifier. */
+            /** @description The OCFL object identifier; empty in a listing by collection or folder node, whose files each name their own object. */
             object_id: string;
-            /** @description The version listed. */
+            /** @description The version listed; empty in a listing by collection or folder node, which lists the head of each file's object. */
             version: string;
             /** @description The folder listed, a logical-path prefix without a trailing /; empty for the root. */
             prefix: string;
@@ -1877,7 +1879,7 @@ export interface components {
             /** @description The OCFL validation code when an OCFL rule is broken (E###), else unreadable. */
             error_code: string;
         };
-        /** @description Everything a rebuild from files found, and with the host's journal restore, what it restored of the library's journal. */
+        /** @description Everything a rebuild from files found (the result of a completed library.rebuild job): the objects read, the objects not readable, each object's validation errors, and with the host's journal restore, what it restored of the library's journal. */
         RebuildReport: {
             /** @description Objects read, in object-root order. */
             objects: components["schemas"]["RebuiltObject"][];
@@ -1885,6 +1887,20 @@ export interface components {
             unreadable: components["schemas"]["UnreadableObject"][];
             journal?: components["schemas"]["JournalRebuild"];
         };
+        /** @description The answer of POST /api/v1/libraries/rebuilds: the rebuild's durable job, pending (API-S-025 Rebuild as a job). */
+        RebuildJobAnswer: {
+            outcome: components["schemas"]["RebuildOutcome"];
+            /** @description The job's ID: read and control it through the job routes. */
+            job_id: string;
+            job: components["schemas"]["JobView"];
+            /** @description Whether the job was handed to the host's runner to run now; false leaves it pending (paused, already running, or a host without a runner for the kind). */
+            scheduled: boolean;
+        };
+        /**
+         * @description What became of a rebuild request: pending, a durable job that has not finished.
+         * @enum {string}
+         */
+        RebuildOutcome: "pending";
         /** @description An object the UI may offer to repair. */
         RepairCandidate: {
             /** @description The object identifier. */
@@ -2403,8 +2419,10 @@ export interface components {
         ImportRequest: {
             envelope: components["schemas"]["CommandEnvelope"];
             library_id: string;
-            /** @description Reserved for filing the imported files into a collection. Not supported yet: a request that carries it is refused 400 invalid_request (journal code `collection_not_supported`) and no dialog is shown. */
-            collection_id?: string;
+            /** @description The destination collection, a collection of the library (owner decision 2026-10-22, "Must choose", ADR 041). Required: a request without it is refused 400 invalid_request with the journal code `destination_required` before any dialog, so nothing is imported to a library's top level and no default collection is chosen; an unknown collection, one of another library or one the caller may not read is refused 404 not_found (`collection_not_found`) before any dialog. Each imported file is registered in this collection at the logical path of its manifest entry beneath `folder` (a picked folder keeps its structure). */
+            collection_id: string;
+            /** @description The destination folder inside the collection: a collection logical path (1 to 1,024 UTF-8 bytes in NFC, `/`-separated segments of 1 to 255 bytes without `\`, NUL or control characters, never `.` or `..`), not inside the reserved `provenance` or `.filesquid` folders; the collection's root when absent. A folder outside the rule is refused 400 invalid_request (`invalid_path`) before any dialog. A picked folder or file whose path is already taken in the collection (a deleted file's path included) is numbered beside it (`directoryY-1`, `photo-1.jpg`, `archive-1.tar.gz`, `.env-1`); after 9,999 numbers the file is quarantined as `path_suffix_exhausted`, and a name over 255 bytes after the safe transformation as `name_too_long` (API-S-011, API-S-036). */
+            folder?: string;
             source: components["schemas"]["ImportSource"];
         };
         /** @description The answer of an import request: the command outcome (API-S-002) and what became of the request. */
@@ -2565,7 +2583,7 @@ export interface components {
         JobView: {
             /** @description The job ID. */
             id: string;
-            /** @description The kind of work, for example import. */
+            /** @description The kind of work, for example import or library.rebuild. */
             kind: string;
             /** @description The job's operation ID. */
             operation_id: string;
@@ -2591,8 +2609,10 @@ export interface components {
              * @description When the job last changed (RFC 3339, UTC).
              */
             updated: string;
+            /** @description Once the job has completed, the result its kind defines (for library.rebuild, the RebuildReport of API-S-025), answered by GET /api/v1/jobs/{job} and the control routes; null before then, after a failure or a cancel, for a kind without one, and in the job listing and the job.update event, so neither grows with a report. */
+            result: components["schemas"]["RebuildReport"] | null;
         };
-        /** @description One listing of durable jobs. */
+        /** @description One listing of durable jobs. Each listed view carries result null; read a completed job's result through GET /api/v1/jobs/{job}. */
         JobPage: {
             /** @description The jobs, newest first. */
             jobs: components["schemas"]["JobView"][];
@@ -2854,7 +2874,7 @@ export interface components {
                 "application/json": components["schemas"]["ApiError"];
             };
         };
-        /** @description Refused by a rule about the storage root, the destination or the consent (conflict); nothing was written. The journal entry names the rule: root_not_empty, not_a_storage_root, git_in_root, destination_not_empty, snapshot_unreadable, destination_overlaps_library, location_in_use, library_already_open, too_many_libraries, consent_required or consent_mismatch. */
+        /** @description Refused by a rule about the storage root, the destination or the consent (conflict); nothing was written. The journal entry names the rule: root_not_empty, not_a_storage_root, git_in_root, destination_not_empty, snapshot_unreadable, destination_overlaps_library, location_in_use, library_already_open, library_mismatch, too_many_libraries, consent_required or consent_mismatch. */
         LibraryConflict: {
             headers: {
                 [name: string]: unknown;
@@ -4290,7 +4310,7 @@ export interface operations {
             400: components["responses"]["InvalidRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
-            /** @description The library is not open on this host (`not_found`). */
+            /** @description The library is not open on this host (`library_not_found`), or the destination collection is unknown, of another library or not readable (`collection_not_found`). */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -4299,7 +4319,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiError"];
                 };
             };
-            /** @description A dialog is already open (`conflict`). */
+            /** @description A dialog is already open (`conflict`, journal code `dialog_open`), or the operation ID already started an import of another library, destination or kind of source (`conflict`, journal code `operation_reused`). */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -4356,13 +4376,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Everything the rebuild found. */
+            /** @description The rebuild's job, pending. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RebuildReport"];
+                    "application/json": components["schemas"]["RebuildJobAnswer"];
                 };
             };
             400: components["responses"]["InvalidRequest"];

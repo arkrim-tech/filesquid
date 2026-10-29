@@ -342,10 +342,17 @@ pub enum EntryView {
         modified: String,
         /// The lowercase extension, a display hint only.
         type_hint: Option<String>,
+        /// The file's own OCFL object, present in a listing by collection or folder node,
+        /// where each file has its own object and `path` is the original's logical path
+        /// inside it (Task DE-1.7); absent in a listing of one object.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        object_id: Option<String>,
     },
 }
 
-/// One page of a folder listing.
+/// One page of a folder listing. A listing by collection or folder node from the host's
+/// index of registered files (Task DE-1.7) names no single object: its `object_id` and
+/// `version` are empty and each file entry names its own object.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct FolderPageView {
     /// The library.
@@ -393,6 +400,7 @@ fn entry_view(entry: Entry) -> EntryView {
             modified_version: file.modified_version.to_string(),
             modified: file.modified,
             type_hint: file.type_hint,
+            object_id: None,
         },
     }
 }

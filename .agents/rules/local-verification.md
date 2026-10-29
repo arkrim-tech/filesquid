@@ -40,10 +40,10 @@ license: CC-BY
 | 4 | `verify_relative_links.sh` | No absolute paths in staged Markdown ([links-enforce.md](./links-enforce.md)) |
 | 5 | `verify_workspace_boundaries.sh` | No language manifests at the root; distributions hold no Rust ([workspace-boundaries.md](./workspace-boundaries.md)) |
 | 6 | `verify_centralized_logging.sh` | No file logging ([logging-enforce.md](./logging-enforce.md)) |
-| 7 | `verify_formatting.sh` | `cargo fmt --check` per Cargo workspace (skipped when the scope is `docs` or npm-only; it runs for every `rust:` and `full` scope), `prettier --check` per npm package |
+| 7 | `verify_formatting.sh` | `cargo fmt --check` per Cargo workspace (skipped when the scope is `docs` or npm-only; it runs for every `rust:` and `full` scope), `prettier --check` per npm package; `apps/imagesquid` is checked with `@filesquid/ui`'s Prettier, so the hook needs no ImageSquid install ([ImageSquid during the MVP](#imagesquid-during-the-mvp)) |
 | 8 | `verify_docs.sh` | ADR structure, PRD allocation, relative links and anchors, FileSquid/ImageSquid document boundary, task cleanup (`scripts/docs/`), and the MVP progress merge-driver tests (`test_merge_mvp_progress.py`, throwaway git repositories under `TMPDIR`) |
 | 9 | `verify_changed_scope.sh` | Tests of the change-scope helper and the hook libraries against a temporary git repository |
-| 10 | `verify_tests.sh` | Clippy, Cargo tests, each module crate alone (ADR 029), rustdoc, then ESLint, `tsc` and Vitest per UI package, **limited to the change scope**; Playwright with `FILESQUID_E2E=1` |
+| 10 | `verify_tests.sh` | Clippy, Cargo tests, each module crate alone (ADR 029), rustdoc, then ESLint, `tsc` and Vitest for `@filesquid/ui` (`apps/filesquid/ui`), **limited to the change scope**; Playwright with `FILESQUID_E2E=1`. It runs no ImageSquid suite ([ImageSquid during the MVP](#imagesquid-during-the-mvp)) |
 
 Steps 0 to 9 run on every commit and take seconds; only step 7's Rust format check depends on the scope. Step 10 is the gate that would otherwise be hosted CI and takes minutes on a cold Cargo cache. `FILESQUID_SKIP_TESTS=1` skips step 10 only.
 
@@ -55,10 +55,23 @@ Steps 0 to 9 run on every commit and take seconds; only step 7's Rust format che
 |---|---|---|
 | `docs` | Only documentation changed **outside** the crates and npm packages: Markdown, `resources/`, `.agents/`, and the root `.claude/` and `docs/` (every file inside a crate or package, its README and `resources/` included, belongs to it, because its tests read them, for example `crates/api/resources/srs.md`); or a text checker that steps 0 to 9 run on every commit (the explicit list `verify_branch.sh`, `verify_isolated_ports.sh`, `verify_doc_sync.sh`, `verify_srs_traceability.sh`, `verify_relative_links.sh`, `verify_workspace_boundaries.sh`, `verify_centralized_logging.sh`, `verify_docs.sh`, `verify_task_cleanup.sh`, and `scripts/docs/`) | No Cargo or npm step; each skipped step is printed with the reason |
 | `rust:<crates>` | Any file changed under `apps/filesquid/crates/<crate>/` | Clippy, tests and rustdoc with `-p` for the changed crates **and every workspace crate that depends on them** (`cargo metadata` reverse dependencies); each listed module crate alone; the desktop `test-webdriver` steps only when `filesquid-desktop` is listed |
-| `npm:<packages>` | Files changed in `apps/filesquid/ui` or `apps/imagesquid`, their top-level `package.json` and `package-lock.json` included (no Rust build reads them; a nested manifest gives `full`) | Lint, typecheck and tests for those packages, plus ImageSquid whenever `@filesquid/ui` changed (it links it) |
+| `npm:<packages>` | Files changed in `apps/filesquid/ui` or `apps/imagesquid`, their top-level `package.json` and `package-lock.json` included (no Rust build reads them; a nested manifest gives `full`). The only package step 10 tests is `apps/filesquid/ui`, so either gives `npm:apps/filesquid/ui`: a change confined to `apps/imagesquid` selects `@filesquid/ui`'s suite, whose distribution-table test reads ImageSquid's label table and token file, and a change to `@filesquid/ui` no longer adds ImageSquid | Lint, typecheck and tests for `@filesquid/ui` |
 | `full` | `apps/filesquid/Cargo.toml` or `Cargo.lock`, a `rust-toolchain` file, any other `package.json` or `package-lock.json`, a script that decides or runs the scope (`pre-commit.sh`, `changed_scope.sh`, `verify_changed_scope.sh`, `verify_tests.sh`, `verify_formatting.sh`, `setup-dev-environment.sh`, `scripts/lib/`) or any script not in the `docs` list (a new one included), a generated contract file (`openapi.json`, `schema.d.ts`), any other unclassified file, `FULL=1`, or any detection failure (unknown `origin/main`, git or `cargo metadata` error) | Every step, exactly as before the scope existed |
 
-Detection never falls back to running less: any doubt, and any answer outside the scope grammar, gives `full`. The hook detects the scope once, hands it to steps 7 and 10 with `--scope`, and prints it in its first and last lines (`✅ All Pre-Commit Hooks Passed! Test scope: <scope>`).
+Detection never falls back to running less: any doubt, and any answer outside the scope grammar, gives `full`. A scope handed to a gate with `--scope` is normalised the same way: a guarded package (`npm:apps/imagesquid`) becomes the suite that guards it (`npm:apps/filesquid/ui`), and any other package the hook does not know gives `full` (`normalise_scope` in `scripts/lib/hook_scope.sh`). The hook detects the scope once, hands it to steps 7 and 10 with `--scope`, and prints it in its first and last lines (`✅ All Pre-Commit Hooks Passed! Test scope: <scope>`).
+
+## ImageSquid during the MVP
+
+Owner decision, 2026-10-23, verbatim: "for ImageSquid checks decision use option 2". It answers the owner's question of the same day, verbatim: "why are we running imagesquid unit tests in the filesquid project, imagesquid is release 2". Option 2, as the orchestrator offered it, verbatim: "Narrow it for the MVP (my recommendation). Drop ImageSquid's lint, typecheck, Vitest and Playwright from the hook. Keep one cheap completeness test inside the FileSquid UI package that reads ImageSquid's label and token tables. Then MVP UI tasks only add keys to that table, and the full ImageSquid suite comes back when ImageSquid work starts."
+
+Until ImageSquid work starts:
+
+- The hook MUST NOT run ImageSquid's ESLint, `tsc`, Vitest or Playwright suite. `apps/imagesquid` keeps its npm scripts for anyone who runs them by hand there after `npm ci`; the hook needs no ImageSquid install.
+- Step 7 MUST still run `prettier --check` over `apps/imagesquid`, with `@filesquid/ui`'s Prettier and ImageSquid's own `.prettierrc.json` and `.prettierignore`.
+- `apps/filesquid/ui/tests/unit/distribution-tables.test.ts` MUST read ImageSquid's label table (`src/theme/labels.en.json`) and token file (`src/theme/tokens.css`) and fail when either lacks a key or token of the default table or token file, in light or dark (UI-S-005), or when a colour token is unreadable or a checked pair misses WCAG 2.2 AA, with no contrast exemption (UI-S-015). A change confined to `apps/imagesquid` MUST select `npm:apps/filesquid/ui`, so this test runs.
+- A FileSquid UI change that adds a label key or a required token MUST add it to ImageSquid's label table and token file in the same change.
+
+When ImageSquid work starts, the full ImageSquid lint, typecheck, Vitest and Playwright suite MUST return to the ImageSquid repository's own gates, or to this hook if ImageSquid is still in this repository ([Task FS-3.8](../../resources/implementation-plan.md#task-fs-3.8)).
 
 ## Shared Cargo target
 
