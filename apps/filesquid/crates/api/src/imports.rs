@@ -7,9 +7,16 @@
 //! An import commits, so its body carries a [`CommandEnvelope`] (API-S-002): its operation ID
 //! is the idempotency key, and the same operation ID answers the same job instead of starting a
 //! second import. An import only adds new files and changes no existing one, so the envelope's
-//! scope MUST be `library:<library_id>` and its expected revision is not compared. Filing the
-//! files into a collection is not supported yet: a request naming a `collection_id` is
-//! refused before any dialog ([`COLLECTION_NOT_SUPPORTED`]).
+//! scope MUST be `library:<library_id>` and its expected revision is not compared.
+//!
+//! Every import names its destination (owner decision 2026-10-22, "Must choose", ADR 041
+//! Decision 4): `collection_id`, a collection of the library, and optionally `folder`, a
+//! collection logical folder path inside it. A request without `collection_id` is refused
+//! before any dialog ([`DESTINATION_REQUIRED`]), so nothing is imported to a library's top
+//! level and no default collection is chosen; an unknown collection, or one of another
+//! library, is `not_found` ([`COLLECTION_NOT_FOUND`]); a folder outside the collection-path
+//! rule or inside a reserved folder is `invalid_request` (`invalid_path`). The collection is
+//! looked up through the navigation service's library catalog, the one meaning of API-S-019.
 //!
 //! What the dialog shows and how the job runs is the host's, behind [`ImportStarter`],
 //! installed with [`crate::ApiState::install_import_starter`]; a host without one
@@ -18,8 +25,11 @@
 //! error code; never a path or file name.
 
 use crate::auth::{journal_entry, Action, Principal};
+use crate::canonical::collection_path::check_folder;
 use crate::error::{ApiError, ErrorCode};
 use crate::journal::{JournalEntry, Level, Outcome};
+use crate::library::CatalogError;
+use crate::navigation::{NavigationError, NodeRef};
 use crate::routes::Route;
 use crate::ApiState;
 use axum::extract::rejection::JsonRejection;
@@ -27,16 +37,20 @@ use axum::extract::State;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Extension, Json};
-use filesquid_core::{CommandEnvelope, CommandOutcome, CommandOutcomeKind, OperationId};
+use filesquid_core::{
+    CollectionId, CommandEnvelope, CommandOutcome, CommandOutcomeKind, OperationId,
+};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 /// Journal operation of an import request.
 pub const IMPORT_START_OPERATION: &str = "import.start";
 
-/// Journal error code of a request naming a `collection_id`: imports do not file into a
-/// collection yet, so the request is refused rather than its files left unfiled.
-pub const COLLECTION_NOT_SUPPORTED: &str = "collection_not_supported";
+/// Journal error code of a request that names no destination collection.
+pub const DESTINATION_REQUIRED: &str = "destination_required";
+
+/// Journal error code of a destination collection that is unknown or of another library.
+pub const COLLECTION_NOT_FOUND: &str = "collection_not_found";
 
 /// What the owner picks in the host's dialog.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -57,10 +71,15 @@ pub struct ImportRequest {
     pub envelope: CommandEnvelope,
     /// The open library to import into.
     pub library_id: String,
-    /// Reserved for filing the files into a collection; not supported yet, so a request
-    /// that carries it is refused ([`COLLECTION_NOT_SUPPORTED`]).
+    /// The destination collection, a collection of the library. Required: a request
+    /// without it is refused ([`DESTINATION_REQUIRED`]); it is optional here only so that
+    /// refusal can be journaled with its own code.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub collection_id: Option<String>,
+    /// The destination folder inside the collection, a collection logical path; the
+    /// collection's root when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
     /// Files or a folder.
     pub source: ImportSource,
 }
@@ -119,6 +138,9 @@ pub enum ImportStartError {
     Busy,
     /// The host cannot show a dialog or run a job now.
     Unavailable,
+    /// The operation ID already started an import of another library, destination or
+    /// source; it is never answered with that job.
+    OperationReused,
 }
 
 impl ImportStartError {
@@ -128,6 +150,7 @@ impl ImportStartError {
             ImportStartError::LibraryNotFound => "library_not_found",
             ImportStartError::Busy => "dialog_open",
             ImportStartError::Unavailable => "unavailable",
+            ImportStartError::OperationReused => "operation_reused",
         }
     }
 }
@@ -142,6 +165,20 @@ pub trait ImportStarter: Send + Sync {
     /// An [`ImportStartError`]; no job is made.
     fn start(&self, actor: &str, request: &ImportRequest)
         -> Result<ImportAnswer, ImportStartError>;
+
+    /// The answer of the job `request`'s operation ID already started, if any, without a
+    /// dialog: the route answers a repeated operation with it before checking the destination
+    /// again, so a retry of a started import is never refused because its collection changed
+    /// since. The default knows of no job.
+    ///
+    /// # Errors
+    /// [`ImportStartError::OperationReused`] when that job imports into another library,
+    /// collection or folder, or from another kind of source;
+    /// [`ImportStartError::Unavailable`] when the host cannot tell.
+    fn replay(&self, request: &ImportRequest) -> Result<Option<ImportAnswer>, ImportStartError> {
+        let _ = request;
+        Ok(None)
+    }
 }
 
 /// The import route, relative to [`crate::API_PREFIX`].
@@ -160,10 +197,16 @@ async fn start(
         Some(request) => request,
         None => return refuse_invalid(&state, &actor).await,
     };
-    if request.collection_id.is_some() {
-        return refuse_collection(&state, &actor, &request).await;
+    let starter = state.import_starter();
+    match replayed(starter.clone(), request.clone()).await {
+        Ok(Some(answer)) => return answer_started(&state, &actor, answer).await,
+        Ok(None) => {}
+        Err(err) => return refuse(&state, &actor, &request, err).await,
     }
-    let started = match state.import_starter() {
+    if let Err(refusal) = checked_destination(&state, &principal, &request).await {
+        return refuse_destination(&state, &actor, &request, refusal).await;
+    }
+    let started = match starter {
         Some(starter) => run(starter, actor.clone(), request.clone()).await,
         None => Err(ImportStartError::Unavailable),
     };
@@ -179,6 +222,19 @@ fn scoped(request: &ImportRequest) -> bool {
     request.envelope.schema_version() == filesquid_core::PROTOCOL_SCHEMA_VERSION
         && !request.library_id.is_empty()
         && request.envelope.scope().as_str() == format!("library:{}", request.library_id)
+}
+
+/// The answer of the job the request's operation already started, asked of the host's
+/// starter off the async executor; none without a starter.
+async fn replayed(
+    starter: Option<Arc<dyn ImportStarter>>,
+    request: ImportRequest,
+) -> Result<Option<ImportAnswer>, ImportStartError> {
+    let Some(starter) = starter else {
+        return Ok(None);
+    };
+    let joined = tokio::task::spawn_blocking(move || starter.replay(&request)).await;
+    joined.unwrap_or(Err(ImportStartError::Unavailable))
 }
 
 /// Run the host's starter off the async executor; a panicked starter is unavailable.
@@ -216,17 +272,140 @@ async fn refuse_invalid(state: &ApiState, actor: &str) -> Response {
     ApiError::new(ErrorCode::InvalidRequest, message).into_response()
 }
 
-/// Journal a request naming a collection once and answer `400 invalid_request`.
-async fn refuse_collection(state: &ApiState, actor: &str, request: &ImportRequest) -> Response {
+/// Why a request's destination was refused before any dialog.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DestinationRefusal {
+    /// No `collection_id`.
+    Required,
+    /// A `folder` outside the collection-path rule or in a reserved folder.
+    Folder,
+    /// An unknown collection, one of another library, or one the caller may not read.
+    NotFound,
+    /// The library catalog cannot answer now.
+    Unavailable,
+    /// The library catalog failed in a way a retry will not fix.
+    Internal,
+}
+
+impl DestinationRefusal {
+    /// The refusal of a catalog failure: `unavailable` only when a retry may succeed. Pure.
+    fn of_catalog(err: &CatalogError) -> Self {
+        match err {
+            CatalogError::Unavailable(_) => Self::Unavailable,
+            CatalogError::Conflict | CatalogError::Failed(_) => Self::Internal,
+        }
+    }
+
+    /// The refusal of a readability check of the collection and its ancestors. Pure.
+    fn of_navigation(err: NavigationError) -> Self {
+        match err {
+            NavigationError::NotFound | NavigationError::Invalid(_) => Self::NotFound,
+            NavigationError::Unavailable => Self::Unavailable,
+            NavigationError::Internal => Self::Internal,
+        }
+    }
+
+    /// The journal error code, the answer's status code and its message (which names the
+    /// error code and never the request's values).
+    fn answer(self) -> (&'static str, ErrorCode, &'static str) {
+        match self {
+            Self::Required => (
+                DESTINATION_REQUIRED,
+                ErrorCode::InvalidRequest,
+                "Choose the collection to import into (destination_required); nothing is \
+                 imported to a library's top level.",
+            ),
+            Self::Folder => (
+                "invalid_path",
+                ErrorCode::InvalidRequest,
+                "The destination folder is not a folder path inside the collection \
+                 (invalid_path).",
+            ),
+            Self::NotFound => (
+                COLLECTION_NOT_FOUND,
+                ErrorCode::NotFound,
+                "That collection is not in this library (collection_not_found).",
+            ),
+            Self::Unavailable => (
+                "unavailable",
+                ErrorCode::Unavailable,
+                "This host cannot import now.",
+            ),
+            Self::Internal => (
+                "internal",
+                ErrorCode::Internal,
+                "This host could not check the destination.",
+            ),
+        }
+    }
+}
+
+/// Check the request's destination: a collection is named, the folder (if any) follows the
+/// collection-path rule outside the reserved folders, and the collection belongs to the
+/// request's library and is readable to `principal`. Reads the library catalog on a
+/// blocking thread.
+async fn checked_destination(
+    state: &ApiState,
+    principal: &Principal,
+    request: &ImportRequest,
+) -> Result<(), DestinationRefusal> {
+    let collection = request
+        .collection_id
+        .clone()
+        .ok_or(DestinationRefusal::Required)?;
+    if let Some(folder) = &request.folder {
+        check_folder(folder).map_err(|_| DestinationRefusal::Folder)?;
+    }
+    let navigation = state.navigation().ok_or(DestinationRefusal::Unavailable)?;
+    let (principal, library) = (principal.clone(), request.library_id.clone());
+    let found = tokio::task::spawn_blocking(move || {
+        collection_in(&navigation, &principal, &library, &collection)
+    })
+    .await;
+    found.unwrap_or(Err(DestinationRefusal::Unavailable))
+}
+
+/// Whether `collection` is a collection of `library` that `principal` may read. Reads the
+/// library catalog (may block).
+fn collection_in(
+    navigation: &crate::navigation::NavigationService,
+    principal: &Principal,
+    library: &str,
+    collection: &str,
+) -> Result<(), DestinationRefusal> {
+    let id = CollectionId::new(collection).map_err(|_| DestinationRefusal::NotFound)?;
+    let found = navigation
+        .catalog()
+        .collection(&id)
+        .map_err(|err| DestinationRefusal::of_catalog(&err))?
+        .ok_or(DestinationRefusal::NotFound)?;
+    if found.library_id().as_str() != library {
+        return Err(DestinationRefusal::NotFound);
+    }
+    navigation
+        .check_readable(principal, &NodeRef::Collection(id))
+        .map_err(DestinationRefusal::of_navigation)
+}
+
+/// Journal a refused destination once and answer its typed error.
+async fn refuse_destination(
+    state: &ApiState,
+    actor: &str,
+    request: &ImportRequest,
+    refusal: DestinationRefusal,
+) -> Response {
+    let (error_code, code, message) = refusal.answer();
+    let level = match refusal {
+        DestinationRefusal::Unavailable | DestinationRefusal::Internal => Level::Error,
+        _ => Level::Warn,
+    };
     let entry = JournalEntry::new(IMPORT_START_OPERATION, Outcome::Failed)
-        .level(Level::Warn)
+        .level(level)
         .actor(actor)
         .operation_id(request.envelope.operation_id().as_str())
-        .error_code(COLLECTION_NOT_SUPPORTED);
+        .error_code(error_code);
     journal_entry(state, entry).await;
-    let message = "Imports cannot be filed into a collection yet (collection_not_supported); \
-                   send the request without collection_id.";
-    ApiError::new(ErrorCode::InvalidRequest, message).into_response()
+    ApiError::new(code, message).into_response()
 }
 
 /// Journal the refusal once and answer its typed error.
@@ -251,6 +430,11 @@ async fn refuse(
             Level::Error,
             ErrorCode::Unavailable,
             "This host cannot import now.",
+        ),
+        ImportStartError::OperationReused => (
+            Level::Warn,
+            ErrorCode::Conflict,
+            "That operation ID already started another import (operation_reused).",
         ),
     };
     let entry = JournalEntry::new(IMPORT_START_OPERATION, Outcome::Failed)

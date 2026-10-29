@@ -4,9 +4,10 @@
 //! A request whose operation ID already started a job answers that job. Otherwise the owner
 //! picks files or a folder in a native dialog the host shows from Rust ([`RfdSources`], the
 //! `rfd` crate, so the webview keeps no dialog permission, DE-S-002), the host submits one
-//! durable import job, keeps its plan in its operational store (a job whose plan cannot be
-//! kept is failed at once, so none is left without one) and queues it on the native import
-//! worker. The check for an existing job and the submission run under one lock, so two
+//! durable import job, keeps its plan (with the destination collection and folder the
+//! request named, which the API checked before the dialog, Task DE-1.7) in its operational
+//! store (a job whose plan cannot be kept is failed at once, so none is left without one) and
+//! queues it on the native import worker. The check for an existing job and the submission run under one lock, so two
 //! requests can never make two jobs for one operation ID. Only opaque IDs leave the host;
 //! the picked paths never do (DE-S-006).
 
@@ -173,6 +174,15 @@ impl DesktopImports {
     }
 }
 
+/// Whether `plan` is the import `request` asks for: the same library, destination collection
+/// and folder, and kind of source. Pure.
+fn same_import(plan: &ImportPlan, request: &ImportRequest) -> bool {
+    plan.library_id == request.library_id
+        && plan.collection_id == request.collection_id
+        && plan.folder == request.folder
+        && plan.method == method_of(request.source)
+}
+
 /// The import method of a picked source. Pure.
 fn method_of(source: ImportSource) -> ImportMethod {
     match source {
@@ -188,6 +198,30 @@ impl DesktopImports {
             .plans
             .job_of_operation(operation_id)
             .map_err(|_| ImportStartError::Unavailable)
+    }
+
+    /// The answer of the job `request`'s operation ID already started, if any: that job when
+    /// its plan names the request's library, destination and kind of source, else a refusal,
+    /// so an operation ID reused for another import is never answered with the first one's
+    /// job. Reads the plans.
+    fn answer_known(
+        &self,
+        request: &ImportRequest,
+    ) -> Result<Option<ImportAnswer>, ImportStartError> {
+        let operation = request.envelope.operation_id();
+        let Some(job_id) = self.known_job(operation.as_str())? else {
+            return Ok(None);
+        };
+        let plan = self
+            .starting
+            .plans
+            .load(&job_id)
+            .map_err(|_| ImportStartError::Unavailable)?
+            .ok_or(ImportStartError::Unavailable)?;
+        match same_import(&plan, request) {
+            true => Ok(Some(ImportAnswer::started(operation, job_id))),
+            false => Err(ImportStartError::OperationReused),
+        }
     }
 
     /// The job of `operation_id`: the one already started, or a new one for `plan`, decided
@@ -210,6 +244,10 @@ impl DesktopImports {
 }
 
 impl ImportStarter for DesktopImports {
+    fn replay(&self, request: &ImportRequest) -> Result<Option<ImportAnswer>, ImportStartError> {
+        self.answer_known(request)
+    }
+
     fn start(
         &self,
         _actor: &str,
@@ -217,8 +255,8 @@ impl ImportStarter for DesktopImports {
     ) -> Result<ImportAnswer, ImportStartError> {
         let operation = request.envelope.operation_id();
         let operation_id = operation.as_str();
-        if let Some(job_id) = self.known_job(operation_id)? {
-            return Ok(ImportAnswer::started(operation, job_id));
+        if let Some(answer) = self.answer_known(request)? {
+            return Ok(answer);
         }
         let library =
             LibraryId::new(&request.library_id).map_err(|_| ImportStartError::LibraryNotFound)?;
@@ -230,6 +268,8 @@ impl ImportStarter for DesktopImports {
         };
         let plan = ImportPlan {
             library_id: request.library_id.clone(),
+            collection_id: request.collection_id.clone(),
+            folder: request.folder.clone(),
             sources,
             method: method_of(request.source),
         };

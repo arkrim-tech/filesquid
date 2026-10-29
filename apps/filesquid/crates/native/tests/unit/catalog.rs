@@ -134,7 +134,7 @@ fn catalog_files(root: &std::path::Path) -> Vec<String> {
 fn the_catalog_directory_name_is_stable() {
     assert_eq!(CATALOG_DIR, "libraries");
     assert_eq!(CATALOG_FILE_EXTENSION, "sqlite");
-    assert_eq!(CATALOG_SCHEMA_VERSION, 2);
+    assert_eq!(CATALOG_SCHEMA_VERSION, 3);
 }
 
 #[test]
@@ -321,7 +321,7 @@ fn a_receipt_in_one_library_answers_a_commit_naming_another() {
 }
 
 #[test]
-fn deleting_a_collection_keeps_its_files_as_unfiled() {
+fn deleting_a_collection_deletes_its_files_in_place() {
     let fx = Fixture::new("unfiled");
     let lib = fx.create_library("Family archive");
     let home = fx.create_collection(&lib, "Summer");
@@ -340,7 +340,15 @@ fn deleting_a_collection_keeps_its_files_as_unfiled() {
         VisibilityFilter::Ordinary,
         10,
     );
-    assert_eq!(unfiled, names(&["f1", "f2"]));
+    assert!(unfiled.is_empty(), "no file is ever unfiled (ADR 041)");
+    let deleted = list(
+        &fx.catalog,
+        &lib,
+        FileScope::Library,
+        VisibilityFilter::Deleted,
+        10,
+    );
+    assert_eq!(deleted, names(&["f1", "f2"]));
     assert_eq!(fx.catalog.collection(&home).expect("read"), None);
     let kept = fx
         .catalog
@@ -519,21 +527,20 @@ fn a_failed_create_leaves_no_catalog_file() {
 }
 
 #[test]
-fn creating_an_existing_library_conflicts() {
+fn a_create_commit_is_refused_even_for_an_attached_library() {
     let fx = Fixture::new("create-twice");
-    let create = |op: &str| {
-        raw(
-            LIB_A,
-            NEW_LIBRARY_REVISION,
-            op,
-            vec![CatalogChange::CreateLibrary(record(LIB_A))],
-        )
-    };
-    fx.catalog.commit(create("op-1")).expect("create");
-    assert_eq!(
-        fx.catalog.commit(create("op-2")),
-        Err(CatalogError::Conflict)
+    let lib = fx.create_library("Family archive");
+    let create = raw(
+        lib.as_str(),
+        NEW_LIBRARY_REVISION,
+        "op-2",
+        vec![CatalogChange::CreateLibrary(record(lib.as_str()))],
     );
+    assert!(matches!(
+        fx.catalog.commit(create),
+        Err(CatalogError::Failed(_))
+    ));
+    assert_eq!(fx.revision(&lib), "1", "nothing changed");
 }
 
 #[test]
@@ -649,8 +656,12 @@ fn a_consistent_backup_holds_the_committed_library_and_is_journaled() {
     let dest_dir = temp_root("backup-dest");
     let dest = catalog_file(&dest_dir, &lib);
     fx.catalog.backup(&lib, &dest).expect("backup");
-    let copy = Fixture::over(dest_dir.clone(), Arc::new(MemoryJournal::new("desktop")));
-    assert_eq!(copy.revision(&lib), "2");
+    let copy = rusqlite::Connection::open(&dest).expect("open the copy");
+    let revision: i64 = copy
+        .query_row("SELECT revision FROM library", [], |r| r.get(0))
+        .expect("the committed library");
+    assert_eq!(revision, 2);
+    drop(copy);
     assert!(
         fx.catalog.backup(&lib, &dest).is_err(),
         "an existing backup is not overwritten"
@@ -742,14 +753,19 @@ fn the_schema_is_versioned_and_a_newer_catalog_is_refused() {
     conn.pragma_update(None, "user_version", CATALOG_SCHEMA_VERSION + 1)
         .expect("bump");
     drop(conn);
-    let err =
-        SqliteCatalog::open(&root, Arc::new(MemoryJournal::new("desktop"))).expect_err("refused");
+    let again = Fixture::over(root.clone(), Arc::new(MemoryJournal::new("desktop")));
+    assert!(
+        again.catalog.library(&lib).expect("read").is_none(),
+        "not served"
+    );
+    let err = again
+        .attach(&lib, &again.folder_of(&lib))
+        .expect_err("refused");
     assert!(format!("{err:?}").contains("schema"), "{err:?}");
     assert!(
         !format!("{err:?}").contains(root.to_string_lossy().as_ref()),
         "{err:?}"
     );
-    std::fs::remove_dir_all(root).expect("cleanup");
 }
 
 #[test]
@@ -801,20 +817,17 @@ fn an_unusable_root_fails_without_naming_its_path() {
 }
 
 /// Drive `catalog` through a fixed sequence of commits (create, collections, virtual
-/// collection, memberships, hide, delete, collection removal) and answer what every listing
+/// collection, memberships, hide, collection deletion with its files) and answer what every listing
 /// shows afterwards, with each library's revision.
 fn scripted(
     catalog: &dyn LibraryCatalog,
+    create: impl Fn(&LibraryId),
     index: impl Fn(&LibraryId, &CollectionId),
 ) -> Vec<String> {
     let lib = LibraryId::new(LIB_A).unwrap();
     let commit =
         |rev: &str, op: &str, changes| catalog.commit(raw(LIB_A, rev, op, changes)).unwrap();
-    commit(
-        NEW_LIBRARY_REVISION,
-        "op-1",
-        vec![CatalogChange::CreateLibrary(record(LIB_A))],
-    );
+    create(&lib);
     let home = CollectionId::new("c-1").unwrap();
     let vc = VirtualCollectionId::new("vc-1").unwrap();
     let put = Collection::new(home.clone(), lib.clone(), "Summer")
@@ -850,11 +863,33 @@ fn scripted(
             state: hide,
         }],
     );
-    commit(
-        "4",
-        "op-5",
-        vec![CatalogChange::RemoveCollection(home.clone())],
+    let deletion = filesquid_api::library::Deletion {
+        deleted_at_ms: 1_000,
+        purge_after_ms: 2_000,
+    };
+    let delete_collection = || CatalogCommit {
+        deletion: Some(deletion),
+        ..raw(
+            LIB_A,
+            "4",
+            "op-5",
+            vec![
+                CatalogChange::DeleteCollectionFiles {
+                    collection_id: home.clone(),
+                    deletion,
+                },
+                CatalogChange::RemoveCollection(home.clone()),
+            ],
+        )
+    };
+    let receipt = catalog.commit(delete_collection()).unwrap();
+    assert_eq!(
+        receipt.deletion,
+        Some(deletion),
+        "the receipt keeps the times"
     );
+    let replayed = catalog.commit(delete_collection()).unwrap();
+    assert_eq!(replayed, receipt, "a replay answers the first deletion");
     let mut out = vec![catalog.library(&lib).unwrap().unwrap().revision];
     for scope in [
         FileScope::Library,
@@ -863,7 +898,11 @@ fn scripted(
             virtual_collection_id: vc.clone(),
         },
     ] {
-        for visibility in [VisibilityFilter::Ordinary, VisibilityFilter::Hidden] {
+        for visibility in [
+            VisibilityFilter::Ordinary,
+            VisibilityFilter::Hidden,
+            VisibilityFilter::Deleted,
+        ] {
             let listing = FileListing {
                 library_id: lib.clone(),
                 scope: scope.clone(),
@@ -897,13 +936,27 @@ fn the_sqlite_catalog_answers_like_the_api_reference_catalog() {
             .collect()
     };
     let memory = filesquid_api::library::MemoryCatalog::new();
-    let expected = scripted(&memory, |lib, home| {
+    let create_in_memory = |_: &LibraryId| {
+        let create = raw(
+            LIB_A,
+            NEW_LIBRARY_REVISION,
+            "op-1",
+            vec![CatalogChange::CreateLibrary(record(LIB_A))],
+        );
+        memory.commit(create).unwrap();
+    };
+    let expected = scripted(&memory, create_in_memory, |lib, home| {
         files(lib, home)
             .into_iter()
             .for_each(|(f, o)| memory.insert_file(f, o).unwrap())
     });
     let fx = Fixture::new("parity");
-    let actual = scripted(fx.catalog.as_ref(), |lib, home| {
+    let create_in_folder = |lib: &LibraryId| {
+        let folder = fx.folder_of(lib);
+        std::fs::create_dir_all(&folder).unwrap();
+        fx.attach(lib, &folder).unwrap();
+    };
+    let actual = scripted(fx.catalog.as_ref(), create_in_folder, |lib, home| {
         let entry = JournalEntry::new("library.file.index", Outcome::Succeeded);
         fx.catalog
             .index_files(lib, &files(lib, home), entry)
@@ -919,13 +972,10 @@ fn a_catalog_file_that_is_a_symbolic_link_is_not_followed() {
     let target = outside.join("elsewhere.sqlite");
     let fx = Fixture::new("symlink");
     std::os::unix::fs::symlink(&target, fx.root.join(format!("{LIB_A}.sqlite"))).expect("link");
-    let create = raw(
-        LIB_A,
-        NEW_LIBRARY_REVISION,
-        "op-1",
-        vec![CatalogChange::CreateLibrary(record(LIB_A))],
-    );
-    assert!(fx.catalog.commit(create).is_err());
+    let lib = LibraryId::new(LIB_A).unwrap();
+    let folder = fx.folder_of(&lib);
+    std::fs::create_dir_all(&folder).expect("folder");
+    assert!(fx.attach(&lib, &folder).is_err());
     assert!(!target.exists(), "the link target must not be created");
     std::fs::remove_dir_all(outside).expect("cleanup");
 }
@@ -971,27 +1021,20 @@ fn a_renamed_catalog_file_is_not_served_under_another_library() {
 #[test]
 fn no_more_than_the_library_limit_can_be_created() {
     let fx = Fixture::new("limit");
+    let attach = |id: &str, folder_of: &str| {
+        let folder = fx.folder_of(&LibraryId::new(folder_of).unwrap());
+        std::fs::create_dir_all(&folder).expect("folder");
+        fx.attach(&LibraryId::new(id).unwrap(), &folder)
+    };
     for n in 0..filesquid_native::MAX_LIBRARIES {
         let id = format!("0b0f8a52-3f0e-4c4b-9a59-{n:012x}");
-        let create = raw(
-            &id,
-            NEW_LIBRARY_REVISION,
-            &format!("op-{n}"),
-            vec![CatalogChange::CreateLibrary(record(&id))],
-        );
-        fx.catalog.commit(create).expect("create");
+        attach(&id, &id).expect("attach");
     }
+    // The host registers at most as many folders as the catalog serves libraries, so the one
+    // too many is offered through a folder already registered.
     let id = "0b0f8a52-3f0e-4c4b-9a59-ffffffffffff";
-    let create = raw(
-        id,
-        NEW_LIBRARY_REVISION,
-        "op-over",
-        vec![CatalogChange::CreateLibrary(record(id))],
-    );
-    assert!(matches!(
-        fx.catalog.commit(create),
-        Err(CatalogError::Failed(_))
-    ));
+    let first = "0b0f8a52-3f0e-4c4b-9a59-000000000000";
+    assert!(matches!(attach(id, first), Err(CatalogError::Failed(_))));
     assert!(!catalog_file(&fx.root, &LibraryId::new(id).unwrap()).exists());
 }
 
@@ -1031,7 +1074,12 @@ fn a_version_1_catalog_is_migrated_and_brought_to_its_snapshot() {
     let root = fx.release();
     let conn = rusqlite::Connection::open(&file).expect("open");
     conn.execute_batch(
-        "ALTER TABLE library DROP COLUMN snapshot_version; PRAGMA user_version = 1;",
+        "DROP INDEX files_place; DROP INDEX files_dir;
+         ALTER TABLE files DROP COLUMN path; ALTER TABLE files DROP COLUMN object_id;
+         ALTER TABLE files DROP COLUMN dir_key; ALTER TABLE files DROP COLUMN name;
+         ALTER TABLE library DROP COLUMN retention_days;
+         ALTER TABLE library DROP COLUMN folder_identity;
+         ALTER TABLE library DROP COLUMN snapshot_version; PRAGMA user_version = 1;",
     )
     .expect("downgrade");
     drop(conn);

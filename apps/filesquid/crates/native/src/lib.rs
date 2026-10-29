@@ -62,10 +62,10 @@ pub mod workers;
 
 #[cfg(feature = "desktop")]
 pub use catalog::{
-    intent_entry, library_ocfl_root, CatalogRoots, CommitProbe, HostRoots, LibraryBackfill,
-    NoProbe, PendingIntent, SqliteCatalog, CATALOG_DIR, CATALOG_FILE_EXTENSION,
-    CATALOG_SCHEMA_VERSION, INTENT_RECORDED_OPERATION, MAX_BACKFILL_RUNS, MAX_LIBRARIES,
-    OCFL_ROOT_SUFFIX, RECONCILE_OPERATION, WORK_DIR_SUFFIX,
+    intent_entry, AttachReport, CatalogRoots, CommitProbe, HostRoots, LibraryBackfill,
+    LibraryFolder, NoProbe, PendingIntent, RegisterFile, Registration, SqliteCatalog, CATALOG_DIR,
+    CATALOG_FILE_EXTENSION, CATALOG_SCHEMA_VERSION, INTENT_RECORDED_OPERATION, MAX_BACKFILL_RUNS,
+    MAX_LIBRARIES, RECONCILE_OPERATION, WORK_DIR_SUFFIX,
 };
 #[cfg(feature = "desktop")]
 pub use files::open_fs_library_root;

@@ -1,6 +1,9 @@
-//! Shared fixture for the per-library SQLite catalog tests (Task DE-0.2): a
+//! Shared fixture for the per-library SQLite catalog tests (Tasks DE-0.2, DE-1.7): a
 //! `LibraryService` over a `SqliteCatalog` in a fresh temporary directory, with the host's
-//! journal store and a bounded failure journal.
+//! journal store and a bounded failure journal. Every library lives in a folder of its own
+//! that the test "owner" chose (`<root>.folders/<library-id>/`), registered through
+//! `HostLocations` as the desktop registers it, with its leases in `<root>.data/`; the
+//! catalog directory keeps only each library's index (ADR 041).
 
 #![allow(dead_code)]
 
@@ -9,12 +12,13 @@ use filesquid_api::journal::{
     RetentionPolicy, MAX_PAGE,
 };
 use filesquid_api::journal_writer::{JournalWriter, WriterConfig};
-use filesquid_api::library::{CommandResult, LibraryCommand, LibraryService, NEW_LIBRARY_REVISION};
+use filesquid_api::library::{CommandResult, LibraryCommand, LibraryService};
 use filesquid_api::metrics::Metrics;
 use filesquid_api::operation::{CommandEnvelope, ExpectedRevision, OperationId, OperationScope};
 use filesquid_api::EventBus;
 use filesquid_core::{CollectionId, LibraryId, RepositoryId, VirtualCollectionId};
-use filesquid_native::{CommitProbe, SqliteCatalog};
+use filesquid_native::catalog::{AttachReport, LibraryFolder};
+use filesquid_native::{CommitProbe, HostLocations, SqliteCatalog};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -22,13 +26,38 @@ use std::sync::Arc;
 /// Upper bound on journal pages read by [`all_entries`] (AGENTS.md §22).
 const MAX_JOURNAL_PAGES: usize = 1_000;
 
-/// A fresh, empty temporary directory named after `name` (filesystem I/O).
+/// A fresh, empty temporary directory named after `name` (filesystem I/O), with its
+/// sibling folders for library folders and the host's data directory removed too.
 pub fn temp_root(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("fs-catalog-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    for stale in [dir.clone(), folders_dir(&dir), data_dir(&dir)] {
+        let _ = std::fs::remove_dir_all(stale);
+    }
     std::fs::create_dir_all(&dir).expect("temp dir");
     dir
 }
+
+/// Where the libraries of the catalog directory `root` live: one folder per library, named by
+/// its ID (the owner's chosen folders). Pure.
+pub fn folders_dir(root: &Path) -> PathBuf {
+    root.with_extension("folders")
+}
+
+/// The host's data directory beside the catalog directory `root`: the locations' leases.
+/// Pure.
+pub fn data_dir(root: &Path) -> PathBuf {
+    root.with_extension("data")
+}
+
+/// The folder the owner chose for `library` in the fixture over `root`: the library's OCFL
+/// storage root (ADR 041). `Some` always; an `Option` so callers read it as they read the
+/// retired in-app root.
+pub fn library_ocfl_root(root: &Path, library: &LibraryId) -> Option<PathBuf> {
+    Some(folders_dir(root).join(library.as_str()))
+}
+
+/// The repository every fixture library is created on.
+pub const REPOSITORY: &str = "repo-1";
 
 /// A journal store whose writes fail while `down` is set, standing in for an unreachable
 /// host journal.
@@ -105,6 +134,8 @@ pub struct Fixture {
     pub service: LibraryService,
     /// The repository every library is created on.
     pub repository: RepositoryId,
+    /// The folders registered for the libraries, as the desktop registers them.
+    pub locations: HostLocations,
     writer: JournalWriter,
     next_op: AtomicU64,
     owns_root: bool,
@@ -116,7 +147,13 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         self.writer.shutdown();
         if self.owns_root {
-            let _ = std::fs::remove_dir_all(&self.root);
+            for dir in [
+                self.root.clone(),
+                folders_dir(&self.root),
+                data_dir(&self.root),
+            ] {
+                let _ = std::fs::remove_dir_all(dir);
+            }
         }
     }
 }
@@ -130,11 +167,53 @@ impl Fixture {
         Self::over(temp_root(name), Arc::new(MemoryJournal::new("desktop")))
     }
 
-    /// A fixture over the catalog files in `root`, forwarding to `journal` (opens SQLite). The
-    /// fixture owns `root` and removes it when dropped.
+    /// A fixture over the catalog files in `root`, forwarding to `journal` (opens SQLite),
+    /// with every library folder under [`folders_dir`] attached again, as a restarted host
+    /// opens the folders the owner chose. The fixture owns `root` and removes it when
+    /// dropped.
     pub fn over(root: PathBuf, journal: Arc<dyn JournalStore>) -> Self {
         let catalog = SqliteCatalog::open(&root, journal.clone()).expect("open");
-        Self::around(root, journal, catalog)
+        let fx = Self::around(root, journal, catalog);
+        fx.attach_all();
+        fx
+    }
+
+    /// Attach every library folder under [`folders_dir`] (bounded by the catalog's limit).
+    pub fn attach_all(&self) {
+        let Ok(entries) = std::fs::read_dir(folders_dir(&self.root)) else {
+            return;
+        };
+        for entry in entries.take(filesquid_native::MAX_LIBRARIES) {
+            let entry = entry.expect("entry");
+            let name = entry.file_name().to_string_lossy().to_string();
+            let id = LibraryId::new(name).expect("library id");
+            // A folder the catalog refuses is not served, as the host leaves it (the test
+            // that made it so checks the refusal).
+            let _ = self.attach(&id, &entry.path());
+        }
+    }
+
+    /// Attach the folder `folder` as library `library_id` (created there, named "Library",
+    /// when it holds no snapshot), registering it as the desktop does.
+    pub fn attach(
+        &self,
+        library_id: &LibraryId,
+        folder: &Path,
+    ) -> Result<AttachReport, filesquid_api::library::CatalogError> {
+        let location = self.locations.register(folder).expect("register folder");
+        let folder = LibraryFolder {
+            library_id: library_id.clone(),
+            repository_id: self.repository.clone(),
+            name: "Library".into(),
+            root: self.locations.root_of(&location).expect("root"),
+            identity: self.locations.identity_of(&location).expect("identity"),
+        };
+        self.catalog.attach(&folder)
+    }
+
+    /// The folder of `library_id`.
+    pub fn folder_of(&self, library_id: &LibraryId) -> PathBuf {
+        folders_dir(&self.root).join(library_id.as_str())
     }
 
     /// A fixture over `root` whose commits stop where `probe` says, as a crash would.
@@ -144,7 +223,9 @@ impl Fixture {
         probe: Arc<dyn CommitProbe>,
     ) -> Self {
         let catalog = SqliteCatalog::open_with_probe(&root, journal.clone(), probe).expect("open");
-        Self::around(root, journal, catalog)
+        let fx = Self::around(root, journal, catalog);
+        fx.attach_all();
+        fx
     }
 
     /// A fixture over `root` whose catalog records the PROV-O history of its commits as
@@ -165,7 +246,9 @@ impl Fixture {
         let catalog = SqliteCatalog::open_with_probe(&root, journal.clone(), probe)
             .expect("open")
             .with_provenance(context);
-        Self::around(root, journal, catalog)
+        let fx = Self::around(root, journal, catalog);
+        fx.attach_all();
+        fx
     }
 
     /// A fixture around an opened `catalog` (starts the failure journal writer, which the
@@ -179,12 +262,16 @@ impl Fixture {
         );
         let catalog = Arc::new(catalog.with_failure_journal(writer.sender()));
         let service = LibraryService::new(catalog.clone(), writer.sender());
+        std::fs::create_dir_all(data_dir(&root)).expect("data dir");
+        std::fs::create_dir_all(folders_dir(&root)).expect("folders dir");
+        let locations = HostLocations::new(&data_dir(&root));
         Self {
             root,
             journal,
             catalog,
             service,
-            repository: RepositoryId::new("repo-1").expect("repository"),
+            repository: RepositoryId::new(REPOSITORY).expect("repository"),
+            locations,
             writer,
             next_op: AtomicU64::new(0),
             owns_root: true,
@@ -227,16 +314,24 @@ impl Fixture {
         self.run_as(self.op(), revision, command).expect("command")
     }
 
-    /// Create a library named `name`; answers its ID.
+    /// Create a library named `name` in a new folder of its own, as the desktop does when
+    /// the owner chooses an empty folder; answers its ID.
     pub fn create_library(&self, name: &str) -> LibraryId {
-        let result = self.run(
-            NEW_LIBRARY_REVISION,
-            LibraryCommand::CreateLibrary {
-                repository_id: self.repository.clone(),
-                name: name.to_string(),
-            },
-        );
-        LibraryId::new(result.created_id.expect("id")).expect("library id")
+        let id = LibraryId::new(filesquid_api::library::mint_uuid_v4().expect("uuid"))
+            .expect("library id");
+        let folder = self.folder_of(&id);
+        std::fs::create_dir_all(&folder).expect("folder");
+        let location = self.locations.register(&folder).expect("register folder");
+        let library = LibraryFolder {
+            library_id: id.clone(),
+            repository_id: self.repository.clone(),
+            name: name.to_string(),
+            root: self.locations.root_of(&location).expect("root"),
+            identity: self.locations.identity_of(&location).expect("identity"),
+        };
+        let report = self.catalog.attach(&library).expect("attach");
+        assert!(report.created, "a new folder creates its library");
+        id
     }
 
     /// The current revision of `library_id`.

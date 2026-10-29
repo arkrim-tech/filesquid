@@ -11,8 +11,13 @@ use crate::journal::{format_rfc3339_ms, parse_rfc3339_ms};
 use filesquid_core::LibraryId;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-/// Default number of days a deleted file stays recoverable.
+/// Default number of days a deleted file stays recoverable: the installation default of
+/// 30 days (owner decision 2026-10-22, ADR 041 Decision 10).
 pub const RECOVERABLE_DAYS: u32 = 30;
+
+/// Longest retention period a library may set, in days; the shortest is 1 (ADR 041
+/// Decision 10, proposed bounds).
+pub const MAX_RETENTION_DAYS: u32 = 3_650;
 
 /// Milliseconds in one day.
 const DAY_MS: i64 = 86_400_000;

@@ -12,7 +12,7 @@
 //!   a record is skipped, and a second call commits nothing.
 
 use super::LOG_TARGET;
-use super::{canonical, error_code, reconcile, reconcile_library, OpenLibrary, SqliteCatalog};
+use super::{error_code, reconcile, reconcile_library, OpenLibrary, SqliteCatalog};
 use crate::locations::OpenedRoots;
 use filesquid_api::history::backfill::{Backfill, BackfillError, BackfillReport};
 use filesquid_api::history::{HistoryError, HistoryRoots, RootResult};
@@ -38,12 +38,8 @@ impl HistoryRoots for CatalogRoots {
     /// root cannot be opened is answered as unavailable on its own, so the others are still
     /// read; every failure is logged as a warning with its code only.
     fn roots(&self) -> Result<Vec<RootResult<FsBackend>>, HistoryError> {
-        let readers = self.0.history_roots().map_err(roots_unavailable)?;
-        let roots = readers
-            .into_iter()
-            .map(|reader| reader.map(Arc::new).map_err(roots_unavailable))
-            .collect();
-        Ok(roots)
+        let roots = self.0.history_roots().map_err(roots_unavailable)?;
+        Ok(roots.into_iter().map(Ok).collect())
     }
 }
 
@@ -103,20 +99,18 @@ pub struct LibraryBackfill {
 }
 
 impl SqliteCatalog {
-    /// A reader of the OCFL storage root of every library this catalog serves (at most
-    /// [`super::MAX_LIBRARIES`]), each opened or the reason it could not be, so one library
-    /// that cannot be read does not hide the others. Filesystem I/O; no path leaves this
-    /// crate.
+    /// The OCFL storage root of every library this catalog serves (at most
+    /// [`super::MAX_LIBRARIES`]): the owner's folders, through the backends the file routes
+    /// share. No path leaves this crate.
     ///
     /// # Errors
     /// [`CatalogError`] when the lock is poisoned.
-    pub fn history_roots(&self) -> Result<Vec<Result<FsBackend, CatalogError>>, CatalogError> {
+    pub fn history_roots(&self) -> Result<Vec<Arc<FsBackend>>, CatalogError> {
         let libraries = self.lock()?;
-        let readers = libraries
+        Ok(libraries
             .values()
-            .map(|library| canonical::history_reader(&self.root, &library.id))
-            .collect();
-        Ok(readers)
+            .map(|library| library.canonical.backend())
+            .collect())
     }
 
     /// Run `backfill` over every library this catalog serves, one library at a time under

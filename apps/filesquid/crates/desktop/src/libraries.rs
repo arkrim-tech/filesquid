@@ -8,21 +8,27 @@
 //! storage roots come from ([`HostLocations`]) and the persistent repair ledger
 //! ([`SqliteRepairLedger`](filesquid_native::SqliteRepairLedger) in the operational store). [`DesktopLibraries`] adds what a host
 //! does once a library is bound to a folder: it serves the library's files from the same
-//! root and leases ([`open_fs_library_root`]), schedules its OCFL validation and lists its
-//! root for the PROV-O history ([`OpenedRoots`]). No path ever reaches an answer.
+//! root and leases ([`open_fs_library_root`]), attaches the folder to the library's catalog
+//! index in the data directory, which is created or rebuilt from the folder when missing,
+//! of another copy or behind (Task DE-1.7, ADR 041), schedules its OCFL validation and lists
+//! its root for the PROV-O history ([`OpenedRoots`]). No path ever reaches an answer.
 //!
 //! The repair is the desktop owner's alone: the per-launch token's holder is the only
 //! principal this host authenticates, and the API refuses the repair for anyone else.
 
 use filesquid_api::auth::Principal;
+use filesquid_api::library::CatalogError;
 use filesquid_api::local_library::{
     CopyReport, LibraryCommands, LibraryFuture, LibraryOperations, LibraryRequest, LibraryView,
     LocalLibraryService, LocationRequest, RebuildEnd, RebuildProgress, RepairAnswer,
     RepairCandidates, RepairRequest, SnapshotCopyRequest,
 };
 use filesquid_api::ocfl_validation::ValidationService;
-use filesquid_core::LibraryId;
-use filesquid_native::{open_fs_library_root, HostFiles, HostLocations, OpenedRoots};
+use filesquid_core::{LibraryId, RepositoryId};
+use filesquid_native::catalog::{LibraryFolder, DEFAULT_LIBRARY_NAME};
+use filesquid_native::{
+    open_fs_library_root, HostFiles, HostLocations, OpenedRoots, SqliteCatalog,
+};
 use filesquid_ocfl::storage::FsBackend;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -43,6 +49,10 @@ pub struct LibraryServing {
     pub opened: Arc<OpenedRoots>,
     /// The data directory (leases and staging).
     pub data_dir: PathBuf,
+    /// The library catalog indexes, keyed by library UUID (DE-S-009).
+    pub catalog: Arc<SqliteCatalog>,
+    /// This installation as a repository, which a new library entity names.
+    pub repository: RepositoryId,
 }
 
 /// The desktop's library commands: [`LibraryCommands`] over [`HostLocations`], serving each
@@ -80,18 +90,21 @@ impl DesktopLibraries {
     }
 
     /// Serve the bound library of `view`: its files from its folder's root and leases, its
-    /// validation and its history. A part that cannot be served is logged as a warning with
-    /// its error code only (the journal layer journals it); the library stays open in the
-    /// commands. Creates directories in the data directory.
-    fn serve(&self, view: &LibraryView) {
-        let root = self
-            .commands
-            .location_of(&view.library_id)
-            .and_then(|location| self.locations.root_of(&location));
+    /// catalog index, its validation and its history. A part that cannot be served is logged
+    /// as a warning with its error code only (the journal layer journals it); the library
+    /// stays open in the commands. Creates directories in the data directory; the catalog
+    /// attach (which may rebuild a whole index) runs on a blocking thread.
+    async fn serve(&self, view: &LibraryView) {
+        let location = self.commands.location_of(&view.library_id);
+        let root = location
+            .as_deref()
+            .and_then(|location| self.locations.root_of(location));
         let Some(root) = root else {
             warn_unserved(&view.library_id, "location_not_found");
             return;
         };
+        let identity = location.and_then(|location| self.locations.identity_of(&location));
+        self.attach(&view.library_id, &root, identity).await;
         if open_fs_library_root(
             &self.serving.files,
             &view.library_id,
@@ -108,6 +121,36 @@ impl DesktopLibraries {
         self.serving.opened.insert(&view.library_id, root);
     }
 
+    /// Attach `library_id`'s folder `root` (identified as `identity`) to its catalog index on
+    /// a blocking thread, logging a folder that cannot be attached with its error code only
+    /// (`conflict`, `unavailable` or `internal`, as the catalog classified it). Filesystem and
+    /// database I/O.
+    async fn attach(
+        &self,
+        library_id: &LibraryId,
+        root: &filesquid_native::HostRoot,
+        identity: Option<String>,
+    ) {
+        let Some(identity) = identity else {
+            warn_unserved(library_id, "location_not_found");
+            return;
+        };
+        let folder = LibraryFolder {
+            library_id: library_id.clone(),
+            repository_id: self.serving.repository.clone(),
+            name: DEFAULT_LIBRARY_NAME.to_string(),
+            root: root.clone(),
+            identity,
+        };
+        let catalog = self.serving.catalog.clone();
+        let attached = tokio::task::spawn_blocking(move || catalog.attach(&folder)).await;
+        match attached {
+            Ok(Ok(_)) => {}
+            Ok(Err(err)) => warn_unserved(library_id, attach_error_code(&err)),
+            Err(_) => warn_unserved(library_id, "internal"),
+        }
+    }
+
     /// Bind with `bind`, then serve the bound library.
     async fn bind_and_serve(
         &self,
@@ -116,8 +159,17 @@ impl DesktopLibraries {
         >,
     ) -> Result<LibraryView, filesquid_api::local_library::LocalLibraryError> {
         let view = bind.await?;
-        self.serve(&view);
+        self.serve(&view).await;
         Ok(view)
+    }
+}
+
+/// The error code of a catalog attach failure: whether a retry may help. Pure.
+fn attach_error_code(err: &CatalogError) -> &'static str {
+    match err {
+        CatalogError::Conflict => "conflict",
+        CatalogError::Unavailable(_) => "unavailable",
+        CatalogError::Failed(_) => "internal",
     }
 }
 

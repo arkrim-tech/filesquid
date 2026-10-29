@@ -105,9 +105,12 @@ INSTRUCTIONS FOR EVERY AGENT AND SESSION
 - Branch prefix feat/, fix/, docs/, refactor/, test/, chore/, build/, perf/ or style/; NEVER
   claude/ or task/. Use exactly the branch the orchestrator names.
 - Environment: CARGO_TARGET_DIR=$HOME/.cargo-target-shared CARGO_INCREMENTAL=0
-  CARGO_PROFILE_DEV_DEBUG=0 TMPDIR=/dev/shm/<task>. Run `npm ci` in apps/filesquid/ui and
-  apps/imagesquid unless setup already did. Scratch files use a unique <task>- prefix. The
-  logging verifier rejects a quoted ".log" literal.
+  CARGO_PROFILE_DEV_DEBUG=0 TMPDIR=/dev/shm/<task>. Run `npm ci` in apps/filesquid/ui
+  unless setup already did; the hook needs no ImageSquid install during the MVP (owner
+  decision 2026-10-23, .agents/rules/local-verification.md "ImageSquid during the MVP"), so
+  run `npm ci` in apps/imagesquid only to run ImageSquid's own scripts by hand (an `IS-`
+  task). Scratch files use a unique <task>- prefix. The logging verifier rejects a quoted
+  ".log" literal.
 - `bash scripts/pre-commit.sh` passes before every push. Never --no-verify. No hosted CI.
 - After ticking checklist boxes, run `python3 scripts/docs/update_mvp_progress.py`.
 - Conventional Commits ending with your own session's attribution trailer, then

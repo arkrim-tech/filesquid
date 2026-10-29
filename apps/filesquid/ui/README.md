@@ -4,7 +4,7 @@ FileSquid's default distribution and the component library every distribution bu
 
 ## Develop and test
 
-From `apps/filesquid/ui`, on any OS with Node.js 22.12 or later:
+From `apps/filesquid/ui`, on any OS with Node.js 22.12 or later and npm 11 or later:
 
 ```sh
 npm ci
@@ -16,7 +16,7 @@ npm run report         # Allure HTML report from tests/allure-results/ into test
 npm run contract:types # regenerate src/api/schema.d.ts and src/api/contract-version.ts from crates/api/openapi.json
 ```
 
-`npm run test:e2e` builds the UI and starts `filesquid-server` with Cargo, so it needs the Rust toolchain and a Playwright browser (`npx playwright install chromium`). The repository's pre-commit hook runs it when `FILESQUID_E2E=1` is set. The second suite, `tests/e2e/preview/`, serves the static build with `vite preview` on port 4173 and needs no server; both use `tests/e2e/support/strict-dom.ts` for strict DOM assertions (defined elements, labels from the label table, computed tokens in light and dark, no console errors).
+`npm run test:e2e` builds the UI and starts `filesquid-server` with Cargo, so it needs the Rust toolchain and a Playwright browser (`npx playwright install chromium`). The repository's pre-commit hook runs it when `FILESQUID_E2E=1` is set. During the FileSquid MVP this package's lint, typecheck and tests are the only npm suite the hook runs, and they run when the change scope includes this package: a change here or confined to ImageSquid gives `npm:apps/filesquid/ui`, a `full` scope runs them with everything else, and a `docs` scope runs no npm suite ([change-aware test scope](../../../.agents/rules/local-verification.md#change-aware-test-scope)). The hook's format step checks ImageSquid on every commit whatever the scope, with this package's Prettier. The second suite, `tests/e2e/preview/`, serves the static build with `vite preview` on port 4173 and needs no server; both use `tests/e2e/support/strict-dom.ts` for strict DOM assertions (defined elements, labels from the label table, computed tokens in light and dark, no console errors).
 
 ## Theme, tokens and brand
 
@@ -56,6 +56,8 @@ expect(invalidColourTokens(tokensCss)).toEqual([]); // every colour token is #rg
 expect(contrastFailures(tokensCss)).toEqual([]); // text 4.5:1, focus ring and control outline 3:1, both themes
 expect(missingLabels(labels)).toEqual([]);
 ```
+
+**Distribution completeness in this package.** [`tests/unit/distribution-tables.test.ts`](./tests/unit/distribution-tables.test.ts) reads each in-repository distribution's label table and token file straight from its directory (today `apps/imagesquid/src/theme/labels.en.json` and `tokens.css`) and fails when either lacks a key of the default table or a token of the default token file, in light or dark ([UI-S-005](./resources/srs.md)), when a colour token is unreadable, or when a checked pair misses WCAG 2.2 AA with no exemption (UI-S-015). During the FileSquid MVP the pre-commit hook runs no ImageSquid suite and a change to ImageSquid runs this package's suite instead (owner decision 2026-10-23, [ImageSquid during the MVP](../../../.agents/rules/local-verification.md#imagesquid-during-the-mvp)), so a change here that adds a label key or a required token MUST add it to ImageSquid's label table and token file in the same change. Run it alone with `npx vitest run tests/unit/distribution-tables.test.ts`.
 
 **Theme choice.** `createThemeStore(window)` returns the shared `ThemeStore`; call `start()` before configuring the shell. With no saved choice the theme follows the operating system and the root element has no `data-theme`. `<fs-theme-control>` in Settings, Appearance (owner answer 7; the shell header has none) offers System, Light and Dark as native radio buttons (arrow keys move between them); Light or Dark sets `data-theme` and is kept on the device in Web Storage under `filesquid.theme`, so it survives a relaunch. System removes both. The choice is a display preference, never a credential; if the browser refuses storage, the choice applies until the page closes and the console says why.
 
