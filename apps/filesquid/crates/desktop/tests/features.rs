@@ -51,6 +51,10 @@ mod policy_support;
 #[path = "support/mock_app.rs"]
 mod mock_app;
 
+#[path = "support/folder_library.rs"]
+#[allow(dead_code)]
+mod folder_library;
+
 #[path = "support/library_steps.rs"]
 mod library_steps;
 

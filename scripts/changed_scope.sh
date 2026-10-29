@@ -25,11 +25,15 @@
 #                           every workspace crate that depends on them (all
 #                           dependency kinds, transitively; from
 #                           `cargo metadata --no-deps --format-version 1`)
-#   npm:<packages>          the changed npm packages, plus every package that
-#                           links one by a `file:` dependency (ImageSquid links
-#                           @filesquid/ui). A package's own top-level
-#                           package.json and package-lock.json count as the
-#                           package: no Rust build reads them
+#   npm:<packages>          the changed npm packages the hook tests (only
+#                           apps/filesquid/ui during the MVP). A package's own
+#                           top-level package.json and package-lock.json count
+#                           as the package: no Rust build reads them. A change
+#                           confined to apps/imagesquid, its top-level
+#                           manifests included, gives npm:apps/filesquid/ui:
+#                           the hook runs no ImageSquid suite (owner decision
+#                           2026-10-23), and @filesquid/ui's distribution-table
+#                           test reads ImageSquid's label table and token file
 #   rust:<crates> npm:<packages>   both
 #   full                    the workspace Cargo.toml or Cargo.lock, a
 #                           rust-toolchain file, any other package.json or
@@ -62,7 +66,14 @@
 unset CDPATH
 WORKSPACE_DIR="apps/filesquid"
 CRATES_DIR="$WORKSPACE_DIR/crates"
-NPM_PACKAGES="apps/filesquid/ui apps/imagesquid"
+# The npm packages whose suites the hook runs (scripts/verify_tests.sh).
+NPM_PACKAGES="apps/filesquid/ui"
+# Package directories the hook does not test itself, each as <directory>=<package
+# in NPM_PACKAGES whose suite guards it>. ImageSquid's own lint, typecheck, Vitest
+# and Playwright suite left the hook for the MVP (owner decision 2026-10-23,
+# .agents/rules/local-verification.md); @filesquid/ui's distribution-table test
+# reads its label table and token file, so a change there runs that suite.
+GUARDED_PACKAGES="apps/imagesquid=apps/filesquid/ui"
 # Text checkers that pre-commit steps 0 to 9 run on every commit, whatever the
 # scope, so the commit that changes one also runs it. An explicit list: a
 # script not named here (a new one included) forces full.
@@ -100,31 +111,6 @@ while queue:  # bounded: a crate is expanded at most once
 print(",".join(sorted(scope)))
 '
 
-# Reads the package list in NPM_PACKAGES (environment) and changed packages as
-# arguments. Prints the comma-separated changed packages plus every listed
-# package that links one of them by a `file:` dependency, in list order.
-NPM_DEPENDENTS_PY='
-import json, os, sys
-packages = os.environ["NPM_PACKAGES"].split()
-dependents = {pkg: set() for pkg in packages}
-for pkg in packages:
-    with open(os.path.join(pkg, "package.json"), encoding="utf-8") as handle:
-        manifest = json.load(handle)
-    for field in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
-        for spec in manifest.get(field, {}).values():
-            if spec.startswith("file:"):
-                target = os.path.normpath(os.path.join(pkg, spec[5:])).replace(os.sep, "/")
-                if target in dependents:
-                    dependents[target].add(pkg)
-scope, queue = set(), list(sys.argv[1:])
-while queue:  # bounded: a package is expanded at most once
-    name = queue.pop()
-    if name not in scope:
-        scope.add(name)
-        queue.extend(dependents[name] - scope)
-print(",".join(pkg for pkg in packages if pkg in scope))
-'
-
 # Prints the scope line on stdout and the reason on stderr.
 report() {
   echo "changed_scope: $1 ($2)" >&2
@@ -145,24 +131,50 @@ classify_script() {
   echo full
 }
 
-# Classifies one package.json or package-lock.json. Pure. Prints
-# npm:<package> when it is the top-level manifest of a package in
-# NPM_PACKAGES, full for any other one.
-classify_npm_manifest() {
-  local path="$1" pkg
-  for pkg in $NPM_PACKAGES; do
-    [ "${path%/*}" = "$pkg" ] && { echo "npm:$pkg"; return; }
+# Prints every package directory the scope knows: the tested packages in
+# NPM_PACKAGES, then the guarded directories in GUARDED_PACKAGES. Pure.
+package_dirs() {
+  local pair
+  # shellcheck disable=SC2086 # one word per package directory
+  printf '%s\n' $NPM_PACKAGES
+  for pair in $GUARDED_PACKAGES; do
+    printf '%s\n' "${pair%%=*}"
   done
-  echo full
+}
+
+# Prints the package in NPM_PACKAGES whose suite covers package directory $1:
+# the package itself, or its guard in GUARDED_PACKAGES. Prints nothing for any
+# other directory. Pure.
+suite_for_package() {
+  local dir="$1" pkg pair
+  for pkg in $NPM_PACKAGES; do
+    [ "$dir" = "$pkg" ] && { echo "$pkg"; return; }
+  done
+  for pair in $GUARDED_PACKAGES; do
+    [ "$dir" = "${pair%%=*}" ] && { echo "${pair#*=}"; return; }
+  done
+}
+
+# Classifies one package.json or package-lock.json. Pure. Prints
+# npm:<package> when it is the top-level manifest of a tested or guarded
+# package directory (the package whose suite covers it), full for any other one.
+classify_npm_manifest() {
+  local suite
+  suite=$(suite_for_package "${1%/*}")
+  if [ -n "$suite" ]; then
+    echo "npm:$suite"
+  else
+    echo full
+  fi
 }
 
 # Classifies one changed path. Pure. The case order matters: full triggers
 # (contract and toolchain files; npm manifests and scripts/, which are full
 # unless their own rule above matches; the Cargo manifest and lockfile), then
 # crates, then npm packages, then documentation. Prints one of: docs, full,
-# crate:<dir relative to the workspace root>, npm:<package directory>.
+# crate:<dir relative to the workspace root>, npm:<package in NPM_PACKAGES>.
 classify_path() {
-  local path="$1" rest pkg
+  local path="$1" rest dir
   case "${path##*/}" in
     openapi.json | schema.d.ts | rust-toolchain | rust-toolchain.toml) echo full; return ;;
     package.json | package-lock.json) classify_npm_manifest "$path"; return ;;
@@ -175,9 +187,9 @@ classify_path() {
       echo "crate:crates/${rest%%/*}"
       return ;;
   esac
-  for pkg in $NPM_PACKAGES; do
+  for dir in $(package_dirs); do
     case "$path" in
-      "$pkg"/*) echo "npm:$pkg"; return ;;
+      "$dir"/*) echo "npm:$(suite_for_package "$dir")"; return ;;
     esac
   done
   case "$path" in
@@ -215,11 +227,6 @@ resolve_rust_scope() {
   printf '%s' "$metadata" | python3 -c "$REVERSE_DEPENDENCIES_PY" "$@"
 }
 
-# Prints the comma-separated npm scope for package directories "$@".
-resolve_npm_scope() {
-  NPM_PACKAGES="$NPM_PACKAGES" python3 -c "$NPM_DEPENDENTS_PY" "$@"
-}
-
 # Classifies every changed path on stdin. Prints "full <path>" for the first
 # path that forces full, and the unique crate:/npm: tokens. Pure.
 classify_files() {
@@ -236,7 +243,7 @@ classify_files() {
 }
 
 main() {
-  local files classes full_path crate_dirs npm_dirs rust npm line=""
+  local files classes full_path crate_dirs npm_dirs rust line=""
   if [ "${FULL:-}" = "1" ]; then report full "FULL=1 is set"; return; fi
   files=$(read_changed_files) || { report full "cannot diff against ${CHANGED_SCOPE_BASE:-origin/main}; fetch it or check the git repository"; return; }
   if [ -z "$files" ]; then report docs "no files changed since the merge-base"; return; fi
@@ -252,11 +259,10 @@ main() {
     line="rust:$rust"
   fi
   if [ -n "$npm_dirs" ]; then
-    # shellcheck disable=SC2086 # one word per package directory
-    npm=$(resolve_npm_scope $npm_dirs) || { report full "npm package lookup failed for: $(echo $npm_dirs)"; return; }
-    line="${line:+$line }npm:$npm"
+    # classify_files sorted and deduplicated the packages; join them with commas.
+    line="${line:+$line }npm:$(printf '%s\n' "$npm_dirs" | paste -sd, -)"
   fi
-  report "$line" "changed: $(echo $crate_dirs $npm_dirs)"
+  report "$line" "changed crates and npm suites: $(echo $crate_dirs $npm_dirs)"
 }
 
 main

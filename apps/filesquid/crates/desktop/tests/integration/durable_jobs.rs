@@ -8,16 +8,16 @@
 #[allow(dead_code)]
 mod journal;
 
+#[path = "../support/folder_library.rs"]
+#[allow(dead_code)]
+mod folder_library;
+
 use filesquid_api::history::backfill::BACKFILL_OPERATION;
 use filesquid_api::jobs::{JobSpec, JobState, JobStore, Jobs, JOB_FAILED, JOB_SUSPENDED};
 use filesquid_api::journal::JournalEntry;
-use filesquid_api::library::{
-    CommandRequest, LibraryCommand, LibraryService, NEW_LIBRARY_REVISION,
-};
-use filesquid_api::operation::{CommandEnvelope, ExpectedRevision, OperationId, OperationScope};
 use filesquid_api::ApiState;
 use filesquid_core::RESTART_RESUMABLE_WITHIN_SECS;
-use filesquid_core::{InstallationId, LibraryId, RepositoryId};
+use filesquid_core::{InstallationId, LibraryId};
 use filesquid_desktop_lib::{history_backfill, open_host_monitor, open_library_catalog};
 use filesquid_native::workers::history_backfill::{
     backfill_checkpoint, backfill_source, open_jobs, recover_jobs, run_backfill_job,
@@ -40,39 +40,24 @@ fn installation() -> InstallationId {
 /// A fresh, empty data directory for one test (filesystem I/O).
 fn data_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("fs-desktop-jobs-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(folder_library::folders_of(&dir));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("data dir");
     dir
 }
 
-/// Create a library as operation `op` through a catalog without provenance, so its first
-/// version has no PROV-O record (filesystem and database I/O).
+/// Create one library per entry of `ops`, each in a folder of its own, through a catalog
+/// without provenance, so its first version has no PROV-O record (filesystem and database
+/// I/O).
 fn libraries_without_history(dir: &Path, ops: &[&str]) -> Vec<String> {
     let state = ApiState::new();
     let host = open_host_monitor(&state, dir, None).expect("monitor");
     let plain = SqliteCatalog::open(&dir.join(CATALOG_DIR), host.monitor().announcing_store())
         .expect("catalog");
-    let plain = Arc::new(plain);
-    let service = LibraryService::new(plain.clone(), host.monitor().journal());
     let ids = ops
         .iter()
-        .map(|op| {
-            let request = CommandRequest {
-                envelope: CommandEnvelope::new(
-                    OperationId::new(*op).expect("op"),
-                    ExpectedRevision::new(NEW_LIBRARY_REVISION).expect("revision"),
-                    OperationScope::new("library").expect("scope"),
-                ),
-                command: LibraryCommand::CreateLibrary {
-                    repository_id: RepositoryId::new("repo-1").expect("repo"),
-                    name: "Family archive".into(),
-                },
-            };
-            let result = service.execute("owner", request).expect("create");
-            result.created_id.expect("library id")
-        })
+        .map(|_| folder_library::attach_new_library(&plain, dir, "Family archive").0)
         .collect();
-    drop(service);
     drop(plain);
     host.stop();
     ids
@@ -91,6 +76,7 @@ impl Launch {
         let state = ApiState::new();
         let host = open_host_monitor(&state, dir, None).expect("monitor");
         let catalog = Arc::new(open_library_catalog(dir, &host, &installation()).expect("catalog"));
+        folder_library::reattach_all(&catalog, dir);
         let jobs = open_jobs(dir, &host).expect("jobs");
         Self {
             dir: dir.to_path_buf(),
@@ -111,9 +97,8 @@ impl Launch {
 
 /// Whether the snapshot of `library` has a PROV-O record for `v1` (filesystem I/O).
 fn has_record(dir: &Path, library: &str) -> bool {
-    let snapshot = dir
-        .join(CATALOG_DIR)
-        .join(format!("{library}.ocfl"))
+    let snapshot = folder_library::folders_of(dir)
+        .join(library)
         .join("snapshot");
     (1..=4).any(|n| {
         snapshot
@@ -152,7 +137,7 @@ fn a_backfill_job_completes_and_records_both_libraries_in_its_checkpoint() {
         assert!(has_record(&dir, lib), "{lib} backfilled");
     }
     launch.stop();
-    std::fs::remove_dir_all(dir).expect("cleanup");
+    folder_library::remove_all(&dir);
 }
 
 #[test]
@@ -184,7 +169,7 @@ fn quitting_suspends_the_backfill_job_with_its_checkpoint_kept() {
             .count(),
         1
     );
-    std::fs::remove_dir_all(dir).expect("cleanup");
+    folder_library::remove_all(&dir);
 }
 
 #[test]
@@ -241,7 +226,7 @@ fn the_next_launch_resumes_the_job_without_rescanning_completed_libraries() {
     );
     assert!(has_record(&dir, &libs[1]));
     next.stop();
-    std::fs::remove_dir_all(dir).expect("cleanup");
+    folder_library::remove_all(&dir);
 }
 
 #[test]
@@ -285,7 +270,7 @@ fn a_job_for_another_installation_is_failed_and_a_new_one_runs() {
         !text.contains(OTHER_INSTALLATION),
         "no source identity in the journal"
     );
-    std::fs::remove_dir_all(dir).expect("cleanup");
+    folder_library::remove_all(&dir);
 }
 
 #[test]
@@ -323,7 +308,7 @@ fn a_run_left_by_a_crash_is_waited_out_and_resumed() {
     assert_eq!(run.state, JobState::Completed);
     assert!(started.elapsed() < Duration::from_secs(RESTART_RESUMABLE_WITHIN_SECS));
     launch.stop();
-    std::fs::remove_dir_all(dir).expect("cleanup");
+    folder_library::remove_all(&dir);
 }
 
 #[test]
@@ -352,7 +337,7 @@ fn restart_recovery_reads_only_jobs_and_stays_within_the_budget() {
         started.elapsed()
     );
     next.stop();
-    std::fs::remove_dir_all(dir).expect("cleanup");
+    folder_library::remove_all(&dir);
 }
 
 /// Cubic round 1 (DE-0.8): an unreadable checkpoint counts as none, so every library is
@@ -391,7 +376,7 @@ fn an_unreadable_checkpoint_visits_every_library_again() {
         assert_eq!(run.state, JobState::Completed);
         launch.stop();
     }
-    std::fs::remove_dir_all(dir).expect("cleanup");
+    folder_library::remove_all(&dir);
 }
 
 #[test]
@@ -431,5 +416,5 @@ fn a_paused_backfill_job_waits_until_it_is_resumed() {
     assert_eq!(run.job_id, quit.job_id, "the same job resumed");
     assert_eq!(run.state, JobState::Completed);
     launch.stop();
-    std::fs::remove_dir_all(dir).expect("cleanup");
+    folder_library::remove_all(&dir);
 }

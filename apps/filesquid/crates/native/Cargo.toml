@@ -108,6 +108,11 @@ required-features = ["desktop"]
 harness = false
 
 [[test]]
+name = "unit_folder_libraries"
+path = "tests/unit/folder_libraries.rs"
+required-features = ["desktop"]
+
+[[test]]
 name = "unit_canonical_commit"
 path = "tests/unit/canonical_commit.rs"
 required-features = ["desktop"]

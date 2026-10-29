@@ -144,6 +144,10 @@ name = "integration_files"
 path = "tests/integration/files.rs"
 
 [[test]]
+name = "integration_scope_listing"
+path = "tests/integration/scope_listing.rs"
+
+[[test]]
 name = "unit_receipts"
 path = "tests/unit/receipts.rs"
 
@@ -239,3 +243,7 @@ harness = false
 [[test]]
 name = "unit_canonical"
 path = "tests/unit/canonical.rs"
+
+[[test]]
+name = "unit_collection_path"
+path = "tests/unit/collection_path.rs"
