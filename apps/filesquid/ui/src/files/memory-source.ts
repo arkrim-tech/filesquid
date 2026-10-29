@@ -25,7 +25,7 @@ import type {
   UploadCommit,
   UploadFacts,
 } from "./model";
-import { MAX_UPLOAD_BYTES, isControl, isMediaType, lastSegment } from "./model";
+import { MAX_UPLOAD_BYTES, isControl, isMediaType, lastSegment, validLabel } from "./model";
 import { fileIdOf, inOriginalFolder, isOriginalPath } from "./ops";
 import {
   NEW_FILE_REVISION,
@@ -440,7 +440,11 @@ export class MemoryFileSource implements FileSource, HistorySource {
     });
   }
 
-  /** Restore files or folders from an earlier version as a new version, with its optional label. */
+  /**
+   * Restore files or folders from an earlier version as a new version, with its optional label.
+   * A label the restorations route refuses (blank, over 512 bytes or with a control character)
+   * is `invalid_request`, checked before the revision as the route checks its body first.
+   */
   async restore(
     _object: ObjectRef,
     version: string,
@@ -448,6 +452,9 @@ export class MemoryFileSource implements FileSource, HistorySource {
     options: RestoreOptions,
   ): Promise<FileCommit> {
     this.check();
+    if (options.label !== undefined && !validLabel(options.label)) {
+      throw refusal(400, "invalid_request");
+    }
     this.expect(options.revision);
     const earlier = this.snapshot(version);
     const change = (files: Map<string, Stored>, label: string, created: string) => {

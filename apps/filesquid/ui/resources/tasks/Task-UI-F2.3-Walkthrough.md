@@ -50,12 +50,19 @@ No API route, field or event was assumed or stubbed.
 - Test fakes: abort-aware gates, distinct contents, unknown versions and paths refused, command replay by operation ID in the e2e restore fake; the 503 tolerance of the states test is scoped to the details route; stronger assertions (full history-size query, value filtering, the stale answer, lazy factories, the shell's row layout).
 - Docs: the README example is runnable, removed versions are described, the plan names `GET /files/versions`, the refusal scenario sets up its dialog, and this walkthrough names no machine path.
 
+## Review fixes (Cubic round 2: 0 P1, 1 P2, 1 P3)
+
+- `MemoryFileSource.restore` refuses a label the restorations route refuses (blank, over 512 UTF-8 bytes, or with a control character) as `invalid_request`, before the revision check, as the route validates its body before the envelope (P2). The rule lives once in `src/files/model.ts` as `validLabel` with `MAX_LABEL_BYTES`; `labelProblem` in the restore dialog applies it to the trimmed text it sends, and the dialog re-exports `MAX_LABEL_BYTES` so the package's public surface is unchanged. Unit tests: `validLabel` in `files-model.test.ts` (the 512-byte edge, the untrimmed byte count, C0, DEL and C1 characters) and the fixture refusal in `memory-history.test.ts` (three refused labels leave the head alone; a 512-byte label is kept).
+- The `PropertyTable` contract comments describe reset-on-load (P3): the filter field stays in the layout through every state, its word is reset when a load starts or the file is cleared, kept only across `rows(...)` renders of the same load, and Try again resets it through the next load.
+- `origin/main` was merged by its own merge commit first (PR #137, #132, #140 and #141; the branch already held #133 and #135). No conflict: the MVP progress block merged through the `mvp-progress` driver. After PR #140 the hook runs only `@filesquid/ui`'s suite, whose `distribution-tables.test.ts` reads ImageSquid's label and token tables, so the hook's scope line is now `npm:apps/filesquid/ui`.
+
 ## How it was tested
 
 1. Tests first: the unit and UI tests of the models, the history source, the three elements, the route and the shell ran red before the implementation (below), then green. The history reads of `MemoryFileSource` and the file-route fake were added when the first full Playwright run showed the existing browser specs logging 404s for `files/versions`; their unit tests (`tests/unit/memory-history.test.ts`) were written with that change.
 2. `npx prettier --write .`, `npx eslint . --fix`, `npx tsc --noEmit` in `apps/filesquid/ui` and `apps/imagesquid`: clean.
 3. `npm test` in both packages.
-4. Playwright, both suites of both packages. The installed Playwright expects a newer Chromium than this machine has, so the suites ran through temporary configs that point `executablePath` at the machine's preinstalled Chromium; the server-backed suites used the already-built `filesquid-server` binary instead of `cargo run`, so no Rust build ran (npm-only scope). The configs were deleted before committing. The clock of the file panel spec is fixed with `page.clock`. No mocked environment values were used.
+4. Round 2 (after merging main): the two label tests ran red, then green; `npx prettier --write .`, `npx eslint .`, `npx tsc --noEmit` and `npm test` in `apps/filesquid/ui` are clean; the production-build Playwright suite (`vite build` plus `vite preview`) ran through the same kind of temporary config, deleted before committing; the ordinary hook passed (`Test scope: npm:apps/filesquid/ui`). ImageSquid's own suite is not run by the hook during the MVP (owner decision 2026-10-23) and nothing in `apps/imagesquid` changed in this round.
+5. Playwright, both suites of both packages. The installed Playwright expects a newer Chromium than this machine has, so the suites ran through temporary configs that point `executablePath` at the machine's preinstalled Chromium; the server-backed suites used the already-built `filesquid-server` binary instead of `cargo run`, so no Rust build ran (npm-only scope). The configs were deleted before committing. The clock of the file panel spec is fixed with `page.clock`. No mocked environment values were used.
 
 ## Raw test output
 
@@ -427,5 +434,886 @@ Running 9 tests using 1 worker
 ✅ Lint and test validation passed (test scope: npm:apps/filesquid/ui,apps/imagesquid).
 ========================================
 ✅ All Pre-Commit Hooks Passed! Test scope: npm:apps/filesquid/ui,apps/imagesquid (75s)
+========================================
+```
+
+## Raw test output (Cubic round 2, after merging main)
+
+### Red run (the two label tests before the fix)
+
+```text
+
+ RUN  v4.1.12 <repo>/apps/filesquid/ui
+
+ ❯ tests/unit/memory-history.test.ts (9 tests | 1 failed) 31ms
+     ✓ lists every version of the object, oldest first, with the head 6ms
+     ✓ lists only the versions that changed the file: added, removed and restored 2ms
+     ✓ counts each distinct content of the history once 2ms
+     ✓ keeps a restore's label on its version, in the versions and the history 1ms
+     × refuses a restore label the restorations route refuses, before the revision check 12ms
+     ✓ lists no version that only changed the display name, as the API compares content 2ms
+     ✓ names no file for an object that is not a file object 0ms
+     ✓ counts two different contents of the same size as two 1ms
+     ✓ refuses a file that never existed 1ms
+ ❯ tests/unit/files-model.test.ts (60 tests | 2 failed) 63ms
+     ✓ match the file routes 3ms
+     ✓ shows the display name of a file and never its stored name 4ms
+     ✓ keeps the API order, with a folder named by its last segment 1ms
+     ✓ adds pending folders after the listed folders and drops one the listing now holds 1ms
+     ✓ counts folders, files and bytes 1ms
+     ✓ join, split and walk 1ms
+     ✓ a change affects the path itself and everything below it 0ms
+     ✓ accepts an ordinary name, trimmed 1ms
+     ✓ refuses "" as empty 1ms
+     ✓ refuses "   " as empty 0ms
+     ✓ refuses "a/b" as separator 0ms
+     ✓ refuses "a\\b" as separator 0ms
+     ✓ refuses "." as reserved 0ms
+     ✓ refuses ".." as reserved 0ms
+     ✓ refuses "a\u0000b" as control 0ms
+     ✓ refuses "a\u001fb" as control 0ms
+     ✓ refuses "a
+b" as control 0ms
+     ✓ refuses "ab" as control 0ms
+     ✓ refuses "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé" as long 0ms
+     ✓ counts bytes, not characters: 255 bytes pass and 256 do not 0ms
+     × takes 1 to 512 UTF-8 bytes, not blank, without control characters, as the route does 7ms
+     × refuses a blank, an over-long and a control-character label 1ms
+     ✓ steps back one OCFL version 1ms
+     ✓ 0 bytes is 0 B 16ms
+     ✓ 999 bytes is 999 B 0ms
+     ✓ 2048 bytes is 2 KB 0ms
+     ✓ 421888 bytes is 412 KB 0ms
+     ✓ 6481920 bytes is 6.2 MB 0ms
+     ✓ 19293798 bytes is 18.4 MB 0ms
+     ✓ 1288490189 bytes is 1.2 GB 0ms
+     ✓ 3298534883328 bytes is 3 TB 0ms
+     ✓ 1048524 bytes is 1 MB 0ms
+     ✓ 1023 bytes is 1,023 B 0ms
+     ✓ takes its words from the label table 0ms
+     ✓ writes the date the way the locale does 5ms
+     ✓ shows an unparseable time as given instead of a wrong date 0ms
+     ✓ round-trips a location with folders 3ms
+     ✓ the root has no folder segments 0ms
+     ✓ does not read "" 0ms
+     ✓ does not read "#/monitor" 0ms
+     ✓ does not read "#/files" 0ms
+     ✓ does not read "#/files/only-library" 0ms
+     ✓ does not read "#/files/l/o/../x" 0ms
+     ✓ does not read "#/files/l/o/%E0%A4%A" 0ms
+     ✓ does not read "#/files/l/o/a%2F..%2Fb" 0ms
+     ✓ does not read "#/files/l/o/a%5Cb" 0ms
+     ✓ image/png previews as image 0ms
+     ✓ image/jpeg previews as image 0ms
+     ✓ image/svg+xml previews as image 0ms
+     ✓ video/mp4 previews as video 0ms
+     ✓ video/webm previews as video 0ms
+     ✓ audio/mpeg previews as audio 0ms
+     ✓ audio/wav previews as audio 0ms
+     ✓ text/plain; charset=utf-8 previews as text 0ms
+     ✓ text/csv previews as text 0ms
+     ✓ application/json previews as text 0ms
+     ✓ application/pdf previews as undefined 0ms
+     ✓ application/x-blender previews as undefined 0ms
+     ✓ image/tiff previews as undefined 0ms
+     ✓ application/octet-stream previews as undefined 0ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/unit/files-model.test.ts > validLabel > takes 1 to 512 UTF-8 bytes, not blank, without control characters, as the route does
+AssertionError: expected undefined to be 512 // Object.is equality
+
+- Expected:
+512
+
++ Received:
+undefined
+
+ ❯ node_modules/allure-vitest/src/matchers.ts:510:70
+ ❯ runWithNestedMatcherStepsSuppressed node_modules/allure-vitest/src/matchers.ts:395:19
+ ❯ node_modules/allure-vitest/src/matchers.ts:510:6
+ ❯ runMatcherStep node_modules/allure-vitest/src/matchers.ts:461:19
+ ❯ Proxy.<anonymous> node_modules/allure-vitest/src/matchers.ts:509:11
+ ❯ tests/unit/files-model.test.ts:155:29
+    153| describe("validLabel", () => {
+    154|   it("takes 1 to 512 UTF-8 bytes, not blank, without control character…
+    155|     expect(MAX_LABEL_BYTES).toBe(512);
+       |                             ^
+    156|     expect(validLabel("Back again")).toBe(true);
+    157|     expect(validLabel("é".repeat(256))).toBe(true);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  tests/unit/files-model.test.ts > validLabel > refuses a blank, an over-long and a control-character label
+TypeError: validLabel is not a function
+ ❯ tests/unit/files-model.test.ts:163:12
+    161|
+    162|   it("refuses a blank, an over-long and a control-character label", ()…
+    163|     expect(validLabel("")).toBe(false);
+       |            ^
+    164|     expect(validLabel("   ")).toBe(false);
+    165|     expect(validLabel(`${"é".repeat(256)}a`)).toBe(false);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  tests/unit/memory-history.test.ts > MemoryFileSource history reads > refuses a restore label the restorations route refuses, before the revision check
+AssertionError: expected ApiError: FileSquid API /api/v1/files fai… { …(5) } to match object { code: 'invalid_request' }
+(5 matching properties omitted from actual)
+
+- Expected
++ Received
+
+- {
+-   "code": "invalid_request",
++ ApiError {
++   "code": "conflict",
+  }
+
+ ❯ tests/unit/memory-history.test.ts:71:8
+     69|       await expect(
+     70|         s.restore(OBJECT, "v1", ["Docs/a.txt"], { revision: "stale", l…
+     71|       ).rejects.toMatchObject({ code: "invalid_request" });
+       |        ^
+     72|     }
+     73|     expect((await s.versions()).head).toBe("v2");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  3 failed | 66 passed (69)
+   Start at  01:37:33
+   Duration  1.15s (transform 511ms, setup 128ms, import 562ms, tests 95ms, environment 1.05s)
+
+JUNIT report written to <repo>/apps/filesquid/ui/tests/allure-results/vitest-junit.xml
+```
+
+### npm test (apps/filesquid/ui)
+
+```text
+
+> @filesquid/ui@0.1.0 pretest
+> node tests/support/clean-results.mjs tests/allure-results
+
+
+> @filesquid/ui@0.1.0 test
+> vitest run
+
+
+ RUN  v4.1.12 <repo>/apps/filesquid/ui
+
+stderr | tests/ui/host-indicator.test.ts > <fs-host-indicator> loading and error > shows the error state and no host when the descriptor cannot be read
+FileSquid host descriptor could not be read ApiError: FileSquid API /api/v1/host failed with HTTP 500
+    at <repo>/apps/filesquid/ui/tests/ui/host-indicator.test.ts:329:46
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20
+    at new Promise (<anonymous>)
+    at runWithCancel (<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20
+    at new Promise (<anonymous>)
+    at runWithTimeout (<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2956:64 {
+  status: 500,
+  path: '/api/v1/host',
+  code: undefined,
+  reason: undefined,
+  retryable: false
+}
+
+stderr | tests/ui/host-indicator.test.ts > <fs-host-indicator> loading and error > shows the denied state for an authorisation denial
+FileSquid host descriptor could not be read ApiError: FileSquid API /api/v1/host failed with HTTP 401 (missing_credentials)
+    at <repo>/apps/filesquid/ui/tests/ui/host-indicator.test.ts:338:20
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20
+    at new Promise (<anonymous>)
+    at runWithCancel (<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20
+    at new Promise (<anonymous>)
+    at runWithTimeout (<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2956:64 {
+  status: 401,
+  path: '/api/v1/host',
+  code: 'unauthorized',
+  reason: 'missing_credentials',
+  retryable: false
+}
+
+stderr | tests/ui/host-indicator.test.ts > <fs-host-indicator> loading and error > shows the offline state with Retry when the read fails while the browser is offline
+FileSquid host descriptor could not be read TypeError: Failed to fetch
+    at <repo>/apps/filesquid/ui/tests/ui/host-indicator.test.ts:357:29
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20
+    at new Promise (<anonymous>)
+    at runWithCancel (<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20
+    at new Promise (<anonymous>)
+    at runWithTimeout (<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2956:64
+
+stderr | tests/ui/host-indicator.test.ts > <fs-host-indicator> loading and error > reads again when Retry is pressed and recovers
+FileSquid host descriptor could not be read ApiError: FileSquid API /api/v1/host failed with HTTP 500
+    at <repo>/apps/filesquid/ui/tests/ui/host-indicator.test.ts:369:29
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20
+    at new Promise (<anonymous>)
+    at runWithCancel (<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20
+    at new Promise (<anonymous>)
+    at runWithTimeout (<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2956:64 {
+  status: 500,
+  path: '/api/v1/host',
+  code: undefined,
+  reason: undefined,
+  retryable: false
+}
+
+stderr | tests/ui/host-indicator.test.ts > <fs-host-indicator> follows the host > reads again when a host.change payload breaks the contract
+FileSquid host.change payload broke the contract; reading the descriptor
+
+ ✓ tests/ui/host-indicator.test.ts (40 tests) 584ms
+ ✓ tests/ui/nav-tree.test.ts (30 tests) 1128ms
+ ✓ tests/unit/theme.test.ts (36 tests) 112ms
+ ✓ tests/ui/file-browser-writes.test.ts (47 tests) 1749ms
+ ✓ tests/ui/app-shell.test.ts (24 tests) 591ms
+ ✓ tests/ui/file-browser.test.ts (37 tests) 1792ms
+stderr | tests/ui/versions-panel.test.ts > <fs-versions-panel> > sends the head it read as the revision, so a head moved meanwhile is refused
+FileSquid could not restore a version ApiError
+
+stderr | tests/ui/versions-panel.test.ts > <fs-versions-panel> > keeps the dialog open with the refusal's words when the restore is refused
+FileSquid could not restore a version ApiError
+
+stderr | tests/ui/versions-panel.test.ts > <fs-versions-panel> > shows loading, then the error with Try again when the history cannot be read
+FileSquid could not read the versions ApiError
+
+ ✓ tests/unit/files-source.test.ts (29 tests) 68ms
+stderr | tests/ui/ocfl-findings.test.ts > <fs-ocfl-findings> > words a refused start from the label table
+OCFL validation could not start ApiError: FileSquid API /api/v1/admin/ocfl/validation-runs failed with HTTP 403 (not_permitted)
+    at <repo>/apps/filesquid/ui/tests/ui/ocfl-findings.test.ts:301:7
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20
+    at new Promise (<anonymous>)
+    at runWithCancel (<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20
+    at new Promise (<anonymous>)
+    at runWithTimeout (<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2956:64 {
+  status: 403,
+  path: '/api/v1/admin/ocfl/validation-runs',
+  code: undefined,
+  reason: 'not_permitted',
+  retryable: false
+}
+
+stderr | tests/ui/ocfl-findings.test.ts > <fs-ocfl-findings> > shows the unavailable state with Retry when the findings route answers 503
+OCFL findings could not be read ApiError: FileSquid API /api/v1/admin/ocfl/findings failed with HTTP 503
+    at <repo>/apps/filesquid/ui/tests/ui/ocfl-findings.test.ts:315:29
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20
+    at new Promise (<anonymous>)
+    at runWithCancel (<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20
+    at new Promise (<anonymous>)
+    at runWithTimeout (<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2956:64 {
+  status: 503,
+  path: '/api/v1/admin/ocfl/findings',
+  code: undefined,
+  reason: undefined,
+  retryable: false
+}
+
+ ✓ tests/ui/ocfl-findings.test.ts (22 tests) 488ms
+ ✓ tests/ui/library-start.test.ts (22 tests) 323ms
+stderr | tests/ui/monitor.test.ts > <fs-monitor> > keeps the other sections up when the findings route is unavailable
+OCFL findings could not be read ApiError: FileSquid API /api/v1/admin/ocfl/findings failed with HTTP 503
+    at Object.fake.client.adminOcflFindings (<repo>/apps/filesquid/ui/tests/ui/monitor.test.ts:458:22)
+    at FsOcflFindings.read (<repo>/apps/filesquid/ui/src/components/fs-ocfl-findings.ts:155:41)
+    at FsOcflFindings.load (<repo>/apps/filesquid/ui/src/components/fs-ocfl-findings.ts:142:23)
+    at FsOcflFindings.refresh (<repo>/apps/filesquid/ui/src/components/fs-ocfl-findings.ts:130:31)
+    at FsOcflFindings.connectedCallback (<repo>/apps/filesquid/ui/src/components/fs-ocfl-findings.ts:111:15)
+    at FsOcflFindings.invokeTheCallbackFunction (<repo>/apps/filesquid/ui/node_modules/jsdom/lib/jsdom/living/generated/Function.js:19:26)
+    at invokeCEReactions (<repo>/apps/filesquid/ui/node_modules/jsdom/lib/jsdom/living/helpers/custom-elements.js:190:31)
+    at ceReactionsPostSteps (<repo>/apps/filesquid/ui/node_modules/jsdom/lib/jsdom/living/helpers/custom-elements.js:54:3)
+    at ShadowRoot.replaceChildren (<repo>/apps/filesquid/ui/node_modules/jsdom/lib/jsdom/living/generated/DocumentFragment.js:204:9)
+    at replaceKeepingFocus (<repo>/apps/filesquid/ui/src/a11y/focus.ts:52:8) {
+  status: 503,
+  path: '/api/v1/admin/ocfl/findings',
+  code: undefined,
+  reason: undefined,
+  retryable: false
+}
+
+ ✓ tests/ui/monitor.test.ts (22 tests) 5227ms
+     ✓ shows only the newest 200 rows after a long stream during a journal re-read  4630ms
+ ✓ tests/unit/files-memory-source.test.ts (35 tests) 48ms
+ ✓ tests/ui/library-repair.test.ts (22 tests) 452ms
+ ✓ tests/unit/files-ops.test.ts (55 tests) 208ms
+ ✓ tests/ui/library-detail.test.ts (20 tests) 331ms
+ ✓ tests/unit/component-styles.test.ts (226 tests) 106ms
+ ✓ tests/ui/accessibility.test.ts (19 tests) 709ms
+stderr | tests/ui/file-preview.test.ts > <fs-file-preview> > shows the error state with Try again when the details cannot be read, and retries
+FileSquid could not preview a file Error
+
+stderr | tests/ui/file-preview.test.ts > <fs-file-preview> > shows permission denied with the reason's label
+FileSquid could not preview a file ApiError
+
+ ✓ tests/ui/file-preview.test.ts (16 tests) 210ms
+ ✓ tests/unit/client-io.test.ts (23 tests) 50ms
+ ✓ tests/ui/versions-panel.test.ts (22 tests) 8730ms
+     ✓ counts every version even when it lists only the newest MAX_VERSION_ROWS  8037ms
+ ✓ tests/unit/client-auth.test.ts (23 tests) 52ms
+ ✓ tests/ui/navigation-view.test.ts (20 tests) 265ms
+ ✓ tests/ui/settings.test.ts (10 tests) 262ms
+ ✓ tests/unit/navigation-store.test.ts (19 tests) 48ms
+stderr | tests/ui/details-panel.test.ts > <fs-details-panel> > shows the error with its reason, Nothing was changed, the code and Try again
+FileSquid could not read file details ApiError
+
+stderr | tests/ui/details-panel.test.ts > <fs-details-panel> > words a denial with its reason and an offline failure as offline
+FileSquid could not read file details ApiError
+
+stderr | tests/ui/details-panel.test.ts > <fs-details-panel> > words a denial with its reason and an offline failure as offline
+FileSquid could not read file details TypeError
+
+stderr | tests/ui/details-panel.test.ts > <fs-details-panel> > hides Clear filter and forgets the filter while loading, failed or cleared
+FileSquid could not read file details ApiError
+
+ ✓ tests/ui/details-panel.test.ts (11 tests) 320ms
+ ✓ tests/ui/file-panel.test.ts (11 tests) 472ms
+ ✓ tests/ui/nav-tree-live.test.ts (11 tests) 340ms
+Not implemented: HTMLMediaElement's pause() method
+ ✓ tests/unit/media-handle.test.ts (14 tests) 93ms
+ ✓ tests/unit/navigation-model.test.ts (30 tests) 39ms
+ ✓ tests/unit/a11y-audit.test.ts (19 tests) 120ms
+ ✓ tests/unit/library-client.test.ts (18 tests) 43ms
+ ✓ tests/unit/navigation-source.test.ts (18 tests) 51ms
+ ✓ tests/unit/files-model.test.ts (60 tests) 66ms
+ ✓ tests/unit/navigation-client.test.ts (13 tests) 22ms
+ ✓ tests/unit/theme-store.test.ts (23 tests) 32ms
+stderr | tests/ui/files-route.test.ts > bindFilesRoute > mounts the file panel in the panel slot for the opened file and removes it on close (UI-F2.3)
+FileSquid could not read the history size object
+
+ ✓ tests/ui/files-route.test.ts (10 tests) 754ms
+ ✓ tests/unit/commands.test.ts (46 tests) 27ms
+ ✓ tests/ui/states.test.ts (26 tests) 154ms
+ ✓ tests/unit/host-descriptor.test.ts (43 tests) 34ms
+ ✓ tests/unit/versions-model.test.ts (14 tests) 69ms
+ ✓ tests/unit/admin-client.test.ts (10 tests) 31ms
+ ✓ tests/unit/files-window.test.ts (19 tests) 34ms
+ ✓ tests/unit/focus.test.ts (16 tests) 71ms
+ ✓ tests/unit/memory-history.test.ts (9 tests) 20ms
+ ✓ tests/unit/library-errors.test.ts (15 tests) 16ms
+ ✓ tests/unit/test-scripts.test.ts (10 tests | 1 skipped) 741ms
+ ✓ tests/unit/distribution-tables.test.ts (7 tests) 13ms
+ ✓ tests/unit/details-model.test.ts (7 tests) 31ms
+ ✓ tests/unit/navigation-contract.test.ts (30 tests) 21ms
+ ✓ tests/ui/library-route.test.ts (6 tests) 108ms
+ ✓ tests/unit/test-reporting.test.ts (12 tests) 15ms
+ ✓ tests/unit/history-source.test.ts (6 tests) 16ms
+ ✓ tests/unit/host-adapter.test.ts (13 tests) 72ms
+ ✓ tests/unit/client.test.ts (8 tests) 24ms
+ ✓ tests/ui/theme-control.test.ts (8 tests) 93ms
+ ✓ tests/unit/nav-tree-keys.test.ts (8 tests) 17ms
+ ✓ tests/unit/library-model.test.ts (7 tests) 15ms
+ ✓ tests/unit/preferences.test.ts (10 tests) 18ms
+ ✓ tests/unit/view-state.test.ts (5 tests) 10ms
+ ✓ tests/ui/breadcrumb.test.ts (6 tests) 81ms
+ ✓ tests/unit/contrast.test.ts (13 tests) 22ms
+ ✓ tests/unit/host-client.test.ts (4 tests) 14ms
+ ✓ tests/unit/distribution.test.ts (3 tests) 11ms
+ ✓ tests/ui/monitor-route.test.ts (2 tests) 30ms
+ ✓ tests/unit/contract.test.ts (2 tests) 221ms
+
+ Test Files  64 passed (64)
+      Tests  1421 passed | 1 skipped (1422)
+   Start at  01:38:47
+   Duration  28.47s (transform 3.80s, setup 2.68s, import 8.79s, tests 27.91s, environment 34.32s)
+
+JUNIT report written to <repo>/apps/filesquid/ui/tests/allure-results/vitest-junit.xml
+```
+
+### Playwright, production build (`vite build` plus `vite preview`, apps/filesquid/ui, temporary config with the machine's Chromium)
+
+```text
+
+Running 90 tests using 2 workers
+
+  ✓   1 [chromium] › tests/e2e/preview/file-browser.spec.ts:96:1 › the browser is a defined element and lists display names in the list layout from the label table (882ms)
+  ✓   3 [chromium] › tests/e2e/preview/file-browser.spec.ts:140:1 › a file row shows size, type hint, modified date and version (426ms)
+  ✓   2 [chromium] › tests/e2e/preview/file-panel.spec.ts:102:5 › light theme › File info (35): header, tab, filter, count, rows and footer (1.4s)
+  ✓   4 [chromium] › tests/e2e/preview/file-browser.spec.ts:152:1 › computed token values are exact in the browser in light and dark (746ms)
+  ✓   5 [chromium] › tests/e2e/preview/file-panel.spec.ts:212:5 › light theme › Versions (26): Back, count, eyebrow, rows, Current, menu and note (1.4s)
+  ✓   6 [chromium] › tests/e2e/preview/file-browser.spec.ts:175:1 › opening a folder updates the breadcrumb and the address, and Back returns (768ms)
+  ✓   8 [chromium] › tests/e2e/preview/file-browser.spec.ts:196:1 › an image previews through a content handle that is used only as the media src (927ms)
+  ✓   7 [chromium] › tests/e2e/preview/file-panel.spec.ts:337:5 › light theme › restore (27): the dialog, one call with the label, and the new current version (1.4s)
+  ✓   9 [chromium] › tests/e2e/preview/file-browser.spec.ts:231:1 › a handle that fails is replaced once; a second failure shows the error and mints no third (871ms)
+  ✓  10 [chromium] › tests/e2e/preview/file-panel.spec.ts:460:5 › light theme › panel states (25): loading, no match and error keep the header, tabs and filter (1.2s)
+  ✓  11 [chromium] › tests/e2e/preview/file-browser.spec.ts:247:1 › a video resumes at the same position and paused state after one new handle (789ms)
+  ✓  13 [chromium] › tests/e2e/preview/file-browser.spec.ts:283:1 › audio plays natively and is named by the display name (631ms)
+  ✓  12 [chromium] › tests/e2e/preview/file-panel.spec.ts:537:5 › light theme › keyboard: the tab, the history button and the dialog keep focus where it belongs (980ms)
+  ✓  14 [chromium] › tests/e2e/preview/file-browser.spec.ts:296:1 › text previews through one ranged read of the first 64 KiB and says it is cut (608ms)
+  ✓  15 [chromium] › tests/e2e/preview/file-panel.spec.ts:102:5 › dark theme › File info (35): header, tab, filter, count, rows and footer (866ms)
+  ✓  16 [chromium] › tests/e2e/preview/file-browser.spec.ts:312:1 › a format it cannot show says so and shows no viewer (574ms)
+  ✓  18 [chromium] › tests/e2e/preview/file-browser.spec.ts:342:1 › the viewer steps through files, closes with Escape and returns focus to the row (686ms)
+  ✓  17 [chromium] › tests/e2e/preview/file-panel.spec.ts:212:5 › dark theme › Versions (26): Back, count, eyebrow, rows, Current, menu and note (1.0s)
+  ✓  19 [chromium] › tests/e2e/preview/file-browser.spec.ts:355:1 › an upload is one PUT of the client's facts that creates the file's own object (589ms)
+  ✓  21 [chromium] › tests/e2e/preview/file-browser.spec.ts:404:1 › a rename posts to the renames route, never to moves, and shows the new display name (676ms)
+  ✓  20 [chromium] › tests/e2e/preview/file-panel.spec.ts:337:5 › dark theme › restore (27): the dialog, one call with the label, and the new current version (1.2s)
+  ✓  22 [chromium] › tests/e2e/preview/file-browser.spec.ts:433:1 › a refused rename shows the label for its reason and keeps the display name (632ms)
+  ✓  23 [chromium] › tests/e2e/preview/file-panel.spec.ts:460:5 › dark theme › panel states (25): loading, no match and error keep the header, tabs and filter (947ms)
+  ✓  24 [chromium] › tests/e2e/preview/file-browser.spec.ts:452:1 › writes are single calls: new folder, move, remove and Undo (997ms)
+  ✓  25 [chromium] › tests/e2e/preview/file-panel.spec.ts:537:5 › dark theme › keyboard: the tab, the history button and the dialog keep focus where it belongs (753ms)
+  ✓  26 [chromium] › tests/e2e/preview/file-browser.spec.ts:499:1 › a refused write shows the label for its reason and changes nothing (533ms)
+  ✓  27 [chromium] › tests/e2e/preview/host-indicator.spec.ts:96:1 › the indicator is a defined custom element in the shell header, named from the label table (509ms)
+  ✓  29 [chromium] › tests/e2e/preview/host-indicator.spec.ts:110:1 › the desktop host says only you can read your files, and shows the not-enrolled state (458ms)
+  ✓  28 [chromium] › tests/e2e/preview/file-browser.spec.ts:514:1 › a long folder is virtualised, pages in on demand and stays keyboard reachable (991ms)
+  ✓  30 [chromium] › tests/e2e/preview/host-indicator.spec.ts:124:1 › a server names its operator, who can read the files, and states the at-rest duty (460ms)
+  ✓  32 [chromium] › tests/e2e/preview/host-indicator.spec.ts:137:1 › a server without an operator name uses the unnamed-operator label (412ms)
+  ✓  31 [chromium] › tests/e2e/preview/file-browser.spec.ts:554:1 › the layout does not scroll sideways at 320 px, at 200 % text size, or both, in list and grid (693ms)
+  ✓  33 [chromium] › tests/e2e/preview/host-indicator.spec.ts:149:1 › the browser host says files are decrypted only in this browser (439ms)
+  ✓  34 [chromium] › tests/e2e/preview/file-browser.spec.ts:571:1 › motion stops under reduced motion and focus is the 2px --fs-focus-ring ring (647ms)
+  ✓  35 [chromium] › tests/e2e/preview/host-indicator.spec.ts:162:1 › enrolled backup and sync are shown apart from the host, as ciphertext only (585ms)
+  ✓  36 [chromium] › tests/e2e/preview/file-browser.spec.ts:598:1 › a failed listing shows the error state with Try again, and retrying loads it (715ms)
+  ✓  37 [chromium] › tests/e2e/preview/host-indicator.spec.ts:187:1 › a host.change event updates the indicator without a reload or another read (515ms)
+  ✓  38 [chromium] › tests/e2e/preview/library.spec.ts:47:1 › the start page offers create, open and recover in the active vocabulary (645ms)
+  ✓  39 [chromium] › tests/e2e/preview/host-indicator.spec.ts:209:1 › events.resync makes the indicator read the descriptor again (520ms)
+  ✓  40 [chromium] › tests/e2e/preview/library.spec.ts:80:1 › (1) create asks for a folder, passes the location ID on and shows the library, with no path (578ms)
+  ✓  42 [chromium] › tests/e2e/preview/library.spec.ts:102:1 › (1) open passes the location ID to the open route (374ms)
+  ✓  41 [chromium] › tests/e2e/preview/host-indicator.spec.ts:222:1 › loading shows no host until the descriptor arrives (1.3s)
+  ✓  43 [chromium] › tests/e2e/preview/library.spec.ts:116:1 › (1) recover opens the copy, rebuilds from files and reports without repairing (451ms)
+  ✓  45 [chromium] › tests/e2e/preview/library.spec.ts:153:1 › (1) copy asks for a destination and passes it as destination_location_id (622ms)
+  ✓  44 [chromium] › tests/e2e/preview/host-indicator.spec.ts:234:1 › a failed read shows the error state and never a guessed host, then Retry recovers (756ms)
+  ✓  47 [chromium] › tests/e2e/preview/host-indicator.spec.ts:256:1 › the header shows a compact badge with the short host label, not the statement (560ms)
+  ✓  46 [chromium] › tests/e2e/preview/library.spec.ts:176:1 › (2) a cancelled folder choice sends no library request and says nothing changed (619ms)
+  ✓  48 [chromium] › tests/e2e/preview/host-indicator.spec.ts:271:1 › Enter opens the popover with the full statement; Escape closes it and returns focus (590ms)
+  ✓  49 [chromium] › tests/e2e/preview/library.spec.ts:190:1 › (3) 503 unavailable is the unavailable state with its reason and a Retry, and the choices stay (755ms)
+  ✓  50 [chromium] › tests/e2e/preview/host-indicator.spec.ts:297:1 › Privacy settings opens the Settings page, whose Privacy section has the full statement (725ms)
+  ✓  51 [chromium] › tests/e2e/preview/library.spec.ts:217:1 › (4) confirm sends the consent for exactly the named objects and shows each result (649ms)
+  ✓  53 [chromium] › tests/e2e/preview/library.spec.ts:254:1 › (4) cancel and Escape send nothing and return focus to the opener (614ms)
+  ✓  52 [chromium] › tests/e2e/preview/host-indicator.spec.ts:333:1 › computed token values are exact in light and dark (UI-S-024, mockup 40) (1.0s)
+  ✓  54 [chromium] › tests/e2e/preview/library.spec.ts:277:1 › (4) a refused repair says nothing was changed and shows no result (601ms)
+  ✓  55 [chromium] › tests/e2e/preview/host-indicator.spec.ts:378:1 › the badge is reachable by keyboard and has a visible focus outline (733ms)
+  ✓  56 [chromium] › tests/e2e/preview/library.spec.ts:292:1 › (5) the Monitor's W010 note links to the library's repair offer (612ms)
+  ✓  57 [chromium] › tests/e2e/preview/mockup-fidelity.spec.ts:116:5 › light theme › the shell frame (UI-S-025): sidebar, header, footer, controls and strings (747ms)
+  ✓  58 [chromium] › tests/e2e/preview/library.spec.ts:345:1 › colours come from tokens in light and dark (1.0s)
+  ✓  59 [chromium] › tests/e2e/preview/mockup-fidelity.spec.ts:200:5 › light theme › the navigation tree as built (55, UI-S-017): eyebrows, 30 px rows, 16 px icons (628ms)
+  ✓  60 [chromium] › tests/e2e/preview/navigation.spec.ts:62:1 › the live tree fills the shell's navigation slot, worded from the label table (441ms)
+  ✓  61 [chromium] › tests/e2e/preview/mockup-fidelity.spec.ts:238:5 › light theme › welcome (01, UI-S-027): title, lead, cards, privacy box and footer (721ms)
+  ✓  62 [chromium] › tests/e2e/preview/navigation.spec.ts:83:1 › a level is read page by page through next_cursor until it is null (540ms)
+  ✓  63 [chromium] › tests/e2e/preview/mockup-fidelity.spec.ts:294:5 › light theme › folder-choice unavailable (03) and the view states treatment (56) (698ms)
+  ✓  64 [chromium] › tests/e2e/preview/navigation.spec.ts:121:1 › a destination opens with a breadcrumb filled from ancestors (720ms)
+  ✓  66 [chromium] › tests/e2e/preview/navigation.spec.ts:142:1 › a deep link to a destination shows its breadcrumb after a reload (619ms)
+  ✓  65 [chromium] › tests/e2e/preview/mockup-fidelity.spec.ts:329:5 › light theme › library page (41, UI-S-027): facts rows, actions and the W010 note (808ms)
+  ✓  67 [chromium] › tests/e2e/preview/navigation.spec.ts:154:1 › navigation.change reads only the named level again, without a reload (569ms)
+  ✓  68 [chromium] › tests/e2e/preview/mockup-fidelity.spec.ts:379:5 › light theme › repair consent (42) and results (43): dialog, scrim, chips and the refused box (883ms)
+  ✓  69 [chromium] › tests/e2e/preview/navigation.spec.ts:177:1 › a 503 shows the unavailable state with Retry, never an empty tree (539ms)
+  ✓  70 [chromium] › tests/e2e/preview/mockup-fidelity.spec.ts:424:5 › light theme › Monitor (31) and its OCFL validation section (54) (714ms)
+  ✓  71 [chromium] › tests/e2e/preview/navigation.spec.ts:194:1 › computed token values of the tree and breadcrumb are exact in light and dark (988ms)
+  ✓  72 [chromium] › tests/e2e/preview/mockup-fidelity.spec.ts:485:5 › light theme › host popover (40) and Settings (32): 372 px overlay, Appearance and About (655ms)
+  ✓  73 [chromium] › tests/e2e/preview/ocfl-findings.spec.ts:174:1 › (1) an E023 finding shows with its code beside the degraded health reason (638ms)
+  ✓  74 [chromium] › tests/e2e/preview/mockup-fidelity.spec.ts:116:5 › dark theme › the shell frame (UI-S-025): sidebar, header, footer, controls and strings (930ms)
+  ✓  75 [chromium] › tests/e2e/preview/ocfl-findings.spec.ts:200:1 › (2) the finding disappears after a clean revalidation's health.change, without a reload (684ms)
+  ✓  76 [chromium] › tests/e2e/preview/mockup-fidelity.spec.ts:200:5 › dark theme › the navigation tree as built (55, UI-S-017): eyebrows, 30 px rows, 16 px icons (605ms)
+  ✓  77 [chromium] › tests/e2e/preview/ocfl-findings.spec.ts:220:1 › (3) a W010 warning is listed apart from errors and health stays ok (544ms)
+  ✓  78 [chromium] › tests/e2e/preview/mockup-fidelity.spec.ts:238:5 › dark theme › welcome (01, UI-S-027): title, lead, cards, privacy box and footer (759ms)
+  ✓  79 [chromium] › tests/e2e/preview/ocfl-findings.spec.ts:238:1 › (4) no location is rendered when the API withholds it (612ms)
+  ✓  80 [chromium] › tests/e2e/preview/mockup-fidelity.spec.ts:294:5 › dark theme › folder-choice unavailable (03) and the view states treatment (56) (683ms)
+  ✓  81 [chromium] › tests/e2e/preview/ocfl-findings.spec.ts:250:1 › (5) the last and next run times come from the findings route; Validate now starts a run (869ms)
+  ✓  83 [chromium] › tests/e2e/preview/ocfl-findings.spec.ts:289:1 › error and warning codes take their colours from tokens in light and dark (543ms)
+  ✓  82 [chromium] › tests/e2e/preview/mockup-fidelity.spec.ts:329:5 › dark theme › library page (41, UI-S-027): facts rows, actions and the W010 note (835ms)
+  ✓  84 [chromium] › tests/e2e/preview/production-build.spec.ts:63:1 › the built page is static, mounts the shell and defines every custom element (530ms)
+  ✓  85 [chromium] › tests/e2e/preview/mockup-fidelity.spec.ts:379:5 › dark theme › repair consent (42) and results (43): dialog, scrim, chips and the refused box (799ms)
+  ✓  86 [chromium] › tests/e2e/preview/production-build.spec.ts:80:1 › sidebar, header and Settings words come from the active label table (UI-S-025, UI-S-033) (575ms)
+  ✓  88 [chromium] › tests/e2e/preview/production-build.spec.ts:124:1 › computed token values are exact in light and dark (UI-S-024, CA-1) (602ms)
+  ✓  87 [chromium] › tests/e2e/preview/mockup-fidelity.spec.ts:424:5 › dark theme › Monitor (31) and its OCFL validation section (54) (855ms)
+  ✓  89 [chromium] › tests/e2e/preview/production-build.spec.ts:146:1 › a refused health call shows the unavailable alert in Settings, About, not a console error (498ms)
+[WebServer] 1:40:50 AM [vite] http proxy error: /api/v1/navigation?node=l1
+[WebServer] Error: connect ECONNREFUSED 127.0.0.1:8083
+[WebServer]     at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)
+  ✓  90 [chromium] › tests/e2e/preview/mockup-fidelity.spec.ts:485:5 › dark theme › host popover (40) and Settings (32): 372 px overlay, Appearance and About (629ms)
+
+  90 passed (44.3s)
+```
+
+### Pre-commit hook (ordinary run, `bash scripts/pre-commit.sh`)
+
+```text
+changed_scope: npm:apps/filesquid/ui (changed crates and npm suites: apps/filesquid/ui)
+========================================
+Running Pre-Commit Hooks... (test scope: npm:apps/filesquid/ui)
+========================================
+✅ Branch Validation passed.
+Starting Port Isolation Validation...
+🔍 Validating ./apps/filesquid/ui (Vite)...
+✅ ./apps/filesquid/ui uniquely bound to 5173
+✅ ./apps/filesquid/ui uniquely bound to 4173
+🔍 Validating ./apps/imagesquid (Vite)...
+✅ ./apps/imagesquid uniquely bound to 5174
+✅ ./apps/imagesquid uniquely bound to 4174
+🔍 Validating filesquid-server (default bind)...
+✅ filesquid-server uniquely bound to 8083
+
+🚀 VALIDATION PASSED: All modules maintain strict port isolation.
+Starting Document Sync Validation...
+Starting PRD/SRS Traceability Validation...
+✅ Traceability Validation passed: 96 PRD requirements, 84 resolved SRS references.
+Starting Portable Documentation Validation...
+Starting Workspace Boundary Validation...
+✅ Workspace Boundary validation passed.
+Starting logging rule validation...
+✅ Logging rule validation passed (no relevant staged files).
+Starting Format Validation...
+⏭️  Skipped: Rust formatting in ./apps/filesquid (no Rust file changed; test scope: npm:apps/filesquid/ui)
+🔍 Validating Prettier formatting in ./apps/filesquid/ui...
+✅ ./apps/filesquid/ui is properly formatted.
+🔍 Validating Prettier formatting in ./apps/imagesquid...
+✅ ./apps/imagesquid is properly formatted.
+✅ Format validation passed.
+Starting Documentation Validation...
+🔍 ADR structure (ISO 42010)...
+TAP version 13
+# Subtest: stack ADRs exist with ISO 42010 sections and accepted vocabulary
+ok 1 - stack ADRs exist with ISO 42010 sections and accepted vocabulary
+  ---
+  duration_ms: 10.07168
+  type: 'test'
+  ...
+# Subtest: ADR markdown hrefs reject absolute destinations
+ok 2 - ADR markdown hrefs reject absolute destinations
+  ---
+  duration_ms: 0.24372
+  type: 'test'
+  ...
+# Subtest: FileSquid ADRs 029-032 are indexed with the FileSquid header and expected status
+ok 3 - FileSquid ADRs 029-032 are indexed with the FileSquid header and expected status
+  ---
+  duration_ms: 0.722411
+  type: 'test'
+  ...
+1..3
+# tests 3
+# suites 0
+# pass 3
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 75.877642
+✅ ADR structure (ISO 42010) passed.
+🔍 PRD allocation...
+FileSquid: 263 vision IDs, 263 allocated, 133 allocation rows
+ImageSquid: 29 vision IDs, 29 allocated, 19 allocation rows
+OK: every vision ID is allocated
+✅ PRD allocation passed.
+🔍 Plan traceability...
+OK: every requirement is accounted for in a plan task
+✅ Plan traceability passed.
+🔍 Relative links and anchors...
+checked 294 Markdown files: 0 broken link(s)
+✅ Relative links and anchors passed.
+🔍 FileSquid and ImageSquid document boundary...
+checked 174 documents: 0 link(s) cross the FileSquid/ImageSquid boundary
+✅ FileSquid and ImageSquid document boundary passed.
+🔍 MVP queue and merge driver tests...
+......................................................
+----------------------------------------------------------------------
+Ran 54 tests in 5.456s
+
+OK
+✅ MVP queue and merge driver tests passed.
+🔍 MVP progress bar...
+✅ MVP progress bar passed.
+🔍 Task cleanup...
+✅ Task cleanup passed.
+✅ Documentation validation passed.
+Starting Change Scope Validation...
+✅ Change scope validation passed (188 assertions).
+Starting Lint and Test Validation...
+ℹ️  Test scope: npm:apps/filesquid/ui
+⏭️  Skipped: ESLint, TypeScript, Vitest and Playwright e2e in apps/imagesquid (not run by the hook during the MVP (owner decision 2026-10-23); @filesquid/ui's distribution-table test checks its label table and token file)
+⏭️  Skipped: Clippy (no Rust crate changed)
+⏭️  Skipped: Workspace tests (no Rust crate changed)
+⏭️  Skipped: Module crate alone: filesquid-core (no Rust crate changed)
+⏭️  Skipped: Module crate alone: filesquid-ocfl (no Rust crate changed)
+⏭️  Skipped: Module crate alone: filesquid-metadata (no Rust crate changed)
+⏭️  Skipped: Module crate alone: filesquid-c2pa (no Rust crate changed)
+⏭️  Skipped: Module crate alone: filesquid-prov (no Rust crate changed)
+⏭️  Skipped: Module crate alone: filesquid-api (no Rust crate changed)
+⏭️  Skipped: Module crate alone: filesquid-native (no Rust crate changed)
+⏭️  Skipped: filesquid-metadata all-features tests and wasm32 builds (no Rust crate changed)
+⏭️  Skipped: filesquid-prov all-features tests and wasm32 builds (no Rust crate changed)
+⏭️  Skipped: Rustdoc (no Rust crate changed)
+⏭️  Skipped: Clippy (desktop, test-instrumented) (no Rust crate changed)
+⏭️  Skipped: Desktop tests (test-instrumented) (no Rust crate changed)
+🔍 ESLint (apps/filesquid/ui)...
+
+> @filesquid/ui@0.1.0 lint
+> eslint .
+
+✅ ESLint passed (5s).
+🔍 TypeScript (apps/filesquid/ui)...
+
+> @filesquid/ui@0.1.0 check
+> tsc --noEmit
+
+✅ TypeScript passed (6s).
+🔍 Vitest (apps/filesquid/ui)...
+
+> @filesquid/ui@0.1.0 pretest
+> node tests/support/clean-results.mjs tests/allure-results
+
+
+> @filesquid/ui@0.1.0 test
+> vitest run
+
+
+ RUN  v4.1.12 <repo>/apps/filesquid/ui
+
+stderr | tests/ui/host-indicator.test.ts > <fs-host-indicator> loading and error > shows the error state and no host when the descriptor cannot be read
+FileSquid host descriptor could not be read ApiError: FileSquid API /api/v1/host failed with HTTP 500
+    at <repo>/apps/filesquid/ui/tests/ui/host-indicator.test.ts:329:46
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20
+    at new Promise (<anonymous>)
+    at runWithCancel (<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20
+    at new Promise (<anonymous>)
+    at runWithTimeout (<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2956:64 {
+  status: 500,
+  path: '/api/v1/host',
+  code: undefined,
+  reason: undefined,
+  retryable: false
+}
+
+stderr | tests/ui/host-indicator.test.ts > <fs-host-indicator> loading and error > shows the denied state for an authorisation denial
+FileSquid host descriptor could not be read ApiError: FileSquid API /api/v1/host failed with HTTP 401 (missing_credentials)
+    at <repo>/apps/filesquid/ui/tests/ui/host-indicator.test.ts:338:20
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20
+    at new Promise (<anonymous>)
+    at runWithCancel (<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20
+    at new Promise (<anonymous>)
+    at runWithTimeout (<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2956:64 {
+  status: 401,
+  path: '/api/v1/host',
+  code: 'unauthorized',
+  reason: 'missing_credentials',
+  retryable: false
+}
+
+stderr | tests/ui/host-indicator.test.ts > <fs-host-indicator> loading and error > shows the offline state with Retry when the read fails while the browser is offline
+FileSquid host descriptor could not be read TypeError: Failed to fetch
+    at <repo>/apps/filesquid/ui/tests/ui/host-indicator.test.ts:357:29
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20
+    at new Promise (<anonymous>)
+    at runWithCancel (<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20
+    at new Promise (<anonymous>)
+    at runWithTimeout (<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2956:64
+
+stderr | tests/ui/host-indicator.test.ts > <fs-host-indicator> loading and error > reads again when Retry is pressed and recovers
+FileSquid host descriptor could not be read ApiError: FileSquid API /api/v1/host failed with HTTP 500
+    at <repo>/apps/filesquid/ui/tests/ui/host-indicator.test.ts:369:29
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20
+    at new Promise (<anonymous>)
+    at runWithCancel (<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20
+    at new Promise (<anonymous>)
+    at runWithTimeout (<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2956:64 {
+  status: 500,
+  path: '/api/v1/host',
+  code: undefined,
+  reason: undefined,
+  retryable: false
+}
+
+stderr | tests/ui/host-indicator.test.ts > <fs-host-indicator> follows the host > reads again when a host.change payload breaks the contract
+FileSquid host.change payload broke the contract; reading the descriptor
+
+ ✓ tests/ui/host-indicator.test.ts (40 tests) 484ms
+ ✓ tests/unit/theme.test.ts (36 tests) 76ms
+ ✓ tests/ui/nav-tree.test.ts (30 tests) 1138ms
+ ✓ tests/ui/file-browser-writes.test.ts (47 tests) 1764ms
+ ✓ tests/ui/app-shell.test.ts (24 tests) 682ms
+ ✓ tests/ui/file-browser.test.ts (37 tests) 1652ms
+stderr | tests/ui/versions-panel.test.ts > <fs-versions-panel> > sends the head it read as the revision, so a head moved meanwhile is refused
+FileSquid could not restore a version ApiError
+
+stderr | tests/ui/versions-panel.test.ts > <fs-versions-panel> > keeps the dialog open with the refusal's words when the restore is refused
+FileSquid could not restore a version ApiError
+
+stderr | tests/ui/versions-panel.test.ts > <fs-versions-panel> > shows loading, then the error with Try again when the history cannot be read
+FileSquid could not read the versions ApiError
+
+ ✓ tests/unit/files-source.test.ts (29 tests) 90ms
+stderr | tests/ui/ocfl-findings.test.ts > <fs-ocfl-findings> > words a refused start from the label table
+OCFL validation could not start ApiError: FileSquid API /api/v1/admin/ocfl/validation-runs failed with HTTP 403 (not_permitted)
+    at <repo>/apps/filesquid/ui/tests/ui/ocfl-findings.test.ts:301:7
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20
+    at new Promise (<anonymous>)
+    at runWithCancel (<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20
+    at new Promise (<anonymous>)
+    at runWithTimeout (<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2956:64 {
+  status: 403,
+  path: '/api/v1/admin/ocfl/validation-runs',
+  code: undefined,
+  reason: 'not_permitted',
+  retryable: false
+}
+
+stderr | tests/ui/ocfl-findings.test.ts > <fs-ocfl-findings> > shows the unavailable state with Retry when the findings route answers 503
+OCFL findings could not be read ApiError: FileSquid API /api/v1/admin/ocfl/findings failed with HTTP 503
+    at <repo>/apps/filesquid/ui/tests/ui/ocfl-findings.test.ts:315:29
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20
+    at new Promise (<anonymous>)
+    at runWithCancel (<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20
+    at new Promise (<anonymous>)
+    at runWithTimeout (<repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)
+    at <repo>/apps/filesquid/ui/node_modules/@vitest/runner/dist/chunk-artifact.js:2956:64 {
+  status: 503,
+  path: '/api/v1/admin/ocfl/findings',
+  code: undefined,
+  reason: undefined,
+  retryable: false
+}
+
+ ✓ tests/ui/ocfl-findings.test.ts (22 tests) 357ms
+ ✓ tests/ui/library-start.test.ts (22 tests) 417ms
+stderr | tests/ui/monitor.test.ts > <fs-monitor> > keeps the other sections up when the findings route is unavailable
+OCFL findings could not be read ApiError: FileSquid API /api/v1/admin/ocfl/findings failed with HTTP 503
+    at Object.fake.client.adminOcflFindings (<repo>/apps/filesquid/ui/tests/ui/monitor.test.ts:458:22)
+    at FsOcflFindings.read (<repo>/apps/filesquid/ui/src/components/fs-ocfl-findings.ts:155:41)
+    at FsOcflFindings.load (<repo>/apps/filesquid/ui/src/components/fs-ocfl-findings.ts:142:23)
+    at FsOcflFindings.refresh (<repo>/apps/filesquid/ui/src/components/fs-ocfl-findings.ts:130:31)
+    at FsOcflFindings.connectedCallback (<repo>/apps/filesquid/ui/src/components/fs-ocfl-findings.ts:111:15)
+    at FsOcflFindings.invokeTheCallbackFunction (<repo>/apps/filesquid/ui/node_modules/jsdom/lib/jsdom/living/generated/Function.js:19:26)
+    at invokeCEReactions (<repo>/apps/filesquid/ui/node_modules/jsdom/lib/jsdom/living/helpers/custom-elements.js:190:31)
+    at ceReactionsPostSteps (<repo>/apps/filesquid/ui/node_modules/jsdom/lib/jsdom/living/helpers/custom-elements.js:54:3)
+    at ShadowRoot.replaceChildren (<repo>/apps/filesquid/ui/node_modules/jsdom/lib/jsdom/living/generated/DocumentFragment.js:204:9)
+    at replaceKeepingFocus (<repo>/apps/filesquid/ui/src/a11y/focus.ts:52:8) {
+  status: 503,
+  path: '/api/v1/admin/ocfl/findings',
+  code: undefined,
+  reason: undefined,
+  retryable: false
+}
+
+ ✓ tests/ui/monitor.test.ts (22 tests) 5060ms
+     ✓ shows only the newest 200 rows after a long stream during a journal re-read  4507ms
+ ✓ tests/unit/files-memory-source.test.ts (35 tests) 60ms
+ ✓ tests/ui/library-repair.test.ts (22 tests) 404ms
+ ✓ tests/unit/files-ops.test.ts (55 tests) 203ms
+ ✓ tests/ui/library-detail.test.ts (20 tests) 373ms
+ ✓ tests/unit/component-styles.test.ts (226 tests) 96ms
+ ✓ tests/ui/accessibility.test.ts (19 tests) 679ms
+ ✓ tests/unit/client-io.test.ts (23 tests) 53ms
+stderr | tests/ui/file-preview.test.ts > <fs-file-preview> > shows the error state with Try again when the details cannot be read, and retries
+FileSquid could not preview a file Error
+
+stderr | tests/ui/file-preview.test.ts > <fs-file-preview> > shows permission denied with the reason's label
+FileSquid could not preview a file ApiError
+
+ ✓ tests/ui/file-preview.test.ts (16 tests) 225ms
+ ✓ tests/ui/versions-panel.test.ts (22 tests) 8576ms
+     ✓ counts every version even when it lists only the newest MAX_VERSION_ROWS  7678ms
+ ✓ tests/ui/navigation-view.test.ts (20 tests) 229ms
+ ✓ tests/unit/client-auth.test.ts (23 tests) 52ms
+ ✓ tests/ui/settings.test.ts (10 tests) 201ms
+ ✓ tests/unit/navigation-store.test.ts (19 tests) 29ms
+stderr | tests/ui/details-panel.test.ts > <fs-details-panel> > shows the error with its reason, Nothing was changed, the code and Try again
+FileSquid could not read file details ApiError
+
+stderr | tests/ui/details-panel.test.ts > <fs-details-panel> > words a denial with its reason and an offline failure as offline
+FileSquid could not read file details ApiError
+
+stderr | tests/ui/details-panel.test.ts > <fs-details-panel> > words a denial with its reason and an offline failure as offline
+FileSquid could not read file details TypeError
+
+stderr | tests/ui/details-panel.test.ts > <fs-details-panel> > hides Clear filter and forgets the filter while loading, failed or cleared
+FileSquid could not read file details ApiError
+
+ ✓ tests/ui/details-panel.test.ts (11 tests) 292ms
+ ✓ tests/ui/nav-tree-live.test.ts (11 tests) 350ms
+ ✓ tests/ui/file-panel.test.ts (11 tests) 456ms
+Not implemented: HTMLMediaElement's pause() method
+ ✓ tests/unit/media-handle.test.ts (14 tests) 81ms
+ ✓ tests/unit/navigation-model.test.ts (30 tests) 33ms
+ ✓ tests/unit/a11y-audit.test.ts (19 tests) 134ms
+ ✓ tests/unit/navigation-source.test.ts (18 tests) 43ms
+ ✓ tests/unit/library-client.test.ts (18 tests) 42ms
+ ✓ tests/unit/navigation-client.test.ts (13 tests) 24ms
+ ✓ tests/unit/files-model.test.ts (60 tests) 56ms
+ ✓ tests/unit/theme-store.test.ts (23 tests) 28ms
+stderr | tests/ui/files-route.test.ts > bindFilesRoute > mounts the file panel in the panel slot for the opened file and removes it on close (UI-F2.3)
+FileSquid could not read the history size object
+
+ ✓ tests/unit/commands.test.ts (46 tests) 52ms
+ ✓ tests/ui/files-route.test.ts (10 tests) 625ms
+ ✓ tests/unit/host-descriptor.test.ts (43 tests) 25ms
+ ✓ tests/ui/states.test.ts (26 tests) 144ms
+ ✓ tests/unit/versions-model.test.ts (14 tests) 50ms
+ ✓ tests/unit/files-window.test.ts (19 tests) 17ms
+ ✓ tests/unit/admin-client.test.ts (10 tests) 25ms
+ ✓ tests/unit/focus.test.ts (16 tests) 92ms
+ ✓ tests/unit/library-errors.test.ts (15 tests) 15ms
+ ✓ tests/unit/memory-history.test.ts (9 tests) 21ms
+ ✓ tests/unit/test-scripts.test.ts (10 tests | 1 skipped) 634ms
+ ✓ tests/unit/distribution-tables.test.ts (7 tests) 15ms
+ ✓ tests/unit/details-model.test.ts (7 tests) 34ms
+ ✓ tests/unit/navigation-contract.test.ts (30 tests) 47ms
+ ✓ tests/ui/library-route.test.ts (6 tests) 98ms
+ ✓ tests/unit/test-reporting.test.ts (12 tests) 22ms
+ ✓ tests/unit/history-source.test.ts (6 tests) 18ms
+ ✓ tests/unit/host-adapter.test.ts (13 tests) 91ms
+ ✓ tests/unit/client.test.ts (8 tests) 17ms
+ ✓ tests/ui/theme-control.test.ts (8 tests) 95ms
+ ✓ tests/unit/nav-tree-keys.test.ts (8 tests) 19ms
+ ✓ tests/unit/library-model.test.ts (7 tests) 15ms
+ ✓ tests/unit/preferences.test.ts (10 tests) 21ms
+ ✓ tests/ui/breadcrumb.test.ts (6 tests) 71ms
+ ✓ tests/unit/view-state.test.ts (5 tests) 9ms
+ ✓ tests/unit/contrast.test.ts (13 tests) 21ms
+ ✓ tests/unit/host-client.test.ts (4 tests) 13ms
+ ✓ tests/unit/distribution.test.ts (3 tests) 7ms
+ ✓ tests/ui/monitor-route.test.ts (2 tests) 26ms
+ ✓ tests/unit/contract.test.ts (2 tests) 203ms
+
+ Test Files  64 passed (64)
+      Tests  1421 passed | 1 skipped (1422)
+   Start at  01:42:25
+   Duration  27.09s (transform 3.59s, setup 2.40s, import 8.55s, tests 26.98s, environment 31.96s)
+
+JUNIT report written to <repo>/apps/filesquid/ui/tests/allure-results/vitest-junit.xml
+✅ Vitest passed (29s).
+ℹ️  Playwright e2e skipped for apps/filesquid/ui (set FILESQUID_E2E=1 to run).
+ℹ️  Desktop packaged-window e2e skipped (set FILESQUID_DESKTOP_E2E=1 to run).
+✅ Lint and test validation passed (test scope: npm:apps/filesquid/ui).
+========================================
+✅ All Pre-Commit Hooks Passed! Test scope: npm:apps/filesquid/ui (59s)
 ========================================
 ```

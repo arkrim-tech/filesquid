@@ -4,8 +4,10 @@
  * eyebrow, rows of a 13 px muted label over a 13 px value (mono for identifiers, codes and
  * digests) with a copy button, the panel states that replace the rows (loading placeholder rows
  * with a busy line, no match with Clear filter, error with its reason, "Nothing was changed.",
- * the code and Try again), and the footer line. One treatment for every tab: the filter stays
- * in place while a state replaces the rows.
+ * the code and Try again), and the footer line. One treatment for every tab: the filter field
+ * stays in the layout while a state replaces the rows, disabled until rows arrive, and its word
+ * is reset when a load starts (`loading()`) or the file is cleared (`clear()`), so every file's
+ * rows start unfiltered; the word is kept only across `rows(...)` renders of the same load.
  *
  * {@link PropertyTable} builds the DOM once from the label table and the tab's own words and
  * is driven by its host element: `loading()`, `rows(...)`, `error(...)` and `clear()`. Copy is
@@ -234,7 +236,10 @@ export class PropertyTable {
     this.setState("idle");
   }
 
-  /** Show the busy line and placeholder rows; the filter is disabled until rows arrive. */
+  /**
+   * Show the busy line and placeholder rows. The filter is emptied (reset on load) and disabled
+   * until rows arrive, so the rows of this load start unfiltered.
+   */
   loading(): void {
     this.resetFilter();
     this.setState("loading");
@@ -246,14 +251,14 @@ export class PropertyTable {
     this.body.setAttribute("aria-busy", "true");
   }
 
-  /** Show `rows`, filtered by the word in the filter field. */
+  /** Show `rows`, filtered by the word typed since this load started. */
   rows(rows: readonly PropertyRow[]): void {
     this.all = rows.slice(0, MAX_PROPERTY_ROWS);
     this.filter.disabled = false;
     this.render();
   }
 
-  /** Show the error state for a failed read. */
+  /** Show the error state for a failed read; the filter is disabled, and Try again resets it. */
   error(error: unknown): void {
     this.setState("error");
     this.filter.disabled = true;

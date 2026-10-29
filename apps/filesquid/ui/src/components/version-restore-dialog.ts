@@ -12,12 +12,11 @@
  * only on the active tint, the one surface its listed exemption covers (SRS-UI-007, UI-S-015).
  */
 import { formatLabel, type LabelTable } from "../theme/labels";
-import { formatModified, formatSize, isControl, type FileRef } from "../files/model";
+import { formatModified, formatSize, validLabel, type FileRef } from "../files/model";
 import { restoreKeepText, type VersionRow } from "../files/versions";
 import { icon } from "./icons";
 
-/** Longest label the restorations route takes, in UTF-8 bytes. */
-export const MAX_LABEL_BYTES = 512;
+export { MAX_LABEL_BYTES } from "../files/model";
 
 /** What the dialog names. */
 export interface RestoreDialogParams {
@@ -96,8 +95,9 @@ function node<K extends keyof HTMLElementTagNameMap>(
 }
 
 /**
- * Check a typed label as the restorations route does: blank means no label; otherwise 1 to
- * 512 UTF-8 bytes after trimming and no control character. Pure.
+ * Check a typed label as the restorations route does ({@link validLabel}): blank means no
+ * label; otherwise the trimmed text is sent, so it is 1 to 512 UTF-8 bytes after trimming and
+ * has no control character. Pure.
  *
  * @param raw The label as typed.
  * @returns `invalid` when the route would refuse it, otherwise undefined.
@@ -105,8 +105,7 @@ function node<K extends keyof HTMLElementTagNameMap>(
 export function labelProblem(raw: string): "invalid" | undefined {
   const label = raw.trim();
   if (label === "") return undefined;
-  const long = new TextEncoder().encode(label).length > MAX_LABEL_BYTES;
-  return long || Array.from(label).some(isControl) ? "invalid" : undefined;
+  return validLabel(label) ? undefined : "invalid";
 }
 
 /** One line of the change box: the version chip and its words. */

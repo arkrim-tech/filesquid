@@ -62,6 +62,21 @@ describe("MemoryFileSource history reads", () => {
     expect((await s.history(FILE)).entries.at(-1)?.version.label).toBe("Back again");
   });
 
+  it("refuses a restore label the restorations route refuses, before the revision check", async () => {
+    const s = source();
+    await s.remove(OBJECT, "Docs/a.txt", { revision: "v1" });
+    for (const label of ["   ", "a\u0007b", "x".repeat(513)]) {
+      await expect(
+        s.restore(OBJECT, "v1", ["Docs/a.txt"], { revision: "stale", label }),
+      ).rejects.toMatchObject({ code: "invalid_request" });
+    }
+    expect((await s.versions()).head).toBe("v2");
+    const longest = "x".repeat(512);
+    const ok = await s.restore(OBJECT, "v1", ["Docs/a.txt"], { revision: "v2", label: longest });
+    expect(ok.version).toBe("v3");
+    expect((await s.versions()).versions.at(-1)?.label).toBe(longest);
+  });
+
   it("lists no version that only changed the display name, as the API compares content", async () => {
     const s = new MemoryFileSource({
       library_id: "lib",
