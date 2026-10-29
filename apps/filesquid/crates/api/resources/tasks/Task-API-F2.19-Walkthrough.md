@@ -101,7 +101,35 @@ test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 `cargo test -p filesquid-api --locked --test unit_contract --test unit_rebuild_job --test unit_receipts --test features` and `cargo test -p filesquid-desktop --locked --test integration_library_routes`:
 
 ```text
-CARGO_OUTPUT_PLACEHOLDER
+386 scenarios (284 passed, 102 skipped)
+1383 steps (1281 passed, 102 skipped)
+     Running tests/unit/contract.rs (<target>/debug/deps/unit_contract-27eeb267071a4e20)
+running 28 tests
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.48s
+     Running tests/unit/rebuild_job.rs (<target>/debug/deps/unit_rebuild_job-b0ec82f77c97a20c)
+running 16 tests
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+     Running tests/unit/receipts.rs (<target>/debug/deps/unit_receipts-7327fc3f04a01ed5)
+running 4 tests
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test a_cancelled_or_unusable_pick_registers_nothing ... ok
+test create_in_a_chosen_folder_answers_an_opaque_library_and_serves_its_files ... ok
+test the_data_directory_keeps_only_each_library_s_index_never_its_files ... ok
+test a_library_folder_copied_elsewhere_reopens_with_its_collections ... ok
+test the_navigation_lists_the_installations_repository_and_its_libraries ... ok
+test an_opened_folder_feeds_the_history_and_copies_and_rebuilds_without_paths ... ok
+test the_owner_picks_a_folder_in_the_hosts_dialog_and_the_app_sees_only_its_id ... ok
+test the_owners_preferences_are_kept_in_the_operational_store ... ok
+test the_backfill_route_runs_over_the_folders_the_owner_opened ... ok
+test the_owners_consented_repair_is_kept_in_the_persistent_ledger ... ok
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
+```
+
+`cargo test -p filesquid-desktop --features test-webdriver --locked --test features` (the desktop cucumber steps now send the envelope):
+
+```text
+48 scenarios (48 passed)
+206 steps (206 passed)
 ```
 
 `npx vitest run` (in `apps/filesquid/ui`):

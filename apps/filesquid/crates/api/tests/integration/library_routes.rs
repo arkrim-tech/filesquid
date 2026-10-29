@@ -408,7 +408,7 @@ async fn a_copy_into_an_open_library_or_of_an_unknown_library_is_refused() {
     );
     let dest = rig.locations.register("copy");
     let before = failures(&rig).len();
-    let body = copy_body(&LIBRARY, &dest);
+    let body = copy_body(LIBRARY, &dest);
     let answer = rig.post("/api/v1/libraries/snapshot-copies", body).await;
     assert_error(&answer, 404, "not_found");
     assert_one_refusal(&rig, before, COPY_OPERATION, "library_not_open");
@@ -513,7 +513,7 @@ async fn a_rebuild_of_a_library_that_is_not_open_submits_no_job() {
     let rig = LibraryRig::new(Mount::Desktop);
     let before = failures(&rig).len();
     let answer = rig
-        .post("/api/v1/libraries/rebuilds", rebuild_body(&LIBRARY))
+        .post("/api/v1/libraries/rebuilds", rebuild_body(LIBRARY))
         .await;
     assert_error(&answer, 404, "not_found");
     assert_one_refusal(&rig, before, REBUILD_OPERATION, "library_not_open");
@@ -738,7 +738,7 @@ async fn the_routes_answer_unavailable_once_until_the_host_installs_its_commands
         .uri("/api/v1/libraries/rebuilds")
         .header("authorization", format!("Bearer {}", token.secret()))
         .header("content-type", "application/json")
-        .body(axum::body::Body::from(rebuild_body(&LIBRARY).to_string()))
+        .body(axum::body::Body::from(rebuild_body(LIBRARY).to_string()))
         .expect("request");
     let response = tower::ServiceExt::oneshot(filesquid_api::router(state), request)
         .await
