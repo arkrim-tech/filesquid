@@ -10,7 +10,7 @@ Branch `feat/io-1.7-streamed-stage-file`. Module task [IO-1.7](../plan.md) of gl
 |---|---|---|
 | Bounded chunks of at most `MAX_CHUNK_BYTES` (8 MiB), never read whole | the staging area's `put_file` (the path behind `stage_tree`): `hash_file` and `copy_file` read through `ChunkReader` with `MAX_CHUNK_BYTES` | `a_file_larger_than_one_chunk_is_read_in_bounded_chunks`: a 16 MiB + 123 B file, largest read ≤ 8 MiB, exactly 2 × 3 chunk reads |
 | Hashed as it is copied; the sha256 digest answered | `upload_parts` hashes each chunk as it uploads; `stage_file` returns the digest | `stage_file_answers_the_digest_and_stages_the_blob_stage_bytes_would` (same blob and same index as `stage_bytes`) |
-| Bounded memory: no whole-file buffer | chunk reads of at most `MAX_CHUNK_BYTES` and multipart parts of at most `MAX_PART_BYTES`, one of each in memory at a time; only the upload's per-part completion records (one small entry per part, at most `MAX_PARTS`) grow with the file | the bounded-read test above |
+| Bounded buffering: no whole-file buffer in the stage | chunk reads of at most `MAX_CHUNK_BYTES` and multipart parts of at most `MAX_PART_BYTES`, one of each in memory at a time; only the upload's per-part completion records (one small entry per part, at most `MAX_PARTS`) grow with the file. The staged blob itself lives in the staging backend: on disk or remote for `FsBackend` and remote stores, in memory for `MemoryBackend` (which keeps every part until the upload completes) | the bounded-read test above |
 | Manifest bytes not copied (OCFL-S-014) | `known` (the manifest digests) checked after the hashing read | `a_file_whose_digest_the_manifest_holds_is_not_copied`: no blob write, one read pass, no new content on commit |
 | A held blob re-hashed; reused when it matches | `holds_blob` re-hashes the blob | `a_blob_the_staging_area_holds_is_not_copied_again`: no blob write, one read pass |
 | A corrupt or stale blob replaced before the index points at it | `holds_blob` reports a mismatch as absent and the copy replaces it; the index is saved after | `a_corrupt_or_stale_staged_blob_is_replaced_with_the_source_bytes`: one blob write, the blob and the committed content hold the source bytes |
@@ -34,7 +34,7 @@ The stage-bytes comparison test shows the same staging index and blob for `stage
 
 ## SRS-NFR-003: Bounded processing and migration endurance
 
-The bytes the stage holds in memory are bounded whatever the file's size: chunk reads of at most 8 MiB and multipart parts of at most 64 MiB, one of each at a time. Only the upload's per-part completion records (one small entry per part of up to 64 MiB, at most 10,000 parts) grow with the file.
+The stage's own buffering is bounded whatever the file's size: chunk reads of at most 8 MiB and multipart parts of at most 64 MiB, one of each at a time, and only the upload's per-part completion records (one small entry per part of up to 64 MiB, at most 10,000 parts) grow with the file. The staging backend then holds the staged blob as its storage: on `FsBackend` or a remote store it is on disk or remote, while `MemoryBackend` is in-memory storage and keeps every uploaded part until the upload completes, so a staging area on `MemoryBackend` holds the whole staged file in memory by design. A host stages large files on `FsBackend` or a remote store.
 
 ## BDD
 

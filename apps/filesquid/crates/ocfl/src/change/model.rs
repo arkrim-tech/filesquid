@@ -152,10 +152,14 @@ where
     /// most [`MAX_CHUNK_BYTES`](crate::storage::MAX_CHUNK_BYTES) once to
     /// hash it, and, only when its bytes are new, once more to copy it into
     /// the staging area while hashing again, in multipart parts of at most
-    /// [`MAX_PART_BYTES`](crate::storage::MAX_PART_BYTES). The bytes held
-    /// in memory are bounded (one chunk and one part at a time); only the
-    /// upload's per-part completion records, one small entry per part up
-    /// to [`MAX_PARTS`](crate::storage::MAX_PARTS), grow with the file.
+    /// [`MAX_PART_BYTES`](crate::storage::MAX_PART_BYTES). The stage's own
+    /// buffering is bounded (one chunk and one part in memory at a time);
+    /// only the upload's per-part completion records, one small entry per
+    /// part up to [`MAX_PARTS`](crate::storage::MAX_PARTS), grow with the
+    /// file. The staged blob lives in the staging backend: a staging area
+    /// on [`MemoryBackend`](crate::storage::MemoryBackend), in-memory
+    /// storage by design, holds the whole staged file in memory, so large
+    /// files are staged on `FsBackend` or a remote store.
     /// Bytes the object's `manifest` holds are not copied
     /// (OCFL-S-014); a blob the staging area holds under the digest is
     /// re-hashed and reused when it matches, and replaced with the file's
