@@ -4,8 +4,8 @@ Branch `feat/api-f2.19-library-envelopes`, module `filesquid-api` ([plan row](..
 
 ## Traceability
 
-- PRD [F-056](../../../../../resources/prd.md#f-056-single-filesquid-api), SRS [SRS-F-056](../../../../../resources/srs.md#srs-f-056-single-filesquid-api)
-- [API-S-002](../srs.md), [API-S-019](../srs.md), [API-S-025](../srs.md), [API-S-034](../srs.md), [API-S-038](../srs.md), [UI-S-012](../../../../ui/resources/srs.md), [CORE-S-005](../../../core/resources/srs.md), [ADR 030](../../../../../resources/architecture/030-filesquid-api-and-transports.md)
+- PRD [F-056](../../../../../../resources/prd.md#f-056-single-filesquid-api), SRS [SRS-F-056](../../../../../../resources/srs.md#srs-f-056-single-filesquid-api)
+- [API-S-002](../srs.md), [API-S-019](../srs.md), [API-S-025](../srs.md), [API-S-034](../srs.md), [API-S-038](../srs.md), [UI-S-012](../../../../ui/resources/srs.md), [CORE-S-005](../../../core/resources/srs.md), [ADR 030](../../../../../../resources/architecture/030-filesquid-api-and-transports.md)
 - Features: [`library_and_repair_routes_API-S-025.feature`](../../tests/features/library_and_repair_routes_API-S-025.feature), a new `library_command_envelopes_API-S-002.feature`, [`versioned_api_contract_F-056.feature`](../../tests/features/versioned_api_contract_F-056.feature), [`host_adapter_UI-S-012.feature`](../../../../ui/tests/features/host_adapter_UI-S-012.feature)
 
 ## Granular constraints (verbatim or near-verbatim from the SRS and the plan row)
