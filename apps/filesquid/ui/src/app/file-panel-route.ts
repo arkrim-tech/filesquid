@@ -1,17 +1,20 @@
 /**
- * The file panel of the files route (UI-F2.3, UI-S-031): composes `<fs-file-panel>` with the
- * Details panel as its File info tab and the Versions view behind its history button, puts it
- * in the shell's `panel` slot while a file is open in the browser, and reloads the browser's
- * listing after a panel commits a version (a restore). The panels read and write only through
- * the file source and the history source (UI-S-012, ADR 030).
+ * The file panel of the files route (UI-F2.3, UI-F2.4, UI-S-031): composes `<fs-file-panel>`
+ * with the Details panel as its File info tab, the Metadata panel as its Description tab (when
+ * a metadata source is given) and the Versions view behind its history button, puts it in the
+ * shell's `panel` slot while a file is open in the browser, and reloads the browser's listing
+ * after a panel commits a version (a restore, or a metadata edit). The panels read and write
+ * only through the file source, the history source and the metadata source (UI-S-012, ADR 030).
  */
 import type { FsDetailsPanel } from "../components/fs-details-panel";
+import type { FsMetadataPanel } from "../components/fs-metadata-panel";
 import type { FsFileBrowser } from "../components/fs-file-browser";
 import { FILE_PANEL_CLOSE_EVENT, type FsFilePanel } from "../components/fs-file-panel";
 import type { FsVersionsPanel, VersionsSource } from "../components/fs-versions-panel";
 import type { FileRef } from "../files/model";
 import type { FileSource } from "../files/source";
 import type { HistorySource } from "../files/history-source";
+import type { MetadataSource } from "../files/metadata-source";
 import type { LabelTable } from "../theme/labels";
 
 /** What the file panel needs: the labels, the file source and the history source. */
@@ -22,6 +25,8 @@ export interface FilePanelRouteOptions {
   readonly source: FileSource;
   /** Reads histories, versions and history sizes. */
   readonly history: HistorySource;
+  /** Reads and writes statements; without it the panel has no Description tab. */
+  readonly metadata?: MetadataSource;
 }
 
 /** The tag of the file panel the route mounts. */
@@ -47,7 +52,7 @@ export function panelSource(
   };
 }
 
-/** Build the file panel with its File info tab and Versions view. */
+/** Build the file panel with its File info and Description tabs and Versions view. */
 function createPanel(options: FilePanelRouteOptions): FsFilePanel {
   const { labels } = options;
   const source = panelSource(options.source, options.history);
@@ -59,6 +64,14 @@ function createPanel(options: FilePanelRouteOptions): FsFilePanel {
     details.configure({ labels, source });
     return details;
   });
+  const metadata = options.metadata;
+  if (metadata) {
+    panel.registerTab("description", labels.filePanelDescription, () => {
+      const description = document.createElement("fs-metadata-panel") as FsMetadataPanel;
+      description.configure({ labels, source: metadata });
+      return description;
+    });
+  }
   panel.setVersions(() => {
     const versions = document.createElement("fs-versions-panel") as FsVersionsPanel;
     versions.configure({ labels, source });

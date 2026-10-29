@@ -25,6 +25,7 @@ export const COLOURS = {
     onPrimary: "#ffffff",
     error: "#e53935",
     focus: "#0f8a39",
+    icon: "#111111",
   },
   dark: {
     surface: "#141414",
@@ -44,6 +45,7 @@ export const COLOURS = {
     onPrimary: "#ffffff",
     error: "#ef5350",
     focus: "#16ac49",
+    icon: "#a0a0a0",
   },
 } as const;
 

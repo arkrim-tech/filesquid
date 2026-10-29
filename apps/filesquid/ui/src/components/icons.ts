@@ -37,7 +37,8 @@ export type IconName =
   | "copy"
   | "refresh"
   | "chevron-back"
-  | "more-vertical";
+  | "more-vertical"
+  | "edit";
 
 /** The path data of each icon on the 24-unit grid. */
 const PATHS: Readonly<Record<IconName, string>> = {
@@ -73,6 +74,7 @@ const PATHS: Readonly<Record<IconName, string>> = {
   refresh: "M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7",
   "chevron-back": "M15 6l-6 6 6 6",
   "more-vertical": "M12 5h.01M12 12h.01M12 19h.01",
+  edit: "M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z",
 };
 
 /** Default size of an icon in CSS pixels. */
