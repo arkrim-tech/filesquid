@@ -141,6 +141,8 @@ export const MAX_LISTING_PAGES = 500;
 export const MAX_NAME_BYTES = 255;
 /** Longest display name the renames route takes, in UTF-8 bytes (API-S-027). */
 export const MAX_DISPLAY_NAME_BYTES = 1024;
+/** Longest version label the restorations and labels routes take, in UTF-8 bytes (API-F2.5). */
+export const MAX_LABEL_BYTES = 512;
 /** Rows kept in the DOM above and below the visible ones. */
 export const OVERSCAN_ROWS = 5;
 /** Height of a list row, in rem (so the window follows the text size). */
@@ -279,6 +281,18 @@ export type NameProblem = "empty" | "separator" | "reserved" | "control" | "long
 export function isControl(character: string): boolean {
   const code = character.codePointAt(0) ?? 0;
   return code < 0x20 || (code >= 0x7f && code <= 0x9f);
+}
+
+/**
+ * Whether a version label is one the restorations and labels routes take (API-F2.5): 1 to
+ * {@link MAX_LABEL_BYTES} UTF-8 bytes as given, not blank, and no control character. Pure.
+ *
+ * @param label The label as sent.
+ */
+export function validLabel(label: string): boolean {
+  const bytes = new TextEncoder().encode(label).length;
+  const sized = bytes > 0 && bytes <= MAX_LABEL_BYTES;
+  return sized && label.trim() !== "" && !Array.from(label).some(isControl);
 }
 
 /**

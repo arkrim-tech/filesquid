@@ -287,6 +287,37 @@ describe("<fs-app-shell>", () => {
     expect(panel?.hidden).toBe(true);
   });
 
+  it("puts the file panel region under the header, beside the main column and the footer (35, 26)", async () => {
+    const shell = mount();
+    await settle();
+    const root = shell.shadowRoot as ShadowRoot;
+    const content = root.querySelector(".content") as HTMLElement;
+    expect(
+      [...content.children].map((el) => el.tagName.toLowerCase() + "." + el.className),
+    ).toEqual(["header.", "div.body"]);
+    const body = content.querySelector(".body") as HTMLElement;
+    expect([...body.children].map((el) => el.className)).toEqual(["column", "panel"]);
+    expect([...(body.querySelector(".column")?.children ?? [])].map((el) => el.tagName)).toEqual([
+      "MAIN",
+      "FOOTER",
+    ]);
+    expect(styleOf(shell)).toMatch(/:host \{[^}]*grid-template-columns: auto minmax\(0, 1fr\);/);
+    // Beside, not below: the body is a row above 40rem and a column only below it; the
+    // production-build geometry is asserted in tests/e2e/preview/file-panel.spec.ts.
+    const css = styleOf(shell);
+    const desktop = css.slice(0, css.indexOf("@media (max-width: 40rem)"));
+    expect(desktop).toMatch(/\.body \{ display: flex;[^}]*\}/);
+    expect(desktop).not.toMatch(/\.body \{[^}]*flex-direction: column/);
+    expect(css.slice(css.indexOf("@media (max-width: 40rem)"))).toMatch(
+      /\.body \{ flex-direction: column; \}/,
+    );
+    const slotted = document.createElement("div");
+    slotted.slot = "panel";
+    shell.append(slotted);
+    root.querySelector('slot[name="panel"]')?.dispatchEvent(new Event("slotchange"));
+    expect((body.querySelector("aside.panel") as HTMLElement).hidden).toBe(false);
+  });
+
   it("hides the sidebar, header and footer in frameless mode, for the welcome screen (UI-S-027)", async () => {
     const shell = mount();
     await settle();

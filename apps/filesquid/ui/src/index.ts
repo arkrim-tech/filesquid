@@ -6,6 +6,9 @@ import { FsAppShell } from "./components/fs-app-shell";
 import { FsBreadcrumb } from "./components/fs-breadcrumb";
 import { FsFileBrowser } from "./components/fs-file-browser";
 import { FsFilePreview } from "./components/fs-file-preview";
+import { FsDetailsPanel } from "./components/fs-details-panel";
+import { FsFilePanel } from "./components/fs-file-panel";
+import { FsVersionsPanel } from "./components/fs-versions-panel";
 import { FsHostIndicator } from "./components/fs-host-indicator";
 import { FsLibraryDetail } from "./components/fs-library-detail";
 import { FsLibraryRepair } from "./components/fs-library-repair";
@@ -61,6 +64,43 @@ export {
   type FilePanel,
   type PanelFactory,
 } from "./components/fs-file-browser";
+export {
+  FsDetailsPanel,
+  type DetailsPanelOptions,
+  type DetailsSource,
+} from "./components/fs-details-panel";
+export {
+  FILE_PANEL_CLOSE_EVENT,
+  FsFilePanel,
+  type FilePanelOptions,
+} from "./components/fs-file-panel";
+export {
+  FsVersionsPanel,
+  VERSIONS_CLOSE_EVENT,
+  type VersionsPanelOptions,
+  type VersionsSource,
+} from "./components/fs-versions-panel";
+export {
+  MAX_PROPERTY_ROWS,
+  PROPERTY_TABLE_STYLE,
+  PropertyTable,
+  type PropertyTableOptions,
+  type PropertyTableState,
+} from "./components/property-table";
+export { MAX_LABEL_BYTES, labelProblem } from "./components/version-restore-dialog";
+export {
+  ClientHistorySource,
+  type FileHistory,
+  type FileHistoryEntry,
+  type FileHistorySize,
+  type HistoryClient,
+  type HistorySource,
+  type ObjectVersions,
+  type VersionRecord,
+} from "./files/history-source";
+export * from "./files/versions";
+export * from "./files/details";
+export { bindFilePanel, panelSource, type FilePanelRouteOptions } from "./app/file-panel-route";
 export type { FileLayout } from "./components/file-list";
 export type { WriteOperation } from "./components/file-browser-writes";
 export * from "./files/model";
@@ -68,6 +108,7 @@ export {
   ClientFileSource,
   type FileClient,
   type FileSource,
+  type RestoreOptions,
   type SourceOptions,
 } from "./files/source";
 export { MemoryFileSource, type MemoryFile, type MemoryOptions } from "./files/memory-source";
@@ -244,6 +285,13 @@ export function defineElements(): void {
   if (!customElements.get("fs-file-browser")) {
     customElements.define("fs-file-browser", FsFileBrowser);
   }
+  if (!customElements.get("fs-details-panel")) {
+    customElements.define("fs-details-panel", FsDetailsPanel);
+  }
+  if (!customElements.get("fs-versions-panel")) {
+    customElements.define("fs-versions-panel", FsVersionsPanel);
+  }
+  if (!customElements.get("fs-file-panel")) customElements.define("fs-file-panel", FsFilePanel);
   if (!customElements.get("fs-host-indicator")) {
     customElements.define("fs-host-indicator", FsHostIndicator);
   }

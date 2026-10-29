@@ -477,10 +477,20 @@ export class FsFileBrowser extends HTMLElement {
     this.showState(failureState(error, online));
   }
 
-  /** Reload the listing, keeping the number of entries already shown. */
-  private async reload(): Promise<void> {
-    await this.loadFolder(this.entries.length);
-    this.refreshViewer();
+  /**
+   * Read the listing again, keeping the number of entries already shown, and point an open
+   * viewer at the file's new head version (closing it when the file is gone). The files route
+   * calls it after a panel commits a version, for example a restore. Network I/O via the source.
+   *
+   * @returns Resolves once the listing and the viewer show the new answer.
+   */
+  async reload(): Promise<void> {
+    const load = this.loadFolder(this.entries.length);
+    // loadFolder counts its generation before its first await: only the newest read refreshes
+    // the viewer, so an older reload cannot point it at stale rows after a newer one started.
+    const generation = this.generation;
+    await load;
+    if (generation === this.generation) this.refreshViewer();
   }
 
   /** Set the breadcrumb to the root and the folders down to the current one. */

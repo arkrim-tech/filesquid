@@ -34,14 +34,20 @@ export function isNavigationUnavailable(text: string, url: string): boolean {
  * {@link isNavigationUnavailable}).
  *
  * @param page - The page to observe.
- * @param tolerate - Console lines to ignore, for a deliberately refused call. Page errors are
- *   never tolerated.
+ * @param tolerate - Console lines to ignore, for a deliberately refused call: a pattern of the
+ *   text, or a predicate of the text and the URL the line is attributed to (to excuse one
+ *   route's refusal only). Page errors are never tolerated.
  * @returns The live list; assert it equals `[]` at the end of the test.
  */
-export function trackErrors(page: Page, tolerate?: RegExp): string[] {
+export function trackErrors(
+  page: Page,
+  tolerate?: RegExp | ((text: string, url: string) => boolean),
+): string[] {
   const errors: string[] = [];
+  const excused = (text: string, url: string) =>
+    typeof tolerate === "function" ? tolerate(text, url) : (tolerate?.test(text) ?? false);
   page.on("console", (msg) => {
-    if (msg.type() !== "error" || tolerate?.test(msg.text())) return;
+    if (msg.type() !== "error" || excused(msg.text(), msg.location().url)) return;
     if (isNavigationUnavailable(msg.text(), msg.location().url)) return;
     errors.push(msg.text());
   });
