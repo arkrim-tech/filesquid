@@ -61,7 +61,7 @@ No API route, field or event was assumed or stubbed.
 1. Tests first: the unit and UI tests of the models, the history source, the three elements, the route and the shell ran red before the implementation (below), then green. The history reads of `MemoryFileSource` and the file-route fake were added when the first full Playwright run showed the existing browser specs logging 404s for `files/versions`; their unit tests (`tests/unit/memory-history.test.ts`) were written with that change.
 2. `npx prettier --write .`, `npx eslint . --fix`, `npx tsc --noEmit` in `apps/filesquid/ui` and `apps/imagesquid`: clean.
 3. `npm test` in both packages.
-4. Round 2 (after merging main): the two label tests ran red, then green; `npx prettier --write .`, `npx eslint .`, `npx tsc --noEmit` and `npm test` in `apps/filesquid/ui` are clean; the production-build Playwright suite (`vite build` plus `vite preview`) ran through the same kind of temporary config, deleted before committing; the ordinary hook passed (`Test scope: npm:apps/filesquid/ui`). ImageSquid's own suite is not run by the hook during the MVP (owner decision 2026-10-23) and nothing in `apps/imagesquid` changed in this round.
+4. Round 2 (after merging main): the three label test cases in `files-model.test.ts` and `memory-history.test.ts` ran red, then green; `npx prettier --write .`, `npx eslint .`, `npx tsc --noEmit` and `npm test` in `apps/filesquid/ui` are clean; the production-build Playwright suite (`vite build` plus `vite preview`) ran through the same kind of temporary config, deleted before committing; the ordinary hook passed (`Test scope: npm:apps/filesquid/ui`). ImageSquid's own suite is not run by the hook during the MVP (owner decision 2026-10-23) and nothing in `apps/imagesquid` changed in this round.
 5. Playwright, both suites of both packages. The installed Playwright expects a newer Chromium than this machine has, so the suites ran through temporary configs that point `executablePath` at the machine's preinstalled Chromium; the server-backed suites used the already-built `filesquid-server` binary instead of `cargo run`, so no Rust build ran (npm-only scope). The configs were deleted before committing. The clock of the file panel spec is fixed with `page.clock`. No mocked environment values were used.
 
 ## Raw test output
@@ -439,7 +439,7 @@ Running 9 tests using 1 worker
 
 ## Raw test output (Cubic round 2, after merging main)
 
-### Red run (the two label tests before the fix)
+### Red run (the three label test cases before the fix)
 
 ```text
 
