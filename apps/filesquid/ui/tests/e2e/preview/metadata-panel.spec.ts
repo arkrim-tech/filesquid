@@ -376,6 +376,61 @@ for (const scheme of SCHEMES) {
       expect(errors).toEqual([]);
     });
 
+    test("edit and remove (28): one PUT, one POST, the rows and the announcements", async ({
+      page,
+    }) => {
+      const errors = trackErrors(page);
+      const api = await openDescription(page);
+      const description = page.locator("fs-metadata-panel");
+      const subject = description.locator('.row[data-key="dcterms:subject"]');
+      await subject.hover();
+      await subject.locator("button.edit").click();
+      const dialog = description.locator('[role="dialog"]');
+      await expect(dialog.locator(".dialog-title")).toHaveText(
+        fill("metadataEditTitle", { property: "dcterms:subject" }),
+      );
+      await expect(dialog.locator("input.search")).toHaveCount(0);
+      const value = dialog.locator("input.value-input");
+      await expect(value).toBeFocused();
+      await expect(value).toHaveValue("harbour · facade · restoration");
+      await expect(dialog.locator("button.confirm")).toHaveText(label(labels, "fileSave"));
+      await value.fill("harbour · facade · restoration · 2026");
+      await dialog.locator("button.confirm").click();
+      await expect(dialog).toHaveCount(0);
+      expect(api.sets).toEqual([
+        {
+          library_id: "lib",
+          file_id: "7f3c9a1e-0b2c-4d5e-8f90-a1b2c341d2b8",
+          curie: "dcterms:subject",
+          value: "harbour · facade · restoration · 2026",
+        },
+      ]);
+      await expect(description.locator(".announce").first()).toHaveText(
+        fill("metadataSet", { property: "dcterms:subject", version: "v5" }),
+      );
+      await expect(subject.locator(".value")).toHaveText("harbour · facade · restoration · 2026");
+      await expect(subject.locator("button.edit")).toBeFocused();
+
+      const year = description.locator('.row[data-key="schema:copyrightYear"]');
+      await year.hover();
+      await year.locator("button.remove").click();
+      await expect(description.locator(".announce").first()).toHaveText(
+        fill("metadataRemoved", { property: "schema:copyrightYear", version: "v6" }),
+      );
+      expect(api.removals).toEqual([
+        {
+          library_id: "lib",
+          file_id: "7f3c9a1e-0b2c-4d5e-8f90-a1b2c341d2b8",
+          curie: "schema:copyrightYear",
+        },
+      ]);
+      await expect(description.locator(".row")).toHaveCount(7);
+      await expect(year).toHaveCount(0);
+      await expect(description.locator(".count")).toHaveText(fill("metadataCount", { count: "7" }));
+      await expect(description.locator(".body > button.add")).toBeFocused();
+      expect(errors).toEqual([]);
+    });
+
     test("panel states (25): empty, loading, no match and error keep the header, tabs and filter", async ({
       page,
     }) => {

@@ -111,13 +111,29 @@ Feature: Media metadata inspection, correction and privacy exports
     Then the dialog should stay open and show why
     And nothing should be changed
 
-  Scenario: The Description tab has empty, loading, no-match and error states
+  Scenario: The Description tab of a file without descriptive statements is empty
     Given a file whose record holds no descriptive statement
     When I open its Description tab
     Then I should see "No description yet" with a hint and Add property
-    And while statements load I should see placeholder rows
-    And a filter word that matches nothing should offer Clear filter
-    And a failed read should show the reason, "Nothing was changed." and Try again
+    And the count should read "0 properties"
+
+  Scenario: The Description tab shows placeholder rows while statements load
+    Given a file whose statements have not yet been answered
+    When I open its Description tab
+    Then I should see placeholder rows and "Loading description…"
+    And the filter should be disabled until the rows arrive
+
+  Scenario: A filter word that matches no property offers Clear filter
+    Given the Description tab lists a file's statements
+    When I filter with a word that matches no property or value
+    Then I should see that no properties match the word
+    And Clear filter should show every row again
+
+  Scenario: A failed statements read shows the reason and Try again
+    Given the statements read fails
+    When I open the file's Description tab
+    Then I should see "Could not load the description" with the reason, "Nothing was changed." and the code
+    And Try again should read the statements again
 
   # Source
   # - srs.md SRS-F-046

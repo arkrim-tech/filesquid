@@ -39,8 +39,10 @@ export const TECHNICAL_PREFIXES: readonly string[] = ["exif"];
 export const MAX_STATEMENT_ROWS = 500;
 /** Longest statement value the set route takes, in UTF-8 bytes (API-S-035). */
 export const MAX_STATEMENT_VALUE_BYTES = 65_536;
-/** Longest term name the terms route takes, in UTF-8 bytes. */
+/** Longest bare name the terms route looks up, in UTF-8 bytes (its `name` query). */
 export const MAX_TERM_NAME_BYTES = 128;
+/** Longest term of a statement the set route takes, in UTF-8 bytes (the module's `valid_term`). */
+export const MAX_STATEMENT_TERM_BYTES = 255;
 /** Most `/terms/` names the dialog's search lists. */
 export const MAX_TERM_MATCHES = 8;
 
@@ -114,14 +116,26 @@ function byteLength(text: string): number {
 }
 
 /**
- * Whether `name` is a bare term name the routes accept (API-S-035): letters, digits, `_`,
- * `-` and `.`, starting with a letter or `_`, 1 to 128 UTF-8 bytes. Pure.
+ * Whether `name` is a bare term name the terms route looks up (API-S-035): letters, digits,
+ * `_`, `-` and `.`, starting with a letter or `_`, 1 to 128 UTF-8 bytes. Pure.
  *
  * @param name The candidate.
- * @returns True when the API would take it.
+ * @returns True when the terms route would take it.
  */
 export function validTermName(name: string): boolean {
   return TERM_NAME.test(name) && byteLength(name) <= MAX_TERM_NAME_BYTES;
+}
+
+/**
+ * Whether `term` is a term the set route accepts in a statement: the same characters, 1 to
+ * 255 UTF-8 bytes (the metadata module's `valid_term`), so a custom key may be longer than a
+ * name the terms route looks up. Pure.
+ *
+ * @param term The candidate.
+ * @returns True when the set route would take it.
+ */
+export function validStatementTerm(term: string): boolean {
+  return TERM_NAME.test(term) && byteLength(term) <= MAX_STATEMENT_TERM_BYTES;
 }
 
 /** One row of the Description tab: a property row that knows its statement. */
@@ -291,7 +305,7 @@ export function customKeyProblem(
   if (colon <= 0) return "format";
   const prefix = text.slice(0, colon);
   const name = text.slice(colon + 1);
-  if (!validTermName(name)) return "format";
+  if (!validStatementTerm(name)) return "format";
   const custom = customNamespaces(namespaces).some((namespace) => namespace.prefix === prefix);
   return custom ? undefined : "prefix";
 }
@@ -309,14 +323,30 @@ export function dctermsDescription(term: string, labels: LabelTable): string | u
   return Object.hasOwn(labels, key) ? labels[key] : undefined;
 }
 
+/** The prefixes the eyebrow "Dublin Core and Schema.org" names; any other row extends it. */
+const CORE_PREFIXES: readonly string[] = ["dcterms", "schema"];
+
 /**
- * The count eyebrow of the Description tab: "Dublin Core and Schema.org · {count}", "… ·
- * {shown} of {count}" under a filter, or "0 properties" for an empty record. Pure.
+ * Whether any row carries a registered extension or custom prefix, so the count eyebrow
+ * names extensions too. Pure.
+ *
+ * @param rows The rows shown.
+ * @returns True when a row's prefix is neither `dcterms` nor `schema`.
+ */
+export function hasExtensionRows(rows: readonly MetadataRow[]): boolean {
+  return rows.some((row) => !CORE_PREFIXES.includes(row.prefix));
+}
+
+/**
+ * The count eyebrow of the Description tab: "Dublin Core and Schema.org · {count}" ("Dublin
+ * Core, Schema.org and extensions · {count}" when a registered or custom row is listed),
+ * "… · {shown} of {count}" under a filter, or "0 properties" for an empty record. Pure.
  *
  * @param labels The active label table.
  * @param shown The rows that match the filter.
  * @param total Every row.
  * @param locale BCP 47 tag for numbers.
+ * @param extended True when a registered or custom row is listed.
  * @returns The eyebrow text.
  */
 export function metadataCountText(
@@ -324,12 +354,12 @@ export function metadataCountText(
   shown: number,
   total: number,
   locale?: string,
+  extended = false,
 ): string {
   if (total === 0) return labels.metadataCountEmpty;
   const number = (n: number) => new Intl.NumberFormat(locale).format(n);
-  if (shown === total) return formatLabel(labels.metadataCount, { count: number(total) });
-  return formatLabel(labels.metadataCountFiltered, {
-    shown: number(shown),
-    count: number(total),
-  });
+  const all = extended ? labels.metadataCountExtended : labels.metadataCount;
+  const some = extended ? labels.metadataCountExtendedFiltered : labels.metadataCountFiltered;
+  if (shown === total) return formatLabel(all, { count: number(total) });
+  return formatLabel(some, { shown: number(shown), count: number(total) });
 }

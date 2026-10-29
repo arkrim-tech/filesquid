@@ -48,6 +48,7 @@ import {
   customNamespaces,
   dctermsDescription,
   groupCandidates,
+  hasExtensionRows,
   matchingTerms,
   metadataCountText,
   statementRows,
@@ -136,9 +137,9 @@ function markSelected(dialog: OpenDialog, curie: string | undefined): void {
   }
 }
 
-/** The Add property button below the rows. */
+/** The Add property button: below the rows, or in the empty state once the last row is gone. */
 function addButtonOf(root: ShadowRoot): HTMLElement | null {
-  return root.querySelector<HTMLElement>(".body > button.add");
+  return root.querySelector<HTMLElement>(".body button.add");
 }
 
 /** The edit button of the row keyed by `curie`, once the rows show again. */
@@ -215,7 +216,8 @@ export class FsMetadataPanel extends HTMLElement {
       filterPlaceholder: labels.metadataFilter,
       loadingText: labels.metadataLoading,
       errorTitle: labels.metadataError,
-      countText: (shown, total) => metadataCountText(labels, shown, total, locale()),
+      countText: (shown, total) =>
+        metadataCountText(labels, shown, total, locale(), hasExtensionRows(this.rows)),
       noMatchTitle: (word) => formatLabel(labels.metadataNoMatch, { word }),
       onRetry: () => void this.load(),
       online: options.online,
@@ -281,7 +283,7 @@ export class FsMetadataPanel extends HTMLElement {
     remove.type = "button";
     remove.setAttribute("aria-label", formatLabel(labels.metadataRemove, { property: row.curie }));
     remove.append(icon("trash", 16));
-    remove.addEventListener("click", () => void this.removeRow(row));
+    remove.addEventListener("click", () => void this.removeRow(row, [edit, remove]));
     return [edit, remove];
   }
 
@@ -308,10 +310,14 @@ export class FsMetadataPanel extends HTMLElement {
     return state;
   }
 
-  /** Remove an owner value in one call, then announce it and list the new version. */
-  private async removeRow(row: MetadataRow): Promise<void> {
+  /**
+   * Remove an owner value in one call, then announce it and list the new version. The row's
+   * actions are disabled while the call runs, so it cannot be sent twice.
+   */
+  private async removeRow(row: MetadataRow, actions: readonly HTMLButtonElement[]): Promise<void> {
     const { options, file } = this;
     if (!options || !file) return;
+    for (const action of actions) action.disabled = true;
     try {
       const commit = await options.source.removeStatement(file, row.curie);
       this.afterCommit(METADATA_OPERATIONS.remove, file, commit, {
@@ -324,6 +330,7 @@ export class FsMetadataPanel extends HTMLElement {
     } catch (error) {
       console.warn("FileSquid could not remove a statement", errorKind(error));
       this.announce(refusalText(error, options.labels));
+      for (const action of actions) action.disabled = false;
     }
   }
 
@@ -335,8 +342,9 @@ export class FsMetadataPanel extends HTMLElement {
   }
 
   /**
-   * A write committed: tell the page, announce it, read the statements of the new version
-   * and move focus to `focus` once they show.
+   * A write committed: tell the page and announce it; then, unless the panel moved on to
+   * another file meanwhile (the page's navigation wins), read the statements of the new
+   * version and move focus to `focus` once they show.
    */
   private afterCommit(
     operation: string,
@@ -352,6 +360,7 @@ export class FsMetadataPanel extends HTMLElement {
       }),
     );
     this.announce(after.words);
+    if (!sameRef(this.file, file)) return;
     this.file = { ...file, version: commit.version };
     void this.load().then(() => {
       const target = this.shadowRoot ? after.focus(this.shadowRoot) : null;
@@ -483,7 +492,10 @@ export class FsMetadataPanel extends HTMLElement {
     if (!dialog || !button || !this.options) return;
     const curie = button.dataset.curie as string;
     dialog.selected = curie;
-    if (dialog.parts.customInput) dialog.parts.customInput.value = "";
+    if (dialog.parts.customInput) {
+      dialog.parts.customInput.value = "";
+      dialog.parts.customInput.removeAttribute("aria-invalid");
+    }
     dialog.parts.error.textContent = "";
     markSelected(dialog, curie);
     chooseProperty(dialog.parts, this.options.labels, curie);

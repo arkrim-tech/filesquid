@@ -10,6 +10,7 @@ import {
   DCTERMS_FILE_TERMS,
   MAX_STATEMENT_ROWS,
   MAX_STATEMENT_VALUE_BYTES,
+  MAX_STATEMENT_TERM_BYTES,
   MAX_TERM_MATCHES,
   TECHNICAL_PREFIXES,
   customKeyProblem,
@@ -17,9 +18,11 @@ import {
   dctermsDescription,
   descriptiveStatements,
   groupCandidates,
+  hasExtensionRows,
   matchingTerms,
   metadataCountText,
   statementRows,
+  validStatementTerm,
   validTermName,
   valueProblem,
 } from "../../src/files/metadata";
@@ -199,6 +202,18 @@ describe("the checks the dialog applies before sending", () => {
     expect(customKeyProblem("other:berth", registry)).toBe("prefix");
     expect(customNamespaces(registry)).toEqual([CUSTOM]);
   });
+
+  it("a custom key may be as long as the set route allows a term, 255 bytes, beyond the lookup's 128", () => {
+    expect(MAX_STATEMENT_TERM_BYTES).toBe(255);
+    const long = "k".repeat(200);
+    expect(validTermName(long)).toBe(false);
+    expect(validStatementTerm(long)).toBe(true);
+    expect(validStatementTerm("k".repeat(255))).toBe(true);
+    expect(validStatementTerm("k".repeat(256))).toBe(false);
+    expect(validStatementTerm("1k")).toBe(false);
+    expect(customKeyProblem(`harbour:${long}`, [CUSTOM])).toBeUndefined();
+    expect(customKeyProblem(`harbour:${"k".repeat(256)}`, [CUSTOM])).toBe("format");
+  });
 });
 
 describe("metadataCountText", () => {
@@ -206,5 +221,24 @@ describe("metadataCountText", () => {
     expect(metadataCountText(labels, 8, 8, "en")).toBe("Dublin Core and Schema.org · 8");
     expect(metadataCountText(labels, 2, 8, "en")).toBe("Dublin Core and Schema.org · 2 of 8");
     expect(metadataCountText(labels, 0, 0, "en")).toBe(labels.metadataCountEmpty);
+  });
+
+  it("names extensions when a registered or custom row is listed", () => {
+    const rows = statementRows(metadataStatements());
+    expect(hasExtensionRows(rows)).toBe(false);
+    const rico = {
+      curie: "rico:title",
+      prefix: "rico",
+      term: "title",
+      value: "x",
+      source: "asserted" as const,
+    };
+    expect(hasExtensionRows(statementRows([...metadataStatements(), rico]))).toBe(true);
+    expect(metadataCountText(labels, 9, 9, "en", true)).toBe(
+      "Dublin Core, Schema.org and extensions · 9",
+    );
+    expect(metadataCountText(labels, 1, 9, "en", true)).toBe(
+      "Dublin Core, Schema.org and extensions · 1 of 9",
+    );
   });
 });

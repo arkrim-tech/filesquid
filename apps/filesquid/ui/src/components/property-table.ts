@@ -78,8 +78,11 @@ export type PropertyTableState = "idle" | "loading" | "ready" | "no-match" | "er
 
 /**
  * The stylesheet of the table and of the panel states (UI-S-024): the 32 px filter of mockup
- * 35 with its search icon, the count eyebrow, 44 px rows, the 16 px copy icon in
- * `--fs-icon-muted` (`--fs-icon` on hover and focus), the placeholder bars on `--fs-outline`,
+ * 35 with its search icon, the count eyebrow, 44 px rows whose chip and action buttons sit in
+ * the flow beside the key, and whose action buttons sit at the bottom right over space the
+ * value reserves (`--fs-row-actions`, set per row), so a long key or value wraps instead of
+ * running under them, the 16 px copy icon in `--fs-icon-muted` (`--fs-icon` on hover and
+ * focus), the placeholder bars on `--fs-outline`,
  * the centred states (14 px 600 title, 13 px secondary detail, 13 px mono code, 36 px buttons)
  * and the 44 px footer line above a 1 px `--fs-outline` border. Content sits 20 px from the panel
  * edges: a 16 px padding and a 4 px inset.
@@ -97,19 +100,21 @@ const STYLE = `
   .count.busy { font-weight: 500; text-transform: none; }
   .body { flex: 1 1 auto; min-block-size: 0; }
   dl.rows { margin: 0; padding: 0; }
-  .row { position: relative; box-sizing: border-box; min-block-size: 2.75rem; padding: var(--fs-space-1) var(--fs-space-5) var(--fs-space-1) var(--fs-space-3); }
+  .row { --fs-row-actions: 0; position: relative; box-sizing: border-box; min-block-size: 2.75rem; padding: var(--fs-space-1) var(--fs-space-3); }
   .row::after { content: ""; position: absolute; inset-inline: 20px; inset-block-end: 0; border-block-end: 1px solid var(--fs-outline); }
   .row:hover, .row:focus-within { background: var(--fs-surface-raised); }
   .row dt, .row dd { margin: 0 var(--fs-space-1); font-size: var(--fs-font-size-small); line-height: 1.3; overflow-wrap: anywhere; }
   .row dt { display: flex; align-items: start; justify-content: space-between; gap: var(--fs-space-2); color: var(--fs-on-surface-muted); }
+  .row dt .label, .row dt .key { flex: 1 1 auto; min-width: 0; }
+  .row dd .value { display: block; padding-inline-end: var(--fs-row-actions); }
   .row:hover dt, .row:focus-within dt { color: var(--fs-on-surface-variant); }
   .row dd { color: var(--fs-on-surface); }
   .row dt .key { font-family: var(--fs-font-mono); font-weight: 500; }
   .row dt .key-owner, .row:hover dt .key-owner, .row:focus-within dt .key-owner { color: var(--fs-primary); }
   .row dt .key-extracted, .row:hover dt .key-extracted, .row:focus-within dt .key-extracted { color: var(--fs-on-surface-variant); }
-  .row dt .chip.source { position: absolute; inset-inline-end: 20px; inset-block-start: 5px; border-radius: var(--fs-radius-chip); line-height: 1.6; }
+  .row dt .chip.source { flex: 0 0 auto; align-self: start; position: relative; inset-block-start: 2px; border-radius: var(--fs-radius-chip); line-height: 1.6; }
   .mono { font-family: var(--fs-font-mono); }
-  .actions { position: absolute; inset-inline-end: 16px; inset-block-end: 0; display: inline-flex; align-items: center; gap: 0; }
+  .actions { position: absolute; inset-inline-end: 20px; inset-block-end: 0; display: inline-flex; align-items: center; gap: 0; }
   .actions .button-icon { opacity: 0; transition: opacity var(--fs-motion-duration); }
   .row:hover .actions .button-icon, .row:focus-within .actions .button-icon, .actions .button-icon:focus-visible { opacity: 1; }
   .button-icon, .copy { display: inline-flex; align-items: center; justify-content: center; inline-size: 1.5rem; block-size: 1.5rem; padding: 0; border: 0; border-radius: var(--fs-radius-item); background: none; color: var(--fs-icon-muted); cursor: pointer; }
@@ -312,17 +317,17 @@ export class PropertyTable {
     this.count.classList.remove("busy");
     this.body.removeAttribute("aria-busy");
     this.count.textContent = this.options.countText(shown.length, this.all.length);
-    if (shown.length === 0 && word !== "") {
-      this.body.replaceChildren(this.noMatch(word));
-      this.setState("no-match");
-      return;
-    }
     const empty = this.all.length === 0 ? this.options.emptyState?.() : undefined;
     if (empty) {
       empty.classList.add("empty");
       this.filter.disabled = true;
       this.body.replaceChildren(empty);
       this.setState("empty");
+      return;
+    }
+    if (shown.length === 0 && word !== "") {
+      this.body.replaceChildren(this.noMatch(word));
+      this.setState("no-match");
       return;
     }
     const list = node("dl", "rows");
@@ -350,6 +355,8 @@ export class PropertyTable {
       actions.append(action);
     }
     actions.append(this.copyButton(row));
+    // The value keeps clear of the buttons: 1.5rem each, set as a token-named property.
+    element.style.setProperty("--fs-row-actions", `${actions.childElementCount * 1.5}rem`);
     const dd = node("dd", "");
     dd.append(value, actions);
     element.append(this.term(row), dd);

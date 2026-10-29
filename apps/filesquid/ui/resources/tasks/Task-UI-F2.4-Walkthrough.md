@@ -1,6 +1,6 @@
 # Task UI-F2.4 Walkthrough: `<fs-metadata-panel>`
 
-Branch `feat/ui-f2.4-metadata-panel`. Plan row: [Task UI-F2.4](../plan.md). Mockups (active suite v3): [28-panel-metadata](../../../../../resources/ui-mockups/v3/28-panel-metadata.svg), [29-metadata-add-property](../../../../../resources/ui-mockups/v3/29-metadata-add-property.svg), [25-panel-states](../../../../../resources/ui-mockups/v3/25-panel-states.svg). Built on the file panel and the shared property table of [UI-F2.3](./Task-UI-F2.3-Walkthrough.md) and the tokens and shell of [UI-F2.18](./Task-UI-F2.18-Walkthrough.md). Completes global [Task FS-2.2](../../../../../resources/implementation-plan.md#task-fs-2.2).
+Branch `feat/ui-f2.4-metadata-panel`. Plan row: [Task UI-F2.4](../plan.md). Mockups (active suite v3): [28-panel-metadata](../../../../../resources/ui-mockups/v3/28-panel-metadata.svg), [29-metadata-add-property](../../../../../resources/ui-mockups/v3/29-metadata-add-property.svg), [25-panel-states](../../../../../resources/ui-mockups/v3/25-panel-states.svg). Built on the file panel and the shared property table of [UI-F2.3](./Task-UI-F2.3-Walkthrough.md) and the tokens and shell of [UI-F2.18](./Task-UI-F2.18-Walkthrough.md). Completes global [Task FS-2.2](../../../../../resources/implementation-plan.md#task-fs-2.2) as amended on 2026-10-29: its Import record section and `exif:` technical rows are the File info tab's (UI-S-022, UI-F2.15), so FS-2.2's three module rows close with the Description tab.
 
 ## SRS mapping
 
@@ -41,6 +41,11 @@ PRD: [F-046](../../../../../resources/prd.md#f-046-media-metadata-inspection-cor
 - **The files-route test for the Description tab** was written after the wiring as a wiring proof; the red-first run covered the element, the dialog, the model and the source.
 
 No API route, field or event was assumed or stubbed; every route used is in `apps/filesquid/crates/api/openapi.json` on `main` (0.27.0).
+
+## Review fixes (Cubic round 1: 4 P1, 24 P2, 3 P3)
+
+- **Fixed (1 P1, 20 P2, 3 P3):** a write that commits after another file opened no longer switches the panel back (the page's navigation wins; the commit is still reported); the Add property focus target covers the empty state; a custom key's invalid mark is cleared when a candidate is chosen; a row's actions are disabled while its removal runs; the count eyebrow names extensions when a registered or custom row is listed (`metadataCountExtended`, two new keys in both tables); the value label says a value is non-empty; the edit icon is the mockup's pencil; a custom key may be up to the set route's 255 bytes (`validStatementTerm`) while the lookup keeps 128; `metadataFileId` accepts only a file's own original path (a collection snapshot is `urn:uuid:` too); the chip and the action buttons sit in the row's flow so a long key or value wraps; the empty-record branch is checked before the no-match branch; the fakes follow the contract (`dc:` normalised, value bounds, term lists, at most 64 candidates, the e2e `retryable` flag from the code); the source tests assert exactly one request; the oversized-value path, the edit and removal flows against the production build, and the split state scenarios are tested; the README no longer presents technical rows as built; the UI-F2.4 and FS-2.2 descriptions record the amendment.
+- **Answered (3 P1, 4 P2):** the metadata set and remove routes take plain bodies in the contract on `main` (0.28.0: `SetStatementRequest` and `RemoveStatementRequest` have no envelope member and `additionalProperties: false`), a UI PR does not bump the contract, and the API's own alignment of these routes with API-S-002 is the open owner decision already handed back, so the client follows the contract as published and keeps both call sites in one place; the e2e fixture marks `dcterms:created` extracted because the contract's `StatementSource` allows it on any statement, mockup 28 draws it so, and F-046 expects extraction to reach `dcterms:` rows; the FS-2.2 tick stands with the amendment rather than an open box over three ticked rows (the owner may reopen it).
 
 ## How it was tested
 
@@ -327,4 +332,197 @@ stderr | tests/ui/details-panel.test.ts > <fs-details-panel> > hides Clear filte
 ========================================
 ✅ All Pre-Commit Hooks Passed! Test scope: npm:apps/filesquid/ui (64s)
 ========================================
+```
+
+## Raw test output (Cubic round 1, after merging main)
+
+### npm test (apps/filesquid/ui)
+
+```text
+ ✓ tests/ui/metadata-panel.test.ts (24 tests) 1222ms
+ ✓ tests/ui/nav-tree.test.ts (30 tests) 1230ms
+ ✓ tests/unit/theme.test.ts (36 tests) 69ms
+ ✓ tests/ui/file-browser-writes.test.ts (47 tests) 2034ms
+ ✓ tests/ui/host-indicator.test.ts (40 tests) 464ms
+ ✓ tests/ui/app-shell.test.ts (24 tests) 819ms
+ ✓ tests/ui/file-browser.test.ts (37 tests) 2044ms
+ ✓ tests/unit/files-source.test.ts (29 tests) 86ms
+ ✓ tests/ui/ocfl-findings.test.ts (22 tests) 492ms
+ ✓ tests/ui/library-start.test.ts (22 tests) 356ms
+ ✓ tests/ui/monitor.test.ts (22 tests) 5568ms
+ ✓ tests/unit/files-memory-source.test.ts (35 tests) 124ms
+ ✓ tests/ui/library-repair.test.ts (22 tests) 478ms
+ ✓ tests/unit/files-ops.test.ts (55 tests) 187ms
+ ✓ tests/unit/component-styles.test.ts (239 tests) 94ms
+ ✓ tests/ui/library-detail.test.ts (20 tests) 379ms
+ ✓ tests/ui/accessibility.test.ts (19 tests) 632ms
+ ✓ tests/ui/file-preview.test.ts (16 tests) 230ms
+ ✓ tests/unit/client-io.test.ts (23 tests) 111ms
+ ✓ tests/ui/versions-panel.test.ts (22 tests) 10312ms
+ ✓ tests/ui/navigation-view.test.ts (20 tests) 327ms
+ ✓ tests/unit/client-auth.test.ts (23 tests) 54ms
+ ✓ tests/unit/navigation-store.test.ts (19 tests) 45ms
+ ✓ tests/ui/settings.test.ts (10 tests) 259ms
+ ✓ tests/ui/details-panel.test.ts (11 tests) 331ms
+ ✓ tests/ui/file-panel.test.ts (11 tests) 406ms
+ ✓ tests/unit/media-handle.test.ts (14 tests) 108ms
+ ✓ tests/ui/nav-tree-live.test.ts (11 tests) 409ms
+ ✓ tests/unit/metadata-model.test.ts (15 tests) 50ms
+ ✓ tests/unit/navigation-model.test.ts (30 tests) 46ms
+ ✓ tests/unit/a11y-audit.test.ts (19 tests) 119ms
+ ✓ tests/ui/files-route.test.ts (11 tests) 726ms
+ ✓ tests/unit/library-client.test.ts (18 tests) 58ms
+ ✓ tests/unit/navigation-source.test.ts (18 tests) 76ms
+ ✓ tests/unit/files-model.test.ts (60 tests) 61ms
+ ✓ tests/unit/navigation-client.test.ts (13 tests) 31ms
+ ✓ tests/unit/theme-store.test.ts (23 tests) 39ms
+ ✓ tests/unit/commands.test.ts (46 tests) 46ms
+ ✓ tests/ui/states.test.ts (26 tests) 181ms
+ ✓ tests/unit/host-descriptor.test.ts (43 tests) 23ms
+ ✓ tests/unit/versions-model.test.ts (14 tests) 53ms
+ ✓ tests/unit/admin-client.test.ts (10 tests) 24ms
+ ✓ tests/unit/files-window.test.ts (19 tests) 19ms
+ ✓ tests/unit/focus.test.ts (16 tests) 61ms
+ ✓ tests/unit/metadata-source.test.ts (7 tests) 15ms
+ ✓ tests/unit/test-scripts.test.ts (10 tests | 1 skipped) 665ms
+ ✓ tests/unit/library-errors.test.ts (15 tests) 16ms
+ ✓ tests/unit/memory-history.test.ts (9 tests) 16ms
+ ✓ tests/unit/distribution-tables.test.ts (7 tests) 16ms
+ ✓ tests/unit/navigation-contract.test.ts (30 tests) 20ms
+ ✓ tests/unit/details-model.test.ts (7 tests) 41ms
+ ✓ tests/ui/library-route.test.ts (6 tests) 96ms
+ ✓ tests/unit/history-source.test.ts (6 tests) 15ms
+ ✓ tests/unit/test-reporting.test.ts (12 tests) 14ms
+ ✓ tests/unit/host-adapter.test.ts (13 tests) 72ms
+ ✓ tests/unit/client.test.ts (8 tests) 26ms
+ ✓ tests/ui/theme-control.test.ts (8 tests) 52ms
+ ✓ tests/unit/nav-tree-keys.test.ts (8 tests) 11ms
+ ✓ tests/unit/library-model.test.ts (7 tests) 22ms
+ ✓ tests/unit/preferences.test.ts (10 tests) 19ms
+ ✓ tests/ui/breadcrumb.test.ts (6 tests) 97ms
+ ✓ tests/unit/view-state.test.ts (5 tests) 12ms
+ ✓ tests/unit/host-client.test.ts (4 tests) 13ms
+ ✓ tests/unit/contrast.test.ts (13 tests) 19ms
+ ✓ tests/unit/distribution.test.ts (3 tests) 7ms
+ ✓ tests/ui/monitor-route.test.ts (2 tests) 29ms
+ ✓ tests/unit/contract.test.ts (2 tests) 240ms
+ Test Files  67 passed (67)
+      Tests  1481 passed | 1 skipped (1482)
+   Start at  14:54:38
+   Duration  32.34s (transform 5.96s, setup 2.94s, import 12.07s, tests 32.01s, environment 36.92s)
+```
+
+### Playwright, production build: whole preview suite (temporary config with the machine's Chromium)
+
+```text
+Running 100 tests using 2 workers
+  ✓    1 [chromium] › tests/e2e/preview/file-browser.spec.ts:96:1 › the browser is a defined element and lists display names in the list layout from the label table (773ms)
+  ✓    3 [chromium] › tests/e2e/preview/file-browser.spec.ts:140:1 › a file row shows size, type hint, modified date and version (539ms)
+  ✓    2 [chromium] › tests/e2e/preview/file-panel.spec.ts:102:5 › light theme › File info (35): header, tab, filter, count, rows and footer (1.5s)
+  ✓    4 [chromium] › tests/e2e/preview/file-browser.spec.ts:152:1 › computed token values are exact in the browser in light and dark (773ms)
+  ✓    5 [chromium] › tests/e2e/preview/file-panel.spec.ts:212:5 › light theme › Versions (26): Back, count, eyebrow, rows, Current, menu and note (1.3s)
+  ✓    6 [chromium] › tests/e2e/preview/file-browser.spec.ts:175:1 › opening a folder updates the breadcrumb and the address, and Back returns (788ms)
+  ✓    8 [chromium] › tests/e2e/preview/file-browser.spec.ts:196:1 › an image previews through a content handle that is used only as the media src (861ms)
+  ✓    7 [chromium] › tests/e2e/preview/file-panel.spec.ts:337:5 › light theme › restore (27): the dialog, one call with the label, and the new current version (1.4s)
+  ✓    9 [chromium] › tests/e2e/preview/file-browser.spec.ts:231:1 › a handle that fails is replaced once; a second failure shows the error and mints no third (739ms)
+  ✓   10 [chromium] › tests/e2e/preview/file-panel.spec.ts:460:5 › light theme › panel states (25): loading, no match and error keep the header, tabs and filter (1.1s)
+  ✓   11 [chromium] › tests/e2e/preview/file-browser.spec.ts:247:1 › a video resumes at the same position and paused state after one new handle (895ms)
+  ✓   13 [chromium] › tests/e2e/preview/file-browser.spec.ts:283:1 › audio plays natively and is named by the display name (766ms)
+  ✓   12 [chromium] › tests/e2e/preview/file-panel.spec.ts:537:5 › light theme › keyboard: the tab, the history button and the dialog keep focus where it belongs (979ms)
+  ✓   14 [chromium] › tests/e2e/preview/file-browser.spec.ts:296:1 › text previews through one ranged read of the first 64 KiB and says it is cut (785ms)
+  ✓   15 [chromium] › tests/e2e/preview/file-panel.spec.ts:102:5 › dark theme › File info (35): header, tab, filter, count, rows and footer (1.4s)
+  ✓   16 [chromium] › tests/e2e/preview/file-browser.spec.ts:312:1 › a format it cannot show says so and shows no viewer (872ms)
+  ✓   18 [chromium] › tests/e2e/preview/file-browser.spec.ts:342:1 › the viewer steps through files, closes with Escape and returns focus to the row (838ms)
+  ✓   17 [chromium] › tests/e2e/preview/file-panel.spec.ts:212:5 › dark theme › Versions (26): Back, count, eyebrow, rows, Current, menu and note (1.3s)
+  ✓   19 [chromium] › tests/e2e/preview/file-browser.spec.ts:355:1 › an upload is one PUT of the client's facts that creates the file's own object (797ms)
+  ✓   21 [chromium] › tests/e2e/preview/file-browser.spec.ts:404:1 › a rename posts to the renames route, never to moves, and shows the new display name (746ms)
+  ✓   20 [chromium] › tests/e2e/preview/file-panel.spec.ts:337:5 › dark theme › restore (27): the dialog, one call with the label, and the new current version (1.4s)
+  ✓   22 [chromium] › tests/e2e/preview/file-browser.spec.ts:433:1 › a refused rename shows the label for its reason and keeps the display name (920ms)
+  ✓   23 [chromium] › tests/e2e/preview/file-panel.spec.ts:460:5 › dark theme › panel states (25): loading, no match and error keep the header, tabs and filter (1.1s)
+  ✓   24 [chromium] › tests/e2e/preview/file-browser.spec.ts:452:1 › writes are single calls: new folder, move, remove and Undo (1.2s)
+  ✓   25 [chromium] › tests/e2e/preview/file-panel.spec.ts:537:5 › dark theme › keyboard: the tab, the history button and the dialog keep focus where it belongs (1.0s)
+  ✓   26 [chromium] › tests/e2e/preview/file-browser.spec.ts:499:1 › a refused write shows the label for its reason and changes nothing (635ms)
+  ✓   27 [chromium] › tests/e2e/preview/host-indicator.spec.ts:96:1 › the indicator is a defined custom element in the shell header, named from the label table (593ms)
+  ✓   29 [chromium] › tests/e2e/preview/host-indicator.spec.ts:110:1 › the desktop host says only you can read your files, and shows the not-enrolled state (521ms)
+  ✓   28 [chromium] › tests/e2e/preview/file-browser.spec.ts:514:1 › a long folder is virtualised, pages in on demand and stays keyboard reachable (887ms)
+  ✓   30 [chromium] › tests/e2e/preview/host-indicator.spec.ts:124:1 › a server names its operator, who can read the files, and states the at-rest duty (584ms)
+  ✓   31 [chromium] › tests/e2e/preview/file-browser.spec.ts:554:1 › the layout does not scroll sideways at 320 px, at 200 % text size, or both, in list and grid (657ms)
+  ✓   32 [chromium] › tests/e2e/preview/host-indicator.spec.ts:137:1 › a server without an operator name uses the unnamed-operator label (503ms)
+  ✓   33 [chromium] › tests/e2e/preview/file-browser.spec.ts:571:1 › motion stops under reduced motion and focus is the 2px --fs-focus-ring ring (778ms)
+  ✓   34 [chromium] › tests/e2e/preview/host-indicator.spec.ts:149:1 › the browser host says files are decrypted only in this browser (575ms)
+  ✓   36 [chromium] › tests/e2e/preview/host-indicator.spec.ts:162:1 › enrolled backup and sync are shown apart from the host, as ciphertext only (562ms)
+  ✓   35 [chromium] › tests/e2e/preview/file-browser.spec.ts:598:1 › a failed listing shows the error state with Try again, and retrying loads it (755ms)
+  ✓   37 [chromium] › tests/e2e/preview/host-indicator.spec.ts:187:1 › a host.change event updates the indicator without a reload or another read (564ms)
+  ✓   38 [chromium] › tests/e2e/preview/library.spec.ts:47:1 › the start page offers create, open and recover in the active vocabulary (594ms)
+  ✓   39 [chromium] › tests/e2e/preview/host-indicator.spec.ts:209:1 › events.resync makes the indicator read the descriptor again (612ms)
+  ✓   40 [chromium] › tests/e2e/preview/library.spec.ts:80:1 › (1) create asks for a folder, passes the location ID on and shows the library, with no path (716ms)
+  ✓   42 [chromium] › tests/e2e/preview/library.spec.ts:102:1 › (1) open passes the location ID to the open route (551ms)
+  ✓   43 [chromium] › tests/e2e/preview/library.spec.ts:116:1 › (1) recover opens the copy, rebuilds from files and reports without repairing (445ms)
+  ✓   41 [chromium] › tests/e2e/preview/host-indicator.spec.ts:222:1 › loading shows no host until the descriptor arrives (1.4s)
+  ✓   44 [chromium] › tests/e2e/preview/library.spec.ts:153:1 › (1) copy asks for a destination and passes it as destination_location_id (598ms)
+  ✓   45 [chromium] › tests/e2e/preview/host-indicator.spec.ts:234:1 › a failed read shows the error state and never a guessed host, then Retry recovers (666ms)
+  ✓   46 [chromium] › tests/e2e/preview/library.spec.ts:176:1 › (2) a cancelled folder choice sends no library request and says nothing changed (566ms)
+  ✓   47 [chromium] › tests/e2e/preview/host-indicator.spec.ts:256:1 › the header shows a compact badge with the short host label, not the statement (551ms)
+  ✓   48 [chromium] › tests/e2e/preview/library.spec.ts:190:1 › (3) 503 unavailable is the unavailable state with its reason and a Retry, and the choices stay (772ms)
+  ✓   49 [chromium] › tests/e2e/preview/host-indicator.spec.ts:271:1 › Enter opens the popover with the full statement; Escape closes it and returns focus (673ms)
+  ✓   50 [chromium] › tests/e2e/preview/library.spec.ts:217:1 › (4) confirm sends the consent for exactly the named objects and shows each result (624ms)
+  ✓   51 [chromium] › tests/e2e/preview/host-indicator.spec.ts:297:1 › Privacy settings opens the Settings page, whose Privacy section has the full statement (775ms)
+  ✓   52 [chromium] › tests/e2e/preview/library.spec.ts:254:1 › (4) cancel and Escape send nothing and return focus to the opener (773ms)
+  ✓   53 [chromium] › tests/e2e/preview/host-indicator.spec.ts:333:1 › computed token values are exact in light and dark (UI-S-024, mockup 40) (902ms)
+  ✓   54 [chromium] › tests/e2e/preview/library.spec.ts:277:1 › (4) a refused repair says nothing was changed and shows no result (614ms)
+  ✓   55 [chromium] › tests/e2e/preview/host-indicator.spec.ts:378:1 › the badge is reachable by keyboard and has a visible focus outline (822ms)
+  ✓   56 [chromium] › tests/e2e/preview/library.spec.ts:292:1 › (5) the Monitor's W010 note links to the library's repair offer (610ms)
+  ✓   58 [chromium] › tests/e2e/preview/library.spec.ts:345:1 › colours come from tokens in light and dark (941ms)
+  ✓   57 [chromium] › tests/e2e/preview/metadata-panel.spec.ts:89:5 › light theme › Description (28): tab, filter, count, rows, chips, actions and Add property (1.6s)
+  ✓   59 [chromium] › tests/e2e/preview/mockup-fidelity.spec.ts:116:5 › light theme › the shell frame (UI-S-025): sidebar, header, footer, controls and strings (774ms)
+  ✓   61 [chromium] › tests/e2e/preview/mockup-fidelity.spec.ts:200:5 › light theme › the navigation tree as built (55, UI-S-017): eyebrows, 30 px rows, 16 px icons (761ms)
+  ✓   60 [chromium] › tests/e2e/preview/metadata-panel.spec.ts:224:5 › light theme › Add property (29): the dialog, the groups in the add order, one set and the new row (1.6s)
+  ✓   62 [chromium] › tests/e2e/preview/mockup-fidelity.spec.ts:238:5 › light theme › welcome (01, UI-S-027): title, lead, cards, privacy box and footer (722ms)
+  ✓   64 [chromium] › tests/e2e/preview/mockup-fidelity.spec.ts:294:5 › light theme › folder-choice unavailable (03) and the view states treatment (56) (883ms)
+  ✓   63 [chromium] › tests/e2e/preview/metadata-panel.spec.ts:379:5 › light theme › edit and remove (28): one PUT, one POST, the rows and the announcements (1.2s)
+  ✓   65 [chromium] › tests/e2e/preview/mockup-fidelity.spec.ts:329:5 › light theme › library page (41, UI-S-027): facts rows, actions and the W010 note (824ms)
+  ✓   67 [chromium] › tests/e2e/preview/mockup-fidelity.spec.ts:379:5 › light theme › repair consent (42) and results (43): dialog, scrim, chips and the refused box (769ms)
+  ✓   66 [chromium] › tests/e2e/preview/metadata-panel.spec.ts:434:5 › light theme › panel states (25): empty, loading, no match and error keep the header, tabs and filter (1.3s)
+  ✓   68 [chromium] › tests/e2e/preview/mockup-fidelity.spec.ts:424:5 › light theme › Monitor (31) and its OCFL validation section (54) (836ms)
+  ✓   69 [chromium] › tests/e2e/preview/metadata-panel.spec.ts:502:5 › light theme › no match and keyboard: the filter, Escape in the dialog, and the focus ring (1.1s)
+  ✓   70 [chromium] › tests/e2e/preview/mockup-fidelity.spec.ts:485:5 › light theme › host popover (40) and Settings (32): 372 px overlay, Appearance and About (644ms)
+  ✓   72 [chromium] › tests/e2e/preview/mockup-fidelity.spec.ts:116:5 › dark theme › the shell frame (UI-S-025): sidebar, header, footer, controls and strings (905ms)
+  ✓   71 [chromium] › tests/e2e/preview/metadata-panel.spec.ts:89:5 › dark theme › Description (28): tab, filter, count, rows, chips, actions and Add property (1.8s)
+  ✓   73 [chromium] › tests/e2e/preview/mockup-fidelity.spec.ts:200:5 › dark theme › the navigation tree as built (55, UI-S-017): eyebrows, 30 px rows, 16 px icons (646ms)
+  ✓   75 [chromium] › tests/e2e/preview/mockup-fidelity.spec.ts:238:5 › dark theme › welcome (01, UI-S-027): title, lead, cards, privacy box and footer (793ms)
+  ✓   76 [chromium] › tests/e2e/preview/mockup-fidelity.spec.ts:294:5 › dark theme › folder-choice unavailable (03) and the view states treatment (56) (594ms)
+  ✓   74 [chromium] › tests/e2e/preview/metadata-panel.spec.ts:224:5 › dark theme › Add property (29): the dialog, the groups in the add order, one set and the new row (1.7s)
+  ✓   77 [chromium] › tests/e2e/preview/mockup-fidelity.spec.ts:329:5 › dark theme › library page (41, UI-S-027): facts rows, actions and the W010 note (917ms)
+  ✓   78 [chromium] › tests/e2e/preview/metadata-panel.spec.ts:379:5 › dark theme › edit and remove (28): one PUT, one POST, the rows and the announcements (1.2s)
+  ✓   79 [chromium] › tests/e2e/preview/mockup-fidelity.spec.ts:379:5 › dark theme › repair consent (42) and results (43): dialog, scrim, chips and the refused box (793ms)
+  ✓   81 [chromium] › tests/e2e/preview/mockup-fidelity.spec.ts:424:5 › dark theme › Monitor (31) and its OCFL validation section (54) (790ms)
+  ✓   80 [chromium] › tests/e2e/preview/metadata-panel.spec.ts:434:5 › dark theme › panel states (25): empty, loading, no match and error keep the header, tabs and filter (1.2s)
+  ✓   82 [chromium] › tests/e2e/preview/mockup-fidelity.spec.ts:485:5 › dark theme › host popover (40) and Settings (32): 372 px overlay, Appearance and About (770ms)
+  ✓   83 [chromium] › tests/e2e/preview/metadata-panel.spec.ts:502:5 › dark theme › no match and keyboard: the filter, Escape in the dialog, and the focus ring (1.2s)
+  ✓   84 [chromium] › tests/e2e/preview/navigation.spec.ts:62:1 › the live tree fills the shell's navigation slot, worded from the label table (514ms)
+  ✓   85 [chromium] › tests/e2e/preview/ocfl-findings.spec.ts:174:1 › (1) an E023 finding shows with its code beside the degraded health reason (670ms)
+  ✓   86 [chromium] › tests/e2e/preview/navigation.spec.ts:83:1 › a level is read page by page through next_cursor until it is null (666ms)
+  ✓   87 [chromium] › tests/e2e/preview/ocfl-findings.spec.ts:200:1 › (2) the finding disappears after a clean revalidation's health.change, without a reload (832ms)
+  ✓   88 [chromium] › tests/e2e/preview/navigation.spec.ts:121:1 › a destination opens with a breadcrumb filled from ancestors (877ms)
+  ✓   89 [chromium] › tests/e2e/preview/ocfl-findings.spec.ts:220:1 › (3) a W010 warning is listed apart from errors and health stays ok (675ms)
+  ✓   90 [chromium] › tests/e2e/preview/navigation.spec.ts:142:1 › a deep link to a destination shows its breadcrumb after a reload (744ms)
+  ✓   91 [chromium] › tests/e2e/preview/ocfl-findings.spec.ts:238:1 › (4) no location is rendered when the API withholds it (641ms)
+  ✓   92 [chromium] › tests/e2e/preview/navigation.spec.ts:154:1 › navigation.change reads only the named level again, without a reload (776ms)
+  ✓   93 [chromium] › tests/e2e/preview/ocfl-findings.spec.ts:250:1 › (5) the last and next run times come from the findings route; Validate now starts a run (712ms)
+  ✓   94 [chromium] › tests/e2e/preview/navigation.spec.ts:177:1 › a 503 shows the unavailable state with Retry, never an empty tree (590ms)
+  ✓   95 [chromium] › tests/e2e/preview/ocfl-findings.spec.ts:289:1 › error and warning codes take their colours from tokens in light and dark (659ms)
+  ✓   97 [chromium] › tests/e2e/preview/production-build.spec.ts:63:1 › the built page is static, mounts the shell and defines every custom element (474ms)
+  ✓   96 [chromium] › tests/e2e/preview/navigation.spec.ts:194:1 › computed token values of the tree and breadcrumb are exact in light and dark (999ms)
+  ✓   98 [chromium] › tests/e2e/preview/production-build.spec.ts:80:1 › sidebar, header and Settings words come from the active label table (UI-S-025, UI-S-033) (528ms)
+  ✓   99 [chromium] › tests/e2e/preview/production-build.spec.ts:124:1 › computed token values are exact in light and dark (UI-S-024, CA-1) (355ms)
+  ✓  100 [chromium] › tests/e2e/preview/production-build.spec.ts:146:1 › a refused health call shows the unavailable alert in Settings, About, not a console error (347ms)
+  100 passed (53.2s)
+```
+
+### Pre-commit hook (ordinary run, `bash scripts/pre-commit.sh`, round 1 head commit)
+
+```text
+ℹ️  Test scope: npm:apps/filesquid/ui
+✅ Lint and test validation passed (test scope: npm:apps/filesquid/ui).
+✅ All Pre-Commit Hooks Passed! Test scope: npm:apps/filesquid/ui (70s)
 ```

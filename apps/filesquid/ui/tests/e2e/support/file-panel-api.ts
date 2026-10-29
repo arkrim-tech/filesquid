@@ -31,9 +31,13 @@ export interface PanelFixture {
   readonly versions: readonly (readonly [string | null, string, number])[];
 }
 
-/** Mockup 35: facade-study.jpg, four versions, the head v4 at 11:05 UTC on 16 Oct 2026. */
+/**
+ * Mockup 35: facade-study.jpg, four versions, the head v4 at 11:05 UTC on 16 Oct 2026. Its
+ * stored original is named by its file id, as API-S-026 stores it, so the metadata routes
+ * (UI-F2.4) take it as the file's own original.
+ */
 export const FACADE: PanelFixture = {
-  path: `original/${PANEL_STORED[0]}.jpg`,
+  path: `original/${PANEL_OBJECT.slice("urn:uuid:".length)}.jpg`,
   displayName: "facade-study.jpg",
   mediaType: "image/jpeg",
   versions: [
@@ -137,7 +141,13 @@ export async function servePanel(page: Page, fixture: PanelFixture): Promise<Pan
     object_id: PANEL_OBJECT,
     files: [
       { path: fixture.path, displayName: fixture.displayName, content: new Uint8Array(PNG) },
-      { path: "original/9f2c41ff.txt", displayName: "readme.txt", content: "hello" },
+      // A second file's original, named by the same file id with its own extension, so the
+      // metadata routes (UI-F2.4) take it as a file's own original too (API-S-026).
+      {
+        path: `original/${PANEL_OBJECT.slice("urn:uuid:".length)}.txt`,
+        displayName: "readme.txt",
+        content: "hello",
+      },
     ],
   });
   await serveFiles(page, source);

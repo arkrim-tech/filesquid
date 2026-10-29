@@ -7,7 +7,12 @@
  */
 import { ApiError } from "../../src/api/client";
 import type { FileRef, LibraryRef } from "../../src/files/model";
-import { DCTERMS_FILE_TERMS, validTermName } from "../../src/files/metadata";
+import {
+  DCTERMS_FILE_TERMS,
+  MAX_STATEMENT_VALUE_BYTES,
+  validStatementTerm,
+  validTermName,
+} from "../../src/files/metadata";
 import type {
   FileStatements,
   MetadataCommit,
@@ -82,6 +87,19 @@ export const CUSTOM: NamespaceRegistration = {
 
 type Method = "statements" | "set" | "remove" | "terms" | "namespaces";
 
+/** Most candidates the terms route answers (its `MAX_CANDIDATES`). */
+export const MAX_CANDIDATES = 64;
+
+/** A CURIE as the routes store it: `dc:` names `dcterms:`. */
+function normalised(curie: string): string {
+  return curie.startsWith("dc:") ? `dcterms:${curie.slice("dc:".length)}` : curie;
+}
+
+/** UTF-8 length of a string. */
+function byteLength(text: string): number {
+  return new TextEncoder().encode(text).byteLength;
+}
+
 /** The tab's reads and writes over the fixture. */
 export class FakeMetadataSource implements MetadataSource {
   statements_: MetadataStatement[] = metadataStatements();
@@ -144,19 +162,24 @@ export class FakeMetadataSource implements MetadataSource {
   ): Promise<MetadataCommit> {
     await this.step("set", options);
     const route = "/api/v1/files/metadata/statements";
-    const [prefix, term] = curie.split(":");
+    const stored = normalised(curie);
+    const [prefix, term] = stored.split(":") as [string, string | undefined];
+    const name = term ?? "";
     const known =
-      (prefix === "dcterms" && DCTERMS_FILE_TERMS.includes(term ?? "")) ||
+      (prefix === "dcterms" && DCTERMS_FILE_TERMS.includes(name)) ||
       prefix === "schema" ||
-      this.registry.some((r) => r.prefix === prefix);
-    if (!known || !validTermName(term ?? "")) {
+      this.registry.some(
+        (r) => r.prefix === prefix && (r.terms === null || r.terms.includes(name)),
+      );
+    const bytes = byteLength(value);
+    if (!known || !validStatementTerm(name) || bytes === 0 || bytes > MAX_STATEMENT_VALUE_BYTES) {
       throw new ApiError(400, route, { code: "invalid_request" });
     }
-    const existing = this.statements_.find((s) => s.curie === curie);
+    const existing = this.statements_.find((s) => s.curie === stored);
     if (existing?.value === value) throw new ApiError(409, route, { code: "conflict" });
     this.sets.push({ file, curie, value });
     if (existing) existing.value = value;
-    else this.statements_.push(statement(curie, value, "asserted"));
+    else this.statements_.push(statement(stored, value, "asserted"));
     return this.commit(file);
   }
 
@@ -168,8 +191,9 @@ export class FakeMetadataSource implements MetadataSource {
   ): Promise<MetadataCommit> {
     await this.step("remove", options);
     const route = "/api/v1/files/metadata/removals";
+    const stored = normalised(curie);
     const before = this.statements_.length;
-    this.statements_ = this.statements_.filter((s) => s.curie !== curie);
+    this.statements_ = this.statements_.filter((s) => s.curie !== stored);
     if (this.statements_.length === before) {
       throw new ApiError(404, route, { code: "not_found" });
     }
@@ -190,6 +214,7 @@ export class FakeMetadataSource implements MetadataSource {
       candidates.push({ curie: `dcterms:${name}`, kind: "dcterms" });
     if (validTermName(name)) candidates.push({ curie: `schema:${name}`, kind: "schema" });
     for (const r of this.registry) {
+      if (candidates.length >= MAX_CANDIDATES) break;
       if (r.terms === null || r.terms.includes(name)) {
         candidates.push({ curie: `${r.prefix}:${name}`, kind: r.kind });
       }

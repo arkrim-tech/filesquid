@@ -361,6 +361,8 @@ export const REQUIRED_LABEL_KEYS = [
   "metadataFilter",
   "metadataCount",
   "metadataCountFiltered",
+  "metadataCountExtended",
+  "metadataCountExtendedFiltered",
   "metadataCountEmpty",
   "metadataLoading",
   "metadataError",

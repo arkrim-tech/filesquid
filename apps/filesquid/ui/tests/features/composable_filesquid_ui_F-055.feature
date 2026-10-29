@@ -101,7 +101,7 @@ Feature: Composable filesquid user interface
   Scenario: The Description tab shows the facts the metadata module owns, in its own slot
     Given a file panel with the tabs "details" and "description"
     When I select the Description tab
-    Then only the metadata panel should be created and receive the file reference
+    Then the metadata panel should be created in its Description slot and receive the file reference
     And it should show the file's dcterms: and schema: statements and nothing the OCFL module owns
     And it should share the file info tab's property table, filter and states
     And neither panel should hold a reference to the other

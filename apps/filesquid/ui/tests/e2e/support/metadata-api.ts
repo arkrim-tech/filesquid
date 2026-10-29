@@ -171,7 +171,14 @@ export async function serveMetadata(
   };
   const json = (route: Route, body: unknown) => route.fulfill({ json: body });
   const refuse = (route: Route, status: number, code: string) =>
-    route.fulfill({ status, json: { code, message: "refused", retryable: false } });
+    route.fulfill({
+      status,
+      json: {
+        code,
+        message: "refused",
+        retryable: code === "unavailable" || code === "rate_limited",
+      },
+    });
   const commit = () => {
     head += 1;
     const version = `v${head}`;

@@ -12,7 +12,7 @@
 import type { FileSquidClient } from "../api/client";
 import type { FileStatements, MetadataCommit, Namespaces, TermCandidates } from "./metadata";
 import type { FileRef, LibraryRef } from "./model";
-import { fileIdOf } from "./ops";
+import { fileIdOf, isOriginalPath } from "./ops";
 import type { SourceOptions } from "./source";
 
 /** Everything the Description tab asks of the API. */
@@ -54,16 +54,20 @@ function query(values: Readonly<Record<string, string>>): string {
 }
 
 /**
- * The file id of a file reference, from its object identifier `urn:uuid:<file-id>`
- * (API-S-026). Pure.
+ * The file id of a file reference: the id in its object identifier `urn:uuid:<file-id>`,
+ * when the reference is that file's stored original `original/<file-id>[.<ext>]`
+ * (API-S-026). A collection snapshot is named `urn:uuid:` too, so the object's name alone
+ * does not make a file; the path must be the original. Pure.
  *
  * @param file The file.
  * @returns The id.
- * @throws TypeError when the object is not a file's own object, so no request is sent.
+ * @throws TypeError when the reference is not a file's own original, so no request is sent.
  */
 export function metadataFileId(file: FileRef): string {
   const id = fileIdOf(file.object_id);
-  if (id === undefined) throw new TypeError("The object is not a file object");
+  if (id === undefined || !isOriginalPath(file.path, id)) {
+    throw new TypeError("The reference is not a file's own original");
+  }
   return id;
 }
 

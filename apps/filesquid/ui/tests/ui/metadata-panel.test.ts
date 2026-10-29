@@ -270,6 +270,14 @@ describe("<fs-metadata-panel>", () => {
     expect(source.sets).toEqual([]);
     expect(value?.getAttribute("aria-invalid")).toBe("true");
     expect(dialog.querySelector(".error")?.textContent).toBe(labels.metadataValueInvalid);
+    // 32,769 two-byte characters are 65,538 UTF-8 bytes, over the route's 65,536.
+    type(value, "é".repeat(32_769));
+    dialog.querySelector<HTMLButtonElement>("button.confirm")?.click();
+    await settle();
+    expect(source.sets).toEqual([]);
+    expect(value?.getAttribute("aria-invalid")).toBe("true");
+    expect(dialog.querySelector(".error")?.textContent).toBe(labels.metadataValueInvalid);
+    expect(root(panel).querySelector('[role="dialog"]')).not.toBeNull();
     type(value, "Facade study, north pier");
     source.failures.set = new ApiError(400, "/api/v1/files/metadata/statements", {
       code: "invalid_request",
@@ -446,6 +454,114 @@ describe("<fs-metadata-panel>", () => {
     await settle();
     expect(panel.dataset.state).toBe("idle");
     expect(root(panel).querySelectorAll(".row")).toHaveLength(0);
+  });
+
+  it("does not revert to the old file when a write commits after another file opened", async () => {
+    const source = new FakeMetadataSource();
+    const panel = await mount(source);
+    const changes: unknown[] = [];
+    panel.addEventListener("fs-files-change", (e) => changes.push((e as CustomEvent).detail));
+    row(panel, "dcterms:title").querySelector<HTMLButtonElement>("button.edit")?.click();
+    await settle();
+    const dialog = root(panel).querySelector('[role="dialog"]') as HTMLElement;
+    const wait = gate();
+    source.gates.set = wait;
+    type(dialog.querySelector("input.value-input"), "Facade study, revised");
+    dialog.querySelector<HTMLButtonElement>("button.confirm")?.click();
+    await settle();
+    const other = { ...METADATA_FILE, path: "original/9f2c41ab.pdf", display_name: "other.pdf" };
+    panel.fileRef = other;
+    await settle();
+    expect(root(panel).querySelector('[role="dialog"]')).toBeNull();
+    const reads = source.calls.statements;
+    wait.open();
+    await settle();
+    await settle();
+    expect(changes).toEqual([
+      { operation: "metadata.set", commit: expect.objectContaining({ version: "v5" }) },
+    ]);
+    expect(panel.fileRef).toEqual(other);
+    expect(source.calls.statements).toBe(reads);
+  });
+
+  it("focuses the empty state's Add property after removing the last statement", async () => {
+    const source = new FakeMetadataSource();
+    source.statements_ = source.statements_.filter((s) => s.curie === "dcterms:title");
+    const panel = await mount(source);
+    row(panel, "dcterms:title").querySelector<HTMLButtonElement>("button.remove")?.click();
+    await settle();
+    await settle();
+    expect(panel.dataset.state).toBe("empty");
+    expect(root(panel).activeElement).toBe(root(panel).querySelector(".state.empty button.add"));
+  });
+
+  it("disables a row's actions while its removal runs", async () => {
+    const source = new FakeMetadataSource();
+    const wait = gate();
+    source.gates.remove = wait;
+    const panel = await mount(source);
+    const subject = row(panel, "dcterms:subject");
+    const remove = subject.querySelector<HTMLButtonElement>("button.remove") as HTMLButtonElement;
+    remove.click();
+    await settle();
+    expect(remove.disabled).toBe(true);
+    expect(subject.querySelector<HTMLButtonElement>("button.edit")?.disabled).toBe(true);
+    remove.click();
+    wait.open();
+    await settle();
+    await settle();
+    expect(source.removals).toHaveLength(1);
+    expect(root(panel).querySelectorAll(".row")).toHaveLength(7);
+  });
+
+  it("re-enables a row's actions when its removal is refused", async () => {
+    const source = new FakeMetadataSource();
+    source.failures.remove = new ApiError(409, "/api/v1/files/metadata/removals", {
+      code: "conflict",
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const panel = await mount(source);
+    const remove = row(panel, "dcterms:subject").querySelector<HTMLButtonElement>("button.remove");
+    remove?.click();
+    await settle();
+    expect(remove?.disabled).toBe(false);
+  });
+
+  it("clears a custom key's invalid mark when a candidate is chosen instead", async () => {
+    const source = new FakeMetadataSource();
+    source.registry = [CUSTOM];
+    const panel = await mount(source);
+    const dialog = await openAdd(panel);
+    dialog.querySelector<HTMLButtonElement>("button.custom-key")?.click();
+    const key = dialog.querySelector<HTMLInputElement>("input.custom-input");
+    type(key, "nope");
+    expect(key?.getAttribute("aria-invalid")).toBe("true");
+    type(dialog.querySelector("input.search"), "title");
+    await settle();
+    dialog.querySelector<HTMLButtonElement>('.candidate[data-curie="dcterms:title"]')?.click();
+    expect(key?.value).toBe("");
+    expect(key?.hasAttribute("aria-invalid")).toBe(false);
+    expect(dialog.querySelector(".error")?.textContent).toBe("");
+  });
+
+  it("names extensions in the count when a registered row is listed", async () => {
+    const source = new FakeMetadataSource();
+    source.registry = [RICO];
+    source.statements_.push({
+      curie: "rico:hasOrHadRightsHolder",
+      prefix: "rico",
+      term: "hasOrHadRightsHolder",
+      value: "Mara Okafor",
+      source: "asserted",
+    });
+    const panel = await mount(source);
+    expect(root(panel).querySelector(".count")?.textContent).toBe(
+      "Dublin Core, Schema.org and extensions · 9",
+    );
+    type(root(panel).querySelector("input.filter"), "rico");
+    expect(root(panel).querySelector(".count")?.textContent).toBe(
+      "Dublin Core, Schema.org and extensions · 1 of 9",
+    );
   });
 
   it("re-reads the statements of a new version of the same file", async () => {
