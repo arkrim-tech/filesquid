@@ -40,13 +40,23 @@ Feature: Library facts: name, free space and recent libraries
     When the caller lists the recent libraries
     Then 20 libraries should be listed, newest readable first, with no path or location ID
 
+  Scenario: A name of exactly 1,024 bytes is the longest the rules allow
+    When the owner creates a library named with 1024 bytes
+    Then the library should be created with its 1024-byte name
+
   # Error cases
-  Scenario: A name that breaks the rules creates nothing
-    When the owner creates a library named with 1025 bytes
+  Scenario Outline: A name that breaks the rules creates nothing
+    When the owner creates a library <named>
     Then the creation should be refused with "invalid_name" and nothing written
+
+    Examples:
+      | named                                   |
+      | named with 1025 bytes                   |
+      | with a blank name                       |
+      | with a control character in its name    |
 
   Scenario: An unreadable library is not found
     Given the owner has created the library "Hidden"
     And the caller may not read that library
-    When the owner reads the library's facts
+    When the caller reads the library's facts
     Then the facts should be refused as not found

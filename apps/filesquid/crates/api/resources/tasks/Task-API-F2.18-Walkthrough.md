@@ -25,7 +25,7 @@ Branch `feat/api-f2.18-library-facts`, modules `filesquid-api` ([plan row](../pl
 
 TDD: `integration_library_facts` was written before the implementation and did not compile against the old API (`unresolved imports filesquid_api::local_library::FreeSpace, LibraryRegistry, FACTS_OPERATION, RENAME_OPERATION, UNTITLED_LIBRARY`; `no method named with_registry`).
 
-Known limits: the registry lives for the host's lifetime, so the recent list starts empty at each launch until DE-1.8 keeps it; a library's name is kept by the host, not in the library's folder.
+Known limits: the registry lives for the host's lifetime, so the recent list starts empty at each launch until DE-1.8 keeps it; a library's name lives in the registry and in the library entity of the folder's snapshot, which the host keeps in step (Cubic round 3): a new library's entity takes the bound name, a reopened, moved or copied folder names the registry, and a rename retitles the entity in a snapshot version journaled as `library.entity.rename` (the library ID only), so the navigation title follows the name (API-S-038).
 
 ## Test output
 
@@ -177,6 +177,128 @@ Feature: Library facts: name, free space and recent libraries
 ```
 
 The head-commit hook run (`FULL=1 bash scripts/pre-commit.sh`, `Test scope: full`) is recorded in the pull request.
+
+## Cubic round 3 (the whole PR after the merge of main)
+
+The P1 finding: the name only reached the host registry, so the navigation title stayed "Library". Now the name is kept in step with the library entity of the folder's snapshot (`SqliteCatalog::library_name` and `rename_library`, journaled as `library.entity.rename` with the library ID only; the desktop's `align_name` after every attach and its retitle after every rename). The feature gained the blank, control-character and 1,024-byte name cases and uses one actor in the unreadable-library scenario. Run from `apps/filesquid/` with the shared target:
+
+```text
+     Running tests/unit/folder_libraries.rs (<target>/debug/deps/unit_folder_libraries-1d70d3f4ec7a989a)
+
+running 23 tests
+test a_create_library_command_is_refused_and_creates_nothing ... ok
+test a_folder_that_cannot_be_a_library_leaves_nothing_in_the_catalog_directory ... ok
+test a_file_s_path_is_taken_below_it_and_no_file_sits_below_a_file ... ok
+test a_file_object_without_a_snapshot_entry_is_counted_and_left_unregistered ... ok
+test a_file_of_the_earlier_form_is_placed_when_it_is_registered ... ok
+test a_library_folder_copied_elsewhere_reopens_with_its_collections_folders_and_files ... ok
+test a_retired_in_app_root_is_neither_opened_nor_served ... ok
+test a_refused_registration_is_journaled_as_failed_with_its_code ... ok
+test a_registration_whose_numbers_are_all_taken_is_refused_and_changes_nothing ... ok
+test a_registered_file_names_its_path_and_object_in_the_snapshot_and_the_index ... ok
+test an_empty_folder_attached_with_an_index_of_another_folder_starts_afresh ... ok
+test an_index_write_for_a_library_that_is_not_attached_is_refused ... ok
+test a_version_2_catalog_is_migrated_to_version_3_and_rebuilt_from_its_folder ... ok
+test an_index_built_from_another_copy_of_the_folder_is_rebuilt ... ok
+test a_taken_path_is_numbered_beside_it_and_a_deleted_file_s_path_counts ... ok
+test no_index_is_created_beyond_the_catalog_s_limit_of_files ... ok
+test files_deleted_with_their_collection_are_deleted_not_unfiled ... ok
+test no_library_root_or_original_is_ever_created_in_the_catalog_directory ... ok
+test removing_a_collection_that_still_holds_files_is_refused_before_anything_is_published ... ok
+test renaming_a_library_retitles_its_entity_in_one_journaled_version_and_a_same_name_rename_publishes_nothing ... ok
+test deleting_a_collection_deletes_its_files_in_place_in_one_version ... ok
+test the_library_s_own_retention_survives_a_rebuild_and_sets_purge_after ... ok
+test folders_and_scope_entries_come_from_the_index_of_ordinary_files ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.38s
+```
+
+```text
+     Running tests/integration/library_routes.rs (<target>/debug/deps/integration_library_routes-be26db170b910b92)
+
+running 11 tests
+test a_cancelled_or_unusable_pick_registers_nothing ... ok
+test create_in_a_chosen_folder_answers_an_opaque_library_and_serves_its_files ... ok
+test a_named_library_answers_its_facts_and_is_listed_as_recent_without_its_folder ... ok
+test a_library_folder_copied_elsewhere_reopens_with_its_collections ... ok
+test the_data_directory_keeps_only_each_library_s_index_never_its_files ... ok
+test the_navigation_lists_the_installations_repository_and_its_libraries ... ok
+test an_opened_folder_feeds_the_history_and_copies_and_rebuilds_without_paths ... ok
+test the_owners_preferences_are_kept_in_the_operational_store ... ok
+test the_owner_picks_a_folder_in_the_hosts_dialog_and_the_app_sees_only_its_id ... ok
+test the_backfill_route_runs_over_the_folders_the_owner_opened ... ok
+test the_owners_consented_repair_is_kept_in_the_persistent_ledger ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+```
+
+```text
+Feature: Library facts: name, free space and recent libraries
+  Scenario: A library created with a name answers its name and free space
+   ✔  Given the owner has created the library "Family archive"
+   ✔  When the owner reads the library's facts
+   ✔  Then the facts should name it "Family archive" with 1000000 free bytes
+  Scenario: A rename is journaled with the library only
+   ✔  Given the owner has created the library "Family archive"
+   ✔  When the owner renames the library to "Family archive 1990s"
+   ✔  Then the facts should name it "Family archive 1990s" with 1000000 free bytes
+   ✔  And the journal should record one library rename naming the library and not the name
+  Scenario: A volume that cannot be read answers null free bytes with the reason
+   ✔  Given the owner has created the library "Remote"
+   ✔  And the library's volume is not local
+   ✔  When the owner reads the library's facts
+   ✔  Then the free bytes should be null because "not_local"
+  Scenario: The recent list keeps readable libraries first, then the 20 newest
+   ✔  Given the owner has opened 22 libraries one after another
+   ✔  And the caller may not read the newest one
+   ✔  When the caller lists the recent libraries
+   ✔  Then 20 libraries should be listed, newest readable first, with no path or location ID
+  Scenario: A name of exactly 1,024 bytes is the longest the rules allow
+   ✔  When the owner creates a library named with 1024 bytes
+   ✔  Then the library should be created with its 1024-byte name
+  Scenario Outline: A name that breaks the rules creates nothing
+   ✔  When the owner creates a library named with 1025 bytes
+   ✔  Then the creation should be refused with "invalid_name" and nothing written
+  Scenario Outline: A name that breaks the rules creates nothing
+   ✔  When the owner creates a library with a blank name
+   ✔  Then the creation should be refused with "invalid_name" and nothing written
+  Scenario Outline: A name that breaks the rules creates nothing
+   ✔  When the owner creates a library with a control character in its name
+   ✔  Then the creation should be refused with "invalid_name" and nothing written
+  Scenario: An unreadable library is not found
+   ✔  Given the owner has created the library "Hidden"
+   ✔  And the caller may not read that library
+   ✔  When the caller reads the library's facts
+   ✔  Then the facts should be refused as not found
+
+```
+
+```text
+[Summary]
+28 features
+388 scenarios (286 passed, 102 skipped)
+1377 steps (1275 passed, 102 skipped)
+```
+
+```text
+     Running tests/integration/library_facts.rs (<target>/debug/deps/integration_library_facts-5ae061bbd5d57a20)
+
+running 12 tests
+test a_library_this_host_remembers_but_has_not_opened_now_is_listed_as_not_open ... ok
+test a_caller_who_may_not_read_the_repository_reads_no_library_facts ... ok
+test a_library_created_without_a_name_is_untitled_and_open_may_name_it ... ok
+test a_library_is_created_with_its_name_and_the_facts_answer_it ... ok
+test a_name_given_on_open_that_replaces_another_is_journaled_as_a_rename ... ok
+test a_rename_of_an_unknown_library_or_to_a_bad_name_is_refused_once ... ok
+test a_name_that_breaks_the_rules_is_refused_before_anything_is_created ... ok
+test a_rename_is_journaled_with_the_library_only_and_a_same_name_changes_nothing ... ok
+test an_unknown_or_unreadable_library_is_not_found_and_journaled_once ... ok
+test without_a_registry_the_facts_and_recent_routes_are_unavailable ... ok
+test free_bytes_are_null_with_their_reason_when_the_volume_cannot_be_read ... ok
+test recent_lists_at_most_20_readable_libraries_newest_first_without_paths ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+```
 
 ## Mocked Environment Variables
 

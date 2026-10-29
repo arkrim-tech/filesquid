@@ -45,7 +45,7 @@ impl FactsWorld {
     }
 }
 
-/// Readability decided by a closure over the node.
+/// Readability that denies the one library it holds and admits every other node.
 struct Except(LibraryId);
 
 impl NavigationAccess for Except {
@@ -109,6 +109,7 @@ fn unreadable(w: &mut MonitorWorld) {
 }
 
 #[when("the owner reads the library's facts")]
+#[when("the caller reads the library's facts")]
 async fn read_facts(w: &mut MonitorWorld) {
     let (library, _) = w.facts.last();
     let uri = format!("/api/v1/libraries/{library}/facts");
@@ -131,9 +132,25 @@ async fn list_recent(w: &mut MonitorWorld) {
 }
 
 #[when(expr = "the owner creates a library named with {int} bytes")]
-async fn create_too_long(w: &mut MonitorWorld, bytes: usize) {
-    let location = w.facts.rig().locations.register("too-long");
-    let body = json!({ "location_id": location, "name": "x".repeat(bytes) });
+async fn create_with_bytes(w: &mut MonitorWorld, bytes: usize) {
+    create_named(w, &"x".repeat(bytes)).await;
+}
+
+#[when("the owner creates a library with a blank name")]
+async fn create_blank(w: &mut MonitorWorld) {
+    create_named(w, "   ").await;
+}
+
+#[when("the owner creates a library with a control character in its name")]
+async fn create_with_control_character(w: &mut MonitorWorld) {
+    create_named(w, "Family\u{0007}archive").await;
+}
+
+/// Ask to create a library named `name` on a new location, keeping the answer and the
+/// location for the Then steps.
+async fn create_named(w: &mut MonitorWorld, name: &str) {
+    let location = w.facts.rig().locations.register("checked-name");
+    let body = json!({ "location_id": location, "name": name });
     w.facts.answer = Some(w.facts.rig().post("/api/v1/libraries", body).await);
     w.facts.location = Some(location);
 }
@@ -192,6 +209,21 @@ fn listed(w: &mut MonitorWorld) {
     let text = answer.text();
     let dir = w.facts.rig().dir_text();
     assert!(!text.contains(&dir) && !text.contains("loc-"), "{text}");
+}
+
+#[then(expr = "the library should be created with its {int}-byte name")]
+async fn created_with_bytes(w: &mut MonitorWorld, bytes: usize) {
+    let answer = w.facts.answer();
+    assert_eq!(answer.status.as_u16(), 200, "{}", answer.text());
+    let library = answer.json()["library_id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+    let location = w.facts.location.clone().expect("location");
+    w.facts.libraries.push((library, location));
+    read_facts(w).await;
+    let name = w.facts.answer().json()["name"].clone();
+    assert_eq!(name.as_str().expect("name").len(), bytes);
 }
 
 #[then(expr = "the creation should be refused with {string} and nothing written")]

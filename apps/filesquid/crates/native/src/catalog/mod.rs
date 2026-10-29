@@ -51,7 +51,7 @@ mod rows;
 mod schema;
 mod write;
 
-pub use attach::{AttachReport, LibraryFolder, DEFAULT_LIBRARY_NAME};
+pub use attach::{AttachReport, LibraryFolder, DEFAULT_LIBRARY_NAME, ENTITY_RENAME_OPERATION};
 pub use canonical::WORK_DIR_SUFFIX;
 pub use intent::{intent_entry, PendingIntent, INTENT_RECORDED_OPERATION};
 pub use provenance::{CatalogRoots, HostRoots, LibraryBackfill, MAX_BACKFILL_RUNS};
@@ -359,6 +359,44 @@ impl SqliteCatalog {
         journal_alone(&mut library.conn, &entry.target(library_id.as_str()))?;
         self.forward_logged(&library.conn);
         result
+    }
+
+    /// The name of the attached library `library_id`, from its index: the name its snapshot's
+    /// library entity carries and its navigation node shows (API-S-038). Database I/O.
+    ///
+    /// # Errors
+    /// [`CatalogError::Failed`] for a library that is not attached, an index without a
+    /// library row or a database failure.
+    pub fn library_name(&self, library_id: &LibraryId) -> Result<String, CatalogError> {
+        let libraries = self.lock()?;
+        let library = open_library(&libraries, library_id)?;
+        rows::library(&library.conn)?
+            .map(|(record, _, _)| record.name)
+            .ok_or_else(|| failed("unknown library"))
+    }
+
+    /// Rename the attached library `library_id` to `name` in its index and its snapshot, in
+    /// one version journaled as [`ENTITY_RENAME_OPERATION`] by `actor` with the library ID
+    /// only (never the name), so the owner's rename of API-S-038 reaches the navigation
+    /// title and survives a move or copy of the folder. A rename to the name the library
+    /// already has publishes no version and journals nothing. Database, filesystem and
+    /// journal-store I/O.
+    ///
+    /// # Errors
+    /// As [`Self::index_files`]; a failure is journaled as `failed` with its code.
+    pub fn rename_library(
+        &self,
+        library_id: &LibraryId,
+        name: &str,
+        actor: &str,
+    ) -> Result<(), CatalogError> {
+        let journal = JournalEntry::new(ENTITY_RENAME_OPERATION, Outcome::Succeeded)
+            .actor(actor)
+            .target(library_id.as_str());
+        let keys = vec![SnapshotKey::Library];
+        self.write_journaled(library_id, journal, keys, |tx| {
+            write::set_library_name(tx, name)
+        })
     }
 
     /// Write an index refresh of `library_id` with [`Self::write_indexed`], then forward the
