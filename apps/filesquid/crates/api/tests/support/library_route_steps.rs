@@ -2,7 +2,9 @@
 //! the library and repair routes through the router, on the desktop and the server mount,
 //! over real OCFL storage roots on the local filesystem.
 
-use crate::library_routes_fixture::{Answer, LibraryRig, Mount};
+use crate::library_routes_fixture::{
+    library_command, location_command, operation_id, Answer, LibraryRig, Mount,
+};
 use crate::MonitorWorld;
 use cucumber::{given, then, when};
 use filesquid_api::journal::Outcome;
@@ -24,6 +26,10 @@ pub struct LibraryRouteWorld {
     failures: usize,
     answer: Option<Answer>,
     job: String,
+    /// The first answer of each operation ID a scenario repeats.
+    first: std::collections::HashMap<String, Value>,
+    /// The copy destination registered for this scenario.
+    copy_dest: Option<String>,
 }
 
 impl std::fmt::Debug for LibraryRouteWorld {
@@ -41,6 +47,21 @@ impl LibraryRouteWorld {
 
     fn answer(&self) -> &Answer {
         self.answer.as_ref().expect("answer")
+    }
+
+    /// Keep the first answer of `operation`, so a repeat can be compared with it.
+    fn keep_first(&mut self, operation: &str, answer: &Answer) {
+        self.first
+            .entry(operation.to_string())
+            .or_insert_with(|| answer.json());
+    }
+
+    /// The one copy destination of this scenario, registered on first use.
+    fn copy_destination(&mut self) -> String {
+        if self.copy_dest.is_none() {
+            self.copy_dest = Some(self.rig().locations.register("copy"));
+        }
+        self.copy_dest.clone().expect("destination")
     }
 
     /// Remember the failed journal entries so far.
@@ -105,20 +126,29 @@ async fn server_library(w: &mut MonitorWorld) {
 
 #[when(expr = "the owner creates a library in that folder through the API")]
 async fn create(w: &mut MonitorWorld) {
-    let body = json!({ "location_id": w.routes.location });
-    w.routes.answer = Some(w.routes.rig().post("/api/v1/libraries", body).await);
+    create_as(w, operation_id(), "0".into()).await;
+}
+
+#[when(
+    expr = "the owner creates a library in that folder as operation {string} expecting {string}"
+)]
+async fn create_as(w: &mut MonitorWorld, operation: String, revision: String) {
+    let body = location_command(&w.routes.location, &operation, &revision, None);
+    let answer = w.routes.rig().post("/api/v1/libraries", body).await;
+    w.routes.keep_first(&operation, &answer);
+    w.routes.answer = Some(answer);
 }
 
 #[when(expr = "the owner opens the library's folder through the API")]
 async fn open(w: &mut MonitorWorld) {
-    let body = json!({ "location_id": w.routes.location });
+    let body = location_command(&w.routes.location, &operation_id(), "0", None);
     let rig = w.routes.rig();
     w.routes.answer = Some(rig.post("/api/v1/libraries/openings", body).await);
 }
 
 #[then(expr = "the answer should name the same library with {int} objects")]
 fn same_library(w: &mut MonitorWorld, objects: u64) {
-    let body = w.routes.answer().json();
+    let body = w.routes.answer().result();
     assert_eq!(body["library_id"], w.routes.library.as_str(), "{body}");
     assert_eq!(body["objects"], objects, "{body}");
 }
@@ -127,10 +157,82 @@ fn same_library(w: &mut MonitorWorld, objects: u64) {
     expr = "the owner copies a completed snapshot of the library to an empty folder through the API"
 )]
 async fn copy(w: &mut MonitorWorld) {
-    let dest = w.routes.rig().locations.register("copy");
-    let body = json!({ "library_id": w.routes.library, "destination_location_id": dest });
+    copy_as(w, operation_id(), "1".into()).await;
+}
+
+#[when(
+    expr = "the owner copies the library to an empty folder as operation {string} expecting {string}"
+)]
+async fn copy_as(w: &mut MonitorWorld, operation: String, revision: String) {
+    let dest = w.routes.copy_destination();
+    let input = json!({ "library_id": w.routes.library, "destination_location_id": dest });
+    let body = library_command(&w.routes.library, &operation, &revision, input);
+    let answer = w
+        .routes
+        .rig()
+        .post("/api/v1/libraries/snapshot-copies", body)
+        .await;
+    w.routes.keep_first(&operation, &answer);
+    w.routes.answer = Some(answer);
+}
+
+#[when(expr = "the owner sends a rebuild of the library without an envelope")]
+async fn rebuild_without_envelope(w: &mut MonitorWorld) {
+    let body = json!({ "library_id": w.routes.library });
     let rig = w.routes.rig();
-    w.routes.answer = Some(rig.post("/api/v1/libraries/snapshot-copies", body).await);
+    w.routes.answer = Some(rig.post("/api/v1/libraries/rebuilds", body).await);
+}
+
+#[then(expr = "the answer should be a committed library outcome of operation {string}")]
+fn committed_library(w: &mut MonitorWorld, operation: String) {
+    let answer = w.routes.answer();
+    assert_eq!(answer.status.as_u16(), 200, "{}", answer.text());
+    let body = answer.json();
+    assert_eq!(body["operation_id"], operation, "{body}");
+    assert_eq!(body["kind"], "committed", "{body}");
+    assert_eq!(body["error"], Value::Null, "{body}");
+    assert!(body["result"].is_object(), "{body}");
+}
+
+#[then(expr = "the library should be at revision {string}")]
+fn library_revision(w: &mut MonitorWorld, revision: String) {
+    let result = w.routes.answer().result();
+    assert_eq!(result["revision"], revision, "{result}");
+}
+
+#[then(
+    expr = "the library answer should be HTTP 409 with a conflict outcome of operation {string}"
+)]
+fn conflict_outcome(w: &mut MonitorWorld, operation: String) {
+    let answer = w.routes.answer();
+    assert_eq!(answer.status.as_u16(), 409, "{}", answer.text());
+    let body = answer.json();
+    assert_eq!(body["operation_id"], operation, "{body}");
+    assert_eq!(body["kind"], "conflict", "{body}");
+    assert_eq!(body["code"], "conflict", "{body}");
+    assert_eq!(body["result"], Value::Null, "{body}");
+}
+
+#[then(expr = "the library answer should be the first answer of operation {string}")]
+fn first_answer(w: &mut MonitorWorld, operation: String) {
+    let first = w.routes.first.get(&operation).expect("a first answer");
+    assert_eq!(&w.routes.answer().json(), first);
+}
+
+#[then(expr = "the copy folder should be empty")]
+fn copy_folder_empty(w: &mut MonitorWorld) {
+    let dest = w.routes.copy_destination();
+    assert!(w.routes.rig().files(&dest).is_empty());
+}
+
+#[then(expr = "{string} should be journaled {int} time(s) as a success")]
+fn journaled_successes(w: &mut MonitorWorld, operation: String, times: usize) {
+    let entries = w.routes.rig().journaled(&operation);
+    let succeeded = entries
+        .iter()
+        .filter(|e| e.outcome == Outcome::Succeeded)
+        .count();
+    assert_eq!(succeeded, times, "{entries:?}");
 }
 
 #[given(
@@ -143,12 +245,27 @@ async fn library_without_runner(w: &mut MonitorWorld) {
 
 #[when(expr = "the owner starts a rebuild of the library from its files through the API")]
 async fn start_rebuild(w: &mut MonitorWorld) {
-    let body = json!({ "library_id": w.routes.library });
+    start_rebuild_as(w, operation_id(), "1".into()).await;
+}
+
+#[when(expr = "the owner starts a rebuild of the library as operation {string} expecting {string}")]
+async fn start_rebuild_as(w: &mut MonitorWorld, operation: String, revision: String) {
+    let input = json!({ "library_id": w.routes.library });
+    let body = library_command(&w.routes.library, &operation, &revision, input);
     let rig = w.routes.rig();
     let answer = rig.post("/api/v1/libraries/rebuilds", body).await;
     assert_eq!(answer.status.as_u16(), 200, "{}", answer.text());
-    w.routes.job = answer.json()["job_id"].as_str().expect("job").to_string();
+    w.routes.job = answer.result()["job_id"].as_str().expect("job").to_string();
+    w.routes.keep_first(&operation, &answer);
     w.routes.answer = Some(answer);
+}
+
+#[then(expr = "the answer should be a pending outcome of operation {string} naming the same job")]
+fn pending_same_job(w: &mut MonitorWorld, operation: String) {
+    let body = w.routes.answer().json();
+    assert_eq!(body["operation_id"], operation, "{body}");
+    assert_eq!(body["kind"], "pending", "{body}");
+    assert_eq!(body["result"]["job_id"], w.routes.job.as_str(), "{body}");
 }
 
 #[when(expr = "the owner rebuilds the library from its files through the API")]
@@ -184,7 +301,9 @@ async fn control_rebuild(w: &mut MonitorWorld, control: String) {
 
 #[then(expr = "the answer should be a pending library.rebuild job without a result")]
 fn pending_rebuild(w: &mut MonitorWorld) {
-    let body = w.routes.answer().json();
+    let answer = w.routes.answer().json();
+    assert_eq!(answer["kind"], "pending", "{answer}");
+    let body = &answer["result"];
     assert_eq!(body["outcome"], "pending", "{body}");
     assert_eq!(body["job"]["kind"], "library.rebuild", "{body}");
     assert_eq!(body["job"]["state"], "pending", "{body}");
@@ -289,7 +408,7 @@ async fn repair_anonymous(w: &mut MonitorWorld) {
 fn opaque_answer(w: &mut MonitorWorld) {
     let answer = w.routes.answer();
     assert_eq!(answer.status.as_u16(), 200, "{}", answer.text());
-    let library = answer.json()["library_id"].as_str().map(str::len);
+    let library = answer.result()["library_id"].as_str().map(str::len);
     assert_eq!(library, Some(36));
     assert!(!answer.text().contains(&w.routes.rig().dir_text()));
 }
@@ -323,7 +442,7 @@ fn only_that_file(w: &mut MonitorWorld) {
 
 #[then(expr = "the copy should report {int} objects and no invalid object")]
 fn copy_report(w: &mut MonitorWorld, objects: u64) {
-    let report = w.routes.answer().json();
+    let report = w.routes.answer().result();
     assert_eq!(report["objects"], objects, "{report}");
     assert_eq!(report["invalid_objects"], json!([]));
 }
@@ -403,7 +522,9 @@ async fn committable(w: &mut MonitorWorld) {
 
 #[when(expr = "the owner rebuilds a library that is not open through the API")]
 async fn rebuild_not_open(w: &mut MonitorWorld) {
-    let body = json!({ "library_id": crate::library_routes_fixture::LIBRARY });
+    let library = crate::library_routes_fixture::LIBRARY;
+    let input = json!({ "library_id": library });
+    let body = library_command(library, &operation_id(), "1", input);
     let rig = w.routes.rig();
     let answer = rig.post("/api/v1/libraries/rebuilds", body).await;
     assert!(

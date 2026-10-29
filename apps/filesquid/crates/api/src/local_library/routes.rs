@@ -12,9 +12,25 @@
 //! - `POST /api/v1/libraries/repairs` (`library.repair`): the consented repair; the policy
 //!   grants it to the desktop owner only.
 //!
+//! **Command envelopes (Task API-F2.19; API-S-002, API-S-019).** The four mutation routes
+//! take `{"envelope": CommandEnvelope, "input": ...}` ([`crate::envelope`]) and answer a
+//! `CommandOutcome` for the envelope's operation ID with the route's former answer as
+//! `result`: `committed` for create, open and copy, `pending` with the job for a rebuild. The
+//! scope is `location:<location_id>` for create and open and `library:<library_id>` for copy
+//! and rebuild. The expected revision is compared by the operations under their binding lock
+//! (create `0`; open `0`, or the current revision of a library already open there; copy and
+//! rebuild the current revision); a stale one, like every other 409 refusal, is HTTP 409 with
+//! a `conflict` outcome beside the `ApiError` fields. A repeated operation ID of a command
+//! that changed something (a create, a fresh open, a copy, a rebuild that submitted its job)
+//! answers its first answer again with no second change; a command that changed nothing (an
+//! open of an open library, a rebuild that answered an unfinished job, a refusal) stores no
+//! receipt. The repair route keeps its consent body and the location-choices route its
+//! purpose: neither is an envelope route.
+//!
 //! The operations journal their own outcomes and refusals. A handler journals only what it
-//! refuses itself, once: a body or query it cannot read, and a host that has not installed
-//! its library commands yet.
+//! refuses itself, once: a body or query it cannot read, an envelope it refuses, an operation
+//! ID that names another command or is still running, and a host that has not installed its
+//! library commands yet.
 
 use super::operations::LibraryOperations;
 use super::rebuild_job::{submit_rebuild, RebuildJobAnswer, RebuildOutcome, SubmitRefusal};
@@ -22,12 +38,15 @@ use super::repair::REPAIR_OPERATION;
 use super::service::{
     CANDIDATES_OPERATION, COPY_OPERATION, CREATE_OPERATION, OPEN_OPERATION, REBUILD_OPERATION,
 };
-use super::LocalLibraryError;
+use super::{LibraryRequest, LocalLibraryError, LocationRequest, SnapshotCopyRequest};
 use crate::auth::{journal_entry, Action, Principal};
-use crate::error::ApiError;
+use crate::envelope::{self, Checked, Command, Settled};
+use crate::error::{ApiError, ErrorCode};
+use crate::files::receipts::ClaimGuard;
 use crate::jobs::routes as job_routes;
 use crate::jobs::{JobError, JobView};
 use crate::journal::{JournalEntry, Level, Outcome};
+use crate::operation::OperationId;
 use crate::routes::Route;
 use crate::ApiState;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
@@ -36,6 +55,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Extension, Json};
 use serde::Serialize;
+use std::future::Future;
 use std::sync::Arc;
 
 /// The library and repair routes, relative to [`crate::API_PREFIX`].
@@ -60,6 +80,41 @@ pub(crate) fn routes() -> Vec<Route> {
         ),
         ("/libraries/repairs", post(repair), Action::RepairLibraries),
     ]
+}
+
+/// What a command that ran answers: the route's result, whether it is complete, and whether
+/// it changed anything (so its answer is stored as a receipt).
+struct Done<V> {
+    /// What the route answers as `result`.
+    result: V,
+    /// `committed`, or `pending` for a durable job.
+    pending: bool,
+    /// True when the command changed something.
+    changed: bool,
+}
+
+/// The target a library command's receipt is keyed by, and the scope its envelope must name.
+trait CommandInput: Serialize {
+    /// `location:<id>` for a command that binds a folder, `library:<id>` otherwise.
+    fn scope(&self) -> String;
+}
+
+impl CommandInput for LocationRequest {
+    fn scope(&self) -> String {
+        format!("location:{}", self.location_id)
+    }
+}
+
+impl CommandInput for SnapshotCopyRequest {
+    fn scope(&self) -> String {
+        format!("library:{}", self.library_id.as_str())
+    }
+}
+
+impl CommandInput for LibraryRequest {
+    fn scope(&self) -> String {
+        format!("library:{}", self.library_id.as_str())
+    }
 }
 
 /// The refusal for a host that has not installed its library commands.
@@ -96,71 +151,215 @@ fn query<T>(query: Result<Query<T>, QueryRejection>) -> Option<T> {
     query.ok().map(|Query(q)| q)
 }
 
-/// `POST /api/v1/libraries`.
+/// The checked command of a JSON mutation route, or the refusal to journal here.
+fn checked<T: CommandInput>(
+    request: Result<Json<Command<T>>, JsonRejection>,
+) -> Result<Checked<T>, LocalLibraryError> {
+    let command = body(request).ok_or_else(unreadable)?;
+    let scope = command.input.scope();
+    envelope::check(command.envelope, command.input, &scope)
+        .map_err(|message| LocalLibraryError::invalid("invalid_request", message))
+}
+
+/// Run the command of the route journaled as `operation` once: answer its receipt when the
+/// same command already ran, refuse an operation ID of another command or one in flight,
+/// else `execute` it and store the answer of a change.
+async fn run<T, V, F, Fut>(
+    state: &ApiState,
+    principal: &Principal,
+    operation: &'static str,
+    command: Result<Checked<T>, LocalLibraryError>,
+    execute: F,
+) -> Response
+where
+    T: CommandInput,
+    V: Serialize,
+    F: FnOnce(Arc<dyn LibraryOperations>, Checked<T>, String) -> Fut,
+    Fut: Future<Output = Result<Done<V>, LocalLibraryError>>,
+{
+    let actor = principal.actor().to_string();
+    let (operations, command) = match command.and_then(|c| ready(state, Some(c))) {
+        Ok(ready) => ready,
+        Err(err) => return refuse(state, operation, &actor, None, err).await,
+    };
+    let operation_id = command.operation_id.clone();
+    let target = command.input.scope();
+    let receipts = state.command_receipts();
+    let claimed = envelope::claim(receipts, operation, &target, &command.input, &operation_id);
+    let guard = match claimed {
+        Ok(guard) => guard,
+        Err(settled) => return settle(state, operation, &actor, &operation_id, settled).await,
+    };
+    match execute(operations, command, actor).await {
+        Ok(done) => answer_done(operation, &operation_id, done, guard),
+        Err(err) => envelope::refusal(Some(&operation_id), ApiError::from(err)),
+    }
+}
+
+/// Answer a claim that did not run the command: a replay changes nothing and is not
+/// journaled; a refusal is journaled once.
+async fn settle(
+    state: &ApiState,
+    operation: &'static str,
+    actor: &str,
+    operation_id: &OperationId,
+    settled: Settled,
+) -> Response {
+    let Some((code, message)) = settled.refusal() else {
+        let Settled::Replay(answer) = settled else {
+            unreachable!("only a replay refuses nothing");
+        };
+        return Json(answer).into_response();
+    };
+    let err = match code {
+        ErrorCode::InvalidRequest => LocalLibraryError::invalid("invalid_request", message),
+        ErrorCode::Conflict => LocalLibraryError::refused("conflict", message),
+        _ => LocalLibraryError::Internal,
+    };
+    refuse(state, operation, actor, Some(operation_id), err).await
+}
+
+/// Store the answer of a change as its command's receipt, then answer it.
+fn answer_done<V: Serialize>(
+    operation: &str,
+    operation_id: &OperationId,
+    done: Done<V>,
+    guard: ClaimGuard,
+) -> Response {
+    let encoded = match done.pending {
+        true => envelope::pending(operation_id, done.result),
+        false => envelope::committed(operation_id, done.result),
+    };
+    let Some(answer) = encoded else {
+        return ApiError::internal(operation, "an answer did not encode").into_response();
+    };
+    if done.changed {
+        guard.store(answer.clone());
+    }
+    Json(answer).into_response()
+}
+
+/// `POST /api/v1/libraries`: create a library, answered `committed` with the library.
 async fn create(
     State(state): State<ApiState>,
     Extension(principal): Extension<Principal>,
-    request: Result<Json<super::LocationRequest>, JsonRejection>,
+    request: Result<Json<Command<LocationRequest>>, JsonRejection>,
 ) -> Response {
-    let actor = principal.actor().to_string();
-    let (operations, request) = match ready(&state, body(request)) {
-        Ok(ready) => ready,
-        Err(err) => return refuse(&state, CREATE_OPERATION, &actor, err).await,
-    };
-    answer(operations.create(actor, request).await)
+    let command = checked(request);
+    run(
+        &state,
+        &principal,
+        CREATE_OPERATION,
+        command,
+        |ops, c, actor| async move {
+            let view = ops.create(actor, c.input, c.expected).await?;
+            Ok(Done {
+                result: view,
+                pending: false,
+                changed: true,
+            })
+        },
+    )
+    .await
 }
 
-/// `POST /api/v1/libraries/openings`.
+/// `POST /api/v1/libraries/openings`: open a library, answered `committed` with the
+/// library; a library already open there is answered again and stores no receipt.
 async fn open(
     State(state): State<ApiState>,
     Extension(principal): Extension<Principal>,
-    request: Result<Json<super::LocationRequest>, JsonRejection>,
+    request: Result<Json<Command<LocationRequest>>, JsonRejection>,
 ) -> Response {
-    let actor = principal.actor().to_string();
-    let (operations, request) = match ready(&state, body(request)) {
-        Ok(ready) => ready,
-        Err(err) => return refuse(&state, OPEN_OPERATION, &actor, err).await,
-    };
-    answer(operations.open(actor, request).await)
+    let command = checked(request);
+    run(
+        &state,
+        &principal,
+        OPEN_OPERATION,
+        command,
+        |ops, c, actor| async move {
+            let opened = ops.open(actor, c.input, c.expected).await?;
+            Ok(Done {
+                result: opened.view,
+                pending: false,
+                changed: opened.bound,
+            })
+        },
+    )
+    .await
 }
 
-/// `POST /api/v1/libraries/snapshot-copies`.
+/// `POST /api/v1/libraries/snapshot-copies`: copy a completed snapshot, answered
+/// `committed` with the copy report.
 async fn copy_snapshot(
     State(state): State<ApiState>,
     Extension(principal): Extension<Principal>,
-    request: Result<Json<super::SnapshotCopyRequest>, JsonRejection>,
+    request: Result<Json<Command<SnapshotCopyRequest>>, JsonRejection>,
 ) -> Response {
-    let actor = principal.actor().to_string();
-    let (operations, request) = match ready(&state, body(request)) {
-        Ok(ready) => ready,
-        Err(err) => return refuse(&state, COPY_OPERATION, &actor, err).await,
-    };
-    answer(operations.copy_snapshot(actor, request).await)
+    let command = checked(request);
+    run(
+        &state,
+        &principal,
+        COPY_OPERATION,
+        command,
+        |ops, c, actor| async move {
+            let report = ops.copy_snapshot(actor, c.input, c.expected).await?;
+            Ok(Done {
+                result: report,
+                pending: false,
+                changed: true,
+            })
+        },
+    )
+    .await
 }
 
-/// `POST /api/v1/libraries/rebuilds`: refuse a library that is not open, then answer the
-/// library's unfinished rebuild job or a new one, handed to the host's runner (API-S-025
-/// **Rebuild as a job**).
+/// `POST /api/v1/libraries/rebuilds`: refuse a library that is not open or read at another
+/// revision, then answer the library's unfinished rebuild job or a new one under the
+/// envelope's operation ID, handed to the host's runner, as the `pending` outcome (API-S-025
+/// **Rebuild as a job**). Only a new job stores a receipt.
 async fn rebuild(
     State(state): State<ApiState>,
     Extension(principal): Extension<Principal>,
-    request: Result<Json<super::LibraryRequest>, JsonRejection>,
+    request: Result<Json<Command<LibraryRequest>>, JsonRejection>,
 ) -> Response {
-    let actor = principal.actor().to_string();
-    let checked = ready(&state, body(request))
-        .and_then(|(ops, request)| Ok((ops, request, state.jobs().ok_or_else(no_jobs)?)));
-    let (operations, request, jobs) = match checked {
-        Ok(ready) => ready,
-        Err(err) => return refuse(&state, REBUILD_OPERATION, &actor, err).await,
-    };
-    if let Err(err) = operations
-        .rebuild_ready(actor.clone(), request.clone())
-        .await
-    {
-        return ApiError::from(err).into_response();
-    }
-    let library = request.library_id;
-    let submitted = job_routes::blocking(move || Ok(submit_rebuild(&jobs, &library)))
+    let command = checked(request).and_then(|c| {
+        state.jobs().ok_or_else(no_jobs)?;
+        Ok(c)
+    });
+    let jobs_state = state.clone();
+    run(
+        &state,
+        &principal,
+        REBUILD_OPERATION,
+        command,
+        |ops, c, actor| async move {
+            ops.rebuild_ready(actor.clone(), c.input.clone(), c.expected)
+                .await?;
+            let answer = submit(&jobs_state, &actor, &c.input, c.operation_id.as_str()).await?;
+            let changed = answer.job.operation_id == c.operation_id.as_str();
+            Ok(Done {
+                result: answer,
+                pending: true,
+                changed,
+            })
+        },
+    )
+    .await
+}
+
+/// Submit the rebuild job of `request.library_id` under `operation_id`, or answer its
+/// unfinished job, and hand a new job to the runner. A submission the job store refused
+/// without journaling is journaled here once.
+async fn submit(
+    state: &ApiState,
+    actor: &str,
+    request: &LibraryRequest,
+    operation_id: &str,
+) -> Result<RebuildJobAnswer, LocalLibraryError> {
+    let jobs = state.jobs().ok_or_else(no_jobs)?;
+    let library = request.library_id.clone();
+    let id = operation_id.to_string();
+    let submitted = job_routes::blocking(move || Ok(submit_rebuild(&jobs, &library, id)))
         .await
         .unwrap_or_else(|error| {
             let journaled = false;
@@ -168,22 +367,21 @@ async fn rebuild(
         });
     let job = match submitted {
         Ok(job) => job,
-        Err(refusal) if refusal.journaled => {
-            return ApiError::from(job_failure(&refusal.error)).into_response();
-        }
         Err(refusal) => {
             let err = job_failure(&refusal.error);
-            return refuse(&state, REBUILD_OPERATION, &actor, err).await;
+            if !refusal.journaled {
+                journal_refusal(state, REBUILD_OPERATION, actor, Some(operation_id), &err).await;
+            }
+            return Err(err);
         }
     };
-    let scheduled = !job.is_paused() && job_routes::schedule(&state, &job);
-    Json(RebuildJobAnswer {
+    let scheduled = !job.is_paused() && job_routes::schedule(state, &job);
+    Ok(RebuildJobAnswer {
         outcome: RebuildOutcome::Pending,
         job_id: job.id.clone(),
         job: JobView::of(&job),
         scheduled,
     })
-    .into_response()
 }
 
 /// The refusal for a host that runs no durable jobs yet.
@@ -211,7 +409,7 @@ async fn repair_candidates(
     let actor = principal.actor().to_string();
     let (operations, request) = match ready(&state, query(request)) {
         Ok(ready) => ready,
-        Err(err) => return refuse(&state, CANDIDATES_OPERATION, &actor, err).await,
+        Err(err) => return refuse(&state, CANDIDATES_OPERATION, &actor, None, err).await,
     };
     answer(operations.repair_candidates(actor, request).await)
 }
@@ -224,7 +422,9 @@ async fn repair(
 ) -> Response {
     let (operations, request) = match ready(&state, body(request)) {
         Ok(ready) => ready,
-        Err(err) => return refuse(&state, REPAIR_OPERATION, principal.actor(), err).await,
+        Err(err) => {
+            return refuse(&state, REPAIR_OPERATION, principal.actor(), None, err).await;
+        }
     };
     answer(operations.repair(principal, request).await)
 }
@@ -237,21 +437,45 @@ fn answer<T: Serialize>(outcome: Result<T, LocalLibraryError>) -> Response {
     }
 }
 
-/// Journal a refusal of `operation` made by a handler, once, and answer the typed error.
-async fn refuse(
+/// Journal a refusal of `operation` made by a handler, once, with its operation ID when the
+/// envelope was read.
+async fn journal_refusal(
     state: &ApiState,
     operation: &'static str,
     actor: &str,
-    err: LocalLibraryError,
-) -> Response {
+    operation_id: Option<&str>,
+    err: &LocalLibraryError,
+) {
     let level = match err {
         LocalLibraryError::Unavailable | LocalLibraryError::Internal => Level::Error,
         _ => Level::Warn,
     };
-    let entry = JournalEntry::new(operation, Outcome::Failed)
+    let mut entry = JournalEntry::new(operation, Outcome::Failed)
         .level(level)
         .actor(actor)
         .error_code(err.error_code());
+    if let Some(id) = operation_id {
+        entry = entry.operation_id(id);
+    }
     journal_entry(state, entry).await;
-    ApiError::from(err).into_response()
+}
+
+/// Journal a refusal of `operation` made by a handler, once, and answer the typed error: a
+/// `conflict` of a command whose envelope was read as HTTP 409 with a `conflict` outcome.
+async fn refuse(
+    state: &ApiState,
+    operation: &'static str,
+    actor: &str,
+    operation_id: Option<&OperationId>,
+    err: LocalLibraryError,
+) -> Response {
+    journal_refusal(
+        state,
+        operation,
+        actor,
+        operation_id.map(OperationId::as_str),
+        &err,
+    )
+    .await;
+    envelope::refusal(operation_id, ApiError::from(err))
 }

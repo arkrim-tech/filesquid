@@ -20,7 +20,7 @@ use filesquid_api::auth::Principal;
 use filesquid_api::library::CatalogError;
 use filesquid_api::local_library::{
     CopyReport, LibraryCommands, LibraryFuture, LibraryOperations, LibraryRequest, LibraryView,
-    LocalLibraryService, LocationRequest, RebuildEnd, RebuildProgress, RepairAnswer,
+    LocalLibraryService, LocationRequest, Opened, RebuildEnd, RebuildProgress, RepairAnswer,
     RepairCandidates, RepairRequest, SnapshotCopyRequest,
 };
 use filesquid_api::ocfl_validation::ValidationService;
@@ -184,17 +184,28 @@ fn warn_unserved(library_id: &LibraryId, code: &str) {
 }
 
 impl LibraryOperations for DesktopLibraries {
-    fn create(&self, actor: String, request: LocationRequest) -> LibraryFuture<'_, LibraryView> {
+    fn create(
+        &self,
+        actor: String,
+        request: LocationRequest,
+        expected: String,
+    ) -> LibraryFuture<'_, LibraryView> {
         Box::pin(async move {
-            self.bind_and_serve(self.commands.create(&actor, request))
+            self.bind_and_serve(self.commands.create(&actor, request, &expected))
                 .await
         })
     }
 
-    fn open(&self, actor: String, request: LocationRequest) -> LibraryFuture<'_, LibraryView> {
+    fn open(
+        &self,
+        actor: String,
+        request: LocationRequest,
+        expected: String,
+    ) -> LibraryFuture<'_, Opened> {
         Box::pin(async move {
-            self.bind_and_serve(self.commands.open(&actor, request))
-                .await
+            let opened = self.commands.open(&actor, request, &expected).await?;
+            self.serve(&opened.view).await;
+            Ok(opened)
         })
     }
 
@@ -202,12 +213,22 @@ impl LibraryOperations for DesktopLibraries {
         &self,
         actor: String,
         request: SnapshotCopyRequest,
+        expected: String,
     ) -> LibraryFuture<'_, CopyReport> {
-        Box::pin(async move { self.commands.copy_snapshot(&actor, request).await })
+        Box::pin(async move {
+            self.commands
+                .copy_snapshot(&actor, request, &expected)
+                .await
+        })
     }
 
-    fn rebuild_ready(&self, actor: String, request: LibraryRequest) -> LibraryFuture<'_, ()> {
-        Box::pin(async move { self.commands.rebuild_ready(&actor, &request) })
+    fn rebuild_ready(
+        &self,
+        actor: String,
+        request: LibraryRequest,
+        expected: String,
+    ) -> LibraryFuture<'_, ()> {
+        Box::pin(async move { self.commands.rebuild_ready(&actor, &request, &expected) })
     }
 
     fn rebuild_from<'a>(

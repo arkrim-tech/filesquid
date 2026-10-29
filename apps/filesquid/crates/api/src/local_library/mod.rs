@@ -65,8 +65,8 @@ pub use error::LocalLibraryError;
 pub use journal_rebuild::{JournalRebuild, JournalRestore, MAX_RESTORED_ENTRIES, RESTORE_BATCH};
 pub use ledger::{LedgerError, MemoryRepairLedger, RecordedRepair, RepairLedger, RepairRecord};
 pub use locations::{
-    LibraryLocations, LibraryRequest, LibraryRoot, LibraryView, LocationRequest,
-    SnapshotCopyRequest, MAX_LOCATION_ID_BYTES,
+    LibraryLocations, LibraryRequest, LibraryRoot, LibraryView, LocationRequest, Opened,
+    SnapshotCopyRequest, INITIAL_REVISION, MAX_LOCATION_ID_BYTES,
 };
 pub use operations::{LibraryFuture, LibraryOperations};
 pub use provenance::{

@@ -191,6 +191,7 @@ export * from "./libraries/model";
 export { ClientLibrarySource, type LibraryClient } from "./libraries/client-source";
 export {
   parseLibraryView,
+  parseRebuildJob,
   parseLocationChoice,
   parseRebuildReport,
   parseRepairAnswer,

@@ -13,6 +13,7 @@ import {
   type LocationChoice,
   type ObjectFindings,
   type ObjectRepair,
+  type RebuildJobAnswer,
   type RebuildReport,
   type RebuiltObject,
   type RepairAnswer,
@@ -72,9 +73,29 @@ export function parseLocationChoice(value: unknown): LocationChoice {
  */
 export function parseLibraryView(value: unknown): LibraryView {
   if (!isRecord(value)) throw breaks("library");
-  const { library_id: id, spec_version: version, objects } = value;
-  if (!isText(id) || !isText(version) || !isCount(objects)) throw breaks("library");
-  return { library_id: id, spec_version: version, objects };
+  const { library_id: id, spec_version: version, objects, revision } = value;
+  const shaped = isText(id) && isText(version) && isCount(objects) && isText(revision);
+  if (!shaped) throw breaks("library");
+  return { library_id: id, spec_version: version, objects, revision };
+}
+
+/**
+ * Check the answer of a rebuild command: its pending job (API-S-025, API-F2.19).
+ *
+ * @param value The parsed JSON `result` of the pending outcome.
+ * @returns The job answer with its job view.
+ * @throws TypeError when the outcome is not `pending`, the job ID or the job is missing, or
+ *   `scheduled` is not a boolean.
+ */
+export function parseRebuildJob(value: unknown): RebuildJobAnswer {
+  if (!isRecord(value) || value.outcome !== "pending") throw breaks("rebuild job");
+  const { job_id: jobId, job, scheduled } = value;
+  if (!isText(jobId) || !isRecord(job) || typeof scheduled !== "boolean") {
+    throw breaks("rebuild job");
+  }
+  const { id, kind, state } = job;
+  if (!isText(id) || !isText(kind) || !isText(state)) throw breaks("rebuild job");
+  return { outcome: "pending", job_id: jobId, job: job as RebuildJobAnswer["job"], scheduled };
 }
 
 /** An RFC 3339 date-time: full date, `T`, full time with optional fraction, `Z` or an offset. */

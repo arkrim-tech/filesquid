@@ -5,7 +5,7 @@
  * a path, and nothing is written to Web Storage: the library's address `#/library/<id>` is what
  * later pages (such as the import UI) read the open library from.
  */
-import type { LibraryView, RebuildReport } from "./model";
+import { INITIAL_LIBRARY_REVISION, type LibraryView, type RebuildReport } from "./model";
 
 /** Most libraries kept; the API allows at most 64 open libraries. */
 const MAX_LIBRARIES = 64;
@@ -45,6 +45,18 @@ export class LibraryRegistry {
    */
   get(libraryId: string): LibraryView | undefined {
     return this.views.get(libraryId);
+  }
+
+  /**
+   * The revision a copy or rebuild of the library expects (API-S-019, API-F2.19): the one
+   * the API answered when this page created or opened it, else the initial revision of a
+   * bound library.
+   *
+   * @param libraryId The library ID.
+   * @returns The expected revision.
+   */
+  revisionOf(libraryId: string): string {
+    return this.views.get(libraryId)?.revision ?? INITIAL_LIBRARY_REVISION;
   }
 
   /**

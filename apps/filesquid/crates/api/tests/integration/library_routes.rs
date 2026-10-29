@@ -14,11 +14,35 @@ use filesquid_api::local_library::{
     CANDIDATES_OPERATION, COPY_OPERATION, CREATE_OPERATION, MAX_OPEN_LIBRARIES, OPEN_OPERATION,
     REBUILD_OPERATION, REPAIR_OPERATION,
 };
-use fixture::{Answer, LibraryRig, Mount, LIBRARY};
+use fixture::{
+    library_command, location_command, operation_id, Answer, LibraryRig, Mount, LIBRARY,
+};
 use serde_json::{json, Value};
 
 /// Both mounts, desktop first.
 const MOUNTS: [Mount; 2] = [Mount::Desktop, Mount::Server];
+
+/// The create or open command of `location` under a fresh operation ID, expecting `0`,
+/// naming `library` when given.
+fn bind_body(location: &str, library: Option<&str>) -> Value {
+    location_command(location, &operation_id(), "0", library)
+}
+
+/// The copy command of the open library `library` to `dest`, expecting revision `1`.
+fn copy_body(library: &str, dest: &str) -> Value {
+    let input = json!({ "library_id": library, "destination_location_id": dest });
+    library_command(library, &operation_id(), "1", input)
+}
+
+/// The rebuild command of the open library `library`, expecting revision `1`.
+fn rebuild_body(library: &str) -> Value {
+    library_command(
+        library,
+        &operation_id(),
+        "1",
+        json!({ "library_id": library }),
+    )
+}
 
 /// Assert `answer` is the typed error `code` with `status`.
 fn assert_error(answer: &Answer, status: u16, code: &str) {
@@ -78,10 +102,10 @@ async fn create_writes_only_the_declaration_and_answers_an_opaque_library_id() {
         let rig = LibraryRig::new(mount);
         let location = rig.locations.register("new");
         let answer = rig
-            .post("/api/v1/libraries", json!({ "location_id": location }))
+            .post("/api/v1/libraries", bind_body(&location, None))
             .await;
         assert_eq!(answer.status, StatusCode::OK, "{}", answer.text());
-        let body = answer.json();
+        let body = answer.result();
         let library = body["library_id"].as_str().expect("library id");
         assert_eq!(library.len(), 36, "a minted UUID: {library}");
         assert_eq!(body["spec_version"], "1.1");
@@ -99,10 +123,10 @@ async fn create_writes_only_the_declaration_and_answers_an_opaque_library_id() {
 async fn create_keeps_a_library_id_the_caller_names() {
     let rig = LibraryRig::new(Mount::Desktop);
     let location = rig.locations.register("named");
-    let body = json!({ "location_id": location, "library_id": LIBRARY });
+    let body = bind_body(&location, Some(LIBRARY));
     let answer = rig.post("/api/v1/libraries", body).await;
     assert_eq!(answer.status, StatusCode::OK, "{}", answer.text());
-    assert_eq!(answer.json()["library_id"], LIBRARY);
+    assert_eq!(answer.result()["library_id"], LIBRARY);
 }
 
 #[tokio::test]
@@ -112,7 +136,7 @@ async fn create_in_a_folder_that_holds_a_file_is_refused_and_writes_nothing() {
     std::fs::write(rig.locations.folder(&location).join("notes.txt"), b"mine").expect("file");
     let before = failures(&rig).len();
     let answer = rig
-        .post("/api/v1/libraries", json!({ "location_id": location }))
+        .post("/api/v1/libraries", bind_body(&location, None))
         .await;
     assert_error(&answer, 409, "conflict");
     assert_eq!(rig.files(&location), ["notes.txt"]);
@@ -125,7 +149,7 @@ async fn an_unknown_location_is_not_found_and_journaled_once() {
     let rig = LibraryRig::new(Mount::Desktop);
     let before = failures(&rig).len();
     let answer = rig
-        .post("/api/v1/libraries", json!({ "location_id": "loc-missing" }))
+        .post("/api/v1/libraries", bind_body("loc-missing", None))
         .await;
     assert_error(&answer, 404, "not_found");
     assert_one_refusal(&rig, before, CREATE_OPERATION, "location_not_found");
@@ -155,11 +179,11 @@ async fn open_answers_the_library_and_its_objects() {
             &rig.locations.folder(&location),
             &other.locations.folder(&reopened),
         );
-        let body = json!({ "location_id": reopened, "library_id": LIBRARY });
+        let body = bind_body(&reopened, Some(LIBRARY));
         let answer = other.post("/api/v1/libraries/openings", body).await;
         assert_eq!(answer.status, StatusCode::OK, "{}", answer.text());
-        assert_eq!(answer.json()["library_id"], LIBRARY);
-        assert_eq!(answer.json()["objects"], 1);
+        assert_eq!(answer.result()["library_id"], LIBRARY);
+        assert_eq!(answer.result()["objects"], 1);
         assert!(
             other.journaled(OPEN_OPERATION).is_empty(),
             "reads succeed silently"
@@ -174,10 +198,7 @@ async fn opening_a_folder_that_is_not_a_library_is_refused_once() {
     let location = rig.locations.register("plain");
     let before = failures(&rig).len();
     let answer = rig
-        .post(
-            "/api/v1/libraries/openings",
-            json!({ "location_id": location }),
-        )
+        .post("/api/v1/libraries/openings", bind_body(&location, None))
         .await;
     assert_error(&answer, 409, "conflict");
     assert_one_refusal(&rig, before, OPEN_OPERATION, "not_a_storage_root");
@@ -188,14 +209,11 @@ async fn opening_an_open_location_answers_its_library_again() {
     let rig = LibraryRig::new(Mount::Desktop);
     let (library, location) = rig.create("lib").await;
     let answer = rig
-        .post(
-            "/api/v1/libraries/openings",
-            json!({ "location_id": location }),
-        )
+        .post("/api/v1/libraries/openings", bind_body(&location, None))
         .await;
     assert_eq!(answer.status, StatusCode::OK, "{}", answer.text());
-    assert_eq!(answer.json()["library_id"], library.as_str());
-    let other = json!({ "location_id": location, "library_id": LIBRARY });
+    assert_eq!(answer.result()["library_id"], library.as_str());
+    let other = bind_body(&location, Some(LIBRARY));
     let before = failures(&rig).len();
     let refused = rig.post("/api/v1/libraries/openings", other).await;
     assert_error(&refused, 409, "conflict");
@@ -209,10 +227,7 @@ async fn an_open_library_folder_under_a_second_location_id_is_refused_once() {
     rig.locations.alias(&location, "loc-again");
     let before = failures(&rig).len();
     let answer = rig
-        .post(
-            "/api/v1/libraries/openings",
-            json!({ "location_id": "loc-again" }),
-        )
+        .post("/api/v1/libraries/openings", bind_body("loc-again", None))
         .await;
     assert_error(&answer, 409, "conflict");
     assert_one_refusal(&rig, before, OPEN_OPERATION, "location_in_use");
@@ -232,11 +247,11 @@ async fn opening_a_folder_answers_the_library_its_snapshot_names() {
         &mine.locations.folder(&copy),
     );
     let answer = mine
-        .post("/api/v1/libraries/openings", json!({ "location_id": copy }))
+        .post("/api/v1/libraries/openings", bind_body(&copy, None))
         .await;
     assert_eq!(answer.status, StatusCode::OK, "{}", answer.text());
     assert_eq!(
-        answer.json()["library_id"],
+        answer.result()["library_id"],
         LIBRARY,
         "not a newly minted ID"
     );
@@ -261,7 +276,7 @@ async fn opening_a_folder_under_another_library_id_than_its_snapshot_s_is_refuse
     let answer = rig
         .post(
             "/api/v1/libraries/openings",
-            json!({ "location_id": location, "library_id": other }),
+            bind_body(&location, Some(other)),
         )
         .await;
     assert_error(&answer, 409, "conflict");
@@ -290,10 +305,7 @@ async fn opening_a_folder_whose_snapshot_cannot_be_read_is_refused_once() {
     std::fs::write(&inventory, b"{ not an inventory").expect("damage the snapshot");
     let before = failures(&rig).len();
     let answer = rig
-        .post(
-            "/api/v1/libraries/openings",
-            json!({ "location_id": location }),
-        )
+        .post("/api/v1/libraries/openings", bind_body(&location, None))
         .await;
     assert_error(&answer, 409, "conflict");
     assert_one_refusal(&rig, before, OPEN_OPERATION, "snapshot_unreadable");
@@ -303,7 +315,7 @@ async fn opening_a_folder_whose_snapshot_cannot_be_read_is_refused_once() {
 async fn a_second_folder_of_an_open_library_is_refused_once() {
     let rig = LibraryRig::new(Mount::Desktop);
     let first = rig.locations.register("first");
-    let body = json!({ "location_id": first, "library_id": LIBRARY });
+    let body = bind_body(&first, Some(LIBRARY));
     let created = rig.post("/api/v1/libraries", body).await;
     assert_eq!(created.status, StatusCode::OK, "{}", created.text());
     rig.object(&first, "snapshot", &format!("urn:uuid:{LIBRARY}"))
@@ -316,10 +328,7 @@ async fn a_second_folder_of_an_open_library_is_refused_once() {
     );
     let before = failures(&rig).len();
     let answer = rig
-        .post(
-            "/api/v1/libraries/openings",
-            json!({ "location_id": second }),
-        )
+        .post("/api/v1/libraries/openings", bind_body(&second, None))
         .await;
     assert_error(&answer, 409, "conflict");
     assert_one_refusal(&rig, before, OPEN_OPERATION, "library_already_open");
@@ -334,7 +343,7 @@ async fn open_libraries_are_bounded() {
     let location = rig.locations.register("one-too-many");
     let before = failures(&rig).len();
     let answer = rig
-        .post("/api/v1/libraries", json!({ "location_id": location }))
+        .post("/api/v1/libraries", bind_body(&location, None))
         .await;
     assert_error(&answer, 409, "conflict");
     assert_one_refusal(&rig, before, CREATE_OPERATION, "too_many_libraries");
@@ -352,10 +361,10 @@ async fn a_completed_snapshot_is_copied_to_an_empty_location_and_validates() {
         rig.w010_object(&location, "obj-b", "urn:uuid:b").await;
         let source_files = rig.files(&location);
         let dest = rig.locations.register("copy");
-        let body = json!({ "library_id": library, "destination_location_id": dest });
+        let body = copy_body(&library, &dest);
         let answer = rig.post("/api/v1/libraries/snapshot-copies", body).await;
         assert_eq!(answer.status, StatusCode::OK, "{}", answer.text());
-        let report = answer.json();
+        let report = answer.result();
         assert_eq!(report["objects"], 2);
         assert_eq!(report["invalid_objects"], json!([]));
         assert!(report["files"].as_u64().expect("files") > 0);
@@ -382,13 +391,13 @@ async fn a_copy_into_an_open_library_or_of_an_unknown_library_is_refused() {
     let rig = LibraryRig::new(Mount::Desktop);
     let (library, location) = rig.create("source").await;
     let before = failures(&rig).len();
-    let body = json!({ "library_id": library, "destination_location_id": location });
+    let body = copy_body(&library, &location);
     let answer = rig.post("/api/v1/libraries/snapshot-copies", body).await;
     assert_error(&answer, 409, "conflict");
     assert_one_refusal(&rig, before, COPY_OPERATION, "destination_overlaps_library");
     let (_, other) = rig.create("other").await;
     let before = failures(&rig).len();
-    let body = json!({ "library_id": library, "destination_location_id": other });
+    let body = copy_body(&library, &other);
     let answer = rig.post("/api/v1/libraries/snapshot-copies", body).await;
     assert_error(&answer, 409, "conflict");
     assert_one_refusal(&rig, before, COPY_OPERATION, "destination_overlaps_library");
@@ -399,7 +408,7 @@ async fn a_copy_into_an_open_library_or_of_an_unknown_library_is_refused() {
     );
     let dest = rig.locations.register("copy");
     let before = failures(&rig).len();
-    let body = json!({ "library_id": LIBRARY, "destination_location_id": dest });
+    let body = copy_body(&LIBRARY, &dest);
     let answer = rig.post("/api/v1/libraries/snapshot-copies", body).await;
     assert_error(&answer, 404, "not_found");
     assert_one_refusal(&rig, before, COPY_OPERATION, "library_not_open");
@@ -415,13 +424,11 @@ async fn the_rebuild_answers_pending_with_a_library_rebuild_job_whose_result_is_
         rig.w010_object(&location, "obj-b", "urn:uuid:b").await;
         let files = rig.files(&location);
         let answer = rig
-            .post(
-                "/api/v1/libraries/rebuilds",
-                json!({ "library_id": library }),
-            )
+            .post("/api/v1/libraries/rebuilds", rebuild_body(&library))
             .await;
         assert_eq!(answer.status, StatusCode::OK, "{}", answer.text());
-        let body = answer.json();
+        assert_eq!(answer.json()["kind"], "pending", "{}", answer.text());
+        let body = answer.result();
         assert_eq!(body["outcome"], "pending", "{body}");
         assert_eq!(body["job"]["kind"], "library.rebuild");
         assert_eq!(body["job"]["id"], body["job_id"]);
@@ -473,14 +480,18 @@ async fn a_repeated_rebuild_answers_the_unfinished_job_and_cancel_changes_no_fil
     let (library, location) = rig.create("lib").await;
     rig.object(&location, "obj-a", "urn:uuid:a").await;
     let files = rig.files(&location);
-    let body = json!({ "library_id": library });
+    let body = rebuild_body(&library);
     let first = rig.post("/api/v1/libraries/rebuilds", body.clone()).await;
     assert_eq!(first.status, StatusCode::OK, "{}", first.text());
-    assert_eq!(first.json()["scheduled"], false, "no runner: it waits");
+    assert_eq!(first.result()["scheduled"], false, "no runner: it waits");
     let second = rig.post("/api/v1/libraries/rebuilds", body).await;
-    assert_eq!(second.json()["job_id"], first.json()["job_id"], "one job");
+    assert_eq!(
+        second.result()["job_id"],
+        first.result()["job_id"],
+        "one job"
+    );
     assert_eq!(rig.journaled("job.created").len(), 1);
-    let id = first.json()["job_id"].as_str().expect("id").to_string();
+    let id = first.result()["job_id"].as_str().expect("id").to_string();
     let cancel = rig
         .send(
             Method::POST,
@@ -502,10 +513,7 @@ async fn a_rebuild_of_a_library_that_is_not_open_submits_no_job() {
     let rig = LibraryRig::new(Mount::Desktop);
     let before = failures(&rig).len();
     let answer = rig
-        .post(
-            "/api/v1/libraries/rebuilds",
-            json!({ "library_id": LIBRARY }),
-        )
+        .post("/api/v1/libraries/rebuilds", rebuild_body(&LIBRARY))
         .await;
     assert_error(&answer, 404, "not_found");
     assert_one_refusal(&rig, before, REBUILD_OPERATION, "library_not_open");
@@ -730,9 +738,7 @@ async fn the_routes_answer_unavailable_once_until_the_host_installs_its_commands
         .uri("/api/v1/libraries/rebuilds")
         .header("authorization", format!("Bearer {}", token.secret()))
         .header("content-type", "application/json")
-        .body(axum::body::Body::from(
-            json!({ "library_id": LIBRARY }).to_string(),
-        ))
+        .body(axum::body::Body::from(rebuild_body(&LIBRARY).to_string()))
         .expect("request");
     let response = tower::ServiceExt::oneshot(filesquid_api::router(state), request)
         .await
@@ -756,9 +762,7 @@ async fn a_rebuild_on_a_host_without_a_job_service_is_unavailable_and_journaled_
         .uri("/api/v1/libraries/rebuilds")
         .header("authorization", format!("Bearer {}", token.secret()))
         .header("content-type", "application/json")
-        .body(axum::body::Body::from(
-            json!({ "library_id": library }).to_string(),
-        ))
+        .body(axum::body::Body::from(rebuild_body(&library).to_string()))
         .expect("request");
     let response = tower::ServiceExt::oneshot(filesquid_api::router(state), request)
         .await

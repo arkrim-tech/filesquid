@@ -13,9 +13,9 @@ use filesquid_api::journal::{JournalEntry, JournalQuery, JournalStore, MemoryJou
 use filesquid_api::journal_writer::{JournalWriter, WriterConfig};
 use filesquid_api::local_library::{
     rebuild_source, submit_rebuild, LibraryFuture, LibraryOperations, LibraryRequest, LibraryView,
-    LocalLibraryError, LocationRequest, RebuildEnd, RebuildEntry, RebuildProgress, RebuildReport,
-    RebuildRunner, RebuildStep, RebuiltObject, RepairAnswer, RepairCandidates, RepairRequest,
-    SnapshotCopyRequest, UnreadableObject, REBUILD_JOB_KIND,
+    LocalLibraryError, LocationRequest, Opened, RebuildEnd, RebuildEntry, RebuildProgress,
+    RebuildReport, RebuildRunner, RebuildStep, RebuiltObject, RepairAnswer, RepairCandidates,
+    RepairRequest, SnapshotCopyRequest, UnreadableObject, REBUILD_JOB_KIND,
 };
 use filesquid_api::metrics::Metrics;
 use filesquid_api::registry::ProcessRegistry;
@@ -148,11 +148,11 @@ fn unused<T>() -> LibraryFuture<'static, T> {
 }
 
 impl LibraryOperations for ScriptedLibrary {
-    fn create(&self, _: String, _: LocationRequest) -> LibraryFuture<'_, LibraryView> {
+    fn create(&self, _: String, _: LocationRequest, _: String) -> LibraryFuture<'_, LibraryView> {
         unused()
     }
 
-    fn open(&self, _: String, _: LocationRequest) -> LibraryFuture<'_, LibraryView> {
+    fn open(&self, _: String, _: LocationRequest, _: String) -> LibraryFuture<'_, Opened> {
         unused()
     }
 
@@ -160,11 +160,17 @@ impl LibraryOperations for ScriptedLibrary {
         &self,
         _: String,
         _: SnapshotCopyRequest,
+        _: String,
     ) -> LibraryFuture<'_, filesquid_api::local_library::CopyReport> {
         unused()
     }
 
-    fn rebuild_ready(&self, _: String, request: LibraryRequest) -> LibraryFuture<'_, ()> {
+    fn rebuild_ready(
+        &self,
+        _: String,
+        request: LibraryRequest,
+        _: String,
+    ) -> LibraryFuture<'_, ()> {
         let known = request.library_id.as_str() == LIBRARY;
         Box::pin(async move {
             match known {
@@ -262,7 +268,7 @@ impl Rig {
 
     fn submit(&self) -> Job {
         let library = LibraryId::new(LIBRARY).expect("library");
-        submit_rebuild(&self.jobs(), &library).expect("submit")
+        submit_rebuild(&self.jobs(), &library, "op-rebuild".into()).expect("submit")
     }
 
     fn job(&self, id: &str) -> Job {
@@ -461,10 +467,10 @@ async fn a_submission_past_the_unfinished_bound_is_refused_instead_of_duplicated
     for index in 0..filesquid_api::jobs::MAX_RECOVERED_JOBS {
         let other = format!("00000000-0000-4000-8000-{index:012}");
         let library = LibraryId::new(&other).expect("library");
-        submit_rebuild(&jobs, &library).expect("submit");
+        submit_rebuild(&jobs, &library, format!("op-{index}")).expect("submit");
     }
     let library = LibraryId::new(LIBRARY).expect("library");
-    let refused = submit_rebuild(&jobs, &library).expect_err("bound reached");
+    let refused = submit_rebuild(&jobs, &library, "op-over".into()).expect_err("bound reached");
     assert_eq!(refused.error.error_code(), "unavailable");
     assert!(!refused.journaled, "the caller journals it");
 }
@@ -648,7 +654,7 @@ async fn the_view_carries_no_source_checkpoint_lease_or_fence() {
 async fn a_library_that_is_no_longer_open_fails_the_job_with_its_code() {
     let rig = Rig::new(3);
     let other = LibraryId::new("0d6e1f2a-3b4c-4d5e-8f60-718293a4b5c6").expect("library");
-    let job = submit_rebuild(&rig.jobs(), &other).expect("submit");
+    let job = submit_rebuild(&rig.jobs(), &other, "op-other".into()).expect("submit");
     let refusing = RebuildRunner::new(rig.jobs(), Arc::new(Refusing), "owner");
     assert_eq!(refusing.run(&job.id).await.expect("run"), JobState::Failed);
     let failed = rig.job(&job.id);
@@ -660,11 +666,11 @@ async fn a_library_that_is_no_longer_open_fails_the_job_with_its_code() {
 struct Refusing;
 
 impl LibraryOperations for Refusing {
-    fn create(&self, _: String, _: LocationRequest) -> LibraryFuture<'_, LibraryView> {
+    fn create(&self, _: String, _: LocationRequest, _: String) -> LibraryFuture<'_, LibraryView> {
         unused()
     }
 
-    fn open(&self, _: String, _: LocationRequest) -> LibraryFuture<'_, LibraryView> {
+    fn open(&self, _: String, _: LocationRequest, _: String) -> LibraryFuture<'_, Opened> {
         unused()
     }
 
@@ -672,11 +678,12 @@ impl LibraryOperations for Refusing {
         &self,
         _: String,
         _: SnapshotCopyRequest,
+        _: String,
     ) -> LibraryFuture<'_, filesquid_api::local_library::CopyReport> {
         unused()
     }
 
-    fn rebuild_ready(&self, _: String, _: LibraryRequest) -> LibraryFuture<'_, ()> {
+    fn rebuild_ready(&self, _: String, _: LibraryRequest, _: String) -> LibraryFuture<'_, ()> {
         unused()
     }
 

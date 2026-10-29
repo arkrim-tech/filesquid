@@ -316,14 +316,15 @@ export class FsLibraryDetail extends HTMLElement {
 
   /** Choose a destination unless one is kept, copy the snapshot there and report it. */
   private async copy(feedback: Feedback, generation: number): Promise<void> {
-    const { labels, source } = this.options as LibraryPageOptions;
+    const { labels, source, registry } = this.options as LibraryPageOptions;
     const id = this.library as string;
     this.showResult("copy", []);
     this.destination ??= await this.chooseDestination(feedback, generation);
     const destination = this.destination;
     if (generation !== this.generation || destination === undefined) return;
     feedback.note(labels.libraryWorking);
-    const report = await step("copy", () => source.copy(id, destination));
+    const revision = registry.revisionOf(id);
+    const report = await step("copy", () => source.copy(id, destination, revision));
     if (generation !== this.generation) return;
     feedback.clear();
     this.showResult("copy", copyReport(report, labels));
@@ -348,17 +349,18 @@ export class FsLibraryDetail extends HTMLElement {
     return undefined;
   }
 
-  /** Rebuild the catalog from files, report it and read the repair candidates again. */
+  /**
+   * Start the rebuild of the catalog from files as a durable job (API-F2.19, API-S-025) and
+   * read the repair candidates again. The job is pending when the command answers, so the
+   * "Working." note stays until UI-1.3 follows the job's progress and shows its report.
+   */
   private async rebuild(feedback: Feedback, generation: number): Promise<void> {
     const { labels, source, registry } = this.options as LibraryPageOptions;
     const id = this.library as string;
     this.showResult("rebuild", []);
     feedback.note(labels.libraryWorking);
-    const report = await step("rebuild", () => source.rebuild(id));
-    registry.rememberRebuild(id, report);
+    await step("rebuild", () => source.rebuild(id, registry.revisionOf(id)));
     if (generation !== this.generation) return;
-    feedback.clear();
-    this.showResult("rebuild", rebuildReport(report, labels));
     await this.loadCandidates();
   }
 

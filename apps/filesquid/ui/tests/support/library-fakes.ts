@@ -8,6 +8,7 @@ import type {
   LibrarySource,
   LibraryView,
   LocationChoice,
+  RebuildJobAnswer,
   RebuildReport,
   RepairAnswer,
   RepairCandidate,
@@ -20,7 +21,12 @@ import type {
 export type Answer<T> = T | Error | (() => T | Promise<T>);
 
 /** A library of three objects. */
-export const LIBRARY: LibraryView = { library_id: "lib-1", spec_version: "1.1", objects: 3 };
+export const LIBRARY: LibraryView = {
+  library_id: "lib-1",
+  spec_version: "1.1",
+  objects: 3,
+  revision: "1",
+};
 
 /** One object whose head lacks its version inventory, and one interrupted sha512 object. */
 export const CANDIDATES: RepairCandidates = {
@@ -69,6 +75,25 @@ export const REBUILD: RebuildReport = {
   unreadable: [{ error_code: "E001" }],
 };
 
+/** The pending job a rebuild command answers (API-F2.19, API-S-025). */
+export const REBUILD_JOB: RebuildJobAnswer = {
+  outcome: "pending",
+  job_id: "job-1",
+  job: {
+    id: "job-1",
+    kind: "library.rebuild",
+    operation_id: "op-rebuild-1",
+    state: "pending",
+    paused: false,
+    done: 0,
+    attempts: 0,
+    created: "2026-10-29T12:00:00Z",
+    updated: "2026-10-29T12:00:00Z",
+    result: null,
+  },
+  scheduled: true,
+};
+
 /** A copy that wrote two objects, one with validation errors. */
 export const COPY_REPORT: SnapshotCopyReport = {
   objects: 2,
@@ -108,11 +133,13 @@ export class FakeLibrarySource implements LibrarySource {
   readonly calls: string[] = [];
   /** Every repair request, as sent. */
   readonly repairs: RepairRequest[] = [];
+  /** The expected revision of every copy and rebuild, in order. */
+  readonly revisions: string[] = [];
   choice: Answer<LocationChoice> = { outcome: "chosen", location_id: "loc-1" };
   created: Answer<LibraryView> = LIBRARY;
   opened: Answer<LibraryView> = LIBRARY;
   copied: Answer<SnapshotCopyReport> = COPY_REPORT;
-  rebuilt: Answer<RebuildReport> = REBUILD;
+  rebuilt: Answer<RebuildJobAnswer> = REBUILD_JOB;
   candidates: Answer<RepairCandidates> = CANDIDATES;
   repaired: Answer<RepairAnswer> = {
     library_id: "lib-1",
@@ -151,13 +178,19 @@ export class FakeLibrarySource implements LibrarySource {
     return answer(this.opened);
   }
   /** @inheritdoc */
-  copy(libraryId: string, destinationLocationId: string): Promise<SnapshotCopyReport> {
+  copy(
+    libraryId: string,
+    destinationLocationId: string,
+    expectedRevision: string,
+  ): Promise<SnapshotCopyReport> {
     this.calls.push(`copy:${libraryId}:${destinationLocationId}`);
+    this.revisions.push(expectedRevision);
     return answer(this.copied);
   }
   /** @inheritdoc */
-  rebuild(libraryId: string): Promise<RebuildReport> {
+  rebuild(libraryId: string, expectedRevision: string): Promise<RebuildJobAnswer> {
     this.calls.push(`rebuild:${libraryId}`);
+    this.revisions.push(expectedRevision);
     return answer(this.rebuilt);
   }
   /** @inheritdoc */

@@ -218,11 +218,14 @@ export class FsLibraryStart extends HTMLElement {
     return view;
   }
 
-  /** Rebuild a recovered copy's catalog from its files and keep the report. Network I/O. */
+  /**
+   * Start the rebuild of a recovered copy's catalog from its files as a durable job, expecting
+   * the revision the open answered (API-F2.19); its progress and report are the job's (UI-1.3).
+   * Network I/O.
+   */
   private async rebuild(view: LibraryView): Promise<void> {
-    const { source, registry } = this.options as LibraryPageOptions;
-    const report = await step("rebuild", () => source.rebuild(view.library_id));
-    registry.rememberRebuild(view.library_id, report);
+    const { source } = this.options as LibraryPageOptions;
+    await step("rebuild", () => source.rebuild(view.library_id, view.revision));
   }
 
   /** Show a failed step, and log it to the console. */

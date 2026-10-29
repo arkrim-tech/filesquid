@@ -5,6 +5,7 @@
 #![allow(dead_code)]
 
 use axum::http::Method;
+use filesquid_api::envelope::{Command, CommandAnswer, ConflictAnswer};
 use filesquid_api::imports::{
     ImportAnswer, ImportOutcome, ImportRequest, ImportSource, ImportStartError, ImportStarter,
 };
@@ -20,6 +21,10 @@ use filesquid_api::local_library::{
     UnreadableObject, CONSENT_STATEMENT_ID, REBUILD_JOB_KIND,
 };
 use filesquid_api::monitor::Monitor;
+use filesquid_api::operation::{
+    CommandEnvelope, CommandOutcome, CommandOutcomeKind, ExpectedRevision, OperationId,
+    OperationScope,
+};
 use filesquid_api::ApiState;
 use filesquid_core::LibraryId;
 use filesquid_ocfl::change::{ChangeModel, StagingArea, VersionMeta};
@@ -91,7 +96,10 @@ pub async fn install(state: &ApiState, monitor: &Monitor) {
         location_id: SAMPLE.to_string(),
         library_id: Some(library()),
     };
-    commands.create("owner", request).await.expect("create");
+    commands
+        .create("owner", request, "0")
+        .await
+        .expect("create");
     commit_w010(&sample).await;
     assert!(state.install_libraries(Arc::new(commands)));
     assert!(state.install_location_chooser(Arc::new(PickingChooser)));
@@ -185,18 +193,58 @@ fn json_body(body: Value) -> SampleBody {
     Some(("application/json", body.to_string().into_bytes()))
 }
 
+/// The sample envelope of a command with `scope`, expecting `revision`.
+fn envelope(scope: &str, revision: &str) -> CommandEnvelope {
+    CommandEnvelope::new(
+        operation(),
+        ExpectedRevision::new(revision).expect("revision"),
+        OperationScope::new(scope).expect("scope"),
+    )
+}
+
+/// The sample operation ID.
+fn operation() -> OperationId {
+    OperationId::new("contract-library-command").expect("operation")
+}
+
+/// The sample command body `{envelope, input}` with `scope`, expecting `revision`.
+fn command_body(scope: &str, revision: &str, input: Value) -> Value {
+    json!({ "envelope": to_value(envelope(scope, revision)), "input": input })
+}
+
+/// The sample library at its initial revision.
+fn library_view() -> LibraryView {
+    LibraryView {
+        library_id: library(),
+        spec_version: "1.1".to_string(),
+        objects: 1,
+        revision: "1".to_string(),
+    }
+}
+
 /// The request URI and body of the sample call of `method path`, or `None` when `path` is
-/// not a library route.
+/// not a library route. The command routes carry the envelope of Task API-F2.19.
 pub fn sample(method: &Method, path: &str) -> Option<(String, SampleBody)> {
+    let library_scope = format!("library:{LIBRARY}");
     let body = match (method.as_str(), path) {
-        ("POST", "/api/v1/libraries") => json!({ "location_id": NEW }),
-        ("POST", "/api/v1/libraries/openings") => {
-            json!({ "location_id": SAMPLE, "library_id": LIBRARY })
+        ("POST", "/api/v1/libraries") => command_body(
+            &format!("location:{NEW}"),
+            "0",
+            json!({ "location_id": NEW }),
+        ),
+        ("POST", "/api/v1/libraries/openings") => command_body(
+            &format!("location:{SAMPLE}"),
+            "0",
+            json!({ "location_id": SAMPLE, "library_id": LIBRARY }),
+        ),
+        ("POST", "/api/v1/libraries/snapshot-copies") => command_body(
+            &library_scope,
+            "1",
+            json!({ "library_id": LIBRARY, "destination_location_id": COPY }),
+        ),
+        ("POST", "/api/v1/libraries/rebuilds") => {
+            command_body(&library_scope, "1", json!({ "library_id": LIBRARY }))
         }
-        ("POST", "/api/v1/libraries/snapshot-copies") => {
-            json!({ "library_id": LIBRARY, "destination_location_id": COPY })
-        }
-        ("POST", "/api/v1/libraries/rebuilds") => json!({ "library_id": LIBRARY }),
         ("POST", "/api/v1/libraries/location-choices") => json!({ "purpose": "create" }),
         ("POST", "/api/v1/imports") => serde_json::to_value(import_request()).expect("json"),
         ("GET", "/api/v1/libraries/repair-candidates") => {
@@ -373,12 +421,66 @@ pub fn samples() -> Vec<(&'static str, Vec<Value>)> {
                 library_id: Some(library()),
             })],
         ),
+        ("LibraryView", vec![to_value(library_view())]),
         (
-            "LibraryView",
-            vec![to_value(LibraryView {
-                library_id: library(),
-                spec_version: "1.1".to_string(),
-                objects: 1,
+            "LibraryLocationCommand",
+            vec![to_value(Command {
+                envelope: envelope("location:loc-sample", "0"),
+                input: LocationRequest {
+                    location_id: SAMPLE.to_string(),
+                    library_id: Some(library()),
+                },
+            })],
+        ),
+        (
+            "SnapshotCopyCommand",
+            vec![to_value(Command {
+                envelope: envelope(&format!("library:{LIBRARY}"), "1"),
+                input: SnapshotCopyRequest {
+                    library_id: library(),
+                    destination_location_id: COPY.to_string(),
+                },
+            })],
+        ),
+        (
+            "RebuildLibraryCommand",
+            vec![to_value(Command {
+                envelope: envelope(&format!("library:{LIBRARY}"), "1"),
+                input: LibraryRequest {
+                    library_id: library(),
+                },
+            })],
+        ),
+        (
+            "LibraryViewOutcome",
+            vec![to_value(CommandAnswer {
+                outcome: CommandOutcome::new(operation(), CommandOutcomeKind::Committed),
+                result: Some(library_view()),
+            })],
+        ),
+        (
+            "SnapshotCopyOutcome",
+            vec![to_value(CommandAnswer {
+                outcome: CommandOutcome::new(operation(), CommandOutcomeKind::Committed),
+                result: Some(copy.clone()),
+            })],
+        ),
+        (
+            "RebuildJobOutcome",
+            vec![to_value(CommandAnswer {
+                outcome: CommandOutcome::new(operation(), CommandOutcomeKind::Pending),
+                result: Some(rebuild_answer()),
+            })],
+        ),
+        (
+            "LibraryCommandConflict",
+            vec![to_value(ConflictAnswer {
+                outcome: CommandOutcome::new(operation(), CommandOutcomeKind::Conflict),
+                result: None,
+                error: filesquid_api::ApiError::new(
+                    filesquid_api::ErrorCode::Conflict,
+                    "The library changed since it was last read.",
+                ),
             })],
         ),
         (

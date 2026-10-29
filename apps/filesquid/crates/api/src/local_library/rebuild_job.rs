@@ -30,7 +30,6 @@ use crate::jobs::{
     Halt, Job, JobError, JobRunner, JobSpec, JobState, JobView, Jobs, RunningJob,
     MAX_RECOVERED_JOBS, MAX_RESULT_BYTES,
 };
-use crate::library::mint_uuid_v4;
 use filesquid_core::LibraryId;
 use serde::{Deserialize, Serialize};
 use std::ops::ControlFlow;
@@ -111,15 +110,19 @@ impl SubmitRefusal {
     }
 }
 
-/// The unfinished rebuild job of `library`, or a new pending one (store I/O; `job.created` is
-/// journaled for a new job). At most [`MAX_RECOVERED_JOBS`] unfinished rebuild jobs are read
-/// (one per library); when that many are unfinished and none is the library's, nothing is
-/// submitted, so a job the bound left out is never duplicated.
+/// The unfinished rebuild job of `library`, or a new pending one under `operation_id`, the
+/// command's operation ID (store I/O; `job.created` is journaled for a new job). At most
+/// [`MAX_RECOVERED_JOBS`] unfinished rebuild jobs are read (one per library); when that many
+/// are unfinished and none is the library's, nothing is submitted, so a job the bound left
+/// out is never duplicated.
 ///
 /// # Errors
-/// A store failure; [`JobError::Unavailable`] when no ID can be minted or the bound is
-/// reached.
-pub fn submit_rebuild(jobs: &Jobs, library: &LibraryId) -> Result<Job, SubmitRefusal> {
+/// A store failure; [`JobError::Unavailable`] when the bound is reached.
+pub fn submit_rebuild(
+    jobs: &Jobs,
+    library: &LibraryId,
+    operation_id: String,
+) -> Result<Job, SubmitRefusal> {
     let _one = SUBMITTING.lock().unwrap_or_else(PoisonError::into_inner);
     let source = rebuild_source(library);
     let open = jobs
@@ -133,8 +136,6 @@ pub fn submit_rebuild(jobs: &Jobs, library: &LibraryId) -> Result<Job, SubmitRef
         let error = JobError::Unavailable("too many unfinished rebuild jobs".into());
         return Err(SubmitRefusal::unjournaled(error));
     }
-    let operation_id = mint_uuid_v4()
-        .map_err(|err| SubmitRefusal::unjournaled(JobError::Unavailable(err.to_string())))?;
     let spec = JobSpec {
         kind: REBUILD_JOB_KIND.to_string(),
         operation_id,

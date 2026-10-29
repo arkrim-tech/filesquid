@@ -3,10 +3,13 @@
  * the real built UI; `POST /api/v1/libraries/location-choices`, `/libraries`, `/openings`,
  * `/snapshot-copies`, `/rebuilds`, `GET /libraries/repair-candidates` and `POST
  * /libraries/repairs` are answered here in the shapes of the API contract (`LibraryView`,
- * `SnapshotCopyReport`, `RebuildReport`, `RepairCandidates`, `RepairAnswer`). Like the real
- * routes it refuses an unknown body field (400), and the repair route refuses a request whose
- * consent is missing, unconfirmed or names other objects than the request (409). It records
- * every request, so a test can prove what was sent, and what was not.
+ * `SnapshotCopyReport`, `RebuildJobAnswer`, `RepairCandidates`, `RepairAnswer`). The four
+ * command routes (API-F2.19) take `{ envelope, input }` and answer an outcome for the sent
+ * operation id with the route's result (`committed`; `pending` with the job for a rebuild).
+ * Like the real routes it refuses an unknown body field or a missing envelope (400), and the
+ * repair route refuses a request whose consent is missing, unconfirmed or names other objects
+ * than the request (409). It records every request, so a test can prove what was sent, and
+ * what was not.
  */
 import type { Page } from "@playwright/test";
 import { FAMILY, serveNavigation } from "./navigation-api";
@@ -64,19 +67,54 @@ function candidates(ids: string[]) {
   };
 }
 
-/** The rebuild report: both objects flagged, one with an error code. */
-function rebuild(ids: string[]) {
+/** The pending rebuild job a rebuild command answers (API-S-025). */
+function rebuildJob(operationId: string) {
   return {
-    objects: ids.map((object_id, index) => ({
-      object_id,
-      head: "v2",
-      files: 3,
-      digest_algorithm: "sha256",
-      error_codes: index === 1 ? ["E023"] : [],
-      missing_version_inventory: true,
-    })),
-    unreadable: [],
+    outcome: "pending",
+    job_id: "job-e2e-1",
+    job: {
+      id: "job-e2e-1",
+      kind: "library.rebuild",
+      operation_id: operationId,
+      state: "pending",
+      paused: false,
+      done: 0,
+      attempts: 0,
+      created: "2026-10-29T12:00:00Z",
+      updated: "2026-10-29T12:00:00Z",
+      result: null,
+    },
+    scheduled: true,
   };
+}
+
+/** The routes that take a command envelope (API-F2.19). */
+const COMMAND_ROUTES = [
+  "/api/v1/libraries",
+  "/api/v1/libraries/openings",
+  "/api/v1/libraries/snapshot-copies",
+  "/api/v1/libraries/rebuilds",
+];
+
+/** The envelope of a command body, or undefined when the body carries no valid one. */
+function envelopeOf(body: unknown): { operation_id: string } | undefined {
+  const record = (body ?? {}) as Record<string, unknown>;
+  const envelope = record.envelope as Record<string, unknown> | undefined;
+  const keys = Object.keys(record);
+  const shaped =
+    envelope !== undefined &&
+    keys.every((key) => key === "envelope" || key === "input") &&
+    envelope.schema_version === 1 &&
+    typeof envelope.operation_id === "string" &&
+    envelope.operation_id !== "" &&
+    typeof envelope.expected_revision === "string" &&
+    typeof envelope.scope === "string";
+  return shaped ? { operation_id: envelope.operation_id as string } : undefined;
+}
+
+/** The outcome answer of a command: the outcome fields for `operationId` and `result`. */
+function outcome(operationId: string, kind: "committed" | "pending", result: unknown) {
+  return { status: 200, json: { operation_id: operationId, kind, error: null, result } };
 }
 
 /** Why the repair route would refuse this body, or undefined when it accepts it. */
@@ -190,7 +228,12 @@ function refusedShape(
     const ok = keys.length === 1 && keys[0] === "library_id";
     return ok ? undefined : { status: 400, json: error("invalid_request") };
   }
-  const keys = Object.keys((body ?? {}) as Record<string, unknown>);
+  const command = COMMAND_ROUTES.includes(url.pathname);
+  if (command && envelopeOf(body) === undefined) {
+    return { status: 400, json: error("invalid_request") };
+  }
+  const input = command ? (body as Record<string, unknown>).input : body;
+  const keys = Object.keys((input ?? {}) as Record<string, unknown>);
   const allowed = [...shape.required, ...shape.optional];
   const complete = shape.required.every((key) => keys.includes(key));
   const known = keys.every((key) => allowed.includes(key));
@@ -207,20 +250,23 @@ function answerFor(
   const record = (body ?? {}) as Record<string, unknown>;
   if (path.endsWith("/location-choices")) return choose(api, record);
   if (path.endsWith("/repair-candidates")) return ok(candidates(api.needing));
-  if (path.endsWith("/rebuilds")) return ok(rebuild(OBJECTS));
+  if (path.endsWith("/repairs")) return repairAnswer(api, record);
+  const operation = envelopeOf(body)?.operation_id ?? "";
+  const input = (record.input ?? {}) as Record<string, unknown>;
+  if (path.endsWith("/rebuilds")) return outcome(operation, "pending", rebuildJob(operation));
   if (path.endsWith("/snapshot-copies")) {
-    return ok({
+    return outcome(operation, "committed", {
       objects: 2,
       files: 6,
       bytes: 3072,
       invalid_objects: [{ object_id: OBJECTS[1], error_codes: ["E023"] }],
     });
   }
-  if (path.endsWith("/repairs")) return repairAnswer(api, record);
-  return ok({
-    library_id: typeof record.library_id === "string" ? record.library_id : LIB,
+  return outcome(operation, "committed", {
+    library_id: typeof input.library_id === "string" ? input.library_id : LIB,
     spec_version: "1.1",
     objects: 2,
+    revision: "1",
   });
 }
 
