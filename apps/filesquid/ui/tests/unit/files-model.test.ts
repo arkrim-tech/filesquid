@@ -5,6 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  MAX_LABEL_BYTES,
   MAX_NAME_BYTES,
   MAX_LISTING_PAGES,
   MAX_UPLOAD_BYTES,
@@ -24,6 +25,7 @@ import {
   previousVersion,
   prefixTrail,
   rowSummary,
+  validLabel,
   validateName,
   type FolderEntry,
 } from "../../src/files/model";
@@ -145,6 +147,26 @@ describe("validateName", () => {
   it("counts bytes, not characters: 255 bytes pass and 256 do not", () => {
     expect(validateName("a".repeat(255))).toBeUndefined();
     expect(validateName("a".repeat(256))).toBe("long");
+  });
+});
+
+describe("validLabel", () => {
+  it("takes 1 to 512 UTF-8 bytes, not blank, without control characters, as the route does", () => {
+    expect(MAX_LABEL_BYTES).toBe(512);
+    expect(validLabel("Back again")).toBe(true);
+    expect(validLabel("é".repeat(256))).toBe(true);
+    expect(validLabel(" x ")).toBe(true);
+    expect(validLabel(`${" ".repeat(1)}${"a".repeat(511)}`)).toBe(true);
+  });
+
+  it("refuses a blank, an over-long and a control-character label", () => {
+    expect(validLabel("")).toBe(false);
+    expect(validLabel("   ")).toBe(false);
+    expect(validLabel(`${"é".repeat(256)}a`)).toBe(false);
+    expect(validLabel(`${" ".repeat(1)}${"a".repeat(512)}`)).toBe(false);
+    expect(validLabel("a\u0007b")).toBe(false);
+    expect(validLabel("a\u007fb")).toBe(false);
+    expect(validLabel("a\u0085b")).toBe(false);
   });
 });
 

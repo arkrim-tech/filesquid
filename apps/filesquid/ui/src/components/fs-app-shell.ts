@@ -14,7 +14,9 @@
  *   owner answer 7), no API status (Settings, About only, owner answer 12) and no permanent
  *   privacy text (UI-S-004);
  * - `main` with the default slot; a 40 px footer with the `summary` and `commit-state` slots;
- *   and a 320 px file panel region shown while the `panel` slot is filled.
+ *   and a 320 px file panel region shown while the `panel` slot is filled, under the header and
+ *   beside `main` and the footer (mockups 35 and 26: the header keeps the full width, the footer
+ *   ends where the panel starts).
  *
  * The fallback New button dispatches a bubbling, composed `fs-new` event for the menu a later
  * task adds (UI-F2.8); the fallback filter and search fields are the fields those tasks wire.
@@ -74,7 +76,7 @@ export interface StorageSummary {
 export const NEW_EVENT = "fs-new";
 
 const STYLE = `
-  :host { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; block-size: 100vh; overflow: hidden; background: var(--fs-surface); color: var(--fs-on-surface); font-family: var(--fs-font-sans); font-size: var(--fs-font-size-ui); }
+  :host { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); block-size: 100vh; overflow: hidden; background: var(--fs-surface); color: var(--fs-on-surface); font-family: var(--fs-font-sans); font-size: var(--fs-font-size-ui); }
   :host([frameless]) { grid-template-columns: minmax(0, 1fr); }
   :host([frameless]) nav, :host([frameless]) header, :host([frameless]) footer, :host([frameless]) aside.panel { display: none; }
   .skip { position: absolute; inset-inline-start: var(--fs-space-2); inset-block-start: var(--fs-space-2); z-index: 1; padding: var(--fs-space-2) var(--fs-space-3); border: 0; border-radius: var(--fs-radius-button); background: var(--fs-primary); color: var(--fs-on-primary); font-family: inherit; font-size: var(--fs-font-size-ui); font-weight: 600; cursor: pointer; }
@@ -106,6 +108,8 @@ const STYLE = `
   .storage-caption { margin: 0; color: var(--fs-on-surface-muted); }
   .storage-facts { display: grid; gap: var(--fs-space-1); }
   .content { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .body { display: flex; flex: 1 1 auto; min-width: 0; min-height: 0; }
+  .column { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; min-height: 0; }
   header { display: flex; flex-wrap: wrap; align-items: center; gap: var(--fs-space-3); box-sizing: border-box; min-block-size: 3.75rem; padding: var(--fs-space-2) var(--fs-space-4); border-block-end: 1px solid var(--fs-outline); }
   .search { flex: 0 1 32.5rem; min-width: 0; }
   .search-slot { flex: 0 1 32.5rem; display: flex; min-width: 0; }
@@ -115,11 +119,13 @@ const STYLE = `
   main { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; padding: var(--fs-space-4); }
   footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--fs-space-2) var(--fs-space-3); box-sizing: border-box; min-block-size: 2.5rem; padding: var(--fs-space-1) var(--fs-space-3); border-block-start: 1px solid var(--fs-outline); color: var(--fs-on-surface-variant); font-size: var(--fs-font-size-small); }
   footer p { margin: 0; min-width: 0; overflow-wrap: anywhere; }
-  aside.panel { box-sizing: border-box; inline-size: 20rem; min-width: 0; min-height: 0; overflow: auto; border-inline-start: 1px solid var(--fs-outline); background: var(--fs-surface-card); }
+  aside.panel { box-sizing: border-box; flex: 0 0 auto; display: flex; flex-direction: column; inline-size: 20rem; min-width: 0; min-height: 0; overflow: auto; border-inline-start: 1px solid var(--fs-outline); background: var(--fs-surface-card); }
+  aside.panel ::slotted(*) { flex: 1 0 auto; }
   [hidden] { display: none !important; }
   @media (max-width: 40rem) {
     :host { grid-template-columns: minmax(0, 1fr); block-size: auto; min-height: 100vh; overflow: visible; }
     main { overflow: visible; }
+    .body { flex-direction: column; }
     nav { inline-size: auto; border-inline-end: 0; border-block-end: 1px solid var(--fs-outline); }
     aside.panel { inline-size: auto; }
   }
@@ -278,7 +284,6 @@ export class FsAppShell extends HTMLElement {
       this.skipControl(dist),
       this.sidebar(dist),
       this.contentColumn(dist),
-      this.panelRegion(),
     );
     this.showLogo();
     this.showStorage();
@@ -329,16 +334,22 @@ export class FsAppShell extends HTMLElement {
     return button;
   }
 
-  /** The header, main and footer column. */
+  /** The header over the body: the main and footer column beside the file panel region. */
   private contentColumn(dist: Distribution): HTMLElement {
     const { labels } = dist;
-    const column = document.createElement("div");
-    column.className = "content";
+    const content = document.createElement("div");
+    content.className = "content";
     const main = document.createElement("main");
     main.tabIndex = -1;
     main.append(document.createElement("slot"));
-    column.append(this.header(labels), main, footerBar());
-    return column;
+    const column = document.createElement("div");
+    column.className = "column";
+    column.append(main, footerBar());
+    const body = document.createElement("div");
+    body.className = "body";
+    body.append(column, this.panelRegion());
+    content.append(this.header(labels), body);
+    return content;
   }
 
   /** The header: search slot, host badge and the Monitor button. */

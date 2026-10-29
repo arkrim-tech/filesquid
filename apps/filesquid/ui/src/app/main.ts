@@ -6,7 +6,7 @@
  * breadcrumb; `#/settings` shows the Settings page (Appearance with the theme control, Privacy,
  * About with the API status); `#/monitor` shows the Monitor dashboard, whose W010 note links to the library's repair offer;
  * `#/library` creates, opens or recovers a library and `#/library/<id>` shows it; `#/files/<library>/<object>` shows the
- * file browser until the API lists files by navigation node. On the desktop host the client
+ * file browser until the API lists files by navigation node, with the file panel (File info and Versions) for the open file. On the desktop host the client
  * uses the per-launch token; on the server host the Monitor asks for the administrator token,
  * which is kept in memory only, and entering it reconnects the event channel and reads the
  * host, the health and the tree again.
@@ -17,6 +17,7 @@ import pkg from "../../package.json";
 import { CONTRACT_VERSION } from "../api/contract-version";
 import {
   ClientFileSource,
+  ClientHistorySource,
   ClientLibrarySource,
   ClientNavigationSource,
   LibraryRegistry,
@@ -82,4 +83,7 @@ if (shell) {
   const monitor = { labels, client, tokens: desktop ? undefined : tokens };
   bindMonitorRoute(shell, { ...monitor, repairHref: libraryRepairHref });
 }
-if (shell) bindFilesRoute(shell, { labels, source: new ClientFileSource(client) });
+if (shell) {
+  const files = { labels, source: new ClientFileSource(client) };
+  bindFilesRoute(shell, { ...files, history: new ClientHistorySource(client) });
+}

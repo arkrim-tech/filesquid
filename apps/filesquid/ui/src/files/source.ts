@@ -58,6 +58,15 @@ export interface UploadSourceOptions extends SourceOptions {
   readonly operationId?: string;
 }
 
+/** Options of a restore: the revision it expects, the new version's optional label, and a way to cancel it. */
+export interface RestoreOptions extends WriteOptions {
+  /**
+   * The new version's label (API-F2.5): 1 to 512 bytes, not blank, no control characters; the
+   * label member of the version's `filesquid.operation.v1` message. No label when absent.
+   */
+  readonly label?: string;
+}
+
 /** Everything the file browser asks of the API. */
 export interface FileSource {
   /** List one page of a folder at the head version. Reads. */
@@ -99,12 +108,15 @@ export interface FileSource {
   ): Promise<RenameCommit>;
   /** Remove one file or folder (its bytes stay in history); commits one version. Writes. */
   remove(object: ObjectRef, path: string, options: WriteOptions): Promise<FileCommit>;
-  /** Restore files or folders from an earlier version; commits one version. Writes. */
+  /**
+   * Restore files or folders from an earlier version, with an optional label for the new
+   * version; commits one version. Writes.
+   */
   restore(
     object: ObjectRef,
     version: string,
     paths: readonly string[],
-    options: WriteOptions,
+    options: RestoreOptions,
   ): Promise<FileCommit>;
 }
 
@@ -392,7 +404,8 @@ export class ClientFileSource implements FileSource {
    * @param object The library and object.
    * @param version The earlier version: `v1`, `v2`, ...
    * @param paths The files or folders (1 to 1,000).
-   * @param options The object's head as last read, and abort signal.
+   * @param options The object's head as last read, the new version's optional label, and
+   *   abort signal.
    * @returns The version published.
    * @throws ApiError when the API refuses, `conflict` included.
    */
@@ -400,9 +413,11 @@ export class ClientFileSource implements FileSource {
     object: ObjectRef,
     version: string,
     paths: readonly string[],
-    options: WriteOptions,
+    options: RestoreOptions,
   ): Promise<FileCommit> {
-    return this.send<FileCommit>("restorations", { ...bodyOf(object), version, paths }, options);
+    const label = options.label === undefined ? {} : { label: options.label };
+    const body = { ...bodyOf(object), version, paths, ...label };
+    return this.send<FileCommit>("restorations", body, options);
   }
 
   /**
