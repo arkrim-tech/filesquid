@@ -18,6 +18,7 @@ import { CONTRACT_VERSION } from "../api/contract-version";
 import {
   ClientFileSource,
   ClientHistorySource,
+  ClientMetadataSource,
   ClientLibrarySource,
   ClientNavigationSource,
   LibraryRegistry,
@@ -85,5 +86,6 @@ if (shell) {
 }
 if (shell) {
   const files = { labels, source: new ClientFileSource(client) };
-  bindFilesRoute(shell, { ...files, history: new ClientHistorySource(client) });
+  const history = new ClientHistorySource(client);
+  bindFilesRoute(shell, { ...files, history, metadata: new ClientMetadataSource(client) });
 }

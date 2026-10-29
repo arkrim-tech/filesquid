@@ -12,6 +12,7 @@ import {
 } from "../../src/index";
 import { fixture, one, settle, control, click } from "../support/file-browser-fakes";
 import { FakePanelSource } from "../support/panel-fakes";
+import { FakeMetadataSource } from "../support/metadata-fakes";
 import labels from "../../src/theme/labels.en.json";
 
 let host: HTMLElement & { focusMain: () => void };
@@ -153,6 +154,30 @@ describe("bindFilesRoute", () => {
       }),
     );
     expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("registers the Description tab when a metadata source is given (UI-F2.4)", async () => {
+    window.history.replaceState(null, "", "#/files/lib/obj");
+    const metadata = new FakeMetadataSource();
+    const history = new FakePanelSource();
+    stop = bindFilesRoute(host, { labels, source: fixture(), history, metadata });
+    await settle();
+    await click(control(browser() as FsFileBrowser, "readme.txt"));
+    await settle();
+    const panel = host.querySelector<FsFilePanel>("fs-file-panel") as FsFilePanel;
+    const tabs = [...(panel.shadowRoot?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [])];
+    expect(tabs.map((t) => t.textContent)).toEqual([
+      labels.filePanelInfo,
+      labels.filePanelDescription,
+    ]);
+    expect(panel.shadowRoot?.querySelector("fs-metadata-panel")).toBeNull();
+    tabs[1]?.click();
+    await settle();
+    const description = panel.shadowRoot?.querySelector("fs-metadata-panel") as HTMLElement;
+    expect(description.closest("section")?.dataset.slot).toBe("description");
+    expect(description.dataset.state).toBe("ready");
+    expect(metadata.calls.statements).toBe(1);
+    expect(description.shadowRoot?.querySelectorAll(".row")).toHaveLength(8);
   });
 
   it("mounts no file panel without a history source", async () => {

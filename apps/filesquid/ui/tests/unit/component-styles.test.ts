@@ -26,6 +26,7 @@ const ELEMENTS = [
   "fs-file-panel.ts",
   "fs-file-preview.ts",
   "fs-host-indicator.ts",
+  "fs-metadata-panel.ts",
   "fs-monitor.ts",
   "fs-nav-tree.ts",
   "fs-ocfl-findings.ts",

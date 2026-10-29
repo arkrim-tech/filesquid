@@ -553,7 +553,8 @@ for (const scheme of SCHEMES) {
         "aria-pressed",
         "false",
       );
-      const tab = page.locator('fs-file-panel [role="tab"]');
+      // The first tab, File info, is the selected one; UI-F2.4 added Description after it.
+      const tab = page.locator('fs-file-panel [role="tab"]').first();
       await expect(tab).toHaveAttribute("tabindex", "0");
       await page.keyboard.press("Tab");
       await page.keyboard.press("Tab");
