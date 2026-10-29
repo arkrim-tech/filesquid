@@ -23,6 +23,8 @@ mod community;
 mod content;
 #[path = "support/copy_warning_steps.rs"]
 mod copy_warning_steps;
+#[path = "support/counting_backend.rs"]
+mod counting;
 #[path = "support/enumerate.rs"]
 mod enumerate;
 #[path = "support/enumerate_steps.rs"]
@@ -53,6 +55,8 @@ mod repair_steps;
 mod rig;
 #[path = "support/source_scan.rs"]
 mod source_scan;
+#[path = "support/stage_file_steps.rs"]
+mod stage_file_steps;
 #[path = "support/validate_steps.rs"]
 mod validate_steps;
 #[path = "support/view_steps.rs"]
@@ -113,6 +117,7 @@ struct OcflWorld {
     view: view_steps::ViewState,
     copy_warning: copy_warning_steps::CopyWarningState,
     bound_order: bound_order_steps::BoundOrderState,
+    stage_file: stage_file_steps::StageFileState,
 }
 
 /// Run `$body` with `$b` bound to the scenario's concrete backend.
