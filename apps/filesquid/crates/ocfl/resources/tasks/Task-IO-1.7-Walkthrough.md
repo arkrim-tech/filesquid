@@ -10,15 +10,15 @@ Branch `feat/io-1.7-streamed-stage-file`. Module task [IO-1.7](../plan.md) of gl
 |---|---|---|
 | Bounded chunks of at most `MAX_CHUNK_BYTES` (8 MiB), never read whole | the staging area's `put_file` (the path behind `stage_tree`): `hash_file` and `copy_file` read through `ChunkReader` with `MAX_CHUNK_BYTES` | `a_file_larger_than_one_chunk_is_read_in_bounded_chunks`: a 16 MiB + 123 B file, largest read ≤ 8 MiB, exactly 2 × 3 chunk reads |
 | Hashed as it is copied; the sha256 digest answered | `upload_parts` hashes each chunk as it uploads; `stage_file` returns the digest | `stage_file_answers_the_digest_and_stages_the_blob_stage_bytes_would` (same blob and same index as `stage_bytes`) |
-| Memory independent of the file's size | chunk reads and multipart parts of at most `MAX_PART_BYTES`; no whole-file buffer | the bounded-read test above |
+| Bounded memory: no whole-file buffer | chunk reads of at most `MAX_CHUNK_BYTES` and multipart parts of at most `MAX_PART_BYTES`, one of each in memory at a time; only the upload's per-part completion records (one small entry per part, at most `MAX_PARTS`) grow with the file | the bounded-read test above |
 | Manifest bytes not copied (OCFL-S-014) | `known` (the manifest digests) checked after the hashing read | `a_file_whose_digest_the_manifest_holds_is_not_copied`: no blob write, one read pass, no new content on commit |
 | A held blob re-hashed; reused when it matches | `holds_blob` re-hashes the blob | `a_blob_the_staging_area_holds_is_not_copied_again`: no blob write, one read pass |
 | A corrupt or stale blob replaced before the index points at it | `holds_blob` reports a mismatch as absent and the copy replaces it; the index is saved after | `a_corrupt_or_stale_staged_blob_is_replaced_with_the_source_bytes`: one blob write, the blob and the committed content hold the source bytes |
 | Read at most twice; `SourceChanged` and the partial copy removed | `put_file` compares the copy's digest with the hash pass and deletes the blob | `a_file_that_changes_between_the_two_reads_is_refused`: the source changes after the hash pass; no blob under either digest, no index |
-| Path validated as `stage_bytes` does, before the file is read | `valid_path`, then `check_new_path` (E095 path conflicts) before `put_file` | `an_invalid_logical_path_is_refused_before_the_source_is_read`: no read, no staging write |
+| Path validated as `stage_bytes` does, before the file is read | `valid_path`, then `check_new_path` (E095 path conflicts) before `put_file` | `an_invalid_logical_path_is_refused_before_the_source_is_read` and `a_path_under_a_logical_file_is_refused_before_the_source_is_read` (`a.txt/inner` under the committed `a.txt`): no read, no staging write |
 | The commit keeps the OCFL-S-018 write order | the ordinary commit path | `the_commit_of_a_streamed_file_keeps_the_write_order` on `MemoryBackend` and `FsBackend` storage |
 
-Every scenario except the path check reads its source from `MemoryBackend` and from `FsBackend`, each wrapped in the test-only `CountingBackend` (`tests/support/counting_backend.rs`), which counts and sizes ranged reads and can replace a file after a chosen number of reads.
+Every scenario except the two path checks reads its source from `MemoryBackend` and from `FsBackend`, each wrapped in the test-only `CountingBackend` (`tests/support/counting_backend.rs`), which counts and sizes ranged reads and can replace a file after a chosen number of reads.
 
 ## OCFL-S-014: Forward-delta change model (only bytes the manifest lacks are written)
 
@@ -34,11 +34,11 @@ The stage-bytes comparison test shows the same staging index and blob for `stage
 
 ## SRS-NFR-003: Bounded processing and migration endurance
 
-Memory use of the stage does not grow with the file: chunk reads of at most 8 MiB and multipart parts of at most 64 MiB.
+The bytes the stage holds in memory are bounded whatever the file's size: chunk reads of at most 8 MiB and multipart parts of at most 64 MiB, one of each at a time. Only the upload's per-part completion records (one small entry per part of up to 64 MiB, at most 10,000 parts) grow with the file.
 
 ## BDD
 
-`streamed_stage_OCFL-S-026.feature` (steps in `tests/support/stage_file_steps.rs`): the bounded-chunk outline on the memory and filesystem backends with a commit, manifest bytes not copied, and a source that changes between its reads.
+`streamed_stage_OCFL-S-026.feature` (steps in `tests/support/stage_file_steps.rs`): the bounded-chunk outline on the memory and filesystem backends with a commit, manifest bytes not copied (read once, no blob in the staging area), and a source that changes between its reads.
 
 ## What changed
 
@@ -90,13 +90,13 @@ None.
 `cargo test -p filesquid-ocfl --locked --test integration_stage_file`:
 
 ```text
-   Compiling filesquid-ocfl v0.1.0 (<repo>/apps/filesquid/crates/ocfl)
-    Finished `test` profile [unoptimized] target(s) in 1.24s
+    Finished `test` profile [unoptimized] target(s) in 18.63s
      Running tests/integration/stage_file.rs (<target>/debug/deps/integration_stage_file-281404c847806322)
 
-running 8 tests
+running 9 tests
 test a_blob_the_staging_area_holds_is_not_copied_again ... ok
 test a_corrupt_or_stale_staged_blob_is_replaced_with_the_source_bytes ... ok
+test a_path_under_a_logical_file_is_refused_before_the_source_is_read ... ok
 test an_invalid_logical_path_is_refused_before_the_source_is_read ... ok
 test stage_file_answers_the_digest_and_stages_the_blob_stage_bytes_would ... ok
 test a_file_whose_digest_the_manifest_holds_is_not_copied ... ok
@@ -104,13 +104,13 @@ test a_file_that_changes_between_the_two_reads_is_refused ... ok
 test a_file_larger_than_one_chunk_is_read_in_bounded_chunks ... ok
 test the_commit_of_a_streamed_file_keeps_the_write_order ... ok
 
-test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 16.58s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 14.97s
 ```
 
 `cargo test -p filesquid-ocfl --locked --test features -- --input "streamed_stage_*.feature"`:
 
 ```text
-    Finished `test` profile [unoptimized] target(s) in 0.18s
+    Finished `test` profile [unoptimized] target(s) in 10.91s
      Running tests/features.rs (<target>/debug/deps/features-9009fa7eceb51bdd)
 Feature: Streamed single-file stage
   Scenario Outline: A file larger than one chunk is staged in bounded chunks from the memory backend
@@ -135,6 +135,7 @@ Feature: Streamed single-file stage
    ✔  When writer "writer-a" stages it as "copy-of-a.txt" with stage_file
    ✔  Then stage_file should answer the sha256 digest of the source file
    ✔  And the source should have been read once, to hash it
+   ✔  And no blob should have been copied into the staging area
   Scenario: A source that changes between its two reads is refused
    ✔> Given an object committed at "v1" with "a.txt", "b.txt" and "c.txt" through the change model
    ✔  Given a source file of three chunks on the memory backend that changes after it is hashed
@@ -144,5 +145,5 @@ Feature: Streamed single-file stage
 [Summary]
 1 feature
 4 scenarios (4 passed)
-24 steps (24 passed)
+25 steps (25 passed)
 ```

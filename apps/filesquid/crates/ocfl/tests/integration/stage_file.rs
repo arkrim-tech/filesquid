@@ -131,9 +131,10 @@ fn large_bytes() -> Vec<u8> {
     (0..len).map(|i| (i % 251) as u8).collect()
 }
 
-/// The chunk reads of one whole pass over `len` bytes.
+/// The chunk reads of one whole pass over `len` bytes: a full chunk per
+/// `MAX_CHUNK_BYTES`, then the short or empty read that ends the stream.
 fn chunks(len: usize) -> usize {
-    (len as u64).div_ceil(MAX_CHUNK_BYTES).max(1) as usize
+    ((len as u64) / MAX_CHUNK_BYTES + 1) as usize
 }
 
 /// Put `bytes` at the source key of `source`.
@@ -320,6 +321,29 @@ fn an_invalid_logical_path_is_refused_before_the_source_is_read() {
     assert!(matches!(err, ChangeError::InvalidPath { .. }), "{err:?}");
     assert_eq!(source.reads(), 0);
     assert!(log.lock().expect("lock").is_empty());
+}
+
+#[test]
+fn a_path_under_a_logical_file_is_refused_before_the_source_is_read() {
+    let rig = Rig::new(MemoryBackend::new());
+    commit_files(
+        &change::model(&rig, "seed"),
+        &rig,
+        &[("a.txt", b"alpha")],
+        "v1",
+    )
+    .expect("v1");
+    let source = CountingBackend::new(MemoryBackend::new());
+    put_source(&source, b"pixels");
+    let (staging, log) = staging();
+    let err = ready(model(&rig, &staging).stage_file("a.txt/inner", &source, SOURCE_KEY))
+        .expect_err("refused");
+    assert!(
+        matches!(&err, ChangeError::InvalidPath { path, .. } if path == "a.txt/inner"),
+        "{err:?}"
+    );
+    assert_eq!(source.reads(), 0, "refused before any read");
+    assert!(log.lock().expect("lock").is_empty(), "nothing staged");
 }
 
 fn streamed_commit_follows_the_write_order<B: StorageBackend>(rig: &Rig<B>) {

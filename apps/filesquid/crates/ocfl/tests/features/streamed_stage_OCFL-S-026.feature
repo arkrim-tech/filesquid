@@ -29,6 +29,7 @@ Feature: Streamed single-file stage
     When writer "writer-a" stages it as "copy-of-a.txt" with stage_file
     Then stage_file should answer the sha256 digest of the source file
     And the source should have been read once, to hash it
+    And no blob should have been copied into the staging area
 
   # Error case
   Scenario: A source that changes between its two reads is refused

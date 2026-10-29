@@ -94,9 +94,10 @@ fn three_chunks() -> Vec<u8> {
     (0..len).map(|i| (i % 251) as u8).collect()
 }
 
-/// The chunk reads of one pass over `len` bytes.
+/// The chunk reads of one whole pass over `len` bytes: a full chunk per
+/// `MAX_CHUNK_BYTES`, then the short or empty read that ends the stream.
 fn pass(len: usize) -> usize {
-    (len as u64).div_ceil(MAX_CHUNK_BYTES).max(1) as usize
+    ((len as u64) / MAX_CHUNK_BYTES + 1) as usize
 }
 
 /// Store `bytes` as the source file of `source` and forget the reads.
@@ -205,12 +206,23 @@ fn refused_changed(world: &mut OcflWorld) {
     );
 }
 
+#[then("no blob should have been copied into the staging area")]
+fn not_copied(world: &mut OcflWorld) {
+    let digest = DigestAlgorithm::Sha256.digest_hex(&world.stage_file.bytes);
+    assert_no_staged_blob(world, &digest);
+}
+
 #[then("no staged blob should be left under either digest")]
 fn no_blob_left(world: &mut OcflWorld) {
-    let staging = &*rig(world).staging;
     for bytes in [&world.stage_file.bytes, &world.stage_file.changed] {
         let digest = DigestAlgorithm::Sha256.digest_hex(bytes);
-        let blob = key(&format!("changes/writer-a/blobs/{digest}"));
-        assert!(!ready(staging.exists(&blob)).expect("exists"), "{blob}");
+        assert_no_staged_blob(world, &digest);
     }
+}
+
+/// Fail when writer-a's staging area holds a blob under `digest`.
+fn assert_no_staged_blob(world: &OcflWorld, digest: &str) {
+    let staging = &*rig(world).staging;
+    let blob = key(&format!("changes/writer-a/blobs/{digest}"));
+    assert!(!ready(staging.exists(&blob)).expect("exists"), "{blob}");
 }

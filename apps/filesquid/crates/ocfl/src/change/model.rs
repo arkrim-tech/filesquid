@@ -151,8 +151,12 @@ where
     /// The file is streamed, never read whole: it is read in chunks of at
     /// most [`MAX_CHUNK_BYTES`](crate::storage::MAX_CHUNK_BYTES) once to
     /// hash it, and, only when its bytes are new, once more to copy it into
-    /// the staging area while hashing again, so memory use does not grow
-    /// with the file. Bytes the object's `manifest` holds are not copied
+    /// the staging area while hashing again, in multipart parts of at most
+    /// [`MAX_PART_BYTES`](crate::storage::MAX_PART_BYTES). The bytes held
+    /// in memory are bounded (one chunk and one part at a time); only the
+    /// upload's per-part completion records, one small entry per part up
+    /// to [`MAX_PARTS`](crate::storage::MAX_PARTS), grow with the file.
+    /// Bytes the object's `manifest` holds are not copied
     /// (OCFL-S-014); a blob the staging area holds under the digest is
     /// re-hashed and reused when it matches, and replaced with the file's
     /// bytes when it does not. A file whose two reads differ is refused and
