@@ -168,6 +168,13 @@ fn the_command_is_refused_without_consent_and_writes_nothing() {
     let mut stale = rig.consented(&["urn:uuid:a"]);
     stale.consent.as_mut().expect("consent").statement_id = "old".into();
     cases.push((stale, "consent_mismatch"));
+    let mut before_the_history_version = rig.consented(&["urn:uuid:a"]);
+    before_the_history_version
+        .consent
+        .as_mut()
+        .expect("consent")
+        .statement_id = "version_inventory_repair.v1".into();
+    cases.push((before_the_history_version, "consent_mismatch"));
     for (request, code) in cases {
         let err = repair_as_owner(&rig, request).expect_err("refused");
         assert_eq!(err.error_code(), code);
@@ -175,7 +182,7 @@ fn the_command_is_refused_without_consent_and_writes_nothing() {
     assert_eq!(rig.root.writes(), writes, "nothing written");
     assert!(rig.ledger.consents().is_empty() && rig.ledger.outcomes().is_empty());
     let refusals = rig.journaled(REPAIR_OPERATION);
-    assert_eq!(refusals.len(), 4, "every refusal is journaled");
+    assert_eq!(refusals.len(), 5, "every refusal is journaled");
     assert!(refusals.iter().all(|e| e.outcome == Outcome::Failed));
 }
 
@@ -338,7 +345,7 @@ fn the_candidate_query_lists_heads_without_their_version_inventory() {
 
 #[test]
 fn the_consent_statement_id_is_pinned() {
-    assert_eq!(CONSENT_STATEMENT_ID, "version_inventory_repair.v1");
+    assert_eq!(CONSENT_STATEMENT_ID, "version_inventory_repair.v2");
 }
 
 #[test]
@@ -402,7 +409,8 @@ fn the_consent_statement_names_what_changes() {
         "one version inventory and its sidecar",
         "copies of the root inventory",
         "latest version directory",
-        "nothing else changes",
+        "a new version recording the repair will be committed to each object's history",
+        "no file content changes",
     ] {
         assert!(CONSENT_STATEMENT.contains(phrase), "{phrase}");
     }
