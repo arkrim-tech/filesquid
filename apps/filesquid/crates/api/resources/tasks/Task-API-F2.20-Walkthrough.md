@@ -1,6 +1,6 @@
 # Task API-F2.20 Walkthrough: Repair consent statement names the repair's history version
 
-Branch `fix/repair-consent-wording`, module `filesquid-api` ([plan row](../plan.md)), with the UI label, the ImageSquid label table and mockup 42 changed in the same change. Contract **0.27.0** (main was 0.26.0).
+Branch `fix/repair-consent-wording`, module `filesquid-api` ([plan row](../plan.md)), with the UI label, the ImageSquid label table and mockup 42 changed in the same change. Contract **0.28.0** (main was 0.27.0 when the branch merged it; the branch first bumped to 0.27.0 while main was 0.26.0).
 
 Binding owner decision 4 of 2026-10-23 (the owner adopted the orchestrator's recommendations, verbatim answer: "provide and implement recommendations for owner's decisions 1-6"): "The consent statement says what the repair now does. API-S-023's statement becomes: one version inventory and its sidecar, copies of the root inventory, will be added to each object's latest version directory, and a new version recording the repair will be committed to each object's history (API-S-028); no file content changes. The UI label `repairConsent` reads: 'One copy of the root inventory and its sidecar will be added to each listed object's latest version directory, and a new version recording this repair will be committed to each object's history. No file content changes.'"
 
@@ -19,12 +19,12 @@ The consent names its statement by ID. The statement now also says that the repa
 | `repairConsent` reads the owner's string in FileSquid and ImageSquid | `library-repair.test.ts` ("states exactly what the repair adds"), the label tables | Met |
 | The UI sends statement v2 | `library-model.test.ts`, `library-client.test.ts`, `library-repair.test.ts` ("Confirm calls the repair route once…"), e2e fixtures | Met |
 | Mockup 42 shows the same text and fits its dialog | XML parse and the Chromium measurement above; `mockup-fidelity.spec.ts` "repair consent (42)" | Met |
-| Contract 0.27.0 with regenerated types | `unit_contract`, Vitest `contract.test.ts` | Met |
+| Contract 0.28.0 with regenerated types | `unit_contract`, Vitest `contract.test.ts` | Met |
 
 ## What changed
 
 - [`repair.rs`](../../src/local_library/repair.rs): `CONSENT_STATEMENT_ID` and `CONSENT_STATEMENT`.
-- [`openapi.json`](../../openapi.json): the repair route and `RepairConsent.statement_id` descriptions name v2 and the history version; 0.27.0. `ui/src/api/schema.d.ts` and `ui/src/api/contract-version.ts` regenerated.
+- [`openapi.json`](../../openapi.json): the repair route and `RepairConsent.statement_id` descriptions name v2 and the history version; 0.28.0. `ui/src/api/schema.d.ts` and `ui/src/api/contract-version.ts` regenerated.
 - UI: `REPAIR_STATEMENT_ID`, `repairConsent`, the `fs-library-repair.ts` module doc, the UI README, the F-001 feature scenario and the tests; the desktop WebdriverIO spec sends v2.
 - ImageSquid: `repairConsent`.
 - Mockup 42: text only.
