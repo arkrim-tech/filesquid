@@ -4,7 +4,9 @@
  * 2026-10-18). It lists the objects whose files can be read but not changed because the head
  * has no version inventory, and offers the repair only through a consent dialog that names
  * those objects and says that one copy of the root inventory and its sidecar will be added to
- * each object's latest version directory and that nothing else changes. Only Confirm calls the
+ * each object's latest version directory, that a new version recording the repair will be
+ * committed to each object's history, and that no file content changes (owner decision 4 of
+ * 2026-10-23). Only Confirm calls the
  * repair route, with the owner's consent for exactly the named objects; Cancel and Escape send
  * nothing and change nothing. The result is shown per object, and a refused repair says nothing
  * was changed. The Monitor's W010 note links here through `bindMonitorRoute`'s `repairHref`.

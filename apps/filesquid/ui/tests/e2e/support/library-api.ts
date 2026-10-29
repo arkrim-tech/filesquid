@@ -91,7 +91,7 @@ function repairRefusal(
   const same = JSON.stringify(consent.object_ids) === JSON.stringify(ids);
   const named =
     consent.library_id === body.library_id &&
-    consent.statement_id === "version_inventory_repair.v1";
+    consent.statement_id === "version_inventory_repair.v2";
   return same && named ? undefined : { status: 409, code: "conflict" };
 }
 
