@@ -47,7 +47,7 @@ mod service;
 pub(crate) use announce::{navigation_parents, NavigationParents};
 pub use catalog::{
     CatalogChange, CatalogCommit, CatalogError, CommitReceipt, FileEntry, FileListing, FileScope,
-    Keyed, LibraryCatalog, LibraryRecord, LibraryState, PageKey,
+    Keyed, LibraryCatalog, LibraryRecord, LibraryState, PageKey, COLLECTION_HOLDS_FILES,
 };
 pub use command::{
     CommandRequest, CommandResult, LibraryCommand, MAX_EXPRESSION_BYTES, MAX_FILES_PER_COMMAND,
@@ -57,7 +57,8 @@ pub use error::LibraryError;
 pub use ids::{is_uuid_v4, mint_uuid_v4};
 pub use memory::MemoryCatalog;
 pub use policy::{
-    Deletion, DeletionPolicy, FileState, PurgeConfirmation, VisibilityFilter, RECOVERABLE_DAYS,
+    Deletion, DeletionPolicy, FileState, PurgeConfirmation, VisibilityFilter, MAX_RETENTION_DAYS,
+    RECOVERABLE_DAYS,
 };
 pub use query::{Cursor, LibraryQuery, Page, QueryAnswer, QueryRequest};
 pub use service::LibraryService;

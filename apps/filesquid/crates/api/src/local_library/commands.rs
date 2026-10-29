@@ -23,6 +23,7 @@ use super::service::{
 };
 use super::snapshot::CopyReport;
 use crate::auth::Principal;
+use crate::canonical::{snapshot_library_id, CanonicalError};
 use crate::library::mint_uuid_v4;
 use filesquid_core::LibraryId;
 use std::collections::HashMap;
@@ -355,8 +356,14 @@ impl<L: LibraryLocations> LibraryCommands<L> {
         let _serialised = self.binding.lock().await;
         let operation = binding.operation();
         let target = request.library_id.clone();
-        let planned = name_or_refusal(request.name.as_deref())
-            .and_then(|()| self.plan_binding(&request, binding));
+        let named = name_or_refusal(request.name.as_deref());
+        self.refused(actor, operation, target.as_ref(), named)?;
+        let request = match binding {
+            Binding::Open => self.named_by_snapshot(request).await,
+            Binding::Create => Ok(request),
+        };
+        let request = self.refused(actor, operation, target.as_ref(), request)?;
+        let planned = self.plan_binding(&request, binding);
         let (library_id, root) = self.refused(actor, operation, target.as_ref(), planned)?;
         let backend = root.backend.as_ref();
         let summary = match binding {
@@ -371,6 +378,44 @@ impl<L: LibraryLocations> LibraryCommands<L> {
             library_id,
             spec_version: summary.spec_version,
             objects: summary.objects,
+        })
+    }
+
+    /// `request` naming the library the folder's collection snapshot belongs to, so opening a
+    /// moved or copied folder answers its own library rather than a new ID, and a second
+    /// folder of an open library is refused by [`Self::plan_binding`] (ADR 041 Decision 6). A
+    /// folder without a snapshot is left as the request names it. Reads the location's
+    /// snapshot head.
+    ///
+    /// # Errors
+    ///
+    /// `library_mismatch` when the request names another library than the snapshot's;
+    /// `snapshot_unreadable` when the folder holds a snapshot that cannot be read, so a
+    /// damaged or partly copied folder never opens under another ID; `unavailable` when the
+    /// storage cannot be reached now.
+    async fn named_by_snapshot(
+        &self,
+        request: LocationRequest,
+    ) -> Result<LocationRequest, LocalLibraryError> {
+        check_location(&request.location_id)?;
+        let Ok(root) = self.location(&request.location_id) else {
+            return Ok(request);
+        };
+        let named = snapshot_library_id(root.backend.as_ref())
+            .await
+            .map_err(|err| snapshot_refusal(&err))?;
+        let Some(named) = named.and_then(|id| LibraryId::new(id).ok()) else {
+            return Ok(request);
+        };
+        if request.library_id.as_ref().is_some_and(|id| *id != named) {
+            return Err(LocalLibraryError::refused(
+                "library_mismatch",
+                "That folder holds another library than the one named.",
+            ));
+        }
+        Ok(LocationRequest {
+            library_id: Some(named),
+            ..request
         })
     }
 
@@ -587,5 +632,36 @@ async fn read_free_spaces(
             tracing::warn!(target: super::LOG_TARGET, error = %err, "free space read failed");
             vec![FreeSpace::VolumeUnreadable; count]
         }
+    }
+}
+
+/// The refusal of an open whose folder's snapshot could not be read: `unavailable` when the
+/// storage is unreachable now (a retry may succeed), else `snapshot_unreadable`. Pure.
+fn snapshot_refusal(err: &CanonicalError) -> LocalLibraryError {
+    match err {
+        CanonicalError::Unavailable(_) => LocalLibraryError::Unavailable,
+        _ => LocalLibraryError::refused(
+            "snapshot_unreadable",
+            "That folder's library snapshot cannot be read.",
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_unreachable_snapshot_is_retryable_and_an_unreadable_one_is_refused() {
+        let outage = snapshot_refusal(&CanonicalError::Unavailable("offline".into()));
+        assert!(matches!(outage, LocalLibraryError::Unavailable));
+        let damaged = snapshot_refusal(&CanonicalError::Failed("bad inventory".into()));
+        assert!(matches!(
+            damaged,
+            LocalLibraryError::Refused {
+                code: "snapshot_unreadable",
+                ..
+            }
+        ));
     }
 }

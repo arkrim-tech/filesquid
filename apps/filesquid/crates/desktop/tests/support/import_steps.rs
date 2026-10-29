@@ -1,14 +1,16 @@
-//! Steps of `desktop_imports_F-002.feature` (Task DE-1.2; SRS-F-002, API-S-036, DE-S-019,
-//! DE-S-006): the desktop's import route over a folder-bound library, driven through the
-//! `filesquid://` scheme with the per-launch token and a scripted dialog
-//! ([`ImportRig`](super::import_rig::ImportRig)), in a scratch directory that is removed when
-//! the scenario ends.
+//! Steps of `desktop_imports_F-002.feature` (Tasks DE-1.2, DE-1.7; SRS-F-002, API-S-036,
+//! DE-S-019, DE-S-018, API-S-011, DE-S-006): the desktop's import route over a library in its
+//! own folder, attached to its catalog index, driven through the `filesquid://` scheme with
+//! the per-launch token and a scripted dialog ([`ImportRig`](super::import_rig::ImportRig)),
+//! in a scratch directory that is removed when the scenario ends.
 
 use super::import_rig::{fresh_dir, holiday_folder, ImportRig, LIBRARY, UNOPENED_LIBRARY};
 use super::DesktopWorld;
 use cucumber::{given, then, when};
 use filesquid_api::imports::IMPORT_START_OPERATION;
-use serde_json::Value;
+use filesquid_api::navigation::{FolderScope, NodeRef};
+use filesquid_core::CollectionId;
+use serde_json::{json, Value};
 use std::path::PathBuf;
 
 /// What one import scenario set up and saw.
@@ -174,7 +176,11 @@ fn one_request(world: &mut DesktopWorld) {
         .filter(|e| e.operation == IMPORT_START_OPERATION)
         .collect();
     assert_eq!(starts.len(), 1);
-    assert_eq!(starts[0].error_code.as_deref(), Some("library_not_found"));
+    assert_eq!(
+        starts[0].error_code.as_deref(),
+        Some("collection_not_found"),
+        "the destination is not a collection of that library"
+    );
     assert!(!format!("{starts:?}").contains(rig.dir.to_string_lossy().as_ref()));
 }
 
@@ -187,4 +193,70 @@ async fn after_restart(world: &mut DesktopWorld, count: usize) {
     );
     rig(world).relaunch().await;
     files_imported(world, count);
+}
+
+#[when("the app asks to import a folder without naming a destination collection")]
+async fn import_nowhere(world: &mut DesktopWorld) {
+    let only_folder = json!({ "folder": "trips" });
+    let answer = rig(world)
+        .import_into(LIBRARY, "op-nowhere", "folder", only_folder)
+        .await;
+    scenario(world).answers.push(answer);
+}
+
+#[when(expr = "the import has finished with {int} files")]
+fn import_finished(world: &mut DesktopWorld, count: usize) {
+    assert_eq!(rig(world).wait_for_files(count), count);
+}
+
+#[then(expr = "the import should be refused as an invalid request naming {string}")]
+fn refused_invalid(world: &mut DesktopWorld, code: String) {
+    let (status, answer) = last_answer(world);
+    assert_eq!(status, 400, "{answer}");
+    assert_eq!(answer["code"], "invalid_request");
+    let message = answer["message"].as_str().unwrap_or_default();
+    assert!(message.contains(&code), "{answer}");
+}
+
+/// The folder scope of the rig's destination collection.
+fn destination(world: &mut DesktopWorld) -> FolderScope {
+    let collection = CollectionId::new(rig(world).collection.clone()).expect("collection");
+    FolderScope::Collection(collection)
+}
+
+/// The names shown by `key` items of `page`: a file's display name, else its name.
+fn shown(page: &Value, key: &str) -> Vec<String> {
+    page[key]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|item| {
+            let name = item.get("display_name").unwrap_or(&item["name"]);
+            name.as_str().expect("name").to_string()
+        })
+        .collect()
+}
+
+#[then(expr = "the collection should list the folder {string} holding {string} and {string}")]
+async fn folder_holds(world: &mut DesktopWorld, folder: String, first: String, second: String) {
+    let node = NodeRef::folder(destination(world), folder)
+        .to_handle()
+        .expect("handle");
+    let uri = format!("/api/v1/files/listing?node={node}");
+    let (status, page) = rig(world).get(&uri).await;
+    assert_eq!(status, 200, "{page}");
+    assert_eq!(shown(&page, "entries"), [first, second]);
+}
+
+#[then(expr = "the collection should list the folders {string} and {string} in {string}")]
+async fn folders_in(world: &mut DesktopWorld, first: String, second: String, parent: String) {
+    assert_eq!(rig(world).wait_for_files(4), 4, "both imports finished");
+    let node = NodeRef::folder(destination(world), parent)
+        .to_handle()
+        .expect("handle");
+    let (status, page) = rig(world)
+        .get(&format!("/api/v1/navigation?node={node}"))
+        .await;
+    assert_eq!(status, 200, "{page}");
+    assert_eq!(shown(&page, "nodes"), [first, second]);
 }

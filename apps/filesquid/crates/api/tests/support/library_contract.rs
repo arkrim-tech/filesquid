@@ -120,16 +120,25 @@ impl ImportStarter for StartingImports {
     }
 }
 
-/// The sample import request into the sample library.
+/// The library of the contract's navigation catalog (the drive catalog's), which imports
+/// name with its collection [`IMPORT_COLLECTION`] as their destination (Task DE-1.7).
+const IMPORT_LIBRARY: &str = "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b";
+
+/// The drive catalog's collection, the sample import's destination.
+const IMPORT_COLLECTION: &str = "2c0d1e2f-3a4b-4c5d-8e6f-7a8b9c0d1e2f";
+
+/// The sample import request into the navigation catalog's collection.
 fn import_request() -> ImportRequest {
     ImportRequest {
         envelope: filesquid_core::CommandEnvelope::new(
             filesquid_core::OperationId::new("op-import").expect("op"),
             filesquid_core::ExpectedRevision::new("r1").expect("revision"),
-            filesquid_core::OperationScope::new(format!("library:{LIBRARY}")).expect("scope"),
+            filesquid_core::OperationScope::new(format!("library:{IMPORT_LIBRARY}"))
+                .expect("scope"),
         ),
-        library_id: LIBRARY.to_string(),
-        collection_id: None,
+        library_id: IMPORT_LIBRARY.to_string(),
+        collection_id: Some(IMPORT_COLLECTION.to_string()),
+        folder: None,
         source: ImportSource::Folder,
     }
 }
@@ -318,7 +327,7 @@ pub fn samples() -> Vec<(&'static str, Vec<Value>)> {
             vec![
                 to_value(import_request()),
                 to_value(ImportRequest {
-                    collection_id: Some("collection-1".into()),
+                    folder: Some("trips/2024".into()),
                     source: ImportSource::Files,
                     ..import_request()
                 }),
