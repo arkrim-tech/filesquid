@@ -163,6 +163,11 @@ path = "tests/integration/copy_guard_warnings.rs"
 required-features = ["fs"]
 
 [[test]]
+name = "integration_stage_file"
+path = "tests/integration/stage_file.rs"
+required-features = ["fs"]
+
+[[test]]
 name = "integration_view_api"
 path = "tests/integration/view_api.rs"
 required-features = ["fs"]

@@ -7,6 +7,7 @@ import { FsBreadcrumb } from "./components/fs-breadcrumb";
 import { FsFileBrowser } from "./components/fs-file-browser";
 import { FsFilePreview } from "./components/fs-file-preview";
 import { FsDetailsPanel } from "./components/fs-details-panel";
+import { FsMetadataPanel } from "./components/fs-metadata-panel";
 import { FsFilePanel } from "./components/fs-file-panel";
 import { FsVersionsPanel } from "./components/fs-versions-panel";
 import { FsHostIndicator } from "./components/fs-host-indicator";
@@ -74,6 +75,58 @@ export {
   FsFilePanel,
   type FilePanelOptions,
 } from "./components/fs-file-panel";
+export {
+  FsMetadataPanel,
+  METADATA_OPERATIONS,
+  type MetadataPanelOptions,
+} from "./components/fs-metadata-panel";
+export {
+  MAX_DIALOG_CANDIDATES,
+  METADATA_DIALOG_STYLE,
+  buildMetadataDialog,
+  chooseProperty,
+  keepTabInside,
+  renderCandidates,
+  type CandidateDescriber,
+  type MetadataDialog,
+  type MetadataDialogMode,
+  type MetadataDialogParams,
+} from "./components/metadata-dialog";
+export {
+  ClientMetadataSource,
+  metadataFileId,
+  type MetadataClient,
+  type MetadataSource,
+} from "./files/metadata-source";
+export {
+  DCTERMS_FILE_TERMS,
+  MAX_STATEMENT_ROWS,
+  MAX_STATEMENT_VALUE_BYTES,
+  MAX_TERM_MATCHES,
+  MAX_TERM_NAME_BYTES,
+  TECHNICAL_PREFIXES,
+  customKeyProblem,
+  customNamespaces,
+  dctermsDescription,
+  descriptiveStatements,
+  groupCandidates,
+  matchingTerms,
+  metadataCountText,
+  statementRows,
+  validTermName,
+  valueProblem,
+  type CandidateGroups,
+  type FileStatements,
+  type MetadataCommit,
+  type MetadataRow,
+  type MetadataStatement,
+  type NamespaceRegistration,
+  type Namespaces,
+  type RegisteredCandidate,
+  type StatementSource,
+  type TermCandidate,
+  type TermCandidates,
+} from "./files/metadata";
 export {
   FsVersionsPanel,
   VERSIONS_CLOSE_EVENT,
@@ -287,6 +340,9 @@ export function defineElements(): void {
   }
   if (!customElements.get("fs-details-panel")) {
     customElements.define("fs-details-panel", FsDetailsPanel);
+  }
+  if (!customElements.get("fs-metadata-panel")) {
+    customElements.define("fs-metadata-panel", FsMetadataPanel);
   }
   if (!customElements.get("fs-versions-panel")) {
     customElements.define("fs-versions-panel", FsVersionsPanel);
