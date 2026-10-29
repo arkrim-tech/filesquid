@@ -34,7 +34,7 @@ pub const CREATE_OPERATION: &str = "library.create";
 
 /// Journal operation of renaming a library's entity in its folder (the snapshot version that
 /// carries the new name), beside the API's `library.rename` of the command, as
-/// [`CREATE_OPERATION`] sits beside its `library.root.create`.
+/// `library.create` sits beside its `library.root.create`.
 pub const ENTITY_RENAME_OPERATION: &str = "library.entity.rename";
 
 /// A library folder the host attaches: where it lives and who it belongs to.
