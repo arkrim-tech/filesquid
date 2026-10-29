@@ -17,6 +17,7 @@ Feature: Streamed single-file stage
     And the source should have been read in chunks of at most 8 MiB, once to hash it and once to copy it
     When writer "writer-a" commits the streamed file
     Then the committed "big.raw" should hold the source file's bytes
+    And the commit should keep the OCFL-S-018 write order for "big.raw"
 
     Examples:
       | backend    |
@@ -30,6 +31,21 @@ Feature: Streamed single-file stage
     Then stage_file should answer the sha256 digest of the source file
     And the source should have been read once, to hash it
     And no blob should have been copied into the staging area
+
+  # Edge case
+  Scenario: A corrupt or stale staged blob is replaced with the source's bytes
+    Given a source file of three chunks on the memory backend
+    And the staging area already holds other bytes under the source file's digest
+    When writer "writer-a" stages it as "big.raw" with stage_file
+    Then stage_file should answer the sha256 digest of the source file
+    And the staged blob should hold the source file's bytes
+
+  # Error case
+  Scenario: An invalid logical path is refused before the source is read
+    Given a source file of three chunks on the memory backend
+    When writer "writer-a" stages it as "../escape" with stage_file
+    Then stage_file should be refused as an invalid logical path
+    And the source should not have been read
 
   # Error case
   Scenario: A source that changes between its two reads is refused

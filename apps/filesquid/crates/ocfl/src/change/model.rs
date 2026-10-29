@@ -508,9 +508,12 @@ fn check_new_path(
     base: &WorkingState,
     path: &str,
 ) -> Result<(), ChangeError> {
-    let mut probe = index.clone();
-    probe.set(base, path, Staged::File(String::new()));
-    check_working(&probe, base)
+    let mut working = index.working(base);
+    working.insert(path.to_string(), String::new());
+    match path_conflict(working.keys().map(String::as_str)) {
+        Some(found) => Err(conflict_error(found)),
+        None => Ok(()),
+    }
 }
 
 /// The E095 error for `path`.

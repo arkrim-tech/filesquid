@@ -2,9 +2,12 @@
 //! OCFL-S-018; PRD F-051, NFR-003).
 //!
 //! `ChangeModel::stage_file` stages one logical file from a file of any
-//! backend in bounded chunks and answers its sha256 digest. Every scenario
-//! reads its source from the in-memory backend and from `FsBackend`; the
-//! write-order scenario also commits to both.
+//! backend in bounded chunks and answers its sha256 digest. The chunked
+//! read, manifest, held-blob, corrupt-blob and changed-source scenarios
+//! read their source from the in-memory backend and from `FsBackend`
+//! (`on_both_sources!`); the two path checks read nothing; and the
+//! write-order scenario reads from memory and varies the storage backend,
+//! committing to the in-memory backend and to `FsBackend`.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};

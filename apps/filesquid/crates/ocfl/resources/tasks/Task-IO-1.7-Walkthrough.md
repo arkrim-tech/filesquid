@@ -18,7 +18,7 @@ Branch `feat/io-1.7-streamed-stage-file`. Module task [IO-1.7](../plan.md) of gl
 | Path validated as `stage_bytes` does, before the file is read | `valid_path`, then `check_new_path` (E095 path conflicts) before `put_file` | `an_invalid_logical_path_is_refused_before_the_source_is_read` and `a_path_under_a_logical_file_is_refused_before_the_source_is_read` (`a.txt/inner` under the committed `a.txt`): no read, no staging write |
 | The commit keeps the OCFL-S-018 write order | the ordinary commit path | `the_commit_of_a_streamed_file_keeps_the_write_order` on `MemoryBackend` and `FsBackend` storage |
 
-Every scenario except the two path checks reads its source from `MemoryBackend` and from `FsBackend`, each wrapped in the test-only `CountingBackend` (`tests/support/counting_backend.rs`), which counts and sizes ranged reads and can replace a file after a chosen number of reads.
+The chunked-read, manifest, held-blob, corrupt-blob and changed-source integration scenarios run through `on_both_sources!`, reading their source from `MemoryBackend` and from `FsBackend`, each wrapped in the test-only `CountingBackend` (`tests/support/counting_backend.rs`), which counts and sizes ranged reads and can replace a file after a chosen number of reads. The two path checks read nothing, and the write-order test reads its source from memory and varies only the storage backend (`MemoryBackend` and `FsBackend`). In the BDD feature, only the bounded-chunk outline runs on both source backends; its other scenarios use the memory source.
 
 ## OCFL-S-014: Forward-delta change model (only bytes the manifest lacks are written)
 
@@ -38,7 +38,7 @@ The stage's own buffering is bounded whatever the file's size: chunk reads of at
 
 ## BDD
 
-`streamed_stage_OCFL-S-026.feature` (steps in `tests/support/stage_file_steps.rs`): the bounded-chunk outline on the memory and filesystem backends with a commit, manifest bytes not copied (read once, no blob in the staging area), and a source that changes between its reads.
+`streamed_stage_OCFL-S-026.feature` (steps in `tests/support/stage_file_steps.rs`): the bounded-chunk outline on the memory and filesystem backends with a commit that keeps the OCFL-S-018 write order, manifest bytes not copied (read once, no blob in the staging area), a corrupt or stale staged blob replaced with the source's bytes, an invalid logical path refused before the source is read, and a source that changes between its reads.
 
 ## What changed
 
@@ -90,7 +90,7 @@ None.
 `cargo test -p filesquid-ocfl --locked --test integration_stage_file`:
 
 ```text
-    Finished `test` profile [unoptimized] target(s) in 18.63s
+    Finished `test` profile [unoptimized] target(s) in 2.00s
      Running tests/integration/stage_file.rs (<target>/debug/deps/integration_stage_file-281404c847806322)
 
 running 9 tests
@@ -101,16 +101,16 @@ test an_invalid_logical_path_is_refused_before_the_source_is_read ... ok
 test stage_file_answers_the_digest_and_stages_the_blob_stage_bytes_would ... ok
 test a_file_whose_digest_the_manifest_holds_is_not_copied ... ok
 test a_file_that_changes_between_the_two_reads_is_refused ... ok
-test a_file_larger_than_one_chunk_is_read_in_bounded_chunks ... ok
 test the_commit_of_a_streamed_file_keeps_the_write_order ... ok
+test a_file_larger_than_one_chunk_is_read_in_bounded_chunks ... ok
 
-test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 14.97s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 19.51s
 ```
 
 `cargo test -p filesquid-ocfl --locked --test features -- --input "streamed_stage_*.feature"`:
 
 ```text
-    Finished `test` profile [unoptimized] target(s) in 10.91s
+    Finished `test` profile [unoptimized] target(s) in 19.39s
      Running tests/features.rs (<target>/debug/deps/features-9009fa7eceb51bdd)
 Feature: Streamed single-file stage
   Scenario Outline: A file larger than one chunk is staged in bounded chunks from the memory backend
@@ -121,6 +121,7 @@ Feature: Streamed single-file stage
    ✔  And the source should have been read in chunks of at most 8 MiB, once to hash it and once to copy it
    ✔  When writer "writer-a" commits the streamed file
    ✔  Then the committed "big.raw" should hold the source file's bytes
+   ✔  And the commit should keep the OCFL-S-018 write order for "big.raw"
   Scenario Outline: A file larger than one chunk is staged in bounded chunks from the filesystem backend
    ✔> Given an object committed at "v1" with "a.txt", "b.txt" and "c.txt" through the change model
    ✔  Given a source file of three chunks on the filesystem backend
@@ -129,6 +130,7 @@ Feature: Streamed single-file stage
    ✔  And the source should have been read in chunks of at most 8 MiB, once to hash it and once to copy it
    ✔  When writer "writer-a" commits the streamed file
    ✔  Then the committed "big.raw" should hold the source file's bytes
+   ✔  And the commit should keep the OCFL-S-018 write order for "big.raw"
   Scenario: Bytes the object already holds are not copied
    ✔> Given an object committed at "v1" with "a.txt", "b.txt" and "c.txt" through the change model
    ✔  Given a source file holding the bytes of "a.txt" on the memory backend
@@ -136,6 +138,19 @@ Feature: Streamed single-file stage
    ✔  Then stage_file should answer the sha256 digest of the source file
    ✔  And the source should have been read once, to hash it
    ✔  And no blob should have been copied into the staging area
+  Scenario: A corrupt or stale staged blob is replaced with the source's bytes
+   ✔> Given an object committed at "v1" with "a.txt", "b.txt" and "c.txt" through the change model
+   ✔  Given a source file of three chunks on the memory backend
+   ✔  And the staging area already holds other bytes under the source file's digest
+   ✔  When writer "writer-a" stages it as "big.raw" with stage_file
+   ✔  Then stage_file should answer the sha256 digest of the source file
+   ✔  And the staged blob should hold the source file's bytes
+  Scenario: An invalid logical path is refused before the source is read
+   ✔> Given an object committed at "v1" with "a.txt", "b.txt" and "c.txt" through the change model
+   ✔  Given a source file of three chunks on the memory backend
+   ✔  When writer "writer-a" stages it as "../escape" with stage_file
+   ✔  Then stage_file should be refused as an invalid logical path
+   ✔  And the source should not have been read
   Scenario: A source that changes between its two reads is refused
    ✔> Given an object committed at "v1" with "a.txt", "b.txt" and "c.txt" through the change model
    ✔  Given a source file of three chunks on the memory backend that changes after it is hashed
@@ -144,6 +159,6 @@ Feature: Streamed single-file stage
    ✔  And no staged blob should be left under either digest
 [Summary]
 1 feature
-4 scenarios (4 passed)
-25 steps (25 passed)
+6 scenarios (6 passed)
+38 steps (38 passed)
 ```

@@ -11,13 +11,13 @@ use cucumber::{given, then, when};
 use filesquid_ocfl::change::ChangeError;
 use filesquid_ocfl::digest::DigestAlgorithm;
 use filesquid_ocfl::storage::{
-    write_whole, FsBackend, MemoryBackend, StorageBackend, MAX_CHUNK_BYTES,
+    read_verified, write_whole, FsBackend, MemoryBackend, StorageBackend, MAX_CHUNK_BYTES,
 };
 
 use crate::change::{meta, model, state_of};
 use crate::change_steps::rig;
 use crate::counting::CountingBackend;
-use crate::rig::{key, ready};
+use crate::rig::{key, ready, OBJECT_ID};
 use crate::{OcflWorld, Scratch};
 
 /// The key the source file is read from.
@@ -39,6 +39,8 @@ pub struct StageFileState {
     bytes: Vec<u8>,
     changed: Vec<u8>,
     result: Option<Result<String, ChangeError>>,
+    /// The rig's write log of the commit, from the reservation on.
+    writes: Vec<String>,
 }
 
 impl fmt::Debug for StageFileState {
@@ -156,11 +158,25 @@ fn stage_it(world: &mut OcflWorld, holder: String, path: String) {
     world.stage_file.result = Some(result);
 }
 
+#[given("the staging area already holds other bytes under the source file's digest")]
+fn stale_blob(world: &mut OcflWorld) {
+    let blob = staged_blob_key(&world.stage_file.bytes);
+    let staging = &*rig(world).staging;
+    ready(write_whole(
+        staging,
+        &blob,
+        b"stale bytes under the source digest",
+    ))
+    .expect("blob");
+}
+
 #[when(expr = "writer {string} commits the streamed file")]
 fn commit_it(world: &mut OcflWorld, holder: String) {
-    let rig = rig(world);
-    let receipt = ready(model(rig, &holder).commit(meta(rig, "streamed"))).expect("commit");
+    let r = rig(world);
+    r.clear_log();
+    let receipt = ready(model(r, &holder).commit(meta(r, "streamed"))).expect("commit");
     assert_eq!(receipt.version.to_string(), "v2");
+    world.stage_file.writes = r.writes();
 }
 
 #[then("stage_file should answer the sha256 digest of the source file")]
@@ -197,6 +213,57 @@ fn committed_bytes(world: &mut OcflWorld, path: String) {
     rig(world).assert_valid();
 }
 
+#[then(expr = "the commit should keep the OCFL-S-018 write order for {string}")]
+fn write_order_kept(world: &mut OcflWorld, path: String) {
+    let lease = rig(world).leases.lease_key(OBJECT_ID).expect("lease key");
+    let reserve = format!("leases put_if {lease}");
+    let writes = &world.stage_file.writes;
+    assert_eq!(
+        writes.first(),
+        Some(&reserve),
+        "reserved before any v2 byte"
+    );
+    assert_eq!(writes.last(), Some(&reserve), "released last");
+    let storage: Vec<&str> = writes
+        .iter()
+        .filter_map(|w| w.strip_prefix("storage "))
+        .collect();
+    let content = format!("complete obj/v2/content/{path}");
+    assert_eq!(
+        storage,
+        [
+            content.as_str(),
+            "put_if obj/v2/inventory.json",
+            "put_if obj/v2/inventory.json.sha256",
+            "put_if obj/inventory.json",
+            "put_if obj/inventory.json.sha256",
+        ]
+    );
+}
+
+#[then("the staged blob should hold the source file's bytes")]
+fn staged_blob_matches(world: &mut OcflWorld) {
+    let blob = staged_blob_key(&world.stage_file.bytes);
+    let staging = &*rig(world).staging;
+    let stored = ready(read_verified(staging, &blob, MAX_CHUNK_BYTES)).expect("blob");
+    assert_eq!(stored, world.stage_file.bytes);
+}
+
+#[then("stage_file should be refused as an invalid logical path")]
+fn refused_invalid_path(world: &mut OcflWorld) {
+    let result = world.stage_file.result.as_ref().expect("staged");
+    assert!(
+        matches!(result, Err(ChangeError::InvalidPath { .. })),
+        "{result:?}"
+    );
+}
+
+#[then("the source should not have been read")]
+fn not_read(world: &mut OcflWorld) {
+    let reads = on_source!(world, s => s.reads());
+    assert_eq!(reads, 0);
+}
+
 #[then("stage_file should be refused because the source changed")]
 fn refused_changed(world: &mut OcflWorld) {
     let result = world.stage_file.result.as_ref().expect("staged");
@@ -225,4 +292,10 @@ fn assert_no_staged_blob(world: &OcflWorld, digest: &str) {
     let staging = &*rig(world).staging;
     let blob = key(&format!("changes/writer-a/blobs/{digest}"));
     assert!(!ready(staging.exists(&blob)).expect("exists"), "{blob}");
+}
+
+/// Writer-a's staging key of the blob that holds `bytes`.
+fn staged_blob_key(bytes: &[u8]) -> filesquid_ocfl::storage::StorageKey {
+    let digest = DigestAlgorithm::Sha256.digest_hex(bytes);
+    key(&format!("changes/writer-a/blobs/{digest}"))
 }
